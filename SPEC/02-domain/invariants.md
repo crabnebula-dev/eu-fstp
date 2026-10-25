@@ -156,4 +156,4 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-88** Calls to external MCP servers initiated by platform components use read-only tools only, unless a named human approved the specific action.
 - **I-89** Calls to external MCP servers send only the fields declared for that integration. Identity attributes and bank details go only to an approved finance hand-over.
 - **I-90** A composite signature verifies only when both the Ed25519 and the ML-DSA-65 halves verify.
-- **I-91** Self-hosted cells and desktop clients install only updates whose release metadata carries a valid composite signature by a current release key.
+- **I-91** Self-hosted cells and desktop clients install only updates whose release metadata carries a valid composite signature by a release signing key that the release root currently certifies.

@@ -89,7 +89,7 @@
 | I-87 | Public MCP responses equal public page data for generated programmes in every state |
 | I-88, I-89 | Platform-initiated write calls without approval fail; undeclared fields never leave the cell |
 | I-90 | Signatures with one valid and one invalid half are rejected everywhere; moduletto and aws-lc-rs ML-DSA verify each other's signatures |
-| I-91 | Updates with missing, partial or rotated-out composite signatures are refused by cells and clients |
+| I-91 | Updates with missing, partial or rotated-out composite signatures, or signed by a key without a current certificate from the release root, are refused by cells and clients |
 | I-73 | Templates with seeded personal data are blocked; single-person publication is rejected; templates never carry people or proposal records |
 | I-64 | After closure, I-45 headroom grows by exactly the grant's unclaimed balance under "return", and by zero spend under "lapse" |
 | I-52 | Guides missing any required section fail generation |

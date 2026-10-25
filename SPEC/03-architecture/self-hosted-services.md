@@ -4,7 +4,7 @@ Self-hosted cells call two CrabNebula-hosted services: an update service and a l
 
 ## Update service
 
-- Release metadata and artefacts carry composite Ed25519 plus ML-DSA-65 signatures by CrabNebula release keys (ADR-001, I-91).
+- Release metadata and artefacts carry composite Ed25519 plus ML-DSA-65 signatures by CrabNebula release signing keys, which the release root certifies (ADR-001, ADR-004, I-91).
 - Cells verify signatures, reject rollbacks to older versions and support key rotation.
 - The update check sends only the product version and channel.
 - Air-gapped cells import signed update bundles manually.

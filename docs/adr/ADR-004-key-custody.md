@@ -40,10 +40,17 @@ Proposed: an X-Wing style combiner. Both shared secrets, the ML-KEM ciphertext a
 
 | Key | Algorithm | Held in |
 | --- | --- | --- |
-| Release signing key | Composite Ed25519 plus ML-DSA-65 | Offline HSM under CrabNebula control. Used only in the release ceremony (proposed) |
+| Release root key | Composite Ed25519 plus ML-DSA-65 | Offline, under CrabNebula control. Used only to certify and revoke release signing keys |
+| Release signing key | Composite Ed25519 plus ML-DSA-65 | Isolated signing service. Ed25519 half in an HSM; ML-DSA half sealed by an HSM or TPM and unsealed into the service at start. Certified by the root for a limited period |
 | Audit anchor and export manifest key, per cell | Composite | Level 2 key of the cell, wrapped by the root key |
 | Notice companion key, per tenant | Composite | Level 2 key of the cell |
 | Licence token, profile bundle and template keys | Ed25519 | Level 2 keys of the issuing cell or the control plane |
 
-- Self-hosted cells and desktop clients ship with the release public keys and accept rotation only through a message signed by the current release key.
-- moduletto ML-DSA signing inside an HSM depends on the HSM's ability to run it. If it cannot, the release ceremony runs on an offline, air-gapped machine with the ML-DSA key sealed by the HSM (O-42).
+Release signing was decided by Daniel on 2026-10-25 (O-42).
+
+- Self-hosted cells and desktop clients pin the release root public key. They accept a release only when its signing key carries a valid, unexpired certificate from that root (I-91).
+- Releases are signed automatically. The signing service signs only requests that carry verified build provenance from the release pipeline, and moduletto produces the ML-DSA half (I-75).
+- A release can also require approval by two maintainers with a phishing-resistant step-up before the service signs it.
+- The root key is used in a short manual step, about once a year, to certify the next signing key, and whenever a signing key must be revoked or rotated. It never signs releases.
+- A compromised signing key is revoked through the root and stays bounded by its certificate period.
+- If the chosen HSM can run moduletto, the signing service may move into the HSM later without changing what clients verify.
