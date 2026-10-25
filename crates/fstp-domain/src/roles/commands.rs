@@ -9,16 +9,22 @@
 //!   candidate set (SoD-09, I-06). A self-grant needs the second tenant
 //!   admin that the shell attested (SoD-07). The organisation field is
 //!   data for I-34 and never a reason to refuse.
-//! - `EndRole` of a held Drafting, Judging or Operations binding at
-//!   `ctx.now`. It pins the cooling-off bar.
-//! - `ReinstateBinding` of a suspended binding.
+//! - `EndRole` of a Drafting, Judging or Operations binding that is not
+//!   voided, at `ctx.now`. It pins the cooling-off bar, which never counts
+//!   for a conflict-of-interest suspension.
+//! - `ReinstateBinding` of a suspended binding. A conflict-of-interest
+//!   suspension is reinstated only once the identity clash is over: no
+//!   I-01 or I-02 clash on its own account, and `SameIdentityAsAny` false
+//!   over the other accounts it would break I-01 with (I-06). Its record
+//!   falls back to an ordinary suspension kept beneath the marker, if any.
 //! - `VaultChanged`, the same-step reaction to a newer vault epoch
 //!   (enforcement point 3). It voids every held Receiving binding of a
 //!   changed account in an excluded class (I-04). It also voids every held
 //!   or ended Receiving binding whose account shares a verified identity
 //!   with a candidate set that touches a changed account (I-06). It
-//!   suspends a Drafting or Judging binding found to share a verified
-//!   identity with the other of those groups. Its queries are answered at
+//!   suspends, as a conflict of interest, every held or ended Judging
+//!   binding found to share a verified identity with a Drafting binding it
+//!   breaks I-01 with. The Drafting binding stays. Its queries are answered at
 //!   the new epoch, so under the commit protocol they see the provisional
 //!   fact the reaction reacts to (overview NOTE 4).
 //!
@@ -58,9 +64,12 @@ use crate::record::{
 };
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::roles::guards::{
-    Target, account_rule, breaking_candidates, identity_candidates, latest, published_call, unknown,
+    Target, account_rule, breaking_accounts, breaking_candidates, identity_candidates, latest,
+    other_separated, published_call, unknown,
 };
-use crate::roles::{Binding, BindingScope, BindingStatus, EndedBinding, Group, Role};
+use crate::roles::{
+    Binding, BindingScope, BindingStatus, EndedBinding, Group, IdentityDiscovery, Role,
+};
 use crate::state::{State, UsedId};
 use crate::time::Timestamp;
 
@@ -267,6 +276,9 @@ fn decide_grant(plan: GrantPlan, answers: &Answers) -> Result<Vec<Record>, Refus
 // ---------------------------------------------------------------------------
 
 /// Checks an `EndRole` and returns its records.
+///
+/// A binding under a conflict-of-interest suspension can end too. The bar
+/// its end pins never counts (Identity discovery, decided 2026-10-25).
 fn plan_end(
     state: &State,
     binding: BindingId,
@@ -274,7 +286,7 @@ fn plan_end(
     ctx: &Ctx,
 ) -> Result<Vec<Record>, Refusal> {
     let b = state.roster.binding(binding).ok_or_else(unknown)?;
-    if !b.held() || b.group() == Group::Receiving {
+    if b.voided() || b.group() == Group::Receiving {
         // Voided bindings are no longer held. Receiving bindings end with
         // the proposal's terminal state (Q11 A).
         return Err(wrong_state());
@@ -286,23 +298,100 @@ fn plan_end(
     Ok(end_records(state, binding, b, at)?.to_vec())
 }
 
-/// Checks a `ReinstateBinding` and returns its records.
+/// A checked `ReinstateBinding`: the record and its vault question.
+struct ReinstatePlan {
+    /// The reinstatement.
+    record: BindingReinstated,
+    /// For a conflict-of-interest suspension, `SameIdentityAsAny` over the
+    /// other accounts whose bindings the reinstated binding would break
+    /// I-01 with (I-06). None for every other suspension, or when the set
+    /// is empty.
+    identity: Option<Query>,
+}
+
+/// Checks a `ReinstateBinding` and returns its plan.
+///
+/// A conflict-of-interest suspension is reinstated only once the identity
+/// clash is over (Identity discovery, decided 2026-10-25). Counted again,
+/// the binding must not break the I-01 pair rule with a binding of its own
+/// account. Nor may it break I-02 with a binding of its own account that
+/// was held beside it, held now or ended since its grant. The vault
+/// question covers the other accounts of its verified identity (I-06).
 fn plan_reinstate(
     state: &State,
     binding: BindingId,
     reason: crate::id::TextRef,
     ctx: &Ctx,
-) -> Result<Vec<Record>, Refusal> {
+) -> Result<ReinstatePlan, Refusal> {
     let by = crate::policy::actor_account(ctx)?;
     let b = state.roster.binding(binding).ok_or_else(unknown)?;
     if !matches!(b.status, BindingStatus::Suspended(_)) {
         return Err(wrong_state());
     }
-    Ok(vec![Record::BindingReinstated(BindingReinstated {
-        binding,
-        by,
-        reason,
-    })])
+    let mut identity = None;
+    if b.conflict_of_interest() {
+        let groups = other_separated(b.group());
+        let breaking = breaking_accounts(state, b.programme, &groups, b.opened, None);
+        if breaking.contains(&b.account) {
+            return Err(Refusal::new(RuleRef::I01, RefusalReason::GuardFailed));
+        }
+        if irc_clash(state, b) {
+            return Err(Refusal::new(RuleRef::I02, RefusalReason::GuardFailed));
+        }
+        let others = breaking_candidates(state, b.account, b.programme, &groups, b.opened, None);
+        identity = (!others.is_empty()).then_some(Query::SameIdentityAsAny {
+            subject: b.account,
+            others,
+        });
+    }
+    Ok(ReinstatePlan {
+        record: BindingReinstated {
+            binding,
+            by,
+            reason,
+        },
+        identity,
+    })
+}
+
+/// Whether the open binding `b`, counted again, would have been held at the
+/// same time as a binding of its own account and programme that I-02
+/// separates from it.
+///
+/// A counted binding held now was open beside `b`. So was a counted
+/// binding that ended after the grant of `b` in fold order, because `b`
+/// has been open since its grant. Counted again, `b` counts over its
+/// conflict-of-interest suspension too, so an IRC binding granted and
+/// ended during it still clashes. Otherwise the history would show both
+/// held at the same time.
+fn irc_clash(state: &State, b: &Binding) -> bool {
+    let separated = |y: &Binding| {
+        y.account == b.account
+            && y.programme == b.programme
+            && y.held()
+            && ((b.role == Role::IrcMember && y.role.other_judging())
+                || (b.role.other_judging() && y.role == Role::IrcMember))
+    };
+    state.roster.bindings().any(|(_, y)| separated(y))
+        || state
+            .roster
+            .ended()
+            .any(|(_, e)| separated(&e.binding) && e.ended > b.granted)
+}
+
+/// The records of a checked `ReinstateBinding` under `answers`. A shared
+/// verified identity means the clash lasts, so the reinstatement is refused.
+fn decide_reinstate(plan: ReinstatePlan, answers: &Answers) -> Result<Vec<Record>, Refusal> {
+    let mut out = Vec::new();
+    if let Some(q) = &plan.identity {
+        let a = answer(answers, q)?;
+        if a.holds {
+            return Err(Refusal::new(RuleRef::I06, RefusalReason::VaultRefused));
+        }
+        out.push(outcome(q, a));
+    }
+    out.push(Record::BindingReinstated(plan.record));
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +403,8 @@ fn plan_reinstate(
 enum Remedy {
     /// A Receiving binding, held or ended, is voided (Identity discovery).
     Void,
-    /// A held Drafting or Judging binding is suspended (enforcement point 3).
+    /// A Judging binding, held or ended, is suspended as a conflict of
+    /// interest under I-06 (Identity discovery, decided 2026-10-25).
     Suspend,
 }
 
@@ -386,10 +476,16 @@ fn identity_recheck(
 /// - Every held or ended Receiving binding is rechecked for I-06 when its
 ///   account or a candidate changed. An ended binding counts through its
 ///   bar, so voiding it drops a past binding inside the cooling-off period.
-/// - Every active Drafting or Judging binding is rechecked against the
-///   other of those two groups in the same way. A positive answer is a
-///   new violation that enforcement point 3 suspends.
+/// - Every Judging binding that counts, held or ended inside its bar, is
+///   rechecked against the Drafting bindings in the same way. A positive
+///   answer is a conflict of interest, and the reaction suspends the
+///   Judging binding under I-06 (Identity discovery, decided 2026-10-25).
+///   Only a later identity merge reaches this, since SoD-09 refuses it at
+///   binding time. The Drafting binding stays. The pair rule is
+///   symmetric, so the Judging side alone covers each pair.
 ///
+/// Every recheck reads the bindings that count before the reaction, so the
+/// voids and suspensions of one reaction do not depend on each other.
 /// Exclusions are facts about identities, so the vault lists every account
 /// of an identity whose exclusion changed. Bars and bindings do not change
 /// with the vault, so no other binding can start to break I-04 or I-06.
@@ -431,20 +527,13 @@ fn plan_reaction(
                     ),
                 }
             }
-            Group::Drafting | Group::Judging if b.status == BindingStatus::Active => {
-                let other = if b.group() == Group::Drafting {
-                    Group::Judging
-                } else {
-                    Group::Drafting
-                };
-                Recheck {
-                    binding: id,
-                    remedy: Remedy::Suspend,
-                    excluded: None,
-                    identity: identity_recheck(state, b, &[other], None, changed),
-                }
-            }
-            Group::Drafting | Group::Judging | Group::Operations => continue,
+            Group::Judging => Recheck {
+                binding: id,
+                remedy: Remedy::Suspend,
+                excluded: None,
+                identity: identity_recheck(state, b, &[Group::Drafting], None, changed),
+            },
+            Group::Drafting | Group::Operations => continue,
         };
         if recheck.excluded.is_some() || recheck.identity.is_some() {
             rechecks.push(recheck);
@@ -452,20 +541,16 @@ fn plan_reaction(
     }
     for (id, e) in state.roster.ended() {
         let Some(bar) = e.live_bar() else { continue };
-        if e.binding.group() != Group::Receiving {
-            continue;
-        }
-        let identity = identity_recheck(
-            state,
-            &e.binding,
-            &[Group::Drafting, Group::Judging],
-            Some(bar),
-            changed,
-        );
+        let (remedy, groups): (Remedy, &[Group]) = match e.binding.group() {
+            Group::Receiving => (Remedy::Void, &[Group::Drafting, Group::Judging]),
+            Group::Judging => (Remedy::Suspend, &[Group::Drafting]),
+            Group::Drafting | Group::Operations => continue,
+        };
+        let identity = identity_recheck(state, &e.binding, groups, Some(bar), changed);
         if identity.is_some() {
             rechecks.push(Recheck {
                 binding: id,
-                remedy: Remedy::Void,
+                remedy,
                 excluded: None,
                 identity,
             });
@@ -753,8 +838,10 @@ pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Que
             Ok(Vec::new())
         }
         Command::ReinstateBinding { binding, reason } => {
-            plan_reinstate(state, *binding, *reason, ctx)?;
-            Ok(Vec::new())
+            Ok(plan_reinstate(state, *binding, *reason, ctx)?
+                .identity
+                .into_iter()
+                .collect())
         }
         Command::VaultChanged { epoch, changed } => {
             Ok(plan_reaction(state, *epoch, changed)?.queries())
@@ -774,7 +861,7 @@ pub(crate) fn decide(
         Command::GrantRole { .. } => decide_grant(plan_grant(state, cmd, ctx)?, answers),
         Command::EndRole { binding, at } => plan_end(state, *binding, *at, ctx),
         Command::ReinstateBinding { binding, reason } => {
-            plan_reinstate(state, *binding, *reason, ctx)
+            decide_reinstate(plan_reinstate(state, *binding, *reason, ctx)?, answers)
         }
         Command::VaultChanged { epoch, changed } => {
             let plan = plan_reaction(state, *epoch, changed)?;
@@ -801,65 +888,27 @@ pub(crate) fn apply(
                 .bindings
                 .get(&e.binding)
                 .ok_or(FoldError::UnknownEntity)?;
-            if !b.held() {
+            // A conflict-of-interest suspension can end. Its bar never counts.
+            if b.voided() {
                 return Err(FoldError::Inconsistent);
             }
             state.roster.bindings.remove(&e.binding);
+            let ended = judging_tick(state, b.group());
             if b.group().separated() {
                 state.roster.ended.insert(
                     e.binding,
                     EndedBinding {
                         binding: b,
                         bar: e.barred_through,
+                        ended,
                     },
                 );
             }
             Ok(())
         }
-        Record::BindingSuspended(s) => {
-            let b = state
-                .roster
-                .bindings
-                .get_mut(&s.binding)
-                .ok_or(FoldError::UnknownEntity)?;
-            if b.status != BindingStatus::Active {
-                return Err(FoldError::Inconsistent);
-            }
-            b.status = BindingStatus::Suspended(s.rule);
-            Ok(())
-        }
-        Record::BindingVoided(v) => {
-            // A held Receiving binding, or an ended one whose bar still
-            // counts (Identity discovery: voided bindings pin no bar).
-            let b = match state.roster.bindings.get_mut(&v.binding) {
-                Some(b) => b,
-                None => {
-                    &mut state
-                        .roster
-                        .ended
-                        .get_mut(&v.binding)
-                        .ok_or(FoldError::UnknownEntity)?
-                        .binding
-                }
-            };
-            if !b.held() || b.group() != Group::Receiving {
-                return Err(FoldError::Inconsistent);
-            }
-            b.status = BindingStatus::Voided(v.rule);
-            Ok(())
-        }
-        Record::BindingReinstated(r) => {
-            let b = state
-                .roster
-                .bindings
-                .get_mut(&r.binding)
-                .ok_or(FoldError::UnknownEntity)?;
-            if !matches!(b.status, BindingStatus::Suspended(_)) {
-                return Err(FoldError::Inconsistent);
-            }
-            b.status = BindingStatus::Active;
-            Ok(())
-        }
+        Record::BindingSuspended(s) => fold_suspension(state, s),
+        Record::BindingVoided(v) => fold_void(state, v),
+        Record::BindingReinstated(r) => fold_reinstatement(state, r),
         Record::VaultEpochProcessed { epoch } => {
             if *epoch <= state.epoch {
                 return Err(FoldError::Inconsistent);
@@ -869,6 +918,126 @@ pub(crate) fn apply(
         }
         _ => Err(FoldError::Inconsistent),
     }
+}
+
+/// The next fold position for the grant or end of a binding of `group`:
+/// a fresh one for Judging, and 0 for every other group (I-02 reads it).
+fn judging_tick(state: &mut State, group: Group) -> u64 {
+    if group == Group::Judging {
+        state.roster.tick()
+    } else {
+        0
+    }
+}
+
+/// Folds one `BindingSuspended`.
+///
+/// - The conflict-of-interest marker (rule I-06 on a Judging binding)
+///   applies to a binding not voided, held or ended, that is not under the
+///   marker already (Identity discovery, decided 2026-10-25). An ordinary
+///   suspension it lands on is kept beneath the marker.
+/// - An ordinary suspension applies to any binding not voided, held or
+///   ended. On a binding under the marker it is kept beneath the marker.
+///   On a binding already under an ordinary suspension it replaces the
+///   rule. The reference keeps one pending ordinary suspension, so one
+///   reinstatement lifts it, however many records led to it.
+///
+/// Reinstating the marker falls back to the suspension beneath it, which
+/// stays pending resolution (enforcement point 3). A voided binding takes
+/// no suspension, and the marker never lands twice. Each marker is
+/// recorded as an identity discovery.
+fn fold_suspension(state: &mut State, s: &BindingSuspended) -> Result<(), FoldError> {
+    let b = match state.roster.bindings.get_mut(&s.binding) {
+        Some(b) => b,
+        None => {
+            &mut state
+                .roster
+                .ended
+                .get_mut(&s.binding)
+                .ok_or(FoldError::UnknownEntity)?
+                .binding
+        }
+    };
+    let marker = s.rule == RuleRef::I06 && b.group() == Group::Judging;
+    match (b.status, marker) {
+        (BindingStatus::Voided(_), _) => return Err(FoldError::Inconsistent),
+        (BindingStatus::Suspended(_), true) if b.conflict_of_interest() => {
+            return Err(FoldError::Inconsistent);
+        }
+        (BindingStatus::Suspended(prior), true) => {
+            b.suspended_beneath = Some(prior);
+            b.status = BindingStatus::Suspended(s.rule);
+        }
+        (BindingStatus::Suspended(_), false) if b.conflict_of_interest() => {
+            b.suspended_beneath = Some(s.rule);
+        }
+        (BindingStatus::Active | BindingStatus::Suspended(_), _) => {
+            b.status = BindingStatus::Suspended(s.rule);
+        }
+    }
+    if marker {
+        let d = IdentityDiscovery::ConflictOfInterest {
+            binding: s.binding,
+            account: b.account,
+            programme: b.programme,
+            role: b.role,
+            epoch: s.epoch,
+        };
+        state.roster.discovered(d);
+    }
+    Ok(())
+}
+
+/// Folds one `BindingReinstated`. It lifts one suspension: the conflict of
+/// interest first, which falls back to the ordinary suspension beneath it.
+fn fold_reinstatement(state: &mut State, r: &BindingReinstated) -> Result<(), FoldError> {
+    let b = state
+        .roster
+        .bindings
+        .get_mut(&r.binding)
+        .ok_or(FoldError::UnknownEntity)?;
+    if !matches!(b.status, BindingStatus::Suspended(_)) {
+        return Err(FoldError::Inconsistent);
+    }
+    b.status = match b.suspended_beneath.take() {
+        Some(prior) => BindingStatus::Suspended(prior),
+        None => BindingStatus::Active,
+    };
+    Ok(())
+}
+
+/// Folds one `BindingVoided`: a held Receiving binding, or an ended one
+/// whose bar still counts (Identity discovery: voided bindings pin no
+/// bar). A void under I-06 is recorded as an identity discovery.
+fn fold_void(state: &mut State, v: &BindingVoided) -> Result<(), FoldError> {
+    let b = match state.roster.bindings.get_mut(&v.binding) {
+        Some(b) => b,
+        None => {
+            &mut state
+                .roster
+                .ended
+                .get_mut(&v.binding)
+                .ok_or(FoldError::UnknownEntity)?
+                .binding
+        }
+    };
+    if !b.held() || b.group() != Group::Receiving {
+        return Err(FoldError::Inconsistent);
+    }
+    b.status = BindingStatus::Voided(v.rule);
+    let discovery = match (v.rule, b.proposal()) {
+        (RuleRef::I06, Some(proposal)) => Some(IdentityDiscovery::ReceivingVoided {
+            binding: v.binding,
+            account: b.account,
+            proposal,
+            epoch: v.epoch,
+        }),
+        _ => None,
+    };
+    if let Some(d) = discovery {
+        state.roster.discovered(d);
+    }
+    Ok(())
 }
 
 /// Folds one `BindingGranted`. A Receiving role must be scoped to a
@@ -904,6 +1073,7 @@ fn fold_grant(state: &mut State, g: &BindingGranted) -> Result<(), FoldError> {
         BindingScope::Programme => latest(state, g.programme),
     };
     state.used_ids.insert(UsedId::Binding(g.binding));
+    let granted = judging_tick(state, g.role.group());
     state.roster.bindings.insert(
         g.binding,
         Binding {
@@ -914,6 +1084,8 @@ fn fold_grant(state: &mut State, g: &BindingGranted) -> Result<(), FoldError> {
             start: g.start,
             opened,
             status: BindingStatus::Active,
+            suspended_beneath: None,
+            granted,
         },
     );
     Ok(())
@@ -1023,6 +1195,8 @@ mod tests {
                 start: Timestamp::from_micros(1),
                 opened: 1,
                 status: BindingStatus::Active,
+                suspended_beneath: None,
+                granted: 0,
             },
         );
         state

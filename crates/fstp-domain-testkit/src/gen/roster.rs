@@ -15,9 +15,11 @@
 //!   steps on the reference alone, for measuring model sizes and checking
 //!   that witnesses are reachable before production lands.
 //! - [`SodMachine`] is the fstp-prop machine over `GrantRole`, `EndRole`,
-//!   `PublishCall`, `EditPolicy` (P-12 and P-13), `CreateDraft`,
-//!   `AddTeamMember`, `AddGuardian` and vault changes. It runs through a
-//!   [`Scenario`], so every step also checks the ledger (I-23).
+//!   `ReinstateBinding`, `PublishCall`, `EditPolicy` (P-12 and P-13),
+//!   `CreateDraft`, `AddTeamMember`, `AddGuardian` and vault changes. The
+//!   vault changes are verifications, new affiliations and identity merges
+//!   ([`VaultOp::Merge`]). It runs through a [`Scenario`], so every step
+//!   also checks the ledger (I-23).
 //!
 //! Reading for the models: no SoD guard compares wall-clock times, only
 //! call sequences and ledger order (P-12 NOTE 4). So model commands all run
@@ -35,7 +37,9 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::{Answer, Answers, Query};
 use fstp_domain::policy::{ExclusionClasses, ModelRef, PolicyVersion};
-use fstp_domain::record::{BindingEnded, BindingGranted, BindingVoided, Record};
+use fstp_domain::record::{
+    BindingEnded, BindingGranted, BindingReinstated, BindingSuspended, BindingVoided, Record,
+};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::{CoolingOff, Role};
 use fstp_domain::state::State;
@@ -49,8 +53,8 @@ use crate::r#gen::policy::{MODEL_A, base_version, core_records, eur, next_versio
 use crate::harness::prop::{ledger_step, two_way_exec};
 use crate::reference::sod::{
     Ask, ExpectedBinding, RefGroup, Verdict, View, check_bars, check_ended, check_granted,
-    check_i01, check_i02, check_i04, check_i06, check_voids, expected_binding, expected_voids,
-    spec_group, verdict,
+    check_i01, check_i02, check_i04, check_i06, check_suspensions, check_voids, expected_binding,
+    expected_suspensions, expected_voids, spec_group, verdict,
 };
 use crate::scenario::Scenario;
 use crate::vault::{GroundTruth, IdentityTag, PendingFact, excluded_applicant, sybil_pair};
@@ -239,6 +243,18 @@ pub fn grant(
 /// An `EndRole` of `binding` at `at` by the tenant admin.
 pub fn end(binding: BindingId, at: Timestamp) -> Step {
     Step::by(ADMIN, Flags::ADMIN, Command::EndRole { binding, at })
+}
+
+/// A `ReinstateBinding` of `binding` by the tenant admin, with a synthetic reason.
+pub fn reinstate(binding: BindingId) -> Step {
+    Step::by(
+        ADMIN,
+        Flags::ADMIN,
+        Command::ReinstateBinding {
+            binding,
+            reason: text(binding.raw().saturating_add(70_000)),
+        },
+    )
 }
 
 /// A `CreateDraft` by `lead` in `call`.
@@ -627,6 +643,7 @@ impl SodWorld {
                     Facts::WithProvisional => reaction_truth(&self.truth),
                 };
                 let mut out = voids(&self.view, &seen, target);
+                out.extend(suspensions(&self.view, &seen, target));
                 out.push(Record::VaultEpochProcessed { epoch: target });
                 out
             }
@@ -684,6 +701,26 @@ fn voids(view: &View, truth: &GroundTruth, epoch: fstp_domain::id::VaultEpoch) -
         .collect()
 }
 
+/// The `BindingSuspended` records the reference expects of a reaction at
+/// `epoch`: each Judging binding in a conflict of interest, under I-06, the
+/// marker (Identity discovery, decided 2026-10-25).
+fn suspensions(
+    view: &View,
+    truth: &GroundTruth,
+    epoch: fstp_domain::id::VaultEpoch,
+) -> Vec<Record> {
+    expected_suspensions(view, truth)
+        .into_iter()
+        .map(|binding| {
+            Record::BindingSuspended(BindingSuspended {
+                binding,
+                rule: RuleRef::I06,
+                epoch,
+            })
+        })
+        .collect()
+}
+
 /// The records the reference expects of `step`, or `None` when it refuses.
 /// Commands outside the reference are taken as accepted with the records a
 /// correct engine emits, which the setups need.
@@ -702,6 +739,20 @@ fn synthesize(
         Verdict::Refuse(_) => return Ok(None),
         Verdict::Accept => {}
         Verdict::Unjudged => {
+            if let Command::ReinstateBinding { binding, reason } = &step.cmd {
+                // As production does: only an open suspended binding is reinstated.
+                let open_suspended = view
+                    .bindings
+                    .get(binding)
+                    .is_some_and(|b| b.open() && b.suspended);
+                return Ok(open_suspended.then(|| {
+                    vec![Record::BindingReinstated(BindingReinstated {
+                        binding: *binding,
+                        by: actor,
+                        reason: *reason,
+                    })]
+                }));
+            }
             return synthesize_unjudged(view, truth, actor, &step.cmd).map(Some);
         }
     }
@@ -848,8 +899,9 @@ fn synthesize_unjudged(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SodFocus {
     /// Draw weights in the order grant, end, publish, P-12 edit, P-13 edit,
-    /// draft, team member, guardian, verification, new affiliation.
-    pub weights: [u32; 10],
+    /// draft, team member, guardian, verification, new affiliation,
+    /// identity merge, reinstatement.
+    pub weights: [u32; 12],
     /// The roles grants draw from.
     pub roles: &'static [Role],
     /// Commands per case.
@@ -873,28 +925,30 @@ impl SodFocus {
     /// I-01, SoD-01 and SoD-05: grants of every role, ends, publications,
     /// P-12 edits and drafts.
     pub const I01: SodFocus = SodFocus {
-        weights: [6, 4, 4, 2, 0, 4, 2, 1, 1, 0],
+        weights: [6, 4, 4, 2, 0, 4, 2, 1, 1, 0, 0, 0],
         roles: &EVERY_ROLE,
         max_commands: 40,
         cases: 128,
     };
     /// I-02 and SoD-02: grants and ends of Judging roles.
     pub const I02: SodFocus = SodFocus {
-        weights: [8, 5, 1, 0, 0, 0, 0, 0, 0, 0],
+        weights: [8, 5, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         roles: &JUDGING_ROLES,
         max_commands: 32,
         cases: 128,
     };
     /// I-04 and SoD-06: Receiving bindings, verifications, new affiliations and P-13 edits.
     pub const I04: SodFocus = SodFocus {
-        weights: [1, 1, 1, 0, 3, 5, 4, 2, 3, 3],
+        weights: [1, 1, 1, 0, 3, 5, 4, 2, 3, 3, 0, 0],
         roles: &EVERY_ROLE,
         max_commands: 32,
         cases: 128,
     };
-    /// I-06 and SoD-09: Sybil grants, drafts and verifications.
+    /// I-06 and SoD-09: Sybil grants, drafts, verifications, identity
+    /// merges of Drafting and Judging holders, and reinstatements of
+    /// conflict-of-interest suspensions.
     pub const I06: SodFocus = SodFocus {
-        weights: [6, 3, 3, 1, 0, 5, 2, 1, 4, 0],
+        weights: [6, 3, 3, 1, 0, 5, 2, 1, 4, 0, 4, 2],
         roles: &[
             Role::ProgrammeManager,
             Role::CommitteeMember,
@@ -913,6 +967,11 @@ pub enum VaultOp {
     Verify(AccountId),
     /// The vault learns that the identity is in the class: a new affiliation.
     Exclude(IdentityTag, ClassId),
+    /// The vault merges the account into the identity: a re-tag that lists
+    /// only the account as changed. Accounts holding Drafting and Judging
+    /// bindings can then share one verified identity, which SoD-09 refuses
+    /// at binding time (Identity discovery, last paragraph).
+    Merge(AccountId, IdentityTag),
 }
 
 impl VaultOp {
@@ -921,6 +980,7 @@ impl VaultOp {
         match self {
             VaultOp::Verify(a) => truth.verify(a),
             VaultOp::Exclude(t, k) => truth.exclude(t, k),
+            VaultOp::Merge(a, t) => truth.set_identity(a, t),
         }
     }
 }
@@ -1091,12 +1151,15 @@ pub struct MachineOutput {
     pub expected: Option<ExpectedBinding>,
     /// The voids an accepted step must record, with their allowed rules.
     pub voids: BTreeMap<BindingId, BTreeSet<RuleRef>>,
+    /// The conflict-of-interest suspensions an accepted step must record.
+    pub suspensions: BTreeSet<BindingId>,
 }
 
 /// The fstp-prop machine over the role, draft and vault commands (I-01,
 /// I-02, I-04, I-06). Its postconditions compare accept and refuse with
 /// [`verdict`] in both directions and check the records of every accepted
-/// step. Its invariant checks I-01, the pinned bars, I-02, I-04, I-06 and
+/// step, voids and conflict-of-interest suspensions included. Its
+/// invariant checks I-01, the pinned bars, I-02, I-04, I-06 and
 /// I-23 after every step, over the reference view of the ledger.
 #[derive(Debug)]
 pub struct SodMachine {
@@ -1269,7 +1332,7 @@ impl SodMachine {
             .bindings
             .values()
             .filter(|b| !is_staff_binding(b.binding))
-            .filter(|b| (b.held() && b.group != RefGroup::Receiving) || g.weighted(&[8, 1]) == 1)
+            .filter(|b| (b.open() && b.group != RefGroup::Receiving) || g.weighted(&[8, 1]) == 1)
             .map(|b| b.binding)
             .collect();
         if candidates.is_empty() {
@@ -1394,6 +1457,63 @@ impl SodMachine {
             op: VaultOp::Exclude(t, class),
         }
     }
+
+    /// An identity merge: a subject takes the identity of another subject.
+    /// Mostly a holder of an open Drafting or Judging binding is merged
+    /// into the identity of a holder of the other group, so that the
+    /// conflict of interest of Identity discovery arises.
+    fn gen_merge(&self, g: &mut Gen, model: &MachineModel, now: i64) -> MachineCmd {
+        let holders = |group: RefGroup| -> Vec<AccountId> {
+            model
+                .view
+                .bindings
+                .values()
+                .filter(|b| b.group == group && b.open() && !is_staff_binding(b.binding))
+                .map(|b| b.account)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        let drafting = holders(RefGroup::Drafting);
+        let judging = holders(RefGroup::Judging);
+        let (account, into) =
+            if !drafting.is_empty() && !judging.is_empty() && g.weighted(&[1, 3]) == 1 {
+                if g.bool() {
+                    (*g.pick(&judging), *g.pick(&drafting))
+                } else {
+                    (*g.pick(&drafting), *g.pick(&judging))
+                }
+            } else {
+                (self.pick_subject(g, model), self.pick_subject(g, model))
+            };
+        match model.truth.identity_of(into) {
+            Some(t) if account != into && model.truth.identity_of(account) != Some(t) => {
+                MachineCmd::Vault {
+                    now,
+                    op: VaultOp::Merge(account, t),
+                }
+            }
+            _ => self.gen_grant(g, model, now),
+        }
+    }
+
+    /// A `ReinstateBinding`, mostly of a suspended binding.
+    fn gen_reinstate(&self, g: &mut Gen, model: &MachineModel, now: i64) -> MachineCmd {
+        let suspended: Vec<BindingId> = model
+            .view
+            .bindings
+            .values()
+            .filter(|b| b.suspended || g.weighted(&[8, 1]) == 1)
+            .map(|b| b.binding)
+            .collect();
+        if suspended.is_empty() {
+            return self.gen_grant(g, model, now);
+        }
+        MachineCmd::Core {
+            now,
+            step: Box::new(reinstate(*g.pick(&suspended))),
+        }
+    }
 }
 
 impl StateMachine for SodMachine {
@@ -1439,7 +1559,9 @@ impl StateMachine for SodMachine {
             6 => self.gen_member(g, model, now, false),
             7 => self.gen_member(g, model, now, true),
             8 => self.gen_verify(g, model, now),
-            _ => self.gen_affiliation(g, model, now),
+            9 => self.gen_affiliation(g, model, now),
+            10 => self.gen_merge(g, model, now),
+            _ => self.gen_reinstate(g, model, now),
         }
     }
 
@@ -1462,6 +1584,7 @@ impl StateMachine for SodMachine {
             before: View::new(),
             expected: None,
             voids: BTreeMap::new(),
+            suspensions: BTreeSet::new(),
         };
         let before = View::of(sut.records.iter()).unwrap_or_default();
         match cmd {
@@ -1501,6 +1624,7 @@ impl StateMachine for SodMachine {
                 out.verdict = Verdict::Accept;
                 out.result = driver.change_vault(*op, Timestamp::from_micros(*now));
                 out.voids = expected_voids(&before, driver.truth());
+                out.suspensions = expected_suspensions(&before, driver.truth());
             }
         }
         out.before = before;
@@ -1542,7 +1666,8 @@ impl StateMachine for SodMachine {
         {
             check_ended(context, &out.before, *binding, *at, &out.appended)?;
         }
-        check_voids(context, &out.voids, &out.appended)
+        check_voids(context, &out.voids, &out.appended)?;
+        check_suspensions(context, &out.suspensions, &out.appended)
     }
 
     fn next_state(&self, model: &mut MachineModel, cmd: &MachineCmd) {

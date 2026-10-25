@@ -12,28 +12,34 @@
 //!   ground truth, never production structures.
 //!
 //! Instances (design 6.3): P-12 = 0, 1 and 2 for I-01; one account in two
-//! programmes; I-02 over Judging roles; I-06 with the Sybil pair. A run of
-//! an instance in [`Backend::Reference`] mode checks the model itself:
-//! every property passes and every witness is reached on the reference.
+//! programmes; I-02 over Judging roles; I-06 with the Sybil pair and an
+//! identity merge of c into the Sybil identity. A run of an instance in
+//! [`Backend::Reference`] mode checks the model itself: every property
+//! passes and every witness is reached on the reference.
+//!
+//! The merge is the vault operation that the W3b fix round left out. It
+//! lets a Drafting and a Judging holder share one verified identity, which
+//! the reaction answers with a conflict-of-interest suspension of the
+//! Judging binding (Identity discovery, decided 2026-10-25).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::id::{AccountId, BindingId, CallId, ProgrammeId, ProposalId, VaultEpoch};
-use fstp_domain::record::Record;
+use fstp_domain::record::{BindingReinstated, BindingSuspended, Record};
 use fstp_domain::refusal::RuleRef;
 use fstp_domain::roles::Role;
 use fstp_mc::{Model, Property};
 
 use crate::r#gen::roster::{
-    A, B, Backend, C, Facts, P1, P2, SodSetup, SodWorld, Step, T0, call, draft, end, grant,
-    publish, sod_truth,
+    A, B, Backend, C, Facts, ID_AB, P1, P2, SodSetup, SodWorld, Step, T0, call, draft, end, grant,
+    publish, reinstate, sod_truth,
 };
 use crate::reference::sod::{
     RefBinding, RefGroup, Verdict, View, check_bars, check_ended, check_granted, check_i01,
-    check_i02, check_i06, check_voids, expected_binding, expected_voids, new_bindings,
-    other_judging, verdict,
+    check_i02, check_i06, check_suspensions, check_voids, expected_binding, expected_suspensions,
+    expected_voids, new_bindings, other_judging, verdict,
 };
-use crate::vault::GroundTruth;
+use crate::vault::{GroundTruth, IdentityTag};
 
 // ---------------------------------------------------------------------------
 // Shared model state and steps
@@ -80,7 +86,7 @@ impl SodMcState {
 
 /// Runs a role or draft `step` on a copy of `s` and compares the outcome
 /// with the reference verdict in both directions. An accepted step must
-/// record the binding or end the reference expects and void nothing.
+/// record the binding or end the reference expects, and void or suspend nothing.
 ///
 /// A refused step that the reference also refuses has no successor. A
 /// disagreement yields a successor marked with the divergence.
@@ -114,6 +120,7 @@ pub fn judged(s: &SodMcState, step: &Step) -> Option<SodMcState> {
                 checks.push(check_ended(&context, s.view(), *binding, *at, &records));
             }
             checks.push(check_voids(&context, &BTreeMap::new(), &records));
+            checks.push(check_suspensions(&context, &BTreeSet::new(), &records));
             match checks.into_iter().find_map(Result::err) {
                 Some(e) => Some(next.diverged(e)),
                 None => Some(next),
@@ -138,7 +145,9 @@ pub fn unjudged(
         Ok(Err(r)) => Some(next.diverged(format!(
             "{context}: production refused a step every engine must accept: {r}"
         ))),
-        Ok(Ok(records)) => match check_voids(&context, &expected, &records) {
+        Ok(Ok(records)) => match check_voids(&context, &expected, &records)
+            .and_then(|()| check_suspensions(&context, &BTreeSet::new(), &records))
+        {
             Ok(()) => Some(next),
             Err(e) => Some(next.diverged(e)),
         },
@@ -146,9 +155,9 @@ pub fn unjudged(
 }
 
 /// Changes the vault with `change`, then runs the reaction in the same
-/// step (design 6.1). The reaction
-/// must be accepted and must void exactly the Receiving bindings the
-/// reference expects under the facts the reaction sees.
+/// step (design 6.1). The reaction must be accepted. It must void exactly
+/// the Receiving bindings, and suspend exactly the Judging bindings, that
+/// the reference expects under the facts the reaction sees.
 pub fn vault_step(s: &SodMcState, change: impl FnOnce(&mut GroundTruth)) -> Option<SodMcState> {
     let mut next = s.clone();
     change(&mut next.world.truth);
@@ -167,19 +176,23 @@ pub fn react(next: SodMcState) -> Option<SodMcState> {
     react_with(next, facts)
 }
 
-/// Runs the reaction to a newer vault epoch on `next` under `facts`, and checks the voids.
+/// Runs the reaction to a newer vault epoch on `next` under `facts`, and
+/// checks the voids and the conflict-of-interest suspensions.
 pub fn react_with(mut next: SodMcState, facts: Facts) -> Option<SodMcState> {
     let seen = match facts {
         Facts::Effective => next.truth().clone(),
         Facts::WithProvisional => crate::r#gen::roster::reaction_truth(next.truth()),
     };
     let expected = expected_voids(next.view(), &seen);
+    let suspensions = expected_suspensions(next.view(), &seen);
     match next.world.sync(facts) {
         Err(e) => Some(next.diverged(format!("vault reaction: {e}"))),
         Ok(Err(r)) => Some(next.diverged(format!(
             "vault reaction: over-denial, production refused VaultChanged with {r}"
         ))),
-        Ok(Ok(records)) => match check_voids("vault reaction", &expected, &records) {
+        Ok(Ok(records)) => match check_voids("vault reaction", &expected, &records)
+            .and_then(|()| check_suspensions("vault reaction", &suspensions, &records))
+        {
             Ok(()) => Some(next),
             Err(e) => Some(next.diverged(e)),
         },
@@ -218,6 +231,9 @@ pub struct SodConfig {
     pub max_publications: usize,
     /// The subjects.
     pub subjects: Vec<SodSubject>,
+    /// The identity merges the vault may make: the account takes the
+    /// identity, once, and the platform reacts in the same step.
+    pub merges: Vec<(AccountId, IdentityTag)>,
 }
 
 /// An M-SOD action.
@@ -245,6 +261,16 @@ pub enum SodAction {
     Verify(AccountId),
     /// The staff programme manager publishes the call.
     Publish(CallId),
+    /// The vault merges the account into the identity, and the platform
+    /// reacts in the same step (Identity discovery, last paragraph).
+    Merge {
+        /// The account re-tagged.
+        account: AccountId,
+        /// The identity it takes.
+        identity: IdentityTag,
+    },
+    /// `ReinstateBinding` of a suspended binding by the tenant admin.
+    Reinstate(BindingId),
 }
 
 /// The id of the `n`-th creation of the subject at `index`.
@@ -332,8 +358,20 @@ impl Model for SodModel {
             }
         }
         for b in s.view().bindings.values() {
-            if b.held() && self.subject(b.account).is_some() && b.group != RefGroup::Receiving {
+            // An open binding under a conflict-of-interest suspension can end too.
+            if b.open() && self.subject(b.account).is_some() && b.group != RefGroup::Receiving {
                 actions.push(SodAction::End(b.binding));
+            }
+            if b.suspended && self.subject(b.account).is_some() {
+                actions.push(SodAction::Reinstate(b.binding));
+            }
+        }
+        for (account, identity) in &self.config.merges {
+            if s.truth().identity_of(*account) != Some(*identity) {
+                actions.push(SodAction::Merge {
+                    account: *account,
+                    identity: *identity,
+                });
             }
         }
         if self.published(s) < self.config.max_publications {
@@ -385,6 +423,14 @@ impl Model for SodModel {
                 vault_step(s, |t| t.verify(account))
             }
             SodAction::Publish(c) => unjudged(s, &publish(*c), |_| BTreeMap::new()),
+            SodAction::Merge { account, identity } => {
+                if s.truth().identity_of(*account) == Some(*identity) {
+                    return None;
+                }
+                let (account, identity) = (*account, *identity);
+                vault_step(s, |t| t.set_identity(account, identity))
+            }
+            SodAction::Reinstate(binding) => judged(s, &reinstate(*binding)),
         }
     }
 
@@ -409,8 +455,10 @@ pub const M_SOD_I01_P12_2_STATES: usize = 1_104;
 pub const M_SOD_TWO_PROGRAMMES_STATES: usize = 713;
 /// See [`M_SOD_I01_P12_0_STATES`].
 pub const M_SOD_I02_STATES: usize = 227;
-/// See [`M_SOD_I01_P12_0_STATES`].
-pub const M_SOD_I06_STATES: usize = 2_802;
+/// See [`M_SOD_I01_P12_0_STATES`]. Measured again on the reference backend
+/// in step W4, lane w4-sodcoi, after c gained Drafting and Judging grants
+/// and the identity merge of c into the identity of a and b (2_802 before).
+pub const M_SOD_I06_STATES: usize = 98_387;
 
 /// The calls of the one-programme instances.
 pub const SOD_CALLS: [u128; 3] = [1, 2, 3];
@@ -434,6 +482,7 @@ pub fn i01_config(p12: u8) -> SodConfig {
             verify: false,
             max_creations: 2,
         }],
+        merges: Vec::new(),
     }
 }
 
@@ -460,6 +509,7 @@ pub fn two_programmes_config() -> SodConfig {
             verify: false,
             max_creations: 2,
         }],
+        merges: Vec::new(),
     }
 }
 
@@ -482,13 +532,16 @@ pub fn i02_config() -> SodConfig {
             verify: false,
             max_creations: 2,
         }],
+        merges: Vec::new(),
     }
 }
 
-/// I-06: a may be a committee member or a programme manager; b, the unverified Sybil of a, may
-/// be a committee member or draft, and the vault may verify it; c, another
-/// identity, may draft. Each creates at most one binding, and staff publish
-/// up to two calls.
+/// I-06: a may be a committee member or a programme manager; b, the
+/// unverified Sybil of a, may be a committee member or draft, and the vault
+/// may verify it. c, another identity, may be a committee member or a
+/// programme manager, or draft. The vault may merge c into the identity of
+/// a and b, once. Each subject creates at most one binding, and staff
+/// publish up to two calls.
 pub fn i06_config() -> SodConfig {
     SodConfig {
         setup: SodSetup::one(1, &[1, 2]),
@@ -514,12 +567,13 @@ pub fn i06_config() -> SodConfig {
             SodSubject {
                 account: C,
                 index: 3,
-                grants: Vec::new(),
+                grants: vec![(P1, Role::CommitteeMember), (P1, Role::ProgrammeManager)],
                 drafts: true,
                 verify: false,
                 max_creations: 1,
             },
         ],
+        merges: vec![(C, ID_AB)],
     }
 }
 
@@ -726,12 +780,51 @@ pub fn sybil_voided_at_verification(s: &SodMcState) -> bool {
 /// committee binding. GRANTED needs the lifecycle and lands in W4.
 pub fn distinct_identity_applies(s: &SodMcState) -> bool {
     let v = s.view();
-    v.bindings
-        .values()
-        .any(|b| b.account == C && b.role == Role::Applicant && b.held())
+    s.truth().identity_of(C) != s.truth().identity_of(A)
+        && v.bindings
+            .values()
+            .any(|b| b.account == C && b.role == Role::Applicant && b.held())
         && v.bindings
             .values()
             .any(|b| b.account == A && b.role == Role::CommitteeMember && b.held())
+}
+
+/// Witness: after an identity merge, a Judging binding is under a
+/// conflict-of-interest suspension, while a Drafting binding of another
+/// account of the same verified identity stays unsuspended.
+pub fn judging_suspended_drafting_stays(s: &SodMcState) -> bool {
+    let v = s.view();
+    let t = s.truth();
+    v.bindings.values().any(|j| {
+        j.group == RefGroup::Judging
+            && j.conflict_of_interest
+            && t.verified_identity(j.account).is_some_and(|id| {
+                v.bindings.values().any(|d| {
+                    d.group == RefGroup::Drafting
+                        && d.account != j.account
+                        && !d.suspended
+                        && t.verified_identity(d.account) == Some(id)
+                })
+            })
+    })
+}
+
+/// Witness: the Judging binding of a, the account the merge did not
+/// re-tag, is under a conflict-of-interest suspension.
+pub fn unchanged_account_judging_suspended(s: &SodMcState) -> bool {
+    s.view()
+        .bindings
+        .values()
+        .any(|b| b.account == A && b.conflict_of_interest)
+}
+
+/// Witness: an ended Judging binding is under a conflict-of-interest
+/// suspension, so its bar never counts.
+pub fn ended_judging_suspended(s: &SodMcState) -> bool {
+    s.view()
+        .bindings
+        .values()
+        .any(|b| b.conflict_of_interest && b.end.is_some() && b.bar().is_none())
 }
 
 /// Witness: one account holds a programme manager binding in one programme
@@ -818,6 +911,18 @@ pub fn i06_properties<'a, M: Model<State = SodMcState>>() -> Vec<Property<'a, M>
         Property::<M>::reachable(
             "I-06 witness: a distinct identity applies while a Judging binding is held",
             distinct_identity_applies,
+        ),
+        Property::<M>::reachable(
+            "I-06 witness: a merge suspends the Judging binding as a conflict of interest and the Drafting binding stays",
+            judging_suspended_drafting_stays,
+        ),
+        Property::<M>::reachable(
+            "I-06 witness: the Judging binding of the account the merge did not re-tag is suspended",
+            unchanged_account_judging_suspended,
+        ),
+        Property::<M>::reachable(
+            "I-06 witness: an ended Judging binding under a conflict-of-interest suspension pins no bar",
+            ended_judging_suspended,
         ),
     ]
 }
@@ -912,6 +1017,67 @@ pub fn fault_sybil_left_bound(s: &SodMcState) -> Option<SodMcState> {
         Ok(()) => Some(next),
         Err(_) => None,
     }
+}
+
+/// The fault of `i06_teeth_conflict_suspension_counted_as_held_is_caught`:
+/// the vault merges c into the identity of a and b while one of a and c
+/// holds a Drafting binding and the other a Judging one. A broken reaction
+/// suspends the Judging binding under a rule other than I-06. That is not
+/// the conflict-of-interest marker, so the binding still counts as held.
+pub fn fault_conflict_suspension_counted_as_held(s: &SodMcState) -> Option<SodMcState> {
+    if s.truth().identity_of(C) == Some(ID_AB) {
+        return None;
+    }
+    let v = s.view();
+    let open = |account, group| {
+        v.bindings
+            .values()
+            .find(|b| b.account == account && b.group == group && b.open() && !b.suspended)
+            .map(|b| b.binding)
+    };
+    let judging = match (
+        open(A, RefGroup::Drafting),
+        open(C, RefGroup::Judging),
+        open(C, RefGroup::Drafting),
+        open(A, RefGroup::Judging),
+    ) {
+        (Some(_), Some(j), _, _) | (_, _, Some(_), Some(j)) => j,
+        _ => return None,
+    };
+    let mut next = s.clone();
+    next.world.truth.set_identity(C, ID_AB);
+    let epoch = next.world.truth.epoch();
+    let records = vec![
+        Record::BindingSuspended(BindingSuspended {
+            binding: judging,
+            rule: RuleRef::I01,
+            epoch,
+        }),
+        Record::VaultEpochProcessed { epoch },
+    ];
+    next.world.commit(&records).ok()?;
+    Some(next)
+}
+
+/// The fault of
+/// `i06_teeth_conflict_suspension_reinstated_during_the_clash_is_caught`:
+/// a broken engine reinstates a Judging binding under a conflict-of-interest
+/// suspension while the identity clash lasts. In M-SOD a merge is never
+/// undone, so the clash lasts for the rest of the run.
+pub fn fault_conflict_suspension_reinstated(s: &SodMcState) -> Option<SodMcState> {
+    let b = s
+        .view()
+        .bindings
+        .values()
+        .find(|b| b.conflict_of_interest && b.open())?;
+    inject(
+        s,
+        &[Record::BindingReinstated(BindingReinstated {
+            binding: b.binding,
+            by: crate::r#gen::roster::ADMIN,
+            reason: crate::r#gen::policy::text(9_002),
+        })],
+    )
 }
 
 /// A `BindingGranted` as a broken engine would record it, with a SoD-09

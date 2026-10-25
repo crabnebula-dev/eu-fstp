@@ -6,26 +6,31 @@
 //!   voids it when it breaks I-01 with the other account's binding, and
 //!   keeps it otherwise.
 //! - A suspended Receiving binding still counts as held, so a discovery voids it.
-//! - A Drafting and a Judging binding found to share a verified identity
-//!   are suspended. Suspension does not restore I-06, which is an open
-//!   question for Daniel, so these tests check the records only.
+//! - A Drafting and a Judging binding found to share a verified identity:
+//!   only a later identity merge reaches this. The reaction suspends the
+//!   Judging binding as a conflict of interest, held or ended, and the
+//!   Drafting binding stays (Identity discovery, decided 2026-10-25). The
+//!   suspension restores I-06.
 //!
-//! Each reaction is also checked against the reference's expected voids,
-//! in both directions. Ended Receiving bindings are injected as the
-//! `BindingEnded` that lane L-SOD writes at a terminal state, because the
-//! `Transitioned` fold is lane L-LIFE's.
+//! Each reaction is also checked against the reference's expected voids
+//! and conflict-of-interest suspensions, in both directions. Ended
+//! Receiving bindings are injected as the `BindingEnded` that lane L-SOD
+//! writes at a terminal state, because the `Transitioned` fold is lane
+//! L-LIFE's.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain::id::{AccountId, BindingId, ProposalId};
 use fstp_domain::record::{BindingEnded, BindingSuspended, Record};
 use fstp_domain::refusal::RuleRef;
-use fstp_domain::roles::{CoolingOff, Role};
+use fstp_domain::roles::{BindingStatus, CoolingOff, Group, Role};
 use fstp_domain_testkit::r#gen::roster::{
-    A, B, Backend, C, Facts, ID_AB, P1, SodSetup, SodWorld, Step, T0, call, draft, grant, publish,
-    sod_truth,
+    A, B, Backend, C, Facts, ID_AB, P1, SodSetup, SodWorld, Step, T0, call, draft, end, grant,
+    publish, sod_truth,
 };
-use fstp_domain_testkit::reference::sod::{check_i06, check_voids, expected_voids};
+use fstp_domain_testkit::reference::sod::{
+    check_i06, check_suspensions, check_voids, expected_suspensions, expected_voids,
+};
 use fstp_domain_testkit::vault::{GroundTruth, IdentityTag};
 
 /// Account d: its own verified identity.
@@ -60,15 +65,20 @@ fn end_receiving(w: &mut SodWorld, binding: BindingId, latest: u32, p12: u8) {
     .unwrap_or_else(|e| panic!("terminal end of {binding:?}: {e}"));
 }
 
-/// Processes the newer vault epoch and checks its voids against the
-/// reference. Returns the reaction's records.
+/// Processes the newer vault epoch and checks its voids and its
+/// conflict-of-interest suspensions against the reference. Returns the
+/// reaction's records.
 fn react(w: &mut SodWorld) -> Vec<Record> {
     let expected = expected_voids(&w.view, &w.truth);
+    let suspensions = expected_suspensions(&w.view, &w.truth);
     let records = w
         .sync(Facts::Effective)
         .unwrap_or_else(|e| panic!("reaction: harness: {e}"))
         .unwrap_or_else(|r| panic!("the reaction was refused: {r}"));
     if let Err(e) = check_voids("reaction", &expected, &records) {
+        panic!("{e}");
+    }
+    if let Err(e) = check_suspensions("reaction", &suspensions, &records) {
         panic!("{e}");
     }
     records
@@ -114,12 +124,32 @@ fn i06_identity_merge_with_a_candidate_voids_the_receiving_holder() {
     }
 }
 
-/// I-06, enforcement point 3: a holds a Drafting binding and c a Judging
-/// one. The vault links c to a's identity. No Receiving binding is
-/// involved, so this is another new violation, and the reaction suspends
-/// both bindings under I-06.
+/// Whether `records` suspend `binding` under I-06, the conflict-of-interest marker.
+fn suspended_under_i06(records: &[Record], binding: BindingId) -> bool {
+    records.iter().any(|r| {
+        matches!(
+            r,
+            Record::BindingSuspended(BindingSuspended { binding: b, rule: RuleRef::I06, .. })
+                if *b == binding
+        )
+    })
+}
+
+/// Whether `records` suspend `binding` under any rule.
+fn suspended_at_all(records: &[Record], binding: BindingId) -> bool {
+    records
+        .iter()
+        .any(|r| matches!(r, Record::BindingSuspended(s) if s.binding == binding))
+}
+
+/// I-06, Identity discovery (last paragraph, decided 2026-10-25),
+/// enforcement point 3: a holds a Drafting binding and c a Judging one.
+/// The vault merges c into a's identity, which SoD-09 would have refused at
+/// binding time. In the same step the reaction suspends c's Judging binding
+/// as a conflict of interest, under I-06. a's Drafting binding stays,
+/// active and unsuspended. The suspension restores I-06.
 #[test]
-fn i06_identity_merge_of_drafting_and_judging_suspends_both() {
+fn i06_identity_merge_suspends_the_judging_binding_as_a_conflict() {
     let mut w = world(1, sod_truth());
     let drafting = BindingId::from_raw(301);
     let judging = BindingId::from_raw(302);
@@ -136,18 +166,74 @@ fn i06_identity_merge_of_drafting_and_judging_suspends_both() {
 
     w.truth.set_identity(C, ID_AB);
     let records = react(&mut w);
-    for binding in [drafting, judging] {
-        let suspended = records.iter().any(|r| {
-            matches!(
-                r,
-                Record::BindingSuspended(BindingSuspended { binding: b, rule: RuleRef::I06, .. })
-                    if *b == binding
-            )
-        });
-        assert!(
-            suspended,
-            "{binding:?} shares a verified identity across Drafting and Judging and must be suspended: {records:?}"
-        );
+    assert!(
+        suspended_under_i06(&records, judging),
+        "c's Judging binding shares a verified identity with a's Drafting binding and must be suspended as a conflict of interest: {records:?}"
+    );
+    assert!(
+        !suspended_at_all(&records, drafting),
+        "the Drafting binding stays: a's binding must not be suspended: {records:?}"
+    );
+    let roster = w.state.roster();
+    let d = roster.binding(drafting).expect("a's binding");
+    assert_eq!(d.status, BindingStatus::Active, "a's Drafting binding");
+    let j = roster.binding(judging).expect("c's binding");
+    assert_eq!(
+        j.status,
+        BindingStatus::Suspended(RuleRef::I06),
+        "c's Judging binding"
+    );
+    assert!(
+        !j.held(),
+        "a conflict-of-interest suspension never counts as held"
+    );
+    if let Err(e) = check_i06(&w.view, &w.truth) {
+        panic!("the conflict-of-interest suspension must restore I-06: {e}");
+    }
+}
+
+/// I-06, Identity discovery (last paragraph, decided 2026-10-25): c ends a
+/// Judging binding at P-12 = 1 (bar 2), and a then gets a Drafting binding
+/// while the latest call is 1, inside that bar. The vault merges c into a's
+/// identity. c's ended Judging binding still counts through its bar, so
+/// the reaction suspends it as a conflict of interest. Its bar then never
+/// counts. a's Drafting binding stays (test-author reading for an ended
+/// Judging binding, see `reference::sod`).
+#[test]
+fn i06_identity_merge_suspends_an_ended_judging_binding_inside_its_bar() {
+    let mut w = world(1, sod_truth());
+    let judging = BindingId::from_raw(302);
+    let drafting = BindingId::from_raw(301);
+    accept(
+        &mut w,
+        &grant(judging, C, P1, Role::CommitteeMember, T0),
+        "c's grant",
+    );
+    accept(&mut w, &end(judging, T0), "c's end");
+    assert_eq!(w.state.roster().bar(P1, C, Group::Judging), Some(2));
+    accept(
+        &mut w,
+        &grant(drafting, A, P1, Role::ProgrammeManager, T0),
+        "a's grant",
+    );
+
+    w.truth.set_identity(C, ID_AB);
+    let records = react(&mut w);
+    assert!(
+        suspended_under_i06(&records, judging),
+        "c's ended Judging binding breaks I-01 with a's Drafting binding through its bar and must be suspended: {records:?}"
+    );
+    assert!(
+        !suspended_at_all(&records, drafting),
+        "the Drafting binding stays: {records:?}"
+    );
+    assert_eq!(
+        w.state.roster().bar(P1, C, Group::Judging),
+        None,
+        "a conflict-of-interest suspension pins no cooling-off bar"
+    );
+    if let Err(e) = check_i06(&w.view, &w.truth) {
+        panic!("the conflict-of-interest suspension must restore I-06: {e}");
     }
 }
 
