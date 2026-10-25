@@ -5,6 +5,8 @@
 //! [`ProposalStore`]. The proposal states themselves are the tags in
 //! [`crate::rules::StateTag`]. Lane L-LIFE completes the lifecycle.
 
+pub(crate) mod draft;
+
 use fstp_money::PosAmount;
 
 use crate::id::{ActivityTypeId, DeliverableId, MilestoneId, TextRef};
@@ -88,13 +90,16 @@ pub struct NoticeVersion(pub u32);
 /// Declared empty by W1c so that `State` can hold it. Lane L-LIFE fills it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ProposalStore {
-    _pending: (),
+    /// The created proposals, from `draft` (lane L-SOD, step W3b).
+    drafts: draft::Drafts,
 }
 
 impl ProposalStore {
     /// The proposal store before any record.
     pub(crate) const fn genesis() -> ProposalStore {
-        ProposalStore { _pending: () }
+        ProposalStore {
+            drafts: draft::Drafts::genesis(),
+        }
     }
 }
 
@@ -110,8 +115,20 @@ pub(crate) fn queries(
     cmd: &crate::command::Command,
     ctx: &crate::command::Ctx,
 ) -> Result<Vec<crate::oracle::Query>, crate::refusal::Refusal> {
-    let _ = (state, cmd, ctx);
+    if is_draft_command(cmd) {
+        return draft::queries(state, cmd, ctx);
+    }
     Err(crate::refusal::Refusal::not_implemented())
+}
+
+/// Whether `cmd` is one of the commands that `draft` decides.
+const fn is_draft_command(cmd: &crate::command::Command) -> bool {
+    matches!(
+        cmd,
+        crate::command::Command::CreateDraft { .. }
+            | crate::command::Command::AddTeamMember { .. }
+            | crate::command::Command::AddGuardian { .. }
+    )
 }
 
 /// The records of the proposal lifecycle commands.
@@ -123,7 +140,9 @@ pub(crate) fn decide(
     ctx: &crate::command::Ctx,
     answers: &crate::oracle::Answers,
 ) -> Result<Vec<crate::record::Record>, crate::refusal::Refusal> {
-    let _ = (state, cmd, ctx, answers);
+    if is_draft_command(cmd) {
+        return draft::decide(state, cmd, ctx, answers);
+    }
     Err(crate::refusal::Refusal::not_implemented())
 }
 
@@ -136,7 +155,10 @@ pub(crate) fn apply(
     at: crate::time::Timestamp,
     record: &crate::record::Record,
 ) -> Result<(), crate::engine::FoldError> {
-    let _ = (state, seq, at, record);
+    let _ = (seq, at);
+    if matches!(record, crate::record::Record::ProposalCreated { .. }) {
+        return draft::apply(state, record);
+    }
     Err(crate::engine::FoldError::NotImplemented)
 }
 
@@ -188,6 +210,8 @@ pub(crate) fn governing_policy(
     state: &crate::state::State,
     cmd: &crate::command::Command,
 ) -> Result<crate::engine::PolicyScope, crate::refusal::Refusal> {
-    let _ = (state, cmd);
+    if is_draft_command(cmd) {
+        return draft::governing_policy(state, cmd);
+    }
     Err(crate::refusal::Refusal::not_implemented())
 }

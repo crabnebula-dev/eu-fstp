@@ -31,7 +31,10 @@
 //!   "queries count only effective facts". The reaction to a provisional
 //!   fact is the exception: the queries of the VaultChanged that processes
 //!   it see the fact, or the reaction could not act on it (design 4.3).
-//!   Lane L-SOD adds that reaction view for M-RACE.
+//!   Lane L-SOD adds that reaction view for M-RACE:
+//!   [`GroundTruth::reaction_view`], [`GroundTruth::reaction_changed_since`]
+//!   and [`GroundTruth::answer_in_reaction`]. In the reaction view the
+//!   change query also lists the accounts that the revealed facts touch.
 //! - Removing a fact advances the epoch and logs the accounts it touches,
 //!   as adding it does.
 //! - Affiliations on proximity lists and the P-17 bit are per account.
@@ -444,6 +447,68 @@ impl GroundTruth {
             accounts,
             epoch: self.epoch,
             digest: PLACEHOLDER_DIGEST,
+        }
+    }
+
+    // -- the reaction view (overview NOTE 4) ----------------------------------
+
+    /// The facts that the reaction to a provisional fact sees (overview
+    /// NOTE 4, the exception). Every provisional verification and
+    /// affiliation counts as effective, with the pending facts a
+    /// verification reveals. The epoch and the change log stay those of
+    /// `self`, so answers carry the epoch the reaction is decided at.
+    ///
+    /// Added by lane L-SOD in step W3b. It changes no fact of `self`.
+    pub fn reaction_view(&self) -> GroundTruth {
+        let mut view = self.clone();
+        for account in self.provisional_accounts() {
+            view.make_effective(account);
+        }
+        view.epoch = self.epoch;
+        view.changes.clone_from(&self.changes);
+        view
+    }
+
+    /// The accounts the reaction to a provisional fact learns as changed
+    /// after `epoch`: those of [`GroundTruth::changed_since`], and every
+    /// account that the pending facts of a provisional verification touch.
+    ///
+    /// This is the change query contract the reaction relies on: exclusions
+    /// and relations are facts about identities, so the vault lists every
+    /// account of the identities they touch, as [`GroundTruth::verify`]
+    /// does. Without it, a sibling account excluded by the revealed facts
+    /// would keep its Receiving binding until the fact took effect.
+    pub fn reaction_changed_since(&self, epoch: VaultEpoch) -> BTreeSet<AccountId> {
+        let mut out = self.changed_since(epoch);
+        for account in &self.provisional_verified {
+            for fact in self.pending.get(account).into_iter().flatten() {
+                match fact {
+                    PendingFact::Excluded { identity, .. } => {
+                        out.extend(self.accounts_of(&[*identity]));
+                    }
+                    PendingFact::Related { a, b, .. } => out.extend(self.accounts_of(&[*a, *b])),
+                }
+            }
+        }
+        out
+    }
+
+    /// The answer to `q` that the reaction to a provisional fact gets: over
+    /// [`GroundTruth::reaction_view`], at the current epoch. `ChangedSince`
+    /// lists [`GroundTruth::reaction_changed_since`], since making a fact
+    /// effective is a later change the reaction has not seen.
+    pub fn answer_in_reaction(&self, q: &Query) -> Answer {
+        match q {
+            Query::ChangedSince { epoch } => {
+                let accounts = self.reaction_changed_since(*epoch);
+                Answer {
+                    holds: !accounts.is_empty(),
+                    accounts: Some(accounts),
+                    epoch: self.epoch,
+                    digest: PLACEHOLDER_DIGEST,
+                }
+            }
+            _ => self.reaction_view().answer(q),
         }
     }
 
