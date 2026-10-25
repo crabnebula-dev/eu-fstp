@@ -27,6 +27,6 @@ Amounts are decimal strings in JSON, never JSON numbers. Each amount has exactly
 
 - Hashes and signatures over amounts are exact. Two different amounts never share a canonical form.
 - Equal amounts in the same currency always have the same spelling, so they hash equally.
-- The tenant export schema (`schemas/README.md`) records amounts as strings in this canonical form.
+- The tenant export schema (`SPEC/schemas/README.md`) records amounts as strings in this canonical form.
 - Conversions between currencies are out of scope.
 - TODO(legal): Daniel to confirm whether the grant agreement or the funder's rules fix how a calculated amount is rounded to the minor unit, for example a share of eligible costs.

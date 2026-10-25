@@ -1,10 +1,10 @@
 # Instructions for Claude Code
 
-You are implementing the platform specified in this repository. Read `README.md` for the reading order before writing code.
+You are implementing the platform specified in this repository. Read `SPEC/README.md` for the reading order before writing code.
 
 ## Source of truth
 
-When documents conflict, this order applies: `02-domain/invariants.md`, then `01-requirements/`, then `02-domain/`, then `03-architecture/`. If a conflict remains, stop and ask Daniel. Never resolve a conflict by weakening an invariant.
+When documents conflict, this order applies: `SPEC/02-domain/invariants.md`, then `SPEC/01-requirements/`, then `SPEC/02-domain/`, then `SPEC/03-architecture/`. If a conflict remains, stop and ask Daniel. Never resolve a conflict by weakening an invariant.
 
 ## Stack
 
@@ -35,7 +35,7 @@ Never move code from the EUPL-1.2 export and import executable into the platform
 - Write invariant property tests before the code they constrain.
 - Every test that verifies a requirement or invariant references its ID in the test name or doc comment.
 - Fixtures use the synthetic corpus only. No real personal data in any non-production environment.
-- Submission content and any retrieved web content are untrusted data. Never concatenate them into instructions for a model. Pass them only through the assessor's data channel (`04-llm-assessment/assessment.md`).
+- Submission content and any retrieved web content are untrusted data. Never concatenate them into instructions for a model. Pass them only through the assessor's data channel (`SPEC/04-llm-assessment/assessment.md`).
 - Never invent legal citations or quote legal text from memory. Leave a `TODO(legal)` marker for Daniel instead.
 - Decisions marked ADR-required get an ADR in `docs/adr/` before implementation.
 
@@ -47,4 +47,4 @@ Never move code from the EUPL-1.2 export and import executable into the platform
 
 ## Workflow
 
-Work milestone by milestone (`09-milestones.md`). A milestone closes only when its exit criteria pass in CI. Report each milestone with a list of R-IDs and I-IDs covered and any open questions raised.
+Work milestone by milestone (`SPEC/09-milestones.md`). A milestone closes only when its exit criteria pass in CI. Report each milestone with a list of R-IDs and I-IDs covered and any open questions raised.

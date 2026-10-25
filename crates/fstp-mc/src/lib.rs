@@ -1,8 +1,8 @@
 //! In-house bounded explicit-state model checker.
 //!
-//! This is the model-checking layer of `07-test-plan/test-plan.md`. From M2
+//! This is the model-checking layer of `SPEC/07-test-plan/test-plan.md`. From M2
 //! onwards it checks the proposal state machine, contracts, payment requests
-//! and separation of duties over time. `02-domain/invariants.md` gives every
+//! and separation of duties over time. `SPEC/02-domain/invariants.md` gives every
 //! invariant that involves state transitions a model-checking property.
 //!
 //! # How it works

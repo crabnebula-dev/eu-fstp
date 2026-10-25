@@ -1,7 +1,7 @@
 //! In-house PostgreSQL wire protocol client. Extended query protocol only; no string-built SQL.
 //!
 //! This is the PostgreSQL component of the build approach in
-//! `03-architecture/overview.md`. It speaks protocol 3.0 to PostgreSQL 16
+//! `SPEC/03-architecture/overview.md`. It speaks protocol 3.0 to PostgreSQL 16
 //! and later.
 //!
 //! # Security properties

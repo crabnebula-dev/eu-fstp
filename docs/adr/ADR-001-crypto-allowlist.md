@@ -100,7 +100,7 @@ The hybrid key encapsulation combiner is proposed as X-Wing style: both shared s
 
 ## Open points
 
-- Authentication crates: webauthn-rs and opaque-ke are candidates for Tier A, subject to review of their audit status (O-36 resolved in `03-architecture/authentication.md`).
+- Authentication crates: webauthn-rs and opaque-ke are candidates for Tier A, subject to review of their audit status (O-36 resolved in `SPEC/03-architecture/authentication.md`).
 - A PKCS#11 client crate for the CrabNebula-operated HSM (ADR-004).
 - Root key custody is fixed in ADR-004.
 

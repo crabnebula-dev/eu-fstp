@@ -1,7 +1,7 @@
 //! Test harness that runs a fresh, real PostgreSQL server per test run.
 //!
 //! This is the harness of the "Database" layer in
-//! `07-test-plan/test-plan.md`: real PostgreSQL per test run, used for
+//! `SPEC/07-test-plan/test-plan.md`: real PostgreSQL per test run, used for
 //! migrations, constraint enforcement and wire protocol conformance.
 //!
 //! # What a server looks like

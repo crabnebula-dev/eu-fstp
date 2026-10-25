@@ -1,8 +1,8 @@
 //! Forward-only, checksummed PostgreSQL migration runner.
 //!
 //! This is the migration component of the build approach in
-//! `03-architecture/overview.md`. It serves the "Database" layer of
-//! `07-test-plan/test-plan.md` (migrations forward-only) and R-NF-06:
+//! `SPEC/03-architecture/overview.md`. It serves the "Database" layer of
+//! `SPEC/07-test-plan/test-plan.md` (migrations forward-only) and R-NF-06:
 //! security updates apply without data migration loss, because every
 //! migration either applies completely or not at all.
 //!

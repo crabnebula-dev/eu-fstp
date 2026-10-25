@@ -1,7 +1,7 @@
 //! In-house property-based testing harness with integrated shrinking.
 //!
-//! This is the property-based layer of `07-test-plan/test-plan.md`. Every
-//! invariant in `02-domain/invariants.md` gets a property built on it.
+//! This is the property-based layer of `SPEC/07-test-plan/test-plan.md`. Every
+//! invariant in `SPEC/02-domain/invariants.md` gets a property built on it.
 //!
 //! # How it works
 //!

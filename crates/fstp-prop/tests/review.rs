@@ -1,7 +1,7 @@
 //! Regression tests for the M1 review findings on the property harness.
 //!
 //! Each test is named after the finding it guards. The harness runs every
-//! invariant property (`07-test-plan/test-plan.md`), so a gap here would let
+//! invariant property (`SPEC/07-test-plan/test-plan.md`), so a gap here would let
 //! an invariant test pass without checking anything.
 
 // Helpers and fixtures here sit outside #[test] functions, where the workspace

@@ -1,8 +1,8 @@
 //! In-house JSON and NDJSON parser and serializer.
 //!
 //! This crate is the JSON component of the build approach in
-//! `03-architecture/overview.md`. The API, tenant export files
-//! (`schemas/README.md`), adapters and the PostgreSQL `jsonb` codec share it.
+//! `SPEC/03-architecture/overview.md`. The API, tenant export files
+//! (`SPEC/schemas/README.md`), adapters and the PostgreSQL `jsonb` codec share it.
 //!
 //! # Parsing
 //!

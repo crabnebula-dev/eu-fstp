@@ -28,7 +28,7 @@ use core::hash::Hash;
 ///
 /// The proposal state machine, contracts, payment requests and separation of
 /// duties over time are modelled on this trait from M2 onwards
-/// (`07-test-plan/test-plan.md`). Policy parameters live in `self`. A role or
+/// (`SPEC/07-test-plan/test-plan.md`). Policy parameters live in `self`. A role or
 /// guard check that denies an action makes [`Model::step`] return `None`.
 pub trait Model {
     /// A state of the system. Two states that compare equal are the same

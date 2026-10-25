@@ -1,4 +1,4 @@
-//! NDJSON reader and writer (export files, `schemas/README.md`).
+//! NDJSON reader and writer (export files, `SPEC/schemas/README.md`).
 
 #![allow(
     clippy::panic,

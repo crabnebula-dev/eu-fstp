@@ -1,6 +1,6 @@
 //! Newline-delimited JSON: one JSON text per line.
 //!
-//! Tenant export files use this format (`schemas/README.md`).
+//! Tenant export files use this format (`SPEC/schemas/README.md`).
 //!
 //! # Reader rules
 //!
@@ -10,7 +10,7 @@
 //! - An empty input holds no values and is not an error.
 //! - A blank line, empty or holding only JSON whitespace, is an error. A blank
 //!   line in an export file signals truncation or concatenation damage, and
-//!   import validates everything before writing (`schemas/README.md`).
+//!   import validates everything before writing (`SPEC/schemas/README.md`).
 //! - Each line must be one complete JSON text under the configured
 //!   [`ParseLimits`]. Whitespace around the value is allowed.
 //! - A line longer than [`NdjsonOptions::max_line_bytes`] is an error. The

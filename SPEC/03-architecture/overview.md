@@ -69,7 +69,7 @@ The tenant configures an inference endpoint. Self-hosted cells can point at a lo
 
 ## Build approach
 
-Components are written in-house per the dependency policy in `CLAUDE.md`. In-house components with significant scope:
+Components are written in-house per the dependency policy in `../.claude/CLAUDE.md`. In-house components with significant scope:
 
 | Component | Notes |
 | --- | --- |
