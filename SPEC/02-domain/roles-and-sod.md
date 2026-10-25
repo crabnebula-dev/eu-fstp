@@ -24,11 +24,11 @@ Roles bind a tenant account to a programme with a start date and an optional end
 
 NOTE: The Contract signatory is the tenant operator signatory that `02-domain/contracts.md` lists as a party, and it holds signing authority (decided 2026-10-25). SoD-03 keeps it apart from Receiving roles.
 
-NOTE: For R-PC-03, the drafters of a call are its authors plus the last authors of P-01 and P-09 in that call's policy (decided 2026-10-25). None of them may approve the call's publication.
+NOTE: For R-PC-03, the drafters of a call are its authors plus the last authors of P-01 and P-09 in that call's policy (decided 2026-10-25). The last author of P-01 or P-09 changes only when its value changes (confirmed 2026-10-25). None of them may approve the call's publication.
 
 ## Granting roles
 
-A tenant admin grants Drafting, Judging and Operations roles in a programme (decided 2026-10-25, O-47). SoD-07 applies when the grant is to the admin's own account.
+A tenant admin grants Drafting, Judging and Operations roles in a programme (decided 2026-10-25, O-47). The tenant admin role is tenant-wide, not bound to a programme, and the shell attests it to the domain core (confirmed 2026-10-25). SoD-07 applies when the grant is to the admin's own account.
 
 Receiving bindings are not granted by an admin. They arise from the proposal itself (see Receiving bindings, decided 2026-10-25).
 

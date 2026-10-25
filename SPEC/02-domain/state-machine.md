@@ -77,7 +77,7 @@ NOTE 13: R-LA-03 requires a named human to record every decision. Where a System
 | State | Meaning |
 | --- | --- |
 | DRAFT | Call text and criteria being drafted. |
-| APPROVED | Publication approved by a person other than its drafter (R-PC-03). |
+| APPROVED | Publication approved by a person other than its drafter (R-PC-03). An edit to the call text, P-01 or P-09 after approval revokes the approval, and the call returns to DRAFT (confirmed 2026-10-25). |
 | PUBLISHED | Published with a frozen policy version (R-PC-02, I-12). |
 
 Open and closed are not states. A published call is open from its opening time until its deadline, and closed afterwards (decided 2026-10-25).
