@@ -9,9 +9,9 @@
 //! or fstp-mc as a normal dependency, which `tools/deps-check` enforces.
 //! Fixtures are synthetic numbers only, never real personal data.
 //!
-//! Status: module tree from milestone M2 step W0. Every module is an empty
-//! stub. Lane W2 owns this file, `vault`, `scenario`, `clock` and `harness`.
-//! The W3 to W5 lanes own their files under `reference`, `gen` and `mc`.
+//! Status: the harness from step W2 is in place: `vault`, `scenario`, `clock`
+//! and `harness`, owned by lane W2. The W3 to W5 lanes own their files under
+//! `reference`, `gen` and `mc`, which are still empty stubs.
 //!
 //! # Compile-fail doctests
 //!

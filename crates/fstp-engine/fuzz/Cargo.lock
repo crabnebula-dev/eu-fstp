@@ -56,9 +56,11 @@ dependencies = [
 name = "fstp-engine-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-domain",
  "fstp-engine",
  "fstp-json",
  "fstp-ledger",
+ "fstp-money",
  "libfuzzer-sys",
 ]
 

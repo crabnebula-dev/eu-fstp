@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-engine = { path = ".." }
+fstp-domain = { path = "../../fstp-domain" }
+fstp-money = { path = "../../fstp-money" }
 fstp-ledger = { path = "../../fstp-ledger" }
 fstp-json = { path = "../../fstp-json" }
 
