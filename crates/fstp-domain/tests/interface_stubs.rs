@@ -267,7 +267,10 @@ fn i84_tenant_admin_rule_needs_the_shell_attestation() {
         ..ctx()
     };
     let reached = decide(&state, &grant_role(), &admin, &Answers::new());
-    assert!(reached.is_err(), "a grant in an unknown programme was accepted");
+    assert!(
+        reached.is_err(),
+        "a grant in an unknown programme was accepted"
+    );
     assert_ne!(reached, Err(wrong_actor()));
 }
 
@@ -457,7 +460,10 @@ fn interface_vault_changed_carries_the_changed_accounts() {
         ..ctx()
     };
     let reached = decide(&State::genesis(), &cmd, &system, &Answers::new());
-    assert!(reached.is_err(), "a change at the processed epoch was accepted");
+    assert!(
+        reached.is_err(),
+        "a change at the processed epoch was accepted"
+    );
     assert_ne!(reached, Err(wrong_actor()));
 }
 
