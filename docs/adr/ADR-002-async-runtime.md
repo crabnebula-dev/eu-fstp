@@ -29,4 +29,13 @@ NOTE: tokio has the wider ecosystem fit with the TLS crates under ADR-001. smol 
 
 | Component | Runtime | Version | Features | Tree recorded |
 | --- | --- | --- | --- | --- |
-| (filled at first use) |  |  |  |  |
+| `fstp-rt` (M1), the tokio implementation of the runtime trait. fstp-tls, fstp-http, fstp-pgwire and fstp-migrate reach tokio only through it | tokio | 1.54.1 (`=1.54.1` in the workspace manifest) | `rt`, `rt-multi-thread`, `net`, `time`, with default features off | 2026-10-24: `tokio 1.54.1`, `mio 1.2.4`, `socket2 0.6.5`, `libc 0.2.191`, `pin-project-lite 0.2.17` |
+
+Record notes:
+
+- Resolved feature sets: tokio also lists `libc`, `mio`, `socket2` and `windows-sys`, which are the optional dependencies that `net` enables. mio has `net`, `os-ext` and `os-poll`, socket2 has `all`, libc has `default` and `std`.
+- The tree covers x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu and is the same on both. windows-sys is not built on either. tokio has no build dependencies.
+- Other targets, recorded 2026-10-25: `windows-sys 0.61.2` and its dependency `windows-link 0.2.1` serve tokio, mio and socket2 on Windows. `wasi 0.11.1+wasi-snapshot-preview1` serves mio on WASI. None of them is built for either Linux platform.
+- `deps/allowlist.txt` lists the Linux crates above as runtime packages tied to ADR-002, and the other-target crates with role `platform`. Each entry pins the exact version and the `.crate` SHA-256 from every `Cargo.lock`.
+- `deps/adr-roots.txt` records tokio's resolved feature set: `libc`, `mio`, `net`, `rt`, `rt-multi-thread`, `socket2`, `time`, `windows-sys`.
+- `tools/deps-check` fails CI when a crate enters this tree, changes version or checksum, or reaches a higher role, and when tokio's resolved features change. It passes again only when the allowlist and the roots file match the new tree, and this record names each allowlisted crate and version. A crate that leaves the tree, or drops to a lower role, produces a warning, not a failure.

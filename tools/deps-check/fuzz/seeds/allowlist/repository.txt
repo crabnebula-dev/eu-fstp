@@ -1,0 +1,50 @@
+# Third-party crates allowed in any build of this repository (TH-15).
+# Checked by tools/deps-check against every Cargo.lock in the repository,
+# for every cargo project, with default features and with --all-features.
+#
+# Format: one entry per line, fields separated by whitespace:
+#   <name> <exact version> <sha256> <ADR ids, comma-separated> <role> <note>
+# sha256 is the .crate checksum that every Cargo.lock must record.
+# role is the highest allowed use on x86_64 and aarch64 Linux:
+#   runtime   linked into shipped artifacts
+#   build     build scripts and their dependencies only
+#   test      dev-dependencies and fuzz projects only
+#   platform  never built for x86_64 or aarch64 Linux; only another target
+#             or a custom cfg reaches it
+# The ADR ids are the ADRs whose resolved tree contains the crate
+# (deps/adr-roots.txt names each tree's root). Each of those ADRs records
+# the exact `name version`.
+#
+# Regenerate with: cargo run -p deps-check --locked -- --print-allowlist
+# Any change to this file needs review against the ADRs.
+
+arbitrary         1.5.0                          3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed  ADR-003                  test      Input type of libfuzzer-sys; fuzz projects only
+aws-lc-rs         1.18.2                         faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13  ADR-001                  runtime   ADR root: primitives and the rustls provider
+aws-lc-sys        0.46.0                         f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc  ADR-001                  runtime   AWS-LC C library bindings behind aws-lc-rs
+cc                1.10.0                         86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0  ADR-001,ADR-003          build     C compiler driver for the aws-lc-sys and libfuzzer-sys build scripts
+cfg-if            1.0.5                          4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600  ADR-001,ADR-003          platform  Dependency of getrandom 0.4.3; only jobserver on Windows reaches it
+cmake             0.1.58                         c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678  ADR-001                  build     CMake driver for the aws-lc-sys build script
+dunce             1.0.5                          92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813  ADR-001                  build     Path normalisation in the aws-lc-sys build script
+find-msvc-tools   0.1.15                         1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48  ADR-001,ADR-003          build     Dependency of cc; MSVC lookup, inert on Linux
+fs_extra          1.3.0                          42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c  ADR-001                  build     File copying in the aws-lc-sys build script
+getrandom         0.4.3                          300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099  ADR-001,ADR-003          platform  Randomness for jobserver on Windows only (cfg(windows))
+jobserver         0.1.35                         1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3  ADR-001,ADR-003          build     Jobserver client for parallel cc builds
+libc              0.2.191                        65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a  ADR-001,ADR-002,ADR-003  runtime   System interface for tokio, mio and socket2; jobserver at build time
+libfuzzer-sys     0.4.13                         a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2  ADR-003                  test      ADR root: libFuzzer for cargo-fuzz projects
+mio               1.2.4                          1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee  ADR-002                  runtime   I/O event loop under tokio
+once_cell         1.21.4                         9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50  ADR-001                  runtime   Lazy initialisation in rustls
+pin-project-lite  0.2.17                         a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd  ADR-002                  runtime   Pin projection in tokio
+pkg-config        0.3.34                         f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548  ADR-001                  build     Library probe in the aws-lc-sys build script
+r-efi             6.0.0                          f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf  ADR-001,ADR-003          platform  UEFI bindings for getrandom 0.4.3 under a custom getrandom_backend cfg only
+rustls            0.23.46                        48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf  ADR-001                  runtime   ADR root: TLS 1.3 client and server
+rustls-pki-types  1.15.1                         2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96  ADR-001                  runtime   ADR root: certificate and key types, PEM parsing
+rustls-webpki     0.103.16                       4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281  ADR-001                  runtime   ADR root: certificate path validation
+shlex             2.0.1                          f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba  ADR-001,ADR-003          build     Shell word splitting in cc
+socket2           0.6.5                          c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4  ADR-002                  runtime   Socket options under tokio
+subtle            2.6.1                          13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292  ADR-001                  runtime   Constant-time comparison in rustls
+tokio             1.54.1                         b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3  ADR-002                  runtime   ADR root: async runtime behind the fstp-rt trait
+untrusted         0.9.0                          8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1  ADR-001                  runtime   Bounds-checked input reader in rustls-webpki
+wasi              0.11.1+wasi-snapshot-preview1  ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b  ADR-002                  platform  WASI bindings for mio on target_os = "wasi" only
+windows-link      0.2.1                          f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5  ADR-002                  platform  Linking support for windows-sys on Windows only
+windows-sys       0.61.2                         ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc  ADR-002                  platform  Windows API bindings for tokio, mio and socket2 on Windows only
+zeroize           1.9.1                          e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879  ADR-001                  runtime   Secret wiping in aws-lc-rs, rustls and rustls-pki-types

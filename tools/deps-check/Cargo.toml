@@ -1,0 +1,17 @@
+[package]
+name = "deps-check"
+description = "CI gate: every third-party crate in every lockfile is on the ADR allowlist, and the repository contains no Python."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

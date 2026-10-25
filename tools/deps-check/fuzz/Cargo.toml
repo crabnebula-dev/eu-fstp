@@ -1,0 +1,52 @@
+[package]
+name = "deps-check-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+deps-check = { path = ".." }
+
+[[bin]]
+name = "allowlist"
+path = "fuzz_targets/allowlist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "adr_roots"
+path = "fuzz_targets/adr_roots.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_required"
+path = "fuzz_targets/fuzz_required.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_lock"
+path = "fuzz_targets/cargo_lock.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_metadata"
+path = "fuzz_targets/cargo_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

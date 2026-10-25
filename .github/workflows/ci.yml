@@ -1,0 +1,225 @@
+# CI for the FSTP platform workspace.
+#
+# Supply chain (TH-15, H-10): this workflow uses no actions at all, not even
+# first-party ones. Each job checks out the commit with plain git and the
+# job token, and installs toolchains with the runner's rustup.
+#
+# Jobs:
+#   deps-check   dependency allowlist, no-Python and fuzz-target gates
+#   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
+#   test         cargo test on the workspace with a real PostgreSQL 16
+#   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
+#
+# Every job that builds or runs code needs deps-check, so no crate outside
+# the allowlist is compiled before the gate has passed. The deps-check job
+# itself first proves that the gate's own build graph is in-house.
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push cancels an older run only on pull requests. Every commit
+  # on the main branches keeps its own CI result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  GIT_TERMINAL_PROMPT: "0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  fmt-clippy:
+    name: fmt and clippy
+    needs: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          # The header lives only in this command's environment, never in .git/config.
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          rustup --version
+          # rustup 1.28 and later install the toolchain file's channel and
+          # components with no arguments; older rustup installs it on `rustup show`.
+          rustup toolchain install --no-self-update || rustup show
+          rustc --version
+          cargo --version
+      - name: rustfmt (workspace)
+        run: cargo fmt --all -- --check
+      - name: rustfmt (fuzz projects)
+        run: |
+          set -euo pipefail
+          # deps-check fails on any cargo project outside these two globs.
+          for m in crates/*/fuzz/Cargo.toml tools/*/fuzz/Cargo.toml; do
+            echo "rustfmt $m"
+            cargo fmt --manifest-path "$m" -- --check
+          done
+      - name: clippy (workspace)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy (fuzz projects)
+        run: |
+          set -euo pipefail
+          for m in crates/*/fuzz/Cargo.toml tools/*/fuzz/Cargo.toml; do
+            echo "clippy $m"
+            cargo clippy --manifest-path "$m" --all-targets --locked -- -D warnings
+          done
+
+  test:
+    name: tests (PostgreSQL 16)
+    needs: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          rustup --version
+          rustup toolchain install --no-self-update || rustup show
+          rustc --version
+          cargo --version
+      - name: Install PostgreSQL 16 if absent
+        run: |
+          set -euo pipefail
+          pg_bin=/usr/lib/postgresql/16/bin
+          missing=0
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "$pg_bin/$b" ] || missing=1
+          done
+          if [ "$missing" = 1 ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends postgresql-16
+          fi
+          "$pg_bin/postgres" --version
+          echo "FSTP_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  deps-check:
+    name: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          rustup --version
+          rustup toolchain install --no-self-update || rustup show
+          rustc --version
+          cargo --version
+      - name: The gate builds only in-house code
+        run: |
+          set -euo pipefail
+          # cargo tree resolves without compiling anything. Every package
+          # that building deps-check needs must be a path package here.
+          cargo tree --locked -p deps-check -e normal,build --target all \
+            --prefix none --format '{p}' | sed 's/ (\*)$//' | sort -u \
+            > "$RUNNER_TEMP/deps-check-tree.txt"
+          cat "$RUNNER_TEMP/deps-check-tree.txt"
+          if grep -v -F "($GITHUB_WORKSPACE/" "$RUNNER_TEMP/deps-check-tree.txt"; then
+            echo "deps-check depends on a package outside the repository" >&2
+            exit 1
+          fi
+      - name: Dependency allowlist, no-Python and fuzz-target gates
+        run: cargo run --locked -p deps-check -- --root .
+
+  fuzz-smoke:
+    name: fuzz smoke (60 s per target)
+    needs: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # One target directory shared by every fuzz project avoids rebuilding
+      # the common crates once per project.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/fuzz
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install toolchains and cargo-fuzz (ADR-003)
+        run: |
+          set -euo pipefail
+          rustup --version
+          # The repository toolchain builds cargo-fuzz itself.
+          rustup toolchain install --no-self-update || rustup show
+          # The pinned nightly builds and runs the fuzz targets.
+          nightly="$(tools/fuzz-all.sh --print-toolchain)"
+          rustup toolchain install "$nightly" --profile minimal --no-self-update
+          rustc "+$nightly" --version
+          cargo install cargo-fuzz --version 0.13.2 --locked
+          cargo fuzz --version
+      - name: Run every fuzz target for 60 seconds
+        run: tools/fuzz-all.sh -j "$(nproc)" 60

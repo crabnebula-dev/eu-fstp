@@ -1,0 +1,5 @@
+windows-sys 0.61.2 ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc ADR-002 platform tokio on Windows
+libc 0.2.191 65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a ADR-001,ADR-002,ADR-003 runtime shared
+# comment
+
+cc 1.10.0 86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0 ADR-001 build

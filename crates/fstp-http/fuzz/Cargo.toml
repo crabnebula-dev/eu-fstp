@@ -1,0 +1,52 @@
+[package]
+name = "fstp-http-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-http = { path = ".." }
+
+[[bin]]
+name = "http_request_parse"
+path = "fuzz_targets/http_request_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_response_parse"
+path = "fuzz_targets/http_response_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_chunked_decode"
+path = "fuzz_targets/http_chunked_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_header_value"
+path = "fuzz_targets/http_header_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_router_path"
+path = "fuzz_targets/http_router_path.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

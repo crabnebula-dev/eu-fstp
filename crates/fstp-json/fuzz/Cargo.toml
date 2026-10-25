@@ -1,0 +1,45 @@
+[package]
+name = "fstp-json-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-json = { path = ".." }
+
+[[bin]]
+name = "json_parse"
+path = "fuzz_targets/json_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ndjson_read"
+path = "fuzz_targets/ndjson_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_typed"
+path = "fuzz_targets/json_typed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_canonical"
+path = "fuzz_targets/json_canonical.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

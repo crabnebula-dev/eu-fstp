@@ -1,0 +1,39 @@
+[package]
+name = "fstp-tls-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-tls = { path = ".." }
+fstp-rt = { path = "../../fstp-rt" }
+
+[[bin]]
+name = "tls_client_hostile_server"
+path = "fuzz_targets/tls_client_hostile_server.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls_server_hostile_client"
+path = "fuzz_targets/tls_server_hostile_client.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls_round_trip"
+path = "fuzz_targets/tls_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

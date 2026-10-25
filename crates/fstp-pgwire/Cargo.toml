@@ -1,0 +1,21 @@
+[package]
+name = "fstp-pgwire"
+description = "In-house PostgreSQL wire protocol client. Extended query protocol only; no string-built SQL."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-rt.workspace = true
+fstp-tls.workspace = true
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-pgtest.workspace = true
+
+[lints]
+workspace = true

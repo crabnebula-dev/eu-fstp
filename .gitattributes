@@ -1,0 +1,4 @@
+# Migration checksums cover the raw bytes of each SQL file. Git must never
+# convert line endings in SQL files, or a checkout with core.autocrlf would
+# embed other bytes and refuse every database that another build migrated.
+*.sql -text

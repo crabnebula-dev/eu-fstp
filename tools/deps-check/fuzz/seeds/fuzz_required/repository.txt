@@ -1,0 +1,12 @@
+# Parser-bearing crates (TH-26, H-05, ADR-003).
+# Checked by tools/deps-check: each crate listed here must own a cargo-fuzz
+# project at <crate dir>/fuzz (crates/*/fuzz or tools/*/fuzz) with at least
+# one target.
+fstp-json
+fstp-http
+fstp-pgwire
+fstp-migrate
+fstp-tls
+fstp-prop
+fstp-mc
+deps-check
