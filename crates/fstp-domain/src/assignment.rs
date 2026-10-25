@@ -593,9 +593,7 @@ pub(crate) fn committee_organisation(
     let binding = state
         .roster
         .active_binding(account, Role::CommitteeMember, programme, now)?;
-    // With the field in the roster: `state.roster.binding(binding)?.organisation`.
-    let _ = state.roster.binding(binding)?;
-    None
+    state.roster.binding(binding)?.organisation
 }
 
 /// Whether `proposal` is under evaluation in `call` now (I-36): it is in

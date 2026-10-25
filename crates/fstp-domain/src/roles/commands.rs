@@ -1086,6 +1086,7 @@ fn fold_grant(state: &mut State, g: &BindingGranted) -> Result<(), FoldError> {
             status: BindingStatus::Active,
             suspended_beneath: None,
             granted,
+            organisation: g.organisation,
         },
     );
     Ok(())
@@ -1197,6 +1198,7 @@ mod tests {
                 status: BindingStatus::Active,
                 suspended_beneath: None,
                 granted: 0,
+                organisation: None,
             },
         );
         state

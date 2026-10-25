@@ -90,7 +90,9 @@ pub(crate) mod guards;
 
 use std::collections::BTreeMap;
 
-use crate::id::{AccountId, BindingId, CallId, ProgrammeId, ProposalId, VaultEpoch};
+use crate::id::{
+    AccountId, BindingId, CallId, OrganisationId, ProgrammeId, ProposalId, VaultEpoch,
+};
 use crate::refusal::RuleRef;
 use crate::time::Timestamp;
 
@@ -287,6 +289,9 @@ pub struct Binding {
     /// The roster fold position of the grant of a Judging binding
     /// (`RosterState::tick`), and 0 for every other group.
     pub granted: u64,
+    /// The organisation the grant records, for committee bindings (I-34,
+    /// SoD-10).
+    pub organisation: Option<OrganisationId>,
 }
 
 impl Binding {
