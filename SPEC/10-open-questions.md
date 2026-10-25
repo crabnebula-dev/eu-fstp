@@ -42,12 +42,23 @@
 | O-40 | MCP server for all roles plus public research tools; reviewer content access off by default (P-75); binding actions per programme (P-77); MCP client in v1. |
 | O-41 | SuperSAFE: agents may not complete binding actions; they draft, and the user confirms in the platform (P-77). |
 | O-35 | Composite Ed25519 (aws-lc-rs) plus ML-DSA-65 (moduletto) for release metadata, updates, audit anchors, export manifests, and as companion signature on notices (ADR-001). |
+| O-47 | A tenant admin grants Drafting, Judging and Operations roles in a programme. SoD-07 applies to self-grants. Receiving bindings arise from the proposal (`02-domain/roles-and-sod.md`, decided 2026-10-25). |
+| O-43 | Under the P-10 option "operator staff only", the FSTP coordinator reads proposals in stages 1 and 2 (`02-domain/policy-parameters.md` NOTE 1, decided 2026-10-25). |
+| O-48 | The applicant states a country of residence or establishment at submission, held only in the identity vault and verified in NEGOTIATION; R-NG-01 carries the exception. A legal check is pending (`03-architecture/overview.md` NOTE 6, decided 2026-10-25). |
+| O-51 | The programme manager closes each milestone with a reason; PAID, REJECTED, WITHDRAWN and CLOSED are terminal, and the programme manager can close a request waiting in CHECKS_FAILED or CHANGES_REQUESTED (`02-domain/payment-requests.md`, decided 2026-10-25). |
+| O-44 | P-16: a majority of votes cast by members who are not recused, a quorum of more than half of them, at most one delegated vote per member, and the chair's casting vote on a tie (`02-domain/policy-parameters.md` NOTE 8, decided 2026-10-25). |
+| O-46 | The SuperSAFE criterion scale is 0 to 5 (`02-domain/policy-parameters.md` NOTE 6, decided 2026-10-25). |
+| O-49 | The FSTP coordinator records the stage 1 rows; the programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED; timer and date rows are not decisions (`02-domain/state-machine.md` NOTE 13, decided 2026-10-25). |
+| O-50 | Every active assigned reviewer records "no questions" before the stage 2 window closes that way (`02-domain/state-machine.md` NOTE 4, decided 2026-10-25). |
+| O-53 | The other account's Drafting binding stays at identity discovery, as its Judging binding does (`02-domain/roles-and-sod.md`, decided 2026-10-25). |
+| O-42 | Two-tier release signing: an offline root used about yearly to certify time-limited signing keys, and an isolated automated signing service with moduletto, optional two-maintainer approval (`../docs/adr/ADR-004-key-custody.md`, decided 2026-10-25). |
+| O-45 | Per-text data keys; erased texts resolve to an erasure-log entry linked into the audit chain; salted digests; Auditors and tenant admins read the log; erasure requests deferred only for P-41 records; a pseudonymous ledger skeleton remains after P-41. Two legal checks pending (`../docs/adr/ADR-007-domain-ledger.md`, decided 2026-10-25). |
+| O-52 | A published call keeps a record of its effective P-05 and P-13 limits, the publication values plus every later tightening. Corrigenda come from that record, and the Guide with its corrigenda equals it under I-51 (`02-domain/policy-parameters.md` NOTE 7, decided 2026-10-25). |
 
 ## Open
 
 | ID | Question | Blocks |
 | --- | --- | --- |
-| O-42 | Release key ceremony: whether the chosen HSM can run moduletto ML-DSA, or an air-gapped machine with an HSM-sealed key is used | First release |
 
 ## Backlogged
 

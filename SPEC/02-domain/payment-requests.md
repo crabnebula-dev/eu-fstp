@@ -2,7 +2,7 @@
 
 ## Plan structure
 
-A grant plan is a list of tasks. Each task holds milestones, and each milestone has an amount. A task's amount is the sum of its milestones. The contract total is the sum of its tasks (`contracts.md`).
+A grant plan is a list of tasks. Each task holds milestones, and each milestone has an amount. A task's amount is the sum of its milestones. The contract total is the sum of its tasks (`02-domain/contracts.md`).
 
 ## Balances
 
@@ -15,7 +15,9 @@ For every milestone the platform keeps:
 | Pending | Sum of requested lines in requests not yet released, rejected or withdrawn |
 | Available | Amount minus paid minus pending |
 
-Tasks show the same figures as sums over their milestones. All amounts are stored in integer euro cents.
+Tasks show the same figures as sums over their milestones.
+
+Amounts follow `../docs/adr/ADR-006-money-representation.md`. In records and exports they are decimal strings in the currency's fixed scale, for example EUR `"1234.50"`. PostgreSQL stores them as `numeric` at that scale. The domain holds them as integer minor units, which is cents for EUR.
 
 ## Flow
 
@@ -73,6 +75,7 @@ LLM findings may compare deliverables with the promised scope. They are advisory
 | PAID | System or finance | Payment confirmed |
 | REJECTED | Assigned reviewer | Every line rejected, with reasons |
 | WITHDRAWN | Grantee | Withdrawn before release; pending amounts return to available |
+| CLOSED | Programme manager | Closed while waiting in CHECKS_FAILED or CHANGES_REQUESTED, with a recorded reason; pending amounts return to available |
 
 ## Rules
 
@@ -81,7 +84,18 @@ LLM findings may compare deliverables with the promised scope. They are advisory
 - Released totals never exceed the contract amount (I-31).
 - A change of bank details blocks release until re-verification completes and P-36 elapses (I-33).
 - The change is notified to the previously verified email address and contact channels, with a way to dispute it during the hold. A dispute freezes payments and alerts the finance approver.
-- Accepted deliverables feed the I-15 record used for repeat grants.
+- Accepted deliverables feed the I-15 record used for repeat grants and amendments (`02-domain/contracts.md`).
+
+NOTE: For I-05, the payment releaser is a different person from every assigned reviewer who approved a line of the request, and from the finance approver (SoD-04). This satisfies R-EX-04, SoD-04 and the roles table at once (decided 2026-10-25).
+
+## Milestone closure
+
+COMPLETED needs every milestone closed and every payment request in a terminal state (`02-domain/state-machine.md` NOTE 12). These rules were decided on 2026-10-25 (O-51).
+
+- The programme manager closes a milestone explicitly, with a recorded reason. No timer or balance closes it.
+- A milestone can close without being fully paid, since P-67 releases unclaimed balances at grant end.
+- PAID, REJECTED, WITHDRAWN and CLOSED are terminal.
+- CHECKS_FAILED and CHANGES_REQUESTED stay open while the grantee can respond. The programme manager can close such a request, with a recorded reason, which makes it CLOSED.
 
 ## Legal nature
 
@@ -103,6 +117,8 @@ Each programme chooses one of two options:
 - **I-62** The line that brings a milestone to fully claimed always carries public deliverables under a licence in P-26, whatever P-65 says.
 
 NOTE: SuperSAFE uses public deliverables, which matches payment upon delivery in Annexe section 5 and keeps the I-15 record complete for repeat grants.
+
+NOTE: Under the progress report option, a partial claim without public deliverables leaves the public deliverable record incomplete until the final claim on that milestone (decided 2026-10-25).
 
 ## Reallocation within a task (P-66)
 

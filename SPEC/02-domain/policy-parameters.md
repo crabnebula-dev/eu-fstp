@@ -4,8 +4,8 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 
 | ID | Parameter | SuperSAFE default | Frozen |
 | --- | --- | --- | --- |
-| P-01 | Criteria and weights | Technical excellence 30, Relevance and impact 40, Value for money 30 | Yes |
-| P-02 | Stage 1 pass threshold (strictly above) | 75% | Yes |
+| P-01 | Criteria, weights and score scale (NOTE 6) | Technical excellence 30, Relevance and impact 40, Value for money 30; scale 0 to 5 | Yes |
+| P-02 | Stage 1 pass threshold (strictly above, NOTE 6) | 75.00% | Yes |
 | P-03 | Assigned reviewers per proposal (minimum) | 2 | Yes |
 | P-04 | Grant range per proposal | 5k to 100k EUR | Yes |
 | P-05 | Cap per recipient over programme lifetime, bounded by P-58 (I-50) | 400k EUR per the Annexe, to confirm against the Data Sheet (L-10) | No (programme-level) |
@@ -15,7 +15,7 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 | P-09 | Knock-out criteria | Aligned with Open Internet Stack and SuperSAFE vision; R&D as primary objective; English | Yes |
 | P-10 | Proposal read access in stages 1 and 2 | Assigned reviewers only | Yes |
 | P-11 | Reviewer anonymity towards applicants | Anonymous | Yes |
-| P-12 | Cooling-off before Receiving after Drafting or Judging | 1 call | No |
+| P-12 | Cooling-off between the Drafting, Judging and Receiving groups (NOTE 4) | 1 call | No |
 | P-13 | Excluded affiliation classes | Consortium partners, their affiliated entities and staff; IRC members, employers, co-workers, relatives | No |
 | P-14 | IRC exemptions for amendments | Team change; plan change without budget change; additional tasks in scope at equivalent rates with total under 100k EUR | Yes |
 | P-15 | IRC members per proposal (minimum) | 2 | Yes |
@@ -24,7 +24,7 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 | P-18 | Identity verification methods | EUDI Wallet; document upload with manual check | No |
 | P-19 | Uploaded document retention after verification | None: deleted on verification | No |
 | P-20 | Payment mode | Record-only or execution | No (tenant-level) |
-| P-21 | Inference provider and pinned model | Tenant choice | Yes |
+| P-21 | Inference provider and pinned model, with an ordered fallback list (NOTE 10) | Tenant choice | Yes |
 | P-22 | Trace retention | Until the funder audit period ends (P-41) | No |
 | P-23 | Pre-check enabled and rate limits | Enabled; 1 per day and 5 per call per proposal; account-level cap across drafts in the same call | Yes |
 | P-24 | Effective score rule after stage 2 | Higher of original and revised | Yes |
@@ -33,15 +33,54 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 | P-27 | Hardship contribution enabled | Yes | No |
 | P-28 | Show indicative LLM rubric bands to reviewers | Off | Yes |
 
-NOTE 1: P-10 options are: assigned reviewers only, all committee members, operator staff only. The default is the narrowest.
+NOTE 1: P-10 options are: assigned reviewers only, all committee members, operator staff only. The default is the narrowest. Under the option "operator staff only", the FSTP coordinator reads, after declaring conflicts as for the knock-out read. Operator staff means the programme operator's staff, never platform operator staff, who hold no roles (SoD-08) (decided 2026-10-25, O-43).
 
 NOTE 2: Annexe sections 5.a, 7 and 8.a disagree on who reads proposals. SuperSAFE resolves this as assigned reviewers only (O-01). Staff of any partner may be assigned (O-22), subject to SoD-10 and SoD-11.
 
 NOTE 3: P-28 defaults to off to limit anchoring of human scores on model output.
 
-NOTE 4: P-12 counted in calls means: the first call published after the binding ends is barred, and later calls are open. I-36 adds a further bar for calls holding a proposal the person reviewed.
+NOTE 4: P-12 is counted in calls (decided 2026-10-25). A call is barred for a person when they may not hold a role from another group in it.
+
+- P-12 applies to every switch among the Drafting, Judging and Receiving groups, since I-01 counts past bindings in all three.
+- Every call published up to the end of the binding is barred, including calls published before it started.
+- After the binding ends, the next P-12 calls published are barred, and later calls are open. With the default of 1, the first call published after the binding ends is barred.
+- The P-12 value is pinned when each binding ends. A later edit of P-12 does not change the bar for a binding that has already ended.
+- P-12 = 0 is allowed. Only calls published up to the end of the binding are then barred.
+
+The comparison is set out under Cooling-off in `02-domain/roles-and-sod.md`. I-36 adds a further bar for calls holding a proposal the person reviewed.
 
 NOTE 5: For SuperSAFE, a quarterly cadence with a 4-week stage 2 window leaves limited slack. An indicative cycle is knock-out 1 week, stage 1 scoring 2 weeks, stage 2 4 weeks, ranking 1 week and IRC 2 weeks. That totals about 10 of 13 weeks. Overruns push proposals into the next call through DEFERRED.
+
+NOTE 6: Scoring under P-01 and P-02 (decided 2026-10-25).
+
+- Each criterion is scored on an integer scale from 0 to N. N is part of P-01, so it freezes with the criteria and weights.
+- Every reviewer scores every criterion. A score that leaves out a criterion is incomplete.
+- Weights are positive integers. They need no particular total.
+- A reviewer's weighted sum is the sum over criteria of weight times score. The maximum is N times the sum of the weights.
+- The proposal score is the mean over reviewers of their weighted sums, as a fraction of the maximum.
+- P-02 is a percentage of that maximum with two decimals. The comparison is exact, with no rounding, and the score must be strictly above P-02.
+- For example, with N = 4, the default weights and every score at 3, the score is exactly 75.00%. It does not pass a P-02 of 75.00%.
+- The SuperSAFE default is N = 5, matching the Horizon Europe criterion scores of 0 to 5 (decided 2026-10-25, O-46).
+
+NOTE 7: P-05 and P-13 are not frozen (decided 2026-10-25).
+
+- For a published call, enforcement uses the stricter of the call's publication snapshot and the live programme value. For P-05 that is the lower amount. For P-13 it is every class in either value.
+- The published call policy records the publication snapshot of P-05 and P-13 next to the frozen values. The Guide for Applicants shows that snapshot.
+- A change after publication that tightens the limit produces a numbered corrigendum (I-53). Each published call keeps a record of its effective limits: the publication values plus every later tightening. Corrigenda are generated from that record, and the Guide read with its corrigenda equals it, which is how I-51 applies to P-05 and P-13 (decided 2026-10-25, O-52).
+- Adding a P-13 class voids the Receiving bindings of every holder now in an excluded class, in the same step, as under Identity discovery in `02-domain/roles-and-sod.md` (I-04).
+- An edit that lowers P-05 below a recipient's counted sum is refused (`02-domain/contracts.md`).
+
+NOTE 8: P-16 voting details (decided 2026-10-25, O-44).
+
+- Members recused under `02-domain/roles-and-sod.md` neither vote nor count.
+- A decision needs a majority of the votes cast.
+- A vote needs a quorum of more than half of the members who are not recused. Delegated votes count towards the quorum.
+- A member holds at most one delegated vote. No vote is delegated to or from a recused member.
+- The committee chair has a casting vote on a tie.
+
+NOTE 9: Applying P-17 needs the applicant's country before NEGOTIATION. The identity vault provides it as a boolean answer: whether the applicant meets the country condition of P-17 (decided 2026-10-25). The applicant states a country of residence or establishment at submission. It goes only to the identity vault, never to the platform or to Judging roles, and is verified in NEGOTIATION (R-NG-01, decided 2026-10-25, O-48). TODO(legal): confirm that collecting the country before negotiation meets GDPR data minimisation and purpose limitation.
+
+NOTE 10: The frozen P-21 value is a primary model plus an ordered fallback list, all pinned at publication (decided 2026-10-25). A replacement takes the next model on the list. It regenerates every finding of the call in one atomic step, so findings never mix configurations (I-11).
 
 ## Added parameters
 

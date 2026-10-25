@@ -6,6 +6,7 @@ Each tenant runs in an isolated cell. A cell contains:
 
 - application services in Rust,
 - a PostgreSQL database and an object store,
+- an append-only domain ledger in that database (ADR-007),
 - an identity vault as a separate service with separate keys,
 - an assessor worker for LLM findings,
 - a timeline engine and notification dispatcher (`notifications.md`),
@@ -26,12 +27,39 @@ NOTE: Self-hosted cells call two CrabNebula-hosted services, described in `self-
 
 ## Identity vault
 
-The vault holds verified identity attributes, verification records, guardian consent, declared affiliations, bank details, messaging handles and hardship evidence. It exposes only boolean queries to the application:
+The vault holds verified identity attributes, verification records, guardian consent, declared affiliations, bank details, messaging handles and hardship evidence. It answers the application only through the queries below. Every answer is one bit, except the change query.
 
-- Does this applicant's verified identity match any Drafting or Judging binding in this programme? (SoD-09)
-- Does this reviewer have a conflict with this proposal's applicant team? (I-03)
-- Would this amount exceed the recipient cap? (I-14)
-- Is this applicant in an excluded affiliation class? (I-04)
+| Query | Serves |
+| --- | --- |
+| Is this account verified? | SoD-09, I-06 |
+| Does this account share a verified identity with any account in a given set? | SoD-09, I-06, I-15 |
+| Does this reviewer have a conflict with this proposal's applicant team? | I-03, I-54 |
+| Is this account in an excluded affiliation class of this programme? | I-04 |
+| Would this amount keep the recipient within the cap? | I-14 |
+| Do all recipients of the programme stay within the cap? | I-14, on P-05 edits |
+| Does this proposal have a verified guardian consent record? | I-18 |
+| Does any team member declare an affiliation on this proximity list? | I-35 |
+| Does this applicant meet the P-17 country condition of this programme? | R-EV-08, P-17 |
+| Which accounts have vault facts that changed since a given vault epoch? | Reaction to vault changes |
+
+The change query returns account identifiers and no attributes. The query set was decided on 2026-10-25.
+
+NOTE 1: The application builds each candidate set from its own bindings: active bindings, and bindings inside a cooling-off bar (`02-domain/roles-and-sod.md` Cooling-off). For the cap queries it sends per-account totals of granted and reserved amounts, and the vault groups them by verified identity.
+
+NOTE 2: Fail closed (decided 2026-10-25). When the vault cannot answer, the application refuses the command that needed the answer and records nothing.
+
+NOTE 3: Every answer carries a vault epoch. The application accepts answers only at the epoch it has processed. When the vault reports a newer epoch, the application processes the change first and asks again.
+
+NOTE 4: Verification commit protocol (decided 2026-10-25). The vault marks a new verification or affiliation as provisional. The application reacts in one step and records the reaction with that epoch. The vault then makes the fact effective. Queries count only effective facts, so I-04 and I-06 hold at every instant. The exception is the reaction itself: its queries see the provisional fact it reacts to. Until the fact is effective, the vault refuses every other query about the accounts it affects, so the application fails closed and refuses those commands. Once the reaction is recorded, the application acknowledges it, and the vault makes the fact effective (decided 2026-10-25).
+
+NOTE 5: What the platform learns (decided 2026-10-25). A positive answer over a one-member set tells the platform that two accounts share a verified identity. The repeat-grant check (I-15) and the SoD-09 check at negotiation can both use one-member sets. The link is evident anyway, because the platform must void or refuse in response.
+
+- Refusals name only the rule, never an account.
+- Each vault answer is recorded as a query digest and the answer bit, with no identity attributes.
+- Only the Auditor role can see recorded positive matches. Judging roles never see them (R-CF-03).
+- Such links are between accounts of one tenant. I-20 concerns accounts in different tenants and is unaffected.
+
+NOTE 6: The P-17 query answers one bit and releases no country to Judging roles (decided 2026-10-25). The applicant states the country at submission, and only the vault receives it. It is verified in NEGOTIATION, and a false statement is grounds to decline (decided 2026-10-25, O-48). TODO(legal): confirm the early collection under GDPR.
 
 Identity attributes are released to Operations roles only in NEGOTIATION and later. Phone numbers and messaging handles are released only to the channel adapters.
 
@@ -96,3 +124,5 @@ NOTE: In-house code reduces supply chain exposure and increases the attack surfa
 - Authentication: `authentication.md`.
 - Key hierarchy and custody: ADR-004.
 - Hosting provider and database layout: ADR-005.
+- Money representation: ADR-006.
+- Domain ledger and record storage: ADR-007.

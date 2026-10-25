@@ -34,13 +34,14 @@
 | --- | --- |
 | I-01, I-02, I-06 | Random sequences of bindings, unbindings and affiliation changes never yield a violating state |
 | I-03 | No read or score action succeeds for a conflicted reviewer |
+| I-04 | Random Receiving bindings, affiliation changes, verifications and P-13 edits never leave a held Receiving binding for an account the vault knows to be excluded. Active and suspended bindings count as held; only voided bindings do not |
 | I-05 | No payment has the same approver and releaser |
 | I-07, I-08, I-09 | Scoring over random weights, thresholds and plan revisions matches a reference implementation |
 | I-10 | Fuzzed findings, including adversarial content, never alter state |
 | I-11 | All findings in a generated call share one config_id |
 | I-12 | Random policy edits after publication leave call outcomes unchanged |
 | I-13, I-14 | Random grant sequences never exceed range or cap |
-| I-15 | Repeat grants without recorded public deliverables are rejected |
+| I-15 | A repeat grant or amendment for a lead whose verified identity, anywhere in the tenant, has an accepted deliverable without a public record under its own call's P-26 is rejected. Under the P-65 option "progress report", a partial claim keeps the record incomplete until the final claim |
 | I-16 | Static check: no code path stores funds or initiates transfers from platform-controlled accounts |
 | I-17, I-21 | Canary attributes never readable by Judging roles before NEGOTIATION |
 | I-18 | No minor-flagged proposal reaches GRANTED without consent record |
@@ -88,7 +89,7 @@
 | I-87 | Public MCP responses equal public page data for generated programmes in every state |
 | I-88, I-89 | Platform-initiated write calls without approval fail; undeclared fields never leave the cell |
 | I-90 | Signatures with one valid and one invalid half are rejected everywhere; moduletto and aws-lc-rs ML-DSA verify each other's signatures |
-| I-91 | Updates with missing, partial or rotated-out composite signatures are refused by cells and clients |
+| I-91 | Updates with missing, partial or rotated-out composite signatures, or signed by a key without a current certificate from the release root, are refused by cells and clients |
 | I-73 | Templates with seeded personal data are blocked; single-person publication is rejected; templates never carry people or proposal records |
 | I-64 | After closure, I-45 headroom grows by exactly the grant's unclaimed balance under "return", and by zero spend under "lapse" |
 | I-52 | Guides missing any required section fail generation |
