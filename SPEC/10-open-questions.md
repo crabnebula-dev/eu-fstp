@@ -51,6 +51,7 @@
 | O-49 | The FSTP coordinator records the stage 1 rows; the programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED; timer and date rows are not decisions (`02-domain/state-machine.md` NOTE 13, decided 2026-10-25). |
 | O-50 | Every active assigned reviewer records "no questions" before the stage 2 window closes that way (`02-domain/state-machine.md` NOTE 4, decided 2026-10-25). |
 | O-53 | The other account's Drafting binding stays at identity discovery, as its Judging binding does (`02-domain/roles-and-sod.md`, decided 2026-10-25). |
+| O-42 | Two-tier release signing: an offline root used about yearly to certify time-limited signing keys, and an isolated automated signing service with moduletto, optional two-maintainer approval (`../docs/adr/ADR-004-key-custody.md`, decided 2026-10-25). |
 | O-45 | Per-text data keys; erased texts resolve to an erasure-log entry linked into the audit chain; salted digests; Auditors and tenant admins read the log; erasure requests deferred only for P-41 records; a pseudonymous ledger skeleton remains after P-41. Two legal checks pending (`../docs/adr/ADR-007-domain-ledger.md`, decided 2026-10-25). |
 | O-52 | A published call keeps a record of its effective P-05 and P-13 limits, the publication values plus every later tightening. Corrigenda come from that record, and the Guide with its corrigenda equals it under I-51 (`02-domain/policy-parameters.md` NOTE 7, decided 2026-10-25). |
 
@@ -58,7 +59,6 @@
 
 | ID | Question | Blocks |
 | --- | --- | --- |
-| O-42 | Release key ceremony: whether the chosen HSM can run moduletto ML-DSA, or an air-gapped machine with an HSM-sealed key is used | First release |
 
 ## Backlogged
 
