@@ -68,7 +68,7 @@ NOTE 10: Withdrawal is open in DRAFT, SUBMITTED, STAGE1, STAGE2, RANKED, IRC_REV
 
 NOTE 11: Each milestone carries a start date as well as a due date. GRANTED to IN_EXECUTION uses the earliest milestone start date in the effective contract version (decided 2026-10-25).
 
-NOTE 12: A milestone can close without being fully paid, since P-67 releases unclaimed balances at COMPLETED (decided 2026-10-25). The milestone closure rule is set in M5, and so are the terminal payment request states (`02-domain/payment-requests.md`, O-51). TODO(Daniel): confirm both in M5.
+NOTE 12: A milestone can close without being fully paid, since P-67 releases unclaimed balances at COMPLETED (decided 2026-10-25). The programme manager closes each milestone with a recorded reason. A payment request is terminal when PAID, REJECTED, WITHDRAWN or CLOSED (`02-domain/payment-requests.md`, decided 2026-10-25, O-51).
 
 NOTE 13: R-LA-03 requires a named human to record every decision. Where a System row records a decision, its outcome stays computed and a named human records it. The FSTP coordinator records the stage 1 rows. The programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED, which are decisions with a recorded reason. The rows driven by a timer or a date are not decisions, and the system records them: STAGE2 to DEFERRED, DEFERRED re-entry, GRANTED to IN_EXECUTION and IN_EXECUTION to COMPLETED (decided 2026-10-25, O-49).
 

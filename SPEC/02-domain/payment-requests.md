@@ -75,6 +75,7 @@ LLM findings may compare deliverables with the promised scope. They are advisory
 | PAID | System or finance | Payment confirmed |
 | REJECTED | Assigned reviewer | Every line rejected, with reasons |
 | WITHDRAWN | Grantee | Withdrawn before release; pending amounts return to available |
+| CLOSED | Programme manager | Closed while waiting in CHECKS_FAILED or CHANGES_REQUESTED, with a recorded reason; pending amounts return to available |
 
 ## Rules
 
@@ -89,11 +90,12 @@ NOTE: For I-05, the payment releaser is a different person from every assigned r
 
 ## Milestone closure
 
-COMPLETED needs every milestone closed and every payment request in a terminal state (`02-domain/state-machine.md` NOTE 12). M5 sets both rules (O-51). TODO(Daniel): confirm them in M5.
+COMPLETED needs every milestone closed and every payment request in a terminal state (`02-domain/state-machine.md` NOTE 12). These rules were decided on 2026-10-25 (O-51).
 
-- PAID, REJECTED and WITHDRAWN end a request, so they are read as terminal until M5 decides.
-- Whether CHECKS_FAILED and CHANGES_REQUESTED become terminal, for example when the grant ends, is part of O-51.
+- The programme manager closes a milestone explicitly, with a recorded reason. No timer or balance closes it.
 - A milestone can close without being fully paid, since P-67 releases unclaimed balances at grant end.
+- PAID, REJECTED, WITHDRAWN and CLOSED are terminal.
+- CHECKS_FAILED and CHANGES_REQUESTED stay open while the grantee can respond. The programme manager can close such a request, with a recorded reason, which makes it CLOSED.
 
 ## Legal nature
 

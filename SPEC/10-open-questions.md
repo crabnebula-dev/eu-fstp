@@ -43,6 +43,9 @@
 | O-41 | SuperSAFE: agents may not complete binding actions; they draft, and the user confirms in the platform (P-77). |
 | O-35 | Composite Ed25519 (aws-lc-rs) plus ML-DSA-65 (moduletto) for release metadata, updates, audit anchors, export manifests, and as companion signature on notices (ADR-001). |
 | O-47 | A tenant admin grants Drafting, Judging and Operations roles in a programme. SoD-07 applies to self-grants. Receiving bindings arise from the proposal (`02-domain/roles-and-sod.md`, decided 2026-10-25). |
+| O-43 | Under the P-10 option "operator staff only", the FSTP coordinator reads proposals in stages 1 and 2 (`02-domain/policy-parameters.md` NOTE 1, decided 2026-10-25). |
+| O-48 | The applicant states a country of residence or establishment at submission, held only in the identity vault and verified in NEGOTIATION; R-NG-01 carries the exception. A legal check is pending (`03-architecture/overview.md` NOTE 6, decided 2026-10-25). |
+| O-51 | The programme manager closes each milestone with a reason; PAID, REJECTED, WITHDRAWN and CLOSED are terminal, and the programme manager can close a request waiting in CHECKS_FAILED or CHANGES_REQUESTED (`02-domain/payment-requests.md`, decided 2026-10-25). |
 | O-44 | P-16: a majority of votes cast by members who are not recused, a quorum of more than half of them, at most one delegated vote per member, and the chair's casting vote on a tie (`02-domain/policy-parameters.md` NOTE 8, decided 2026-10-25). |
 | O-46 | The SuperSAFE criterion scale is 0 to 5 (`02-domain/policy-parameters.md` NOTE 6, decided 2026-10-25). |
 | O-49 | The FSTP coordinator records the stage 1 rows; the programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED; timer and date rows are not decisions (`02-domain/state-machine.md` NOTE 13, decided 2026-10-25). |
@@ -55,10 +58,7 @@
 | ID | Question | Blocks |
 | --- | --- | --- |
 | O-42 | Release key ceremony: whether the chosen HSM can run moduletto ML-DSA, or an air-gapped machine with an HSM-sealed key is used | First release |
-| O-43 | Which Judging role reads proposals in stages 1 and 2 under the P-10 option "operator staff only" | Programmes that choose that option; the M4 authorisation matrix |
 | O-45 | How P-41 retention and I-81 crypto-shredding coexist with the append-only records of I-23. Free text already sits outside ledger bodies, and an erased text's `TextRef` resolves to its erasure-log entry (`../docs/adr/ADR-007-domain-ledger.md`). Open: what the erasure log holds and who may read it | Erasure and retention design for the domain ledger in M3 |
-| O-48 | How the identity vault learns an applicant's country for the P-17 query before NEGOTIATION, given R-NG-01 and I-17, and whether showing the committee that one derived bit is consistent with I-17 | P-17 tie-breaks under R-EV-08; the M3 vault interface |
-| O-51 | The milestone closure rule, and which payment request states are terminal, in particular CHECKS_FAILED and CHANGES_REQUESTED (`02-domain/payment-requests.md`) | The IN_EXECUTION to COMPLETED guard; M5 |
 
 ## Backlogged
 
