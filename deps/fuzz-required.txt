@@ -10,3 +10,8 @@ fstp-tls
 fstp-prop
 fstp-mc
 deps-check
+fstp-money
+fstp-ledger
+fstp-domain
+fstp-findings
+fstp-engine

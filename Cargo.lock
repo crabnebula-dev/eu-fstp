@@ -87,6 +87,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-domain"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-domain-testkit"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-findings",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-mc",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-engine"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-findings"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-http"
 version = "0.1.0"
 dependencies = [
@@ -100,6 +147,14 @@ dependencies = [
 name = "fstp-json"
 version = "0.1.0"
 dependencies = [
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-ledger"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
  "fstp-prop",
 ]
 
@@ -120,6 +175,14 @@ dependencies = [
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
+]
+
+[[package]]
+name = "fstp-money"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
 ]
 
 [[package]]

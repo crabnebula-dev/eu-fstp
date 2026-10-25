@@ -10,6 +10,7 @@ use crate::allowlist::{self, Entry};
 use crate::cargo::{self, Query};
 use crate::fuzz;
 use crate::graph::{self, Context, ProjectKind};
+use crate::layering;
 use crate::lockfile::{self, Lockfile};
 use crate::metadata::{self, Metadata};
 use crate::provenance::{self, ProjectLock};
@@ -442,6 +443,17 @@ pub fn run() -> ExitCode {
     let (fuzz_summary, fuzz_findings) =
         fuzz::check(&root, &required, workspace_meta, &fuzz_projects);
     findings.extend(fuzz_findings);
+
+    // The layering rules read the main workspace in every context, so an
+    // edge that exists only on one platform or feature set still counts.
+    if let Some(label) = workspace_index
+        .and_then(|i| projects.get(i))
+        .map(|p| &p.label)
+    {
+        for c in contexts.iter().filter(|c| &c.label == label) {
+            findings.extend(layering::check(c.meta));
+        }
+    }
 
     findings.extend(allowlist::compare(&agg, &entries));
     findings.extend(allowlist::compare_root_features(&agg, &roots));

@@ -107,7 +107,9 @@ impl Report<'_> {
     /// Renders the text report.
     pub(crate) fn text(&self) -> String {
         let mut out = String::new();
-        out.push_str("deps-check: dependency allowlist, no-Python and fuzz-target gates\n\n");
+        out.push_str(
+            "deps-check: dependency allowlist, no-Python, fuzz-target and layering gates\n\n",
+        );
         out.push_str("Contexts (cargo metadata --locked):\n");
         for c in self.contexts {
             let features = if c.all_features {

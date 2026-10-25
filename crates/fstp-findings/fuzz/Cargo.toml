@@ -1,0 +1,25 @@
+[package]
+name = "fstp-findings-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-findings = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "finding_decode"
+path = "fuzz_targets/finding_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

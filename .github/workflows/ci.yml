@@ -5,7 +5,7 @@
 # job token, and installs toolchains with the runner's rustup.
 #
 # Jobs:
-#   deps-check   dependency allowlist, no-Python and fuzz-target gates
+#   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
 #   test         cargo test on the workspace with a real PostgreSQL 16
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
@@ -187,7 +187,7 @@ jobs:
             echo "deps-check depends on a package outside the repository" >&2
             exit 1
           fi
-      - name: Dependency allowlist, no-Python and fuzz-target gates
+      - name: Dependency allowlist, no-Python, fuzz-target and layering gates
         run: cargo run --locked -p deps-check -- --root .
 
   fuzz-smoke:

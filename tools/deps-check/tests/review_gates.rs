@@ -291,3 +291,36 @@ fn review_ci_unvetted_deps_built_before_gate() {
         assert!(waits.contains(j), "job {j} does not wait for deps-check");
     }
 }
+
+/// I-10, design section 1: the layering gate runs on the workspace graph,
+/// so a path from fstp-domain to fstp-findings fails the whole gate.
+#[test]
+fn i10_layering_gate_rejects_domain_depending_on_findings() {
+    let repo = Repo::new("layering");
+    repo.write(
+        "Cargo.toml",
+        "[workspace]\nresolver = \"3\"\n\
+         members = [\"crates/app\", \"crates/fstp-domain\", \"crates/fstp-findings\"]\n",
+    );
+    repo.write(
+        "crates/fstp-findings/Cargo.toml",
+        "[package]\nname = \"fstp-findings\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    repo.write("crates/fstp-findings/src/lib.rs", "//! findings\n");
+    repo.write(
+        "crates/fstp-domain/Cargo.toml",
+        "[package]\nname = \"fstp-domain\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    repo.write("crates/fstp-domain/src/lib.rs", "//! domain\n");
+    repo.lock(".");
+    let (ok, text) = repo.check();
+    assert!(ok, "the layered baseline fails:\n{text}");
+
+    repo.write(
+        "crates/fstp-domain/Cargo.toml",
+        "[package]\nname = \"fstp-domain\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [dev-dependencies]\nfstp-findings = { path = \"../fstp-findings\" }\n",
+    );
+    repo.lock(".");
+    repo.assert_fails_with("layering-i10");
+}

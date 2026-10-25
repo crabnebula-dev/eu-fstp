@@ -1,0 +1,39 @@
+[package]
+name = "fstp-money-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-money = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "amount_parse"
+path = "fuzz_targets/amount_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "amount_json"
+path = "fuzz_targets/amount_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "percent_parse"
+path = "fuzz_targets/percent_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

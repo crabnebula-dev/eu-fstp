@@ -1,0 +1,19 @@
+[package]
+name = "fstp-domain"
+description = "Pure domain core: policy, roles and SoD, scoring, decisions and grants."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-money.workspace = true
+fstp-ledger.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
