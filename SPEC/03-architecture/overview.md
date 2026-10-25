@@ -50,7 +50,7 @@ NOTE 2: Fail closed (decided 2026-10-25). When the vault cannot answer, the appl
 
 NOTE 3: Every answer carries a vault epoch. The application accepts answers only at the epoch it has processed. When the vault reports a newer epoch, the application processes the change first and asks again.
 
-NOTE 4: Verification commit protocol (decided 2026-10-25). The vault marks a new verification or affiliation as provisional. The application reacts in one step and records the reaction with that epoch. The vault then makes the fact effective. Queries count only effective facts, so I-04 and I-06 hold at every instant.
+NOTE 4: Verification commit protocol (decided 2026-10-25). The vault marks a new verification or affiliation as provisional. The application reacts in one step and records the reaction with that epoch. The vault then makes the fact effective. Queries count only effective facts, so I-04 and I-06 hold at every instant. The exception is the reaction itself: its queries see the provisional fact it reacts to.
 
 NOTE 5: What the platform learns (decided 2026-10-25). A positive answer over a one-member set tells the platform that two accounts share a verified identity. The repeat-grant check (I-15) and the SoD-09 check at negotiation can both use one-member sets. The link is evident anyway, because the platform must void or refuse in response.
 
