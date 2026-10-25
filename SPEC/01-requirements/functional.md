@@ -8,8 +8,12 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
   AC: two programmes with different P-01 weights produce different weighted scores for identical reviewer inputs.
 - **R-PC-02** A published call carries a frozen policy version.
   AC: a parameter edit after publication does not change any outcome in that call (I-12).
+  NOTE: The AC covers the parameters marked frozen, as I-12 does. Programme-level parameters such as P-05 and P-13 keep their live values, because I-04 and I-14 hold against them. Adding a P-13 class therefore affects existing Receiving roles.
+  NOTE: For P-05 and P-13, a published call enforces the stricter of its publication snapshot and the live programme value (decided 2026-10-25, `02-domain/policy-parameters.md`). A live edit can tighten a published call's limits but never loosen them.
 - **R-PC-03** Publishing a call requires approval by a person other than its drafter.
   AC: publication by the drafter alone is rejected.
+  AC: approval by an author of the call, or by the last author of P-01 or P-09 in the policy the call freezes, is rejected.
+  NOTE: The drafters of a call are its authors plus the last authors of P-01 and P-09 (decided 2026-10-25). A person here means a tenant account (`00-scope.md`).
 
 ## Submission
 
@@ -18,6 +22,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 - **R-SB-02** Minors can submit without guardian consent.
   AC: a minor-flagged submission reaches SUBMITTED without a guardian record.
 - **R-SB-03** Applicants can withdraw at any point before contract signature.
+  AC: a withdrawal from any non-terminal state before GRANTED succeeds, including after signature while the contract is not yet EFFECTIVE.
+  NOTE: The state machine permits withdrawal until GRANTED (`02-domain/state-machine.md`), which covers every point before signature. Terminal states, INELIGIBLE among them, have no exits.
 - **R-SB-04** Applicants can obtain a copy of their application at an email address they provide.
 
 ## Evaluation
@@ -25,12 +31,28 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 - **R-EV-01** Proposals failing any knock-out criterion receive no further review.
 - **R-EV-02** Each eligible proposal is scored by at least P-03 assigned reviewers without conflict (I-03, I-07).
 - **R-EV-03** Stage 1 outcome follows the weighted score and P-02 (I-08).
+  AC: with P-01 weights 30, 40 and 30, a criterion scale of 0 to 4 and every score 3, the weighted score is exactly 75.00% and the proposal does not pass a P-02 of 75%.
+  NOTE: Each reviewer scores every P-01 criterion on an integer scale from 0 to the P-01 maximum. The weighted score is the mean of the reviewers' weighted sums, as a fraction of the maximum. P-02 is a percentage with two decimals, compared exactly (decided 2026-10-25, `02-domain/policy-parameters.md`).
+  NOTE: P-01 weights are positive integers with no required total. Only valid scores count: scores of released or conflicted reviewers never do. Scores seal when the proposal leaves stage 1, and only a recorded complaint remedy reopens them (decided 2026-10-25).
 - **R-EV-04** Non-selected applicants are notified within P-08.
 - **R-EV-05** In stage 2, assigned reviewers can ask questions and suggest changes, and applicants can submit a revised plan including budget changes.
+  AC: when the assigned reviewers record that they have no questions, the proposal reaches RANKED without waiting for P-07.
+  NOTE: Assigned reviewers rescore each revised plan, and at least P-03 valid stage 2 scores are needed. A "no questions" record closes the stage 2 window at once, with answers deemed complete (decided 2026-10-25, `02-domain/state-machine.md`). How many assigned reviewers must make that record is open (O-50). TODO(Daniel): decide.
 - **R-EV-06** The effective score after stage 2 follows P-24 (I-09).
+  AC: under "higher of original and revised", equal original and revised scores give an effective score that references the original plan version.
+  NOTE: When several revisions exist, the latest scored revision is the revised plan. On a P-24 tie, the original plan carries forward (decided 2026-10-25, `02-domain/state-machine.md` NOTE 4).
 - **R-EV-07** A proposal without stage 2 answers within P-07 moves to the next call.
+  NOTE: A "no questions" record under R-EV-05 counts as complete answers, so this requirement does not apply to it.
+  NOTE: The move from STAGE2 to DEFERRED has no guard that a future call exists. The proposal waits in DEFERRED until the next call opens (decided 2026-10-25, `02-domain/state-machine.md`).
+  NOTE: The original call's frozen policy keeps governing a deferred proposal, matching what the applicant was told. The new call makes new assignments and handles. Findings stay with the call that produced them, and the new call may produce its own (decided 2026-10-25).
 - **R-EV-08** The committee sets a cut-off from the ranking view (`02-domain/roles-and-sod.md`) with remaining budget visible, and the rationale is recorded.
+  AC: a cut-off that leaves a tie at the cut-off position without a recorded P-17 tie-break is rejected.
+  NOTE: The cut-off is a rank position over a total order. The committee breaks ties under P-17 and records the tie-break. Each cut-off covers the proposals currently RANKED (decided 2026-10-25).
+  NOTE: Before NEGOTIATION, the P-17 country priority uses a boolean answer from the identity vault, never a self-declared field (decided 2026-10-25).
+  NOTE: The call budget is fixed at publication and shown for information. It is not a hard limit on nominations (decided 2026-10-25).
 - **R-EV-09** Committee decisions follow P-16.
+  NOTE: Committee members with a conflict on a ranked proposal recuse from that call's cut-off vote (R-CF-02).
+  NOTE: The P-16 majority base, quorum and delegation limits are not decided yet (O-44).
 - **R-EV-10** Reviewers can record external verification of claims without disclosing applicant identity unless the applicant consented to sharing.
 
 ## Independent review
@@ -45,8 +67,15 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 - **R-NG-01** Identity attributes are collected only in NEGOTIATION (I-17).
 - **R-NG-02** A minor's proposal enters NEGOTIATION only with verified guardian consent (I-18).
 - **R-NG-03** The grant amount is set by the assigned reviewers, adjusted for ineligible costs, within P-04 and P-05.
+  AC: a granted amount that differs from the effective plan total minus the recorded deductions is rejected. An amount equal to either P-04 bound is accepted.
+  NOTE: The granted amount equals the effective plan total minus recorded deductions, and each deduction carries a reason. P-04 bounds are inclusive at both ends (decided 2026-10-25, `02-domain/contracts.md`).
+  NOTE: P-05 applies per verified identity of the applicant lead. It counts granted amounts plus open reservations from amount determination, amended totals included. At COMPLETED or TERMINATED, committed amounts drop to the paid total (I-64) (decided 2026-10-25).
+  NOTE: An edit that lowers P-05 below a recipient's committed sum is refused (decided 2026-10-25).
 - **R-NG-04** The contract records amount, milestones and licence obligations (`02-domain/contracts.md`). The applicant can decline before signature.
 - **R-NG-05** Repeat grants and amendments require prior deliverables recorded as public under P-26 (I-15). Reviewers see prior outcomes.
+  AC: a grant to a lead whose earlier grant in another programme of the same tenant has an accepted deliverable without a public record under its call's P-26 is rejected.
+  NOTE: The same applicant means the verified identity of the applicant lead, across the whole tenant. Prior deliverables are every deliverable accepted so far. Each must be public under a licence in the P-26 of the prior call (decided 2026-10-25).
+  NOTE: An amendment also needs this grant's own accepted deliverables recorded. A partial claim under P-65 without public deliverables leaves the record incomplete until the final claim on that milestone (decided 2026-10-25).
 
 ## Execution and payment
 
@@ -59,6 +88,10 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 - **R-CF-01** SoD-01 to SoD-09 are enforced at every enforcement point.
 - **R-CF-02** Reviewers declare conflicts before accessing full content. A declared conflict triggers reassignment.
+  AC: the FSTP coordinator cannot read a submission for the knock-out check before declaring conflicts on it.
+  NOTE: I-03 covers content reads by anyone and every act on the proposal or its grant. These acts are assigned-reviewer acts, IRC review, the knock-out check and committee votes on the cut-off (decided 2026-10-25, `02-domain/roles-and-sod.md`).
+  NOTE: The FSTP coordinator declares before the knock-out read. Under the P-10 option "all committee members", every committee member declares before reading (decided 2026-10-25).
+  NOTE: A committee member with a conflict on a ranked proposal recuses from that call's cut-off vote. No vote is delegated to or from them (decided 2026-10-25).
 - **R-CF-03** Conflict and cap checks return boolean outcomes without disclosing identity to Judging roles.
 
 ## Identity
@@ -91,8 +124,13 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 - **R-LA-01** Every submission receives findings on completeness, quality and accuracy of representation.
 - **R-LA-02** Every finding carries evidence pointers.
 - **R-LA-03** A named human records every decision. Findings are advisory (I-10).
+  AC: a stage 1 close recorded with an outcome other than the computed one is rejected.
+  NOTE: Computed outcomes are decisions under this requirement. The FSTP coordinator records the stage 1 close and cannot choose its outcome (decided 2026-10-25, `02-domain/state-machine.md`).
+  NOTE: Stage 1 closes when every active assignee has a valid score and at least P-03 valid scores exist (decided 2026-10-25).
 - **R-LA-04** Each tenant selects its inference provider. Self-hosted cells can use a local endpoint.
 - **R-LA-05** Model, prompt and rubric are pinned per call (I-11).
+  NOTE: The pin is the full assessor configuration (`config_id` in `04-llm-assessment/assessment.md`). P-21 names only the provider and model, so the pin covers more than P-21.
+  NOTE: The frozen P-21 value is a primary model plus an ordered fallback list, pinned at publication. A switch to a fallback regenerates all of the call's findings in one atomic step, so I-11 and I-12 keep holding (decided 2026-10-25, `02-domain/policy-parameters.md`).
 - **R-LA-06** Applicants can run a pre-submission check with the same rubric. It returns findings, never scores.
 - **R-LA-07** Traces of submission assessments are retained in the tenant cell for P-22, then deleted.
   NOTE: Pre-check traces follow the draft lifecycle in `04-llm-assessment/pre-check.md`, not P-22.

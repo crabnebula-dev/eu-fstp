@@ -42,12 +42,23 @@
 | O-40 | MCP server for all roles plus public research tools; reviewer content access off by default (P-75); binding actions per programme (P-77); MCP client in v1. |
 | O-41 | SuperSAFE: agents may not complete binding actions; they draft, and the user confirms in the platform (P-77). |
 | O-35 | Composite Ed25519 (aws-lc-rs) plus ML-DSA-65 (moduletto) for release metadata, updates, audit anchors, export manifests, and as companion signature on notices (ADR-001). |
+| O-47 | A tenant admin grants Drafting, Judging and Operations roles in a programme. SoD-07 applies to self-grants. Receiving bindings arise from the proposal (`02-domain/roles-and-sod.md`, decided 2026-10-25). |
 
 ## Open
 
 | ID | Question | Blocks |
 | --- | --- | --- |
 | O-42 | Release key ceremony: whether the chosen HSM can run moduletto ML-DSA, or an air-gapped machine with an HSM-sealed key is used | First release |
+| O-43 | Which Judging role reads proposals in stages 1 and 2 under the P-10 option "operator staff only" | Programmes that choose that option; the M4 authorisation matrix |
+| O-44 | P-16 details: the majority base, the quorum and the limits on vote delegation | Exact vote counting for committee decisions under R-EV-09 |
+| O-45 | How P-41 retention and I-81 crypto-shredding coexist with the append-only records of I-23. Free text already sits outside ledger bodies (`../docs/adr/ADR-007-domain-ledger.md`) | Erasure and retention design for the domain ledger in M3 |
+| O-46 | The criterion scale maximum N in the SuperSAFE default of P-01. The spec sets weights but no scale | SuperSAFE programme build in M4 |
+| O-48 | How the identity vault learns an applicant's country for the P-17 query before NEGOTIATION, given R-NG-01 and I-17, and whether showing the committee that one derived bit is consistent with I-17 | P-17 tie-breaks under R-EV-08; the M3 vault interface |
+| O-49 | Which named human records each System row of the state machine that records a decision under R-LA-03, beyond the stage 1 rows, and which System rows count as decisions | M2 command records for those rows; the M4 authorisation matrix |
+| O-50 | Whether every active assigned reviewer or at least P-03 of them must record "no questions" to close the stage 2 window (`02-domain/state-machine.md` NOTE 4) | The STAGE2 to RANKED guard |
+| O-51 | The milestone closure rule, and which payment request states are terminal, in particular CHECKS_FAILED and CHANGES_REQUESTED (`02-domain/payment-requests.md`) | The IN_EXECUTION to COMPLETED guard; M5 |
+| O-52 | How a corrigendum that states a stricter live P-05 or P-13 value squares with I-51, which ties Guide values to the frozen call policy | Guide generation and corrigenda in M9 |
+| O-53 | Whether the other account's Drafting binding stays at identity discovery, as its Judging binding does (`02-domain/roles-and-sod.md` Identity discovery) | The M2 voiding reaction for Drafting accounts |
 
 ## Backlogged
 

@@ -1107,9 +1107,9 @@ Order from `.claude/CLAUDE.md`: `SPEC/02-domain/invariants.md`, then `SPEC/01-re
 4. **Money storage wording.** `payment-requests.md` says "integer euro cents". ADR-006 says `numeric` at scale 2. The domain holds integer minor units, which matches both. Storage follows ADR-006, Daniel's later decision. The domain file needs a wording update.
 5. **NEGOTIATION to GRANTED actors.** The row names the applicant and the programme manager. `contracts.md` names an Operations signatory as a contract party. The domain requires both human records plus the M5 contract-effective fact. The missing signatory role is Q18.
 
-### 9.3 Interim strict readings (until Daniel answers)
+### 9.3 Readings for gaps, now decided
 
-Daniel answered Q1 to Q3 on 2026-10-25 (section 12.1). Those rows are now decisions. One differs from the interim reading: under Q3, a "no questions" record from the reviewers closes the stage 2 window at once.
+Daniel answered Q1 to Q19 on 2026-10-25 (section 12). Every row below is now a decision. These differ from the interim reading: under Q3, a "no questions" record closes the stage 2 window at once. Under Q6, a failed negotiation goes to DECLINED with a recorded reason. Under Q8, prior deliverables mean those accepted so far, and only the prior call's P-26 applies.
 
 Where the spec is silent, the design takes the strictest reading. Each sits in one function and changes locally.
 
@@ -1223,7 +1223,7 @@ Each question lists options and a recommendation. The interim reading in section
 
 ### 12.1 These block M2
 
-Q1 to Q3 are answered. Q4 to Q19 are open.
+Q1 to Q19 are answered. A few details inside Q14, Q17 and Q19 stay open, as marked.
 
 **Q1. Scoring arithmetic (I-08, R-EV-03).** The spec gives no criterion scale, no rule for combining reviewers and no base for "75%".
 
@@ -1258,6 +1258,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - P-12 edits. A: the value is pinned when each binding ends. B: the current value always applies.
 - P-12 = 0. A: allowed. B: minimum 1.
 - Recommendation: A for all four.
+- **Answered by Daniel on 2026-10-25: A for all four.**
 
 **Q5. Sybil and exclusion discovery (I-06, I-04).** When the vault verifies an applicant at negotiation, the combined state can break I-06 or I-04 before the platform acts. The platform can restore them only if the affected bindings stop counting as held.
 
@@ -1266,6 +1267,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - C: Suspend, and keep counting suspended bindings as held. I-04 and I-06 then cannot be green as written, and you would restate them.
 - Also confirm two points. The I-04 predicate is stated over the vault's knowledge, since the system holds no other. The M3 provisional-verification protocol in section 4.3 is acceptable.
 - Recommendation: A, plus the protocol. For scores the Judging account already gave, record a notifiable conflict (R-CF-04) and leave re-evaluation to complaint remedies.
+- **Answered by Daniel on 2026-10-25: A, plus the protocol in section 4.3.** Scores the Judging account already gave get a notifiable conflict (R-CF-04). Re-evaluation is left to complaint remedies. The I-04 predicate is stated over the vault's knowledge.**
 
 **Q6. NEGOTIATION failures.** Identity, SoD-09, I-04, I-13, I-14, I-15 or consent can fail. No transition leaves NEGOTIATION except GRANTED and WITHDRAWN.
 
@@ -1273,6 +1275,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - B: A new terminal state for failed negotiation, named by you.
 - C: The proposal stays in NEGOTIATION until the applicant withdraws. After Q5 voiding, the lead cannot act, so it stalls.
 - Recommendation: B, because DECLINED means "no future call available". You choose the name and update the state machine.
+- **Answered by Daniel on 2026-10-25: A.** A new System transition leads from NEGOTIATION to DECLINED with a recorded reason. DECLINED means no future call is available, or negotiation failed with a recorded reason.**
 
 **Q7. Grant amount and cap (I-13, I-14, R-NG-03).**
 
@@ -1282,6 +1285,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - Counting. A: granted plus open reservations from amount determination, amended totals included, dropping to the paid total at closure (I-64). B: granted amounts only.
 - P-05 lowered below a recipient's committed sum. A: the edit is refused. B: the edit applies and blocks further grants.
 - Recommendation: A for all five. A in the first part means every reduction carries a recorded reason.
+- **Answered by Daniel on 2026-10-25: A for all five.**
 
 **Q8. Repeat grants (I-15, R-NG-05).**
 
@@ -1291,6 +1295,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - Amendments. A: this grant's accepted deliverables must also be recorded. B: only other prior grants count.
 - P-65 "progress report". Does a partial claim without public deliverables leave the record incomplete until the final claim?
 - Recommendation: A, B, B, A, and yes. Interim builds the strictest combination (A, A, A, A).
+- **Answered by Daniel on 2026-10-25: A, B, B, A, and yes.**
 
 **Q9. Non-frozen limits in published calls (P-05, P-13, I-51).** The Guide shows P-05 and P-13, and I-51 ties Guide values to the frozen call policy. I-04 and I-14 must hold against the programme's current values.
 
@@ -1298,6 +1303,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - B: Freeze P-05 and P-13 per call. I-04 and I-14 would then need restating per call.
 - C: Enforce the stricter of the call snapshot and the live value. Adding a P-13 class re-evaluates existing Receiving holders under Q5.
 - Recommendation: C. It keeps I-04 and I-14, and never applies a looser limit than the published Guide.
+- **Answered by Daniel on 2026-10-25: C.**
 
 **Q10. I-03 scope and committee conflicts.**
 
@@ -1305,6 +1311,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - Declarations. Must the FSTP coordinator declare before the knock-out read? Must every committee member declare under the P-10 option "all committee members"?
 - Conflicted committee members. A: recuse from the cut-off vote of any call where they hold a conflict on a ranked proposal, with no delegation to or from them. B: vote, with no special rule.
 - Recommendation: B for acts, yes to both declarations, and A for conflicted members.
+- **Answered by Daniel on 2026-10-25: B for acts, yes to both declarations, and A for conflicted members.**
 
 **Q11. Receiving bindings (I-01, I-04, I-36).** Roles bind to programmes, but NOTE 4 and I-36 need a call.
 
@@ -1312,6 +1319,7 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - End. A: at the proposal's terminal state, so grantees stay bound until COMPLETED or TERMINATED. B: never, as a programme-level binding.
 - Scope. A: the proposal and its call. B: the programme only.
 - Recommendation: A for all three, applied equally to team members and guardians.
+- **Answered by Daniel on 2026-10-25: A for all three, applied equally to team members and guardians.**
 
 **Q12. M2 exit scope.**
 
@@ -1319,19 +1327,34 @@ Q1 to Q3 are answered. Q4 to Q19 are open.
 - I-34, I-35 and I-36 sit in no milestone's exit. A: add them to M2. B: leave them unassigned. If A: reviewer organisations are a field on the committee binding, and proposal-declared affiliations stay in the vault behind `DeclaresAffiliationOnList`. A DEFERRED proposal counts as under evaluation in the next call for I-36.
 - The test plan has no I-04 row. Do you accept the row proposed in section 6.2?
 - Recommendation: A, A with that data placement, and yes.
+- **Answered by Daniel on 2026-10-25: A, A with that data placement, and yes.**
 
 ### 12.2 These shape M2 but can follow
 
 **Q13. Vault interface for M3.** Accept the query set in section 4.1, fail-closed on vault unavailability, and recording positive matches visible to auditors only? Options: A, accept as listed; B, keep to the four queries in `overview.md` and restate the affected invariants. Recommendation: A.
 
+**Answered by Daniel on 2026-10-25: A.**
+
 **Q14. Calls.** Call states: A, draft, approved and published, with open and closed derived from time; B, a richer lifecycle you define. "Future call exists": A, a later call of the programme is published; B, one is scheduled under P-06. Call budget: A, immutable once published and display-only; B, a hard nomination limit. R-PC-03 drafters: A, call authors plus the last authors of P-01 and P-09; B, call authors only. P-10 "operator staff only": which role reads? Recommendation: A, A, A, A, and a named Judging role for the P-10 option.
+
+**Answered by Daniel on 2026-10-25: A, A, A, A.** The Judging role that reads under the P-10 option "operator staff only" is not named yet and stays open.
 
 **Q15. Deferral.** Which call's frozen policy governs a deferred proposal: A, the original call, matching what the applicant was told; B, the new call. Do assignments and handles carry over: A, new assignments and handles in the new call; B, they carry over. A STAGE2 deferral with no next call: A, it waits; B, it becomes DECLINED after a limit. Findings: A, they stay with the producing call and M7 may regenerate in the new call; B, they move. Recommendation: A for all four.
 
+**Answered by Daniel on 2026-10-25: A for all four.**
+
 **Q16. Model replacement versus frozen P-21.** A: the frozen P-21 value is a primary model plus an ordered fallback list, pinned at publication, with atomic regeneration of the call's findings. B: no replacement, and the call stops using findings. C: unfreeze P-21. Recommendation: A, which keeps I-11 and I-12 intact.
+
+**Answered by Daniel on 2026-10-25: A.**
 
 **Q17. Cut-off and voting (R-EV-08, R-EV-09).** Cut-off: A, a rank position over a total order, with ties broken by the committee under P-17 and recorded; B, a score. P-16: majority base, quorum, delegation limits. P-17 needs applicant country before NEGOTIATION: A, a vault boolean; B, a self-declared field. Rounds: A, each cut-off covers the proposals currently RANKED; B, one per call. Recommendation: A, then your P-16 details, A, A.
 
+**Answered by Daniel on 2026-10-25: A, A, A.** The P-16 details (majority base, quorum, delegation limits) stay open.
+
 **Q18. Execution, amendments and signatory.** Milestones have due dates, not start dates: what is the "first milestone start date" (A, contract effective date plus an offset you set; B, a start date added to milestones)? COMPLETED with partial payments: "all milestone payment requests PAID" seems to conflict with P-67 releasing unclaimed balances at COMPLETED (A, every milestone closed by M5's rule and every request terminal; B, every milestone fully paid). Is GRANTED to TERMINATED allowed? Amendments: A, a separate workflow with the proposal state unchanged, the programme manager deciding P-14 exemptions, and "total" meaning the amended contract total. The contract signatory: add an "Operations role with signing authority" to the roles table? Recommendation: B, A, yes, A, and yes.
 
+**Answered by Daniel on 2026-10-25: B, A, yes, A, and yes.**
+
 **Q19. Persistence.** A: one ledger per cell, recorded in a new ADR before M3, with canonical record text holding ADR-006 strings and `numeric` columns in projections. B: one ledger per programme. Also confirm `TextRef` for free text, and say how P-41 retention and I-81 shredding should coexist with I-23. Recommendation: A, plus the `TextRef` approach.
+
+**Answered by Daniel on 2026-10-25: A, plus the `TextRef` approach.** How P-41 retention and I-81 shredding coexist with I-23 stays open.
