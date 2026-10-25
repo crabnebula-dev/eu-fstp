@@ -67,6 +67,8 @@ NOTE: The bar covers every call published up to the end of the binding, includin
 
 NOTE: P-12 is pinned when each binding ends. A later P-12 edit changes only the bars of bindings that end after the edit.
 
+NOTE: An end may be scheduled for a later instant, when the role is granted or afterwards (decided 2026-10-25). The binding stays held until that instant. Its bar is pinned then, from the calls published by that instant and the P-12 value in force at it. A scheduled end can be brought forward, never moved earlier than the current time.
+
 NOTE: Cooling-off counts call publications, never a wall-clock duration (`02-domain/policy-parameters.md` NOTE 4). I-36 adds a further bar for calls holding a proposal the person reviewed.
 
 NOTE: Through I-06, a bar also binds every other account with the same verified identity. SoD-09 enforces this: an account with an unexpired bar joins the candidate set of the identity query (`03-architecture/overview.md` NOTE 1).
@@ -83,8 +85,9 @@ When the vault verifies an applicant at negotiation, it can find either of two t
 
 - Voided bindings never count as held, including as past bindings within the cooling-off period. They pin no cooling-off bar.
 - The other account's Judging binding stays, since it was verified at grant time.
-- A Drafting binding of the other account is read the same way, since SoD-09 also verified it at grant time. TODO(Daniel): confirm this reading (O-53).
+- A Drafting binding of the other account stays too, since SoD-09 also verified it at grant time (decided 2026-10-25, O-53).
 - Scores already given by a matching Judging account get a notifiable conflict (R-CF-04).
+- The notifiable conflict is recorded even when the discovered Receiving binding was already voided for another reason, such as I-04 (decided 2026-10-25).
 - Re-evaluation of those scores happens only through complaint remedies (`02-domain/complaints.md`).
 
 The same voiding applies, in the same step, when a P-13 class is added (decided 2026-10-25). The vault then re-checks every Receiving holder of the programme, and each account now in an excluded class loses its Receiving bindings. It applies equally when the vault reports a new affiliation that puts a Receiving holder in an excluded class, under the verification commit protocol (`03-architecture/overview.md` NOTE 4).

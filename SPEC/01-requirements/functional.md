@@ -37,7 +37,7 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 - **R-EV-04** Non-selected applicants are notified within P-08.
 - **R-EV-05** In stage 2, assigned reviewers can ask questions and suggest changes, and applicants can submit a revised plan including budget changes.
   AC: when the assigned reviewers record that they have no questions, the proposal reaches RANKED without waiting for P-07.
-  NOTE: Assigned reviewers rescore each revised plan, and at least P-03 valid stage 2 scores are needed. A "no questions" record closes the stage 2 window at once, with answers deemed complete (decided 2026-10-25, `02-domain/state-machine.md`). How many assigned reviewers must make that record is open (O-50). TODO(Daniel): decide.
+  NOTE: Assigned reviewers rescore each revised plan, and at least P-03 valid stage 2 scores are needed. A "no questions" record closes the stage 2 window at once, with answers deemed complete (decided 2026-10-25, `02-domain/state-machine.md`). Every active assigned reviewer must make that record (decided 2026-10-25, O-50).
 - **R-EV-06** The effective score after stage 2 follows P-24 (I-09).
   AC: under "higher of original and revised", equal original and revised scores give an effective score that references the original plan version.
   NOTE: When several revisions exist, the latest scored revision is the revised plan. On a P-24 tie, the original plan carries forward (decided 2026-10-25, `02-domain/state-machine.md` NOTE 4).
@@ -52,7 +52,7 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
   NOTE: The call budget is fixed at publication and shown for information. It is not a hard limit on nominations (decided 2026-10-25).
 - **R-EV-09** Committee decisions follow P-16.
   NOTE: Committee members with a conflict on a ranked proposal recuse from that call's cut-off vote (R-CF-02).
-  NOTE: The P-16 majority base, quorum and delegation limits are not decided yet (O-44).
+  NOTE: P-16 counts a majority of the votes cast by members who are not recused, needs a quorum of more than half of them, lets a member hold at most one delegated vote, and gives the chair a casting vote on a tie (decided 2026-10-25, `02-domain/policy-parameters.md` NOTE 8).
 - **R-EV-10** Reviewers can record external verification of claims without disclosing applicant identity unless the applicant consented to sharing.
 
 ## Independent review
