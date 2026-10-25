@@ -11,8 +11,13 @@
 //! to `fstp-findings` or `fstp-engine` (I-10), which `tools/deps-check`
 //! enforces.
 //!
-//! Status: module tree from milestone M2 step W0. Every module is an empty
-//! stub. Each lane fills only the modules it owns (design section 10).
+//! Status: interface from milestone M2 step W1c. The interface modules hold
+//! ids, time, refusals, commands, records, vault queries, the projection,
+//! the transition and actor tables and the parameter catalogue. The engine
+//! is a fixed dispatcher. It runs the checks every command shares, then calls
+//! one stub per lane module, which refuses with `Refusal::not_implemented()`.
+//! Lane modules hold the vocabulary the interface names and those stubs.
+//! Each lane fills only the modules it owns (design section 10).
 
 #![deny(
     clippy::float_arithmetic,
@@ -57,3 +62,11 @@ pub mod proposal;
 pub mod amendment;
 pub mod grant;
 pub mod payment;
+
+pub use command::{Actor, Command, CommandKind, Ctx, SystemCause, Via};
+pub use engine::{FoldError, apply, decide, due, queries, replay, stage1_ready};
+pub use oracle::{Answer, Answers, OracleDown, Query, QueryKind};
+pub use record::{Record, RulesVersion};
+pub use refusal::{Refusal, RefusalReason, RuleRef};
+pub use rules::{ACTOR_RULES, CATALOGUE, Row, StateTag, TRANSITIONS};
+pub use state::State;
