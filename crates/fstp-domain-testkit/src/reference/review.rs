@@ -16,8 +16,9 @@
 //!   leaves it to production. [`expected`] says what an accepted command
 //!   must record, and [`check_reaction`] checks a vault reaction.
 //! - [`check_i03`], [`check_rcf02`], [`check_handles`],
-//!   [`check_i02_assignments`] and [`check_i36`] are the invariant
-//!   predicates. They read the views only.
+//!   [`check_i02_assignments`], [`check_i36`], [`check_i36_held`] and
+//!   [`check_i36_grants`] are the invariant predicates. They read the
+//!   views only.
 //!
 //! # Readings
 //!
@@ -115,6 +116,17 @@
 //!   proposal is under evaluation in its current call and in the next
 //!   published call of the programme (Q12). A Receiving binding of a
 //!   former reviewer in such a call is refused, whatever P-12 says.
+//! - I-36, decided 2026-10-25 (Reviewer assignment, data placement NOTE):
+//!   a former reviewer takes no Receiving role in a call of a programme
+//!   where they reviewed a proposal, until every proposal they reviewed is
+//!   decided. Decided means terminal, or GRANTED or later. This closes the
+//!   race in which a proposal is deferred into a call after its former
+//!   reviewer drafted there. Two test-author choices, the strictest the
+//!   text allows: "later call" covers every call of that programme, and
+//!   "every proposal they reviewed" counts proposals of any programme.
+//! - I-36 also holds as a state predicate: no held Receiving binding sits
+//!   in a call where a proposal its account reviewed is under evaluation
+//!   ([`check_i36_held`]). It catches a deferral that lands after a grant.
 //! - Intake: `Submit` and `RecordPlanVersion` are the lead's, with an
 //!   active Applicant binding on the proposal. `Submit` needs DRAFT, a
 //!   published call with `opens <= now < deadline`, and a plan of the
@@ -357,8 +369,10 @@ pub struct RevView {
     /// Reads by an account outside the applicant team with neither an active
     /// assignment nor a clearance on the proposal.
     pub undeclared_reads: BTreeSet<(AccountId, ProposalId)>,
-    /// Receiving bindings granted to a former reviewer in a call where the
-    /// reviewed proposal was under evaluation (I-36).
+    /// Receiving bindings granted to a former reviewer while I-36 barred
+    /// them: in a call where a reviewed proposal was under evaluation, or
+    /// in a call of a programme where they reviewed, while a reviewed
+    /// proposal was undecided.
     pub i36_breaches: BTreeSet<(AccountId, CallId)>,
     /// The last vault epoch processed.
     pub epoch: VaultEpoch,
@@ -406,6 +420,24 @@ pub const TERMINAL: [StateTag; 6] = [
 /// Whether `s` is terminal, from the states table.
 pub fn terminal(s: StateTag) -> bool {
     TERMINAL.contains(&s)
+}
+
+/// The states in which a reviewed proposal is decided for I-36: terminal,
+/// or GRANTED or later (decided 2026-10-25).
+pub const DECIDED: [StateTag; 8] = [
+    StateTag::Ineligible,
+    StateTag::NotSelected,
+    StateTag::Declined,
+    StateTag::Withdrawn,
+    StateTag::Granted,
+    StateTag::InExecution,
+    StateTag::Completed,
+    StateTag::Terminated,
+];
+
+/// Whether `s` is decided for I-36.
+pub fn decided(s: StateTag) -> bool {
+    DECIDED.contains(&s)
 }
 
 impl RevView {
@@ -554,11 +586,48 @@ impl RevView {
         life.state == StateTag::Deferred && self.next_call(life.current_call) == Some(call)
     }
 
-    /// Whether a Receiving binding of `account` in `call` breaks I-36 now.
-    pub fn i36_bars(&self, account: AccountId, call: CallId) -> bool {
+    /// The proposals `account` reviewed: any reviewer or IRC assignment,
+    /// released or not (I-36).
+    pub fn reviewed_by(&self, account: AccountId) -> impl Iterator<Item = ProposalId> + '_ {
         self.reviewed
             .iter()
-            .any(|(a, p)| *a == account && self.under_evaluation_in(*p, call))
+            .filter(move |(a, _)| *a == account)
+            .map(|(_, p)| *p)
+    }
+
+    /// Whether `proposal` is decided for I-36: terminal, or GRANTED or
+    /// later. An unknown proposal is not decided.
+    pub fn decided(&self, proposal: ProposalId) -> bool {
+        self.proposals
+            .get(&proposal)
+            .is_some_and(|l| decided(l.state))
+    }
+
+    /// The narrower check that I-36 had before the decision of 2026-10-25:
+    /// a reviewed proposal is under evaluation in `call` now. It is kept
+    /// for the teeth tests, which inject it as the faulty engine.
+    pub fn i36_bars_current_call_only(&self, account: AccountId, call: CallId) -> bool {
+        self.reviewed_by(account)
+            .any(|p| self.under_evaluation_in(p, call))
+    }
+
+    /// Whether a Receiving binding of `account` in `call` breaks I-36 now.
+    ///
+    /// It does when a proposal the account reviewed is under evaluation in
+    /// `call`. It also does when the account reviewed a proposal of the
+    /// programme of `call`, and any proposal it reviewed is undecided
+    /// (decided 2026-10-25).
+    pub fn i36_bars(&self, account: AccountId, call: CallId) -> bool {
+        if self.i36_bars_current_call_only(account, call) {
+            return true;
+        }
+        let Some(programme) = self.calls.get(&call).map(|c| c.programme) else {
+            return false;
+        };
+        let reviewed_here = self
+            .reviewed_by(account)
+            .any(|p| self.programme_of(p) == Some(programme));
+        reviewed_here && self.reviewed_by(account).any(|p| !self.decided(p))
     }
 
     fn act(&mut self, account: AccountId, proposal: ProposalId) {
@@ -2146,15 +2215,64 @@ pub fn check_i02_assignments(view: &sod::View, rev: &RevView) -> Result<(), Stri
     Ok(())
 }
 
-/// I-36: no Receiving binding was granted to a former reviewer in a call
-/// where the reviewed proposal was under evaluation.
+/// I-36: no Receiving binding was granted to a former reviewer while
+/// [`RevView::i36_bars`] barred it. That is a call where a reviewed
+/// proposal was under evaluation, or a call of a programme where the
+/// account reviewed while a proposal it reviewed was undecided.
 pub fn check_i36(rev: &RevView) -> Result<(), String> {
     match rev.i36_breaches.iter().next() {
         None => Ok(()),
         Some((a, c)) => Err(format!(
-            "I-36: former reviewer {a:?} took a Receiving role in {c:?}, which holds a proposal it reviewed"
+            "I-36: former reviewer {a:?} took a Receiving role in {c:?} while a proposal it reviewed was undecided"
         )),
     }
+}
+
+/// I-36 as a state predicate: no held Receiving binding sits in a call
+/// where a proposal its account reviewed is under evaluation now. The call
+/// is the binding's own call and the current call of its proposal. A
+/// DEFERRED proposal is under evaluation in the next published call too
+/// (Q12), so a deferral that lands after the grant is caught here.
+pub fn check_i36_held(view: &sod::View, rev: &RevView) -> Result<(), String> {
+    for b in view
+        .bindings
+        .values()
+        .filter(|b| b.group == RefGroup::Receiving && b.held())
+    {
+        let current = b
+            .proposal
+            .and_then(|p| rev.proposals.get(&p))
+            .map(|l| l.current_call);
+        for call in b.call.into_iter().chain(current) {
+            if let Some(p) = rev
+                .reviewed_by(b.account)
+                .find(|p| rev.under_evaluation_in(*p, call))
+            {
+                return Err(format!(
+                    "I-36: {:?} holds Receiving binding {:?} in {call:?}, where {p:?}, which it reviewed, is under evaluation",
+                    b.account, b.binding
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// I-36 on one step: no Receiving binding that `records` grant was barred
+/// by [`RevView::i36_bars`] in `before`, the view before the step.
+pub fn check_i36_grants(before: &RevView, records: &[Record]) -> Result<(), String> {
+    for r in records {
+        if let Record::BindingGranted(g) = r
+            && let BindingScope::Proposal { call, .. } = g.scope
+            && before.i36_bars(g.account, call)
+        {
+            return Err(format!(
+                "I-36: former reviewer {:?} was granted Receiving binding {:?} in {call:?} while a proposal it reviewed was undecided",
+                g.account, g.binding
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// I-34 after an accepted `Assign` (test-author reading): when the
