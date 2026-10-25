@@ -97,13 +97,7 @@ fn interface_engine_stubs_refuse_without_panicking() {
 
     let none: Vec<Entry<Record>> = Vec::new();
     assert_eq!(replay(&none), Ok(State::genesis()));
-    let one = vec![Entry {
-        seq: Seq::from_raw(1),
-        at: 1,
-        command: [1; 16],
-        schema: 1,
-        record,
-    }];
+    let one = vec![entry(1, 1, [1; 16], record)];
     assert_eq!(replay(&one), Err(FoldError::NotImplemented));
 
     assert!(due(&state, Timestamp::from_micros(i64::MAX)).is_empty());
@@ -409,13 +403,23 @@ fn interface_criteria_new_checks_design_bounds() {
 }
 
 fn vault_entry(seq: u64, at: i64) -> Entry<Record> {
-    Entry {
-        seq: Seq::from_raw(seq),
-        at,
-        command: [2; 16],
-        schema: 1,
-        record: vault_outcome(),
-    }
+    entry(seq, at, [2; 16], vault_outcome())
+}
+
+/// An entry with these envelope fields. Only a store or the decoder builds
+/// entries, so this decodes a template and then sets the public fields,
+/// which lets replay tests use sequence numbers no store would write.
+#[allow(clippy::expect_used, reason = "the template is a fixed valid entry")]
+fn entry(seq: u64, at: i64, command: [u8; 16], record: Record) -> Entry<Record> {
+    let text = br#"{"at":0,"command":"00000000000000000000000000000000","record":null,"schema":1,"seq":"1"}"#;
+    let value = fstp_json::parse(text).expect("template entry parses");
+    let mut e = fstp_json::FromJson::from_json(&value)
+        .map(|e: Entry<fstp_json::Value>| e.map_record(|_| record))
+        .expect("template entry decodes");
+    e.seq = Seq::from_raw(seq);
+    e.at = at;
+    e.command = command;
+    e
 }
 
 /// `replay` folds only a log numbered from 1 with no gaps. A repeated,
