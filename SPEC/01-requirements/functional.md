@@ -64,7 +64,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 ## Negotiation and grant
 
-- **R-NG-01** Identity attributes are collected only in NEGOTIATION (I-17).
+- **R-NG-01** Identity attributes are collected only in NEGOTIATION (I-17), except the applicant's country of residence or establishment for P-17, which is collected at submission and held only in the identity vault.
+  NOTE: Judging roles see only the vault's yes or no answer to the P-17 country condition. The country is verified in NEGOTIATION (decided 2026-10-25, O-48). TODO(legal): confirm this early collection under GDPR.
 - **R-NG-02** A minor's proposal enters NEGOTIATION only with verified guardian consent (I-18).
 - **R-NG-03** The grant amount is set by the assigned reviewers, adjusted for ineligible costs, within P-04 and P-05.
   AC: a granted amount that differs from the effective plan total minus the recorded deductions is rejected. An amount equal to either P-04 bound is accepted.

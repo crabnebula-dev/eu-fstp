@@ -59,7 +59,7 @@ NOTE 5: What the platform learns (decided 2026-10-25). A positive answer over a 
 - Only the Auditor role can see recorded positive matches. Judging roles never see them (R-CF-03).
 - Such links are between accounts of one tenant. I-20 concerns accounts in different tenants and is unaffected.
 
-NOTE 6: The P-17 query answers one bit and releases no country to Judging roles (decided 2026-10-25). How the vault holds the country before NEGOTIATION, given R-NG-01 and I-17, is open (O-48). TODO(Daniel): decide the source and confirm that the derived bit is consistent with I-17.
+NOTE 6: The P-17 query answers one bit and releases no country to Judging roles (decided 2026-10-25). The applicant states the country at submission, and only the vault receives it. It is verified in NEGOTIATION, and a false statement is grounds to decline (decided 2026-10-25, O-48). TODO(legal): confirm the early collection under GDPR.
 
 Identity attributes are released to Operations roles only in NEGOTIATION and later. Phone numbers and messaging handles are released only to the channel adapters.
 

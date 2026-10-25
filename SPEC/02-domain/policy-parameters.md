@@ -33,7 +33,7 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 | P-27 | Hardship contribution enabled | Yes | No |
 | P-28 | Show indicative LLM rubric bands to reviewers | Off | Yes |
 
-NOTE 1: P-10 options are: assigned reviewers only, all committee members, operator staff only. The default is the narrowest. Which Judging role reads under the option "operator staff only" is open (O-43). TODO(Daniel): name that role.
+NOTE 1: P-10 options are: assigned reviewers only, all committee members, operator staff only. The default is the narrowest. Under the option "operator staff only", the FSTP coordinator reads, after declaring conflicts as for the knock-out read. Operator staff means the programme operator's staff, never platform operator staff, who hold no roles (SoD-08) (decided 2026-10-25, O-43).
 
 NOTE 2: Annexe sections 5.a, 7 and 8.a disagree on who reads proposals. SuperSAFE resolves this as assigned reviewers only (O-01). Staff of any partner may be assigned (O-22), subject to SoD-10 and SoD-11.
 
@@ -78,7 +78,7 @@ NOTE 8: P-16 voting details (decided 2026-10-25, O-44).
 - A member holds at most one delegated vote. No vote is delegated to or from a recused member.
 - The committee chair has a casting vote on a tie.
 
-NOTE 9: Applying P-17 needs the applicant's country before NEGOTIATION. The identity vault provides it as a boolean answer: whether the applicant meets the country condition of P-17 (decided 2026-10-25). How the vault learns the country before NEGOTIATION is open (O-48). TODO(Daniel): decide the source, given R-NG-01 and I-17.
+NOTE 9: Applying P-17 needs the applicant's country before NEGOTIATION. The identity vault provides it as a boolean answer: whether the applicant meets the country condition of P-17 (decided 2026-10-25). The applicant states a country of residence or establishment at submission. It goes only to the identity vault, never to the platform or to Judging roles, and is verified in NEGOTIATION (R-NG-01, decided 2026-10-25, O-48). TODO(legal): confirm that collecting the country before negotiation meets GDPR data minimisation and purpose limitation.
 
 NOTE 10: The frozen P-21 value is a primary model plus an ordered fallback list, all pinned at publication (decided 2026-10-25). A replacement takes the next model on the list. It regenerates every finding of the call in one atomic step, so findings never mix configurations (I-11).
 
