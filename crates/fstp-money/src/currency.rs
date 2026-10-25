@@ -8,6 +8,11 @@ use core::fmt;
 pub enum Currency {
     /// Euro, two minor digits.
     Eur,
+    /// ISO 4217 `XTS`, the code reserved for testing, with two minor digits.
+    /// It exists only in unit tests, so the `CurrencyMismatch` paths have
+    /// coverage. [`Currency::from_code`] never returns it.
+    #[cfg(test)]
+    Xts,
 }
 
 impl Currency {
@@ -15,6 +20,8 @@ impl Currency {
     pub const fn code(self) -> &'static str {
         match self {
             Currency::Eur => "EUR",
+            #[cfg(test)]
+            Currency::Xts => "XTS",
         }
     }
 
@@ -22,6 +29,8 @@ impl Currency {
     pub const fn minor_digits(self) -> u8 {
         match self {
             Currency::Eur => 2,
+            #[cfg(test)]
+            Currency::Xts => 2,
         }
     }
 
