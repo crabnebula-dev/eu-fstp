@@ -172,8 +172,9 @@ fn defer_pr1(s: &mut Scenario) -> Timestamp {
 /// I-36, Q12: once PR1 is DEFERRED and the next call is published, R1,
 /// who reviewed PR1, is refused a draft and a team role in that call under
 /// I-36, with P-12 = 0. R2, a committee member who never reviewed PR1, is
-/// not. After PR1 is withdrawn it is no longer under evaluation, and R1
-/// may apply.
+/// not. After PR1 is withdrawn it is terminal. It is the only proposal R1
+/// reviewed, so every proposal R1 reviewed is decided, and R1 may apply
+/// (decided 2026-10-25).
 #[test]
 fn i36_former_reviewer_never_receives_in_call_under_evaluation() {
     let mut s = scenario_with_second_deadline(&setup());

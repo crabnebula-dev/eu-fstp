@@ -1,4 +1,4 @@
-//! I-36 with the stage rows folded: a former reviewer never takes a Receiving role in a call where the reviewed proposal is under evaluation (design 2.7).
+//! I-36 with the stage rows folded: a former reviewer never takes a Receiving role in a later call while the reviewed proposal is undecided (design 2.7, decided 2026-10-25).
 //!
 //! The scenario runs production commands from genesis with P-12 = 0, so
 //! SoD-05 alone would let a former committee member apply. The stage rows
@@ -103,15 +103,21 @@ fn apply(who: fstp_domain::id::AccountId, n: u128, c: u128) -> Step {
     )
 }
 
-/// I-36: while PR1 is in STAGE2 of call 1, it is under evaluation in call
-/// 1 only. SoD-05 already bars R1 from call 1, the call its binding ended
-/// in. Call 2 holds no proposal R1 reviewed, so with P-12 = 0 R1 may
-/// apply there.
+/// I-36, decided 2026-10-25: while PR1 is in STAGE2 of call 1, it is
+/// under evaluation in call 1 only, but it is undecided. So R1, who
+/// reviewed it, is refused a draft in call 2 too, with P-12 = 0. This
+/// closes the race with a later deferral of PR1 into call 2. R2, who never
+/// reviewed PR1, drafts in call 2.
 #[test]
-fn i36_former_reviewer_may_apply_where_nothing_it_reviewed_is_evaluated() {
+fn i36_former_reviewer_may_not_apply_while_a_reviewed_proposal_is_undecided() {
     let mut w = world();
     fold(&mut w, &TO_STAGE2);
     let step = apply(R1, 9_302, 2);
+    match w.exec(&step).unwrap_or_else(|e| panic!("harness: {e}")) {
+        Err(r) => assert_eq!(r.rule, RuleRef::I36, "{r}"),
+        Ok(records) => panic!("I-36: R1 drafted in call 2 while PR1 is undecided: {records:?}"),
+    }
+    let step = apply(R2, 9_303, 2);
     ok(&mut w, &step);
 }
 

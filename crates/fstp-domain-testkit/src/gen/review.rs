@@ -33,10 +33,13 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::{Answer, Answers, Query};
 use fstp_domain::policy::{ProximityLists, ReadAccess};
-use fstp_domain::proposal::{EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, Task};
-use fstp_domain::record::{BindingVoided, Record};
+use fstp_domain::proposal::{
+    EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, ReentryStage, Task,
+};
+use fstp_domain::record::{BindingVoided, Record, Transitioned};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::Role;
+use fstp_domain::rules::{Row, StateTag};
 use fstp_domain::time::Timestamp;
 use fstp_engine::{ExecError, Record as EngineRecord};
 use fstp_ledger::{Entry, Seq};
@@ -45,14 +48,15 @@ use fstp_prop::{Gen, StateMachine};
 
 use crate::r#gen::policy::{core_records, text};
 use crate::r#gen::roster::{
-    Backend, Facts, Flags, P1, SodSetup, SodWorld, Step, T0, add_member, add_staff, call, draft,
-    end, grant,
+    Backend, Facts, Flags, P1, P2, SodSetup, SodWorld, Step, T0, add_member, add_staff, call,
+    draft, end, grant,
 };
 use crate::harness::prop::{ledger_step, two_way_exec};
 use crate::reference::review::{
     ConflictFacts, RevView, check_expected, check_handles, check_i02_assignments, check_i03,
-    check_i34_assign, check_i36, check_rcf02, check_reaction, committee_organisation, end_releases,
-    expected, reaction_records, receiving_holder, team_change_records, team_of, verdict,
+    check_i34_assign, check_i36, check_i36_grants, check_i36_held, check_rcf02, check_reaction,
+    committee_organisation, end_releases, expected, reaction_records, receiving_holder,
+    team_change_records, team_of, verdict,
 };
 use crate::reference::sod::{self, Verdict};
 use crate::scenario::Scenario;
@@ -1664,6 +1668,7 @@ impl StateMachine for ReviewMachine {
         check_handles(&rev)?;
         check_i02_assignments(&view, &rev)?;
         sod::check_i02(&view)?;
+        check_i36_held(&view, &rev)?;
         check_i36(&rev)
     }
 
@@ -1750,4 +1755,522 @@ pub fn scenario_from(setup: &ReviewSetup, truth: GroundTruth) -> Result<Scenario
         }
     }
     Ok(s)
+}
+
+// ---------------------------------------------------------------------------
+// I-36: former reviewers and later calls
+// ---------------------------------------------------------------------------
+
+/// The call of the second programme [`P2`] in the I-36 setup.
+pub const I36_OTHER_CALL: CallId = call(11);
+
+/// The calls the I-36 property drafts in: the three calls of [`P1`] and
+/// the call of [`P2`]. SoD-05 bars call 1 to every former committee
+/// member, so the I-36 cases sit in calls 2, 3 and 11.
+pub const I36_TARGET_CALLS: [CallId; 4] = [call(1), call(2), call(3), I36_OTHER_CALL];
+
+/// The committee members of the I-36 setup. Their bindings end before
+/// the later calls are published.
+pub const I36_REVIEWERS: [AccountId; 4] = [R1, R2, R3, R4];
+
+/// The proposals of the I-36 setup, all submitted in call 1.
+pub const I36_PROPOSALS: [ProposalId; 3] = [PR1, PR2, PR3];
+
+/// The former judges of the I-36 setup: the committee members and the IRC
+/// member. Every binding of theirs ends before the later calls are published.
+pub const I36_FORMER_JUDGES: [AccountId; 5] = [R1, R2, R3, R4, IRC];
+
+/// The accounts the I-36 property drafts with: the former judges and two
+/// accounts that never review.
+pub const I36_APPLICANTS: [AccountId; 7] = [R1, R2, R3, R4, IRC, L4, STRANGER];
+
+/// Steps per case of the I-36 property, after the setup.
+pub const I36_MAX_STEPS: usize = 24;
+
+/// The lifecycle rows the I-36 property folds, from the transitions table.
+/// `Withdraw` is left out, since the property runs the command instead.
+pub const I36_ROWS: [(StateTag, StateTag, Row); 19] = [
+    (
+        StateTag::Submitted,
+        StateTag::Ineligible,
+        Row::SubmittedToIneligible,
+    ),
+    (
+        StateTag::Submitted,
+        StateTag::Stage1,
+        Row::SubmittedToStage1,
+    ),
+    (
+        StateTag::Stage1,
+        StateTag::NotSelected,
+        Row::Stage1ToNotSelected,
+    ),
+    (StateTag::Stage1, StateTag::Stage2, Row::Stage1ToStage2),
+    (StateTag::Stage2, StateTag::Ranked, Row::Stage2ToRanked),
+    (StateTag::Stage2, StateTag::Deferred, Row::Stage2ToDeferred),
+    (
+        StateTag::Ranked,
+        StateTag::NotSelected,
+        Row::RankedToNotSelected,
+    ),
+    (
+        StateTag::Ranked,
+        StateTag::IrcReview,
+        Row::RankedToIrcReview,
+    ),
+    (
+        StateTag::IrcReview,
+        StateTag::Negotiation,
+        Row::IrcReviewToNegotiation,
+    ),
+    (
+        StateTag::IrcReview,
+        StateTag::Deferred,
+        Row::IrcReviewToDeferred,
+    ),
+    (
+        StateTag::IrcReview,
+        StateTag::Declined,
+        Row::IrcReviewToDeclined,
+    ),
+    (StateTag::Deferred, StateTag::Stage2, Row::DeferredToStage2),
+    (
+        StateTag::Deferred,
+        StateTag::IrcReview,
+        Row::DeferredToIrcReview,
+    ),
+    (
+        StateTag::Negotiation,
+        StateTag::Granted,
+        Row::NegotiationToGranted,
+    ),
+    (
+        StateTag::Negotiation,
+        StateTag::Declined,
+        Row::NegotiationToDeclined,
+    ),
+    (
+        StateTag::Granted,
+        StateTag::InExecution,
+        Row::GrantedToInExecution,
+    ),
+    (
+        StateTag::Granted,
+        StateTag::Terminated,
+        Row::GrantedToTerminated,
+    ),
+    (
+        StateTag::InExecution,
+        StateTag::Completed,
+        Row::InExecutionToCompleted,
+    ),
+    (
+        StateTag::InExecution,
+        StateTag::Terminated,
+        Row::InExecutionToTerminated,
+    ),
+];
+
+/// The setup of the I-36 tests.
+///
+/// Programmes [`P1`] and [`P2`] have P-12 = 0, so SoD-05 alone lets a
+/// former committee member apply to every call published after its
+/// binding ended. Calls 1 to 3 of P1 and [`I36_OTHER_CALL`] of P2 are
+/// drafted and approved, and call 1 is published. The Judging bindings
+/// are those of [`machine_judges`], all in P1. PR1 to PR3 are submitted
+/// in call 1 by L1 to L3.
+pub fn i36_setup() -> ReviewSetup {
+    let mut base = SodSetup::one(0, &[1, 2, 3]);
+    base.programmes.push(P2);
+    base.calls.push((P2, I36_OTHER_CALL));
+    base.published = vec![call(1)];
+    let drafts = [(L1, PR1), (L2, PR2), (L3, PR3)]
+        .into_iter()
+        .map(|(lead, proposal)| DraftSpec {
+            lead,
+            proposal,
+            call: call(1),
+            team: Vec::new(),
+            minor: false,
+            submit: true,
+        })
+        .collect();
+    ReviewSetup {
+        base,
+        p38: BTreeMap::new(),
+        p10: ReadAccess::AssignedReviewersOnly,
+        judges: machine_judges(),
+        drafts,
+    }
+}
+
+/// The assignment id of the `n`-th review of [`i36_world`].
+pub fn i36_assignment(n: usize) -> AssignmentId {
+    AssignmentId::from_raw(8_000u128.saturating_add(u128::try_from(n).unwrap_or(0)))
+}
+
+/// The rows that bring a SUBMITTED proposal to IRC_REVIEW, where IRC
+/// assignments open.
+pub const I36_TO_IRC_REVIEW: [(StateTag, StateTag, Row); 4] = [
+    (
+        StateTag::Submitted,
+        StateTag::Stage1,
+        Row::SubmittedToStage1,
+    ),
+    (StateTag::Stage1, StateTag::Stage2, Row::Stage1ToStage2),
+    (StateTag::Stage2, StateTag::Ranked, Row::Stage2ToRanked),
+    (
+        StateTag::Ranked,
+        StateTag::IrcReview,
+        Row::RankedToIrcReview,
+    ),
+];
+
+/// A world after [`i36_setup`], then the assignments `reviews`, then the
+/// end of every committee member binding and of the IRC binding, then the
+/// publication of calls 2, 3 and [`I36_OTHER_CALL`].
+///
+/// A pair with [`IRC`] is an IRC assignment, and every other pair is a
+/// reviewer assignment. The reviewer assignments come first. An IRC
+/// assignment then folds its proposal from SUBMITTED to IRC_REVIEW with
+/// [`I36_TO_IRC_REVIEW`], since only IRC_REVIEW opens it. An assignment
+/// that the backend refuses, such as one that I-34 bars, is no review and
+/// is skipped. The ends release the assignments, which stay reviews for
+/// I-36.
+pub fn i36_world(
+    backend: Backend,
+    reviews: &[(AccountId, ProposalId)],
+) -> Result<ReviewWorld, String> {
+    let setup = i36_setup();
+    let mut w = ReviewWorld::from_setup(backend, review_truth(machine_accounts()), &setup, None)?;
+    let (irc, committee): (Vec<_>, Vec<_>) = reviews
+        .iter()
+        .enumerate()
+        .partition(|(_, (r, _))| *r == IRC);
+    for (n, (reviewer, proposal)) in committee.into_iter().chain(irc) {
+        let kind = if *reviewer == IRC {
+            let submitted = w
+                .view
+                .proposals
+                .get(proposal)
+                .is_some_and(|l| l.state == StateTag::Submitted);
+            if submitted {
+                i36_fold_path(&mut w, *proposal, &I36_TO_IRC_REVIEW)?;
+            }
+            AssignmentKind::Irc
+        } else {
+            AssignmentKind::Reviewer
+        };
+        let id = i36_assignment(n);
+        let step = assign(
+            COORDINATOR,
+            id,
+            *proposal,
+            *reviewer,
+            kind,
+            Some(handle(id.raw())),
+        );
+        // A refusal leaves the world unchanged, and the pair is no review.
+        let _refused = w.exec(&step)?;
+    }
+    // Judges 1 to 4 are the committee members, and judge 5 is the IRC member.
+    let mut fixed: Vec<Step> = (1..=5).map(|i| end(judge_binding(i), T0)).collect();
+    fixed.extend([call(2), call(3), I36_OTHER_CALL].map(crate::r#gen::roster::publish));
+    for step in fixed {
+        if let Err(r) = w.exec(&step)? {
+            return Err(format!(
+                "I-36 setup step {:?} refused: {r}",
+                step.cmd.kind()
+            ));
+        }
+    }
+    Ok(w)
+}
+
+/// Folds the lifecycle row `from` to `to` of `proposal` through the public
+/// structural fold, as the teeth helpers do, since lane L-LIFE does not
+/// record these rows yet. A row that leaves DEFERRED also folds the
+/// `ReEntered` record into the next published call first.
+///
+/// Returns whether the row was folded. It is not when the proposal is not
+/// in `from`, when no next call exists, or when the production fold does
+/// not take `ReEntered` yet.
+pub fn i36_advance(
+    w: &mut ReviewWorld,
+    proposal: ProposalId,
+    from: StateTag,
+    to: StateTag,
+    row: Row,
+) -> Result<bool, String> {
+    let Some(life) = w.view.proposals.get(&proposal) else {
+        return Ok(false);
+    };
+    if life.state != from {
+        return Ok(false);
+    }
+    let stage = match row {
+        Row::DeferredToStage2 => Some(ReentryStage::Stage2),
+        Row::DeferredToIrcReview => Some(ReentryStage::IrcReview),
+        _ => None,
+    };
+    let mut records = Vec::new();
+    if let Some(stage) = stage {
+        let Some(next) = w.view.next_call(life.current_call) else {
+            return Ok(false);
+        };
+        records.push(Record::ReEntered {
+            proposal,
+            from_call: life.current_call,
+            to_call: next,
+            stage,
+        });
+    }
+    records.push(Record::Transitioned(Transitioned {
+        proposal,
+        from,
+        to,
+        row,
+        actor: Actor::System(SystemCause::Timeline),
+        decision: None,
+    }));
+    match w.commit(&records) {
+        Ok(()) => Ok(true),
+        // Until lane L-LIFE lands, production refuses to fold `ReEntered`.
+        Err(_) if stage.is_some() => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Folds `rows` of `proposal` in order with [`i36_advance`]. Every row must fold.
+pub fn i36_fold_path(
+    w: &mut ReviewWorld,
+    proposal: ProposalId,
+    rows: &[(StateTag, StateTag, Row)],
+) -> Result<(), String> {
+    for (from, to, row) in rows {
+        if !i36_advance(w, proposal, *from, *to, *row)? {
+            return Err(format!("{proposal:?}: the row {row:?} did not fold"));
+        }
+    }
+    Ok(())
+}
+
+/// The account and call of the Receiving binding that `step` asks for,
+/// read from the review view. `None` for every other command.
+pub fn i36_target(rev: &RevView, step: &Step) -> Option<(AccountId, CallId)> {
+    match &step.cmd {
+        Command::CreateDraft { call, .. } => match step.actor {
+            Actor::Account(a) => Some((a, *call)),
+            Actor::System(_) => None,
+        },
+        Command::AddTeamMember {
+            proposal, account, ..
+        }
+        | Command::AddGuardian {
+            proposal, account, ..
+        } => rev.proposals.get(proposal).map(|l| (*account, l.call)),
+        _ => None,
+    }
+}
+
+/// The faulty engine of the I-36 teeth tests: the references with the
+/// check that I-36 had before the decision of 2026-10-25. It refuses a
+/// former reviewer only in a call where a proposal it reviewed is under
+/// evaluation now, and grants everything else that the other rules allow.
+/// It runs on [`Backend::Reference`] only.
+pub fn i36_exec_current_call_only(w: &mut ReviewWorld, step: &Step) -> StepResult {
+    if w.sod.backend != Backend::Reference {
+        return Err("the faulty I-36 engine runs on the references only".to_owned());
+    }
+    if let Err(r) = w.sync()? {
+        return Ok(Err(r));
+    }
+    let narrow_allows =
+        i36_target(&w.view, step).is_some_and(|(a, c)| !w.view.i36_bars_current_call_only(a, c));
+    if !narrow_allows {
+        return w.exec(step);
+    }
+    // The faulty engine forgets every review beyond the current-call check.
+    let mut blind = w.clone();
+    blind.view.reviewed.clear();
+    let result = blind.exec(step)?;
+    if let Ok(records) = &result {
+        w.commit(records)?;
+    }
+    Ok(result)
+}
+
+/// Runs one command of the I-36 property on `w` and checks it.
+///
+/// The I-36 check of the grants comes first, so a counterexample names
+/// I-36. Then the outcome is compared with the reference verdict in both
+/// directions. A refusal that the reference gives for I-36 alone must
+/// carry `RuleRef::I36` in production. `faulty` runs the step on
+/// [`i36_exec_current_call_only`].
+pub fn i36_core(w: &mut ReviewWorld, step: &Step, faulty: bool) -> Result<(), String> {
+    let context = format!("{:?} by {:?}", step.cmd, step.actor);
+    let before = w.view.clone();
+    let v = w.verdict(step);
+    let result = if faulty {
+        i36_exec_current_call_only(w, step)?
+    } else {
+        w.exec(step)?
+    };
+    match (result, &v) {
+        (Ok(records), _) => {
+            check_i36_grants(&before, &records).map_err(|e| format!("{e} ({context})"))?;
+            if let Verdict::Refuse(why) = &v {
+                return Err(format!(
+                    "{context}: over-permission, the reference refuses ({why}), the engine accepts"
+                ));
+            }
+            Ok(())
+        }
+        (Err(r), Verdict::Accept) => Err(format!(
+            "{context}: over-denial, the reference accepts, the engine refuses with {r}"
+        )),
+        (Err(r), Verdict::Refuse(why))
+            if why == "I-36" && w.sod.backend == Backend::Production && r.rule != RuleRef::I36 =>
+        {
+            Err(format!(
+                "I-36: {context}: refused with {r}, but the refusal must name RuleRef::I36"
+            ))
+        }
+        (Err(_), _) => Ok(()),
+    }
+}
+
+/// One step of the I-36 property.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum I36Act {
+    /// Folds a lifecycle row of a proposal with [`i36_advance`].
+    Advance {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The state left.
+        from: StateTag,
+        /// The state reached.
+        to: StateTag,
+        /// The row.
+        row: Row,
+    },
+    /// A core command, run with [`i36_core`].
+    Core(Box<Step>),
+}
+
+/// Draws one step of the I-36 property over `w`. `next` is a fresh id for
+/// a new proposal or binding.
+pub fn i36_act(g: &mut Gen, w: &ReviewWorld, next: u128) -> I36Act {
+    let drafts: Vec<(ProposalId, AccountId)> = w
+        .view
+        .proposals
+        .iter()
+        .filter(|(p, l)| !I36_PROPOSALS.contains(p) && l.state == StateTag::Draft)
+        .map(|(p, l)| (*p, l.lead))
+        .collect();
+    match g.weighted(&[6, 5, 2, 1]) {
+        0 => {
+            let proposal = *g.pick(&I36_PROPOSALS);
+            let state = w.view.proposals.get(&proposal).map(|l| l.state);
+            let rows: Vec<(StateTag, StateTag, Row)> = I36_ROWS
+                .iter()
+                .filter(|(from, _, _)| Some(*from) == state)
+                .copied()
+                .collect();
+            if rows.is_empty() {
+                return i36_draw_draft(g, next);
+            }
+            let (from, to, row) = *g.pick(&rows);
+            I36Act::Advance {
+                proposal,
+                from,
+                to,
+                row,
+            }
+        }
+        1 => i36_draw_draft(g, next),
+        2 if !drafts.is_empty() => {
+            let (proposal, lead) = *g.pick(&drafts);
+            let account = *g.pick(&I36_FORMER_JUDGES);
+            let guardian = g.weighted(&[3, 1]) == 1;
+            I36Act::Core(Box::new(add_member(
+                lead,
+                proposal,
+                account,
+                BindingId::from_raw(next),
+                guardian,
+            )))
+        }
+        2 => i36_draw_draft(g, next),
+        _ => {
+            let proposal = *g.pick(&I36_PROPOSALS);
+            let lead = w.view.proposals.get(&proposal).map_or(L1, |l| l.lead);
+            I36Act::Core(Box::new(withdraw(lead, proposal)))
+        }
+    }
+}
+
+/// Draws a draft by an account of [`I36_APPLICANTS`]. One draft in three
+/// is a minor's, so that `AddGuardian` on it reaches the I-36 bar.
+fn i36_draw_draft(g: &mut Gen, next: u128) -> I36Act {
+    let account = *g.pick(&I36_APPLICANTS);
+    let target = I36_TARGET_CALLS
+        .get(g.weighted(&[1, 4, 3, 2]))
+        .copied()
+        .unwrap_or(I36_OTHER_CALL);
+    let minor = g.weighted(&[2, 1]) == 1;
+    I36Act::Core(Box::new(draft(
+        account,
+        ProposalId::from_raw(next),
+        target,
+        BindingId::from_raw(next),
+        minor,
+    )))
+}
+
+/// The I-36 property (decided 2026-10-25, test plan row I-36).
+///
+/// It draws reviews of PR1 to PR3 by the committee members, always with
+/// R1 on PR1. In half the cases, the IRC member also reviews one of them.
+/// It then builds [`i36_world`] on `backend`. It then runs up to
+/// [`I36_MAX_STEPS`] steps: lifecycle rows of the reviewed proposals,
+/// withdrawals, drafts and team roles in calls 1 to 3 and the call of the
+/// other programme. Each command is checked with [`i36_core`]. After every
+/// step, [`check_i36_held`] and [`check_i36`] must hold. `faulty` runs the
+/// commands on [`i36_exec_current_call_only`] instead, for the teeth.
+pub fn i36_property(g: &mut Gen, backend: Backend, faulty: bool) -> Result<(), String> {
+    let mut reviews = vec![(R1, PR1)];
+    for r in I36_REVIEWERS {
+        for p in I36_PROPOSALS {
+            if (r, p) != (R1, PR1) && g.weighted(&[2, 1]) == 1 {
+                reviews.push((r, p));
+            }
+        }
+    }
+    if g.weighted(&[1, 1]) == 1 {
+        reviews.push((IRC, *g.pick(&I36_PROPOSALS)));
+    }
+    g.note("reviews", &reviews);
+    let mut w = i36_world(backend, &reviews)?;
+    let steps = g.usize_in(1..=I36_MAX_STEPS);
+    let mut next: u128 = 7_000;
+    for _ in 0..steps {
+        next = next.saturating_add(1);
+        let act = i36_act(g, &w, next);
+        g.note("step", &act);
+        match &act {
+            I36Act::Advance {
+                proposal,
+                from,
+                to,
+                row,
+            } => {
+                i36_advance(&mut w, *proposal, *from, *to, *row)?;
+            }
+            I36Act::Core(step) => i36_core(&mut w, step, faulty)?,
+        }
+        check_i36_held(&w.sod.view, &w.view)?;
+        check_i36(&w.view)?;
+    }
+    Ok(())
 }

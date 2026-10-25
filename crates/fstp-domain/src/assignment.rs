@@ -623,14 +623,46 @@ pub(crate) fn under_evaluation_in(state: &State, proposal: ProposalId, call: Cal
                 && crate::programme::next_published_call(state, current) == Some(call)))
 }
 
-/// Whether a Receiving binding of `account` in `call` would break I-36:
-/// the account reviewed a proposal under evaluation in that call.
-pub fn i36_bars(state: &State, account: AccountId, call: CallId) -> bool {
-    state.review.assignments.values().any(|a| {
-        a.reviewer == account
-            && a.kind.reviews_proposal()
-            && under_evaluation_in(state, a.proposal, call)
+/// Whether `proposal` is decided for I-36: in a terminal state, or in
+/// GRANTED or later (decided 2026-10-25). An unknown proposal is not
+/// decided.
+fn i36_decided(state: &State, proposal: ProposalId) -> bool {
+    proposal_state(state, proposal).is_some_and(|s| {
+        StateTag::TERMINAL.contains(&s) || matches!(s, StateTag::Granted | StateTag::InExecution)
     })
+}
+
+/// The proposals `account` reviewed: any reviewer or IRC assignment on
+/// them, released or not (I-36). A proposal may repeat.
+fn reviewed_by(state: &State, account: AccountId) -> impl Iterator<Item = ProposalId> + '_ {
+    state
+        .review
+        .assignments
+        .values()
+        .filter(move |a| a.reviewer == account && a.kind.reviews_proposal())
+        .map(|a| a.proposal)
+}
+
+/// Whether a Receiving binding of `account` in `call` would break I-36.
+///
+/// It would when a proposal the account reviewed is under evaluation in
+/// `call`. It also would when the account reviewed a proposal of the
+/// programme of `call` and any proposal it reviewed is still undecided
+/// (decided 2026-10-25). The second case covers every call of that
+/// programme, and it counts reviewed proposals of any programme. A later
+/// deferral then cannot bring a reviewed proposal into the account's call.
+pub fn i36_bars(state: &State, account: AccountId, call: CallId) -> bool {
+    if reviewed_by(state, account).any(|p| under_evaluation_in(state, p, call)) {
+        return true;
+    }
+    let Some(programme) =
+        crate::programme::call(state, call).map(crate::programme::CallView::programme)
+    else {
+        return false;
+    };
+    let reviewed_here =
+        reviewed_by(state, account).any(|p| programme_of(state, p).ok() == Some(programme));
+    reviewed_here && reviewed_by(state, account).any(|p| !i36_decided(state, p))
 }
 
 /// Whether someone who reviewed `proposal` holds a Receiving binding in
