@@ -155,6 +155,7 @@ NOTE: Data placement for SoD-10, SoD-11 and I-36 (decided 2026-10-25).
 - Each committee binding records the reviewer's organisation. SoD-10 and I-34 count distinct organisations from that field.
 - Affiliations a proposal declares are held only in the identity vault. SoD-11 and I-35 are checked through the proximity-list query (`03-architecture/overview.md`).
 - For I-36, a DEFERRED proposal is under evaluation in the next call.
+- A person who reviewed a proposal cannot take a Receiving role in any later call of the programme until every proposal they reviewed is decided: terminal, or GRANTED or later. This holds regardless of P-12, and it keeps a later deferral from putting a former reviewer's own proposal in the same call as one they reviewed (I-36, decided 2026-10-25).
 
 NOTE: Annexe 8.e allows proposals from the non-commercial constituencies around partners. SoD-11 keeps a partner's reviewers away from its own constituencies, which is the personal conflict risk 8.b addresses.
 
