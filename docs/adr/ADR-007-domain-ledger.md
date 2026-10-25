@@ -1,6 +1,6 @@
 # ADR-007: Domain ledger
 
-Status: Accepted by Daniel on 2026-10-25. After erasure, a `TextRef` resolves to its entry in the erasure log (decided 2026-10-25). The rest of the P-41 retention and I-81 crypto-shredding design stays open (O-45).
+Status: Accepted by Daniel on 2026-10-25. Retention and erasure were decided on 2026-10-25 (section "Retention and erasure", O-45). Two legal checks are pending.
 
 ## Context
 
@@ -29,7 +29,7 @@ Each cell has one append-only domain ledger. Every programme of the tenant write
 - Record bodies are stored as canonical text under RFC 8785, not as `jsonb`. The stored bytes are the bytes that are hashed.
 - Amounts in canonical record text are ADR-006 strings, for example `"1234.50"`.
 - Queryable projections are folds of the ledger. They store amounts in `numeric` columns at the currency's scale, through fstp-pgwire's `Numeric` type. Daniel decided on 2026-10-25 that this split meets ADR-006.
-- Free text is kept out of ledger bodies. A body holds a `TextRef`, which is an identifier and a digest of the text. The text itself is stored outside the ledger.
+- Free text is kept out of ledger bodies. A body holds a `TextRef`, which is an identifier and a digest of the text. The digest is keyed with a random salt stored with the text and destroyed with it, so after erasure the digest cannot confirm a guessed text (decided 2026-10-25). The text itself is stored outside the ledger.
 - The ledger holds no identity attributes. A vault answer is recorded as a query digest and the answer bit (`SPEC/03-architecture/overview.md`).
 - The ledger sits in the application database, never in the identity vault database (I-83).
 
@@ -46,5 +46,15 @@ Each cell has one append-only domain ledger. Every programme of the tenant write
 - The canonical bytes of each entry can feed the I-24 hash chain in M3 directly, with hashes from ADR-001 crates.
 - Because free text sits behind `TextRef`, erasure never needs to rewrite a ledger body.
 - The tenant export reads ledger records through the file interface in `SPEC/schemas/README.md`. No EUPL-1.2 code is linked into the platform.
-- After its text is erased, a `TextRef` resolves to the text's entry in the erasure log, never to the text (decided 2026-10-25). The ledger entry that holds the reference is unchanged.
-- Open: the rest of how P-41 retention and I-81 crypto-shredding coexist with I-23, such as what the erasure log holds and who may read it (O-45).
+- Retention and erasure follow the section below.
+
+## Retention and erasure
+
+Decided by Daniel on 2026-10-25 (O-45).
+
+- Each text has its own data key, so one text can be erased alone (ADR-004 level 3). Erasure destroys that key (R-KY-02, I-81).
+- After erasure, a `TextRef` resolves to the text's entry in the erasure log, never to the text. The ledger entry that holds the reference is unchanged (I-23).
+- An erasure-log entry holds the text id, the time of erasure, the cause (retention expiry, an erasure request or cell erasure) and the person who authorised it. It is linked into the tamper-evident audit chain (I-24), so an auditor can show that the erasure happened.
+- The Auditor role and tenant admins read the erasure log. The person concerned receives a confirmation.
+- An erasure request is honoured at once for everything outside the funder retention obligation (P-41). The rest is erased automatically when P-41 ends. TODO(legal): confirm which records the retention obligation covers and that deferring erasure for them is lawful.
+- When P-41 ends, the ledger stays as a pseudonymous skeleton: ids, amounts, scores and decisions, with no text and no identity vault data. I-23 and I-24 stay verifiable, and account ids cannot be linked to people once the vault and text keys are destroyed. TODO(legal): confirm whether that skeleton counts as anonymised data.
