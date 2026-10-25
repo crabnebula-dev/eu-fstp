@@ -68,8 +68,10 @@
 //!   holds another binding of that role in the programme (I-02).
 //! - `CreateDraft`, `AddTeamMember` and `AddGuardian` are refused under
 //!   I-36 when the account reviewed a proposal that is under evaluation in
-//!   the binding's call. A DEFERRED proposal is under evaluation in the
-//!   next published call too. P-12 does not matter.
+//!   the binding's call, or when it reviewed in the call's programme and
+//!   any proposal it reviewed is still undecided (terminal, GRANTED or
+//!   later is decided). A DEFERRED proposal is under evaluation in the
+//!   next published call too. P-12 does not matter (decided 2026-10-25).
 //!
 //! Readings of this lane, reported to Daniel:
 //!
