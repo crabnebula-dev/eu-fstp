@@ -1,6 +1,6 @@
 # ADR-007: Domain ledger
 
-Status: Accepted by Daniel on 2026-10-25. How P-41 retention and I-81 crypto-shredding coexist with I-23 stays open (O-45).
+Status: Accepted by Daniel on 2026-10-25. After erasure, a `TextRef` resolves to its entry in the erasure log (decided 2026-10-25). The rest of the P-41 retention and I-81 crypto-shredding design stays open (O-45).
 
 ## Context
 
@@ -46,4 +46,5 @@ Each cell has one append-only domain ledger. Every programme of the tenant write
 - The canonical bytes of each entry can feed the I-24 hash chain in M3 directly, with hashes from ADR-001 crates.
 - Because free text sits behind `TextRef`, erasure never needs to rewrite a ledger body.
 - The tenant export reads ledger records through the file interface in `SPEC/schemas/README.md`. No EUPL-1.2 code is linked into the platform.
-- Open: how P-41 retention and I-81 crypto-shredding of referenced text coexist with I-23 (O-45). This includes what a `TextRef` resolves to after its text is erased.
+- After its text is erased, a `TextRef` resolves to the text's entry in the erasure log, never to the text (decided 2026-10-25). The ledger entry that holds the reference is unchanged.
+- Open: the rest of how P-41 retention and I-81 crypto-shredding coexist with I-23, such as what the erasure log holds and who may read it (O-45).

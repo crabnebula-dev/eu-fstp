@@ -4,7 +4,7 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 
 | ID | Parameter | SuperSAFE default | Frozen |
 | --- | --- | --- | --- |
-| P-01 | Criteria, weights and score scale (NOTE 6) | Technical excellence 30, Relevance and impact 40, Value for money 30; scale maximum N not yet set (TODO(Daniel)) | Yes |
+| P-01 | Criteria, weights and score scale (NOTE 6) | Technical excellence 30, Relevance and impact 40, Value for money 30; scale 0 to 5 | Yes |
 | P-02 | Stage 1 pass threshold (strictly above, NOTE 6) | 75.00% | Yes |
 | P-03 | Assigned reviewers per proposal (minimum) | 2 | Yes |
 | P-04 | Grant range per proposal | 5k to 100k EUR | Yes |
@@ -60,7 +60,7 @@ NOTE 6: Scoring under P-01 and P-02 (decided 2026-10-25).
 - The proposal score is the mean over reviewers of their weighted sums, as a fraction of the maximum.
 - P-02 is a percentage of that maximum with two decimals. The comparison is exact, with no rounding, and the score must be strictly above P-02.
 - For example, with N = 4, the default weights and every score at 3, the score is exactly 75.00%. It does not pass a P-02 of 75.00%.
-- The spec gives no SuperSAFE value for N (O-46). TODO(Daniel): set N for the SuperSAFE default of P-01.
+- The SuperSAFE default is N = 5, matching the Horizon Europe criterion scores of 0 to 5 (decided 2026-10-25, O-46).
 
 NOTE 7: P-05 and P-13 are not frozen (decided 2026-10-25).
 
@@ -70,7 +70,13 @@ NOTE 7: P-05 and P-13 are not frozen (decided 2026-10-25).
 - Adding a P-13 class voids the Receiving bindings of every holder now in an excluded class, in the same step, as under Identity discovery in `02-domain/roles-and-sod.md` (I-04).
 - An edit that lowers P-05 below a recipient's counted sum is refused (`02-domain/contracts.md`).
 
-NOTE 8: The P-16 details are open (O-44): the majority base, the quorum and the limits on vote delegation. TODO(Daniel): set them.
+NOTE 8: P-16 voting details (decided 2026-10-25, O-44).
+
+- Members recused under `02-domain/roles-and-sod.md` neither vote nor count.
+- A decision needs a majority of the votes cast.
+- A vote needs a quorum of more than half of the members who are not recused. Delegated votes count towards the quorum.
+- A member holds at most one delegated vote. No vote is delegated to or from a recused member.
+- The committee chair has a casting vote on a tie.
 
 NOTE 9: Applying P-17 needs the applicant's country before NEGOTIATION. The identity vault provides it as a boolean answer: whether the applicant meets the country condition of P-17 (decided 2026-10-25). How the vault learns the country before NEGOTIATION is open (O-48). TODO(Daniel): decide the source, given R-NG-01 and I-17.
 

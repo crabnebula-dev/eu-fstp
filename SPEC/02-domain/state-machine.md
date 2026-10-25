@@ -52,7 +52,7 @@ NOTE 2: Notifications to NOT_SELECTED applicants are sent within P-08 so they ca
 
 NOTE 3: Stage 1 closes when every active assigned reviewer has a valid score and at least P-03 valid scores exist (I-07). A valid score is the current value from an active assignment. Scores of released or conflicted reviewers never count. Scores seal when the proposal leaves the stage. Only a recorded complaint remedy reopens them (`02-domain/complaints.md`). The FSTP coordinator records the close and cannot choose its outcome, which is computed (decided 2026-10-25).
 
-NOTE 4: In stage 2, the assigned reviewers rescore a revised plan, and at least P-03 valid stage 2 scores on it are needed. When several revisions exist, the latest scored revision counts. When the original and revised scores tie under P-24, the original plan carries forward. When the assigned reviewers record "no questions", the window closes at once with answers deemed complete, and STAGE2 to RANKED applies (decided 2026-10-25). Without that record, P-07 runs, and STAGE2 to DEFERRED applies if it elapses without answers. Whether every active assigned reviewer or at least P-03 of them must record "no questions" is open (O-50). TODO(Daniel): decide.
+NOTE 4: In stage 2, the assigned reviewers rescore a revised plan, and at least P-03 valid stage 2 scores on it are needed. When several revisions exist, the latest scored revision counts. When the original and revised scores tie under P-24, the original plan carries forward. When the assigned reviewers record "no questions", the window closes at once with answers deemed complete, and STAGE2 to RANKED applies (decided 2026-10-25). Without that record, P-07 runs, and STAGE2 to DEFERRED applies if it elapses without answers. Every active assigned reviewer must record "no questions" before the window closes this way (decided 2026-10-25, O-50).
 
 NOTE 5: STAGE2 to DEFERRED needs no future call (R-EV-07). A proposal deferred from STAGE2 while no next call exists waits in DEFERRED (decided 2026-10-25).
 
@@ -70,7 +70,7 @@ NOTE 11: Each milestone carries a start date as well as a due date. GRANTED to I
 
 NOTE 12: A milestone can close without being fully paid, since P-67 releases unclaimed balances at COMPLETED (decided 2026-10-25). The milestone closure rule is set in M5, and so are the terminal payment request states (`02-domain/payment-requests.md`, O-51). TODO(Daniel): confirm both in M5.
 
-NOTE 13: R-LA-03 requires a named human to record every decision. Where a System row records a decision, its outcome stays computed and a named human records it. Only the stage 1 rows name that human so far. The recorder of each other System row, and which of those rows record a decision, are open (O-49). TODO(Daniel): name them.
+NOTE 13: R-LA-03 requires a named human to record every decision. Where a System row records a decision, its outcome stays computed and a named human records it. The FSTP coordinator records the stage 1 rows. The programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED, which are decisions with a recorded reason. The rows driven by a timer or a date are not decisions, and the system records them: STAGE2 to DEFERRED, DEFERRED re-entry, GRANTED to IN_EXECUTION and IN_EXECUTION to COMPLETED (decided 2026-10-25, O-49).
 
 ## Call states
 
