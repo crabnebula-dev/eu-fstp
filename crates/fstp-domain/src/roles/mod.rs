@@ -4,17 +4,22 @@
 //! come from `SPEC/02-domain/roles-and-sod.md` and
 //! `SPEC/03-architecture/overview.md` NOTE 1 to 6.
 //!
-//! - [`RosterState`] holds the bindings that count: held ones (active or
-//!   suspended) and voided ones. An ended binding of Drafting, Judging or
+//! - [`RosterState`] holds the bindings that are not ended: active,
+//!   suspended and voided ones. An ended binding of Drafting, Judging or
 //!   Receiving moves to the ended part with its pinned cooling-off bar,
-//!   one bar per binding. Voiding an ended Receiving binding drops its bar
+//!   one bar per binding. Voiding an ended Receiving binding, or suspending
+//!   an ended Judging binding as a conflict of interest, drops its bar
 //!   (Identity discovery). The bar of an account, programme and group is
-//!   the largest bar that is not voided.
+//!   the largest bar that still counts.
 //! - Each binding keeps its opening: the call's sequence number for a
 //!   Receiving binding, and the latest call sequence published at the
 //!   grant otherwise. Two bindings of different separated groups break
 //!   I-01 together exactly when each opening is at most the other's bar,
-//!   a held binding having no bar. So no ledger position is needed.
+//!   a held binding having no bar. So I-01 needs no ledger position.
+//! - The roster also keeps a fold position for each Judging grant and end.
+//!   An open binding and an ended one were held at the same time exactly
+//!   when the end folded after the grant. Only the reinstatement of a
+//!   conflict-of-interest suspension reads it, for I-02.
 //! - Cooling-off is one comparison (Cooling-off section). An end pins the
 //!   bar: the latest call sequence published in the programme, plus P-12,
 //!   both read before the end record in ledger order. A Receiving binding
@@ -34,18 +39,47 @@
 //!
 //! - A person is a tenant account, except for I-06 (NOTE 3).
 //! - Voided bindings never count as held, past bindings included, and pin
-//!   no bar. Suspended bindings are inactive for every action but still
-//!   count as held, for I-04 and I-06 too.
+//!   no bar. Suspended bindings are inactive for every action. A
+//!   conflict-of-interest suspension never counts as held either, past
+//!   bindings included, and pins no bar. Every other suspended binding
+//!   still counts as held, for I-04 and I-06 too (enforcement points NOTE).
+//! - The conflict-of-interest marker is a `BindingSuspended` with rule I-06
+//!   on a Judging binding. The record shape has no other field for it. Rule
+//!   I-06 on a Drafting or Receiving binding is an ordinary suspension, and
+//!   this lane never writes one.
 //! - SoD-02 and I-02 concern roles held now (NOTE 4).
 //! - Identity discovery voids only the discovered account's Receiving
 //!   bindings, held and ended ones. The other account's Drafting or
 //!   Judging binding stays (strict reading of open point O-53, as the spec
 //!   text says). When the vault finds both an exclusion and a shared
 //!   identity, the void names I-06, so the R-CF-04 fact is kept.
-//! - A shared verified identity behind a Drafting and a Judging binding is
-//!   another new violation under enforcement point 3. The reaction
-//!   suspends each such held binding. Suspension does not restore I-06,
-//!   which is an open question for Daniel.
+//! - A shared verified identity behind a Drafting and a Judging binding
+//!   arises only from a later identity merge, since SoD-09 refuses it at
+//!   binding time. The reaction suspends the Judging binding as a conflict
+//!   of interest, in the same step, and the Drafting binding stays
+//!   (Identity discovery, decided 2026-10-25). An ended Judging binding
+//!   whose bar still breaks I-01 with the Drafting binding is suspended
+//!   too, or I-06 would stay broken through that bar.
+//! - A conflict-of-interest suspension can still be ended, and its bar
+//!   never counts. Its reinstatement is refused while the binding, counted
+//!   again, would break I-01 or I-02 for its own account, or I-06 with an
+//!   account of its verified identity. Bindings held at the same time break
+//!   I-01 forever, so the clash lasts until the vault splits the identities.
+//! - Counted again, a reinstated conflict-of-interest suspension counts
+//!   over the suspension period too. So its reinstatement is also refused
+//!   under I-02 when an IRC binding, or another Judging binding, of its own
+//!   account was held beside it, even one that has ended since. Otherwise
+//!   the history would show both held at the same time.
+//! - A conflict-of-interest suspension and an ordinary suspension of one
+//!   binding are kept apart. The marker can land on an ordinarily
+//!   suspended binding, and an ordinary suspension can land under the
+//!   marker. Reinstating the conflict of interest then falls back to the
+//!   ordinary suspension, which stays pending resolution (enforcement
+//!   point 3). One `ReinstateBinding` lifts one suspension, the conflict of
+//!   interest first.
+//! - The roster keeps every identity discovery it folds, in ledger order,
+//!   with the vault epoch of its record. A reinstatement or an end never
+//!   erases one (R-CF-04).
 //! - An end earlier or later than `ctx.now` is refused. A later end could
 //!   not pin its bar, because the calls published before it are unknown
 //!   when the command is decided. Scheduled ends are an open question for
@@ -56,7 +90,7 @@ pub(crate) mod guards;
 
 use std::collections::BTreeMap;
 
-use crate::id::{AccountId, BindingId, CallId, ProgrammeId, ProposalId};
+use crate::id::{AccountId, BindingId, CallId, ProgrammeId, ProposalId, VaultEpoch};
 use crate::refusal::RuleRef;
 use crate::time::Timestamp;
 
@@ -217,7 +251,9 @@ pub struct CoolingOff(pub u8);
 pub enum BindingStatus {
     /// The binding acts from its start.
     Active,
-    /// Suspended under enforcement point 3. Inactive for every action,
+    /// Suspended under enforcement point 3. Inactive for every action.
+    /// Rule I-06 on a Judging binding marks a conflict-of-interest
+    /// suspension, which never counts as held. Every other suspension is
     /// still held for every invariant.
     Suspended(RuleRef),
     /// Voided under Identity discovery. Never held, and it pins no bar.
@@ -243,6 +279,14 @@ pub struct Binding {
     pub opened: u32,
     /// Active, suspended or voided.
     pub status: BindingStatus,
+    /// The rule of an ordinary suspension that lies under a
+    /// conflict-of-interest suspension, if any. It is `None` whenever the
+    /// binding is not under a conflict-of-interest suspension. Reinstating
+    /// the conflict of interest restores `Suspended` with this rule.
+    pub suspended_beneath: Option<RuleRef>,
+    /// The roster fold position of the grant of a Judging binding
+    /// (`RosterState::tick`), and 0 for every other group.
+    pub granted: u64,
 }
 
 impl Binding {
@@ -251,10 +295,24 @@ impl Binding {
         self.role.group()
     }
 
-    /// Whether the binding counts as held: not voided. Ended bindings are
-    /// not in the roster at all.
+    /// Whether the binding counts as held: neither voided nor under a
+    /// conflict-of-interest suspension. Ended bindings are not in the
+    /// roster at all. Every other suspended binding still counts.
     pub const fn held(&self) -> bool {
-        !matches!(self.status, BindingStatus::Voided(_))
+        !self.voided() && !self.conflict_of_interest()
+    }
+
+    /// Whether the binding was voided under Identity discovery.
+    pub const fn voided(&self) -> bool {
+        matches!(self.status, BindingStatus::Voided(_))
+    }
+
+    /// Whether the binding is under a conflict-of-interest suspension: a
+    /// Judging binding suspended under I-06 (Identity discovery, decided
+    /// 2026-10-25). Such a binding never counts, held or past, and pins no bar.
+    pub const fn conflict_of_interest(&self) -> bool {
+        matches!(self.status, BindingStatus::Suspended(RuleRef::I06))
+            && matches!(self.role.group(), Group::Judging)
     }
 
     /// Whether the binding is active at `t`: started, held and not
@@ -287,15 +345,21 @@ pub struct EndedBinding {
     pub binding: Binding,
     /// The bar its end pinned (Cooling-off section).
     pub bar: u32,
+    /// The roster fold position of the end of a Judging binding
+    /// (`RosterState::tick`), and 0 for every other group. It is larger
+    /// than the grant position of every Judging binding open beside it.
+    pub ended: u64,
 }
 
 impl EndedBinding {
-    /// The bar, unless the binding was voided after its end. A voided
-    /// binding pins no bar (Identity discovery).
+    /// The bar, unless the binding was voided, or suspended as a conflict
+    /// of interest, before or after its end. Neither pins a bar (Identity
+    /// discovery).
     pub const fn live_bar(&self) -> Option<u32> {
-        match self.binding.status {
-            BindingStatus::Voided(_) => None,
-            BindingStatus::Active | BindingStatus::Suspended(_) => Some(self.bar),
+        if self.binding.held() {
+            Some(self.bar)
+        } else {
+            None
         }
     }
 }
@@ -308,6 +372,11 @@ pub struct RosterState {
     /// Ended bindings of the three groups that I-01 separates, each with
     /// its bar.
     ended: BTreeMap<BindingId, EndedBinding>,
+    /// Every identity discovery folded so far, in ledger order. Kept for
+    /// good: a reinstatement or an end does not erase one.
+    discoveries: Vec<IdentityDiscovery>,
+    /// The number of Judging grants and ends folded so far.
+    clock: u64,
 }
 
 impl RosterState {
@@ -316,7 +385,24 @@ impl RosterState {
         RosterState {
             bindings: BTreeMap::new(),
             ended: BTreeMap::new(),
+            discoveries: Vec::new(),
+            clock: 0,
         }
+    }
+
+    /// The next fold position, for the grant or end of a Judging binding.
+    /// Positions grow with ledger order, so they order those grants and
+    /// ends. Only I-02 reads them, and it concerns Judging roles alone.
+    /// Other groups take no position, so the order of their records adds
+    /// no state.
+    pub(crate) fn tick(&mut self) -> u64 {
+        self.clock = self.clock.saturating_add(1);
+        self.clock
+    }
+
+    /// Records one identity discovery, in ledger order.
+    pub(crate) fn discovered(&mut self, d: IdentityDiscovery) {
+        self.discoveries.push(d);
     }
 
     /// The binding `id`, when it is held or voided.
@@ -335,7 +421,7 @@ impl RosterState {
     }
 
     /// The largest cooling-off bar pinned for `account` in `programme` and
-    /// `group` by a binding that ended there and was not voided.
+    /// `group` by a binding that ended there and still counts.
     pub fn bar(&self, programme: ProgrammeId, account: AccountId, group: Group) -> Option<u32> {
         self.bars()
             .filter(|(p, a, g, _)| *p == programme && *a == account && *g == group)
@@ -343,7 +429,7 @@ impl RosterState {
             .max()
     }
 
-    /// Every bar that is not voided, one per ended binding: programme,
+    /// Every bar that still counts, one per ended binding: programme,
     /// account, group and bar.
     pub fn bars(&self) -> impl Iterator<Item = (ProgrammeId, AccountId, Group, u32)> + '_ {
         self.ended.values().filter_map(|e| {
@@ -423,21 +509,78 @@ impl RosterState {
             .collect()
     }
 
-    /// The Receiving bindings voided under I-06, held or ended at the void:
-    /// binding, account and proposal. Each is an identity discovery. The
-    /// scores that a matching Judging account already gave on that proposal
-    /// get a notifiable conflict (R-CF-04, Identity discovery), which lane
-    /// L-REV records from this fact.
-    #[allow(dead_code, reason = "lane L-REV calls it")]
-    pub(crate) fn identity_discoveries(
-        &self,
-    ) -> impl Iterator<Item = (BindingId, AccountId, ProposalId)> + '_ {
-        self.bindings
-            .iter()
-            .chain(self.ended.iter().map(|(id, e)| (id, &e.binding)))
-            .filter_map(|(id, b)| match b.status {
-                BindingStatus::Voided(RuleRef::I06) => b.proposal().map(|p| (*id, b.account, p)),
-                _ => None,
-            })
+    /// Every identity discovery the roster has folded, in ledger order
+    /// (Identity discovery). Each is a `BindingVoided` with rule I-06, or a
+    /// conflict-of-interest marker, with the vault epoch of its record.
+    ///
+    /// The list is permanent. A later reinstatement or end of the binding
+    /// does not remove its entry, so a reader after the reaction batch still
+    /// sees it. A binding suspended, reinstated and suspended again appears
+    /// twice, once per epoch. Lane L-REV records the R-CF-04 notifiable
+    /// conflicts from these facts, and releases the open assignments of a
+    /// conflict-of-interest suspension. Entries at an epoch it already
+    /// handled are old ones.
+    pub fn identity_discoveries(&self) -> impl Iterator<Item = IdentityDiscovery> + '_ {
+        self.discoveries.iter().copied()
+    }
+}
+
+/// One identity discovery of the roster (`SPEC/02-domain/roles-and-sod.md`, Identity discovery).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IdentityDiscovery {
+    /// A Receiving binding voided under I-06, held or ended at the void.
+    /// The scores that a matching Judging account already gave on the
+    /// proposal get a notifiable conflict (R-CF-04).
+    ReceivingVoided {
+        /// The voided binding.
+        binding: BindingId,
+        /// The discovered account.
+        account: AccountId,
+        /// The proposal of the binding.
+        proposal: ProposalId,
+        /// The vault epoch the `BindingVoided` record carries.
+        epoch: VaultEpoch,
+    },
+    /// A Judging binding suspended as a conflict of interest, held or ended
+    /// at the suspension (decided 2026-10-25). The account's open
+    /// assignments under it are released. The scores it already gave in
+    /// the programme get a notifiable conflict (R-CF-04).
+    ConflictOfInterest {
+        /// The suspended Judging binding.
+        binding: BindingId,
+        /// The suspended account.
+        account: AccountId,
+        /// The programme of the binding.
+        programme: ProgrammeId,
+        /// The Judging role of the binding.
+        role: Role,
+        /// The vault epoch the `BindingSuspended` record carries.
+        epoch: VaultEpoch,
+    },
+}
+
+impl IdentityDiscovery {
+    /// The binding the discovery voided or suspended.
+    pub const fn binding(&self) -> BindingId {
+        match self {
+            IdentityDiscovery::ReceivingVoided { binding, .. }
+            | IdentityDiscovery::ConflictOfInterest { binding, .. } => *binding,
+        }
+    }
+
+    /// The account of that binding.
+    pub const fn account(&self) -> AccountId {
+        match self {
+            IdentityDiscovery::ReceivingVoided { account, .. }
+            | IdentityDiscovery::ConflictOfInterest { account, .. } => *account,
+        }
+    }
+
+    /// The vault epoch of the discovery's record.
+    pub const fn epoch(&self) -> VaultEpoch {
+        match self {
+            IdentityDiscovery::ReceivingVoided { epoch, .. }
+            | IdentityDiscovery::ConflictOfInterest { epoch, .. } => *epoch,
+        }
     }
 }

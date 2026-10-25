@@ -74,7 +74,8 @@ pub(crate) fn published_call(state: &State, call: CallId) -> Result<(ProgrammeId
 /// - SoD-03: a held Operations binding against a Receiving one, or the reverse.
 /// - SoD-02: a held IRC binding against another Judging one, or the reverse.
 ///
-/// Held bindings include suspended ones. Voided bindings never count.
+/// Held bindings include suspended ones. Voided bindings and
+/// conflict-of-interest suspensions never count.
 pub(crate) fn account_rule(
     state: &State,
     account: AccountId,
@@ -163,7 +164,8 @@ pub(crate) fn other_separated(group: Group) -> Vec<Group> {
 /// separated groups break I-01 together exactly when each opening is at
 /// most the other's bar, a held binding having no bar. Overlapping
 /// bindings always meet this, because every call sequence only grows.
-/// Voided bindings never count.
+/// Voided bindings and conflict-of-interest suspensions never count, held
+/// or past (Identity discovery, decided 2026-10-25).
 pub(crate) fn breaking_candidates(
     state: &State,
     subject: AccountId,
@@ -172,22 +174,32 @@ pub(crate) fn breaking_candidates(
     opened: u32,
     bar: Option<u32>,
 ) -> BTreeSet<AccountId> {
+    let mut out = breaking_accounts(state, programme, groups, opened, bar);
+    out.remove(&subject);
+    out
+}
+
+/// Every account of `programme`, the binding's own included, with a
+/// binding in one of `groups` that breaks I-01 with a binding opened at
+/// `opened` and barred through `bar`, under the rule of
+/// [`breaking_candidates`].
+pub(crate) fn breaking_accounts(
+    state: &State,
+    programme: ProgrammeId,
+    groups: &[Group],
+    opened: u32,
+    bar: Option<u32>,
+) -> BTreeSet<AccountId> {
     let covers = |other_opened: u32| bar.is_none_or(|b| other_opened <= b);
     let mut out = BTreeSet::new();
     for (_, b) in state.roster.bindings() {
-        if b.account != subject
-            && b.programme == programme
-            && b.held()
-            && groups.contains(&b.group())
-            && covers(b.opened)
-        {
+        if b.programme == programme && b.held() && groups.contains(&b.group()) && covers(b.opened) {
             out.insert(b.account);
         }
     }
     for (_, e) in state.roster.ended() {
         let b = &e.binding;
-        if b.account != subject
-            && b.programme == programme
+        if b.programme == programme
             && groups.contains(&b.group())
             && covers(b.opened)
             && e.live_bar().is_some_and(|other_bar| opened <= other_bar)

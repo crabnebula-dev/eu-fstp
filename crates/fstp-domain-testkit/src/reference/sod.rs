@@ -34,7 +34,13 @@
 //!   Receiving that were held at the same time break I-01 forever, as do a
 //!   binding and a later binding inside its bar.
 //! - Voided bindings never count as held, past bindings included, and pin
-//!   no bar. Suspended bindings still count as held.
+//!   no bar. A conflict-of-interest suspension counts the same way (decided
+//!   2026-10-25). Every other suspended binding still counts as held, for
+//!   I-04 and I-06 too (enforcement points NOTE).
+//! - The conflict-of-interest marker: a `BindingSuspended` with rule I-06
+//!   on a Judging binding. The record shape has no other field for it. A
+//!   `BindingSuspended` with rule I-06 on a Drafting or Receiving binding
+//!   is an ordinary suspension and still counts as held.
 //! - SoD-02 and I-02 concern roles held now (NOTE 4). An IRC binding and
 //!   another Judging binding (FSTP coordinator, committee member or
 //!   committee chair) of one account must never be held at the same time.
@@ -81,6 +87,28 @@
 //!   so the R-CF-04 fact is kept. A P-13 edit that adds a class voids every
 //!   held Receiving binding now in an excluded class. The Drafting or
 //!   Judging side stays bound (O-53 strict reading).
+//! - Conflict of interest (Identity discovery, last paragraph, decided
+//!   2026-10-25): the same reaction suspends every Judging binding that
+//!   breaks I-01 with a Drafting binding of another account of the same
+//!   verified identity. It writes `BindingSuspended` with rule I-06 on the
+//!   Judging binding only. The Drafting binding stays, unsuspended.
+//! - Test-author choices for the conflict of interest, where the spec is silent:
+//!   - An ended Judging binding whose pair rule with the Drafting binding
+//!     still holds is suspended too, held or past. Otherwise I-06 would
+//!     stay broken through its bar.
+//!   - Voids and suspensions of one reaction are each judged over the
+//!     bindings that count before the reaction.
+//!   - `EndRole` of a binding under a conflict-of-interest suspension is
+//!     accepted. The bar its end pins never counts.
+//!   - `ReinstateBinding` of such a binding is refused while the binding,
+//!     counted again, would break I-01, I-02 or I-06 with the bindings
+//!     that count. Two bindings held at the same time break I-01 forever,
+//!     so the clash lasts while the two accounts share a verified identity.
+//!     Who may reinstate is unspecified, so the reference judges nothing else.
+//!   - A conflict-of-interest suspension and an ordinary suspension of one
+//!     binding are kept apart. One reinstatement lifts one of them, the
+//!     conflict of interest first, so an ordinary suspension still pending
+//!     resolution survives it (enforcement point 3).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -201,17 +229,38 @@ pub struct RefBinding {
     pub verified_epoch: Option<VaultEpoch>,
     /// The end, once recorded.
     pub end: Option<RefEnd>,
-    /// Whether the binding is suspended now.
+    /// Whether the binding is suspended now, for any reason.
     pub suspended: bool,
+    /// Whether the suspension is a conflict-of-interest suspension: a
+    /// `BindingSuspended` with rule I-06 on a Judging binding (Identity
+    /// discovery, decided 2026-10-25). Such a binding never counts.
+    pub conflict_of_interest: bool,
+    /// Whether an ordinary suspension is pending, beside or beneath a
+    /// conflict-of-interest suspension. Reinstating the conflict of
+    /// interest leaves it in place (enforcement point 3).
+    pub ordinary_suspension: bool,
     /// The rule of the void, once voided.
     pub voided: Option<RuleRef>,
 }
 
 impl RefBinding {
-    /// Whether the binding counts as held now: not ended and not voided.
-    /// Suspended bindings still count as held.
-    pub fn held(&self) -> bool {
+    /// Whether the binding counts for I-01, I-02 and I-06 at all, held or
+    /// past: neither voided nor under a conflict-of-interest suspension.
+    pub fn counts(&self) -> bool {
+        self.voided.is_none() && !self.conflict_of_interest
+    }
+
+    /// Whether the binding is still open: not ended and not voided. An open
+    /// binding can be ended, even under a conflict-of-interest suspension.
+    pub fn open(&self) -> bool {
         self.end.is_none() && self.voided.is_none()
+    }
+
+    /// Whether the binding counts as held now: open and counted. Ordinary
+    /// suspended bindings still count as held. A conflict-of-interest
+    /// suspension never does.
+    pub fn held(&self) -> bool {
+        self.open() && self.counts()
     }
 
     /// Whether the binding is active for every action: held and not suspended.
@@ -219,9 +268,10 @@ impl RefBinding {
         self.held() && !self.suspended
     }
 
-    /// The bar of an ended, non-voided binding of a separated group.
+    /// The bar of an ended, counted binding of a separated group. A voided
+    /// binding and a conflict-of-interest suspension pin no bar.
     pub fn bar(&self) -> Option<u32> {
-        if self.voided.is_some() || !self.group.separated() {
+        if !self.counts() || !self.group.separated() {
             return None;
         }
         self.end.map(|e| e.bar)
@@ -491,7 +541,15 @@ impl View {
                     .bindings
                     .get_mut(&s.binding)
                     .ok_or_else(|| format!("unknown binding {:?} suspended", s.binding))?;
+                if b.voided.is_some() {
+                    return Err(format!("voided binding {:?} suspended", s.binding));
+                }
                 b.suspended = true;
+                if s.rule == RuleRef::I06 && b.group == RefGroup::Judging {
+                    b.conflict_of_interest = true;
+                } else {
+                    b.ordinary_suspension = true;
+                }
             }
             Record::BindingVoided(v) => {
                 let b = self
@@ -508,7 +566,14 @@ impl View {
                     .bindings
                     .get_mut(&r.binding)
                     .ok_or_else(|| format!("unknown binding {:?} reinstated", r.binding))?;
-                b.suspended = false;
+                // One reinstatement lifts one suspension, the conflict of
+                // interest first. An ordinary suspension beneath it stays.
+                if b.conflict_of_interest {
+                    b.conflict_of_interest = false;
+                } else {
+                    b.ordinary_suspension = false;
+                }
+                b.suspended = b.conflict_of_interest || b.ordinary_suspension;
             }
             Record::VaultEpochProcessed { epoch } => self.epoch = *epoch,
             Record::ConflictDetected(c) => {
@@ -555,6 +620,8 @@ impl View {
                 verified_epoch: g.verified_epoch,
                 end: None,
                 suspended: false,
+                conflict_of_interest: false,
+                ordinary_suspension: false,
                 voided: None,
             },
         );
@@ -574,14 +641,15 @@ fn ordered(x: BindingId, y: BindingId) -> (BindingId, BindingId) {
 /// Why bindings `x` and `y` together break I-01, if they do: they belong
 /// to different groups among Drafting, Judging and Receiving, and they were
 /// held at the same time, or one was granted inside the other's bar.
+/// Voided bindings and conflict-of-interest suspensions never count.
 pub fn pair_violation(view: &View, x: &RefBinding, y: &RefBinding) -> Option<String> {
     if x.binding == y.binding
         || x.programme != y.programme
         || x.group == y.group
         || !x.group.separated()
         || !y.group.separated()
-        || x.voided.is_some()
-        || y.voided.is_some()
+        || !x.counts()
+        || !y.counts()
     {
         return None;
     }
@@ -675,14 +743,14 @@ pub fn check_i06(view: &View, truth: &GroundTruth) -> Result<(), String> {
 
 /// I-02: no account holds an IRC binding and another Judging binding of one
 /// programme at the same time. Assignments are lane L-REV's, checked in W4.
+/// Voided bindings and conflict-of-interest suspensions never count.
 pub fn check_i02(view: &View) -> Result<(), String> {
     for x in view.bindings.values() {
-        if x.role != Role::IrcMember || x.voided.is_some() {
+        if x.role != Role::IrcMember || !x.counts() {
             continue;
         }
         for y in view.bindings_of(x.account, x.programme) {
-            if other_judging(y.role) && y.voided.is_none() && view.overlapped(x.binding, y.binding)
-            {
+            if other_judging(y.role) && y.counts() && view.overlapped(x.binding, y.binding) {
                 return Err(format!(
                     "I-02: account {:?} held IRC member {:?} and {:?} {:?} at the same time",
                     x.account, x.binding, y.role, y.binding
@@ -803,7 +871,7 @@ fn account_rules(
     let group = spec_group(role);
     let latest = view.latest(programme);
     for x in view.bindings_of(account, programme) {
-        if x.voided.is_some() {
+        if !x.counts() {
             continue;
         }
         if group.separated() && x.group.separated() && x.group != group {
@@ -837,7 +905,8 @@ fn account_rules(
 /// Whether another verified account with the verified identity of
 /// `account` holds a binding that a new binding of `account` in `group`
 /// would break I-01 with (I-06, SoD-09 NOTE 1). For a Receiving target,
-/// `call_seq` is its call's sequence number.
+/// `call_seq` is its call's sequence number. A conflict-of-interest
+/// suspension is not in the candidate set, held or past.
 pub fn identity_clash(
     view: &View,
     truth: &GroundTruth,
@@ -853,7 +922,7 @@ pub fn identity_clash(
     view.bindings.values().any(|y| {
         y.account != account
             && y.programme == programme
-            && y.voided.is_none()
+            && y.counts()
             && y.group.separated()
             && group.separated()
             && y.group != group
@@ -907,7 +976,9 @@ fn receiving_rules(
 /// The reference verdict on `ask` under `view` and the vault facts `truth`.
 ///
 /// It judges `GrantRole`, `EndRole`, `CreateDraft`, `AddTeamMember` and
-/// `AddGuardian`. Every other command is [`Verdict::Unjudged`].
+/// `AddGuardian`. Of `ReinstateBinding` it judges only the refusals it
+/// knows: an unknown binding, and a conflict-of-interest suspension that is
+/// ended or whose clash lasts. Every other command is [`Verdict::Unjudged`].
 pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
     let Actor::Account(actor) = ask.actor else {
         return match ask.cmd {
@@ -981,7 +1052,8 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             if b.group == RefGroup::Receiving {
                 return refuse("Receiving bindings end with the proposal");
             }
-            if !b.held() {
+            if !b.open() {
+                // A conflict-of-interest suspension is open and can end.
                 return refuse("binding not held");
             }
             if *at < ask.now {
@@ -1050,8 +1122,59 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             };
             receiving_rules(view, truth, *account, role, p.call, ask.binds_tenant_admin)
         }
+        Command::ReinstateBinding { binding, .. } => {
+            let Some(b) = view.bindings.get(binding) else {
+                return refuse("unknown binding");
+            };
+            if !b.conflict_of_interest {
+                return Verdict::Unjudged;
+            }
+            if b.end.is_some() {
+                return refuse("binding ended");
+            }
+            match reinstate_clash(view, truth, b) {
+                Some(rule) => refuse(rule),
+                None => Verdict::Unjudged,
+            }
+        }
         _ => Verdict::Unjudged,
     }
+}
+
+/// The rule a binding under a conflict-of-interest suspension would break
+/// if it were reinstated now, if any (Identity discovery, decided
+/// 2026-10-25: reinstatement is refused while the identity clash lasts).
+///
+/// Counted again, `b` must not break the I-01 pair rule with a counted
+/// binding of its own account (I-01) or of another account of its verified
+/// identity (I-06). Nor may it break I-02 with a counted binding of its own
+/// account that was held beside it, held now or ended since. Counted
+/// again, `b` counts over its suspension period too, so the history must
+/// not show both held at the same time (`check_i02`).
+pub fn reinstate_clash(view: &View, truth: &GroundTruth, b: &RefBinding) -> Option<&'static str> {
+    let mut x = b.clone();
+    x.suspended = false;
+    x.conflict_of_interest = false;
+    let identity = truth.verified_identity(x.account);
+    for y in view.bindings.values() {
+        if y.binding == x.binding || y.programme != x.programme || !y.counts() {
+            continue;
+        }
+        let same_account = y.account == x.account;
+        let same_identity = identity.is_some() && truth.verified_identity(y.account) == identity;
+        if !same_account && !same_identity {
+            continue;
+        }
+        if pair_violation(view, &x, y).is_some() {
+            return Some(if same_account { "I-01" } else { "I-06" });
+        }
+        let irc_clash = (x.role == Role::IrcMember && other_judging(y.role))
+            || (other_judging(x.role) && y.role == Role::IrcMember);
+        if same_account && irc_clash && view.overlapped(x.binding, y.binding) {
+            return Some("I-02");
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,6 +1383,83 @@ pub fn check_voids(
         if !expected.contains_key(b) {
             return Err(format!(
                 "{context}: {b:?} voided, but it breaks neither I-04 nor I-06"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether the Judging binding `b` must be suspended as a conflict of
+/// interest under `truth` (Identity discovery, last paragraph, decided
+/// 2026-10-25). It counts, held or past, and it breaks the I-01 pair rule
+/// with a counted Drafting binding of another account of the same
+/// verified identity. Only a later identity merge reaches this, since
+/// SoD-09 refuses it at binding time.
+pub fn conflict_of_interest(view: &View, truth: &GroundTruth, b: &RefBinding) -> bool {
+    if b.group != RefGroup::Judging || !b.counts() {
+        return false;
+    }
+    let Some(t) = truth.verified_identity(b.account) else {
+        return false;
+    };
+    view.bindings.values().any(|y| {
+        y.account != b.account
+            && y.group == RefGroup::Drafting
+            && truth.verified_identity(y.account) == Some(t)
+            && pair_violation(view, b, y).is_some()
+    })
+}
+
+/// The Judging bindings a reaction must suspend as a conflict of interest
+/// in the same batch. `view` is the view the reaction starts from, and
+/// `truth` holds the facts the reaction sees.
+pub fn expected_suspensions(view: &View, truth: &GroundTruth) -> BTreeSet<BindingId> {
+    view.bindings
+        .values()
+        .filter(|b| conflict_of_interest(view, truth, b))
+        .map(|b| b.binding)
+        .collect()
+}
+
+/// Checks the suspensions of a batch against [`expected_suspensions`]:
+/// every expected Judging binding is suspended once under I-06, the
+/// conflict-of-interest marker, and no other binding is suspended. The
+/// Drafting binding stays (Identity discovery, decided 2026-10-25).
+pub fn check_suspensions(
+    context: &str,
+    expected: &BTreeSet<BindingId>,
+    batch: &[Record],
+) -> Result<(), String> {
+    let mut suspended: BTreeMap<BindingId, RuleRef> = BTreeMap::new();
+    for r in batch {
+        if let Record::BindingSuspended(s) = r
+            && suspended.insert(s.binding, s.rule).is_some()
+        {
+            return Err(format!(
+                "{context}: {:?} suspended twice in one batch",
+                s.binding
+            ));
+        }
+    }
+    for b in expected {
+        match suspended.get(b) {
+            None => {
+                return Err(format!(
+                    "I-06: {context}: Judging binding {b:?} shares a verified identity with a Drafting binding and must be suspended as a conflict of interest in the same batch"
+                ));
+            }
+            Some(rule) if *rule != RuleRef::I06 => {
+                return Err(format!(
+                    "I-06: {context}: Judging binding {b:?} suspended under {rule:?}, which still counts as held; the conflict-of-interest suspension is under I06"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    for (b, rule) in &suspended {
+        if !expected.contains(b) {
+            return Err(format!(
+                "I-06: {context}: {b:?} suspended under {rule:?}, but it is no Judging binding in a conflict of interest; the Drafting binding stays"
             ));
         }
     }

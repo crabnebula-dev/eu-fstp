@@ -4,9 +4,14 @@
 //!   later end pins a smaller one because P-12 was lowered in between.
 //! - A suspended binding is inactive for every action, but it still counts
 //!   as held for the account rules (enforcement points, NOTE on suspension).
+//!   This holds for every suspension except the conflict-of-interest one,
+//!   a `BindingSuspended` with rule I-06 on a Judging binding (decided
+//!   2026-10-25, covered by `i06_conflict_suspension`).
 //!
 //! Suspensions are injected as records, as the teeth tests inject faults,
-//! because no M2 command suspends a Receiving binding.
+//! because no M2 command suspends a Receiving binding. They use rule I-01,
+//! standing for "any other new violation" of enforcement point 3, so that
+//! they are never the conflict-of-interest marker.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -36,12 +41,13 @@ fn accept(w: &mut SodWorld, step: &fstp_domain_testkit::r#gen::roster::Step, wha
         .unwrap_or_else(|r| panic!("{what} refused: {r}"));
 }
 
-/// Suspends `binding` by injecting the record enforcement point 3 writes.
+/// Suspends `binding` by injecting the record enforcement point 3 writes
+/// for a new violation other than the conflict of interest.
 fn suspend(w: &mut SodWorld, binding: BindingId) {
     let epoch = w.epoch();
     w.commit(&[Record::BindingSuspended(BindingSuspended {
         binding,
-        rule: RuleRef::I06,
+        rule: RuleRef::I01,
         epoch,
     })])
     .unwrap_or_else(|e| panic!("suspension of {binding:?}: {e}"));
