@@ -6,6 +6,7 @@
 //! [`crate::rules::StateTag`]. Lane L-LIFE completes the lifecycle.
 
 pub(crate) mod draft;
+pub(crate) mod intake;
 
 use fstp_money::PosAmount;
 
@@ -92,6 +93,8 @@ pub struct NoticeVersion(pub u32);
 pub struct ProposalStore {
     /// The created proposals, from `draft` (lane L-SOD, step W3b).
     drafts: draft::Drafts,
+    /// States, plans and submissions, from `intake` (lane L-REV, step W4a).
+    intake: intake::Intake,
 }
 
 impl ProposalStore {
@@ -99,6 +102,7 @@ impl ProposalStore {
     pub(crate) const fn genesis() -> ProposalStore {
         ProposalStore {
             drafts: draft::Drafts::genesis(),
+            intake: intake::Intake::genesis(),
         }
     }
 }
@@ -117,6 +121,9 @@ pub(crate) fn queries(
 ) -> Result<Vec<crate::oracle::Query>, crate::refusal::Refusal> {
     if is_draft_command(cmd) {
         return draft::queries(state, cmd, ctx);
+    }
+    if intake::is_intake_command(cmd) {
+        return intake::queries(state, cmd, ctx);
     }
     Err(crate::refusal::Refusal::not_implemented())
 }
@@ -143,6 +150,9 @@ pub(crate) fn decide(
     if is_draft_command(cmd) {
         return draft::decide(state, cmd, ctx, answers);
     }
+    if intake::is_intake_command(cmd) {
+        return intake::decide(state, cmd, ctx, answers);
+    }
     Err(crate::refusal::Refusal::not_implemented())
 }
 
@@ -158,6 +168,9 @@ pub(crate) fn apply(
     let _ = (seq, at);
     if matches!(record, crate::record::Record::ProposalCreated { .. }) {
         return draft::apply(state, record);
+    }
+    if intake::is_intake_record(record) {
+        return intake::apply(state, record);
     }
     Err(crate::engine::FoldError::NotImplemented)
 }
@@ -212,6 +225,9 @@ pub(crate) fn governing_policy(
 ) -> Result<crate::engine::PolicyScope, crate::refusal::Refusal> {
     if is_draft_command(cmd) {
         return draft::governing_policy(state, cmd);
+    }
+    if intake::is_intake_command(cmd) {
+        return intake::governing_policy(state, cmd);
     }
     Err(crate::refusal::Refusal::not_implemented())
 }

@@ -9,8 +9,8 @@ use std::num::{NonZeroU8, NonZeroU16};
 use fstp_domain::command::{Actor, Command, CommandKind, Ctx, SystemCause, Via};
 use fstp_domain::engine::{FoldError, apply, decide, due, queries, replay, stage1_ready};
 use fstp_domain::id::{
-    AccountId, BindingId, CallId, CommandId, ContentDigest, CriterionId, LlmConfigId, ProgrammeId,
-    ProposalId, VaultEpoch,
+    AccountId, BindingId, CallId, CommandId, ContentDigest, CriterionId, DecisionId, LlmConfigId,
+    ProgrammeId, ProposalId, VaultEpoch,
 };
 use fstp_domain::oracle::{Answer, Answers, Query, QueryKind};
 use fstp_domain::policy::ModelRef;
@@ -36,8 +36,9 @@ fn ctx() -> Ctx {
     }
 }
 
-fn withdraw() -> Command {
-    Command::Withdraw {
+fn accept_grant() -> Command {
+    Command::AcceptGrant {
+        decision: DecisionId::from_raw(7),
         proposal: ProposalId::from_raw(7),
     }
 }
@@ -66,8 +67,8 @@ fn wrong_actor() -> Refusal {
 #[test]
 fn interface_engine_stubs_refuse_without_panicking() {
     let state = State::genesis();
-    let cmd = withdraw();
-    assert_eq!(cmd.kind(), CommandKind::Withdraw);
+    let cmd = accept_grant();
+    assert_eq!(cmd.kind(), CommandKind::AcceptGrant);
     assert_eq!(
         queries(&state, &cmd, &ctx()),
         Err(Refusal::not_implemented())
@@ -210,7 +211,7 @@ fn i85_high_risk_command_refused_through_mcp() {
 }
 
 /// I-84: a System actor cannot issue a command whose actor rule names a
-/// person, here the lead's withdrawal.
+/// person, here the lead's acceptance of the grant.
 #[test]
 fn i84_system_actor_refused_for_a_person_command() {
     let system = Ctx {
@@ -218,7 +219,7 @@ fn i84_system_actor_refused_for_a_person_command() {
         ..ctx()
     };
     assert_eq!(
-        decide(&State::genesis(), &withdraw(), &system, &Answers::new()),
+        decide(&State::genesis(), &accept_grant(), &system, &Answers::new()),
         Err(wrong_actor())
     );
 }
@@ -282,7 +283,7 @@ fn interface_decide_refuses_a_time_before_the_floor() {
         ..ctx()
     };
     assert_eq!(
-        decide(&State::genesis(), &withdraw(), &early, &Answers::new()),
+        decide(&State::genesis(), &accept_grant(), &early, &Answers::new()),
         Err(Refusal::new(RuleRef::Ledger, RefusalReason::ClockBackwards))
     );
 }
@@ -476,9 +477,9 @@ fn r_mc_05_mcp_binding_action_reaches_the_governing_policy_lookup() {
         via: Via::Mcp,
         ..ctx()
     };
-    assert!(withdraw().binding_action());
+    assert!(accept_grant().binding_action());
     assert_eq!(
-        decide(&State::genesis(), &withdraw(), &mcp, &Answers::new()),
+        decide(&State::genesis(), &accept_grant(), &mcp, &Answers::new()),
         Err(Refusal::not_implemented())
     );
 }
