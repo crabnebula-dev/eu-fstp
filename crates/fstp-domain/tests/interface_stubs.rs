@@ -59,9 +59,10 @@ fn wrong_actor() -> Refusal {
     Refusal::new(RuleRef::Actor, RefusalReason::WrongActor)
 }
 
-/// Every engine entry point is total: `queries` and `decide` refuse with
-/// `NotImplemented`, `apply` fails with `FoldError::NotImplemented`, an empty
-/// replay is genesis, and nothing is due or ready.
+/// Every engine entry point is total. A command of a lane that has not
+/// landed is refused with `NotImplemented`. A fold that cannot apply its
+/// record fails without changing the state, an empty replay is genesis, and
+/// nothing is due or ready.
 #[test]
 fn interface_engine_stubs_refuse_without_panicking() {
     let state = State::genesis();
@@ -84,21 +85,22 @@ fn interface_engine_stubs_refuse_without_panicking() {
         minor: false,
     };
     let mut folded = State::genesis();
-    assert_eq!(
+    assert!(
         apply(
             &mut folded,
             Seq::from_raw(1),
             Timestamp::from_micros(1),
             &record
-        ),
-        Err(FoldError::NotImplemented)
+        )
+        .is_err(),
+        "a draft in an unknown call folded"
     );
     assert_eq!(folded, State::genesis(), "a refused fold changed the state");
 
     let none: Vec<Entry<Record>> = Vec::new();
     assert_eq!(replay(&none), Ok(State::genesis()));
     let one = vec![entry(1, 1, [1; 16], record)];
-    assert_eq!(replay(&one), Err(FoldError::NotImplemented));
+    assert!(replay(&one).is_err(), "a draft in an unknown call replayed");
 
     assert!(due(&state, Timestamp::from_micros(i64::MAX)).is_empty());
     assert!(stage1_ready(&state, Timestamp::from_micros(i64::MAX)).is_empty());
@@ -252,7 +254,7 @@ fn r_la_03_system_actor_cannot_record_stage1_close() {
 
 /// I-84 and O-47: `GrantRole` needs a tenant admin at tenant scope, which
 /// the shell attests. Without the attestation it is refused. With it the
-/// command reaches lane L-SOD, which has not landed yet.
+/// command passes the actor check and reaches the roles lane.
 #[test]
 fn i84_tenant_admin_rule_needs_the_shell_attestation() {
     let state = State::genesis();
@@ -264,10 +266,9 @@ fn i84_tenant_admin_rule_needs_the_shell_attestation() {
         tenant_admin: true,
         ..ctx()
     };
-    assert_eq!(
-        decide(&state, &grant_role(), &admin, &Answers::new()),
-        Err(Refusal::not_implemented())
-    );
+    let reached = decide(&state, &grant_role(), &admin, &Answers::new());
+    assert!(reached.is_err(), "a grant in an unknown programme was accepted");
+    assert_ne!(reached, Err(wrong_actor()));
 }
 
 /// `decide` refuses a command time before the latest recorded time.
@@ -442,7 +443,8 @@ fn interface_replay_refuses_entries_out_of_sequence() {
 
 /// Enforcement point 3: `VaultChanged` carries the accounts that the
 /// driver's first `ChangedSince` answer listed, so its batch is decided in
-/// one round. A System vault actor reaches lane L-SOD, which has not landed.
+/// one round. A System vault actor passes the actor check and reaches the
+/// roles lane.
 #[test]
 fn interface_vault_changed_carries_the_changed_accounts() {
     let cmd = Command::VaultChanged {
@@ -454,10 +456,9 @@ fn interface_vault_changed_carries_the_changed_accounts() {
         actor: Actor::System(SystemCause::Vault),
         ..ctx()
     };
-    assert_eq!(
-        decide(&State::genesis(), &cmd, &system, &Answers::new()),
-        Err(Refusal::not_implemented())
-    );
+    let reached = decide(&State::genesis(), &cmd, &system, &Answers::new());
+    assert!(reached.is_err(), "a change at the processed epoch was accepted");
+    assert_ne!(reached, Err(wrong_actor()));
 }
 
 /// R-MC-05: a binding action through MCP asks the owning lane for the
