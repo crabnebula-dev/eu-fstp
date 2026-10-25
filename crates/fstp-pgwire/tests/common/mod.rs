@@ -8,8 +8,8 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use fstp_pgtest::{ConnParams, PgServer, ServerOptions, ServerTls, tls as certs};
-use fstp_pgwire::{Client, Config, Password};
+use fstp_pgtest::{ConnParams, PgServer, Role, ServerOptions, ServerTls, tls as certs};
+use fstp_pgwire::{Client, ClientTls, Config, Password};
 use fstp_rt::tokio::TokioRuntime;
 
 pub(crate) type PgClient = Client<TokioRuntime>;
@@ -27,16 +27,25 @@ pub(crate) fn server_with(tls: ServerTls) -> &'static PgServer {
     PgServer::shared_with(ServerOptions { tls }).unwrap_or_else(|e| panic!("{e}"))
 }
 
-pub(crate) fn tls() -> fstp_tls::ClientConfig {
-    fstp_tls::ClientConfig::new(certs::CA_PEM).unwrap()
+/// TLS settings that trust the test CA and present `role`'s client
+/// certificate (D2, R-NF-09).
+pub(crate) fn role_tls(role: Role) -> ClientTls {
+    ClientTls::new(certs::CA_PEM, role.client_cert_pem(), role.client_key_pem()).unwrap()
 }
 
-pub(crate) fn mutual_tls() -> fstp_tls::ClientConfig {
-    fstp_tls::ClientConfig::mutual(certs::CA_PEM, certs::CLIENT_CERT_PEM, certs::CLIENT_KEY_PEM)
-        .unwrap()
+/// TLS settings that trust the test CA and present the client certificate
+/// of `db`'s role.
+pub(crate) fn tls_for(db: &ConnParams) -> ClientTls {
+    ClientTls::new(certs::CA_PEM, db.client_cert_pem, db.client_key_pem).unwrap()
 }
 
-pub(crate) fn config_for(db: &ConnParams, tls: fstp_tls::ClientConfig) -> Config {
+/// TLS settings for fake servers, which ignore the client certificate.
+pub(crate) fn tls() -> ClientTls {
+    role_tls(Role::Superuser)
+}
+
+/// A configuration for `db` with explicit TLS settings.
+pub(crate) fn config_with(db: &ConnParams, tls: ClientTls) -> Config {
     Config::new(
         db.host.clone(),
         db.port,
@@ -49,10 +58,15 @@ pub(crate) fn config_for(db: &ConnParams, tls: fstp_tls::ClientConfig) -> Config
     .connect_timeout(Some(Duration::from_secs(20)))
 }
 
+/// A configuration for `db` with its role's client certificate.
+pub(crate) fn config_for(db: &ConnParams) -> Config {
+    config_with(db, tls_for(db))
+}
+
 /// A fresh database on the shared server and its configuration.
 pub(crate) fn fresh() -> (ConnParams, Config) {
     let db = server().fresh_database().unwrap_or_else(|e| panic!("{e}"));
-    let cfg = config_for(&db, tls());
+    let cfg = config_for(&db);
     (db, cfg)
 }
 

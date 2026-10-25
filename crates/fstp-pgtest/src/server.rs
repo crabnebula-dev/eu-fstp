@@ -14,16 +14,65 @@ use std::time::{Duration, Instant};
 
 use crate::tls;
 
-/// The role that may log in only with a client certificate from the trusted
-/// test CA (`clientcert=verify-ca` in `pg_hba.conf`). It exists for mutual
-/// TLS tests (R-NF-09). Its password is [`PgServer::mtls_password`].
-pub const MTLS_USER: &str = "fstp_mtls";
-
 /// The superuser that `initdb` creates.
 const SUPERUSER: &str = "fstp_super";
 
+/// The login role without special rights that every server has.
+const APP_USER: &str = "fstp_app";
+
+/// A login role on every test server.
+///
+/// Every role logs in with SCRAM and a client certificate from the trusted
+/// test CA whose CN equals the role name (`clientcert=verify-full`, D2,
+/// R-NF-09). The certificates are committed fixtures in
+/// `crates/fstp-tls/testdata/`. The role names are fixed, so tests isolate
+/// their data with [`PgServer::fresh_database`] and
+/// [`PgServer::fresh_database_as`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    /// `fstp_super`, the superuser that `initdb` creates.
+    Superuser,
+    /// `fstp_app`, a login role without superuser, `CREATEDB`, `CREATEROLE`,
+    /// replication or row security bypass rights.
+    App,
+}
+
+impl Role {
+    /// The role name, which is also the CN of its client certificate.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::Superuser => SUPERUSER,
+            Role::App => APP_USER,
+        }
+    }
+
+    /// The role's client certificate (PEM), issued by [`tls::CA_PEM`].
+    #[must_use]
+    pub fn client_cert_pem(self) -> &'static [u8] {
+        match self {
+            Role::Superuser => tls::SUPERUSER_CERT_PEM,
+            Role::App => tls::APP_CERT_PEM,
+        }
+    }
+
+    /// The private key of [`Role::client_cert_pem`] (PEM).
+    #[must_use]
+    pub fn client_key_pem(self) -> &'static [u8] {
+        match self {
+            Role::Superuser => tls::SUPERUSER_KEY_PEM,
+            Role::App => tls::APP_KEY_PEM,
+        }
+    }
+}
+
 /// The only address the server listens on.
 const HOST: &str = "127.0.0.1";
+
+/// The subdirectory of the server directory that holds the superuser's
+/// client certificate and key for `psql`. It belongs to the test process's
+/// user, since `psql` runs as that user.
+const CLIENT_DIR: &str = "client";
 
 /// How many ports to try when another process takes the chosen port first.
 const START_ATTEMPTS: u32 = 8;
@@ -98,12 +147,14 @@ impl std::error::Error for Error {}
 /// How the server treats TLS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ServerTls {
-    /// `ssl = on`, and `pg_hba.conf` has only `hostssl` lines. The default.
+    /// `ssl = on`, and `pg_hba.conf` has only `hostssl` lines, each with
+    /// `clientcert=verify-full`. The default.
     #[default]
     Required,
     /// `ssl = on`, and `pg_hba.conf` also accepts unencrypted connections
     /// with `hostnossl` lines. A test-only configuration: the server answers
     /// an SSLRequest with `S`, but a client that skips TLS is accepted too.
+    /// Its `hostssl` lines still require `clientcert=verify-full`.
     Optional,
     /// `ssl = off`, and `pg_hba.conf` accepts only unencrypted `host`
     /// connections. A test-only configuration: the server answers every
@@ -131,7 +182,9 @@ pub struct ServerOptions {
 /// Connection parameters for one database on a test server.
 ///
 /// The TLS trust anchor for every test server is [`tls::CA_PEM`]. The server
-/// certificate is valid for the name in [`ConnParams::host`].
+/// certificate is valid for the name in [`ConnParams::host`]. A TLS server
+/// accepts the role only with [`ConnParams::client_cert_pem`] and
+/// [`ConnParams::client_key_pem`] (D2, R-NF-09).
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnParams {
     /// Always `127.0.0.1`.
@@ -144,6 +197,10 @@ pub struct ConnParams {
     pub password: String,
     /// The database name.
     pub dbname: String,
+    /// The role's client certificate (PEM). Its CN equals [`ConnParams::user`].
+    pub client_cert_pem: &'static [u8],
+    /// The private key of [`ConnParams::client_cert_pem`] (PEM).
+    pub client_key_pem: &'static [u8],
 }
 
 impl fmt::Debug for ConnParams {
@@ -154,7 +211,8 @@ impl fmt::Debug for ConnParams {
             .field("user", &self.user)
             .field("password", &"<redacted>")
             .field("dbname", &self.dbname)
-            .finish()
+            .field("client_key_pem", &"<redacted>")
+            .finish_non_exhaustive()
     }
 }
 
@@ -177,7 +235,7 @@ pub struct PgServer {
     dir: PathBuf,
     port: u16,
     password: String,
-    mtls_password: String,
+    app_password: String,
     tls: ServerTls,
     version: String,
     next_db: AtomicU64,
@@ -245,22 +303,42 @@ impl PgServer {
             .map_err(Clone::clone)
     }
 
-    /// Creates a new, empty database and returns parameters for the
-    /// superuser to connect to it. Each call returns a different database.
+    /// Creates a new, empty database owned by the superuser and returns
+    /// parameters for the superuser to connect to it. Each call returns a
+    /// different database.
     ///
     /// # Errors
     ///
     /// Returns an error when `psql` fails to create the database.
     pub fn fresh_database(&self) -> Result<ConnParams, Error> {
+        self.fresh_database_as(Role::Superuser)
+    }
+
+    /// Creates a new, empty database owned by `role` and returns parameters
+    /// for `role` to connect to it. Each call returns a different database.
+    ///
+    /// The owner may create objects in the database's `public` schema.
+    /// Roles are shared by the whole server, so tests keep their data apart
+    /// by database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `psql` fails to create the database.
+    pub fn fresh_database_as(&self, role: Role) -> Result<ConnParams, Error> {
         let n = self.next_db.fetch_add(1, Ordering::Relaxed);
         let dbname = format!("fstp_test_{n}");
-        self.psql("postgres", &format!("CREATE DATABASE {dbname}"))?;
+        self.psql(
+            "postgres",
+            &format!("CREATE DATABASE {dbname} OWNER {}", role.name()),
+        )?;
         Ok(ConnParams {
             host: HOST.to_owned(),
             port: self.port,
-            user: SUPERUSER.to_owned(),
-            password: self.password.clone(),
+            user: role.name().to_owned(),
+            password: self.password(role).to_owned(),
             dbname,
+            client_cert_pem: role.client_cert_pem(),
+            client_key_pem: role.client_key_pem(),
         })
     }
 
@@ -274,22 +352,32 @@ impl PgServer {
     /// same user and root can read. `psql` runs the statements one at a
     /// time and stops at the first error.
     ///
+    /// On a server with TLS, `psql` verifies the server certificate in full
+    /// and presents the superuser's client certificate, like every other
+    /// client (D2).
+    ///
     /// # Errors
     ///
     /// Returns an error with `psql`'s standard error when it fails.
     pub fn psql(&self, dbname: &str, sql: &str) -> Result<String, Error> {
-        let sslmode = match self.tls {
-            ServerTls::Required | ServerTls::Optional => "verify-full",
-            ServerTls::Off => "disable",
-        };
         let mut cmd = Command::new(self.bindir.join("psql"));
         cmd.env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("LC_ALL", "C")
-            .env("PGPASSWORD", &self.password)
-            .env("PGSSLMODE", sslmode)
-            .env("PGSSLROOTCERT", self.dir.join("tls").join("ca.pem"))
-            .env("PGCONNECT_TIMEOUT", "10")
+            .env("PGPASSWORD", &self.password);
+        match self.tls {
+            ServerTls::Required | ServerTls::Optional => {
+                let client = self.dir.join(CLIENT_DIR);
+                cmd.env("PGSSLMODE", "verify-full")
+                    .env("PGSSLROOTCERT", self.dir.join("tls").join("ca.pem"))
+                    .env("PGSSLCERT", client.join(format!("{SUPERUSER}.pem")))
+                    .env("PGSSLKEY", client.join(format!("{SUPERUSER}-key.pem")));
+            }
+            ServerTls::Off => {
+                cmd.env("PGSSLMODE", "disable");
+            }
+        }
+        cmd.env("PGCONNECT_TIMEOUT", "10")
             .env("PGAPPNAME", "fstp-pgtest")
             .args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
             .args(["-h", HOST, "-p", &self.port.to_string(), "-U", SUPERUSER])
@@ -348,10 +436,13 @@ impl PgServer {
         &self.password
     }
 
-    /// The random password of [`MTLS_USER`].
+    /// The random password of `role`.
     #[must_use]
-    pub fn mtls_password(&self) -> &str {
-        &self.mtls_password
+    pub fn password(&self, role: Role) -> &str {
+        match role {
+            Role::Superuser => &self.password,
+            Role::App => &self.app_password,
+        }
     }
 
     /// How this server treats TLS.
@@ -367,7 +458,8 @@ impl PgServer {
     }
 
     /// The server's temporary directory. It holds the data directory, the
-    /// TLS files, the Unix socket and `server.log`.
+    /// server's TLS files, the superuser's client certificate for `psql`,
+    /// the Unix socket and `server.log`.
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -674,22 +766,18 @@ fn server_conf(dir: &Path, tls_on: bool) -> String {
     )
 }
 
+/// `pg_hba.conf`. Every `hostssl` line requires SCRAM and a client
+/// certificate from the test CA whose CN equals the role name
+/// (`clientcert=verify-full`, D2, R-NF-09). Only the negative-test
+/// configurations accept unencrypted connections.
 fn hba_conf(tls: ServerTls) -> String {
     let mut out = String::from("# Written by fstp-pgtest.\n");
+    let hostssl = format!("hostssl all all {HOST}/32 scram-sha-256 clientcert=verify-full\n");
     match tls {
-        ServerTls::Required => {
-            out.push_str(&format!(
-                "hostssl all {MTLS_USER} {HOST}/32 scram-sha-256 clientcert=verify-ca\n\
-                 hostssl all all {HOST}/32 scram-sha-256\n"
-            ));
-        }
+        ServerTls::Required => out.push_str(&hostssl),
         ServerTls::Optional => {
-            out.push_str(&format!(
-                "hostssl all {MTLS_USER} {HOST}/32 scram-sha-256 clientcert=verify-ca\n\
-                 hostnossl all {MTLS_USER} {HOST}/32 reject\n\
-                 hostssl all all {HOST}/32 scram-sha-256\n\
-                 hostnossl all all {HOST}/32 scram-sha-256\n"
-            ));
+            out.push_str(&hostssl);
+            out.push_str(&format!("hostnossl all all {HOST}/32 scram-sha-256\n"));
         }
         ServerTls::Off => {
             out.push_str(&format!("host all all {HOST}/32 scram-sha-256\n"));
@@ -729,7 +817,7 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
     chown(&dir, &run_as)?;
 
     let password = random_hex(24)?;
-    let mtls_password = random_hex(24)?;
+    let app_password = random_hex(24)?;
 
     // initdb with a random superuser password and SCRAM for every method.
     let pwfile = dir.join("pwfile");
@@ -771,6 +859,26 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
     )?;
     write_private(&tls_dir.join("ca.pem"), tls::CA_PEM, 0o600, &run_as)?;
 
+    // The superuser's client certificate and key for psql, which runs as
+    // the test process's user. libpq refuses a key that others can read.
+    let client_dir = dir.join(CLIENT_DIR);
+    DirBuilder::new()
+        .mode(0o700)
+        .create(&client_dir)
+        .map_err(|e| Error::io("cannot create the client certificate directory", &e))?;
+    write_private(
+        &client_dir.join(format!("{SUPERUSER}.pem")),
+        Role::Superuser.client_cert_pem(),
+        0o600,
+        &RunAs::Current,
+    )?;
+    write_private(
+        &client_dir.join(format!("{SUPERUSER}-key.pem")),
+        Role::Superuser.client_key_pem(),
+        0o600,
+        &RunAs::Current,
+    )?;
+
     let tls_on = !matches!(options.tls, ServerTls::Off);
     let mut conf = OpenOptions::new()
         .append(true)
@@ -790,23 +898,24 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
         dir,
         port,
         password,
-        mtls_password,
+        app_password,
         tls: options.tls,
         version,
         next_db: AtomicU64::new(1),
         watchdog: Mutex::new(guard.take()),
     };
-    if tls_on {
-        server.psql("postgres", &mtls_role_sql(&server.mtls_password))?;
-    }
+    server.psql("postgres", &app_role_sql(&server.app_password))?;
     Ok(server)
 }
 
-/// The statement that creates [`MTLS_USER`]. It holds the password, so it
-/// goes to psql through standard input only. The password is hex, so it
-/// needs no quoting beyond the literal.
-fn mtls_role_sql(password: &str) -> String {
-    format!("CREATE ROLE {MTLS_USER} LOGIN PASSWORD '{password}'")
+/// The statement that creates the [`Role::App`] role. It holds the
+/// password, so it goes to psql through standard input only. The password
+/// is hex, so it needs no quoting beyond the literal.
+fn app_role_sql(password: &str) -> String {
+    format!(
+        "CREATE ROLE {APP_USER} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+         NOREPLICATION NOBYPASSRLS PASSWORD '{password}'"
+    )
 }
 
 fn start_on_free_port(
@@ -863,6 +972,26 @@ mod tests {
         }
     }
 
+    /// R-NF-09, D2: every hostssl line, in every configuration that allows
+    /// TLS, requires a client certificate whose CN equals the role.
+    #[test]
+    fn r_nf_09_d2_every_hostssl_line_requires_verify_full() {
+        for tls in [ServerTls::Required, ServerTls::Optional] {
+            let hba = hba_conf(tls);
+            let hostssl: Vec<&str> = hba.lines().filter(|l| l.starts_with("hostssl")).collect();
+            assert!(!hostssl.is_empty(), "{tls:?}");
+            for line in hostssl {
+                assert!(
+                    line.ends_with(" scram-sha-256 clientcert=verify-full"),
+                    "{tls:?}: {line}"
+                );
+            }
+        }
+        // Only the negative-test configurations accept plaintext.
+        assert!(!hba_conf(ServerTls::Required).contains("nossl"));
+        assert!(hba_conf(ServerTls::Optional).contains("hostnossl all all"));
+    }
+
     #[test]
     fn hba_off_has_no_tls_lines() {
         let hba = hba_conf(ServerTls::Off);
@@ -903,7 +1032,31 @@ mod tests {
             user: "u".to_owned(),
             password: "secret-value".to_owned(),
             dbname: "d".to_owned(),
+            client_cert_pem: Role::App.client_cert_pem(),
+            client_key_pem: Role::App.client_key_pem(),
         };
-        assert!(!format!("{p:?}").contains("secret-value"));
+        let shown = format!("{p:?}");
+        assert!(!shown.contains("secret-value"), "{shown}");
+        assert!(!shown.contains("PRIVATE KEY"), "{shown}");
+    }
+
+    #[test]
+    fn role_names_and_certificates_belong_together() {
+        assert_eq!(Role::Superuser.name(), "fstp_super");
+        assert_eq!(Role::App.name(), "fstp_app");
+        for role in [Role::Superuser, Role::App] {
+            assert!(
+                role.client_cert_pem()
+                    .starts_with(b"-----BEGIN CERTIFICATE-----")
+            );
+            assert!(
+                role.client_key_pem()
+                    .starts_with(b"-----BEGIN PRIVATE KEY-----")
+            );
+        }
+        assert_ne!(
+            Role::Superuser.client_cert_pem(),
+            Role::App.client_cert_pem()
+        );
     }
 }

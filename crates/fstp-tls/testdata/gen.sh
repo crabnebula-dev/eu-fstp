@@ -18,13 +18,37 @@
 #                                          same SANs as server.pem
 #   untrusted-client.pem, untrusted-client-key.pem
 #                                          client leaf signed by the untrusted CA
+#   role-<role>.pem, role-<role>-key.pem   database client leaf signed by the
+#                                          test CA, CN <role>, EKU clientAuth,
+#                                          no SAN, for each role in ROLES below
 #
-# Usage: bash gen.sh   (run from any directory; writes next to this script)
+# The database roles are the PostgreSQL roles that fstp-pgtest creates.
+# Every hostssl line in its pg_hba.conf has clientcert=verify-full, so the
+# certificate CN must equal the role name (D2, R-NF-09).
+#
+# Usage:
+#   bash gen.sh         regenerate every file, including a new CA
+#   bash gen.sh roles   regenerate only the role-*.pem files, signed by the
+#                       existing ca.pem and ca-key.pem; nothing else changes
+# The script writes next to itself and can run from any directory.
 # Requires: bash and the openssl command line tool (tested with OpenSSL 3.0).
 
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
+
+MODE="${1:-all}"
+case "$MODE" in
+    all | roles) ;;
+    *)
+        echo "usage: bash gen.sh [roles]" >&2
+        exit 2
+        ;;
+esac
+
+# The PostgreSQL roles that tests connect as. Keep in sync with
+# crates/fstp-pgtest/src/server.rs and crates/fstp-pgtest/src/tls.rs.
+ROLES=(fstp_super fstp_app)
 
 DAYS=36525
 TMP="$(mktemp -d)"
@@ -79,23 +103,47 @@ EXT
         -extfile "$TMP/$name.ext" -out "$name.pem"
 }
 
-SERVER_SAN="DNS:localhost, IP:127.0.0.1, IP:::1"
+if [ "$MODE" = all ]; then
+    SERVER_SAN="DNS:localhost, IP:127.0.0.1, IP:::1"
 
-make_ca ca "FSTP Test CA"
-make_leaf server localhost ca serverAuth "$SERVER_SAN"
-make_leaf client fstp-test-client ca clientAuth "DNS:fstp-test-client"
+    make_ca ca "FSTP Test CA"
+    make_leaf server localhost ca serverAuth "$SERVER_SAN"
+    make_leaf client fstp-test-client ca clientAuth "DNS:fstp-test-client"
 
-make_ca untrusted-ca "FSTP Untrusted Test CA"
-make_leaf untrusted-server localhost untrusted-ca serverAuth "$SERVER_SAN"
-make_leaf untrusted-client fstp-test-client untrusted-ca clientAuth "DNS:fstp-test-client"
+    make_ca untrusted-ca "FSTP Untrusted Test CA"
+    make_leaf untrusted-server localhost untrusted-ca serverAuth "$SERVER_SAN"
+    make_leaf untrusted-client fstp-test-client untrusted-ca clientAuth "DNS:fstp-test-client"
 
-# Sanity checks: each leaf verifies against its own CA and not the other.
-openssl verify -CAfile ca.pem server.pem client.pem > /dev/null
-openssl verify -CAfile untrusted-ca.pem untrusted-server.pem untrusted-client.pem > /dev/null
-if openssl verify -CAfile ca.pem untrusted-server.pem > /dev/null 2>&1; then
-    echo "untrusted-server.pem unexpectedly verifies against ca.pem" >&2
-    exit 1
+    # Sanity checks: each leaf verifies against its own CA and not the other.
+    openssl verify -CAfile ca.pem server.pem client.pem > /dev/null
+    openssl verify -CAfile untrusted-ca.pem untrusted-server.pem untrusted-client.pem > /dev/null
+    if openssl verify -CAfile ca.pem untrusted-server.pem > /dev/null 2>&1; then
+        echo "untrusted-server.pem unexpectedly verifies against ca.pem" >&2
+        exit 1
+    fi
+else
+    for f in ca.pem ca-key.pem; do
+        if [ ! -s "$f" ]; then
+            echo "$f is missing; run 'bash gen.sh' to regenerate everything" >&2
+            exit 1
+        fi
+    done
 fi
 
+# One client certificate per database role, CN = role name.
+for role in "${ROLES[@]}"; do
+    make_leaf "role-$role" "$role" ca clientAuth ""
+    openssl verify -CAfile ca.pem "role-$role.pem" > /dev/null
+    if openssl verify -CAfile untrusted-ca.pem "role-$role.pem" > /dev/null 2>&1; then
+        echo "role-$role.pem unexpectedly verifies against untrusted-ca.pem" >&2
+        exit 1
+    fi
+    subject="$(openssl x509 -in "role-$role.pem" -noout -subject -nameopt RFC2253)"
+    if [ "$subject" != "subject=O=FSTP test fixtures,CN=$role" ]; then
+        echo "role-$role.pem has an unexpected subject: $subject" >&2
+        exit 1
+    fi
+done
+
 chmod 0644 ./*.pem
-echo "regenerated test certificates in $(pwd)"
+echo "regenerated test certificates ($MODE) in $(pwd)"

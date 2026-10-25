@@ -4,7 +4,7 @@ use std::fmt;
 use std::num::NonZeroU32;
 use std::time::Duration;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 use crate::proto::backend::DecodeLimits;
 
 /// Longest accepted password, in bytes.
@@ -221,11 +221,11 @@ impl Limits {
 
 /// Everything needed to open a connection.
 ///
-/// TLS with full verification is not optional: [`Config::new`] takes the
-/// TLS client configuration, and [`Client::connect`](crate::Client::connect)
-/// refuses servers that decline TLS. The server name for certificate
-/// verification is the host unless [`Config::tls_server_name`] overrides
-/// it.
+/// Mutual TLS with full verification is not optional: [`Config::new`]
+/// takes a [`ClientTls`] with the role's client certificate, and
+/// [`Client::connect`](crate::Client::connect) refuses servers that decline
+/// TLS (D2, R-NF-09). The server name for certificate verification is the
+/// host unless [`Config::tls_server_name`] overrides it.
 ///
 /// [`fmt::Debug`] never shows the password.
 #[derive(Clone)]
@@ -236,7 +236,7 @@ pub struct Config {
     pub(crate) password: Password,
     pub(crate) dbname: String,
     pub(crate) application_name: Option<String>,
-    pub(crate) tls: fstp_tls::ClientConfig,
+    pub(crate) tls: ClientTls,
     pub(crate) tls_server_name: Option<String>,
     pub(crate) require_auth: RequireAuth,
     pub(crate) connect_timeout: Option<Duration>,
@@ -279,12 +279,88 @@ fn check_name(value: &str, what: &str, allow_empty: bool) -> Result<(), Error> {
     Ok(())
 }
 
+/// The TLS settings of a database connection: the trust roots that verify
+/// the server certificate, and the role's client certificate and key.
+///
+/// Every database connection is mutually authenticated (D2, R-NF-09). The
+/// server checks the client certificate with `clientcert=verify-full`, so
+/// its CN must equal the role given to [`Config::new`]. SCRAM still runs
+/// on top. [`ClientTls::new`] is the only constructor and requires a
+/// certificate and key. A [`Config`] without them therefore cannot exist,
+/// and [`Client::connect`](crate::Client::connect) never connects without
+/// one.
+///
+/// Cheap to clone. [`fmt::Debug`] shows no key material.
+#[derive(Clone)]
+pub struct ClientTls {
+    inner: fstp_tls::ClientConfig,
+}
+
+impl fmt::Debug for ClientTls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientTls")
+            .field("client_certificate", &true)
+            .finish_non_exhaustive()
+    }
+}
+
+/// True when `pem` holds nothing but ASCII whitespace.
+fn is_blank(pem: &[u8]) -> bool {
+    pem.iter().all(u8::is_ascii_whitespace)
+}
+
+impl ClientTls {
+    /// Trusts the CA certificates in `roots_pem` for the server, and
+    /// presents the certificate chain `client_cert_pem` (leaf first) with
+    /// the private key `client_key_pem`.
+    ///
+    /// The leaf's CN must equal the database role. The server enforces
+    /// that; a mismatch fails the login.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`ErrorKind::Config`](crate::ErrorKind::Config) error when
+    /// the client certificate or key is missing, when any PEM input is
+    /// invalid, or when the key does not match the certificate. The message
+    /// never quotes key material.
+    pub fn new(
+        roots_pem: &[u8],
+        client_cert_pem: &[u8],
+        client_key_pem: &[u8],
+    ) -> Result<ClientTls, Error> {
+        if is_blank(client_cert_pem) {
+            return Err(Error::config(
+                "no client certificate: every database connection uses mutual TLS (D2, R-NF-09), \
+                 so a certificate whose CN is the database role is required",
+            ));
+        }
+        if is_blank(client_key_pem) {
+            return Err(Error::config(
+                "no client private key: every database connection uses mutual TLS (D2, R-NF-09), \
+                 so the key of the role's client certificate is required",
+            ));
+        }
+        let inner = fstp_tls::ClientConfig::mutual(roots_pem, client_cert_pem, client_key_pem)
+            .map_err(|e| Error::with_source(ErrorKind::Config, "client TLS settings", e))?;
+        Ok(ClientTls { inner })
+    }
+
+    /// The fstp-tls configuration, for example to run
+    /// [`tls_handshake`](crate::tls_handshake) over a transport the caller
+    /// owns. It always presents the client certificate.
+    #[must_use]
+    pub fn fstp_tls_config(&self) -> &fstp_tls::ClientConfig {
+        &self.inner
+    }
+}
+
 impl Config {
     /// A configuration for `user` with `password` on database `dbname` at
-    /// `host:port`, verifying the server certificate with `tls`.
+    /// `host:port`, with the TLS settings `tls`.
     ///
-    /// `tls` may carry a client certificate, which is then presented for
-    /// mutual TLS (R-NF-09).
+    /// The server certificate is verified in full against the roots in
+    /// `tls`, and the client certificate in `tls` is presented on every
+    /// connection (D2, R-NF-09). Its CN must equal `user`.
     ///
     /// Defaults: connect timeout 10 seconds, no statement timeout, cancel
     /// grace 5 seconds, 256 cached statements, SCRAM only, default
@@ -300,7 +376,7 @@ impl Config {
         user: impl Into<String>,
         password: Password,
         dbname: impl Into<String>,
-        tls: fstp_tls::ClientConfig,
+        tls: ClientTls,
     ) -> Result<Config, Error> {
         let host = host.into();
         let user = user.into();
@@ -426,6 +502,12 @@ impl Config {
         self.tls_server_name.as_deref().unwrap_or(&self.host)
     }
 
+    /// The TLS settings.
+    #[must_use]
+    pub fn tls(&self) -> &ClientTls {
+        &self.tls
+    }
+
     /// The accepted authentication methods.
     #[must_use]
     pub fn allowed_auth(&self) -> RequireAuth {
@@ -466,6 +548,45 @@ mod tests {
         let l = Limits::default();
         assert_eq!(l.min_scram_iterations.get(), 4096);
         assert!(l.max_scram_iterations >= l.min_scram_iterations.get());
+    }
+
+    const CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
+    const CERT: &[u8] = include_bytes!("../../fstp-tls/testdata/role-fstp_app.pem");
+    const KEY: &[u8] = include_bytes!("../../fstp-tls/testdata/role-fstp_app-key.pem");
+    const OTHER_KEY: &[u8] = include_bytes!("../../fstp-tls/testdata/role-fstp_super-key.pem");
+
+    /// R-NF-09, D2: TLS settings without a client certificate or key are a
+    /// configuration error. No [`Config`] can exist without them, so
+    /// `Client::connect` never connects without mutual TLS.
+    #[test]
+    fn r_nf_09_d2_client_tls_requires_a_certificate_and_key() {
+        let cases: [(&[u8], &[u8], &str); 4] = [
+            (b"", KEY, "no client certificate"),
+            (b" \r\n\t", KEY, "no client certificate"),
+            (CERT, b"", "no client private key"),
+            (CERT, b"\n", "no client private key"),
+        ];
+        for (cert, key, expected) in cases {
+            let err = ClientTls::new(CA, cert, key).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Config, "{err}");
+            let shown = err.to_string();
+            assert!(shown.contains(expected), "{shown}");
+            assert!(shown.contains("mutual TLS"), "{shown}");
+        }
+        // Invalid input and a key of another certificate fail too, and the
+        // error never quotes key material.
+        for (cert, key) in [
+            (&b"not a certificate"[..], KEY),
+            (CERT, b"not a key"),
+            (CERT, OTHER_KEY),
+        ] {
+            let err = ClientTls::new(CA, cert, key).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Config, "{err}");
+            let shown = format!("{err} {err:?}");
+            assert!(!shown.contains("PRIVATE KEY"), "{shown}");
+        }
+        let tls = ClientTls::new(CA, CERT, KEY).unwrap();
+        assert!(!format!("{tls:?}").contains("PRIVATE KEY"));
     }
 
     #[test]

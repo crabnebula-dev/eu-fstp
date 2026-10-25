@@ -46,6 +46,7 @@ export/
 - The vault export is encrypted under a key the tenant controls.
 - The message log holds metadata only, never message bodies sent to external channels.
 - Import validates all hashes and the audit chain before writing any data.
+- Amounts are decimal strings in the canonical form of `docs/adr/ADR-006-money-representation.md`, never JSON numbers.
 
 ## Licensing and contributions
 

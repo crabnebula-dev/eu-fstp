@@ -11,8 +11,8 @@
 //!   than rustls's 64 KiB handshake buffer. These seeds also raise
 //!   libFuzzer's default input length limit above that buffer size.
 //! - `round-trip`: control inputs for `tls_round_trip` that cover clean
-//!   sessions, backpressure, aborts, corruption, cuts and a stalled
-//!   handshake. They are the same on every run.
+//!   sessions, backpressure, aborts, corruption, cuts, a stalled handshake
+//!   and resumed sessions. They are the same on every run.
 //!
 //! Usage: `cargo run -p fstp-tls --example tls_fuzz_seeds -- [GROUP]...`
 
@@ -249,7 +249,7 @@ fn write_round_trip(dir: &Path) -> Result<(), Box<dyn Error>> {
     rt.faults = 0x02;
     rt.tamper_at = 15_000;
     rt.tamper_bit = 5;
-    seeds.push(("failure-tamper-server-to-client", rt, mixed));
+    seeds.push(("failure-tamper-server-to-client", rt, mixed.clone()));
     // Corrupts the length of the first record, the ClientHello, so that
     // both sides wait for each other.
     let mut rt = RoundTrip::plain(100, 100);
@@ -257,6 +257,24 @@ fn write_round_trip(dir: &Path) -> Result<(), Box<dyn Error>> {
     rt.tamper_at = 3;
     rt.tamper_bit = 3;
     seeds.push(("stalled-handshake", rt, Vec::new()));
+    // Faults bit 4 runs a clean session first, so these resume (P2).
+    let mut rt = RoundTrip::plain(1000, 2000);
+    rt.faults = 0x10;
+    seeds.push(("complete-resumed", rt, Vec::new()));
+    let mut rt = RoundTrip::plain(300, 300);
+    rt.capacity = 0;
+    rt.client = [0, 0, 0xA5, 0];
+    rt.server = [0, 0, 0x5A, 0];
+    rt.faults = 0x10;
+    seeds.push(("complete-resumed-bytewise-pending", rt, mixed.clone()));
+    let mut rt = RoundTrip::plain(20_000, 2000);
+    rt.faults = 0x11;
+    rt.tamper_at = 15_000;
+    seeds.push(("failure-resumed-tamper-client-to-server", rt, Vec::new()));
+    let mut rt = RoundTrip::plain(4000, 4000);
+    rt.faults = 0x18;
+    rt.cut_at = 5000;
+    seeds.push(("truncated-resumed-cut-server-to-client", rt, mixed));
     for (name, rt, tape) in seeds {
         std::fs::write(dir.join(name), rt.encode(&tape))?;
     }

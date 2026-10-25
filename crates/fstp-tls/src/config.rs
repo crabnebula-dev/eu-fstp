@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustls::RootCertStore;
-use rustls::client::Resumption;
+use rustls::client::{Resumption, Tls12Resumption};
 use rustls::crypto::CryptoProvider;
 use rustls::server::{NoServerSessionStorage, WebPkiClientVerifier};
 use rustls_pki_types::pem::PemObject;
@@ -12,6 +12,9 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::error::TlsError;
 use crate::provider::crypto_provider;
+use crate::resumption::{
+    CLIENT_SERVERS, CLIENT_TICKETS_PER_SERVER, ClientSessions, SERVER_SESSIONS, ServerSessions,
+};
 
 /// Limits applied to PEM input before it is parsed.
 ///
@@ -118,11 +121,24 @@ static TLS13_ONLY: &[&rustls::SupportedProtocolVersion] = &[&rustls::version::TL
 ///
 /// Cheap to clone. One configuration serves any number of connections.
 ///
-/// Session resumption is off. The client keeps no session cache, so every
-/// connection runs a full handshake and validates the server certificate.
+/// Session resumption follows policy P2. The configuration keeps a bounded
+/// cache of TLS 1.3 tickets, which its clones share. A connection offers a
+/// ticket only while its session is younger than
+/// [`MAX_RESUMPTION_AGE`](crate::MAX_RESUMPTION_AGE), counted from the full
+/// handshake that validated the server certificate.
+/// A chain of resumptions never extends that time, whatever ticket lifetime
+/// the server announces. After it, a full handshake validates the server
+/// certificate again.
+///
+/// The cache keeps up to 8 tickets for each of up to 256 server names.
+/// Certificate validity and ticket age use the same clock.
 #[derive(Clone)]
 pub struct ClientConfig {
+    /// The shared rustls configuration. Its own resumption is disabled.
+    /// `connection_config` adds the session cache for each connection.
     pub(crate) inner: Arc<rustls::ClientConfig>,
+    /// `None` only for plain rustls configurations that tests build.
+    pub(crate) sessions: Option<Arc<ClientSessions>>,
 }
 
 impl fmt::Debug for ClientConfig {
@@ -133,11 +149,36 @@ impl fmt::Debug for ClientConfig {
                 "client_auth",
                 &self.inner.client_auth_cert_resolver.has_certs(),
             )
+            .field("resumption", &self.sessions.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl ClientConfig {
+    /// Wraps a plain rustls configuration, for tests. Its resumption
+    /// settings stay as rustls has them.
+    #[cfg(test)]
+    pub(crate) fn from_rustls(cfg: rustls::ClientConfig) -> Self {
+        Self {
+            inner: Arc::new(cfg),
+            sessions: None,
+        }
+    }
+
+    /// The rustls configuration for one new connection. It is the shared
+    /// configuration with a session store that tracks the origin of this
+    /// connection's tickets (see `resumption.rs`).
+    pub(crate) fn connection_config(&self) -> Arc<rustls::ClientConfig> {
+        let Some(sessions) = &self.sessions else {
+            return self.inner.clone();
+        };
+        let mut cfg = (*self.inner).clone();
+        let handle = sessions.handle(cfg.time_provider.clone());
+        cfg.resumption =
+            Resumption::store(Arc::new(handle)).tls12_resumption(Tls12Resumption::Disabled);
+        Arc::new(cfg)
+    }
+
     /// Starts a configuration that trusts the CA certificates in `roots_pem`.
     pub fn builder(roots_pem: &[u8]) -> ClientConfigBuilder<'_> {
         ClientConfigBuilder {
@@ -240,11 +281,16 @@ impl<'a> ClientConfigBuilder<'a> {
             None => builder.with_no_client_auth(),
         };
         cfg.alpn_protocols = self.alpn;
-        // No session cache: every connection validates the server
-        // certificate in a full handshake (R-NF-09).
+        // The shared configuration never resumes on its own. Each
+        // connection gets the bounded session cache through
+        // `connection_config` (P2, R-NF-09).
         cfg.resumption = Resumption::disabled();
         Ok(ClientConfig {
             inner: Arc::new(cfg),
+            sessions: Some(Arc::new(ClientSessions::new(
+                CLIENT_SERVERS,
+                CLIENT_TICKETS_PER_SERVER,
+            ))),
         })
     }
 }
@@ -254,24 +300,62 @@ impl<'a> ClientConfigBuilder<'a> {
 ///
 /// Cheap to clone. One configuration serves any number of connections.
 ///
-/// Session resumption is off. The server issues no TLS 1.3 tickets and keeps
-/// no session store, so every connection runs a full handshake. Under
-/// mutual TLS, each one validates the client certificate again, including
-/// its expiry.
+/// Session resumption follows policy P2. The server keeps its sessions in a
+/// bounded in-memory store, which its clones share, and issues one TLS 1.3
+/// ticket per handshake. Tickets are single use. A session can be resumed
+/// only while it is younger than
+/// [`MAX_RESUMPTION_AGE`](crate::MAX_RESUMPTION_AGE), counted from the full
+/// handshake that authenticated it. A chain of resumptions never extends
+/// that time. After it, a full handshake runs, and under mutual TLS
+/// it validates the client certificate again, including its expiry.
+///
+/// Within that time, a resumed session carries the client certificate of
+/// its full handshake without checking it again. The store keeps up to 1024
+/// sessions and drops the oldest first. The server issues no stateless
+/// tickets and accepts no early data. Each ticket announces a lifetime of
+/// 24 hours, which rustls 0.23.46 fixes for stateful tickets. The store
+/// still refuses a session once the hour has passed.
 #[derive(Clone)]
 pub struct ServerConfig {
+    /// The shared rustls configuration. It has no session store of its
+    /// own. `connection_config` adds it for each connection.
     pub(crate) inner: Arc<rustls::ServerConfig>,
+    /// `None` only for plain rustls configurations that tests build.
+    pub(crate) sessions: Option<Arc<ServerSessions>>,
 }
 
 impl fmt::Debug for ServerConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ServerConfig")
             .field("alpn", &self.inner.alpn_protocols)
+            .field("resumption", &self.sessions.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl ServerConfig {
+    /// Wraps a plain rustls configuration, for tests. Its resumption
+    /// settings stay as rustls has them.
+    #[cfg(test)]
+    pub(crate) fn from_rustls(cfg: rustls::ServerConfig) -> Self {
+        Self {
+            inner: Arc::new(cfg),
+            sessions: None,
+        }
+    }
+
+    /// The rustls configuration for one new connection. It is the shared
+    /// configuration with a session store that tracks the origin of this
+    /// connection's tickets (see `resumption.rs`).
+    pub(crate) fn connection_config(&self) -> Arc<rustls::ServerConfig> {
+        let Some(sessions) = &self.sessions else {
+            return self.inner.clone();
+        };
+        let mut cfg = (*self.inner).clone();
+        cfg.session_storage = Arc::new(sessions.handle(cfg.time_provider.clone()));
+        Arc::new(cfg)
+    }
+
     /// Starts a configuration that presents `chain_pem` (leaf first) with the
     /// private key `key_pem`.
     pub fn builder<'a>(chain_pem: &'a [u8], key_pem: &'a [u8]) -> ServerConfigBuilder<'a> {
@@ -388,14 +472,22 @@ impl<'a> ServerConfigBuilder<'a> {
             .with_single_cert(chain, key)
             .map_err(|e| TlsError::config_from("server certificate", e))?;
         cfg.alpn_protocols = self.alpn;
-        // No TLS 1.3 tickets and no session store. A resumed session would
-        // skip the client verifier and keep an expired client certificate
-        // authenticated (R-NF-09). The default ticketer issues no
-        // stateless tickets either.
+        // A resumed session skips the client verifier, so its age is
+        // bounded (P2, R-NF-09). The shared configuration stores nothing
+        // and fails safe if used directly. Each connection gets the bounded
+        // store through `connection_config`. The default ticketer issues no
+        // stateless tickets, and early data stays off.
+        //
+        // One ticket per handshake: a resumption consumes one and receives
+        // one, so sequential clients leave no unused entries in the store.
+        // Client requests for more tickets (RFC 9149) are ignored.
         cfg.session_storage = Arc::new(NoServerSessionStorage {});
-        cfg.send_tls13_tickets = 0;
+        cfg.send_tls13_tickets = 1;
+        cfg.max_tls13_tickets = 0;
+        cfg.max_early_data_size = 0;
         Ok(ServerConfig {
             inner: Arc::new(cfg),
+            sessions: Some(Arc::new(ServerSessions::new(SERVER_SESSIONS))),
         })
     }
 }

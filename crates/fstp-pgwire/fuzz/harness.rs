@@ -27,7 +27,7 @@
 use std::io;
 use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 
 use fstp_json::Value;
@@ -35,8 +35,8 @@ use fstp_pgwire::proto::backend::{BackendDecoder, BackendMessage, DecodeLimits, 
 use fstp_pgwire::scram::{ChannelBinding, ScramClient};
 use fstp_pgwire::x509::{EndPointHash, end_point_hash, tls_server_end_point};
 use fstp_pgwire::{
-    AuthMethod, Config, Date, ErrorKind, FromSql, Limits, Numeric, Password, RequireAuth, Session,
-    Timestamptz, ToSql, Type, Uuid, base64,
+    AuthMethod, ClientTls, Config, Date, ErrorKind, FromSql, Limits, Numeric, Password,
+    RequireAuth, Session, Timestamptz, ToSql, Type, Uuid, base64,
 };
 use fstp_rt::duplex::{DuplexStream, duplex};
 use fstp_rt::future::{join, poll_bounded};
@@ -46,6 +46,8 @@ use fstp_rt::{AsyncRead, AsyncWrite, Connection};
 pub const CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
 pub const SERVER: &[u8] = include_bytes!("../../fstp-tls/testdata/server.pem");
 pub const SERVER_KEY: &[u8] = include_bytes!("../../fstp-tls/testdata/server-key.pem");
+pub const CLIENT: &[u8] = include_bytes!("../../fstp-tls/testdata/client.pem");
+pub const CLIENT_KEY: &[u8] = include_bytes!("../../fstp-tls/testdata/client-key.pem");
 
 fn ctrl(data: &[u8], i: usize) -> u8 {
     data.get(i).copied().unwrap_or(0)
@@ -642,6 +644,14 @@ async fn scripted_server<S: AsyncRead + AsyncWrite + Unpin>(
     .await;
 }
 
+/// The client's TLS settings, built once. [`Session::startup`] does not
+/// use them; the TLS modes run [`fstp_pgwire::tls_handshake`] themselves.
+fn client_tls() -> ClientTls {
+    static TLS: OnceLock<ClientTls> = OnceLock::new();
+    TLS.get_or_init(|| ClientTls::new(CA, CLIENT, CLIENT_KEY).unwrap())
+        .clone()
+}
+
 fn hostile_config(require: RequireAuth) -> Config {
     Config::new(
         "localhost",
@@ -649,7 +659,7 @@ fn hostile_config(require: RequireAuth) -> Config {
         "fuzz",
         Password::new(PASSWORD).unwrap(),
         "db",
-        fstp_tls::ClientConfig::new(CA).unwrap(),
+        client_tls(),
     )
     .unwrap()
     .require_auth(require)

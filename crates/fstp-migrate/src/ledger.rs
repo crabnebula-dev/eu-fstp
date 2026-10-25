@@ -1,8 +1,10 @@
 //! The migration ledger and the forward-only consistency rules.
 //!
-//! The ledger is the table `fstp_migrate.schema_migrations`, in a schema
-//! of its own that the runner creates. It holds one row per applied
-//! migration, written in the same transaction as the migration.
+//! The ledger is the table [`LEDGER_TABLE_NAME`] in a schema of its own,
+//! [`DEFAULT_LEDGER_SCHEMA`](crate::DEFAULT_LEDGER_SCHEMA) unless the caller
+//! configures another. The runner creates the schema and the table if they
+//! are missing. The table holds one row per applied migration, written
+//! in the same transaction as the migration.
 //! [`check_ledger`] compares its rows with the embedded migrations. It is
 //! a pure function, so the rules are testable without a server.
 
@@ -12,14 +14,12 @@ use fstp_pgwire::Timestamptz;
 
 use crate::migration::CheckedMigration;
 
-/// The schema that holds the ledger. The runner creates it with the
-/// ledger table.
-pub const LEDGER_SCHEMA: &str = "fstp_migrate";
-
-/// The ledger table's schema-qualified name, as every runner statement
-/// writes it. A qualified name never resolves through `search_path` and
-/// never to a temporary table, so neither can redirect the ledger.
-pub const LEDGER_TABLE: &str = "fstp_migrate.schema_migrations";
+/// The ledger table's name within the ledger schema. Every runner
+/// statement qualifies it with the schema, as
+/// [`LedgerSchema`](crate::LedgerSchema) describes. A qualified name never
+/// resolves through `search_path` and never to a temporary table, so
+/// neither can redirect the ledger.
+pub const LEDGER_TABLE_NAME: &str = "schema_migrations";
 
 /// Most problems reported in one [`LedgerInconsistency`].
 pub const MAX_REPORTED_PROBLEMS: usize = 32;

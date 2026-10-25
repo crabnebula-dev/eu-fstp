@@ -55,9 +55,10 @@ async fn connect_tcp<R: Runtime>(rt: &R, host: &str, port: u16) -> Result<R::Tcp
 
 /// A connected PostgreSQL client.
 ///
-/// - TLS with full certificate verification is always used. A server that
-///   declines TLS is refused (R-NF-09). A client certificate in the TLS
-///   configuration gives mutual TLS.
+/// - Mutual TLS with full certificate verification is always used: the
+///   server certificate is verified, and the role's client certificate from
+///   the [`ClientTls`](crate::ClientTls) is presented (D2, R-NF-09). A
+///   server that declines TLS is refused.
 /// - Authentication is SCRAM-SHA-256-PLUS when the server offers it, else
 ///   SCRAM-SHA-256, as limited by `require_auth`.
 /// - Statements use the extended query protocol only. SQL text is
@@ -86,14 +87,21 @@ impl<R: Runtime> fmt::Debug for Client<R> {
 }
 
 impl<R: Runtime> Client<R> {
-    /// Connects over TCP to the configured host and port, negotiates TLS and
-    /// authenticates. The connect timeout covers all of it.
+    /// Connects over TCP to the configured host and port, negotiates mutual
+    /// TLS and authenticates. The connect timeout covers all of it.
+    ///
+    /// The configuration always carries a client certificate and key,
+    /// because [`ClientTls::new`](crate::ClientTls::new) refuses to build TLS
+    /// settings without them. A configuration without a client certificate
+    /// therefore never reaches the network (D2, R-NF-09).
     ///
     /// # Errors
     ///
     /// Returns [`ErrorKind::Timeout`], [`ErrorKind::TlsRequired`],
     /// [`ErrorKind::Tls`], [`ErrorKind::Auth`], the server's error (such as
     /// SQLSTATE `28P01` for a wrong password), or a transport error.
+    /// PostgreSQL also reports `28P01` when the client certificate's CN
+    /// does not match the role, and `28000` when no certificate arrived.
     pub async fn connect(rt: &R, config: &Config) -> Result<Client<R>, Error> {
         let fut = async {
             let tcp = connect_tcp(rt, &config.host, config.port).await?;
@@ -129,7 +137,7 @@ impl<R: Runtime> Client<R> {
     }
 
     async fn establish<S: Connection>(rt: &R, io: S, config: &Config) -> Result<Client<R>, Error> {
-        let tls = tls_handshake(io, &config.tls, config.server_name()).await?;
+        let tls = tls_handshake(io, config.tls.fstp_tls_config(), config.server_name()).await?;
         let cert = tls
             .peer_end_entity_der()
             .map(<[u8]>::to_vec)
@@ -139,7 +147,7 @@ impl<R: Runtime> Client<R> {
             host: config.host.clone(),
             port: config.port,
             server_name: config.server_name().to_owned(),
-            tls: config.tls.clone(),
+            tls: config.tls.fstp_tls_config().clone(),
             key: session.backend_key(),
             timeout: config.connect_timeout,
         };

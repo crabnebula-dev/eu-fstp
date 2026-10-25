@@ -12,11 +12,18 @@ mod common;
 use std::collections::BTreeMap;
 use std::sync::Barrier;
 
-use common::{Pg, block_on, connect, fresh, relation_exists, rt, scalar_i64, scalar_text, tls};
-use fstp_migrate::{
-    Database, Error, LEDGER_SCHEMA, LEDGER_TABLE, LedgerProblem, Migration, MigrationSet, Status,
+use common::{
+    Pg, block_on, connect, fresh, fresh_as, relation_exists, rt, scalar_i64, scalar_text,
 };
+use fstp_migrate::{
+    DEFAULT_LEDGER_SCHEMA, Database, Error, LEDGER_TABLE_NAME, LedgerProblem, LedgerSchema,
+    Migration, MigrationSet, Status,
+};
+use fstp_pgtest::Role;
 use fstp_pgwire::{Session, TransactionStatus};
+
+/// The ledger table in the default schema, as these tests name it in SQL.
+const LEDGER_TABLE: &str = "fstp_migrate.schema_migrations";
 
 const ACCOUNTS: &str = include_str!("migrations/base/0001_create_accounts.sql");
 const ACCOUNTS_EDITED: &str = include_str!("migrations/base/0001_create_accounts_edited.sql");
@@ -391,7 +398,7 @@ fn r_nf_06_upgrade_keeps_existing_data() {
 /// so that they overlap.
 #[test]
 fn forward_only_concurrent_runners_apply_each_migration_once() {
-    concurrent_runners(None);
+    concurrent_runners(None, None);
 }
 
 /// As above, with `REPEATABLE READ` as every session's default isolation
@@ -399,14 +406,19 @@ fn forward_only_concurrent_runners_apply_each_migration_once() {
 /// the lock fresh.
 #[test]
 fn forward_only_concurrent_runners_ignore_default_isolation() {
-    concurrent_runners(Some(
-        "SET default_transaction_isolation = 'repeatable read'",
-    ));
+    concurrent_runners(
+        Some("SET default_transaction_isolation = 'repeatable read'"),
+        None,
+    );
 }
 
-fn concurrent_runners(session_setup: Option<&'static str>) {
-    let cfg = fresh();
-    let migrations = set(CONCURRENT);
+/// Runs four runners at once, as the superuser with the default ledger
+/// schema, or as `fstp_app` with the ledger schema `ledger`.
+fn concurrent_runners(session_setup: Option<&'static str>, ledger: Option<LedgerSchema>) {
+    let custom = ledger.is_some();
+    let cfg = if custom { fresh_as(Role::App) } else { fresh() };
+    let ledger = ledger.unwrap_or_default();
+    let migrations = set(CONCURRENT).with_ledger_schema(ledger.clone());
     let runners = 4;
     let barrier = Barrier::new(runners);
     let reports: Vec<fstp_migrate::ApplyReport> = std::thread::scope(|s| {
@@ -445,7 +457,18 @@ fn concurrent_runners(session_setup: Option<&'static str>) {
         .map(|r| (r.get(0).unwrap(), r.get(1).unwrap()))
         .collect();
     assert_eq!(counts, BTreeMap::from([(1, 1), (2, 1), (3, 1), (4, 1)]));
-    assert_eq!(ledger_versions(&mut db), vec![1, 2, 3, 4]);
+    let status = block_on(migrations.verify(&mut db)).unwrap();
+    let recorded: Vec<i64> = status.applied.iter().map(|r| r.version).collect();
+    assert_eq!(recorded, vec![1, 2, 3, 4]);
+    if custom {
+        assert_eq!(
+            schema_owner(&mut db, ledger.as_str()).as_deref(),
+            Some("fstp_app")
+        );
+        assert_eq!(schema_owner(&mut db, DEFAULT_LEDGER_SCHEMA), None);
+    } else {
+        assert_eq!(ledger_versions(&mut db), recorded);
+    }
 }
 
 /// A migration that changes `search_path` or `standard_conforming_strings`,
@@ -591,9 +614,10 @@ fn session_implements_database() {
         let tcp = <TokioRuntime as Runtime>::connect_tcp(rt(), addr)
             .await
             .unwrap();
-        let tls_stream = fstp_pgwire::tls_handshake(tcp, &tls(), cfg.server_name())
-            .await
-            .unwrap();
+        let tls_stream =
+            fstp_pgwire::tls_handshake(tcp, cfg.tls().fstp_tls_config(), cfg.server_name())
+                .await
+                .unwrap();
         let cert = tls_stream.peer_end_entity_der().unwrap().to_vec();
         Session::startup(Box::new(tls_stream), &cfg, Some(&cert))
             .await
@@ -679,7 +703,10 @@ fn review_ledger_located_via_search_path() {
         ),
         LEDGER_TABLE
     );
-    assert!(LEDGER_TABLE.starts_with(LEDGER_SCHEMA));
+    assert_eq!(
+        LEDGER_TABLE,
+        format!("{DEFAULT_LEDGER_SCHEMA}.{LEDGER_TABLE_NAME}")
+    );
 }
 
 /// Review finding `temp-table-shadows-ledger` (forward-only). A temporary
@@ -860,4 +887,312 @@ fn review_lexer_param_and_vtab_disagree() {
     };
     assert_eq!(err.code(), Some("42601"), "{err}");
     assert!(!relation_exists(&mut db, "vt"));
+}
+
+fn schema(name: &str) -> LedgerSchema {
+    LedgerSchema::new(name).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+/// The owner of schema `name`, or `None` when it does not exist.
+fn schema_owner(db: &mut Pg, name: &str) -> Option<String> {
+    block_on(db.query(
+        "SELECT pg_get_userbyid(nspowner)::text FROM pg_namespace WHERE nspname = $1::text",
+        &[&name],
+    ))
+    .unwrap()
+    .first()
+    .map(|r| r.get(0).unwrap())
+}
+
+/// P4 (revised): by default the ledger lives in `fstp_migrate`, which the
+/// runner creates owned by the migrating role (`current_user`). Here that
+/// role is `fstp_app`, which has no superuser rights.
+#[test]
+fn p4_default_ledger_schema_is_created_and_owned_by_the_migrating_role() {
+    let mut db = connect(&fresh_as(Role::App));
+    let migrations = set(RELEASE_1);
+    assert_eq!(migrations.ledger_schema(), &LedgerSchema::default());
+    assert_eq!(migrations.ledger_schema().as_str(), DEFAULT_LEDGER_SCHEMA);
+    assert_eq!(schema_owner(&mut db, DEFAULT_LEDGER_SCHEMA), None);
+    assert_eq!(
+        versions(&block_on(migrations.apply(&mut db)).unwrap()),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        schema_owner(&mut db, DEFAULT_LEDGER_SCHEMA).as_deref(),
+        Some("fstp_app")
+    );
+    assert_eq!(
+        scalar_text(&mut db, "SELECT current_user::text"),
+        "fstp_app"
+    );
+    assert!(relation_exists(&mut db, LEDGER_TABLE));
+    assert_eq!(ledger_versions(&mut db), vec![1, 2, 3]);
+}
+
+/// P4 (revised): a configured ledger schema holds the ledger instead of
+/// `fstp_migrate`, which is never created. The runner creates it owned by
+/// the migrating role. A runner with another schema sees another, empty
+/// ledger. An SQL keyword works as a schema name, since the server quotes
+/// it wherever it is an identifier.
+#[test]
+fn p4_custom_ledger_schema_holds_the_ledger() {
+    let cfg = fresh_as(Role::App);
+    let mut db = connect(&cfg);
+    let custom = set(RELEASE_1).with_ledger_schema(schema("app_ledger"));
+    assert_eq!(custom.ledger_schema().as_str(), "app_ledger");
+    let status = block_on(custom.verify(&mut db)).unwrap();
+    assert!(!status.ledger_exists);
+    assert_eq!(
+        schema_owner(&mut db, "app_ledger"),
+        None,
+        "verify creates nothing"
+    );
+
+    let report = block_on(custom.apply(&mut db)).unwrap();
+    assert_eq!(versions(&report), vec![1, 2, 3]);
+    assert_eq!(
+        schema_owner(&mut db, "app_ledger").as_deref(),
+        Some("fstp_app")
+    );
+    assert_eq!(schema_owner(&mut db, DEFAULT_LEDGER_SCHEMA), None);
+    assert_eq!(
+        scalar_text(
+            &mut db,
+            "SELECT string_agg(version::text || ':' || name, ',' ORDER BY version) \
+             FROM app_ledger.schema_migrations"
+        ),
+        "1:create_accounts,2:tricky_sql,3:seed_accounts"
+    );
+    let status = block_on(custom.verify(&mut db)).unwrap();
+    assert!(status.ledger_exists);
+    assert_eq!(status.applied.len(), 3);
+    assert!(status.pending.is_empty());
+    assert!(block_on(custom.apply(&mut db)).unwrap().applied.is_empty());
+
+    // The default ledger is a different, missing one.
+    let status = verify(&mut db, RELEASE_1).unwrap();
+    assert!(!status.ledger_exists);
+    assert_eq!(status.pending.len(), 3);
+
+    // A keyword as the schema name, on a fresh database.
+    let mut db = connect(&fresh_as(Role::App));
+    let keyword = set(RELEASE_1).with_ledger_schema(schema("order"));
+    assert_eq!(
+        versions(&block_on(keyword.apply(&mut db)).unwrap()),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        scalar_i64(&mut db, "SELECT count(*) FROM \"order\".schema_migrations"),
+        3
+    );
+    assert_eq!(schema_owner(&mut db, "order").as_deref(), Some("fstp_app"));
+    assert!(
+        block_on(keyword.verify(&mut db))
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+}
+
+/// P4 (revised): every runner method refuses a ledger schema that exists
+/// but belongs to a role other than the migrating role (`current_user`),
+/// with a typed error. It applies nothing and creates nothing, even where
+/// its privileges would let it write there, and even when that schema
+/// already holds a ledger that claims every migration is applied.
+#[test]
+fn p4_ledger_schema_owned_by_another_role_is_refused() {
+    struct Case {
+        runner: Role,
+        owner: Role,
+        ledger: Option<&'static str>,
+        forged_ledger: bool,
+    }
+    let cases = [
+        Case {
+            runner: Role::App,
+            owner: Role::Superuser,
+            ledger: None,
+            forged_ledger: false,
+        },
+        Case {
+            runner: Role::App,
+            owner: Role::Superuser,
+            ledger: Some("shared_ledger"),
+            forged_ledger: true,
+        },
+        Case {
+            runner: Role::Superuser,
+            owner: Role::App,
+            ledger: None,
+            forged_ledger: true,
+        },
+        Case {
+            runner: Role::Superuser,
+            owner: Role::App,
+            ledger: Some("shared_ledger"),
+            forged_ledger: false,
+        },
+    ];
+    for case in cases {
+        let ledger = case.ledger.map_or_else(LedgerSchema::default, schema);
+        let cfg = fresh_as(case.runner);
+        let mut setup = format!(
+            "CREATE SCHEMA {ledger} AUTHORIZATION {};\n",
+            case.owner.name()
+        );
+        if case.forged_ledger {
+            setup.push_str(&format!(
+                "CREATE TABLE {ledger}.schema_migrations (version int8 PRIMARY KEY, name text, \
+                 checksum bytea, applied_at timestamptz DEFAULT now(), statement_count int4);\n\
+                 ALTER TABLE {ledger}.schema_migrations OWNER TO {};\n\
+                 INSERT INTO {ledger}.schema_migrations (version, name, checksum, statement_count) \
+                 VALUES (1, 'create_accounts', sha256(convert_to($a${ACCOUNTS}$a$, 'UTF8')), 2), \
+                 (2, 'tricky_sql', sha256(convert_to($t${TRICKY}$t$, 'UTF8')), 6), \
+                 (3, 'seed_accounts', sha256(convert_to($s${SEED}$s$, 'UTF8')), 2);\n",
+                case.owner.name()
+            ));
+        }
+        common::server()
+            .psql(cfg.dbname(), &setup)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let migrations = set(RELEASE_2).with_ledger_schema(ledger.clone());
+        let mut db = connect(&cfg);
+        let refused = |err: Error| match err {
+            Error::LedgerSchemaOwner {
+                schema,
+                owner,
+                current_user,
+            } => {
+                assert_eq!(schema, ledger);
+                assert_eq!(owner, case.owner.name());
+                assert_eq!(current_user, case.runner.name());
+            }
+            other => panic!("{ledger}: unexpected error: {other}"),
+        };
+        let err = block_on(migrations.apply(&mut db)).unwrap_err();
+        let shown = err.to_string();
+        assert!(
+            shown.contains(ledger.as_str()) && shown.contains(case.owner.name()),
+            "{shown}"
+        );
+        assert_eq!(err.code(), None);
+        refused(err);
+        refused(block_on(migrations.verify(&mut db)).unwrap_err());
+        refused(block_on(migrations.plan(&mut db)).unwrap_err());
+        assert_eq!(db.transaction_status(), TransactionStatus::Idle);
+        assert!(!relation_exists(&mut db, "accounts"), "{ledger}");
+        assert_eq!(
+            schema_owner(&mut db, ledger.as_str()).as_deref(),
+            Some(case.owner.name())
+        );
+        // A catalog lookup: the runner may lack USAGE on that schema.
+        let tables = block_on(db.query_one(
+            "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1::text AND c.relname = 'schema_migrations'",
+            &[&ledger.as_str()],
+        ))
+        .unwrap()
+        .get::<i64>(0)
+        .unwrap();
+        assert_eq!(tables, i64::from(case.forged_ledger));
+    }
+}
+
+/// P4 (revised), with review findings `ledger-located-via-search-path` and
+/// `temp-table-shadows-ledger`. With a configured schema, these cannot
+/// redirect the ledger:
+///
+/// - a `search_path` that lists decoy ledgers;
+/// - a temporary table named like the ledger;
+/// - a migration that points the runner's own transaction-local settings
+///   at a decoy schema.
+///
+/// A later session with another `search_path` re-applies nothing.
+#[test]
+fn p4_custom_schema_cannot_be_redirected() {
+    const LIST: &[Migration] = &[
+        Migration::new(
+            1,
+            "create_items",
+            "CREATE TABLE public.items (id int);\n\
+             INSERT INTO public.items VALUES (1);\n\
+             SELECT pg_catalog.set_config('fstp_ledger.schema', 'decoy', true);\n\
+             CREATE TEMP TABLE IF NOT EXISTS schema_migrations (version bigint, name text, \
+             checksum bytea, statement_count int, applied_at timestamptz DEFAULT now());",
+        ),
+        Migration::new(
+            2,
+            "move_to_decoy",
+            "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET search_path = decoy, public', \
+             current_database()); END $$;",
+        ),
+    ];
+    // A table shaped like the ledger, under the name `$table`.
+    macro_rules! decoy {
+        ($table:literal) => {
+            concat!(
+                "CREATE ",
+                $table,
+                " (version bigint, name text, checksum bytea, statement_count int, \
+                 applied_at timestamptz DEFAULT now())"
+            )
+        };
+    }
+    let cfg = fresh_as(Role::App);
+    let mut db = connect(&cfg);
+    for sql in [
+        "CREATE SCHEMA decoy",
+        decoy!("TABLE decoy.schema_migrations"),
+        decoy!("TABLE public.schema_migrations"),
+        decoy!("TEMP TABLE schema_migrations"),
+    ] {
+        block_on(db.execute(sql, &[])).unwrap();
+    }
+    block_on(db.execute("SET search_path = decoy, public", &[])).unwrap();
+    block_on(db.execute(
+        "SELECT set_config('fstp_ledger.schema', 'decoy', false)",
+        &[],
+    ))
+    .unwrap();
+    let migrations = set(LIST).with_ledger_schema(schema("ledger_custom"));
+    assert_eq!(
+        versions(&block_on(migrations.apply(&mut db)).unwrap()),
+        vec![1, 2]
+    );
+    drop(db);
+
+    let mut next = connect(&cfg);
+    assert_eq!(
+        scalar_text(&mut next, "SELECT current_setting('search_path')"),
+        "decoy, public"
+    );
+    assert!(
+        block_on(migrations.verify(&mut next))
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert!(
+        block_on(migrations.apply(&mut next))
+            .unwrap()
+            .applied
+            .is_empty()
+    );
+    for (sql, want) in [
+        ("SELECT count(*) FROM ledger_custom.schema_migrations", 2),
+        ("SELECT count(*) FROM decoy.schema_migrations", 0),
+        ("SELECT count(*) FROM public.schema_migrations", 0),
+        ("SELECT count(*) FROM public.items", 1),
+    ] {
+        assert_eq!(scalar_i64(&mut next, sql), want, "{sql}");
+    }
+}
+
+/// P4 (revised), forward-only (test plan, Database layer): concurrent
+/// runners with a configured ledger schema apply each migration exactly
+/// once, and create the schema once.
+#[test]
+fn p4_concurrent_runners_with_custom_schema_apply_each_migration_once() {
+    concurrent_runners(None, Some(schema("concurrent_ledger")));
 }

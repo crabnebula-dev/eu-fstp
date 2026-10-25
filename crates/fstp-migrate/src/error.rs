@@ -3,6 +3,7 @@
 use std::fmt;
 
 use crate::ledger::LedgerInconsistency;
+use crate::schema::LedgerSchema;
 
 /// An error from [`MigrationSet::verify`](crate::MigrationSet::verify),
 /// [`MigrationSet::plan`](crate::MigrationSet::plan) or
@@ -36,6 +37,17 @@ pub enum Error {
     /// The ledger contradicts the embedded migrations. Nothing was applied
     /// in the transaction that found it.
     Inconsistent(LedgerInconsistency),
+    /// The ledger schema exists, but a role other than the migrating role
+    /// (`current_user`) owns it. That role could change the ledger, so the
+    /// runner neither reads nor writes it, and nothing was applied.
+    LedgerSchemaOwner {
+        /// The configured ledger schema.
+        schema: LedgerSchema,
+        /// The role that owns the schema.
+        owner: String,
+        /// The migrating role.
+        current_user: String,
+    },
     /// The server's `standard_conforming_strings` setting is not `on`, or
     /// the connection does not report it. The statement splitter relies on
     /// it, so nothing was applied.
@@ -113,6 +125,7 @@ impl Error {
             Self::TransactionOpen
             | Self::NoRow { .. }
             | Self::Inconsistent(_)
+            | Self::LedgerSchemaOwner { .. }
             | Self::StandardConformingStringsOff
             | Self::SessionChanged { .. } => None,
         }
@@ -156,6 +169,15 @@ impl fmt::Display for Error {
             Self::Database { context, source } => write!(f, "{context}: {source}"),
             Self::NoRow { context } => write!(f, "{context}: the server returned no row"),
             Self::Inconsistent(i) => write!(f, "{i}"),
+            Self::LedgerSchemaOwner {
+                schema,
+                owner,
+                current_user,
+            } => write!(
+                f,
+                "the ledger schema {schema} is owned by the role {owner:?}, not by the migrating \
+                 role {current_user:?}; the runner refuses to use it"
+            ),
             Self::StandardConformingStringsOff => f.write_str(
                 "standard_conforming_strings is not reported as on; the statement splitter requires it",
             ),

@@ -142,3 +142,28 @@ Weak dependency note:
 - Verified on 2026-10-24: `cargo tree --locked -i ring --target all -e all` prints nothing, and `tools/deps-check` reports the edge as not activated.
 - ring's own dependencies `getrandom 0.2.17` and `windows-sys 0.52.0`, with the `windows-targets 0.52.6` crates below it, are unused for the same reason. They appear only in the lockfile and the resolve graph. `cfg-if 1.0.5` is a dependency of ring too, but getrandom 0.4.3 reaches it on other targets (see the platform note).
 - ring is not allowed as a platform provider (see Not allowed). It has no allowlist entry, so deps-check fails if a feature change ever activates it.
+
+Platform crates accepted, recorded 2026-10-25 (M1 decision D5):
+
+- Daniel accepted the six crates with role `platform` on 2026-10-25.
+- This ADR covers `getrandom 0.4.3`, `cfg-if 1.0.5` and `r-efi 6.0.0`. ADR-002 covers `windows-sys 0.61.2`, `windows-link 0.2.1` and `wasi 0.11.1+wasi-snapshot-preview1`.
+
+rustls debug assertion note, recorded 2026-10-25 (M1 decision D4):
+
+- In `rustls 0.23.46`, a connection that sent `close_notify` counts as if it had sent a fatal alert. When it then reads an invalid record, rustls queues a fatal alert through `CommonState::send_fatal_alert`.
+- That function starts with `debug_assert!(!self.sent_fatal_alert)`. Builds with debug assertions, such as `cargo test` and fuzz builds, panic there.
+- Release builds compile the assertion out. The read fails with a typed protocol error from fstp-tls, and the stream stays failed.
+- Daniel decided on 2026-10-25 to keep half-close reads in fstp-tls and to document the assertion. Only a corrupted or hostile record after this side's own `close_notify` reaches it.
+- The test `d4_invalid_record_after_close_notify` in `crates/fstp-tls/tests/tls.rs` pins both behaviours. Its debug run fails once a rustls update removes the assertion.
+
+TLS session resumption, recorded 2026-10-25 (policy P2 as revised by Daniel on 2026-10-25):
+
+- Resumption is allowed on servers with and without client authentication, and on clients.
+- A session can be resumed for at most 1 hour after the full handshake that authenticated it. A chain of resumptions never extends that hour.
+- After that hour, a full handshake validates every certificate again.
+- fstp-tls keeps resumable sessions in in-house tables on both sides (`crates/fstp-tls/src/resumption.rs`). The server issues no stateless tickets, so no ticket encryption key exists. Nothing in those tables encrypts or derives keys.
+
+Non-cryptographic hashing, recorded 2026-10-25 (M1 decision D6):
+
+- Daniel decided on 2026-10-25 that std's non-cryptographic hashers are acceptable.
+- Examples: fstp-json uses `HashMap` with `RandomState` against hash flooding, and fstp-mc uses `DefaultHasher` with fixed keys. Neither use is cryptographic.

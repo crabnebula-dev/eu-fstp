@@ -40,11 +40,27 @@
 //! - [`MigrationSet::plan`] lists the migrations that would run.
 //! - [`MigrationSet::apply`] runs them.
 //!
+//! The ledger lives in the schema `fstp_migrate` unless the caller names
+//! another:
+//!
+//! ```
+//! use fstp_migrate::{LedgerSchema, Migration, MigrationSet};
+//!
+//! const MIGRATIONS: &[Migration] = &[Migration::new(1, "create_t", "CREATE TABLE t (id int);")];
+//!
+//! let ledger = LedgerSchema::new("app_ledger").expect("a plain lowercase identifier");
+//! let set = MigrationSet::new(MIGRATIONS)
+//!     .expect("the list is valid")
+//!     .with_ledger_schema(ledger);
+//! assert_eq!(set.ledger_schema().as_str(), "app_ledger");
+//! assert!(LedgerSchema::new("app\"; DROP SCHEMA public; --").is_err());
+//! ```
+//!
 //! The runner works over the [`Database`] trait. [`fstp_pgwire::Client`]
 //! and [`fstp_pgwire::Session`] both implement it.
 //!
 //! Each migration runs in one transaction together with its row in the
-//! ledger table [`LEDGER_TABLE`]. A transaction-scoped advisory lock
+//! ledger table. A transaction-scoped advisory lock
 //! ([`ADVISORY_LOCK_KEY`]) and a reread of the ledger under that lock make
 //! concurrent runners apply each migration exactly once.
 //!
@@ -70,12 +86,27 @@
 //! | `applied_at` | `timestamptz` | Start of the applying transaction |
 //! | `statement_count` | `integer` | Statements in the file, informational |
 //!
-//! The table lives in the schema [`LEDGER_SCHEMA`], which the runner
-//! creates together with it. Every runner statement names the table with
-//! its schema, as [`LEDGER_TABLE`]. Neither a different `search_path` nor
-//! a temporary table with the same name can therefore redirect it. The
-//! runner's statements also qualify types, functions and operators with
-//! `pg_catalog`.
+//! The table is [`LEDGER_TABLE_NAME`] in the ledger schema, which is
+//! [`DEFAULT_LEDGER_SCHEMA`] unless [`MigrationSet::with_ledger_schema`]
+//! names another [`LedgerSchema`]. The name is a plain lowercase
+//! identifier that [`LedgerSchema::new`] validates.
+//!
+//! [`MigrationSet::apply`] creates the schema if it is missing, owned by
+//! the migrating role (`current_user`), and then the table. Every runner
+//! method refuses an existing schema of that name that another role
+//! owns, with [`Error::LedgerSchemaOwner`], because that role could change
+//! the ledger.
+//!
+//! Every runner statement names the table qualified with the ledger
+//! schema. Neither a different `search_path` nor a temporary table with
+//! the same name can therefore redirect it. The runner's statements also
+//! qualify types, functions and operators with `pg_catalog`.
+//!
+//! SQL text stays `&'static str`, so the schema name never enters it on
+//! the client. The runner sends the name as a bind parameter. Where a
+//! statement needs it as an identifier, a `DO` block quotes it on the
+//! server with `format('%I', ...)`, after checking it against the same
+//! rules as [`LedgerSchema::new`].
 //!
 //! # Session settings
 //!
@@ -134,17 +165,21 @@ mod ledger;
 mod lex;
 mod migration;
 mod runner;
+mod schema;
 pub mod split;
 
 pub use crate::error::Error;
 pub use crate::ledger::{
-    LEDGER_SCHEMA, LEDGER_TABLE, LedgerInconsistency, LedgerProblem, LedgerRow,
-    MAX_REPORTED_PROBLEMS, check_ledger,
+    LEDGER_TABLE_NAME, LedgerInconsistency, LedgerProblem, LedgerRow, MAX_REPORTED_PROBLEMS,
+    check_ledger,
 };
 pub use crate::migration::{
     CheckedMigration, Migration, MigrationLimits, StatementRule, ValidationError, validate_entries,
 };
 pub use crate::runner::{
     ADVISORY_LOCK_KEY, ApplyReport, Database, MigrationInfo, MigrationSet, Status,
+};
+pub use crate::schema::{
+    DEFAULT_LEDGER_SCHEMA, LedgerSchema, LedgerSchemaError, MAX_LEDGER_SCHEMA_LEN,
 };
 pub use crate::split::{SplitError, SplitErrorKind, SplitLimits, SqlStatement, split_statements};

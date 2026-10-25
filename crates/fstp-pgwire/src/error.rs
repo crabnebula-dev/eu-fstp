@@ -2,10 +2,10 @@
 //!
 //! [`Error`] is the one error type of the client API. A server error is a
 //! [`DbError`] with its SQLSTATE. Display and Debug output never carry data
-//! values or SQL text (R-NF-02). A `DbError` shows its severity and
-//! SQLSTATE, plus the table, column and constraint names when the server
-//! supplies them. The primary message, detail, hint and context can quote
-//! data, so they stay behind accessors.
+//! values or SQL text (R-NF-02). A `DbError` shows its severity, SQLSTATE
+//! and the SQLSTATE's standard condition name, plus the table, column and
+//! constraint names when the server supplies them. The primary message,
+//! detail, hint and context can quote data, so they stay behind accessors.
 
 use std::fmt;
 use std::io;
@@ -221,10 +221,14 @@ impl std::error::Error for Error {
 
 /// An error or notice reported by the server, with its SQLSTATE.
 ///
-/// [`fmt::Display`] and [`fmt::Debug`] show the severity and the SQLSTATE.
-/// They add the table, column and constraint names when the server supplies
-/// them, since these are schema names and not data. An example is
-/// `ERROR 23505 (table "people", constraint "people_pkey")`.
+/// [`fmt::Display`] and [`fmt::Debug`] show the severity, the SQLSTATE and
+/// its standard condition name from [`crate::sqlstate`]. For a code without
+/// a name they show the name of its class, marked `class`, or nothing when
+/// the class has none either. They add the table, column and constraint
+/// names when the server supplies them, since these are schema names and
+/// not data. Examples are
+/// `ERROR 23505 unique_violation (table "people", constraint "people_pkey")`
+/// and `ERROR 23P99 class integrity_constraint_violation`.
 ///
 /// Every other field is reachable only through its accessor (R-NF-02). The
 /// primary message can quote the offending value, as in `invalid input
@@ -438,6 +442,21 @@ impl DbError {
         self.routine.as_deref()
     }
 
+    /// The standard condition name of the SQLSTATE, for example
+    /// `unique_violation` for `23505`. `None` when the code has none.
+    #[must_use]
+    pub fn condition_name(&self) -> Option<&'static str> {
+        crate::sqlstate::condition_name(&self.code)
+    }
+
+    /// The condition name of the SQLSTATE's class, for example
+    /// `integrity_constraint_violation` for any `23` code. `None` when the
+    /// class has none.
+    #[must_use]
+    pub fn class_name(&self) -> Option<&'static str> {
+        crate::sqlstate::class_name(&self.code)
+    }
+
     /// True for `FATAL` and `PANIC`, after which the server closes the
     /// connection.
     #[must_use]
@@ -462,9 +481,16 @@ impl DbError {
 impl fmt::Display for DbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // The primary message, detail, hint and context can quote data, so
-        // only the severity, the SQLSTATE and schema names appear (R-NF-02).
-        // Names use Debug quoting, which escapes control characters.
+        // only the severity, the SQLSTATE, its condition name and schema
+        // names appear (R-NF-02). Schema names use Debug quoting, which
+        // escapes control characters. Condition names come from the
+        // generated table, never from the server.
         write!(f, "{} {}", self.severity, self.code)?;
+        if let Some(name) = self.condition_name() {
+            write!(f, " {name}")?;
+        } else if let Some(class) = self.class_name() {
+            write!(f, " class {class}")?;
+        }
         let mut sep = " (";
         for (what, name) in self.schema_names() {
             write!(f, "{sep}{what} {name:?}")?;
@@ -480,10 +506,14 @@ impl fmt::Display for DbError {
 impl fmt::Debug for DbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Only the fields that Display shows; the rest can carry data.
-        f.debug_struct("DbError")
-            .field("severity", &self.severity)
+        let mut d = f.debug_struct("DbError");
+        d.field("severity", &self.severity)
             .field("code", &self.code)
-            .field("table", &self.table)
+            .field("condition", &self.condition_name());
+        if self.condition_name().is_none() {
+            d.field("class", &self.class_name());
+        }
+        d.field("table", &self.table)
             .field("column", &self.column)
             .field("constraint", &self.constraint)
             .finish_non_exhaustive()
@@ -531,7 +561,7 @@ mod tests {
         assert!(!shown.contains("canary"), "{shown}");
         assert_eq!(
             e.to_string(),
-            "ERROR 23505 (table \"t\", constraint \"t_pkey\")"
+            "ERROR 23505 unique_violation (table \"t\", constraint \"t_pkey\")"
         );
         assert!(e.message().contains("message canary"));
         assert_eq!(
@@ -557,7 +587,7 @@ mod tests {
         .unwrap();
         let shown = format!("{e} {e:?} {}", Error::db(e.clone()));
         assert!(!shown.contains("canary"), "{shown}");
-        assert_eq!(e.to_string(), "ERROR 22P02");
+        assert_eq!(e.to_string(), "ERROR 22P02 invalid_text_representation");
         assert!(e.message().contains("canary@example.org"));
         // A schema name with a control character cannot forge a log line.
         let e = DbError::from_fields(&fields(&[
@@ -567,7 +597,77 @@ mod tests {
             (b'c', "col\nfake"),
         ]))
         .unwrap();
-        assert_eq!(e.to_string(), "ERROR 23514 (column \"col\\nfake\")");
+        assert_eq!(
+            e.to_string(),
+            "ERROR 23514 check_violation (column \"col\\nfake\")"
+        );
+    }
+
+    /// P1, R-NF-02: Display and Debug name the SQLSTATE's standard
+    /// condition. A unique violation reads like
+    /// `ERROR 23505 unique_violation (table ..., constraint ...)` and shows
+    /// no row values.
+    #[test]
+    fn p1_display_names_the_condition_without_values() {
+        let e = DbError::from_fields(&fields(&[
+            (b'S', "ERROR"),
+            (b'C', "23505"),
+            (b'M', "duplicate key value canary"),
+            (b'D', "Key (email)=(canary@example.org) already exists."),
+            (b's', "public"),
+            (b't', "people"),
+            (b'n', "people_email_key"),
+        ]))
+        .unwrap();
+        let expected =
+            "ERROR 23505 unique_violation (table \"people\", constraint \"people_email_key\")";
+        assert_eq!(e.to_string(), expected);
+        assert_eq!(Error::db(e.clone()).to_string(), expected);
+        let debug = format!("{e:?} {:?}", Error::db(e.clone()));
+        assert!(debug.contains("code: \"23505\""), "{debug}");
+        assert!(
+            debug.contains("condition: Some(\"unique_violation\")"),
+            "{debug}"
+        );
+        assert!(debug.contains("table: Some(\"people\")"), "{debug}");
+        assert!(
+            debug.contains("constraint: Some(\"people_email_key\")"),
+            "{debug}"
+        );
+        assert!(!debug.contains("canary"), "{debug}");
+    }
+
+    /// P1: a SQLSTATE without a condition name shows its class name,
+    /// marked `class`, and a code whose class has no name shows only the
+    /// code.
+    #[test]
+    fn p1_unknown_code_shows_its_class_or_only_the_code() {
+        let with_class = DbError::from_fields(&fields(&[
+            (b'S', "ERROR"),
+            (b'C', "23P99"),
+            (b'M', "m"),
+            (b't', "t"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            with_class.to_string(),
+            "ERROR 23P99 class integrity_constraint_violation (table \"t\")"
+        );
+        let debug = format!("{with_class:?}");
+        assert!(debug.contains("condition: None"), "{debug}");
+        assert!(
+            debug.contains("class: Some(\"integrity_constraint_violation\")"),
+            "{debug}"
+        );
+        let unknown =
+            DbError::from_fields(&fields(&[(b'S', "ERROR"), (b'C', "ZZ999"), (b'M', "m")]))
+                .unwrap();
+        assert_eq!(unknown.to_string(), "ERROR ZZ999");
+        assert_eq!(
+            format!("{unknown:?}"),
+            "DbError { severity: \"ERROR\", code: \"ZZ999\", condition: None, class: None, \
+             table: None, column: None, constraint: None, .. }"
+        );
     }
 
     #[test]

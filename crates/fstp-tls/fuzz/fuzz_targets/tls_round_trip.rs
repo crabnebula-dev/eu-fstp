@@ -8,6 +8,11 @@
 //! can add one corrupted byte or a silent cut. Wake-ups are tracked per
 //! side, as in the test `handshake_wakeups_are_precise`.
 //!
+//! An input can also ask for a resumed session (policy P2). A clean session
+//! then runs first and leaves the client a ticket. Every run builds its own
+//! configurations, so session caches start empty and a crash reproduces
+//! from its input alone.
+//!
 //! This reaches the stream adapter after the handshake: the read loop,
 //! truncation detection, `close_notify` handling, writes while rustls holds
 //! buffered records, and shutdown.
@@ -19,6 +24,7 @@
 //!   `close_notify`. A truncation fails with `UnexpectedEof`.
 //! - Without faults, every byte arrives and both sides close cleanly.
 //! - Every error is typed, and errors happen only after a fault.
+//! - Without corruption, the session resumes exactly when the input asks.
 //! - No lost wake-up, no busy loop, and termination within a poll budget.
 
 #![no_main]
@@ -26,32 +32,10 @@
 #[path = "../../tests/support/round_trip.rs"]
 mod round_trip;
 
-use std::sync::OnceLock;
-
-use fstp_tls::{ClientConfig, ServerConfig};
 use libfuzzer_sys::fuzz_target;
 
-const CA: &[u8] = include_bytes!("../../testdata/ca.pem");
-const CLIENT: &[u8] = include_bytes!("../../testdata/client.pem");
-const CLIENT_KEY: &[u8] = include_bytes!("../../testdata/client-key.pem");
-const SERVER: &[u8] = include_bytes!("../../testdata/server.pem");
-const SERVER_KEY: &[u8] = include_bytes!("../../testdata/server-key.pem");
-
-fn configs() -> &'static (ClientConfig, ServerConfig) {
-    static CFG: OnceLock<(ClientConfig, ServerConfig)> = OnceLock::new();
-    CFG.get_or_init(|| {
-        let client = ClientConfig::mutual(CA, CLIENT, CLIENT_KEY);
-        let server = ServerConfig::mutual(SERVER, SERVER_KEY, CA);
-        match (client, server) {
-            (Ok(c), Ok(s)) => (c, s),
-            (Err(e), _) | (_, Err(e)) => panic!("test certificates are invalid: {e}"),
-        }
-    })
-}
-
 fuzz_target!(|data: &[u8]| {
-    let (client, server) = configs();
-    if let Err(violation) = round_trip::run(data, client, server) {
+    if let Err(violation) = round_trip::run(data) {
         panic!("{violation}");
     }
 });

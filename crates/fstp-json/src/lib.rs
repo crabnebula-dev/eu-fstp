@@ -59,17 +59,20 @@
 //! required and optional fields, and rejects unknown members by default.
 //! A [`FromJsonError`] reports a path such as `$.calls[2].deadline`.
 //!
+//! Money amounts never travel as JSON numbers. ADR-006 carries them as
+//! decimal strings in the currency's fixed scale.
+//!
 //! ```
 //! use fstp_json::{FromJson, ToJson, json, json_struct, parse, to_canonical};
 //!
 //! #[derive(Debug, PartialEq)]
-//! struct Payment { id: String, amount: fstp_json::Decimal, note: Option<String> }
-//! json_struct!(Payment { required id, required amount, optional note });
+//! struct Criterion { id: String, weight: fstp_json::Decimal, note: Option<String> }
+//! json_struct!(Criterion { required id, required weight, optional note });
 //!
-//! let v = parse(br#"{"id": "p-1", "amount": 1250.00}"#).unwrap();
-//! let p = Payment::from_json(&v).unwrap();
-//! assert_eq!(p.amount.to_scaled_i128(2), Ok(125000));
-//! assert_eq!(to_canonical(&p.to_json()).unwrap(), r#"{"amount":1250,"id":"p-1"}"#);
+//! let v = parse(br#"{"id": "c-1", "weight": 0.250}"#).unwrap();
+//! let c = Criterion::from_json(&v).unwrap();
+//! assert_eq!(c.weight.to_scaled_i128(3), Ok(250));
+//! assert_eq!(to_canonical(&c.to_json()).unwrap(), r#"{"id":"c-1","weight":0.25}"#);
 //! assert_eq!(json!({"id": "p-1"}).get("id").and_then(|v| v.as_str()), Some("p-1"));
 //! ```
 

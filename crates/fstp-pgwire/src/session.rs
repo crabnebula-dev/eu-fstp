@@ -1291,8 +1291,12 @@ mod tests {
     #[test]
     fn review_pg_buffers_never_shrink_write_buffer() {
         let (c, _peer) = fstp_rt::duplex::duplex(4 << 20);
-        let tls =
-            fstp_tls::ClientConfig::new(include_bytes!("../../fstp-tls/testdata/ca.pem")).unwrap();
+        let tls = crate::ClientTls::new(
+            include_bytes!("../../fstp-tls/testdata/ca.pem"),
+            include_bytes!("../../fstp-tls/testdata/client.pem"),
+            include_bytes!("../../fstp-tls/testdata/client-key.pem"),
+        )
+        .unwrap();
         let cfg = Config::new(
             "localhost",
             5432,

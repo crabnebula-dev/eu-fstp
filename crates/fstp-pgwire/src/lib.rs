@@ -6,11 +6,13 @@
 //!
 //! # Security properties
 //!
-//! - **TLS is required.** [`Client::connect`] sends an SSLRequest and runs
-//!   an fstp-tls handshake with full verification of chain and name. A
+//! - **Mutual TLS is required.** [`Client::connect`] sends an SSLRequest and
+//!   runs an fstp-tls handshake with full verification of chain and name. A
 //!   server that declines TLS is refused, and so are unencrypted bytes that
-//!   arrive between the server's `S` and the handshake. A client
-//!   certificate in the TLS configuration gives mutual TLS (R-NF-09).
+//!   arrive between the server's `S` and the handshake. Every connection
+//!   presents the role's client certificate from its [`ClientTls`], which
+//!   cannot be built without one (D2, R-NF-09). The server checks it with
+//!   `clientcert=verify-full`, so its CN must equal the role.
 //! - **SCRAM only by default.** SCRAM-SHA-256-PLUS with
 //!   `tls-server-end-point` channel binding is used when the server offers
 //!   it, otherwise SCRAM-SHA-256. The server signature is always verified.
@@ -32,8 +34,9 @@
 //!   length, enforces [`Limits`], and treats unsupported messages such as
 //!   COPY as protocol errors that break the connection.
 //! - **No data in logs.** The crate logs nothing. A [`DbError`] displays
-//!   its severity and SQLSTATE, plus table, column and constraint names
-//!   when the server supplies them. The primary message, detail, hint and
+//!   its severity, its SQLSTATE and the SQLSTATE's standard condition name
+//!   (see [`sqlstate`]), plus table, column and constraint names when the
+//!   server supplies them. The primary message, detail, hint and
 //!   context can quote data values, so they stay behind accessors
 //!   (R-NF-02). SQL text never appears in Display or Debug output. Notices
 //!   are discarded unread. `Debug` output of rows and messages shows no
@@ -42,12 +45,16 @@
 //! # Example
 //!
 //! ```no_run
-//! use fstp_pgwire::{Client, Config, Password};
+//! use fstp_pgwire::{Client, ClientTls, Config, Password};
 //! use fstp_rt::tokio::TokioRuntime;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let rt = TokioRuntime::new_multi_thread(2)?;
-//! let tls = fstp_tls::ClientConfig::new(&std::fs::read("ca.pem")?)?;
+//! let tls = ClientTls::new(
+//!     &std::fs::read("ca.pem")?,
+//!     &std::fs::read("app.pem")?,     // CN = app, the database role
+//!     &std::fs::read("app-key.pem")?,
+//! )?;
 //! let config = Config::new("db.example", 5432, "app", Password::new("s3cret")?, "cell", tls)?;
 //! rt.block_on(async {
 //!     let mut client = Client::connect(&rt, &config).await?;
@@ -93,6 +100,7 @@ pub mod proto;
 mod row;
 pub mod scram;
 mod session;
+pub mod sqlstate;
 mod tls;
 pub mod types;
 pub mod x509;
@@ -101,8 +109,8 @@ pub use crate::client::{
     CancelToken, Client, IsolationLevel, RowStream, Transaction, TransactionOptions,
 };
 pub use crate::config::{
-    AuthMethod, Config, DEFAULT_MIN_SCRAM_ITERATIONS, Limits, MAX_NAME_LEN, MAX_PASSWORD_LEN,
-    Password, RequireAuth,
+    AuthMethod, ClientTls, Config, DEFAULT_MIN_SCRAM_ITERATIONS, Limits, MAX_NAME_LEN,
+    MAX_PASSWORD_LEN, Password, RequireAuth,
 };
 pub use crate::error::{DbError, Error, ErrorKind};
 pub use crate::proto::backend::TransactionStatus;

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use fstp_pgtest::{MTLS_USER, PgServer, ServerOptions, ServerTls};
+use fstp_pgtest::{PgServer, Role, ServerOptions, ServerTls, tls as certs};
 
 const CHILD_ENV: &str = "FSTP_PGTEST_ABORT_CHILD";
 
@@ -78,31 +78,116 @@ fn server_settings_match_the_harness_contract() {
         )
         .unwrap();
     assert_eq!(ssl, "t");
-    // Every pg_hba rule is hostssl with SCRAM.
+    // R-NF-09, D2: psql presented the superuser's certificate as well.
+    let client_dn = server
+        .psql(
+            "postgres",
+            "SELECT client_dn FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+        )
+        .unwrap();
+    assert!(client_dn.contains("CN=fstp_super"), "{client_dn}");
+    // Every pg_hba rule is hostssl with SCRAM and clientcert=verify-full.
     let rules = server
         .psql(
             "postgres",
-            "SELECT type || ' ' || auth_method FROM pg_hba_file_rules ORDER BY line_number",
+            "SELECT type || ' ' || auth_method || ' ' || array_to_string(options, ',') \
+             FROM pg_hba_file_rules ORDER BY line_number",
         )
         .unwrap();
+    assert!(!rules.is_empty());
     for rule in rules.lines() {
-        assert_eq!(rule, "hostssl scram-sha-256", "rule: {rule}");
+        assert_eq!(
+            rule, "hostssl scram-sha-256 clientcert=verify-full",
+            "rule: {rule}"
+        );
     }
-    // The superuser's password is stored as a SCRAM verifier.
-    let verifier = server
+    // Every role's password is stored as a SCRAM verifier.
+    let verifiers = server
         .psql(
             "postgres",
-            "SELECT left(rolpassword, 14) FROM pg_authid WHERE rolname = current_user",
+            "SELECT rolname || ' ' || left(rolpassword, 14) FROM pg_authid \
+             WHERE rolcanlogin ORDER BY rolname",
         )
         .unwrap();
-    assert_eq!(verifier, "SCRAM-SHA-256$");
-    let mtls = server
+    assert_eq!(
+        verifiers,
+        "fstp_app SCRAM-SHA-256$\nfstp_super SCRAM-SHA-256$"
+    );
+    // The app role has no special rights.
+    let app = server
         .psql(
             "postgres",
-            &format!("SELECT count(*) FROM pg_roles WHERE rolname = '{MTLS_USER}'"),
+            "SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls \
+             FROM pg_roles WHERE rolname = 'fstp_app'",
         )
         .unwrap();
-    assert_eq!(mtls, "1");
+    assert_eq!(app, "f");
+}
+
+/// R-NF-09, D2: the optional-TLS configuration keeps plaintext lines for
+/// negative tests, and its hostssl lines still require client
+/// certificates.
+#[test]
+fn r_nf_09_d2_optional_tls_still_requires_client_certificates() {
+    let server = PgServer::shared_with(ServerOptions {
+        tls: ServerTls::Optional,
+    })
+    .unwrap();
+    let rules = server
+        .psql(
+            "postgres",
+            "SELECT type || ' ' || auth_method || ' ' \
+             || coalesce(array_to_string(options, ','), '-') \
+             FROM pg_hba_file_rules ORDER BY line_number",
+        )
+        .unwrap();
+    assert_eq!(
+        rules,
+        "hostssl scram-sha-256 clientcert=verify-full\nhostnossl scram-sha-256 -"
+    );
+    let err = psql_as(
+        server,
+        server.superuser(),
+        server.superuser_password(),
+        None,
+    )
+    .unwrap_err();
+    assert_refused_without_certificate(&err);
+}
+
+/// R-NF-09, D2: the app role logs in to a database it owns with its own
+/// certificate and password.
+#[test]
+fn r_nf_09_d2_app_role_logs_in_with_its_certificate() {
+    let server = PgServer::shared().unwrap();
+    let db = server.fresh_database_as(Role::App).unwrap();
+    assert_eq!(db.user, "fstp_app");
+    assert_eq!(db.client_cert_pem, certs::APP_CERT_PEM);
+    assert_eq!(db.client_key_pem, certs::APP_KEY_PEM);
+    let owner = server
+        .psql(
+            &db.dbname,
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()",
+        )
+        .unwrap();
+    assert_eq!(owner, "fstp_app");
+    let user = psql_as(
+        server,
+        &db.user,
+        &db.password,
+        Some((db.client_cert_pem, db.client_key_pem)),
+    )
+    .unwrap();
+    assert_eq!(user, "fstp_app");
+    // The superuser's certificate does not log in the app role.
+    let err = psql_as(
+        server,
+        &db.user,
+        &db.password,
+        Some((certs::SUPERUSER_CERT_PEM, certs::SUPERUSER_KEY_PEM)),
+    )
+    .unwrap_err();
+    assert_refused_for_cn_mismatch(server, &err, &db.user);
 }
 
 #[test]
@@ -111,6 +196,15 @@ fn tls_files_are_private_to_the_server_user() {
     let server = PgServer::shared().unwrap();
     for name in ["server.pem", "server-key.pem", "ca.pem"] {
         let meta = std::fs::metadata(server.dir().join("tls").join(name)).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600, "{name}");
+    }
+    let client = server.dir().join("client");
+    assert_eq!(
+        std::fs::metadata(&client).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    for name in ["fstp_super.pem", "fstp_super-key.pem"] {
+        let meta = std::fs::metadata(client.join(name)).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o600, "{name}");
     }
     let dir_meta = std::fs::metadata(server.dir()).unwrap();
@@ -225,7 +319,7 @@ fn argv_child_helper() {
         "sql-canary"
     );
     let mut out = std::io::stdout();
-    writeln!(out, "MTLS {}", server.mtls_password()).unwrap();
+    writeln!(out, "APP {}", server.password(Role::App)).unwrap();
     out.flush().unwrap();
 }
 
@@ -273,7 +367,7 @@ fn psql_sql_never_goes_on_the_command_line() {
     );
     let password = stdout
         .lines()
-        .find_map(|l| l.find("MTLS ").map(|i| l[i + 5..].trim().to_owned()))
+        .find_map(|l| l.find("APP ").map(|i| l[i + 4..].trim().to_owned()))
         .unwrap_or_else(|| panic!("no password line in child output: {stdout}"));
     assert_eq!(password.len(), 48);
     let argv = std::fs::read_to_string(&log).unwrap();
@@ -287,4 +381,138 @@ fn psql_sql_never_goes_on_the_command_line() {
     );
     assert!(!argv.contains("sql-canary"), "SQL was on the command line");
     assert!(!argv.contains("CREATE ROLE"), "SQL was on the command line");
+}
+
+/// Runs `SELECT current_user` with a psql that this test configures
+/// itself: TLS verify-full against the test CA, the given role and
+/// password, and the given client certificate, if any. `HOME` points at an
+/// empty directory, so libpq finds no default certificate in
+/// `~/.postgresql`. Returns psql's output or its standard error.
+fn psql_as(
+    server: &PgServer,
+    user: &str,
+    password: &str,
+    cert: Option<(&[u8], &[u8])>,
+) -> Result<String, String> {
+    use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let home = std::env::temp_dir().join(format!("fstp-pgtest-home-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&home)
+        .unwrap();
+    let mut cmd = Command::new(server.bindir().join("psql"));
+    cmd.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
+        .env("HOME", &home)
+        .env("PGPASSWORD", password)
+        .env("PGSSLMODE", "verify-full")
+        .env("PGSSLROOTCERT", server.dir().join("tls").join("ca.pem"))
+        .env("PGCONNECT_TIMEOUT", "10")
+        .args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
+        .args([
+            "-h",
+            server.host(),
+            "-p",
+            &server.port().to_string(),
+            "-U",
+            user,
+        ])
+        .args(["-d", "postgres", "-c", "SELECT current_user"])
+        .stdin(Stdio::null());
+    if let Some((chain, key)) = cert {
+        let write = |name: &str, data: &[u8]| {
+            let path = home.join(name);
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .unwrap();
+            f.write_all(data).unwrap();
+            path
+        };
+        cmd.env("PGSSLCERT", write("client.pem", chain))
+            .env("PGSSLKEY", write("client-key.pem", key));
+    }
+    let out = cmd.output().unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
+/// R-NF-09, D2: the default server refuses a TLS client that presents no
+/// client certificate, even with the right password.
+#[test]
+fn r_nf_09_d2_login_without_client_certificate_is_refused() {
+    let server = PgServer::shared().unwrap();
+    let err = psql_as(
+        server,
+        server.superuser(),
+        server.superuser_password(),
+        None,
+    )
+    .unwrap_err();
+    assert_refused_without_certificate(&err);
+}
+
+/// R-NF-09, D2: a certificate from the trusted CA whose CN names another
+/// role is refused (`clientcert=verify-full`).
+#[test]
+fn r_nf_09_d2_certificate_for_another_role_is_refused() {
+    let server = PgServer::shared().unwrap();
+    let err = psql_as(
+        server,
+        server.superuser(),
+        server.superuser_password(),
+        Some((certs::APP_CERT_PEM, certs::APP_KEY_PEM)),
+    )
+    .unwrap_err();
+    assert_refused_for_cn_mismatch(server, &err, server.superuser());
+}
+
+/// R-NF-09, D2: the role's own certificate and password log in.
+#[test]
+fn r_nf_09_d2_certificate_matching_the_role_logs_in() {
+    let server = PgServer::shared().unwrap();
+    let user = psql_as(
+        server,
+        server.superuser(),
+        server.superuser_password(),
+        Some((certs::SUPERUSER_CERT_PEM, certs::SUPERUSER_KEY_PEM)),
+    )
+    .unwrap();
+    assert_eq!(user, server.superuser());
+}
+
+/// The server's answer to a TLS login without a client certificate on a
+/// `clientcert=verify-full` line.
+fn assert_refused_without_certificate(err: &str) {
+    assert!(
+        err.contains("FATAL:  connection requires a valid client certificate"),
+        "{err}"
+    );
+}
+
+/// PostgreSQL reports a CN mismatch to the client as a failed password
+/// login, so the server log must show that the certificate check refused
+/// it.
+fn assert_refused_for_cn_mismatch(server: &PgServer, err: &str, user: &str) {
+    assert!(
+        err.contains(&format!(
+            "FATAL:  password authentication failed for user \"{user}\""
+        )),
+        "{err}"
+    );
+    let log = std::fs::read_to_string(server.dir().join("server.log")).unwrap();
+    let line = format!(
+        "certificate validation (clientcert=verify-full) failed for user \"{user}\": CN mismatch"
+    );
+    assert!(log.contains(&line), "{log}");
 }

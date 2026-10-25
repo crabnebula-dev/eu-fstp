@@ -2,9 +2,11 @@
 //! "Database" layer). Every test gets a fresh database on the server that
 //! fstp-pgtest starts for this test binary.
 //!
-//! Tests named `r_nf_09_*` verify R-NF-09: traffic is encrypted, and with a
-//! client certificate mutually authenticated. Tests named `r_nf_02_*`
-//! verify R-NF-02: error output carries no data values.
+//! Tests named `r_nf_09_*` verify R-NF-09: traffic is encrypted and
+//! mutually authenticated. Every hostssl line of the test server has
+//! `clientcert=verify-full`, so every connection presents the role's
+//! client certificate (D2). Tests named `r_nf_02_*` verify R-NF-02: error
+//! output carries no data values.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -13,11 +15,13 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{block_on, config_for, connect, fresh, mutual_tls, rt, server, server_with, tls};
-use fstp_pgtest::{MTLS_USER, ServerTls, tls as certs};
+use common::{
+    block_on, config_for, config_with, connect, fresh, rt, server, server_with, tls, tls_for,
+};
+use fstp_pgtest::{Role, ServerTls, tls as certs};
 use fstp_pgwire::{
-    AuthMethod, Client, Config, ErrorKind, IsolationLevel, Limits, Password, RequireAuth,
-    TransactionOptions, TransactionStatus, Type,
+    AuthMethod, Client, ClientTls, Config, ErrorKind, IsolationLevel, Limits, Password,
+    RequireAuth, Session, TransactionOptions, TransactionStatus, Type,
 };
 use fstp_rt::{Listener, Runtime};
 use fstp_tls::TlsErrorKind;
@@ -69,7 +73,7 @@ fn wrong_password_is_rejected_with_28p01() {
     let (db, _) = fresh();
     let mut bad = db.clone();
     bad.password = format!("{}x", db.password);
-    let err = block_on(Client::connect(rt(), &config_for(&bad, tls()))).unwrap_err();
+    let err = block_on(Client::connect(rt(), &config_for(&bad))).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Db, "{err}");
     assert_eq!(err.code(), Some("28P01"));
 }
@@ -77,8 +81,13 @@ fn wrong_password_is_rejected_with_28p01() {
 #[test]
 fn r_nf_09_untrusted_ca_is_rejected() {
     let (db, _) = fresh();
-    let untrusted = fstp_tls::ClientConfig::new(certs::UNTRUSTED_CA_PEM).unwrap();
-    let err = block_on(Client::connect(rt(), &config_for(&db, untrusted))).unwrap_err();
+    let untrusted = ClientTls::new(
+        certs::UNTRUSTED_CA_PEM,
+        db.client_cert_pem,
+        db.client_key_pem,
+    )
+    .unwrap();
+    let err = block_on(Client::connect(rt(), &config_with(&db, untrusted))).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Tls, "{err}");
     assert_eq!(
         err.tls_error().map(fstp_tls::TlsError::kind),
@@ -89,9 +98,7 @@ fn r_nf_09_untrusted_ca_is_rejected() {
 #[test]
 fn r_nf_09_certificate_name_is_verified() {
     let (db, _) = fresh();
-    let cfg = config_for(&db, tls())
-        .tls_server_name("db.invalid")
-        .unwrap();
+    let cfg = config_for(&db).tls_server_name("db.invalid").unwrap();
     let err = block_on(Client::connect(rt(), &cfg)).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Tls, "{err}");
     assert_eq!(
@@ -99,7 +106,7 @@ fn r_nf_09_certificate_name_is_verified() {
         Some(TlsErrorKind::NameMismatch)
     );
     // The DNS name in the certificate works as well as the IP address.
-    let ok = config_for(&db, tls()).tls_server_name("localhost").unwrap();
+    let ok = config_for(&db).tls_server_name("localhost").unwrap();
     connect(&ok);
 }
 
@@ -107,7 +114,7 @@ fn r_nf_09_certificate_name_is_verified() {
 fn r_nf_09_server_without_tls_is_refused() {
     let plain = server_with(ServerTls::Off);
     let db = plain.fresh_database().unwrap();
-    let err = block_on(Client::connect(rt(), &config_for(&db, tls()))).unwrap_err();
+    let err = block_on(Client::connect(rt(), &config_for(&db))).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::TlsRequired, "{err}");
 }
 
@@ -115,7 +122,7 @@ fn r_nf_09_server_without_tls_is_refused() {
 fn r_nf_09_tls_is_used_even_when_the_server_allows_plaintext() {
     let optional = server_with(ServerTls::Optional);
     let db = optional.fresh_database().unwrap();
-    let mut c = connect(&config_for(&db, tls()));
+    let mut c = connect(&config_for(&db));
     assert_eq!(c.auth_method(), Some(AuthMethod::ScramSha256Plus));
     let ssl: bool = block_on(c.query_one(
         "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
@@ -127,48 +134,106 @@ fn r_nf_09_tls_is_used_even_when_the_server_allows_plaintext() {
     assert!(ssl);
 }
 
-fn mtls_config(tls: fstp_tls::ClientConfig) -> Config {
-    let srv = server();
-    let db = srv.fresh_database().unwrap();
-    Config::new(
-        db.host,
-        db.port,
-        MTLS_USER,
-        Password::new(srv.mtls_password()).unwrap(),
-        db.dbname,
-        tls,
-    )
-    .unwrap()
+/// R-NF-09, D2: each role's own certificate, whose CN is the role name,
+/// connects with SCRAM-SHA-256-PLUS on top of mutual TLS.
+#[test]
+fn r_nf_09_d2_matching_certificate_connects_with_scram_sha_256_plus() {
+    for role in [Role::Superuser, Role::App] {
+        let db = server().fresh_database_as(role).unwrap();
+        let mut c = connect(&config_for(&db));
+        assert_eq!(c.auth_method(), Some(AuthMethod::ScramSha256Plus));
+        let row = block_on(c.query_one(
+            "SELECT current_user::text, client_dn FROM pg_stat_ssl \
+             WHERE pid = pg_backend_pid()",
+            &[],
+        ))
+        .unwrap();
+        assert_eq!(row.get::<String>(0).unwrap(), role.name());
+        let dn: String = row.get(1).unwrap();
+        assert!(dn.contains(&format!("CN={}", role.name())), "{dn}");
+    }
 }
 
+/// R-NF-09, D2: the server refuses a role that presents no client
+/// certificate, even with the right password. `Client` cannot even be
+/// configured that way, so the test drives a `Session` over a TLS stream
+/// without a client certificate.
 #[test]
-fn r_nf_09_mutual_tls_with_client_certificate() {
-    let mut c = connect(&mtls_config(mutual_tls()));
-    let row = block_on(c.query_one(
-        "SELECT client_dn FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
-        &[],
-    ))
-    .unwrap();
-    let dn: String = row.get(0).unwrap();
-    assert!(dn.contains("fstp-test-client"), "{dn}");
-}
-
-#[test]
-fn r_nf_09_role_requiring_a_client_certificate_rejects_clients_without_one() {
-    let err = block_on(Client::connect(rt(), &mtls_config(tls()))).unwrap_err();
+fn r_nf_09_d2_role_without_client_certificate_is_refused_by_the_server() {
+    let (db, cfg) = fresh();
+    let err = block_on(async {
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], db.port));
+        let tcp = rt().connect_tcp(addr).await.unwrap();
+        let no_client_cert = fstp_tls::ClientConfig::new(certs::CA_PEM).unwrap();
+        let stream = fstp_pgwire::tls_handshake(tcp, &no_client_cert, cfg.server_name())
+            .await
+            .unwrap();
+        let cert = stream.peer_end_entity_der().unwrap().to_vec();
+        Session::startup(Box::new(stream), &cfg, Some(&cert))
+            .await
+            .unwrap_err()
+    });
     assert_eq!(err.kind(), ErrorKind::Db, "{err}");
-    assert_eq!(err.code(), Some("28000"));
+    assert_eq!(err.code(), Some("28000"), "{err}");
+    let db_err = err.as_db_error().unwrap();
+    assert!(db_err.is_fatal());
+    assert_eq!(
+        db_err.message(),
+        "connection requires a valid client certificate"
+    );
+    // The same password with the role's certificate logs in.
+    connect(&cfg);
+}
+
+/// R-NF-09, D2: a certificate from the trusted CA whose CN is not the role
+/// is refused. PostgreSQL reports the CN mismatch as a failed password
+/// login (SQLSTATE 28P01) and logs the certificate check on the server.
+/// The same password with the matching certificate logs in.
+#[test]
+fn r_nf_09_d2_certificate_for_another_role_is_refused() {
+    let superuser_db = server().fresh_database_as(Role::Superuser).unwrap();
+    let app_db = server().fresh_database_as(Role::App).unwrap();
+    let wrong =
+        |cert: &'static [u8], key: &'static [u8]| ClientTls::new(certs::CA_PEM, cert, key).unwrap();
+    let cases = [
+        (
+            &superuser_db,
+            wrong(certs::APP_CERT_PEM, certs::APP_KEY_PEM),
+        ),
+        (
+            &superuser_db,
+            wrong(certs::CLIENT_CERT_PEM, certs::CLIENT_KEY_PEM),
+        ),
+        (
+            &app_db,
+            wrong(certs::SUPERUSER_CERT_PEM, certs::SUPERUSER_KEY_PEM),
+        ),
+    ];
+    for (db, tls) in cases {
+        let err = block_on(Client::connect(rt(), &config_with(db, tls))).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Db, "{err}");
+        assert_eq!(err.code(), Some("28P01"), "{err}");
+        connect(&config_with(db, tls_for(db)));
+    }
+    let log = std::fs::read_to_string(server().dir().join("server.log")).unwrap();
+    for user in ["fstp_super", "fstp_app"] {
+        let line = format!(
+            "certificate validation (clientcert=verify-full) failed for user \"{user}\": CN mismatch"
+        );
+        assert!(log.contains(&line), "{line}");
+    }
 }
 
 #[test]
 fn r_nf_09_untrusted_client_certificate_is_rejected() {
-    let untrusted = fstp_tls::ClientConfig::mutual(
+    let (db, _) = fresh();
+    let untrusted = ClientTls::new(
         certs::CA_PEM,
         certs::UNTRUSTED_CLIENT_CERT_PEM,
         certs::UNTRUSTED_CLIENT_KEY_PEM,
     )
     .unwrap();
-    let err = block_on(Client::connect(rt(), &mtls_config(untrusted))).unwrap_err();
+    let err = block_on(Client::connect(rt(), &config_with(&db, untrusted))).unwrap_err();
     assert!(
         matches!(
             err.kind(),
@@ -200,12 +265,80 @@ fn unique_violation_reports_23505_without_values() {
     // R-NF-02: neither Display nor Debug carries the duplicate value.
     let shown = format!("{err} {err:?}");
     assert!(!shown.contains("canary"), "{shown}");
+    // P1: Display names the condition and the schema objects.
+    assert_eq!(
+        err.to_string(),
+        "ERROR 23505 unique_violation (table \"people\", constraint \"people_pkey\")"
+    );
+    assert!(
+        shown.contains("condition: Some(\"unique_violation\")"),
+        "{shown}"
+    );
     // The connection is still usable.
     let n: i64 = block_on(c.query_one("SELECT count(*) FROM people", &[]))
         .unwrap()
         .get(0)
         .unwrap();
     assert_eq!(n, 1);
+}
+
+/// P1: the generated SQLSTATE table agrees with the server under test.
+/// Every condition name raises, by name, a code that the table maps back
+/// to that name. Names of classes 00, 01 and 02 do not raise: PL/pgSQL has
+/// no names for them, as the generated table's header records.
+#[test]
+fn p1_sqlstate_table_agrees_with_the_server() {
+    let (_db, cfg) = fresh();
+    let mut c = connect(&cfg);
+    block_on(c.execute(
+        "CREATE FUNCTION pg_temp.raise_name(n text) RETURNS text LANGUAGE plpgsql AS $f$ \
+         DECLARE code text; msg text; \
+         BEGIN RAISE EXCEPTION USING ERRCODE = n, MESSAGE = 'fstp-probe'; \
+         EXCEPTION WHEN OTHERS OR query_canceled OR assert_failure THEN \
+         GET STACKED DIAGNOSTICS code = RETURNED_SQLSTATE, msg = MESSAGE_TEXT; \
+         IF msg = 'fstp-probe' THEN RETURN code; END IF; RETURN NULL; END $f$",
+        &[],
+    ))
+    .unwrap();
+    let mut names: Vec<&str> = fstp_pgwire::sqlstate::conditions()
+        .iter()
+        .map(|(_, name)| *name)
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    let rows = block_on(c.query(
+        "SELECT n, pg_temp.raise_name(n) FROM unnest(string_to_array($1, ',')) AS n",
+        &[&names.join(",")],
+    ))
+    .unwrap();
+    assert_eq!(rows.len(), names.len());
+    let mut raised = 0;
+    for row in rows {
+        let name: String = row.get(0).unwrap();
+        let code: Option<String> = row.get(1).unwrap();
+        let codes: Vec<&str> = fstp_pgwire::sqlstate::conditions()
+            .iter()
+            .filter(|(_, n)| *n == name)
+            .map(|(code, _)| *code)
+            .collect();
+        match code {
+            Some(code) => {
+                assert_eq!(
+                    fstp_pgwire::sqlstate::condition_name(&code),
+                    Some(name.as_str()),
+                    "{code}"
+                );
+                raised += 1;
+            }
+            None => assert!(
+                codes
+                    .iter()
+                    .all(|c| c.starts_with("00") || c.starts_with("01") || c.starts_with("02")),
+                "{name} did not raise: {codes:?}"
+            ),
+        }
+    }
+    assert!(raised >= 200, "{raised}");
 }
 
 #[test]

@@ -104,10 +104,31 @@ pub(crate) fn group_name(group: NamedGroup) -> &'static str {
 ///   buffer is full and the transport is not writable, writes return
 ///   `Pending`.
 /// - `poll_shutdown` sends `close_notify`, flushes, and then shuts down the
-///   transport's write direction. Reading stays possible afterwards.
-///   Invalid records read after that fail with a typed error in release
-///   builds. In debug builds, rustls 0.23.46 fails a debug assertion there
-///   instead, because it sends a fatal alert after `close_notify`.
+///   transport's write direction. Reading stays possible afterwards, so a
+///   side can close first and still read the peer's reply (half-close).
+///
+/// # Invalid records after `close_notify` (decision D4)
+///
+/// rustls 0.23.46 marks a connection that sent `close_notify` as if it had
+/// sent a fatal alert. When this side then reads an invalid record, rustls
+/// queues a fatal alert through `CommonState::send_fatal_alert`. That
+/// function starts with `debug_assert!(!self.sent_fatal_alert)`.
+///
+/// - In builds with debug assertions, such as `cargo test` and fuzz
+///   builds, the assertion fails and the read panics.
+/// - In release builds, the assertion is compiled out. The read fails with
+///   a typed [`TlsError`] of kind [`TlsErrorKind::Protocol`], and the
+///   stream stays failed. Writes are already refused after the shutdown.
+///   The alert reaches the peer only if the transport still accepts it.
+///
+/// Half-close reads are kept on purpose (D4). Only a corrupted or hostile
+/// record after this side's own `close_notify` reaches the assertion. Fuzz
+/// targets avoid that order. The test
+/// `d4_invalid_record_after_close_notify` pins both behaviours.
+///
+/// [`TlsErrorKind::Protocol`]: crate::TlsErrorKind::Protocol
+///
+/// # Tasks
 ///
 /// Drive each stream from a single task. A read can also write queued TLS
 /// records, so it can register the reading task's waker for transport
@@ -196,6 +217,17 @@ impl<S> TlsStream<S> {
     /// Returns the transport and drops the TLS session state.
     pub fn into_inner(self) -> S {
         self.io
+    }
+
+    /// True when this session was resumed from an earlier full handshake
+    /// instead of running one (policy P2).
+    ///
+    /// A resumed session validated no certificate itself. It carries the
+    /// peer certificate of that full handshake, which ran less than
+    /// [`MAX_RESUMPTION_AGE`](crate::MAX_RESUMPTION_AGE) before it.
+    #[must_use]
+    pub fn is_resumed(&self) -> bool {
+        self.conn.handshake_kind() == Some(rustls::HandshakeKind::Resumed)
     }
 
     /// Whether the handshake was full or resumed, for tests of policy P2.
@@ -295,11 +327,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TlsStream<S> {
             let flushed = self.poll_flush_tls(cx);
             if !self.conn.is_handshaking() {
                 if matches!(self.conn, rustls::Connection::Server(_)) {
-                    // Any remaining server output is post-handshake data.
-                    // This crate sends no session tickets, but later reads
-                    // and writes flush whatever is queued and report its
-                    // errors. Waiting for it here could deadlock with a
-                    // client that does not read yet.
+                    // Any remaining server output is post-handshake data,
+                    // such as the session ticket (P2). Later reads, writes
+                    // and the shutdown flush whatever is queued and report
+                    // its errors. Waiting for it here could deadlock with
+                    // a client that does not read yet.
                     return Poll::Ready(Ok(()));
                 }
                 // A client must deliver its final flight, or the server
@@ -462,7 +494,7 @@ pub async fn connect<S: Connection>(
 ) -> io::Result<TlsStream<S>> {
     let name = ServerName::try_from(server_name.to_owned())
         .map_err(|_| TlsError::config("invalid server name").into_io())?;
-    let conn = rustls::ClientConnection::new(cfg.inner.clone(), name)
+    let conn = rustls::ClientConnection::new(cfg.connection_config(), name)
         .map_err(|e| TlsError::config_from("client connection", e).into_io())?;
     let mut stream = TlsStream::new(io, rustls::Connection::Client(conn));
     poll_fn(|cx| stream.poll_handshake(cx)).await?;
@@ -484,7 +516,7 @@ pub async fn connect<S: Connection>(
 /// misbehaves or fails authentication, or the transport closes early.
 /// Transport errors are returned as they are.
 pub async fn accept<S: Connection>(cfg: &ServerConfig, io: S) -> io::Result<TlsStream<S>> {
-    let conn = rustls::ServerConnection::new(cfg.inner.clone())
+    let conn = rustls::ServerConnection::new(cfg.connection_config())
         .map_err(|e| TlsError::config_from("server connection", e).into_io())?;
     let mut stream = TlsStream::new(io, rustls::Connection::Server(conn));
     poll_fn(|cx| stream.poll_handshake(cx)).await?;
@@ -525,9 +557,7 @@ mod tests {
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .unwrap();
-        ServerConfig {
-            inner: Arc::new(cfg),
-        }
+        ServerConfig::from_rustls(cfg)
     }
 
     fn restricted_client(groups: Vec<&'static dyn SupportedKxGroup>) -> ClientConfig {
@@ -542,9 +572,7 @@ mod tests {
             .unwrap()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        ClientConfig {
-            inner: Arc::new(cfg),
-        }
+        ClientConfig::from_rustls(cfg)
     }
 
     fn negotiate(client: &ClientConfig, server: &ServerConfig) -> (&'static str, &'static str) {

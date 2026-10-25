@@ -1,6 +1,9 @@
 //! Shared helpers for the integration tests: one tokio runtime and one
 //! PostgreSQL server per test binary, a fresh database per test, and the
 //! [`Pg`] client type.
+//!
+//! Every connection is mutually authenticated (D2, R-NF-09). It presents
+//! the client certificate of its role, whose CN is the role name.
 
 #![allow(dead_code, unreachable_pub)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -9,8 +12,8 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use fstp_pgtest::{PgServer, tls as certs};
-use fstp_pgwire::{Client, Config, Password};
+use fstp_pgtest::{ConnParams, PgServer, Role, tls as certs};
+use fstp_pgwire::{Client, ClientTls, Config, Password};
 use fstp_rt::tokio::TokioRuntime;
 
 /// A test connection. `fstp_pgwire::Client` implements [`Database`]
@@ -30,21 +33,36 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
     rt().block_on(f)
 }
 
-/// The TLS client configuration that trusts the test CA.
-pub fn tls() -> fstp_tls::ClientConfig {
-    fstp_tls::ClientConfig::new(certs::CA_PEM).unwrap()
+/// The TLS settings for `role`: the test CA as trust root, and the role's
+/// client certificate and key.
+pub fn tls(role: Role) -> ClientTls {
+    ClientTls::new(certs::CA_PEM, role.client_cert_pem(), role.client_key_pem()).unwrap()
 }
 
-/// Configuration for a fresh database on the shared server.
+/// Configuration for a fresh database on the shared server, as the
+/// superuser that owns it.
 pub fn fresh() -> Config {
-    let db = server().fresh_database().unwrap_or_else(|e| panic!("{e}"));
+    fresh_as(Role::Superuser)
+}
+
+/// Configuration for a fresh database on the shared server, owned by
+/// `role` and logging in as `role`.
+pub fn fresh_as(role: Role) -> Config {
+    let db = server()
+        .fresh_database_as(role)
+        .unwrap_or_else(|e| panic!("{e}"));
+    config(&db, role)
+}
+
+/// Configuration for the database of `db`, logging in as `role`.
+pub fn config(db: &ConnParams, role: Role) -> Config {
     Config::new(
         db.host.clone(),
         db.port,
-        db.user.clone(),
-        Password::new(db.password.clone()).unwrap(),
+        role.name(),
+        Password::new(server().password(role)).unwrap(),
         db.dbname.clone(),
-        tls(),
+        tls(role),
     )
     .unwrap()
     .connect_timeout(Some(Duration::from_secs(20)))

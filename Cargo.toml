@@ -14,7 +14,7 @@ members = [
     "tools/deps-check",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
-exclude = ["crates/*/fuzz"]
+exclude = ["crates/*/fuzz", "tools/*/fuzz"]
 
 [workspace.package]
 version = "0.1.0"

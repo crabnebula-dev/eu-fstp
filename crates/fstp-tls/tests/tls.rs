@@ -518,6 +518,36 @@ fn clean_shutdown_in_both_directions() {
     });
 }
 
+/// Decision D4: after this side's `close_notify`, an invalid record from
+/// the peer reaches a debug assertion in rustls 0.23.46. Release builds
+/// fail the read with a typed protocol error instead, and the stream stays
+/// failed. `cargo test --release` checks the release behaviour. If a rustls
+/// update removes the assertion, the debug run of this test fails, and the
+/// `TlsStream` documentation needs an update.
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    should_panic(expected = "assertion failed: !self.sent_fatal_alert")
+)]
+fn d4_invalid_record_after_close_notify() {
+    let (client, server) = duplex_pair(&mutual_client(), &mutual_server(), "localhost", 4096);
+    let mut client = client.unwrap();
+    let mut server = server.unwrap();
+    block_on(async {
+        client.shutdown().await.unwrap();
+        // An application data record that cannot decrypt, written under
+        // the server's TLS layer.
+        let mut record = vec![0x17, 0x03, 0x03, 0x00, 0x20];
+        record.extend_from_slice(&[0xA5; 32]);
+        server.get_mut().write_all(&record).await.unwrap();
+        let mut buf = [0u8; 16];
+        let err = client.read(&mut buf).await.unwrap_err();
+        assert_eq!(tls_kind(&err), Some(TlsErrorKind::Protocol), "{err:?}");
+        let err = client.read(&mut buf).await.unwrap_err();
+        assert_eq!(tls_kind(&err), Some(TlsErrorKind::Protocol), "{err:?}");
+    });
+}
+
 /// A transport EOF without close_notify is a truncation, not a clean end.
 #[test]
 fn truncation_without_close_notify_is_an_error() {

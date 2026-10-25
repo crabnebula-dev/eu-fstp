@@ -138,6 +138,13 @@ jobs:
           echo "FSTP_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
       - name: cargo test
         run: cargo test --workspace --locked
+      # The SQLSTATE condition-name table must match this PostgreSQL 16.
+      - name: SQLSTATE table matches the server
+        run: bash crates/fstp-pgwire/tools/gen-sqlstate.sh --check
+      # rustls 0.23.46 asserts in debug builds after close_notify; release
+      # builds must return a typed error instead (ADR-001 record, D4).
+      - name: TLS after close_notify in a release build
+        run: cargo test --release --locked -p fstp-tls --test tls d4_invalid_record_after_close_notify
 
   deps-check:
     name: deps-check

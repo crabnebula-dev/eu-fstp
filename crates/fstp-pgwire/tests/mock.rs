@@ -13,7 +13,9 @@ use std::num::NonZeroU32;
 use fstp_pgwire::proto::backend::{
     Authentication, BackendMessage, DataRow, ErrorFields, FieldDescription, TransactionStatus,
 };
-use fstp_pgwire::{AuthMethod, Client, Config, ErrorKind, Password, RequireAuth, Session, base64};
+use fstp_pgwire::{
+    AuthMethod, Client, ClientTls, Config, ErrorKind, Password, RequireAuth, Session, base64,
+};
 use fstp_rt::duplex::{DuplexStream, duplex};
 use fstp_rt::future::join;
 use fstp_rt::tokio::TokioRuntime;
@@ -23,6 +25,8 @@ use fstp_tls::{ServerConfig, TlsStream};
 const CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
 const SERVER: &[u8] = include_bytes!("../../fstp-tls/testdata/server.pem");
 const SERVER_KEY: &[u8] = include_bytes!("../../fstp-tls/testdata/server-key.pem");
+const CLIENT: &[u8] = include_bytes!("../../fstp-tls/testdata/client.pem");
+const CLIENT_KEY: &[u8] = include_bytes!("../../fstp-tls/testdata/client-key.pem");
 const PASSWORD: &str = "mock-password";
 
 fn rt() -> &'static TokioRuntime {
@@ -37,7 +41,7 @@ fn config() -> Config {
         "alice",
         Password::new(PASSWORD).unwrap(),
         "db",
-        fstp_tls::ClientConfig::new(CA).unwrap(),
+        ClientTls::new(CA, CLIENT, CLIENT_KEY).unwrap(),
     )
     .unwrap()
     .connect_timeout(None)
@@ -755,7 +759,7 @@ fn timeout_config() -> Config {
         "alice",
         Password::new(PASSWORD).unwrap(),
         "db",
-        fstp_tls::ClientConfig::new(CA).unwrap(),
+        ClientTls::new(CA, CLIENT, CLIENT_KEY).unwrap(),
     )
     .unwrap()
     .connect_timeout(None)

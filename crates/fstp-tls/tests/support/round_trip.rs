@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
 use fstp_rt::duplex::{DuplexStream, duplex};
-use fstp_rt::{AsyncRead, AsyncWrite};
+use fstp_rt::future::{block_on, join};
+use fstp_rt::{AsyncRead, AsyncWrite, IoExt};
 use fstp_tls::{ClientConfig, ServerConfig, TlsError, TlsStream, accept, connect};
 
 /// Number of header bytes before the schedule tape. See [`run`].
@@ -360,6 +361,8 @@ type Handshake<'a> = Pin<Box<dyn Future<Output = io::Result<TlsStream<Wire>>> + 
 struct Outcome {
     /// `Some(Ok)` once the handshake completed.
     handshake: Option<io::Result<()>>,
+    /// Whether the completed handshake resumed a session.
+    resumed: Option<bool>,
     /// `Some(Ok)` once a read returned `Ok(0)`.
     read: Option<io::Result<()>>,
     /// `Some(Ok)` once all plaintext was accepted and the side closed.
@@ -371,6 +374,7 @@ impl std::fmt::Debug for Outcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Outcome")
             .field("handshake", &self.handshake)
+            .field("resumed", &self.resumed)
             .field("read", &self.read)
             .field("write", &self.write)
             .field("received_len", &self.received.len())
@@ -443,6 +447,7 @@ impl<'a> Side<'a> {
                 Poll::Pending => return Ok(false),
                 Poll::Ready(Ok(stream)) => {
                     self.handshake = None;
+                    self.outcome.resumed = Some(stream.is_resumed());
                     self.stream = Some(stream);
                     self.outcome.handshake = Some(Ok(()));
                 }
@@ -615,6 +620,58 @@ fn acceptable(e: &io::Error) -> bool {
         )
 }
 
+const CA: &[u8] = include_bytes!("../../testdata/ca.pem");
+const CLIENT: &[u8] = include_bytes!("../../testdata/client.pem");
+const CLIENT_KEY: &[u8] = include_bytes!("../../testdata/client-key.pem");
+const SERVER: &[u8] = include_bytes!("../../testdata/server.pem");
+const SERVER_KEY: &[u8] = include_bytes!("../../testdata/server-key.pem");
+
+/// A mutual TLS client and server configuration with empty session caches.
+fn configs() -> Result<(ClientConfig, ServerConfig), String> {
+    let client = ClientConfig::mutual(CA, CLIENT, CLIENT_KEY)
+        .map_err(|e| format!("test client configuration: {e}"))?;
+    let server = ServerConfig::mutual(SERVER, SERVER_KEY, CA)
+        .map_err(|e| format!("test server configuration: {e}"))?;
+    Ok((client, server))
+}
+
+/// Runs one clean session with a full handshake, so that the client holds
+/// a ticket for the next session. The client reads to the end, which makes
+/// it process the ticket that the server sends after the handshake.
+fn prime(client: &ClientConfig, server: &ServerConfig) -> Result<(), String> {
+    let (c, s) = duplex(1 << 16);
+    let (c, s) = block_on(join(connect(client, "localhost", c), accept(server, s)));
+    let (mut c, mut s) = match (c, s) {
+        (Ok(c), Ok(s)) => (c, s),
+        (c, s) => {
+            return Err(format!(
+                "priming handshake failed: client {:?}, server {:?}",
+                c.err(),
+                s.err()
+            ));
+        }
+    };
+    if c.is_resumed() || s.is_resumed() {
+        return Err(String::from("the priming session resumed"));
+    }
+    let (from_server, from_client) = block_on(join(
+        async {
+            c.shutdown().await?;
+            let mut out = Vec::new();
+            c.read_to_end(&mut out, 16).await.map(|_| out)
+        },
+        async {
+            let mut out = Vec::new();
+            s.read_to_end(&mut out, 16).await?;
+            s.shutdown().await.map(|()| out)
+        },
+    ));
+    match (from_server, from_client) {
+        (Ok(a), Ok(b)) if a.is_empty() && b.is_empty() => Ok(()),
+        other => Err(format!("priming session failed: {other:?}")),
+    }
+}
+
 fn is_eof(r: &Option<io::Result<()>>) -> bool {
     matches!(r, Some(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof && TlsError::from_io(e).is_none())
 }
@@ -628,8 +685,10 @@ fn is_eof(r: &Option<io::Result<()>>) -> bool {
 /// - bytes 1 to 6, client: transport read chunk, write chunk, `Pending`
 ///   pattern, mode, and payload length (two bytes).
 /// - bytes 7 to 12: the same for the server.
-/// - byte 13: faults. Bits 0 and 1 choose a direction for one corrupted
-///   byte, bits 2 and 3 a direction for a silent cut.
+/// - byte 13: faults and resumption. Bits 0 and 1 choose a direction for
+///   one corrupted byte, bits 2 and 3 a direction for a silent cut. Bit 4
+///   first runs a clean session that leaves the client a ticket, so the
+///   fuzzed session resumes (policy P2).
 /// - bytes 14 to 17: corruption offset (three bytes) and bit index.
 /// - bytes 18 to 20: cut offset.
 /// - the rest is a schedule tape. It picks which woken side runs next,
@@ -655,15 +714,18 @@ fn is_eof(r: &Option<io::Result<()>>) -> bool {
 ///   payload, and only if the peer sent `close_notify`. A transport end of
 ///   stream without it fails with `UnexpectedEof`.
 /// - Without faults, everything arrives and both sides close cleanly.
+/// - Without corruption, both sides resume exactly when bit 4 is set. Two
+///   sides that both complete the handshake agree on whether it resumed.
 /// - With aborts only, the peer of an aborting side detects the
 ///   truncation, after the complete payload if the side flushed first.
 /// - Every error is a typed `TlsError`, a detected truncation, or a write
 ///   to a peer that already closed. Errors happen only after a fault.
-pub(crate) fn run(
-    data: &[u8],
-    client_cfg: &ClientConfig,
-    server_cfg: &ServerConfig,
-) -> Result<Ending, String> {
+///
+/// Each run builds its own mutual TLS configurations, so their session
+/// caches start empty and a run depends on its input alone.
+pub(crate) fn run(data: &[u8]) -> Result<Ending, String> {
+    let (client_cfg, server_cfg) = configs()?;
+    let (client_cfg, server_cfg) = (&client_cfg, &server_cfg);
     let mut b = Bytes { data, pos: 0 };
     let cap = capacity(b.u8());
     let mut ccfg = SideConfig::decode(&mut b);
@@ -672,6 +734,10 @@ pub(crate) fn run(
     // deadlock by design, like two TCP peers that never read.
     ccfg.read_first = false;
     let faults = b.u8();
+    let resume = faults & 0x10 != 0;
+    if resume {
+        prime(client_cfg, server_cfg)?;
+    }
     // rustls 0.23.46 has a debug assertion that fails when it sends a fatal
     // alert after this side's close_notify. Corrupted input after a
     // graceful shutdown triggers it in debug builds, including fuzz builds.
@@ -860,12 +926,22 @@ pub(crate) fn run(
         }
     }
     let [client, server] = sides;
-    let ending = check(&client, &server, corrupted)?;
+    let ending = check(&client, &server, corrupted, resume)?;
     Ok(if stalled { Ending::Stalled } else { ending })
 }
 
 /// Checks the outcome of a finished or stalled run. See [`run`].
-fn check(client: &Side<'_>, server: &Side<'_>, corrupted: bool) -> Result<Ending, String> {
+fn check(
+    client: &Side<'_>,
+    server: &Side<'_>,
+    corrupted: bool,
+    resume: bool,
+) -> Result<Ending, String> {
+    if let (Some(c), Some(s)) = (client.outcome.resumed, server.outcome.resumed)
+        && c != s
+    {
+        return Err(format!("client resumed: {c}, server resumed: {s}"));
+    }
     let aborted = client.cfg.close != Close::Graceful || server.cfg.close != Close::Graceful;
     let mut tls_failure = false;
     let mut truncated = false;
@@ -910,6 +986,12 @@ fn check(client: &Side<'_>, server: &Side<'_>, corrupted: bool) -> Result<Ending
         // each read ends as the peer's close mode dictates.
         if !matches!(o.handshake, Some(Ok(()))) {
             return Err(format!("{}: handshake did not complete: {o:?}", me.name));
+        }
+        if o.resumed != Some(resume) {
+            return Err(format!(
+                "{}: resumed {:?}, but the input asked for {resume}",
+                me.name, o.resumed
+            ));
         }
         if matches!(o.write, Some(Err(_))) {
             return Err(format!(
