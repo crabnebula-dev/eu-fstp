@@ -1,0 +1,32 @@
+[package]
+name = "fstp-migrate-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-migrate = { path = ".." }
+fstp-crypto = { path = "../../fstp-crypto" }
+
+[[bin]]
+name = "sql_split"
+path = "fuzz_targets/sql_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "migration_list_validate"
+path = "fuzz_targets/migration_list_validate.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

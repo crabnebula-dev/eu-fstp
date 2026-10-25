@@ -1,0 +1,402 @@
+{
+ "version": 1,
+ "workspace_root": "/repo",
+ "workspace_members": [
+  "path+file:///repo/app#0.1.0"
+ ],
+ "packages": [
+  {
+   "id": "path+file:///repo/app#0.1.0",
+   "name": "app",
+   "version": "0.1.0",
+   "source": null,
+   "manifest_path": "/repo/app/Cargo.toml",
+   "features": {},
+   "dependencies": [
+    {
+     "name": "alpha",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    },
+    {
+     "name": "beta",
+     "rename": null,
+     "kind": "build",
+     "optional": false
+    },
+    {
+     "name": "gamma",
+     "rename": null,
+     "kind": "dev",
+     "optional": false
+    },
+    {
+     "name": "loner",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    },
+    {
+     "name": "helper",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    }
+   ],
+   "metadata": null
+  },
+  {
+   "id": "path+file:///repo/helper#0.1.0",
+   "name": "helper",
+   "version": "0.1.0",
+   "source": null,
+   "manifest_path": "/repo/helper/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#alpha@1.0.0",
+   "name": "alpha",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/alpha-1.0.0/Cargo.toml",
+   "features": {
+    "never": [
+     "dep:never"
+    ],
+    "default": []
+   },
+   "dependencies": [
+    {
+     "name": "alpha-build",
+     "rename": null,
+     "kind": "build",
+     "optional": false
+    },
+    {
+     "name": "shared",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    },
+    {
+     "name": "opt",
+     "rename": null,
+     "kind": null,
+     "optional": true
+    },
+    {
+     "name": "never",
+     "rename": null,
+     "kind": null,
+     "optional": true
+    }
+   ],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#alpha-build@1.0.0",
+   "name": "alpha-build",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/alpha-build-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#beta@1.0.0",
+   "name": "beta",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/beta-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [
+    {
+     "name": "beta-child",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    }
+   ],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#beta-child@1.0.0",
+   "name": "beta-child",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/beta-child-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#gamma@1.0.0",
+   "name": "gamma",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/gamma-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [
+    {
+     "name": "gamma-child",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    },
+    {
+     "name": "shared",
+     "rename": null,
+     "kind": null,
+     "optional": false
+    }
+   ],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#gamma-child@1.0.0",
+   "name": "gamma-child",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/gamma-child-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#shared@1.0.0",
+   "name": "shared",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/shared-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#opt@1.0.0",
+   "name": "opt",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/opt-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#never@1.0.0",
+   "name": "never",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/never-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  },
+  {
+   "id": "registry+https://github.com/rust-lang/crates.io-index#loner@1.0.0",
+   "name": "loner",
+   "version": "1.0.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "manifest_path": "/cargo-home/registry/loner-1.0.0/Cargo.toml",
+   "features": {},
+   "dependencies": [],
+   "metadata": null
+  }
+ ],
+ "resolve": {
+  "root": null,
+  "nodes": [
+   {
+    "id": "path+file:///repo/app#0.1.0",
+    "deps": [
+     {
+      "name": "alpha",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#alpha@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "beta",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#beta@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": "build",
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "gamma",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#gamma@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": "dev",
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "loner",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#loner@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "helper",
+      "pkg": "path+file:///repo/helper#0.1.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     }
+    ],
+    "features": []
+   },
+   {
+    "id": "path+file:///repo/helper#0.1.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#alpha@1.0.0",
+    "deps": [
+     {
+      "name": "alpha_build",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#alpha-build@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": "build",
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "shared",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#shared@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "opt",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#opt@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "never",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#never@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     }
+    ],
+    "features": [
+     "default",
+     "opt"
+    ]
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#alpha-build@1.0.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#beta@1.0.0",
+    "deps": [
+     {
+      "name": "beta_child",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#beta-child@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     }
+    ],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#beta-child@1.0.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#gamma@1.0.0",
+    "deps": [
+     {
+      "name": "gamma_child",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#gamma-child@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     },
+     {
+      "name": "shared",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#shared@1.0.0",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
+     }
+    ],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#gamma-child@1.0.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#shared@1.0.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#opt@1.0.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#never@1.0.0",
+    "deps": [],
+    "features": []
+   },
+   {
+    "id": "registry+https://github.com/rust-lang/crates.io-index#loner@1.0.0",
+    "deps": [],
+    "features": []
+   }
+  ]
+ }
+}

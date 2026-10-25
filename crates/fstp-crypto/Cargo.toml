@@ -1,0 +1,17 @@
+[package]
+name = "fstp-crypto"
+description = "Facade over the ADR-001 cryptography crates. No primitive is implemented here."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aws-lc-rs.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

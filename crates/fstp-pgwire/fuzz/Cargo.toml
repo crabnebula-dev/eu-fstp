@@ -1,0 +1,49 @@
+[package]
+name = "fstp-pgwire-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-pgwire = { path = ".." }
+fstp-rt = { path = "../../fstp-rt" }
+fstp-tls = { path = "../../fstp-tls" }
+fstp-crypto = { path = "../../fstp-crypto" }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "pg_backend_decode"
+path = "fuzz_targets/pg_backend_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pg_scram_server_messages"
+path = "fuzz_targets/pg_scram_server_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pg_value_decode"
+path = "fuzz_targets/pg_value_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pg_hostile_server"
+path = "fuzz_targets/pg_hostile_server.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

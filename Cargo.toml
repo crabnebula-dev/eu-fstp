@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/fstp-prop",
+    "crates/fstp-mc",
+    "crates/fstp-crypto",
+    "crates/fstp-rt",
+    "crates/fstp-tls",
+    "crates/fstp-json",
+    "crates/fstp-http",
+    "crates/fstp-pgwire",
+    "crates/fstp-pgtest",
+    "crates/fstp-migrate",
+    "tools/deps-check",
+]
+# Each cargo-fuzz project is its own workspace with its own lockfile.
+exclude = ["crates/*/fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "PolyForm-Noncommercial-1.0.0"
+publish = false
+
+# Third-party crates. Each one is allowlisted in an ADR, and its full resolved
+# tree is recorded there. Do not add an entry without an ADR.
+[workspace.dependencies]
+# ADR-002: async runtime. Minimal features; a new feature needs a review note in ADR-002.
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "rt-multi-thread", "net", "time"] }
+# ADR-001 Tier A: TLS 1.3 only (no tls12 feature), aws-lc-rs provider, no logging.
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs", "prefer-post-quantum"] }
+rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
+aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys"] }
+
+# In-house crates.
+fstp-prop = { path = "crates/fstp-prop" }
+fstp-mc = { path = "crates/fstp-mc" }
+fstp-crypto = { path = "crates/fstp-crypto" }
+fstp-rt = { path = "crates/fstp-rt" }
+fstp-tls = { path = "crates/fstp-tls" }
+fstp-json = { path = "crates/fstp-json" }
+fstp-http = { path = "crates/fstp-http" }
+fstp-pgwire = { path = "crates/fstp-pgwire" }
+fstp-pgtest = { path = "crates/fstp-pgtest" }
+fstp-migrate = { path = "crates/fstp-migrate" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# Parsers and protocol code must not panic on any input (TH-26).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
+arithmetic_side_effects = "warn"
+dbg_macro = "deny"
+todo = "warn"
+
+[profile.release]
+overflow-checks = true

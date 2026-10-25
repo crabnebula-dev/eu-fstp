@@ -1,0 +1,31 @@
+[package]
+name = "fstp-mc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-mc = { path = ".." }
+
+[[bin]]
+name = "random_graph"
+path = "fuzz_targets/random_graph.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "symmetric_graph"
+path = "fuzz_targets/symmetric_graph.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

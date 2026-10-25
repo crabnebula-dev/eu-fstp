@@ -1,0 +1,24 @@
+[package]
+name = "fstp-prop-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-prop = { path = ".." }
+
+[[bin]]
+name = "replay_parse"
+path = "fuzz_targets/replay_parse.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

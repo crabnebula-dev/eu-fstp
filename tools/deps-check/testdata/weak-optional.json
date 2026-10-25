@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "workspace_root": "/repo",
+  "workspace_members": ["path+file:///repo/app#0.1.0"],
+  "packages": [
+    {
+      "id": "path+file:///repo/app#0.1.0",
+      "name": "app",
+      "version": "0.1.0",
+      "source": null,
+      "manifest_path": "/repo/app/Cargo.toml",
+      "features": {},
+      "dependencies": [
+        {"name": "rustls-webpki", "rename": null, "kind": null, "optional": false}
+      ],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.16",
+      "name": "rustls-webpki",
+      "version": "0.103.16",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/rustls-webpki-0.103.16/Cargo.toml",
+      "features": {
+        "alloc": ["ring?/alloc", "pki-types/alloc"],
+        "aws-lc-rs": ["dep:aws-lc-rs", "aws-lc-rs/aws-lc-sys", "aws-lc-rs/prebuilt-nasm"],
+        "default": ["std"],
+        "ring": ["dep:ring"],
+        "std": ["alloc", "pki-types/std"]
+      },
+      "dependencies": [
+        {"name": "aws-lc-rs", "rename": null, "kind": null, "optional": true},
+        {"name": "rustls-pki-types", "rename": "pki-types", "kind": null, "optional": false},
+        {"name": "ring", "rename": null, "kind": null, "optional": true},
+        {"name": "untrusted", "rename": null, "kind": null, "optional": false},
+        {"name": "serde", "rename": null, "kind": "dev", "optional": false}
+      ],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-lc-rs@1.18.2",
+      "name": "aws-lc-rs",
+      "version": "1.18.2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/aws-lc-rs-1.18.2/Cargo.toml",
+      "features": {},
+      "dependencies": [],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/rustls-pki-types-1.15.1/Cargo.toml",
+      "features": {"alloc": [], "default": ["alloc"], "std": ["alloc"]},
+      "dependencies": [],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "name": "ring",
+      "version": "0.17.14",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/ring-0.17.14/Cargo.toml",
+      "features": {"alloc": [], "default": ["alloc", "dev_urandom_fallback"]},
+      "dependencies": [
+        {"name": "cc", "rename": null, "kind": "build", "optional": false},
+        {"name": "cfg-if", "rename": null, "kind": null, "optional": false},
+        {"name": "getrandom", "rename": null, "kind": null, "optional": false},
+        {"name": "untrusted", "rename": null, "kind": null, "optional": false}
+      ],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+      "name": "untrusted",
+      "version": "0.9.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/untrusted-0.9.0/Cargo.toml",
+      "features": {},
+      "dependencies": [],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.10.0",
+      "name": "cc",
+      "version": "1.10.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/cc-1.10.0/Cargo.toml",
+      "features": {},
+      "dependencies": [],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5",
+      "name": "cfg-if",
+      "version": "1.0.5",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/cfg-if-1.0.5/Cargo.toml",
+      "features": {},
+      "dependencies": [],
+      "metadata": null
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#getrandom@0.2.17",
+      "name": "getrandom",
+      "version": "0.2.17",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest_path": "/cargo-home/registry/getrandom-0.2.17/Cargo.toml",
+      "features": {},
+      "dependencies": [
+        {"name": "cfg-if", "rename": null, "kind": null, "optional": false}
+      ],
+      "metadata": null
+    }
+  ],
+  "resolve": {
+    "root": null,
+    "nodes": [
+      {
+        "id": "path+file:///repo/app#0.1.0",
+        "deps": [
+          {"name": "webpki", "pkg": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.16", "dep_kinds": [{"kind": null, "target": null}]}
+        ],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.16",
+        "deps": [
+          {"name": "aws_lc_rs", "pkg": "registry+https://github.com/rust-lang/crates.io-index#aws-lc-rs@1.18.2", "dep_kinds": [{"kind": null, "target": null}]},
+          {"name": "ring", "pkg": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14", "dep_kinds": [{"kind": null, "target": null}]},
+          {"name": "pki_types", "pkg": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1", "dep_kinds": [{"kind": null, "target": null}]},
+          {"name": "untrusted", "pkg": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0", "dep_kinds": [{"kind": null, "target": null}]}
+        ],
+        "features": ["alloc", "aws-lc-rs", "std"]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#aws-lc-rs@1.18.2",
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+        "deps": [],
+        "features": ["alloc", "std"]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+        "deps": [
+          {"name": "cc", "pkg": "registry+https://github.com/rust-lang/crates.io-index#cc@1.10.0", "dep_kinds": [{"kind": "build", "target": null}]},
+          {"name": "cfg_if", "pkg": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5", "dep_kinds": [{"kind": null, "target": null}]},
+          {"name": "getrandom", "pkg": "registry+https://github.com/rust-lang/crates.io-index#getrandom@0.2.17", "dep_kinds": [{"kind": null, "target": null}]},
+          {"name": "untrusted", "pkg": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0", "dep_kinds": [{"kind": null, "target": null}]}
+        ],
+        "features": ["alloc"]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.10.0",
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5",
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#getrandom@0.2.17",
+        "deps": [
+          {"name": "cfg_if", "pkg": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.5", "dep_kinds": [{"kind": null, "target": null}]}
+        ],
+        "features": []
+      }
+    ]
+  }
+}

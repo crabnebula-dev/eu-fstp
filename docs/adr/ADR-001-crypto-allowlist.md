@@ -107,3 +107,38 @@ The hybrid key encapsulation combiner is proposed as X-Wing style: both shared s
 ## Evidence
 
 Audit reports for Tier A crates and Mythos confirmations for Tier B crates are stored with this ADR.
+
+## Record
+
+Exact versions and resolved trees at first use. `deps/allowlist.txt` ties each crate below to ADR-001 and pins its exact version and `.crate` SHA-256. `deps/adr-roots.txt` records the features cargo enables on each root crate.
+
+`tools/deps-check` fails CI when a crate enters this tree, changes version or checksum, or reaches a higher role, and when a root's features change. It passes again only when the allowlist and the roots file match the new tree, and this record names each allowlisted crate and version. A crate that leaves the tree, or drops to a lower role, produces a warning, not a failure.
+
+| Crate | Tier | Version | Features | First use |
+| --- | --- | --- | --- | --- |
+| rustls | A | 0.23.46 (`=0.23.46`) | `std`, `aws_lc_rs`, `prefer-post-quantum`, with default features off. No `tls12`, no `logging`. Resolved: `aws-lc-rs`, `aws_lc_rs`, `prefer-post-quantum`, `std` | 2026-10-24, M1, `fstp-tls` |
+| aws-lc-rs | A | 1.18.2 (`=1.18.2`) | `aws-lc-sys`, with default features off. The `aws_lc_rs` feature of rustls and the `aws-lc-rs` feature of rustls-webpki both add `prebuilt-nasm`. Resolved: `aws-lc-sys`, `prebuilt-nasm` | 2026-10-24, M1, `fstp-crypto` and the rustls provider |
+| rustls-pki-types | A | 1.15.1 (`=1.15.1`) | `std`, with default features off. Resolved: `alloc`, `default`, `std` | 2026-10-24, M1, `fstp-tls` |
+| rustls-webpki | A | 0.103.16 (through rustls) | `alloc`, `aws-lc-rs`, `std` | 2026-10-24, M1, through rustls |
+
+Resolved tree. The runtime and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu, and are the same on both. The platform row, added 2026-10-25, covers every other target.
+
+| Role | Crates |
+| --- | --- |
+| Runtime | `rustls 0.23.46`, `aws-lc-rs 1.18.2`, `aws-lc-sys 0.46.0`, `rustls-pki-types 1.15.1`, `rustls-webpki 0.103.16`, `once_cell 1.21.4`, `subtle 2.6.1`, `untrusted 0.9.0`, `zeroize 1.9.1` |
+| Build, for the aws-lc-sys build script only | `cc 1.10.0`, `cmake 0.1.58`, `dunce 1.0.5`, `fs_extra 1.3.0`, `pkg-config 0.3.34`, `find-msvc-tools 0.1.15`, `jobserver 0.1.35`, `libc 0.2.191`, `shlex 2.0.1` |
+| Platform, never built for x86_64 or aarch64 Linux | `getrandom 0.4.3`, `cfg-if 1.0.5`, `r-efi 6.0.0` |
+
+Platform note, recorded 2026-10-25:
+
+- deps-check also analyses every target, not only the two Linux platforms. Crates that only another target or a custom cfg reaches carry the role `platform` in `deps/allowlist.txt`.
+- jobserver, a dependency of cc in the aws-lc-sys build script, depends on `getrandom 0.4.3` under `cfg(windows)`. getrandom depends on `cfg-if 1.0.5`, and on `r-efi 6.0.0` only for UEFI with a custom `getrandom_backend` cfg.
+- deps-check fails if a Linux build ever reaches one of them.
+
+Weak dependency note:
+
+- `ring 0.17.14` appears in `Cargo.lock` and in the `cargo metadata` resolve graph as an optional dependency of rustls-webpki.
+- rustls-webpki refers to it only through the weak feature `ring?/alloc`. No enabled feature activates `dep:ring`, so cargo never builds it.
+- Verified on 2026-10-24: `cargo tree --locked -i ring --target all -e all` prints nothing, and `tools/deps-check` reports the edge as not activated.
+- ring's own dependencies `getrandom 0.2.17` and `windows-sys 0.52.0`, with the `windows-targets 0.52.6` crates below it, are unused for the same reason. They appear only in the lockfile and the resolve graph. `cfg-if 1.0.5` is a dependency of ring too, but getrandom 0.4.3 reaches it on other targets (see the platform note).
+- ring is not allowed as a platform provider (see Not allowed). It has no allowlist entry, so deps-check fails if a feature change ever activates it.

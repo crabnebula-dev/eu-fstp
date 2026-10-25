@@ -1,0 +1,16 @@
+# Third-party crates that an ADR allowlists by name (TH-15).
+# Checked by tools/deps-check. Every other third-party package must sit in
+# the resolved tree of one of these roots. In-house crates may depend
+# directly only on a root. Using any other crate directly needs an ADR first.
+#
+# Format: <name> <ADR id> <features> <note>
+# features is the exact set of features cargo enables on the crate, the
+# union over every analysed project, target and feature setting, or `-`
+# for none. Any change fails deps-check until it is reviewed here and
+# recorded in the ADR.
+rustls            ADR-001  aws-lc-rs,aws_lc_rs,prefer-post-quantum,std                 Tier A: TLS 1.3 client and server
+aws-lc-rs         ADR-001  aws-lc-sys,prebuilt-nasm                                    Tier A: primitives and the rustls provider
+rustls-pki-types  ADR-001  alloc,default,std                                           Tier A: certificate and key types, PEM parsing
+rustls-webpki     ADR-001  alloc,aws-lc-rs,std                                         Tier A: certificate path validation
+tokio             ADR-002  libc,mio,net,rt,rt-multi-thread,socket2,time,windows-sys    Async runtime
+libfuzzer-sys     ADR-003  default,link_libfuzzer                                      libFuzzer for cargo-fuzz projects, test time only
