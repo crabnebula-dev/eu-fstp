@@ -1,19 +1,29 @@
-//! Fuzz target for the `fstp-domain` policy decoder (TH-26, H-05).
+//! Fuzz target for the `fstp-domain` policy version decoder (TH-26, H-05,
+//! I-12).
 //!
-//! W0 stub: the policy codec does not exist yet, so the target exercises the
-//! closest existing stage, the JSON parser and canonical writer that the
-//! codec will sit on. Lane L-CODEC replaces the body when it lands the
-//! codec. The final target decodes policy versions, runs validation, which must be total, and checks the round trip.
+//! The input is the JSON form of one policy version. The shared oracle in
+//! `common` checks that decoding never panics, rejects unknown members at
+//! every object, round-trips with stable canonical bytes and accepts one
+//! spelling per policy version. The decoder is structural, so it accepts
+//! values that validation refuses.
+//!
+//! Design section 7 also asks that validation is total on every decoded
+//! policy. Lane L-POL has not published a validation entry point yet. When
+//! it does, this target runs it on every accepted value and checks that it
+//! returns a report without panicking.
 
 #![no_main]
 
-use fstp_domain as _;
-use fstp_json::{parse, to_canonical};
+mod common;
+
+use fstp_domain::policy::PolicyVersion;
 use libfuzzer_sys::fuzz_target;
 
+use common::{Outcome, codec_for, oracle};
+
 fuzz_target!(|data: &[u8]| {
-    let Ok(v) = parse(data) else {
-        return;
-    };
-    let _ = to_canonical(&v);
+    let codec = codec_for!(PolicyVersion);
+    if let Outcome::Accepted(p) = oracle(&codec, data) {
+        let _ = format!("{p:?}");
+    }
 });
