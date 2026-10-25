@@ -1,0 +1,272 @@
+# Functional requirements
+
+Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry explanation only.
+
+## Programmes and calls
+
+- **R-PC-01** A tenant can run several programmes, each with its own policy parameters.
+  AC: two programmes with different P-01 weights produce different weighted scores for identical reviewer inputs.
+- **R-PC-02** A published call carries a frozen policy version.
+  AC: a parameter edit after publication does not change any outcome in that call (I-12).
+- **R-PC-03** Publishing a call requires approval by a person other than its drafter.
+  AC: publication by the drafter alone is rejected.
+
+## Submission
+
+- **R-SB-01** Before negotiation, applicants provide only data needed for evaluation.
+  AC: no submission form contains identity document, date of birth or payment fields.
+- **R-SB-02** Minors can submit without guardian consent.
+  AC: a minor-flagged submission reaches SUBMITTED without a guardian record.
+- **R-SB-03** Applicants can withdraw at any point before contract signature.
+- **R-SB-04** Applicants can obtain a copy of their application at an email address they provide.
+
+## Evaluation
+
+- **R-EV-01** Proposals failing any knock-out criterion receive no further review.
+- **R-EV-02** Each eligible proposal is scored by at least P-03 assigned reviewers without conflict (I-03, I-07).
+- **R-EV-03** Stage 1 outcome follows the weighted score and P-02 (I-08).
+- **R-EV-04** Non-selected applicants are notified within P-08.
+- **R-EV-05** In stage 2, assigned reviewers can ask questions and suggest changes, and applicants can submit a revised plan including budget changes.
+- **R-EV-06** The effective score after stage 2 follows P-24 (I-09).
+- **R-EV-07** A proposal without stage 2 answers within P-07 moves to the next call.
+- **R-EV-08** The committee sets a cut-off from the ranking view (`02-domain/roles-and-sod.md`) with remaining budget visible, and the rationale is recorded.
+- **R-EV-09** Committee decisions follow P-16.
+- **R-EV-10** Reviewers can record external verification of claims without disclosing applicant identity unless the applicant consented to sharing.
+
+## Independent review
+
+- **R-IR-01** At least P-15 IRC members review each nominated proposal for eligibility and frugality.
+- **R-IR-02** An IRC concern is sent to the applicant, and the proposal is deferred or declined per the state machine.
+- **R-IR-03** IRC members see the nominated proposal and outcome, not committee deliberation.
+- **R-IR-04** Amendments meeting P-14 skip IRC review.
+
+## Negotiation and grant
+
+- **R-NG-01** Identity attributes are collected only in NEGOTIATION (I-17).
+- **R-NG-02** A minor's proposal enters NEGOTIATION only with verified guardian consent (I-18).
+- **R-NG-03** The grant amount is set by the assigned reviewers, adjusted for ineligible costs, within P-04 and P-05.
+- **R-NG-04** The contract records amount, milestones and licence obligations (`02-domain/contracts.md`). The applicant can decline before signature.
+- **R-NG-05** Repeat grants and amendments require prior deliverables recorded as public under P-26 (I-15). Reviewers see prior outcomes.
+
+## Execution and payment
+
+- **R-EX-01** Payment follows an accepted payment request for a milestone, in full or in part.
+- **R-EX-02** A hardship contribution proportional to delivered work can be granted on verified evidence.
+- **R-EX-03** Each tenant selects record-only or execution payment mode (P-20).
+- **R-EX-04** Milestone acceptance and payment release are done by different persons (I-05).
+
+## Conflicts and separation of duties
+
+- **R-CF-01** SoD-01 to SoD-09 are enforced at every enforcement point.
+- **R-CF-02** Reviewers declare conflicts before accessing full content. A declared conflict triggers reassignment.
+- **R-CF-03** Conflict and cap checks return boolean outcomes without disclosing identity to Judging roles.
+
+## Identity
+
+- **R-ID-01** Each tenant selects verification methods from P-18.
+- **R-ID-02** The vault stores verification outcome, method, document type, checks performed, time and verifier. It stores no identity document numbers or document images.
+- **R-ID-03** Uploaded identity documents are deleted within P-19 after verification, including from backups.
+  AC: after verification, no backup or replica can reproduce the document.
+  NOTE: Encrypting each document under its own key and destroying the key on verification reaches backups without rewriting them.
+- **R-ID-04** Minor status is stored as a derived flag relative to the call deadline.
+
+## Profile sync
+
+- **R-PS-01** A user can export a profile bundle from one tenant and import it into another.
+- **R-PS-02** The user selects which profile fields the bundle contains. Proposals, reviews, scores and role bindings are never included.
+- **R-PS-03** The receiving tenant treats imported fields as self-declared, unless carried as verifiable attestations.
+
+NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type in.
+
+## Tenant data and switching
+
+- **R-TD-01** A tenant can export all its exportable data and digital assets in the documented schema (`schemas/`).
+- **R-TD-02** Importing an export restores the tenant on SaaS or self-hosted without loss (I-22).
+- **R-TD-03** Export and import tooling is available under EUPL-1.2 as a separate executable, independent of the platform licence.
+  AC: the platform binary contains no EUPL-licensed code; it invokes the tool through its process and file interface.
+- **R-TD-04** Export and switching carry no charge.
+
+## LLM assessment
+
+- **R-LA-01** Every submission receives findings on completeness, quality and accuracy of representation.
+- **R-LA-02** Every finding carries evidence pointers.
+- **R-LA-03** A named human records every decision. Findings are advisory (I-10).
+- **R-LA-04** Each tenant selects its inference provider. Self-hosted cells can use a local endpoint.
+- **R-LA-05** Model, prompt and rubric are pinned per call (I-11).
+- **R-LA-06** Applicants can run a pre-submission check with the same rubric. It returns findings, never scores.
+- **R-LA-07** Traces of submission assessments are retained in the tenant cell for P-22, then deleted.
+  NOTE: Pre-check traces follow the draft lifecycle in `04-llm-assessment/pre-check.md`, not P-22.
+- **R-LA-08** Applicants are informed that AI assessment is used, in the call text and at the pre-check.
+
+## Visibility
+
+- **R-AC-01** Proposal read access in stages 1 and 2 follows P-10.
+- **R-AN-01** Reviewer identity towards applicants follows P-11. Anonymous mode uses pseudonymous handles.
+
+## Reporting and audit
+
+- **R-RP-01** Funder documents are generated per funder profile (P-53) from a data snapshot (`03-architecture/funder-reporting.md`).
+  AC: regenerating from the same snapshot and template yields an identical document.
+- **R-RP-02** Every figure in a funder document reconciles with the payment records (I-44).
+- **R-RP-03** Funder documents require approval by a named Operations role before release.
+- **R-RP-04** The Horizon Europe profile generates all five outputs in `03-architecture/funder-reporting.md`: call publication record, open call package, periodic reporting data, audit file per call and deliverable drafts.
+- **R-AU-01** Every state transition, role binding, policy change and read of proposal content or identity attributes is logged (I-23, I-24).
+
+## Contracts
+
+- **R-CT-01** Contracts are generated from the frozen template (P-29) and the agreed plan version.
+  AC: regenerating from the same inputs yields a byte-identical document and hash.
+- **R-CT-02** Signature follows P-30, with any fallback approved and recorded. A minor's contract includes the guardian as a signing party.
+- **R-CT-03** Signed versions are immutable and amendments are new signed versions (I-30).
+- **R-CT-04** Negotiated clause changes are recorded as a diff against the template.
+
+## Payment requests
+
+- **R-PR-01** Grantees request payment per milestone with deliverable evidence per P-34.
+- **R-PR-02** Automated checks run before human review, and failures return to the grantee with reasons.
+- **R-PR-03** Evidence snapshots are recorded at submission and acceptance (I-32).
+- **R-PR-04** Hardship contributions use the payment request flow with vault-held evidence.
+- **R-PR-05** Bank detail changes trigger re-verification and the P-36 hold (I-33).
+
+## Notifications and timelines
+
+- **R-NT-01** Timeline events are derived from calls, contracts, payment requests and reminder policy.
+  AC: amending a milestone due date reschedules its reminders and cancels the superseded ones.
+- **R-NT-02** Reminders and escalations follow P-31 and P-33.
+- **R-NT-03** Each event reaches each recipient on each channel at most once (I-26).
+- **R-NT-04** Contractual notices are sealed PDFs stored in the platform, announced by email (`02-domain/contractual-notices.md`, I-40).
+- **R-NT-05** Users choose which opt-in channels they receive on.
+
+## Group messaging
+
+- **R-MG-01** Tenants can enable Matrix and WhatsApp adapters per P-32.
+- **R-MG-02** Group types and membership follow `03-architecture/messaging.md` (I-28, I-29).
+- **R-MG-03** Announcements reach recipients without exposing other recipients.
+
+## Calibration with consented proposals
+
+- **R-LA-09** After the outcome notice, applicants can consent to pseudonymised use of their proposal for assessor calibration within the tenant (P-42).
+  NOTE: Asking after the outcome prevents consent from appearing to influence evaluation.
+- **R-LA-10** Consent is revocable. Revocation removes the proposal from future calibration runs.
+- **R-LA-11** Use beyond the tenant, including research, needs both tenant agreement and a separate applicant consent.
+
+## Switching
+
+- **R-SW-01** A tenant can start switching at any time without notice.
+- **R-SW-02** After the retrieval period (P-46), the tenant cell is fully erased and the tenant receives an erasure confirmation.
+  AC: after erasure, no backup or replica can restore the cell.
+
+## WhatsApp
+
+- **R-WA-01** WhatsApp is enabled in v1 for individual notifications, after the assessment in `05-compliance/messaging.md` is complete for the tenant.
+- **R-WA-02** Recipients opt in explicitly per programme. Opt-out takes effect immediately.
+
+## Public transparency
+
+- **R-PB-01** Each programme publishes open calls, funded subgrants and finished subgrants (`02-domain/public-transparency.md`).
+- **R-PB-02** Each grantee opts in to a visibility level up to P-50 and P-51, and can change it at any time (I-43).
+  AC: withdrawing removes the grant from pages and the feed on the next request.
+- **R-PB-05** Public aggregates appear only when they cover at least P-54 grants.
+- **R-PB-03** Public summaries come from the grantee, never from proposal text.
+- **R-PB-04** Public pages work without scripts, carry no tracking and meet R-NF-03.
+
+## Horizon Europe alignment
+
+- **R-SB-05** Submissions include an ethics self-declaration. Declared ethics issues are flagged to the assigned reviewers.
+- **R-CF-04** A conflict that could compromise impartial implementation is recorded as notifiable and produces a notification draft for the coordinator to send to the granting authority.
+- **R-NG-06** Applicants receive a data protection notice at submission and at negotiation, covering transfer of recipient data to the granting authority and referencing the Portal Privacy Statement.
+- **R-EX-05** Grantees can notify events or circumstances affecting their subgrant. Notifications are logged and reach the programme manager.
+- **R-HE-01** Under the Horizon Europe profile, I-45 to I-50 are enforced (`05-compliance/horizon-europe-mga.md`).
+
+## Guide for Applicants
+
+- **R-GA-01** Every open call publishes a Guide for Applicants generated from the frozen call policy (`02-domain/guide-for-applicants.md`).
+  AC: changing a frozen parameter in a draft programme changes every place it appears in the Guide.
+- **R-GA-02** The Guide is available as accessible HTML on the public call page and as a PDF.
+- **R-GA-03** Corrigenda are versioned, published with the call and notified to affected applicants (I-53).
+
+## Support programme
+
+- **R-SP-01** Grants can have a mentor assigned, accepted by both mentor and grantee, and ended by the grantee at any time.
+- **R-SP-02** Grantees can book presentation slots with the consortium through the timeline engine.
+- **R-SP-03** Promotion of a grant stays within the grantee's publication choice (I-43).
+- **R-SP-04** Support is free, unconditional and separate from payment decisions (SoD-12, I-55).
+
+## Complaints
+
+- **R-CP-01** Applicants and grantees can file a complaint about a procedural decision within P-61 of its notice (`02-domain/complaints.md`).
+- **R-CP-02** The coordinator responds within P-62, and the complainant can escalate to the IRC within P-63.
+- **R-CP-03** Reviewers of a complaint did not take part in the contested decision (SoD-13).
+- **R-CP-04** Every response is reasoned and recorded (I-56).
+
+## Payment timing
+
+- **R-EX-06** Approved payments are released within P-59. A release that would miss P-59 escalates to the programme manager.
+
+## Payment request lines
+
+- **R-PR-06** A payment request can claim partial amounts on several milestones across tasks (`02-domain/payment-requests.md`).
+  AC: a request with lines on three milestones in two tasks, each below the milestone amount, is accepted by the form and the server.
+- **R-PR-07** The request form shows amount, paid, pending and available per milestone and per task, and locks fully paid milestones.
+- **R-PR-08** Reviewers approve, reduce or reject each line, with a reason for any reduction or rejection (I-60).
+- **R-PR-09** Requested amounts above a milestone's available balance are rejected (I-58).
+  AC: two concurrent requests that together exceed a milestone's available balance cannot both be submitted.
+- **R-PR-10** Evidence for partial claims follows P-65. The final claim on a milestone always carries public deliverables (I-62).
+- **R-PR-11** Grantees can request reallocation between milestones of the same task, approved by an assigned reviewer (P-66, I-63).
+  AC: a reallocation that would change a task total or lower a milestone below paid plus pending is rejected.
+- **R-PR-12** Unclaimed balances at grant end follow P-67, and committed amounts drop to the paid total (I-64).
+
+## Tenant onboarding and programme creator
+
+- **R-TN-01** New tenants are set up through a guided onboarding flow (`02-domain/programme-creator.md`).
+- **R-PG-01** Programmes are built in a guided programme creator with per-step validation, previews and a final validation report.
+  AC: a programme with P-05 above P-58 cannot be activated, and the report names both values.
+- **R-PG-02** Programmes can start from blank, a clone, a template or an imported funding document (I-65).
+- **R-PG-03** Activation needs a clean validation report and a second approver (I-66, I-67).
+- **R-PG-04** After activation, the creator shows which calls each change affects.
+
+## White-labelling
+
+- **R-WL-01** Each tenant can apply a white-label package covering every interface, public page, document, email and messaging identity (`03-architecture/white-labelling.md`).
+- **R-WL-02** Custom domains get automatic certificates after verified ownership (I-71).
+- **R-WL-03** Branding cannot execute code, break contrast or remove mandatory elements (I-68 to I-70).
+- **R-PG-05** Tenants can save templates for their own use and publish them to other tenants (I-73).
+  AC: publishing a template that contains a personal name or email address is blocked with the matches listed.
+- **R-WL-04** Every interface and public page shows the platform attribution in the footer (P-68).
+- **R-WL-05** Terminology overrides change interface labels only (I-72).
+
+## Desktop client
+
+- **R-DC-01** A white-labelled desktop client gives access to the tenant's interfaces (`03-architecture/desktop-client.md`).
+
+## Cryptography
+
+- **R-CR-01** Data at rest that leaves the running system, such as backups and exports, is protected by hybrid post-quantum key encapsulation (ADR-001).
+- **R-CR-02** Release builds fail when a Tier B crate lacks a matching Mythos confirmation (I-74).
+
+## Authentication
+
+- **R-LG-01** Users log in with passkeys, and where the tenant enables them, the EUDI Wallet, OPAQUE passwords, or magic links for applicants and grantees (`03-architecture/authentication.md`).
+- **R-LG-02** Management roles use phishing-resistant login only (I-77).
+- **R-LG-03** High-risk actions need a fresh phishing-resistant step-up (I-78).
+  AC: granting a committee role, exporting the tenant or adding a passkey fails without a step-up in the last P-71.
+- **R-LG-04** Users can see and end their sessions and linked devices.
+
+## Keys and hosting
+
+- **R-KY-01** Cell root keys are held in an EU-operated KMS or HSM, or a CrabNebula-operated HSM, chosen per cell (ADR-004).
+- **R-KY-02** Erasure and crypto-shredding work by key destruction (I-81).
+- **R-HS-01** The SaaS runs on an EU-owned provider (ADR-005).
+- **R-HS-02** Cells share a database cluster by default, with a dedicated cluster on request (P-73, I-82, I-83).
+
+## MCP server
+
+- **R-MC-01** Each cell exposes an MCP server with OAuth 2.1 authorisation, scoped per user and client (`03-architecture/mcp-server.md`).
+- **R-MC-02** MCP actions follow the user's roles exactly (I-84), and high-risk actions need confirmation in the platform (I-85).
+- **R-MC-03** Users can list and revoke connected agents.
+- **R-MC-04** Agents without an account can research open calls and published subgrants through public MCP tools (I-87), and programmes can opt in to a platform-wide directory (P-76).
+- **R-MC-05** Each programme chooses whether agents complete binding actions or only draft them (P-77).
+- **R-MC-06** Tenants can connect external MCP servers for checks and hand-offs (`03-architecture/mcp-client.md`, I-88, I-89).
+  AC: an integration declared without bank fields cannot send bank details, and a write tool cannot run without a named approval.
+- **R-CR-03** Release metadata, update bundles, audit chain anchors and export manifests carry composite Ed25519 plus ML-DSA-65 signatures (ADR-001, I-90).
+- **R-CR-04** Contractual notices carry a composite companion signature next to the eIDAS seal.
