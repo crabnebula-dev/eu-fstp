@@ -66,7 +66,7 @@ NOTE 7: P-05 and P-13 are not frozen (decided 2026-10-25).
 
 - For a published call, enforcement uses the stricter of the call's publication snapshot and the live programme value. For P-05 that is the lower amount. For P-13 it is every class in either value.
 - The published call policy records the publication snapshot of P-05 and P-13 next to the frozen values. The Guide for Applicants shows that snapshot.
-- A change after publication produces a numbered corrigendum (I-53). How such a corrigendum squares with I-51 is open (O-52). TODO(Daniel): decide.
+- A change after publication that tightens the limit produces a numbered corrigendum (I-53). Each published call keeps a record of its effective limits: the publication values plus every later tightening. Corrigenda are generated from that record, and the Guide read with its corrigenda equals it, which is how I-51 applies to P-05 and P-13 (decided 2026-10-25, O-52).
 - Adding a P-13 class voids the Receiving bindings of every holder now in an excluded class, in the same step, as under Identity discovery in `02-domain/roles-and-sod.md` (I-04).
 - An edit that lowers P-05 below a recipient's counted sum is refused (`02-domain/contracts.md`).
 

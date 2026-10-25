@@ -48,6 +48,7 @@
 | O-49 | The FSTP coordinator records the stage 1 rows; the programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED; timer and date rows are not decisions (`02-domain/state-machine.md` NOTE 13, decided 2026-10-25). |
 | O-50 | Every active assigned reviewer records "no questions" before the stage 2 window closes that way (`02-domain/state-machine.md` NOTE 4, decided 2026-10-25). |
 | O-53 | The other account's Drafting binding stays at identity discovery, as its Judging binding does (`02-domain/roles-and-sod.md`, decided 2026-10-25). |
+| O-52 | A published call keeps a record of its effective P-05 and P-13 limits, the publication values plus every later tightening. Corrigenda come from that record, and the Guide with its corrigenda equals it under I-51 (`02-domain/policy-parameters.md` NOTE 7, decided 2026-10-25). |
 
 ## Open
 
@@ -58,7 +59,6 @@
 | O-45 | How P-41 retention and I-81 crypto-shredding coexist with the append-only records of I-23. Free text already sits outside ledger bodies, and an erased text's `TextRef` resolves to its erasure-log entry (`../docs/adr/ADR-007-domain-ledger.md`). Open: what the erasure log holds and who may read it | Erasure and retention design for the domain ledger in M3 |
 | O-48 | How the identity vault learns an applicant's country for the P-17 query before NEGOTIATION, given R-NG-01 and I-17, and whether showing the committee that one derived bit is consistent with I-17 | P-17 tie-breaks under R-EV-08; the M3 vault interface |
 | O-51 | The milestone closure rule, and which payment request states are terminal, in particular CHECKS_FAILED and CHANGES_REQUESTED (`02-domain/payment-requests.md`) | The IN_EXECUTION to COMPLETED guard; M5 |
-| O-52 | How a corrigendum that states a stricter live P-05 or P-13 value squares with I-51, which ties Guide values to the frozen call policy | Guide generation and corrigenda in M9 |
 
 ## Backlogged
 
