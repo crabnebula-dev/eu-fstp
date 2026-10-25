@@ -89,6 +89,13 @@ When the vault verifies an applicant at negotiation, it can find either of two t
 
 The same voiding applies, in the same step, when a P-13 class is added (decided 2026-10-25). The vault then re-checks every Receiving holder of the programme, and each account now in an excluded class loses its Receiving bindings. It applies equally when the vault reports a new affiliation that puts a Receiving holder in an excluded class, under the verification commit protocol (`03-architecture/overview.md` NOTE 4).
 
+The vault can also find that accounts holding Drafting and Judging bindings share one verified identity. SoD-09 refuses this at binding time, so only a later identity merge reaches it. In the same step, the platform suspends the Judging binding as a conflict of interest (decided 2026-10-25).
+
+- A conflict-of-interest suspension restores I-06. The suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar.
+- Its reinstatement is refused while the identity clash lasts.
+- The suspended account's open assignments are released, and scores it already gave get a notifiable conflict (R-CF-04).
+- The Drafting binding stays.
+
 NOTE: The I-04 check is evaluated over the identity vault's knowledge. The platform holds no other source for affiliation classes.
 
 ## Enforcement points
@@ -97,9 +104,9 @@ Rules are evaluated at three points:
 
 1. At role binding.
 2. At every action that reads proposal content or changes state.
-3. When a declared affiliation or relationship changes, or a P-13 class is added. A Receiving binding that would break I-04 or I-06 is voided, as described under Identity discovery. Any other new violation suspends the affected bindings pending resolution.
+3. When a declared affiliation or relationship changes, or a P-13 class is added. A Receiving binding that would break I-04 or I-06 is voided, and a Judging binding that breaks I-06 together with a Drafting binding is suspended as a conflict of interest, as described under Identity discovery. Any other new violation suspends the affected bindings pending resolution.
 
-NOTE: A suspended binding is inactive for every action. Suspension is never used to restore I-04 or I-06, so a suspended Receiving binding still counts as held for those invariants.
+NOTE: A suspended binding is inactive for every action. Only a conflict-of-interest suspension restores I-06. Every other suspended binding, Receiving bindings included, still counts as held for I-04 and I-06.
 
 ## Conflict declarations
 
