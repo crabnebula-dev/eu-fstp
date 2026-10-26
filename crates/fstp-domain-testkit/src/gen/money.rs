@@ -37,9 +37,9 @@ use fstp_domain::command::{Actor, Command, ContractEvent, DeclarationSubject, Sy
 use fstp_domain::decision::Vote;
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
-    AccountId, AmendmentId, CommandId, ContentDigest, ContractId, DecisionId, DeliverableId,
-    LineId, MilestoneId, OrganisationId, PlanVersionId, PolicyVersionId, ProposalId, RequestId,
-    TextRef,
+    AccountId, AmendmentId, AssignmentId, CommandId, ContentDigest, ContractId, DecisionId,
+    DeliverableId, LineId, MilestoneId, OrganisationId, PlanVersionId, PolicyVersionId, ProposalId,
+    RequestId, TextRef,
 };
 use fstp_domain::oracle::Answers;
 use fstp_domain::payment::PaymentLine;
@@ -534,6 +534,38 @@ pub fn activate_amendment(amendment: AmendmentId, contract: ContractId) -> Step 
             contract,
         },
     )
+}
+
+/// The id of the IRC assignment of `member` to the amendment `amendment`.
+/// It never meets an id of [`crate::mc::life_model::assignment_of`].
+pub fn amendment_assignment(member: AccountId, amendment: AmendmentId) -> AssignmentId {
+    AssignmentId::from_raw(
+        90_000_000u128
+            .saturating_add(amendment.raw().saturating_mul(1_000))
+            .saturating_add(member.raw()),
+    )
+}
+
+/// The coordinator's assignment of `member` to the IRC review of
+/// `amendment` of `grant`, then the member's no-conflict declaration on it
+/// (R-IR-04).
+pub fn assign_amendment_declared(
+    member: AccountId,
+    grant: ProposalId,
+    amendment: AmendmentId,
+) -> Vec<Step> {
+    let id = amendment_assignment(member, amendment);
+    vec![
+        crate::r#gen::review::assign(
+            COORDINATOR,
+            id,
+            grant,
+            member,
+            AssignmentKind::Amendment(amendment),
+            Some(crate::r#gen::review::handle(id.raw())),
+        ),
+        declare(member, DeclarationSubject::Assignment(id), false, false),
+    ]
 }
 
 /// The staff programme manager's `EditPolicy` of `head` as version `id`, with P-05 at `cents`.

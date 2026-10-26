@@ -8,8 +8,10 @@
 //! A proposal with no listed failure cannot be declined: with b at 2.00,
 //! a's 4.00 still leaves b's whole plan within the cap. The cap failure
 //! appears once a holds 4.00 and P-05 is lowered to 4.00. It also appears
-//! for b's 3.00 under P-05 = 6.00, although the P-04 minimum fits. In M2 a
-//! deduction is refused, so the plan total is the only amount b can reach.
+//! for b's 3.00 under P-05 = 6.00, although the P-04 minimum fits. No
+//! negotiated plan of b is recorded, so the plan total is the only amount
+//! b can reach. Counting only recorded plans is an interim reading, open
+//! for Daniel (`fstp_domain::grant` module doc).
 //! DECLINED is terminal, and the decline releases the open reservation.
 //!
 //! Identity discovery can also leave an open reservation above the cap.

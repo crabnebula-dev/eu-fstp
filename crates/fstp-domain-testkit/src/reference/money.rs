@@ -122,30 +122,52 @@
 //!   An amendment also needs this grant's own record complete.
 //! - Amendments leave the proposal state unchanged. `ProposeAmendment` is
 //!   the lead's or an assigned reviewer's, on a GRANTED or IN_EXECUTION
-//!   grant, naming a plan of origin "amendment" of the grant. The
-//!   programme manager routes it (P-14). `ActivateAmendment` is the
-//!   System's, on a routed amendment, and needs the I-15 record, the
-//!   amended total within P-04 (I-13) and the identity's counted sum with
-//!   the amended total within the cap (I-14). The amended total is at least
-//!   the paid plus pending amount of the grant (I-31, I-61). The amended
-//!   total then counts.
+//!   grant, naming a live plan of origin "amendment" of the grant that no
+//!   other amendment names. The programme manager routes it (P-14).
+//!   `ActivateAmendment` is the System's, on a routed amendment whose plan
+//!   is still live. It needs the I-15 record, the amended total within
+//!   P-04 (I-13) and the identity's counted sum with the amended total
+//!   within the cap (I-14). Every milestone with a paid or pending amount
+//!   stays in the amended plan at no less than that amount (I-61), so the
+//!   claims stay within the amended total (I-31). The amended total then
+//!   counts.
 //!   An exempt route activates at once. An IRC route needs the IRC review
-//!   of the amendment first, which lanes L-REV and L-LIFE record, so the
-//!   reference leaves that activation open and no test probes it.
+//!   of the amendment first (R-IR-04).
+//! - The IRC review of an amendment (step W5 integration, test-author
+//!   choices where marked). The FSTP coordinator assigns IRC members to the
+//!   grant with `AssignmentKind::Amendment` naming an amendment routed to
+//!   IRC review and not yet activated, on a GRANTED or IN_EXECUTION grant.
+//!   The assignment rules of an IRC assignment apply: an active IRC member
+//!   binding, no duplicate, I-02 within the programme, no conflict fact or
+//!   vault conflict (I-03), and the P-11 handle rule. Each assignee declares
+//!   on the assignment and then records one `RecordIrcReview` on it. The
+//!   batch holds no transition, since the proposal state never changes.
+//!   Test-author choice: once a concern is recorded on the amendment, no
+//!   further review is taken and the amendment cannot be activated. An IRC
+//!   route activates once at least P-15 active amendment assignments exist,
+//!   every one validated, and none awaits its declaration (R-IR-01 read for
+//!   amendments, R-IR-04).
 //! - New plans of origin "negotiated" (in NEGOTIATION) and "amendment" (in
 //!   GRANTED or IN_EXECUTION) are the lead's, with the same structural
-//!   checks as a submitted plan, superseding the live plan.
+//!   checks as a submitted plan, superseding the live plan. An amendment
+//!   plan may keep a milestone of the effective contract version under its
+//!   id, and every other milestone id is fresh (I-61). The applicant
+//!   lead proposes plan content, and the assigned reviewers set the amount
+//!   with `DetermineAmount` (R-NG-03). The agreed plan of a determination is
+//!   the effective plan or a negotiated plan of the proposal, and its total
+//!   equals the granted amount, so a deduction needs a negotiated plan that
+//!   carries it (design 2.11).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::amendment::AmendmentRoute;
 use fstp_domain::assignment::AssignmentKind;
 use fstp_domain::command::{Actor, Command, ContractEvent};
-use fstp_domain::decision::NegotiationFailure;
+use fstp_domain::decision::{IrcVerdict, NegotiationFailure};
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
-    AccountId, AmendmentId, CallId, ContractId, DecisionId, DeliverableId, MilestoneId,
-    PlanVersionId, ProgrammeId, ProposalId, RequestId, TextRef,
+    AccountId, AmendmentId, AssignmentId, CallId, ContractId, DecisionId, DeliverableId,
+    MilestoneId, PlanVersionId, ProgrammeId, ProposalId, RequestId, TextRef,
 };
 use fstp_domain::proposal::{PlanOrigin, Task};
 use fstp_domain::record::{Record, RulesVersion, Transitioned};
@@ -385,6 +407,16 @@ pub struct MoneyAmendment {
     pub route: Option<AmendmentRoute>,
     /// Whether it was activated.
     pub activated: bool,
+    /// The IRC reviews recorded on its amendment assignments: `true` for a
+    /// validation, `false` for a concern (R-IR-04).
+    pub reviews: BTreeMap<AssignmentId, bool>,
+}
+
+impl MoneyAmendment {
+    /// Whether a concern was recorded on the amendment.
+    pub fn concern(&self) -> bool {
+        self.reviews.values().any(|ok| !*ok)
+    }
 }
 
 /// The money reference's fold of core records.
@@ -404,6 +436,8 @@ pub struct MoneyView {
     pub deliverables: BTreeMap<DeliverableId, MoneyDeliverable>,
     /// Amendments.
     pub amendments: BTreeMap<AmendmentId, MoneyAmendment>,
+    /// The IRC assignments of amendments, by assignment (R-IR-04).
+    pub amendment_assignments: BTreeMap<AssignmentId, AmendmentId>,
     /// Decision ids taken by this lane's records.
     pub decisions: BTreeSet<DecisionId>,
     /// Payment requests.
@@ -447,6 +481,7 @@ impl MoneyView {
             proposals: BTreeMap::new(),
             deliverables: BTreeMap::new(),
             amendments: BTreeMap::new(),
+            amendment_assignments: BTreeMap::new(),
             decisions: BTreeSet::new(),
             pay: PayView::new(),
             breaches: BTreeSet::new(),
@@ -861,8 +896,27 @@ impl MoneyView {
                         plan: *plan,
                         route: None,
                         activated: false,
+                        reviews: BTreeMap::new(),
                     },
                 );
+            }
+            Record::Assigned(a) => {
+                if let AssignmentKind::Amendment(id) = a.kind {
+                    self.amendment_assignments.insert(a.assignment, id);
+                }
+            }
+            Record::IrcReviewRecorded {
+                assignment,
+                verdict,
+            } => {
+                if let Some(id) = self.amendment_assignments.get(assignment).copied() {
+                    let a = self
+                        .amendments
+                        .get_mut(&id)
+                        .ok_or("IRC review of an unknown amendment")?;
+                    a.reviews
+                        .insert(*assignment, matches!(verdict, IrcVerdict::Validate));
+                }
             }
             Record::AmendmentRouted {
                 amendment, route, ..
@@ -1280,6 +1334,8 @@ impl MoneyCx<'_> {
     /// only the determined amount is left. Before, they are the totals of
     /// the effective plan and of every negotiated plan of `p` that a
     /// deduction can reach, that is at most `total` (design 2.11, R-NG-03).
+    /// Only negotiated plans already recorded count. That mirrors the
+    /// interim reading in the `fstp_domain::grant` module doc, open for Daniel.
     fn reachable(&self, p: ProposalId, total: i64) -> Vec<i64> {
         let Some(q) = self.money.proposals.get(&p) else {
             return Vec::new();
@@ -1449,6 +1505,32 @@ pub fn money_verdict(cx: &MoneyCx<'_>, actor: Actor, cmd: &Command) -> MoneyVerd
     }
     if let Some(v) = pay_verdict(cx, actor, cmd) {
         return v;
+    }
+    if let Command::Assign {
+        assignment,
+        proposal,
+        reviewer,
+        kind: AssignmentKind::Amendment(amendment),
+        handle,
+    } = cmd
+    {
+        return amendment_assign(
+            cx,
+            actor,
+            *assignment,
+            *proposal,
+            *reviewer,
+            *amendment,
+            *handle,
+        );
+    }
+    if let Command::RecordIrcReview {
+        assignment,
+        verdict,
+    } = cmd
+        && let Some(amendment) = cx.money.amendment_assignments.get(assignment).copied()
+    {
+        return amendment_review(cx, actor, *assignment, amendment, *verdict);
     }
     match cmd {
         Command::DetermineAmount {
@@ -2105,15 +2187,32 @@ fn money_plan(
         .iter()
         .flat_map(|t| t.milestones.iter())
         .all(|m| m.start <= m.due);
-    let fresh = tasks.iter().flat_map(|t| t.milestones.iter()).all(|m| {
-        !cx.life.milestones.contains(&m.id)
-            && !cx
+    // I-61: an amendment plan keeps a milestone of the effective contract
+    // version under its id, so its paid and pending lines stay on it.
+    // Every other milestone is new and needs an id never used before.
+    let kept = |m: MilestoneId| {
+        origin == PlanOrigin::Amendment
+            && cx
                 .money
-                .plans
-                .values()
-                .any(|p| p.milestones.contains_key(&m.id))
+                .contract_plan(proposal)
+                .is_some_and(|c| c.milestones.contains_key(&m))
+    };
+    let fresh = tasks.iter().flat_map(|t| t.milestones.iter()).all(|m| {
+        kept(m.id)
+            || (!cx.life.milestones.contains(&m.id)
+                && !cx
+                    .money
+                    .plans
+                    .values()
+                    .any(|p| p.milestones.contains_key(&m.id)))
     });
-    if !(complete && dated && fresh) {
+    let ids: Vec<MilestoneId> = tasks
+        .iter()
+        .flat_map(|t| t.milestones.iter())
+        .map(|m| m.id)
+        .collect();
+    let distinct = ids.iter().collect::<BTreeSet<_>>().len() == ids.len();
+    if !(complete && dated && fresh && distinct) {
         return refuse("plan structure");
     }
     MoneyVerdict::Accept(MoneyExpect::new().exact(Record::PlanVersionRecorded(
@@ -2157,6 +2256,14 @@ fn propose(
         .is_some_and(|p| p.proposal == grant && p.origin == PlanOrigin::Amendment);
     if !ok {
         return refuse("the amended plan is an amendment plan of the grant");
+    }
+    // Only the latest plan version counts, and one plan backs at most one
+    // amendment.
+    if cx.money.plans.get(&plan).is_some_and(|p| p.superseded) {
+        return refuse("the amended plan is superseded");
+    }
+    if cx.money.amendments.values().any(|x| x.plan == plan) {
+        return refuse("another amendment names the plan");
     }
     MoneyVerdict::Accept(MoneyExpect::new().exact(Record::AmendmentProposed {
         amendment,
@@ -2226,15 +2333,30 @@ fn activate(
     if total < f.p04_min || total > f.p04_max {
         return refuse("I-13: the amended total lies outside P-04");
     }
+    if cx.money.plans.get(&x.plan).is_none_or(|p| p.superseded) {
+        return refuse("a later plan supersedes the amended plan");
+    }
+    // I-61, per milestone: every milestone with a paid or pending amount
+    // stays in the amended plan, at no less than that amount. Then the
+    // claims stay within the amended total too (I-31).
     let claimed: BTreeSet<MilestoneId> = cx
         .money
         .pay
         .requests_of(g)
         .flat_map(|r| r.lines.values().map(|l| l.milestone))
         .collect();
-    let used = sum(claimed.into_iter().map(|m| cx.money.pay.used(g, m)));
-    if used > total {
-        return refuse("I-31, I-61: the amended total lies below the paid plus pending amount");
+    let amended = cx.money.plans.get(&x.plan);
+    for m in claimed {
+        let used = cx.money.pay.used(g, m);
+        if used == 0 {
+            continue;
+        }
+        let amount = amended.and_then(|p| p.milestones.get(&m)).map(|x| x.amount);
+        if amount.is_none_or(|a| a < used) {
+            return refuse(
+                "I-61: the amendment sets a milestone below its paid plus pending amount",
+            );
+        }
     }
     if cx.headroom(g).is_none_or(|h| total > h) {
         return refuse("I-14: the amended total exceeds the cap headroom");
@@ -2247,10 +2369,207 @@ fn activate(
     });
     match route {
         AmendmentRoute::Exempt => MoneyVerdict::Accept(e),
-        // An IRC route needs the IRC review of the amendment first, which
-        // lanes L-REV and L-LIFE record. The reference leaves it open.
-        AmendmentRoute::Irc => MoneyVerdict::Either(e),
+        AmendmentRoute::Irc if irc_review_complete(cx, amendment, g) => MoneyVerdict::Accept(e),
+        AmendmentRoute::Irc => {
+            refuse("R-IR-04: an IRC-routed amendment needs its completed IRC review")
+        }
     }
+}
+
+/// The amendment assignments of `amendment` on `grant` with their state:
+/// active ones, and ones that await their declaration. Assignments whose
+/// assignee holds a conflict fact on the grant count in neither.
+fn amendment_assignments(
+    cx: &MoneyCx<'_>,
+    amendment: AmendmentId,
+    grant: ProposalId,
+) -> (BTreeSet<AssignmentId>, BTreeSet<AssignmentId>) {
+    let mut active = BTreeSet::new();
+    let mut awaiting = BTreeSet::new();
+    for (id, a) in &cx.life.assignments {
+        if a.proposal != grant
+            || a.kind != AssignmentKind::Amendment(amendment)
+            || a.released
+            || cx.life.facts.contains(&(a.reviewer, grant))
+        {
+            continue;
+        }
+        if a.declared {
+            active.insert(*id);
+        } else {
+            awaiting.insert(*id);
+        }
+    }
+    (active, awaiting)
+}
+
+/// Whether the IRC review of `amendment` is complete (R-IR-01 read for
+/// amendments, R-IR-04): at least P-15 active amendment assignments, every
+/// one validated, none awaiting its declaration and no concern recorded.
+fn irc_review_complete(cx: &MoneyCx<'_>, amendment: AmendmentId, grant: ProposalId) -> bool {
+    let Some(x) = cx.money.amendments.get(&amendment) else {
+        return false;
+    };
+    let Some(p15) = cx.life.governing(grant).map(|p| p.p15) else {
+        return false;
+    };
+    let (active, awaiting) = amendment_assignments(cx, amendment, grant);
+    !x.concern()
+        && active.len() >= usize::from(p15)
+        && awaiting.is_empty()
+        && active.iter().all(|id| x.reviews.get(id) == Some(&true))
+}
+
+/// The verdict on an `Assign` of kind `AssignmentKind::Amendment` (R-IR-04).
+fn amendment_assign(
+    cx: &MoneyCx<'_>,
+    actor: Actor,
+    assignment: AssignmentId,
+    proposal: ProposalId,
+    reviewer: AccountId,
+    amendment: AmendmentId,
+    handle: Option<fstp_domain::id::Handle>,
+) -> MoneyVerdict {
+    let Some(a) = account(actor) else {
+        return refuse("the FSTP coordinator assigns IRC members");
+    };
+    if !cx.holder(a, Role::FstpCoordinator, proposal) {
+        return refuse("the FSTP coordinator assigns IRC members");
+    }
+    let Some(x) = cx.money.amendments.get(&amendment) else {
+        return refuse("unknown amendment");
+    };
+    if x.grant != proposal {
+        return refuse("the amendment belongs to another grant");
+    }
+    if x.route != Some(AmendmentRoute::Irc) || x.activated {
+        return refuse("R-IR-04: only an IRC-routed amendment not yet activated gets IRC members");
+    }
+    if x.concern() {
+        return refuse("test-author choice: a concern ends the IRC review of the amendment");
+    }
+    if !matches!(
+        cx.state(proposal),
+        Some(StateTag::Granted | StateTag::InExecution)
+    ) {
+        return refuse("an amendment needs GRANTED or IN_EXECUTION");
+    }
+    if cx.life.assignments.contains_key(&assignment) || cx.rev.assignments.contains_key(&assignment)
+    {
+        return refuse("assignment id reused");
+    }
+    if !cx.holder(reviewer, Role::IrcMember, proposal) {
+        return refuse("the assignee holds no active IRC member binding");
+    }
+    let duplicate = cx.life.assignments.values().any(|y| {
+        y.reviewer == reviewer && y.kind == AssignmentKind::Amendment(amendment) && !y.released
+    });
+    if duplicate {
+        return refuse("already assigned to this amendment");
+    }
+    let programme = cx.programme(proposal);
+    let reviewing = cx.life.assignments.values().any(|y| {
+        y.reviewer == reviewer
+            && y.kind == AssignmentKind::Reviewer
+            && !y.released
+            && cx.programme(y.proposal) == programme
+    });
+    if reviewing {
+        return refuse("I-02: the IRC member holds a reviewer assignment in the programme");
+    }
+    if cx.life.facts.contains(&(reviewer, proposal))
+        || crate::reference::review::ConflictFacts::has_conflict(
+            cx.truth,
+            reviewer,
+            &team_of(cx.sod, proposal),
+        )
+    {
+        return refuse("I-03: the IRC member is conflicted on the grant");
+    }
+    match cx.rev.governing_policy(proposal).map(|p| p.p11) {
+        Some(fstp_domain::policy::ReviewerAnonymity::Anonymous) => match handle {
+            None => return refuse("R-AN-01: no handle under P-11 anonymous"),
+            Some(h) if cx.rev.handles.contains_key(&h) => {
+                return refuse("R-AN-01: handle issued before");
+            }
+            Some(_) => {}
+        },
+        Some(fstp_domain::policy::ReviewerAnonymity::Named) if handle.is_some() => {
+            return refuse("R-AN-01: no handle under P-11 named");
+        }
+        Some(fstp_domain::policy::ReviewerAnonymity::Named) => {}
+        None => return refuse("no governing policy"),
+    }
+    let Some(call) = cx.life.proposals.get(&proposal).map(|p| p.current_call) else {
+        return refuse("unknown proposal");
+    };
+    MoneyVerdict::Accept(MoneyExpect::new().exact(Record::Assigned(
+        fstp_domain::record::Assigned {
+            assignment,
+            proposal,
+            call,
+            reviewer,
+            kind: AssignmentKind::Amendment(amendment),
+            handle,
+            by: a,
+            epoch: cx.sod.epoch,
+        },
+    )))
+}
+
+/// The verdict on a `RecordIrcReview` on an amendment assignment (R-IR-04).
+/// The batch holds no transition: the proposal state never changes.
+fn amendment_review(
+    cx: &MoneyCx<'_>,
+    actor: Actor,
+    assignment: AssignmentId,
+    amendment: AmendmentId,
+    verdict: IrcVerdict,
+) -> MoneyVerdict {
+    let Some(a) = account(actor) else {
+        return refuse("the IRC assignee records the review");
+    };
+    let Some(y) = cx.life.assignments.get(&assignment) else {
+        return refuse("unknown assignment");
+    };
+    if y.reviewer != a || !y.active() {
+        return refuse("the active IRC assignee records the review");
+    }
+    let grant = y.proposal;
+    if !cx.holder(a, Role::IrcMember, grant) {
+        return refuse("the assignee holds no active IRC member binding");
+    }
+    if cx.life.facts.contains(&(a, grant))
+        || crate::reference::review::ConflictFacts::has_conflict(
+            cx.truth,
+            a,
+            &team_of(cx.sod, grant),
+        )
+    {
+        return refuse("I-03: the IRC member is conflicted on the grant");
+    }
+    let Some(x) = cx.money.amendments.get(&amendment) else {
+        return refuse("unknown amendment");
+    };
+    if x.route != Some(AmendmentRoute::Irc) || x.activated {
+        return refuse("R-IR-04: the amendment is not under IRC review");
+    }
+    if !matches!(
+        cx.state(grant),
+        Some(StateTag::Granted | StateTag::InExecution)
+    ) {
+        return refuse("an amendment needs GRANTED or IN_EXECUTION");
+    }
+    if x.reviews.contains_key(&assignment) {
+        return refuse("R-IR-01: the review is recorded");
+    }
+    if x.concern() {
+        return refuse("test-author choice: a concern ends the IRC review of the amendment");
+    }
+    MoneyVerdict::Accept(MoneyExpect::new().exact(Record::IrcReviewRecorded {
+        assignment,
+        verdict,
+    }))
 }
 
 /// The records of a withdrawal that this lane adds: the release of an open reservation.

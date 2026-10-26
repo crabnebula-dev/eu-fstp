@@ -865,6 +865,22 @@ fn synthesize_unjudged(
             text: *text,
             author: actor,
         }],
+        Command::EditCall {
+            call,
+            opens,
+            deadline,
+            deadline_zone,
+            budget,
+            text,
+        } => vec![Record::CallEdited {
+            call: *call,
+            opens: *opens,
+            deadline: *deadline,
+            deadline_zone: deadline_zone.clone(),
+            budget: *budget,
+            text: *text,
+            author: actor,
+        }],
         Command::ApproveCallPublication { .. } => Vec::new(),
         Command::PublishCall { call, config, .. } => {
             let c = view.calls.get(call).ok_or("reference mode: unknown call")?;

@@ -48,10 +48,11 @@
 //! [`crate::state::UsedIds`], because only that lane knows which ids a
 //! command introduces and which it references.
 //!
-//! Status: step W1c. Every lane function is a stub that refuses with
-//! `Refusal::not_implemented()` or fails with `FoldError::NotImplemented`,
-//! so later lanes start red without panics. The contribution stubs are the
-//! exception: they add no records and ask no questions, as explained above.
+//! Status: step W5 integration. Every lane has landed. No command kind
+//! reaches a `NotImplemented` refusal, and no fold returns
+//! `FoldError::NotImplemented`. Both variants stay so that the codec keeps
+//! decoding records and refusals written before. A lane fallback that no
+//! command reaches refuses with an internal rule, such as `RuleRef::Row`.
 
 use fstp_ledger::{Entry, Seq};
 

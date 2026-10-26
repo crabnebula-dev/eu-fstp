@@ -10,29 +10,58 @@
 //!
 //! - `ProposeAmendment`, by the lead or an assigned reviewer of the grant
 //!   with a [`crate::assignment::ReviewerAct`], names a plan of origin
-//!   "amendment" of the grant.
+//!   "amendment" of the grant. The plan is the live version of the chain,
+//!   and no other amendment names it.
 //! - `RouteAmendment`, by the programme manager, who decides whether a
 //!   P-14 exemption applies.
 //! - `ActivateAmendment`, by the System on the M5 contract-version fact.
 //!   It needs the I-15 record of the identity's earlier grants and of this
 //!   grant itself, the amended total within P-04 (I-13), and the vault's
 //!   answer that the amended total keeps the recipient within the cap
-//!   (I-14). The amended total is at least the paid plus pending amount of
-//!   the grant (I-31, I-61). The amended total then counts against P-05.
+//!   (I-14). The plan must still be the live version. Every milestone with
+//!   a paid or pending amount stays in the amended plan under its id, at
+//!   no less than that amount (I-31, I-58, I-61). The amended total then
+//!   counts against P-05.
 //!
-//! An IRC route needs the IRC review of the amendment first. M2 records no
-//! such review, so its activation is refused under R-IR-04 until one exists.
+//! An IRC route needs the IRC review of the amendment first (R-IR-04, step
+//! W5 integration):
+//!
+//! - The FSTP coordinator assigns IRC members with `Assign` of kind
+//!   `AssignmentKind::Amendment`. It names an amendment of the same grant
+//!   that is routed to IRC review, not activated and without a concern, on
+//!   a GRANTED or IN_EXECUTION grant. The rules of an IRC assignment apply
+//!   (`crate::assignment`).
+//! - Each assignee declares on the assignment, then records one
+//!   `RecordIrcReview` on it with a [`crate::assignment::ReviewerAct`]
+//!   (`crate::decision`). The batch holds no transition and no deferral,
+//!   since the proposal state never changes (Q18).
+//! - Activation needs at least P-15 active amendment assignments, every
+//!   one validated, none awaiting its declaration, and no concern (R-IR-01
+//!   read for amendments).
+//!
+//! Readings of this step, reported to Daniel:
+//!
+//! - A concern ends the IRC review of the amendment for good. No later
+//!   review or assignment is taken, and the amendment cannot be activated.
+//!   The grant keeps its state and its counted amount.
+//! - A concern on an amendment enqueues no notification. The outbox event
+//!   of an IRC concern names a proposal in IRC_REVIEW, and M6 owns a
+//!   notification of its own for amendments.
+
+use std::collections::BTreeMap;
 
 use crate::assignment::AssignmentKind;
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
-use fstp_money::NonNegAmount;
+use fstp_money::PosAmount;
 
 use crate::grant::{
-    add_opt, at_most, cap_query, clear_repeat, guard, inactive, invalid, plan_total, record_answer,
+    at_most, cap_query, clear_repeat, guard, inactive, invalid, plan_total, record_answer,
     record_complete, repeat_check, reused, subject, unknown, vault, wrong_state,
 };
-use crate::id::{AccountId, AmendmentId, ContractId, PlanVersionId, ProposalId};
+use crate::id::{
+    AccountId, AmendmentId, AssignmentId, ContractId, MilestoneId, PlanVersionId, ProposalId,
+};
 use crate::oracle::{Answers, Query};
 use crate::proposal::PlanOrigin;
 use crate::record::Record;
@@ -52,7 +81,7 @@ pub enum AmendmentRoute {
 }
 
 /// One amendment of the projection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Amendment {
     /// The grant.
     pub(crate) grant: ProposalId,
@@ -62,6 +91,16 @@ pub(crate) struct Amendment {
     pub(crate) route: Option<AmendmentRoute>,
     /// Whether it was activated.
     pub(crate) activated: bool,
+    /// The IRC reviews recorded on its amendment assignments: `true` for a
+    /// validation, `false` for a concern (R-IR-04).
+    pub(crate) reviews: BTreeMap<AssignmentId, bool>,
+}
+
+impl Amendment {
+    /// Whether a concern was recorded on the amendment.
+    fn concern(&self) -> bool {
+        self.reviews.values().any(|ok| !*ok)
+    }
 }
 
 /// The amendment `id`.
@@ -72,6 +111,103 @@ fn amendment_of(state: &State, id: AmendmentId) -> Result<&Amendment, Refusal> {
 /// Whether the proposal is in GRANTED or IN_EXECUTION.
 const fn amendable(s: StateTag) -> bool {
     matches!(s, StateTag::Granted | StateTag::InExecution)
+}
+
+// ---------------------------------------------------------------------------
+// IRC review of an amendment (R-IR-04)
+// ---------------------------------------------------------------------------
+
+/// Refuses unless the amendment `id` of `grant` is under IRC review: it is
+/// routed to IRC review, not activated and without a concern, and the
+/// grant is in GRANTED or IN_EXECUTION.
+fn under_irc_review(state: &State, id: AmendmentId, grant: ProposalId) -> Result<(), Refusal> {
+    let a = amendment_of(state, id)?;
+    if a.grant != grant {
+        return Err(invalid());
+    }
+    if a.route != Some(AmendmentRoute::Irc) || a.activated || a.concern() {
+        return Err(guard(RuleRef::Rir04));
+    }
+    if !amendable(subject(state, grant)?.state) {
+        return Err(wrong_state());
+    }
+    Ok(())
+}
+
+/// Refuses an `Assign` of kind `AssignmentKind::Amendment(id)` on `grant`
+/// unless the amendment is under IRC review. `crate::assignment` checks
+/// every other rule of an IRC assignment.
+pub(crate) fn check_irc_assignment(
+    state: &State,
+    id: AmendmentId,
+    grant: ProposalId,
+) -> Result<(), Refusal> {
+    under_irc_review(state, id, grant)
+}
+
+/// Refuses a `RecordIrcReview` on the amendment assignment `assignment` of
+/// amendment `id` on `grant` unless the amendment is under IRC review and
+/// the assignment has no review yet (R-IR-01, R-IR-04). The caller checks
+/// the assignee and builds the reviewer act.
+pub(crate) fn check_irc_review(
+    state: &State,
+    id: AmendmentId,
+    grant: ProposalId,
+    assignment: AssignmentId,
+) -> Result<(), Refusal> {
+    under_irc_review(state, id, grant)?;
+    if amendment_of(state, id)?.reviews.contains_key(&assignment) {
+        return Err(guard(RuleRef::Rir01));
+    }
+    Ok(())
+}
+
+/// Folds the IRC review of amendment `id` on `assignment`. The fold checks
+/// structure only: the amendment exists and the assignment has no review yet.
+pub(crate) fn fold_irc_review(
+    state: &mut State,
+    id: AmendmentId,
+    assignment: AssignmentId,
+    validated: bool,
+) -> Result<(), FoldError> {
+    let a = state
+        .money
+        .amendments
+        .get_mut(&id)
+        .ok_or(FoldError::UnknownEntity)?;
+    if a.reviews.contains_key(&assignment) {
+        return Err(FoldError::Inconsistent);
+    }
+    a.reviews.insert(assignment, validated);
+    Ok(())
+}
+
+/// Whether the IRC review of the amendment `id` on `grant` is complete
+/// (R-IR-01 read for amendments, R-IR-04): no concern, at least P-15 active
+/// amendment assignments, every one validated, and none awaiting its
+/// declaration. Assignments whose assignee holds a conflict fact on the
+/// grant count in neither.
+fn irc_review_complete(state: &State, id: AmendmentId, a: &Amendment) -> Result<bool, Refusal> {
+    if a.concern() {
+        return Ok(false);
+    }
+    let p15 = crate::assignment::governing_values(state, a.grant)?.p15;
+    let kind = AssignmentKind::Amendment(id);
+    let mut active = 0_usize;
+    for (assignment, x) in state.review.assignments() {
+        if x.proposal != a.grant
+            || x.kind != kind
+            || !x.unreleased()
+            || state.review.conflict_fact(x.reviewer, a.grant)
+        {
+            continue;
+        }
+        if !x.active() || a.reviews.get(&assignment) != Some(&true) {
+            return Ok(false);
+        }
+        active = active.saturating_add(1);
+    }
+    Ok(active >= usize::from(p15.get()))
 }
 
 /// A checked `ProposeAmendment`: the proposer, and the reviewer's
@@ -117,8 +253,9 @@ fn check_propose(
         return Err(reused());
     }
     let ok = crate::proposal::intake::plan(state, plan)
-        .is_some_and(|p| p.proposal == grant && p.origin == PlanOrigin::Amendment);
-    if !ok {
+        .is_some_and(|p| p.proposal == grant && p.origin == PlanOrigin::Amendment && !p.superseded);
+    let named = state.money.amendments.values().any(|a| a.plan == plan);
+    if !ok || named {
         return Err(invalid());
     }
     Ok(ProposePlan {
@@ -134,23 +271,28 @@ fn check_propose(
     })
 }
 
-/// Refuses an amended total below the paid plus pending amount of the
-/// grant, so released payments never exceed the contract amount (I-31)
-/// and the amendment never sets the contract below what is claimed
-/// (I-61). It is refused as an invalid value, as I-58 is.
-///
-/// TODO(M5): I-59 and I-61 per milestone. An amended plan must keep every
-/// milestone that carries paid or pending lines, at no less than that
-/// amount. This needs a rule for milestone identity across contract
-/// versions, which plan intake (lane L-LIFE) does not have yet.
-fn keeps_claims(state: &State, grant: ProposalId, total: NonNegAmount) -> Result<(), Refusal> {
-    let claimed = crate::payment::claimed(state, grant)
-        .into_values()
-        .fold(None, |acc, a| add_opt(acc, Some(a)));
-    match claimed {
-        Some(c) if !at_most(c.amount(), total.amount())? => Err(invalid()),
-        _ => Ok(()),
+/// Refuses an amended plan that drops a claimed milestone or sets its
+/// amount below its paid plus pending amount (I-61). So the claims of the
+/// grant stay on milestones of the effective contract version (I-59), no
+/// milestone is claimed twice (I-58) and released payments never exceed
+/// the contract amount (I-31). It is refused as an invalid value, as
+/// I-58 is. Plan intake lets an amendment plan keep a milestone of the
+/// effective contract version under its id.
+fn keeps_claims(state: &State, grant: ProposalId, plan: PlanVersionId) -> Result<(), Refusal> {
+    let amended: BTreeMap<MilestoneId, PosAmount> = crate::grant::plan_milestones(state, plan)
+        .ok_or_else(unknown)?
+        .into_iter()
+        .map(|(m, amount, _)| (m, amount))
+        .collect();
+    for (m, claimed) in crate::payment::claimed(state, grant) {
+        let Some(amount) = amended.get(&m) else {
+            return Err(invalid());
+        };
+        if !at_most(claimed.amount(), amount.amount())? {
+            return Err(invalid());
+        }
     }
+    Ok(())
 }
 
 /// A checked `ActivateAmendment` and its questions.
@@ -176,15 +318,21 @@ fn check_activate(
     if !amendable(s.state) {
         return Err(wrong_state());
     }
-    if route == AmendmentRoute::Irc {
+    if route == AmendmentRoute::Irc && !irc_review_complete(state, id, a)? {
         return Err(guard(RuleRef::Rir04));
+    }
+    // Only the latest plan version counts, so a later plan of the grant
+    // makes this amendment stale.
+    let live = crate::proposal::intake::plan(state, a.plan).is_some_and(|p| !p.superseded);
+    if !live {
+        return Err(invalid());
     }
     let total = plan_total(state, a.plan).ok_or_else(unknown)?;
     let p04 = crate::assignment::governing_values(state, a.grant)?.p04;
     if !p04.contains(total).map_err(|_| invalid())? {
         return Err(guard(RuleRef::I13));
     }
-    keeps_claims(state, a.grant, total)?;
+    keeps_claims(state, a.grant, a.plan)?;
     Ok(ActivatePlan {
         record: Record::AmendmentActivated {
             amendment: id,
@@ -328,6 +476,7 @@ pub(crate) fn apply(
                     plan: *plan,
                     route: None,
                     activated: false,
+                    reviews: BTreeMap::new(),
                 },
             );
             Ok(())
@@ -349,7 +498,7 @@ pub(crate) fn apply(
         Record::AmendmentActivated {
             amendment, plan, ..
         } => {
-            let a = *state
+            let a = state
                 .money
                 .amendments
                 .get(amendment)
@@ -357,8 +506,9 @@ pub(crate) fn apply(
             if a.activated || a.plan != *plan {
                 return Err(FoldError::Inconsistent);
             }
+            let grant = a.grant;
             let total = plan_total(state, *plan).ok_or(FoldError::UnknownEntity)?;
-            crate::grant::amend(state, a.grant, *plan, total)?;
+            crate::grant::amend(state, grant, *plan, total)?;
             if let Some(x) = state.money.amendments.get_mut(amendment) {
                 x.activated = true;
             }

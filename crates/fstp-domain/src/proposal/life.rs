@@ -29,7 +29,7 @@ use crate::proposal::ReentryStage;
 use crate::record::Transitioned;
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::rules::StateTag;
-use crate::scoring::{ScoreKey, ScoreSheet};
+use crate::scoring::{ScoreKey, ScoreSheet, Stage};
 use crate::state::State;
 use crate::time::Timestamp;
 
@@ -55,6 +55,9 @@ pub(crate) struct Facts {
     pub(crate) entries: BTreeMap<ScoreKey, Seq>,
     /// The assignments that ever recorded a score, for R-CF-04.
     pub(crate) given: BTreeSet<AssignmentId>,
+    /// The keys that held a current value when the proposal left their
+    /// stage. They stay sealed, also after a re-entry (NOTE 3, NOTE 8).
+    pub(crate) sealed: BTreeSet<ScoreKey>,
     /// Whether the knock-out check passed, once recorded (R-EV-01).
     pub(crate) knock_out: Option<bool>,
     /// The recorded stage 1 close. Its score is sealed (NOTE 3).
@@ -80,6 +83,7 @@ impl Facts {
             sheet: ScoreSheet::empty(),
             entries: BTreeMap::new(),
             given: BTreeSet::new(),
+            sealed: BTreeSet::new(),
             knock_out: None,
             closed: None,
             round: None,
@@ -302,6 +306,24 @@ pub(crate) fn on_transition(
     t: &Transitioned,
     at: Timestamp,
 ) -> Result<(), FoldError> {
+    let left = match t.from {
+        StateTag::Stage1 => Some(Stage::One),
+        StateTag::Stage2 => Some(Stage::Two),
+        _ => None,
+    };
+    // Scores seal when the proposal leaves the stage (NOTE 3). Only a
+    // proposal with scores has facts to seal.
+    if let Some(stage) = left.filter(|_| t.to != t.from)
+        && let Some(f) = state.proposals.life.facts.get_mut(&t.proposal)
+    {
+        let keys: Vec<ScoreKey> = f
+            .entries
+            .keys()
+            .filter(|k| k.stage == stage)
+            .copied()
+            .collect();
+        f.sealed.extend(keys);
+    }
     let entering_stage2 = t.to == StateTag::Stage2;
     let leaving_stage2 = t.from == StateTag::Stage2;
     let entering_irc = t.to == StateTag::IrcReview;

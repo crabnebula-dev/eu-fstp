@@ -964,6 +964,11 @@ struct Live {
 struct Track {
     live: Vec<Live>,
     current: BTreeMap<ScoreKey, Seq>,
+    /// The stage the scored proposal is in.
+    stage: Stage,
+    /// The keys that held a current value when the proposal left their
+    /// stage (NOTE 3).
+    sealed: BTreeSet<ScoreKey>,
     conflicted: BTreeSet<AccountId>,
     pool: Vec<AccountId>,
     call: CallId,
@@ -972,6 +977,26 @@ struct Track {
 }
 
 impl Track {
+    /// Whether `key` is on a sealed stage: the proposal is not in its
+    /// stage, or left that stage while the key held a value (NOTE 3). The
+    /// structural fold refuses a correction or void of such a key
+    /// (design 5.1), and no command writes one, so the generator emits none.
+    fn is_sealed(&self, key: &ScoreKey) -> bool {
+        key.stage != self.stage || self.sealed.contains(key)
+    }
+
+    /// The proposal leaves `stage` for `next`: its current keys on `stage` seal.
+    fn leave(&mut self, stage: Stage, next: Stage) {
+        let keys: Vec<ScoreKey> = self
+            .current
+            .keys()
+            .filter(|k| k.stage == stage)
+            .copied()
+            .collect();
+        self.sealed.extend(keys);
+        self.stage = next;
+    }
+
     /// A complete random score vector.
     fn vector(&self, g: &mut Gen) -> Vec<u8> {
         (0..self.criteria)
@@ -1037,6 +1062,9 @@ impl Track {
 ///   and rescore once more. The first call's assignments stay unreleased,
 ///   so a stage 2 quorum that ignores the call counts them. A stage 1
 ///   quorum still counts them, since stage 1 ran in that call (NOTE 8).
+/// - No correction or void names a key on a sealed stage: one the
+///   proposal is not in, or one it left while the key held a value. The
+///   structural fold refuses both (design 5.1, NOTE 3, step W5 integration).
 /// - Stage 2 cases sometimes ask for a stage 2 quorum on the submitted
 ///   plan, with stage 2 scores on it. NOTE 4 scores only a revision, so
 ///   the expected outcome is a refusal.
@@ -1067,6 +1095,8 @@ pub fn quorum_case(g: &mut Gen) -> Result<QuorumCase, String> {
     let mut t = Track {
         live: Vec::new(),
         current: BTreeMap::new(),
+        stage: Stage::One,
+        sealed: BTreeSet::new(),
         conflicted: BTreeSet::new(),
         pool: pool.clone(),
         call: fx.call,
@@ -1102,6 +1132,7 @@ pub fn quorum_case(g: &mut Gen) -> Result<QuorumCase, String> {
             Actor::Account(COORDINATOR),
             None,
         )?;
+        t.leave(Stage::One, Stage::Two);
         let count = g.usize_in(1..=3);
         for _ in 0..count {
             plan = revise(&mut script, &fx, plan)?;
@@ -1165,6 +1196,9 @@ fn reenter(g: &mut Gen, script: &mut Script, t: &mut Track, fx: &Fixture) -> Res
     let seq = CallSeq::FIRST.next().ok_or("no second call number")?;
     script.publish_call(fx, next, seq)?;
     let system = Actor::System(SystemCause::Timeline);
+    // STAGE2 to DEFERRED seals the stage 2 keys of the first call, and the
+    // re-entry brings the proposal back to STAGE2.
+    t.leave(Stage::Two, Stage::Two);
     script.transition(
         fx.proposal,
         StateTag::Stage2,
@@ -1277,6 +1311,10 @@ fn run_ops(
 
 /// A score on `key`, or a correction when the key has a current value.
 fn score_key(g: &mut Gen, script: &mut Script, t: &mut Track, key: ScoreKey) -> Result<(), String> {
+    // No correction on a sealed stage (design 5.1, NOTE 3).
+    if t.current.contains_key(&key) && t.is_sealed(&key) {
+        return Ok(());
+    }
     let values = t.vector(g);
     let supersedes = t.current.get(&key).copied();
     let seq = script.score(key, values, supersedes)?;
@@ -1476,6 +1514,7 @@ fn release(
             .current
             .keys()
             .filter(|k| k.assignment == l.assignment && k.stage == stage)
+            .filter(|k| !t.is_sealed(k))
             .copied()
             .collect();
         for key in keys {
@@ -1502,7 +1541,7 @@ fn op_void_kept(
     let candidates: Vec<ScoreKey> = t
         .current
         .keys()
-        .filter(|k| k.stage == stage && k.plan == plan)
+        .filter(|k| k.stage == stage && k.plan == plan && !t.is_sealed(k))
         .filter(|k| {
             t.live.iter().any(|l| {
                 l.assignment == k.assignment

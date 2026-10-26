@@ -36,6 +36,10 @@
 //!   raises a concern (R-IR-01, R-IR-02, NOTE 7, I-18). A validated IRC
 //!   member may repeat the validation once the review would complete, and
 //!   the repeat records only the entry into NEGOTIATION.
+//! - `RecordIrcReview` on an amendment assignment (R-IR-04, step W5
+//!   integration): the assignee validates or raises a concern on an
+//!   amendment under IRC review (`crate::amendment`). The batch holds the
+//!   review only, with no transition, deferral or outbox event (Q18).
 //! - A batch of a named human in another lane that releases the last IRC
 //!   assignment not yet validated completes the IRC review through
 //!   [`contribute`] (R-IR-01). A release by the System does not, since the
@@ -75,7 +79,8 @@ use crate::assignment::{
 use crate::command::{Actor, Command, Ctx};
 use crate::engine::FoldError;
 use crate::id::{
-    AccountId, AssignmentId, CallId, DecisionId, PlanVersionId, ProgrammeId, ProposalId, TextRef,
+    AccountId, AmendmentId, AssignmentId, CallId, DecisionId, PlanVersionId, ProgrammeId,
+    ProposalId, TextRef,
 };
 use crate::oracle::{Answer, Answers, Query};
 use crate::policy::FrozenPolicy;
@@ -1274,6 +1279,9 @@ struct Review {
     /// Whether the proposal is a minor's, so the entry into NEGOTIATION
     /// needs a verified guardian consent (I-18, R-NG-02).
     minor: bool,
+    /// The amendment under review, for a review on an amendment
+    /// assignment (R-IR-04). Such a review never moves the proposal.
+    amendment: Option<AmendmentId>,
 }
 
 /// Checks an IRC review against the state: the IRC assignee's own active
@@ -1295,6 +1303,19 @@ fn plan_review(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Review, Refusa
     };
     let actor = crate::policy::actor_account(ctx)?;
     let a = crate::assignment::reviewer_basis(state, actor, *assignment, ctx.now)?;
+    if let AssignmentKind::Amendment(id) = a.kind {
+        crate::amendment::check_irc_review(state, id, a.proposal, *assignment)?;
+        return Ok(Review {
+            actor,
+            proposal: a.proposal,
+            assignment: *assignment,
+            verdict: *verdict,
+            completes: false,
+            rerun: false,
+            minor: false,
+            amendment: Some(id),
+        });
+    }
     if a.kind != AssignmentKind::Irc {
         return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
     }
@@ -1328,6 +1349,7 @@ fn plan_review(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Review, Refusa
         completes,
         rerun,
         minor,
+        amendment: None,
     })
 }
 
@@ -1376,6 +1398,10 @@ fn decide_review(
             assignment: r.assignment,
             verdict: r.verdict,
         });
+    }
+    // The review of an amendment leaves the proposal state unchanged (Q18).
+    if r.amendment.is_some() {
+        return Ok(out);
     }
     match r.verdict {
         IrcVerdict::Validate if r.completes => out.push(transition(
@@ -1437,7 +1463,8 @@ pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Que
         Command::RecordIrcReview { .. } => {
             Ok(review_queries(state, &plan_review(state, cmd, ctx)?))
         }
-        _ => Err(Refusal::not_implemented()),
+        // The dispatcher sends no other command here.
+        _ => Err(life::wrong_state()),
     }
 }
 
@@ -1461,7 +1488,8 @@ pub(crate) fn decide(
         Command::RecordIrcReview { .. } => {
             decide_review(state, &plan_review(state, cmd, ctx)?, ctx, answers)
         }
-        _ => Err(Refusal::not_implemented()),
+        // The dispatcher sends no other command here.
+        _ => Err(life::wrong_state()),
     }
 }
 
@@ -1535,11 +1563,17 @@ pub(crate) fn apply(
             assignment,
             verdict,
         } => {
-            let proposal = state
+            let a = state
                 .review
                 .get(*assignment)
-                .map(|a| a.proposal)
                 .ok_or(FoldError::UnknownEntity)?;
+            let proposal = a.proposal;
+            // The review of an amendment is the amendment's, and never
+            // touches the proposal's own IRC round (R-IR-04).
+            if let AssignmentKind::Amendment(id) = a.kind {
+                let validated = matches!(verdict, IrcVerdict::Validate);
+                return crate::amendment::fold_irc_review(state, id, *assignment, validated);
+            }
             in_state(state, proposal, StateTag::IrcReview)?;
             let f = life::facts_mut(state, proposal)?;
             if f.irc.contains_key(assignment) {
@@ -1724,7 +1758,8 @@ pub(crate) fn governing_policy(
             .map(|a| a.proposal)
             .ok_or_else(unknown)?,
         Command::RecordCutOff { call, .. } => return Ok(crate::engine::PolicyScope::Call(*call)),
-        _ => return Err(Refusal::not_implemented()),
+        // The dispatcher sends no other command here.
+        _ => return Err(life::wrong_state()),
     };
     crate::proposal::draft::proposal_call(state, proposal)
         .map(crate::engine::PolicyScope::Call)

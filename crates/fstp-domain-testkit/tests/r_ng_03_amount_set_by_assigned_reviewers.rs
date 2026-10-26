@@ -9,9 +9,10 @@
 //!
 //! The granted amount is the effective plan total minus the recorded
 //! deductions, and the agreed plan's total must equal it (design 2.11).
-//! The only agreed plan in M2 is the effective one, since lane L-LIFE
-//! still refuses negotiated plans. So a deduction is refused, and the
-//! contract never carries milestones above the granted amount (I-31).
+//! So a deduction on the effective plan as agreed plan is refused, and the
+//! contract never carries milestones above the granted amount (I-31). A
+//! deduction with the negotiated plan that carries it is checked in
+//! `r_ng_03_i13_negotiated_plan_carries_the_deductions`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

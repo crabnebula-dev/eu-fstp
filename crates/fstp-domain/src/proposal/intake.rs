@@ -15,9 +15,20 @@
 //!   amounts, structure and a digest only (R-SB-01). A plan of origin
 //!   "stage 2 revision" passes the same checks in STAGE2 while the P-07
 //!   window is open, and is refused in every other state (lane L-LIFE,
-//!   R-EV-05). The negotiated and amendment origins belong to lane L-MONEY.
-//!   Here they are refused in DRAFT, SUBMITTED and terminal states, and
-//!   refused as not implemented elsewhere.
+//!   R-EV-05).
+//! - A plan of origin "negotiated" passes the same checks in NEGOTIATION
+//!   (step W5 integration, design 2.11). The lead proposes its content.
+//!   The assigned reviewers set the amount with `DetermineAmount`, which
+//!   takes it as the agreed plan when its total equals the granted amount,
+//!   the effective plan total minus the recorded deductions (R-NG-03, I-13).
+//! - A plan of origin "amendment" passes the same checks in GRANTED or
+//!   IN_EXECUTION, and the proposal state does not change (Q18). The lead
+//!   proposes its content. It may keep a milestone of the effective
+//!   contract version under its id, so the milestone's paid and pending
+//!   lines stay on it (I-61). Every new milestone needs a fresh id.
+//!   `crate::amendment` takes it from there: the proposal of the
+//!   amendment, the P-14 route and the activation.
+//! - Every origin is refused in every other state.
 //! - `Submit` takes the DRAFT to SUBMITTED row. It needs the lead with an
 //!   active Applicant binding, a call open at `now`, and a plan of the
 //!   proposal with origin "submitted" that no later plan supersedes and that
@@ -184,6 +195,20 @@ pub(crate) fn plan(state: &State, plan: PlanVersionId) -> Option<&Plan> {
     state.proposals.intake.plans.get(&plan)
 }
 
+/// Every plan version of `proposal`, in id order.
+pub(crate) fn plans_of(
+    state: &State,
+    proposal: ProposalId,
+) -> impl Iterator<Item = (PlanVersionId, &Plan)> + '_ {
+    state
+        .proposals
+        .intake
+        .plans
+        .iter()
+        .filter(move |(_, p)| p.proposal == proposal)
+        .map(|(id, p)| (*id, p))
+}
+
 /// The submission of `proposal`, once submitted.
 #[allow(dead_code, reason = "lanes L-LIFE and L-MONEY read submissions")]
 pub(crate) fn submission(state: &State, proposal: ProposalId) -> Option<&Submission> {
@@ -268,11 +293,35 @@ fn complete(tasks: &[Task]) -> bool {
     !tasks.is_empty() && tasks.iter().all(|t| !t.milestones.is_empty())
 }
 
-/// Checks the structure of a submitted plan: required fields, fresh and
-/// distinct milestone ids, start no later than due, amounts in the
-/// programme currency of `proposal`, and a total inside the money range
-/// (ADR-006).
-fn check_tasks(state: &State, proposal: ProposalId, tasks: &[Task]) -> Result<(), Refusal> {
+/// The milestone ids a new plan of `proposal` with `origin` may reuse.
+/// An amendment plan may keep the milestones of the grant's effective
+/// contract version under their ids, so their paid and pending lines stay
+/// on them (I-58, I-61). Every other milestone needs a fresh id.
+fn reusable_milestones(
+    state: &State,
+    proposal: ProposalId,
+    origin: PlanOrigin,
+) -> BTreeSet<MilestoneId> {
+    if origin != PlanOrigin::Amendment {
+        return BTreeSet::new();
+    }
+    crate::grant::contract_milestones(state, proposal)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect()
+}
+
+/// Checks the structure of a new plan: required fields, distinct milestone
+/// ids that are fresh or in `reusable`, start no later than due, amounts in
+/// the programme currency of `proposal`, and a total inside the money
+/// range (ADR-006).
+fn check_tasks(
+    state: &State,
+    proposal: ProposalId,
+    tasks: &[Task],
+    reusable: &BTreeSet<MilestoneId>,
+) -> Result<(), Refusal> {
     if !complete(tasks) {
         return Err(invalid());
     }
@@ -283,7 +332,8 @@ fn check_tasks(state: &State, proposal: ProposalId, tasks: &[Task]) -> Result<()
     let currency = crate::policy::programme_currency(state, programme).ok_or_else(unknown)?;
     let mut seen: BTreeSet<MilestoneId> = BTreeSet::new();
     for m in tasks.iter().flat_map(|t| t.milestones.iter()) {
-        if state.used_ids.contains(UsedId::Milestone(m.id)) || !seen.insert(m.id) {
+        let taken = state.used_ids.contains(UsedId::Milestone(m.id)) && !reusable.contains(&m.id);
+        if taken || !seen.insert(m.id) {
             return Err(reused());
         }
         if m.start > m.due || m.amount.amount().currency() != currency {
@@ -350,14 +400,21 @@ fn check_plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Re
             crate::proposal::life::open_round(state, *proposal, ctx.now)?;
         }
         PlanOrigin::Stage2Revision => return Err(wrong_row()),
-        _ if matches!(current, StateTag::Draft | StateTag::Submitted) || current.is_terminal() => {
-            return Err(wrong_row());
-        }
-        // Stage 2 revisions, negotiated plans and amendments are lanes
-        // L-LIFE and L-MONEY.
-        _ => return Err(Refusal::not_implemented()),
+        // The plan the lead proposes in negotiation. The assigned reviewers
+        // then set the amount on it with `DetermineAmount` (R-NG-03).
+        PlanOrigin::Negotiated if current == StateTag::Negotiation => {}
+        PlanOrigin::Negotiated => return Err(wrong_row()),
+        // The plan of an amendment, on a grant that can be amended. The
+        // proposal state never changes (Q18).
+        PlanOrigin::Amendment if matches!(current, StateTag::Granted | StateTag::InExecution) => {}
+        PlanOrigin::Amendment => return Err(wrong_row()),
     }
-    check_tasks(state, *proposal, tasks)?;
+    check_tasks(
+        state,
+        *proposal,
+        tasks,
+        &reusable_milestones(state, *proposal, *origin),
+    )?;
     Ok(vec![Record::PlanVersionRecorded(PlanVersionRecorded {
         plan: *plan,
         proposal: *proposal,
@@ -526,9 +583,11 @@ fn fold_plan(state: &mut State, p: &PlanVersionRecorded) -> Result<(), FoldError
     {
         return Err(FoldError::DuplicateId);
     }
+    let reusable = reusable_milestones(state, p.proposal, p.origin);
     let mut seen = BTreeSet::new();
     for m in p.tasks.iter().flat_map(|t| t.milestones.iter()) {
-        if state.used_ids.contains(UsedId::Milestone(m.id)) || !seen.insert(m.id) {
+        let taken = state.used_ids.contains(UsedId::Milestone(m.id)) && !reusable.contains(&m.id);
+        if taken || !seen.insert(m.id) {
             return Err(FoldError::DuplicateId);
         }
     }

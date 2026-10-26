@@ -3,16 +3,14 @@
 //! Lead a is granted 4.00 from genesis by production commands and starts
 //! execution. The property draws the state of a's own deliverables from
 //! the five of the test plan, as `i15_repeat_grant_requires_public_deliverables`
-//! does. The lead records an amendment plan of 3.00 and proposes it, the
+//! does. The lead records an amendment plan of 3.00 and proposes it. It
+//! keeps M0 under its id at the 2.00 any drawn state claims on it (I-61),
+//! and adds a new milestone M7 of 1.00. Then the
 //! programme manager decides that a P-14 exemption applies, and the
 //! contract port activates it. An IRC route needs the IRC review of the
 //! amendment, which lanes L-REV and L-LIFE record, so it is not drawn. Activation succeeds exactly in the states
 //! the reference rule clears. The proposal state never changes (Q18), and
 //! the amended total then counts against P-05.
-//!
-//! Lane L-LIFE refuses plans of origin "amendment" as not implemented
-//! (`crates/fstp-domain/src/proposal/intake.rs`), which lies outside lane
-//! L-MONEY's files. This test stays red until that refusal is lifted.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -99,7 +97,9 @@ fn case(start: &MoneyStory, g: &mut Gen) -> Result<(), String> {
         AMENDED,
         PlanOrigin::Amendment,
         Some(plan_of(PA)),
-        &[(milestone_n(PA, 7), 300, T0)],
+        // I-61: M0 stays under its id at its 2.00 claim, and the new M7
+        // takes the rest of the amended 3.00.
+        &[(milestone_n(PA, 0), 200, T0), (milestone_n(PA, 7), 100, T0)],
     )?)?;
     s.run(&propose_amendment(LA, AMENDMENT, PA, AMENDED))?;
     s.run(&route_amendment(STAFF_PM, AMENDMENT, route))?;

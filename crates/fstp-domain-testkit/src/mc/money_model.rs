@@ -26,6 +26,7 @@ use std::collections::BTreeSet;
 use fstp_domain::command::Actor;
 use fstp_domain::decision::NegotiationFailure;
 use fstp_domain::id::{DeliverableId, LineId, PolicyVersionId, ProposalId, RequestId};
+use fstp_domain::proposal::PlanOrigin;
 use fstp_domain::record::{Record, RulesVersion};
 use fstp_domain::rules::{Row, StateTag};
 use fstp_mc::{Model, Property};
@@ -33,8 +34,8 @@ use fstp_mc::{Model, Property};
 use crate::r#gen::money::{
     FINREL, LA, LB, MoneyDraft, MoneySetup, MoneyWorld, PA, PB, PC, REL, accept_grant, accept_line,
     amount_decision, approve_grant, approve_payment, complete, confirm_paid, contract_effective,
-    contract_of, decline_negotiation, determine, edit_p05, record_deliverable, release_payment,
-    request_payment, start_execution, terminate,
+    contract_of, decline_negotiation, determine, edit_p05, money_plan, record_deliverable,
+    release_payment, request_payment, start_execution, terminate,
 };
 use crate::r#gen::review::{R1, plan_of, withdraw};
 use crate::r#gen::roster::{Backend, STAFF_PM, Step};
@@ -63,6 +64,7 @@ pub enum Fact {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum McAction {
     /// R1 determines the amount with a deduction of these cents, 0 for none.
+    /// A deduction first records the lead's negotiated plan that carries it.
     Determine(ProposalId, i64),
     /// The two other facts, then this one, which completes the set.
     Grant(ProposalId, Fact),
@@ -192,10 +194,32 @@ fn fact_step(w: &MoneyWorld, p: ProposalId, f: Fact) -> Option<Step> {
 fn steps(w: &MoneyWorld, versions: usize, action: &McAction) -> Option<Vec<Step>> {
     let money = &w.money;
     Some(match action {
-        McAction::Determine(p, cut) => {
+        McAction::Determine(p, cut) if *cut > 0 => {
+            // A deduction needs a negotiated plan whose total is the
+            // effective plan total minus the deduction (design 2.11).
             let n = determinations(w, *p).saturating_add(1);
-            let d: Vec<i64> = if *cut > 0 { vec![*cut] } else { Vec::new() };
-            vec![determine(R1, *p, amount_decision(*p, n), plan_of(*p), &d).ok()?]
+            let total = money.plans.get(&plan_of(*p))?.total();
+            let plan = negotiated_of(*p, n);
+            vec![
+                money_plan(
+                    lead_of(w, *p)?,
+                    *p,
+                    plan,
+                    PlanOrigin::Negotiated,
+                    money.live_plan(*p),
+                    &[(
+                        negotiated_milestone(*p, n),
+                        total.checked_sub(*cut)?,
+                        crate::r#gen::roster::T0,
+                    )],
+                )
+                .ok()?,
+                determine(R1, *p, amount_decision(*p, n), plan, &[*cut]).ok()?,
+            ]
+        }
+        McAction::Determine(p, _) => {
+            let n = determinations(w, *p).saturating_add(1);
+            vec![determine(R1, *p, amount_decision(*p, n), plan_of(*p), &[]).ok()?]
         }
         McAction::Grant(p, last) => {
             // The facts already recorded are not sent again, so a refused
@@ -325,6 +349,8 @@ pub fn run_action(s: &McState, action: &McAction) -> Option<McState> {
                 next.grant_blocked = true;
                 return Some(next);
             }
+            // A deduction and its negotiated plan stand or fall together.
+            Ok(None) if matches!(action, McAction::Determine(_, cut) if *cut > 0) => return None,
             Ok(None) if i == 0 => {
                 let sybil = matches!(action, McAction::Determine(p, _) if [PA, PB].contains(p));
                 let cap = matches!(&verdict, MoneyVerdict::Refuse(why) if why.starts_with("I-14"));
@@ -540,10 +566,13 @@ impl Model for MoneyMc {
 /// M-MONEY (design 6.3): identities {a, b} and {c}, three proposals in
 /// NEGOTIATION from genesis with plans of 4.00, 2.00 and 1.00, P-04 =
 /// [2.00, 4.00], P-05 = 6.00, deductions of 0.00 or 1.00, and one P-05
-/// edit down to 4.00. A deduction is always refused, because the only
-/// agreed plan is the effective one and its total must equal the granted
-/// amount (design 2.11). The plans therefore reach both P-04 bounds and
-/// the cap without one.
+/// edit down to 4.00. The agreed plan's total must equal the granted
+/// amount (design 2.11), so a deduction comes with a negotiated plan that
+/// carries it: the lead records the plan of the effective total minus the
+/// deduction, and R1 determines the amount on it (R-NG-03). The action is
+/// atomic: when the determination is refused, the plan is not kept.
+/// Step W5 integration restored this branch, which lane L-MONEY had to
+/// leave out while negotiated plans were refused.
 pub fn m_money() -> McConfig {
     McConfig {
         setup: MoneySetup::sybil([400, 200, 100]),
@@ -680,7 +709,7 @@ pub fn after() -> McConfig {
 }
 
 /// The measured state count of M-MONEY, on the references.
-pub const M_MONEY_STATES: usize = 306;
+pub const M_MONEY_STATES: usize = 864;
 /// The measured state count of the M-RACE reservation part, on the references.
 pub const M_RACE_RESERVATION_STATES: usize = 1_682;
 /// The measured state count of the I-15 repeat model, on the references.
@@ -832,6 +861,10 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
             "I-14 witness: a Sybil pair blocked by the cap",
             |s: &McState| s.cap_blocked,
         ),
+        Property::reachable(
+            "R-NG-03 witness: granted on a recorded deduction with its negotiated plan",
+            granted_after_deduction,
+        ),
         Property::reachable("I-14 witness: P-05 lowered to 4.00", |s: &McState| {
             s.edited
                 && s.world
@@ -856,7 +889,9 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
 
 /// Whether lead a was declined for the cap although the P-04 minimum 2.00
 /// fits its headroom. Only the plan total 4.00 breaks the cap: P-05 was
-/// lowered to 4.00 and b holds 2.00 (NOTE 9, I-14).
+/// lowered to 4.00 and b holds 2.00 (NOTE 9, I-14). The witness rests on
+/// the interim reading that only recorded negotiated plans count, open for
+/// Daniel (`fstp_domain::grant` module doc).
 pub fn declined_above_floor(s: &McState) -> bool {
     let m = &s.world.money;
     let Some(q) = m.proposals.get(&PA) else {
@@ -1085,6 +1120,29 @@ fn forged_grant(s: &McState, p: ProposalId, cents: i64) -> Option<McState> {
 /// The proposals a fault may target, for the documentation of the teeth tests.
 pub fn targets() -> BTreeSet<ProposalId> {
     [PA, PB, PC].into_iter().collect()
+}
+
+/// The negotiated plan of the `n`-th amount decision of `p`.
+pub fn negotiated_of(p: ProposalId, n: u128) -> fstp_domain::id::PlanVersionId {
+    fstp_domain::id::PlanVersionId::from_raw(
+        4_800u128
+            .saturating_add(p.raw().saturating_mul(10))
+            .saturating_add(n),
+    )
+}
+
+/// The milestone of [`negotiated_of`] for `p` and `n`.
+pub fn negotiated_milestone(p: ProposalId, n: u128) -> fstp_domain::id::MilestoneId {
+    crate::r#gen::money::milestone_n(p, 30u128.saturating_add(n))
+}
+
+/// Whether some proposal was granted on a recorded deduction (R-NG-03).
+pub fn granted_after_deduction(s: &McState) -> bool {
+    s.world
+        .money
+        .proposals
+        .values()
+        .any(|q| q.granted.is_some() && q.determined.as_ref().is_some_and(|d| d.deductions > 0))
 }
 
 /// The number of amount decisions recorded for `p`, read from the decision
