@@ -8,11 +8,9 @@
 //! - NOTE 8: `ReEnter` is refused one microsecond before call 2 opens,
 //!   and `due` does not list it. From the opening, `due` lists it and it
 //!   takes PR1 back to STAGE2.
-//! - I-36 "including after deferral": R3 reviewed PR1 in call 1, ended its
-//!   committee binding and drafted a proposal in call 2 while PR1 was still
-//!   in STAGE2 of call 1. After PR1 defers, its re-entry into call 2 is
-//!   refused while R3 holds that Receiving binding. Once R3 withdraws its
-//!   draft, PR1 re-enters.
+//! - I-36 "including after deferral": R3 reviewed PR1 in call 1 and ended
+//!   its committee binding. While PR1 is undecided, R3 cannot draft in call
+//!   2 (decided 2026-10-25), so PR1 re-enters call 2 without waiting.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -20,7 +18,7 @@ use fstp_domain::command::Command;
 use fstp_domain::id::{BindingId, ProposalId};
 use fstp_domain::rules::StateTag;
 use fstp_domain::time::Timestamp;
-use fstp_domain_testkit::r#gen::review::{L1, PR1, R1, R2, R3, judge_binding, withdraw};
+use fstp_domain_testkit::r#gen::review::{L1, PR1, R1, R2, R3, judge_binding};
 use fstp_domain_testkit::r#gen::roster::{Backend, call, draft, end, publish};
 use fstp_domain_testkit::mc::life_model::{
     LifeWorld, Story, expire, life_judges, reenter, story_setup,
@@ -114,7 +112,7 @@ fn r_ev_07_reentry_waits_for_the_next_call_to_open_on(b: Backend) {
     assert_eq!(s.state(PR1), Some(StateTag::Stage2));
 }
 
-fn i36_reentry_waits_while_a_former_reviewer_receives_on(b: Backend) {
+fn i36_former_reviewer_cannot_draft_before_the_reentry_on(b: Backend) {
     let mut s = story(b, Timestamp::from_micros(0));
     deferred(&mut s, &[R1, R2, R3], false);
     let now = s.world.now();
@@ -122,37 +120,27 @@ fn i36_reentry_waits_while_a_former_reviewer_receives_on(b: Backend) {
         .unwrap_or_else(|e| panic!("R3's committee binding ends: {e}"));
     s.run(&publish(call(2))).unwrap_or_else(|e| panic!("{e}"));
     let other = ProposalId::from_raw(9_601);
-    s.run(&draft(
-        R3,
-        other,
-        call(2),
-        BindingId::from_raw(9_601),
-        false,
-    ))
-    .unwrap_or_else(|e| {
-        panic!("I-36: R3 may draft in call 2 while PR1 is evaluated in call 1: {e}")
-    });
+    let drafted = s
+        .attempt(&draft(
+            R3,
+            other,
+            call(2),
+            BindingId::from_raw(9_601),
+            false,
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        drafted.is_none(),
+        "I-36: R3 drafted in call 2 while PR1, which it reviewed, is undecided"
+    );
     expire_now(&mut s);
     let now = s.world.now();
     assert!(
-        !reentry_listed(&s, now, false),
-        "I-36: due lists no re-entry while a former reviewer receives in call 2"
-    );
-    let barred = s
-        .attempt(&reenter(PR1, call(2)))
-        .unwrap_or_else(|e| panic!("{e}"));
-    assert!(
-        barred.is_none(),
-        "I-36: PR1 re-entered call 2 while its former reviewer R3 holds a Receiving binding there"
-    );
-    s.run(&withdraw(R3, other))
-        .unwrap_or_else(|e| panic!("R3 withdraws its draft: {e}"));
-    assert!(
         reentry_listed(&s, now, true),
-        "NOTE 8: due lists the re-entry once no former reviewer receives in call 2"
+        "NOTE 8: due lists the re-entry, since no former reviewer receives in call 2"
     );
     s.run(&reenter(PR1, call(2)))
-        .unwrap_or_else(|e| panic!("NOTE 8: re-entry after the withdrawal: {e}"));
+        .unwrap_or_else(|e| panic!("NOTE 8: re-entry into call 2: {e}"));
     assert_eq!(s.state(PR1), Some(StateTag::Stage2));
 }
 
@@ -163,16 +151,17 @@ fn r_ev_07_reentry_waits_for_the_next_call_to_open() {
     r_ev_07_reentry_waits_for_the_next_call_to_open_on(Backend::Production);
 }
 
-/// I-36, NOTE 8: re-entry is refused while a former reviewer holds a
-/// Receiving binding in the next call, including after deferral.
+/// I-36, NOTE 8: a former reviewer cannot draft in the next call while a
+/// proposal it reviewed is undecided (decided 2026-10-25), so the deferred
+/// proposal re-enters without waiting.
 #[test]
-fn i36_reentry_waits_while_a_former_reviewer_receives() {
-    i36_reentry_waits_while_a_former_reviewer_receives_on(Backend::Production);
+fn i36_former_reviewer_cannot_draft_before_the_reentry() {
+    i36_former_reviewer_cannot_draft_before_the_reentry_on(Backend::Production);
 }
 
 /// R-EV-07, I-36: the stories above pass on the references alone.
 #[test]
 fn r_ev_07_reentry_stories_pass_on_the_reference() {
     r_ev_07_reentry_waits_for_the_next_call_to_open_on(Backend::Reference);
-    i36_reentry_waits_while_a_former_reviewer_receives_on(Backend::Reference);
+    i36_former_reviewer_cannot_draft_before_the_reentry_on(Backend::Reference);
 }

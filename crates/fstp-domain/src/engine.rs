@@ -537,10 +537,10 @@ pub fn replay<'a>(
     Ok(state)
 }
 
-/// The System commands enabled at `now`: `ExpireStage2`, `DeclineAfterConcern`
-/// and `ReEnter` from lane L-LIFE, and `DeclineNegotiation`, `StartExecution`
-/// and `Complete` from lane L-MONEY (design section 3.6). Each is issued with
-/// a System actor. `CloseStage1` is not among them, see [`stage1_ready`].
+/// The System commands enabled at `now`: `ExpireStage2` and `ReEnter` from
+/// lane L-LIFE, and `StartExecution` and `Complete` from lane L-MONEY (design
+/// section 3.6). Each is issued with a System actor. The two decline commands
+/// are not due: the programme manager records them (O-49). `CloseStage1` is not among them, see [`stage1_ready`].
 pub fn due(state: &State, now: Timestamp) -> Vec<Command> {
     let mut out = proposal::due(state, now);
     out.extend(grant::due(state, now));

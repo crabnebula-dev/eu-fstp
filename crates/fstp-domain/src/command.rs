@@ -807,7 +807,9 @@ impl CommandKind {
     ///
     /// Every command a human issues is binding, except preparing a draft
     /// or a plan and reading content. System commands never arrive through
-    /// MCP. `ConfirmPaid` is binding, because finance may issue it.
+    /// MCP. `ConfirmPaid` is binding, because finance may issue it. The two
+    /// decline commands are binding, because the programme manager records
+    /// them (O-49).
     pub const fn binding_action(self) -> bool {
         !matches!(
             self,
@@ -816,10 +818,8 @@ impl CommandKind {
                 | CommandKind::ReadContent
                 | CommandKind::VaultChanged
                 | CommandKind::ExpireStage2
-                | CommandKind::DeclineAfterConcern
                 | CommandKind::ReEnter
                 | CommandKind::ContractFact
-                | CommandKind::DeclineNegotiation
                 | CommandKind::StartExecution
                 | CommandKind::Complete
                 | CommandKind::RecordDeliverable
