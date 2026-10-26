@@ -1154,7 +1154,11 @@ const COORDINATOR: ActorRule = ActorRule::Holder(Role::FstpCoordinator);
 /// A tenant admin at tenant scope creates programmes and grants, ends and
 /// reinstates roles (O-47). The FSTP coordinator assigns reviewers, and the
 /// programme manager routes amendments. PAID is confirmed by the System or
-/// by finance (`SPEC/02-domain/payment-requests.md` States).
+/// by finance (`SPEC/02-domain/payment-requests.md` States). The programme
+/// manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED,
+/// which are decisions with a recorded reason, although their rows name
+/// the System (NOTE 13, O-49). The System records `DeclineAfterConcern`
+/// when it defers instead, once a later call is published (NOTE 7).
 pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::CreateProgramme, ActorRule::TenantAdmin),
     (K::EditPolicy, PM),
@@ -1205,13 +1209,16 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::ExpireStage2, ActorRule::System),
     (K::RecordCutOff, ActorRule::Committee),
     (K::RecordIrcReview, ActorRule::IrcMember),
-    (K::DeclineAfterConcern, ActorRule::System),
+    (
+        K::DeclineAfterConcern,
+        ActorRule::AnyOf(&[ActorRule::System, PM]),
+    ),
     (K::ReEnter, ActorRule::System),
     (K::DetermineAmount, ActorRule::AssignedReviewer),
     (K::AcceptGrant, ActorRule::Lead),
     (K::ApproveGrant, PM),
     (K::ContractFact, ActorRule::System),
-    (K::DeclineNegotiation, ActorRule::System),
+    (K::DeclineNegotiation, PM),
     (K::Withdraw, ActorRule::Lead),
     (K::StartExecution, ActorRule::System),
     (K::Complete, ActorRule::System),
