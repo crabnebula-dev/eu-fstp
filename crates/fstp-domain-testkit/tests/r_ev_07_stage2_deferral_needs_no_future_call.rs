@@ -21,17 +21,13 @@ use fstp_domain_testkit::mc::life_model::{
     LifeModel, Story, expire, life_judges, reenter, story_setup,
 };
 use fstp_domain_testkit::mc::lifecycle_model::{
-    M_LIFECYCLE_STATES, lifecycle_config, r_ev_07_properties,
+    M_LIFECYCLE_REFERENCE_STATES, M_LIFECYCLE_STATES, lifecycle_config, r_ev_07_properties,
 };
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model = LifeModel::new(lifecycle_config(), backend)
         .unwrap_or_else(|e| panic!("M-LIFECYCLE start from genesis: {e}"));
-    if let Err(e) = check_exhaustive(
-        &model,
-        &r_ev_07_properties::<LifeModel>(),
-        M_LIFECYCLE_STATES,
-    ) {
+    if let Err(e) = check_exhaustive(&model, &r_ev_07_properties::<LifeModel>(), measured) {
         panic!("{e}");
     }
 }
@@ -40,13 +36,13 @@ fn model(backend: Backend) {
 /// answers, and no future call.
 #[test]
 fn r_ev_07_stage2_deferral_needs_no_future_call() {
-    model(Backend::Production);
+    model(Backend::Production, M_LIFECYCLE_STATES);
 }
 
 /// R-EV-07: the model passes on the references alone.
 #[test]
 fn r_ev_07_stage2_deferral_needs_no_future_call_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_LIFECYCLE_REFERENCE_STATES);
 }
 
 fn due(s: &Story, now: fstp_domain::time::Timestamp) -> Vec<Command> {

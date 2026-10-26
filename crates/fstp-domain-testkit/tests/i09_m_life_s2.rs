@@ -19,21 +19,21 @@
 //! per P-24 on one plan. Also two-way, I-07, I-08 and sealed scores.
 //! Witnesses: both bases, a tie keeping the original plan (R-EV-06 AC),
 //! and I-09 in each later state. Production runs are exhaustive under a
-//! tripwire at twice the count measured on the references.
+//! tripwire at twice the count measured on production (step W6).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::life_model::{
-    LifeConfig, LifeModel, M_LIFE_S2_AFTER_STATES, M_LIFE_S2_STATES, s2_after_config,
-    s2_after_properties, s2_config, s2_properties,
+    LifeConfig, LifeModel, M_LIFE_S2_AFTER_STATES, M_LIFE_S2_REFERENCE_STATES, M_LIFE_S2_STATES,
+    s2_after_config, s2_after_properties, s2_config, s2_properties,
 };
 
-fn stage2(backend: Backend) {
+fn stage2(backend: Backend, measured: usize) {
     let model = LifeModel::new(s2_config(), backend)
         .unwrap_or_else(|e| panic!("M-LIFE-S2 start from genesis: {e}"));
-    if let Err(e) = check_exhaustive(&model, &s2_properties::<LifeModel>(), M_LIFE_S2_STATES) {
+    if let Err(e) = check_exhaustive(&model, &s2_properties::<LifeModel>(), measured) {
         panic!("{e}");
     }
 }
@@ -53,7 +53,7 @@ fn after(config: LifeConfig, backend: Backend) {
 /// I-09, R-EV-05, R-EV-06, NOTE 4: M-LIFE-S2 from STAGE2 to RANKED.
 #[test]
 fn i09_m_life_s2() {
-    stage2(Backend::Production);
+    stage2(Backend::Production, M_LIFE_S2_STATES);
 }
 
 /// I-09, NOTE 1: the effective score on the revised plan survives every later state.
@@ -71,7 +71,7 @@ fn i09_m_life_s2_after_ranking_on_the_original_plan() {
 /// I-09: the stage 2 part passes on the references alone.
 #[test]
 fn i09_m_life_s2_reference() {
-    stage2(Backend::Reference);
+    stage2(Backend::Reference, M_LIFE_S2_REFERENCE_STATES);
 }
 
 /// I-09: the after-ranking part on the revised plan passes on the references alone.

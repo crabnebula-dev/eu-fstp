@@ -494,8 +494,12 @@ pub fn s1_findings_model(backend: Backend) -> Result<LifeModel, String> {
     LifeModel::with_findings(s1_even(), backend, s1_finding_offers(), S1_FINDING_BUDGET)
 }
 
-/// The measured state count of M-LIFE-S1 with findings, on the references.
-pub const M_LIFE_S1_FINDINGS_STATES: usize = 22_792;
+/// The state count of M-LIFE-S1 with findings, measured on production in
+/// step W6. The references store 22_792.
+pub const M_LIFE_S1_FINDINGS_STATES: usize = 27_064;
+/// The state count of M-LIFE-S1 with findings on the references, the
+/// tripwire of its `_reference` twin (design 6.1).
+pub const M_LIFE_S1_FINDINGS_REFERENCE_STATES: usize = 22_792;
 
 /// The I-10 properties of M-LIFE-S1 with findings: every M-LIFE-S1
 /// property, transition("I-10"), always("I-11"), and witnesses of stored
@@ -615,8 +619,12 @@ pub fn m_find_model(backend: Backend) -> Result<LifeModel, String> {
     LifeModel::with_findings(m_find_config(), backend, m_find_offers(), M_FIND_BUDGET)
 }
 
-/// The measured state count of M-FIND, on the references.
-pub const M_FIND_STATES: usize = 74;
+/// The state count of M-FIND, measured on production in step W6. The
+/// references store 74.
+pub const M_FIND_STATES: usize = 110;
+/// The state count of M-FIND on the references, the tripwire of its
+/// `_reference` twin (design 6.1).
+pub const M_FIND_REFERENCE_STATES: usize = 74;
 
 /// The calls of M-FIND.
 pub const M_FIND_CALLS: [CallId; 2] = [call(1), call(2)];

@@ -881,7 +881,13 @@ fn synthesize_unjudged(
             text: *text,
             author: actor,
         }],
-        Command::ApproveCallPublication { .. } => Vec::new(),
+        // As production does, and as `reference::policy` expects: the
+        // approval is recorded, so the lifecycle reference folds its decision.
+        Command::ApproveCallPublication { call, decision } => vec![Record::CallApproved {
+            call: *call,
+            decision: *decision,
+            approver: actor,
+        }],
         Command::PublishCall { call, config, .. } => {
             let c = view.calls.get(call).ok_or("reference mode: unknown call")?;
             if c.seq.is_some() {

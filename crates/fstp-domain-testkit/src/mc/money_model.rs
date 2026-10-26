@@ -708,13 +708,17 @@ pub fn after() -> McConfig {
     }
 }
 
-/// The measured state count of M-MONEY, on the references.
+/// The state count of M-MONEY, measured on production in step W6. The
+/// references store the same count.
 pub const M_MONEY_STATES: usize = 864;
-/// The measured state count of the M-RACE reservation part, on the references.
+/// The state count of the M-RACE reservation part, measured on production
+/// in step W6. The references store the same count.
 pub const M_RACE_RESERVATION_STATES: usize = 1_682;
-/// The measured state count of the I-15 repeat model, on the references.
+/// The state count of the I-15 repeat model, measured on production in
+/// step W6. The references store the same count.
 pub const M_MONEY_REPEAT_STATES: usize = 256;
-/// The measured state count of the after-negotiation lifecycle, on the references.
+/// The state count of the after-negotiation lifecycle, measured on
+/// production in step W6. The references store the same count.
 pub const M_AFTER_STATES: usize = 203;
 
 // ---------------------------------------------------------------------------

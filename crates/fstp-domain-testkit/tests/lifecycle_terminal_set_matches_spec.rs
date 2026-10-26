@@ -18,7 +18,7 @@ use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::life_model::LifeModel;
 use fstp_domain_testkit::mc::lifecycle_model::{
-    M_LIFECYCLE_STATES, lifecycle_config, terminal_properties,
+    M_LIFECYCLE_REFERENCE_STATES, M_LIFECYCLE_STATES, lifecycle_config, terminal_properties,
 };
 
 fn spec() -> String {
@@ -93,14 +93,10 @@ fn lifecycle_terminal_set_matches_spec() {
     }
 }
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model = LifeModel::new(lifecycle_config(), backend)
         .unwrap_or_else(|e| panic!("M-LIFECYCLE start from genesis: {e}"));
-    if let Err(e) = check_exhaustive(
-        &model,
-        &terminal_properties::<LifeModel>(),
-        M_LIFECYCLE_STATES,
-    ) {
+    if let Err(e) = check_exhaustive(&model, &terminal_properties::<LifeModel>(), measured) {
         panic!("{e}");
     }
 }
@@ -109,11 +105,11 @@ fn model(backend: Backend) {
 /// terminal state up to NEGOTIATION is reached.
 #[test]
 fn lifecycle_m_lifecycle_terminal_states_have_no_exit() {
-    model(Backend::Production);
+    model(Backend::Production, M_LIFECYCLE_STATES);
 }
 
 /// NOTE 10: the model passes on the references alone.
 #[test]
 fn lifecycle_m_lifecycle_terminal_states_have_no_exit_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_LIFECYCLE_REFERENCE_STATES);
 }

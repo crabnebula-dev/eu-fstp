@@ -1488,13 +1488,24 @@ pub fn s2_after_config(revised: bool) -> LifeConfig {
     c
 }
 
-/// The measured state count of M-LIFE-S1 with weights (1, 1), on the references.
-pub const M_LIFE_S1_EVEN_STATES: usize = 5_698;
-/// The measured state count of M-LIFE-S1 with weights (3, 1), on the references.
-pub const M_LIFE_S1_WEIGHTED_STATES: usize = 5_260;
-/// The measured state count of M-LIFE-S2, on the references.
-pub const M_LIFE_S2_STATES: usize = 14_722;
-/// The measured state count of M-LIFE-S2 after ranking on the revised plan, on the references.
+/// The state count of M-LIFE-S1 with weights (1, 1), measured on production
+/// in step W6. The references store 5_698.
+pub const M_LIFE_S1_EVEN_STATES: usize = 6_766;
+/// The state count of M-LIFE-S1 with weights (3, 1), measured on production
+/// in step W6. The references store 5_260.
+pub const M_LIFE_S1_WEIGHTED_STATES: usize = 6_202;
+/// The state count of M-LIFE-S2, measured on production in step W6. The
+/// references store 14_722.
+pub const M_LIFE_S2_STATES: usize = 19_220;
+/// The reference counts of M-LIFE-S1 (1, 1), M-LIFE-S1 (3, 1) and M-LIFE-S2,
+/// the tripwires of their `_reference` twins (design 6.1).
+pub const M_LIFE_S1_EVEN_REFERENCE_STATES: usize = 5_698;
+/// See [`M_LIFE_S1_EVEN_REFERENCE_STATES`].
+pub const M_LIFE_S1_WEIGHTED_REFERENCE_STATES: usize = 5_260;
+/// See [`M_LIFE_S1_EVEN_REFERENCE_STATES`].
+pub const M_LIFE_S2_REFERENCE_STATES: usize = 14_722;
+/// The state count of M-LIFE-S2 after ranking on the revised plan, measured
+/// on production in step W6. The references store the same count.
 pub const M_LIFE_S2_AFTER_STATES: usize = 192;
 
 // ---------------------------------------------------------------------------

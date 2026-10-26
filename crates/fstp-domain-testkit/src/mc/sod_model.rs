@@ -443,22 +443,37 @@ impl Model for SodModel {
 // Instances
 // ---------------------------------------------------------------------------
 
-/// The state counts of the M-SOD instances, measured on the reference
-/// backend in step W3b. Each run stops at twice its count, so growth fails
-/// visibly. Step W6 writes the production counts here.
-pub const M_SOD_I01_P12_0_STATES: usize = 1_300;
+/// The state counts of the M-SOD instances, measured on the production
+/// backend in step W6. Each run stops at twice its count, so growth fails
+/// visibly. The reference backend stores the same count or fewer. For the
+/// I-01 instances at P-12 = 0, 1 and 2, for I-02 and for I-06, production
+/// refines the reference states by its projection only: with the
+/// projection removed, the two state sets are equal (step W6 audit).
+pub const M_SOD_I01_P12_0_STATES: usize = 1_370;
 /// See [`M_SOD_I01_P12_0_STATES`].
-pub const M_SOD_I01_P12_1_STATES: usize = 1_155;
+pub const M_SOD_I01_P12_1_STATES: usize = 1_225;
 /// See [`M_SOD_I01_P12_0_STATES`].
-pub const M_SOD_I01_P12_2_STATES: usize = 1_104;
+pub const M_SOD_I01_P12_2_STATES: usize = 1_174;
 /// See [`M_SOD_I01_P12_0_STATES`].
 pub const M_SOD_TWO_PROGRAMMES_STATES: usize = 713;
 /// See [`M_SOD_I01_P12_0_STATES`].
-pub const M_SOD_I02_STATES: usize = 227;
-/// See [`M_SOD_I01_P12_0_STATES`]. Measured again on the reference backend
-/// in step W4, lane w4-sodcoi, after c gained Drafting and Judging grants
-/// and the identity merge of c into the identity of a and b (2_802 before).
-pub const M_SOD_I06_STATES: usize = 98_387;
+pub const M_SOD_I02_STATES: usize = 252;
+/// See [`M_SOD_I01_P12_0_STATES`]. The reference backend stores 98_387
+/// states.
+pub const M_SOD_I06_STATES: usize = 149_961;
+
+/// The state counts of the M-SOD instances on the reference backend, where
+/// they differ from production. Each `_reference` twin stops at twice its
+/// own count, so growth on the reference fails visibly too (design 6.1).
+pub const M_SOD_I01_P12_0_REFERENCE_STATES: usize = 1_300;
+/// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
+pub const M_SOD_I01_P12_1_REFERENCE_STATES: usize = 1_155;
+/// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
+pub const M_SOD_I01_P12_2_REFERENCE_STATES: usize = 1_104;
+/// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
+pub const M_SOD_I02_REFERENCE_STATES: usize = 227;
+/// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
+pub const M_SOD_I06_REFERENCE_STATES: usize = 98_387;
 
 /// The calls of the one-programme instances.
 pub const SOD_CALLS: [u128; 3] = [1, 2, 3];

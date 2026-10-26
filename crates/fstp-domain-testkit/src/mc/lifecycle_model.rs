@@ -30,8 +30,12 @@ use crate::mc::life_model::{
     LifeAction, LifeConfig, LifeSetup, LifeState, Phases, Start, agree, in_state, life_judges,
 };
 
-/// The measured state count of M-LIFECYCLE, on the references.
-pub const M_LIFECYCLE_STATES: usize = 4_476;
+/// The state count of M-LIFECYCLE, measured on production in step W6. The
+/// references store 4_488.
+pub const M_LIFECYCLE_STATES: usize = 4_734;
+/// The state count of M-LIFECYCLE on the references, the tripwire of its
+/// `_reference` twins (design 6.1).
+pub const M_LIFECYCLE_REFERENCE_STATES: usize = 4_488;
 
 /// The states this model reaches, every state up to NEGOTIATION. GRANTED,
 /// IN_EXECUTION, COMPLETED and TERMINATED come with lane L-MONEY.

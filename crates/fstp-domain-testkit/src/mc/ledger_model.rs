@@ -2146,7 +2146,7 @@ impl StateMachine for LedgerMachine {
 /// The I-23 record budget of M-LEDGER after the start (design 6.3).
 pub const M_LEDGER_BUDGET: usize = 6;
 
-/// The measured state count of M-LEDGER.
+/// The state count of M-LEDGER, measured on production in step W6.
 pub const M_LEDGER_STATES: usize = 1_422;
 
 /// The binding of the IRC member, the fourth judge of [`m_ledger_judges`].

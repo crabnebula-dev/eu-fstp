@@ -10,13 +10,15 @@
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
-use fstp_domain_testkit::mc::sod_model::{M_SOD_I02_STATES, SodModel, i02_config, i02_properties};
+use fstp_domain_testkit::mc::sod_model::{
+    M_SOD_I02_REFERENCE_STATES, M_SOD_I02_STATES, SodModel, i02_config, i02_properties,
+};
 
-fn run(backend: Backend) {
+fn run(backend: Backend, measured: usize) {
     let model = SodModel::new(i02_config(), backend)
         .unwrap_or_else(|e| panic!("M-SOD start from genesis: {e}"));
     let properties = i02_properties::<SodModel>();
-    if let Err(e) = check_exhaustive(&model, &properties, M_SOD_I02_STATES) {
+    if let Err(e) = check_exhaustive(&model, &properties, measured) {
         panic!("{e}");
     }
 }
@@ -25,11 +27,11 @@ fn run(backend: Backend) {
 /// of the account, and a past committee binding never bars an IRC one.
 #[test]
 fn i02_m_sod_irc_exclusive() {
-    run(Backend::Production);
+    run(Backend::Production, M_SOD_I02_STATES);
 }
 
 /// I-02: the model passes on the reference alone.
 #[test]
 fn i02_m_sod_irc_exclusive_reference() {
-    run(Backend::Reference);
+    run(Backend::Reference, M_SOD_I02_REFERENCE_STATES);
 }

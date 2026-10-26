@@ -139,8 +139,9 @@ fn preconditions(s: &MoneyStory) -> Result<(), fstp_domain::refusal::Refusal> {
     check_grant_preconditions(state, PC, &answers)
 }
 
-/// Row NEGOTIATION to GRANTED: a completing fact refused while the lead is
-/// unverified is sent again once the vault verifies the lead, and grants.
+/// Row NEGOTIATION to GRANTED, SoD-09, NOTE 9: a completing fact refused
+/// while the lead is unverified is sent again once the vault verifies the
+/// lead, and grants.
 #[test]
 fn r_ng_grant_completing_fact_is_retried_after_verification() {
     for which in 0..3 {
@@ -148,9 +149,10 @@ fn r_ng_grant_completing_fact_is_retried_after_verification() {
     }
 }
 
-/// Row NEGOTIATION to GRANTED, design 2.11 contract seam: the preconditions
-/// refuse before an amount is reserved and while the lead is unverified,
-/// and hold once it is verified, so the countersigned contract grants.
+/// Row NEGOTIATION to GRANTED, R-NG-03, SoD-09, design 2.11 contract seam:
+/// the preconditions refuse before an amount is reserved and while the lead
+/// is unverified, and hold once it is verified, so the countersigned
+/// contract grants.
 #[test]
 fn r_ng_grant_preconditions_seam_matches_the_completing_fact() {
     let mut setup = setup();
@@ -192,19 +194,19 @@ fn r_ng_grant_preconditions_seam_matches_the_completing_fact() {
     );
 }
 
-/// Row NEGOTIATION to GRANTED: the acceptance completes the set.
+/// Row NEGOTIATION to GRANTED, I-13: the acceptance completes the set.
 #[test]
 fn r_ng_grant_completes_on_the_acceptance() {
     last(Backend::Production, 0);
 }
 
-/// Row NEGOTIATION to GRANTED: the approval completes the set.
+/// Row NEGOTIATION to GRANTED, I-13: the approval completes the set.
 #[test]
 fn r_ng_grant_completes_on_the_approval() {
     last(Backend::Production, 1);
 }
 
-/// Row NEGOTIATION to GRANTED: the contract EFFECTIVE fact completes the set.
+/// Row NEGOTIATION to GRANTED, I-13: the contract EFFECTIVE fact completes the set.
 #[test]
 fn r_ng_grant_completes_on_the_contract_fact() {
     last(Backend::Production, 2);
@@ -216,7 +218,8 @@ fn r_ng_grant_facts_have_their_actors() {
     actors(Backend::Production);
 }
 
-/// Row NEGOTIATION to GRANTED: the stories pass on the references alone.
+/// Row NEGOTIATION to GRANTED, I-13, SoD-09, NOTE 9: the stories pass on the
+/// references alone.
 #[test]
 fn r_ng_grant_stories_pass_on_the_reference() {
     for which in 0..3 {

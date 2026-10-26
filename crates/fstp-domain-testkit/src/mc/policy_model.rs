@@ -380,7 +380,7 @@ pub const M_EDITS: u8 = 2;
 /// once its guard holds and each history keeps its own ledger. Edit
 /// histories of up to two edits over four values, interleaved with either
 /// order of up to two publications, give 5 + 44 + 304 = 353 states. Step W6
-/// replaces it with the measured count.
+/// measured the same count on production.
 pub const M_POLICY_STATES: usize = 353;
 
 /// One M-POLICY state: the production side, the reference side and the

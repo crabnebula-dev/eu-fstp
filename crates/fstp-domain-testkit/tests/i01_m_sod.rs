@@ -10,15 +10,17 @@
 //! the bar, and that a call was published while a binding was held.
 //!
 //! Each production run is exhaustive under a tripwire at twice the count
-//! measured on the reference backend. The `_reference` twins run the same
-//! model on the reference alone, which must pass every property.
+//! measured on production (step W6). The `_reference` twins run the same
+//! model on the reference alone, which must pass every property, each under
+//! a tripwire at twice the count the reference stores.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::sod_model::{
-    M_SOD_I01_P12_0_STATES, M_SOD_I01_P12_1_STATES, M_SOD_I01_P12_2_STATES,
+    M_SOD_I01_P12_0_REFERENCE_STATES, M_SOD_I01_P12_0_STATES, M_SOD_I01_P12_1_REFERENCE_STATES,
+    M_SOD_I01_P12_1_STATES, M_SOD_I01_P12_2_REFERENCE_STATES, M_SOD_I01_P12_2_STATES,
     M_SOD_TWO_PROGRAMMES_STATES, SodConfig, SodModel, i01_config, i01_properties,
     two_programmes_config, two_programmes_properties,
 };
@@ -68,19 +70,31 @@ fn i01_m_sod_two_programmes() {
 /// I-01: M-SOD at P-12 = 0 passes on the reference alone.
 #[test]
 fn i01_m_sod_p12_0_reference() {
-    run_i01(i01_config(0), Backend::Reference, M_SOD_I01_P12_0_STATES);
+    run_i01(
+        i01_config(0),
+        Backend::Reference,
+        M_SOD_I01_P12_0_REFERENCE_STATES,
+    );
 }
 
 /// I-01: M-SOD at P-12 = 1 passes on the reference alone.
 #[test]
 fn i01_m_sod_p12_1_reference() {
-    run_i01(i01_config(1), Backend::Reference, M_SOD_I01_P12_1_STATES);
+    run_i01(
+        i01_config(1),
+        Backend::Reference,
+        M_SOD_I01_P12_1_REFERENCE_STATES,
+    );
 }
 
 /// I-01: M-SOD at P-12 = 2 passes on the reference alone.
 #[test]
 fn i01_m_sod_p12_2_reference() {
-    run_i01(i01_config(2), Backend::Reference, M_SOD_I01_P12_2_STATES);
+    run_i01(
+        i01_config(2),
+        Backend::Reference,
+        M_SOD_I01_P12_2_REFERENCE_STATES,
+    );
 }
 
 /// I-01: the two-programme instance passes on the reference alone.

@@ -20,13 +20,15 @@
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
-use fstp_domain_testkit::mc::sod_model::{M_SOD_I06_STATES, SodModel, i06_config, i06_properties};
+use fstp_domain_testkit::mc::sod_model::{
+    M_SOD_I06_REFERENCE_STATES, M_SOD_I06_STATES, SodModel, i06_config, i06_properties,
+};
 
-fn run(backend: Backend) {
+fn run(backend: Backend, measured: usize) {
     let model = SodModel::new(i06_config(), backend)
         .unwrap_or_else(|e| panic!("M-SOD start from genesis: {e}"));
     let properties = i06_properties::<SodModel>();
-    if let Err(e) = check_exhaustive(&model, &properties, M_SOD_I06_STATES) {
+    if let Err(e) = check_exhaustive(&model, &properties, measured) {
         panic!("{e}");
     }
 }
@@ -37,11 +39,11 @@ fn run(backend: Backend) {
 /// unverified account.
 #[test]
 fn i06_m_sod_sybil() {
-    run(Backend::Production);
+    run(Backend::Production, M_SOD_I06_STATES);
 }
 
 /// I-06: the model passes on the reference alone.
 #[test]
 fn i06_m_sod_sybil_reference() {
-    run(Backend::Reference);
+    run(Backend::Reference, M_SOD_I06_REFERENCE_STATES);
 }
