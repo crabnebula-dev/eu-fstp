@@ -26,11 +26,12 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
-/// The workspace's `cargo metadata` document.
+/// The workspace's `cargo metadata` document. It runs without `--offline`, because
+/// metadata covers every platform and CI fetches only Linux dependencies.
 fn metadata() -> Value {
     let root = workspace_root();
     let out = Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1", "--locked", "--offline"])
+        .args(["metadata", "--format-version", "1", "--locked"])
         .arg("--manifest-path")
         .arg(root.join("Cargo.toml"))
         .output()
