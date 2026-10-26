@@ -30,7 +30,7 @@ All results below are local runs on an Apple M5 with 10 cores, macOS, PostgreSQL
 | I-10 | `i10_domain_crates_cannot_reach_findings`, `i10_findings_never_alter_core_state` | `i10_m_life_s1_findings` (27,064 / 22,792), the I-10 properties of M-LIFE-S1 | `i10_teeth_finding_driven_transition_is_caught`, `i10_teeth_core_decider_reading_findings_is_caught` | Green |
 | I-11 | `i11_call_findings_share_pinned_config` | `i11_m_find` (110 / 74) | `i11_teeth_foreign_config_is_caught` | Green |
 | I-12 | `i12_every_frozen_parameter_is_in_the_snapshot`; `i12_frozen_edits_leave_call_outcomes_unchanged` is not in this worktree | `i12_m_policy` (353, production only, equal to the hand count) | `i12_teeth_head_instead_of_snapshot_is_caught` | Open: the twin test belongs to the W6 twin lane |
-| I-13 | `i13_i14_grant_sequences_respect_range_and_cap` | `i13_i14_m_money` (864 / 864) | `i13_teeth_out_of_range_grant_is_caught` | Green |
+| I-13 | `i13_i14_grant_sequences_respect_range_and_cap` | `i13_i14_m_money` (594 / 840) | `i13_teeth_out_of_range_grant_is_caught` | Green |
 | I-14 | `i13_i14_grant_sequences_respect_range_and_cap`, `i14_p05_edit_below_committed_is_refused` | `i13_i14_m_money`, `i14_m_race_reservation` (1,682 / 1,682) | `i14_teeth_grant_above_cap_is_caught` | Green |
 | I-15 | `i15_repeat_grant_requires_public_deliverables`, `i15_amendment_requires_public_deliverables` | `i15_m_money_repeat` (256 / 256) | `i15_teeth_repeat_without_records_is_caught` | Green |
 | I-23 | `i23_ledger_is_prefix_monotone_and_replays`, `i23_verifier_flags_every_mutation` (`fstp-ledger`), `i23_store_api_has_no_mutation` as 11 compile-fail pairs in `fstp-ledger/src/twins.rs` | `i23_m_ledger` (1,422, production only, equal to the measured count) | `i23_teeth_changed_past_entry_is_caught` | Green |
@@ -72,7 +72,7 @@ Each shared constant now holds the production count, and its tripwire is twice t
 | `M_FIND_STATES` | 74 | 110 | 220 | `M_FIND_REFERENCE_STATES` | 74 | 148 |
 | `M_POLICY_STATES` | 353 | 353 | 706 | none | none | none |
 | `M_LEDGER_STATES` | 1,422 | 1,422 | 2,844 | none | none | none |
-| `M_MONEY_STATES` | 864 | 864 | 1,728 | same | 864 | 1,728 |
+| `M_MONEY_STATES` | 840 | 594 | 1,188 | `M_MONEY_REFERENCE_STATES` | 840 | 1,680 |
 | `M_RACE_RESERVATION_STATES` | 1,682 | 1,682 | 3,364 | same | 1,682 | 3,364 |
 | `M_MONEY_REPEAT_STATES` | 256 | 256 | 512 | same | 256 | 512 |
 | `M_AFTER_STATES` | 203 | 203 | 406 | same | 203 | 406 |

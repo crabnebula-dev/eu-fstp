@@ -2384,8 +2384,10 @@ pub fn witness_repeat_grant_run() -> Result<TwinWitness, String> {
 /// [0, 1.00], which excludes the plan total of 3.00 EUR that call 1's
 /// P-04 of [2.00, 4.00] admits. The decline of PA is refused on both
 /// twins, since no NOTE 9 reason holds under call 1's P-04. A live P-05
-/// edit to 2.50 EUR then lets the decline of PA record "no amount within
-/// the cap", and a second live edit restores 10.00 EUR. PB is granted at
+/// edit to 1.50 EUR, below call 1's P-04 minimum of 2.00 EUR, then lets the
+/// decline of PA record "no amount within the cap". A head read of P-04
+/// would see a minimum of 0 and refuse it. A second live edit restores
+/// 10.00 EUR. PB is granted at
 /// 3.00 EUR. Twin B edits P-15 to one. An amendment with one IRC member
 /// stays inactive under call 1's P-15 of two, and one with two members
 /// is activated at 3.00 EUR. Every check of the machine holds after each command.
@@ -2419,7 +2421,7 @@ pub fn witness_decline_run() -> Result<TwinWitness, String> {
                 .to_owned(),
         );
     }
-    s.live(LiveEdit::P05(250))?;
+    s.live(LiveEdit::P05(150))?;
     s.eval(PA, Act::DeclineNegotiation)?;
     s.live(LiveEdit::P05(1_000))?;
     s.eval(PB, Act::GrantAll)?;

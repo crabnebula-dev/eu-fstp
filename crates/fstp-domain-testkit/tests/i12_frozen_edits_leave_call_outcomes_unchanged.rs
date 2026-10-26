@@ -135,8 +135,8 @@ fn i12_twin_witness_reaches_grant_and_reentry() {
 
 /// I-12, I-13, NOTE 9: after twin B edits P-04 to [0, 1.00] in
 /// NEGOTIATION, the decline of PA is refused, since call 1's P-04 admits
-/// its plan total. A live P-05 edit below the plan total then declines
-/// PA. PB is granted under call 1's P-04. After twin B edits P-15 to one,
+/// its plan total. A live P-05 edit below call 1's P-04 minimum then
+/// declines PA (NOTE 9, decided 2026-10-26). PB is granted under call 1's P-04. After twin B edits P-15 to one,
 /// an amendment with one IRC member stays inactive and one with two is
 /// activated. Every machine check holds, so both twins ask the same cap
 /// questions, carrying the head P-05 at decision time.
