@@ -1035,6 +1035,11 @@ impl LifeView {
                     .assignments
                     .get(assignment)
                     .ok_or_else(|| format!("IRC review on unknown assignment {assignment:?}"))?;
+                // The IRC review of an amendment is the money view's. It
+                // never touches the proposal's own IRC round (R-IR-04).
+                if matches!(a.kind, AssignmentKind::Amendment(_)) {
+                    return Ok(());
+                }
                 let p = self.proposal_mut(a.proposal)?;
                 match verdict {
                     IrcVerdict::Validate => {

@@ -14,6 +14,10 @@
 //!   one with a current value, and supersedes its entry with a reason.
 //! - The fold replaces the current value of a key, so a corrected value
 //!   never counts twice. A void removes it.
+//! - The fold refuses a correction or a void once the key's stage
+//!   sealed, with `FoldError::SealedStage` (design 5.1, NOTE 3, step W5
+//!   integration). `decide` never writes one, so every ledger the engine
+//!   writes still replays.
 //! - [`ScoreFacts`] is the quorum's view of the proposal store.
 
 use std::collections::BTreeSet;
@@ -134,32 +138,60 @@ pub(crate) fn decide(
     Ok(out)
 }
 
-/// Folds a score or a correction at entry `seq`. A correction must name the
-/// entry of the key's current value, and a first score finds none (I-23).
-pub(crate) fn apply_score(state: &mut State, seq: Seq, s: &ScoreRecorded) -> Result<(), FoldError> {
+/// The proposal of `key`, and whether its stage has sealed (NOTE 3).
+///
+/// A key is open while the proposal is in the key's stage, unless the key
+/// held a current value when the proposal last left that stage. So the
+/// stage 2 keys of the call a proposal was deferred from stay sealed after
+/// its re-entry (NOTE 8). Only a recorded complaint remedy reopens a
+/// sealed stage. M2 records none, so no record reopens one here.
+fn score_stage(state: &State, key: ScoreKey) -> Result<(ProposalId, bool), FoldError> {
     let proposal = state
         .review
-        .get(s.key.assignment)
+        .get(key.assignment)
         .map(|a| a.proposal)
         .ok_or(FoldError::UnknownEntity)?;
-    let f = facts_mut(state, proposal)?;
-    let entry = f.entries.get(&s.key).copied();
+    let current =
+        crate::proposal::intake::proposal_state(state, proposal).ok_or(FoldError::UnknownEntity)?;
+    let in_stage = match key.stage {
+        Stage::One => current == StateTag::Stage1,
+        Stage::Two => current == StateTag::Stage2,
+    };
+    let left = facts(state, proposal).is_some_and(|f| f.sealed.contains(&key));
+    Ok((proposal, !in_stage || left))
+}
+
+/// Folds a score or a correction at entry `seq`. A correction must name the
+/// entry of the key's current value, and a first score finds none (I-23).
+/// A correction on a sealed stage is refused (design 5.1, NOTE 3). A first
+/// score on a sealed stage still folds, since `decide` takes one only in
+/// its stage. Whether the fold should refuse it too is open for Daniel.
+pub(crate) fn apply_score(state: &mut State, seq: Seq, s: &ScoreRecorded) -> Result<(), FoldError> {
+    let (proposal, sealed) = score_stage(state, s.key)?;
+    let entry = facts(state, proposal).and_then(|f| f.entries.get(&s.key).copied());
     if s.supersedes != entry {
         return Err(FoldError::CorrectionTarget);
     }
+    if s.supersedes.is_some() && sealed {
+        return Err(FoldError::SealedStage);
+    }
+    let f = facts_mut(state, proposal)?;
     f.sheet.record(s.key, s.values.clone());
     f.entries.insert(s.key, seq);
     f.given.insert(s.key.assignment);
     Ok(())
 }
 
-/// Folds a void: the key's current value stops counting.
+/// Folds a void: the key's current value stops counting. A void on a
+/// sealed stage is refused (design 5.1, NOTE 3).
 pub(crate) fn apply_void(state: &mut State, key: ScoreKey) -> Result<(), FoldError> {
-    let proposal = state
-        .review
-        .get(key.assignment)
-        .map(|a| a.proposal)
-        .ok_or(FoldError::UnknownEntity)?;
+    let (proposal, sealed) = score_stage(state, key)?;
+    if !facts(state, proposal).is_some_and(|f| f.entries.contains_key(&key)) {
+        return Err(FoldError::Inconsistent);
+    }
+    if sealed {
+        return Err(FoldError::SealedStage);
+    }
     let f = facts_mut(state, proposal)?;
     if f.sheet.void(key).is_none() {
         return Err(FoldError::Inconsistent);

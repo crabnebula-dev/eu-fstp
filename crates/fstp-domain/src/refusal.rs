@@ -376,7 +376,9 @@ impl Refusal {
         Refusal { rule, reason }
     }
 
-    /// The refusal of every stub until its lane lands.
+    /// The refusal of a stub whose lane has not landed. No engine path
+    /// returns it since step W5 integration. It stays for the codec and
+    /// for test doubles.
     pub const fn not_implemented() -> Refusal {
         Refusal::new(RuleRef::NotImplemented, RefusalReason::NotImplemented)
     }

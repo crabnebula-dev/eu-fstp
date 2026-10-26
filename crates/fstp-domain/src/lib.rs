@@ -15,9 +15,10 @@
 //! ids, time, refusals, commands, records, vault queries, the projection,
 //! the transition and actor tables and the parameter catalogue. The engine
 //! is a fixed dispatcher. It runs the checks every command shares, then calls
-//! one stub per lane module, which refuses with `Refusal::not_implemented()`.
-//! Lane modules hold the vocabulary the interface names and those stubs.
-//! Each lane fills only the modules it owns (design section 10).
+//! the lane module that owns the command. Each lane fills only the modules
+//! it owns (design section 10). Since step W5 integration every lane has
+//! landed, and no well-formed command reaches a `NotImplemented` refusal.
+//! The `NotImplemented` variants stay for wire compatibility of the codec.
 
 #![deny(
     clippy::float_arithmetic,

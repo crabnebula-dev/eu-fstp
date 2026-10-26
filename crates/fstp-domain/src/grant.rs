@@ -54,6 +54,16 @@
 //!   No grant amount can keep I-13 when none of them lies within P-04. No
 //!   grant amount can keep I-14 when none of those within P-04 fits the
 //!   cap headroom.
+//! - Interim reading, open for Daniel (step W5 integration): "no grant
+//!   amount can keep I-13 and I-14" counts only negotiated plans already
+//!   recorded. In NEGOTIATION the lead may still record a negotiated plan
+//!   at a lower total, which a matching deduction could grant. This
+//!   reading does not count such a plan. The other reading would make
+//!   every amount from the P-04 minimum up to the effective plan total
+//!   reachable. The range failure would then mean an effective plan total
+//!   below the P-04 minimum. The cap failure would mean a headroom below
+//!   the P-04 minimum. The money reference (`reachable`) and the M-MONEY
+//!   witnesses follow the reading chosen here.
 //! - `StartExecution`, by the System, at the earliest milestone start date
 //!   of the effective contract version (NOTE 11).
 //! - `Terminate`, by the programme manager, in GRANTED or IN_EXECUTION,
@@ -90,9 +100,11 @@
 //!   approved, since both accepted the amount determined.
 //! - A grant fact before any determination is refused, as is a repeated
 //!   contract fact or one outside NEGOTIATION.
-//! - Lane L-LIFE still refuses negotiated plans. Until it accepts them, the
-//!   only agreed plan is the effective one, so a non-zero deduction is
-//!   refused under I-13.
+//! - The lead records a negotiated plan in NEGOTIATION (step W5
+//!   integration). A non-zero deduction needs one whose total equals the
+//!   granted amount, and is refused under I-13 otherwise. Every negotiated
+//!   plan of the proposal counts as an agreed plan, a superseded one too.
+//!   Whether only the live one should count is open for Daniel.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1590,10 +1602,9 @@ struct DeclinePlan {
 /// the lead accepted or the programme manager approved, only the
 /// determined amount is left, since it is locked. Before, they are the
 /// totals of the plans [`agreed_plan_ok`] admits, each at most the
-/// effective plan total, since a deduction is never negative. The plan
-/// store lists no plans by proposal, and lane L-LIFE refuses negotiated
-/// plans in M2. The effective plan total is then the only one. Once
-/// negotiated plans are accepted, their totals join this set.
+/// effective plan total, since a deduction is never negative. Those are
+/// the effective plan total and the total of every negotiated plan of the
+/// proposal that does not exceed it (R-NG-03, design 2.11).
 fn reachable_amounts(state: &State, proposal: ProposalId) -> Option<Vec<NonNegAmount>> {
     let total = effective_plan(state, proposal).and_then(|e| plan_total(state, e))?;
     let locked = state
@@ -1603,7 +1614,21 @@ fn reachable_amounts(state: &State, proposal: ProposalId) -> Option<Vec<NonNegAm
         .filter(|n| n.accepted.is_some() || n.approved.is_some())
         .and_then(|n| n.determined)
         .map(|d| d.granted);
-    Some(vec![locked.unwrap_or(total)])
+    if let Some(l) = locked {
+        return Some(vec![l]);
+    }
+    let mut out = vec![total];
+    for (id, p) in crate::proposal::intake::plans_of(state, proposal) {
+        if p.origin != PlanOrigin::Negotiated || !agreed_plan_ok(state, proposal, id) {
+            continue;
+        }
+        if let Some(t) = crate::proposal::intake::plan_total(p)
+            && matches!(at_most(t.amount(), total.amount()), Ok(true))
+        {
+            out.push(t);
+        }
+    }
+    Some(out)
 }
 
 fn check_decline(state: &State, cmd: &Command, ctx: &Ctx) -> Result<DeclinePlan, Refusal> {

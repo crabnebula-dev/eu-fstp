@@ -22,9 +22,11 @@
 //! - `Assign`, by an active FSTP coordinator (interim actor, design 2.7).
 //!   A reviewer assignment needs an active committee member binding and
 //!   SUBMITTED, STAGE1 or STAGE2. An IRC assignment needs an active IRC
-//!   member binding and IRC_REVIEW. Amendment assignments are lane
-//!   L-MONEY's. The assignee holds no unreleased assignment of the other
-//!   side of I-02 in the same programme, no conflict fact on the proposal,
+//!   member binding and IRC_REVIEW. An amendment assignment needs an
+//!   active IRC member binding and an amendment of the same grant under
+//!   IRC review (`crate::amendment`, R-IR-04). The assignee holds no
+//!   unreleased assignment of the other side of I-02 in the same
+//!   programme, no conflict fact on the proposal,
 //!   and the vault answers `HasConflict` false for the assignee. Under
 //!   P-11 anonymous the handle was never issued in the cell (R-AN-01).
 //!   Under P-11 named no handle is given. A reviewer assignment keeps I-34
@@ -849,8 +851,13 @@ fn plan_assign(state: &State, cmd: &Command, ctx: &Ctx) -> Result<AssignPlan, Re
             StateTag::Submitted | StateTag::Stage1 | StateTag::Stage2
         ),
         AssignmentKind::Irc => current == StateTag::IrcReview,
-        // IRC review of amendments is lane L-MONEY's.
-        AssignmentKind::Amendment(_) => return Err(Refusal::not_implemented()),
+        // The IRC review of an amendment that no P-14 exemption covers
+        // (R-IR-04). `crate::amendment` checks the amendment and the grant's
+        // state, and the rules below hold as for any IRC assignment.
+        AssignmentKind::Amendment(id) => {
+            crate::amendment::check_irc_assignment(state, *id, *proposal)?;
+            true
+        }
     };
     if !open {
         return Err(wrong_state());

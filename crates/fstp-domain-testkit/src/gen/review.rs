@@ -614,6 +614,14 @@ impl ReviewWorld {
         fstp_domain::decide(&self.sod.state, &step.cmd, &ctx, &answers)
     }
 
+    /// Production's outcome of `step` now, with the refusal typed, and
+    /// nothing committed. `None` on the references alone, which keep no
+    /// production projection. A test reads the refusal's rule through it,
+    /// for example to check that no path refuses as not implemented.
+    pub fn production_outcome(&self, step: &Step) -> Option<Result<Vec<Record>, Refusal>> {
+        (self.sod.backend == Backend::Production).then(|| self.production(step))
+    }
+
     /// The `VaultChanged` step that processes the vault epoch now.
     pub fn vault_step(&self) -> Step {
         Step {

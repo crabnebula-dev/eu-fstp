@@ -150,7 +150,8 @@ pub(crate) fn queries(
     if deferral::is_deferral_command(cmd) {
         return deferral::queries(state, cmd, ctx);
     }
-    Err(crate::refusal::Refusal::not_implemented())
+    // The dispatcher sends no other command here.
+    Err(life::wrong_state())
 }
 
 /// Whether `cmd` is one of the commands that `draft` decides.
@@ -185,7 +186,8 @@ pub(crate) fn decide(
     if deferral::is_deferral_command(cmd) {
         return deferral::decide(state, cmd, ctx);
     }
-    Err(crate::refusal::Refusal::not_implemented())
+    // The dispatcher sends no other command here.
+    Err(life::wrong_state())
 }
 
 /// Folds a proposal lifecycle record. A transition is folded by `intake`,
@@ -275,7 +277,8 @@ pub(crate) fn governing_policy(
         | Command::ExpireStage2 { proposal }
         | Command::ReEnter { proposal, .. }
         | Command::DeclineAfterConcern { proposal } => *proposal,
-        _ => return Err(crate::refusal::Refusal::not_implemented()),
+        // The dispatcher sends no other command here.
+        _ => return Err(life::wrong_state()),
     };
     draft::proposal_call(state, proposal)
         .map(crate::engine::PolicyScope::Call)
