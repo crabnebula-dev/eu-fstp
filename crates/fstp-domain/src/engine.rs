@@ -194,14 +194,16 @@ const fn command_lane(kind: CommandKind) -> Lane {
         | K::StartExecution
         | K::Complete
         | K::Terminate
-        | K::RecordDeliverable => Lane::Grant,
+        | K::RecordDeliverable
+        | K::CloseMilestone => Lane::Grant,
         K::RequestPayment
         | K::AcceptLine
         | K::ApprovePayment
         | K::ReleasePayment
         | K::ConfirmPaid
         | K::WithdrawPaymentRequest
-        | K::RequestPaymentChanges => Lane::Payment,
+        | K::RequestPaymentChanges
+        | K::ClosePaymentRequest => Lane::Payment,
         K::ProposeAmendment | K::RouteAmendment | K::ActivateAmendment => Lane::Amendment,
     }
 }
@@ -253,14 +255,16 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::GrantDecided(_)
         | Record::NegotiationDeclined { .. }
         | Record::TerminationRecorded { .. }
-        | Record::DeliverableRecorded(_) => Lane::Grant,
+        | Record::DeliverableRecorded(_)
+        | Record::MilestoneClosed { .. } => Lane::Grant,
         Record::PaymentRequested { .. }
         | Record::LineAccepted { .. }
         | Record::PaymentApproved { .. }
         | Record::PaymentReleased(_)
         | Record::PaymentConfirmed { .. }
         | Record::PaymentRequestWithdrawn { .. }
-        | Record::PaymentChangesRequested { .. } => Lane::Payment,
+        | Record::PaymentChangesRequested { .. }
+        | Record::PaymentRequestClosed { .. } => Lane::Payment,
         Record::AmendmentProposed { .. }
         | Record::AmendmentRouted { .. }
         | Record::AmendmentActivated { .. } => Lane::Amendment,

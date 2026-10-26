@@ -1240,6 +1240,8 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     ),
     (K::RouteAmendment, PM),
     (K::ActivateAmendment, ActorRule::System),
+    (K::CloseMilestone, PM),
+    (K::ClosePaymentRequest, PM),
 ];
 
 /// The actor rule of `kind`, from [`ACTOR_RULES`].

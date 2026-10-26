@@ -727,11 +727,13 @@ pub(crate) enum RecordTag {
     AmendmentProposed,
     AmendmentRouted,
     AmendmentActivated,
+    MilestoneClosed,
+    PaymentRequestClosed,
 }
 
 impl RecordTag {
     /// Every tag, in declaration order of [`Record`].
-    pub(crate) const ALL: [RecordTag; 57] = [
+    pub(crate) const ALL: [RecordTag; 59] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -789,6 +791,8 @@ impl RecordTag {
         RecordTag::AmendmentProposed,
         RecordTag::AmendmentRouted,
         RecordTag::AmendmentActivated,
+        RecordTag::MilestoneClosed,
+        RecordTag::PaymentRequestClosed,
     ];
 
     /// The four payloads that only a witness builds. Tests cannot construct
@@ -883,6 +887,8 @@ impl RecordTag {
             Record::AmendmentProposed { .. } => RecordTag::AmendmentProposed,
             Record::AmendmentRouted { .. } => RecordTag::AmendmentRouted,
             Record::AmendmentActivated { .. } => RecordTag::AmendmentActivated,
+            Record::MilestoneClosed { .. } => RecordTag::MilestoneClosed,
+            Record::PaymentRequestClosed { .. } => RecordTag::PaymentRequestClosed,
         }
     }
 
@@ -1809,6 +1815,15 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
             amendment: id(g, d, AmendmentId::from_raw),
             contract: id(g, d, ContractId::from_raw),
         },
+        CommandKind::CloseMilestone => Command::CloseMilestone {
+            proposal: id(g, d, ProposalId::from_raw),
+            milestone: id(g, d, MilestoneId::from_raw),
+            reason: text(g, d),
+        },
+        CommandKind::ClosePaymentRequest => Command::ClosePaymentRequest {
+            request: id(g, d, RequestId::from_raw),
+            reason: text(g, d),
+        },
     })
 }
 
@@ -2162,6 +2177,17 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             plan: id(g, d, PlanVersionId::from_raw),
             route: route(g),
             contract: id(g, d, ContractId::from_raw),
+        },
+        RecordTag::MilestoneClosed => Record::MilestoneClosed {
+            proposal: id(g, d, ProposalId::from_raw),
+            milestone: id(g, d, MilestoneId::from_raw),
+            by: id(g, d, AccountId::from_raw),
+            reason: text(g, d),
+        },
+        RecordTag::PaymentRequestClosed => Record::PaymentRequestClosed {
+            request: id(g, d, RequestId::from_raw),
+            by: id(g, d, AccountId::from_raw),
+            reason: text(g, d),
         },
         RecordTag::Stage1Closed
         | RecordTag::EffectiveScoreSet

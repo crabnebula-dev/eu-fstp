@@ -740,4 +740,24 @@ pub enum Record {
         /// The contract.
         contract: ContractId,
     },
+    /// The programme manager closed a milestone (NOTE 12, O-51).
+    MilestoneClosed {
+        /// The grant.
+        proposal: ProposalId,
+        /// The milestone.
+        milestone: MilestoneId,
+        /// The programme manager.
+        by: AccountId,
+        /// The recorded reason.
+        reason: TextRef,
+    },
+    /// The programme manager closed a waiting payment request (O-51).
+    PaymentRequestClosed {
+        /// The request.
+        request: RequestId,
+        /// The programme manager.
+        by: AccountId,
+        /// The recorded reason.
+        reason: TextRef,
+    },
 }

@@ -224,3 +224,38 @@ fn th26_every_named_seed_decodes() {
         }
     }
 }
+
+/// NOTE 12, O-51, I-23, ADR-007: the two closure records of lane L-MONEY
+/// round trip, and a form with an unknown member or without its reason is
+/// refused.
+#[test]
+fn i23_closure_records_round_trip_and_refuse_bad_members() {
+    use crate::id::{ContentDigest, MilestoneId, TextId, TextRef};
+    let reason = TextRef::new(TextId::from_raw(9), ContentDigest::from_bytes([7; 32]));
+    let records = [
+        Record::MilestoneClosed {
+            proposal: ProposalId::from_raw(13),
+            milestone: MilestoneId::from_raw(u128::MAX),
+            by: AccountId::from_raw(3),
+            reason,
+        },
+        Record::PaymentRequestClosed {
+            request: RequestId::from_raw(0),
+            by: AccountId::from_raw(3),
+            reason,
+        },
+    ];
+    for r in &records {
+        let text = round_trip(r);
+        let v = parse(text.as_bytes()).unwrap();
+        let mut extra = v.clone();
+        extra
+            .as_object_mut()
+            .unwrap()
+            .insert("zz", Value::String("1".to_owned()));
+        assert!(Record::from_json(&extra).is_err(), "{text}");
+        let mut missing = v;
+        missing.as_object_mut().unwrap().remove("reason");
+        assert!(Record::from_json(&missing).is_err(), "{text}");
+    }
+}

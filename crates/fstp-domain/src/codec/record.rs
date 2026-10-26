@@ -302,6 +302,8 @@ tagged_enum! {
         AmendmentProposed { amendment, grant, plan, by },
         AmendmentRouted { amendment, route, by },
         AmendmentActivated { amendment, plan, route, contract },
+        MilestoneClosed { proposal, milestone, by, reason },
+        PaymentRequestClosed { request, by, reason },
     }
     money {
         CallDrafted { call, programme, opens, deadline, deadline_zone, budget, text, author },
