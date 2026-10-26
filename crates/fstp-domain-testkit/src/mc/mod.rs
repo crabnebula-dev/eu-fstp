@@ -3,6 +3,7 @@
 //! Module list from milestone M2 step W0. Each lane owns its own file.
 
 pub mod conflict_model;
+pub mod conformance;
 pub mod excl_model;
 pub mod findings_model;
 pub mod ledger_model;

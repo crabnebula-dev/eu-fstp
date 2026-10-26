@@ -111,7 +111,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use fstp_money::{Amount, Currency, NonNegAmount, PosAmount};
 
 use crate::assignment::AssignmentKind;
-use crate::command::{Command, ContractEvent, Ctx};
+use crate::command::{Actor, Command, ContractEvent, Ctx};
 use crate::decision::NegotiationFailure;
 use crate::engine::{FoldError, PolicyScope};
 use crate::id::{
@@ -490,6 +490,9 @@ struct Negotiation {
     accepted: Option<DecisionId>,
     /// The programme manager's approval.
     approved: Option<DecisionId>,
+    /// The programme manager who approved, who records the grant when the
+    /// contract port completes the facts (R-LA-03, NOTE 13).
+    approver: Option<AccountId>,
     /// The contract the port reported EFFECTIVE.
     contract: Option<ContractId>,
 }
@@ -501,6 +504,7 @@ impl Negotiation {
             reserved: None,
             accepted: None,
             approved: None,
+            approver: None,
             contract: None,
         }
     }
@@ -1443,6 +1447,8 @@ struct FactPlan {
     proposal: ProposalId,
     record: Record,
     facts: Option<(DecisionId, DecisionId, ContractId)>,
+    /// The approving programme manager, once approved.
+    approver: Option<AccountId>,
     clearance: Option<ClearancePlan>,
 }
 
@@ -1511,6 +1517,7 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
                 return Err(wrong_state());
             }
             after.approved = Some(d);
+            after.approver = Some(by);
             Record::GrantApproved {
                 decision: d,
                 proposal,
@@ -1541,6 +1548,7 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
         proposal,
         record,
         facts,
+        approver: after.approver,
         clearance,
     })
 }
@@ -1566,14 +1574,21 @@ fn decide_fact(
         &mut outcomes,
     )?;
     out.push(Record::GrantDecided(GrantDecided::from_clearance(&c)));
-    out.push(transition(
-        plan.proposal,
-        StateTag::Negotiation,
-        StateTag::Granted,
-        Row::NegotiationToGranted,
-        ctx,
-        Some(c.approval),
-    ));
+    // R-LA-03, NOTE 13: the row's actor is the applicant and the programme
+    // manager. When the contract port completes the facts, the approving
+    // programme manager records the grant, never the System.
+    let actor = match (ctx.actor, plan.approver) {
+        (Actor::System(_), Some(pm)) => Actor::Account(pm),
+        (a, _) => a,
+    };
+    out.push(Record::Transitioned(Transitioned {
+        proposal: plan.proposal,
+        from: StateTag::Negotiation,
+        to: StateTag::Granted,
+        row: Row::NegotiationToGranted,
+        actor,
+        decision: Some(c.approval),
+    }));
     out.extend(outcomes);
     Ok(out)
 }
@@ -2094,11 +2109,15 @@ pub(crate) fn apply(
             Ok(())
         }
         Record::GrantApproved {
-            decision, proposal, ..
+            decision,
+            proposal,
+            by,
         } => {
             negotiation_mut(state, *proposal)?;
             take_decision(state, *decision)?;
-            negotiation_mut(state, *proposal)?.approved = Some(*decision);
+            let n = negotiation_mut(state, *proposal)?;
+            n.approved = Some(*decision);
+            n.approver = Some(*by);
             Ok(())
         }
         Record::ContractFactRecorded {

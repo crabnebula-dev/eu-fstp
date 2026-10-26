@@ -296,7 +296,9 @@ pub struct Transitioned {
     pub to: StateTag,
     /// The row taken.
     pub row: Row,
-    /// The actor of the command that computed it.
+    /// The actor of the command that computed it. A NEGOTIATION to GRANTED
+    /// completed by the contract port names the approving programme
+    /// manager instead (R-LA-03, NOTE 13).
     pub actor: Actor,
     /// The decision behind it, when one was recorded.
     pub decision: Option<DecisionId>,
