@@ -44,6 +44,7 @@ use fstp_domain::roles::Role;
 use fstp_domain::rules::{Row, StateTag};
 use fstp_domain::scoring::{Criteria, Criterion, ScoreKey, ScoreVector, Stage};
 use fstp_domain::time::{Days, Timestamp};
+use fstp_findings::Finding;
 use fstp_mc::{Model, Property};
 use fstp_money::Percent;
 
@@ -54,6 +55,7 @@ use crate::r#gen::review::{
     declare, handle, judged, milestone, plan_of, review_truth, submit, tag, withdraw,
 };
 use crate::r#gen::roster::{Backend, Flags, STAFF_PM, SodSetup, SodWorld, Step, call, publish};
+use crate::mc::findings_model::FindingSide;
 use crate::reference::lifecycle::{
     Effective, Frac, LifeAsk, LifeCx, LifeVerdict, LifeView, check_batch, check_i07, check_i08,
     check_i09, check_recorded_by_human, check_sealed, forge_effective, forge_stage1_closed,
@@ -860,6 +862,9 @@ pub enum LifeAction {
     Decline(Who),
     /// The lead withdraws.
     Withdraw,
+    /// The assessor stores the model's finding offer at this index (I-10).
+    /// Lane L-FIND-B, see `mc::findings_model`.
+    AddFinding(usize),
 }
 
 /// The action families a model offers.
@@ -918,6 +923,9 @@ pub struct LifeState {
     /// Set when production and the references disagree. The `two-way`
     /// property fails on it, and the state is terminal.
     pub divergence: Option<String>,
+    /// The findings beside the core: the production and reference stores
+    /// and the offer budget (I-10, I-11, lane L-FIND-B).
+    pub findings: FindingSide,
 }
 
 impl LifeState {
@@ -933,12 +941,28 @@ pub struct LifeModel {
     pub config: LifeConfig,
     /// The start state.
     pub start: LifeState,
+    /// The findings `LifeAction::AddFinding` offers, by index. Empty
+    /// unless the model was built by [`LifeModel::with_findings`].
+    pub offers: Vec<Finding>,
 }
 
 impl LifeModel {
     /// The model of `config` over `backend`, with its start built from genesis.
     pub fn new(config: LifeConfig, backend: Backend) -> Result<LifeModel, String> {
+        LifeModel::with_findings(config, backend, Vec::new(), 0)
+    }
+
+    /// The model of `config` over `backend` that also offers each finding
+    /// of `offers` while its call is its proposal's current call, at most
+    /// `budget` times in a run (I-10, lane L-FIND-B).
+    pub fn with_findings(
+        config: LifeConfig,
+        backend: Backend,
+        offers: Vec<Finding>,
+        budget: u8,
+    ) -> Result<LifeModel, String> {
         let world = config.setup.world(backend, config.setup.truth())?;
+        let findings = FindingSide::new(&config.setup.draft_steps()?, budget);
         Ok(LifeModel {
             start: LifeState {
                 world,
@@ -946,8 +970,10 @@ impl LifeModel {
                 flips: 1,
                 revisions: config.revisions,
                 divergence: None,
+                findings,
             },
             config,
+            offers,
         })
     }
 
@@ -1009,7 +1035,10 @@ impl LifeModel {
                 };
                 vec![close(actor, PR1)]
             }
-            LifeAction::Conflict(_) | LifeAction::Havoc(_) | LifeAction::Tick => Vec::new(),
+            LifeAction::Conflict(_)
+            | LifeAction::Havoc(_)
+            | LifeAction::Tick
+            | LifeAction::AddFinding(_) => Vec::new(),
             LifeAction::Ask(r) => vec![ask(*r, PR1, reviewer_in(*r, Stage::Two)?)],
             LifeAction::NoQuestions(r) => vec![no_questions(*r, PR1, reviewer_in(*r, Stage::Two)?)],
             LifeAction::Answer => vec![answer(L1, PR1)],
@@ -1281,6 +1310,7 @@ impl Model for LifeModel {
         if ph.withdraw && state.is_withdrawable() {
             actions.push(LifeAction::Withdraw);
         }
+        crate::mc::findings_model::offer_findings(self, s, actions);
     }
 
     fn step(&self, s: &LifeState, action: &LifeAction) -> Option<LifeState> {
@@ -1290,6 +1320,9 @@ impl Model for LifeModel {
         match action {
             LifeAction::Conflict(_) | LifeAction::Havoc(_) => return self.vault(s, action),
             LifeAction::Tick => return self.tick(s),
+            LifeAction::AddFinding(i) => {
+                return crate::mc::findings_model::add_finding(self, s, *i);
+            }
             _ => {}
         }
         let steps = self.steps(s, action)?;
@@ -1309,6 +1342,9 @@ impl Model for LifeModel {
         }
         let mut next = s.clone();
         next.world = w;
+        for st in &steps {
+            next.findings.observe(st);
+        }
         match action {
             LifeAction::Correct(..) => next.corrections = next.corrections.saturating_sub(1),
             LifeAction::Revise => next.revisions = next.revisions.saturating_sub(1),

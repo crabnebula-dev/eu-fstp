@@ -58,6 +58,7 @@ version = "0.0.0"
 dependencies = [
  "fstp-domain",
  "fstp-engine",
+ "fstp-findings",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
