@@ -1,0 +1,39 @@
+[package]
+name = "fstp-domain-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-domain = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "record_decode"
+path = "fuzz_targets/record_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "command_decode"
+path = "fuzz_targets/command_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy_decode"
+path = "fuzz_targets/policy_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

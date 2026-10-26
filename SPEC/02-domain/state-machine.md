@@ -62,7 +62,7 @@ NOTE 7: A future call exists when a later call of the same programme is publishe
 
 NOTE 8: The original call's frozen policy keeps governing a deferred proposal. On re-entry, assignments and reviewer handles are made afresh in the new call. LLM findings stay with the call that produced them, and the new call may produce its own (decided 2026-10-25).
 
-NOTE 9: NEGOTIATION to DECLINED ends a negotiation that cannot reach GRANTED (decided 2026-10-25). Guardian consent is checked on entry to NEGOTIATION and again before GRANTED (I-18, R-NG-02).
+NOTE 9: NEGOTIATION to DECLINED ends a negotiation that cannot reach GRANTED (decided 2026-10-25). For I-13 and I-14, "cannot reach" means that no amount within P-04 fits the recipient's remaining room under P-05, so even the P-04 minimum does not fit. A plan total above the cap is no ground for declining while a smaller negotiated plan could still fit, and the lead may propose one (decided 2026-10-26). Guardian consent is checked on entry to NEGOTIATION and again before GRANTED (I-18, R-NG-02).
 
 NOTE 10: Withdrawal is open in DRAFT, SUBMITTED, STAGE1, STAGE2, RANKED, IRC_REVIEW, DEFERRED and NEGOTIATION. This meets R-SB-03, which allows withdrawal at least until contract signature. Terminal states have no exits.
 
@@ -77,7 +77,7 @@ NOTE 13: R-LA-03 requires a named human to record every decision. Where a System
 | State | Meaning |
 | --- | --- |
 | DRAFT | Call text and criteria being drafted. |
-| APPROVED | Publication approved by a person other than its drafter (R-PC-03). |
+| APPROVED | Publication approved by a person other than its drafter (R-PC-03). An edit to the call text, P-01 or P-09 after approval revokes the approval, and the call returns to DRAFT (confirmed 2026-10-25). |
 | PUBLISHED | Published with a frozen policy version (R-PC-02, I-12). |
 
 Open and closed are not states. A published call is open from its opening time until its deadline, and closed afterwards (decided 2026-10-25).

@@ -1,0 +1,21 @@
+[package]
+name = "fstp-engine"
+description = "Composition of the domain core and findings, with a synchronous reference driver."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-domain.workspace = true
+fstp-findings.workspace = true
+fstp-money.workspace = true
+fstp-ledger.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

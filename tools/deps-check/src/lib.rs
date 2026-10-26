@@ -1,6 +1,6 @@
 //! CI gate for the dependency policy in CLAUDE.md.
 //!
-//! deps-check runs three gates over the repository and fails on any error:
+//! deps-check runs four gates over the repository and fails on any error:
 //!
 //! 1. Dependency allowlist (TH-15, H-10). It finds every cargo project in
 //!    the repository: the main workspace, the cargo-fuzz projects and any
@@ -22,6 +22,10 @@
 //!    interpreter invocations in scripts and workflows.
 //! 3. Fuzz targets (TH-26, H-05). Every crate in `deps/fuzz-required.txt`
 //!    owns a cargo-fuzz project with at least one target.
+//! 4. Layering of the M2 domain crates (`docs/handoff/m2-design.md` section
+//!    1). No M2 crate reaches an I/O crate, `fstp-domain` has no dependency
+//!    path to `fstp-findings` or `fstp-engine` (I-10), and only
+//!    `fstp-domain-testkit` takes a test-only crate as a normal dependency.
 //!
 //! Run it from the repository root with `cargo run -p deps-check --locked`.
 //! `--print-allowlist` prints an allowlist generated from the current graph,
@@ -32,6 +36,7 @@ mod cargo;
 mod fuzz;
 pub mod fuzzing;
 mod graph;
+mod layering;
 mod lockfile;
 mod metadata;
 mod provenance;

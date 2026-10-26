@@ -3,6 +3,8 @@
 //! This test reads the resident set size of the whole process, so it runs
 //! in its own test binary, away from other tests that allocate.
 
+// Linux only: it reads /proc/self/statm, which macOS lacks. CI runs on Linux.
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 

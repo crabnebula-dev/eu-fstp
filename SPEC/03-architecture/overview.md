@@ -42,7 +42,7 @@ The vault holds verified identity attributes, verification records, guardian con
 | Does this applicant meet the P-17 country condition of this programme? | R-EV-08, P-17 |
 | Which accounts have vault facts that changed since a given vault epoch? | Reaction to vault changes |
 
-The change query returns account identifiers and no attributes. The query set was decided on 2026-10-25.
+The change query returns account identifiers and no attributes. After a provisional verification, it also lists every other account that the facts revealed by that verification touch (confirmed 2026-10-25). The query set was decided on 2026-10-25.
 
 NOTE 1: The application builds each candidate set from its own bindings: active bindings, and bindings inside a cooling-off bar (`02-domain/roles-and-sod.md` Cooling-off). For the cap queries it sends per-account totals of granted and reserved amounts, and the vault groups them by verified identity.
 

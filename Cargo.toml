@@ -11,6 +11,12 @@ members = [
     "crates/fstp-pgwire",
     "crates/fstp-pgtest",
     "crates/fstp-migrate",
+    "crates/fstp-money",
+    "crates/fstp-ledger",
+    "crates/fstp-domain",
+    "crates/fstp-findings",
+    "crates/fstp-engine",
+    "crates/fstp-domain-testkit",
     "tools/deps-check",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
@@ -44,6 +50,12 @@ fstp-http = { path = "crates/fstp-http" }
 fstp-pgwire = { path = "crates/fstp-pgwire" }
 fstp-pgtest = { path = "crates/fstp-pgtest" }
 fstp-migrate = { path = "crates/fstp-migrate" }
+fstp-money = { path = "crates/fstp-money" }
+fstp-ledger = { path = "crates/fstp-ledger" }
+fstp-domain = { path = "crates/fstp-domain" }
+fstp-findings = { path = "crates/fstp-findings" }
+fstp-engine = { path = "crates/fstp-engine" }
+fstp-domain-testkit = { path = "crates/fstp-domain-testkit" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

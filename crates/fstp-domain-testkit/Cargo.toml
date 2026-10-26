@@ -1,0 +1,22 @@
+[package]
+name = "fstp-domain-testkit"
+description = "Test-only kit for the domain invariant suites: synthetic vault, references, generators and model adapters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# Test only: never a normal dependency of another crate (tools/deps-check layering gate).
+publish = false
+
+[dependencies]
+fstp-money.workspace = true
+fstp-ledger.workspace = true
+fstp-domain.workspace = true
+fstp-findings.workspace = true
+fstp-engine.workspace = true
+fstp-json.workspace = true
+fstp-prop.workspace = true
+fstp-mc.workspace = true
+
+[lints]
+workspace = true

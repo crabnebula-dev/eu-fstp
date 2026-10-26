@@ -5,7 +5,7 @@
 # job token, and installs toolchains with the runner's rustup.
 #
 # Jobs:
-#   deps-check   dependency allowlist, no-Python and fuzz-target gates
+#   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
 #   test         cargo test on the workspace with a real PostgreSQL 16
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
@@ -98,6 +98,11 @@ jobs:
     needs: deps-check
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      # The M2 testkit builds about 160 test binaries, and each links every
+      # M2 crate. With full debug info they fill the runner's disk. Line
+      # tables keep file and line numbers in panics and backtraces.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Check out with plain git
         env:
@@ -122,6 +127,14 @@ jobs:
           rustup toolchain install --no-self-update || rustup show
           rustc --version
           cargo --version
+      # The runner image ships toolchains this job never uses. Removing them
+      # leaves room for the test binaries.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install PostgreSQL 16 if absent
         run: |
           set -euo pipefail
@@ -187,7 +200,7 @@ jobs:
             echo "deps-check depends on a package outside the repository" >&2
             exit 1
           fi
-      - name: Dependency allowlist, no-Python and fuzz-target gates
+      - name: Dependency allowlist, no-Python, fuzz-target and layering gates
         run: cargo run --locked -p deps-check -- --root .
 
   fuzz-smoke:

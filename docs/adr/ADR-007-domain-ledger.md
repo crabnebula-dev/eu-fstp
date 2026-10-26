@@ -23,7 +23,7 @@ Options considered:
 Each cell has one append-only domain ledger. Every programme of the tenant writes to it.
 
 - An entry holds a sequence number, a time, a command identifier, a schema version and a record.
-- An append is an atomic batch. It succeeds only if the ledger head is still the one the writer expected. A repeated command identifier is refused.
+- An append is an atomic batch. It succeeds only if the ledger head is still the one the writer expected. A repeated command identifier is refused. A store checks the command identifier before the head, so a retry after a lost acknowledgement is reported as a duplicate (confirmed 2026-10-25).
 - No operation updates or deletes an entry. The database role that writes the ledger holds INSERT and SELECT only.
 - A correction is a new record that names the record it supersedes. Ending a binding is a new record. A policy change is a new policy version.
 - Record bodies are stored as canonical text under RFC 8785, not as `jsonb`. The stored bytes are the bytes that are hashed.

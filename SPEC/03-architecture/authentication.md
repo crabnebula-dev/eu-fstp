@@ -39,6 +39,7 @@ High-risk actions need a fresh step-up with a phishing-resistant method within P
 - **I-78** No high-risk action completes without a phishing-resistant step-up within P-71.
 - An account without a phishing-resistant method is asked to add one before its first high-risk action.
 - Every step-up is logged with the action it authorised.
+- Creating a programme counts as activating it, so it needs the step-up (confirmed 2026-10-25).
 
 ## Account recovery
 
