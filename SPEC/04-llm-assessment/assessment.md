@@ -34,7 +34,7 @@ Every submission receives findings on completeness, quality and accuracy of repr
 - Submission and retrieved content travel only in the data channel. Instructions come only from the pinned prompt.
 - Integrity findings flag suspected instructions to the assessor. Reviewers see them.
 - Indicative rubric bands are hidden from reviewers unless P-28 is on.
-- Reviewers can mark each finding as agreed or disputed. These marks feed calibration.
+- Reviewers can mark each finding as agreed or disputed. These marks feed calibration. Marking stays open after the proposal reaches a terminal state, and a mark never changes the proposal (I-10) (decided 2026-10-26).
 - If the pinned model becomes unavailable during a call, all findings in that call are regenerated with the replacement configuration before ranking.
 - English fluency is not a quality signal. Quality refers to substance against the criteria.
 
