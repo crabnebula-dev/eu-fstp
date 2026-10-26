@@ -12,9 +12,12 @@
 //!   programme currency (ADR-006). The plans of a proposal form one chain:
 //!   a new plan supersedes the live plan when one exists, and nothing
 //!   otherwise. The plan text lives outside the domain, which keeps
-//!   amounts, structure and a digest only (R-SB-01). The other origins
-//!   belong to lane L-LIFE and lane L-MONEY. Here they are refused in DRAFT,
-//!   SUBMITTED and terminal states, and refused as not implemented elsewhere.
+//!   amounts, structure and a digest only (R-SB-01). A plan of origin
+//!   "stage 2 revision" passes the same checks in STAGE2 while the P-07
+//!   window is open, and is refused in every other state (lane L-LIFE,
+//!   R-EV-05). The negotiated and amendment origins belong to lane L-MONEY.
+//!   Here they are refused in DRAFT, SUBMITTED and terminal states, and
+//!   refused as not implemented elsewhere.
 //! - `Submit` takes the DRAFT to SUBMITTED row. It needs the lead with an
 //!   active Applicant binding, a call open at `now`, and a plan of the
 //!   proposal with origin "submitted" that no later plan supersedes and that
@@ -108,6 +111,40 @@ impl Intake {
             submissions: BTreeMap::new(),
         }
     }
+
+    /// The call of the latest re-entry or first transition of `proposal`,
+    /// once it left DRAFT. Lane L-LIFE reads it through the quorum's view.
+    pub(crate) fn current_call_of(&self, proposal: ProposalId) -> Option<CallId> {
+        self.lives.get(&proposal).map(|l| l.current_call)
+    }
+
+    /// The plan version `plan`.
+    pub(crate) fn plan_of(&self, plan: PlanVersionId) -> Option<&Plan> {
+        self.plans.get(&plan)
+    }
+
+    /// The submission of `proposal`, once submitted.
+    pub(crate) fn submission_of(&self, proposal: ProposalId) -> Option<&Submission> {
+        self.submissions.get(&proposal)
+    }
+}
+
+/// Moves `proposal` to `call` as the call it is evaluated in, for the fold
+/// of a re-entry (NOTE 8). Written for lane L-LIFE. The proposal must have
+/// left DRAFT.
+pub(crate) fn set_current_call(
+    state: &mut State,
+    proposal: ProposalId,
+    call: CallId,
+) -> Result<(), FoldError> {
+    let life = state
+        .proposals
+        .intake
+        .lives
+        .get_mut(&proposal)
+        .ok_or(FoldError::UnknownEntity)?;
+    life.current_call = call;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +344,12 @@ fn check_plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Re
     match origin {
         PlanOrigin::Submitted if current != StateTag::Draft => return Err(wrong_row()),
         PlanOrigin::Submitted => {}
+        // A stage 2 revision is recorded in an open stage 2 window (R-EV-05,
+        // lane L-LIFE).
+        PlanOrigin::Stage2Revision if current == StateTag::Stage2 => {
+            crate::proposal::life::open_round(state, *proposal, ctx.now)?;
+        }
+        PlanOrigin::Stage2Revision => return Err(wrong_row()),
         _ if matches!(current, StateTag::Draft | StateTag::Submitted) || current.is_terminal() => {
             return Err(wrong_row());
         }
@@ -529,6 +572,14 @@ pub(crate) fn fold_transition(state: &mut State, t: &Transitioned) -> Result<(),
         .any(|r| r.row == t.row && r.to == t.to && r.from.contains(&t.from));
     if !known || current != t.from {
         return Err(FoldError::Inconsistent);
+    }
+    // An admission records its decision id on the transition alone, so the
+    // fold marks it as taken here, and `decide` refuses any later decision
+    // under it (R-AU-01). The knock-out and cut-off records mark their own
+    // ids. The fold checks structure only and re-runs no guard, so it
+    // tolerates an id that the proposal's knock-out check took already.
+    if let (Row::SubmittedToStage1, Some(d)) = (t.row, t.decision) {
+        state.used_ids.insert(UsedId::Decision(d));
     }
     state.proposals.intake.lives.insert(
         t.proposal,

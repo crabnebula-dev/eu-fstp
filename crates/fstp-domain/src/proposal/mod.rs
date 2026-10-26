@@ -3,10 +3,24 @@
 //! Owned by lane L-LIFE (docs/handoff/m2-design.md section 10). Step W1c
 //! declared only the vocabulary the interface names and the empty
 //! [`ProposalStore`]. The proposal states themselves are the tags in
-//! [`crate::rules::StateTag`]. Lane L-LIFE completes the lifecycle.
+//! [`crate::rules::StateTag`].
+//!
+//! Lane L-LIFE (step W4b) completes the lifecycle from SUBMITTED to the
+//! entry into NEGOTIATION, with deferral and re-entry:
+//!
+//! - `life` keeps the lifecycle facts of each proposal.
+//! - `score` takes scores and corrections and is the quorum's view of the store.
+//! - `stage2` takes questions, "no questions", answers and revisions.
+//! - `deferral` takes the expiry of stage 2, the re-entry and the decline
+//!   after a concern, and lists the System commands that are due.
+//! - The decisions of the lifecycle are in [`crate::decision`].
 
+pub(crate) mod deferral;
 pub(crate) mod draft;
 pub(crate) mod intake;
+pub(crate) mod life;
+pub(crate) mod score;
+pub(crate) mod stage2;
 
 use fstp_money::PosAmount;
 
@@ -88,13 +102,16 @@ pub struct NoticeVersion(pub u32);
 /// Proposal part of the projection: state, call history, plans, current
 /// scores, stage results and negotiation per proposal.
 ///
-/// Declared empty by W1c so that `State` can hold it. Lane L-LIFE fills it.
+/// Declared empty by W1c so that `State` can hold it. Lane L-SOD added the
+/// drafts, lane L-REV the intake and lane L-LIFE the lifecycle facts.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ProposalStore {
     /// The created proposals, from `draft` (lane L-SOD, step W3b).
     drafts: draft::Drafts,
     /// States, plans and submissions, from `intake` (lane L-REV, step W4a).
     intake: intake::Intake,
+    /// Scores, stage results, rounds and deferrals, from `life` (lane L-LIFE, step W4b).
+    life: life::Lives,
 }
 
 impl ProposalStore {
@@ -103,6 +120,7 @@ impl ProposalStore {
         ProposalStore {
             drafts: draft::Drafts::genesis(),
             intake: intake::Intake::genesis(),
+            life: life::Lives::genesis(),
         }
     }
 }
@@ -112,8 +130,6 @@ impl ProposalStore {
 // ---------------------------------------------------------------------------
 
 /// The vault questions of the proposal lifecycle commands.
-///
-/// Declared by W1c as a stub. Lane L-LIFE completes it.
 pub(crate) fn queries(
     state: &crate::state::State,
     cmd: &crate::command::Command,
@@ -124,6 +140,15 @@ pub(crate) fn queries(
     }
     if intake::is_intake_command(cmd) {
         return intake::queries(state, cmd, ctx);
+    }
+    if score::is_score_command(cmd) {
+        return score::queries(state, cmd, ctx);
+    }
+    if stage2::is_stage2_command(cmd) {
+        return stage2::queries(state, cmd, ctx);
+    }
+    if deferral::is_deferral_command(cmd) {
+        return deferral::queries(state, cmd, ctx);
     }
     Err(crate::refusal::Refusal::not_implemented())
 }
@@ -139,8 +164,6 @@ const fn is_draft_command(cmd: &crate::command::Command) -> bool {
 }
 
 /// The records of the proposal lifecycle commands.
-///
-/// Declared by W1c as a stub. Lane L-LIFE completes it.
 pub(crate) fn decide(
     state: &crate::state::State,
     cmd: &crate::command::Command,
@@ -153,43 +176,54 @@ pub(crate) fn decide(
     if intake::is_intake_command(cmd) {
         return intake::decide(state, cmd, ctx, answers);
     }
+    if score::is_score_command(cmd) {
+        return score::decide(state, cmd, ctx, answers);
+    }
+    if stage2::is_stage2_command(cmd) {
+        return stage2::decide(state, cmd, ctx, answers);
+    }
+    if deferral::is_deferral_command(cmd) {
+        return deferral::decide(state, cmd, ctx);
+    }
     Err(crate::refusal::Refusal::not_implemented())
 }
 
-/// Folds a proposal lifecycle record.
-///
-/// Declared by W1c as a stub. Lane L-LIFE completes it.
+/// Folds a proposal lifecycle record. A transition is folded by `intake`,
+/// then `life` keeps the stage rounds in step with it.
 pub(crate) fn apply(
     state: &mut crate::state::State,
     seq: fstp_ledger::Seq,
     at: crate::time::Timestamp,
     record: &crate::record::Record,
 ) -> Result<(), crate::engine::FoldError> {
-    let _ = (seq, at);
-    if matches!(record, crate::record::Record::ProposalCreated { .. }) {
-        return draft::apply(state, record);
+    use crate::record::Record;
+    match record {
+        Record::ProposalCreated { .. } => draft::apply(state, record),
+        Record::Transitioned(t) => {
+            intake::apply(state, record)?;
+            life::on_transition(state, t, at)
+        }
+        Record::ScoreRecorded(s) => score::apply_score(state, seq, s),
+        Record::ScoreVoided(v) => score::apply_void(state, v.key),
+        _ if intake::is_intake_record(record) => intake::apply(state, record),
+        _ if stage2::is_stage2_record(record) => stage2::apply(state, record),
+        _ if deferral::is_deferral_record(record) => deferral::apply(state, record),
+        _ => Err(crate::engine::FoldError::Inconsistent),
     }
-    if intake::is_intake_record(record) {
-        return intake::apply(state, record);
-    }
-    Err(crate::engine::FoldError::NotImplemented)
 }
 
-/// The System commands of this lane that are enabled at `now` (design section 3.6).
-///
-/// Declared by W1c as a stub. Lane L-LIFE completes it.
+/// The System commands of this lane that are enabled at `now` (design
+/// section 3.6): `ExpireStage2` and `ReEnter`.
 pub(crate) fn due(
     state: &crate::state::State,
     now: crate::time::Timestamp,
 ) -> Vec<crate::command::Command> {
-    let _ = (state, now);
-    Vec::new()
+    deferral::due(state, now)
 }
 
 /// The vault questions this lane needs for its contribution to the batch of
 /// a command that another lane owns. It reads only the state and the command.
-///
-/// Declared by W1c as a stub that asks nothing. Lane L-LIFE completes it.
+/// The lifecycle contributes to no other lane's batch in M2.
 pub(crate) fn contribute_queries(
     state: &crate::state::State,
     cmd: &crate::command::Command,
@@ -200,10 +234,9 @@ pub(crate) fn contribute_queries(
 }
 
 /// The records this lane adds to the batch of a command that another lane
-/// owns, given the records so far (`crate::engine` module docs).
-/// Example: voiding the scores of assignments that the batch released (enforcement point 3).
-///
-/// Declared by W1c as a stub that adds nothing. Lane L-LIFE completes it.
+/// owns, given the records so far (`crate::engine` module docs). It adds
+/// none: a released assignment's scores stop counting because the quorum
+/// counts active assignments only, so no void is recorded (NOTE 3).
 pub(crate) fn contribute(
     state: &crate::state::State,
     cmd: &crate::command::Command,
@@ -216,18 +249,35 @@ pub(crate) fn contribute(
 }
 
 /// The policy whose P-77 governs a binding action of this lane through MCP
-/// (R-MC-05, `crate::engine::PolicyScope`).
-///
-/// Declared by W1c as a stub. Lane L-LIFE completes it.
+/// (R-MC-05, `crate::engine::PolicyScope`): the frozen policy of the
+/// proposal's original call.
 pub(crate) fn governing_policy(
     state: &crate::state::State,
     cmd: &crate::command::Command,
 ) -> Result<crate::engine::PolicyScope, crate::refusal::Refusal> {
+    use crate::command::Command;
     if is_draft_command(cmd) {
         return draft::governing_policy(state, cmd);
     }
     if intake::is_intake_command(cmd) {
         return intake::governing_policy(state, cmd);
     }
-    Err(crate::refusal::Refusal::not_implemented())
+    let proposal = match cmd {
+        Command::RecordScore { key, .. } | Command::CorrectScore { key, .. } => state
+            .review
+            .get(key.assignment)
+            .map(|a| a.proposal)
+            .ok_or_else(life::unknown)?,
+        Command::AskQuestion { proposal, .. }
+        | Command::RecordNoQuestions { proposal, .. }
+        | Command::AnswerQuestions { proposal, .. }
+        | Command::SubmitRevision { proposal, .. }
+        | Command::ExpireStage2 { proposal }
+        | Command::ReEnter { proposal, .. }
+        | Command::DeclineAfterConcern { proposal } => *proposal,
+        _ => return Err(crate::refusal::Refusal::not_implemented()),
+    };
+    draft::proposal_call(state, proposal)
+        .map(crate::engine::PolicyScope::Call)
+        .ok_or_else(life::unknown)
 }

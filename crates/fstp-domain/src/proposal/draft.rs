@@ -49,6 +49,12 @@ impl Drafts {
             proposals: BTreeMap::new(),
         }
     }
+
+    /// The created proposal `proposal`. Lane L-LIFE reads it through the
+    /// quorum's view of the store (`crate::scoring::ScoreFacts`).
+    pub(crate) fn get(&self, proposal: ProposalId) -> Option<&Draft> {
+        self.proposals.get(&proposal)
+    }
 }
 
 /// The created proposal `proposal`.

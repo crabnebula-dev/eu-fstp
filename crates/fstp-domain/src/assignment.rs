@@ -58,7 +58,13 @@
 //!   held an assignment or a clearance on a proposal, when the batch voids
 //!   a Receiving binding of that proposal under I-06 and the vault answers
 //!   that the two accounts share a verified identity (R-CF-04, Identity
-//!   discovery). Released assignments count, since their scores stay.
+//!   discovery). Released assignments count, since their scores stay. The
+//!   same holds when the Receiving binding was voided before, under I-04
+//!   or I-06 (added by lane L-LIFE in step W4b).
+//! - `VaultChanged` that suspends a Judging binding as a conflict of
+//!   interest releases the open assignments under it, and records a
+//!   notifiable conflict for every proposal of the programme the account
+//!   scored (R-CF-04, Identity discovery, added by lane L-LIFE in step W4b).
 //! - `AddTeamMember` and `AddGuardian` recheck every tracked pair of the
 //!   proposal against the team with the new account, and I-35 against the
 //!   new team. A positive answer records the detection and the releases
@@ -1284,7 +1290,11 @@ pub(crate) fn apply(
                     .assignments
                     .get_mut(&id)
                     .ok_or(FoldError::UnknownEntity)?;
-                if !declaration_open(a.status, d.conflicted) {
+                // A conflicted declaration on a released assignment is still a
+                // conflict fact for the account on the proposal, so the
+                // structural fold takes it. `DeclareConflict` refuses it.
+                let late_conflict = d.conflicted && !a.unreleased();
+                if !declaration_open(a.status, d.conflicted) && !late_conflict {
                     return Err(FoldError::Inconsistent);
                 }
                 let pair = (a.reviewer, a.proposal);
@@ -1458,17 +1468,19 @@ struct IdentityCheck {
 }
 
 /// The identity questions of a `VaultChanged` that lists `changed`: one
-/// per Receiving account that is not voided and per account that judged
-/// its proposal, when either changed. Lane L-SOD voids a Receiving binding
-/// under I-06 only when its account or a candidate changed, so the
-/// questions cover every discovery the batch can record.
+/// per Receiving account and per account that judged its proposal, when
+/// either changed. Lane L-SOD voids a Receiving binding under I-06 only
+/// when its account or a candidate changed, so the questions cover every
+/// discovery the batch can record. Voided Receiving bindings are asked
+/// about too, so a shared identity found after an I-04 void still gives a
+/// notifiable conflict (R-CF-04, added by lane L-LIFE in step W4b).
 fn identity_checks(state: &State, changed: &BTreeSet<AccountId>) -> Vec<IdentityCheck> {
     let subjects: BTreeSet<(AccountId, ProposalId)> = state
         .roster
         .bindings()
         .map(|(_, b)| b)
         .chain(state.roster.ended().map(|(_, e)| &e.binding))
-        .filter(|b| b.group() == Group::Receiving && !matches!(b.status, BindingStatus::Voided(_)))
+        .filter(|b| b.group() == Group::Receiving)
         .filter_map(|b| b.proposal().map(|p| (b.account, p)))
         .collect();
     let mut out = Vec::new();
@@ -1670,10 +1682,57 @@ fn voided_under_i06(state: &State, batch: &[Record]) -> BTreeSet<(AccountId, Pro
         .collect()
 }
 
+/// The account and proposal of every Receiving binding that was voided
+/// before the batch, held or ended (Identity discovery, R-CF-04).
+fn voided_before(state: &State) -> BTreeSet<(AccountId, ProposalId)> {
+    state
+        .roster
+        .bindings()
+        .map(|(_, b)| b)
+        .chain(state.roster.ended().map(|(_, e)| &e.binding))
+        .filter(|b| b.group() == Group::Receiving && b.voided())
+        .filter_map(|b| b.proposal().map(|p| (b.account, p)))
+        .collect()
+}
+
+/// The account and proposal of every score that a Judging account gave in
+/// its programme, when `batch` suspends that account's Judging binding as
+/// a conflict of interest (Identity discovery, R-CF-04). Added by lane
+/// L-LIFE in step W4b. The open assignments under the binding are released
+/// by [`binding_releases`].
+fn conflict_of_interest_scores(
+    state: &State,
+    batch: &[Record],
+) -> BTreeSet<(AccountId, ProposalId)> {
+    let mut out = BTreeSet::new();
+    for r in batch {
+        let Record::BindingSuspended(s) = r else {
+            continue;
+        };
+        let Some(b) = state.roster.binding(s.binding) else {
+            continue;
+        };
+        if s.rule != RuleRef::I06 || b.group() != Group::Judging {
+            continue;
+        }
+        for p in crate::proposal::life::scored_by(state, b.account) {
+            if programme_of(state, p).ok() == Some(b.programme) {
+                out.insert((b.account, p));
+            }
+        }
+    }
+    out
+}
+
 /// The records of the rechecks in `plan` under `answers`, at `epoch`
 /// (I-03, I-35, R-CF-02, R-CF-04): the answers used, one detection per
 /// conflicted pair, the releases, and one notification draft per proposal
 /// with a notifiable detection.
+///
+/// An identity question counts when the batch voids the subject's binding
+/// under I-06, or when the binding was voided before. The scores of a
+/// Judging account whose binding the batch suspends as a conflict of
+/// interest are notifiable too (R-CF-04).
 fn react(
     state: &State,
     plan: &Rechecks,
@@ -1682,10 +1741,12 @@ fn react(
     batch: &[Record],
 ) -> Result<Vec<Record>, Refusal> {
     let voided = voided_under_i06(state, batch);
+    let earlier = voided_before(state);
     let mut outcomes = Vec::new();
-    let mut matched: BTreeSet<(AccountId, ProposalId)> = BTreeSet::new();
+    let mut matched: BTreeSet<(AccountId, ProposalId)> = conflict_of_interest_scores(state, batch);
     for c in &plan.identity {
-        if !voided.contains(&(c.subject, c.proposal)) {
+        let pair = (c.subject, c.proposal);
+        if !voided.contains(&pair) && !earlier.contains(&pair) {
             continue;
         }
         let a = answer(answers, &c.query)?;

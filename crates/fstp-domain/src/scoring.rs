@@ -47,10 +47,10 @@
 //! State seam. The quorum reads assignments from lane L-REV and scores
 //! from lane L-LIFE through two crate-private traits, `AssignmentFacts`
 //! and `ScoreFacts`. It reads the frozen policy of a call from lane L-POL
-//! through `CallState::frozen`. Until those lanes land, the stub blocks at
-//! the end of this file refuse with `Refusal::not_implemented()` or find
-//! no policy. Each owning lane deletes its stub block from this file in
-//! the same change that lands its own impl. The blocks hold nothing else.
+//! through `CallState::frozen`. Lane L-LIFE implements `ScoreFacts` in
+//! `proposal/score.rs`. In step W4b it also replaced the two other stub
+//! blocks at the end of this file with reads of the owning lanes'
+//! accessors, since the quorum cannot run without them.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU8, NonZeroU16, NonZeroU64};
@@ -63,7 +63,7 @@ use crate::id::{AccountId, AssignmentId, CallId, CriterionId, PlanVersionId, Pro
 use crate::oracle::{Answers, Query};
 use crate::policy::{EffectiveScoreRule, FrozenPolicy};
 use crate::programme::CallState;
-use crate::proposal::{PlanOrigin, ProposalStore};
+use crate::proposal::PlanOrigin;
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::rules::ParamId;
 use crate::state::State;
@@ -864,16 +864,15 @@ pub fn effective_score_of_revisions(
 }
 
 // ---------------------------------------------------------------------------
-// Stubs for the lanes that own the state the quorum reads
+// The fact sources of the lanes that own the state the quorum reads
 // ---------------------------------------------------------------------------
 
-/// Stub block of lane L-REV. Lane L-REV implements `AssignmentFacts` on
-/// `ReviewState` in `assignment.rs` and deletes this block in the same
-/// change.
+/// The assignment facts of lane L-REV, read through the accessors that
+/// `crate::assignment` keeps for the quorum. Lane L-LIFE replaced the stub
+/// block here in step W4b, since the quorum cannot run without it.
 impl AssignmentFacts for ReviewState {
     fn assignment(&self, id: AssignmentId) -> Result<Option<AssignmentFact>, Refusal> {
-        let _ = id;
-        Err(Refusal::not_implemented())
+        Ok(self.quorum_fact(id))
     }
 
     fn active_reviewer_assignments(
@@ -881,64 +880,23 @@ impl AssignmentFacts for ReviewState {
         proposal: ProposalId,
         call: CallId,
     ) -> Result<BTreeSet<AssignmentId>, Refusal> {
-        let _ = (proposal, call);
-        Err(Refusal::not_implemented())
+        Ok(self.active_reviewers_in(proposal, call))
     }
 
     fn has_conflict_fact(&self, account: AccountId, proposal: ProposalId) -> Result<bool, Refusal> {
-        let _ = (account, proposal);
-        Err(Refusal::not_implemented())
+        Ok(self.conflict_fact(account, proposal))
     }
 }
 
-/// Stub block of lane L-LIFE. Lane L-LIFE implements `ScoreFacts` on
-/// `ProposalStore` in `proposal/` and deletes this block in the same
-/// change.
-impl ScoreFacts for ProposalStore {
-    fn governing_call(&self, proposal: ProposalId) -> Result<Option<CallId>, Refusal> {
-        let _ = proposal;
-        Err(Refusal::not_implemented())
-    }
+// Lane L-LIFE implements `ScoreFacts` on `ProposalStore` in `proposal/score.rs`.
 
-    fn current_call(&self, proposal: ProposalId) -> Result<Option<CallId>, Refusal> {
-        let _ = proposal;
-        Err(Refusal::not_implemented())
-    }
-
-    fn plan_origin(
-        &self,
-        proposal: ProposalId,
-        plan: PlanVersionId,
-    ) -> Result<Option<PlanOrigin>, Refusal> {
-        let _ = (proposal, plan);
-        Err(Refusal::not_implemented())
-    }
-
-    fn submitted_plan(&self, proposal: ProposalId) -> Result<Option<PlanVersionId>, Refusal> {
-        let _ = proposal;
-        Err(Refusal::not_implemented())
-    }
-
-    fn applicant_team(&self, proposal: ProposalId) -> Result<BTreeSet<AccountId>, Refusal> {
-        let _ = proposal;
-        Err(Refusal::not_implemented())
-    }
-
-    fn score_sheet(&self, proposal: ProposalId) -> Result<Option<&ScoreSheet>, Refusal> {
-        let _ = proposal;
-        Err(Refusal::not_implemented())
-    }
-}
-
-/// Stub block of lane L-POL. Lane L-POL defines this read in
-/// `programme.rs` over its call views and deletes this block in the same
-/// change.
+/// The read of lane L-POL over its call views. Lane L-LIFE replaced the
+/// stub block here in step W4b, since the quorum cannot run without it.
 impl CallState {
     /// The frozen policy of `call` once it is published (I-12, design
-    /// section 2.5). The stub finds none.
+    /// section 2.5).
     pub fn frozen(&self, call: CallId) -> Option<&FrozenPolicy> {
-        let _ = call;
-        None
+        self.get(call).and_then(crate::programme::CallView::frozen)
     }
 }
 
