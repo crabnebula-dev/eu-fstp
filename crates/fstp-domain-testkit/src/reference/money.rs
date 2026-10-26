@@ -87,10 +87,14 @@
 //!   minimum and no deduction can raise it; no amount can keep I-14,
 //!   because the cap headroom lies below the smallest amount still open;
 //!   the I-15 record is incomplete; or guardian consent is missing for a
-//!   minor. Test-author choice: the smallest amount still open is the
-//!   determined amount once the lead accepted or the programme manager
-//!   approved it, and the P-04 minimum before. Amount failures count with
-//!   or without an open reservation. The recorded reason
+//!   minor. The smallest amount still open is the determined amount once
+//!   the lead accepted or the programme manager approved it, and the P-04
+//!   minimum before (NOTE 9, decided 2026-10-26). A plan total above the
+//!   headroom is no failure while the P-04 minimum fits, since the lead
+//!   may propose a smaller negotiated plan. A plan total above the P-04
+//!   maximum is no failure either, for the same reason. The headroom reads
+//!   the stricter of the snapshot and the live P-05. Amount failures count
+//!   with or without an open reservation. The recorded reason
 //!   is one of the failures that hold. The batch releases an open
 //!   reservation.
 //! - `Withdraw` from NEGOTIATION releases an open reservation in the same
@@ -1328,34 +1332,53 @@ impl MoneyCx<'_> {
             })
     }
 
-    /// The granted amounts a `DetermineAmount` of `p` can still reach, in
-    /// cents, before the P-04 check, where `total` is the effective plan
-    /// total. Once the lead accepted or the programme manager approved,
-    /// only the determined amount is left. Before, they are the totals of
-    /// the effective plan and of every negotiated plan of `p` that a
-    /// deduction can reach, that is at most `total` (design 2.11, R-NG-03).
-    /// Only negotiated plans already recorded count. That mirrors the
-    /// interim reading in the `fstp_domain::grant` module doc, open for Daniel.
-    fn reachable(&self, p: ProposalId, total: i64) -> Vec<i64> {
-        let Some(q) = self.money.proposals.get(&p) else {
-            return Vec::new();
-        };
-        if q.accepted.is_some() || q.approved.is_some() {
-            return q
-                .determined
-                .as_ref()
-                .map(|d| d.granted)
-                .into_iter()
-                .collect();
+    /// The determined amount of `p` in cents once it is locked: the lead
+    /// accepted it or the programme manager approved it. A determination
+    /// after either is refused, so no other amount stays open (R-NG-03).
+    pub fn locked(&self, p: ProposalId) -> Option<i64> {
+        let q = self.money.proposals.get(&p)?;
+        if q.accepted.is_none() && q.approved.is_none() {
+            return None;
         }
-        let negotiated = self
-            .money
-            .plans
-            .values()
-            .filter(|m| m.proposal == p && m.origin == PlanOrigin::Negotiated)
-            .map(MoneyPlan::total)
-            .filter(|t| *t <= total);
-        core::iter::once(total).chain(negotiated).collect()
+        q.determined.as_ref().map(|d| d.granted)
+    }
+
+    /// The NOTE 9 amount failure of `p`, if any (decided 2026-10-26).
+    ///
+    /// Once the amount is locked, the locked amount decides: outside P-04
+    /// fails I-13, and above the cap headroom fails I-14. Before, the lead
+    /// may still propose a negotiated plan at any total from the P-04
+    /// minimum up to the effective plan total, and a matching deduction
+    /// grants it. A grant is never zero, since every milestone amount is
+    /// positive. So the smallest grant amount within P-04 is the P-04
+    /// minimum, or one cent when that minimum is zero. No amount within
+    /// P-04 exists only when that floor lies above the effective plan
+    /// total, or above the P-04 maximum. No amount fits the cap only when
+    /// even that floor lies above the headroom. A plan total above the
+    /// headroom is no failure while the floor fits.
+    pub fn amount_failure(&self, p: ProposalId) -> Option<NegotiationFailure> {
+        let total = self
+            .effective_plan(p)
+            .and_then(|e| self.money.plans.get(&e))
+            .map(MoneyPlan::total)?;
+        let (lo, hi) = self.money.governing(p).map(|f| (f.p04_min, f.p04_max))?;
+        let smallest = match self.locked(p) {
+            Some(amount) if lo <= amount && amount <= hi => amount,
+            Some(_) => return Some(NegotiationFailure::NoAmountWithinRange),
+            None => {
+                let floor = lo.max(1);
+                if floor > total || floor > hi {
+                    return Some(NegotiationFailure::NoAmountWithinRange);
+                }
+                floor
+            }
+        };
+        // The headroom reads the stricter of the snapshot and the live
+        // P-05 for the lead's verified identity (P-05 NOTE 7).
+        match self.headroom(p) {
+            Some(h) if smallest > h => Some(NegotiationFailure::NoAmountWithinCap),
+            _ => None,
+        }
     }
 
     /// The NOTE 9 failures that hold for `p` now.
@@ -1390,27 +1413,9 @@ impl MoneyCx<'_> {
         }
         // Amount failures count whether or not a reservation is open, since
         // a later verification can leave a reservation above the headroom
-        // (Identity discovery). NOTE 9 asks whether any amount a
-        // DetermineAmount can still reach keeps I-13 and I-14.
-        let total = self
-            .effective_plan(p)
-            .and_then(|e| self.money.plans.get(&e))
-            .map(MoneyPlan::total);
-        let range = self.money.governing(p).map(|f| (f.p04_min, f.p04_max));
-        if let (Some(total), Some((lo, hi))) = (total, range) {
-            let in_range: Vec<i64> = self
-                .reachable(p, total)
-                .into_iter()
-                .filter(|a| lo <= *a && *a <= hi)
-                .collect();
-            if in_range.is_empty() {
-                out.insert(NegotiationFailure::NoAmountWithinRange);
-            } else if let Some(h) = self.headroom(p)
-                && in_range.iter().all(|a| *a > h)
-            {
-                out.insert(NegotiationFailure::NoAmountWithinCap);
-            }
-        }
+        // (Identity discovery). NOTE 9 asks whether any amount within P-04
+        // fits the recipient's remaining room (decided 2026-10-26).
+        out.extend(self.amount_failure(p));
         if !self.money.repeat_clear(self.truth, q.lead, p) {
             out.insert(NegotiationFailure::RepeatRecordIncomplete);
         }

@@ -708,9 +708,15 @@ pub fn after() -> McConfig {
     }
 }
 
-/// The state count of M-MONEY, measured on production in step W6. The
-/// references store the same count.
-pub const M_MONEY_STATES: usize = 864;
+/// The state count of M-MONEY, measured on production by lane w6-decline
+/// after the decision of 2026-10-26. That decision makes the decline of
+/// lead a for the plan total unreachable. Production stores 594 states.
+/// The references store more (`M_MONEY_REFERENCE_STATES`), because they
+/// accept the `Either` grant-fact verdicts that production refuses.
+pub const M_MONEY_STATES: usize = 594;
+/// The state count of M-MONEY on the references, measured by lane
+/// w6-decline. It is the tripwire of the `_reference` twin (design 6.1).
+pub const M_MONEY_REFERENCE_STATES: usize = 840;
 /// The state count of the M-RACE reservation part, measured on production
 /// in step W6. The references store the same count.
 pub const M_RACE_RESERVATION_STATES: usize = 1_682;
@@ -885,31 +891,94 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
             |s: &McState| declined_for(s, NegotiationFailure::NoAmountWithinCap),
         ),
         Property::reachable(
-            "NOTE 9 witness: a declined for the cap while the P-04 minimum fits the headroom",
-            declined_above_floor,
+            "NOTE 9 witness: declined for the cap while even the P-04 minimum is above the headroom",
+            declined_below_floor,
+        ),
+        Property::transition_with(
+            "NOTE 9: no decline for the cap while the smallest open amount fits the headroom",
+            cap_decline_transition,
         ),
     ]
 }
 
-/// Whether lead a was declined for the cap although the P-04 minimum 2.00
-/// fits its headroom. Only the plan total 4.00 breaks the cap: P-05 was
-/// lowered to 4.00 and b holds 2.00 (NOTE 9, I-14). The witness rests on
-/// the interim reading that only recorded negotiated plans count, open for
-/// Daniel (`fstp_domain::grant` module doc).
-pub fn declined_above_floor(s: &McState) -> bool {
+/// The smallest amount still open for `p` in `s` and its cap headroom,
+/// cents. The smallest open amount is the determined amount once the lead
+/// accepted or the programme manager approved it. Before, it is the P-04
+/// minimum, or one cent when that minimum is zero, since a grant is never
+/// zero (NOTE 9, decided 2026-10-26). The headroom is the stricter of
+/// the snapshot and the live P-05, minus the other counted sums of the
+/// lead's recipient (I-14).
+pub fn smallest_and_headroom(s: &McState, p: ProposalId) -> Option<(i64, i64)> {
     let m = &s.world.money;
-    let Some(q) = m.proposals.get(&PA) else {
-        return false;
+    let q = m.proposals.get(&p)?;
+    let locked = q
+        .accepted
+        .or(q.approved)
+        .and(q.determined.as_ref().map(|d| d.granted));
+    let smallest = match locked {
+        Some(l) => l,
+        None => m.governing(p)?.p04_min.max(1),
     };
-    let floor = m.governing(PA).map(|f| f.p04_min);
-    let head = m
-        .programme_of(PA)
-        .zip(m.cap_of_call(q.call))
-        .map(|(prog, cap)| {
-            cap.saturating_sub(m.counted_for(s.world.truth(), prog, q.lead, Some(PA)))
-        });
-    q.declined == Some(NegotiationFailure::NoAmountWithinCap)
-        && matches!((floor, head), (Some(f), Some(h)) if f <= h)
+    let prog = m.programme_of(p)?;
+    let cap = m.cap_of_call(q.call)?;
+    let head = cap.saturating_sub(m.counted_for(s.world.truth(), prog, q.lead, Some(p)));
+    Some((smallest, head))
+}
+
+/// The proposals the step from `before` to `after` declined for the cap
+/// although the smallest amount still open fitted the headroom in
+/// `before`. Under NOTE 9 as decided on 2026-10-26 this never happens: a
+/// plan total above the headroom is no ground while a smaller negotiated
+/// plan could still fit. Under the old reading lead a was declined here
+/// once P-05 was lowered to 4.00 and b held 2.00.
+pub fn declined_above_floor(before: &McState, after: &McState) -> Vec<ProposalId> {
+    after
+        .world
+        .money
+        .proposals
+        .iter()
+        .filter(|(id, q)| {
+            q.declined == Some(NegotiationFailure::NoAmountWithinCap)
+                && before
+                    .world
+                    .money
+                    .proposals
+                    .get(id)
+                    .is_some_and(|b| b.declined.is_none())
+        })
+        .map(|(id, _)| *id)
+        .filter(|id| smallest_and_headroom(before, *id).is_none_or(|(sm, h)| sm <= h))
+        .collect()
+}
+
+/// The NOTE 9 cap decline transition: [`declined_above_floor`] is empty.
+pub fn cap_decline_transition(
+    before: &McState,
+    _a: &McAction,
+    after: &McState,
+) -> Result<(), String> {
+    let wrong = declined_above_floor(before, after);
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "NOTE 9: {wrong:?} declined for the cap while the smallest open amount fitted the headroom"
+        ))
+    }
+}
+
+/// Whether some proposal was declined for the cap with its amount still
+/// open and the P-04 minimum above its headroom. In M-MONEY that is b once
+/// a holds 4.00 or 3.00 and P-05 is lowered to 4.00 (NOTE 9, I-14). The
+/// decline changes neither the floor nor the headroom of the declined
+/// proposal, so the state after it shows them as they were.
+pub fn declined_below_floor(s: &McState) -> bool {
+    s.world.money.proposals.iter().any(|(id, q)| {
+        q.declined == Some(NegotiationFailure::NoAmountWithinCap)
+            && q.accepted.is_none()
+            && q.approved.is_none()
+            && smallest_and_headroom(s, *id).is_some_and(|(sm, h)| sm > h)
+    })
 }
 
 /// The M-RACE reservation properties.

@@ -195,20 +195,6 @@ pub(crate) fn plan(state: &State, plan: PlanVersionId) -> Option<&Plan> {
     state.proposals.intake.plans.get(&plan)
 }
 
-/// Every plan version of `proposal`, in id order.
-pub(crate) fn plans_of(
-    state: &State,
-    proposal: ProposalId,
-) -> impl Iterator<Item = (PlanVersionId, &Plan)> + '_ {
-    state
-        .proposals
-        .intake
-        .plans
-        .iter()
-        .filter(move |(_, p)| p.proposal == proposal)
-        .map(|(id, p)| (*id, p))
-}
-
 /// The submission of `proposal`, once submitted.
 #[allow(dead_code, reason = "lanes L-LIFE and L-MONEY read submissions")]
 pub(crate) fn submission(state: &State, proposal: ProposalId) -> Option<&Submission> {
