@@ -47,23 +47,15 @@
 //! - `DeclineNegotiation`, by the programme manager (NOTE 13), when one of
 //!   the NOTE 9 failures holds. The reason recorded is the first failure
 //!   that holds, in declaration order. The batch releases the reservation.
-//!   The amount failures look at the amounts a determination can still
-//!   reach. That is the determined amount once the lead accepted or the
-//!   programme manager approved it. Before, it is the total of each plan
-//!   the determination admits as agreed, at most the effective plan total.
-//!   No grant amount can keep I-13 when none of them lies within P-04. No
-//!   grant amount can keep I-14 when none of those within P-04 fits the
-//!   cap headroom.
-//! - Interim reading, open for Daniel (step W5 integration): "no grant
-//!   amount can keep I-13 and I-14" counts only negotiated plans already
-//!   recorded. In NEGOTIATION the lead may still record a negotiated plan
-//!   at a lower total, which a matching deduction could grant. This
-//!   reading does not count such a plan. The other reading would make
-//!   every amount from the P-04 minimum up to the effective plan total
-//!   reachable. The range failure would then mean an effective plan total
-//!   below the P-04 minimum. The cap failure would mean a headroom below
-//!   the P-04 minimum. The money reference (`reachable`) and the M-MONEY
-//!   witnesses follow the reading chosen here.
+//!   The amount failures look at the smallest amount still open (NOTE 9,
+//!   decided 2026-10-26). That is the determined amount once the lead
+//!   accepted or the programme manager approved it, since it is then
+//!   locked. Before, it is the P-04 minimum, since the lead may still
+//!   propose a smaller negotiated plan. No grant amount can keep I-13 when
+//!   that amount lies outside P-04 or above the effective plan total. No
+//!   grant amount can keep I-14 when it does not fit the recipient's room
+//!   under the stricter of the snapshot and live P-05. A plan total above
+//!   the cap is no ground for declining while the P-04 minimum fits.
 //! - `StartExecution`, by the System, at the earliest milestone start date
 //!   of the effective contract version (NOTE 11).
 //! - `Terminate`, by the programme manager, in GRANTED or IN_EXECUTION,
@@ -1612,16 +1604,31 @@ struct DeclinePlan {
     reserved: Option<NonNegAmount>,
 }
 
-/// The granted amounts a `DetermineAmount` of `proposal` can still reach,
-/// before the P-04 check, or `None` without an effective plan total. Once
-/// the lead accepted or the programme manager approved, only the
-/// determined amount is left, since it is locked. Before, they are the
-/// totals of the plans [`agreed_plan_ok`] admits, each at most the
-/// effective plan total, since a deduction is never negative. Those are
-/// the effective plan total and the total of every negotiated plan of the
-/// proposal that does not exceed it (R-NG-03, design 2.11).
-fn reachable_amounts(state: &State, proposal: ProposalId) -> Option<Vec<NonNegAmount>> {
-    let total = effective_plan(state, proposal).and_then(|e| plan_total(state, e))?;
+/// The smallest grant amount of `proposal` still open within P-04, or
+/// `None` without an effective plan total (NOTE 9, decided 2026-10-26).
+/// The inner `None` means that no amount within P-04 can exist at all.
+///
+/// Once the lead accepted or the programme manager approved, the
+/// determined amount is locked, so it alone is open. It counts only
+/// within P-04 as frozen for the governing call. Before, the lead may
+/// still propose a negotiated plan at any total from the P-04 minimum up
+/// to the effective plan total, and a matching deduction grants it
+/// (R-NG-03, design 2.11). A grant is never zero, though. The agreed plan
+/// total equals the granted amount, and every milestone carries a positive
+/// amount. So the smallest grant amount within P-04 is the P-04 minimum,
+/// or one minor unit when that minimum is zero (NOTE 9, row "no grant
+/// amount can keep I-13 and I-14"). It is open exactly when it lies
+/// within P-04 and at most at the effective plan total. A plan total
+/// above the P-04 maximum or above the cap headroom is no failure while
+/// that smallest amount fits.
+fn reachable_amounts(
+    state: &State,
+    proposal: ProposalId,
+) -> Result<Option<Option<NonNegAmount>>, Refusal> {
+    let Some(total) = effective_plan(state, proposal).and_then(|e| plan_total(state, e)) else {
+        return Ok(None);
+    };
+    let p04 = crate::assignment::governing_values(state, proposal)?.p04;
     let locked = state
         .money
         .negotiations
@@ -1629,21 +1636,29 @@ fn reachable_amounts(state: &State, proposal: ProposalId) -> Option<Vec<NonNegAm
         .filter(|n| n.accepted.is_some() || n.approved.is_some())
         .and_then(|n| n.determined)
         .map(|d| d.granted);
-    if let Some(l) = locked {
-        return Some(vec![l]);
-    }
-    let mut out = vec![total];
-    for (id, p) in crate::proposal::intake::plans_of(state, proposal) {
-        if p.origin != PlanOrigin::Negotiated || !agreed_plan_ok(state, proposal, id) {
-            continue;
+    let smallest = match locked {
+        Some(l) => p04.contains(l).map_err(|_| invalid())?.then_some(l),
+        None => {
+            let floor = smallest_grant(p04.min())?;
+            (p04.contains(floor).map_err(|_| invalid())?
+                && at_most(floor.amount(), total.amount())?)
+            .then_some(floor)
         }
-        if let Some(t) = crate::proposal::intake::plan_total(p)
-            && matches!(at_most(t.amount(), total.amount()), Ok(true))
-        {
-            out.push(t);
-        }
+    };
+    Ok(Some(smallest))
+}
+
+/// The smallest grant amount at or above `min`: `min` itself, or one
+/// minor unit of its currency when `min` is zero. A granted amount is the
+/// total of a plan with at least one positive milestone, so it is never
+/// zero (R-NG-03, design 2.11).
+fn smallest_grant(min: NonNegAmount) -> Result<NonNegAmount, Refusal> {
+    if !is_zero(min) {
+        return Ok(min);
     }
-    Some(out)
+    Amount::from_minor(1, min.amount().currency())
+        .and_then(NonNegAmount::new)
+        .map_err(|_| invalid())
 }
 
 fn check_decline(state: &State, cmd: &Command, ctx: &Ctx) -> Result<DeclinePlan, Refusal> {
@@ -1659,26 +1674,15 @@ fn check_decline(state: &State, cmd: &Command, ctx: &Ctx) -> Result<DeclinePlan,
     let reserved = state.money.reserved(*proposal);
     let mut range_failed = false;
     let mut cap = None;
-    if let Some(candidates) = reachable_amounts(state, *proposal) {
-        let p04 = crate::assignment::governing_values(state, *proposal)?.p04;
-        let mut lowest: Option<NonNegAmount> = None;
-        for c in candidates {
-            if !p04.contains(c).map_err(|_| invalid())? {
-                continue;
-            }
-            lowest = match lowest {
-                Some(l) if at_most(l.amount(), c.amount())? => Some(l),
-                _ => Some(c),
-            };
-        }
-        match lowest {
-            // The cap holds for some reachable amount within P-04 exactly
-            // when it holds for the smallest one. A vault change can leave
-            // even an open reservation above the headroom (Identity
-            // discovery).
-            Some(l) => cap = Some(cap_query(state, *proposal, l)?),
-            None => range_failed = true,
-        }
+    match reachable_amounts(state, *proposal)? {
+        // Some amount within P-04 fits the room exactly when the smallest
+        // open one does. The vault answers for the stricter of the
+        // snapshot and live P-05, for the lead's verified identity. A
+        // vault change can leave even an open reservation above the room
+        // (Identity discovery).
+        Some(Some(smallest)) => cap = Some(cap_query(state, *proposal, smallest)?),
+        Some(None) => range_failed = true,
+        None => {}
     }
     let (repeat_local, repeat) = repeat_check(state, s.lead, *proposal);
     Ok(DeclinePlan {

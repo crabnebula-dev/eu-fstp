@@ -7,11 +7,13 @@
 //! manager records the decline, never the System, the lead or a reviewer.
 //! A proposal with no listed failure cannot be declined: with b at 2.00,
 //! a's 4.00 still leaves b's whole plan within the cap. The cap failure
-//! appears once a holds 4.00 and P-05 is lowered to 4.00. It also appears
-//! for b's 3.00 under P-05 = 6.00, although the P-04 minimum fits. No
-//! negotiated plan of b is recorded, so the plan total is the only amount
-//! b can reach. Counting only recorded plans is an interim reading, open
-//! for Daniel (`fstp_domain::grant` module doc).
+//! appears once a holds 4.00 and P-05 is lowered to 4.00, since even the
+//! P-04 minimum 2.00 then lies above b's headroom.
+//!
+//! NOTE 9 as decided on 2026-10-26: b's plan 3.00 above its headroom 2.00
+//! is no ground for declining while the P-04 minimum 2.00 fits, because
+//! the lead may still propose a smaller negotiated plan. That story used
+//! to expect a decline for the cap. It now expects the decline refused.
 //! DECLINED is terminal, and the decline releases the open reservation.
 //!
 //! Identity discovery can also leave an open reservation above the cap.
@@ -104,13 +106,14 @@ fn plan_total_breaks_the_cap(b: Backend) {
     let mut s = story(b);
     s.determine(PA, 1, &[])
         .unwrap_or_else(|e| panic!("a reserves 4.00: {e}"));
-    let recs = s
-        .run(&decline_negotiation(Actor::Account(STAFF_PM), PB))
+    s.refused(&decline_negotiation(Actor::Account(STAFF_PM), PB))
         .unwrap_or_else(|e| {
-            panic!("NOTE 9: b can reach only its plan 3.00, above the headroom 2.00: {e}")
+            panic!(
+                "NOTE 9 (decided 2026-10-26): b's plan 3.00 lies above the headroom 2.00, \
+                 but the P-04 minimum 2.00 fits, so the decline is refused: {e}"
+            )
         });
-    assert_eq!(reason(&recs), Some(NegotiationFailure::NoAmountWithinCap));
-    assert_eq!(s.state(PB), Some(StateTag::Declined));
+    assert_eq!(s.state(PB), Some(StateTag::Negotiation));
     s.invariants().unwrap_or_else(|e| panic!("{e}"));
 }
 
@@ -195,10 +198,11 @@ fn r_ng_negotiation_declined_when_no_amount_fits_the_cap() {
     cap_failure(Backend::Production);
 }
 
-/// NOTE 9, I-14, R-NG-03: a plan total above the cap headroom is a decline
-/// reason even when the P-04 minimum fits, since a deduction is refused in M2.
+/// NOTE 9 (decided 2026-10-26), I-14, R-NG-03: a plan total above the cap
+/// headroom is no decline reason while the P-04 minimum fits, since the
+/// lead may still propose a smaller negotiated plan.
 #[test]
-fn r_ng_negotiation_declined_when_only_the_plan_total_breaks_the_cap() {
+fn r_ng_negotiation_not_declined_when_only_the_plan_total_breaks_the_cap() {
     plan_total_breaks_the_cap(Backend::Production);
 }
 

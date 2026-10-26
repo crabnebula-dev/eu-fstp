@@ -1,13 +1,16 @@
 //! Review reproducers for lane L-MONEY, round 2 (adversarial verifier).
 //!
-//! Each test drives the two-way money story from genesis and fails
-//! against the current code.
+//! Each test drives the two-way money story from genesis. Both tests
+//! first expected a decline that NOTE 9 now forbids. Lane w6-decline
+//! inverted them after the decision of 2026-10-26 (state-machine.md
+//! NOTE 9). A plan total above the cap or above P-04 is no ground for
+//! declining while the P-04 minimum fits, since the lead may propose a
+//! smaller negotiated plan. The full stories that reach GRANTED on such a
+//! plan live in `r_ng_decline_only_when_no_p04_amount_fits.rs`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain::command::Actor;
-use fstp_domain::decision::NegotiationFailure;
-use fstp_domain::record::Record;
 use fstp_domain::rules::StateTag;
 use fstp_domain_testkit::r#gen::money::{
     MoneySetup, MoneyStory, PA, PB, amount_decision, decline_negotiation, determine,
@@ -15,21 +18,12 @@ use fstp_domain_testkit::r#gen::money::{
 use fstp_domain_testkit::r#gen::review::{R1, plan_of};
 use fstp_domain_testkit::r#gen::roster::{Backend, STAFF_PM};
 
-/// The decline reason of `recs`, if any.
-fn reason(recs: &[Record]) -> Option<NegotiationFailure> {
-    recs.iter().find_map(|r| match r {
-        Record::NegotiationDeclined { reason, .. } => Some(*reason),
-        _ => None,
-    })
-}
-
-/// NOTE 9, I-14, R-NG-03: a non-zero deduction is refused in M2, so the
-/// only amount a determination can reach is the effective plan total.
-/// Leads a and b share one identity, P-04 = [2.00, 4.00], P-05 = 6.00.
-/// a is granted 4.00. b's plan total is 4.00, and 4.00 + 4.00 > 6.00, so
-/// every DetermineAmount of b is refused under I-14. The decline still
-/// tests the P-04 minimum 2.00, which fits, so it finds no failure and is
-/// refused. b can reach neither GRANTED nor DECLINED.
+/// NOTE 9, I-14, R-NG-03: leads a and b share one identity, P-04 =
+/// [2.00, 4.00], P-05 = 6.00. a is granted 4.00. b's plan total is 4.00,
+/// and 4.00 + 4.00 > 6.00, so no determination on b's recorded plan
+/// passes I-14. The P-04 minimum 2.00 fits b's room 2.00, so a smaller
+/// negotiated plan could still fit. The decline is refused and b stays in
+/// NEGOTIATION.
 #[test]
 fn review_decline_when_only_the_plan_total_exceeds_the_cap() {
     let mut setup = MoneySetup::sybil([400, 400, 100]);
@@ -45,24 +39,22 @@ fn review_decline_when_only_the_plan_total_exceeds_the_cap() {
             "a determination of b with deductions {ded:?} was accepted: {got:?}"
         );
     }
-    let recs = s
+    let got = s
         .attempt(&decline_negotiation(Actor::Account(STAFF_PM), PB))
-        .unwrap_or_else(|e| panic!("{e}"))
-        .unwrap_or_else(|| {
-            panic!(
-                "NOTE 9: no DetermineAmount of b can pass I-13 and I-14, yet the programme \
-                 manager's decline is refused, so b is stuck in NEGOTIATION"
-            )
-        });
-    assert_eq!(reason(&recs), Some(NegotiationFailure::NoAmountWithinCap));
-    assert_eq!(s.state(PB), Some(StateTag::Declined));
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        got.is_none(),
+        "NOTE 9 (decided 2026-10-26): the P-04 minimum 2.00 fits b's room 2.00, so the \
+         decline is refused, yet it was accepted: {got:?}"
+    );
+    assert_eq!(s.state(PB), Some(StateTag::Negotiation));
 }
 
-/// NOTE 9, I-13, R-NG-03: with deductions refused, a plan total above the
-/// P-04 maximum can never be granted. a's plan total is 5.00 under P-04 =
-/// [2.00, 4.00]. Every DetermineAmount is refused under I-13, yet the
-/// decline reports no range failure, because it only checks the plan
-/// total against the P-04 minimum.
+/// NOTE 9, I-13, R-NG-03: a's plan total is 5.00 under P-04 = [2.00,
+/// 4.00], so no determination on a's recorded plan passes I-13. The P-04
+/// minimum 2.00 lies below the plan total, so an amount within P-04 can
+/// still exist on a smaller negotiated plan. The decline is refused and a
+/// stays in NEGOTIATION.
 #[test]
 fn review_decline_when_the_plan_total_is_above_p04() {
     let mut setup = MoneySetup::sybil([500, 100, 100]);
@@ -76,15 +68,13 @@ fn review_decline_when_the_plan_total_is_above_p04() {
             "a determination of a with deductions {ded:?} was accepted: {got:?}"
         );
     }
-    let recs = s
+    let got = s
         .attempt(&decline_negotiation(Actor::Account(STAFF_PM), PA))
-        .unwrap_or_else(|e| panic!("{e}"))
-        .unwrap_or_else(|| {
-            panic!(
-                "NOTE 9: no DetermineAmount of a can pass I-13, yet the programme manager's \
-                 decline is refused, so a is stuck in NEGOTIATION"
-            )
-        });
-    assert_eq!(reason(&recs), Some(NegotiationFailure::NoAmountWithinRange));
-    assert_eq!(s.state(PA), Some(StateTag::Declined));
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        got.is_none(),
+        "NOTE 9 (decided 2026-10-26): an amount within P-04 can still exist on a smaller \
+         negotiated plan, so the decline is refused, yet it was accepted: {got:?}"
+    );
+    assert_eq!(s.state(PA), Some(StateTag::Negotiation));
 }
