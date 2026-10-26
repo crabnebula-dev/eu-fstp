@@ -245,7 +245,8 @@ impl Model for PayMc {
     }
 }
 
-/// The measured state count of M-PAY, on the references.
+/// The state count of M-PAY, measured on production in step W6. The
+/// references store the same count.
 pub const M_PAY_STATES: usize = 162;
 
 /// I-05 and SoD-04 on the payment view.

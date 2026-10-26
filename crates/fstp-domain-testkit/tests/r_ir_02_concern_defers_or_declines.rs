@@ -25,17 +25,13 @@ use fstp_domain_testkit::mc::life_model::{
     irc_review, life_judges, reenter, story_setup,
 };
 use fstp_domain_testkit::mc::lifecycle_model::{
-    M_LIFECYCLE_STATES, lifecycle_config, r_ir_02_properties,
+    M_LIFECYCLE_REFERENCE_STATES, M_LIFECYCLE_STATES, lifecycle_config, r_ir_02_properties,
 };
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model = LifeModel::new(lifecycle_config(), backend)
         .unwrap_or_else(|e| panic!("M-LIFECYCLE start from genesis: {e}"));
-    if let Err(e) = check_exhaustive(
-        &model,
-        &r_ir_02_properties::<LifeModel>(),
-        M_LIFECYCLE_STATES,
-    ) {
+    if let Err(e) = check_exhaustive(&model, &r_ir_02_properties::<LifeModel>(), measured) {
         panic!("{e}");
     }
 }
@@ -147,13 +143,13 @@ fn r_ir_02_concern_with_future_call_defers_on(b: Backend) {
 /// R-IR-02, NOTE 7: on M-LIFECYCLE every concern is sent, and defers or awaits the decline.
 #[test]
 fn r_ir_02_concern_defers_or_declines() {
-    model(Backend::Production);
+    model(Backend::Production, M_LIFECYCLE_STATES);
 }
 
 /// R-IR-02: the model passes on the references alone.
 #[test]
 fn r_ir_02_concern_defers_or_declines_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_LIFECYCLE_REFERENCE_STATES);
 }
 
 /// R-IR-02, NOTE 7, NOTE 13: a concern without a later call leaves the

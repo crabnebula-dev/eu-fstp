@@ -22,17 +22,13 @@ use fstp_domain_testkit::mc::life_model::{
     life_judges, story_setup,
 };
 use fstp_domain_testkit::mc::lifecycle_model::{
-    M_LIFECYCLE_STATES, lifecycle_config, r_ev_01_properties,
+    M_LIFECYCLE_REFERENCE_STATES, M_LIFECYCLE_STATES, lifecycle_config, r_ev_01_properties,
 };
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model = LifeModel::new(lifecycle_config(), backend)
         .unwrap_or_else(|e| panic!("M-LIFECYCLE start from genesis: {e}"));
-    if let Err(e) = check_exhaustive(
-        &model,
-        &r_ev_01_properties::<LifeModel>(),
-        M_LIFECYCLE_STATES,
-    ) {
+    if let Err(e) = check_exhaustive(&model, &r_ev_01_properties::<LifeModel>(), measured) {
         panic!("{e}");
     }
 }
@@ -145,13 +141,13 @@ fn r_ev_01_ineligible_gets_no_further_review_on(b: Backend) {
 /// no further assignment or score.
 #[test]
 fn r_ev_01_ineligible_has_no_successor() {
-    model(Backend::Production);
+    model(Backend::Production, M_LIFECYCLE_STATES);
 }
 
 /// R-EV-01: the model passes on the references alone.
 #[test]
 fn r_ev_01_ineligible_has_no_successor_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_LIFECYCLE_REFERENCE_STATES);
 }
 
 /// R-EV-01, I-03: the knock-out record names every P-09 criterion once, a

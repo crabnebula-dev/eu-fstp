@@ -33,7 +33,7 @@ fn lifecycle_after_negotiation_states_reachable() {
     model(Backend::Production);
 }
 
-/// Conformance: the after-negotiation model passes on the references alone.
+/// Conformance, R-AU-01, I-64: the after-negotiation model passes on the references alone.
 #[test]
 fn lifecycle_after_negotiation_states_reachable_reference() {
     model(Backend::Reference);

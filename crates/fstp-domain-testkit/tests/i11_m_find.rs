@@ -16,18 +16,20 @@
 //! re-entered call 2 (`SPEC/02-domain/state-machine.md` NOTE 8).
 //!
 //! The production run is exhaustive under a tripwire at twice the count
-//! measured on the references. The `_reference` twin runs the same model
+//! measured on production (step W6). The `_reference` twin runs the same model
 //! on the references alone and must pass now.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
-use fstp_domain_testkit::mc::findings_model::{M_FIND_STATES, m_find_model, m_find_properties};
+use fstp_domain_testkit::mc::findings_model::{
+    M_FIND_REFERENCE_STATES, M_FIND_STATES, m_find_model, m_find_properties,
+};
 
-fn run(backend: Backend) {
+fn run(backend: Backend, measured: usize) {
     let model = m_find_model(backend).unwrap_or_else(|e| panic!("M-FIND start from genesis: {e}"));
-    if let Err(e) = check_exhaustive(&model, &m_find_properties(&model), M_FIND_STATES) {
+    if let Err(e) = check_exhaustive(&model, &m_find_properties(&model), measured) {
         panic!("{e}");
     }
 }
@@ -35,11 +37,11 @@ fn run(backend: Backend) {
 /// I-11, NOTE 8, I-10: M-FIND through the engine's finding decider.
 #[test]
 fn i11_m_find() {
-    run(Backend::Production);
+    run(Backend::Production, M_FIND_STATES);
 }
 
 /// I-11, NOTE 8: M-FIND passes on the references alone.
 #[test]
 fn i11_m_find_reference() {
-    run(Backend::Reference);
+    run(Backend::Reference, M_FIND_REFERENCE_STATES);
 }

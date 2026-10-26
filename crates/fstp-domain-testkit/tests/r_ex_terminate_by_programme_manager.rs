@@ -68,13 +68,13 @@ fn r_ex_terminate_from_granted_by_programme_manager() {
     story(Backend::Production, false);
 }
 
-/// IN_EXECUTION to TERMINATED by the programme manager with a reason.
+/// Q18: IN_EXECUTION to TERMINATED by the programme manager with a reason.
 #[test]
 fn r_ex_terminate_from_in_execution_by_programme_manager() {
     story(Backend::Production, true);
 }
 
-/// The termination stories pass on the references alone.
+/// Q18: the termination stories pass on the references alone.
 #[test]
 fn r_ex_terminate_stories_pass_on_the_reference() {
     story(Backend::Reference, false);

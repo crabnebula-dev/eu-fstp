@@ -26,10 +26,10 @@
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::conflict_model::{
-    ConflictConfig, ConflictModel, M_CONFLICT_HAVOC_STATES, M_CONFLICT_STAGED_STATES,
-    M_CONFLICT_TRUTHFUL_STATES, M_CONFLICT_TWO_PROPOSAL_STATES, havoc_config, havoc_properties,
-    staged_config, staged_properties, truthful_config, truthful_properties, two_proposal_config,
-    two_proposal_properties,
+    ConflictConfig, ConflictModel, M_CONFLICT_HAVOC_STATES, M_CONFLICT_STAGED_REFERENCE_STATES,
+    M_CONFLICT_STAGED_STATES, M_CONFLICT_TRUTHFUL_STATES, M_CONFLICT_TWO_PROPOSAL_STATES,
+    havoc_config, havoc_properties, staged_config, staged_properties, truthful_config,
+    truthful_properties, two_proposal_config, two_proposal_properties,
 };
 use fstp_mc::Property;
 
@@ -73,12 +73,12 @@ fn two_proposals(backend: Backend) {
     );
 }
 
-fn staged(backend: Backend) {
+fn staged(backend: Backend, measured: usize) {
     run(
         staged_config(),
         backend,
         &staged_properties::<ConflictModel>(),
-        M_CONFLICT_STAGED_STATES,
+        measured,
     );
 }
 
@@ -128,11 +128,11 @@ fn i03_m_conflict_two_proposals_reference() {
 /// predicate matches the reference in RANKED.
 #[test]
 fn i03_m_conflict_staged() {
-    staged(Backend::Production);
+    staged(Backend::Production, M_CONFLICT_STAGED_STATES);
 }
 
 /// I-03: the staged instance passes on the references alone.
 #[test]
 fn i03_m_conflict_staged_reference() {
-    staged(Backend::Reference);
+    staged(Backend::Reference, M_CONFLICT_STAGED_REFERENCE_STATES);
 }

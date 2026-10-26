@@ -71,8 +71,8 @@ pub fn excl_setup() -> SodSetup {
     s
 }
 
-/// The state count of M-EXCL, measured on the reference backend in step
-/// W3b. Step W6 writes the production count here.
+/// The state count of M-EXCL, measured on the production backend in step
+/// W6. The reference backend stores the same count.
 pub const M_EXCL_STATES: usize = 470;
 
 /// An M-EXCL action.

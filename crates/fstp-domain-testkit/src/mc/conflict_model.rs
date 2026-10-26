@@ -569,10 +569,17 @@ impl ConflictModel {
 // Instances
 // ---------------------------------------------------------------------------
 
-/// The state counts of the M-CONFLICT instances, measured in step W4a. Each
-/// run stops at twice its count, so growth fails visibly. The counts are
-/// the larger of the two backends. They differ only for the staged
-/// instance, whose production projection also keeps the ranking summaries.
+/// The state counts of the M-CONFLICT instances, measured in step W4a and
+/// confirmed on production in step W6. Each run stops at twice its count,
+/// so growth fails visibly. The counts are the production counts. The
+/// backends differ only for the staged instance, where the references
+/// store 9_618. There, two command orders can reach equal reference views
+/// but different production projections. The references also take the
+/// reads they leave unjudged as accepted. In this instance production
+/// refuses each of them: coordinator reads in STAGE1 and STAGE2 under P-10
+/// "assigned reviewers only", and reads in RANKED. With the projection
+/// removed, the production states are a strict subset of the reference
+/// states (step W6 audit).
 pub const M_CONFLICT_TRUTHFUL_STATES: usize = 23_364;
 /// See [`M_CONFLICT_TRUTHFUL_STATES`].
 pub const M_CONFLICT_HAVOC_STATES: usize = 16_724;
@@ -580,6 +587,9 @@ pub const M_CONFLICT_HAVOC_STATES: usize = 16_724;
 pub const M_CONFLICT_TWO_PROPOSAL_STATES: usize = 2_702;
 /// See [`M_CONFLICT_TRUTHFUL_STATES`].
 pub const M_CONFLICT_STAGED_STATES: usize = 10_230;
+/// The state count of the staged instance on the references, the tripwire
+/// of its `_reference` twin (design 6.1).
+pub const M_CONFLICT_STAGED_REFERENCE_STATES: usize = 9_618;
 
 /// The setup of M-CONFLICT: one programme with one published call, the
 /// coordinator and R1 to R3 of organisations O1 to O3, and PR1 of L1, submitted.

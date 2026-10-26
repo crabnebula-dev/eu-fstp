@@ -46,8 +46,8 @@ pub const RACE_GRANT: BindingId = BindingId::from_raw(1_500);
 /// The proposal and binding id of b's draft.
 pub const RACE_DRAFT: u128 = 1_400;
 
-/// The state count of M-RACE with the protocol, measured on the reference
-/// backend in step W3b. Step W6 writes the production count here.
+/// The state count of M-RACE with the protocol, measured on the production
+/// backend in step W6. The reference backend stores the same count.
 pub const M_RACE_PROTOCOL_STATES: usize = 19;
 /// The state count of M-RACE without the protocol, measured likewise.
 pub const M_RACE_NO_PROTOCOL_STATES: usize = 12;
