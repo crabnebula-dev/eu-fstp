@@ -19,13 +19,23 @@
 //! at twice the count measured on the references. The `_reference` twins
 //! run the same model on the references alone and must pass now.
 //!
-//! The I-10 part of this model (findings offered beside every action)
-//! comes with lane L-FIND-B.
+//! The I-10 part (lane L-FIND-B) runs the weights (1, 1) instance with at
+//! most two `AddFinding` actions: an integrity finding that holds an
+//! injection phrase and a quality finding whose statement is a JSON
+//! command, both under call 1's pinned configuration. Each goes through
+//! the engine's finding decider. Beside every M-LIFE-S1 property it checks
+//! `transition("I-10")`: `AddFinding` leaves the core world unchanged, and
+//! every other action reaches the same core world from a state as from
+//! that state with its findings stripped. It also checks `always("I-11")`
+//! and witnesses of stored findings beside both stage 1 exits.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
+use fstp_domain_testkit::mc::findings_model::{
+    M_LIFE_S1_FINDINGS_STATES, s1_findings_model, s1_findings_properties,
+};
 use fstp_domain_testkit::mc::life_model::{
     LifeConfig, LifeModel, M_LIFE_S1_EVEN_STATES, M_LIFE_S1_WEIGHTED_STATES, s1_even,
     s1_properties, s1_weighted,
@@ -65,4 +75,29 @@ fn i07_i08_m_life_s1_reference() {
 #[test]
 fn i07_i08_m_life_s1_weighted_reference() {
     run(s1_weighted(), Backend::Reference, M_LIFE_S1_WEIGHTED_STATES);
+}
+
+fn run_findings(backend: Backend) {
+    let model = s1_findings_model(backend)
+        .unwrap_or_else(|e| panic!("M-LIFE-S1 with findings, start from genesis: {e}"));
+    if let Err(e) = check_exhaustive(
+        &model,
+        &s1_findings_properties(&model),
+        M_LIFE_S1_FINDINGS_STATES,
+    ) {
+        panic!("{e}");
+    }
+}
+
+/// I-10, I-11, I-07, I-08: M-LIFE-S1 with weights (1, 1) at P-02 50.00 and
+/// at most two `AddFinding` actions through the engine's finding decider.
+#[test]
+fn i10_m_life_s1_findings() {
+    run_findings(Backend::Production);
+}
+
+/// I-10, I-11: the same instance passes on the references alone.
+#[test]
+fn i10_m_life_s1_findings_reference() {
+    run_findings(Backend::Reference);
 }

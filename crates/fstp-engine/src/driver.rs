@@ -21,6 +21,10 @@
 //! After every call, accepted or not, the state equals the replay of the
 //! store, unless the store holds a log the fold refuses.
 //!
+//! A finding command skips step 2, so it never appends a core record
+//! (I-10). When it has vault questions and the vault is ahead, it is
+//! refused with `StaleFacts` instead.
+//!
 //! Readings taken where the design is silent:
 //! - Retries are bounded by [`MAX_ATTEMPTS`]. A driver that gives up still
 //!   holds the replay of the store and reports [`ExecError::Contended`].
@@ -105,7 +109,10 @@ pub trait Decider {
 /// The domain core: `fstp_domain::queries` and `decide` for core commands.
 ///
 /// A core command sees only the core part of the state, never the finding
-/// store (I-10). Finding commands go through the finding seam in the crate
+/// store (I-10). Before it, the engine refuses a time before the latest
+/// entry of either side, so the ledger stays time-monotone (design section
+/// 2.2). That check reads the time of the latest finding entry, never a
+/// finding. Finding commands go through the finding seam in the crate
 /// root, which lane L-FIND-B routes to `decide_finding`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DomainDecider;
@@ -118,7 +125,10 @@ impl Decider for DomainDecider {
         ctx: &Ctx,
     ) -> Result<Vec<Query>, Refusal> {
         match cmd {
-            Command::Core(c) => fstp_domain::queries(&state.core, c, ctx),
+            Command::Core(c) => {
+                crate::ledger_clock(state, ctx)?;
+                fstp_domain::queries(&state.core, c, ctx)
+            }
             Command::Finding(f) => crate::finding_queries(state, f, ctx),
         }
     }
@@ -131,8 +141,11 @@ impl Decider for DomainDecider {
         answers: &Answers,
     ) -> Result<Vec<Record>, Refusal> {
         match cmd {
-            Command::Core(c) => fstp_domain::decide(&state.core, c, ctx, answers)
-                .map(|records| records.into_iter().map(Record::Core).collect()),
+            Command::Core(c) => {
+                crate::ledger_clock(state, ctx)?;
+                fstp_domain::decide(&state.core, c, ctx, answers)
+                    .map(|records| records.into_iter().map(Record::Core).collect())
+            }
             Command::Finding(f) => crate::decide_finding(state, f, ctx, answers),
         }
     }
@@ -396,6 +409,9 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
         if is_reserved_command_id(ctx.command) {
             return Err(ExecError::ReservedCommandId);
         }
+        if matches!(cmd, Command::Finding(_)) {
+            return self.execute_finding(&cmd, &ctx);
+        }
         let mut progress = Progress::default();
         for _ in 0..MAX_ATTEMPTS {
             self.catch_up()?;
@@ -407,6 +423,41 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
                 Attempt::Appended(seq) => return Ok(seq),
                 Attempt::Duplicate(at) => return Err(ExecError::Duplicate { at }),
                 Attempt::Again(answered) => progress.saw(answered),
+            }
+        }
+        self.catch_up()?;
+        Err(ExecError::Contended)
+    }
+
+    /// [`Engine::execute`] for a finding command, without step 2. It never
+    /// processes `VaultChanged`, so a finding command appends only its own
+    /// finding records and never a core record (I-10). A command with vault
+    /// questions is refused with `StaleFacts` while the vault is ahead of
+    /// the state's epoch. The next core command or [`Engine::sync_vault`]
+    /// processes the change first (NOTE 3). A command without questions
+    /// never reads the vault.
+    fn execute_finding(&mut self, cmd: &Command, ctx: &Ctx) -> Result<Seq, ExecError> {
+        for _ in 0..MAX_ATTEMPTS {
+            self.catch_up()?;
+            let asks = !self
+                .decider
+                .queries(&self.state, cmd, ctx)
+                .map_err(ExecError::Refused)?
+                .is_empty();
+            if asks {
+                let vault = self
+                    .oracle
+                    .epoch()
+                    .map_err(|_| ExecError::Refused(oracle_down()))?;
+                if vault > self.state.epoch() {
+                    return Err(ExecError::Refused(stale_facts()));
+                }
+            }
+            match self.attempt(cmd, ctx)? {
+                Attempt::Appended(seq) => return Ok(seq),
+                Attempt::Duplicate(at) => return Err(ExecError::Duplicate { at }),
+                Attempt::Again(Some(_)) => return Err(ExecError::Refused(stale_facts())),
+                Attempt::Again(None) => {}
             }
         }
         self.catch_up()?;
