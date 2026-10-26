@@ -745,20 +745,14 @@ pub(crate) fn require_holder(
     }
 }
 
-/// The granted and reserved sum per account in `programme`, for the
+/// The counted sum per applicant lead account in `programme`, for the
 /// `AllRecipientsWithinCap` question (I-14, Q7 A).
 ///
-/// Lane L-MONEY owns these sums. Its `MoneyState` exposes no read yet, and
-/// no grant or reservation can be recorded before it lands, so every sum
-/// is zero today and the question is exact.
-///
-/// TODO(L-MONEY): read the programme's granted plus reserved sum per
-/// account here. Step W5 adds `i14_p05_edit_below_committed_is_refused`,
-/// which reaches a non-zero sum through production, and a P-05 edit in
-/// `i13_i14_m_money` (design 6.2 and 6.3).
+/// Lane L-MONEY owns these sums: granted plus open reservations, amended
+/// totals included, and the paid total of a COMPLETED or TERMINATED grant
+/// (I-64). The vault groups the accounts by verified identity.
 fn committed(state: &State, programme: ProgrammeId) -> BTreeMap<AccountId, NonNegAmount> {
-    let _ = (state.money(), programme);
-    BTreeMap::new()
+    crate::grant::committed(state, programme, None)
 }
 
 /// Checks a `CreateProgramme` command and returns its creator.

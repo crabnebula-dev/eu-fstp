@@ -69,6 +69,8 @@ tagged_enum! {
         ProposeAmendment { amendment, grant, plan },
         RouteAmendment { amendment, route },
         ActivateAmendment { amendment, contract },
+        CloseMilestone { proposal, milestone, reason },
+        ClosePaymentRequest { request, reason },
     }
     money {
         DraftCall { call, programme, opens, deadline, deadline_zone, budget, text },

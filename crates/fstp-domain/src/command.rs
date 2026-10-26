@@ -602,6 +602,24 @@ pub enum Command {
         /// The contract.
         contract: ContractId,
     },
+    /// Close a milestone of a grant in execution (NOTE 12, O-51). No timer
+    /// or balance closes a milestone.
+    CloseMilestone {
+        /// The grant.
+        proposal: ProposalId,
+        /// The milestone of the effective contract version.
+        milestone: MilestoneId,
+        /// The recorded reason.
+        reason: TextRef,
+    },
+    /// Close a payment request waiting in CHECKS_FAILED or CHANGES_REQUESTED
+    /// (`SPEC/02-domain/payment-requests.md` Milestone closure, O-51).
+    ClosePaymentRequest {
+        /// The request.
+        request: RequestId,
+        /// The recorded reason.
+        reason: TextRef,
+    },
 }
 
 /// The fieldless tag of a [`Command`].
@@ -717,11 +735,15 @@ pub enum CommandKind {
     RouteAmendment,
     /// [`Command::ActivateAmendment`].
     ActivateAmendment,
+    /// [`Command::CloseMilestone`].
+    CloseMilestone,
+    /// [`Command::ClosePaymentRequest`].
+    ClosePaymentRequest,
 }
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 55] = [
+    pub const ALL: [CommandKind; 57] = [
         CommandKind::CreateProgramme,
         CommandKind::EditPolicy,
         CommandKind::DraftCall,
@@ -777,6 +799,8 @@ impl CommandKind {
         CommandKind::ProposeAmendment,
         CommandKind::RouteAmendment,
         CommandKind::ActivateAmendment,
+        CommandKind::CloseMilestone,
+        CommandKind::ClosePaymentRequest,
     ];
 
     /// Whether the kind is a high-risk action from the list in
@@ -887,6 +911,8 @@ impl Command {
             Command::ProposeAmendment { .. } => CommandKind::ProposeAmendment,
             Command::RouteAmendment { .. } => CommandKind::RouteAmendment,
             Command::ActivateAmendment { .. } => CommandKind::ActivateAmendment,
+            Command::CloseMilestone { .. } => CommandKind::CloseMilestone,
+            Command::ClosePaymentRequest { .. } => CommandKind::ClosePaymentRequest,
         }
     }
 
