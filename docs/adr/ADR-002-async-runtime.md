@@ -40,3 +40,38 @@ Record notes:
 - `deps/allowlist.txt` lists the Linux crates above as runtime packages tied to ADR-002, and the other-target crates with role `platform`. Each entry pins the exact version and the `.crate` SHA-256 from every `Cargo.lock`.
 - `deps/adr-roots.txt` records tokio's resolved feature set: `libc`, `mio`, `net`, `rt`, `rt-multi-thread`, `socket2`, `time`, `windows-sys`.
 - `tools/deps-check` fails CI when a crate enters this tree, changes version or checksum, or reaches a higher role, and when tokio's resolved features change. It passes again only when the allowlist and the roots file match the new tree, and this record names each allowlisted crate and version. A crate that leaves the tree, or drops to a lower role, produces a warning, not a failure.
+
+## Review note of 2026-10-28: tokio `signal` feature
+
+Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+
+The Decision above says "Enabling an additional feature needs a review note here." This is that note for the M3 design (`docs/handoff/m3-design.md`, sections 2.2 and 2.5). Daniel accepted the recommendation of Q23 on 2026-10-28 (design section 21.0). The feature stays off until Daniel accepts this note (design section 18, before W2l starts).
+
+Why:
+
+- The Needs above include graceful shutdown for cell restarts and self-hosted updates. A service manager stops a process with SIGTERM.
+- `fstp-rt` gains a `signal` module behind the runtime trait. SIGTERM then triggers the existing `Shutdown`. No other crate calls `tokio::signal`.
+- Every M3 binary keeps one runtime, tokio 1.54.1 through `fstp_rt::tokio::TokioRuntime` (design section 2.3).
+
+What the feature enables, read from the tokio 1.54.1 manifest on 2026-10-28:
+
+- `signal` turns on `libc`, `mio/os-poll`, `mio/net`, `mio/os-ext`, `signal-hook-registry`, `windows-sys/Win32_Foundation` and `windows-sys/Win32_System_Console`.
+- `signal-hook-registry` is an optional tokio dependency under `cfg(unix)`, with the requirement `1.1.1`. It is the only crate the feature can add on Linux.
+- `libc` and the three mio features are already in the resolved tree. The windows-sys features apply on Windows only, where windows-sys has the role `platform`.
+
+Record, to fill at first use:
+
+| Item | Value |
+| --- | --- |
+| `signal-hook-registry` version and `.crate` SHA-256 | Record at first use |
+| Its resolved dependencies on x86_64 and aarch64 Linux | Record at first use |
+| Crates it reaches only on other targets | Record at first use |
+| tokio resolved feature set | Record at first use. Expected: the current set plus `signal` and `signal-hook-registry` |
+| First use | Record at first use (planned: W2l, `fstp-rt`) |
+
+Record notes:
+
+- The newest version in the local cargo cache on 2026-10-28, `signal-hook-registry 1.4.8`, declares `errno` (`>=0.2, <0.4`) and `libc` (`^0.2`) as normal dependencies. If the resolved version does the same, `errno` enters this tree and is recorded here with its own version, checksum and tree.
+- The tokio line in `deps/adr-roots.txt` gains the new resolved features in the same staged change.
+- `deps/allowlist.txt` gains each new crate, tied to ADR-002, with role `runtime` or `platform`.
+- `tools/deps-check` fails until the allowlist, the roots file and this record match the new tree, as for every other ADR-002 change.

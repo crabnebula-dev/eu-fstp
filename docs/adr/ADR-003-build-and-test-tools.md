@@ -61,3 +61,54 @@ Fuzzing nightly updates, decided by Daniel on 2026-10-25 (M1 decision D7):
 | Date | Nightly | rustc | Reason |
 | --- | --- | --- | --- |
 | 2026-10-24 | `nightly-2026-10-24` | 1.101.0-nightly (48f4b0553 2026-10-23) | First pin, M1 |
+
+## Amendment of 2026-10-28: Node.js and npm as build and test hosts (Q39 A)
+
+Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+
+### Context
+
+tsc and Playwright run on Node.js, and Playwright installs through npm. The Decision above allowlists tsc, libFuzzer and Playwright only. A record line alone does not cover a new tool (M3 design, `docs/handoff/m3-design.md`, section 2.5). Daniel answered Q39 with A on 2026-10-28 (design section 21.0). That answer also settles M4 Q7. W3c does not start before Daniel accepts this section (design section 18).
+
+### Decision
+
+| Tool | Use | Scope |
+| --- | --- | --- |
+| Node.js | Host process for tsc and Playwright | Build and test time only. Never ships |
+| npm, the version bundled with the pinned Node.js | Installs tsc and Playwright from committed lockfiles | Build and test time only. Never ships |
+
+### Rules
+
+- No release artifact, image or self-hosted package contains Node.js, npm, `node_modules`, tsc or Playwright. The frontend that ships is the JavaScript tsc emits from in-house TypeScript, plus in-house assets. The release SBOM lists Node.js and npm as build-time components.
+- Node.js never runs on a cell, vault, control-plane, witness or edge host.
+- One exact Node.js version is pinned, written as a full `major.minor.patch` version. Ranges, `latest` and LTS aliases are refused.
+- CI obtains Node.js as a release archive checked against a SHA-256 recorded here for each CI platform. A CI step fails when `node --version` or `npm --version` differs from the record.
+- npm projects exist only in `web/` and `e2e/`. Each has a committed `package.json` and `package-lock.json`.
+- The direct npm packages are the TypeScript compiler (`typescript`) and Playwright's test runner (`@playwright/test`). No framework and no other direct package is added without an amendment here. Their transitive packages are part of this allowlist and recorded below.
+- Installs use `npm ci --ignore-scripts` only. `npm install`, `npm update` and `npx` fetching an unlisted package are refused in CI.
+- With `--ignore-scripts`, no package lifecycle script runs. That also keeps native add-on builds, and the Python that node-gyp needs, out of the build.
+- Playwright browsers are fetched by the controlled CI step that the Rules above require, never during `npm ci`. Their versions and SHA-256 digests are recorded at first use.
+- `cargo test` never needs Node.js. Playwright runs in its own CI job, `e2e (Playwright)` (design section 14.8).
+
+### Lockfile gate
+
+`tools/deps-check` gains an npm lockfile check (`src/npm.rs`, design section 2.2). It reads `web/package-lock.json` and `e2e/package-lock.json`.
+
+- It accepts only the lockfile format version that the pinned npm writes. Record at first use. Unknown structure fails, as in the `Cargo.lock` reader.
+- Every package has an exact version, a `resolved` URL on the public npm registry and an `integrity` value. Git, file, link and other tarball sources fail.
+- Every package name, version and integrity value must match an allowlist entry tied to ADR-003. The file name and format are set when the gate lands. Any lockfile change fails until the allowlist and this record match.
+- A package marked as having an install script fails unless its allowlist entry accepts it with a note. Its script still never runs.
+- `package.json` must list only the direct packages named above.
+- The gate's parser has the fuzz target `npm_lock_decode` in `tools/deps-check/fuzz` (design section 15).
+
+### Record
+
+| Tool | Approved version | Pinned by | Recorded |
+| --- | --- | --- | --- |
+| Node.js | Record at first use: exact version, plus the archive SHA-256 for each CI platform | Record at first use | Record at first use |
+| npm | Record at first use: the version bundled with the pinned Node.js | The pinned Node.js archive | Record at first use |
+| `web/` npm tree | Record at first use | `web/package-lock.json` and the npm allowlist | Record at first use |
+| `e2e/` npm tree | Record at first use | `e2e/package-lock.json` and the npm allowlist | Record at first use |
+| Playwright browsers | Record at first use | The controlled CI step | Record at first use |
+
+The tsc and Playwright rows in the record table above are filled at first use as before.

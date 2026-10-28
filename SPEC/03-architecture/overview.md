@@ -27,7 +27,7 @@ NOTE: Self-hosted cells call two CrabNebula-hosted services, described in `self-
 
 ## Identity vault
 
-The vault holds verified identity attributes, verification records, guardian consent, declared affiliations, bank details, messaging handles and hardship evidence. It answers the application only through the queries below. Every answer is one bit, except the change query.
+The vault holds verified identity attributes, verification records, over-18 attestations, guardian consent, declared affiliations, bank details, messaging handles and hardship evidence. It answers the application only through the queries below. Every answer is one bit, except the change query. Its other operations are listed under Operations other than queries.
 
 | Query | Serves |
 | --- | --- |
@@ -38,11 +38,12 @@ The vault holds verified identity attributes, verification records, guardian con
 | Would this amount keep the recipient within the cap? | I-14 |
 | Do all recipients of the programme stay within the cap? | I-14, on P-05 edits |
 | Does this proposal have a verified guardian consent record? | I-18 |
+| Does this proposal's lead have an effective verified over-18 attestation at the call deadline? | I-18, R-ID-04 |
 | Does any team member declare an affiliation on this proximity list? | I-35 |
 | Does this applicant meet the P-17 country condition of this programme? | R-EV-08, P-17 |
 | Which accounts have vault facts that changed since a given vault epoch? | Reaction to vault changes |
 
-The change query returns account identifiers and no attributes. After a provisional verification, it also lists every other account that the facts revealed by that verification touch (confirmed 2026-10-25). The query set was decided on 2026-10-25.
+The change query returns account identifiers and no attributes. After a provisional verification, it also lists every other account that the facts revealed by that verification touch (confirmed 2026-10-25). The query set was decided on 2026-10-25. The over-18 attestation query was added to it (decided 2026-10-28, NOTE 7).
 
 NOTE 1: The application builds each candidate set from its own bindings: active bindings, and bindings inside a cooling-off bar (`02-domain/roles-and-sod.md` Cooling-off). For the cap queries it sends per-account totals of granted and reserved amounts, and the vault groups them by verified identity.
 
@@ -61,7 +62,22 @@ NOTE 5: What the platform learns (decided 2026-10-25). A positive answer over a 
 
 NOTE 6: The P-17 query answers one bit and releases no country to Judging roles (decided 2026-10-25). The applicant states the country at submission, and only the vault receives it. It is verified in NEGOTIATION, and a false statement is grounds to decline (decided 2026-10-25, O-48). TODO(legal): confirm the early collection under GDPR.
 
+NOTE 7: The over-18 attestation query (decided 2026-10-28), named `IsVerifiedAdultAtDeadline` in code. It answers yes only for an effective verified attestation that shows the lead was 18 or older at the call deadline (`01-requirements/functional.md` R-ID-04). It answers no in every other case. It releases no age and no date of birth. The guard into NEGOTIATION asks it (`02-domain/state-machine.md` NOTE 14), and Judging roles never see its answer. Interim, pending Daniel: whether the guard into GRANTED asks it too, and how a later verification showing the lead under 18 affects the answer, are not decided (ADR-008, Minor flag details). The attestation becomes effective under the commit protocol of NOTE 4. TODO(legal): L-02, the legal basis for the attestation before NEGOTIATION, and whether Article 8 GDPR applies to it.
+
 Identity attributes are released to Operations roles only in NEGOTIATION and later. Phone numbers and messaging handles are released only to the channel adapters.
+
+### Operations other than queries
+
+The queries are the vault's only answers to the application (decided 2026-10-28). The vault also takes four kinds of operation, and none of them returns an identity attribute to the application:
+
+- **Writes** add a fact of a kind the vault holds. A person writes attributes, the P-17 country, affiliations, attestations, guardian consents and identity documents on the vault origin. The application writes only facts that carry no identity attributes, such as an I-54 relationship between two account ids.
+- **Releases** show identity attributes on the vault origin to an Operations role holder, only for a proposal in NEGOTIATION or later. Handles go only to the channel adapters.
+- **Acknowledgements** report that the application has recorded its reaction to a provisional fact. The vault then makes the fact effective (NOTE 4).
+- **Negotiation facts** tell the vault that a proposal has entered NEGOTIATION. The vault refuses a release for a subject that no negotiation fact lists.
+
+From writes, the application learns only the resulting epoch change, through the change query.
+
+The vault origin is a web origin of the vault, separate from the application's origin and inside the cell (decided 2026-10-28, ADR-009). The browser sends attributes, the P-17 country and identity documents to it directly, and released attributes are shown there. So the application never receives them (I-17, NOTE 6). Each write or release by a person needs a signed, single-use ticket that the application issues. Issuing a ticket is recorded, so every read of identity attributes is logged (R-AU-01). The vault origin keeps no sessions.
 
 ## Assessor
 

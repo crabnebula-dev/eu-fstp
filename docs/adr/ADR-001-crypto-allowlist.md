@@ -101,6 +101,7 @@ The hybrid key encapsulation combiner is proposed as X-Wing style: both shared s
 ## Open points
 
 - Authentication crates: webauthn-rs and opaque-ke are candidates for Tier A, subject to review of their audit status (O-36 resolved in `SPEC/03-architecture/authentication.md`).
+  - Part of the proposed amendment of 2026-10-28, awaiting Daniel's acceptance: A4 below closes this line.
 - A PKCS#11 client crate for the CrabNebula-operated HSM (ADR-004).
 - Root key custody is fixed in ADR-004.
 
@@ -167,3 +168,121 @@ Non-cryptographic hashing, recorded 2026-10-25 (M1 decision D6):
 
 - Daniel decided on 2026-10-25 that std's non-cryptographic hashers are acceptable.
 - Examples: fstp-json uses `HashMap` with `RandomState` against hash flooding, and fstp-mc uses `DefaultHasher` with fixed keys. Neither use is cryptographic.
+
+## Amendment of 2026-10-28: M3 dependencies
+
+Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+
+This section records the dependency decisions of the M3 design (`docs/handoff/m3-design.md`, sections 2.1, 2.4, 2.5, 2.6, 8.1 and 15). It follows Daniel's answers of 2026-10-28 to Q1 (C), Q10 (A) and Q23 (Accept), in design section 21.0. A7 and A8 rest on no answer: A7 is interim, pending Daniel (Q24), and A8 is a proposal that ADR-004 needs. The text above stays as accepted. No production code uses an item below before Daniel accepts this section (design section 18).
+
+### A1. zeroize as a root (Q23)
+
+- `zeroize 1.9.1` becomes a direct dependency of `fstp-custody` and `fstp-keyd` (design section 2.1). In-house code then wipes key material without writing `unsafe`.
+- It is already in this ADR's runtime tree through aws-lc-rs, rustls and rustls-pki-types. `deps/allowlist.txt` already pins it with `.crate` SHA-256 `e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879`. Version and checksum do not change.
+- New line in `deps/adr-roots.txt`: `zeroize ADR-001 alloc,default`, with the note "Tier A tree: secret wiping in fstp-custody and fstp-keyd".
+- Features: `alloc` and `default` only. In zeroize 1.9.1, `default` enables `alloc` and nothing else. The tree resolved these two features on 2026-10-28 (`cargo tree --locked -e features -i zeroize`), so the root line matches the current tree.
+- `derive` is refused. It would add `zeroize_derive` and the proc-macro crates `syn`, `quote` and `proc-macro2`. Every other feature is refused too, and deps-check already fails on any change to a root's features.
+- zeroize is not a cryptographic primitive. It sits under this ADR because its tree already contains it.
+- Another in-house crate that names zeroize directly needs a line in this record first.
+
+### A2. moduletto as a git dependency (Q1 C)
+
+moduletto is not on crates.io for M3. Daniel chose a git dependency, pinned to one full commit.
+
+| Item | Value |
+| --- | --- |
+| Repository URL | Record at first use: Daniel supplies the URL |
+| Commit (full id, as `Cargo.lock` records it) | Record at first use: Daniel supplies the commit |
+| Version in moduletto's manifest at that commit | Record at first use |
+| Features | Record at first use. Only ML-KEM-768 and ML-DSA-65 are used |
+| Resolved tree | Record at first use |
+| First use | Record at first use (planned: W1h, `fstp-crypto`) |
+
+- The workspace manifest declares moduletto once, with `git = "<URL>"` and `rev = "<full commit id>"`. A branch, a tag or a shortened rev is refused.
+- Only `fstp-crypto` depends on it (layering rule 8, design section 2.4). The modules `mlkem`, `mldsa`, `hybrid_kem` and `composite` use it (design section 2.2).
+- With that manifest, `Cargo.lock` records `source = "git+<URL>?rev=<commit>#<commit>"` and no checksum. This form was checked with cargo on 2026-10-28 against a local test repository.
+- Cargo places a git checkout at `$CARGO_HOME/git/checkouts/<name>-<hash>/<short commit>/`. This was checked the same way.
+- If the repository is a workspace, each package cargo takes from it shares the same source string. Each one gets its own allowlist entry and appears in the tree record.
+- Each crate that moduletto brings from crates.io is part of this allowlist. It is pinned by name, version and `.crate` SHA-256, as today. A crate from any other git source is refused (A3).
+- The hybrid rule (I-75, I-90) and the release gate (I-74) apply unchanged. A new commit counts as a version change for the release gate, even when the manifest version stays the same.
+- Interim until the pin exists (design section 17.2): production code waits for it. Tests use the aws-lc-rs ML-KEM and ML-DSA oracles through `fstp-celltest` only. No classical fallback ships (I-75).
+- Open: whether moduletto exposes deterministic key generation and encapsulation for the ACVP and combiner vectors. This Q1 sub-question stays open. The answer is recorded here before W1h merges.
+
+### A3. deps-check git-source rule
+
+Today `tools/deps-check` refuses every source other than crates.io (the `non-crates-io-source` check in `src/provenance.rs`). This amendment adds one exception and nothing else.
+
+- `deps/allowlist.txt` gains a git entry form. The checksum field holds the exact lockfile source string, `git+<URL>?rev=<commit>#<commit>`, in place of the `.crate` SHA-256. That one token records both the repository URL and the commit.
+- A lockfile package with a `git+` source passes only when an allowlist entry names the same crate, the same version and the same source string, byte for byte.
+- Every other git source fails. That includes another URL, another commit, a branch or tag reference, a shortened rev and the same commit at another URL. A git package that carries a checksum fails too, since cargo writes none.
+- Path sources outside the repository, other registries and source replacement stay refused, as today.
+- The resolve graph must place each git package under cargo's git checkout directory, at the recorded short commit. A `paths` override or source replacement then cannot shadow it.
+- Only moduletto, and packages from its recorded repository, may use the git form under this amendment. Any other git entry needs its own ADR record first.
+- Proposed tests: `th15_git_source_refuses_unlisted_url`, `th15_git_source_refuses_other_commit`, `th15_git_source_refuses_branch_or_tag_reference` and `th15_git_source_accepts_only_the_recorded_source`. Each gets a failing fixture, as the existing provenance tests do.
+- The lockfile reader's existing fuzz target (`tools/deps-check/fuzz`, `cargo_lock`) covers the new source-string parsing.
+- Open: a git commit id is a SHA-1 object id unless the repository uses SHA-256 object format. Should this record also hold a SHA-256 digest over the checked-out source, with deps-check checking it? This is raised for Daniel and not decided here.
+
+### A4. Authentication crates (Q10 A)
+
+This closes the "Open points" line on authentication crates. `SPEC/03-architecture/authentication.md` says these crates are chosen in this ADR.
+
+- WebAuthn is built in-house in `fstp-webauthn`, a pure crate with no I/O (design sections 2.1 and 8.1). webauthn-rs is not used.
+- It composes aws-lc-rs and implements no primitive. Signature verification covers ES256 (ECDSA P-256 with SHA-256), EdDSA (Ed25519) and RS256 (RSA PKCS#1 v1.5 with SHA-256, keys of at least 2048 bits).
+- RS256 here is verification through aws-lc-rs. The Tier A row above names RSA signing; this amendment adds RSA verification as a use. The RustCrypto `rsa` crate stays not allowed.
+- Attestation format `none` only. No attestation certificate is parsed, so no Tier B formats crate enters this path.
+- The CBOR and COSE parsers have fuzz targets from their first commit, as `authentication.md` asks. The targets are `cbor_decode`, `cose_key_decode`, `authenticator_data_decode`, `client_data_decode`, `attestation_object_decode`, `assertion_verify` and `registration_verify` (design section 15).
+- Magic links need no new crate.
+- OPAQUE is deferred. opaque-ke is not used. A later addition to this ADR must cover OPAQUE and its group arithmetic before any OPAQUE code is written.
+- EUDI Wallet login and verification move to M4 (Q10).
+- ADR-008 holds the implementation details: methods, ceremonies, step-up binding and recovery.
+
+New row for the Uses table:
+
+| Use | Construction |
+| --- | --- |
+| WebAuthn registration and assertion | ES256, EdDSA and RS256 verification through aws-lc-rs. CBOR, COSE, authenticator data and client data parsed in-house in `fstp-webauthn`, each with a fuzz target |
+
+### A5. Tier B confirmation mirror (design section 2.6)
+
+M3 brings moduletto into production code, so the release gate above is built now (I-74, R-CR-02).
+
+- `deps/tier-b-confirmations.txt` mirrors the confirmation table of the release gate, row for row. Each line holds crate, version, source hash, confirmation date and findings reference.
+- The same file names each Tier B crate of the Tier B table above. Design section 2.6 places that marker in `deps/allowlist.txt`; the lead may keep it there instead. Either way, one test checks the marker list against the Tier B table here.
+- A test checks that the mirror equals the confirmation rows of this ADR.
+- The source hash of a crates.io package must equal the `.crate` SHA-256 that `deps/allowlist.txt` pins. For moduletto it must equal the full commit id in the allowlist source string (A3).
+- `tools/deps-check/src/tier_b.rs` reads the resolved tree of each shipped `[[bin]]` target. Every Tier B package there needs a confirmation for its exact version and source hash.
+- `deps-check --release` fails without a matching confirmation. Development and test builds report the missing confirmation and pass, since Tier B use in development is allowed.
+- The release workflow job runs `deps-check --release` on a tag pattern only, because M3 ships no release. Its fixture test runs on every push.
+- Tests: `i74_release_gate_refuses_unconfirmed_tier_b_version`, `i74_release_gate_refuses_a_confirmation_for_another_hash`, `i74_dev_build_reports_but_passes` and `i74_teeth_gate_skipping_tier_b_is_caught`.
+- The mirror's parser has the fuzz target `tier_b_confirmations_decode` in `tools/deps-check/fuzz`.
+- The confirmation table above stays at "(none yet)". No confirmation is recorded in M3.
+
+### A6. No aws-lc-rs feature change
+
+- aws-lc-rs stays at 1.18.2 with `aws-lc-sys` and `prebuilt-nasm`. The `unstable` feature is not enabled.
+- The test oracles need nothing more. In 1.18.2, `signature::ML_DSA_65` (`src/signature.rs:1172`), `signature::ML_DSA_65_SIGNING` (`:1185`), `PqdsaKeyPair::from_seed` (`src/pqdsa/key_pair.rs:175`) and `kem::ML_KEM_768` (`src/kem.rs:85`) are public without a feature gate. Checked in the registry source on 2026-10-28.
+- For key wrapping and signatures, these aws-lc-rs post-quantum APIs serve only as test oracles from `fstp-celltest` (layering rule 9, design section 2.4). moduletto is the post-quantum half there in production, as this ADR names it.
+- TLS is the exception. `fstp-tls` already negotiates X25519MLKEM768 in production through the rustls aws-lc-rs provider, so its ML-KEM half comes from aws-lc-rs. A7 records this gap.
+
+### A7. The TLS key exchange group (Q24)
+
+Interim, pending Daniel. Q24 is not answered. This records the design's interim reading, option A.
+
+- The Uses row "TLS key exchange" names a custom group with ML-KEM-768 from moduletto. Since M1, `fstp-tls` instead uses the X25519MLKEM768 group of the rustls aws-lc-rs provider (rustls feature `prefer-post-quantum`, Record above). Its ML-KEM-768 half comes from aws-lc-rs.
+- The hybrid rule still holds for this group: X25519 and ML-KEM-768 are both always used. No moduletto primitive is involved, so I-75 and the I-74 release gate are not engaged by it.
+- Interim reading of Q24 (option A): the custom group with moduletto's ML-KEM-768 is built in M9, with the ACVP work. The Uses row stays as the target until then, and this section records the gap.
+- Option B, building the custom group in M3 beside key wrapping, is open to Daniel.
+- The Verification line "The custom TLS group interoperates with the aws-lc-rs X25519MLKEM768 group in both directions" applies once the custom group exists.
+
+### A8. Further aws-lc-rs uses (ADR-004 completion parts 1 and 2)
+
+ADR-004's drafts of 2026-10-28 use two aws-lc-rs functions that the Tier A row above does not name. This section adds them as uses. It adds no crate and no feature. Both were found in the aws-lc-rs 1.18.2 registry source on 2026-10-28 without a feature gate.
+
+| Use | Construction | Status |
+| --- | --- | --- |
+| File custody key table (`fstp-keyd`, ADR-004 part 2) | PBKDF2-HMAC-SHA-256 through `aws_lc_rs::pbkdf2` (`PBKDF2_HMAC_SHA256`, `src/pbkdf2.rs:129`), at least 600 000 iterations, random salt | Proposed. ADR-004's file custody KDF is blocked until Daniel accepts this row |
+| AEAD fallback (ADR-004 part 1, Nonce rule) | AES-256-GCM-SIV through `aws_lc_rs::aead::RandomizedNonceKey` (`AES_256_GCM_SIV`, `src/aead/aes_gcm.rs:35`, accepted at `src/aead/rand_nonce.rs:46`) | Conditional. Used only if H-19 asks for misuse resistance, and only through a new `aead` code that ADR-004 assigns |
+
+- Neither function is a new primitive in our code. Both are reached only through `fstp-crypto`. Its `aead` module would take the GCM-SIV algorithm.
+- PBKDF2 is not new to the tree. `fstp-crypto` has exposed `pbkdf2_hmac_sha256` over `aws_lc_rs::pbkdf2` since M1, and `fstp-pgwire` uses it for SCRAM. The row above records that function as a use and adds the file custody use. `fstp-keyd` calls the existing wrapper, so no new wrapper is written.
+- The PBKDF2 iteration floor and parameters are fixed in ADR-004, not here.
