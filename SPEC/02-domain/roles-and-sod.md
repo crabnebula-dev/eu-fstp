@@ -153,6 +153,8 @@ Staff of any consortium partner may be assigned reviewers (O-22). Two rules limi
 NOTE: Data placement for SoD-10, SoD-11 and I-36 (decided 2026-10-25).
 
 - Each committee binding records the reviewer's organisation. SoD-10 and I-34 count distinct organisations from that field.
+- A reviewer has one organisation per programme. A committee binding that records a different organisation from the account's active committee binding in the programme is refused (SoD-10, decided 2026-10-28).
+- SoD-10 and I-34 hold at every step where the assigned reviewers decide: the stage 1 close, the stage 2 ranking and the amount determination in NEGOTIATION (R-NG-03, decided 2026-10-28).
 - Affiliations a proposal declares are held only in the identity vault. SoD-11 and I-35 are checked through the proximity-list query (`03-architecture/overview.md`).
 - For I-36, a DEFERRED proposal is under evaluation in the next call.
 - A person who reviewed a proposal cannot take a Receiving role in any later call of the programme until every proposal they reviewed is decided: terminal, or GRANTED or later. This holds regardless of P-12, and it keeps a later deferral from putting a former reviewer's own proposal in the same call as one they reviewed (I-36, decided 2026-10-25).
