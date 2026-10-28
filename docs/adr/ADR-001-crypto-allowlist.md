@@ -121,12 +121,14 @@ Exact versions and resolved trees at first use. `deps/allowlist.txt` ties each c
 | aws-lc-rs | A | 1.18.2 (`=1.18.2`) | `aws-lc-sys`, with default features off. The `aws_lc_rs` feature of rustls and the `aws-lc-rs` feature of rustls-webpki both add `prebuilt-nasm`. Resolved: `aws-lc-sys`, `prebuilt-nasm` | 2026-10-24, M1, `fstp-crypto` and the rustls provider |
 | rustls-pki-types | A | 1.15.1 (`=1.15.1`) | `std`, with default features off. Resolved: `alloc`, `default`, `std` | 2026-10-24, M1, `fstp-tls` |
 | rustls-webpki | A | 0.103.16 (through rustls) | `alloc`, `aws-lc-rs`, `std` | 2026-10-24, M1, through rustls |
+| zeroize | A tree, root since A1 | 1.9.1 (`=1.9.1`) | Default features, which enable `alloc`. Resolved: `alloc`, `default`. `derive` is refused | 2026-10-28, M3 lane W0: direct dependency of `fstp-crypto`, `fstp-keys`, `fstp-custody` and `fstp-keyd` |
+| moduletto | B | 0.1.0, git commit `46754f2fccb0a501be278fb2fab63b670101a33d` | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
 
 Resolved tree. The runtime and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu, and are the same on both. The platform row, added 2026-10-25, covers every other target.
 
 | Role | Crates |
 | --- | --- |
-| Runtime | `rustls 0.23.46`, `aws-lc-rs 1.18.2`, `aws-lc-sys 0.46.0`, `rustls-pki-types 1.15.1`, `rustls-webpki 0.103.16`, `once_cell 1.21.4`, `subtle 2.6.1`, `untrusted 0.9.0`, `zeroize 1.9.1` |
+| Runtime | `rustls 0.23.46`, `aws-lc-rs 1.18.2`, `aws-lc-sys 0.46.0`, `rustls-pki-types 1.15.1`, `rustls-webpki 0.103.16`, `once_cell 1.21.4`, `subtle 2.6.1`, `untrusted 0.9.0`, `zeroize 1.9.1`, and since 2026-10-28 `moduletto 0.1.0` and `libm 0.2.16` |
 | Build, for the aws-lc-sys build script only | `cc 1.10.0`, `cmake 0.1.58`, `dunce 1.0.5`, `fs_extra 1.3.0`, `pkg-config 0.3.34`, `find-msvc-tools 0.1.15`, `jobserver 0.1.35`, `libc 0.2.191`, `shlex 2.0.1` |
 | Platform, never built for x86_64 or aarch64 Linux | `getrandom 0.4.3`, `cfg-if 1.0.5`, `r-efi 6.0.0` |
 
@@ -169,6 +171,17 @@ Non-cryptographic hashing, recorded 2026-10-25 (M1 decision D6):
 - Daniel decided on 2026-10-25 that std's non-cryptographic hashers are acceptable.
 - Examples: fstp-json uses `HashMap` with `RandomState` against hash flooding, and fstp-mc uses `DefaultHasher` with fixed keys. Neither use is cryptographic.
 
+M3 first-use record, 2026-10-28 (lane W0, the dependency owner of design section 2.5):
+
+- The tree covers x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu and is the same on both. It holds every package of the M1 rows above, plus `moduletto 0.1.0` and `libm 0.2.16`. No build or platform crate was added.
+- `moduletto 0.1.0` comes from the git source of A2 and A3, with no checksum in `Cargo.lock`. `deps/allowlist.txt` records that source string byte for byte. cargo serves it from `$CARGO_HOME/git/checkouts/moduletto-<hash>/46754f2/`.
+- `deps/adr-roots.txt` gains `moduletto ADR-001 alloc,default,libm,std`. Only `fstp-crypto` depends on it, as layering rule 8 requires.
+- `deps/tier-b-confirmations.txt` keeps its `tier-b moduletto` marker and holds no confirmation. A development run of deps-check reports moduletto as an unconfirmed Tier B crate and passes. `deps-check --release` fails on it (I-74).
+- `subtle 2.6.1` now has the feature `core_hint_black_box`, which moduletto enables. rustls enabled none. subtle has no dependencies, so the tree does not grow.
+- `libm 0.2.16` resolves with `arch` and `default` and has no dependencies. It enters through moduletto's `alloc` feature.
+- `zeroize 1.9.1` is unchanged in version, checksum and features (`alloc`, `default`). A1 names `fstp-custody` and `fstp-keyd` as direct users. Design sections 2.2 and 3.2 also give secret types that zeroize on drop to `fstp-crypto` and to `fstp-keys` (`open_blob` returns `Zeroizing<Vec<u8>>`). This line records those two crates as direct users too, as A1 asks of any further crate.
+- Test-only edges, with no new package and no feature change: `fstp-celltest` takes aws-lc-rs as a normal dependency for the ML-KEM-768, ML-DSA-65 and X25519 oracles in its library (A6). The crate is test only and never ships (layering rule 9). `fstp-pki` takes aws-lc-rs, rustls-pki-types and rustls-webpki as dev-dependencies for its round-trip tests. rustls-webpki does not re-export rustls-pki-types, and its path validation takes `UnixTime` and `CertificateDer` from that crate. This test-only edge is outside the "no rustls-pki-types edge from fstp-pki" rule of design section 2.5, which concerns PEM in production code. The `fstp-pki` fuzz project, a separate workspace, takes rustls-pki-types 1.15.1 and rustls-webpki 0.103.16 with the workspace features for its `cert_build_roundtrip` target (design section 15). Its `Cargo.lock` gains only entries that the workspace `Cargo.lock` already holds. rustls-webpki keeps the resolved set `alloc`, `aws-lc-rs`, `std`, and rustls-pki-types keeps `alloc`, `default`, `std`.
+
 ## Amendment of 2026-10-28: M3 dependencies
 
 Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
@@ -193,13 +206,13 @@ moduletto is not on crates.io for M3. Daniel chose a git dependency, pinned to o
 | --- | --- |
 | Repository URL | `https://github.com/crabnebula-dev/moduletto` (Daniel, 2026-10-28). The repository is public, so CI fetches it without credentials |
 | Main branch head on 2026-10-28 | `46754f2fccb0a501be278fb2fab63b670101a33d`. This is a reference point, not the pin |
-| Commit (full id, as `Cargo.lock` records it) | Record at first use. Lane W1h records the exact pinned commit |
-| Version in moduletto's manifest | `0.1.0` at the head above. Record again at first use for the pinned commit |
+| Commit (full id, as `Cargo.lock` records it) | `46754f2fccb0a501be278fb2fab63b670101a33d`, the main branch head above, committed 2026-10-10 ("Merge pull request #10"). Recorded 2026-10-28 by the M3 dependency owner (lane W0), so that W1h writes code against it. Lockfile source: `git+https://github.com/crabnebula-dev/moduletto?rev=46754f2fccb0a501be278fb2fab63b670101a33d#46754f2fccb0a501be278fb2fab63b670101a33d` |
+| Version in moduletto's manifest | `0.1.0` at the pinned commit (recorded 2026-10-28) |
 | Primitives at the head above | ML-KEM-512 and ML-KEM-768 (FIPS 203), with deterministic `keygen_derand` and `encaps_derand` entry points. No ML-DSA |
 | Primitives the platform uses | ML-KEM-768 now. ML-DSA-65 (FIPS 204) once the pull request below lands. ML-KEM-512 is not used |
-| Features | Record at first use. The `kem` module needs `std`. Proposed: `default` only, which enables `std`, `alloc` and `libm` at the head above. `getrandom`, `wasm` and `valgrind-ct` are refused, since system randomness comes from aws-lc-rs (Tier A) |
-| Resolved tree | `subtle 2.6`, always. `libm 0.2`, through the `std` feature. `zeroize`, already allowlisted (A1). Exact versions and `.crate` SHA-256 values recorded at first use |
-| First use | Record at first use (planned: W1h, `fstp-crypto`) |
+| Features | `default` only in the manifest. Resolved 2026-10-28: `alloc`, `default`, `libm`, `std`. The `kem` module needs `std`. `getrandom`, `wasm` and `valgrind-ct` are refused, since system randomness comes from aws-lc-rs (Tier A) |
+| Resolved tree | Recorded 2026-10-28: `subtle 2.6.1` (feature `core_hint_black_box`), `libm 0.2.16` (features `arch`, `default`; no dependencies), and `zeroize 1.9.1` (already allowlisted, A1). Checksums are in `deps/allowlist.txt` |
+| First use | 2026-10-28, M3 lane W0: the dependency line of `fstp-crypto`. No code calls it yet. W1h writes the `mlkem` and `hybrid_kem` modules against it |
 
 ML-DSA-65 (Daniel, 2026-10-28):
 

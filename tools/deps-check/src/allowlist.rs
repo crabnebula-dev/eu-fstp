@@ -577,6 +577,10 @@ pub(crate) fn check_adr_records(
     let mut missing_files = BTreeSet::new();
     for e in entries {
         let needle = format!("`{} {}`", e.name, e.version);
+        // A git package keeps its manifest version when its pin moves, so
+        // its commit is its version (ADR-001 A2). The ADR must name it too.
+        let commit =
+            crate::git_source::parse_pinned(&e.checksum).map(|g| format!("`{}`", g.commit));
         for adr in &e.adrs {
             match adr_text.get(adr) {
                 Some(Some(text)) => {
@@ -585,6 +589,16 @@ pub(crate) fn check_adr_records(
                             "adr-record-missing",
                             format!(
                                 "{adr} does not record {needle}; add it to the ADR's resolved tree"
+                            ),
+                        ));
+                    }
+                    if let Some(c) = &commit
+                        && !text.contains(c.as_str())
+                    {
+                        out.push(Finding::error(
+                            "adr-record-missing",
+                            format!(
+                                "{adr} does not record the pinned commit {c} of {needle}; a moved git pin needs a new tree record (ADR-001 A2)"
                             ),
                         ));
                     }

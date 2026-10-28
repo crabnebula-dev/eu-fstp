@@ -10,6 +10,10 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-pki = { path = ".." }
+# ADR-001 Tier A, same versions and features as the workspace lines. The cert_build_roundtrip
+# target parses every certificate it builds with rustls-webpki (design section 15).
+rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
+rustls-webpki = { version = "=0.103.16", default-features = false, features = ["alloc", "aws-lc-rs", "std"] }
 
 [[bin]]
 name = "cert_build_roundtrip"

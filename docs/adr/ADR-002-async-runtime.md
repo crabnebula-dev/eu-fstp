@@ -30,6 +30,7 @@ NOTE: tokio has the wider ecosystem fit with the TLS crates under ADR-001. smol 
 | Component | Runtime | Version | Features | Tree recorded |
 | --- | --- | --- | --- | --- |
 | `fstp-rt` (M1), the tokio implementation of the runtime trait. fstp-tls, fstp-http, fstp-pgwire and fstp-migrate reach tokio only through it | tokio | 1.54.1 (`=1.54.1` in the workspace manifest) | `rt`, `rt-multi-thread`, `net`, `time`, with default features off | 2026-10-24: `tokio 1.54.1`, `mio 1.2.4`, `socket2 0.6.5`, `libc 0.2.191`, `pin-project-lite 0.2.17` |
+| `fstp-rt` (M3), the `signal` feature for SIGTERM (review note of 2026-10-28 below) | tokio | 1.54.1 (unchanged) | The M1 set plus `signal`, on the `fstp-rt` line only | 2026-10-28: the M1 tree plus `signal-hook-registry 1.4.8` and `errno 0.3.14` |
 
 Record notes:
 
@@ -63,11 +64,11 @@ Record, to fill at first use:
 
 | Item | Value |
 | --- | --- |
-| `signal-hook-registry` version and `.crate` SHA-256 | Record at first use |
-| Its resolved dependencies on x86_64 and aarch64 Linux | Record at first use |
-| Crates it reaches only on other targets | Record at first use |
-| tokio resolved feature set | Record at first use. Expected: the current set plus `signal` and `signal-hook-registry` |
-| First use | Record at first use (planned: W2l, `fstp-rt`) |
+| `signal-hook-registry` version and `.crate` SHA-256 | `1.4.8`, `c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b` (recorded 2026-10-28) |
+| Its resolved dependencies on x86_64 and aarch64 Linux | `libc 0.2.191` (already in this tree) and `errno 0.3.14`, `.crate` SHA-256 `39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb`, features `default`, `std`. errno depends only on `libc` on Linux. Both are role `runtime` |
+| Crates it reaches only on other targets | None in practice. tokio reaches signal-hook-registry only under `cfg(unix)`. errno declares `windows-sys` for `cfg(windows)`, which `Cargo.lock` resolves to the allowlisted `windows-sys 0.61.2`, so no new platform crate enters |
+| tokio resolved feature set | `libc`, `mio`, `net`, `rt`, `rt-multi-thread`, `signal`, `signal-hook-registry`, `socket2`, `time`, `windows-sys` (recorded 2026-10-28). mio keeps `net`, `os-ext` and `os-poll` |
+| First use | 2026-10-28, M3 lane W0: the feature is enabled on the tokio line of `fstp-rt` only. No code calls `tokio::signal` yet. W2l writes the `signal` module |
 
 Record notes:
 
@@ -75,3 +76,5 @@ Record notes:
 - The tokio line in `deps/adr-roots.txt` gains the new resolved features in the same staged change.
 - `deps/allowlist.txt` gains each new crate, tied to ADR-002, with role `runtime` or `platform`.
 - `tools/deps-check` fails until the allowlist, the roots file and this record match the new tree, as for every other ADR-002 change.
+- Recorded 2026-10-28: `deps/allowlist.txt` gains `signal-hook-registry 1.4.8` and `errno 0.3.14`, both tied to ADR-002 with role `runtime`. The tokio line in `deps/adr-roots.txt` gains `signal` and `signal-hook-registry`.
+- When cargo first locked errno, it chose the `windows-sys 0.52.0` that `Cargo.lock` already held for the unused optional ring edge (ADR-001 weak dependency note). That would have reached `windows-sys 0.52.0` and the `windows-targets 0.52.6` crates on other targets. `cargo update -p errno` moved errno to the allowlisted `windows-sys 0.61.2`, which its requirement `>=0.52, <0.62` allows. Every lockfile in the repository records that choice.

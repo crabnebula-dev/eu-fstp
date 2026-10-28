@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 fstp-crypto.workspace = true
 fstp-json.workspace = true
+# ADR-001 A1: `open_blob` returns `Zeroizing<Vec<u8>>` and key types wipe on drop (design section 3.2).
+zeroize.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
