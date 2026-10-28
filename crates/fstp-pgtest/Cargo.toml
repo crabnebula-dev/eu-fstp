@@ -8,6 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Certificates minted at runtime (M3 design section 2.2). In-house.
+fstp-pki.workspace = true
 
 [dev-dependencies]
 

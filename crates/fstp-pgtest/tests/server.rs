@@ -516,3 +516,48 @@ fn assert_refused_for_cn_mismatch(server: &PgServer, err: &str, user: &str) {
     );
     assert!(log.contains(&line), "{log}");
 }
+
+/// Design sections 2.2 and 14.3: the parameters of a fixture server name
+/// the fixture CA as the trust root, so a client needs no other source.
+#[test]
+fn conn_params_name_the_fixture_ca_as_trust_root() {
+    let server = PgServer::shared().unwrap();
+    let db = server.fresh_database().unwrap();
+    assert_eq!(db.server_ca_pem, certs::CA_PEM);
+}
+
+/// Design section 14.3, the at-rest store view: `dump_data` holds a long
+/// value whole, although PostgreSQL stores it compressed and out of line.
+/// The control query shows the value is stored compressed.
+#[test]
+fn dump_data_holds_a_compressed_value_whole() {
+    let server = PgServer::shared().unwrap();
+    let db = server.fresh_database().unwrap();
+    let marker = "fstp-pgtest-dump-marker-0123456789abcdef";
+    server
+        .psql(
+            &db.dbname,
+            &format!(
+                "CREATE TABLE t (v text);\n\
+                 INSERT INTO t VALUES (repeat('abc ', 2000) || '{marker}' || repeat('abc ', 2000));"
+            ),
+        )
+        .unwrap();
+    let method = server
+        .psql(&db.dbname, "SELECT pg_column_compression(v) FROM t")
+        .unwrap();
+    assert_eq!(method, "pglz");
+    let dump = server.dump_data(&db.dbname).unwrap();
+    assert!(
+        dump.windows(marker.len()).any(|w| w == marker.as_bytes()),
+        "the dump lacks the value"
+    );
+}
+
+/// `dump_data` fails for a database that does not exist, rather than
+/// return an empty dump.
+#[test]
+fn dump_data_refuses_a_missing_database() {
+    let server = PgServer::shared().unwrap();
+    assert!(server.dump_data("fstp_no_such_database").is_err());
+}

@@ -10,6 +10,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+fstp-crypto.workspace = true
+fstp-rt.workspace = true
 fstp-pki.workspace = true
 fstp-keys.workspace = true
 fstp-custody.workspace = true

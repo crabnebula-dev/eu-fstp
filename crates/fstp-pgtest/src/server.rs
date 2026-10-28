@@ -77,6 +77,22 @@ const CLIENT_DIR: &str = "client";
 /// How many ports to try when another process takes the chosen port first.
 const START_ATTEMPTS: u32 = 8;
 
+/// How long [`PgServer::dump_data`] waits for each table lock, in the
+/// form `SET lock_timeout` takes.
+pub const DUMP_LOCK_WAIT: &str = "10s";
+
+/// The `psql` script that writes every populated materialized view of a
+/// database as a COPY block. `\gexec` runs each generated statement in
+/// turn: a `SELECT` of the header line, the `COPY ... TO STDOUT`, and a
+/// `SELECT` of the end marker.
+const MATVIEW_COPY_SQL: &str = r"SET client_encoding = 'UTF8';
+SELECT format('SELECT %L', format('COPY %I.%I FROM stdin;', schemaname, matviewname)),
+       format('COPY (SELECT * FROM %I.%I) TO STDOUT', schemaname, matviewname),
+       'SELECT ''\.'''
+FROM pg_matviews WHERE ispopulated ORDER BY schemaname, matviewname
+\gexec
+";
+
 /// How long [`PgServer`]'s destructor waits for the watchdog to finish.
 const STOP_WAIT: Duration = Duration::from_secs(30);
 
@@ -87,7 +103,8 @@ const STOP_WAIT: Duration = Duration::from_secs(30);
 /// `$1` is the temporary directory. The server is stopped with SIGQUIT
 /// (immediate shutdown), then SIGKILL after ten seconds. The process name is
 /// checked first, so a stale pid file never leads to killing an unrelated
-/// process.
+/// process. Linux gives the name in `/proc/<pid>/comm`. Elsewhere, such as
+/// on macOS, `ps` gives it.
 const WATCHDOG: &str = r#"
 trap '' INT TERM HUP QUIT PIPE
 dir="$1"
@@ -99,7 +116,16 @@ if [ -f "$pidfile" ]; then
   case "$pid" in
     ''|*[!0-9]*) pid="" ;;
   esac
-  if [ -n "$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "postgres" ]; then
+  comm=""
+  if [ -n "$pid" ]; then
+    if [ -r "/proc/$pid/comm" ]; then
+      comm="$(cat "/proc/$pid/comm" 2>/dev/null)"
+    else
+      comm="$(ps -p "$pid" -o comm= 2>/dev/null)"
+      comm="${comm##*/}"
+    fi
+  fi
+  if [ "$comm" = "postgres" ]; then
     kill -QUIT "$pid" 2>/dev/null
     i=0
     while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
@@ -119,7 +145,7 @@ pub struct Error {
 }
 
 impl Error {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -181,9 +207,10 @@ pub struct ServerOptions {
 
 /// Connection parameters for one database on a test server.
 ///
-/// The TLS trust anchor for every test server is [`tls::CA_PEM`]. The server
-/// certificate is valid for the name in [`ConnParams::host`]. A TLS server
-/// accepts the role only with [`ConnParams::client_cert_pem`] and
+/// The TLS trust anchor is [`ConnParams::server_ca_pem`]: [`tls::CA_PEM`]
+/// for the fixture servers, and the cluster CA for a named server. The
+/// server certificate is valid for the name in [`ConnParams::host`]. A TLS
+/// server accepts the role only with [`ConnParams::client_cert_pem`] and
 /// [`ConnParams::client_key_pem`] (D2, R-NF-09).
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnParams {
@@ -201,6 +228,8 @@ pub struct ConnParams {
     pub client_cert_pem: &'static [u8],
     /// The private key of [`ConnParams::client_cert_pem`] (PEM).
     pub client_key_pem: &'static [u8],
+    /// The CA certificate the client trusts for the server (PEM).
+    pub server_ca_pem: &'static [u8],
 }
 
 impl fmt::Debug for ConnParams {
@@ -240,6 +269,17 @@ pub struct PgServer {
     version: String,
     next_db: AtomicU64,
     watchdog: Mutex<Option<Child>>,
+    /// The superuser's client certificate (PEM): the `fstp-tls` fixture,
+    /// or the certificate a named server's cluster CA minted.
+    superuser_cert: &'static [u8],
+    /// The private key of `superuser_cert` (PEM).
+    superuser_key: &'static [u8],
+    /// The CA that signed the server certificate and the client
+    /// certificates (PEM): the `fstp-tls` fixture CA, or a named server's
+    /// cluster CA.
+    server_ca: &'static [u8],
+    /// The cluster CA and `pg_hba` state of a named server.
+    pub(crate) named: Option<crate::named::NamedState>,
 }
 
 impl fmt::Debug for PgServer {
@@ -325,6 +365,11 @@ impl PgServer {
     ///
     /// Returns an error when `psql` fails to create the database.
     pub fn fresh_database_as(&self, role: Role) -> Result<ConnParams, Error> {
+        if self.named.is_some() && role == Role::App {
+            return Err(Error::new(
+                "a named server has no fixed app role; use create_login_role",
+            ));
+        }
         let n = self.next_db.fetch_add(1, Ordering::Relaxed);
         let dbname = format!("fstp_test_{n}");
         self.psql(
@@ -337,9 +382,33 @@ impl PgServer {
             user: role.name().to_owned(),
             password: self.password(role).to_owned(),
             dbname,
-            client_cert_pem: role.client_cert_pem(),
-            client_key_pem: role.client_key_pem(),
+            client_cert_pem: self.client_cert_pem(role),
+            client_key_pem: self.client_key_pem(role),
+            server_ca_pem: self.server_ca,
         })
+    }
+
+    /// The CA certificate a client trusts for this server (PEM): the
+    /// `fstp-tls` fixture CA, or a named server's cluster CA.
+    #[must_use]
+    pub fn server_ca_pem(&self) -> &'static [u8] {
+        self.server_ca
+    }
+
+    /// The client certificate of `role` on this server (PEM).
+    fn client_cert_pem(&self, role: Role) -> &'static [u8] {
+        match role {
+            Role::Superuser => self.superuser_cert,
+            Role::App => role.client_cert_pem(),
+        }
+    }
+
+    /// The private key of [`PgServer::client_cert_pem`] (PEM).
+    fn client_key_pem(&self, role: Role) -> &'static [u8] {
+        match role {
+            Role::Superuser => self.superuser_key,
+            Role::App => role.client_key_pem(),
+        }
     }
 
     /// Runs `sql` with `psql` as the superuser in database `dbname` and
@@ -360,26 +429,15 @@ impl PgServer {
     ///
     /// Returns an error with `psql`'s standard error when it fails.
     pub fn psql(&self, dbname: &str, sql: &str) -> Result<String, Error> {
-        let mut cmd = Command::new(self.bindir.join("psql"));
-        cmd.env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("LC_ALL", "C")
-            .env("PGPASSWORD", &self.password);
-        match self.tls {
-            ServerTls::Required | ServerTls::Optional => {
-                let client = self.dir.join(CLIENT_DIR);
-                cmd.env("PGSSLMODE", "verify-full")
-                    .env("PGSSLROOTCERT", self.dir.join("tls").join("ca.pem"))
-                    .env("PGSSLCERT", client.join(format!("{SUPERUSER}.pem")))
-                    .env("PGSSLKEY", client.join(format!("{SUPERUSER}-key.pem")));
-            }
-            ServerTls::Off => {
-                cmd.env("PGSSLMODE", "disable");
-            }
-        }
-        cmd.env("PGCONNECT_TIMEOUT", "10")
-            .env("PGAPPNAME", "fstp-pgtest")
-            .args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
+        let out = self.psql_raw(dbname, sql)?;
+        Ok(String::from_utf8_lossy(&out).trim().to_owned())
+    }
+
+    /// Runs `sql` like [`PgServer::psql`] and returns the output bytes as
+    /// they are, untrimmed.
+    fn psql_raw(&self, dbname: &str, sql: &str) -> Result<Vec<u8>, Error> {
+        let mut cmd = self.superuser_client("psql");
+        cmd.args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
             .args(["-h", HOST, "-p", &self.port.to_string(), "-U", SUPERUSER])
             .args(["-d", dbname, "-f", "-"])
             .stdin(Stdio::piped())
@@ -409,7 +467,87 @@ impl PgServer {
                 String::from_utf8_lossy(&out.stderr).trim()
             )));
         }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        Ok(out.stdout)
+    }
+
+    /// The data of every table, large object and populated materialized
+    /// view in `dbname`, in plain text. For test inspection only.
+    ///
+    /// The tables and large objects are as the superuser's
+    /// `pg_dump --data-only` writes them. That dump leaves out materialized
+    /// view contents, so each populated materialized view follows it as one
+    /// more COPY block: a line `COPY <schema>.<view> FROM stdin;`, its rows
+    /// in COPY text format, and the line `\.`. A materialized view created
+    /// `WITH NO DATA` holds no rows and is skipped.
+    ///
+    /// Each lock wait gives up after [`DUMP_LOCK_WAIT`], so a test that
+    /// holds a conflicting lock gets an error rather than a hang.
+    ///
+    /// The dump is the logical view of the database. PostgreSQL has
+    /// already reassembled and decompressed each TOAST value in it, and a
+    /// `bytea` value appears as hex. Row security does not hide rows from
+    /// the superuser. The connection is configured as for
+    /// [`PgServer::psql`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error with `pg_dump`'s standard error when it fails,
+    /// for example for a database that no longer exists.
+    pub fn dump_data(&self, dbname: &str) -> Result<Vec<u8>, Error> {
+        let mut cmd = self.superuser_client("pg_dump");
+        cmd.args(["-h", HOST, "-p", &self.port.to_string(), "-U", SUPERUSER])
+            .args(["--data-only", "--no-password", "--encoding=UTF8"])
+            .arg(format!("--lock-wait-timeout={DUMP_LOCK_WAIT}"))
+            .args(["-d", dbname])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let out = cmd
+            .output()
+            .map_err(|e| Error::io("cannot run pg_dump", &e))?;
+        if !out.status.success() {
+            return Err(Error::new(format!(
+                "pg_dump of {dbname} failed ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        let mut dump = out.stdout;
+        let views = self
+            .psql_raw(
+                dbname,
+                &format!("SET lock_timeout = '{DUMP_LOCK_WAIT}';\n{MATVIEW_COPY_SQL}"),
+            )
+            .map_err(|e| Error::new(format!("materialized views of {dbname}: {e}")))?;
+        dump.extend_from_slice(&views);
+        Ok(dump)
+    }
+
+    /// A command for the client program `program` of the server's
+    /// binaries, set up to connect as the superuser: a clean environment,
+    /// the password in `PGPASSWORD`, and TLS verify-full with the
+    /// superuser's client certificate when the server has TLS.
+    fn superuser_client(&self, program: &str) -> Command {
+        let mut cmd = Command::new(self.bindir.join(program));
+        cmd.env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LC_ALL", "C")
+            .env("PGPASSWORD", &self.password);
+        match self.tls {
+            ServerTls::Required | ServerTls::Optional => {
+                let client = self.dir.join(CLIENT_DIR);
+                cmd.env("PGSSLMODE", "verify-full")
+                    .env("PGSSLROOTCERT", self.dir.join("tls").join("ca.pem"))
+                    .env("PGSSLCERT", client.join(format!("{SUPERUSER}.pem")))
+                    .env("PGSSLKEY", client.join(format!("{SUPERUSER}-key.pem")));
+            }
+            ServerTls::Off => {
+                cmd.env("PGSSLMODE", "disable");
+            }
+        }
+        cmd.env("PGCONNECT_TIMEOUT", "10")
+            .env("PGAPPNAME", "fstp-pgtest");
+        cmd
     }
 
     /// Always `127.0.0.1`.
@@ -608,12 +746,18 @@ fn detect_run_as() -> Result<RunAs, Error> {
     Ok(RunAs::Postgres { uid, gid })
 }
 
-/// Reads `n` bytes from `/dev/urandom` and returns them as lowercase hex.
-fn random_hex(n: usize) -> Result<String, Error> {
+/// Reads `n` bytes from `/dev/urandom`.
+pub(crate) fn random_bytes(n: usize) -> Result<Vec<u8>, Error> {
     let mut buf = vec![0u8; n];
     File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut buf))
         .map_err(|e| Error::io("cannot read /dev/urandom", &e))?;
+    Ok(buf)
+}
+
+/// Reads `n` bytes from `/dev/urandom` and returns them as lowercase hex.
+pub(crate) fn random_hex(n: usize) -> Result<String, Error> {
+    let buf = random_bytes(n)?;
     let mut out = String::with_capacity(n.saturating_mul(2));
     for b in buf {
         out.push_str(&format!("{b:02x}"));
@@ -787,6 +931,47 @@ fn hba_conf(tls: ServerTls) -> String {
 }
 
 fn start(options: ServerOptions) -> Result<PgServer, Error> {
+    start_planned(
+        StartPlan {
+            tls: options.tls,
+            ca_pem: tls::CA_PEM,
+            server_cert_pem: tls::SERVER_CERT_PEM,
+            server_key_pem: tls::SERVER_KEY_PEM,
+            superuser_cert_pem: Role::Superuser.client_cert_pem(),
+            superuser_key_pem: Role::Superuser.client_key_pem(),
+            hba: hba_conf(options.tls),
+            app_role: true,
+        },
+        None,
+    )
+}
+
+/// Everything a server starts with besides its binaries.
+pub(crate) struct StartPlan<'a> {
+    /// How the server treats TLS.
+    pub(crate) tls: ServerTls,
+    /// The CA that the server and client certificates chain to (PEM).
+    pub(crate) ca_pem: &'static [u8],
+    /// The server certificate (PEM).
+    pub(crate) server_cert_pem: &'a [u8],
+    /// The server key (PEM).
+    pub(crate) server_key_pem: &'a [u8],
+    /// The superuser's client certificate for psql (PEM).
+    pub(crate) superuser_cert_pem: &'static [u8],
+    /// The superuser's client key for psql (PEM).
+    pub(crate) superuser_key_pem: &'static [u8],
+    /// The whole `pg_hba.conf`.
+    pub(crate) hba: String,
+    /// Whether to create the [`Role::App`] role.
+    pub(crate) app_role: bool,
+}
+
+/// Starts a server from `plan`. A named server passes its state in
+/// `named`.
+pub(crate) fn start_planned(
+    plan: StartPlan<'_>,
+    named: Option<crate::named::NamedState>,
+) -> Result<PgServer, Error> {
     let bindir = find_bindir()?;
     let run_as = detect_run_as()?;
     let version = capture(
@@ -847,17 +1032,17 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
     chown(&tls_dir, &run_as)?;
     write_private(
         &tls_dir.join("server.pem"),
-        tls::SERVER_CERT_PEM,
+        plan.server_cert_pem,
         0o600,
         &run_as,
     )?;
     write_private(
         &tls_dir.join("server-key.pem"),
-        tls::SERVER_KEY_PEM,
+        plan.server_key_pem,
         0o600,
         &run_as,
     )?;
-    write_private(&tls_dir.join("ca.pem"), tls::CA_PEM, 0o600, &run_as)?;
+    write_private(&tls_dir.join("ca.pem"), plan.ca_pem, 0o600, &run_as)?;
 
     // The superuser's client certificate and key for psql, which runs as
     // the test process's user. libpq refuses a key that others can read.
@@ -868,18 +1053,18 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
         .map_err(|e| Error::io("cannot create the client certificate directory", &e))?;
     write_private(
         &client_dir.join(format!("{SUPERUSER}.pem")),
-        Role::Superuser.client_cert_pem(),
+        plan.superuser_cert_pem,
         0o600,
         &RunAs::Current,
     )?;
     write_private(
         &client_dir.join(format!("{SUPERUSER}-key.pem")),
-        Role::Superuser.client_key_pem(),
+        plan.superuser_key_pem,
         0o600,
         &RunAs::Current,
     )?;
 
-    let tls_on = !matches!(options.tls, ServerTls::Off);
+    let tls_on = !matches!(plan.tls, ServerTls::Off);
     let mut conf = OpenOptions::new()
         .append(true)
         .open(data.join("postgresql.conf"))
@@ -887,7 +1072,7 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
     conf.write_all(server_conf(&dir, tls_on).as_bytes())
         .map_err(|e| Error::io("cannot write postgresql.conf", &e))?;
     drop(conf);
-    fs::write(data.join("pg_hba.conf"), hba_conf(options.tls))
+    fs::write(data.join("pg_hba.conf"), &plan.hba)
         .map_err(|e| Error::io("cannot write pg_hba.conf", &e))?;
 
     let log = dir.join("server.log");
@@ -899,12 +1084,18 @@ fn start(options: ServerOptions) -> Result<PgServer, Error> {
         port,
         password,
         app_password,
-        tls: options.tls,
+        tls: plan.tls,
         version,
         next_db: AtomicU64::new(1),
         watchdog: Mutex::new(guard.take()),
+        superuser_cert: plan.superuser_cert_pem,
+        superuser_key: plan.superuser_key_pem,
+        server_ca: plan.ca_pem,
+        named,
     };
-    server.psql("postgres", &app_role_sql(&server.app_password))?;
+    if plan.app_role {
+        server.psql("postgres", &app_role_sql(&server.app_password))?;
+    }
     Ok(server)
 }
 
@@ -1034,6 +1225,7 @@ mod tests {
             dbname: "d".to_owned(),
             client_cert_pem: Role::App.client_cert_pem(),
             client_key_pem: Role::App.client_key_pem(),
+            server_ca_pem: tls::CA_PEM,
         };
         let shown = format!("{p:?}");
         assert!(!shown.contains("secret-value"), "{shown}");

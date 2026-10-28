@@ -146,6 +146,7 @@ dependencies = [
  "fstp-cell-core",
  "fstp-control",
  "fstp-cp-proto",
+ "fstp-crypto",
  "fstp-custody",
  "fstp-domain",
  "fstp-domain-testkit",
@@ -162,6 +163,7 @@ dependencies = [
  "fstp-prop",
  "fstp-release",
  "fstp-release-svc",
+ "fstp-rt",
  "fstp-vault",
  "fstp-vault-core",
  "fstp-vault-proto",
@@ -349,6 +351,9 @@ dependencies = [
 [[package]]
 name = "fstp-pgtest"
 version = "0.1.0"
+dependencies = [
+ "fstp-pki",
+]
 
 [[package]]
 name = "fstp-pgwire"
