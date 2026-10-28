@@ -280,15 +280,25 @@ fn new_amount_after_acceptance(b: Backend) {
         Some(StateTag::Negotiation),
         "NOTE 9: the old acceptance and approval no longer count"
     );
-    s.run(&approve_grant_as(STAFF_PM, PB, approve_decision_n(PB, 2)))
-        .unwrap_or_else(|e| panic!("the programme manager approves 2.00: {e}"));
+    s.run(&approve_grant_as(
+        STAFF_PM,
+        PB,
+        approve_decision_n(PB, 2),
+        amount_decision(PB, 2),
+    ))
+    .unwrap_or_else(|e| panic!("the programme manager approves 2.00: {e}"));
     assert_eq!(
         s.state(PB),
         Some(StateTag::Negotiation),
         "NOTE 9: the acceptance of 3.00 does not count for 2.00"
     );
-    s.run(&accept_grant_as(LB, PB, accept_decision_n(PB, 2)))
-        .unwrap_or_else(|e| panic!("b accepts 2.00, which completes the facts: {e}"));
+    s.run(&accept_grant_as(
+        LB,
+        PB,
+        accept_decision_n(PB, 2),
+        amount_decision(PB, 2),
+    ))
+    .unwrap_or_else(|e| panic!("b accepts 2.00, which completes the facts: {e}"));
     assert_eq!(s.state(PB), Some(StateTag::Granted));
     assert_eq!(s.world.money.counted(PB), 200);
     s.grant_facts(PA)

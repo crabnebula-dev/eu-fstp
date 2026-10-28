@@ -67,7 +67,7 @@ NOTE: The bar covers every call published up to the end of the binding, includin
 
 NOTE: P-12 is pinned when each binding ends. A later P-12 edit changes only the bars of bindings that end after the edit.
 
-NOTE: An end may be scheduled for a later instant, when the role is granted or afterwards (decided 2026-10-25). The binding stays held until that instant. Its bar is pinned then, from the calls published by that instant and the P-12 value in force at it. A scheduled end can be brought forward, never moved earlier than the current time.
+NOTE: An end may be scheduled for a later instant, when the role is granted or afterwards (decided 2026-10-25). The binding stays held until that instant. Its bar is pinned then, from the calls published by that instant and the P-12 value in force at it. A scheduled end can be brought forward, never moved earlier than the current time. From the scheduled instant until the System records the end, every other command is refused under SoD-05 (decided 2026-10-28). The identity vault's change notice is the one exception, since it is no command of a person. So no step reads the binding as held after the instant.
 
 NOTE: Cooling-off counts call publications, never a wall-clock duration (`02-domain/policy-parameters.md` NOTE 4). I-36 adds a further bar for calls holding a proposal the person reviewed.
 
@@ -155,6 +155,7 @@ NOTE: Data placement for SoD-10, SoD-11 and I-36 (decided 2026-10-25).
 - Each committee binding records the reviewer's organisation. SoD-10 and I-34 count distinct organisations from that field.
 - A reviewer has one organisation per programme. A committee binding that records a different organisation from the account's active committee binding in the programme is refused (SoD-10, decided 2026-10-28).
 - SoD-10 and I-34 hold at every step where the assigned reviewers decide: the stage 1 close, the stage 2 ranking and the amount determination in NEGOTIATION (R-NG-03, decided 2026-10-28).
+- A reviewer assignment is open in NEGOTIATION too (decided 2026-10-28). So a proposal whose amount determination is refused under I-34 can recover: a new reviewer is assigned and the determination is made again (R-CF-02, R-NG-03).
 - Affiliations a proposal declares are held only in the identity vault. SoD-11 and I-35 are checked through the proximity-list query (`03-architecture/overview.md`).
 - For I-36, a DEFERRED proposal is under evaluation in the next call.
 - A person who reviewed a proposal cannot take a Receiving role in any later call of the programme until every proposal they reviewed is decided: terminal, or GRANTED or later. This holds regardless of P-12, and it keeps a later deferral from putting a former reviewer's own proposal in the same call as one they reviewed (I-36, decided 2026-10-25).

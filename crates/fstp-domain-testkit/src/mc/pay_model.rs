@@ -77,6 +77,7 @@ pub fn pay_world(backend: Backend) -> Result<MoneyWorld, String> {
         cap_blocked: false,
         grant_blocked: false,
         superseded: false,
+        contract_cleared: false,
         deliverables: 0,
         divergence: None,
     };

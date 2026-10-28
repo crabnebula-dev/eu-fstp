@@ -1745,10 +1745,12 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::AcceptGrant => Command::AcceptGrant {
             decision: id(g, d, DecisionId::from_raw),
             proposal: id(g, d, ProposalId::from_raw),
+            determination: id(g, d, DecisionId::from_raw),
         },
         CommandKind::ApproveGrant => Command::ApproveGrant {
             decision: id(g, d, DecisionId::from_raw),
             proposal: id(g, d, ProposalId::from_raw),
+            determination: id(g, d, DecisionId::from_raw),
         },
         CommandKind::ContractFact => Command::ContractFact {
             proposal: id(g, d, ProposalId::from_raw),

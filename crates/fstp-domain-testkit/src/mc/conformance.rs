@@ -46,10 +46,14 @@ use crate::mc::life_model::{
 use crate::mc::money_model::{Fact, McAction, McState, run_action};
 
 /// The measured state count of M-CONFORMANCE with withdrawal, on production.
-pub const M_CONFORMANCE_STATES: usize = 19_929;
+/// Measured in close-out round 2, up from 19,929. A new amount now clears
+/// the contract fact of the old one (Q-W7-4), so the contract fact is given
+/// again after a new determination.
+pub const M_CONFORMANCE_STATES: usize = 21_711;
 
 /// The measured state count of M-CONFORMANCE without withdrawal, on production.
-pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 14_470;
+/// Measured in close-out round 2, up from 14,470, for the reason above.
+pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 15_658;
 
 /// One action of M-CONFORMANCE on PC.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -168,6 +172,7 @@ impl ConformanceModel {
                 cap_blocked: false,
                 grant_blocked: false,
                 superseded: false,
+                contract_cleared: false,
                 deliverables: 0,
                 divergence: None,
             },

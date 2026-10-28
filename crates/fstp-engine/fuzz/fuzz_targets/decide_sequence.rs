@@ -407,10 +407,12 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
         34 => Core::AcceptGrant {
             decision: decision(b.id()),
             proposal: proposal(b.id()),
+            determination: decision(b.id()),
         },
         35 => Core::ApproveGrant {
             decision: decision(b.id()),
             proposal: proposal(b.id()),
+            determination: decision(b.id()),
         },
         36 => Core::ContractFact {
             proposal: proposal(b.id()),
