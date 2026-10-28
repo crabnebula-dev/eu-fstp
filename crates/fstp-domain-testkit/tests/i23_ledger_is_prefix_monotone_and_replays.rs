@@ -4,11 +4,11 @@
 //! Its commands come from every lane that exists. They are policy edits,
 //! calls, role grants, ends and reinstatements, drafts and submissions,
 //! assignments, unassignments, declarations and reads. The lifecycle runs
-//! up to NEGOTIATION with score corrections, withdrawal, expiry, re-entry
-//! and declines. One stage 2 path records a revision that supersedes the
-//! submitted plan, with stage 2 scores, a correction and a ranking. Vault
-//! changes release, void and suspend. Money commands are left out, because
-//! lane L-MONEY may still be stubs here.
+//! with score corrections, withdrawal, expiry, re-entry and declines. One
+//! stage 2 path records a revision that supersedes the submitted plan,
+//! with stage 2 scores, a correction and a ranking. Past NEGOTIATION, PR1
+//! runs the amount, the grant facts, the start of execution, one payment
+//! and the termination. Vault changes release, void and suspend.
 //!
 //! After every command:
 //! - an accepted command appended one batch under its own command id and

@@ -149,7 +149,12 @@ fn plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Planned, Refusal> {
                     proposal: *proposal,
                     assignment: *assignment,
                 },
-                ranks: completes_round(state, *proposal, *assignment)?,
+                // The last "no questions" ranks only while the active
+                // reviewers span P-39 organisations (I-34). Otherwise it is
+                // recorded alone, and a reassignment completes the round.
+                ranks: completes_round(state, *proposal, *assignment)?
+                    && crate::decision::require_stage2_organisations(state, *proposal, ctx.now)
+                        .is_ok(),
             })
         }
         Command::AnswerQuestions { proposal, text } => {

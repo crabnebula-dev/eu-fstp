@@ -73,7 +73,7 @@
 //!   a new reviewer must bring a new organisation. So every run of
 //!   assignments keeps `distinct >= min(count, P-39)` after each accepted
 //!   `Assign`. The organisation is the committee binding's field. A
-//!   reviewer without one is unjudged.
+//!   reviewer without one is refused (SoD-10, decided 2026-10-25).
 //! - I-35: a reviewer whose organisation has a P-38 proximity list is
 //!   refused when the vault answers that a team member declares an
 //!   affiliation on that list. P-38 is live, so the head version counts. A
@@ -1280,7 +1280,7 @@ fn assign_verdict(
     }
     if kind == AssignmentKind::Reviewer {
         match committee_organisation(view, rev, reviewer, programme, now) {
-            None => unjudged = true,
+            None => return refuse("I-34, SoD-10: the reviewer's organisation is unknown"),
             Some(org) => {
                 let p39 = rev.governing_policy(proposal).map_or(0, |p| p.p39);
                 let orgs = assigned_organisations(view, rev, proposal, now);
@@ -2278,8 +2278,8 @@ pub fn check_i36_grants(before: &RevView, records: &[Record]) -> Result<(), Stri
 /// I-34 after an accepted `Assign` (test-author reading): when the
 /// proposal's assignments spanned fewer than P-39 organisations before,
 /// the new reviewer brought a new one. `before` is the view before the
-/// step, and `reviewer` the new assignee. A reviewer whose committee
-/// binding records no organisation is outside the reading.
+/// step, and `reviewer` the new assignee. An accepted reviewer whose
+/// committee binding records no organisation breaks I-34 (SoD-10).
 pub fn check_i34_assign(
     view: &sod::View,
     before: &RevView,
@@ -2291,7 +2291,9 @@ pub fn check_i34_assign(
         return Ok(());
     };
     let Some(org) = committee_organisation(view, before, reviewer, programme, now) else {
-        return Ok(());
+        return Err(format!(
+            "I-34: {reviewer:?} was assigned to {proposal:?} with no known organisation"
+        ));
     };
     let p39 = usize::from(before.governing_policy(proposal).map_or(0, |p| p.p39));
     let orgs_before = assigned_organisations(view, before, proposal, now);

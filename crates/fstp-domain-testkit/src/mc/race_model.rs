@@ -242,7 +242,13 @@ impl RaceModel {
                                 granted_by: e.granted_by,
                                 second_admin: None,
                                 confidentiality: None,
-                                organisation: None,
+                                organisation: match &step.cmd {
+                                    fstp_domain::command::Command::GrantRole {
+                                        organisation,
+                                        ..
+                                    } => *organisation,
+                                    _ => None,
+                                },
                                 verified_epoch: Some(*epoch),
                             },
                         ));

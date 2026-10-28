@@ -70,13 +70,17 @@
 //!   - A guardian is added only to a proposal flagged as a minor's.
 //!   - Drafting and Judging grants need accepted confidentiality terms
 //!     (Confidentiality on binding). Operations grants never need them.
-//!     The organisation field is data only and never a reason to refuse.
+//!   - A committee member grant needs the reviewer's organisation, since
+//!     SoD-10 and I-34 count organisations from it (roles-and-sod.md,
+//!     Reviewer assignment, decided 2026-10-25). For other roles the field
+//!     is data only.
 //!   - A start before `now` is backdating and refused. A later start is
 //!     accepted. An end must be at `now`. An earlier end is backdating. A
 //!     later end is a scheduled end, which M2 refuses: the bar it pins
 //!     would count calls not yet published when the command is decided.
-//!     The spec allows an optional end date, so scheduled ends are an open
-//!     question for Daniel.
+//!     `SPEC/02-domain/roles-and-sod.md` allows a scheduled end (decided
+//!     2026-10-25). M2 does not implement it yet, so the reference
+//!     follows the M2 refusal.
 //!   - The lead of a proposal acts only while its Applicant binding on that
 //!     proposal is held (enforcement point 2).
 //! - Identity discovery: the reaction to a vault change voids, in the same
@@ -999,7 +1003,7 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             start,
             second_admin,
             confidentiality,
-            ..
+            organisation,
         } => {
             if !ask.tenant_admin {
                 return refuse("actor");
@@ -1013,6 +1017,9 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             let group = spec_group(*role);
             if group == RefGroup::Receiving {
                 return refuse("Receiving roles arise from proposals");
+            }
+            if *role == Role::CommitteeMember && organisation.is_none() {
+                return refuse("SoD-10: a committee binding records the reviewer's organisation");
             }
             if *start < ask.now {
                 return refuse("backdated start");
@@ -1060,7 +1067,7 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
                 return refuse("backdated end");
             }
             if *at > ask.now {
-                return refuse("scheduled end, an open question for Daniel");
+                return refuse("scheduled end, allowed by the spec but not yet implemented in M2");
             }
             Verdict::Accept
         }

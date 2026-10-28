@@ -83,7 +83,7 @@ use fstp_domain::rules::{Freeze, Level, ParamId, Row, StateTag};
 use fstp_domain::scoring::{Criteria, Criterion, ScoreKey, Stage};
 use fstp_domain::time::{Days, MICROS_PER_DAY, Timestamp};
 use fstp_engine::EngineState;
-use fstp_ledger::Seq;
+use fstp_ledger::{Entry, Seq};
 use fstp_money::{AmountRange, Percent};
 use fstp_prop::{Gen, StateMachine};
 
@@ -99,6 +99,7 @@ use crate::r#gen::review::{
     records_of, run_records, submit, withdraw,
 };
 use crate::r#gen::roster::{Flags, P1, STAFF_PM, Step, call, end};
+use crate::harness::prop::ledger_step;
 use crate::mc::life_model::{
     IRC2, T_EVAL, admit, answer, ask, assign_declared, assignment_of, ballots, close, correct,
     cut_off, cut_off_decision, decline, expire, irc_review, knock_out, no_questions, rank, reenter,
@@ -1385,6 +1386,33 @@ pub struct TwinPair {
 pub struct TwinSut {
     /// The twins.
     pub pair: Result<TwinPair, String>,
+    /// The ledgers of twins A and B before the latest command, for the
+    /// I-23 checks of the invariant (design 6.1).
+    pub previous: [Vec<Entry<fstp_engine::Record>>; 2],
+}
+
+impl TwinPair {
+    /// The ledgers of twins A and B as their stores hold them.
+    pub fn ledgers(&self) -> Result<[Vec<Entry<fstp_engine::Record>>; 2], String> {
+        let read = |t: &Twin| {
+            t.scenario
+                .entries()
+                .map_err(|e| format!("harness: the ledger read failed: {e:?}"))
+        };
+        Ok([read(&self.a)?, read(&self.b)?])
+    }
+
+    /// I-23 on both twins: each ledger extends its `previous` one and
+    /// replays to the driver's state (design 6.1).
+    pub fn check_ledgers(
+        &self,
+        previous: &[Vec<Entry<fstp_engine::Record>>; 2],
+    ) -> Result<(), String> {
+        let [a, b] = self.ledgers()?;
+        ledger_step(&previous[0], &a, self.a.scenario.state())
+            .map_err(|e| format!("twin A: {e}"))?;
+        ledger_step(&previous[1], &b, self.b.scenario.state()).map_err(|e| format!("twin B: {e}"))
+    }
 }
 
 impl TwinSut {
@@ -1401,7 +1429,11 @@ impl TwinSut {
                 approvals: 0,
             })
         });
-        TwinSut { pair }
+        let previous = match &pair {
+            Ok(p) => p.ledgers().unwrap_or_default(),
+            Err(_) => Default::default(),
+        };
+        TwinSut { pair, previous }
     }
 }
 
@@ -2089,6 +2121,17 @@ impl StateMachine for TwinMachine {
     fn run(&self, sut: &mut TwinSut, cmd: &TwinCmd) -> TwinOutput {
         self.last.replace(None);
         let context = format!("{cmd:?}");
+        if let Ok(p) = &sut.pair {
+            match p.ledgers() {
+                Ok(l) => sut.previous = l,
+                Err(e) => {
+                    return TwinOutput {
+                        context,
+                        verdict: Err(e),
+                    };
+                }
+            }
+        }
         let pair = match sut.pair.as_mut() {
             Ok(p) => p,
             Err(e) => {
@@ -2155,7 +2198,10 @@ impl StateMachine for TwinMachine {
 
     fn invariant(&self, _m: &TwinGhost, sut: &TwinSut) -> Result<(), String> {
         match &sut.pair {
-            Ok(p) => p.check(),
+            Ok(p) => {
+                p.check_ledgers(&sut.previous)?;
+                p.check()
+            }
             Err(e) => Err(format!("harness: genesis failed: {e}")),
         }
     }

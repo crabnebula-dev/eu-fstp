@@ -21,17 +21,13 @@
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::money_model::{
-    M_RACE_RESERVATION_STATES, MoneyMc, race, race_properties,
+    M_RACE_RESERVATION_REFERENCE_STATES, M_RACE_RESERVATION_STATES, MoneyMc, race, race_properties,
 };
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model =
         MoneyMc::new(race(), backend).unwrap_or_else(|e| panic!("M-RACE start from genesis: {e}"));
-    match check_exhaustive(
-        &model,
-        &race_properties::<MoneyMc>(),
-        M_RACE_RESERVATION_STATES,
-    ) {
+    match check_exhaustive(&model, &race_properties::<MoneyMc>(), measured) {
         Ok(o) => eprintln!("M-RACE reservation: {} states", o.stats.states),
         Err(e) => panic!("{e}"),
     }
@@ -40,11 +36,11 @@ fn model(backend: Backend) {
 /// I-14, design 2.11: two concurrent negotiations of one identity cannot both pass the cap.
 #[test]
 fn i14_m_race_reservation() {
-    model(Backend::Production);
+    model(Backend::Production, M_RACE_RESERVATION_STATES);
 }
 
 /// I-14: the reservation race passes on the references alone.
 #[test]
 fn i14_m_race_reservation_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_RACE_RESERVATION_REFERENCE_STATES);
 }

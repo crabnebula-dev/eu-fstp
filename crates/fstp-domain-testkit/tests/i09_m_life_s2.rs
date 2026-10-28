@@ -7,7 +7,9 @@
 //!   "no questions", answers, one revision, stage 2 scores of 50.00, 75.00
 //!   and 100.00, the ranking, the reduced clock, the expiry, publication of
 //!   the next call, re-entry with fresh assignments, one vault conflict
-//!   that releases R2 in STAGE2 (O-50), and withdrawal.
+//!   that releases R2 in STAGE2, and withdrawal. After the release the
+//!   coordinator may assign the spare reviewer R3, which restores P-39
+//!   organisations, so "no questions" can rank the proposal (O-50, I-34).
 //! - The after-ranking part starts in RANKED from genesis, on the revised
 //!   or on the original plan. Actions: the cut-off, IRC assignment and
 //!   review, concerns that defer or decline, publication, re-entry and

@@ -15,12 +15,14 @@
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
-use fstp_domain_testkit::mc::money_model::{M_AFTER_STATES, MoneyMc, after, after_properties};
+use fstp_domain_testkit::mc::money_model::{
+    M_AFTER_REFERENCE_STATES, M_AFTER_STATES, MoneyMc, after, after_properties,
+};
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model = MoneyMc::new(after(), backend)
         .unwrap_or_else(|e| panic!("after-negotiation start from genesis: {e}"));
-    match check_exhaustive(&model, &after_properties::<MoneyMc>(), M_AFTER_STATES) {
+    match check_exhaustive(&model, &after_properties::<MoneyMc>(), measured) {
         Ok(o) => eprintln!("after negotiation: {} states", o.stats.states),
         Err(e) => panic!("{e}"),
     }
@@ -30,11 +32,11 @@ fn model(backend: Backend) {
 /// TERMINATED, DECLINED and WITHDRAWN are reachable after NEGOTIATION.
 #[test]
 fn lifecycle_after_negotiation_states_reachable() {
-    model(Backend::Production);
+    model(Backend::Production, M_AFTER_STATES);
 }
 
 /// Conformance, R-AU-01, I-64: the after-negotiation model passes on the references alone.
 #[test]
 fn lifecycle_after_negotiation_states_reachable_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_AFTER_REFERENCE_STATES);
 }

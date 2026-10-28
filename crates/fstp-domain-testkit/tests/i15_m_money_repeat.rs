@@ -19,17 +19,13 @@
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::money_model::{
-    M_MONEY_REPEAT_STATES, MoneyMc, repeat, repeat_properties,
+    M_MONEY_REPEAT_REFERENCE_STATES, M_MONEY_REPEAT_STATES, MoneyMc, repeat, repeat_properties,
 };
 
-fn model(backend: Backend) {
+fn model(backend: Backend, measured: usize) {
     let model = MoneyMc::new(repeat(), backend)
         .unwrap_or_else(|e| panic!("I-15 repeat model start from genesis: {e}"));
-    match check_exhaustive(
-        &model,
-        &repeat_properties::<MoneyMc>(),
-        M_MONEY_REPEAT_STATES,
-    ) {
+    match check_exhaustive(&model, &repeat_properties::<MoneyMc>(), measured) {
         Ok(o) => eprintln!("I-15 repeat: {} states", o.stats.states),
         Err(e) => panic!("{e}"),
     }
@@ -38,11 +34,11 @@ fn model(backend: Backend) {
 /// I-15, R-NG-05: a repeat grant needs every accepted prior deliverable public under P-26.
 #[test]
 fn i15_m_money_repeat() {
-    model(Backend::Production);
+    model(Backend::Production, M_MONEY_REPEAT_STATES);
 }
 
 /// I-15: the repeat model passes on the references alone.
 #[test]
 fn i15_m_money_repeat_reference() {
-    model(Backend::Reference);
+    model(Backend::Reference, M_MONEY_REPEAT_REFERENCE_STATES);
 }

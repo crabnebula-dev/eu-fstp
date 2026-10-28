@@ -4,7 +4,10 @@
 //! It reads the main workspace's resolve graph and enforces three rules:
 //!
 //! 1. No I/O. No M2 crate depends on `fstp-rt`, `fstp-http`, `fstp-tls`,
-//!    `fstp-pgwire`, `fstp-pgtest`, `fstp-migrate` or `fstp-crypto`.
+//!    `fstp-pgwire`, `fstp-pgtest`, `fstp-migrate` or `fstp-crypto`. Nor
+//!    does it depend on the third-party roots that do I/O or run async
+//!    code: `tokio`, `mio`, `socket2`, the `rustls` crates and `aws-lc-rs`
+//!    (ADR-001, ADR-002).
 //! 2. The I-10 boundary. `fstp-domain` has no dependency path to
 //!    `fstp-findings` or `fstp-engine`.
 //! 3. The testkit never ships. No crate other than `fstp-domain-testkit`
@@ -33,8 +36,11 @@ const M2_CRATES: [&str; 6] = [
     "fstp-domain-testkit",
 ];
 
-/// Crates that do I/O, which no M2 crate may reach (rule 1).
-const IO_CRATES: [&str; 7] = [
+/// Crates that do I/O or run async code, which no M2 crate may reach
+/// (rule 1). The in-house I/O crates come first. The third-party ADR roots
+/// follow: an in-house crate may depend on any root
+/// (`deps/adr-roots.txt`), so the allowlist gate alone lets them through.
+const IO_CRATES: [&str; 15] = [
     "fstp-rt",
     "fstp-http",
     "fstp-tls",
@@ -42,6 +48,14 @@ const IO_CRATES: [&str; 7] = [
     "fstp-pgtest",
     "fstp-migrate",
     "fstp-crypto",
+    "tokio",
+    "mio",
+    "socket2",
+    "rustls",
+    "rustls-webpki",
+    "rustls-pki-types",
+    "aws-lc-rs",
+    "aws-lc-sys",
 ];
 
 /// The crate that must not reach the findings side (rule 2).
@@ -304,6 +318,41 @@ mod tests {
     fn designed_graph_passes() {
         let findings = check(&designed_with(&[]));
         assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    /// Design section 1, rule 1, ADR-002: the third-party ADR roots that do
+    /// I/O or run async code fail too, directly or through another crate.
+    /// An in-house crate may depend on any ADR root, so the allowlist gate
+    /// alone lets them through.
+    #[test]
+    fn review_w7_third_party_io_roots_are_rejected() {
+        for root in [
+            "tokio",
+            "mio",
+            "socket2",
+            "rustls",
+            "rustls-webpki",
+            "aws-lc-rs",
+        ] {
+            let direct = check(&designed_with(&[("fstp-ledger", root, N)]));
+            let msgs = messages(&direct, "layering-io");
+            assert!(
+                msgs.contains(&format!(
+                    "fstp-ledger depends on {root} (fstp-ledger -> {root}); M2 crates do no I/O"
+                )),
+                "{root}: {msgs:?}"
+            );
+        }
+        let transitive = check(&designed_with(&[
+            ("fstp-domain", "fstp-x", N),
+            ("fstp-x", "tokio", N),
+        ]));
+        let msgs = messages(&transitive, "layering-io");
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("fstp-domain -> fstp-x -> tokio")),
+            "{msgs:?}"
+        );
     }
 
     /// Design section 1, rule 1: a direct, a transitive and a dev edge to an

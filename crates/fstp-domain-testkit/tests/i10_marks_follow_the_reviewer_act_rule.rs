@@ -19,7 +19,9 @@ use fstp_domain::assignment::AssignmentKind;
 use fstp_domain::command::Actor;
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain_testkit::r#gen::findings::{ASSESSOR, actor_ctx, finding_command_id};
-use fstp_domain_testkit::r#gen::review::{COORDINATOR, L1, PR1, R1, R2, R3, run_on, tag, unassign};
+use fstp_domain_testkit::r#gen::review::{
+    COORDINATOR, L1, PR1, R1, R2, R3, run_on, tag, unassign, withdraw,
+};
 use fstp_domain_testkit::r#gen::roster::call;
 use fstp_domain_testkit::mc::findings_model::{
     MARKED_FINDING, engine_command, exec_finding, mark_scenario, store_of,
@@ -205,4 +207,34 @@ fn i10_i03_fold_refuses_a_mark_the_engine_would_refuse() {
         );
     }
     assert_eq!(fold_mark(&s, R1, MARKED_FINDING), Ok(()));
+}
+
+/// I-10, `SPEC/04-llm-assessment/assessment.md` (decided 2026-10-26):
+/// marking stays open after the proposal reaches a terminal state, and a
+/// mark never changes the proposal. The lead withdraws PR1, so it is
+/// WITHDRAWN. R1's mark is then recorded as one finding record, and the
+/// core is unchanged.
+#[test]
+fn i10_mark_after_a_terminal_state_is_recorded_and_changes_nothing() {
+    let mut s = start();
+    run_on(&mut s, &withdraw(L1, PR1), T_EVAL).unwrap();
+    let withdrawn = s.entries().unwrap().iter().any(|e| {
+        matches!(&e.record, fstp_engine::Record::Core(fstp_domain::record::Record::Transitioned(t))
+            if t.proposal == PR1 && t.to == fstp_domain::rules::StateTag::Withdrawn)
+    });
+    assert!(withdrawn, "PR1 reached WITHDRAWN");
+    let core = s.state().core.clone();
+    let before = s.entries().unwrap().len();
+    let r = mark(&mut s, Actor::Account(R1), MARKED_FINDING);
+    assert!(r.is_ok(), "R1's mark after WITHDRAWN was {r:?}");
+    let entries = s.entries().unwrap();
+    let appended: Vec<_> = entries.get(before..).unwrap_or_default().to_vec();
+    assert!(
+        appended.len() == 1
+            && appended
+                .iter()
+                .all(|e| matches!(e.record, fstp_engine::Record::Finding(_))),
+        "I-10: a mark after WITHDRAWN appended {appended:?}"
+    );
+    assert_eq!(s.state().core, core, "I-10: a mark changed the core");
 }

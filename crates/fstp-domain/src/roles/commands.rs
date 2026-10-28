@@ -7,8 +7,10 @@
 //!   proposals. Drafting and Judging grants need accepted confidentiality
 //!   terms, `IsVerified` true and `SameIdentityAsAny` false over the
 //!   candidate set (SoD-09, I-06). A self-grant needs the second tenant
-//!   admin that the shell attested (SoD-07). The organisation field is
-//!   data for I-34 and never a reason to refuse.
+//!   admin that the shell attested (SoD-07). A committee member grant
+//!   needs the reviewer's organisation, since SoD-10 and I-34 count
+//!   organisations from it (decided 2026-10-25). For other roles the
+//!   field is data only.
 //! - `EndRole` of a Drafting, Judging or Operations binding that is not
 //!   voided, at `ctx.now`. It pins the cooling-off bar, which never counts
 //!   for a conflict-of-interest suspension.
@@ -193,6 +195,11 @@ fn plan_grant(state: &State, cmd: &Command, ctx: &Ctx) -> Result<GrantPlan, Refu
     if group == Group::Receiving {
         // Receiving bindings arise from proposals, never from a grant.
         return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    }
+    if *role == Role::CommitteeMember && organisation.is_none() {
+        // Each committee binding records the reviewer's organisation, and
+        // SoD-10 and I-34 count organisations from it (decided 2026-10-25).
+        return Err(Refusal::new(RuleRef::Sod10, RefusalReason::InvalidValue));
     }
     if *start < ctx.now {
         // No backdating (design 2.6).

@@ -1,6 +1,6 @@
 # M2 exit audit (step W6, lane w6-audit)
 
-Written on 2026-10-26 against branch `m2/w6-audit`, based on `0f7bfe9`. It checks the M2 exit checklist of `docs/handoff/m2-design.md` section 11. It covers I-01 to I-15, I-23, and I-34 to I-36, which `SPEC/09-milestones.md` NOTE 1 adds to the exit.
+Written on 2026-10-26 against branch `m2/w6-audit`, based on `0f7bfe9`, and updated in the W7 review on 2026-10-28. It checks the M2 exit checklist of `docs/handoff/m2-design.md` section 11. It covers I-01 to I-15, I-23, and I-34 to I-36, which `SPEC/09-milestones.md` NOTE 1 adds to the exit.
 
 ## Method
 
@@ -26,15 +26,15 @@ All results below are local runs on an Apple M5 with 10 cores, macOS, PostgreSQL
 | I-06 | `i06_sod09_verified_identity_never_spans_groups` | `i06_m_sod_sybil` (149,961 / 98,387), `i06_m_race_with_protocol` (19 / 19), `i06_m_race_without_protocol_reaches_violation` (12 / 12) | `i06_teeth_sybil_left_bound_is_caught`, `i06_teeth_conflict_suspension_counted_as_held_is_caught` | Green |
 | I-07 | `i07_quorum_counts_valid_scores_once`, `i07_stage1_exit_requires_p03_valid_scores` | `i07_i08_m_life_s1` (6,766 / 5,698), `i07_i08_m_life_s1_weighted` (6,202 / 5,260) | `i07_teeth_superseded_score_counted_is_caught` (pure and model) | Green |
 | I-08 | `i08_weighted_score_matches_exact_reference`, `i08_equality_is_not_a_pass`, `r_pc_01_weights_change_scores_for_discriminating_inputs` | `i07_i08_m_life_s1`, `i07_i08_m_life_s1_weighted` | `i08_teeth_ge_instead_of_gt_is_caught` (pure and model) | Green |
-| I-09 | `i09_effective_score_follows_p24_and_names_one_plan` | `i09_m_life_s2` (19,220 / 14,722), `i09_m_life_s2_after_ranking_on_the_revised_plan` (192 / 192), `i09_m_life_s2_after_ranking_on_the_original_plan` (192 / 192) | `i09_teeth_effective_cleared_is_caught` | Green |
+| I-09 | `i09_effective_score_follows_p24_and_names_one_plan` | `i09_m_life_s2` (34,824 / 25,870), `i09_m_life_s2_after_ranking_on_the_revised_plan` (192 / 192), `i09_m_life_s2_after_ranking_on_the_original_plan` (192 / 192) | `i09_teeth_effective_cleared_is_caught` | Green |
 | I-10 | `i10_domain_crates_cannot_reach_findings`, `i10_findings_never_alter_core_state` | `i10_m_life_s1_findings` (27,064 / 22,792), the I-10 properties of M-LIFE-S1 | `i10_teeth_finding_driven_transition_is_caught`, `i10_teeth_core_decider_reading_findings_is_caught` | Green |
 | I-11 | `i11_call_findings_share_pinned_config` | `i11_m_find` (110 / 74) | `i11_teeth_foreign_config_is_caught` | Green |
-| I-12 | `i12_every_frozen_parameter_is_in_the_snapshot`; `i12_frozen_edits_leave_call_outcomes_unchanged` is not in this worktree | `i12_m_policy` (353, production only, equal to the hand count) | `i12_teeth_head_instead_of_snapshot_is_caught` | Open: the twin test belongs to the W6 twin lane |
+| I-12 | `i12_every_frozen_parameter_is_in_the_snapshot`, `i12_frozen_edits_leave_call_outcomes_unchanged` (twin machine) and its four witnesses in the same file | `i12_m_policy` (353, production only, equal to the hand count) | `i12_teeth_head_instead_of_snapshot_is_caught`, `i12_teeth_frozen_edit_changes_outcome_is_caught` | Green |
 | I-13 | `i13_i14_grant_sequences_respect_range_and_cap` | `i13_i14_m_money` (594 / 840) | `i13_teeth_out_of_range_grant_is_caught` | Green |
-| I-14 | `i13_i14_grant_sequences_respect_range_and_cap`, `i14_p05_edit_below_committed_is_refused` | `i13_i14_m_money`, `i14_m_race_reservation` (1,682 / 1,682) | `i14_teeth_grant_above_cap_is_caught` | Green |
-| I-15 | `i15_repeat_grant_requires_public_deliverables`, `i15_amendment_requires_public_deliverables` | `i15_m_money_repeat` (256 / 256) | `i15_teeth_repeat_without_records_is_caught` | Green |
-| I-23 | `i23_ledger_is_prefix_monotone_and_replays`, `i23_verifier_flags_every_mutation` (`fstp-ledger`), `i23_store_api_has_no_mutation` as 11 compile-fail pairs in `fstp-ledger/src/twins.rs` | `i23_m_ledger` (1,422, production only, equal to the measured count) | `i23_teeth_changed_past_entry_is_caught` | Green |
-| I-34, I-35 | `i34_i35_assignment_respects_orgs_and_proximity` (machine), plus four example tests in the same file | none in the design | `i34_teeth_same_organisation_below_p39_is_caught`, `i35_teeth_reviewer_on_the_proximity_list_is_caught` (new in this lane) | Green, per step only (Q-W6-4) |
+| I-14 | `i13_i14_grant_sequences_respect_range_and_cap`, `i14_p05_edit_below_committed_is_refused` | `i13_i14_m_money`, `i14_m_race_reservation` (1,566 / 1,682) | `i14_teeth_grant_above_cap_is_caught`, `i14_teeth_reservation_race_is_caught` | Green |
+| I-15 | `i15_repeat_grant_requires_public_deliverables`, `i15_amendment_requires_public_deliverables` | `i15_m_money_repeat` (234 / 256) | `i15_teeth_repeat_without_records_is_caught` | Green |
+| I-23 | `i23_ledger_is_prefix_monotone_and_replays` (its scripted path now runs the amount, the grant facts, execution, an amendment, a payment and the termination), the ledger checks of the I-12 twin machine, `i23_verifier_flags_every_mutation` (`fstp-ledger`), `i23_store_api_has_no_mutation` as 11 compile-fail pairs in `fstp-ledger/src/twins.rs` | `i23_m_ledger` (1,422, production only, equal to the measured count) | `i23_teeth_changed_past_entry_is_caught` | Green |
+| I-34, I-35 | `i34_i35_assignment_respects_orgs_and_proximity` (machine), plus four example tests in the same file; the W7 reproducers in `review_w7.rs` | none in the design | `i34_teeth_same_organisation_below_p39_is_caught`, `i35_teeth_reviewer_on_the_proximity_list_is_caught` | Green, per step, plus a re-check at the stage 1 close and the ranking (W7, Q-W6-4) |
 | I-36 | `i36_former_reviewer_never_receives_in_call_under_evaluation`, `i36_former_reviewer_waits_until_every_reviewed_proposal_is_decided`, `i36_decision_closes_the_deferral_race`, `i36_deferred_proposal_bars_its_former_reviewer_in_the_next_call`, `i36_unreviewed_and_other_programme_calls_are_unaffected` | none in the design | `i36_teeth_current_call_only_check_is_caught`, `i36_teeth_race_under_the_current_call_check_is_caught` | Green |
 
 Notes on the rows:
@@ -46,7 +46,7 @@ Notes on the rows:
 
 ## Tripwires
 
-Each shared constant now holds the production count, and its tripwire is twice that count. Where the reference twin stores fewer states, it runs under its own `*_REFERENCE_STATES` constant, with a tripwire at twice the reference count. Before fix round 1 the twins shared the production constant. They then stopped at up to three times their own count, so their growth did not fail visibly. "same" means the twin runs under the shared constant, because both backends store the same count.
+Each shared constant now holds the production count, and its tripwire is twice that count. Where the reference twin stores a different count, it runs under its own `*_REFERENCE_STATES` constant, with a tripwire at twice the reference count. Before fix round 1 the twins shared the production constant. They then stopped at up to three times their own count, so their growth did not fail visibly. "same" means the twin runs under the shared constant, because both backends store the same count.
 
 | Constant | Before | Production | Production tripwire | Reference constant | Reference | Reference tripwire |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -66,23 +66,25 @@ Each shared constant now holds the production count, and its tripwire is twice t
 | `M_RACE_NO_PROTOCOL_STATES` | 12 | 12 | 24 | same | 12 | 24 |
 | `M_LIFE_S1_EVEN_STATES` | 5,698 | 6,766 | 13,532 | `M_LIFE_S1_EVEN_REFERENCE_STATES` | 5,698 | 11,396 |
 | `M_LIFE_S1_WEIGHTED_STATES` | 5,260 | 6,202 | 12,404 | `M_LIFE_S1_WEIGHTED_REFERENCE_STATES` | 5,260 | 10,520 |
-| `M_LIFE_S2_STATES` | 14,722 | 19,220 | 38,440 | `M_LIFE_S2_REFERENCE_STATES` | 14,722 | 29,444 |
+| `M_LIFE_S2_STATES` | 19,220 | 34,824 | 69,648 | `M_LIFE_S2_REFERENCE_STATES` | 25,870 | 51,740 |
 | `M_LIFE_S2_AFTER_STATES` | 192 | 192 | 384 | same | 192 | 384 |
 | `M_LIFE_S1_FINDINGS_STATES` | 22,792 | 27,064 | 54,128 | `M_LIFE_S1_FINDINGS_REFERENCE_STATES` | 22,792 | 45,584 |
 | `M_FIND_STATES` | 74 | 110 | 220 | `M_FIND_REFERENCE_STATES` | 74 | 148 |
 | `M_POLICY_STATES` | 353 | 353 | 706 | none | none | none |
 | `M_LEDGER_STATES` | 1,422 | 1,422 | 2,844 | none | none | none |
-| `M_MONEY_STATES` | 840 | 594 | 1,188 | `M_MONEY_REFERENCE_STATES` | 840 | 1,680 |
-| `M_RACE_RESERVATION_STATES` | 1,682 | 1,682 | 3,364 | same | 1,682 | 3,364 |
-| `M_MONEY_REPEAT_STATES` | 256 | 256 | 512 | same | 256 | 512 |
-| `M_AFTER_STATES` | 203 | 203 | 406 | same | 203 | 406 |
-| `M_LIFECYCLE_STATES` | 4,476 | 4,734 | 9,468 | `M_LIFECYCLE_REFERENCE_STATES` | 4,488 | 8,976 |
+| `M_MONEY_STATES` | 864 | 594 | 1,188 | `M_MONEY_REFERENCE_STATES` | 840 | 1,680 |
+| `M_RACE_RESERVATION_STATES` | 1,682 | 1,566 | 3,132 | `M_RACE_RESERVATION_REFERENCE_STATES` | 1,682 | 3,364 |
+| `M_MONEY_REPEAT_STATES` | 256 | 234 | 468 | `M_MONEY_REPEAT_REFERENCE_STATES` | 256 | 512 |
+| `M_AFTER_STATES` | 203 | 111 | 222 | `M_AFTER_REFERENCE_STATES` | 203 | 406 |
+| `M_LIFECYCLE_STATES` | 4,734 | 4,287 | 8,574 | `M_LIFECYCLE_REFERENCE_STATES` | 4,022 | 8,044 |
 
 `M_LIFECYCLE_REFERENCE_STATES` serves the five M-LIFECYCLE reference twins: `lifecycle_states_reachable_up_to_negotiation_reference`, `lifecycle_m_lifecycle_terminal_states_have_no_exit_reference`, `r_ev_01_ineligible_has_no_successor_reference`, `r_ev_07_stage2_deferral_needs_no_future_call_reference` and `r_ir_02_concern_defers_or_declines_reference`. The old constant of 4,476 no longer matched the reference, which stores 4,488 on this base.
 
 The teeth runs keep their multiples of the shared constant (two, four or eight times). They stop once the target verdict is decided, so their bound is a search budget, not a tripwire.
 
 Every count above was measured again after fix round 1. The reference-mode call approval fix below left every count unchanged.
+
+The W7 review measured every model again with the same probe. M-LIFE-S2 and M-LIFECYCLE changed, since I-34 is now checked again at the stage 1 close and the ranking. M-LIFE-S2 also gained a spare reviewer after a release, so its O-50 witness stays reachable. M-RACE reservation, the I-15 repeat model and the after-negotiation model had kept their old counts after the NOTE 9 decline change. Their production runs store fewer states than the references, as M-MONEY does, so each twin now runs under its own `*_REFERENCE_STATES` constant. `review_w7_money_tripwires.rs` asserts the stored counts of those three models on both backends. Every other count was unchanged.
 
 No bound was relaxed to pass a test. Every production run was already exhaustive under the old bound. The largest ratio is 1.52 for M-SOD I-06, which stayed under the old tripwire of twice the reference count.
 
@@ -92,6 +94,8 @@ No bound was relaxed to pass a test. Every production run was already exhaustive
 
 In production mode a model state holds the production projection beside the reference views. In reference mode the projection stays at genesis. Two command orders can reach the same reference views but different production projections.
 
+The money models are the exception: M-MONEY, M-RACE reservation, the I-15 repeat model and the after-negotiation model store fewer states on production. The money reference leaves some grant-fact steps `Either`, and in reference mode the model takes such a step as accepted. Production refuses some of them, so its run has no successor there. This reason is read from the M-MONEY constant doc and was not probed state by state.
+
 A temporary probe explored the models on both backends. It then set the backend field to production and removed the production projection, and the finding store where one exists, from every state. The first seven rows were measured after fix round 1. Fix round 2 added the last five.
 
 | Model | Production | Reference | Production with the projection removed | Sets equal |
@@ -100,9 +104,9 @@ A temporary probe explored the models on both backends. It then set the backend 
 | M-LIFE-S1 (1, 1) | 6,766 | 5,698 | 5,698 | yes |
 | M-LIFE-S1 (3, 1) | 6,202 | 5,260 | 5,260 | yes |
 | M-LIFE-S1 with findings | 27,064 | 22,792 | 22,792 | yes |
-| M-LIFE-S2 | 19,220 | 14,722 | 14,722 | yes |
+| M-LIFE-S2 | 19,220 | 14,722 | 14,722 | yes (W6 counts, not measured again in W7) |
 | M-FIND | 110 | 74 | 74 | yes |
-| M-LIFECYCLE | 4,734 | 4,488 | 4,488 | yes |
+| M-LIFECYCLE | 4,734 | 4,488 | 4,488 | yes (W6 counts, not measured again in W7) |
 | M-SOD I-01 (P-12 = 0) | 1,370 | 1,300 | 1,300 | yes |
 | M-SOD I-01 (P-12 = 1) | 1,225 | 1,155 | 1,155 | yes |
 | M-SOD I-01 (P-12 = 2) | 1,174 | 1,104 | 1,104 | yes |
@@ -204,5 +208,5 @@ Proposals, none applied:
 
 - Q-W6-1, answered in fix round 1: the field was `world.life.decisions`. The reference-mode setup emitted no `CallApproved` record, so the lifecycle reference lacked the setup's call-approval decisions. The builder now emits it. Every life model state set now equals production with the projection removed.
 - Q-W6-2: two rules that tests verify have no spec id. One is the ledger time floor of design 2.2. The other is the state-machine row NEGOTIATION to GRANTED, completed by the last of acceptance, approval and the contract EFFECTIVE fact (design 3.2, `contracts.md` States). Should either get one?
-- Q-W6-3: `i12_frozen_edits_leave_call_outcomes_unchanged` belongs to the W6 twin lane. I-12 is not closed until it lands.
-- Q-W6-4: should `ReviewMachine::invariant` gain a state-level I-34 and I-35 check over the system ledger? The teeth would then also forge the record in the ledger, so a forged assignment held there would be caught on replay. Today both invariants are checked per step on appended records only.
+- Q-W6-3, closed in W7: `i12_frozen_edits_leave_call_outcomes_unchanged` landed with the W6 twin lane, and I-12 is green.
+- Q-W6-4: should `ReviewMachine::invariant` gain a state-level I-34 and I-35 check over the system ledger? The teeth would then also forge the record in the ledger, so a forged assignment held there would be caught on replay. Today both invariants are checked per step on appended records. Since W7, the stage 1 close and the ranking also re-check I-34 over the active reviewers.

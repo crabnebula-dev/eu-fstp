@@ -53,10 +53,9 @@
 //!   checked. The core projection has no public read of a proposal's call
 //!   history, so this lane cannot check it.
 //! - A `Mark` is not refused when the finding's proposal is in a terminal
-//!   state. `SPEC/04-llm-assessment/assessment.md` lets reviewers mark each
-//!   finding for calibration and names no state limit. The core projection
-//!   has no public read of a proposal's state either. This reading is open
-//!   for Daniel.
+//!   state. `SPEC/04-llm-assessment/assessment.md` keeps marking open after
+//!   a terminal state, and a mark never changes the proposal (I-10, decided
+//!   2026-10-26).
 //!
 //! Status: lane L-FIND-B of milestone M2.
 

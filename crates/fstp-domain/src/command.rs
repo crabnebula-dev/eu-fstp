@@ -60,7 +60,9 @@ pub struct Ctx {
     ///
     /// Lane L-LIFE reads it for SoD-03 at `AddTeamMember` and `AddGuardian`.
     /// A tenant admin at tenant scope counts as holding an Operations role in
-    /// every programme of the tenant (interim reading, to be confirmed by Daniel).
+    /// every programme of the tenant. The role is tenant-wide, the shell
+    /// attests it, and the Roles table places it in Operations
+    /// (`SPEC/02-domain/roles-and-sod.md`, confirmed 2026-10-25).
     pub binds_tenant_admin: bool,
 }
 
@@ -810,9 +812,9 @@ impl CommandKind {
     /// Covered: granting or changing a Drafting, Judging or Operations role
     /// (every `GrantRole`, `EndRole` and `ReinstateBinding`, since Receiving
     /// bindings arise from proposals), approving or releasing a payment, and
-    /// activating a programme or publishing a call. M2 has no separate
-    /// activation step, so `CreateProgramme` counts as activating (interim
-    /// reading, to be confirmed by Daniel).
+    /// activating a programme or publishing a call. Creating a programme
+    /// counts as activating it (`SPEC/03-architecture/authentication.md`,
+    /// confirmed 2026-10-25).
     pub const fn high_risk(self) -> bool {
         matches!(
             self,

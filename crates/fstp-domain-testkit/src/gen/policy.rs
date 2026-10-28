@@ -610,7 +610,9 @@ impl Setup {
             start,
             second_admin: None,
             confidentiality: Some(text(binding.saturating_add(500))),
-            organisation: None,
+            // SoD-10: a committee binding records the organisation.
+            organisation: (role == Role::CommitteeMember)
+                .then(|| fstp_domain::id::OrganisationId::from_raw(account.raw())),
         };
         self.must(
             &format!("GrantRole {role:?} to {account:?}"),

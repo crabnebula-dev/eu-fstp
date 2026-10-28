@@ -602,6 +602,7 @@ pub fn m_find_config() -> LifeConfig {
         conflicts: Vec::new(),
         havoc: Vec::new(),
         revisions: 0,
+        spares: Vec::new(),
         phases: Phases {
             intake: false,
             stage1: false,

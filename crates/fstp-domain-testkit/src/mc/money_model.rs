@@ -718,14 +718,26 @@ pub const M_MONEY_STATES: usize = 594;
 /// w6-decline. It is the tripwire of the `_reference` twin (design 6.1).
 pub const M_MONEY_REFERENCE_STATES: usize = 840;
 /// The state count of the M-RACE reservation part, measured on production
-/// in step W6. The references store the same count.
-pub const M_RACE_RESERVATION_STATES: usize = 1_682;
-/// The state count of the I-15 repeat model, measured on production in
-/// step W6. The references store the same count.
-pub const M_MONEY_REPEAT_STATES: usize = 256;
+/// in the W7 review after the NOTE 9 decline change. Production stores
+/// fewer states than the references, as in M-MONEY.
+pub const M_RACE_RESERVATION_STATES: usize = 1_566;
+/// The state count of the M-RACE reservation part on the references,
+/// measured in the W7 review. It is the tripwire of the `_reference` twin
+/// (design 6.1).
+pub const M_RACE_RESERVATION_REFERENCE_STATES: usize = 1_682;
+/// The state count of the I-15 repeat model, measured on production in the
+/// W7 review. The references store `M_MONEY_REPEAT_REFERENCE_STATES`.
+pub const M_MONEY_REPEAT_STATES: usize = 234;
+/// The state count of the I-15 repeat model on the references, measured in
+/// the W7 review. It is the tripwire of the `_reference` twin.
+pub const M_MONEY_REPEAT_REFERENCE_STATES: usize = 256;
 /// The state count of the after-negotiation lifecycle, measured on
-/// production in step W6. The references store the same count.
-pub const M_AFTER_STATES: usize = 203;
+/// production in the W7 review. The references store
+/// `M_AFTER_REFERENCE_STATES`.
+pub const M_AFTER_STATES: usize = 111;
+/// The state count of the after-negotiation lifecycle on the references,
+/// measured in the W7 review. It is the tripwire of the `_reference` twin.
+pub const M_AFTER_REFERENCE_STATES: usize = 203;
 
 // ---------------------------------------------------------------------------
 // Properties
@@ -981,21 +993,26 @@ pub fn declined_below_floor(s: &McState) -> bool {
     })
 }
 
+/// The race property of M-RACE: the two negotiations of one identity,
+/// each of 4.00 under P-05 6.00, are never both granted (I-14).
+pub fn race_never_both_granted(s: &McState) -> Result<(), String> {
+    if state_of(s, PA) == Some(StateTag::Granted) && state_of(s, PB) == Some(StateTag::Granted) {
+        Err(
+            "I-14 race: both negotiations of one identity were granted 4.00 under P-05 6.00"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
 /// The M-RACE reservation properties.
 pub fn race_properties<'a, M: Model<State = McState, Action = McAction> + 'a>()
 -> Vec<Property<'a, M>> {
     vec![
         two_way(),
         Property::always_with("I-14", i14),
-        Property::always_with("I-14 race: never both granted", |s: &McState| {
-            if state_of(s, PA) == Some(StateTag::Granted)
-                && state_of(s, PB) == Some(StateTag::Granted)
-            {
-                Err("I-14 race: both negotiations of one identity were granted 4.00 under P-05 6.00".to_owned())
-            } else {
-                Ok(())
-            }
-        }),
+        Property::always_with("I-14 race: never both granted", race_never_both_granted),
         Property::reachable("I-14 witness: a granted", |s: &McState| {
             state_of(s, PA) == Some(StateTag::Granted)
         }),
@@ -1135,6 +1152,15 @@ pub fn fault_above_cap(s: &McState) -> Option<McState> {
         return None;
     }
     forged_grant(s, PB, 300)
+}
+
+/// I-14 race fault: an engine that grants b 4.00 once a holds its grant
+/// of 4.00 under the same identity, so both negotiations pass the cap.
+pub fn fault_race_second_grant(s: &McState) -> Option<McState> {
+    if state_of(s, PA) != Some(StateTag::Granted) {
+        return None;
+    }
+    forged_grant(s, PB, 400)
 }
 
 /// I-15 fault: an engine that grants b while a's record is incomplete.

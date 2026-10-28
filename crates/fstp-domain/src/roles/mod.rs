@@ -82,8 +82,10 @@
 //!   erases one (R-CF-04).
 //! - An end earlier or later than `ctx.now` is refused. A later end could
 //!   not pin its bar, because the calls published before it are unknown
-//!   when the command is decided. Scheduled ends are an open question for
-//!   Daniel. A start before `ctx.now` is refused (no backdating).
+//!   when the command is decided. `SPEC/02-domain/roles-and-sod.md` allows a
+//!   scheduled end (decided 2026-10-25). It needs a pending end that pins
+//!   its bar at the end instant, which M2 does not implement yet. A start
+//!   before `ctx.now` is refused (no backdating).
 
 pub(crate) mod commands;
 pub(crate) mod guards;
@@ -413,6 +415,14 @@ impl RosterState {
     /// The binding `id`, when it is held or voided.
     pub fn binding(&self, id: BindingId) -> Option<&Binding> {
         self.bindings.get(&id)
+    }
+
+    /// The binding `id`, when it is held, voided or ended. An ended
+    /// binding keeps its last state beneath the end (R-CF-04).
+    pub fn held_or_ended(&self, id: BindingId) -> Option<&Binding> {
+        self.bindings
+            .get(&id)
+            .or_else(|| self.ended.get(&id).map(|e| &e.binding))
     }
 
     /// Every held or voided binding, by id.

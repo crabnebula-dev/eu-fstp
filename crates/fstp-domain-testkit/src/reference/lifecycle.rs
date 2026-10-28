@@ -43,8 +43,8 @@
 //!   in the current call: declared without conflict, not released and with
 //!   no conflict fact. Every such assignee must be free of a vault
 //!   conflict, or the admission is refused, since stage 1 could not close.
-//!   I-34: when every such assignee's committee binding records an
-//!   organisation, they span at least P-39 organisations. When a P-38
+//!   I-34: every such assignee's committee binding records an
+//!   organisation, and they span at least P-39 organisations (SoD-10). When a P-38
 //!   list applies, the verdict is left open.
 //! - A score is the assignee's, through an active assignment and an active
 //!   committee member binding, with no conflict fact and no vault conflict.
@@ -59,7 +59,9 @@
 //!   System (R-LA-03, NOTE 13). It needs every active reviewer assignment
 //!   of the creation call to hold a valid score, and at least P-03 valid
 //!   scores (NOTE 3). The outcome is STAGE2 exactly when the weighted score
-//!   is strictly above P-02 (I-08).
+//!   is strictly above P-02 (I-08). Those active assignees span at least
+//!   P-39 known organisations (I-34). I-34 is a state invariant, so a release
+//!   after admission that lowers the count blocks the close.
 //! - The stage 2 window opens when the proposal enters STAGE2, also on
 //!   re-entry. It closes at the opening plus P-07 whole days of 86 400
 //!   seconds. Test-author choice: "elapsed" means `now >= close`, and
@@ -78,7 +80,9 @@
 //! - `RankAfterStage2` is an assignee's. It needs a scored revision, the
 //!   window elapsed with answers, or every active reviewer assignment of
 //!   the current call with a "no questions" record (O-50), which a release
-//!   of the last one without it can bring about. The effective score is
+//!   of the last one without it can bring about. The active assignees span
+//!   at least P-39 known organisations (I-34). The last "no questions"
+//!   ranks only then. The effective score is
 //!   the stage 1 score on the submitted plan, or the revised plan's score
 //!   when it is strictly higher (P-24, I-09). A tie keeps the original
 //!   plan (Q3).
@@ -1901,6 +1905,28 @@ impl LifeCx<'_> {
         Ok((a, asg.proposal))
     }
 
+    /// I-34 over the assignees of `assignments` of `p` at `now`: every
+    /// committee binding records an organisation, and they span at least
+    /// P-39 of them (SoD-10). I-34 is a state invariant, so the steps that
+    /// decide on the reviewers' scores check it again after admission.
+    fn span_p39(
+        &self,
+        p: ProposalId,
+        assignments: &BTreeSet<AssignmentId>,
+        now: Timestamp,
+    ) -> bool {
+        let (Some(policy), Some(programme)) = (self.life.governing(p), self.life.programme_of(p))
+        else {
+            return false;
+        };
+        let orgs: Option<BTreeSet<_>> = assignments
+            .iter()
+            .filter_map(|id| self.life.assignments.get(id).map(|a| a.reviewer))
+            .map(|r| committee_organisation(self.sod, self.rev, r, programme, now))
+            .collect();
+        orgs.is_some_and(|o| o.len() >= usize::from(policy.p39))
+    }
+
     fn coordinator(&self, ask: &LifeAsk<'_>, p: ProposalId) -> Result<AccountId, String> {
         let a = account(ask).ok_or("R-LA-03: the System records no decision")?;
         let programme = self.life.programme_of(p).ok_or("unknown proposal")?;
@@ -2072,18 +2098,19 @@ fn admit(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> LifeVerdict {
         .iter()
         .map(|r| committee_organisation(cx.sod, cx.rev, *r, programme, ask.now))
         .collect();
-    if orgs.iter().all(Option::is_some) {
-        let distinct: BTreeSet<_> = orgs.iter().flatten().collect();
-        if distinct.len() < usize::from(policy.p39) {
-            return refuse("I-34: the active reviewers span fewer than P-39 organisations");
-        }
-        let lists = orgs
-            .iter()
-            .flatten()
-            .any(|o| cx.rev.proximity_list(programme, *o).is_some());
-        if lists {
-            return LifeVerdict::Either(admitted(*proposal, ask.actor, *decision));
-        }
+    if orgs.iter().any(Option::is_none) {
+        return refuse("I-34, SoD-10: an active reviewer's organisation is unknown");
+    }
+    let distinct: BTreeSet<_> = orgs.iter().flatten().collect();
+    if distinct.len() < usize::from(policy.p39) {
+        return refuse("I-34: the active reviewers span fewer than P-39 organisations");
+    }
+    let lists = orgs
+        .iter()
+        .flatten()
+        .any(|o| cx.rev.proximity_list(programme, *o).is_some());
+    if lists {
+        return LifeVerdict::Either(admitted(*proposal, ask.actor, *decision));
     }
     LifeVerdict::Accept(admitted(*proposal, ask.actor, *decision))
 }
@@ -2180,6 +2207,13 @@ fn close(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
     }
     if facts.reviewers < usize::from(facts.p03) {
         return Err("I-07: fewer than P-03 valid scores".to_owned());
+    }
+    let call = cx.life.stage_call(*proposal, Stage::One).ok_or("no call")?;
+    let active = cx
+        .life
+        .active_assignments(*proposal, call, AssignmentKind::Reviewer);
+    if !cx.span_p39(*proposal, &active, ask.now) {
+        return Err("I-34: the active reviewers span fewer than P-39 organisations".to_owned());
     }
     let (Some(score), Some(passed)) = (facts.score, facts.passed) else {
         return Err("no score".to_owned());
@@ -2311,7 +2345,7 @@ fn stage2_act(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
                 .active_assignments(p, call, AssignmentKind::Reviewer);
             let mut recorded = round.no_questions.clone();
             recorded.insert(*assignment);
-            if active.is_subset(&recorded) {
+            if active.is_subset(&recorded) && cx.span_p39(p, &active, ask.now) {
                 ranked(cx, p, ask.actor, vec![record])
             } else {
                 Ok(Expect {
@@ -2448,6 +2482,12 @@ fn rank(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         return Err("ranking is recorded by an assigned reviewer".to_owned());
     };
     cx.act_basis(ask, *asg, AssignmentKind::Reviewer, |q| q.current_call)?;
+    let active = cx
+        .life
+        .active_assignments(*proposal, p.current_call, AssignmentKind::Reviewer);
+    if !cx.span_p39(*proposal, &active, ask.now) {
+        return Err("I-34: the active reviewers span fewer than P-39 organisations".to_owned());
+    }
     let round = p.round.as_ref().ok_or("no stage 2 round")?;
     let end = cx.life.window_end(*proposal).ok_or("no window")?;
     let scored = cx.life.latest_scored_revision(*proposal).is_some();
