@@ -15,8 +15,9 @@ use fstp_domain::record::{AssignmentReleased, Record, Transitioned};
 use fstp_domain::roles::Role;
 use fstp_domain::rules::{Row, StateTag};
 use fstp_domain_testkit::r#gen::review::{
-    COORDINATOR, DraftSpec, L1, L2, O1, PR1, PR2, R1, ReviewSetup, ReviewWorld, assign, declare,
-    handle, judge_binding, milestone_of, plan_of, read, record_plan, review_truth, submit, tag,
+    COORDINATOR, DraftSpec, L1, L2, O1, O2, PR1, PR2, R1, R2, ReviewSetup, ReviewWorld, assign,
+    declare, handle, judge_binding, milestone_of, plan_of, read, record_plan, review_truth, submit,
+    tag,
 };
 use fstp_domain_testkit::r#gen::roster::{
     Backend, P1, P2, SodSetup, Step, T0, call, draft, end, grant,
@@ -72,9 +73,12 @@ fn review_i02_assignment_bar_is_per_programme() {
         base,
         p38: Default::default(),
         p10: fstp_domain::policy::ReadAccess::AssignedReviewersOnly,
+        // R2 of O2 keeps P-39 = 2 in reach, so R1's assignment passes
+        // the I-34 check at assignment (W7 close-out, decided 2026-10-28).
         judges: vec![
             (COORDINATOR, Role::FstpCoordinator, None),
             (R1, Role::CommitteeMember, Some(O1)),
+            (R2, Role::CommitteeMember, Some(O2)),
         ],
         drafts: vec![DraftSpec {
             lead: L1,

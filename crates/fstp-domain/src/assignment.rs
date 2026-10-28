@@ -21,17 +21,26 @@
 //!
 //! - `Assign`, by an active FSTP coordinator (interim actor, design 2.7).
 //!   A reviewer assignment needs an active committee member binding and
-//!   SUBMITTED, STAGE1 or STAGE2. An IRC assignment needs an active IRC
-//!   member binding and IRC_REVIEW. An amendment assignment needs an
-//!   active IRC member binding and an amendment of the same grant under
+//!   SUBMITTED, STAGE1, STAGE2 or NEGOTIATION. NEGOTIATION is open so a
+//!   coordinator can restore P-39 organisations for the amount
+//!   determination (R-CF-02, R-NG-03, W7 reading for Daniel). An IRC
+//!   assignment needs an active IRC member binding and IRC_REVIEW. An
+//!   amendment assignment needs an active IRC member binding and an
+//!   amendment of the same grant under
 //!   IRC review (`crate::amendment`, R-IR-04). The assignee holds no
 //!   unreleased assignment of the other side of I-02 in the same
 //!   programme, no conflict fact on the proposal,
 //!   and the vault answers `HasConflict` false for the assignee. Under
 //!   P-11 anonymous the handle was never issued in the cell (R-AN-01).
-//!   Under P-11 named no handle is given. A reviewer assignment keeps I-34
-//!   and I-35 over the organisation its committee binding records. An
-//!   unknown organisation is refused under I-34 (SoD-10, decided 2026-10-25).
+//!   Under P-11 named no handle is given. A reviewer assignment keeps I-35
+//!   over the organisation its committee binding records. Under I-34 it is
+//!   refused only once P-39 organisations are out of reach, counting the
+//!   proposal's reviewers, the new one and every other active committee
+//!   member of the programme. Admission, the stage 1 close, the ranking
+//!   and the amount determination check I-34 over the reviewers
+//!   themselves, so the order of assignment does not matter (decided
+//!   2026-10-28). An unknown organisation is refused under I-34 (SoD-10,
+//!   decided 2026-10-25).
 //! - `Unassign`, by an active FSTP coordinator, of an unreleased assignment.
 //! - `DeclareConflict` on an assignment by its assignee while it awaits
 //!   the declaration. A conflict found later is declared on the active
@@ -844,9 +853,14 @@ fn plan_assign(state: &State, cmd: &Command, ctx: &Ctx) -> Result<AssignPlan, Re
         return Err(reused());
     }
     let open = match kind {
+        // A reviewer assignment is open in NEGOTIATION too. The assigned
+        // reviewers determine the amount there (R-NG-03), I-34 holds at
+        // that step (decided 2026-10-28), and a declared conflict triggers
+        // reassignment (R-CF-02). Without it, reviewers released there
+        // would leave the proposal with no way to GRANTED or DECLINED.
         AssignmentKind::Reviewer => matches!(
             current,
-            StateTag::Submitted | StateTag::Stage1 | StateTag::Stage2
+            StateTag::Submitted | StateTag::Stage1 | StateTag::Stage2 | StateTag::Negotiation
         ),
         AssignmentKind::Irc => current == StateTag::IrcReview,
         // The IRC review of an amendment that no P-14 exemption covers
@@ -905,8 +919,17 @@ fn plan_assign(state: &State, cmd: &Command, ctx: &Ctx) -> Result<AssignPlan, Re
         // switch off I-34 and I-35 (SoD-10, decided 2026-10-25).
         let org = committee_organisation(state, *reviewer, programme, ctx.now)
             .ok_or(Refusal::new(RuleRef::I34, RefusalReason::GuardFailed))?;
-        let orgs = assigned_organisations(state, *proposal, call, ctx.now);
-        if orgs.len() < usize::from(values.p39.get()) && orgs.contains(&org) {
+        // I-34 at assignment refuses only once P-39 organisations are out
+        // of reach with the remaining reviewer seats. Admission, the stage
+        // 1 close, the ranking and the amount determination check I-34
+        // over the reviewers themselves, so the order of assignment no
+        // longer matters (decided 2026-10-28).
+        let mut orgs = assigned_organisations(state, *proposal, call, ctx.now);
+        orgs.insert(org);
+        orgs.extend(open_seat_organisations(
+            state, programme, *reviewer, ctx.now,
+        ));
+        if orgs.len() < usize::from(values.p39.get()) {
             return Err(Refusal::new(RuleRef::I34, RefusalReason::GuardFailed));
         }
         let list =
@@ -954,6 +977,31 @@ fn assigned_organisations(
                 && a.unreleased()
         })
         .filter_map(|a| committee_organisation(state, a.reviewer, programme, now))
+        .collect()
+}
+
+/// The organisations of the remaining reviewer seats in `programme`: every
+/// account other than `reviewer` with an active committee member binding
+/// at `now`, from that binding (I-34). A member already assigned counts
+/// through [`assigned_organisations`] too, so it changes nothing here.
+/// Conflicts are not read, so a seat that a conflict would close still
+/// counts. The refusal is then left to the steps that decide.
+fn open_seat_organisations(
+    state: &State,
+    programme: ProgrammeId,
+    reviewer: AccountId,
+    now: Timestamp,
+) -> BTreeSet<OrganisationId> {
+    state
+        .roster
+        .bindings()
+        .filter(|(_, b)| {
+            b.programme == programme
+                && b.role == Role::CommitteeMember
+                && b.account != reviewer
+                && b.active_at(now)
+        })
+        .filter_map(|(_, b)| b.organisation)
         .collect()
 }
 

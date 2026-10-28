@@ -70,6 +70,7 @@ fn grant_role() -> Command {
         second_admin: None,
         confidentiality: None,
         organisation: None,
+        end: None,
     }
 }
 
@@ -903,6 +904,7 @@ fn sample(kind: CommandKind) -> Command {
             binding,
             at: Timestamp::from_micros(1),
         },
+        K::EndScheduledRole => Command::EndScheduledRole { binding },
         K::ReinstateBinding => Command::ReinstateBinding {
             binding,
             reason: text_ref(7),

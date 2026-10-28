@@ -10,10 +10,14 @@
 //!
 //! Design section 1, "M2 crates do no I/O": the layering gate checks the
 //! dependency graph. This scan also fails on `std::net`, `std::fs`,
-//! `std::process`, `std::env` or `SystemTime` in the same crates.
+//! `std::io`, `std::process`, `std::env`, `SystemTime` or `Instant` in the
+//! same crates. A `use` item is read as one statement, so a grouped
+//! `use std::{...}` import over several lines is caught too (W7 fix). So
+//! is one behind any visibility, such as `pub(super)` or
+//! `pub(in crate::x)` (W7 fix round 2).
 //!
-//! The scan reads lines. It skips line comments and `#[cfg(test)]`
-//! modules, inline or in their own file. `Decimal` counts wherever it
+//! The scan reads lines, and joins the lines of a `use` item. It skips
+//! line comments and `#[cfg(test)]` modules, inline or in their own file. `Decimal` counts wherever it
 //! appears, since these crates define no type of that name.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -34,7 +38,11 @@ const CRATES: [&str; 5] = [
 const FLOAT_TOKENS: [&str; 4] = ["f32", "f64", "as_f64_lossy", "Decimal"];
 
 /// I/O paths under `std` (design section 1).
-const IO_MODULES: [&str; 4] = ["net", "fs", "process", "env"];
+const IO_MODULES: [&str; 5] = ["net", "fs", "io", "process", "env"];
+
+/// Wall-clock types under `std::time` (design section 1, design 2.2: time
+/// comes only from `Ctx::now`).
+const CLOCK_TYPES: [&str; 2] = ["SystemTime", "Instant"];
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
@@ -65,6 +73,34 @@ fn module_files(file: &Path, name: &str) -> [PathBuf; 2] {
         base.join(format!("{name}.rs")),
         base.join(name).join("mod.rs"),
     ]
+}
+
+/// `item` without a leading visibility: `pub`, or `pub(...)` with any
+/// balanced path inside, such as `pub(super)` or `pub(in crate::x)`.
+fn strip_visibility(item: &str) -> &str {
+    let Some(rest) = item.strip_prefix("pub") else {
+        return item;
+    };
+    if let Some(rest) = rest.strip_prefix(' ') {
+        return rest.trim_start();
+    }
+    let Some(inner) = rest.strip_prefix('(') else {
+        return item;
+    };
+    let mut depth = 1_usize;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return inner.get(i.saturating_add(1)..).unwrap_or("").trim_start();
+                }
+            }
+            _ => {}
+        }
+    }
+    item
 }
 
 /// The opening braces of `line` minus its closing braces.
@@ -117,9 +153,7 @@ fn production_lines<'a>(
                 continue;
             }
             cfg_test = false;
-            let item = t
-                .trim_start_matches("pub(crate) ")
-                .trim_start_matches("pub ");
+            let item = strip_visibility(t);
             if let Some(rest) = item.strip_prefix("mod ") {
                 if let Some(name) = rest.strip_suffix(';') {
                     skip.extend(module_files(file, name.trim()));
@@ -138,6 +172,50 @@ fn production_lines<'a>(
     out
 }
 
+/// The statements of `lines`: each line on its own, except that the lines
+/// of one `use` item are joined up to its `;`, numbered by its first line.
+fn statements(lines: &[(usize, &str)]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut open: Option<(usize, String)> = None;
+    for (n, code) in lines {
+        if let Some((first, text)) = open.as_mut() {
+            text.push(' ');
+            text.push_str(code.trim());
+            if code.contains(';') {
+                out.push((*first, std::mem::take(text)));
+                open = None;
+            }
+            continue;
+        }
+        let t = strip_visibility(code.trim());
+        if t.starts_with("use ") && !t.contains(';') {
+            open = Some((*n, code.trim().to_owned()));
+        } else {
+            out.push((*n, (*code).to_owned()));
+        }
+    }
+    out.extend(open);
+    out
+}
+
+/// Why `code` names I/O or the wall clock under `std`, if it does.
+fn io_hit(code: &str) -> Option<String> {
+    let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+    let ids = identifiers(code);
+    if let Some(t) = CLOCK_TYPES.iter().find(|t| ids.contains(**t)) {
+        return Some(format!("names {t}"));
+    }
+    for m in IO_MODULES {
+        if compact.contains(&format!("std::{m}")) {
+            return Some(format!("names std::{m}"));
+        }
+        if compact.contains("std::{") && ids.contains(m) {
+            return Some(format!("imports std::{m}"));
+        }
+    }
+    None
+}
+
 /// Every hit of `check` in the production sources of the five crates.
 fn scan(check: impl Fn(&str) -> Option<String>) -> Vec<String> {
     let root = workspace_root();
@@ -154,8 +232,9 @@ fn scan(check: impl Fn(&str) -> Option<String>) -> Vec<String> {
     let mut lines = Vec::new();
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {f:?}: {e}"));
-        for (n, code) in production_lines(f, &text, &mut skip) {
-            lines.push((f.clone(), n, code.to_owned()));
+        let own = production_lines(f, &text, &mut skip);
+        for (n, code) in statements(&own) {
+            lines.push((f.clone(), n, code));
         }
     }
     let mut hits = Vec::new();
@@ -184,26 +263,12 @@ fn review_w7_production_crates_name_no_floats() {
     assert!(hits.is_empty(), "No floats:\n{}", hits.join("\n"));
 }
 
-/// Design section 1: no production line of the five M2 crates names
-/// `std::net`, `std::fs`, `std::process`, `std::env` or `SystemTime`.
+/// Design section 1: no production statement of the five M2 crates names
+/// `std::net`, `std::fs`, `std::io`, `std::process`, `std::env`,
+/// `SystemTime` or `Instant`, grouped imports over several lines included.
 #[test]
 fn review_w7_production_crates_name_no_io() {
-    let hits = scan(|code| {
-        let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
-        let ids = identifiers(code);
-        if ids.contains("SystemTime") {
-            return Some("names SystemTime".to_owned());
-        }
-        for m in IO_MODULES {
-            if compact.contains(&format!("std::{m}")) {
-                return Some(format!("names std::{m}"));
-            }
-            if compact.contains("std::{") && ids.contains(m) {
-                return Some(format!("imports std::{m}"));
-            }
-        }
-        None
-    });
+    let hits = scan(io_hit);
     assert!(hits.is_empty(), "M2 crates do no I/O:\n{}", hits.join("\n"));
 }
 
@@ -218,4 +283,56 @@ fn review_w7_production_scan_skips_comments_and_test_modules() {
     assert!(skip.contains(Path::new("/x/src/more.rs")), "{skip:?}");
     assert!(identifiers(lines[0].1).contains("f64"));
     assert!(!identifiers(lines[1].1).contains("f32"));
+}
+
+/// Design section 1 (W7 fix): a grouped `use std::{...}` import over
+/// several lines and `std::time::Instant` are caught by the I/O scan.
+#[test]
+fn review_w7_production_scan_catches_grouped_imports_and_instant() {
+    let text = "use std::{\n    collections::BTreeMap,\n    fs,\n};\nuse std::time::Instant;\npub(crate) use std::{\n    process\n};\nuse std::{\n    collections::BTreeSet,\n    sync::Arc,\n};\nfn d() -> Instant { e() }\n";
+    let mut skip = BTreeSet::new();
+    let lines = production_lines(Path::new("/x/src/lib.rs"), text, &mut skip);
+    let joined = statements(&lines);
+    let numbers: Vec<usize> = joined.iter().map(|(n, _)| *n).collect();
+    assert_eq!(numbers, vec![1, 5, 6, 9, 13], "{joined:?}");
+    let hits: Vec<Option<String>> = joined.iter().map(|(_, c)| io_hit(c)).collect();
+    assert_eq!(
+        hits,
+        vec![
+            Some("imports std::fs".to_owned()),
+            Some("names Instant".to_owned()),
+            Some("imports std::process".to_owned()),
+            None,
+            Some("names Instant".to_owned()),
+        ],
+        "{joined:?}"
+    );
+}
+
+/// Design section 1 (W7 fix round 2): a grouped `use std::{...}` import
+/// over several lines behind `pub(super)` or `pub(in crate::x)` is joined
+/// and caught, and so is `std::io`. A `pub(crate)` test module behind
+/// another visibility is skipped as before.
+#[test]
+fn review_w7_production_scan_catches_imports_behind_any_visibility() {
+    let text = "pub(super) use std::{\n    fs,\n};\npub(in crate::x) use std::{\n    net,\n};\nuse std::io::Write;\npub(self) use std::{\n    io,\n};\n#[cfg(test)]\npub(super) mod tests {\n    use std::fs;\n}\n";
+    let mut skip = BTreeSet::new();
+    let lines = production_lines(Path::new("/x/src/lib.rs"), text, &mut skip);
+    let joined = statements(&lines);
+    let numbers: Vec<usize> = joined.iter().map(|(n, _)| *n).collect();
+    assert_eq!(numbers, vec![1, 4, 7, 8], "{joined:?}");
+    let hits: Vec<Option<String>> = joined.iter().map(|(_, c)| io_hit(c)).collect();
+    assert_eq!(
+        hits,
+        vec![
+            Some("imports std::fs".to_owned()),
+            Some("imports std::net".to_owned()),
+            Some("names std::io".to_owned()),
+            Some("imports std::io".to_owned()),
+        ],
+        "{joined:?}"
+    );
+    assert_eq!(strip_visibility("pub(in crate::a::b) use x;"), "use x;");
+    assert_eq!(strip_visibility("pub use x;"), "use x;");
+    assert_eq!(strip_visibility("public_fn();"), "public_fn();");
 }

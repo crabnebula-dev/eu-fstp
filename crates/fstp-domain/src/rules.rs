@@ -1186,6 +1186,7 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::PublishCall, PM),
     (K::GrantRole, ActorRule::TenantAdmin),
     (K::EndRole, ActorRule::TenantAdmin),
+    (K::EndScheduledRole, ActorRule::System),
     (K::ReinstateBinding, ActorRule::TenantAdmin),
     (K::VaultChanged, ActorRule::System),
     (K::CreateDraft, ActorRule::AnyAccount),

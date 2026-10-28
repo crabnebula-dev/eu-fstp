@@ -13,7 +13,10 @@
 //!
 //! Instances (design 6.3): P-12 = 0, 1 and 2 for I-01; one account in two
 //! programmes; I-02 over Judging roles; I-06 with the Sybil pair and an
-//! identity merge of c into the Sybil identity. A run of an instance in
+//! identity merge of c into the Sybil identity; scheduled ends, where an
+//! end is scheduled for [`T_SCHEDULED`] and time then moves to it, so the
+//! System ends the binding with the bar pinned at that instant
+//! (Cooling-off NOTE, decided 2026-10-25). A run of an instance in
 //! [`Backend::Reference`] mode checks the model itself: every property
 //! passes and every witness is reached on the reference.
 //!
@@ -35,9 +38,10 @@ use crate::r#gen::roster::{
     publish, reinstate, sod_truth,
 };
 use crate::reference::sod::{
-    RefBinding, RefGroup, Verdict, View, check_bars, check_ended, check_granted, check_i01,
-    check_i02, check_i06, check_suspensions, check_voids, expected_binding, expected_suspensions,
-    expected_voids, new_bindings, other_judging, verdict,
+    RefBinding, RefGroup, Verdict, View, check_bars, check_due_ends, check_ended, check_granted,
+    check_i01, check_i02, check_i06, check_scheduled, check_suspensions, check_voids,
+    expected_binding, expected_scheduled, expected_suspensions, expected_voids, new_bindings,
+    other_judging, verdict,
 };
 use crate::vault::{GroundTruth, IdentityTag};
 
@@ -56,6 +60,9 @@ pub struct SodMcState {
     /// Set when production and the reference disagree. The `two-way`
     /// property fails on it, and the state is terminal.
     pub divergence: Option<String>,
+    /// Ghost: an accepted `EndRole` brought a scheduled end forward, to an
+    /// earlier instant that is still after now (Cooling-off NOTE).
+    pub brought_forward: bool,
 }
 
 impl SodMcState {
@@ -65,6 +72,7 @@ impl SodMcState {
             world,
             created: BTreeMap::new(),
             divergence: None,
+            brought_forward: false,
         }
     }
 
@@ -116,7 +124,11 @@ pub fn judged(s: &SodMcState, step: &Step) -> Option<SodMcState> {
             {
                 checks.push(check_granted(&context, &e, &records));
             }
-            if let fstp_domain::command::Command::EndRole { binding, at } = &step.cmd {
+            if let Some((binding, at)) = expected_scheduled(&ask)
+                && v.accepts()
+            {
+                checks.push(check_scheduled(&context, binding, at, &records));
+            } else if let fstp_domain::command::Command::EndRole { binding, at } = &step.cmd {
                 checks.push(check_ended(&context, s.view(), *binding, *at, &records));
             }
             checks.push(check_voids(&context, &BTreeMap::new(), &records));
@@ -140,14 +152,39 @@ pub fn unjudged(
     let expected = voids(s);
     let mut next = s.clone();
     let context = format!("{:?}", step.cmd.kind());
+    // Between a scheduled instant and its System end, every account step is
+    // refused under SoD-05 (Cooling-off NOTE, W7 fix round 1 reading).
+    let window = !crate::reference::sod::due_ends(s.view(), s.world.now).is_empty();
     match next.world.exec(step, Facts::Effective) {
         Err(e) => Some(next.diverged(format!("{context}: {e}"))),
+        Ok(Err(r)) if window && r.rule == RuleRef::Sod05 => None,
+        Ok(Ok(_)) if window => Some(next.diverged(format!(
+            "{context}: accepted between a scheduled instant and its System end"
+        ))),
         Ok(Err(r)) => Some(next.diverged(format!(
             "{context}: production refused a step every engine must accept: {r}"
         ))),
         Ok(Ok(records)) => match check_voids(&context, &expected, &records)
             .and_then(|()| check_suspensions(&context, &BTreeSet::new(), &records))
         {
+            Ok(()) => Some(next),
+            Err(e) => Some(next.diverged(e)),
+        },
+    }
+}
+
+/// Moves the world of `s` to `at` and runs the System commands `due` lists
+/// then. The ends must be exactly the scheduled ends the reference finds
+/// due, each with the bar pinned at `at` (Cooling-off NOTE).
+pub fn arrive(s: &SodMcState, at: fstp_domain::time::Timestamp) -> Option<SodMcState> {
+    let mut next = s.clone();
+    let before = s.view().clone();
+    match next.world.arrive(at) {
+        Err(e) => Some(next.diverged(format!("arrive at {at:?}: {e}"))),
+        Ok(Err(r)) => Some(next.diverged(format!(
+            "arrive at {at:?}: production refused a System command due then: {r}"
+        ))),
+        Ok(Ok(records)) => match check_due_ends(&before, at, &records) {
             Ok(()) => Some(next),
             Err(e) => Some(next.diverged(e)),
         },
@@ -234,6 +271,9 @@ pub struct SodConfig {
     /// The identity merges the vault may make: the account takes the
     /// identity, once, and the platform reacts in the same step.
     pub merges: Vec<(AccountId, IdentityTag)>,
+    /// Whether ends may be scheduled for [`T_SCHEDULED`], and time may then
+    /// move to it (Cooling-off NOTE, decided 2026-10-25).
+    pub schedule: bool,
 }
 
 /// An M-SOD action.
@@ -271,7 +311,31 @@ pub enum SodAction {
     },
     /// `ReinstateBinding` of a suspended binding by the tenant admin.
     Reinstate(BindingId),
+    /// `EndRole` of the binding at a later instant, [`T_EARLIER`] or
+    /// [`T_SCHEDULED`]: a scheduled end (Cooling-off NOTE, decided
+    /// 2026-10-25). With an end already scheduled, an earlier instant
+    /// brings it forward and a later one is refused.
+    ScheduleEnd(BindingId, fstp_domain::time::Timestamp),
+    /// Time moves to the instant, and nothing runs. Between a scheduled
+    /// instant and the System end, every step is checked against the
+    /// reference like any other.
+    Advance(fstp_domain::time::Timestamp),
+    /// The System runs every command that `due` lists now.
+    RunDue,
 }
+
+/// The earlier of the two scheduled end instants of M-SOD: half a second
+/// after `T0`.
+pub const T_EARLIER: fstp_domain::time::Timestamp =
+    fstp_domain::time::Timestamp::from_micros(1_500_000);
+
+/// The later of the two scheduled end instants of M-SOD: one second after
+/// `T0`.
+pub const T_SCHEDULED: fstp_domain::time::Timestamp =
+    fstp_domain::time::Timestamp::from_micros(2_000_000);
+
+/// The two scheduled end instants of M-SOD, in order.
+pub const SCHEDULE_INSTANTS: [fstp_domain::time::Timestamp; 2] = [T_EARLIER, T_SCHEDULED];
 
 /// The id of the `n`-th creation of the subject at `index`.
 pub fn creation_id(index: u8, n: u8) -> u128 {
@@ -366,6 +430,32 @@ impl Model for SodModel {
                 actions.push(SodAction::Reinstate(b.binding));
             }
         }
+        if self.config.schedule {
+            let now = s.world.now;
+            let mut any = false;
+            for b in s.view().bindings.values() {
+                if b.open() && self.subject(b.account).is_some() && b.group != RefGroup::Receiving {
+                    any |= b.scheduled_end.is_some();
+                    for t in SCHEDULE_INSTANTS {
+                        // Scheduling, bringing forward and the refused move
+                        // later. The same instant again changes nothing.
+                        if t > now && b.scheduled_end != Some(t) {
+                            actions.push(SodAction::ScheduleEnd(b.binding, t));
+                        }
+                    }
+                }
+            }
+            if any {
+                for t in SCHEDULE_INSTANTS {
+                    if t > now {
+                        actions.push(SodAction::Advance(t));
+                    }
+                }
+            }
+            if !crate::reference::sod::due_ends(s.view(), now).is_empty() {
+                actions.push(SodAction::RunDue);
+            }
+        }
         for (account, identity) in &self.config.merges {
             if s.truth().identity_of(*account) != Some(*identity) {
                 actions.push(SodAction::Merge {
@@ -398,11 +488,35 @@ impl Model for SodModel {
                 role,
             } => {
                 let id = self.next_id(s, *account)?;
-                let step = grant(BindingId::from_raw(id), *account, *programme, *role, T0);
+                let step = grant(
+                    BindingId::from_raw(id),
+                    *account,
+                    *programme,
+                    *role,
+                    s.world.now,
+                );
                 let n = s.view().bindings.len();
                 judged(s, &step).map(|t| count(t, n, *account))
             }
-            SodAction::End(binding) => judged(s, &end(*binding, T0)),
+            SodAction::End(binding) => judged(s, &end(*binding, s.world.now)),
+            SodAction::ScheduleEnd(binding, at) => {
+                let earlier = s
+                    .view()
+                    .bindings
+                    .get(binding)
+                    .and_then(|b| b.scheduled_end)
+                    .is_some_and(|x| *at < x);
+                judged(s, &end(*binding, *at)).map(|mut t| {
+                    t.brought_forward |= earlier && t.divergence.is_none();
+                    t
+                })
+            }
+            SodAction::Advance(at) => {
+                let mut next = s.clone();
+                next.world.now = *at;
+                Some(next)
+            }
+            SodAction::RunDue => arrive(s, s.world.now),
             SodAction::Draft { account, call } => {
                 let id = self.next_id(s, *account)?;
                 let step = draft(
@@ -498,6 +612,7 @@ pub fn i01_config(p12: u8) -> SodConfig {
             max_creations: 2,
         }],
         merges: Vec::new(),
+        schedule: false,
     }
 }
 
@@ -525,6 +640,7 @@ pub fn two_programmes_config() -> SodConfig {
             max_creations: 2,
         }],
         merges: Vec::new(),
+        schedule: false,
     }
 }
 
@@ -548,6 +664,7 @@ pub fn i02_config() -> SodConfig {
             max_creations: 2,
         }],
         merges: Vec::new(),
+        schedule: false,
     }
 }
 
@@ -589,6 +706,7 @@ pub fn i06_config() -> SodConfig {
             },
         ],
         merges: vec![(C, ID_AB)],
+        schedule: false,
     }
 }
 
@@ -1129,4 +1247,170 @@ pub fn inject(s: &SodMcState, records: &[Record]) -> Option<SodMcState> {
     let mut next = s.clone();
     next.world.commit(records).ok()?;
     Some(next)
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled ends (Cooling-off NOTE, decided 2026-10-25)
+// ---------------------------------------------------------------------------
+
+/// The measured state count of the scheduled end instance on production
+/// (W7 fix round 1, design 6.1), with two instants, the bring-forward and
+/// a time step apart from the System end. The run's tripwire is twice this.
+pub const M_SOD_SCHEDULED_STATES: usize = 12_468;
+/// The measured state count of the scheduled end instance on the
+/// reference alone (W7 fix round 1). See [`M_SOD_SCHEDULED_STATES`].
+pub const M_SOD_SCHEDULED_REFERENCE_STATES: usize = 11_829;
+
+/// The scheduled end instance: P-12 = 1, calls 1 to 3, and c may be a
+/// programme manager or a committee member and may draft, with at most
+/// two bindings. Staff publish up to two calls. Any open binding of c may
+/// have its end scheduled for [`T_EARLIER`] or [`T_SCHEDULED`], brought
+/// forward or, refused, moved later. Time moves to either instant on its
+/// own, and the System runs the ends due as a separate step. So every step
+/// between an instant and its System end is model-checked too.
+pub fn scheduled_config() -> SodConfig {
+    SodConfig {
+        setup: SodSetup::one(1, &SOD_CALLS),
+        calls: SOD_CALLS.iter().map(|n| call(*n)).collect(),
+        max_publications: 2,
+        subjects: vec![SodSubject {
+            account: C,
+            index: 3,
+            grants: vec![(P1, Role::ProgrammeManager), (P1, Role::CommitteeMember)],
+            drafts: true,
+            verify: false,
+            max_creations: 2,
+        }],
+        merges: Vec::new(),
+        schedule: true,
+    }
+}
+
+/// Witness: a binding with a scheduled end is still held.
+pub fn scheduled_and_held(s: &SodMcState) -> bool {
+    s.view()
+        .bindings
+        .values()
+        .any(|x| x.scheduled_end.is_some() && x.held())
+}
+
+/// Witness: the System ended a binding at its scheduled instant, and a
+/// call published after the binding started counts in its bar.
+pub fn scheduled_end_counts_a_later_call(s: &SodMcState) -> bool {
+    s.view().bindings.values().any(|x| {
+        x.end
+            .is_some_and(|e| x.scheduled_end == Some(e.at) && e.latest_at_end > x.latest_at_start)
+    })
+}
+
+/// Witness: a scheduled end was brought forward, and the System ended the
+/// binding at the earlier instant [`T_EARLIER`].
+pub fn scheduled_end_brought_forward(s: &SodMcState) -> bool {
+    s.brought_forward
+        && s.view()
+            .bindings
+            .values()
+            .any(|x| x.scheduled_end == Some(T_EARLIER) && x.end.is_some_and(|e| e.at == T_EARLIER))
+}
+
+/// Witness: time stands between a scheduled instant and the System end,
+/// so every step from here is checked inside that window.
+pub fn inside_the_window(s: &SodMcState) -> bool {
+    !crate::reference::sod::due_ends(s.view(), s.world.now).is_empty()
+}
+
+/// `transition("Cooling-off window")`: from a scheduled instant until the
+/// System records the end, no step records anything but those ends, each
+/// at its instant with the bar of the reference then (Cooling-off NOTE,
+/// decided 2026-10-25; W7 fix round 1 reading). So nothing reads the
+/// binding as held after its instant, and the bar counts only the calls
+/// published by then.
+pub fn transition_window<'a, M: Model<State = SodMcState>>() -> Property<'a, M> {
+    Property::<M>::transition_with("Cooling-off window", |before, _, after| {
+        let due = crate::reference::sod::due_ends(before.view(), before.world.now);
+        if due.is_empty() || after.view() == before.view() {
+            return Ok(());
+        }
+        let mut expected = before.view().clone();
+        for (binding, at) in due {
+            let (bar, p12) = crate::reference::sod::expected_end(before.view(), binding)
+                .ok_or_else(|| format!("unknown binding {binding:?}"))?;
+            expected.fold(&Record::BindingEnded(fstp_domain::record::BindingEnded {
+                binding,
+                at,
+                barred_through: bar,
+                p12: fstp_domain::roles::CoolingOff(p12),
+            }))?;
+        }
+        if after.view() == &expected {
+            Ok(())
+        } else {
+            Err("Cooling-off NOTE: a step between a scheduled instant and its System end recorded more than those ends".to_owned())
+        }
+    })
+}
+
+/// `always("Cooling-off scheduled end")`: no binding ends after its
+/// scheduled instant, so a scheduled end is never moved later.
+pub fn always_scheduled_end_kept<'a, M: Model<State = SodMcState>>() -> Property<'a, M> {
+    Property::<M>::always_with("Cooling-off scheduled end", |s| {
+        for x in s.view().bindings.values() {
+            if let (Some(e), Some(at)) = (x.end, x.scheduled_end)
+                && e.at > at
+            {
+                return Err(format!(
+                    "Cooling-off NOTE: {:?} ended at {:?}, after its scheduled end {at:?}",
+                    x.binding, e.at
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+/// The properties of the scheduled end instance with its witnesses.
+pub fn scheduled_properties<'a, M: Model<State = SodMcState>>() -> Vec<Property<'a, M>> {
+    vec![
+        two_way::<M>(),
+        always_i01::<M>(),
+        transition_sod01::<M>(),
+        transition_sod05::<M>(),
+        always_scheduled_end_kept::<M>(),
+        transition_window::<M>(),
+        Property::<M>::reachable(
+            "Cooling-off witness: a binding with a scheduled end is held",
+            scheduled_and_held,
+        ),
+        Property::<M>::reachable(
+            "Cooling-off witness: a scheduled end pinned at the instant counts a later call",
+            scheduled_end_counts_a_later_call,
+        ),
+        Property::<M>::reachable(
+            "Cooling-off witness: a scheduled end brought forward ends the binding at the earlier instant",
+            scheduled_end_brought_forward,
+        ),
+        Property::<M>::reachable(
+            "Cooling-off witness: time stands between a scheduled instant and the System end",
+            inside_the_window,
+        ),
+        Property::<M>::reachable(
+            "SoD-05 witness: a former programme manager holds Applicant in the first open call",
+            former_pm_applicant_in_first_open_call,
+        ),
+    ]
+}
+
+/// The fault of `i01_teeth_grant_inside_the_scheduled_end_window_is_caught`:
+/// between a scheduled instant and its System end, a broken engine grants
+/// c an auditor binding. Only the window property can catch it, since an
+/// Operations binding breaks no SoD rule here.
+pub fn fault_grant_inside_the_window(s: &SodMcState) -> Option<SodMcState> {
+    if !inside_the_window(s) {
+        return None;
+    }
+    let binding = BindingId::from_raw(9_100);
+    if s.view().bindings.contains_key(&binding) {
+        return None;
+    }
+    inject(s, &[injected_grant(binding, C, P1, Role::Auditor, None)])
 }

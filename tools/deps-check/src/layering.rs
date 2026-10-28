@@ -7,7 +7,14 @@
 //!    `fstp-pgwire`, `fstp-pgtest`, `fstp-migrate` or `fstp-crypto`. Nor
 //!    does it depend on the third-party roots that do I/O or run async
 //!    code: `tokio`, `mio`, `socket2`, the `rustls` crates and `aws-lc-rs`
-//!    (ADR-001, ADR-002).
+//!    (ADR-001, ADR-002). Beyond that, the five M2 production crates take
+//!    no third-party crate at all as a normal or build dependency, directly
+//!    or through another crate, since they use none (W7 fix). Every
+//!    package that is not a workspace member is third-party, whatever its
+//!    source. A path dependency outside the workspace, such as a vendored
+//!    crate, has no source and is caught too. A name list alone
+//!    would let a new third-party crate through, because an in-house crate
+//!    may depend on any ADR root.
 //! 2. The I-10 boundary. `fstp-domain` has no dependency path to
 //!    `fstp-findings` or `fstp-engine`.
 //! 3. The testkit never ships. No crate other than `fstp-domain-testkit`
@@ -56,6 +63,17 @@ const IO_CRATES: [&str; 15] = [
     "rustls-pki-types",
     "aws-lc-rs",
     "aws-lc-sys",
+];
+
+/// The M2 crates that ship: they take no third-party crate as a normal or
+/// build dependency (rule 1). The testkit is a test crate, so it is not
+/// among them.
+const M2_PRODUCTION: [&str; 5] = [
+    "fstp-money",
+    "fstp-ledger",
+    "fstp-domain",
+    "fstp-findings",
+    "fstp-engine",
 ];
 
 /// The crate that must not reach the findings side (rule 2).
@@ -157,6 +175,29 @@ pub(crate) fn check(meta: &Metadata) -> Vec<Finding> {
                 "layering-io",
                 format!(
                     "{krate} depends on {io} ({}); M2 crates do no I/O",
+                    render_path(meta, &parent, start, pkg)
+                ),
+            ));
+        }
+    }
+
+    for krate in M2_PRODUCTION {
+        let Some(&start) = members.get(krate) else {
+            continue;
+        };
+        let parent = reach(meta, start, &SHIPPED);
+        for &pkg in parent.keys() {
+            let Some(p) = meta.packages.get(pkg) else {
+                continue;
+            };
+            if meta.members.contains(&pkg) {
+                continue;
+            }
+            findings.push(Finding::error(
+                "layering-third-party",
+                format!(
+                    "{krate} depends on the third-party crate {} ({}); the M2 production crates take no third-party crate",
+                    p.name,
                     render_path(meta, &parent, start, pkg)
                 ),
             ));
@@ -304,6 +345,39 @@ mod tests {
         let borrowed: Vec<(&str, &[(&str, DepKind)])> =
             crates.iter().map(|(n, d)| (*n, d.as_slice())).collect();
         graph(&borrowed)
+    }
+
+    /// Marks the packages named in `names` as third-party: a registry source.
+    fn third_party(meta: &mut Metadata, names: &[&str]) {
+        for p in &mut meta.packages {
+            if names.contains(&p.name.as_str()) {
+                p.source = Some("registry+https://github.com/rust-lang/crates.io-index".into());
+            }
+        }
+        meta.members.retain(|&i| {
+            meta.packages
+                .get(i)
+                .is_some_and(|p| !names.contains(&p.name.as_str()))
+        });
+    }
+
+    /// The designed graph with `extra` edges, the packages in `outside` third-party.
+    fn with_third_party(
+        extra: &[(&'static str, &'static str, DepKind)],
+        outside: &[&str],
+    ) -> Metadata {
+        let mut m = designed_with(extra);
+        third_party(&mut m, outside);
+        m
+    }
+
+    /// Whether a layering error names both `krate` and `dep`.
+    fn rejects(findings: &[Finding], krate: &str, dep: &str) -> bool {
+        findings.iter().any(|f| {
+            f.code.starts_with("layering")
+                && f.message.starts_with(krate)
+                && f.message.contains(dep)
+        })
     }
 
     fn messages(findings: &[Finding], code: &str) -> Vec<String> {
@@ -514,6 +588,87 @@ mod tests {
             messages(&elsewhere, "layering-test-only").len(),
             1,
             "{elsewhere:?}"
+        );
+    }
+
+    /// Design section 1, rule 1 (W7 fix): the five M2 production crates
+    /// take no third-party crate at all as a normal or build dependency,
+    /// whatever its name. A fixed list of I/O names would let a new
+    /// third-party crate through, since an in-house crate may depend on
+    /// any ADR root.
+    #[test]
+    fn review_w7_any_third_party_crate_is_rejected_in_m2_production_crates() {
+        for krate in [
+            "fstp-money",
+            "fstp-ledger",
+            "fstp-domain",
+            "fstp-findings",
+            "fstp-engine",
+        ] {
+            for kind in [N, B] {
+                let findings = check(&with_third_party(&[(krate, "itoa", kind)], &["itoa"]));
+                assert!(
+                    rejects(&findings, krate, "itoa"),
+                    "{krate} with itoa as a {kind:?} dependency: {findings:?}"
+                );
+            }
+        }
+    }
+
+    /// Design section 1, rule 1 (W7 fix): a third-party crate reached
+    /// through an in-house crate ships with the M2 crate too, so it fails.
+    #[test]
+    fn review_w7_third_party_crate_through_an_in_house_crate_is_rejected() {
+        let findings = check(&with_third_party(
+            &[("fstp-json", "memchr", N)],
+            &["memchr"],
+        ));
+        for krate in ["fstp-money", "fstp-ledger", "fstp-domain"] {
+            assert!(
+                rejects(&findings, krate, "memchr"),
+                "{krate} ships memchr through fstp-json: {findings:?}"
+            );
+        }
+    }
+
+    /// Design section 1, rule 1 (W7 fix): the third-party rule covers what
+    /// ships. A dev-dependency of an M2 crate, a third-party crate of the
+    /// testkit and one of a crate outside M2 are no finding of it.
+    #[test]
+    fn review_w7_third_party_rule_covers_only_shipped_m2_production_edges() {
+        let dev = check(&with_third_party(&[("fstp-domain", "itoa", D)], &["itoa"]));
+        assert!(!rejects(&dev, "fstp-domain", "itoa"), "{dev:?}");
+        let testkit = check(&with_third_party(
+            &[("fstp-domain-testkit", "itoa", N)],
+            &["itoa"],
+        ));
+        assert!(
+            !rejects(&testkit, "fstp-domain-testkit", "itoa"),
+            "{testkit:?}"
+        );
+        let outside = check(&with_third_party(&[("fstp-http", "itoa", N)], &["itoa"]));
+        assert!(outside.is_empty(), "{outside:?}");
+    }
+
+    /// Design section 1, rule 1 (W7 fix round 1): a path dependency outside
+    /// the workspace, such as a vendored third-party crate, has no source in
+    /// `cargo metadata`. It is not a workspace member, so it is third-party
+    /// and fails all the same.
+    #[test]
+    fn review_w7_vendored_path_crate_outside_the_workspace_is_rejected() {
+        let mut m = designed_with(&[("fstp-domain", "vendored", N)]);
+        m.members
+            .retain(|&i| m.packages.get(i).is_some_and(|p| p.name != "vendored"));
+        assert!(
+            m.packages
+                .iter()
+                .any(|p| p.name == "vendored" && p.source.is_none()),
+            "setup: the vendored crate has no source"
+        );
+        let findings = check(&m);
+        assert!(
+            rejects(&findings, "fstp-domain", "vendored"),
+            "{findings:?}"
         );
     }
 }

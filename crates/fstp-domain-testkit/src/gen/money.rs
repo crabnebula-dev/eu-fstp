@@ -121,9 +121,39 @@ pub fn accept_decision(proposal: ProposalId) -> DecisionId {
     DecisionId::from_raw(21_000u128.saturating_add(proposal.raw()))
 }
 
+/// The acceptance decision of `proposal` after its `n`-th amount
+/// determination. For `n` at most 1 it is [`accept_decision`]. A later
+/// one is fresh, since a new amount needs a new acceptance (NOTE 9,
+/// decided 2026-10-28).
+pub fn accept_decision_n(proposal: ProposalId, n: u128) -> DecisionId {
+    if n <= 1 {
+        return accept_decision(proposal);
+    }
+    DecisionId::from_raw(
+        25_000u128
+            .saturating_add(proposal.raw().saturating_mul(100))
+            .saturating_add(n),
+    )
+}
+
 /// The approval decision of `proposal`.
 pub fn approve_decision(proposal: ProposalId) -> DecisionId {
     DecisionId::from_raw(22_000u128.saturating_add(proposal.raw()))
+}
+
+/// The approval decision of `proposal` after its `n`-th amount
+/// determination. For `n` at most 1 it is [`approve_decision`]. A later
+/// one is fresh, since a new amount needs a new approval (NOTE 9, decided
+/// 2026-10-28).
+pub fn approve_decision_n(proposal: ProposalId, n: u128) -> DecisionId {
+    if n <= 1 {
+        return approve_decision(proposal);
+    }
+    DecisionId::from_raw(
+        26_000u128
+            .saturating_add(proposal.raw().saturating_mul(100))
+            .saturating_add(n),
+    )
 }
 
 /// The termination decision of `proposal`.
@@ -206,6 +236,19 @@ pub fn accept_grant(lead: AccountId, proposal: ProposalId) -> Step {
             proposal,
         },
     )
+}
+
+/// The lead's `AcceptGrant` with the decision id `decision`, as given
+/// again after a new amount (NOTE 9, decided 2026-10-28).
+pub fn accept_grant_as(lead: AccountId, proposal: ProposalId, decision: DecisionId) -> Step {
+    by(lead, Command::AcceptGrant { decision, proposal })
+}
+
+/// The programme manager's `ApproveGrant` with the decision id
+/// `decision`, as given again after a new amount (NOTE 9, decided
+/// 2026-10-28).
+pub fn approve_grant_as(pm: AccountId, proposal: ProposalId, decision: DecisionId) -> Step {
+    by(pm, Command::ApproveGrant { decision, proposal })
 }
 
 /// The programme manager's `ApproveGrant`.
@@ -1403,8 +1446,14 @@ impl MoneyMachine {
                 plan_of(*proposal),
                 deductions,
             )?,
-            MoneyCmd::Accept(p) => accept_grant(lead(*p)?, *p),
-            MoneyCmd::Approve(p) => approve_grant(STAFF_PM, *p),
+            // A fresh decision id after every new determination, since a new
+            // amount needs a new acceptance and approval (NOTE 9).
+            MoneyCmd::Accept(p) => {
+                accept_grant_as(lead(*p)?, *p, accept_decision_n(*p, m.decisions))
+            }
+            MoneyCmd::Approve(p) => {
+                approve_grant_as(STAFF_PM, *p, approve_decision_n(*p, m.decisions))
+            }
             MoneyCmd::Contract(p) => contract_effective(*p),
             MoneyCmd::Decline(p) => decline_negotiation(Actor::Account(STAFF_PM), *p),
             MoneyCmd::Withdraw(p) => crate::r#gen::review::withdraw(lead(*p)?, *p),
@@ -1471,18 +1520,10 @@ impl StateMachine for MoneyMachine {
     }
 
     fn precondition(&self, model: &MoneyModel, cmd: &MoneyCmd) -> bool {
-        // A redetermination after the acceptance or the approval is a
-        // test-author choice of the reference, so the machine never probes it.
-        let locked = match cmd {
-            MoneyCmd::Determine { proposal, .. } => model
-                .world
-                .money
-                .proposals
-                .get(proposal)
-                .is_some_and(|p| p.accepted.is_some() || p.approved.is_some()),
-            _ => false,
-        };
-        model.divergence.is_none() && !locked
+        // The amount is never locked (NOTE 9, decided 2026-10-28), so the
+        // machine also draws a determination after acceptance or approval.
+        let _ = cmd;
+        model.divergence.is_none()
     }
 
     fn run(&self, _sut: &mut (), _cmd: &MoneyCmd) {}

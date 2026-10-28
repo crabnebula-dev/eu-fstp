@@ -11,10 +11,24 @@
 //!   needs the reviewer's organisation, since SoD-10 and I-34 count
 //!   organisations from it (decided 2026-10-25). For other roles the
 //!   field is data only.
+//!   A committee member grant whose organisation differs from a held
+//!   committee binding of the account in the programme, whatever its
+//!   period, is refused, since a reviewer has one organisation per
+//!   programme (SoD-10, decided 2026-10-28). A grant may schedule its
+//!   end with `end`, after `start`.
 //! - `EndRole` of a Drafting, Judging or Operations binding that is not
-//!   voided, at `ctx.now`. It pins the cooling-off bar, which never counts
-//!   for a conflict-of-interest suspension.
-//! - `ReinstateBinding` of a suspended binding. A conflict-of-interest
+//!   voided. At `ctx.now` it ends the binding and pins the cooling-off
+//!   bar, which never counts for a conflict-of-interest suspension. At a
+//!   later instant, after the binding's start, it schedules the end, or
+//!   brings a scheduled end forward. Moving a scheduled end later, or
+//!   before `ctx.now`, is refused (Cooling-off NOTE, decided 2026-10-25).
+//! - `EndScheduledRole`, by the System, which [`due`] lists from the
+//!   scheduled instant on. It records the end at that instant, with the
+//!   bar of that instant. Until it is recorded, the engine decides no
+//!   other command but `VaultChanged` ([`end_overdue`]).
+//! - `ReinstateBinding` of a suspended binding. A committee binding is
+//!   refused under SoD-10 when another held committee binding of the
+//!   account in the programme records another organisation. A conflict-of-interest
 //!   suspension is reinstated only once the identity clash is over: no
 //!   I-01 or I-02 clash on its own account, and `SameIdentityAsAny` false
 //!   over the other accounts it would break I-01 with (I-06). Its record
@@ -58,7 +72,7 @@ use std::collections::BTreeSet;
 
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
-use crate::id::{AccountId, BindingId, CallId, ProgrammeId, VaultEpoch};
+use crate::id::{AccountId, BindingId, CallId, OrganisationId, ProgrammeId, VaultEpoch};
 use crate::oracle::{Answer, Answers, Query};
 use crate::record::{
     BindingEnded, BindingGranted, BindingReinstated, BindingSuspended, BindingVoided, OutboxEvent,
@@ -152,6 +166,8 @@ fn end_records(
 struct GrantPlan {
     /// The binding, with no SoD-09 epoch yet.
     record: BindingGranted,
+    /// The scheduled end, if the grant sets one.
+    end: Option<Timestamp>,
     /// `IsVerified` for a Drafting or Judging grant (SoD-09).
     verified: Option<Query>,
     /// `SameIdentityAsAny` over a non-empty candidate set (I-06, SoD-09).
@@ -180,6 +196,7 @@ fn plan_grant(state: &State, cmd: &Command, ctx: &Ctx) -> Result<GrantPlan, Refu
         second_admin,
         confidentiality,
         organisation,
+        end,
     } = cmd
     else {
         return Err(wrong_state());
@@ -201,8 +218,22 @@ fn plan_grant(state: &State, cmd: &Command, ctx: &Ctx) -> Result<GrantPlan, Refu
         // SoD-10 and I-34 count organisations from it (decided 2026-10-25).
         return Err(Refusal::new(RuleRef::Sod10, RefusalReason::InvalidValue));
     }
+    if *role == Role::CommitteeMember
+        && let Some(o) = organisation
+        && other_organisation(state, *account, *programme, *o, None)
+    {
+        // A reviewer has one organisation per programme (SoD-10, decided
+        // 2026-10-28), so the count of organisations never depends on
+        // which of its committee bindings is read.
+        return Err(Refusal::new(RuleRef::Sod10, RefusalReason::GuardFailed));
+    }
     if *start < ctx.now {
         // No backdating (design 2.6).
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    }
+    if end.is_some_and(|e| e <= *start) {
+        // A scheduled end lies at a later instant than the start
+        // (Cooling-off NOTE, decided 2026-10-25).
         return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
     }
     if group.needs_verification() && confidentiality.is_none() {
@@ -250,6 +281,7 @@ fn plan_grant(state: &State, cmd: &Command, ctx: &Ctx) -> Result<GrantPlan, Refu
             organisation: *organisation,
             verified_epoch: None,
         },
+        end: *end,
         verified,
         identity,
     })
@@ -274,8 +306,39 @@ fn decide_grant(plan: GrantPlan, answers: &Answers) -> Result<Vec<Record>, Refus
         }
         out.push(outcome(q, a));
     }
+    let binding = record.binding;
     out.push(Record::BindingGranted(record));
+    if let Some(at) = plan.end {
+        out.push(Record::BindingEndScheduled { binding, at });
+    }
     Ok(out)
+}
+
+/// Whether `account` holds a committee member binding in `programme`, other
+/// than `except`, that records an organisation other than `organisation`
+/// (SoD-10, decided 2026-10-28).
+///
+/// A reviewer has one organisation per programme. Every held binding
+/// counts, whatever its period: one with a scheduled end that is not yet
+/// recorded, one that starts later, and an ordinarily suspended one,
+/// since it can be reinstated. A voided binding or a conflict-of-interest
+/// suspension is not held. So the organisation that `binding_releases`
+/// and I-35 read for kept assignments never changes (W7 fix round 2).
+fn other_organisation(
+    state: &State,
+    account: AccountId,
+    programme: ProgrammeId,
+    organisation: OrganisationId,
+    except: Option<BindingId>,
+) -> bool {
+    state.roster.bindings().any(|(id, b)| {
+        Some(id) != except
+            && b.account == account
+            && b.programme == programme
+            && b.role == Role::CommitteeMember
+            && b.held()
+            && b.organisation.is_some_and(|o| o != organisation)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +349,19 @@ fn decide_grant(plan: GrantPlan, answers: &Answers) -> Result<Vec<Record>, Refus
 ///
 /// A binding under a conflict-of-interest suspension can end too. The bar
 /// its end pins never counts (Identity discovery, decided 2026-10-25).
+///
+/// An end at `ctx.now` ends the binding at once, a scheduled one too. A
+/// later instant schedules the end (Cooling-off NOTE, decided 2026-10-25):
+/// the binding stays held until then, and [`due`] lists its
+/// `EndScheduledRole` from that instant on. A scheduled end can be
+/// brought forward, never moved later. An earlier end than `ctx.now` is
+/// backdating. Scheduling the same instant again is refused, since it
+/// changes nothing. A scheduled end lies after the binding's start, as
+/// at the grant.
+///
+/// Once a scheduled instant is reached, the engine refuses every command
+/// but the System end and `VaultChanged` until the end is recorded
+/// ([`end_overdue`]). So an `EndRole` never moves an overdue end later.
 fn plan_end(
     state: &State,
     binding: BindingId,
@@ -298,11 +374,84 @@ fn plan_end(
         // the proposal's terminal state (Q11 A).
         return Err(wrong_state());
     }
-    if at != ctx.now {
-        // An earlier end is backdating. A later end could not pin its bar.
+    if at < ctx.now {
+        // An earlier end is backdating.
         return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
     }
+    if b.scheduled_end.is_some_and(|s| s <= ctx.now) {
+        // The engine refuses this before any lane runs. Kept so the rule
+        // holds here on its own.
+        return Err(Refusal::new(RuleRef::Sod05, RefusalReason::WrongState));
+    }
+    if at == ctx.now {
+        return Ok(end_records(state, binding, b, at)?.to_vec());
+    }
+    if b.scheduled_end.is_some_and(|s| at >= s) {
+        // A scheduled end is brought forward, never moved later.
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    }
+    if at <= b.start {
+        // A scheduled end lies at a later instant than the start, as the
+        // grant requires.
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    }
+    Ok(vec![Record::BindingEndScheduled { binding, at }])
+}
+
+/// Checks an `EndScheduledRole` and returns its records: the end at the
+/// scheduled instant, once `ctx.now` has reached it (Cooling-off NOTE,
+/// decided 2026-10-25).
+///
+/// The bar is the latest call sequence published in the programme plus
+/// P-12, both read when the System records the end. From the instant on,
+/// the engine refuses every other command but `VaultChanged` until this
+/// end is recorded ([`end_overdue`]). No call is published and no P-12 is
+/// edited in between, so these are the calls published by the instant and
+/// the P-12 value in force at it.
+fn plan_scheduled_end(
+    state: &State,
+    binding: BindingId,
+    ctx: &Ctx,
+) -> Result<Vec<Record>, Refusal> {
+    let b = state.roster.binding(binding).ok_or_else(unknown)?;
+    let at = b.scheduled_end.ok_or_else(wrong_state)?;
+    if b.voided() || at > ctx.now {
+        return Err(wrong_state());
+    }
     Ok(end_records(state, binding, b, at)?.to_vec())
+}
+
+/// Whether the binding `b` has a scheduled end at or before `now` that the
+/// System has not yet recorded.
+fn overdue(b: &Binding, now: Timestamp) -> bool {
+    !b.voided() && b.scheduled_end.is_some_and(|s| s <= now)
+}
+
+/// Whether some binding has a scheduled end at or before `now` that the
+/// System has not yet recorded (Cooling-off NOTE, decided 2026-10-25).
+///
+/// The binding stays held until its instant, and its bar is pinned then.
+/// The engine refuses every command but `EndScheduledRole` and
+/// `VaultChanged` while this holds. So no decision reads the binding as
+/// held after its instant, and the end reads the state of the instant.
+/// `VaultChanged` stays open because every command first processes a
+/// newer vault epoch, the System end included (overview NOTE 3). A
+/// reaction only voids and suspends, so it never grants through the
+/// binding.
+pub(crate) fn end_overdue(state: &State, now: Timestamp) -> bool {
+    state.roster.bindings().any(|(_, b)| overdue(b, now))
+}
+
+/// The System commands due at `now`: the end of every open binding whose
+/// scheduled end instant is at or before `now` (Cooling-off NOTE, decided
+/// 2026-10-25).
+pub(crate) fn due(state: &State, now: Timestamp) -> Vec<Command> {
+    state
+        .roster
+        .bindings()
+        .filter(|(_, b)| overdue(b, now))
+        .map(|(binding, _)| Command::EndScheduledRole { binding })
+        .collect()
 }
 
 /// A checked `ReinstateBinding`: the record and its vault question.
@@ -324,6 +473,10 @@ struct ReinstatePlan {
 /// account. Nor may it break I-02 with a binding of its own account that
 /// was held beside it, held now or ended since its grant. The vault
 /// question covers the other accounts of its verified identity (I-06).
+///
+/// A committee binding is refused under SoD-10 when another held committee
+/// binding of the account in the programme records another
+/// organisation, whatever its period (decided 2026-10-28).
 fn plan_reinstate(
     state: &State,
     binding: BindingId,
@@ -334,6 +487,16 @@ fn plan_reinstate(
     let b = state.roster.binding(binding).ok_or_else(unknown)?;
     if !matches!(b.status, BindingStatus::Suspended(_)) {
         return Err(wrong_state());
+    }
+    if b.role == Role::CommitteeMember
+        && let Some(o) = b.organisation
+        && other_organisation(state, b.account, b.programme, o, Some(binding))
+    {
+        // A committee binding granted while this one was not held may
+        // record another organisation. Counted again, this one would give
+        // the reviewer two organisations in the programme (SoD-10, decided
+        // 2026-10-28).
+        return Err(Refusal::new(RuleRef::Sod10, RefusalReason::GuardFailed));
     }
     let mut identity = None;
     if b.conflict_of_interest() {
@@ -844,6 +1007,10 @@ pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Que
             plan_end(state, *binding, *at, ctx)?;
             Ok(Vec::new())
         }
+        Command::EndScheduledRole { binding } => {
+            plan_scheduled_end(state, *binding, ctx)?;
+            Ok(Vec::new())
+        }
         Command::ReinstateBinding { binding, reason } => {
             Ok(plan_reinstate(state, *binding, *reason, ctx)?
                 .identity
@@ -867,6 +1034,7 @@ pub(crate) fn decide(
     match cmd {
         Command::GrantRole { .. } => decide_grant(plan_grant(state, cmd, ctx)?, answers),
         Command::EndRole { binding, at } => plan_end(state, *binding, *at, ctx),
+        Command::EndScheduledRole { binding } => plan_scheduled_end(state, *binding, ctx),
         Command::ReinstateBinding { binding, reason } => {
             decide_reinstate(plan_reinstate(state, *binding, *reason, ctx)?, answers)
         }
@@ -916,6 +1084,18 @@ pub(crate) fn apply(
         Record::BindingSuspended(s) => fold_suspension(state, s),
         Record::BindingVoided(v) => fold_void(state, v),
         Record::BindingReinstated(r) => fold_reinstatement(state, r),
+        Record::BindingEndScheduled { binding, at } => {
+            let b = state
+                .roster
+                .bindings
+                .get_mut(binding)
+                .ok_or(FoldError::UnknownEntity)?;
+            if b.voided() || b.group() == Group::Receiving {
+                return Err(FoldError::Inconsistent);
+            }
+            b.scheduled_end = Some(*at);
+            Ok(())
+        }
         Record::VaultEpochProcessed { epoch } => {
             if *epoch <= state.epoch {
                 return Err(FoldError::Inconsistent);
@@ -1094,6 +1274,7 @@ fn fold_grant(state: &mut State, g: &BindingGranted) -> Result<(), FoldError> {
             suspended_beneath: None,
             granted,
             organisation: g.organisation,
+            scheduled_end: None,
         },
     );
     Ok(())
@@ -1156,7 +1337,7 @@ pub(crate) fn governing_policy(state: &State, cmd: &Command) -> Result<PolicySco
         Command::GrantRole { .. } | Command::EndRole { .. } | Command::ReinstateBinding { .. } => {
             Err(Refusal::new(RuleRef::I85, RefusalReason::NotThroughMcp))
         }
-        Command::VaultChanged { .. } => {
+        Command::VaultChanged { .. } | Command::EndScheduledRole { .. } => {
             Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor))
         }
         _ => Err(wrong_state()),
@@ -1205,6 +1386,7 @@ mod tests {
                 status: BindingStatus::Active,
                 suspended_beneath: None,
                 granted: 0,
+                scheduled_end: None,
                 organisation: None,
             },
         );

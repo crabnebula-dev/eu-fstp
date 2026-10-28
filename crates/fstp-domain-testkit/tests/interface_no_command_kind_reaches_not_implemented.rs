@@ -514,6 +514,7 @@ fn walk(backend: Backend) {
         fstp_domain_testkit::r#gen::review::judge_binding(3),
         now,
     ));
+    scheduled_end(&mut walk, backend);
 
     walk.w
         .invariants()
@@ -527,6 +528,50 @@ fn walk(backend: Backend) {
         missing.is_empty(),
         "the walk accepted no command of {missing:?}"
     );
+}
+
+/// `EndScheduledRole` (Cooling-off NOTE, decided 2026-10-25). The money
+/// world's review references treat every `EndRole` as an end at once, so
+/// the scheduled end runs in a roles world, which compares each step with
+/// the roles reference. c is granted programme manager, its end is
+/// scheduled one second later, and at that instant the System records the
+/// end that `due` lists. On the references alone, the roles reference
+/// records that end.
+fn scheduled_end(walk: &mut Walk, backend: Backend) {
+    use fstp_domain_testkit::r#gen::roster::{C, P1, SodSetup, SodWorld, grant, sod_truth};
+    use fstp_domain_testkit::reference::sod::check_due_ends;
+    let pm = BindingId::from_raw(301);
+    let mut setup = SodSetup::one(1, &[1]);
+    setup.published = vec![call(1)];
+    let mut w = SodWorld::from_setup(backend, sod_truth(), &setup)
+        .unwrap_or_else(|e| panic!("roles world: {e}"));
+    w.now = T0;
+    let later = Timestamp::from_micros(T0.micros().saturating_add(1_000_000));
+    for step in [grant(pm, C, P1, Role::ProgrammeManager, T0), end(pm, later)] {
+        w.exec(&step, fstp_domain_testkit::r#gen::roster::Facts::Effective)
+            .unwrap_or_else(|e| panic!("roles world: {e}"))
+            .unwrap_or_else(|r| panic!("{:?} refused: {r}", step.cmd));
+    }
+    let before = w.view.clone();
+    let records = w
+        .arrive(later)
+        .unwrap_or_else(|e| panic!("roles world: {e}"))
+        .unwrap_or_else(|r| panic!("the scheduled end due at {later:?} was refused: {r}"));
+    check_due_ends(&before, later, &records).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        records
+            .iter()
+            .any(|r| matches!(r, Record::BindingEnded(e) if e.binding == pm)),
+        "the System ends c's binding at the instant: {records:?}"
+    );
+    if backend == Backend::Production {
+        assert_eq!(
+            fstp_domain::due(&w.state, later),
+            Vec::<Command>::new(),
+            "nothing is due once the end is recorded"
+        );
+    }
+    walk.seen.insert(CommandKind::EndScheduledRole);
 }
 
 /// Every lane has landed: every command kind is accepted on a legal state

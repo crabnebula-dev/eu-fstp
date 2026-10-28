@@ -32,10 +32,11 @@ use fstp_domain::rules::{Row, StateTag};
 use fstp_mc::{Model, Property};
 
 use crate::r#gen::money::{
-    FINREL, LA, LB, MoneyDraft, MoneySetup, MoneyWorld, PA, PB, PC, REL, accept_grant, accept_line,
-    amount_decision, approve_grant, approve_payment, complete, confirm_paid, contract_effective,
-    contract_of, decline_negotiation, determine, edit_p05, money_plan, record_deliverable,
-    release_payment, request_payment, start_execution, terminate,
+    FINREL, LA, LB, MoneyDraft, MoneySetup, MoneyWorld, PA, PB, PC, REL, accept_decision_n,
+    accept_grant_as, accept_line, amount_decision, approve_decision_n, approve_grant_as,
+    approve_payment, complete, confirm_paid, contract_effective, contract_of, decline_negotiation,
+    determine, edit_p05, money_plan, record_deliverable, release_payment, request_payment,
+    start_execution, terminate,
 };
 use crate::r#gen::review::{R1, plan_of, withdraw};
 use crate::r#gen::roster::{Backend, STAFF_PM, Step};
@@ -151,6 +152,10 @@ pub struct McState {
     /// with a verified lead was refused by both sides, so GRANTED was
     /// disabled. The fact can be sent again later.
     pub grant_blocked: bool,
+    /// Ghost: a new amount was determined on a proposal that held a
+    /// given acceptance or approval, which it superseded (NOTE 9, decided
+    /// 2026-10-28).
+    pub superseded: bool,
     /// Deliverables recorded.
     pub deliverables: u8,
     /// Set when production and the references disagree.
@@ -184,8 +189,14 @@ fn line_of(r: RequestId) -> LineId {
 
 fn fact_step(w: &MoneyWorld, p: ProposalId, f: Fact) -> Option<Step> {
     Some(match f {
-        Fact::Accept => accept_grant(lead_of(w, p)?, p),
-        Fact::Approve => approve_grant(STAFF_PM, p),
+        // A new amount needs a new acceptance and approval, each with a
+        // fresh decision id (NOTE 9, decided 2026-10-28).
+        Fact::Accept => accept_grant_as(
+            lead_of(w, p)?,
+            p,
+            accept_decision_n(p, determinations(w, p)),
+        ),
+        Fact::Approve => approve_grant_as(STAFF_PM, p, approve_decision_n(p, determinations(w, p))),
         Fact::Contract => contract_effective(p),
     })
 }
@@ -432,6 +443,7 @@ impl MoneyMc {
             edited: false,
             cap_blocked: false,
             grant_blocked: false,
+            superseded: false,
             deliverables: 0,
             divergence: None,
         };
@@ -472,8 +484,10 @@ impl Model for MoneyMc {
             };
             match q.state {
                 StateTag::Negotiation => {
-                    let locked = q.accepted.is_some() || q.approved.is_some();
-                    if f.determine && !locked && determinations(&s.world, *p) < 2 {
+                    // The amount is never locked (NOTE 9, decided
+                    // 2026-10-28), so a determination after acceptance or
+                    // approval is drawn too.
+                    if f.determine && determinations(&s.world, *p) < 2 {
                         let total = s
                             .world
                             .money
@@ -544,7 +558,18 @@ impl Model for MoneyMc {
     }
 
     fn step(&self, s: &McState, action: &McAction) -> Option<McState> {
-        run_action(s, action)
+        let mut next = run_action(s, action)?;
+        // The ghost of the NOTE 9 witness (decided 2026-10-28). Only the
+        // money models set it, so M-CONFORMANCE keeps its state space.
+        if let McAction::Determine(p, _) = action
+            && let Some(q) = s.world.money.proposals.get(p)
+            && (q.accepted.is_some() || q.approved.is_some())
+            && next.divergence.is_none()
+            && determinations(&next.world, *p) > determinations(&s.world, *p)
+        {
+            next.superseded = true;
+        }
+        Some(next)
     }
 
     fn is_terminal(&self, s: &McState) -> bool {
@@ -572,7 +597,11 @@ impl Model for MoneyMc {
 /// deduction, and R1 determines the amount on it (R-NG-03). The action is
 /// atomic: when the determination is refused, the plan is not kept.
 /// Step W5 integration restored this branch, which lane L-MONEY had to
-/// leave out while negotiated plans were refused.
+/// leave out while negotiated plans were refused. The grant facts come
+/// both as the composite grant and one by one (W7 fix round 1). So a new
+/// amount can supersede a given acceptance or approval, and I-13 and I-14
+/// are checked over the release of the old reservation and the new one
+/// (NOTE 9, decided 2026-10-28).
 pub fn m_money() -> McConfig {
     McConfig {
         setup: MoneySetup::sybil([400, 200, 100]),
@@ -582,7 +611,7 @@ pub fn m_money() -> McConfig {
         families: Families {
             determine: true,
             grant: true,
-            facts: false,
+            facts: true,
             exits: true,
             p05: 400,
             execution: false,
@@ -708,15 +737,16 @@ pub fn after() -> McConfig {
     }
 }
 
-/// The state count of M-MONEY, measured on production by lane w6-decline
-/// after the decision of 2026-10-26. That decision makes the decline of
-/// lead a for the plan total unreachable. Production stores 594 states.
-/// The references store more (`M_MONEY_REFERENCE_STATES`), because they
-/// accept the `Either` grant-fact verdicts that production refuses.
-pub const M_MONEY_STATES: usize = 594;
-/// The state count of M-MONEY on the references, measured by lane
-/// w6-decline. It is the tripwire of the `_reference` twin (design 6.1).
-pub const M_MONEY_REFERENCE_STATES: usize = 840;
+/// The state count of M-MONEY, measured on production in W7 fix round 1.
+/// The grant facts are now also given one by one, so a new amount reaches
+/// a NEGOTIATION that holds a given acceptance or approval (NOTE 9,
+/// decided 2026-10-28). Production stores 20,304 states, up from 594. The
+/// references store more (`M_MONEY_REFERENCE_STATES`), because they accept
+/// the `Either` grant-fact verdicts that production refuses.
+pub const M_MONEY_STATES: usize = 20_304;
+/// The state count of M-MONEY on the references, measured in W7 fix round
+/// 1, up from 840. It is the tripwire of the `_reference` twin (design 6.1).
+pub const M_MONEY_REFERENCE_STATES: usize = 22_332;
 /// The state count of the M-RACE reservation part, measured on production
 /// in the W7 review after the NOTE 9 decline change. Production stores
 /// fewer states than the references, as in M-MONEY.
@@ -906,6 +936,10 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
             "NOTE 9 witness: declined for the cap while even the P-04 minimum is above the headroom",
             declined_below_floor,
         ),
+        Property::reachable(
+            "NOTE 9 witness: a new amount superseded a given acceptance or approval",
+            |s: &McState| s.superseded,
+        ),
         Property::transition_with(
             "NOTE 9: no decline for the cap while the smallest open amount fits the headroom",
             cap_decline_transition,
@@ -914,23 +948,16 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
 }
 
 /// The smallest amount still open for `p` in `s` and its cap headroom,
-/// cents. The smallest open amount is the determined amount once the lead
-/// accepted or the programme manager approved it. Before, it is the P-04
-/// minimum, or one cent when that minimum is zero, since a grant is never
-/// zero (NOTE 9, decided 2026-10-26). The headroom is the stricter of
-/// the snapshot and the live P-05, minus the other counted sums of the
-/// lead's recipient (I-14).
+/// cents. The amount is never locked (decided 2026-10-28), so the smallest
+/// open amount is the P-04 minimum at every point of NEGOTIATION. It is
+/// one cent when that minimum is zero, since a grant is never zero (NOTE
+/// 9, decided 2026-10-26). The headroom is the stricter of the snapshot
+/// and the live P-05, minus the other counted sums of the lead's recipient
+/// (I-14).
 pub fn smallest_and_headroom(s: &McState, p: ProposalId) -> Option<(i64, i64)> {
     let m = &s.world.money;
     let q = m.proposals.get(&p)?;
-    let locked = q
-        .accepted
-        .or(q.approved)
-        .and(q.determined.as_ref().map(|d| d.granted));
-    let smallest = match locked {
-        Some(l) => l,
-        None => m.governing(p)?.p04_min.max(1),
-    };
+    let smallest = m.governing(p)?.p04_min.max(1);
     let prog = m.programme_of(p)?;
     let cap = m.cap_of_call(q.call)?;
     let head = cap.saturating_sub(m.counted_for(s.world.truth(), prog, q.lead, Some(p)));

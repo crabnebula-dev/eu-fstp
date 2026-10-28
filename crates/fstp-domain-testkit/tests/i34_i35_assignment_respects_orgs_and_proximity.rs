@@ -66,19 +66,23 @@ fn reviewer(
     )
 }
 
-/// I-34, SoD-10: below P-39 = 2 organisations, a second reviewer of the
-/// same organisation is refused under I-34, and one of another is accepted.
+/// I-34, SoD-10 (W7 fix): the order of assignment no longer matters. An
+/// `Assign` is refused only once P-39 organisations are out of reach, and
+/// admission, the close, the ranking and the amount re-check I-34. Below
+/// P-39 = 2, a second reviewer of O1 is accepted while R3 of O2 and R4 of
+/// O3 can still take a seat, and R3 of O2 is accepted after it. This test
+/// replaces the reading that refused the second reviewer of O1.
 #[test]
-fn i34_second_reviewer_of_the_same_organisation_is_refused_below_p39() {
+fn i34_second_reviewer_of_the_same_organisation_is_accepted_while_p39_stays_in_reach() {
     let mut s = scenario_from(&machine_setup(), review_truth(machine_accounts()))
         .unwrap_or_else(|e| panic!("setup from genesis: {e}"));
     let first = run_records(&mut s, &reviewer(9_001, PR1, R1), T0).unwrap();
     assert!(first.is_ok(), "R1 of O1 is assigned: {first:?}");
     let same = run_records(&mut s, &reviewer(9_002, PR1, R2), T0).unwrap();
-    match same {
-        Err(r) => assert_eq!(r.rule, RuleRef::I34, "R2 of O1 is refused under I-34"),
-        Ok(records) => panic!("R2 of O1 was assigned below P-39: {records:?}"),
-    }
+    assert!(
+        same.is_ok(),
+        "I-34: R2 of O1 is assigned, since O2 and O3 are still in reach: {same:?}"
+    );
     let other = run_records(&mut s, &reviewer(9_003, PR1, R3), T0).unwrap();
     assert!(other.is_ok(), "R3 of O2 is assigned: {other:?}");
 }

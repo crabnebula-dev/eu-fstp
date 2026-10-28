@@ -236,6 +236,7 @@ pub fn grant(
                 .then(|| text(binding.raw().saturating_add(50_000))),
             organisation: (role == Role::CommitteeMember)
                 .then(|| OrganisationId::from_raw(account.raw())),
+            end: None,
         },
     )
 }
@@ -243,6 +244,36 @@ pub fn grant(
 /// An `EndRole` of `binding` at `at` by the tenant admin.
 pub fn end(binding: BindingId, at: Timestamp) -> Step {
     Step::by(ADMIN, Flags::ADMIN, Command::EndRole { binding, at })
+}
+
+/// A [`grant`] that also schedules the binding's end at `end` (Cooling-off
+/// NOTE, decided 2026-10-25). The `end` member is set on the JSON form of
+/// the command, which the command codec then decodes. The stub interface
+/// does not declare the member yet, so until it does the decode fails and
+/// this returns the error.
+pub fn grant_until(
+    binding: BindingId,
+    account: AccountId,
+    programme: ProgrammeId,
+    role: Role,
+    start: Timestamp,
+    end: Timestamp,
+) -> Result<Step, String> {
+    use fstp_json::ToJson;
+    let mut step = grant(binding, account, programme, role, start);
+    let mut v = step.cmd.to_json();
+    match &mut v {
+        fstp_json::Value::Object(o) => {
+            o.insert(
+                "end".to_owned(),
+                fstp_json::Value::String(end.micros().to_string()),
+            );
+        }
+        _ => return Err("the JSON form of GrantRole is not an object".to_owned()),
+    }
+    step.cmd = fstp_domain::codec::command_from_json(&v)
+        .map_err(|e| format!("GrantRole carries no scheduled end yet (Cooling-off NOTE): {e:?}"))?;
+    Ok(step)
 }
 
 /// A `ReinstateBinding` of `binding` by the tenant admin, with a synthetic reason.
@@ -652,6 +683,56 @@ impl SodWorld {
         Ok(Ok(records))
     }
 
+    /// Moves `now` to `at` and runs every System command that `due` lists
+    /// then, as the M6 timeline does (design 3.6). Each runs with the
+    /// actor `System(Timeline)`, after the reaction to a newer vault epoch.
+    /// In reference mode the reference records the scheduled ends due at
+    /// `at` instead (Cooling-off NOTE, decided 2026-10-25). Returns every
+    /// record, or the first refusal.
+    pub fn arrive(&mut self, at: Timestamp) -> StepResult {
+        self.now = at;
+        if let Err(r) = self.sync(Facts::Effective)? {
+            return Ok(Err(r));
+        }
+        let mut all = Vec::new();
+        match self.backend {
+            Backend::Production => {
+                for cmd in fstp_domain::due(&self.state, at) {
+                    let step = Step {
+                        actor: Actor::System(SystemCause::Timeline),
+                        flags: Flags::NONE,
+                        cmd,
+                    };
+                    let (ctx, answers) = match self.ask(&step, Facts::Effective) {
+                        Ok(x) => x,
+                        Err(r) => return Ok(Err(r)),
+                    };
+                    let records = match fstp_domain::decide(&self.state, &step.cmd, &ctx, &answers)
+                    {
+                        Ok(r) => r,
+                        Err(r) => return Ok(Err(r)),
+                    };
+                    self.commit(&records)?;
+                    all.extend(records);
+                }
+            }
+            Backend::Reference => {
+                for (binding, scheduled) in crate::reference::sod::due_ends(&self.view, at) {
+                    let (bar, p12) = crate::reference::sod::expected_end(&self.view, binding)
+                        .ok_or("reference mode: unknown binding")?;
+                    all.push(Record::BindingEnded(BindingEnded {
+                        binding,
+                        at: scheduled,
+                        barred_through: bar,
+                        p12: CoolingOff(p12),
+                    }));
+                }
+                self.commit(&all)?;
+            }
+        }
+        Ok(Ok(all))
+    }
+
     /// Runs `step`: first the reaction to a newer vault epoch, as the driver
     /// does (overview NOTE 3), then the step. Returns the step's records.
     pub fn exec(&mut self, step: &Step, reaction: Facts) -> StepResult {
@@ -670,8 +751,8 @@ impl SodWorld {
                 }
             }
             Backend::Reference => match synthesize(&self.view, &self.truth, step, self.now)? {
-                Some(records) => records,
-                None => return Ok(Err(REFERENCE_REFUSAL)),
+                Ok(records) => records,
+                Err(r) => return Ok(Err(r)),
             },
         };
         self.commit(&records)?;
@@ -721,7 +802,8 @@ fn suspensions(
         .collect()
 }
 
-/// The records the reference expects of `step`, or `None` when it refuses.
+/// The records the reference expects of `step`, or the refusal when it
+/// refuses. The refusal names the rule the reference gives, or `Input`.
 /// Commands outside the reference are taken as accepted with the records a
 /// correct engine emits, which the setups need.
 fn synthesize(
@@ -729,14 +811,19 @@ fn synthesize(
     truth: &GroundTruth,
     step: &Step,
     now: Timestamp,
-) -> Result<Option<Vec<Record>>, String> {
+) -> Result<Result<Vec<Record>, Refusal>, String> {
     let actor = match step.actor {
         Actor::Account(a) => a,
         Actor::System(_) => return Err("reference mode runs no System command".to_owned()),
     };
     let ask = step.ask(now);
     match verdict(view, truth, &ask) {
-        Verdict::Refuse(_) => return Ok(None),
+        Verdict::Refuse(why) => {
+            return Ok(Err(Refusal::new(
+                crate::reference::sod::rule_of(&why),
+                RefusalReason::GuardFailed,
+            )));
+        }
         Verdict::Accept => {}
         Verdict::Unjudged => {
             if let Command::ReinstateBinding { binding, reason } = &step.cmd {
@@ -745,19 +832,25 @@ fn synthesize(
                     .bindings
                     .get(binding)
                     .is_some_and(|b| b.open() && b.suspended);
-                return Ok(open_suspended.then(|| {
-                    vec![Record::BindingReinstated(BindingReinstated {
-                        binding: *binding,
-                        by: actor,
-                        reason: *reason,
-                    })]
-                }));
+                return Ok(open_suspended
+                    .then(|| {
+                        vec![Record::BindingReinstated(BindingReinstated {
+                            binding: *binding,
+                            by: actor,
+                            reason: *reason,
+                        })]
+                    })
+                    .ok_or(REFERENCE_REFUSAL));
             }
-            return synthesize_unjudged(view, truth, actor, &step.cmd).map(Some);
+            return synthesize_unjudged(view, truth, actor, &step.cmd).map(Ok);
         }
     }
     let mut out = Vec::new();
     match &step.cmd {
+        Command::EndRole { binding, at } if *at > now => {
+            // A later instant schedules the end (Cooling-off NOTE).
+            out.push(crate::reference::sod::scheduled_end_record(*binding, *at)?);
+        }
         Command::EndRole { binding, at } => {
             let (bar, p12) = crate::reference::sod::expected_end(view, *binding)
                 .ok_or("reference mode: unknown binding")?;
@@ -785,8 +878,11 @@ fn synthesize(
     }
     if let Some(e) = expected_binding(view, &ask) {
         out.push(Record::BindingGranted(granted_record(&e, &step.cmd, view)));
+        if let Some(end) = crate::reference::sod::grant_end(&step.cmd) {
+            out.push(crate::reference::sod::scheduled_end_record(e.binding, end)?);
+        }
     }
-    Ok(Some(out))
+    Ok(Ok(out))
 }
 
 /// The `BindingGranted` record of an expected binding.
@@ -1031,6 +1127,13 @@ pub enum MachineCmd {
         /// The change.
         op: VaultOp,
     },
+    /// The System commands `due` lists at `now`, as the M6 timeline runs
+    /// them: the scheduled ends due then (Cooling-off NOTE, decided
+    /// 2026-10-25).
+    Due {
+        /// The instant, in microseconds.
+        now: i64,
+    },
 }
 
 /// The reference side of the machine, used to draw commands.
@@ -1116,6 +1219,27 @@ impl Driver {
             RuleRef::StaleFacts,
             RefusalReason::AnswerStale,
         )))
+    }
+
+    /// Runs every System command that `due` lists at `now`, with the actor
+    /// `System(Timeline)`. In reference mode the reference records the
+    /// scheduled ends due then. Returns the head after the last command.
+    fn run_due(&mut self, now: Timestamp) -> Result<Seq, ExecError> {
+        match self {
+            Driver::Engine(s) => {
+                let mut head = Seq::from_raw(0);
+                for cmd in fstp_domain::due(&s.state().core, now) {
+                    let ctx = s.ctx(now, Actor::System(SystemCause::Timeline));
+                    head = s.execute(fstp_engine::Command::Core(cmd), ctx)?;
+                }
+                Ok(head)
+            }
+            Driver::Reference(w, records) => match w.arrive(now) {
+                Ok(Ok(batch)) => Ok(reference_append(records, batch)),
+                Ok(Err(r)) => Err(ExecError::Refused(r)),
+                Err(_) => Err(ExecError::Contended),
+            },
+        }
     }
 }
 
@@ -1571,6 +1695,13 @@ impl StateMachine for SodMachine {
             return self.gen_setup(g);
         }
         let now = self.gen_now(g, model);
+        // A scheduled end that is due runs often, so the binding's later
+        // steps see it ended (Cooling-off NOTE).
+        let due =
+            !crate::reference::sod::due_ends(&model.view, Timestamp::from_micros(now)).is_empty();
+        if due && g.weighted(&[1, 1]) == 1 {
+            return MachineCmd::Due { now };
+        }
         match g.weighted(&self.focus.weights) {
             0 => self.gen_grant(g, model, now),
             1 => self.gen_end(g, model, now),
@@ -1590,9 +1721,9 @@ impl StateMachine for SodMachine {
     fn precondition(&self, model: &MachineModel, cmd: &MachineCmd) -> bool {
         match cmd {
             MachineCmd::Setup { .. } => !model.ready,
-            MachineCmd::Core { now, .. } | MachineCmd::Vault { now, .. } => {
-                model.ready && *now >= model.now
-            }
+            MachineCmd::Core { now, .. }
+            | MachineCmd::Vault { now, .. }
+            | MachineCmd::Due { now } => model.ready && *now >= model.now,
         }
     }
 
@@ -1648,6 +1779,15 @@ impl StateMachine for SodMachine {
                 out.voids = expected_voids(&before, driver.truth());
                 out.suspensions = expected_suspensions(&before, driver.truth());
             }
+            MachineCmd::Due { now } => {
+                let Some(driver) = sut.driver.as_mut() else {
+                    out.context = "no driver".to_owned();
+                    return out;
+                };
+                out.context = format!("System commands due at {now}");
+                out.verdict = Verdict::Accept;
+                out.result = driver.run_due(Timestamp::from_micros(*now));
+            }
         }
         out.before = before;
         out.appended = sut.advance();
@@ -1683,10 +1823,22 @@ impl StateMachine for SodMachine {
         {
             check_granted(context, e, &out.appended)?;
         }
-        if let MachineCmd::Core { step, .. } = cmd
+        if let MachineCmd::Core { now, step } = cmd
             && let Command::EndRole { binding, at } = &step.cmd
         {
-            check_ended(context, &out.before, *binding, *at, &out.appended)?;
+            // A later instant schedules the end (Cooling-off NOTE).
+            if at.micros() > *now {
+                crate::reference::sod::check_scheduled(context, *binding, *at, &out.appended)?;
+            } else {
+                check_ended(context, &out.before, *binding, *at, &out.appended)?;
+            }
+        }
+        if let MachineCmd::Due { now } = cmd {
+            crate::reference::sod::check_due_ends(
+                &out.before,
+                Timestamp::from_micros(*now),
+                &out.appended,
+            )?;
         }
         check_voids(context, &out.voids, &out.appended)?;
         check_suspensions(context, &out.suspensions, &out.appended)
@@ -1700,7 +1852,7 @@ impl StateMachine for SodMachine {
                 model.truth = (**truth).clone();
                 model.subjects.clone_from(subjects);
             }
-            MachineCmd::Core { now, .. } => model.now = *now,
+            MachineCmd::Core { now, .. } | MachineCmd::Due { now } => model.now = *now,
             MachineCmd::Vault { now, op } => {
                 model.now = *now;
                 op.apply(&mut model.truth);

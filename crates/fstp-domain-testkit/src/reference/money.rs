@@ -63,9 +63,21 @@
 //!   this proposal's own reservation, within the call's cap (I-14). It
 //!   records `AmountDetermined` and `CapReserved` for the granted amount,
 //!   and `CapReleased` for an earlier reservation of the proposal.
-//!   Test-author choice: a determination after the lead's acceptance or
-//!   the programme manager's approval is refused, because they accepted
-//!   the amount determined. No test probes it.
+//!   The amount is never locked (NOTE 9, decided 2026-10-28). A
+//!   determination after the lead's acceptance or the programme manager's
+//!   approval is accepted on the same terms. The new amount supersedes the
+//!   old one. The acceptance and the approval of the old amount stop
+//!   counting, so both are given again, each with a fresh decision id.
+//!   The batch releases the old reservation before it reserves the new
+//!   amount, so the two are never counted together. The headroom the new
+//!   amount must fit leaves the proposal's own reservation out.
+//!   Test-author choice: a contract fact recorded before the new
+//!   determination keeps counting, since NOTE 9 names only acceptance and
+//!   approval. This is raised with Daniel.
+//! - I-34 at the amount determination (decided 2026-10-28): the active
+//!   reviewer assignees of the proposal in its current call must span at
+//!   least P-39 organisations, read from their committee bindings. An
+//!   assignee whose organisation is unknown fails the check (SoD-10).
 //! - `AcceptGrant` is the lead's, `ApproveGrant` an active programme
 //!   manager's, and `ContractFact` the System's, from the contract port.
 //!   Each needs NEGOTIATION, and the two decisions need fresh ids. The
@@ -87,9 +99,10 @@
 //!   minimum and no deduction can raise it; no amount can keep I-14,
 //!   because the cap headroom lies below the smallest amount still open;
 //!   the I-15 record is incomplete; or guardian consent is missing for a
-//!   minor. The smallest amount still open is the determined amount once
-//!   the lead accepted or the programme manager approved it, and the P-04
-//!   minimum before (NOTE 9, decided 2026-10-26). A plan total above the
+//!   minor. The smallest amount still open is the P-04 minimum at every
+//!   point of NEGOTIATION, after acceptance and approval too, since the
+//!   amount is never locked (NOTE 9, decided 2026-10-26 and 2026-10-28).
+//!   It is one cent when that minimum is zero. A plan total above the
 //!   headroom is no failure while the P-04 minimum fits, since the lead
 //!   may propose a smaller negotiated plan. A plan total above the P-04
 //!   maximum is no failure either, for the same reason. The headroom reads
@@ -184,7 +197,7 @@ use fstp_money::NonNegAmount;
 
 use crate::reference::lifecycle::LifeView;
 use crate::reference::payment::{PayView, RequestState, pay_verdict};
-use crate::reference::review::{RevView, holds_active, team_of};
+use crate::reference::review::{RevView, committee_organisation, holds_active, team_of};
 use crate::reference::sod::{self, RefGroup};
 use crate::vault::{GroundTruth, IdentityTag};
 
@@ -831,7 +844,13 @@ impl MoneyView {
                     granted: minor(*granted),
                     agreed: *agreed,
                 };
-                self.proposal_mut(*proposal)?.determined = Some(d);
+                // A new amount supersedes the old one, so the acceptance
+                // and the approval of the old amount stop counting (NOTE 9,
+                // decided 2026-10-28).
+                let q = self.proposal_mut(*proposal)?;
+                q.determined = Some(d);
+                q.accepted = None;
+                q.approved = None;
             }
             Record::CapReserved {
                 proposal, amount, ..
@@ -1283,6 +1302,28 @@ impl MoneyCx<'_> {
             )
     }
 
+    /// I-34 at the amount determination (R-NG-03, decided 2026-10-28): the
+    /// active reviewer assignees of `p` in its current call span at least
+    /// P-39 organisations, each read from the assignee's committee binding
+    /// now. An assignee whose organisation is unknown fails it (SoD-10).
+    pub fn reviewers_span_p39(&self, p: ProposalId) -> bool {
+        let Some(l) = self.life.proposals.get(&p) else {
+            return false;
+        };
+        let (Some(policy), Some(programme)) = (self.rev.governing_policy(p), self.programme(p))
+        else {
+            return false;
+        };
+        let orgs: Option<BTreeSet<_>> = self
+            .life
+            .active_assignments(p, l.current_call, AssignmentKind::Reviewer)
+            .iter()
+            .filter_map(|id| self.life.assignments.get(id).map(|a| a.reviewer))
+            .map(|r| committee_organisation(self.sod, self.rev, r, programme, self.now))
+            .collect();
+        orgs.is_some_and(|o| o.len() >= usize::from(policy.p39))
+    }
+
     fn decision_fresh(&self, d: DecisionId) -> bool {
         !self.life.decisions.contains(&d) && !self.money.decisions.contains(&d)
     }
@@ -1332,23 +1373,12 @@ impl MoneyCx<'_> {
             })
     }
 
-    /// The determined amount of `p` in cents once it is locked: the lead
-    /// accepted it or the programme manager approved it. A determination
-    /// after either is refused, so no other amount stays open (R-NG-03).
-    pub fn locked(&self, p: ProposalId) -> Option<i64> {
-        let q = self.money.proposals.get(&p)?;
-        if q.accepted.is_none() && q.approved.is_none() {
-            return None;
-        }
-        q.determined.as_ref().map(|d| d.granted)
-    }
-
     /// The NOTE 9 amount failure of `p`, if any (decided 2026-10-26).
     ///
-    /// Once the amount is locked, the locked amount decides: outside P-04
-    /// fails I-13, and above the cap headroom fails I-14. Before, the lead
-    /// may still propose a negotiated plan at any total from the P-04
-    /// minimum up to the effective plan total, and a matching deduction
+    /// The amount is never locked (decided 2026-10-28), so acceptance and
+    /// approval change nothing here. The lead may always propose a
+    /// negotiated plan at any total from the P-04 minimum up to the
+    /// effective plan total, and a matching deduction
     /// grants it. A grant is never zero, since every milestone amount is
     /// positive. So the smallest grant amount within P-04 is the P-04
     /// minimum, or one cent when that minimum is zero. No amount within
@@ -1362,17 +1392,10 @@ impl MoneyCx<'_> {
             .and_then(|e| self.money.plans.get(&e))
             .map(MoneyPlan::total)?;
         let (lo, hi) = self.money.governing(p).map(|f| (f.p04_min, f.p04_max))?;
-        let smallest = match self.locked(p) {
-            Some(amount) if lo <= amount && amount <= hi => amount,
-            Some(_) => return Some(NegotiationFailure::NoAmountWithinRange),
-            None => {
-                let floor = lo.max(1);
-                if floor > total || floor > hi {
-                    return Some(NegotiationFailure::NoAmountWithinRange);
-                }
-                floor
-            }
-        };
+        let smallest = lo.max(1);
+        if smallest > total || smallest > hi {
+            return Some(NegotiationFailure::NoAmountWithinRange);
+        }
         // The headroom reads the stricter of the snapshot and the live
         // P-05 for the lead's verified identity (P-05 NOTE 7).
         match self.headroom(p) {
@@ -1661,8 +1684,12 @@ fn determine(
     if !cx.reviewer(a, proposal) {
         return refuse("R-NG-03, I-03: only an assigned reviewer without conflict sets the amount");
     }
-    if q.accepted.is_some() || q.approved.is_some() {
-        return refuse("test-author choice: the amount is locked once accepted or approved");
+    // The amount is never locked (NOTE 9, decided 2026-10-28), so no
+    // acceptance or approval refuses a new determination.
+    if !cx.reviewers_span_p39(proposal) {
+        return refuse(
+            "I-34, SoD-10: the active reviewers span fewer than P-39 organisations (decided 2026-10-28)",
+        );
     }
     if !cx.decision_fresh(decision) {
         return refuse("decision id reused");

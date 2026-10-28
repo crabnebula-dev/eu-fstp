@@ -46,10 +46,10 @@ use crate::mc::life_model::{
 use crate::mc::money_model::{Fact, McAction, McState, run_action};
 
 /// The measured state count of M-CONFORMANCE with withdrawal, on production.
-pub const M_CONFORMANCE_STATES: usize = 11_019;
+pub const M_CONFORMANCE_STATES: usize = 19_929;
 
 /// The measured state count of M-CONFORMANCE without withdrawal, on production.
-pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 8_530;
+pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 14_470;
 
 /// One action of M-CONFORMANCE on PC.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -167,6 +167,7 @@ impl ConformanceModel {
                 edited: false,
                 cap_blocked: false,
                 grant_blocked: false,
+                superseded: false,
                 deliverables: 0,
                 divergence: None,
             },
@@ -319,7 +320,21 @@ impl Model for ConformanceModel {
             }
             StateTag::Deferred => actions.push(ConfAction::ReEnter),
             StateTag::Negotiation => {
-                actions.push(ConfAction::Money(McAction::Determine(PC, 0)));
+                // The amount is never locked (NOTE 9, decided 2026-10-28),
+                // so a new determination stays open after acceptance and
+                // approval. A new amount clears both, so unbounded it would
+                // cycle with fresh decision ids. After acceptance or
+                // approval it is drawn while fewer than two exist, as in
+                // M-MONEY. Before, it is drawn as it always was.
+                let given = s
+                    .world
+                    .money
+                    .proposals
+                    .get(&PC)
+                    .is_some_and(|q| q.accepted.is_some() || q.approved.is_some());
+                if !given || crate::mc::money_model::determinations(&s.world, PC) < 2 {
+                    actions.push(ConfAction::Money(McAction::Determine(PC, 0)));
+                }
                 actions.push(ConfAction::Money(McAction::Grant(PC, Fact::Contract)));
                 actions.push(ConfAction::Money(McAction::Grant(PC, Fact::Approve)));
                 actions.push(ConfAction::Money(McAction::Decline(PC)));

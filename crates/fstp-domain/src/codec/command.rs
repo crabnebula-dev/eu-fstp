@@ -21,9 +21,11 @@ tagged_enum! {
         ApproveCallPublication { call, decision },
         PublishCall { call, config, config_model },
         GrantRole {
-            binding, account, programme, role, start, second_admin, confidentiality, organisation
+            binding, account, programme, role, start, second_admin, confidentiality, organisation,
+            end
         },
         EndRole { binding, at },
+        EndScheduledRole { binding },
         ReinstateBinding { binding, reason },
         VaultChanged { epoch, changed },
         CreateDraft { proposal, call, binding, minor },

@@ -54,8 +54,9 @@ fn prod_state(w: &MoneyWorld, p: fstp_domain::id::ProposalId) -> Option<StateTag
 /// transient guard (the lead is not yet verified) is recorded with the
 /// last grant fact and no transition. Once the vault verifies the lead,
 /// every guard holds. No command then takes the proposal out of
-/// NEGOTIATION: each grant fact is refused as repeated, the amount is
-/// locked, and DeclineNegotiation finds no failure.
+/// NEGOTIATION: each grant fact is refused as repeated, a new amount only
+/// supersedes the old one (NOTE 9, decided 2026-10-28), and
+/// DeclineNegotiation finds no failure.
 #[test]
 fn review_failed_grant_clearance_is_never_retried() {
     let mut setup = MoneySetup::sybil([400, 400, 300]);

@@ -1,6 +1,6 @@
 # M2 exit audit (step W6, lane w6-audit)
 
-Written on 2026-10-26 against branch `m2/w6-audit`, based on `0f7bfe9`, and updated in the W7 review on 2026-10-28. It checks the M2 exit checklist of `docs/handoff/m2-design.md` section 11. It covers I-01 to I-15, I-23, and I-34 to I-36, which `SPEC/09-milestones.md` NOTE 1 adds to the exit.
+Written on 2026-10-26 against branch `m2/w6-audit`, based on `0f7bfe9`. It was updated in the W7 review on 2026-10-28, and again in the W7 close-out and its fix rounds 1 and 2 on branch `m2/w7-fix` the same day. It checks the M2 exit checklist of `docs/handoff/m2-design.md` section 11. It covers I-01 to I-15, I-23, and I-34 to I-36, which `SPEC/09-milestones.md` NOTE 1 adds to the exit.
 
 ## Method
 
@@ -18,7 +18,7 @@ All results below are local runs on an Apple M5 with 10 cores, macOS, PostgreSQL
 
 | Invariant | Property and pure tests | Model checks (prod / ref states) | Teeth | Status |
 | --- | --- | --- | --- | --- |
-| I-01 | `i01_sod01_sod05_bindings_match_reference` | `i01_m_sod_p12_0` (1,370 / 1,300), `i01_m_sod_p12_1` (1,225 / 1,155), `i01_m_sod_p12_2` (1,174 / 1,104), `i01_m_sod_two_programmes` (713 / 713) | `i01_teeth_binding_inside_window_is_caught` | Green |
+| I-01 | `i01_sod01_sod05_bindings_match_reference`; scheduled ends (W7 close-out and fix round 1): the 16 tests of `i01_sod05_scheduled_role_ends.rs`, the 3 of `i01_end_scheduled_role_is_the_systems_at_the_instant.rs`, the 2 of `i01_scheduled_end_codec_round_trips.rs`, and the reproducers of `review_w7fid_scheduled_end.rs` and `review_w7rev_scheduled_and_sod10.rs` | `i01_m_sod_p12_0` (1,370 / 1,300), `i01_m_sod_p12_1` (1,225 / 1,155), `i01_m_sod_p12_2` (1,174 / 1,104), `i01_m_sod_two_programmes` (713 / 713), `i01_m_sod_scheduled_end` (12,468 / 11,829) | `i01_teeth_binding_inside_window_is_caught`, `i01_teeth_grant_inside_the_scheduled_end_window_is_caught` | Green |
 | I-02 | `i02_sod02_irc_member_holds_no_other_judging_role`, `i02_assignment_irc_member_holds_no_other_judging_assignment` | `i02_m_sod_irc_exclusive` (252 / 227) | `i02_teeth_irc_with_assignment_is_caught` | Green |
 | I-03 | `i03_rcf02_conflicted_person_cannot_read_or_act`, `i03_p11_handles_never_repeat_across_proposals_and_calls` | `i03_m_conflict_truthful` (23,364 / 23,364), `i03_m_conflict_havoc` (16,724 / 16,724), `i03_m_conflict_two_proposals` (2,702 / 2,702), `i03_m_conflict_staged` (10,230 / 9,618) | `i03_teeth_read_after_conflict_is_caught` | Green |
 | I-04 | `i04_sod06_excluded_account_holds_no_receiving_role` | `i04_m_excl` (470 / 470) | `i04_teeth_excluded_receiving_is_caught` | Green |
@@ -30,11 +30,11 @@ All results below are local runs on an Apple M5 with 10 cores, macOS, PostgreSQL
 | I-10 | `i10_domain_crates_cannot_reach_findings`, `i10_findings_never_alter_core_state` | `i10_m_life_s1_findings` (27,064 / 22,792), the I-10 properties of M-LIFE-S1 | `i10_teeth_finding_driven_transition_is_caught`, `i10_teeth_core_decider_reading_findings_is_caught` | Green |
 | I-11 | `i11_call_findings_share_pinned_config` | `i11_m_find` (110 / 74) | `i11_teeth_foreign_config_is_caught` | Green |
 | I-12 | `i12_every_frozen_parameter_is_in_the_snapshot`, `i12_frozen_edits_leave_call_outcomes_unchanged` (twin machine) and its four witnesses in the same file | `i12_m_policy` (353, production only, equal to the hand count) | `i12_teeth_head_instead_of_snapshot_is_caught`, `i12_teeth_frozen_edit_changes_outcome_is_caught` | Green |
-| I-13 | `i13_i14_grant_sequences_respect_range_and_cap` | `i13_i14_m_money` (594 / 840) | `i13_teeth_out_of_range_grant_is_caught` | Green |
-| I-14 | `i13_i14_grant_sequences_respect_range_and_cap`, `i14_p05_edit_below_committed_is_refused` | `i13_i14_m_money`, `i14_m_race_reservation` (1,566 / 1,682) | `i14_teeth_grant_above_cap_is_caught`, `i14_teeth_reservation_race_is_caught` | Green |
+| I-13 | `i13_i14_grant_sequences_respect_range_and_cap`; no amount lock (W7 close-out): `r_ng_03_new_amount_supersedes_acceptance_and_approval.rs`, `r_ng_decline_after_acceptance_and_approval_reads_the_p04_minimum` and its twin, `review_w7_decline_after_acceptance_reads_the_p04_minimum`, `review_m_money_reaches_a_determination_after_acceptance` | `i13_i14_m_money` (20,304 / 22,332), `lifecycle_all_sixteen_states_reachable` (19,929, production only) | `i13_teeth_out_of_range_grant_is_caught` | Green |
+| I-14 | `i13_i14_grant_sequences_respect_range_and_cap`, `i14_p05_edit_below_committed_is_refused`, the release before the reservation in `r_ng_03_new_amount_after_acceptance_and_approval_supersedes_the_old_one` | `i13_i14_m_money`, `i14_m_race_reservation` (1,566 / 1,682) | `i14_teeth_grant_above_cap_is_caught`, `i14_teeth_reservation_race_is_caught` | Green |
 | I-15 | `i15_repeat_grant_requires_public_deliverables`, `i15_amendment_requires_public_deliverables` | `i15_m_money_repeat` (234 / 256) | `i15_teeth_repeat_without_records_is_caught` | Green |
 | I-23 | `i23_ledger_is_prefix_monotone_and_replays` (its scripted path now runs the amount, the grant facts, execution, an amendment, a payment and the termination), the ledger checks of the I-12 twin machine, `i23_verifier_flags_every_mutation` (`fstp-ledger`), `i23_store_api_has_no_mutation` as 11 compile-fail pairs in `fstp-ledger/src/twins.rs` | `i23_m_ledger` (1,422, production only, equal to the measured count) | `i23_teeth_changed_past_entry_is_caught` | Green |
-| I-34, I-35 | `i34_i35_assignment_respects_orgs_and_proximity` (machine), plus four example tests in the same file; the W7 reproducers in `review_w7.rs` | none in the design | `i34_teeth_same_organisation_below_p39_is_caught`, `i35_teeth_reviewer_on_the_proximity_list_is_caught` | Green, per step, plus a re-check at the stage 1 close and the ranking (W7, Q-W6-4) |
+| I-34, I-35 | `i34_i35_assignment_respects_orgs_and_proximity` (machine), plus four example tests in the same file; the W7 reproducers in `review_w7.rs` and `review_w7check.rs`; W7 close-out: `i34_assignment_order_no_longer_matters.rs`, `i34_amount_determination_needs_p39_organisations.rs`, `i34_sod10_one_organisation_per_reviewer_per_programme.rs`; fix round 1: `review_w7fid_determination_dead_end.rs`, the SoD-10 reinstatement reproducer of `review_w7rev_scheduled_and_sod10.rs`; fix round 2: `review_w7v2_sod10_switch.rs` | none in the design | `i34_teeth_same_organisation_below_p39_is_caught`, `i34_teeth_assignment_out_of_reach_is_caught`, `sod10_teeth_two_organisations_of_one_reviewer_are_caught`, `i35_teeth_reviewer_on_the_proximity_list_is_caught` | Green. I-34 holds at admission, the stage 1 close, the ranking and the amount determination. An `Assign` is refused only once P-39 organisations are out of reach (W7 close-out, Q-W6-4). A reviewer assignment is open in NEGOTIATION too (fix round 1, Q-W7-6) |
 | I-36 | `i36_former_reviewer_never_receives_in_call_under_evaluation`, `i36_former_reviewer_waits_until_every_reviewed_proposal_is_decided`, `i36_decision_closes_the_deferral_race`, `i36_deferred_proposal_bars_its_former_reviewer_in_the_next_call`, `i36_unreviewed_and_other_programme_calls_are_unaffected` | none in the design | `i36_teeth_current_call_only_check_is_caught`, `i36_teeth_race_under_the_current_call_check_is_caught` | Green |
 
 Notes on the rows:
@@ -72,11 +72,14 @@ Each shared constant now holds the production count, and its tripwire is twice t
 | `M_FIND_STATES` | 74 | 110 | 220 | `M_FIND_REFERENCE_STATES` | 74 | 148 |
 | `M_POLICY_STATES` | 353 | 353 | 706 | none | none | none |
 | `M_LEDGER_STATES` | 1,422 | 1,422 | 2,844 | none | none | none |
-| `M_MONEY_STATES` | 864 | 594 | 1,188 | `M_MONEY_REFERENCE_STATES` | 840 | 1,680 |
+| `M_MONEY_STATES` | 594 | 20,304 | 40,608 | `M_MONEY_REFERENCE_STATES` | 22,332 | 44,664 |
 | `M_RACE_RESERVATION_STATES` | 1,682 | 1,566 | 3,132 | `M_RACE_RESERVATION_REFERENCE_STATES` | 1,682 | 3,364 |
 | `M_MONEY_REPEAT_STATES` | 256 | 234 | 468 | `M_MONEY_REPEAT_REFERENCE_STATES` | 256 | 512 |
 | `M_AFTER_STATES` | 203 | 111 | 222 | `M_AFTER_REFERENCE_STATES` | 203 | 406 |
 | `M_LIFECYCLE_STATES` | 4,734 | 4,287 | 8,574 | `M_LIFECYCLE_REFERENCE_STATES` | 4,022 | 8,044 |
+| `M_CONFORMANCE_STATES` | 11,019 | 19,929 | 39,858 | none | none | none |
+| `M_CONFORMANCE_NO_WITHDRAW_STATES` | 8,530 | 14,470 | 28,940 | none | none | none |
+| `M_SOD_SCHEDULED_STATES` | 1,511 | 12,468 | 24,936 | `M_SOD_SCHEDULED_REFERENCE_STATES` | 11,829 | 23,658 |
 
 `M_LIFECYCLE_REFERENCE_STATES` serves the five M-LIFECYCLE reference twins: `lifecycle_states_reachable_up_to_negotiation_reference`, `lifecycle_m_lifecycle_terminal_states_have_no_exit_reference`, `r_ev_01_ineligible_has_no_successor_reference`, `r_ev_07_stage2_deferral_needs_no_future_call_reference` and `r_ir_02_concern_defers_or_declines_reference`. The old constant of 4,476 no longer matched the reference, which stores 4,488 on this base.
 
@@ -86,7 +89,20 @@ Every count above was measured again after fix round 1. The reference-mode call 
 
 The W7 review measured every model again with the same probe. M-LIFE-S2 and M-LIFECYCLE changed, since I-34 is now checked again at the stage 1 close and the ranking. M-LIFE-S2 also gained a spare reviewer after a release, so its O-50 witness stays reachable. M-RACE reservation, the I-15 repeat model and the after-negotiation model had kept their old counts after the NOTE 9 decline change. Their production runs store fewer states than the references, as M-MONEY does, so each twin now runs under its own `*_REFERENCE_STATES` constant. `review_w7_money_tripwires.rs` asserts the stored counts of those three models on both backends. Every other count was unchanged.
 
-No bound was relaxed to pass a test. Every production run was already exhaustive under the old bound. The largest ratio is 1.52 for M-SOD I-06, which stayed under the old tripwire of twice the reference count.
+The W7 close-out measured every model again with the same probe, on both backends, and removed the probe. Two constants changed and two are new. Every other count was unchanged.
+
+- `M_CONFORMANCE_STATES` and `M_CONFORMANCE_NO_WITHDRAW_STATES` grew. The amount is never locked now, so a new determination is open after acceptance and approval (NOTE 9, decided 2026-10-28). A new amount clears both, so an unbounded `Determine` would cycle with fresh decision ids. M-CONFORMANCE now draws it after acceptance or approval only while fewer than two exist, as M-MONEY does. Before acceptance and approval it is drawn as before, so the old space is kept. The no-withdraw count serves `stalls`, which is not a `check_exhaustive` run.
+- `M_SOD_SCHEDULED_STATES` and its reference constant are new. The test author set a provisional 20,000. Each now holds its measured count.
+- `M_CONFLICT_TWO_PROPOSAL_STATES` keeps 2,702 on both backends after its setup change, which keeps R2 of O2 as an unassigned committee member.
+
+W7 fix round 1 measured every model again with the same probe, on both backends, and removed the probe. Two pairs of constants changed. Every other stored count equals its constant. In the table above, the "Before" column of these two rows holds the W7 close-out count.
+
+- `M_MONEY_STATES` and `M_MONEY_REFERENCE_STATES` grew from 594 and 840 to 20,304 and 22,332. M-MONEY now offers the grant facts one by one as well as the composite grant. So a new amount reaches a NEGOTIATION that holds a given acceptance or approval, and a ghost flag marks the step that superseded it (NOTE 9, decided 2026-10-28). Before, the three facts went together and no such state was reached.
+- `M_SOD_SCHEDULED_STATES` and its reference constant grew from 1,511 and 1,451 to 12,468 and 11,829. The instance now has two instants, the bring-forward and the refused move later. Time moves as a step of its own, apart from the System end, so every step between an instant and its System end is checked.
+
+In the debug test run, `i13_i14_m_money` now takes 83.5 s for both twins, and `review_w7rev_m_money_redetermine` takes 77.0 s. They are the two slowest binaries of the workspace now, so the CI estimate under Timing grows by about 5 minutes on 2 cores. It stays well under the 60-minute timeout. The Timing tables below predate this round. No bound was relaxed: both instances were made larger on purpose, and each constant holds the measured count.
+
+No bound was relaxed to pass a test. Every production run was already exhaustive under the old bound, with one exception in the W7 close-out. M-CONFORMANCE was not exhaustive under twice 11,019 once the lock was gone. It became finite again only through the `Determine` bound above, and its constant was then set to the measured count. The largest ratio is 1.52 for M-SOD I-06, which stayed under the old tripwire of twice the reference count.
 
 `review_w6audit_reference_tripwires.rs` checks the M-FIND and M-SOD I-02 twins: each must run under a tripwire of at most twice the count it stores.
 
@@ -124,6 +140,59 @@ The probe checked every reference edge from a shared state into a reference-only
 The production count is still the larger one. Its 10,230 states collapse to 7,884 once the projection is removed. So 2,346 production states differ from another production state in the projection alone.
 
 The `two-way` property passes in every state of every run. So production and the references agree on every decision the references judge.
+
+## W7 close-out (branch `m2/w7-fix`)
+
+Five items, each decided in the spec on 2026-10-25 or 2026-10-28.
+
+- No amount lock (NOTE 9, R-NG-03). `DetermineAmount` stays open in NEGOTIATION after acceptance and approval. The new amount supersedes the old one, and its fold clears the acceptance, the approval and the approver. The batch releases the old reservation before it reserves the new amount. The decline reads the P-04 minimum against the room under P-05 at every point of NEGOTIATION.
+- One organisation per reviewer per programme (SoD-10). A committee member grant is refused when the account holds a committee binding in the programme that records another organisation. Every held binding counts, an ordinarily suspended one too. Fix round 1 counted only the bindings active beside the new one. Fix round 2 went back to every held binding, whatever its period.
+- I-34 at the amount determination. `DetermineAmount` is refused while the active reviewer assignees of the current call span fewer than P-39 organisations.
+- Scheduled role ends (Cooling-off NOTE). `GrantRole` carries an optional `end`, after `start`. `EndRole` at a later instant records `BindingEndScheduled`, or brings a scheduled end forward. Moving it later, scheduling the same instant again, or an instant before now is refused. `EndRole` at now ends the binding at once. The System command `EndScheduledRole`, which `due` lists from the instant on, records `BindingEnded` at the scheduled instant. A committee binding's assignments are released in that batch as for any end.
+- Low items. The assign-time I-34 check refuses only once P-39 organisations are out of reach, counting the proposal's reviewers, the new one and every other active committee member of the programme. The layering gate rejects any third-party crate as a normal or build dependency of the five M2 production crates (`layering-third-party`). It keeps the named I/O roots, since that rule also covers dev edges. The production source scan catches grouped `use` items over several lines and `std::time::Instant`.
+
+Tests updated because they encoded a reading Daniel overturned on 2026-10-28:
+
+- `review_i34_committee_organisation_reaches_assign` (`review_w4rev_spec.rs`) expected a second O1 reviewer to be refused below P-39. It now assigns R1 and R2 of O1 while O2 and O3 are in reach, and expects a refusal under I-34 once both have ended.
+- `review_i02_assignment_bar_is_per_programme` (`review_w4rev.rs`) had one committee member, of O1, so P-39 = 2 was out of reach at its first assignment. Its setup now adds R2 of O2. Its I-02 assertions are unchanged.
+
+Other test-side changes of the implementer:
+
+- `interface_no_command_kind_reaches_not_implemented.rs` covers the new kind `EndScheduledRole` in a roles world, since the money world's review references treat every `EndRole` as an end at once.
+- `fstp-domain` codec tests: the generators of `codec_support/mod.rs`, the samples of `interface_stubs.rs` and two round-trip cases in `codec_round_trip.rs` cover the new command, record and member.
+- Three testkit literals and one pattern gained `end` (`gen/roster.rs`, `gen/policy.rs`, `reference/sod.rs`).
+- `mc/conformance.rs` bounds `Determine` after acceptance or approval, as described under Tripwires.
+- A fuzz seed `command_decode/end_scheduled_role` was added.
+- New file `i01_end_scheduled_role_is_the_systems_at_the_instant.rs`: a tenant admin cannot issue `EndScheduledRole` (I-84), the System cannot issue it before the instant, and a binding without a scheduled end has none to record.
+
+## W7 fix round 1 (branch `m2/w7-fix`)
+
+The independent review reported 17 findings, 10 of them with a reproducer. Each reproducer failed before its fix and passes now.
+
+- Scheduled ends after the instant (Cooling-off NOTE). From a scheduled instant until the System records the end, the engine refuses every command but `EndScheduledRole` and `VaultChanged` under SoD-05 (`roles::end_overdue`, shared check 1 of `engine.rs`). So no decision reads the binding as held after its instant. No call is published and no P-12 is edited in between, so the System end pins the calls and the P-12 of the instant. An `EndRole` at now can no longer move an overdue end later. `VaultChanged` stays open, since every command first processes a newer vault epoch, the System end included. A reaction only voids and suspends. This is a reading for Daniel (Q-W7-2).
+- A scheduled end at or before the binding's start is refused, as at the grant.
+- SoD-10 counts only committee bindings active beside the new one: from its start to its scheduled end, if any. Fix round 2 overturned this reading, see below. The reinstatement of a suspended committee binding is refused under SoD-10 when another committee binding of the account, active beside it, records another organisation. The references and `check_one_organisation` follow both.
+- The I-34 refusal at the amount determination no longer leaves NEGOTIATION without a way forward. A reviewer assignment is open in NEGOTIATION, so the coordinator can restore P-39 organisations (R-CF-02, R-NG-03). This is a reading for Daniel (Q-W7-6).
+- In reference mode, `SodWorld::exec` now returns a refusal that names the rule the reference gives, through `reference::sod::rule_of`. So the two reference twins of Q-W7-1 pass with their assertions unchanged.
+- M-MONEY reaches a new amount that supersedes a given acceptance or approval, with a NOTE 9 witness. M-SOD with scheduled ends gained a second instant, the bring-forward, a time step apart from the System end, `transition("Cooling-off window")`, two witnesses and a teeth test.
+- The third-party layering rule treats every package that is not a workspace member as third-party, a vendored path crate too.
+
+New tests of this round: `i01_scheduled_end_window_admits_only_the_system_end` and its twin, `i01_scheduled_end_at_or_before_the_start_is_refused`, `sod10_another_organisation_after_a_scheduled_end_is_accepted`, `sod10_reinstatement_beside_another_organisation_is_refused`, `i34_reviewer_assigned_in_negotiation_restores_p39_organisations` and its twin, `i01_teeth_grant_inside_the_scheduled_end_window_is_caught` and its twin, and `review_w7_vendored_path_crate_outside_the_workspace_is_rejected` in `tools/deps-check`.
+
+Not changed, for Daniel: a contract fact recorded before a new amount (Q-W7-4), and an `AcceptGrant` or `ApproveGrant` composed against a superseded amount (Q-W7-7).
+
+## W7 fix round 2 (branch `m2/w7-fix`)
+
+The review reported two findings, one with a reproducer. The reproducer failed before its fix and passes now.
+
+- SoD-10 and I-35 across a scheduled end (`review_w7v2_sod10_switch.rs`). Under the round 1 overlap reading, an O1 committee binding could be granted to start at the scheduled end of the account's O2 binding. At the System end, `binding_releases` kept the reviewer's assignments, since the account still held a committee binding. The reviewer then served under O1, which no I-35 check had seen. The fix takes the literal SPEC reading (`roles-and-sod.md`, Reviewer assignment NOTE: "one organisation per programme"; "a different organisation from the account's active committee binding"). A committee member grant, or a reinstatement, is refused when any held committee binding of the account in the programme records another organisation, whatever its period. A binding with an end scheduled but not yet recorded is held and active, so it counts. `roles::commands::other_organisation`, `reference::sod::other_organisation` and `reference::review::check_one_organisation` drop the period test. So every held committee binding of an account in a programme records one organisation, and the organisation of a kept assignment never changes. Option (b) of the finding, a release rule that reads the organisation at the end instant, is not needed under this reading.
+- The production source scan (`review_w7_production_sources.rs`) now strips any visibility before it tests for `use ` or `mod `: `pub`, and `pub(...)` with a balanced path inside, such as `pub(super)` or `pub(in crate::x)`. So a grouped import over several lines behind such a visibility is joined and caught. `IO_MODULES` gained `io`, since the five crates name no `std::io` today. The new test `review_w7_production_scan_catches_imports_behind_any_visibility` failed before the change.
+
+Test updated because it encoded the round 1 reading that this round overturned:
+
+- `sod10_another_organisation_after_a_scheduled_end_is_accepted` (`i34_sod10_one_organisation_per_reviewer_per_programme.rs`) accepted an O2 binding from the scheduled end of c's O1 binding, before the System end. It now expects SoD-10 refusals for O2 grants from `t(9)` and `t(10)` while the O1 binding is held, and acceptance of an O2 grant once the System has recorded the end at `t(10)`.
+
+Tripwires: no model grants two organisations to one account, since the generators derive the organisation from the account. So no model's verdicts or stored counts change, and every tripwire run passes under its constant. No bound was changed.
 
 ## Test identifiers
 
@@ -209,4 +278,11 @@ Proposals, none applied:
 - Q-W6-1, answered in fix round 1: the field was `world.life.decisions`. The reference-mode setup emitted no `CallApproved` record, so the lifecycle reference lacked the setup's call-approval decisions. The builder now emits it. Every life model state set now equals production with the projection removed.
 - Q-W6-2: two rules that tests verify have no spec id. One is the ledger time floor of design 2.2. The other is the state-machine row NEGOTIATION to GRANTED, completed by the last of acceptance, approval and the contract EFFECTIVE fact (design 3.2, `contracts.md` States). Should either get one?
 - Q-W6-3, closed in W7: `i12_frozen_edits_leave_call_outcomes_unchanged` landed with the W6 twin lane, and I-12 is green.
+- Q-W7-1, closed in fix round 1: in reference mode `SodWorld::exec` now returns a refusal that names the reference's rule. Both reference twins pass with their assertions unchanged.
+- Q-W7-2, answered by a reading for Daniel to confirm: from a scheduled instant until the System records the end, every command but the System end and `VaultChanged` is refused under SoD-05. So the end pins the calls published by the instant and the P-12 value in force at it, and no step reads the binding as held after the instant. The cost is that the cell waits for the System end, which the M6 timeline issues at the instant. The alternative reads publication and P-12 edit times instead, and checks every guard against the instant.
+- Q-W7-3: "remaining reviewer seats" at assignment is read as every other active committee member of the programme with a known organisation. Conflicts are not read, so a seat a conflict would close still counts. The steps that decide then refuse.
+- Q-W7-4: a contract fact recorded before a new determination keeps counting, since NOTE 9 names only acceptance and approval. To be confirmed.
+- Q-W7-5: the review and money references treat `EndRole` as an end at once. A scheduled end through those worlds would need the review reference to release assignments at the System end. Only the roles world drives scheduled ends today.
+- Q-W7-6: a reviewer assignment is now open in NEGOTIATION. Without it, I-34 at the amount determination (decided 2026-10-28) left a proposal whose reviewers were released there with no way to GRANTED or DECLINED. The reading rests on R-CF-02 (a declared conflict triggers reassignment) and R-NG-03. The alternative is a NOTE 9 decline ground for an I-34 failure. Which does Daniel want?
+- Q-W7-7: `AcceptGrant` and `ApproveGrant` carry only their own decision id. One composed against a superseded amount and decided after the new determination counts for the new amount. Should both commands name the determination they accept, and be refused when it is not the current one? That changes the command interface of the M4 and M5 lanes, so it waits for Daniel.
 - Q-W6-4: should `ReviewMachine::invariant` gain a state-level I-34 and I-35 check over the system ledger? The teeth would then also forge the record in the ledger, so a forged assignment held there would be caught on replay. Today both invariants are checked per step on appended records. Since W7, the stage 1 close and the ranking also re-check I-34 over the active reviewers.
