@@ -390,8 +390,10 @@ dependencies = [
 name = "fstp-pki"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "fstp-crypto",
  "fstp-prop",
+ "rustls-webpki",
 ]
 
 [[package]]

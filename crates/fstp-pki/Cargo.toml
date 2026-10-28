@@ -12,6 +12,13 @@ fstp-crypto.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# Test oracles only (lane W1i grant, ADR-001 Tier A). The tests sign with
+# aws-lc-rs and read every certificate back with rustls-webpki. The versions
+# and features are the ones Cargo.lock already resolves, so no new package
+# enters the lockfile. No rustls-pki-types line (design section 2.5): the
+# tests reach its types through rustls-webpki by inference only.
+aws-lc-rs.workspace = true
+rustls-webpki = { version = "=0.103.16", default-features = false, features = ["alloc", "aws-lc-rs", "std"] }
 
 [lints]
 workspace = true
