@@ -1,0 +1,20 @@
+[package]
+name = "fstp-release"
+description = "Licence and release metadata formats, licence state and the I-38 egress client (M3 design section 10)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

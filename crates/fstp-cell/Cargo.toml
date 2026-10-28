@@ -1,0 +1,27 @@
+[package]
+name = "fstp-cell"
+description = "Cell runtime: async engine, routes and background tasks (M3 design sections 2.3 and 5)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-cell-core.workspace = true
+fstp-pgstore.workspace = true
+fstp-custody.workspace = true
+fstp-vault-proto.workspace = true
+fstp-cp-proto.workspace = true
+fstp-release.workspace = true
+fstp-edge.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+fstp-obs.workspace = true
+fstp-rt.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

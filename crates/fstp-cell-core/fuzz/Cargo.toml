@@ -1,0 +1,46 @@
+[package]
+name = "fstp-cell-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-cell-core = { path = ".." }
+fstp-domain = { path = "../../fstp-domain" }
+
+[[bin]]
+name = "cell_record_decode"
+path = "fuzz_targets/cell_record_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cell_command_decode"
+path = "fuzz_targets/cell_command_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cell_decide_sequence"
+path = "fuzz_targets/cell_decide_sequence.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "driver_core_sequence"
+path = "fuzz_targets/driver_core_sequence.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

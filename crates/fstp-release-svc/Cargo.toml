@@ -1,0 +1,21 @@
+[package]
+name = "fstp-release-svc"
+description = "CrabNebula licence and update services (M3 design section 10)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-release.workspace = true
+fstp-pgwire.workspace = true
+fstp-migrate.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

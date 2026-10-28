@@ -1,0 +1,45 @@
+[package]
+name = "fstp-audit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-audit = { path = ".." }
+
+[[bin]]
+name = "chain_row_decode"
+path = "fuzz_targets/chain_row_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anchor_decode"
+path = "fuzz_targets/anchor_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "receipt_decode"
+path = "fuzz_targets/receipt_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_mutations"
+path = "fuzz_targets/verify_mutations.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

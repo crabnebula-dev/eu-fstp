@@ -1,0 +1,66 @@
+[package]
+name = "fstp-webauthn-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-webauthn = { path = ".." }
+
+[[bin]]
+name = "cbor_decode"
+path = "fuzz_targets/cbor_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cose_key_decode"
+path = "fuzz_targets/cose_key_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authenticator_data_decode"
+path = "fuzz_targets/authenticator_data_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_data_decode"
+path = "fuzz_targets/client_data_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "attestation_object_decode"
+path = "fuzz_targets/attestation_object_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "assertion_verify"
+path = "fuzz_targets/assertion_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "registration_verify"
+path = "fuzz_targets/registration_verify.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

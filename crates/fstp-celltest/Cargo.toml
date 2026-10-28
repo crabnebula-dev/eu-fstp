@@ -1,0 +1,43 @@
+[package]
+name = "fstp-celltest"
+description = "Test only. Multi-cell worlds, custody simulator, software authenticator, canaries, scanners, references and models (M3 design section 14.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# Test only: never published and never a dependency of a shipped crate
+# (M3 design section 2.4, layering rule 9).
+publish = false
+
+[dependencies]
+fstp-pki.workspace = true
+fstp-keys.workspace = true
+fstp-custody.workspace = true
+fstp-keyd.workspace = true
+fstp-audit.workspace = true
+fstp-obs.workspace = true
+fstp-pgstore.workspace = true
+fstp-vault-proto.workspace = true
+fstp-vault-core.workspace = true
+fstp-vault.workspace = true
+fstp-webauthn.workspace = true
+fstp-auth.workspace = true
+fstp-cell-core.workspace = true
+fstp-cell.workspace = true
+fstp-cp-proto.workspace = true
+fstp-control.workspace = true
+fstp-witness.workspace = true
+fstp-edge.workspace = true
+fstp-release.workspace = true
+fstp-release-svc.workspace = true
+fstp-backup.workspace = true
+fstp-domain.workspace = true
+fstp-engine.workspace = true
+fstp-migrate.workspace = true
+fstp-pgtest.workspace = true
+fstp-prop.workspace = true
+fstp-mc.workspace = true
+fstp-domain-testkit.workspace = true
+
+[lints]
+workspace = true

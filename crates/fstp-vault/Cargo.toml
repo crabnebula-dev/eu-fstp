@@ -1,0 +1,26 @@
+[package]
+name = "fstp-vault"
+description = "Identity vault service: internal API, vault origin and persistence (M3 design section 6)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-vault-core.workspace = true
+fstp-keys.workspace = true
+fstp-custody.workspace = true
+fstp-audit.workspace = true
+fstp-pgwire.workspace = true
+fstp-migrate.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+fstp-obs.workspace = true
+fstp-rt.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

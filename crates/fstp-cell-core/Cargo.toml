@@ -1,0 +1,23 @@
+[package]
+name = "fstp-cell-core"
+description = "Cell commands, records and state, the gate and the sans-IO driver. Pure (M3 design section 5)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-engine.workspace = true
+fstp-domain.workspace = true
+fstp-auth.workspace = true
+fstp-keys.workspace = true
+fstp-ledger.workspace = true
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

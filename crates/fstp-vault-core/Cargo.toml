@@ -1,0 +1,18 @@
+[package]
+name = "fstp-vault-core"
+description = "Identity vault facts, epochs, commit protocol and query evaluation. Pure (M3 design section 6.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-vault-proto.workspace = true
+fstp-money.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

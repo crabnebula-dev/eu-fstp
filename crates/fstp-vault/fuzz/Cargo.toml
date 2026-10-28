@@ -1,0 +1,31 @@
+[package]
+name = "fstp-vault-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-vault = { path = ".." }
+
+[[bin]]
+name = "origin_write_decode"
+path = "fuzz_targets/origin_write_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fact_body_decode"
+path = "fuzz_targets/fact_body_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

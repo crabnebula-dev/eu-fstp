@@ -160,6 +160,7 @@
 //! (R-NF-02). [`Error::server_message`] returns the message to code that
 //! needs it.
 
+pub mod catalogue;
 mod error;
 mod ledger;
 mod lex;

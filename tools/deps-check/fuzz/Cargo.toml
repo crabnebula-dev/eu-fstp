@@ -46,6 +46,27 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "npm_lock_decode"
+path = "fuzz_targets/npm_lock_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tier_b_confirmations_decode"
+path = "fuzz_targets/tier_b_confirmations_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rust_tokens"
+path = "fuzz_targets/rust_tokens.rs"
+test = false
+doc = false
+bench = false
+
 [lints.rust]
 unsafe_code = "forbid"
 

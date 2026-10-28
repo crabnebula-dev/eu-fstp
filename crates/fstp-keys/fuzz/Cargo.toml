@@ -1,0 +1,38 @@
+[package]
+name = "fstp-keys-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-keys = { path = ".." }
+
+[[bin]]
+name = "sealed_key_decode"
+path = "fuzz_targets/sealed_key_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sealed_blob_decode"
+path = "fuzz_targets/sealed_blob_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "erasure_plan_sequence"
+path = "fuzz_targets/erasure_plan_sequence.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

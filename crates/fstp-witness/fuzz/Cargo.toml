@@ -1,0 +1,31 @@
+[package]
+name = "fstp-witness-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-witness = { path = ".." }
+
+[[bin]]
+name = "witness_message_decode"
+path = "fuzz_targets/witness_message_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "file_store_decode"
+path = "fuzz_targets/file_store_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

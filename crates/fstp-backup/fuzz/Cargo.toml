@@ -1,0 +1,38 @@
+[package]
+name = "fstp-backup-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-backup = { path = ".." }
+
+[[bin]]
+name = "backup_container_decode"
+path = "fuzz_targets/backup_container_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "s3_xml_decode"
+path = "fuzz_targets/s3_xml_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wal_name_parse"
+path = "fuzz_targets/wal_name_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -15,3 +15,29 @@ fstp-ledger
 fstp-domain
 fstp-findings
 fstp-engine
+# M3, docs/handoff/m3-design.md section 15. fstp-crypto joins when lane
+# W1h lands its M3 fuzz targets; fstp-obs has no parser.
+fstp-pki
+fstp-keys
+fstp-custody
+fstp-keyd
+fstp-audit
+fstp-pgstore
+fstp-vault-proto
+# Design section 2.1 gives fstp-vault-core a fuzz project and section 15
+# names no target. W0 takes the stricter reading (fact_commit_sequence),
+# pending Daniel (docs/handoff/m3-base.md).
+fstp-vault-core
+fstp-vault
+fstp-webauthn
+fstp-auth
+fstp-cell-core
+fstp-cell
+fstp-cp-proto
+fstp-control
+fstp-witness
+fstp-edge
+fstp-release
+fstp-release-svc
+fstp-backup
+fstp-celltest

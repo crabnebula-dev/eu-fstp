@@ -1,0 +1,22 @@
+[package]
+name = "fstp-witness"
+description = "Anchor witness: intake, per-cell anchor chains and receipts (I-24, M3 design section 7.2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-audit.workspace = true
+fstp-cp-proto.workspace = true
+fstp-pgwire.workspace = true
+fstp-migrate.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

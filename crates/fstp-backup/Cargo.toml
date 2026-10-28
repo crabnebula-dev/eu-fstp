@@ -1,0 +1,21 @@
+[package]
+name = "fstp-backup"
+description = "Backup container, multipart S3 client and XML subset parser (M3 design section 3.8, ADR-012)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-keys.workspace = true
+fstp-custody.workspace = true
+fstp-crypto.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

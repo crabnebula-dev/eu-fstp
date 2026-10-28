@@ -1,0 +1,31 @@
+[package]
+name = "fstp-edge-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-edge = { path = ".." }
+
+[[bin]]
+name = "client_hello_sni"
+path = "fuzz_targets/client_hello_sni.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tunnel_header_decode"
+path = "fuzz_targets/tunnel_header_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,45 @@
+[package]
+name = "fstp-auth-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-auth = { path = ".." }
+
+[[bin]]
+name = "auth_record_decode"
+path = "fuzz_targets/auth_record_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_command_decode"
+path = "fuzz_targets/auth_command_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_cookie_decode"
+path = "fuzz_targets/session_cookie_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "token_decode"
+path = "fuzz_targets/token_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

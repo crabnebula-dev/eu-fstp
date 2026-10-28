@@ -1,0 +1,19 @@
+[package]
+name = "fstp-edge"
+description = "SNI router: ClientHello parser, route table and tunnel header (I-19, M3 design section 9.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-tls.workspace = true
+fstp-rt.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

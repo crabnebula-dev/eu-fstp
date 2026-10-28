@@ -8,7 +8,9 @@
 //! ```
 //!
 //! The SHA-256 is the `.crate` checksum that every `Cargo.lock` must record
-//! for the package. The role is `runtime`, `build`, `test` or `platform`.
+//! for the package. A git package records its pinned lockfile source
+//! string `git+<URL>?rev=<commit>#<commit>` in that field instead
+//! (ADR-001 A3, `git_source.rs`). The role is `runtime`, `build`, `test` or `platform`.
 //! The note is the rest of the line and must not be empty. Lines that start
 //! with `#` and blank lines are ignored.
 //!
@@ -39,7 +41,8 @@ pub(crate) struct Entry {
     pub(crate) name: String,
     /// Exact version.
     pub(crate) version: String,
-    /// SHA-256 of the `.crate` file, 64 lowercase hex digits.
+    /// SHA-256 of the `.crate` file, 64 lowercase hex digits. For a git
+    /// package it is the pinned lockfile source string (ADR-001 A3).
     pub(crate) checksum: String,
     /// ADR identifiers whose tree contains the crate.
     pub(crate) adrs: BTreeSet<String>,
@@ -190,9 +193,10 @@ pub(crate) fn parse_allowlist(text: &str) -> Result<Vec<Entry>, Vec<LineError>> 
             )));
             continue;
         }
-        if !valid_checksum(checksum) {
+        if !valid_checksum(checksum) && crate::git_source::parse_pinned(checksum).is_none() {
             errors.push(err(format!(
-                "`{checksum}` is not a SHA-256 checksum of 64 lowercase hex digits"
+                "`{checksum}` is not a SHA-256 checksum of 64 lowercase hex digits, \
+                 nor a pinned git source git+<URL>?rev=<commit>#<commit> (ADR-001 A3)"
             )));
             continue;
         }

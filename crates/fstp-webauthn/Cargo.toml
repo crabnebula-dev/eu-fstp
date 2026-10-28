@@ -1,0 +1,18 @@
+[package]
+name = "fstp-webauthn"
+description = "In-house WebAuthn subset: strict CBOR, COSE keys, authenticator and client data (ADR-008, M3 design section 8.1). Pure."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

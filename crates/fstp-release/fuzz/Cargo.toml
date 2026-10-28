@@ -1,0 +1,52 @@
+[package]
+name = "fstp-release-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-release = { path = ".." }
+
+[[bin]]
+name = "licence_token_decode"
+path = "fuzz_targets/licence_token_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "licence_file_import_decode"
+path = "fuzz_targets/licence_file_import_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "key_transition_decode"
+path = "fuzz_targets/key_transition_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "release_metadata_decode"
+path = "fuzz_targets/release_metadata_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "egress_response_decode"
+path = "fuzz_targets/egress_response_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

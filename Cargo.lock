@@ -79,11 +79,146 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fstp-audit"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-auth"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-backup"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-http",
+ "fstp-keys",
+ "fstp-prop",
+ "fstp-tls",
+]
+
+[[package]]
+name = "fstp-cell"
+version = "0.1.0"
+dependencies = [
+ "fstp-cell-core",
+ "fstp-cp-proto",
+ "fstp-custody",
+ "fstp-edge",
+ "fstp-http",
+ "fstp-obs",
+ "fstp-pgstore",
+ "fstp-prop",
+ "fstp-release",
+ "fstp-rt",
+ "fstp-tls",
+ "fstp-vault-proto",
+]
+
+[[package]]
+name = "fstp-cell-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-auth",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-celltest"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-auth",
+ "fstp-backup",
+ "fstp-cell",
+ "fstp-cell-core",
+ "fstp-control",
+ "fstp-cp-proto",
+ "fstp-custody",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-edge",
+ "fstp-engine",
+ "fstp-keyd",
+ "fstp-keys",
+ "fstp-mc",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgstore",
+ "fstp-pgtest",
+ "fstp-pki",
+ "fstp-prop",
+ "fstp-release",
+ "fstp-release-svc",
+ "fstp-vault",
+ "fstp-vault-core",
+ "fstp-vault-proto",
+ "fstp-webauthn",
+ "fstp-witness",
+]
+
+[[package]]
+name = "fstp-control"
+version = "0.1.0"
+dependencies = [
+ "fstp-cp-proto",
+ "fstp-custody",
+ "fstp-http",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgwire",
+ "fstp-pki",
+ "fstp-prop",
+ "fstp-tls",
+ "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-cp-proto"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-crypto"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-custody"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
 ]
 
 [[package]]
@@ -108,6 +243,16 @@ dependencies = [
  "fstp-mc",
  "fstp-money",
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-edge"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
 ]
 
 [[package]]
@@ -151,6 +296,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-keyd"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-prop",
+ "fstp-rt",
+]
+
+[[package]]
+name = "fstp-keys"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-ledger"
 version = "0.1.0"
 dependencies = [
@@ -186,6 +350,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-obs"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-pgstore"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-migrate",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-rt",
+]
+
+[[package]]
 name = "fstp-pgtest"
 version = "0.1.0"
 
@@ -202,8 +387,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-pki"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-prop"
 version = "0.1.0"
+
+[[package]]
+name = "fstp-release"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-tls",
+]
+
+[[package]]
+name = "fstp-release-svc"
+version = "0.1.0"
+dependencies = [
+ "fstp-http",
+ "fstp-migrate",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-release",
+ "fstp-tls",
+]
 
 [[package]]
 name = "fstp-rt"
@@ -221,6 +437,63 @@ dependencies = [
  "fstp-rt",
  "rustls",
  "rustls-pki-types",
+]
+
+[[package]]
+name = "fstp-vault"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-custody",
+ "fstp-http",
+ "fstp-keys",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
+ "fstp-vault-core",
+]
+
+[[package]]
+name = "fstp-vault-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-money",
+ "fstp-prop",
+ "fstp-vault-proto",
+]
+
+[[package]]
+name = "fstp-vault-proto"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-webauthn"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-witness"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-cp-proto",
+ "fstp-http",
+ "fstp-migrate",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-tls",
 ]
 
 [[package]]

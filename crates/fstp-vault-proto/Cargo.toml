@@ -1,0 +1,18 @@
+[package]
+name = "fstp-vault-proto"
+description = "Identity vault wire types, tickets and codecs (M3 design section 6.2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-json.workspace = true
+fstp-money.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

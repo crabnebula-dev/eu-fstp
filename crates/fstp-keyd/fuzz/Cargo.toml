@@ -1,0 +1,31 @@
+[package]
+name = "fstp-keyd-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-keyd = { path = ".." }
+
+[[bin]]
+name = "keyd_request_decode"
+path = "fuzz_targets/keyd_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "custody_file_decode"
+path = "fuzz_targets/custody_file_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

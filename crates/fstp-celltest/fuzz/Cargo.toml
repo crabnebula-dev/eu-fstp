@@ -1,0 +1,24 @@
+[package]
+name = "fstp-celltest-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-celltest = { path = ".." }
+
+[[bin]]
+name = "proc_maps_decode"
+path = "fuzz_targets/proc_maps_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

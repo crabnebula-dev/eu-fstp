@@ -17,6 +17,29 @@ members = [
     "crates/fstp-findings",
     "crates/fstp-engine",
     "crates/fstp-domain-testkit",
+    # M3, docs/handoff/m3-design.md section 2.1.
+    "crates/fstp-pki",
+    "crates/fstp-keys",
+    "crates/fstp-custody",
+    "crates/fstp-keyd",
+    "crates/fstp-audit",
+    "crates/fstp-obs",
+    "crates/fstp-pgstore",
+    "crates/fstp-vault-proto",
+    "crates/fstp-vault-core",
+    "crates/fstp-vault",
+    "crates/fstp-webauthn",
+    "crates/fstp-auth",
+    "crates/fstp-cell-core",
+    "crates/fstp-cell",
+    "crates/fstp-cp-proto",
+    "crates/fstp-control",
+    "crates/fstp-witness",
+    "crates/fstp-edge",
+    "crates/fstp-release",
+    "crates/fstp-release-svc",
+    "crates/fstp-backup",
+    "crates/fstp-celltest",
     "tools/deps-check",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
@@ -56,6 +79,29 @@ fstp-domain = { path = "crates/fstp-domain" }
 fstp-findings = { path = "crates/fstp-findings" }
 fstp-engine = { path = "crates/fstp-engine" }
 fstp-domain-testkit = { path = "crates/fstp-domain-testkit" }
+# M3, docs/handoff/m3-design.md section 2.1.
+fstp-pki = { path = "crates/fstp-pki" }
+fstp-keys = { path = "crates/fstp-keys" }
+fstp-custody = { path = "crates/fstp-custody" }
+fstp-keyd = { path = "crates/fstp-keyd" }
+fstp-audit = { path = "crates/fstp-audit" }
+fstp-obs = { path = "crates/fstp-obs" }
+fstp-pgstore = { path = "crates/fstp-pgstore" }
+fstp-vault-proto = { path = "crates/fstp-vault-proto" }
+fstp-vault-core = { path = "crates/fstp-vault-core" }
+fstp-vault = { path = "crates/fstp-vault" }
+fstp-webauthn = { path = "crates/fstp-webauthn" }
+fstp-auth = { path = "crates/fstp-auth" }
+fstp-cell-core = { path = "crates/fstp-cell-core" }
+fstp-cell = { path = "crates/fstp-cell" }
+fstp-cp-proto = { path = "crates/fstp-cp-proto" }
+fstp-control = { path = "crates/fstp-control" }
+fstp-witness = { path = "crates/fstp-witness" }
+fstp-edge = { path = "crates/fstp-edge" }
+fstp-release = { path = "crates/fstp-release" }
+fstp-release-svc = { path = "crates/fstp-release-svc" }
+fstp-backup = { path = "crates/fstp-backup" }
+# fstp-celltest is test only and never a dependency (layering rule 9).
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

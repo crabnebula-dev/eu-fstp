@@ -1,0 +1,19 @@
+[package]
+name = "fstp-audit"
+description = "Audit chain rows, links, verifier, anchors and receipts. Pure (I-24, M3 design section 7)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+fstp-ledger.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
