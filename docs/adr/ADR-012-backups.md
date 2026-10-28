@@ -1,8 +1,8 @@
 # ADR-012: Backups
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
-Labels such as Q4, Q25, G22 and W2k exist only in `docs/handoff/m3-design.md`. They are not spec identifiers. ADR-008 to ADR-012 are proposed numbers, drafted on the same date. Items marked "interim, pending Daniel" are proposals that no answer of 2026-10-28 settles.
+Labels such as Q4, Q25, G22 and W2k exist only in `docs/handoff/m3-design.md`. They are not spec identifiers. ADR-008 to ADR-012 were drafted on 2026-10-28 and accepted the same day. Items marked "interim, pending Daniel" are proposals that no answer of 2026-10-28 settles.
 
 ## Context
 
@@ -173,7 +173,7 @@ No listing call exists in M3, so a restore needs another way to find the newest 
 - No third-party crate is added.
 - Fuzz targets of `fstp-backup`: `backup_container_decode`, `s3_xml_decode` and `wal_name_parse`. They check that nothing panics, that chunk order and the final flag are enforced, and that DTDs, entity declarations and processing instructions are refused.
 - Tests: `i81_erased_text_unrecoverable_from_every_backup`, `r_id_03_document_unrecoverable_after_verification`, `r_sw_02_cell_erasure_kills_every_backup`, `i81_erased_email_digest_cannot_be_recomputed_from_backups`, `i81_erased_identity_match_key_cannot_be_recomputed_from_backups` and `i80_root_canary_absent_from_logs_dumps_and_backups`. Lane W2k also adds container property tests.
-- Lane W2k starts only after Daniel accepts this ADR.
+- Lane W2k starts only after Daniel accepts this ADR. He accepted it on 2026-10-28.
 
 ## Open points
 

@@ -1,6 +1,6 @@
 # ADR-010: Audit chain, anchors and witnesses
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
 ## Context
 
@@ -10,16 +10,16 @@ Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
 - ADR-007, as amended on 2026-10-28, seals ledger bodies and makes the chain hash the stored bytes, ciphertext included.
 - A database owner could delete entries written after the last anchor. With a receipt after each commit, an entry stays unwitnessed for a short window, and a deletion inside it goes undetected (design gap G7).
 - A self-hosted cell has no control plane, and I-38 forbids sending anything with tenant data to CrabNebula hosts (design gap G17).
-- Daniel answered on 2026-10-28: Q8 signatures A and tail D, and Q9 A. The design source is `docs/handoff/m3-design.md`, sections 1.1 to 1.3, 3.9, 4.1 to 4.4, 5.3, 7, 9.1, 9.5, 14.4 and 15.
+- Daniel answered on 2026-10-28: Q8 signatures A and tail D, and Q9 A. He confirmed Q8 again on 2026-10-28, after the drafts: composite signatures (A) and the strict tail D (prepare, witness receipt, commit). The design source is `docs/handoff/m3-design.md`, sections 1.1 to 1.3, 3.9, 4.1 to 4.4, 5.3, 7, 9.1, 9.5, 14.4 and 15.
 
 Options considered:
 
 | Question | Option | Description | Outcome |
 | --- | --- | --- | --- |
-| Q8 signatures | A | Composite anchors and receipts in M3, with ML-DSA-65 ACVP keyGen, sigGen and sigVer subsets | Chosen by Daniel on 2026-10-28 |
+| Q8 signatures | A | Composite anchors and receipts in M3, with ML-DSA-65 ACVP keyGen, sigGen and sigVer subsets | Chosen by Daniel on 2026-10-28. Confirmed 2026-10-28 |
 | | B | Unsigned anchors until M9, with two witnesses carrying detection | Rejected. R-CR-03 and ADR-001 require composite anchors |
 | | C | Ed25519-only anchors | Rejected. Departs from the ADR-001 table |
-| Q8 tail | D | Prepare, receipt, commit, with abort and in-doubt records. No committed entry is unwitnessed | Chosen by Daniel on 2026-10-28 |
+| Q8 tail | D | Prepare, receipt, commit, with abort and in-doubt records. No committed entry is unwitnessed | Chosen by Daniel on 2026-10-28. Confirmed 2026-10-28 |
 | | A | A receipt after each commit; writes refused once an entry stays unwitnessed for 60 seconds | Rejected. Leaves a window for undetected deletion |
 | | B | As A, with each command waiting for its receipt before it is reported | Rejected. The window remains between commit and receipt |
 | | C | Periodic anchors only | Rejected. The window is the anchor period |
@@ -91,7 +91,10 @@ Anchor { cell, chain, n, link, at, signature }
 
 - `signature` is a composite Ed25519 plus ML-DSA-65 signature under the chain's `Anchor` key (ADR-001, R-CR-03).
 - Proposed signed message, to be fixed with vectors before W2g code: `"fstp-anchor-v1" || cell || chain || be64(n) || link || be64(at)`.
-- Ed25519 comes from aws-lc-rs. ML-DSA-65 comes from moduletto, pinned as a git dependency to a full commit hash (Q1 C). moduletto is Tier B, so the I-74 release gate applies.
+- Ed25519 comes from aws-lc-rs. ML-DSA-65 comes from moduletto once the pull request below lands, pinned as a git dependency to a full commit hash (Q1 C). moduletto is Tier B, so the I-74 release gate applies.
+- moduletto has no ML-DSA-65 yet. Daniel decided on 2026-10-28 that it is added to moduletto on a pull request that Claude writes and Daniel reviews and merges (ADR-001 A2).
+- Until that pull request lands, the ML-DSA half sits behind the `fstp-crypto` seam, and composite signing refuses with a typed error. The anchorer core then cannot prepare, so the cell and the vault refuse writes and keep serving reads, as without a witness. Nothing falls back to Ed25519 alone or to aws-lc-rs ML-DSA in production.
+- Tests of the chain, the witness protocol and the verifier run meanwhile with the aws-lc-rs ML-DSA oracle through `fstp-celltest` only.
 - The verifier accepts a signature only when both halves verify (I-90). `i90_anchor_verifier_rejects_either_half_alone` runs in M3, although I-90 is an M9 exit.
 
 **Composite encoding.**
@@ -114,7 +117,7 @@ The draft text has not been read for this draft of the ADR. Each item below is a
 **Verification of ML-DSA-65.**
 
 - ACVP keyGen, sigGen and sigVer vectors for ML-DSA-65 run in CI. aws-lc-rs runs them through its stable `PqdsaKeyPair::from_seed` and `ML_DSA_65` APIs.
-- moduletto runs them if it exposes deterministic entry points. That is the open sub-question of Q1.
+- moduletto runs them once its ML-DSA-65 pull request lands. ADR-001 A2 proposes deterministic key generation and signing entry points as part of that pull request, so the same vectors apply.
 - Differential checks verify moduletto signatures with aws-lc-rs and the reverse, on random inputs (ADR-001 Post-quantum signatures).
 - These are T-CR-MLDSA for TH-68. The composite verifier tests are T-CR-COMPOSITE for TH-67.
 
@@ -242,6 +245,7 @@ A batch of entries shares one prepare. Steps 1 to 6 can abort. The vault follows
 - A lost COMMIT outcome with a missing row is always reported as `PossibleDeletion`, never resolved silently.
 - The monthly restore drill verifies every cell's chains against the witness (design section 3.8).
 - Composite signing makes every anchor depend on moduletto. No anchor ships in a release until the I-74 confirmation for the pinned commit exists.
+- Production anchoring, and so every production write, waits on the moduletto ML-DSA-65 pull request. The M3 exit claim of I-24 with composite anchors depends on it (`SPEC/09-milestones.md` NOTE 2).
 
 ## Open points
 
@@ -265,5 +269,5 @@ Verify list for the provider (questions, not facts):
 ## Record
 
 - Record at first use: the ML-DSA-65 ACVP vector set and its source, for aws-lc-rs and for moduletto.
-- Record at first use: the moduletto repository URL, commit hash and features used for ML-DSA-65 (ADR-001, Q1).
-- Record at first use: the date Daniel accepts this ADR, for the M3 exit audit.
+- The moduletto repository is `https://github.com/crabnebula-dev/moduletto` (ADR-001 A2). Record at first use: the commit that contains ML-DSA-65 and the features used for it.
+- Daniel accepted this ADR on 2026-10-28. The M3 exit audit lists that date.

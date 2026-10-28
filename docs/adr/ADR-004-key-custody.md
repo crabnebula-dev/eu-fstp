@@ -25,7 +25,7 @@ Root keys sit behind a custody interface with two implementations for the SaaS:
 - Self-hosted cells use the tenant's own backend: a local HSM, the tenant's KMS, or a passphrase-protected file key for small installs.
 - A PKCS#11 client crate, if used, joins ADR-001 Tier A after review.
 
-The backends proposed for M3 are in "Completion part 2" below, which awaits Daniel's acceptance.
+The backends for M3 are in "Completion part 2" below, which Daniel accepted on 2026-10-28.
 
 ## Rules
 
@@ -38,7 +38,7 @@ The backends proposed for M3 are in "Completion part 2" below, which awaits Dani
 
 Proposed: an X-Wing style combiner. Both shared secrets, the ML-KEM ciphertext and the X25519 public values are bound through a KDF from aws-lc-rs. Test vectors and a written construction are fixed here before implementation. The construction is reviewed in hardening activity H-19.
 
-The proposed written construction, its bytes and its test vectors are in "Completion part 1" below, which awaits Daniel's acceptance.
+The written construction, its bytes and its test vectors are in "Completion part 1" below, which Daniel accepted on 2026-10-28. It replaces the "Proposed" paragraph above.
 
 ## Signing keys
 
@@ -61,9 +61,9 @@ Release signing was decided by Daniel on 2026-10-25 (O-42).
 
 ## Completion part 1, 2026-10-28: hybrid combiner, sealed keys and nonces
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
-This section fixes the hybrid combiner "before implementation", as the section "Hybrid combiner" requires. Once accepted, it replaces that section's "Proposed" paragraph. It must be accepted before the W1h production agent starts (M3 design, section 18).
+This section fixes the hybrid combiner "before implementation", as the section "Hybrid combiner" requires. Daniel accepted it on 2026-10-28, so it replaces that section's "Proposed" paragraph. It must be accepted before the W1h production agent starts (M3 design, section 18).
 
 ### Decision
 
@@ -176,7 +176,7 @@ The W1h test agent writes the reference `crates/fstp-celltest/src/reference/hybr
 6. **Both halves (I-75).** A sealed key opened with a wrong X25519 secret or a wrong ML-KEM secret fails.
 7. **Context binding.** Changing any field of `ctx` or the header makes `open_key` fail.
 8. **X25519.** The RFC 7748 test vectors run through aws-lc-rs static keys.
-9. **ML-KEM-768 ACVP.** aws-lc-rs `kem::DecapsulationKey::new` imports raw decapsulation keys, so the ACVP decapsulation cases run against the aws-lc-rs oracle. They run against moduletto if it imports decapsulation keys. KeyGen and encapsulation cases need deterministic entry points, which wait on the open Q1 sub-question. ACVP files are read with `fstp-json`.
+9. **ML-KEM-768 ACVP.** aws-lc-rs `kem::DecapsulationKey::new` imports raw decapsulation keys, so the ACVP decapsulation cases run against the aws-lc-rs oracle. They run against moduletto if it imports decapsulation keys. KeyGen and encapsulation cases run against moduletto through its deterministic `keygen_derand` and `encaps_derand` entry points (ADR-001 A2, Daniel, 2026-10-28). ACVP files are read with `fstp-json`.
 10. **Differential (ADR-001 Verification).** moduletto and aws-lc-rs ML-KEM-768 decapsulate each other's ciphertexts on random keys.
 11. **Nonces.** `r_nf_08_aborted_append_never_reuses_a_nonce`, the teeth twin `r_nf_08_teeth_counter_nonce_is_caught`, and the source scan of the nonce rule.
 12. **Seal counts.** A test drives a key to the hard limit and expects a refusal. Another restarts the process and expects a new ledger key generation.
@@ -191,7 +191,7 @@ Record at first use: the moduletto version and calls used for ML-KEM-768 (ADR-00
 
 ## Completion part 2, 2026-10-28: chains, erasure and custody backends
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
 This section fixes the custody providers "before M3 closes", as the status line of this ADR requires. It must be accepted before W2f starts (M3 design, section 18). The section "Signing keys" above, with its two-tier release signing, is unchanged.
 
@@ -208,6 +208,13 @@ This section fixes the custody providers "before M3 closes", as the status line 
 - `S(e)` is never stored unwrapped, never logged and never serialised. It lives in `Zeroizing` memory, with no `Clone` and no `Debug` output.
 - Each group secret is sealed under `S(e)` with an AAD that names owner, chain, purpose, group, generation and epoch.
 - Rotation re-seals level 2 secrets under a new epoch. Data is never re-encrypted, as the rules above require. Erasure re-seals surviving data keys of the affected group, which wraps level 3 keys again but leaves data unchanged.
+
+Epoch seal keys and I-80 (decided by Daniel on 2026-10-28):
+
+- Epoch seal keys `S(e)` are not root keys. Only root epochs `R(e)` are root keys, and only they stay in custody.
+- `S(e)` lives in process memory, in `Zeroizing` storage that wipes it on drop.
+- The memory scan covers `S(e)`. Proposed reading, to be fixed by W1d before code: the simulator gives each epoch a canary `S(e)`. After that epoch is destroyed and zeroised, the scan finds no copy in `fstp-cell` or `fstp-vault` memory. The proposed test name is `i80_destroyed_epoch_seal_key_absent_from_process_memory`.
+- I-80 is unchanged. Its claim rests on `R(e)`, which never leaves custody.
 
 ### Chains
 
@@ -384,6 +391,7 @@ Per-epoch TPM objects (Q32, option B) are evaluated with the M9 self-hosted pack
 - The export manifest key, the notice companion key, and the profile bundle and template keys are not built in M3. When built, they follow the "Signing keys" table above.
 - Release root and release signing keys are not built in M3 (I-91 is an M9 exit). The two-tier release signing above stands unchanged.
 - ML-DSA-65 halves come from moduletto (I-75), and every composite verifier requires both halves (I-90).
+- moduletto has no ML-DSA-65 yet. Until the pull request of ADR-001 A2 lands, every composite key above refuses to sign with a typed error, and none is created in production. aws-lc-rs ML-DSA is never a production fallback (Daniel, 2026-10-28).
 
 ### Reconciliation
 
@@ -399,11 +407,11 @@ The rule "Root key use is logged by the backend, and the log is reconciled with 
 
 ### Residual risk
 
-Root on a cell or vault host can read unwrapped `S(e)` and group secrets in process memory. Sandboxing does not stop root. This is not a root key leaving custody, so I-80 is not weakened. It is a path to content around SoD-08 (M3 design risk R16). The Q35 answer on root access awaits clarification. Until then the recommendation applies: separate host staff, no standing root, two-person access and tenant-visible access events (interim, pending Daniel). Confidential computing is evaluated with L-15.
+Root on a cell or vault host can read unwrapped `S(e)` and group secrets in process memory. Sandboxing does not stop root. This is not a root key leaving custody, so I-80 is not weakened. It is a path to content around SoD-08 (M3 design risk R16). Daniel accepted this residual risk on 2026-10-28 (Q35), under separate host staff, no standing root, two-person access and access events visible to the tenant. Confidential computing is evaluated in L-15.
 
 ### Tests
 
-- I-80: `i80_custody_has_no_export_and_root_material_cannot_escape`, `i80_root_material_named_only_in_keyd`, `i80_root_canary_absent_from_cell_and_vault_memory`, `i80_root_canary_absent_from_logs_dumps_and_backups`, `i80_file_custody_root_confined_to_keyd`, `i80_teeth_leaking_custody_is_caught`. The memory scan runs on Linux CI (Q27: interim, pending Daniel).
+- I-80: `i80_custody_has_no_export_and_root_material_cannot_escape`, `i80_root_material_named_only_in_keyd`, `i80_root_canary_absent_from_cell_and_vault_memory`, `i80_root_canary_absent_from_logs_dumps_and_backups`, `i80_file_custody_root_confined_to_keyd`, `i80_teeth_leaking_custody_is_caught`. Proposed with the decision on epoch seal keys above: `i80_destroyed_epoch_seal_key_absent_from_process_memory`. The memory scan runs on Linux CI (Q27: interim, pending Daniel).
 - I-81: `i81_m_shred`, `i81_erased_text_unrecoverable_from_every_backup`, `r_id_03_document_unrecoverable_after_verification`, `r_sw_02_cell_erasure_kills_every_backup`, `i81_completion_recorded_only_after_destroy_receipt`, `i81_erasure_resumes_after_crash_at_every_step`, `i81_erased_email_digest_cannot_be_recomputed_from_backups`, `i81_erased_identity_match_key_cannot_be_recomputed_from_backups`.
 - I-81, file custody: `i81_file_custody_destroy_leaves_no_openable_epoch_on_the_key_volume`, `i81_keyd_refuses_copy_on_write_key_volume`.
 - I-81 teeth: `i81_teeth_group_not_rotated_is_caught`, `i81_teeth_destroy_before_commit_loses_data_is_caught`.
@@ -442,4 +450,4 @@ W2f also checks these items on the host side.
 
 - Self-hosted physical cluster backups need a ClusterBackup chain entry, which M3 design section 9.5 does not list. Proposed: `fstp-install` creates one per local cluster, usable only through the root-only console socket.
 - The self-hosted witness needs custody for its receipt key, which section 9.5 also omits. Proposed: a `fstp-keyd` ControlPlane entry with its own socket for the `fstp-witness` OS user.
-- ADR-001 lists the aws-lc-rs functions in use. The ADR-001 amendment of 2026-10-28 now proposes PBKDF2-HMAC-SHA-256 for the file custody key table and AES-256-GCM-SIV as a conditional fallback (ADR-001 A8). The file custody KDF is blocked on that addition: this part cannot be accepted with file custody before A8 is accepted, and no file custody code uses PBKDF2 before then.
+- ADR-001 lists the aws-lc-rs functions in use. The ADR-001 amendment of 2026-10-28 adds PBKDF2-HMAC-SHA-256 for the file custody key table and AES-256-GCM-SIV as a conditional fallback (ADR-001 A8). Daniel accepted A8 with that amendment on 2026-10-28, so the file custody KDF is no longer blocked on it.

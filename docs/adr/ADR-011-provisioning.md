@@ -1,8 +1,8 @@
 # ADR-011: Database provisioning
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
-Labels such as Q4, Q15, G4 and W2h exist only in `docs/handoff/m3-design.md`. They are not spec identifiers. ADR-008 to ADR-012 are proposed numbers, drafted on the same date. Items marked "interim, pending Daniel" are proposals that no answer of 2026-10-28 settles.
+Labels such as Q4, Q15, G4 and W2h exist only in `docs/handoff/m3-design.md`. They are not spec identifiers. ADR-008 to ADR-012 were drafted on 2026-10-28 and accepted the same day. Items marked "interim, pending Daniel" are proposals that no answer of 2026-10-28 settles.
 
 ## Context
 
@@ -119,7 +119,7 @@ Daniel decided on 2026-10-28 that destructive jobs need two operators (Q4 A).
 7. Run migrations and grants. Write `fstp_meta.placement` in both databases.
 8. Create epoch 1 for each chain. Write the genesis chain rows and the first anchors.
 9. Publish the routes for `<cell host>` and `id.<cell host>` to the edge.
-10. The cell creates the first tenant admin invitation as two halves, delivered by two staff members over two channels (ADR-008, Q35 interim). The control plane keeps no copy and never learns the account id or the full token.
+10. The cell creates the first tenant admin invitation as two halves, delivered by two staff members over two channels (ADR-008, Q35 answered 2026-10-28). The control plane keeps no copy and never learns the account id or the full token.
 
 At start, `fstp-vault` refuses a database whose `fstp_meta.placement` kind is not vault, or whose server certificate OU is not `vault`. `fstp-cell` makes the mirror checks.
 
@@ -131,7 +131,7 @@ At start, `fstp-vault` refuses a database whose `fstp_meta.placement` kind is no
 - The same set-up revokes CONNECT from PUBLIC on both databases and grants CONNECT per database (verify item V7 of ADR-005).
 - Interim, pending Daniel: the `avnadmin` password is held under two-person control and is used only for this set-up and for later role changes. No running service holds it.
 - Each service role authenticates with SCRAM over server-authenticated TLS (ADR-005 amendment). Its password sits in a file readable only by the service's OS user.
-- `avnadmin` is a remote role with CREATEDB, CREATEROLE and REPLICATION. That conflicts with the Q4 A rule that no remote role has CREATEROLE or CREATEDB. This ADR does not settle the conflict. The ADR-005 amendment raises it to Daniel, with the proposal that the rule covers the self-operated clusters only.
+- `avnadmin` is a remote role with CREATEDB, CREATEROLE and REPLICATION. The Q4 A rule that no remote role has CREATEROLE or CREATEDB covers the self-operated clusters only, since the managed control-plane cluster holds no cell data (Daniel, 2026-10-28; `SPEC/09-milestones.md` NOTE 2; ADR-005 amendment).
 
 ### Self-hosted install (Q15, decided 2026-10-28)
 
@@ -157,11 +157,11 @@ A self-hosted cell has no control plane. The steps that `fstp-control` performs 
 - Fuzz targets of `fstp-control`: `cp_api_decode`, `pgagent_job_decode`, `ddl_identifier_render` and `install_config_decode`.
 - Tests: `i82_privilege_graph_has_no_cross_cell_path`, `i82_generated_hba_has_no_remote_superuser_and_no_all_line`, `i82_replication_role_has_loopback_line_only_and_no_connect`, `i82_no_remote_role_has_createrole_or_createdb`, `i82_names_reveal_nothing`, `i82_teeth_seeded_connect_grant_is_caught`, `i83_placement_never_mixes_kinds`, `i83_cluster_kind_is_immutable`, `i83_self_hosted_layout_runs_two_instances`, `i83_teeth_first_free_cluster_is_caught`, `r_nf_05_self_hosted_install_has_no_default_credentials` and `t_db_iso_i82_every_role_refused_on_foreign_cell_database`.
 - `i82_no_remote_role_has_createrole_or_createdb` covers the self-operated clusters only (ADR-005 amendment, Open points for Daniel).
-- Lane W2h starts only after Daniel accepts this ADR and the ADR-005 amendment.
+- Lane W2h starts only after Daniel accepts this ADR and the ADR-005 amendment. He accepted both on 2026-10-28.
 
 ## Open points
 
 - The job enum, the extra DDL templates, the `apply_grant` revoke and the pinned staff key set in `fstp-pgagent` are proposals of this draft. Daniel accepts or changes each.
 - Whether a self-hosted install needs a second person for destructive local jobs.
-- Self-hosted issuers, raised in ADR-009. `m3-design.md` names no issuer for the local edge's tunnel certificate or the local witness's server certificate. ADR-009 offers an install-time CA in local custody, kept apart from the cell CA and the cluster CAs. Daniel decides before this ADR is accepted, and steps 6 and 7 of the install then name the issuer.
+- Self-hosted issuers, raised in ADR-009. `m3-design.md` names no issuer for the local edge's tunnel certificate or the local witness's server certificate. ADR-009 offers an install-time CA in local custody, kept apart from the cell CA and the cluster CAs. This was open when Daniel accepted this ADR on 2026-10-28. He decides before W2h builds the install, and steps 6 and 7 of the install then name the issuer.
 - The minimum SCRAM iteration count: Record at first use.

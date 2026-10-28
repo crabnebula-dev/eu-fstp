@@ -43,9 +43,9 @@ Record notes:
 
 ## Review note of 2026-10-28: tokio `signal` feature
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
-The Decision above says "Enabling an additional feature needs a review note here." This is that note for the M3 design (`docs/handoff/m3-design.md`, sections 2.2 and 2.5). Daniel accepted the recommendation of Q23 on 2026-10-28 (design section 21.0). The feature stays off until Daniel accepts this note (design section 18, before W2l starts).
+The Decision above says "Enabling an additional feature needs a review note here." This is that note for the M3 design (`docs/handoff/m3-design.md`, sections 2.2 and 2.5). Daniel accepted the recommendation of Q23 on 2026-10-28 (design section 21.0). Daniel accepted this note on 2026-10-28, which design section 18 requires before W2l starts. The feature is enabled at first use, with the record below.
 
 Why:
 

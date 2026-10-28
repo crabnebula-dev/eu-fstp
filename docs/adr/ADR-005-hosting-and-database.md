@@ -39,9 +39,9 @@ Deferred, recorded 2026-10-25 (M1 decision D3). Whether the database link must u
 
 ## Amendment of 2026-10-28: provider, clusters, roles and backups
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
-This section records Daniel's answers of 2026-10-28 to Q3, Q4, Q25 and Q36 of `docs/handoff/m3-design.md`. It also records the interim readings that still wait for an answer, each marked "interim, pending Daniel". Labels such as Q3, G22 and R16 exist only in that design. They are not spec identifiers. Once accepted, this section governs where it differs from the sections above. ADR-008 to ADR-012 are proposed numbers, drafted on the same date.
+This section records Daniel's answers of 2026-10-28 to Q3, Q4, Q25 and Q36 of `docs/handoff/m3-design.md`. It also records the interim readings that still wait for an answer, each marked "interim, pending Daniel". Labels such as Q3, G22 and R16 exist only in that design. They are not spec identifiers. Daniel accepted this section on 2026-10-28, so it governs where it differs from the sections above. ADR-008 to ADR-012 were drafted and accepted on the same date.
 
 ### Provider
 
@@ -113,14 +113,14 @@ The provider's role can also write `cp` rows. **Rule: no isolation invariant res
 - `fstp_super` has exactly one `pg_hba` line: `hostssl all fstp_super 127.0.0.1/32 scram-sha-256 clientcert=verify-full`. Its certificate, key and password are readable only by the `fstp-pgagent` OS user. It runs only typed, logged jobs (ADR-011).
 - `fstp_repl` is the only role with REPLICATION. Its one line is `hostssl replication fstp_repl 127.0.0.1/32 scram-sha-256 clientcert=verify-full`. It has no CONNECT on any cell database. Its key and password are readable only by the `fstp-backup` OS user, which runs `pg_basebackup` on the host.
 - On the self-operated clusters (`application`, `vault`, `witness`), no role with a remote line has SUPERUSER, CREATEROLE, CREATEDB, REPLICATION or BYPASSRLS. PostgreSQL 16 gives a CREATEROLE role ADMIN OPTION on the roles it creates, so CREATEROLE stays off the network there.
-- This rule does not hold on the managed `control` cluster, where `avnadmin` logs in remotely with CREATEDB, CREATEROLE and REPLICATION. Daniel's answers Q3 C and Q4 A meet at that point. This draft does not settle it. See "Open points for Daniel" below.
+- This rule does not hold on the managed `control` cluster, where `avnadmin` logs in remotely with CREATEDB, CREATEROLE and REPLICATION. Daniel's answers Q3 C and Q4 A meet at that point. Daniel settled it on 2026-10-28: the rule applies to the self-operated clusters, and the managed control-plane cluster holds no cell data (Open points for Daniel below).
 - `pg_hba.conf` has one line per role and database, no remote `all` line, and a final reject line.
 - There is no streaming replica (R1). A standby restores continuously from the sealed WAL archive (ADR-012).
 - Under Q5 A, ledger bodies, checkpoints and audit events are sealed under cell keys. The superuser, the replication stream and the archive then see only ciphertext for content. Random ids, sequence numbers, times, enums and digests stay in clear (R-NF-08, R-CR-01).
-- Root on a database host can read the `fstp_super` credential. Interim, pending Daniel's clarification of Q35: the residual risk is accepted with separate host staff, no standing root, two-person access and host access events shown to the tenant (design risk R16).
+- Root on a database host can read the `fstp_super` credential. Daniel answered Q35 on 2026-10-28: the residual risk is accepted with separate host staff, no standing root, two-person access and host access events shown to the tenant (design risk R16).
 - The design's risk R2 named a synchronous replica with manual promotion. That text predates the Q4 answer and is superseded here.
 - Tests: `i82_generated_hba_has_no_remote_superuser_and_no_all_line`, `i82_replication_role_has_loopback_line_only_and_no_connect`, `i82_no_remote_role_has_createrole_or_createdb`, `i82_privilege_graph_has_no_cross_cell_path` and `t_db_iso_i82_every_role_refused_on_foreign_cell_database`. `i82_no_remote_role_has_createrole_or_createdb` runs over the self-operated clusters only, and its doc comment says so.
-- These tests claim I-82 under the reading above. That reading is recorded only in this ADR, which ranks below `SPEC/02-domain/invariants.md`. See "Open points for Daniel" below.
+- These tests claim I-82 under the reading above. `SPEC/09-milestones.md` NOTE 2 records that reading as a scoped M3 claim (Daniel, 2026-10-28). The invariant text is unchanged.
 
 ### Role certificates
 
@@ -196,14 +196,14 @@ Everything below is unverified. Each item is a question for OVHcloud or for the 
 | V15 | Can credentials be scoped per bucket or per prefix, one set per cell? | ADR-012, B7 |
 | V16 | Does Object Storage verify a signed payload hash (`x-amz-content-sha256`)? What are the multipart part size and count limits? Are quotes in ETag values escaped as XML entities? | ADR-012 client |
 | V17 | Does a Load Balancer TCP listener forward the ClientHello byte for byte? Can it pass the client address? | Edge (ADR-009) |
-| V18 | Does OVHcloud offer confidential computing for cell and vault hosts? | Q35 root on hosts, evaluated later |
+| V18 | Does OVHcloud offer confidential computing for cell and vault hosts? | Q35 root on hosts: evaluated in L-15 (Daniel, 2026-10-28) |
 
 The OKMS items K1 to K15 are kept in one list, in ADR-004 completion part 2 (Verify list). This ADR keeps no copy of them. They include K7, whether OKMS key material can be exported, on which the I-80 claim for OKMS-held epochs waits.
 
-The ADR-005 exit row of the M3 design closes when Daniel accepts this section, Q25 is decided, and this verify list and the ADR-004 OKMS items are resolved through L-15 (`m3-design.md` section 20).
+The ADR-005 exit row of the M3 design closes once this section is accepted (Daniel, 2026-10-28), Q25 is decided, and this verify list and the ADR-004 OKMS items are resolved through L-15 (`m3-design.md` section 20).
 
 ### Open points for Daniel
 
-- **Where the I-82 reading is recorded.** Daniel accepted the reading of I-82 in Q4 A: it covers every role that can log in from another host. The loopback superuser and the replication role can read across the cell databases of their cluster. The provider's `avnadmin` and operator superuser reach only `cp` and `licence`, which belong to no cell, so I-82 does not depend on them. The I-82 text in `SPEC/02-domain/invariants.md` does not carry this reading, and this ADR ranks below it. So the I-82 tests would claim the invariant under a reading the invariant text does not state. Options: (a) Daniel records the reading in `invariants.md`; (b) Daniel adds a scoped I-82 claim to `SPEC/09-milestones.md` NOTE 2. Neither is drafted here, since either changes text that ranks above this ADR.
-- **`avnadmin` on the managed control cluster.** Q4 A says that no remote role has CREATEROLE or CREATEDB. Q3 C puts `cp` and `licence` on the managed service, where `avnadmin` logs in remotely with CREATEDB, CREATEROLE and REPLICATION, and the provider holds SUPERUSER. The two answers conflict there. Proposed: the Q4 A rule covers the self-operated clusters only, since no cell or vault database is ever placed on a `control` cluster. ADR-011 previously settled this itself; it now raises it here. Daniel decides.
+- **Where the I-82 reading is recorded.** Settled by Daniel on 2026-10-28. The Q4 A reading is recorded as a scoped claim in `SPEC/09-milestones.md` NOTE 2: I-82 covers every role that can log in from another host, applied to the self-operated clusters. The managed control-plane cluster holds no cell data. The I-82 text in `SPEC/02-domain/invariants.md` stays unchanged. The loopback superuser and the replication role can read across the cell databases of their cluster, and the M3 exit report states that scope.
+- **`avnadmin` on the managed control cluster.** Settled by the same answer. The Q4 A rule covers the self-operated clusters only, since no cell or vault database is ever placed on a `control` cluster. `avnadmin` and the provider's superuser reach only `cp` and `licence`, which hold no cell data.
 - **`cp` and the metadata register.** Whether staff, job and operator-ticket records in `cp` count as registered metadata waits on the `Infrastructure` class proposed in ADR-009.

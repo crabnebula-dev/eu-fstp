@@ -39,6 +39,8 @@ In M3, a tenant admin records the outcome of a manual identity check (P-18, R-ID
 - No recorder verifies their own account.
 - No recorder verifies an account that shares their identity.
 
+The platform operator verifies the first tenant admin of each tenant (decided 2026-10-28). Two operator staff take part, the verification is logged, and it is shown to the tenant. That admin then records the manual identity checks of others. They never record their own check, or the check of an account that shares their identity. ADR-008 (First tenant admin verification) proposes the mechanism.
+
 A later Operations role, "identity verifier", replaces the tenant admin as recorder (decided 2026-10-28). Whether the same two rules bind it is not decided. ADR-008 (Manual identity checks) proposes that they do.
 
 ## Rules

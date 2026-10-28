@@ -64,11 +64,11 @@ Fuzzing nightly updates, decided by Daniel on 2026-10-25 (M1 decision D7):
 
 ## Amendment of 2026-10-28: Node.js and npm as build and test hosts (Q39 A)
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
 ### Context
 
-tsc and Playwright run on Node.js, and Playwright installs through npm. The Decision above allowlists tsc, libFuzzer and Playwright only. A record line alone does not cover a new tool (M3 design, `docs/handoff/m3-design.md`, section 2.5). Daniel answered Q39 with A on 2026-10-28 (design section 21.0). That answer also settles M4 Q7. W3c does not start before Daniel accepts this section (design section 18).
+tsc and Playwright run on Node.js, and Playwright installs through npm. The Decision above allowlists tsc, libFuzzer and Playwright only. A record line alone does not cover a new tool (M3 design, `docs/handoff/m3-design.md`, section 2.5). Daniel answered Q39 with A on 2026-10-28 (design section 21.0). That answer also settles M4 Q7. W3c does not start before Daniel accepts this section (design section 18). He accepted it on 2026-10-28.
 
 ### Decision
 

@@ -1,13 +1,13 @@
 # ADR-009: Cell boundary
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
 Labels such as `Q7` refer to the questions in `docs/handoff/m3-design.md` section 21. Rule labels B1 to B12 come from design section 1.2. Each decision below names its basis:
 
 - **Answered** means Daniel answered the question on 2026-10-28 (design section 21.0).
 - **Interim, pending Daniel** means the design's interim reading (section 17.2) is written in as the proposed decision. Daniel has not answered it yet.
 
-Accepting this ADR accepts the interim readings in it. A later answer that changes one amends this ADR first, then the code (design section 18).
+Daniel accepted this ADR on 2026-10-28. The interim readings in it are built as written, but each stays interim, pending Daniel, until he answers it. A later answer that changes one amends this ADR first, then the code (design section 18).
 
 ## Context
 
@@ -35,7 +35,7 @@ Accepting this ADR accepts the interim readings in it. A later answer that chang
 | Vault ticket lifetime | 5 minutes, an ADR constant | Interim, pending Daniel (Q37) |
 | Public certificates | Per-cell keys. Production issuance through an in-house ACME client with M4 onboarding | Interim, pending Daniel (Q30) |
 | Client addresses | Memory only, for rate limits | Interim, pending Daniel (Q19) |
-| Root on cell hosts | Accept the residual risk under two-person access, no standing root and tenant-visible access events (risk R16) | Pending Daniel's clarification of Q35 |
+| Root on cell hosts | Accept the residual risk under separate host staff, two-person access, no standing root and tenant-visible access events (risk R16). Confidential computing evaluated in L-15 | Answered (Q35, 2026-10-28) |
 | Deployment unit | An application host and a vault host per cell in SaaS, one node when self-hosted | Interim, pending Daniel (Q26) |
 
 ## Trust domains
@@ -183,7 +183,7 @@ A write ticket admits one write of one kind. The cell receives only the resultin
 | `AdultAttestation` | The lead | From submission until NEGOTIATION | R-NG-01, R-ID-04, `overview.md` NOTE 7 (decided 2026-10-28). `TODO(legal)`: L-02 |
 | `GuardianConsent` with the guardian's identity | The guardian, a Receiving account added by `AddGuardian` | At the IRC_REVIEW to NEGOTIATION gate | R-NG-01, R-NG-02 (decided 2026-10-28). `TODO(legal)`: L-02 |
 | `DocumentUpload` | The account being verified | Before a manual check | P-18, P-19, R-ID-03 |
-| `VerificationRecorded` | The recorder of ADR-008 | At a manual check | Q14, `roles-and-sod.md` Manual identity checks. Release window as ADR-008 sets it |
+| `VerificationRecorded` | The recorder of ADR-008. For the first tenant admin, the platform operator with two staff (ADR-008, First tenant admin verification) | At a manual check | Q14, `roles-and-sod.md` Manual identity checks. Release window as ADR-008 sets it for tenant recorders |
 | `ProximityListDeclared` | The programme manager, with a step-up, for a partner | At programme start | Interim, pending Daniel (Q31) |
 | `ReviewerDeclaration` | The Judging-role holder | At binding time | Interim, pending Daniel (Q31). `TODO(legal)`: the basis for storing reviewers' relatives. No L- item yet; listed for Daniel in `SPEC/10-open-questions.md` (Legal checks awaiting an L- number) |
 | `PartnerStaffDeclared` | The person | At binding or verification | Interim, pending Daniel (Q31) |
@@ -241,7 +241,7 @@ Interim, pending Daniel (Q34). R-NF-09 is read as covering links between platfor
 
 ## Root on cell hosts
 
-Pending Daniel's clarification of Q35. The design recommends option A, and it stands until then.
+Answered (Q35). On 2026-10-28 Daniel accepted the recommendation: option A in M3, with confidential computing evaluated in L-15.
 
 - A person with root on a cell or vault host can read unwrapped group keys from process memory (risk R16). Sandboxing and swap-off do not stop root.
 - Mitigation in M3: separate host-administration staff with no control-plane rights, and no standing root. Root comes from short-lived SSH certificates issued per case with two-person approval. Sessions are recorded, and host access events are shown to the tenant.
@@ -273,7 +273,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 
 - **Vault documents.** Object storage for sealed documents (design sections 4.3, 4.8) against B4a. Option A: documents in the vault database, as the strict interim. Option B: a `VaultDestination::DocumentStore` variant with a vault-only prefix and its own credential.
 - **Self-hosted issuers.** The design names no issuer for the local edge's tunnel certificate or the local witness's server certificate. One option is an install-time CA in local custody, kept apart from the cell CA. Daniel decides before ADR-011 fixes the install.
-- **Root on hosts.** Settled with the Q35 clarification.
+- **Root on hosts.** Settled by Daniel on 2026-10-28 (Q35 A). Confidential computing stays an L-15 evaluation item.
 - **Legal markers.** Two `TODO(legal)` markers in this ADR have no L- number: rate limiting on client addresses, and storing reviewers' relatives. Both are listed in `SPEC/10-open-questions.md` for Daniel to number.
 - **Keystore snapshot destinations.** The two `KeystoreSnapshots` members proposed by ADR-012, and `fstp-control` as a witness client for restore declarations. Both wait for Daniel with ADR-012.
 - **Q34 wording.** A wording proposal for R-NF-09 is with Daniel (Q28).

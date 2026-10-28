@@ -101,7 +101,7 @@ The hybrid key encapsulation combiner is proposed as X-Wing style: both shared s
 ## Open points
 
 - Authentication crates: webauthn-rs and opaque-ke are candidates for Tier A, subject to review of their audit status (O-36 resolved in `SPEC/03-architecture/authentication.md`).
-  - Part of the proposed amendment of 2026-10-28, awaiting Daniel's acceptance: A4 below closes this line.
+  - Closed by A4 below, in the amendment of 2026-10-28 that Daniel accepted on 2026-10-28.
 - A PKCS#11 client crate for the CrabNebula-operated HSM (ADR-004).
 - Root key custody is fixed in ADR-004.
 
@@ -171,9 +171,9 @@ Non-cryptographic hashing, recorded 2026-10-25 (M1 decision D6):
 
 ## Amendment of 2026-10-28: M3 dependencies
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
-This section records the dependency decisions of the M3 design (`docs/handoff/m3-design.md`, sections 2.1, 2.4, 2.5, 2.6, 8.1 and 15). It follows Daniel's answers of 2026-10-28 to Q1 (C), Q10 (A) and Q23 (Accept), in design section 21.0. A7 and A8 rest on no answer: A7 is interim, pending Daniel (Q24), and A8 is a proposal that ADR-004 needs. The text above stays as accepted. No production code uses an item below before Daniel accepts this section (design section 18).
+This section records the dependency decisions of the M3 design (`docs/handoff/m3-design.md`, sections 2.1, 2.4, 2.5, 2.6, 8.1 and 15). It follows Daniel's answers of 2026-10-28 to Q1 (C), Q10 (A) and Q23 (Accept), in design section 21.0. A2 also records his later answer of 2026-10-28 on the moduletto repository and on ML-DSA-65. Daniel accepted this section on 2026-10-28, A8 included. A7 stays interim, pending Daniel (Q24). The text above stays as accepted.
 
 ### A1. zeroize as a root (Q23)
 
@@ -187,26 +187,49 @@ This section records the dependency decisions of the M3 design (`docs/handoff/m3
 
 ### A2. moduletto as a git dependency (Q1 C)
 
-moduletto is not on crates.io for M3. Daniel chose a git dependency, pinned to one full commit.
+moduletto is not on crates.io for M3. Daniel chose a git dependency, pinned to one full commit. On 2026-10-28 he supplied the repository and decided how ML-DSA-65 is added.
 
 | Item | Value |
 | --- | --- |
-| Repository URL | Record at first use: Daniel supplies the URL |
-| Commit (full id, as `Cargo.lock` records it) | Record at first use: Daniel supplies the commit |
-| Version in moduletto's manifest at that commit | Record at first use |
-| Features | Record at first use. Only ML-KEM-768 and ML-DSA-65 are used |
-| Resolved tree | Record at first use |
+| Repository URL | `https://github.com/crabnebula-dev/moduletto` (Daniel, 2026-10-28). The repository is public, so CI fetches it without credentials |
+| Main branch head on 2026-10-28 | `46754f2fccb0a501be278fb2fab63b670101a33d`. This is a reference point, not the pin |
+| Commit (full id, as `Cargo.lock` records it) | Record at first use. Lane W1h records the exact pinned commit |
+| Version in moduletto's manifest | `0.1.0` at the head above. Record again at first use for the pinned commit |
+| Primitives at the head above | ML-KEM-512 and ML-KEM-768 (FIPS 203), with deterministic `keygen_derand` and `encaps_derand` entry points. No ML-DSA |
+| Primitives the platform uses | ML-KEM-768 now. ML-DSA-65 (FIPS 204) once the pull request below lands. ML-KEM-512 is not used |
+| Features | Record at first use. The `kem` module needs `std`. Proposed: `default` only, which enables `std`, `alloc` and `libm` at the head above. `getrandom`, `wasm` and `valgrind-ct` are refused, since system randomness comes from aws-lc-rs (Tier A) |
+| Resolved tree | `subtle 2.6`, always. `libm 0.2`, through the `std` feature. `zeroize`, already allowlisted (A1). Exact versions and `.crate` SHA-256 values recorded at first use |
 | First use | Record at first use (planned: W1h, `fstp-crypto`) |
 
-- The workspace manifest declares moduletto once, with `git = "<URL>"` and `rev = "<full commit id>"`. A branch, a tag or a shortened rev is refused.
-- Only `fstp-crypto` depends on it (layering rule 8, design section 2.4). The modules `mlkem`, `mldsa`, `hybrid_kem` and `composite` use it (design section 2.2).
+ML-DSA-65 (Daniel, 2026-10-28):
+
+- moduletto has no ML-DSA-65 at the head above. Daniel decided that ML-DSA-65 (FIPS 204) is added to moduletto itself.
+- Claude writes that change as a pull request on the moduletto repository. Daniel reviews and merges it.
+- Until it lands, the ML-DSA half sits behind the `fstp-crypto` seam. Composite signing refuses with a typed error.
+- There is no fallback to aws-lc-rs ML-DSA in production. aws-lc-rs ML-DSA stays a test oracle only, reached from `fstp-celltest` (layering rule 9, A6).
+- The hybrid rule holds throughout. Nothing signs with Ed25519 alone in place of a composite (I-75, I-90).
+- Once the pull request is merged, the pin moves to a commit that contains it. That move is a new commit, so it needs a new tree record here and a new I-74 confirmation before any release.
+- Proposed scope of the pull request, for Daniel's review: deterministic key generation from a seed and signing with explicit randomness, so the ACVP keyGen, sigGen and sigVer vectors run against moduletto. A new crate in its dependency tree is a tree change and needs review here first.
+
+Tree:
+
+- `subtle 2.6` and `libm 0.2` are accepted as part of moduletto's allowlisted tree (Daniel, 2026-10-28). Transitive dependencies of an allowlisted crate are part of the allowlist, so each gets its own `deps/allowlist.txt` entry.
+- `subtle 2.6.1` is already in the runtime tree through rustls. At the head above, moduletto enables subtle's `core_hint_black_box` feature. Any resulting feature change on subtle is recorded at first use.
+- moduletto declares zeroize with default features off. The A1 root line for zeroize is unchanged.
+- moduletto's development dependencies are not part of the platform tree. Cargo does not resolve them for a dependency.
+- Any other crate in the resolved tree, or any change to it, needs review here before the pin moves.
+
+Pinning:
+
+- The workspace manifest declares moduletto once, with `git = "https://github.com/crabnebula-dev/moduletto"` and `rev = "<full commit id>"`. A branch, a tag or a shortened rev is refused.
+- Only `fstp-crypto` depends on it (layering rule 8, design section 2.4). The modules `mlkem`, `mldsa`, `hybrid_kem` and `composite` use it (design section 2.2). Until the pull request lands, `mldsa` and `composite` refuse every signing and verifying call with a typed error.
 - With that manifest, `Cargo.lock` records `source = "git+<URL>?rev=<commit>#<commit>"` and no checksum. This form was checked with cargo on 2026-10-28 against a local test repository.
 - Cargo places a git checkout at `$CARGO_HOME/git/checkouts/<name>-<hash>/<short commit>/`. This was checked the same way.
 - If the repository is a workspace, each package cargo takes from it shares the same source string. Each one gets its own allowlist entry and appears in the tree record.
 - Each crate that moduletto brings from crates.io is part of this allowlist. It is pinned by name, version and `.crate` SHA-256, as today. A crate from any other git source is refused (A3).
 - The hybrid rule (I-75, I-90) and the release gate (I-74) apply unchanged. A new commit counts as a version change for the release gate, even when the manifest version stays the same.
-- Interim until the pin exists (design section 17.2): production code waits for it. Tests use the aws-lc-rs ML-KEM and ML-DSA oracles through `fstp-celltest` only. No classical fallback ships (I-75).
-- Open: whether moduletto exposes deterministic key generation and encapsulation for the ACVP and combiner vectors. This Q1 sub-question stays open. The answer is recorded here before W1h merges.
+- Until the pin exists (design section 17.2), production code waits for it. Tests use the aws-lc-rs ML-KEM and ML-DSA oracles through `fstp-celltest` only. No classical fallback ships (I-75).
+- Deterministic entry points (Q1 sub-question): answered for ML-KEM by `keygen_derand` and `encaps_derand`. ML-KEM-768 ACVP and combiner vectors therefore run against moduletto. For ML-DSA-65 the answer follows the pull request.
 
 ### A3. deps-check git-source rule
 
@@ -261,7 +284,7 @@ M3 brings moduletto into production code, so the release gate above is built now
 
 - aws-lc-rs stays at 1.18.2 with `aws-lc-sys` and `prebuilt-nasm`. The `unstable` feature is not enabled.
 - The test oracles need nothing more. In 1.18.2, `signature::ML_DSA_65` (`src/signature.rs:1172`), `signature::ML_DSA_65_SIGNING` (`:1185`), `PqdsaKeyPair::from_seed` (`src/pqdsa/key_pair.rs:175`) and `kem::ML_KEM_768` (`src/kem.rs:85`) are public without a feature gate. Checked in the registry source on 2026-10-28.
-- For key wrapping and signatures, these aws-lc-rs post-quantum APIs serve only as test oracles from `fstp-celltest` (layering rule 9, design section 2.4). moduletto is the post-quantum half there in production, as this ADR names it.
+- For key wrapping and signatures, these aws-lc-rs post-quantum APIs serve only as test oracles from `fstp-celltest` (layering rule 9, design section 2.4). moduletto is the post-quantum half there in production, as this ADR names it. Its ML-DSA-65 waits on the pull request of A2, and aws-lc-rs ML-DSA is never a production fallback (Daniel, 2026-10-28).
 - TLS is the exception. `fstp-tls` already negotiates X25519MLKEM768 in production through the rustls aws-lc-rs provider, so its ML-KEM half comes from aws-lc-rs. A7 records this gap.
 
 ### A7. The TLS key exchange group (Q24)
@@ -280,7 +303,7 @@ ADR-004's drafts of 2026-10-28 use two aws-lc-rs functions that the Tier A row a
 
 | Use | Construction | Status |
 | --- | --- | --- |
-| File custody key table (`fstp-keyd`, ADR-004 part 2) | PBKDF2-HMAC-SHA-256 through `aws_lc_rs::pbkdf2` (`PBKDF2_HMAC_SHA256`, `src/pbkdf2.rs:129`), at least 600 000 iterations, random salt | Proposed. ADR-004's file custody KDF is blocked until Daniel accepts this row |
+| File custody key table (`fstp-keyd`, ADR-004 part 2) | PBKDF2-HMAC-SHA-256 through `aws_lc_rs::pbkdf2` (`PBKDF2_HMAC_SHA256`, `src/pbkdf2.rs:129`), at least 600 000 iterations, random salt | Accepted 2026-10-28 with this section |
 | AEAD fallback (ADR-004 part 1, Nonce rule) | AES-256-GCM-SIV through `aws_lc_rs::aead::RandomizedNonceKey` (`AES_256_GCM_SIV`, `src/aead/aes_gcm.rs:35`, accepted at `src/aead/rand_nonce.rs:46`) | Conditional. Used only if H-19 asks for misuse resistance, and only through a new `aead` code that ADR-004 assigns |
 
 - Neither function is a new primitive in our code. Both are reached only through `fstp-crypto`. Its `aead` module would take the GCM-SIV algorithm.

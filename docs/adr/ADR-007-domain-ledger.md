@@ -61,7 +61,7 @@ Decided by Daniel on 2026-10-25 (O-45).
 
 ## Amendment of 2026-10-28: storage at rest in M3
 
-Status of this section: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance. The sections above keep their accepted status.
+Status of this section: Accepted 2026-10-28 (Daniel Thompson-Yvetot). The sections above keep their accepted status.
 
 ### Context
 

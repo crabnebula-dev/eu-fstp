@@ -4,7 +4,7 @@ Milestone M3 in `SPEC/09-milestones.md`: "Cell runtime, control plane, authentic
 
 Status: final design for Daniel's review, revised after a completeness review with 30 findings. Section 17.4 records each finding that was narrowed or answered differently, and why. No repository file was changed while writing it. Every repository change named here is staged by the implementing agent with a proposed commit message. Daniel creates, signs and pushes each commit.
 
-Labels such as `Q4`, `G3`, `B5`, `W2`, `L-KEYS` and `M-SHRED` exist only in this document. They are not spec identifiers. Every `I-`, `R-`, `P-`, `SoD-`, `TH-`, `T-`, `H-`, `O-`, `L-` and `ADR-` identifier is quoted from the repository. ADR-008 to ADR-012 are proposed numbers. Crate, type, table, route, model and test names are design proposals.
+Labels such as `Q4`, `G3`, `B5`, `W2`, `L-KEYS` and `M-SHRED` exist only in this document. They are not spec identifiers. Every `I-`, `R-`, `P-`, `SoD-`, `TH-`, `T-`, `H-`, `O-`, `L-` and `ADR-` identifier is quoted from the repository. ADR-008 to ADR-012 were proposed numbers, and Daniel accepted those ADRs on 2026-10-28. Crate, type, table, route, model and test names are design proposals.
 
 Sources re-read for this final version:
 
@@ -47,7 +47,7 @@ Grafted from the vertical-slice proposal:
 
 - A runnable stack early. `cargo run -p fstp-celltest --bin fstp-devstack` starts a local cell with the real passkey login, no bypass and no default credentials (R-NF-05).
 - The hybrid combiner that hashes the ML-KEM ciphertext into the KDF input. ADR-001 and ADR-004 both require binding "the ML-KEM ciphertext".
-- Composite-signed anchors as ADR-001 and R-CR-03 require. The per-commit receipt is made stricter in this revision: the witness receipts the prospective link before the commit (section 7.2), so no committed entry is ever unwitnessed.
+- Composite-signed anchors as ADR-001 and R-CR-03 require. Their ML-DSA-65 half waits on the moduletto pull request (section 21.0, Q1). The per-commit receipt is made stricter in this revision: the witness receipts the prospective link before the commit (section 7.2), so no committed entry is ever unwitnessed.
 - `CREATE DATABASE` cannot run inside a transaction or a DO block. Provisioning DDL therefore uses a typed identifier grammar in one place, with its own ADR.
 - The seam test that runs the M2 generators through both drivers and compares records after decryption, plus `adr007_pg_store_matches_mem_store`.
 - A schema catalogue with a closed `TableClass`, and a closed egress `Destination` enum for I-16.
@@ -79,7 +79,7 @@ Each flaw the judges found is fixed. Section 17.3 lists them again with sources.
 2. **No daily ratchet.** The base re-sealed every live data key every 24 hours and completed erasure up to a day late. ADR-007 says an erasure request "is honoured at once". The final design rotates one root epoch per erasure batch and re-seals only the affected group's siblings. No new tenant parameter is needed.
 3. **Attribute release.** The base returned attributes to the cell process, against "answers the application only through the queries" in `overview.md`. Attributes now go from the vault to the browser on a vault origin, with tickets (section 6.5). The conflict is raised as Q7.
 4. **No refactor of `fstp-engine`.** The sans-IO `DriverCore` lives in the new `fstp-cell-core`. The unchanged M2 `Engine` becomes its reference oracle (section 5.2).
-5. **Anchors are composite-signed in M3.** ADR-001 lists audit chain anchors as composite, and R-CR-03 requires it. The signature is not left empty until M9 (Q8).
+5. **Anchors are composite-signed in M3.** ADR-001 lists audit chain anchors as composite, and R-CR-03 requires it. The signature is not left empty until M9 (Q8). Its ML-DSA-65 half waits on the moduletto pull request, and composite signing refuses with a typed error until it lands (section 21.0, Q1).
 6. **Projections.** ADR-007's `numeric` projection tables would store amounts in clear, against R-NF-08. M3 keeps projections in memory with sealed checkpoints, and raises the conflict as Q5.
 7. **`zeroize`.** It needs no `unsafe`. It is already in the ADR-001 runtime tree. `deps/adr-roots.txt` still requires an ADR before any direct use, so ADR-001 gains it as a root with features `alloc` and `default` only. `derive` stays off, since it would pull in `zeroize_derive`, `syn`, `quote` and `proc-macro2` (Q23).
 8. **Scope.** 22 new crates instead of 23 to 30. Half are pure and small. OPAQUE, EUDI Wallet login, ACME, update installation and billing are out of M3 (section 2.1).
@@ -118,11 +118,11 @@ Each gap gets the strictest reading the sources allow. Section 17 explains each 
 | G2 | R-NF-08 asks for all data at rest encrypted with cell-specific keys. ADR-007 stores bodies as plaintext canonical text and projections in `numeric` columns, on shared clusters | Seal bodies, checkpoints and audit events. Chain over stored bytes. Projections in memory | Q5 |
 | G3 | ADR-005 D2 needs `clientcert=verify-full` on every `hostssl` line. OVHcloud's managed PostgreSQL documents no client certificate login, and reserves SUPERUSER for OVHcloud's operation | Self-operated PostgreSQL 16 on OVHcloud instances or Bare Metal | Q3 |
 | G4 | I-82 says no database role reads across cell databases. Every cluster has a superuser that can | The superuser logs in only from the database host, through `fstp-pgagent` | Q4 |
-| G5 | ADR-001 names moduletto as the post-quantum half. moduletto is not yet pinned, and `fstp-tls` uses the aws-lc-rs group | moduletto ML-KEM-768 in key wrapping, aws-lc-rs ML-KEM as test oracle only. TLS changes in M9 | Q1, Q24 |
+| G5 | ADR-001 names moduletto as the post-quantum half. moduletto is not yet pinned, and `fstp-tls` uses the aws-lc-rs group | moduletto ML-KEM-768 in key wrapping, aws-lc-rs ML-KEM as test oracle only. moduletto gains ML-DSA-65 on a pull request (section 21.0). TLS changes in M9 | Q1 (answered), Q24 |
 | G6 | ADR-001 and R-CR-03 sign anchors with the composite signature. ML-DSA is otherwise M9 | Composite anchors and witness receipts in M3, with the ACVP sigGen and sigVer subsets | Q8 |
 | G7 | I-24 says "any" modification or deletion is detectable. Entries after the last anchor could be truncated by a database owner | Prepare, receipt, commit: the witness receipts the prospective link inside the open transaction, and an abort record follows a failed commit. No committed entry is unwitnessed | Q8 |
 | G8 | I-18 and R-NG-02 need verified guardian consent before NEGOTIATION. R-NG-01 collects identity attributes only in NEGOTIATION | Guardian identity collected at the IRC_REVIEW to NEGOTIATION gate, in the vault only | Q12 |
-| G9 | R-ID-02 records a "verifier", and P-18 includes "document upload with manual check". No role in `roles-and-sod.md` performs that check. Without a verification, SoD-09 refuses every Drafting and Judging grant | The manual check route refuses every caller. Tests write verification facts only through the test-only seeding path of section 6.9, which no shipped binary contains | Q14 (blocking), Q33 |
+| G9 | R-ID-02 records a "verifier", and P-18 includes "document upload with manual check". No role in `roles-and-sod.md` performs that check. Without a verification, SoD-09 refuses every Drafting and Judging grant | The tenant admin records checks, and the platform operator verifies the first tenant admin (section 6.7). Tests write verification facts only through the test-only seeding path of section 6.9, which no shipped binary contains | Q14 (answered), Q33 |
 | G10 | I-78 lists "adding a passkey". `authentication.md` also asks weak accounts to add one, and asks applicants to add one after email recovery. A magic-link session cannot step up | A first passkey is accepted only inside three ceremonies: invitation, self-registration and recovery completion | Q15 |
 | G11 | OPAQUE needs prime-order group arithmetic that aws-lc-rs does not expose. webauthn-rs depends on the openssl crate, as far as I know | In-house WebAuthn with fuzzed CBOR and COSE parsers. OPAQUE and EUDI Wallet login deferred | Q10 |
 | G12 | Magic links and recovery emails need SMTP, which is M6 | Outbox rows in the same transaction, a recording sink in tests, no magic links in production until M6 | none |
@@ -138,7 +138,7 @@ Each gap gets the strictest reading the sources allow. Section 17 explains each 
 | G22 | Streaming replication and `pg_basebackup` need a REPLICATION role whose stream carries every cell's pages | Replication logs in only over loopback. Replicas restore from sealed WAL archives | Q4 |
 | G23 | File custody destroys an epoch by rewriting a file. Host backups, snapshots and copy-on-write blocks keep old copies that the same passphrase opens | Per-epoch random keys on a dedicated volume, and an I-81 claim scoped to that condition | Q32 (blocking) |
 | G24 | Keyed digests (email lookup, identity match key) stay in backups while their long-lived keys live | The Lookup and Match keys rotate in every erasure batch that touches them | Q6 |
-| G25 | Operator interception of the first admin invitation, and root on cell hosts reading unwrapped group keys, are content access without break-glass (SoD-08, TH-18) | Split delivery of the first invitation. Risk R16 recorded | Q35 (blocking) |
+| G25 | Operator interception of the first admin invitation, and root on cell hosts reading unwrapped group keys, are content access without break-glass (SoD-08, TH-18) | Split delivery of the first invitation. Risk R16 recorded and accepted | Q35 (answered 2026-10-28) |
 | G26 | I-19 does not say whether counters, health states, anchor digests, edge logs and metrics are tenant data | Only fields in a declared metadata register cross. Each has a closed type | Q36 (blocking) |
 | G27 | R-NF-09 asks for mutual authentication between all components. Object storage, the licence and update services and the witness bucket offer server-authenticated TLS only | Request-level credentials on those links, and R-NF-09 claimed only for internal links | Q34 |
 | G28 | `authentication.md` lists "changing ... login methods" and "Granting or changing a role in the ... Judging ... groups" as high-risk. M2's `high_risk()` omits `Assign`, `Unassign` and any login-policy change | `HighRiskAction` adds them as strict additions, checked against an explicit list | Q38 |
@@ -154,7 +154,7 @@ Each gap gets the strictest reading the sources allow. Section 17 explains each 
 | I-18 | The route layer sets the minor flag on every draft, so NEGOTIATION entry always asks `HasGuardianConsent` (Q13). The vault counts only an effective consent with an effective guardian verification | `fstp_vault_core::eval::guardian_consent`, `routes::commands::create_draft` | M2 lifecycle over the real vault, the literal test-plan property, M-VCP, teeth |
 | I-19 | One trust domain per cell. Closed `CellToCp`. The control plane cannot decode tenant records. The edge never terminates tenant TLS | `CellToCp` type and the cell CA trust store | Multi-cell canary harness (T-ISO), declared columns, teeth |
 | I-20 | Random per-cell ids. RP ID equals the exact cell host. Per-cell keyed lookups and identity match keys. No account type in control-plane crates | `RelyingParty::new`, `CellKeyedIndex::new`, layering rule 4 | Cross-tenant join test, layering, Playwright passkey test, teeth |
-| I-24 | Chain rows in the ledger's transaction. A database trigger recomputes each link. Composite anchors. The witness receipts every prospective link before commit, for both chains | `ChainWriter::append`, `fstp_audit::verify` and the prepare step of the anchorer core | Mutation property, crash injection, trigger test, witness tests, M-AUDIT, teeth |
+| I-24 | Chain rows in the ledger's transaction. A database trigger recomputes each link. Composite anchors, whose ML-DSA-65 half waits on the moduletto pull request (Q1). The witness receipts every prospective link before commit, for both chains | `ChainWriter::append`, `fstp_audit::verify` and the prepare step of the anchorer core | Mutation property, crash injection, trigger test, witness tests, M-AUDIT, teeth |
 | I-38 | Only `fstp-release::egress` builds requests to CrabNebula hosts, from two closed structs | `egress::encode` | Byte-exact capture, canary scan, teeth |
 | I-39 | Licence and update checks run in a background task. No command-path crate reaches `fstp-release` | `LicenceGate::permits`, layering rule 6 | Services-down cycle, M-LICENCE, teeth |
 | I-77 | Strength fixed at login. Holdings checked on every request. A grant ends weak sessions in the same batch | `fstp_auth::admit_method`, `fstp_auth::admit_session` inside `Gate::admit` | M-AUTH, HTTP machine, Playwright, teeth |
@@ -244,7 +244,7 @@ SaaS, recommended default (Q26 covers alternatives):
 - Every host sits in a private vRack network. Only the edge has public addresses.
 - Each process runs as its own OS user under systemd sandboxing: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `MemoryDenyWriteExecute`, `LimitCORE=0`, a system call filter, and swap disabled on hosts that hold unwrapped group keys.
 - Self-hosted: one node, the same processes and OS users, plus `fstp-keyd`, a local `fstp-witness`, a local `fstp-edge` that routes `<host>` and `id.<host>` by SNI, and `fstp-pgagent` in local mode. Two PostgreSQL 16 instances with separate data directories, ports, OS users and cluster CAs. That satisfies I-83 on one node and R-NF-01. Section 9.5 describes the install.
-- Operators with root on a cell or vault host can read unwrapped group keys in process memory. Sandboxing does not stop root. Risk R16 and Q35 cover this.
+- Operators with root on a cell or vault host can read unwrapped group keys in process memory. Sandboxing does not stop root. Risk R16 covers this, and Daniel accepted the residual risk under Q35 on 2026-10-28.
 
 ### 1.5 Edge and vault origin hosts
 
@@ -314,7 +314,7 @@ Out of M3: OPAQUE, EUDI Wallet login and verification, ACME and custom domains, 
 
 | Crate | Change |
 | --- | --- |
-| `fstp-crypto` | New modules: `aead` (AES-256-GCM through `aws_lc_rs::aead::RandomizedNonceKey`; no function takes a caller nonce), `kdf` (HKDF-SHA-256), `sha3` (SHA3-256) and `x25519` (static and ephemeral keys). Also `sig` (Ed25519 sign and verify, ECDSA secp256r1 sign and verify, RSA PKCS#1 SHA-256 verify for WebAuthn RS256), `mlkem` (moduletto ML-KEM-768), `mldsa` (moduletto ML-DSA-65), `hybrid_kem` (section 3.2), `composite` (section 7.4). Secret types implement no `Debug` or `Clone` and zeroize on drop. moduletto is reachable only through this crate |
+| `fstp-crypto` | New modules: `aead` (AES-256-GCM through `aws_lc_rs::aead::RandomizedNonceKey`; no function takes a caller nonce), `kdf` (HKDF-SHA-256), `sha3` (SHA3-256) and `x25519` (static and ephemeral keys). Also `sig` (Ed25519 sign and verify, ECDSA secp256r1 sign and verify, RSA PKCS#1 SHA-256 verify for WebAuthn RS256), `mlkem` (moduletto ML-KEM-768), `mldsa` (moduletto ML-DSA-65), `hybrid_kem` (section 3.2), `composite` (section 7.4). Until the moduletto ML-DSA-65 pull request lands, every `mldsa` call refuses with a typed error. Secret types implement no `Debug` or `Clone` and zeroize on drop. moduletto is reachable only through this crate |
 | `fstp-ledger` | `AsyncRecordStore<R>`: the same contract and refusal order as `RecordStore`, using only `core::future`. Additive. No decode trait is added: `PgRecordStore` takes the decoder as a function value (section 5.3) |
 | `fstp-migrate` | `catalogue` module: `TableSpec`, `TableClass` and `ColumnSpec` types, and the shared SQL of `fstp_meta.apply_grant` (section 4.1). Additive. Each migration set's owner lists its own tables beside its migrations |
 | `fstp-rt` | `signal` module behind the runtime trait, so SIGTERM triggers the existing `Shutdown` (tokio `signal` feature, Q23) |
@@ -361,7 +361,7 @@ Every binary uses tokio 1.54.1 through `fstp_rt::tokio::TokioRuntime`, exactly o
 
 | Item | Why | ADR action |
 | --- | --- | --- |
-| moduletto, ML-KEM-768 and ML-DSA-65 | Post-quantum half of key wrapping and of composite anchors | ADR-001 record: exact version, source, `.crate` SHA-256, features, resolved tree. Tier B release gate I-74 applies (section 2.6) |
+| moduletto: ML-KEM-768 now, ML-DSA-65 once its pull request lands | Post-quantum half of key wrapping and of composite anchors | ADR-001 A2 record: repository `https://github.com/crabnebula-dev/moduletto`, full commit, version, features and resolved tree (`subtle`, `libm`, `zeroize`). ML-DSA-65 is added on a moduletto pull request that Claude writes and Daniel reviews and merges. Tier B release gate I-74 applies (section 2.6) |
 | `zeroize 1.9.1` as a direct dependency, features `alloc` and `default` only | Wiping secrets without `unsafe` | ADR-001 amendment before first use, because `deps/adr-roots.txt` says "Using any other crate directly needs an ADR first". A new root line `zeroize ADR-001 alloc,default`. `derive` is refused, since it adds `zeroize_derive`, `syn`, `quote` and `proc-macro2` (Q23) |
 | tokio `signal` feature, adding `signal-hook-registry` | SIGTERM for graceful shutdown (ADR-002 Needs) | ADR-002 review note before first use ("Enabling an additional feature needs a review note"), then the record with the resolved version and tree. The tokio root line in `deps/adr-roots.txt` gains `signal` (Q23) |
 | Node.js and npm, as the host for tsc and Playwright | tsc and Playwright run on Node.js. ADR-003 allowlists tsc, libFuzzer and Playwright only | ADR-003 amendment by Daniel before W3c starts (Q39). A record line alone does not cover a new tool |
@@ -453,7 +453,7 @@ pub fn decode_sealed_blob(bytes: &[u8]) -> Result<SealedBlob, DecodeError>; // f
 - **Nonces.** Every AES-256-GCM seal in the platform goes through `fstp_crypto::aead::seal`, which wraps `aws_lc_rs::aead::RandomizedNonceKey`. It draws a fresh 96-bit nonce from the system generator and returns it, and the nonce is stored in the sealed bytes. No function in the workspace takes a nonce from its caller, and none derives one from a sequence number, row id or counter. That covers ledger bodies, chain event bodies, checkpoints, outbox rows, texts, keystore secrets and backup chunks.
 - **Why.** The first version used nonce `seq` for ledger bodies. A transaction that aborted after sealing left that ciphertext in the WAL and in archived WAL. The next command then sealed a different body at the same `seq`, under the same key and nonce. Under GCM that reveals the XOR of the two plaintexts and allows tag forgery. An attacker could trigger it by replaying a consumed step-up. With random nonces an aborted attempt and its retry never share a nonce.
 - **Usage limit.** Random 96-bit nonces stay safe for well under 2^32 seals per key. Every key here seals far fewer: a ledger key is replaced after 2^20 seals, bodies and chain events together, and every other data key seals one object or one backup. `fstp-keys` counts seals per key and refuses at 2^24, which a test checks. AES-256-GCM-SIV (stable in aws-lc-rs) is the fallback if H-19 asks for misuse resistance on top.
-- **Vectors.** Combiner vectors run on fixed inputs, computed by an independent implementation in `fstp-celltest`. ML-KEM ACVP vectors need deterministic encapsulation. aws-lc-rs does not expose it. Q1 asks whether moduletto does.
+- **Vectors.** Combiner vectors run on fixed inputs, computed by an independent implementation in `fstp-celltest`. ML-KEM ACVP vectors need deterministic encapsulation. aws-lc-rs does not expose it. moduletto does, through `keygen_derand` and `encaps_derand` (Q1, later answer in section 21.0).
 - **Differential test.** moduletto ML-KEM-768 and aws-lc-rs ML-KEM-768 decapsulate each other's ciphertexts on random keys (ADR-001 Verification, T-CR-HYBRID).
 
 ### 3.3 Custody trait and backends
@@ -1033,7 +1033,7 @@ Interim strict reading, built until Daniel answers Q13 (blocking):
 2. Every proposal is therefore minor-flagged, and M2's NEGOTIATION entry guard asks `HasGuardianConsent` for every proposal.
 3. When the last IRC validation is recorded, the cell issues a write ticket to the guardian, a Receiving account added by `AddGuardian`. The guardian verifies and consents on the vault origin.
 4. The consent fact becomes effective only after the guardian's verification is effective and the cell has reacted to its epoch.
-5. Consequence: in M3 no proposal without a verified guardian consent reaches NEGOTIATION, including an adult's. Production M3 cannot record any verification anyway (Q14). HTTP-level cycle tests seed verified guardian consents through section 6.9 and say so in their doc comments.
+5. Consequence: in M3 no proposal without a verified guardian consent reaches NEGOTIATION, including an adult's. Production M3 records manual verifications only within the release window of ADR-008, and only once composite operator tickets exist (Q14, section 21.0). HTTP-level cycle tests seed verified guardian consents through section 6.9 and say so in their doc comments.
 
 The seam tests that drive `CellEngine` directly keep the M2 generators' flags, because they test driver equivalence, not the flag's source. Q13 offers the options that would let adults through without a guardian.
 
@@ -1041,13 +1041,19 @@ Judging roles never see the guardian's attributes, so I-17 holds. `TODO(legal)`:
 
 ### 6.7 Manual identity checks (G9)
 
-The route `POST /api/v1/verifications` records a manual verification outcome as a vault write. It refuses every caller until Daniel names the verifier role (Q14, blocking). Until then nothing in a shipped binary can record a verification, so SoD-09 refuses every Drafting and Judging grant in production. M3 builds and tests everything behind that route:
+Daniel answered Q14 (B now, A later), and later on 2026-10-28 how a tenant's first recorder starts (section 21.0). A current tenant admin records a manual verification outcome as a vault write. The platform operator verifies the first tenant admin of each tenant. Two operator staff take part, the verification is logged, and it is shown to the tenant. That admin then records the checks of others. They never record their own check, or the check of an account that shares their identity. This replaces the strict interim that refused every unverified recorder.
+
+- ADR-008 moves the outcome from a cell route to a write ticket on the vault origin. It keeps the release window as a strict interim, so a tenant recorder reviews only subjects whose proposal is in NEGOTIATION or later.
+- The operator path uses a composite-signed operator ticket. It waits on the moduletto ML-DSA-65 pull request (Q1), so no operator verification is recorded in production before that lands.
+- Until the release-window open point and that pull request are settled, SoD-09 refuses Drafting and Judging grants in production to every account the operator did not verify.
+
+M3 builds and tests everything behind that path:
 
 - The vault write kind `VerificationRecorded { account, method, document_type, checks, at, verifier }`, with no document number or image (R-ID-02).
 - The P-19 erasure of the document key in the same batch (section 3.6).
 - The NOTE 4 commit protocol for the identities the verification reveals.
 
-Once Q14 names a role, the route's permission rule gains that role, and nothing else changes.
+When the Operations role "identity verifier" replaces the tenant admin (Q14 A later), the ticket's permission rule changes, and nothing else.
 
 ### 6.8 Programme-side and reviewer-side facts (G21, Q31)
 
@@ -1060,7 +1066,7 @@ Several queries need facts that no applicant writes. `HasConflict` needs reviewe
 | `PartnerStaffDeclared { programme, organisation }` | The declaring person is staff of a consortium partner (Annexe 8.a, 8.e) | The person, at binding or at verification | Write ticket on the vault origin | That person's accounts |
 | `AffiliationDeclared` | An applicant's or team member's declared affiliation (already in section 6.5) | The person | Write ticket | That person's accounts |
 | `RecordRelationship { a, b, kind, programme }` | An I-54 mentoring relationship, ids only | The cell, as a system command when a mentoring assignment is accepted | Internal mTLS API (section 6.2) | `a` and `b` |
-| `VerificationRecorded` | Section 6.7 | The verifier role of Q14 | Route of section 6.7 | Every account the verification reveals |
+| `VerificationRecorded` | Section 6.7 | The tenant admin. For the first tenant admin, the platform operator with two staff (Q14, section 21.0) | Write ticket on the vault origin (ADR-008) | Every account the verification reveals |
 
 - Every kind uses the NOTE 4 protocol, so a fact that flips an answer is acted on in one step, as NOTE 4 and P-13 NOTE 7 require for affiliations.
 - Issuing each write ticket is a ledger record, so the write is logged (R-AU-01).
@@ -1074,7 +1080,7 @@ Tests need verified identities, consents and affiliations that M3 production can
 - `fstp_celltest::vault_seed::SeedSource` turns a synthetic `GroundTruth` into `FactWrite`s. It feeds them through `fstp_vault_core::write` and the NOTE 4 protocol, so seeded facts become effective exactly as real ones do, after the cell's reaction.
 - The binary `fstp-vault-seeded` links the `fstp-vault` library with a `SeedSource`. It exists only in `fstp-celltest`, which is `TEST_ONLY` (layering rule 9).
 - The shipped `fstp-vault` binary has no seed route, no seed flag and no seed file reader. `fstp_vault_has_no_seed_path` checks its route table, its configuration decoder, and a source scan for `SeedSource` and `seed_fact` outside `fstp-celltest`.
-- Claims built on seeding say so. I-18 is claimed over the vault core, and over the real vault with seeded facts. The end-to-end claim through a production verification waits on Q14 and Q33.
+- Claims built on seeding say so. I-18 is claimed over the vault core, and over the real vault with seeded facts. The end-to-end claim through a production verification waits on the ADR-008 open point "Reviews outside NEGOTIATION" and on the moduletto ML-DSA-65 pull request (Q1).
 
 ---
 
@@ -1128,9 +1134,10 @@ The first version receipted each head after its commit and refused writes once a
 ### 7.4 Composite signatures in M3
 
 - Format: draft-ietf-lamps-pq-composite-sigs version 19, as ADR-001 pins. ADR-010 transcribes the exact encoding from that draft before code, not from memory.
-- Ed25519 from aws-lc-rs, ML-DSA-65 from moduletto (I-75).
+- Ed25519 from aws-lc-rs, ML-DSA-65 from moduletto (I-75). moduletto has no ML-DSA-65 yet. It is added on a moduletto pull request that Claude writes and Daniel reviews and merges (Q1, section 21.0).
+- Until it lands, the ML-DSA half sits behind the `fstp-crypto` seam and composite signing refuses with a typed error. The anchorer core cannot prepare, so production writes are refused. aws-lc-rs ML-DSA stays a test oracle only, never a production fallback.
 - I-90 already holds for anchors: the verifier accepts only when both halves verify. `i90_anchor_verifier_rejects_either_half_alone` runs in M3, although I-90 is an M9 exit.
-- ACVP keyGen, sigGen and sigVer vectors for ML-DSA-65 run in CI. aws-lc-rs runs them through its stable `PqdsaKeyPair::from_seed` and `ML_DSA_65` APIs, and moduletto runs them if Q1 confirms deterministic entry points. Differential checks compare moduletto with aws-lc-rs. These are the T-CR-MLDSA tests for TH-68, and the composite verifier tests are T-CR-COMPOSITE for TH-67. M9 completes the remaining ML-DSA work.
+- ACVP keyGen, sigGen and sigVer vectors for ML-DSA-65 run in CI. aws-lc-rs runs them through its stable `PqdsaKeyPair::from_seed` and `ML_DSA_65` APIs, and moduletto runs them once its ML-DSA-65 pull request lands. That pull request is proposed to include deterministic entry points (ADR-001 A2). Differential checks compare moduletto with aws-lc-rs. These are the T-CR-MLDSA tests for TH-68, and the composite verifier tests are T-CR-COMPOSITE for TH-67. M9 completes the remaining ML-DSA work.
 
 ---
 
@@ -1181,7 +1188,7 @@ pub fn admit_session(holdings: bool, s: &SessionView, now: Timestamp, p72: &Sess
 A first passkey is accepted only inside one of three logged ceremonies:
 
 1. **Invitation.** A tenant admin issues an invitation with a step-up, or provisioning issues the first admin's. The token is single-use, valid 72 hours (an interim constant, Q37), and stored as a digest.
-   - **First admin, SaaS (G25, Q35).** An operator who intercepts a single invitation would become tenant admin without any tenant approval. The interim splits it. The cell, not the control plane, draws the token as two random halves, and the enrolment needs both. The control plane sends one half to the tenant contact recorded at contract. A second staff member gives the other half to the tenant's contract signatory over a different channel. Each half is shown to one staff member only. Enrolment records `FirstAdminEnrolled`, which every later tenant admin sees in the admin list and the audit view.
+   - **First admin, SaaS (G25, Q35).** An operator who intercepts a single invitation would become tenant admin without any tenant approval. Daniel accepted the split on 2026-10-28, with a token sealed to a tenant-generated key once M4 onboarding exists. The cell, not the control plane, draws the token as two random halves, and the enrolment needs both. The control plane sends one half to the tenant contact recorded at contract. A second staff member gives the other half to the tenant's contract signatory over a different channel. Each half is shown to one staff member only. Enrolment records `FirstAdminEnrolled`, which every later tenant admin sees in the admin list and the audit view.
    - **First admin, self-hosted.** `fstp-cell` writes the token once to a root-only file on first start, and `fstp-cell first-admin` prints it on the host console. No default credential exists (R-NF-05).
 2. **Self-registration** of a new Receiving account: email proof, then passkey enrolment in the same ceremony, at account creation.
 3. **Recovery completion** (section 8.5).
@@ -1255,7 +1262,7 @@ pub mod recovery { pub fn complete(..) -> Result<Vec<AuthRecord>, CellRefusal>; 
 | `POST /auth/recovery`, `.../{case}/email`, `.../{case}/approve`, `.../{case}/complete` | Public, public, high risk `ApproveRecovery`, ceremony |
 | `POST /api/v1/commands` | Per command through `HighRiskAction::of` |
 | `POST /api/v1/vault-tickets` | Session; `IdentityDownload` for download scope |
-| `POST /api/v1/verifications` | Refuses every caller until Q14 names the verifier role (section 6.7) |
+| `POST /api/v1/verifications` | Issues a `VerificationRecorded` write ticket for the vault origin to a tenant admin with a verified identity, within the ADR-008 release window. The outcome itself goes browser to vault (ADR-008, section 6.7) |
 | `GET /api/v1/audit/anchors`, `GET /api/v1/erasures` | Session, Auditor or tenant admin |
 | `GET /healthz` | Loopback only, fixed body |
 
@@ -1422,7 +1429,7 @@ pub fn permits(state: LicenceState, kind: GateKind) -> bool;   // true for every
 | TH-13 | EU regions of an EU-owned provider (ADR-005) |
 | TH-14 | Insert-only role and triggers, a database-side link check, per-commit witness receipts, composite anchors at two witnesses |
 | TH-15 | No new crate except moduletto, already Tier B. Every tree recorded. Funds, layering and runtime rules in deps-check |
-| TH-18 | Operators hold no roles. Break-glass is tenant-approved, scoped, time-boxed and logged. Content is sealed even from a database superuser. The first admin invitation is split across two staff and two channels. Root on a cell host remains an open path to unwrapped group keys (R16, Q35) |
+| TH-18 | Operators hold no roles. Break-glass is tenant-approved, scoped, time-boxed and logged. Content is sealed even from a database superuser. The first admin invitation is split across two staff and two channels. Root on a cell host remains a path to unwrapped group keys, accepted as residual risk by Daniel (R16, Q35) |
 | TH-27 | `DeclaresAffiliationOnList` over P-38 lists written by the programme manager (section 6.8). Test `th_27_t_sod_assign_proximity_list_over_real_vault` (T-SOD-ASSIGN) |
 | TH-26 | A fuzz target for every new parser from its first commit (section 15) |
 | TH-30 | Per-document groups destroyed on verification by root-epoch rotation |
@@ -1600,6 +1607,7 @@ pub fn shared_identifiers(a: &CellDump, b: &CellDump, allow: &PublicConstants) -
 
 - Structure: section 7.
 - Guards: `ChainWriter::append`, `fstp_audit::verify`, the `audit.check_link` trigger.
+- Anchor signatures: until the moduletto ML-DSA-65 pull request lands (Q1, section 21.0), these tests sign with the aws-lc-rs ML-DSA test oracle through `fstp-celltest`. Production composite signing refuses with a typed error meanwhile. The exit report states which implementation the tests ran against (`SPEC/09-milestones.md` NOTE 2).
 - Tests:
   - `i24_verifier_flags_every_mutation`: property over random chains with one change, deletion, insertion, reordering, truncation or consistent recomputation at any row, ledger entry, anchor or receipt. Both chains.
   - `i24_m_audit`.
@@ -1770,7 +1778,7 @@ Each parser-bearing crate joins `deps/fuzz-required.txt` and owns `crates/<crate
 2. **R2 Operating PostgreSQL ourselves.** Patroni is Python, which the project excludes. Mitigation: a synchronous replica with manual promotion in M3, monthly restore drills, and recovery objectives recorded in ADR-005.
 3. **R3 Scope.** 22 new crates and up to seven changed. Mitigation: verification lanes start first, pure cores before shells, disjoint lane files, and OPAQUE, EUDI, ACME, installation and billing out of scope.
 4. **R4 Erasure and open costs.** Per-batch custody calls and local re-seals; one hybrid decapsulation per text open. Mitigation: measure in W2, record budgets in the exit audit, and coalesce requests that arrive during a running batch.
-5. **R5 moduletto availability.** It is not in the local registry. Production key wrapping and anchors wait on Q1. Mitigation: every crate above `fstp-crypto` builds against the `hybrid_kem` and `composite` interfaces, with test-only oracles from aws-lc-rs. No classical fallback ships.
+5. **R5 moduletto availability.** It is a git dependency from `https://github.com/crabnebula-dev/moduletto` (Q1). It has ML-KEM-768 but no ML-DSA-65, which a moduletto pull request adds. Production key wrapping waits on the pin, and production anchors wait on that pull request. Mitigation: every crate above `fstp-crypto` builds against the `hybrid_kem` and `composite` interfaces, with test-only oracles from aws-lc-rs. No classical fallback ships.
 6. **R6 In-house WebAuthn.** CBOR and COSE near authentication. Mitigation: a strict subset, fuzz targets from the first commit, attestation `none`, H-21.
 7. **R7 Memory scans.** Linux-only, and they can miss copies the allocator moved. They catch presence, never prove absence. Structural guards carry I-80.
 8. **R8 Witness coupling.** Prepare, receipt, commit ties every write to witness availability and adds one round trip per append under the cell's lock. Mitigation: a replicated witness in the same region, retries, batching of audit events, a refusal that names the witness, and a latency budget measured in W2 and recorded in the exit audit.
@@ -1781,8 +1789,8 @@ Each parser-bearing crate joins `deps/fuzz-required.txt` and owns `crates/<crate
 13. **R13 Vault origin surface.** The vault becomes reachable from browsers through the edge. Mitigation: three routes, no sessions, signed single-use tickets checked first, fuzzed decoders, H-07.
 14. **R14 Clock steps.** The ledger is time-monotone. Mitigation: NTP on every host and an alert on `TimeBackwards` refusals.
 15. **R15 Encrypted storage and operations.** Ad hoc SQL can no longer read content. Mitigation: typed metrics and the audit view. Operators have no content access through the application, the databases or backups.
-16. **R16 Root on cell hosts (SoD-08, TH-18).** A person with root on a cell or vault host can read unwrapped group keys from process memory, and so read content without break-glass. Sandboxing and swap-off do not stop root. Mitigation in M3: separate host-administration staff with no control-plane rights, no standing root (short-lived SSH certificates issued per case with two-person approval), session recording, and host access events shown to the tenant. Q35 asks Daniel whether to accept the residual risk or to require confidential computing, whose OVHcloud availability is not checked.
-17. **R17 First admin interception.** A single invitation path would let one operator become tenant admin. Mitigation: split delivery (section 8.3). Residual: two colluding staff (Q35).
+16. **R16 Root on cell hosts (SoD-08, TH-18).** A person with root on a cell or vault host can read unwrapped group keys from process memory, and so read content without break-glass. Sandboxing and swap-off do not stop root. Mitigation in M3: separate host-administration staff with no control-plane rights, no standing root (short-lived SSH certificates issued per case with two-person approval), session recording, and host access events shown to the tenant. Daniel accepted the residual risk on 2026-10-28 (Q35). Confidential computing, whose OVHcloud availability is not checked, is evaluated in L-15.
+17. **R17 First admin interception.** A single invitation path would let one operator become tenant admin. Mitigation: split delivery (section 8.3). Residual: two colluding staff, until the M4 token sealed to a tenant-generated key (Q35).
 18. **R18 File custody remnants.** Section 3.3 narrows but does not remove copies of the key table on SSD or in backups the install does not know about (Q32).
 
 ---
@@ -1796,7 +1804,7 @@ Order from `.claude/CLAUDE.md`: `SPEC/02-domain/invariants.md`, then `SPEC/01-re
 1. **R-NF-08 over ADR-007's plaintext bodies and `numeric` projections.** The requirement asks for all data at rest encrypted with cell-specific keys. Shared clusters make disk encryption not cell-specific. Bodies are sealed, and the chain hashes the stored ciphertext, which keeps ADR-007's "stored bytes are the bytes that are hashed" (Q5).
 2. **R-ID-03 and R-SW-02 ACs over ADR-004's static hierarchy.** "No backup or replica can reproduce the document" needs the wrapping chain to die. Hence root-epoch rotation (Q6).
 3. **ADR-007 "an erasure request is honoured at once".** No periodic ratchet. Batches run as requests arrive.
-4. **R-CR-03 over the M9 schedule.** The requirement and ADR-001 both make anchors composite-signed. Anchors are signed in M3 (Q8).
+4. **R-CR-03 over the M9 schedule.** The requirement and ADR-001 both make anchors composite-signed. Anchors are signed in M3 (Q8). Production signing waits on the moduletto ML-DSA-65 pull request (Q1, section 21.0).
 5. **ADR-001 and ADR-004 "binding the ML-KEM ciphertext".** The combiner takes it as an input (Q2).
 6. **I-82 "no database role" over ADR-005's shared default.** No role that can read across cells has a remote login (Q4).
 7. **`overview.md` "answers the application only through the queries" and NOTE 6 "only the vault receives it".** Attributes and the country go browser to vault directly (Q7).
@@ -1812,27 +1820,27 @@ Order from `.claude/CLAUDE.md`: `SPEC/02-domain/invariants.md`, then `SPEC/01-re
 17. **ADR-007 "holds INSERT and SELECT only" over the first version's UPDATE grants.** Side effects are insert-only rows.
 18. **I-81 "including from backups" over long-lived HMAC keys and a rewritten key file.** Keyed digests rotate, and file custody uses per-epoch keys (Q32).
 19. **I-82 over the replication role.** REPLICATION logs in over loopback only (Q4).
-20. **SoD-08 over operator delivery of the first invitation.** Split delivery (Q35).
+20. **SoD-08 over operator delivery of the first invitation.** Split delivery (Q35, answered 2026-10-28).
 21. **ADR-005 "Moving a cell between shared and dedicated mode uses the tenant export and import path".** M-PLACE models no move.
 
 ### 17.2 Interim strict readings
 
 | Topic | Interim reading built | Question |
 | --- | --- | --- |
-| moduletto | Production code waits on the pin. Tests use aws-lc-rs oracles through `fstp-celltest` only | Q1 |
+| moduletto | Production code waits on the pin. Composite signing refuses with a typed error until the ML-DSA-65 pull request lands. Tests use aws-lc-rs oracles through `fstp-celltest` only | Q1 (answered; pull request pending) |
 | Combiner | HKDF-SHA-256 combiner of section 3.2 | Q2 |
 | PostgreSQL | Self-operated PostgreSQL 16 on OVHcloud hosts | Q3 |
 | Superuser and replication | Loopback `hostssl` with a client certificate, used only by `fstp-pgagent` and `fstp-backup`. No streaming replica; standby from sealed WAL archives | Q4 |
 | Ledger at rest | Sealed bodies, chain over ciphertext, no plaintext projection tables | Q5 |
 | Erasure | Root-epoch rotation per batch, completion after the destroy receipt | Q6 |
 | Attributes | Vault origin with tickets | Q7 |
-| Anchors | Composite-signed; prepare, receipt, commit with abort and in-doubt records; no unwitnessed commit | Q8 |
+| Anchors | Composite-signed; prepare, receipt, commit with abort and in-doubt records; no unwitnessed commit; the ML-DSA half waits on the moduletto pull request | Q8 (confirmed) |
 | Self-hosted witness | Mandatory local witness at first start | Q9 |
 | Login methods | Passkeys and magic links only | Q10 |
 | OKMS authentication | Access certificate over mutual TLS if REST accepts it; otherwise the lane waits | Q11 |
 | Guardian | Collected at the IRC_REVIEW to NEGOTIATION gate, vault only | Q12 |
 | Minor flag | Set on every draft by the route layer; never read from the request | Q13 |
-| Manual identity check | Route refuses every caller; tests seed facts through `fstp-celltest` only | Q14 |
+| Manual identity check | The tenant admin records. The platform operator verifies the first tenant admin with two staff. Release window as ADR-008 sets it. Tests seed facts through `fstp-celltest` only | Q14 (answered) |
 | First passkey, step-up, recovery | Three ceremonies; one step-up per command; recovery revokes everything; approval is high-risk; UV for management | Q15 |
 | Sessions on binding end | Every session of the account ends | Q16 |
 | Identity match | Keyed hash over the method's attribute tuple, per cell | Q17 |
@@ -1845,7 +1853,7 @@ Order from `.claude/CLAUDE.md`: `SPEC/02-domain/invariants.md`, then `SPEC/01-re
 | File custody | Per-epoch keys on a non-copy-on-write key volume; passphrase from a systemd credential or the console; I-81 claim scoped | Q32 |
 | Exit scope | Partial claims stated per invariant and requirement, as in section 20 | Q33 |
 | R-NF-09 external links | Claimed for internal links only; request-level credentials on external ones | Q34 |
-| Insider paths | Split first-admin delivery; no standing root; R16 recorded | Q35 |
+| Insider paths | Split first-admin delivery now, tenant-sealed token in M4; no standing root; R16 accepted | Q35 (answered) |
 | I-19 metadata | Only the metadata register crosses | Q36 |
 | New constants and proposed parameters | Ticket 5 minutes, invitation 72 hours, break-glass at most 4 hours as ADR constants; P-71 and P-72 as proposed | Q37 |
 | High-risk additions | `Assign`, `Unassign`, `SetLoginPolicy`, `ApproveSelfGrant`, `ApproveRecovery` | Q38 |
@@ -1912,10 +1920,11 @@ Every one of the 30 review findings was accepted in substance. These were closed
 - W0 drafts every ADR below, with the interim reading of section 17.2 written in as the proposed decision.
 - **No production lane starts before Daniel accepts its ADR**, interim readings included. Verification lanes may write tests and references against a draft, since tests come first and constrain nothing until code exists.
 - When a later answer changes an accepted interim reading, the ADR is amended first, then the code.
+- Daniel accepted every ADR below on 2026-10-28. Readings marked interim inside them stay interim unless section 21.0 settles them.
 
 | ADR | Content | Accepted before |
 | --- | --- | --- |
-| ADR-001 amendment | `zeroize` as a root with features `alloc` and `default` (Q23). moduletto exact version, source, hash, features and tree (Q1). Close the "Open points" line on authentication crates: in-house WebAuthn, with the CBOR and COSE fuzz targets that `authentication.md` asks for (Q10). The Tier B confirmation mirror (section 2.6). No aws-lc-rs feature change | W1h production agent starts; moduletto edges before W1h merges |
+| ADR-001 amendment | `zeroize` as a root with features `alloc` and `default` (Q23). moduletto repository, exact commit, version, features and tree, and the ML-DSA-65 pull request (Q1). Close the "Open points" line on authentication crates: in-house WebAuthn, with the CBOR and COSE fuzz targets that `authentication.md` asks for (Q10). The Tier B confirmation mirror (section 2.6). No aws-lc-rs feature change | W1h production agent starts; moduletto edges before W1h merges |
 | ADR-002 review note | tokio `signal` feature and `signal-hook-registry` with its resolved version and tree | W2l starts |
 | ADR-003 amendment | Node.js and npm as the host of tsc and Playwright (Q39). Then first-use records with versions and trees | W3c starts |
 | ADR-004 completion, part 1 | Combiner bytes and test vectors, "fixed here before implementation" (ADR-004). Nonce rule and seal-count limit | W1h production agent starts |
@@ -1944,7 +1953,7 @@ Tests come first in every step. They compile against stubs that refuse with `Not
 | W1e | R-AUDIT (1) | `src/reference/audit.rs`, `src/mc/audit_model.rs`, `tests/i24_*`, `tests/r_cr_03_*`, `tests/i90_*` | Section 14.4 for I-24 | W1a |
 | W1f | R-ISO (1) | `src/mc/place_model.rs`, `tests/t_iso_*`, `tests/t_db_iso_*`, `tests/i19_*`, `tests/i20_*`, `tests/i82_*`, `tests/i83_*`, `tests/i16_*`, `tests/r_nf_*`, `tests/sod_08_*`, `tests/sod_07_*` | Section 14.4 for I-16, I-19, I-20, I-82, I-83 | W1a |
 | W1g | R-REL (1) | `src/reference/licence.rs`, `src/mc/licence_model.rs`, `tests/i38_*`, `tests/i39_*`, `tests/th_32_*` | Section 14.4 for I-38, I-39 | W1a |
-| W1h | L-CRYPTO (2) | Production agent: `crates/fstp-crypto/src/**`. Test agent: `crates/fstp-crypto/tests/**`, `crates/fstp-crypto/fuzz/**`, `fstp-celltest/src/reference/hybrid.rs` | KATs, ML-KEM and ML-DSA ACVP subsets, differential tests against aws-lc-rs, combiner vectors from an independent implementation, no-`Debug` and zeroize checks | W0; ADR-001 amendment and ADR-004 part 1 accepted; Q1 and Q2 for the moduletto half |
+| W1h | L-CRYPTO (2) | Production agent: `crates/fstp-crypto/src/**`. Test agent: `crates/fstp-crypto/tests/**`, `crates/fstp-crypto/fuzz/**`, `fstp-celltest/src/reference/hybrid.rs` | KATs, ML-KEM and ML-DSA ACVP subsets, differential tests against aws-lc-rs, combiner vectors from an independent implementation, no-`Debug` and zeroize checks. ML-DSA-65 runs against moduletto only once its pull request lands | W0; ADR-001 amendment and ADR-004 part 1 accepted; Q1 (answered) and Q2 for the moduletto half; the moduletto ML-DSA-65 pull request for the `mldsa` and `composite` production code |
 | W1i | L-PKI (2) | Production agent: `crates/fstp-pki/src/**`. Test agent: `crates/fstp-pki/tests/**`, `crates/fstp-pki/fuzz/**` | rustls-webpki round trips; PostgreSQL accepts issued certificates; proof of possession refused when forged | W0 |
 | W2a | L-WEBAUTHN (1) | `crates/fstp-webauthn/**` | Fuzz targets in the first commit; `SoftAuthenticator` fault cases | W1a |
 | W2b | L-AUTH (1) | `crates/fstp-auth/**` | W1b pure parts | W2a API stub |
@@ -1980,28 +1989,28 @@ Every test below is green in CI and each model run is exhaustive. Each teeth tes
 | I-18 | `i18_minor_flag_blocks_negotiation_without_verified_consent`, `i18_no_minor_flagged_proposal_reaches_granted_without_consent`, `i18_route_never_takes_minor_flag_from_the_request`, `i18_consent_counts_only_after_guardian_verification_is_effective`, `fstp_vault_has_no_seed_path` | `i18_m_vcp` | none | `i18_teeth_provisional_consent_counted_is_caught` | Q12, Q13, Q14, Q33 (claimed over seeded facts until a verification method exists) | none |
 | I-19 | `i19_control_plane_columns_are_declared`, `i19_cp_proto_fields_are_declared`, `i19_only_registered_metadata_crosses`, `i19_edge_forwards_bytes_after_client_hello_unchanged`, `i19_foreign_cell_certificates_are_refused`, `i19_session_of_one_cell_is_refused_by_another`, `i19_cell_process_serves_one_cell` | none | `t_iso_i19_no_canary_crosses_a_cell_boundary` | `i19_teeth_canary_in_heartbeat_is_caught`, `i19_teeth_seeded_leak_in_control_plane_is_caught` | Q36 | Q26 |
 | I-20 | `i20_rp_id_is_the_exact_cell_host`, `i20_control_plane_crates_cannot_name_account_types`, `i20_control_plane_and_witness_hold_no_account_id`, `i20_vault_match_keys_differ_across_cells` | none | `t_iso_i20_no_shared_identifier_across_tenants`, Playwright `i20-passkey-not-offered-across-tenants` | `i20_teeth_shared_lookup_key_is_caught` | none | Q17, Q19 |
-| I-24 | `i24_verifier_flags_every_mutation`, `i24_pg_chain_equals_reference_chain`, `i24_database_refuses_bad_link_and_mutation`, `i24_ledger_and_chain_commit_together`, `i24_no_commit_without_a_receipt_for_its_link`, `i24_abort_recorded_before_the_same_n_is_prepared_again`, `i24_in_doubt_missing_row_raises_possible_deletion`, `i24_tail_deletion_after_commit_is_detected`, `i24_vault_chain_anchored_by_the_vault_only`, `i24_erasure_entries_are_chained`, `i24_custody_ops_reconcile_with_key_records`, `r_nf_08_aborted_append_never_reuses_a_nonce` | `i24_m_audit` | none | `i24_teeth_verifier_without_receipt_check_is_caught`, `i24_teeth_link_omitting_a_field_is_caught`, `r_nf_08_teeth_counter_nonce_is_caught` | Q1, Q5, Q8, Q9 | none |
+| I-24 | `i24_verifier_flags_every_mutation`, `i24_pg_chain_equals_reference_chain`, `i24_database_refuses_bad_link_and_mutation`, `i24_ledger_and_chain_commit_together`, `i24_no_commit_without_a_receipt_for_its_link`, `i24_abort_recorded_before_the_same_n_is_prepared_again`, `i24_in_doubt_missing_row_raises_possible_deletion`, `i24_tail_deletion_after_commit_is_detected`, `i24_vault_chain_anchored_by_the_vault_only`, `i24_erasure_entries_are_chained`, `i24_custody_ops_reconcile_with_key_records`, `r_nf_08_aborted_append_never_reuses_a_nonce` | `i24_m_audit` | none | `i24_teeth_verifier_without_receipt_check_is_caught`, `i24_teeth_link_omitting_a_field_is_caught`, `r_nf_08_teeth_counter_nonce_is_caught` | Q1 (the moduletto ML-DSA-65 pull request), Q5, Q8, Q9 | none |
 | I-38 | `i38_update_check_bytes_match_the_template`, `i38_licence_refresh_bytes_match_the_template`, `i38_only_egress_reaches_crabnebula_hosts`, `i38_self_hosted_refuses_intermediary_mode`, `i38_self_hosted_witness_never_targets_crabnebula` | none | `i38_self_hosted_cell_sends_no_canary_to_crabnebula_hosts` | `i38_teeth_extra_header_is_caught` | none | Q19, Q41 |
 | I-39 | `i39_licence_states_never_block_protected_commands`, `i39_no_command_path_reaches_release_crate`, `i39_licence_key_transition_accepted_only_when_signed_by_a_pinned_key`, `i39_rotation_never_blocks_protected_commands` | `i39_m_licence` | `i39_cycle_completes_with_services_down` | `i39_teeth_gate_on_release_payment_is_caught` | Q33 (cycle as far as built; payment M5, export M9) | Q18 |
 | I-77 | `i77_management_login_requires_phishing_resistant_method_over_http`, `i77_role_grant_ends_weak_sessions_in_the_same_batch`, `i77_scheduled_end_ends_sessions_at_its_instant` | `i77_m_auth` | Playwright `i77-management-login` | `i77_teeth_weak_session_admitted_is_caught` | Q10, Q15 | Q16 |
 | I-78 | `i78_high_risk_table_matches_spec_and_domain`, `i78_every_high_risk_route_and_command_needs_a_fresh_step_up`, `i78_route_without_risk_class_does_not_compile`, `i78_stepup_proof_cannot_be_built_outside_the_gate`, `i78_stepup_logged_with_action_digest`, `i78_p71_may_only_shorten`, `i78_database_refuses_a_second_step_up_consumption`, `i78_writer_role_holds_insert_and_select_only` | `i78_m_stepup` | Playwright `r_lg_03_committee_grant_and_add_passkey_need_stepup` | `i78_teeth_stale_step_up_accepted_is_caught` | Q15 | Q37, Q38, Q40 |
 | I-79 | `i79_non_receiving_never_recovered_by_email_alone`, `i79_approver_differs_steps_up_and_is_not_the_same_identity`, `i79_sole_admin_needs_operator_ticket_shown_to_tenant` | `i79_m_recover` | none | `i79_teeth_path_checked_at_request_only_is_caught` | Q15 | none |
-| I-80 | `i80_custody_has_no_export_and_root_material_cannot_escape`, `i80_root_material_named_only_in_keyd` | none | `i80_root_canary_absent_from_cell_and_vault_memory`, `i80_root_canary_absent_from_logs_dumps_and_backups`, `i80_file_custody_root_confined_to_keyd` | `i80_teeth_leaking_custody_is_caught` | Q11, Q32, Q35 (root on hosts) | Q27 |
+| I-80 | `i80_custody_has_no_export_and_root_material_cannot_escape`, `i80_root_material_named_only_in_keyd` | none | `i80_root_canary_absent_from_cell_and_vault_memory`, `i80_root_canary_absent_from_logs_dumps_and_backups`, `i80_file_custody_root_confined_to_keyd` | `i80_teeth_leaking_custody_is_caught` | Q11, Q32 | Q27 |
 | I-81 | `i81_erased_text_unrecoverable_from_every_backup`, `r_id_03_document_unrecoverable_after_verification`, `r_sw_02_cell_erasure_kills_every_backup`, `i81_completion_recorded_only_after_destroy_receipt`, `i81_erasure_resumes_after_crash_at_every_step`, `i81_text_salt_never_stored_in_clear`, `i81_erased_email_digest_cannot_be_recomputed_from_backups`, `i81_erased_identity_match_key_cannot_be_recomputed_from_backups`, `i81_file_custody_destroy_leaves_no_openable_epoch_on_the_key_volume`, `i81_keyd_refuses_copy_on_write_key_volume` | `i81_m_shred` | none | `i81_teeth_group_not_rotated_is_caught`, `i81_teeth_destroy_before_commit_loses_data_is_caught` | Q1, Q6, Q11, Q32 | none |
 | I-82 | `i82_privilege_graph_has_no_cross_cell_path`, `i82_generated_hba_has_no_remote_superuser_and_no_all_line`, `i82_replication_role_has_loopback_line_only_and_no_connect`, `i82_no_remote_role_has_createrole_or_createdb`, `i82_names_reveal_nothing`, `i82_pool_serves_one_cell` | `i83_m_place` (I-82 plan property) | `t_db_iso_i82_every_role_refused_on_foreign_cell_database` | `i82_teeth_seeded_connect_grant_is_caught` | Q3, Q4 | none |
 | I-83 | `i83_placement_never_mixes_kinds`, `i83_vault_refuses_an_application_cluster`, `i83_cell_refuses_a_vault_cluster`, `i83_cluster_kind_is_immutable`, `i83_self_hosted_layout_runs_two_instances` | `i83_m_place` | part of `t_db_iso_*` | `i83_teeth_first_free_cluster_is_caught` | Q3 | none |
 | Isolation | every `t_iso_*`, `t_db_iso_*` and `i80_root_canary_*` | none | `isolation (multi-cell)` job | as above | as above | as above |
 | ADR-005 | Provider named (OVHcloud, 2026-10-28); amendment accepted with the section 1.6 verify list resolved through L-15 | none | none | none | Q3, Q4, Q11, Q25 | none |
 | ADR-004 | Combiner details and custody providers fixed, as its status line requires "before M3 closes" | none | none | none | Q1, Q2, Q11, Q32 | none |
-| ADRs before code | Every ADR of section 18 accepted before its lane's first production commit; the exit audit lists the dates | none | none | none | Q23, Q39 | none |
+| ADRs before code | Every ADR of section 18 accepted before its lane's first production commit. Daniel accepted all of them on 2026-10-28, and the exit audit lists that date | none | none | none | Q23, Q39 | none |
 | Tier B gate | `i74_release_gate_refuses_unconfirmed_tier_b_version`, `i74_release_gate_refuses_a_confirmation_for_another_hash`, `i74_dev_build_reports_but_passes` | none | none | `i74_teeth_gate_skipping_tier_b_is_caught` | Q1 | none |
 | M2 seams | `seam_driver_core_matches_reference_engine`, `adr007_pg_store_matches_mem_store`, `seam_async_engine_matches_reference_over_pg_and_real_vault`, `seam_pg_vault_matches_synthetic_vault`, `seam_m2_suites_over_pg`, `seam_note2_*`, `seam_note3_*`, `seam_note6_*`, `adr007_erased_textref_*` | `m_vcp`, `m_driver` | none | M-VCP and M-DRIVER teeth | Q5, Q7 | Q31 |
 
 Requirements covered in M3, as far as Q33 scopes them:
 
 - Authentication: R-LG-01 (passkeys and magic links), R-LG-02, R-LG-03, R-LG-04.
-- Keys, hosting and cryptography: R-KY-01 (the EU-operated KMS option only; the CrabNebula HSM is not built), R-KY-02, R-HS-02, R-CR-01, R-CR-02 (the gate is built; no release is cut), R-CR-03 (anchors only). R-HS-01 is claimed only once L-15 confirms ownership, contracting entity and regions (section 1.6).
-- Identity and negotiation: R-ID-02 and R-ID-03 (over seeded verifications until Q14), R-ID-04 (interim: every draft flagged, Q13), R-NG-01 (vault side), R-NG-02, R-CF-03 (vault answers).
+- Keys, hosting and cryptography: R-KY-01 (the EU-operated KMS option only; the CrabNebula HSM is not built), R-KY-02, R-HS-02, R-CR-01, R-CR-02 (the gate is built; no release is cut), R-CR-03 (anchors only). The ML-DSA-65 half of those anchors waits on the moduletto pull request, and until then the tests use the aws-lc-rs oracle. R-HS-01 is claimed only once L-15 confirms ownership, contracting entity and regions (section 1.6).
+- Identity and negotiation: R-ID-02 and R-ID-03 (over seeded verifications until the ADR-008 release-window open point and the moduletto ML-DSA-65 pull request are settled), R-ID-04 (interim: every draft flagged, Q13), R-NG-01 (vault side), R-NG-02, R-CF-03 (vault answers).
 - Audit and switching: R-AU-01 (security events and identity reads), R-SW-02.
 - Non-functional: R-NF-01 (self-hosted layout and install), R-NF-02, R-NF-03 and R-NF-04 (for the M3 pages), R-NF-05, R-NF-08, R-NF-09 (internal links only, Q34).
 
@@ -2013,32 +2022,35 @@ Each question gives options and a recommendation. Until you answer, M3 builds th
 
 ### 21.0 Daniel's answers (2026-10-28)
 
-Daniel answered the blocking set in the order it was presented. These answers override the recommendations and the interim readings below wherever they differ.
+Daniel answered the blocking set in the order it was presented. Later on 2026-10-28, after the ADR drafts were committed, he gave further answers, marked "later answer" below. These answers override the recommendations and the interim readings below wherever they differ.
 
 | Question | Answer | Effect on this design |
 | --- | --- | --- |
-| Q1 moduletto source | C: a git dependency | Pinned to a full commit hash in `Cargo.lock`. deps-check gains a git-source rule: the allowlist records the repository URL and commit, and any other git source fails. ADR-001 records URL, commit, features and tree. The deterministic-keygen sub-question stays open |
+| Q1 moduletto source | C: a git dependency. Repository `https://github.com/crabnebula-dev/moduletto`, public, so CI fetches it without credentials (later answer) | Pinned to a full commit hash in `Cargo.lock`. W1h records the exact commit at first use. The main branch head on 2026-10-28 is `46754f2fccb0a501be278fb2fab63b670101a33d`, version 0.1.0. deps-check gains a git-source rule: the allowlist records the repository URL and commit, and any other git source fails. moduletto provides ML-KEM-512 and ML-KEM-768 (FIPS 203) with `keygen_derand` and `encaps_derand`, which answers the deterministic-keygen sub-question for ML-KEM. It has no ML-DSA-65. Daniel decided that ML-DSA-65 (FIPS 204) is added to moduletto, on a pull request that Claude writes and Daniel reviews and merges. Until it lands, the ML-DSA half sits behind the `fstp-crypto` seam and composite signing refuses with a typed error. aws-lc-rs ML-DSA stays a test oracle only and is never a production fallback. Tree: `subtle 2.6` always, `libm 0.2` through the `std` feature, and the allowlisted `zeroize`, with exact versions and checksums recorded at first use (ADR-001 A2) |
 | Q2 combiner | A | As section 3.2 |
 | Q3 PostgreSQL | C: managed for the control-plane databases only; self-operated for cell and vault clusters | Control-plane databases use OVHcloud Public Cloud Databases with SCRAM over server-authenticated TLS (`fstp-pgwire` supports SCRAM). The witness database stays self-operated, the stricter reading, since I-24 detection must not rest on the provider's superuser. ADR-005 records the provider's operator role on control-plane data, which holds only registered metadata (Q36) |
 | Q4 superuser and replication | A with R1 | As recommended |
 | Q5 ledger at rest | A | As recommended, with the listed clear classes accepted |
 | Q6 erasure | A | Per-request root-epoch rotation, with keyed-digest key replacement |
 | Q7 identity attributes | A | Vault origin with tickets |
-| Q8 anchors and tail | Signatures A, tail D | Composite anchors in M3; prepare, receipt, commit. No bounded window |
+| Q8 anchors and tail | Signatures A, tail D. Confirmed again (later answer) | Composite anchors in M3; prepare, witness receipt, commit. No bounded window. The ML-DSA half of every anchor waits on the moduletto pull request (Q1), so production anchoring and production writes wait on it too (ADR-010) |
 | Q9 self-hosted witness | A | Mandatory local witness |
 | Q10 authentication scope | A | In-house WebAuthn and magic links; OPAQUE later; EUDI login and verification in M4 |
 | Q11 OKMS | A, otherwise B | Daniel asks OVHcloud the verify items |
 | Q12 guardian consent | A | At the IRC_REVIEW to NEGOTIATION gate, vault only, R-NG-01 exception, `TODO(legal)` L-02 |
 | Q13 minor flag | A | Over-18 attestation in the vault before NEGOTIATION, new one-bit query, M2 guard change. This also settles M4 Q23 |
-| Q14 manual identity check | B now, A later | The tenant admin records manual checks in M3. A new Operations role "identity verifier" replaces it later. Interim guard: no recorder verifies their own account or an account that shares their identity |
+| Q14 manual identity check | B now, A later. First tenant admin verified by the platform operator (later answer) | The tenant admin records manual checks in M3. A new Operations role "identity verifier" replaces it later. Guard: no recorder verifies their own account or an account that shares their identity. The platform operator verifies the first tenant admin of each tenant. Two operator staff take part, the verification is logged, and it is shown to the tenant. That admin then records the checks of others. This replaces the strict interim that refused every unverified recorder (ADR-008, `roles-and-sod.md`) |
 | Q15 authentication details | Yes to all seven | As recommended |
 | Q23 dependencies | Accept | As recommended |
 | Q25 backup provider | Later | Decided with L-15 due diligence; the ADR-005 exit row stays blocked until then |
 | Q32 file custody | A | As recommended |
 | Q33 exit scope | A | A NOTE for M3 in `SPEC/09-milestones.md` |
-| Q35 insider paths | "First admin" (clarification asked) | Interim: split first-admin delivery now and the tenant-sealed token in M4; root on hosts as recommended until clarified |
+| Q35 insider paths | Both recommendations (later answer) | First-admin invitation split across two staff and two channels now, then a token sealed to a tenant-generated key once M4 onboarding exists. Root on cell hosts: the residual risk is accepted under separate host staff, no standing root, two-person access and tenant-visible access events. Confidential computing is evaluated in L-15 |
 | Q36 tenant data | A | Closed metadata register |
 | Q39 Node.js and npm | A | ADR-003 amendment. This also settles M4 Q7 |
+| ADR acceptance | All drafted M3 ADR sections accepted (later answer) | ADR-001, ADR-002, ADR-003, ADR-004, ADR-005 and ADR-007 amendments and ADR-008 to ADR-012 read "Accepted 2026-10-28 (Daniel Thompson-Yvetot)". Readings marked "interim, pending Daniel" inside them stay interim unless a row here settles them |
+| I-80 epoch seal keys | Not root keys (later answer) | `S(e)` lives in process memory, is zeroised on drop and is covered by the memory scan. Only root epochs stay in custody (ADR-004 part 2) |
+| I-82 reading | Q4 A as a scoped milestone NOTE (later answer) | I-82 covers every role that can log in from another host, applied to the self-operated clusters. The managed control-plane cluster holds no cell data. Recorded in `SPEC/09-milestones.md` NOTE 2. The invariant text is unchanged |
 
 ### 21.1 These block the milestone
 

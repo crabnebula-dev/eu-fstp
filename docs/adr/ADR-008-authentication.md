@@ -1,13 +1,13 @@
 # ADR-008: Authentication implementation
 
-Status: Proposed (drafted 2026-10-28), awaiting Daniel's acceptance.
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
 
 Labels such as `Q10` refer to the questions in `docs/handoff/m3-design.md` section 21. Each decision below names its basis:
 
 - **Answered** means Daniel answered the question on 2026-10-28 (design section 21.0).
 - **Interim, pending Daniel** means the design's interim reading (section 17.2) is written in as the proposed decision. Daniel has not answered it yet.
 
-Accepting this ADR accepts the interim readings in it. A later answer that changes one amends this ADR first, then the code (design section 18).
+Daniel accepted this ADR on 2026-10-28. The interim readings in it are built as written, but each stays interim, pending Daniel, until he answers it. A later answer that changes one amends this ADR first, then the code (design section 18).
 
 ## Context
 
@@ -42,9 +42,10 @@ Options considered for the WebAuthn implementation (Q10):
 | User verification | Required for management logins and for every step-up | Answered (Q15) |
 | Self-hosted sole admin | A host console command is the operator's verified process | Answered (Q15) |
 | Manual identity checks | The tenant admin records them in M3. An Operations role "identity verifier" replaces this later | Answered (Q14 B now, A later) |
-| Recorder without a verified identity | Refused | Interim, pending Daniel (open point "First verified recorder") |
+| First tenant admin verification | The platform operator verifies the first tenant admin of each tenant. Two operator staff take part, the verification is logged, and it is shown to the tenant. That admin then records the checks of others | Answered (Daniel, 2026-10-28) |
+| Recorder without a verified identity | Refused. The operator verification gives the first tenant admin a verified identity, so this no longer blocks a tenant's first record | Interim, pending Daniel. No longer blocking |
 | Minor flag details | Deadline choice, late verification, override and a second derivation before GRANTED | Interim, pending Daniel (Q13 sub-points) |
-| First admin delivery | Split across two staff and two channels now. A tenant-sealed token once M4 onboarding exists | Pending Daniel's clarification of Q35 |
+| First admin delivery | Split across two staff and two channels now. A tenant-sealed token once M4 onboarding exists | Answered (Q35, both recommendations, 2026-10-28) |
 | Sessions on a binding end | Every session of the account ends | Interim, pending Daniel (Q16) |
 | Login email | Sealed in the cell, keyed lookup | Interim, pending Daniel (Q22) |
 | Break-glass | Approval, scope, expiry, gate path and logging in M3. Content views in M4 | Interim, pending Daniel (Q21) |
@@ -124,7 +125,7 @@ Answered (Q15). A first passkey is accepted only inside one of three logged cere
 
 ### First admin delivery
 
-Pending Daniel's clarification of Q35. Daniel answered "First admin", and the design asked which option that selects. The proposed reading follows.
+Answered (Q35). On 2026-10-28 Daniel accepted both recommendations: split delivery across two staff and two channels now, then a token sealed to a tenant-generated key once M4 onboarding exists.
 
 - **SaaS now.** The cell, not the control plane, draws the first-admin token as two random halves. Enrolment needs both.
   - One staff member delivers the first half to the tenant contact recorded at contract.
@@ -198,10 +199,11 @@ Answered (Q14): B in M3, A later. P-18 includes "document upload with manual che
 - **Recorder in M3.** A current tenant admin records a manual verification outcome. The vault records that admin as the verifier.
 - **Later.** An Operations role "identity verifier" replaces the tenant admin as recorder (Daniel, Q14 A later). Interim, pending Daniel: the same two rules bind it, and only the permission rule of the ticket changes. Daniel's answer named the two rules as the guard for the tenant admin in M3.
 - **Rule 1.** No recorder verifies their own account (Daniel's wording, 2026-10-28). The cell refuses the ticket, and the vault refuses the write.
-- **Rule 2.** No recorder verifies an account that shares their identity (Daniel's wording, 2026-10-28). The readings below are this draft's, not Daniel's. They stay in this ADR and do not enter `roles-and-sod.md` until he answers.
+- **Rule 2.** No recorder verifies an account that shares their identity (Daniel's wording, 2026-10-28). The readings marked "Proposed" or "Interim" below are this draft's, not Daniel's. They stay in this ADR and do not enter `roles-and-sod.md` until he answers.
   - Proposed: the vault evaluates the rule over effective facts, including the facts the new verification would reveal.
   - Proposed: a vault outage refuses the record (fail closed, `overview.md` NOTE 2).
-  - Interim, pending Daniel: a recorder without a verified identity is refused, because the vault cannot tell whether that recorder shares the subject's identity. Rule 2 can also be read as satisfied by such a recorder, since no verified identity is shared. Which reading holds is the open point "First verified recorder", which blocks any production claim of Q14.
+  - Answered (Daniel, 2026-10-28): the platform operator verifies the first tenant admin, who then records the checks of others (section "First tenant admin verification" below). This replaces the strict interim that refused every unverified recorder, under which a tenant's first record was impossible.
+  - Interim, pending Daniel: any other recorder without a verified identity is still refused, because the vault cannot evaluate rule 2 for them. With the first admin verified, this no longer blocks a tenant's first record.
 - **What is recorded.** `VerificationRecorded { account, method, document_type, checks, at, verifier }`. No document number or image is stored (R-ID-02).
 - **Document key.** A verification puts the document key into an immediate rotation of the Vault chain (ADR-004 part 2, Erasure construction; P-19, R-ID-03). The verification fact becomes provisional only after that rotation completes. `DocumentErased` is appended only after the destroy receipt for the old root epoch.
 - **Where the outcome travels.** Proposed reading of Q7 A and the `overview.md` section "Operations other than queries": the recorder reviews the upload and enters the outcome on the vault origin, under a write ticket of kind `VerificationRecorded` (ADR-009). No identity attribute enters the application. This changes design section 6.7, which sends the outcome through a cell route.
@@ -209,6 +211,18 @@ Answered (Q14): B in M3, A later. P-18 includes "document upload with manual che
 - **Release window.** `overview.md` allows releases to an Operations role holder "only for a proposal in NEGOTIATION or later". Showing an uploaded document to a recorder is a release. Strict interim: the cell issues a `VerificationRecorded` ticket only for a subject whose proposal is in NEGOTIATION or later. Every other review waits for Daniel (Open points).
 - **Logging.** Issuing the ticket is a ledger record, and the vault logs the review in its own chain (R-AU-01).
 - `TODO(legal)`: L-02, for any manual check of a minor or a guardian before NEGOTIATION.
+
+### First tenant admin verification
+
+Answered (Daniel, 2026-10-28). `roles-and-sod.md` section "Manual identity checks" states the rule.
+
+- The platform operator verifies the first tenant admin of each tenant. Two operator staff take part.
+- The verification is logged and shown to the tenant. Proposed: every later tenant admin sees it in the admin list and the audit view, as with `FirstAdminEnrolled`.
+- That admin then records the manual identity checks of others, under rules 1 and 2. They never record their own check, or the check of an account that shares their identity.
+- Proposed mechanism, fixed by amendment before W2b merges. The first admin uploads a document on the vault origin (`DocumentUpload`). Two staff members review it under an operator ticket with two staff approvals, as in the `OperatorProcess` recovery path. The ticket names only the cell's opaque case reference, never an account id (I-20). The vault records `VerificationRecorded` with the operator process as verifier and both staff references.
+- The operator ticket is composite-signed, so this path waits on the moduletto ML-DSA-65 pull request (ADR-001 A2). Until then, composite signing refuses with a typed error and no operator verification is recorded in production.
+- Proposed reading of SoD-08, for Daniel to confirm: staff take no role binding, and they see only the document the first admin uploads for this check. The first admin's own request for the check counts as the tenant's approval, and the check is logged.
+- Proposed reading for a self-hosted cell: its operator is the hosting organisation, as for `HostConsole` (Q15). The same two-person rule applies to the hosting organisation's staff. This waits for Daniel.
 
 ### Minor flag details
 
@@ -254,9 +268,10 @@ Interim, pending Daniel (Q21). SoD-08 and TH-18 apply.
 - Magic links work only in tests until M6 delivers email.
 - A magic-link account gains a passkey only through a ceremony. The `EmailThenPasskey` path serves that case.
 - Every high-risk command costs one passkey assertion. If assignment lists make this heavy, Q38 offers a batched step-up per list.
-- Under the strict interims, M3 production still records no manual verification. Rule 2 refuses every recorder without a verified identity, and the first verification in a tenant has no verified recorder. The release window also confines reviews to proposals in NEGOTIATION. SoD-09 therefore still refuses Drafting and Judging grants in production, and I-18 stays claimed over seeded facts (`09-milestones.md` NOTE 2).
-- **No production proposal enters NEGOTIATION in M3 under these interims.** Every proposal is minor-flagged unless its lead has an effective verified over-18 attestation (`state-machine.md` NOTE 14). Verifying either an attestation or a guardian needs a manual check before NEGOTIATION, since EUDI verification arrives in M4. The release window allows reviews only in NEGOTIATION or later, and rule 2 refuses every unverified recorder. So no proposal passes IRC_REVIEW to NEGOTIATION in production. This is stricter than Q13 A and Q14 B intend, not a weakening, but it defeats both in M3 production.
-- The open points "First verified recorder" and "Reviews outside NEGOTIATION" therefore block any production claim of Q13 A and Q14 B. Until Daniel answers them, M3 claims both only over seeded facts.
+- The first verified recorder now exists: the platform operator verifies each tenant's first tenant admin (Daniel, 2026-10-28). That path needs a composite-signed operator ticket, so production recording starts only once the moduletto ML-DSA-65 pull request lands (ADR-001 A2).
+- The release window still confines a tenant recorder's reviews to subjects whose proposal is in NEGOTIATION or later. SoD-09 therefore still refuses Drafting and Judging grants in production to every account the operator did not verify. I-18 stays claimed over seeded facts (`09-milestones.md` NOTE 2).
+- **No production proposal enters NEGOTIATION in M3 under the release-window interim.** Every proposal is minor-flagged unless its lead has an effective verified over-18 attestation (`state-machine.md` NOTE 14). Verifying either an attestation or a guardian needs a manual check before NEGOTIATION, since EUDI verification arrives in M4. The release window allows reviews only in NEGOTIATION or later. So no proposal passes IRC_REVIEW to NEGOTIATION in production. This is stricter than Q13 A and Q14 B intend, not a weakening, but it defeats both in M3 production.
+- The open point "Reviews outside NEGOTIATION" therefore blocks any production claim of Q13 A and Q14 B. Until Daniel answers it, M3 claims both only over seeded facts.
 - A verification fact also becomes provisional only after its Vault chain rotation completes. That rotation cannot pass ADR-004 erasure step 5 until Daniel settles how a Vault keystore snapshot is verified (ADR-012 open points).
 
 ## Tests
@@ -269,18 +284,14 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 - I-79: `i79_m_recover`, `i79_non_receiving_never_recovered_by_email_alone`, `i79_approver_differs_steps_up_and_is_not_the_same_identity`, `i79_sole_admin_needs_operator_ticket_shown_to_tenant`, `i79_teeth_path_checked_at_request_only_is_caught`.
 - I-20: `i20_rp_id_is_the_exact_cell_host`, Playwright `i20-passkey-not-offered-across-tenants.spec.ts`.
 - New with this ADR, to be written before the code they constrain:
-  - `r_id_02_recorder_cannot_verify_own_account_or_same_identity`. Its case for a recorder without a verified identity follows whichever reading Daniel chooses under "First verified recorder", and the strict interim until then;
+  - `r_id_02_recorder_cannot_verify_own_account_or_same_identity`, including the interim refusal of any other recorder without a verified identity;
+  - `r_id_02_first_tenant_admin_verified_by_two_operator_staff_and_shown_to_tenant`, proposed with the first tenant admin verification;
   - `i17_verification_review_ticket_refused_to_judging_holder`;
   - `i17_verification_review_ticket_only_in_negotiation_or_later`.
 
 ## Open points
 
-- **Q35 clarification.** Which option "First admin" selects. The split delivery above stands until then.
-- **First verified recorder (blocking for any production claim of Q13 and Q14).** How does a tenant's first recorder start? Under the strict interim, rule 2 refuses an unverified recorder, so a tenant's first manual verification can never be recorded. Options for Daniel:
-  - (a) a bootstrap rule for the first recorder, such as verification through the operator process;
-  - (b) a reading of rule 2 that refuses only a known shared identity, so an unverified recorder may record;
-  - (c) no manual recording until EUDI verification in M4 gives the first recorder a verified identity.
-  - Daniel's answer goes into `roles-and-sod.md` only after he gives it. Until then nothing is recorded in production.
+- **First tenant admin verification details.** The mechanism, the SoD-08 reading and the self-hosted reading under "First tenant admin verification" are proposals. Each is fixed by amendment before W2b merges.
 - **Reviews outside NEGOTIATION (blocking for any production claim of Q13 and Q14).** SoD-09 checks Drafting and Judging holders at binding time, with no proposal involved. Guardian checks (Q12 A) and manual over-18 checks (Q13 A) fall before NEGOTIATION. Each needs a person to see identity data outside the release window of `overview.md`. Options: a separate review operation on the vault origin with its own logged ticket, or no manual review outside NEGOTIATION, leaving those cases to EUDI in M4.
 - **Minor flag details.** The four readings under "Minor flag details" (which deadline, late verification, override, second derivation) wait for Daniel. Each is interim until he answers.
 - **Later Judging grants.** A recorder who later takes a Judging binding already saw what they reviewed. Daniel decides whether such a grant is refused in programmes where the recorder reviewed a subject.
@@ -288,7 +299,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 - **Unset lifetimes.** The magic-link token, the recovery enrolment token, a recovery case and the staff assertion have no lifetime in the design. Each is fixed by amendment before W2b merges.
 - **Operator process checks.** The staff-side checks of `OperatorProcess` are not designed. Proposed: mirror the first-admin split, with one staff member confirming with the tenant contact and a second with the contract signatory. The channels are named in the operator procedure.
 - **Self-registration without a passkey (question for Daniel).** May self-registration end without a passkey where the tenant enables magic links (P-70)? Proposed reading: yes. The account is then magic-link only, as R-LG-01 and the `authentication.md` methods table allow for applicants. `authentication.md` gives it its first passkey through recovery, which is the `EmailThenPasskey` ceremony. Until Daniel answers, `authentication.md` ceremony 2 is worded so that it neither requires nor excludes a passkey at self-registration.
-- **Spec wording (Q28).** `authentication.md` now carries the Q15 answers. The other wording proposals of Q28 stay with Daniel. One more is proposed here: the `authentication.md` section "Crates" still names webauthn-rs and opaque-ke as candidates. ADR-001 amendment A4 rejects both. Proposed wording: "WebAuthn is built in-house (ADR-001 A4, ADR-008), with fuzz targets for its CBOR and COSE parsers from the first commit. OPAQUE waits for an ADR-001 addition that covers its group arithmetic." The paragraph is not edited until Daniel accepts A4 and this wording.
+- **Spec wording (Q28).** `authentication.md` now carries the Q15 answers. The other wording proposals of Q28 stay with Daniel. One more is proposed here: the `authentication.md` section "Crates" still names webauthn-rs and opaque-ke as candidates. ADR-001 amendment A4 rejects both. Proposed wording: "WebAuthn is built in-house (ADR-001 A4, ADR-008), with fuzz targets for its CBOR and COSE parsers from the first commit. OPAQUE waits for an ADR-001 addition that covers its group arithmetic." Daniel accepted A4 on 2026-10-28. The paragraph is not edited until he accepts this wording.
 
 ## Record
 
@@ -296,4 +307,4 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 | --- | --- | --- |
 | Third-party crates added by this ADR | None | 2026-10-28 |
 | `fstp-webauthn` fuzz targets in `deps/fuzz-required.txt` | Record at first use | Record at first use |
-| ADR-001 "Open points" line on authentication crates | Closed by the ADR-001 amendment | Record at first use |
+| ADR-001 "Open points" line on authentication crates | Closed by the ADR-001 amendment, accepted 2026-10-28 | 2026-10-28 |
