@@ -212,6 +212,7 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
             } else {
                 None
             },
+            end: if b.bool() { Some(b.time()) } else { None },
         },
         5 => Core::EndRole {
             binding: binding(b.id()),
@@ -492,6 +493,9 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
             } else {
                 AmendmentRoute::Irc
             },
+        },
+        52 => Core::EndScheduledRole {
+            binding: binding(b.id()),
         },
         _ => Core::ActivateAmendment {
             amendment: amendment(b.id()),
