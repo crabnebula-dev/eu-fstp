@@ -1533,9 +1533,12 @@ fn use_git_crate(repo: &Repo, name: &str, url: &str, spec: &str, source: &str) {
         "deps/adr-roots.txt",
         &format!("{name} ADR-001 - Tier B: post-quantum half\n"),
     );
+    // ADR-001 A2: the record names the pinned commit too, since a git
+    // package keeps its manifest version when its pin moves.
+    let commit = source.rsplit_once('#').map_or("", |(_, c)| c);
     repo.write(
         "docs/adr/ADR-001-crypto.md",
-        &format!("# ADR-001\n\n`{name} 0.3.0`\n"),
+        &format!("# ADR-001\n\n`{name} 0.3.0`, commit `{commit}`\n"),
     );
     repo.lock(".");
 }

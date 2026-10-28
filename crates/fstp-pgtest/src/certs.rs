@@ -20,18 +20,16 @@
 //!
 //! # Seams
 //!
-//! Two parts of this module wait for parallel lanes. Each refuses with
+//! One part of this module waits for a parallel lane. It refuses with
 //! [`CertError::NotImplemented`] and names what it waits for:
 //!
 //! - [`signer`]: key generation, PKCS#8 export and ECDSA P-256 signing.
 //!   They wait for the `fstp_crypto::sig` module of lane W1h. Key pairs
 //!   come from there, never from code written here (`.claude/CLAUDE.md`).
-//! - [`to_spec`]: the W0 stub `fstp_pki::cert::CertSpec` has no subject
-//!   OU, no subjectAltName and no usage beyond `ca`. Lane W1i extends it.
-//!   Until then the profile above cannot be stated, and `to_spec` refuses
-//!   rather than drop a field.
 //!
-//! Only these two functions change when lanes W1h and W1i land. The
+//! [`to_spec`] maps the profile onto `fstp_pki::cert::CertSpec`, with the
+//! issuer's key identifier as the authorityKeyIdentifier. Only [`signer`]
+//! changes when lane W1h lands. The
 //! certificate PEM comes from `fstp_pki::pem`. The key PEM is written
 //! here, since `fstp_pki::pem::PemLabel` names certificates only.
 
@@ -39,7 +37,10 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fstp_pki::cert::{CertSpec, DistinguishedName, SignatureAlgorithm, Validity, assemble, tbs};
+use fstp_pki::cert::{
+    CertKind, CertSpec, DistinguishedName, SignatureAlgorithm, Validity, assemble, key_identifier,
+    tbs,
+};
 use fstp_pki::pem::{PemLabel, encode};
 
 /// Why a certificate operation failed.
@@ -148,42 +149,35 @@ pub struct Profile {
 }
 
 /// Maps a harness profile onto the `fstp-pki` certificate template.
+/// `issuer_spki_der` is the issuer's subject public key info. Its key
+/// identifier becomes the authorityKeyIdentifier, which `fstp-pki`
+/// requires on every certificate a CA key signs.
 ///
 /// # Errors
 ///
-/// Refuses a profile the template cannot state: a subject OU, a
-/// subjectAltName, or a server or client usage. The W0 template has none
-/// of the three, and lane W1i adds them.
-pub fn to_spec(p: &Profile) -> Result<CertSpec, CertError> {
-    if p.subject.ou.is_some() || p.issuer.ou.is_some() {
-        return Err(CertError::NotImplemented(
-            "fstp_pki::cert::CertSpec has no subject OU yet (lane W1i)",
-        ));
-    }
-    if !p.dns_names.is_empty() || !p.ip_addrs.is_empty() {
-        return Err(CertError::NotImplemented(
-            "fstp_pki::cert::CertSpec has no subjectAltName yet (lane W1i)",
-        ));
-    }
-    if p.usage != Usage::Ca {
-        return Err(CertError::NotImplemented(
-            "fstp_pki::cert::CertSpec has no server or client usage yet (lane W1i)",
-        ));
-    }
+/// Refuses a name or a subjectAltName that `fstp-pki` refuses.
+pub fn to_spec(p: &Profile, issuer_spki_der: &[u8]) -> Result<CertSpec, CertError> {
+    let name = |n: &Name| DistinguishedName {
+        common_name: n.cn.clone(),
+        organizational_unit: n.ou.clone(),
+    };
     Ok(CertSpec {
         serial: p.serial.clone(),
-        issuer: DistinguishedName {
-            common_name: p.issuer.cn.clone(),
-        },
-        subject: DistinguishedName {
-            common_name: p.subject.cn.clone(),
-        },
+        issuer: name(&p.issuer),
+        subject: name(&p.subject),
         validity: Validity {
             not_before: p.not_before,
             not_after: p.not_after,
         },
         spki_der: p.spki_der.clone(),
-        ca: p.usage == Usage::Ca,
+        issuer_key_id: Some(key_identifier(issuer_spki_der)?),
+        kind: match p.usage {
+            Usage::Ca => CertKind::Ca,
+            Usage::Server => CertKind::Server,
+            Usage::Client => CertKind::Client,
+        },
+        dns_names: p.dns_names.clone(),
+        ip_addrs: p.ip_addrs.clone(),
         algorithm: SignatureAlgorithm::EcdsaP256Sha256,
     })
 }
@@ -376,7 +370,9 @@ impl ClusterCa {
             },
             subject,
             not_before,
-            not_after: not_before.saturating_add(LEAF_LIFETIME_SECS),
+            // RFC 5280: both ends are valid, so the last second is
+            // LEAF_LIFETIME_SECS - 1 after the first (fstp_pki::CLIENT_MAX_LIFETIME).
+            not_after: not_before.saturating_add(LEAF_LIFETIME_SECS - 1),
             spki_der: key.spki_der()?,
             usage,
             dns_names,
@@ -408,7 +404,7 @@ pub fn is_identifier(name: &str) -> bool {
 
 /// Builds and signs the certificate `p` describes. `issuer` signs it.
 fn build(p: &Profile, issuer: &KeyPair) -> Result<Vec<u8>, CertError> {
-    let spec = to_spec(p)?;
+    let spec = to_spec(p, &issuer.spki_der()?)?;
     let t = tbs(&spec)?;
     let signature = issuer.sign(t.as_der())?;
     Ok(assemble(&t, &signature)?)
