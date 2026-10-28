@@ -5,10 +5,11 @@
 //! authenticator, canaries, scanners, the egress recorder, independent
 //! references, the models and the vault fact seeder (section 6.9).
 //!
-//! Status: W0 stub. Lane W1a owns the harness files, and each W1 lane owns
-//! its `reference` and `mc` files (design section 19). Every operation
-//! refuses with [`NotImplemented`]. Nothing here answers a check with an
-//! empty result, so no test passes on a stub.
+//! Lane W1a owns the harness files, and each W1 lane owns its `reference`
+//! and `mc` files (design section 19). A part that waits for another lane
+//! refuses with [`NotImplemented`] and names what it waits for. Nothing
+//! here answers a check with an empty result, so no test passes on a
+//! missing part.
 
 pub mod canary;
 pub mod custody_sim;
