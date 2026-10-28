@@ -88,10 +88,11 @@ use fstp_money::{AmountRange, Percent};
 use fstp_prop::{Gen, StateMachine};
 
 use crate::r#gen::money::{
-    FINREL, LA, LB, LC, MoneySetup, PA, PB, PC, REL, accept_grant, activate_amendment,
-    amendment_assignment, amount_decision, approve_grant, assign_amendment_declared,
-    contract_effective, decline_negotiation, determine, milestone_n, money_plan, nonneg,
-    propose_amendment, record_deliverable, route_amendment, start_execution, terminate,
+    FINREL, LA, LB, LC, MoneySetup, PA, PB, PC, REL, accept_decision, accept_grant_as,
+    activate_amendment, amendment_assignment, amount_decision, approve_decision, approve_grant_as,
+    assign_amendment_declared, contract_effective_as, contract_of_n, decline_negotiation,
+    determine, milestone_n, money_plan, nonneg, propose_amendment, record_deliverable,
+    route_amendment, start_execution, terminate,
 };
 use crate::r#gen::policy::{knock_outs, model, next_version, opaque, text};
 use crate::r#gen::review::{
@@ -996,9 +997,13 @@ pub fn act_steps(m: &TwinGhost, p: Option<ProposalId>, act: Act) -> Option<Vec<S
                 .map_or_else(|| plan_of(p), EffectiveScoreSet::plan);
             vec![determine(R1, p, amount_decision(p, n), agreed, &[]).ok()?]
         }
-        Act::Accept => vec![accept_grant(lead, p)],
-        Act::Approve => vec![approve_grant(STAFF_PM, p)],
-        Act::Contract => vec![contract_effective(p)],
+        // The grant facts name the current determination (Q-W7-7), and the
+        // contract port reports the contract of the current amount, since a
+        // new amount clears the old contract fact (Q-W7-4, decided
+        // 2026-10-28).
+        Act::Accept => vec![grant_fact_step(m, p, Act::Accept, 0)?],
+        Act::Approve => vec![grant_fact_step(m, p, Act::Approve, 0)?],
+        Act::Contract => vec![grant_fact_step(m, p, Act::Contract, 0)?],
         Act::DeclineNegotiation => vec![decline_negotiation(Actor::Account(STAFF_PM), p)],
         Act::Start => vec![start_execution(p)],
         Act::Terminate => vec![terminate(STAFF_PM, p)],
@@ -1021,14 +1026,47 @@ pub fn act_steps(m: &TwinGhost, p: Option<ProposalId>, act: Act) -> Option<Vec<S
         .map(|a| act_steps(m, Some(p), a))
         .collect::<Option<Vec<_>>>()?
         .concat(),
-        Act::GrantAll => [Act::Determine, Act::Accept, Act::Approve, Act::Contract]
-            .into_iter()
-            .map(|a| act_steps(m, Some(p), a))
-            .collect::<Option<Vec<_>>>()?
-            .concat(),
+        // The facts follow the determination of this step, so they name it.
+        Act::GrantAll => {
+            let mut out = act_steps(m, Some(p), Act::Determine)?;
+            for f in [Act::Accept, Act::Approve, Act::Contract] {
+                out.push(grant_fact_step(m, p, f, 1)?);
+            }
+            out
+        }
         Act::Read(r) => vec![read(r, p)],
         Act::Amend(cents, members) => amend_steps(m, p, cents, members)?,
     })
+}
+
+/// The grant fact `act` of `p` in `m`, after `ahead` more determinations
+/// than `m` records. The acceptance and the approval name that
+/// determination (Q-W7-7), and the contract is the one of that amount
+/// (Q-W7-4, decided 2026-10-28). `None` for another act.
+fn grant_fact_step(m: &TwinGhost, p: ProposalId, act: Act, ahead: u128) -> Option<Step> {
+    let n = m
+        .determinations
+        .get(&p)
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(ahead);
+    let lead = lead_of(p);
+    match act {
+        Act::Accept => Some(accept_grant_as(
+            lead,
+            p,
+            accept_decision(p),
+            amount_decision(p, n),
+        )),
+        Act::Approve => Some(approve_grant_as(
+            STAFF_PM,
+            p,
+            approve_decision(p),
+            amount_decision(p, n),
+        )),
+        Act::Contract => Some(contract_effective_as(p, contract_of_n(p, n))),
+        _ => None,
+    }
 }
 
 /// The id of the `n`-th amendment of `p`.

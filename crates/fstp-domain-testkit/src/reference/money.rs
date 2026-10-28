@@ -71,16 +71,25 @@
 //!   The batch releases the old reservation before it reserves the new
 //!   amount, so the two are never counted together. The headroom the new
 //!   amount must fit leaves the proposal's own reservation out.
-//!   Test-author choice: a contract fact recorded before the new
-//!   determination keeps counting, since NOTE 9 names only acceptance and
-//!   approval. This is raised with Daniel.
+//!   A new determination also clears any contract fact recorded for the
+//!   earlier amount, so the contract always matches the current amount
+//!   (Q-W7-4, decided 2026-10-28). NEGOTIATION to GRANTED then needs the
+//!   acceptance, the approval and the contract fact all given after the
+//!   current determination. The contract of a cleared fact was signed for
+//!   the superseded amount, so a redelivered fact for it is refused.
 //! - I-34 at the amount determination (decided 2026-10-28): the active
 //!   reviewer assignees of the proposal in its current call must span at
 //!   least P-39 organisations, read from their committee bindings. An
 //!   assignee whose organisation is unknown fails the check (SoD-10).
 //! - `AcceptGrant` is the lead's, `ApproveGrant` an active programme
 //!   manager's, and `ContractFact` the System's, from the contract port.
-//!   Each needs NEGOTIATION, and the two decisions need fresh ids. The
+//!   Each needs NEGOTIATION, and the two decisions need fresh ids.
+//!   `AcceptGrant` and `ApproveGrant` each name the amount determination
+//!   they accept, by its decision id. Each is refused unless that
+//!   determination is the current one for the proposal (Q-W7-7, decided
+//!   2026-10-28). So an acceptance composed against a superseded amount
+//!   and decided after the new one is refused. A command without the
+//!   member comes from the interface before it and is not checked. The
 //!   command that completes the three facts takes NEGOTIATION to GRANTED
 //!   in the same batch when every guard of the row holds: identity
 //!   verified, guardian consent if minor (I-18), an open reservation equal
@@ -383,6 +392,9 @@ pub struct MoneyProposal {
     pub approved: Option<DecisionId>,
     /// The contract that became EFFECTIVE.
     pub contract: Option<ContractId>,
+    /// The contracts whose fact a new determination cleared. Each was
+    /// signed for a superseded amount (Q-W7-4, decided 2026-10-28).
+    pub superseded_contracts: BTreeSet<ContractId>,
     /// The granted amount, minor units: the amended total after an amendment.
     pub granted: Option<i64>,
     /// The plan of the effective contract version.
@@ -790,6 +802,7 @@ impl MoneyView {
                         accepted: None,
                         approved: None,
                         contract: None,
+                        superseded_contracts: BTreeSet::new(),
                         granted: None,
                         effective_plan: None,
                         declined: None,
@@ -846,11 +859,18 @@ impl MoneyView {
                 };
                 // A new amount supersedes the old one, so the acceptance
                 // and the approval of the old amount stop counting (NOTE 9,
-                // decided 2026-10-28).
+                // decided 2026-10-28). The contract fact of the old amount
+                // is cleared too, so the contract always matches the
+                // current amount (Q-W7-4, decided 2026-10-28).
                 let q = self.proposal_mut(*proposal)?;
                 q.determined = Some(d);
                 q.accepted = None;
                 q.approved = None;
+                // The cleared contract is remembered, so a redelivered
+                // fact for it never counts again.
+                if let Some(old) = q.contract.take() {
+                    q.superseded_contracts.insert(old);
+                }
             }
             Record::CapReserved {
                 proposal, amount, ..
@@ -1567,12 +1587,26 @@ pub fn money_verdict(cx: &MoneyCx<'_>, actor: Actor, cmd: &Command) -> MoneyVerd
             agreed,
             deductions,
         } => determine(cx, actor, *decision, *proposal, *agreed, deductions),
-        Command::AcceptGrant { decision, proposal } => {
-            grant_fact(cx, actor, *proposal, GrantFact::Accept(*decision))
-        }
-        Command::ApproveGrant { decision, proposal } => {
-            grant_fact(cx, actor, *proposal, GrantFact::Approve(*decision))
-        }
+        Command::AcceptGrant {
+            decision,
+            proposal,
+            determination,
+        } => grant_fact(
+            cx,
+            actor,
+            *proposal,
+            GrantFact::Accept(*decision, *determination),
+        ),
+        Command::ApproveGrant {
+            decision,
+            proposal,
+            determination,
+        } => grant_fact(
+            cx,
+            actor,
+            *proposal,
+            GrantFact::Approve(*decision, *determination),
+        ),
         Command::ContractFact {
             proposal,
             contract,
@@ -1781,9 +1815,19 @@ fn determine(
 /// One of the three facts NEGOTIATION to GRANTED needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GrantFact {
-    Accept(DecisionId),
-    Approve(DecisionId),
+    /// The acceptance decision and the determination it names.
+    Accept(DecisionId, DecisionId),
+    /// The approval decision and the determination it names.
+    Approve(DecisionId, DecisionId),
     Contract(ContractId),
+}
+
+/// Q-W7-7 (decided 2026-10-28): an acceptance or approval names the
+/// amount determination it accepts, and is refused unless that is the
+/// current one of `q`. Every decoded `AcceptGrant` and `ApproveGrant`
+/// carries the member.
+fn names_current(q: &MoneyProposal, named: DecisionId) -> bool {
+    q.determined.as_ref().is_some_and(|d| d.decision == named)
 }
 
 fn grant_fact(
@@ -1813,18 +1857,23 @@ fn grant_fact(
     let mut e = MoneyExpect::new();
     let mut after = q.clone();
     match fact {
-        GrantFact::Accept(d) => {
+        GrantFact::Accept(d, named) => {
             let Some(a) = account(actor) else {
                 return refuse("AcceptGrant is the lead's");
             };
             if !cx.lead(a, proposal) {
                 return refuse("AcceptGrant is the lead's");
             }
+            if !cx.decision_fresh(d) {
+                return refuse("decision id reused");
+            }
             if q.accepted.is_some() {
                 return refuse("already accepted");
             }
-            if !cx.decision_fresh(d) {
-                return refuse("decision id reused");
+            if !names_current(q, named) {
+                return refuse(
+                    "Q-W7-7, NOTE 9 (decided 2026-10-28): AcceptGrant names a determination that is not the current one",
+                );
             }
             e = e.exact(Record::GrantAccepted {
                 decision: d,
@@ -1833,18 +1882,23 @@ fn grant_fact(
             });
             after.accepted = Some(d);
         }
-        GrantFact::Approve(d) => {
+        GrantFact::Approve(d, named) => {
             let Some(a) = account(actor) else {
                 return refuse("ApproveGrant is the programme manager's");
             };
             if !cx.pm(a, proposal) {
                 return refuse("ApproveGrant is the programme manager's");
             }
+            if !cx.decision_fresh(d) {
+                return refuse("decision id reused");
+            }
             if q.approved.is_some() {
                 return refuse("already approved");
             }
-            if !cx.decision_fresh(d) {
-                return refuse("decision id reused");
+            if !names_current(q, named) {
+                return refuse(
+                    "Q-W7-7, NOTE 9 (decided 2026-10-28): ApproveGrant names a determination that is not the current one",
+                );
             }
             e = e.exact(Record::GrantApproved {
                 decision: d,
@@ -1856,6 +1910,13 @@ fn grant_fact(
         GrantFact::Contract(c) => {
             if !matches!(actor, Actor::System(_)) {
                 return refuse("ContractFact comes from the contract port");
+            }
+            // A superseded contract is refused before the repeat check, as
+            // in production.
+            if q.superseded_contracts.contains(&c) {
+                return refuse(
+                    "Q-W7-4 (decided 2026-10-28): the contract was signed for a superseded amount",
+                );
             }
             let repeated = q.contract.is_some();
             e = e.exact(Record::ContractFactRecorded {

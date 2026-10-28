@@ -476,19 +476,26 @@ pub enum Command {
         /// Recorded deductions for ineligible costs.
         deductions: Vec<IneligibleCost>,
     },
-    /// The applicant accepts the grant.
+    /// The applicant accepts the grant of the current amount (NOTE 9).
     AcceptGrant {
         /// The decision.
         decision: DecisionId,
         /// The proposal.
         proposal: ProposalId,
+        /// The amount determination accepted, by its decision id. It must
+        /// be the current one (R-NG-03, NOTE 9, decided 2026-10-28).
+        determination: DecisionId,
     },
-    /// The programme manager approves the grant.
+    /// The programme manager approves the grant of the current amount
+    /// (NOTE 9).
     ApproveGrant {
         /// The decision.
         decision: DecisionId,
         /// The proposal.
         proposal: ProposalId,
+        /// The amount determination approved, by its decision id. It must
+        /// be the current one (R-NG-03, NOTE 9, decided 2026-10-28).
+        determination: DecisionId,
     },
     /// A fact from the M5 contract port.
     ContractFact {

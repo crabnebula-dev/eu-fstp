@@ -28,6 +28,13 @@
 //!   `ClosePaymentRequest { request, reason }`, are built through the
 //!   command codec. Until the codec knows them, building them fails, so a
 //!   test that needs them is red for that reason alone.
+//! - `AcceptGrant` and `ApproveGrant` name the amount determination they
+//!   accept, by its decision id, in the member `determination` (Q-W7-7,
+//!   decided 2026-10-28). Every `AcceptGrant` and `ApproveGrant` the kit
+//!   builds carries that member. [`accept_grant_naming`] and
+//!   [`approve_grant_naming`] build one that may name a superseded
+//!   determination, and round-trip it through the command codec. The
+//!   other grant fact steps name the determination they are given.
 
 use std::collections::BTreeSet;
 
@@ -166,6 +173,21 @@ pub fn contract_of(proposal: ProposalId) -> ContractId {
     ContractId::from_raw(24_000u128.saturating_add(proposal.raw()))
 }
 
+/// The contract of `proposal` for its `n`-th amount determination. For
+/// `n` at most 1 it is [`contract_of`]. A new amount clears the contract
+/// fact of the old one, so the contract port reports the contract of the
+/// new amount (Q-W7-4, decided 2026-10-28).
+pub fn contract_of_n(proposal: ProposalId, n: u128) -> ContractId {
+    if n <= 1 {
+        return contract_of(proposal);
+    }
+    ContractId::from_raw(
+        27_000u128
+            .saturating_add(proposal.raw().saturating_mul(100))
+            .saturating_add(n),
+    )
+}
+
 /// EUR `minor` cents, at least zero.
 pub fn nonneg(minor: i64) -> Result<NonNegAmount, String> {
     Amount::from_minor(minor, Currency::Eur)
@@ -227,48 +249,150 @@ pub fn determine(
     ))
 }
 
-/// The lead's `AcceptGrant`.
+/// The JSON form of the decision id `d`, as a command member carries it.
+fn decision_json(d: DecisionId) -> Result<Value, String> {
+    let probe = Command::Terminate {
+        decision: d,
+        proposal: ProposalId::from_raw(0),
+        reason: text(0),
+    }
+    .to_json();
+    member(probe, "decision")
+}
+
+/// `cmd` with the member `determination` set to `determination`, built
+/// through the command codec (Q-W7-7, decided 2026-10-28). It fails only if
+/// the codec refuses the result.
+pub fn with_determination(cmd: &Command, determination: DecisionId) -> Result<Command, String> {
+    let Value::Object(mut o) = cmd.to_json() else {
+        return Err("a command encodes as an object".to_owned());
+    };
+    let _ = o.insert("determination", decision_json(determination)?);
+    fstp_domain::codec::command_from_json(&Value::Object(o)).map_err(|e| {
+        format!(
+            "the command codec does not know the determination member of {cmd:?} yet ({e:?}), \
+             Q-W7-7"
+        )
+    })
+}
+
+/// The `AcceptGrant` of `decision` on `proposal`, naming `determination`
+/// (Q-W7-7, decided 2026-10-28).
+fn accept_cmd(decision: DecisionId, proposal: ProposalId, determination: DecisionId) -> Command {
+    Command::AcceptGrant {
+        decision,
+        proposal,
+        determination,
+    }
+}
+
+/// The `ApproveGrant` of `decision` on `proposal`, naming `determination`
+/// (Q-W7-7, decided 2026-10-28).
+fn approve_cmd(decision: DecisionId, proposal: ProposalId, determination: DecisionId) -> Command {
+    Command::ApproveGrant {
+        decision,
+        proposal,
+        determination,
+    }
+}
+
+/// The lead's `AcceptGrant`, naming the first determination
+/// [`amount_decision`] `(proposal, 1)` (Q-W7-7).
 pub fn accept_grant(lead: AccountId, proposal: ProposalId) -> Step {
     by(
         lead,
-        Command::AcceptGrant {
-            decision: accept_decision(proposal),
+        accept_cmd(
+            accept_decision(proposal),
             proposal,
-        },
+            amount_decision(proposal, 1),
+        ),
     )
 }
 
-/// The lead's `AcceptGrant` with the decision id `decision`, as given
-/// again after a new amount (NOTE 9, decided 2026-10-28).
-pub fn accept_grant_as(lead: AccountId, proposal: ProposalId, decision: DecisionId) -> Step {
-    by(lead, Command::AcceptGrant { decision, proposal })
+/// The lead's `AcceptGrant` with the decision id `decision`, naming the
+/// current determination `determination`, as given again after a new
+/// amount (NOTE 9, Q-W7-7, decided 2026-10-28).
+pub fn accept_grant_as(
+    lead: AccountId,
+    proposal: ProposalId,
+    decision: DecisionId,
+    determination: DecisionId,
+) -> Step {
+    by(lead, accept_cmd(decision, proposal, determination))
 }
 
 /// The programme manager's `ApproveGrant` with the decision id
-/// `decision`, as given again after a new amount (NOTE 9, decided
-/// 2026-10-28).
-pub fn approve_grant_as(pm: AccountId, proposal: ProposalId, decision: DecisionId) -> Step {
-    by(pm, Command::ApproveGrant { decision, proposal })
+/// `decision`, naming the current determination `determination`, as given
+/// again after a new amount (NOTE 9, Q-W7-7, decided 2026-10-28).
+pub fn approve_grant_as(
+    pm: AccountId,
+    proposal: ProposalId,
+    decision: DecisionId,
+    determination: DecisionId,
+) -> Step {
+    by(pm, approve_cmd(decision, proposal, determination))
 }
 
-/// The programme manager's `ApproveGrant`.
+/// The lead's `AcceptGrant` with the decision id `decision`, naming
+/// `determination`, which may be superseded (Q-W7-7, decided 2026-10-28).
+/// It is built through the command codec.
+pub fn accept_grant_naming(
+    lead: AccountId,
+    proposal: ProposalId,
+    decision: DecisionId,
+    determination: DecisionId,
+) -> Result<Step, String> {
+    let base = accept_cmd(decision, proposal, determination);
+    Ok(by(lead, with_determination(&base, determination)?))
+}
+
+/// The programme manager's `ApproveGrant` with the decision id
+/// `decision`, naming `determination`, which may be superseded (Q-W7-7,
+/// decided 2026-10-28). It is built through the command codec.
+pub fn approve_grant_naming(
+    pm: AccountId,
+    proposal: ProposalId,
+    decision: DecisionId,
+    determination: DecisionId,
+) -> Result<Step, String> {
+    let base = approve_cmd(decision, proposal, determination);
+    Ok(by(pm, with_determination(&base, determination)?))
+}
+
+/// The determination `cmd` names, read from its JSON form (Q-W7-7).
+/// `None` for a command without the member.
+pub fn named_determination(cmd: &Command) -> Option<DecisionId> {
+    match member(cmd.to_json(), "determination") {
+        Ok(Value::String(s)) => s.parse::<u128>().ok().map(DecisionId::from_raw),
+        _ => None,
+    }
+}
+
+/// The programme manager's `ApproveGrant`, naming the first determination
+/// [`amount_decision`] `(proposal, 1)` (Q-W7-7).
 pub fn approve_grant(pm: AccountId, proposal: ProposalId) -> Step {
     by(
         pm,
-        Command::ApproveGrant {
-            decision: approve_decision(proposal),
+        approve_cmd(
+            approve_decision(proposal),
             proposal,
-        },
+            amount_decision(proposal, 1),
+        ),
     )
 }
 
 /// The contract port's EFFECTIVE fact.
 pub fn contract_effective(proposal: ProposalId) -> Step {
+    contract_effective_as(proposal, contract_of(proposal))
+}
+
+/// The contract port's EFFECTIVE fact for the contract `contract`.
+pub fn contract_effective_as(proposal: ProposalId, contract: ContractId) -> Step {
     system(
         SystemCause::ContractPort,
         Command::ContractFact {
             proposal,
-            contract: contract_of(proposal),
+            contract,
             event: ContractEvent::Effective,
         },
     )
@@ -1246,11 +1370,36 @@ impl MoneyStory {
         Ok(())
     }
 
-    /// The acceptance, the approval and the contract fact of `proposal`, in that order.
+    /// The current amount determination of `proposal` in the reference
+    /// view, by its decision id.
+    pub fn determination(&self, proposal: ProposalId) -> Result<DecisionId, String> {
+        self.world
+            .money
+            .proposals
+            .get(&proposal)
+            .and_then(|p| p.determined.as_ref())
+            .map(|d| d.decision)
+            .ok_or_else(|| format!("{proposal:?} has no amount determination"))
+    }
+
+    /// The acceptance, the approval and the contract fact of `proposal`, in
+    /// that order. The acceptance and the approval name the current
+    /// determination (Q-W7-7, decided 2026-10-28).
     pub fn grant_facts(&mut self, proposal: ProposalId) -> Result<(), String> {
         let lead = self.lead(proposal)?;
-        self.run(&accept_grant(lead, proposal))?;
-        self.run(&approve_grant(STAFF_PM, proposal))?;
+        let current = self.determination(proposal)?;
+        self.run(&accept_grant_as(
+            lead,
+            proposal,
+            accept_decision(proposal),
+            current,
+        ))?;
+        self.run(&approve_grant_as(
+            STAFF_PM,
+            proposal,
+            approve_decision(proposal),
+            current,
+        ))?;
         self.run(&contract_effective(proposal))?;
         Ok(())
     }
@@ -1353,10 +1502,12 @@ pub enum MoneyCmd {
         /// The deductions.
         deductions: Vec<i64>,
     },
-    /// The lead's acceptance.
-    Accept(ProposalId),
-    /// The programme manager's approval.
-    Approve(ProposalId),
+    /// The lead's acceptance, naming a superseded determination when the
+    /// flag is set (Q-W7-7).
+    Accept(ProposalId, bool),
+    /// The programme manager's approval, naming a superseded determination
+    /// when the flag is set (Q-W7-7).
+    Approve(ProposalId, bool),
     /// The contract port's EFFECTIVE fact.
     Contract(ProposalId),
     /// `DeclineNegotiation` by the programme manager.
@@ -1425,7 +1576,10 @@ impl MoneyMachine {
     }
 
     /// The step of `cmd` in `m`.
-    pub fn step_of(m: &MoneyModel, cmd: &MoneyCmd) -> Result<Step, String> {
+    /// `Ok(None)` for an acceptance or approval naming a superseded
+    /// determination while the command codec does not know the member yet
+    /// (Q-W7-7), so it is not drawn until then.
+    pub fn step_of(m: &MoneyModel, cmd: &MoneyCmd) -> Result<Option<Step>, String> {
         let lead = |p: ProposalId| {
             m.world
                 .money
@@ -1434,7 +1588,7 @@ impl MoneyMachine {
                 .map(|x| x.lead)
                 .ok_or_else(|| format!("unknown {p:?}"))
         };
-        Ok(match cmd {
+        Ok(Some(match cmd {
             MoneyCmd::Determine {
                 by,
                 proposal,
@@ -1447,14 +1601,36 @@ impl MoneyMachine {
                 deductions,
             )?,
             // A fresh decision id after every new determination, since a new
-            // amount needs a new acceptance and approval (NOTE 9).
-            MoneyCmd::Accept(p) => {
-                accept_grant_as(lead(*p)?, *p, accept_decision_n(*p, m.decisions))
+            // amount needs a new acceptance and approval (NOTE 9). Each names
+            // the current determination, or a superseded one when drawn
+            // stale, which both sides must refuse (Q-W7-7, decided 2026-10-28).
+            MoneyCmd::Accept(p, stale) => {
+                let d = accept_decision_n(*p, m.decisions);
+                let named = naming(m, *p, *stale);
+                if *stale {
+                    match accept_grant_naming(lead(*p)?, *p, d, named) {
+                        Ok(s) => s,
+                        Err(_) => return Ok(None),
+                    }
+                } else {
+                    accept_grant_as(lead(*p)?, *p, d, named)
+                }
             }
-            MoneyCmd::Approve(p) => {
-                approve_grant_as(STAFF_PM, *p, approve_decision_n(*p, m.decisions))
+            MoneyCmd::Approve(p, stale) => {
+                let d = approve_decision_n(*p, m.decisions);
+                let named = naming(m, *p, *stale);
+                if *stale {
+                    match approve_grant_naming(STAFF_PM, *p, d, named) {
+                        Ok(s) => s,
+                        Err(_) => return Ok(None),
+                    }
+                } else {
+                    approve_grant_as(STAFF_PM, *p, d, named)
+                }
             }
-            MoneyCmd::Contract(p) => contract_effective(*p),
+            // A new amount clears the contract fact of the old one, so the
+            // port reports the contract of the new amount (Q-W7-4).
+            MoneyCmd::Contract(p) => contract_effective_as(*p, contract_of_n(*p, m.decisions)),
             MoneyCmd::Decline(p) => decline_negotiation(Actor::Account(STAFF_PM), *p),
             MoneyCmd::Withdraw(p) => crate::r#gen::review::withdraw(lead(*p)?, *p),
             MoneyCmd::EditP05(c) => {
@@ -1467,8 +1643,42 @@ impl MoneyMachine {
             }
             MoneyCmd::Start(p) => start_execution(*p),
             MoneyCmd::Terminate(p) => terminate(STAFF_PM, *p),
-        })
+        }))
     }
+}
+
+/// The determination an acceptance or approval of `p` names in `m`: the
+/// current one, or a superseded one when `stale` (Q-W7-7). Without a
+/// superseded one a stale draw names [`amount_decision`] `(p, 0)`, which
+/// no machine run records.
+fn naming(m: &MoneyModel, p: ProposalId, stale: bool) -> DecisionId {
+    if stale {
+        return superseded_determination(&m.world.money, p).unwrap_or(amount_decision(p, 0));
+    }
+    let current = m
+        .world
+        .money
+        .proposals
+        .get(&p)
+        .and_then(|q| q.determined.as_ref())
+        .map(|d| d.decision);
+    current.unwrap_or(amount_decision(p, 0))
+}
+
+/// The latest amount determination of `p` in `view` that a later one
+/// superseded, read from the decision ids of [`amount_decision`].
+pub fn superseded_determination(view: &MoneyView, p: ProposalId) -> Option<DecisionId> {
+    let current = view
+        .proposals
+        .get(&p)
+        .and_then(|q| q.determined.as_ref())
+        .map(|d| d.decision)?;
+    let base = amount_decision(p, 0).raw();
+    view.decisions
+        .iter()
+        .filter(|d| d.raw() > base && d.raw() < base.saturating_add(100) && **d != current)
+        .max()
+        .copied()
 }
 
 impl StateMachine for MoneyMachine {
@@ -1508,8 +1718,8 @@ impl StateMachine for MoneyMachine {
                     deductions,
                 }
             }
-            1 => MoneyCmd::Accept(p),
-            2 => MoneyCmd::Approve(p),
+            1 => MoneyCmd::Accept(p, *g.pick(&[false, false, true])),
+            2 => MoneyCmd::Approve(p, *g.pick(&[false, false, true])),
             3 => MoneyCmd::Contract(p),
             4 => MoneyCmd::Decline(p),
             5 => MoneyCmd::Withdraw(p),
@@ -1530,7 +1740,8 @@ impl StateMachine for MoneyMachine {
 
     fn next_state(&self, model: &mut MoneyModel, cmd: &MoneyCmd) {
         let step = match MoneyMachine::step_of(model, cmd) {
-            Ok(s) => s,
+            Ok(Some(s)) => s,
+            Ok(None) => return,
             Err(e) => {
                 model.divergence = Some(format!("harness: {e}"));
                 return;

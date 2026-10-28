@@ -21,8 +21,8 @@ use fstp_domain::record::Record;
 use fstp_domain::rules::StateTag;
 use fstp_domain_testkit::r#gen::money::{
     LA, LB, MoneySetup, MoneyStory, PA, PB, accept_decision, accept_decision_n, accept_grant,
-    accept_grant_as, amount_decision, approve_decision_n, approve_grant, approve_grant_as,
-    contract_effective, determine, milestone_n, money_plan,
+    accept_grant_as, amount_decision, approve_decision, approve_decision_n, approve_grant,
+    approve_grant_as, contract_effective, determine, milestone_n, money_plan,
 };
 use fstp_domain_testkit::r#gen::review::{R1, plan_of};
 use fstp_domain_testkit::r#gen::roster::{Backend, STAFF_PM, Step, T0};
@@ -92,11 +92,21 @@ fn supersede(b: Backend) {
         Some(StateTag::Negotiation),
         "NOTE 9: the acceptance and the approval of 4.00 no longer count"
     );
-    s.run(&accept_grant_as(LA, PA, accept_decision_n(PA, 2)))
-        .unwrap_or_else(|e| panic!("a accepts 3.00: {e}"));
+    s.run(&accept_grant_as(
+        LA,
+        PA,
+        accept_decision_n(PA, 2),
+        amount_decision(PA, 2),
+    ))
+    .unwrap_or_else(|e| panic!("a accepts 3.00: {e}"));
     assert_eq!(s.state(PA), Some(StateTag::Negotiation));
-    s.run(&approve_grant_as(STAFF_PM, PA, approve_decision_n(PA, 2)))
-        .unwrap_or_else(|e| panic!("the programme manager approves 3.00: {e}"));
+    s.run(&approve_grant_as(
+        STAFF_PM,
+        PA,
+        approve_decision_n(PA, 2),
+        amount_decision(PA, 2),
+    ))
+    .unwrap_or_else(|e| panic!("the programme manager approves 3.00: {e}"));
     assert_eq!(s.state(PA), Some(StateTag::Granted));
     assert_eq!(
         s.world.money.proposals.get(&PA).and_then(|q| q.granted),
@@ -184,13 +194,25 @@ fn reacceptance_needs_a_fresh_id(b: Backend) {
         _ => panic!("I-14: the batch moves a's reservation: {recs:?}"),
     }
     assert_eq!(s.world.money.counted(PA), 400, "I-14: 4.00 counts once");
-    let reused = accept_grant_as(LA, PA, accept_decision(PA));
+    let reused = accept_grant_as(LA, PA, accept_decision(PA), amount_decision(PA, 2));
     s.refused(&reused)
         .unwrap_or_else(|e| panic!("the spent acceptance id is refused: {e}"));
-    s.run(&accept_grant_as(LA, PA, accept_decision_n(PA, 2)))
-        .unwrap_or_else(|e| panic!("NOTE 9: a accepts the new determination: {e}"));
-    s.run(&approve_grant(STAFF_PM, PA))
-        .unwrap_or_else(|e| panic!("the programme manager approves: {e}"));
+    s.run(&accept_grant_as(
+        LA,
+        PA,
+        accept_decision_n(PA, 2),
+        amount_decision(PA, 2),
+    ))
+    .unwrap_or_else(|e| panic!("NOTE 9: a accepts the new determination: {e}"));
+    // Q-W7-7 (decided 2026-10-28): the approval names the current
+    // determination.
+    s.run(&approve_grant_as(
+        STAFF_PM,
+        PA,
+        approve_decision(PA),
+        amount_decision(PA, 2),
+    ))
+    .unwrap_or_else(|e| panic!("the programme manager approves: {e}"));
     s.run(&contract_effective(PA))
         .unwrap_or_else(|e| panic!("the contract fact grants a: {e}"));
     assert_eq!(s.state(PA), Some(StateTag::Granted));

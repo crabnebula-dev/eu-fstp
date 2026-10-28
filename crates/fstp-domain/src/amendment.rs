@@ -22,6 +22,10 @@
 //!   a paid or pending amount stays in the amended plan under its id, at
 //!   no less than that amount (I-31, I-58, I-61). The amended total then
 //!   counts against P-05.
+//! - The domain does not check which proposal or amount the contract id
+//!   of `ActivateAmendment` was signed for. Until Daniel answers Q-W7-8,
+//!   the M5 contract port alone guarantees that it names a new version of
+//!   this grant's contract for the amended total.
 //!
 //! An IRC route needs the IRC review of the amendment first (R-IR-04, step
 //! W5 integration):

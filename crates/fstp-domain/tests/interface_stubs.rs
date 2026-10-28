@@ -57,6 +57,7 @@ fn accept_grant() -> Command {
     Command::AcceptGrant {
         decision: DecisionId::from_raw(7),
         proposal: ProposalId::from_raw(7),
+        determination: DecisionId::from_raw(8),
     }
 }
 
@@ -1035,7 +1036,11 @@ fn sample(kind: CommandKind) -> Command {
             }],
         },
         K::AcceptGrant => accept_grant(),
-        K::ApproveGrant => Command::ApproveGrant { decision, proposal },
+        K::ApproveGrant => Command::ApproveGrant {
+            decision,
+            proposal,
+            determination: decision,
+        },
         K::ContractFact => Command::ContractFact {
             proposal,
             contract: ContractId::from_raw(7),
