@@ -168,6 +168,11 @@ fn high_risk_kinds(action: &str) -> Option<&'static [CommandKind]> {
         | "Changing bank details"
         | "Publishing a template to other tenants"
         | "Approving break-glass access" => &[],
+        // Approving a recovery is a cell-level authentication action
+        // (`authentication.md` Account recovery, I-79). The domain has no
+        // command for it, and `fstp_cell_core::gate::HIGH_RISK_TABLE`
+        // carries its step-up (decided 2026-10-28, Q15).
+        "Approving an account recovery" => &[],
         _ => return None,
     };
     Some(kinds)

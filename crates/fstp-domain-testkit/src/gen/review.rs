@@ -393,6 +393,22 @@ pub fn review_truth(accounts: impl IntoIterator<Item = AccountId>) -> GroundTrut
     truth
 }
 
+/// Attests each lead of `drafts` whose minor bit is clear 18 or older from
+/// [`crate::r#gen::roster::LEAD_ADULT_FROM`] on (R-ID-04, overview NOTE 7).
+/// A lead whose bit is set gets no attestation, so its proposal stays
+/// minor-flagged and needs a verified guardian consent (state-machine
+/// NOTE 14).
+pub fn attest_adult_leads(
+    truth: &mut GroundTruth,
+    drafts: impl IntoIterator<Item = (AccountId, bool)>,
+) {
+    for (lead, minor) in drafts {
+        if !minor {
+            truth.attest_adult(lead, crate::r#gen::roster::LEAD_ADULT_FROM);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The model driver
 // ---------------------------------------------------------------------------
@@ -1657,7 +1673,7 @@ impl StateMachine for ReviewMachine {
         for r in &records {
             // A record the references cannot follow fails the invariant,
             // which re-folds the whole ledger.
-            let _ = model.sod.fold(r);
+            let _ = model.sod.fold_with(r, &model.truth);
             let _ = model.rev.fold(r);
         }
         model.next_id = model.next_id.saturating_add(1);
@@ -2223,7 +2239,9 @@ pub fn i36_act(g: &mut Gen, w: &ReviewWorld, next: u128) -> I36Act {
 }
 
 /// Draws a draft by an account of [`I36_APPLICANTS`]. One draft in three
-/// is a minor's, so that `AddGuardian` on it reaches the I-36 bar.
+/// has the `minor` field set. The field decides nothing (R-ID-04): every
+/// draft is minor-flagged, so `AddGuardian` on any of them reaches the
+/// I-36 bar.
 fn i36_draw_draft(g: &mut Gen, next: u128) -> I36Act {
     let account = *g.pick(&I36_APPLICANTS);
     let target = I36_TARGET_CALLS

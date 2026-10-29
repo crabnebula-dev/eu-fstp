@@ -315,6 +315,8 @@ pub struct MoneyPolicy {
 pub struct MoneyCall {
     /// The programme.
     pub programme: ProgrammeId,
+    /// The deadline, the instant the lead's age counts at (R-ID-04).
+    pub deadline: fstp_domain::time::Timestamp,
     /// The policy version frozen at publication.
     pub frozen: Option<fstp_domain::id::PolicyVersionId>,
 }
@@ -375,7 +377,9 @@ pub struct MoneyProposal {
     pub lead: AccountId,
     /// The creation call.
     pub call: CallId,
-    /// Whether the lead is flagged as a minor.
+    /// Whether the proposal is minor-flagged: set at creation, and derived
+    /// from the vault at the NEGOTIATION gate (R-ID-04, state-machine
+    /// NOTE 14).
     pub minor: bool,
     /// The state, from the transitions folded.
     pub state: StateTag,
@@ -768,33 +772,46 @@ impl MoneyView {
                 self.heads.insert(version.programme, version.id);
             }
             Record::CallDrafted {
-                call, programme, ..
+                call,
+                programme,
+                deadline,
+                ..
             } => {
                 self.calls.insert(
                     *call,
                     MoneyCall {
                         programme: *programme,
+                        deadline: *deadline,
                         frozen: None,
                     },
                 );
+            }
+            Record::CallEdited { call, deadline, .. } => {
+                if let Some(c) = self.calls.get_mut(call) {
+                    c.deadline = *deadline;
+                }
             }
             Record::CallPublished { call, policy, .. } => {
                 if let Some(c) = self.calls.get_mut(call) {
                     c.frozen = Some(*policy);
                 }
             }
+            // R-ID-04: no field of the request sets or clears the flag, so the
+            // record's minor field is not read. Every proposal is
+            // minor-flagged until the NEGOTIATION gate derives the flag from
+            // the vault (state-machine NOTE 14).
             Record::ProposalCreated {
                 proposal,
                 call,
                 lead,
-                minor,
+                ..
             } => {
                 self.proposals.insert(
                     *proposal,
                     MoneyProposal {
                         lead: *lead,
                         call: *call,
-                        minor: *minor,
+                        minor: true,
                         state: StateTag::Draft,
                         determined: None,
                         reserved: None,
@@ -913,7 +930,22 @@ impl MoneyView {
                 self.decisions.insert(*decision);
             }
             Record::Transitioned(t) => {
-                self.proposal_mut(t.proposal)?.state = t.to;
+                // State-machine NOTE 14, R-ID-04: the flag is derived at the
+                // NEGOTIATION gate from the vault answer about the lead's
+                // attestation at the deadline of the call the proposal was
+                // submitted to (ADR-008, "Which deadline", interim). Whether
+                // it is derived again before GRANTED is not decided, so the
+                // flag holds from the gate on.
+                let deadline = self
+                    .proposals
+                    .get(&t.proposal)
+                    .and_then(|q| self.calls.get(&q.call))
+                    .map(|c| c.deadline);
+                let q = self.proposal_mut(t.proposal)?;
+                q.state = t.to;
+                if t.row == Row::IrcReviewToNegotiation {
+                    q.minor = !deadline.is_some_and(|d| truth.is_adult_at(q.lead, d));
+                }
             }
             Record::DeliverableRecorded(d) => {
                 self.deliverables.insert(

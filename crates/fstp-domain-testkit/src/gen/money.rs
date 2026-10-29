@@ -847,7 +847,10 @@ impl MoneySetup {
         }
     }
 
-    /// The vault of the setup.
+    /// The vault of the setup. Every lead whose draft is not flagged as a
+    /// minor's is attested 18 or older from
+    /// [`crate::r#gen::roster::LEAD_ADULT_FROM`] on, so the flag the
+    /// lifecycle derives from the vault matches the draft (R-ID-04).
     pub fn truth(&self) -> GroundTruth {
         let mut truth = GroundTruth::new();
         add_staff(&mut truth);
@@ -870,6 +873,10 @@ impl MoneySetup {
         for p in &self.consents {
             truth.consent(*p);
         }
+        crate::r#gen::review::attest_adult_leads(
+            &mut truth,
+            self.drafts.iter().map(|d| (d.lead, d.minor)),
+        );
         truth
     }
 
@@ -900,7 +907,20 @@ impl MoneySetup {
 
     /// The world from genesis with every proposal the setup names in NEGOTIATION.
     pub fn world(&self, backend: Backend) -> Result<MoneyWorld, String> {
-        let mut w = MoneyWorld::new(backend, self.truth());
+        self.world_with(backend, |_| {})
+    }
+
+    /// [`MoneySetup::world`] over the setup's vault after `change`. A test
+    /// uses it to give a lead an over-18 attestation or a guardian consent
+    /// apart from the draft's minor bit (R-ID-04, state-machine NOTE 14).
+    pub fn world_with(
+        &self,
+        backend: Backend,
+        change: impl FnOnce(&mut GroundTruth),
+    ) -> Result<MoneyWorld, String> {
+        let mut truth = self.truth();
+        change(&mut truth);
+        let mut w = MoneyWorld::new(backend, truth);
         for s in self.draft_steps()? {
             w = w.must(&s)?;
         }
@@ -1296,6 +1316,18 @@ impl MoneyStory {
     pub fn new(setup: &MoneySetup, backend: Backend) -> Result<MoneyStory, String> {
         Ok(MoneyStory {
             world: setup.world(backend)?,
+        })
+    }
+
+    /// [`MoneyStory::new`] over the setup's vault after `change`, see
+    /// [`MoneySetup::world_with`].
+    pub fn with(
+        setup: &MoneySetup,
+        backend: Backend,
+        change: impl FnOnce(&mut GroundTruth),
+    ) -> Result<MoneyStory, String> {
+        Ok(MoneyStory {
+            world: setup.world_with(backend, change)?,
         })
     }
 

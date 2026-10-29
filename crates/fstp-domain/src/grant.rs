@@ -73,7 +73,7 @@
 //!   GRANTED or IN_EXECUTION, for a milestone of the effective contract version.
 //!
 //! The grant clearance (design 3.3) asks `IsVerified` for the lead,
-//! `HasGuardianConsent` for a minor, `WithinRecipientCap` for the
+//! `HasGuardianConsent` for a minor-flagged proposal, `WithinRecipientCap` for the
 //! determined amount, `InExcludedClass` and `SameIdentityAsAny` for every
 //! held Receiving account of the proposal (I-04, I-06, SoD-09), and the
 //! I-15 question. The candidate set of `SameIdentityAsAny` holds the
@@ -251,8 +251,8 @@ impl IdentityCleared {
     }
 }
 
-/// I-18: the lead is not flagged as a minor, or the vault holds a verified
-/// guardian consent for the proposal.
+/// I-18: the proposal is not minor-flagged, or the vault holds a verified
+/// guardian consent for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MinorCleared {
     proposal: ProposalId,
@@ -265,7 +265,7 @@ impl MinorCleared {
         self.proposal
     }
 
-    /// Whether the lead is flagged as a minor, so consent was checked.
+    /// Whether the proposal is minor-flagged, so consent was checked.
     pub fn minor(&self) -> bool {
         self.minor
     }
@@ -698,7 +698,9 @@ pub(crate) const fn transition(
 pub(crate) struct Subject {
     /// The lead.
     pub(crate) lead: AccountId,
-    /// Whether the lead is flagged as a minor.
+    /// Whether the proposal is minor-flagged, as the NEGOTIATION gate
+    /// derived it from the vault (R-ID-04, state-machine NOTE 14). It is
+    /// never the actor's `CreateDraft` field.
     pub(crate) minor: bool,
     /// The creation call, whose frozen policy governs the proposal (NOTE 8).
     pub(crate) call: CallId,
@@ -718,7 +720,7 @@ pub(crate) fn subject(state: &State, proposal: ProposalId) -> Result<Subject, Re
     let currency = crate::policy::programme_currency(state, programme).ok_or_else(unknown)?;
     Ok(Subject {
         lead: d.lead,
-        minor: d.minor,
+        minor: crate::proposal::draft::minor_flagged(state, proposal),
         call: d.call,
         programme,
         state: tag,
