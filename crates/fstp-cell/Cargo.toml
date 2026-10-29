@@ -40,6 +40,14 @@ fstp-prop.workspace = true
 fstp-witness.workspace = true
 fstp-auth.workspace = true
 fstp-domain-testkit.workspace = true
+# The crate itself with the test-only `memory` feature, so its own tests
+# reach the in-memory route backend. No shipped build enables it.
+fstp-cell = { workspace = true, features = ["memory"] }
+
+[features]
+# Test only: `routes::memory`, the in-memory backend and the local cell
+# (design section 14.3). The `fstp-cell` binary never builds them.
+memory = []
 
 [lints]
 workspace = true

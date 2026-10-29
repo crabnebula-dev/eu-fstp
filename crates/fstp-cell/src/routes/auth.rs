@@ -10,8 +10,9 @@
 //!
 //! Steps that need an API the sources do not offer yet fail closed with
 //! 501 after every check that applies before them:
-//! - `GrantStepUp` after a verified step-up assertion: the gate admits no
-//!   route-only command (`fstp_cell_core::gate`, route-only commands).
+//! - `GrantStepUp` after a verified step-up assertion: the route would
+//!   issue it under the challenge id, but no admission takes its route
+//!   proof yet (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`).
 //! - `EndSession` and `RevokeCredential`: `decide` takes no session rows
 //!   (`fstp_cell_core::RouteInput::SessionRows`).
 //! - Adding a passkey: the step-up digest of `AddPasskey` names a
@@ -23,9 +24,9 @@
 use fstp_auth::ceremony::{MagicLink, admit_magic_link, may_issue_magic_link};
 use fstp_auth::codec::Token;
 use fstp_auth::session::{LoginRefusal, may_end_session, verify_passkey_login};
-use fstp_auth::stepup::{StepUpRequest, challenge as stepup_challenge, verify_step_up};
+use fstp_auth::stepup::{Granted, StepUpRequest, challenge as stepup_challenge, verify_step_up};
 use fstp_auth::{Method, SessionLifetimes, SessionView};
-use fstp_cell_core::gate::{Action, HighRiskAction, ReadAction, management_holders};
+use fstp_cell_core::gate::{Action, Admitted, HighRiskAction, ReadAction, management_holders};
 use fstp_cell_core::{CellCommand, CellState};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
@@ -518,17 +519,19 @@ pub(crate) async fn stepup_options<B: Backend>(
 }
 
 /// `POST /auth/stepup` (Session, I-78): verifies a passkey assertion with
-/// UV over the session's step-up challenge. Recording `StepUpGranted`
-/// needs an admission for route-only commands that the gate does not
-/// offer yet, so a verified step-up fails closed with 501.
+/// UV over the session's step-up challenge, then issues `GrantStepUp`,
+/// which records `StepUpGranted` (design section 8.4).
 ///
-/// The step-up id is the challenge id, as `auth_log.stepup_consumed`
-/// keys it (design section 4.2). The route reads the challenge and never
-/// deletes it. Open point for the lead: `decide` of `GrantStepUp` derives
-/// its own step-up id from the command id, so that id is not the
-/// challenge id yet. When the gate admits `GrantStepUp`, either the
-/// command carries the challenge id or the route uses it as the command
-/// id, so a replayed assertion is a duplicate and not a second grant.
+/// The command id of `GrantStepUp` is the challenge id. So one challenge
+/// grants at most one step-up: a replayed assertion runs under the same
+/// command id, and the store answers it as a duplicate of the first
+/// grant, never as a second grant (ADR-007). The route reads the
+/// challenge and never deletes it.
+///
+/// The route has no admission for the route-only `GrantStepUp` yet
+/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`, [`admit_grant`]). A
+/// verified step-up therefore fails closed with 501 after every check,
+/// and nothing is recorded.
 pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Caller) -> Reply {
     let b = match decode_assertion(&req.body) {
         Ok(b) => b,
@@ -554,13 +557,6 @@ pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Cal
         || !fresh(row.issued_at, now, CHALLENGE_US)
     {
         return stepup_refused();
-    }
-    // One challenge grants at most one step-up. The step-up id is the
-    // challenge id, so a granted challenge is refused here.
-    match ctx.backend.stepup_asserted_at(row.id).await {
-        Err(f) => return unavailable(f),
-        Ok(Some(_)) => return stepup_refused(),
-        Ok(None) => {}
     }
     let (s, _) = match admit(
         ctx,
@@ -598,12 +594,72 @@ pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Cal
             {
                 return unavailable(f);
             }
-            Reply::not_built()
+            grant_stepup(ctx, &s, caller, &granted, row.id, digest, now).await
         }
         // A regressed sign count should record `CredentialSuspect`, as at
         // login. No auth command records it yet.
         Err(_) => stepup_refused(),
     }
+}
+
+/// Issues `GrantStepUp` for `digest` in the caller's session after the
+/// verified assertion `granted`, under the challenge id `challenge` as its
+/// command id, so a replay of the same challenge is a duplicate (ADR-007).
+///
+/// Only [`GrantSeam`] answers 501. Every refusal of the admission that
+/// replaces [`admit_grant`] answers through `denied`, so no gate refusal
+/// is ever read as the seam.
+///
+/// Open point for the lead: `decide` derives the `StepUpGranted` id from
+/// the command id and the decide instant. Design section 4.2 and
+/// `fstp_auth::stepup::verify_step_up` both take the challenge id as the
+/// step-up id. Until `decide` does too, a client cannot name the grant in
+/// its action request (design section 8.4).
+async fn grant_stepup<B: Backend>(
+    ctx: &Ctx<B>,
+    s: &CellState,
+    caller: &Caller,
+    granted: &Granted,
+    challenge: [u8; 16],
+    digest: [u8; 32],
+    now: Timestamp,
+) -> Reply {
+    let grant = CellCommand::Auth(fstp_auth::AuthCommand::GrantStepUp {
+        session: caller.row.id,
+        action_digest: digest,
+    });
+    match admit_grant(s, &caller.view, granted, grant, challenge, now) {
+        Ok(admitted) => run(ctx, admitted).await,
+        Err(GrantSeam) => Reply::not_built(),
+    }
+}
+
+/// The route cannot admit `GrantStepUp` yet
+/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`). It is the only reason
+/// [`admit_grant`] gives, and it carries no gate refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GrantSeam;
+
+/// The admission of `GrantStepUp` with the verified assertion `granted`
+/// as its route proof, running under `command` as its command id.
+///
+/// The gate never admits a route-only command through a session:
+/// `gate::admit_command` refuses it with `NotPermitted` by design, before
+/// it reads the session. The typed admission with route proofs does not
+/// exist yet (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`). So this
+/// answers [`GrantSeam`] and asks the gate nothing. Lane W3a replaces
+/// this function with that admission, and its refusals answer through
+/// `denied`.
+fn admit_grant(
+    s: &CellState,
+    session: &SessionView,
+    granted: &Granted,
+    grant: CellCommand,
+    command: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, GrantSeam> {
+    let _ = (s, session, granted, grant, command, now);
+    Err(GrantSeam)
 }
 
 /// `POST /auth/passkeys/options` and `POST /auth/passkeys` (high risk

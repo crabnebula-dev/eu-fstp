@@ -6,8 +6,9 @@
 //! the operational rows of design section 4.2: sessions, challenges,
 //! tokens and sign counts. [`Backend`] names each of these. The cell's
 //! engine (lane W3a agent two) implements it over `PgRecordStore` and the
-//! application database. [`crate::routes::memory::MemoryBackend`]
-//! implements it in memory for tests.
+//! application database. `crate::routes::memory::MemoryBackend`
+//! implements it in memory for tests, behind the test-only `memory`
+//! feature.
 //!
 //! Every call is async, so a backend over the database never blocks a
 //! request task. A [`BackendFault`] makes the route answer 503: the

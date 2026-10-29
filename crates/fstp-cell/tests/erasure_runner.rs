@@ -27,6 +27,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+mod stepup_common;
+
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -297,12 +299,40 @@ impl VaultClient for GenesisVault {
     }
 }
 
-/// Runs `cmd` as the tenant admin, through the gate, with a fresh strong
-/// step-up when it is high risk.
-async fn as_admin(engine: &CellEngine, cmd: CellCommand, id: u8) -> Result<(), &'static str> {
+/// The tenant admin's session.
+const SESSION: [u8; 16] = [0x5E; 16];
+/// The command id byte of the first tenant admin grant.
+const GRANT_ADMIN: u8 = 0xA0;
+
+/// An empty store that holds the step-up for the first tenant admin
+/// grant, as the ledger granted it (`stepup_common`), and that step-up's
+/// id.
+fn store_with_admin_stepup() -> Result<(MemStore<CellRecord>, [u8; 16]), &'static str> {
+    let mut mem = MemStore::new();
+    let stepup = stepup_common::grant_stepup(
+        &mut mem,
+        SESSION,
+        ADMIN,
+        &CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
+        [GRANT_ADMIN; 16],
+        fstp_cell::tasks::system_now(),
+    )
+    .map_err(|_| "the step-up was not granted")?;
+    Ok((mem, stepup))
+}
+
+/// Runs `cmd` as the tenant admin, through the gate, with the fresh
+/// strong step-up `stepup` that the ledger granted, when it is high
+/// risk.
+async fn as_admin(
+    engine: &CellEngine,
+    cmd: CellCommand,
+    id: u8,
+    stepup: Option<[u8; 16]>,
+) -> Result<(), &'static str> {
     let now = Timestamp::from_micros(fstp_cell::tasks::system_now());
     let session = SessionView {
-        id: [0x5E; 16],
+        id: SESSION,
         account: ADMIN,
         method: Method::Passkey,
         started: now,
@@ -311,8 +341,8 @@ async fn as_admin(engine: &CellEngine, cmd: CellCommand, id: u8) -> Result<(), &
     let command_id = [id; 16];
     let action = Action::Command(cmd.clone());
     let high = HighRiskAction::of(&action).map_err(|_| "no risk class")?;
-    let stepup = high.map(|_| StepUpView {
-        id: [id ^ 0xFF; 16],
+    let stepup = high.zip(stepup).map(|(_, stepup)| StepUpView {
+        id: stepup,
         session: session.id,
         action_digest: action_digest(&cmd, command_id),
         asserted_at: now,
@@ -383,7 +413,8 @@ fn run_erasure(
     let rt2 = rt.clone();
     let texts = texts.to_vec();
     rt.block_on(async move {
-        let store = Unanchored::open(MemStore::new(), CELL)
+        let (mem, stepup) = store_with_admin_stepup()?;
+        let store = Unanchored::open(mem, CELL)
             .await
             .map_err(|_| "the store did not open")?;
         let shutdown = Shutdown::new();
@@ -393,7 +424,8 @@ fn run_erasure(
         as_admin(
             &engine,
             CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
-            0xA0,
+            GRANT_ADMIN,
+            Some(stepup),
         )
         .await?;
         for (n, t) in [T1, T2, T3].into_iter().enumerate() {
@@ -402,6 +434,7 @@ fn run_erasure(
                 &engine,
                 CellCommand::Text(TextCommand::PutText { id: t }),
                 id,
+                None,
             )
             .await?;
         }
@@ -430,6 +463,7 @@ fn run_erasure(
                 cause: 2,
             }),
             0xB0,
+            None,
         )
         .await?;
         let opened_after_request: Vec<bool> = texts
@@ -456,6 +490,7 @@ fn run_erasure(
                         cause: 2,
                     }),
                     0xB1,
+                    None,
                 )
                 .await?;
             }
@@ -722,7 +757,8 @@ fn run_erasure_task() -> Result<TaskRun, &'static str> {
     let rt = TokioRuntime::new_multi_thread(2).map_err(|_| "no runtime")?;
     let rt2 = rt.clone();
     rt.block_on(async move {
-        let store = Unanchored::open(MemStore::new(), CELL)
+        let (mem, stepup) = store_with_admin_stepup()?;
+        let store = Unanchored::open(mem, CELL)
             .await
             .map_err(|_| "the store did not open")?;
         let shutdown = Shutdown::new();
@@ -732,13 +768,15 @@ fn run_erasure_task() -> Result<TaskRun, &'static str> {
         as_admin(
             &engine,
             CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
-            0xA0,
+            GRANT_ADMIN,
+            Some(stepup),
         )
         .await?;
         as_admin(
             &engine,
             CellCommand::Text(TextCommand::PutText { id: T1 }),
             0xA1,
+            None,
         )
         .await?;
         let runner = ErasureRunner::genesis(Custodian::default(), engine.clone(), CELL)
@@ -762,6 +800,7 @@ fn run_erasure_task() -> Result<TaskRun, &'static str> {
                 cause: 2,
             }),
             0xB0,
+            None,
         )
         .await?;
         for _ in 0..500 {

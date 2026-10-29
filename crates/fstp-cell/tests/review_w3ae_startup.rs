@@ -273,8 +273,9 @@ fn review_started_saas_cell_runs_the_timeline() {
         let keys = StoreKeys {
             anchor: composite::generate().unwrap(),
             ledger: DataKey::generate().unwrap(),
+            witness: witness_keys,
         };
-        let mut store = AnchoredStore::new(MemDatabase::new(), client(&peer), CELL, keys);
+        let mut store = AnchoredStore::new(MemDatabase::new(), client(&peer), CELL, keys).unwrap();
         store.start().await.unwrap();
         let setup = Shutdown::new();
         let (engine, task) = CellEngine::start(&rt2, store, GenesisVault, &setup, 8)
@@ -305,7 +306,6 @@ fn review_started_saas_cell_runs_the_timeline() {
             db,
             witness: client(&peer),
             keys,
-            witness_keys,
             vault: GenesisVault,
             crabnebula: None::<NoCrabNebula>,
             licence: None,

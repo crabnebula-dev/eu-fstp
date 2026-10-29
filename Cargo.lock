@@ -129,6 +129,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-audit",
  "fstp-auth",
+ "fstp-cell",
  "fstp-cell-core",
  "fstp-cp-proto",
  "fstp-crypto",
