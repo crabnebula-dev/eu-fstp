@@ -347,6 +347,13 @@ Access to `fstp-keyd`, as proposed:
 - Each socket serves a fixed set of chains and keys. `fstp-cell` reaches App and CellBackup. `fstp-vault` reaches Vault only. `fstp-pgagent` reaches the local cluster CA sign keys.
 - A root-only console socket serves the host console recovery (Q15) and the restore command. Each use is logged.
 
+Recorded at first use (lane W2f, 2026-10-29):
+
+- **Sign key classes.** The first byte of a sign key handle names its class. `0x01` is a cell CA key, which only the `fstp-cell` socket may use. `0x02` is a local cluster CA key, which only the `fstp-pgagent` socket may use. The vault and console sockets and any other class byte get `NotPermitted`.
+- **Epochs without gaps.** A create is epoch 1 for a new chain, or the newest epoch plus one. Anything else is `BadRequest`. So every epoch below the newest really existed, and a destroy of an uncreated epoch, epoch 0 included, gets `UnknownRoot` and no receipt.
+- **Damaged usage records.** A usage record that fails its check is not dropped. Each page that spans it carries a 9-byte marker in its place: the tag `0xf0`, then the log index of the record as a u64. Reconciliation raises `CustodyAnomaly` on it.
+- **Connection limits.** Each socket serves at most 16 connections at once. A request must arrive and its response go out within 5 seconds of the accept, so one slow client cannot stall another socket. The client side times out after 30 seconds.
+
 Unattended boot (I-80, R-NF-05):
 
 - There is no default passphrase.
