@@ -21,6 +21,10 @@ mod api;
 mod auth;
 pub mod backend;
 mod handle;
+/// Test only: the in-memory backend and the local cell. Built only with
+/// the `memory` feature, which no shipped build enables, so the
+/// `fstp-cell` binary never contains a `LocalCell` (design section 14.3).
+#[cfg(feature = "memory")]
 pub mod memory;
 
 pub use auth::{CHALLENGE_US, MAGIC_LINK_US};

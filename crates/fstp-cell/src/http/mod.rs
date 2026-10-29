@@ -61,19 +61,12 @@ pub fn decode_command_request(bytes: &[u8]) -> Result<CommandRequest, CellError>
     decode_command_body(bytes).map_err(body_refusal)
 }
 
-/// The [`CellError`] of a body refusal.
-///
-/// Lane W3a agent two owns `CellError` in `lib.rs`. It has only the W0
-/// variant `NotImplemented` today, so every refusal maps to it, naming
-/// this mapping. The route layer uses [`decode_command_body`] and its
-/// typed refusal, never this error. Once `CellError` gains a variant for
-/// a refused request body, such as `Request(BodyRefusal)`, this function
-/// returns it, and nothing else changes.
+/// The [`CellError`] of a body refusal: [`CellError::Request`]. It keeps
+/// the typed refusal, which names a rule or a schema member and never
+/// request content (R-NF-02). The route layer uses
+/// [`decode_command_body`] and its typed refusal directly.
 pub const fn body_refusal(r: BodyRefusal) -> CellError {
-    let _ = r;
-    CellError::NotImplemented(
-        "fstp_cell::http::body_refusal: CellError has no variant for a refused request body yet (lib.rs, lane W3a agent two)",
-    )
+    CellError::Request(r)
 }
 
 /// The members of a command request body.

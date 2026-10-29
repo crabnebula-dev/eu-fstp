@@ -27,10 +27,14 @@
 //!
 //! # What is not built here yet
 //!
-//! - The PostgreSQL store is lane W2e's. Until it lands the engine runs
-//!   over the anchoring in-memory store of [`witness`], which runs the
-//!   append protocol of design section 5.3, or over
-//!   [`engine::Unanchored`] in tests.
+//! - No [`engine::CellStore`] over `fstp_pgstore::PgRecordStore` exists
+//!   yet. `PgRecordStore::append_with` gives the new head only, and a
+//!   `CellStore` must also give the chain link and the witness receipt of
+//!   each append, which the vault acknowledgement needs. Until then the
+//!   engine runs over the anchoring in-memory store of [`witness`], which
+//!   runs the append protocol of design section 5.3, or over
+//!   [`engine::Unanchored`] in tests. `PgRecordStore::new` already takes
+//!   the pinned witness keys and refuses an empty set.
 //! - The witness wire format and service are lane W2g's
 //!   (`fstp_witness::run` is not written). [`witness::WitnessLink`] is the
 //!   seam a transport fills.
@@ -72,6 +76,9 @@ pub enum CellError {
     Signal,
     /// A listener or runtime failed.
     Io(std::io::ErrorKind),
+    /// A request body was refused. It names the rule the body broke and
+    /// never quotes the body (TH-26, R-NF-02).
+    Request(http::BodyRefusal),
 }
 
 impl std::fmt::Display for CellError {
@@ -88,6 +95,7 @@ impl std::fmt::Display for CellError {
             CellError::Keys(step) => write!(f, "key operation failed: {step}"),
             CellError::Signal => f.write_str("termination signals could not be set up"),
             CellError::Io(kind) => write!(f, "i/o failed: {kind:?}"),
+            CellError::Request(r) => write!(f, "request body refused: {r}"),
         }
     }
 }

@@ -136,6 +136,9 @@ pub enum StartRefusal {
     /// The witness could not be reached, so no open prepare could be
     /// resolved and the chain cannot be verified.
     Witness,
+    /// The pinned witness receipt keys are empty or do not decode
+    /// (ADR-010 "Keys", I-90). Nothing reached the witness.
+    WitnessPins,
     /// The store could not be read, or the ledger does not fold.
     Store,
     /// The chain did not verify against the witness.
@@ -160,10 +163,11 @@ pub struct StartParts<C, D, L, V, T> {
     pub db: D,
     /// The witness client of the App chain.
     pub witness: WitnessClient<L>,
-    /// The anchor and ledger keys of the store.
+    /// The anchor and ledger keys of the store, and the pinned witness
+    /// receipt keys. The store checks each new receipt under those pins
+    /// before COMMIT, and the start-up verification checks every stored
+    /// receipt under the same set (ADR-010 "Keys", I-24).
     pub keys: StoreKeys,
-    /// The pinned witness receipt keys, encoded.
-    pub witness_keys: Vec<Vec<u8>>,
     /// The vault client.
     pub vault: V,
     /// The transport to the CrabNebula services of a self-hosted cell.
@@ -243,7 +247,11 @@ where
     report(StartPhase::GroupSecretsOpened);
     let cell = config.cell.0;
     let anchor_key = parts.keys.anchor.public_key().to_bytes().to_vec();
-    let mut store = AnchoredStore::new(parts.db, parts.witness, cell, parts.keys);
+    // ADR-010 "Keys", I-90: a pin set that accepts no receipt is refused
+    // here, before any prepare reaches the witness.
+    let mut store = AnchoredStore::new(parts.db, parts.witness, cell, parts.keys)
+        .map_err(|_| StartRefusal::WitnessPins)?;
+    let witness_keys = store.witness_keys().to_vec();
     match store.start().await.map_err(|_| StartRefusal::Witness)? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
@@ -274,7 +282,7 @@ where
         anchors: &chain.anchors,
         witness: &log,
         anchor_keys: std::slice::from_ref(&anchor_key),
-        witness_keys: &parts.witness_keys,
+        witness_keys: &witness_keys,
     };
     if fstp_audit::verify::verify(&view).is_err() {
         shutdown.trigger();

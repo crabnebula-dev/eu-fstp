@@ -9,7 +9,9 @@
 //!    the stored bytes;
 //! 4. the insert-only side effects, where a replayed step-up aborts;
 //! 5. the prepare of the prospective head to the witness, with its
-//!    composite anchor, and its receipt;
+//!    composite anchor, and its receipt, taken through
+//!    `Anchorer::signed_receipt` with the pinned witness keys of
+//!    [`StoreKeys::witness`] (ADR-010 "Keys", I-90);
 //! 6. the anchor row with the receipt, then COMMIT.
 //!
 //! The step-up's freshness is checked against the store's commit clock
@@ -53,6 +55,7 @@ use fstp_audit::{
 };
 use fstp_cell_core::CellRecord;
 use fstp_cell_core::driver::ReceiptRef;
+use fstp_crypto::composite::CompositePublicKey;
 use fstp_keys::envelope::{self, DataKey, SealContext};
 use fstp_keys::{Chain, GroupId, ObjectId, Purpose};
 use fstp_ledger::{
@@ -271,12 +274,27 @@ impl Database for MemDatabase {
     }
 }
 
-/// The keys an anchoring store writes with.
+/// The keys an anchoring store writes and checks with.
 pub struct StoreKeys {
     /// The App chain's composite `Anchor` key (design section 3.9).
     pub anchor: CompositeSigningKey,
     /// The current ledger data key.
     pub ledger: DataKey,
+    /// The pinned witness receipt keys, each an encoded composite public
+    /// key (ADR-010 "Keys", I-90). A receipt is accepted only when one of
+    /// them verifies its signature. [`AnchoredStore::new`] refuses an
+    /// empty set and any key that does not decode.
+    pub witness: Vec<Vec<u8>>,
+}
+
+/// Why [`AnchoredStore::new`] refused its keys (ADR-010 "Keys", I-90).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeysRefused {
+    /// No witness receipt key is pinned. Such a store would accept no
+    /// receipt, yet still send each prepare to the witness.
+    NoWitnessPin,
+    /// A pinned witness key is not an encoded composite public key.
+    WitnessPin,
 }
 
 impl std::fmt::Debug for StoreKeys {
@@ -347,8 +365,30 @@ impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static> Ancho
     /// A store over `db` for `cell`. It resolves no prepare yet: call
     /// [`AnchoredStore::start`] before the first append, or the first
     /// append does it.
-    pub fn new(db: D, witness: W, cell: [u8; 16], keys: StoreKeys) -> AnchoredStore<D, W> {
-        AnchoredStore {
+    ///
+    /// # Errors
+    ///
+    /// A [`KeysRefused`] for an empty witness pin set, or a pinned key
+    /// that is not an encoded composite public key (ADR-010 "Keys", I-90).
+    /// `fstp_pgstore::PgRecordStore::new` refuses an empty pin set too, so
+    /// no store of the cell starts with a pin set that accepts no receipt.
+    pub fn new(
+        db: D,
+        witness: W,
+        cell: [u8; 16],
+        keys: StoreKeys,
+    ) -> Result<AnchoredStore<D, W>, KeysRefused> {
+        if keys.witness.is_empty() {
+            return Err(KeysRefused::NoWitnessPin);
+        }
+        if !keys
+            .witness
+            .iter()
+            .all(|k| CompositePublicKey::from_bytes(k).is_ok())
+        {
+            return Err(KeysRefused::WitnessPin);
+        }
+        Ok(AnchoredStore {
             db,
             witness,
             anchorer: Anchorer::new(),
@@ -356,7 +396,7 @@ impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static> Ancho
             keys,
             started: false,
             clock: system_commit_clock(),
-        }
+        })
     }
 
     /// The store with `clock` as its commit clock. Production keeps the
@@ -375,6 +415,13 @@ impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static> Ancho
     /// The witness client.
     pub fn witness(&self) -> &W {
         &self.witness
+    }
+
+    /// The pinned witness receipt keys ([`StoreKeys::witness`]). The
+    /// start-up verification checks the stored receipts under the same
+    /// set, so one pin set serves both checks.
+    pub fn witness_keys(&self) -> &[Vec<u8>] {
+        &self.keys.witness
     }
 
     /// The database and the witness client, for a restart.
@@ -628,8 +675,15 @@ impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static> Ancho
                 return unavailable();
             }
         };
-        if self.anchorer.receipt(&receipt.fields).is_err() {
-            // A receipt for another head: COMMIT is never sent on it.
+        // ADR-010 "Keys", I-24, I-90: the receipt must name this cell and
+        // chain, verify under a pinned witness key, and be for the
+        // prepared head's own `(n, link)`. COMMIT is never sent on any
+        // other receipt, and the prepare it answered is aborted.
+        if self
+            .anchorer
+            .signed_receipt(self.cell, ChainId::App, &receipt, &self.keys.witness)
+            .is_err()
+        {
             self.abort_prepared().await;
             return unavailable();
         }
