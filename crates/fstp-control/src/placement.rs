@@ -46,7 +46,8 @@ pub enum PlacementError {
     NotAVaultCluster,
     /// One cluster for both roles.
     SameCluster,
-    /// The check is a W0 stub. It names the operation.
+    /// An operation that is not built. [`Placement::new`] never returns
+    /// it. The W0 test helpers match on it.
     NotImplemented(&'static str),
 }
 
@@ -59,12 +60,32 @@ pub struct Placement {
 }
 
 impl Placement {
-    /// Places a cell on `app` and `vault`.
+    /// Places a cell on `app` and `vault` (I-83, B8, design section 9.2).
+    ///
+    /// The application cluster must be of kind application and the vault
+    /// cluster of kind vault, so a control or witness cluster is never
+    /// placed. The two must differ. A registry that held two kinds under
+    /// one id is itself broken, so equal ids are refused even when the two
+    /// values carry the right kinds.
+    ///
+    /// # Errors
+    ///
+    /// The first rule broken, checked in this order: the application
+    /// kind, the vault kind, then one cluster for both.
     pub fn new(app: &Cluster, vault: &Cluster) -> Result<Placement, PlacementError> {
-        let _ = (app, vault);
-        Err(PlacementError::NotImplemented(
-            "fstp_control::placement::Placement::new",
-        ))
+        if app.kind != ClusterKind::Application {
+            return Err(PlacementError::NotAnApplicationCluster);
+        }
+        if vault.kind != ClusterKind::Vault {
+            return Err(PlacementError::NotAVaultCluster);
+        }
+        if app.id == vault.id {
+            return Err(PlacementError::SameCluster);
+        }
+        Ok(Placement {
+            app: app.id,
+            vault: vault.id,
+        })
     }
 
     /// The application and vault clusters.
@@ -74,6 +95,15 @@ impl Placement {
 }
 
 /// Runs the control plane service until shutdown.
+///
+/// Not built yet. The service needs the operator passkey and step-up
+/// login (fstp-webauthn), control-plane custody and the `CellToCp`
+/// listener over mutual TLS. This lane builds the parts it composes:
+/// placement, the role plan, the provisioning jobs and the protocol.
+///
+/// # Errors
+///
+/// Always [`ControlError::NotImplemented`].
 pub fn run() -> Result<(), ControlError> {
     Err(ControlError::NotImplemented("fstp_control::run"))
 }

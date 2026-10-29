@@ -210,10 +210,12 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-custody",
  "fstp-http",
+ "fstp-json",
  "fstp-migrate",
  "fstp-obs",
  "fstp-pgwire",
  "fstp-pki",
+ "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
 ]

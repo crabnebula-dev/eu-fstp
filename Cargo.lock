@@ -215,11 +215,14 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-custody",
  "fstp-http",
+ "fstp-json",
  "fstp-migrate",
  "fstp-obs",
+ "fstp-pgtest",
  "fstp-pgwire",
  "fstp-pki",
  "fstp-prop",
+ "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
 ]
@@ -228,7 +231,9 @@ dependencies = [
 name = "fstp-cp-proto"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-json",
+ "fstp-pki",
  "fstp-prop",
 ]
 
