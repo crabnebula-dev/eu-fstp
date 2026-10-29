@@ -53,6 +53,14 @@ pub struct Compiled {
     _w0: (),
 }
 
+/// One field of the creator steps (design section 3.1, `FieldId`).
+///
+/// W0 declaration with no variants, added by lane W2a so that the
+/// creator's records can name fields. Lane W1a writes one variant per
+/// field of the steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FieldId {}
+
 /// One decoded field value.
 ///
 /// W0 placeholder with no fields. Lane W1a writes the per-field values.
