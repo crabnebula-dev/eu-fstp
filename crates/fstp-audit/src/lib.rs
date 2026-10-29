@@ -2,16 +2,16 @@
 //! receipts and the anchorer core (I-24, M3 design section 7, ADR-010).
 //! Pure: no I/O, no runtime (layering rule 1).
 //!
-//! # The composite encoding hard limit
+//! # Signatures
 //!
-//! ADR-010 "Composite encoding" says no production code in `fstp-audit`
-//! or `fstp-witness` signs or verifies before Daniel accepts the composite
-//! encoding table. The table is transcribed but not yet accepted. So
-//! [`anchor::sign_anchor`] and every signature check inside
-//! [`verify::verify`] refuse with [`AuditError::AwaitsAcceptance`], which
-//! names [`COMPOSITE_ENCODING_ACCEPTANCE`]. The verifier still fails
-//! closed. While signatures are unchecked it never answers `Ok` for a
-//! chain that holds any row, anchor or witness record.
+//! Daniel accepted the ADR-010 composite encoding table on 2026-10-29
+//! (design section 21.0). [`anchor::sign_anchor`] signs an anchor under
+//! the chain's composite `Anchor` key. The witness signs receipts under
+//! its receipt key over [`anchor::receipt_message`]. [`verify::verify`]
+//! checks every anchor against the anchor key history and every receipt
+//! against the pinned witness keys. A signature passes only when both
+//! halves verify (I-90). Every signature and check goes through
+//! `fstp_crypto::composite`, and nothing signs with one half alone.
 //!
 //! # Readings
 //!
@@ -19,6 +19,10 @@
 //!   ADR-010 proposals (open point 2). The receipt message order and the
 //!   witness chain link are the W1e readings, since ADR-010 gives only
 //!   their labels and fields.
+//! - The draft 19 application context of an anchor signature is
+//!   [`anchor::ANCHOR_CONTEXT`], and of a receipt signature
+//!   [`anchor::RECEIPT_CONTEXT`]. Each is its message label. This is the
+//!   interim reading of lane W2g under ADR-010 open point 2.
 //! - A prepare carries the head it extends and the stored hashes of its
 //!   rows, so the witness can recompute the link (open point 3).
 //! - The verifier reports a committed row that no receipted prepare
@@ -33,13 +37,10 @@ pub mod witness;
 
 pub use anchor::{Anchor, AnchorRow, Receipt, ReceiptFields};
 pub use chain::{ChainId, ChainRow, ChainWriter, Link, RowKind, StoredEntry, StoredRow};
+pub use fstp_crypto::CryptoError;
 pub use fstp_crypto::composite::{CompositePublicKey, CompositeSigningKey};
 pub use verify::{ChainView, Tamper, Verified};
 pub use witness::{Prepare, WitnessRecord};
-
-/// What every signing and signature check waits on (ADR-010 "Composite
-/// encoding", lane W2g hard limit).
-pub const COMPOSITE_ENCODING_ACCEPTANCE: &str = "ADR-010 composite encoding acceptance (Daniel)";
 
 /// The composite signature length of draft 19: ML-DSA-65 then Ed25519
 /// (ADR-010 "Composite encoding", row "Signature").
@@ -62,9 +63,9 @@ pub enum AuditError {
     Decode(DecodeError),
     /// An input the operation refuses to build or encode.
     Invalid(Invalid),
-    /// The operation signs or checks a signature, and waits on the named
-    /// acceptance ([`COMPOSITE_ENCODING_ACCEPTANCE`]).
-    AwaitsAcceptance(&'static str),
+    /// The composite signer gave no signature, for example when the
+    /// system random number generator failed. Nothing was signed.
+    Signing(CryptoError),
     /// The operation waits for another lane. It names the operation. No
     /// operation of this crate answers it today; it stays for the callers
     /// that tell a stub from a real refusal.
@@ -77,7 +78,7 @@ impl std::fmt::Display for AuditError {
             AuditError::Tamper(t) => write!(f, "audit chain tampered: {t:?}"),
             AuditError::Decode(e) => write!(f, "audit bytes do not decode: {e:?}"),
             AuditError::Invalid(e) => write!(f, "audit input refused: {e:?}"),
-            AuditError::AwaitsAcceptance(what) => write!(f, "refused until {what}"),
+            AuditError::Signing(e) => write!(f, "audit signing failed: {e}"),
             AuditError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
         }
     }

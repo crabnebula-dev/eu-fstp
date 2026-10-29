@@ -12,13 +12,20 @@
 //! 5. The witness log: every prepared link is a present row, or carries
 //!    an `Abort` or an `InDoubtAbsent`, never both. Every row is covered
 //!    by a receipted prepare.
-//! 6. The anchor and receipt signatures.
+//! 6. The anchor and receipt signatures, in both stored copies: every row
+//!    of `audit.anchor`, then every prepare of the witness log, aborted
+//!    and in-doubt ones included. An anchor verifies under any key of the
+//!    anchor key history, and a receipt under any pinned witness key. The
+//!    two lists never stand in for each other.
 //!
-//! Steps 1 to 5 read no key. Step 6 refuses with
-//! [`AuditError::AwaitsAcceptance`] until Daniel accepts the composite
-//! encoding table (ADR-010, lane W2g hard limit). The verifier therefore
-//! never answers `Ok` while any signature is unchecked. Only a view with
-//! no row, no anchor row and no witness record verifies today.
+//! Steps 1 to 5 read no key, apart from a length check of each signature
+//! and key list. So a structural change is named by its own tamper even
+//! though it also breaks a signature. A change that only a signature
+//! sees, such as a changed anchor `at`, a changed witness sequence or a
+//! flipped signature byte, is `BadSignature { n }` of its head. A
+//! signature passes only when both halves verify (I-90), through
+//! [`crate::anchor::anchor_signature_verifies`] and
+//! [`crate::anchor::receipt_signature_verifies`].
 //!
 //! An `Ok` lists every `InDoubtAbsent` record as a possible deletion
 //! ([`Verified::possible_deletions`]). ADR-010 "In doubt" makes that alert
@@ -33,16 +40,18 @@
 //! (ADR-010 open point 8).
 //!
 //! Steps 4 and 5 index the witness log and the anchor rows once each, so
-//! the whole check costs O(N log N) in the number of appends. The view
-//! still holds every row at once. A streaming entry point for long
-//! chains is open for W2e.
+//! the whole check costs O(N log N) in the number of appends. Step 6
+//! makes two composite checks per stored copy and key tried. A witness
+//! copy equal to an `audit.anchor` row already checked is not checked
+//! again, since the outcome cannot differ. The view still holds every
+//! row at once. A streaming entry point for long chains is open for W2e.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::anchor::AnchorRow;
+use crate::anchor::{AnchorRow, anchor_signature_verifies, receipt_signature_verifies};
 use crate::chain::{ChainId, Link, RowKind, StoredEntry, StoredRow, genesis, link, stored_hash};
 use crate::witness::WitnessRecord;
-use crate::{AuditError, COMPOSITE_ENCODING_ACCEPTANCE, CellId, PUBLIC_KEY_LEN, SIGNATURE_LEN};
+use crate::{AuditError, CellId, PUBLIC_KEY_LEN, SIGNATURE_LEN};
 
 /// A change the verifier found.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -393,25 +402,54 @@ fn possible_deletions(view: &ChainView<'_>) -> Vec<(u64, Link)> {
         .collect()
 }
 
-/// Step 6: the signatures. Refuses while any signature would need a
-/// check (lane W2g hard limit).
+/// Whether both signatures of one stored copy verify: the anchor under the
+/// anchor key history, the receipt under the pinned witness keys.
+fn row_signed(view: &ChainView<'_>, row: &AnchorRow) -> bool {
+    anchor_signature_verifies(&row.anchor, view.anchor_keys)
+        && receipt_signature_verifies(&row.receipt, view.witness_keys)
+}
+
+/// Step 6: the signatures of every row of `audit.anchor`, then of every
+/// prepare of the witness log. The first copy that fails names its head.
+/// A witness copy equal to a checked `audit.anchor` row is skipped, since
+/// its outcome is the same.
 fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
-    if view.rows.is_empty() && view.anchors.is_empty() && view.witness.is_empty() {
-        return Ok(());
+    let mut checked: BTreeMap<(u64, Link), &AnchorRow> = BTreeMap::new();
+    for row in view.anchors {
+        if !row_signed(view, row) {
+            return tamper(Tamper::BadSignature { n: row.anchor.n });
+        }
+        checked
+            .entry((row.anchor.n, row.anchor.link))
+            .or_insert(row);
     }
-    Err(AuditError::AwaitsAcceptance(COMPOSITE_ENCODING_ACCEPTANCE))
+    for w in view.witness {
+        let WitnessRecord::Prepare(p) = w else {
+            continue;
+        };
+        let head = (p.anchor.n, p.anchor.link);
+        if checked.get(&head).is_some_and(|c| *c == p) {
+            continue;
+        }
+        if !row_signed(view, p) {
+            return tamper(Tamper::BadSignature { n: p.anchor.n });
+        }
+    }
+    Ok(())
 }
 
 /// Verifies one chain of one cell against its ledger entries, its anchor
 /// rows, the witness log and the key histories (I-24). A live `view` is
 /// taken under the read rule of [`ChainView`].
 ///
+/// `Ok` means every row, ledger entry, anchor row and witness record is
+/// consistent, every row is covered by a receipted prepare, and every
+/// anchor and receipt signature verifies in both halves (I-90).
+///
 /// # Errors
 ///
-/// [`AuditError::Tamper`] with the first change found, or
-/// [`AuditError::AwaitsAcceptance`] when the structure holds but its
-/// signatures cannot be checked yet. Never `Ok` while a signature is
-/// unchecked.
+/// [`AuditError::Tamper`] with the first change found, in the order of
+/// the module documentation.
 pub fn verify(view: &ChainView<'_>) -> Result<Verified, AuditError> {
     let entries = order_and_coverage(view)?;
     hashes_and_links(view, &entries)?;

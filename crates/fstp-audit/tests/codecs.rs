@@ -6,8 +6,8 @@
 //! truncation refused, trailing bytes refused, empty input refused. An
 //! anchor signature has the composite length of draft 19 (R-CR-03).
 //!
-//! Red until lane W2g adds the encoders and the decoders. The stub
-//! decoders refuse with `NotImplemented`, which no test accepts.
+//! Lane W2g landed the encoders and the decoders. A stub decoder that
+//! refused with `NotImplemented` would fail every test here.
 
 #![allow(
     clippy::unwrap_used,

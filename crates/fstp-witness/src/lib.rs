@@ -7,9 +7,10 @@
 //!   one-outstanding-prepare rule.
 //! - [`message`] encodes and decodes what cells and vaults send.
 //! - [`file_store`] is the append-only store of a self-hosted witness.
-//! - [`receipt`] signs receipts and checks anchor signatures. Both refuse
-//!   until Daniel accepts the ADR-010 composite encoding table (lane W2g
-//!   hard limit), so no receipt leaves the witness today.
+//! - [`receipt`] signs receipts under the witness key and checks anchor
+//!   signatures under the chain's anchor key history (ADR-010 "Receipt"
+//!   and "Keys"). The service runs the anchor check before
+//!   [`ChainWitness::prepare`] and signs the receipt fields it returns.
 //!
 //! [`CATALOGUE`] holds the `witness.anchor` column map of design section
 //! 4.4, reviewed in W0. ADR-010 adds prepare, abort, in-doubt and restore
@@ -26,16 +27,15 @@
 //! an aborted `n` breaks the key. [`CATALOGUE`] keeps the design's
 //! columns unchanged until the decision lands in ADR-010 open point 4.
 //!
-//! [`run`], the service over TLS and
-//! PostgreSQL, is not written: without receipt signing it could only
-//! refuse every prepare.
+//! [`run`], the service over TLS and PostgreSQL, is not written yet. Its
+//! TLS and database wiring are missing.
 
 pub mod chain_witness;
 pub mod file_store;
 pub mod message;
 pub mod receipt;
 
-use fstp_audit::{DecodeError, Invalid};
+use fstp_audit::{CryptoError, DecodeError, Invalid};
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
 pub use crate::chain_witness::{
@@ -52,9 +52,12 @@ pub enum WitnessError {
     Decode(DecodeError),
     /// An input the operation refuses to encode.
     Invalid(Invalid),
-    /// The operation signs or checks a signature, and waits on the named
-    /// acceptance ([`fstp_audit::COMPOSITE_ENCODING_ACCEPTANCE`]).
-    AwaitsAcceptance(&'static str),
+    /// An anchor signature did not verify under any key of the chain's
+    /// anchor key history, in both halves (I-90).
+    BadSignature,
+    /// The composite signer gave no signature, for example when the
+    /// system random number generator failed. Nothing was signed.
+    Signing(CryptoError),
     /// The operation is not written yet. It names the operation.
     NotImplemented(&'static str),
 }
@@ -64,7 +67,8 @@ impl std::fmt::Display for WitnessError {
         match self {
             WitnessError::Decode(e) => write!(f, "witness bytes do not decode: {e:?}"),
             WitnessError::Invalid(e) => write!(f, "witness input refused: {e:?}"),
-            WitnessError::AwaitsAcceptance(what) => write!(f, "refused until {what}"),
+            WitnessError::BadSignature => f.write_str("anchor signature does not verify"),
+            WitnessError::Signing(e) => write!(f, "receipt signing failed: {e}"),
             WitnessError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
         }
     }
@@ -119,8 +123,8 @@ pub const CATALOGUE: &[TableSpec] = &[TableSpec {
 }];
 
 /// Runs the witness until shutdown. Not written yet: the service needs
-/// receipt signing, which waits on the ADR-010 composite encoding
-/// acceptance, and its TLS and database wiring.
+/// its TLS and database wiring. The witness core, the anchor check and
+/// receipt signing it would run are written.
 ///
 /// # Errors
 ///
