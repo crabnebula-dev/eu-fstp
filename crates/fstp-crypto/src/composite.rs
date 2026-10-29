@@ -50,6 +50,11 @@ pub const PRIVATE_KEY_LEN: usize = mldsa::SEED_LEN + sig::ED25519_SEED_LEN;
 /// 19 section 4.3, Appendix A Table 4).
 pub const SIGNATURE_LEN: usize = mldsa::SIGNATURE_LEN + sig::ED25519_SIGNATURE_LEN;
 
+/// Length of the ML-DSA-65 half that opens a composite signature (draft 19
+/// section 4.3: `mldsaSig = bytes[:3309]`). Code outside this crate splits
+/// a composite signature with it and never names the `mldsa` module (I-75).
+pub const MLDSA_SIGNATURE_LEN: usize = mldsa::SIGNATURE_LEN;
+
 /// Longest application context in bytes (draft 19 section 3.2 step 1).
 pub const MAX_CONTEXT_LEN: usize = 255;
 
