@@ -11,7 +11,9 @@
 //! - `ApproveRecovery` asks the vault, needs its step-up, and records the
 //!   approval of a second tenant admin only on the `SecondAdmin` path.
 //! - A command whose batch needs a route input is refused with the closed
-//!   refusal `FactsIncomplete`, never the stub's `NotImplemented`.
+//!   refusal `ROUTE_INPUT_MISSING`, never the stub's `NotImplemented`.
+//! - A recovery completion folds only when the case holds the recorded
+//!   evidence of its path, and a step-up consumption only after its grant.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -190,11 +192,15 @@ fn approved(approver: AccountId) -> CellRecord {
 }
 
 fn completed(account: AccountId) -> CellRecord {
+    completed_by(account, RecoveryPath::SecondAdmin)
+}
+
+fn completed_by(account: AccountId, path: RecoveryPath) -> CellRecord {
     auth(AuthRecord::RecoveryCompleted {
         case: CASE,
         account,
-        path: RecoveryPath::SecondAdmin,
-        shown_to_tenant: false,
+        path,
+        shown_to_tenant: path.shown_to_tenant(),
     })
 }
 
@@ -212,6 +218,15 @@ fn consumed_invitation() -> CellRecord {
     auth(AuthRecord::InvitationConsumed {
         invitation: [0x1F; 16],
     })
+}
+
+/// The tenant admin grants of `admins`, then `records`.
+fn admins_then(admins: &[AccountId], records: &[CellRecord]) -> Vec<CellRecord> {
+    admins
+        .iter()
+        .map(|a| admin_granted(*a))
+        .chain(records.iter().cloned())
+        .collect()
 }
 
 /// Replays `records`, each in its own batch at `T0`.
@@ -295,25 +310,62 @@ fn i23_auth_fold_refuses_unknown_and_repeated_references() {
         ),
         (
             "completion of another account",
-            vec![requested(ADMIN), proven(), completed(A)],
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[requested(ADMIN), proven(), approved(ADMIN_2), completed(A)],
+            ),
         ),
         (
             "completion twice",
-            vec![
-                requested(ADMIN),
-                proven(),
-                completed(ADMIN),
-                completed(ADMIN),
-            ],
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[
+                    requested(ADMIN),
+                    proven(),
+                    approved(ADMIN_2),
+                    completed(ADMIN),
+                    completed(ADMIN),
+                ],
+            ),
+        ),
+        (
+            "second admin completion without an approval",
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[requested(ADMIN), proven(), completed(ADMIN)],
+            ),
+        ),
+        (
+            "email completion without the email proof",
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[
+                    requested(A),
+                    completed_by(A, RecoveryPath::EmailThenPasskey),
+                ],
+            ),
+        ),
+        (
+            "operator completion without the email proof",
+            admins_then(
+                &[ADMIN],
+                &[
+                    requested(ADMIN),
+                    completed_by(ADMIN, RecoveryPath::OperatorProcess),
+                ],
+            ),
         ),
         (
             "approval after completion",
-            vec![
-                requested(ADMIN),
-                proven(),
-                completed(ADMIN),
-                approved(ADMIN_2),
-            ],
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[
+                    requested(A),
+                    proven(),
+                    completed_by(A, RecoveryPath::EmailThenPasskey),
+                    approved(ADMIN_2),
+                ],
+            ),
         ),
         ("invitation consumed unknown", vec![consumed_invitation()]),
         (
@@ -334,6 +386,8 @@ fn i23_auth_fold_refuses_unknown_and_repeated_references() {
         assert!(!common::is_stub(&common::shown(&r)), "{name}: {r:?}");
     }
     let s = replay_each(&[
+        admin_granted(ADMIN),
+        admin_granted(ADMIN_2),
         registered(A, &cred),
         auth(AuthRecord::CredentialSuspect {
             account: A,
@@ -360,6 +414,118 @@ fn i23_auth_fold_refuses_unknown_and_repeated_references() {
     );
     assert!(a.invitation([0x1F; 16]).is_some_and(|i| i.consumed));
     assert!(a.first_admin_enrolled(ADMIN));
+}
+
+/// I-79, design section 8.5: a host console completion of a sole tenant
+/// admin needs no email proof and no approval in the auth records, so it
+/// folds on a requested case alone. The console command itself is
+/// checked by its route.
+#[test]
+fn i79_host_console_completion_folds_without_email_proof() {
+    let s = replay_each(&[
+        admin_granted(ADMIN),
+        requested(ADMIN),
+        completed_by(ADMIN, RecoveryPath::HostConsole),
+    ])
+    .unwrap();
+    assert_eq!(
+        s.auth().recovery(CASE).and_then(|c| c.completed),
+        Some(RecoveryPath::HostConsole)
+    );
+}
+
+/// I-79, design section 8.5: the fold refuses a completion path that the
+/// current tenant admins rule out, whatever evidence the case holds.
+/// While another tenant admin exists, `HostConsole` and `OperatorProcess`
+/// do not fold, so a record cannot name them to skip the approval. With
+/// no other tenant admin, `SecondAdmin` does not fold. An account that
+/// is a tenant admin never completes by `EmailThenPasskey`.
+#[test]
+fn i79_completion_path_must_fit_the_tenant_admins() {
+    let refused_logs: Vec<(&str, Vec<CellRecord>)> = vec![
+        (
+            "host console beside another admin",
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[
+                    requested(ADMIN),
+                    completed_by(ADMIN, RecoveryPath::HostConsole),
+                ],
+            ),
+        ),
+        (
+            "operator process beside another admin",
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[
+                    requested(ADMIN),
+                    proven(),
+                    completed_by(ADMIN, RecoveryPath::OperatorProcess),
+                ],
+            ),
+        ),
+        (
+            "host console for a non-admin beside an admin",
+            admins_then(
+                &[ADMIN_2],
+                &[requested(A), completed_by(A, RecoveryPath::HostConsole)],
+            ),
+        ),
+        (
+            "second admin with no other admin",
+            admins_then(
+                &[ADMIN],
+                &[
+                    requested(ADMIN),
+                    proven(),
+                    approved(ADMIN_2),
+                    completed(ADMIN),
+                ],
+            ),
+        ),
+        (
+            "email path for a tenant admin",
+            admins_then(
+                &[ADMIN, ADMIN_2],
+                &[
+                    requested(ADMIN),
+                    proven(),
+                    completed_by(ADMIN, RecoveryPath::EmailThenPasskey),
+                ],
+            ),
+        ),
+    ];
+    for (name, log) in refused_logs {
+        let r = replay_each(&log);
+        assert!(r.is_err(), "{name} folded");
+        assert!(!common::is_stub(&common::shown(&r)), "{name}: {r:?}");
+    }
+}
+
+/// I-79, design section 8.5: `recovery::complete` recomputes the path at
+/// completion, so a completion may name another path than the request.
+/// A `SecondAdmin` case whose other tenant admin left completes by the
+/// operator process on its email proof.
+#[test]
+fn i79_completion_path_may_follow_a_change_of_tenant_admins() {
+    let s = replay_each(&admins_then(
+        &[ADMIN, ADMIN_2],
+        &[
+            requested(ADMIN),
+            common::admin_ended(ADMIN_2),
+            proven(),
+            completed_by(ADMIN, RecoveryPath::OperatorProcess),
+        ],
+    ))
+    .unwrap();
+    let case = s.auth().recovery(CASE).unwrap();
+    assert_eq!(
+        (case.requested, case.completed),
+        (
+            RecoveryPath::SecondAdmin,
+            Some(RecoveryPath::OperatorProcess)
+        )
+    );
 }
 
 /// I-79, design section 4.2: a replay rebuilds the stored credential of a
@@ -397,15 +563,24 @@ fn i78_ledger_step_up_admits_only_its_recorded_session() {
     let digest = fstp_cell_core::action_digest(&c, id);
     let mine = passkey(ADMIN);
     let su = stepup(&mine, digest, NOW);
+    // The grant is recorded at the assertion instant, as the step-up
+    // route records it (design section 8.4).
     let grant = |session: [u8; 16]| {
-        replay_each(&[
-            admin_granted(ADMIN),
-            auth(AuthRecord::StepUpGranted {
-                id: su.id,
-                action_digest: digest,
-                session,
-            }),
-        ])
+        common::state_of(
+            &ledger(&[
+                (T0, cid(1), vec![admin_granted(ADMIN)]),
+                (
+                    su.asserted_at,
+                    cid(2),
+                    vec![auth(AuthRecord::StepUpGranted {
+                        id: su.id,
+                        action_digest: digest,
+                        session,
+                    })],
+                ),
+            ])
+            .unwrap(),
+        )
         .unwrap()
     };
     let other = grant([0x99; 16]);
@@ -425,6 +600,100 @@ fn i78_ledger_step_up_admits_only_its_recorded_session() {
     assert!(
         gate::admit_command(&own, &mine, Action::Command(c), id, Some(&su), NOW, &POLICY).is_ok()
     );
+}
+
+/// I-78, design sections 5.4 and 8.4: a step-up the ledger granted for
+/// another command's digest admits no command, even when the view names
+/// its id and session and carries the admitted command's digest. The
+/// ledger record decides the digest, not the view the shell built.
+#[test]
+fn i78_ledger_step_up_admits_only_its_recorded_digest() {
+    let c = CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::GrantTenantAdmin {
+        account: ADMIN_2,
+    });
+    let other_c =
+        CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::GrantTenantAdmin { account: A });
+    let id = cid(0x35);
+    let digest = fstp_cell_core::action_digest(&c, id);
+    let other_digest = fstp_cell_core::action_digest(&other_c, id);
+    assert_ne!(digest, other_digest);
+    let mine = passkey(ADMIN);
+    let su = stepup(&mine, digest, NOW);
+    let granted = |action_digest: [u8; 32]| {
+        common::state_of(
+            &ledger(&[
+                (T0, cid(1), vec![admin_granted(ADMIN)]),
+                (
+                    su.asserted_at,
+                    cid(2),
+                    vec![auth(AuthRecord::StepUpGranted {
+                        id: su.id,
+                        action_digest,
+                        session: mine.id,
+                    })],
+                ),
+            ])
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let other = granted(other_digest);
+    assert_eq!(
+        gate::admit_command(
+            &other,
+            &mine,
+            Action::Command(c.clone()),
+            id,
+            Some(&su),
+            NOW,
+            &POLICY
+        ),
+        Err(Deny::StepUpMismatch)
+    );
+    let own = granted(digest);
+    assert!(
+        gate::admit_command(&own, &mine, Action::Command(c), id, Some(&su), NOW, &POLICY).is_ok()
+    );
+}
+
+/// I-78, P-71, design section 8.4: freshness is checked against the
+/// logged grant too. A view that claims a fresh assertion for a grant
+/// the ledger logged more than P-71 ago is stale. At exactly P-71 it
+/// admits, and `Admitted` carries the logged instant for the commit.
+#[test]
+fn i78_gate_checks_p71_against_the_logged_grant() {
+    let c = CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::GrantTenantAdmin {
+        account: ADMIN_2,
+    });
+    let id = cid(0x34);
+    let mine = passkey(ADMIN);
+    let su = stepup(&mine, fstp_cell_core::action_digest(&c, id), NOW);
+    let granted_at = |at: fstp_domain::time::Timestamp| {
+        common::state_of(
+            &ledger(&[
+                (T0, cid(1), vec![admin_granted(ADMIN)]),
+                (at, cid(2), vec![common::grant_record(&su)]),
+            ])
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let admit = |s: &CellState| {
+        gate::admit_command(
+            s,
+            &mine,
+            Action::Command(c.clone()),
+            id,
+            Some(&su),
+            NOW,
+            &POLICY,
+        )
+    };
+    let old = granted_at(common::plus(NOW, -common::P71_US - 1));
+    assert_eq!(admit(&old), Err(Deny::StepUpStale));
+    let edge_at = common::plus(NOW, -common::P71_US);
+    let edge = admit(&granted_at(edge_at)).unwrap();
+    assert_eq!(edge.stepup().map(|u| u.asserted_at), Some(edge_at));
 }
 
 /// I-78, I-79, design sections 8.4, 8.5 and 8.7: the auth commands that
@@ -477,12 +746,22 @@ fn r_lg_04_end_session_is_a_session_action_and_approval_is_high_risk() {
 // Route inputs (I-23, design section 8).
 
 /// I-23, design section 8: a command whose batch needs a route input
-/// passes the ledger checks, then is refused with `FactsIncomplete` and
-/// `AnswerMissing`, never with the stub's `NotImplemented`. Lane W3a owns
-/// the routes that hold those inputs.
+/// passes the ledger checks, then is refused with the domain refusal
+/// `ROUTE_INPUT_MISSING`, never with the stub's `NotImplemented`. That
+/// refusal is not the one of a missing vault answer (`FactsIncomplete`),
+/// so a caller tells the two apart. Lane W3a owns the routes that hold
+/// those inputs.
 #[test]
-fn i23_route_input_commands_are_refused_as_incomplete_facts() {
+fn i23_route_input_commands_are_refused_as_a_missing_route_input() {
     assert_eq!(RouteInput::OWNER, "W3a");
+    assert_eq!(
+        fstp_cell_core::ROUTE_INPUT_MISSING,
+        Refusal::new(RuleRef::Input, RefusalReason::AnswerMissing)
+    );
+    assert_ne!(
+        fstp_cell_core::ROUTE_INPUT_MISSING,
+        Refusal::new(RuleRef::FactsIncomplete, RefusalReason::AnswerMissing)
+    );
     let cred = [0x5E, 3];
     let s = replay_each(&[
         admin_granted(ADMIN),
@@ -535,10 +814,7 @@ fn i23_route_input_commands_are_refused_as_incomplete_facts() {
         );
         assert_eq!(
             r,
-            Err(refused(
-                RuleRef::FactsIncomplete,
-                RefusalReason::AnswerMissing
-            )),
+            Err(CellRefusal::Domain(fstp_cell_core::ROUTE_INPUT_MISSING)),
             "{c:?}"
         );
     }
@@ -702,12 +978,31 @@ fn approve(
     approver: AccountId,
     vault: Vault,
 ) -> (Result<(), String>, Option<Vec<CellRecord>>) {
-    let entries: Vec<Entry<CellRecord>> = read_all(store).unwrap();
-    let mut s = fstp_cell_core::replay(&entries).unwrap();
     let c = CellCommand::Auth(AuthCommand::ApproveRecovery { case: CASE });
     let id = cid(0x77);
     let session = passkey(approver);
     let su = stepup(&session, fstp_cell_core::action_digest(&c, id), NOW);
+    // The step-up route recorded the grant at the assertion instant
+    // (design section 8.4). Every approver's passkey session has one id,
+    // so a store reused for another approver holds that grant already.
+    let entries: Vec<Entry<CellRecord>> = read_all(store).unwrap();
+    if fstp_cell_core::replay(&entries)
+        .unwrap()
+        .auth()
+        .stepup_grant(su.id)
+        .is_none()
+    {
+        store
+            .append(
+                store.head(),
+                su.asserted_at.micros(),
+                common::GRANT_COMMAND,
+                vec![common::grant_record(&su)],
+            )
+            .unwrap();
+    }
+    let entries: Vec<Entry<CellRecord>> = read_all(store).unwrap();
+    let mut s = fstp_cell_core::replay(&entries).unwrap();
     let admitted = match gate::admit_command(
         &s,
         &session,

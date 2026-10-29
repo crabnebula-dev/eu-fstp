@@ -586,10 +586,11 @@ fn decide_engine(
 /// see. Lane W3a owns those routes ([`RouteInput::OWNER`]).
 ///
 /// An auth command whose batch needs one is refused with the closed
-/// domain refusal `FactsIncomplete` and `AnswerMissing`, as a missing
-/// vault answer is. It is not the stub refusal `NotImplemented`, which
-/// I-23 forbids from `decide`. [`route_inputs`] lists what each auth
-/// command needs.
+/// domain refusal [`ROUTE_INPUT_MISSING`]: rule `Input`, reason
+/// `AnswerMissing`. No other path pairs those two, so a caller tells it
+/// apart from a vault that did not answer (`FactsIncomplete`). It is not
+/// the stub refusal `NotImplemented`, which I-23 forbids from `decide`.
+/// [`route_inputs`] lists what each auth command needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RouteInput {
     /// The new passkey that `fstp_auth::ceremony::verify_new_passkey`
@@ -625,10 +626,21 @@ pub fn route_inputs(c: &fstp_auth::AuthCommand) -> &'static [RouteInput] {
     }
 }
 
+/// The refusal of an auth command whose batch needs a [`RouteInput`]:
+/// the command input that only a route of lane W3a holds is missing.
+///
+/// `fstp_domain::refusal` is closed and holds no reason for a route
+/// input. So this pairs rule `Input` with reason `AnswerMissing`, which
+/// no other path of the cell or of M2 returns. A reason of its own needs
+/// a change to `fstp-domain`, which is the lead's.
+pub const ROUTE_INPUT_MISSING: Refusal = Refusal::new(RuleRef::Input, RefusalReason::AnswerMissing);
+
 /// The refusal of a command whose batch needs `input` ([`RouteInput`]).
+/// The input itself is in [`route_inputs`] for the command, and its
+/// owner is [`RouteInput::OWNER`].
 fn needs(input: RouteInput) -> CellRefusal {
     let _ = input;
-    refuse(RuleRef::FactsIncomplete, RefusalReason::AnswerMissing)
+    CellRefusal::Domain(ROUTE_INPUT_MISSING)
 }
 
 /// Decides an auth command (design section 8).

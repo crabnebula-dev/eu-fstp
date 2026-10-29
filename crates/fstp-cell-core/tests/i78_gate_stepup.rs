@@ -48,8 +48,15 @@ fn gate_admin(
     now: Timestamp,
     policy: &LoginPolicy,
 ) -> Result<Admitted, Deny> {
+    // The ledger granted the offered step-up as its view states it, at
+    // its assertion instant (design section 8.4). So the checks below
+    // meet the view's own digest, session, method and age.
+    let s = match su {
+        Some(u) => common::with_admins_granted(&[ADMIN], u).unwrap(),
+        None => cell(),
+    };
     admit_with_id(
-        &cell(),
+        &s,
         &passkey(ADMIN),
         Action::Command(c.clone()),
         ID,

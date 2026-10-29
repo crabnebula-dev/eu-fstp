@@ -204,11 +204,16 @@ pub fn prod_self_grant_digest(
     }
 }
 
-/// The seam of [`Production::commit`]: no pure entry point runs an
-/// `Admitted` command (`CellEngine::execute` lives in the shell), and
-/// `AuthRecord` has no `StepUpConsumed`, so consumption cannot be read
-/// from a batch (design section 5.1, lane W2c). The harness owns this seam.
-pub const CONSUME_SEAM: &str = "fstp_celltest::mc::stepup_model::Production::commit: no pure execute(Admitted) and no StepUpConsumed record to read consumption from (design section 5.1, lane W2c)";
+/// The seam of [`Production::commit`]. Lanes W2b and W2c closed their
+/// part: `StepUpConsumed { id }` exists, and `DriverCore` appends it in
+/// the batch of an admitted high-risk command. What is left is the
+/// harness's. `DriverCore` reads ledger entries (`Event::Read`), so a
+/// driver loop over `ProdCell` needs `fstp-ledger` in this crate, which
+/// is also [`super::auth_model::FOLD_SEAM`] (the lead's). The gate also
+/// admits only a step-up the ledger granted, so the harness must record
+/// `StepUpGranted` for each model step-up. Its route-only admission is
+/// `fstp_cell_core::gate::ROUTE_ADMISSION_SEAM` (lane W3a).
+pub const CONSUME_SEAM: &str = "fstp_celltest::mc::stepup_model::Production::commit: a DriverCore loop over ProdCell needs fstp-ledger entries (FOLD_SEAM, the lead), and each model step-up needs a StepUpGranted record, whose admission is lane W3a's (design sections 5.1, 5.4 and 8.4)";
 
 /// The seam of [`login_policy_p71`], closed by lane W2c: the canonical
 /// form is `fstp_cell_core::tenant::TenantLoginPolicy` (design section

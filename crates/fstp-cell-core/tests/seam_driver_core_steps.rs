@@ -603,7 +603,6 @@ fn i78_driver_append_consumes_the_step_up() {
             vec![common::admin_granted(ADMIN)],
         )
         .unwrap();
-    let s = fstp_cell_core::replay(&sh.entries()).unwrap();
     let c = CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN_2 });
     let id = cid(0x32);
     let sess = passkey(ADMIN);
@@ -612,6 +611,16 @@ fn i78_driver_append_consumes_the_step_up() {
         action_digest(&c, id).unwrap_or_else(|e| panic!("{e}")),
         NOW,
     );
+    // The step-up route recorded the grant (design section 8.4).
+    sh.store
+        .append(
+            sh.store.head(),
+            NOW.micros(),
+            common::GRANT_COMMAND,
+            vec![common::grant_record(&su)],
+        )
+        .unwrap();
+    let s = fstp_cell_core::replay(&sh.entries()).unwrap();
     let a = admit_with_id(&s, &sess, Action::Command(c), id, Some(&su), NOW, &POLICY)
         .unwrap_or_else(|e| panic!("{e}"))
         .unwrap();

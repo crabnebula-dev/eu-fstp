@@ -15,8 +15,10 @@
 //! The auth member is encoded and decoded by `fstp_auth::codec`, so each
 //! auth record and command has one spelling. The gate's session checks
 //! call `fstp_auth` (lanes W2b and W2c, integrated). An auth command whose
-//! batch needs an input that only a route holds is refused with
-//! [`CellRefusal::NotImplemented`], naming lane W3a.
+//! batch needs an input that only a route holds is refused with the
+//! domain refusal [`ROUTE_INPUT_MISSING`]. [`route_inputs`] names the
+//! input, and [`RouteInput::OWNER`] names lane W3a. The gate admits no
+//! route-only auth command yet ([`gate::ROUTE_ADMISSION_SEAM`]).
 
 #![deny(
     clippy::float_arithmetic,
@@ -45,7 +47,7 @@ pub use codec::{
     record_from_canonical_at, try_encode_cell_command,
 };
 pub use decide::{
-    ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, RouteInput,
+    ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, ROUTE_INPUT_MISSING, RouteInput,
     WRITE_KIND_GUARDIAN_CONSENT, action_digest, attest_at, decide_reaction, reaction_queries,
     route_inputs, self_grant_digest, try_action_digest, vault_changed, without_vault_outcomes,
 };

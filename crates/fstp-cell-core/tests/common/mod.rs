@@ -315,6 +315,43 @@ pub(crate) fn with_admins(admins: &[AccountId]) -> Result<CellState, String> {
     state_of(&ledger(&batches)?)
 }
 
+/// The `StepUpGranted` record that `POST /auth/stepup` writes for `su`
+/// once its assertion verified: its id, digest and session (design
+/// section 8.4).
+pub(crate) fn grant_record(su: &StepUpView) -> CellRecord {
+    CellRecord::Auth(fstp_auth::AuthRecord::StepUpGranted {
+        id: su.id,
+        action_digest: su.action_digest,
+        session: su.session,
+    })
+}
+
+/// The command id of the batch that grants a step-up in these suites.
+pub(crate) const GRANT_COMMAND: [u8; 16] = cid(0xB5);
+
+/// The state in which each of `admins` was made tenant admin at `T0`,
+/// and the ledger then granted `su` at its assertion instant. Every
+/// step-up the gate admits is one the ledger granted (design sections
+/// 5.4 and 8.4).
+pub(crate) fn with_admins_granted(
+    admins: &[AccountId],
+    su: &StepUpView,
+) -> Result<CellState, String> {
+    let mut batches: Vec<Batch> = admins
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            (
+                fstp_domain_testkit::r#gen::roster::T0,
+                cid(0xA0 + u8::try_from(i).unwrap_or(0)),
+                vec![admin_granted(*a)],
+            )
+        })
+        .collect();
+    batches.push((su.asserted_at, GRANT_COMMAND, vec![grant_record(su)]));
+    state_of(&ledger(&batches)?)
+}
+
 /// The M2 entries as cell entries: each record in the `Engine` member,
 /// with sequence, time, command id and schema kept.
 pub(crate) fn as_cell(entries: &[Entry<fstp_engine::Record>]) -> Vec<Entry<CellRecord>> {
