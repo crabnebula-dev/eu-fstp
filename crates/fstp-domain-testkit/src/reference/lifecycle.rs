@@ -108,9 +108,12 @@
 //!   repeat the validation only to record that entry, for example after
 //!   a release by the System, which records no decision (R-LA-03, NOTE
 //!   13). Any decision row with the System as actor is a breach that
-//!   [`check_recorded_by_human`] reports. For a minor's proposal without a verified
-//!   guardian consent, the last validation may be refused or recorded
-//!   without the transition (I-18, R-NG-02). A concern goes to the
+//!   [`check_recorded_by_human`] reports. The minor flag is derived at this
+//!   gate from the vault, never from the actor (R-ID-04, state-machine
+//!   NOTE 14, [`minor_flagged`]). For a minor-flagged proposal without a
+//!   verified guardian consent, the last validation is recorded without
+//!   the transition, which opens consent collection (I-18, R-NG-01
+//!   guardian note, R-NG-02). A repeat of it is refused. A concern goes to the
 //!   applicant through the outbox (R-IR-02). With a later published call
 //!   of the programme it defers the proposal (NOTE 7). Otherwise the
 //!   proposal stays in IRC_REVIEW until the programme manager records
@@ -156,16 +159,24 @@ use crate::vault::GroundTruth;
 // Vault facts
 // ---------------------------------------------------------------------------
 
-/// The vault facts the lifecycle reference reads: the review questions and
-/// the guardian consent record (I-18).
+/// The vault facts the lifecycle reference reads: the review questions, the
+/// guardian consent record (I-18) and the over-18 attestation (R-ID-04).
 pub trait LifeFacts: ConflictFacts {
     /// "Does this proposal have a verified guardian consent record?"
     fn has_consent(&self, proposal: ProposalId) -> bool;
+
+    /// "Does this proposal's lead have an effective verified over-18
+    /// attestation at the call deadline?" (overview NOTE 7)
+    fn is_adult_at(&self, lead: AccountId, deadline: Timestamp) -> bool;
 }
 
 impl LifeFacts for GroundTruth {
     fn has_consent(&self, proposal: ProposalId) -> bool {
         GroundTruth::has_consent(self, proposal)
+    }
+
+    fn is_adult_at(&self, lead: AccountId, deadline: Timestamp) -> bool {
+        GroundTruth::is_adult_at(self, lead, deadline)
     }
 }
 
@@ -173,6 +184,23 @@ impl LifeFacts for WorldFacts<'_> {
     fn has_consent(&self, proposal: ProposalId) -> bool {
         self.truth.has_consent(proposal)
     }
+
+    fn is_adult_at(&self, lead: AccountId, deadline: Timestamp) -> bool {
+        self.truth.is_adult_at(lead, deadline)
+    }
+}
+
+/// Whether `p` is minor-flagged at the NEGOTIATION gate (R-ID-04,
+/// state-machine NOTE 14): its lead has no effective verified over-18
+/// attestation at the deadline of the call it was submitted to. The
+/// actor's `minor` field is never read. The deadline is that of the
+/// created call (ADR-008, "Which deadline", interim). An unknown call
+/// counts as minor-flagged, so the reading fails closed.
+pub fn minor_flagged<F: LifeFacts + ?Sized>(life: &LifeView, facts: &F, p: &LifeProposal) -> bool {
+    !life
+        .calls
+        .get(&p.created_call)
+        .is_some_and(|c| facts.is_adult_at(p.lead, c.deadline))
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +412,9 @@ pub struct LifeProposal {
     pub current_call: CallId,
     /// The lead.
     pub lead: AccountId,
-    /// The minor flag.
+    /// The `minor` field the actor sent with `CreateDraft`. No guard reads
+    /// it, since the flag is derived from the vault (R-ID-04,
+    /// [`minor_flagged`]).
     pub minor: bool,
     /// The state.
     pub state: StateTag,
@@ -2781,11 +2811,19 @@ fn irc_review(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> LifeVerdict {
                 });
             }
             let wants = if rerun { Vec::new() } else { vec![review] };
-            if p.minor && !cx.facts.has_consent(proposal) {
+            // State-machine NOTE 14: the gate admits a proposal whose lead
+            // has an effective verified over-18 attestation at the
+            // deadline, or that has a verified guardian consent. Every
+            // other proposal is minor-flagged and stays in IRC_REVIEW. The
+            // last validation is recorded with no transition, since consent
+            // collection opens only once every reviewing IRC member has
+            // validated (R-NG-01, guardian note). A refusal would never
+            // open it. A repeat records nothing new, so it is refused.
+            if minor_flagged(cx.life, cx.facts, p) && !cx.facts.has_consent(proposal) {
                 if rerun {
                     return refuse("I-18: no verified guardian consent");
                 }
-                return LifeVerdict::Either(Expect {
+                return LifeVerdict::Accept(Expect {
                     wants,
                     ..Expect::default()
                 });

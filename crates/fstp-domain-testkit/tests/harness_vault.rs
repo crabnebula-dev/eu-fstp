@@ -53,6 +53,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use fstp_domain::id::{AccountId, ClassId, ProgrammeId, ProposalId, ProximityListId, VaultEpoch};
 use fstp_domain::oracle::{OracleDown, Query, QueryKind};
 use fstp_domain::policy::ExclusionClasses;
+use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::vault::{
     DownOracle, GroundTruth, HavocOracle, IdentityTag, PendingFact, PriorDeliverables, Relation,
     SyntheticVault, excluded_applicant, minor_applicant, repeat_applicant, sybil_pair,
@@ -84,6 +85,12 @@ enum Op {
     VerifyProvisional(u128),
     AffiliateProvisional(u128, u128),
     MakeEffective(u128),
+    /// An effective over-18 attestation: account and the instant from which it shows 18 or older.
+    AttestAdult(u128, i64),
+    /// A provisional over-18 attestation (NOTE 4).
+    AttestAdultProvisional(u128, i64),
+    /// The over-18 attestation of the account is withdrawn.
+    WithdrawAttestation(u128),
 }
 
 /// A pending fact in the reference: an exclusion or a relation.
@@ -109,6 +116,10 @@ struct Facts {
     provisional_verified: BTreeSet<u128>,
     /// Provisional affiliations (NOTE 4). No query but `ChangedSince` sees them.
     provisional_affiliations: BTreeSet<(u128, u128)>,
+    /// Effective over-18 attestations, by account (overview NOTE 7).
+    adults: BTreeMap<u128, i64>,
+    /// Provisional over-18 attestations (NOTE 4). No query but `ChangedSince` sees them.
+    provisional_adults: BTreeMap<u128, i64>,
     /// The accounts changed by the change that produced each epoch.
     changes: Vec<(u64, BTreeSet<u128>)>,
 }
@@ -205,7 +216,24 @@ impl Facts {
                     self.affiliations.insert((*a, l));
                     changed.insert(*a);
                 }
+                if let Some(from) = self.provisional_adults.remove(a) {
+                    self.adults.insert(*a, from);
+                    changed.insert(*a);
+                }
                 changed
+            }
+            Op::AttestAdult(a, from) => {
+                self.adults.insert(*a, *from);
+                [*a].into_iter().collect()
+            }
+            Op::AttestAdultProvisional(a, from) => {
+                self.provisional_adults.insert(*a, *from);
+                [*a].into_iter().collect()
+            }
+            Op::WithdrawAttestation(a) => {
+                self.adults.remove(a);
+                self.provisional_adults.remove(a);
+                [*a].into_iter().collect()
             }
         };
         self.epoch += 1;
@@ -319,6 +347,12 @@ impl Facts {
                 })
             }
             Query::HasGuardianConsent { proposal } => self.consents.contains(&proposal.raw()),
+            // Overview NOTE 7: yes only for an effective attestation that shows
+            // the lead 18 or older at the deadline.
+            Query::IsVerifiedAdultAtDeadline { account, deadline } => self
+                .adults
+                .get(&account.raw())
+                .is_some_and(|from| *from <= deadline.micros()),
             Query::DeclaresAffiliationOnList { team, list } => team
                 .iter()
                 .any(|m| self.affiliations.contains(&(m.raw(), list.raw()))),
@@ -378,6 +412,11 @@ fn apply_to_truth(truth: &mut GroundTruth, op: &Op) {
             truth.declare_affiliation_provisional(acc(*a), ProximityListId::from_raw(*l));
         }
         Op::MakeEffective(a) => truth.make_effective(acc(*a)),
+        Op::AttestAdult(a, from) => truth.attest_adult(acc(*a), Timestamp::from_micros(*from)),
+        Op::AttestAdultProvisional(a, from) => {
+            truth.attest_adult_provisional(acc(*a), Timestamp::from_micros(*from));
+        }
+        Op::WithdrawAttestation(a) => truth.withdraw_attestation(acc(*a)),
     }
 }
 
@@ -391,6 +430,8 @@ const CLASSES: u128 = 3;
 const LISTS: u128 = 2;
 const PROPOSALS: u128 = 2;
 const PROGRAMMES: u128 = 2;
+/// The instants of attestations and deadlines, in microseconds.
+const INSTANTS: i64 = 3;
 
 fn account(g: &mut Gen) -> u128 {
     u128::from(g.u8_in(1..=ACCOUNTS as u8))
@@ -404,6 +445,10 @@ fn small(g: &mut Gen, max: u128) -> u128 {
     u128::from(g.u8_in(1..=max as u8))
 }
 
+fn instant(g: &mut Gen) -> i64 {
+    g.i64_in(1..=INSTANTS)
+}
+
 fn relation(g: &mut Gen) -> Relation {
     *g.pick(&[Relation::CoWorker, Relation::Relative, Relation::Mentoring])
 }
@@ -411,7 +456,7 @@ fn relation(g: &mut Gen) -> Relation {
 fn gen_op(g: &mut Gen) -> Op {
     // Identities and verifications are drawn more often, so shared and
     // unverified identities meet in most cases.
-    match g.weighted(&[4, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2]) {
+    match g.weighted(&[4, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1]) {
         0 => Op::SetIdentity(account(g), tag(g)),
         1 => Op::Verify(account(g)),
         2 => Op::Relate(tag(g), tag(g), relation(g)),
@@ -427,7 +472,10 @@ fn gen_op(g: &mut Gen) -> Op {
         12 => Op::WithdrawConsent(small(g, PROPOSALS)),
         13 => Op::VerifyProvisional(account(g)),
         14 => Op::AffiliateProvisional(account(g), small(g, LISTS)),
-        _ => Op::MakeEffective(account(g)),
+        15 => Op::MakeEffective(account(g)),
+        16 => Op::AttestAdult(account(g), instant(g)),
+        17 => Op::AttestAdultProvisional(account(g), instant(g)),
+        _ => Op::WithdrawAttestation(account(g)),
     }
 }
 
@@ -483,6 +531,10 @@ fn gen_query(g: &mut Gen, kind: QueryKind, max_epoch: u64) -> Query {
         },
         QueryKind::HasGuardianConsent => Query::HasGuardianConsent {
             proposal: ProposalId::from_raw(small(g, PROPOSALS)),
+        },
+        QueryKind::IsVerifiedAdultAtDeadline => Query::IsVerifiedAdultAtDeadline {
+            account: AccountId::from_raw(account(g)),
+            deadline: Timestamp::from_micros(instant(g)),
         },
         QueryKind::DeclaresAffiliationOnList => Query::DeclaresAffiliationOnList {
             team: accounts(g),
@@ -582,6 +634,10 @@ fn harness_vault_fixed_truth_answers_each_query_kind() {
     truth.consent(ProposalId::from_raw(1));
     truth.declare_affiliation(a(3), ProximityListId::from_raw(1));
     truth.meet_country(a(1), ProgrammeId::from_raw(1));
+    // Account 1 is attested 18 or older from instant 10 on. Account 2 has a
+    // provisional attestation only, which no query counts (NOTE 4).
+    truth.attest_adult(a(1), Timestamp::from_micros(10));
+    truth.attest_adult_provisional(a(2), Timestamp::from_micros(0));
     let epoch_before_last = truth.epoch();
     truth.verify(a(6));
     let vault = SyntheticVault::new(truth);
@@ -694,6 +750,30 @@ fn harness_vault_fixed_truth_answers_each_query_kind() {
         (
             Query::HasGuardianConsent {
                 proposal: ProposalId::from_raw(2),
+            },
+            false,
+        ),
+        // Overview NOTE 7, R-ID-04: at the deadline 10 account 1 is shown
+        // 18 or older, at 9 it is not, and a provisional attestation of
+        // account 2 does not count.
+        (
+            Query::IsVerifiedAdultAtDeadline {
+                account: a(1),
+                deadline: Timestamp::from_micros(10),
+            },
+            true,
+        ),
+        (
+            Query::IsVerifiedAdultAtDeadline {
+                account: a(1),
+                deadline: Timestamp::from_micros(9),
+            },
+            false,
+        ),
+        (
+            Query::IsVerifiedAdultAtDeadline {
+                account: a(2),
+                deadline: Timestamp::from_micros(10),
             },
             false,
         ),

@@ -103,6 +103,15 @@ pub const CALL_OPENS: Timestamp = Timestamp::from_micros(0);
 /// The deadline of every call: after every command.
 pub const CALL_DEADLINE: Timestamp = Timestamp::from_micros(4_000_000_000_000);
 
+/// The instant from which the over-18 attestation of a lead whose draft is
+/// not flagged as a minor's shows the lead 18 or older: the opening of
+/// every call, so before every deadline (R-ID-04, overview NOTE 7).
+pub const LEAD_ADULT_FROM: Timestamp = CALL_OPENS;
+
+/// The instant from which a lead who turns 18 after the deadline is shown
+/// 18 or older: one microsecond after [`CALL_DEADLINE`] (R-ID-04).
+pub const LEAD_ADULT_AFTER_DEADLINE: Timestamp = Timestamp::from_micros(4_000_000_000_001);
+
 /// The call with synthetic number `n`.
 pub const fn call(n: u128) -> CallId {
     CallId::from_raw(n)
@@ -625,7 +634,7 @@ impl SodWorld {
     pub fn commit(&mut self, records: &[Record]) -> Result<(), String> {
         let mut view = self.view.clone();
         for r in records {
-            view.fold(r)
+            view.fold_with(r, &self.truth)
                 .map_err(|e| format!("the reference cannot follow {r:?}: {e}"))?;
         }
         if self.backend == Backend::Production {
@@ -1861,7 +1870,7 @@ impl StateMachine for SodMachine {
         for r in &records {
             // A record the reference cannot follow fails the invariant, which
             // re-folds the whole ledger.
-            let _ = model.view.fold(r);
+            let _ = model.view.fold_with(r, &model.truth);
             match r {
                 Record::PolicyVersionRecorded { version, .. } => {
                     model.heads.insert(version.programme, (**version).clone());

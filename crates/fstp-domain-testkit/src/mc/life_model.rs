@@ -52,7 +52,8 @@ use crate::clock::ReducedClock;
 use crate::r#gen::policy::text;
 use crate::r#gen::review::{
     COORDINATOR, DraftSpec, IRC, L1, O1, O2, O3, PR1, R1, R2, R3, ReviewSetup, ReviewWorld, assign,
-    declare, handle, judged, milestone, plan_of, review_truth, submit, tag, withdraw,
+    attest_adult_leads, declare, handle, judged, milestone, plan_of, review_truth, submit, tag,
+    withdraw,
 };
 use crate::r#gen::roster::{Backend, Flags, STAFF_PM, SodSetup, SodWorld, Step, call, publish};
 use crate::mc::findings_model::FindingSide;
@@ -708,9 +709,19 @@ impl LifeSetup {
         self.review().accounts()
     }
 
-    /// The vault of the setup: every account verified with its own identity.
+    /// The vault of the setup: every account verified with its own identity,
+    /// and every lead of a proposal not flagged as a minor's attested 18 or
+    /// older from [`crate::r#gen::roster::LEAD_ADULT_FROM`] on.
+    ///
+    /// The minor bit of [`LifeSetup::proposals`] is the vault fact the
+    /// lifecycle derives the flag from (R-ID-04, state-machine NOTE 14). It
+    /// is also sent as the `CreateDraft` field, which no guard may read. A
+    /// test that separates the two changes the truth, for example through
+    /// [`Story::new`].
     pub fn truth(&self) -> GroundTruth {
-        review_truth(self.accounts())
+        let mut truth = review_truth(self.accounts());
+        attest_adult_leads(&mut truth, self.proposals.iter().map(|(l, _, m)| (*l, *m)));
+        truth
     }
 
     /// The production commands from genesis to the proposal in DRAFT, with

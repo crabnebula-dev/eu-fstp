@@ -4,25 +4,41 @@
 //! lifecycle around it.
 //!
 //! - `CreateDraft` needs a published call that is open now. It records
-//!   `ProposalCreated` with the lead and the supplied minor flag (R-ID-04
-//!   seam). Lane L-SOD's contribution adds the lead's Applicant binding.
+//!   `ProposalCreated` with the lead and the actor's `minor` field. No
+//!   guard reads that field (R-ID-04). Lane L-SOD's contribution adds the
+//!   lead's Applicant binding.
 //! - `AddTeamMember` and `AddGuardian` need the lead as actor, with an
 //!   active Applicant binding on the proposal (enforcement point 2). An
 //!   account is bound at most once per proposal, voided bindings included.
-//!   A guardian is added only to a proposal flagged as a minor's. These
+//!   A guardian is added only to a minor-flagged proposal. These
 //!   commands record nothing themselves. Lane L-SOD's contribution adds the
 //!   Receiving binding, after SoD-01, SoD-03, SoD-05, SoD-06 and I-06.
-//! - [`Drafts`] keeps the created proposals: their call, lead and minor flag.
+//! - [`Drafts`] keeps the created proposals: their call, lead, the
+//!   actor's `minor` field and the minor flag derived at the NEGOTIATION gate.
+//! - The minor flag never comes from the actor (R-ID-04, state-machine
+//!   NOTE 14). Every proposal is minor-flagged until the IRC_REVIEW to
+//!   NEGOTIATION gate derives the flag from the vault. The gate records
+//!   the `IsVerifiedAdultAtDeadline` outcome in its batch, right before
+//!   the transition. The fold keeps that bit and gives it to the
+//!   transition, so a replay derives the same flag from the ledger alone.
+//!   Whether the flag is derived again before GRANTED is not decided
+//!   (ADR-008, "Second derivation", interim), so the flag holds from the
+//!   gate on.
+//! - The `AddGuardian` guard reads the derived flag, never the actor's
+//!   field. Before the gate every proposal is minor-flagged, so any lead
+//!   can bind the guardian whose consent the gate may need (R-NG-01, design
+//!   6.6 step 3). After a gate that found the attestation it is refused.
 
 use std::collections::BTreeMap;
 
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
 use crate::id::{AccountId, CallId, ProposalId};
-use crate::oracle::{Answers, Query};
-use crate::record::Record;
+use crate::oracle::{Answers, Query, QueryKind};
+use crate::record::{Record, Transitioned};
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::roles::Role;
+use crate::rules::Row;
 use crate::state::{State, UsedId};
 
 /// One created proposal.
@@ -32,14 +48,22 @@ pub(crate) struct Draft {
     pub(crate) call: CallId,
     /// Its lead.
     pub(crate) lead: AccountId,
-    /// Whether the lead is flagged as a minor.
+    /// The `minor` field the actor sent with `CreateDraft`. No guard reads
+    /// it. The minor flag is [`minor_flagged`].
     pub(crate) minor: bool,
+    /// Whether the last IRC_REVIEW to NEGOTIATION gate found an effective
+    /// verified over-18 attestation of the lead at the deadline (R-ID-04,
+    /// state-machine NOTE 14). `false` until a gate derives it.
+    pub(crate) adult_at_gate: bool,
 }
 
 /// The created proposals.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Drafts {
     proposals: BTreeMap<ProposalId, Draft>,
+    /// The answer bit of the last `IsVerifiedAdultAtDeadline` outcome
+    /// folded, until the next transition takes it.
+    pending_adult: Option<bool>,
 }
 
 impl Drafts {
@@ -47,6 +71,7 @@ impl Drafts {
     pub(crate) const fn genesis() -> Drafts {
         Drafts {
             proposals: BTreeMap::new(),
+            pending_adult: None,
         }
     }
 
@@ -60,6 +85,42 @@ impl Drafts {
 /// The created proposal `proposal`.
 pub(crate) fn draft(state: &State, proposal: ProposalId) -> Option<&Draft> {
     state.proposals.drafts.proposals.get(&proposal)
+}
+
+/// Whether `proposal` is minor-flagged (R-ID-04, state-machine NOTE 14).
+///
+/// The flag is derived at the IRC_REVIEW to NEGOTIATION gate from the
+/// vault, and never from the actor. Before the gate, and for an unknown
+/// proposal, it is set, so every reader fails closed.
+pub(crate) fn minor_flagged(state: &State, proposal: ProposalId) -> bool {
+    !draft(state, proposal).is_some_and(|d| d.adult_at_gate)
+}
+
+/// Keeps the bit of an `IsVerifiedAdultAtDeadline` outcome for the
+/// transition that follows it in the gate's batch. Other records are
+/// ignored.
+pub(crate) fn on_vault_outcome(state: &mut State, record: &Record) {
+    if let Record::VaultOutcome {
+        kind: QueryKind::IsVerifiedAdultAtDeadline,
+        holds,
+        ..
+    } = record
+    {
+        state.proposals.drafts.pending_adult = Some(*holds);
+    }
+}
+
+/// Derives the minor flag at the IRC_REVIEW to NEGOTIATION transition from
+/// the kept outcome bit (state-machine NOTE 14). With no kept bit the flag
+/// is set. Every transition drops the kept bit, so it never reaches a later
+/// gate.
+pub(crate) fn on_transition(state: &mut State, t: &Transitioned) {
+    let adult = state.proposals.drafts.pending_adult.take();
+    if t.row == Row::IrcReviewToNegotiation
+        && let Some(d) = state.proposals.drafts.proposals.get_mut(&t.proposal)
+    {
+        d.adult_at_gate = adult == Some(true);
+    }
 }
 
 /// The call of the created proposal `proposal`.
@@ -127,7 +188,7 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             if state.used_ids.contains(UsedId::Binding(*binding)) {
                 return Err(reused());
             }
-            if matches!(cmd, Command::AddGuardian { .. }) && !d.minor {
+            if matches!(cmd, Command::AddGuardian { .. }) && !minor_flagged(state, *proposal) {
                 return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
             }
             if state.roster.bound_to(*account, *proposal) {
@@ -181,6 +242,7 @@ pub(crate) fn apply(state: &mut State, record: &Record) -> Result<(), FoldError>
             call: *call,
             lead: *lead,
             minor: *minor,
+            adult_at_gate: false,
         },
     );
     Ok(())

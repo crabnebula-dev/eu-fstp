@@ -63,11 +63,26 @@
 //!   round (`crate::visibility::ranking_view`): the requested totals of the
 //!   call's proposals in IRC_REVIEW, NEGOTIATION and later states, with
 //!   TERMINATED included (design 3.7, Q14).
-//! - A validation that would take a minor's proposal into NEGOTIATION
-//!   without a verified guardian consent is refused, so it can be recorded
-//!   once the consent exists (I-18, R-NG-02). A release that would complete
-//!   the review of a minor's proposal completes it only when the release
-//!   is an `Unassign`, which asks the vault for the consent.
+//! - The minor flag at the NEGOTIATION gate is derived from the vault and
+//!   never from the actor (R-ID-04, state-machine NOTE 14). A validation
+//!   that would complete the review asks whether the lead has an effective
+//!   verified over-18 attestation at the deadline of the call the proposal
+//!   was submitted to (ADR-008, "Which deadline", interim). It also asks
+//!   whether the proposal has a verified guardian consent. With neither,
+//!   the proposal is minor-flagged. The validation is recorded and the
+//!   proposal stays in IRC_REVIEW until the consent is effective (I-18,
+//!   R-NG-01, R-NG-02). A validated member then repeats the validation to
+//!   record the entry, and the repeat is refused before that. A missing
+//!   answer refuses the validation (overview NOTE 2).
+//! - [`awaiting_guardian_consent`] tells the cell when consent collection
+//!   is open, so it can issue the guardian's write ticket (R-NG-01, design
+//!   6.6 step 3).
+//! - Open point for Daniel, next to the GRANTED re-derivation: the batch of
+//!   the last validation holds `VaultOutcome` records for the attestation
+//!   and the consent. The cell must never show them to the IRC actor
+//!   (R-NG-01, overview NOTE 7). The gate outcome itself still lets the
+//!   last validating IRC member infer the attestation bit. NOTE 14 sets
+//!   that outcome, so this module does not hide it.
 //! - An IRC assignment still awaiting its declaration is outstanding, so
 //!   it keeps the IRC review open (design 3.2, "none outstanding").
 
@@ -328,6 +343,23 @@ impl EffectiveScoreSet {
 /// compare it with the reference after every step.
 pub fn effective_score(state: &State, proposal: ProposalId) -> Option<&EffectiveScoreSet> {
     life::facts(state, proposal).and_then(|f| f.effective.as_ref())
+}
+
+/// Whether guardian consent collection is open for `proposal` (R-NG-01,
+/// guardian exception; design section 6.6 step 3).
+///
+/// It holds while the proposal is in IRC_REVIEW, every reviewing IRC member
+/// has validated it, and it is minor-flagged (R-ID-04). The cell reads it
+/// to issue the guardian's write ticket. The domain learns the lead's
+/// attestation only from the gate's vault answer. So before a gate has
+/// asked, for example after a release completed the review, this read
+/// counts the proposal as minor-flagged. The cell then asks the vault
+/// `IsVerifiedAdultAtDeadline` before it issues the ticket. Neither this
+/// read nor that answer is shown to a Judging role (R-NG-01, overview
+/// NOTE 7).
+pub fn awaiting_guardian_consent(state: &State, proposal: ProposalId) -> bool {
+    crate::proposal::draft::minor_flagged(state, proposal)
+        && irc_completes(state, proposal, None, &BTreeSet::new())
 }
 
 // ---------------------------------------------------------------------------
@@ -1297,12 +1329,36 @@ struct Review {
     /// Whether the IRC member repeats an earlier validation of the round to
     /// complete the review, so no new review is recorded.
     rerun: bool,
-    /// Whether the proposal is a minor's, so the entry into NEGOTIATION
-    /// needs a verified guardian consent (I-18, R-NG-02).
-    minor: bool,
+    /// The gate's questions, asked when a validation completes the review
+    /// of the proposal itself (state-machine NOTE 14).
+    gate: Option<Gate>,
     /// The amendment under review, for a review on an amendment
     /// assignment (R-IR-04). Such a review never moves the proposal.
     amendment: Option<AmendmentId>,
+}
+
+/// The questions of the IRC_REVIEW to NEGOTIATION gate (state-machine
+/// NOTE 14, R-ID-04, I-18). The gate admits the proposal when either holds.
+struct Gate {
+    /// Does the lead have an effective verified over-18 attestation at the
+    /// deadline? A yes clears the minor flag.
+    adult: Query,
+    /// Does the proposal have a verified guardian consent record?
+    consent: Query,
+}
+
+/// The gate's questions for `proposal`. The deadline is that of the call
+/// the proposal was submitted to (ADR-008, "Which deadline", interim).
+fn gate_questions(state: &State, proposal: ProposalId) -> Result<Gate, Refusal> {
+    let d = crate::proposal::draft::draft(state, proposal).ok_or_else(unknown)?;
+    let call = crate::programme::call(state, d.call).ok_or_else(unknown)?;
+    Ok(Gate {
+        adult: Query::IsVerifiedAdultAtDeadline {
+            account: d.lead,
+            deadline: call.deadline(),
+        },
+        consent: Query::HasGuardianConsent { proposal },
+    })
 }
 
 /// Checks an IRC review against the state: the IRC assignee's own active
@@ -1333,7 +1389,7 @@ fn plan_review(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Review, Refusa
             verdict: *verdict,
             completes: false,
             rerun: false,
-            minor: false,
+            gate: None,
             amendment: Some(id),
         });
     }
@@ -1361,7 +1417,11 @@ fn plan_review(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Review, Refusa
     if rerun && !completes {
         return Err(guard);
     }
-    let minor = crate::proposal::draft::draft(state, proposal).is_some_and(|d| d.minor);
+    let gate = if completes {
+        Some(gate_questions(state, proposal)?)
+    } else {
+        None
+    };
     Ok(Review {
         actor,
         proposal,
@@ -1369,20 +1429,19 @@ fn plan_review(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Review, Refusa
         verdict: *verdict,
         completes,
         rerun,
-        minor,
+        gate,
         amendment: None,
     })
 }
 
 /// The vault questions of an IRC review: `HasConflict` for the IRC member,
-/// and the guardian consent when the validation would take a minor's
-/// proposal into NEGOTIATION.
+/// and the gate's questions when the validation would take the proposal
+/// into NEGOTIATION (state-machine NOTE 14).
 fn review_queries(state: &State, r: &Review) -> Vec<Query> {
     let mut out = vec![conflict_query(state, r.actor, r.proposal)];
-    if r.completes && r.minor {
-        out.push(Query::HasGuardianConsent {
-            proposal: r.proposal,
-        });
+    if let Some(g) = &r.gate {
+        out.push(g.adult.clone());
+        out.push(g.consent.clone());
     }
     out
 }
@@ -1390,8 +1449,12 @@ fn review_queries(state: &State, r: &Review) -> Vec<Query> {
 /// The records of an IRC review.
 ///
 /// - A validation that completes the review takes the proposal into
-///   NEGOTIATION. For a minor's proposal without a verified guardian
-///   consent it is refused, so it can be recorded once the consent exists.
+///   NEGOTIATION, unless the proposal is minor-flagged and has no verified
+///   guardian consent (state-machine NOTE 14). The flag is set unless the
+///   lead has an effective verified over-18 attestation at the deadline.
+///   A minor-flagged proposal stays in IRC_REVIEW with the validation
+///   recorded. A validated member repeats the validation to record the
+///   entry once the consent is effective. Until then the repeat is refused.
 /// - A concern goes to the applicant through the outbox. With a later call
 ///   of the programme published it defers the proposal, and otherwise the
 ///   proposal waits in IRC_REVIEW for the programme manager's decline.
@@ -1406,13 +1469,15 @@ fn decide_review(
     for q in review_queries(state, r) {
         record_answer(&mut out, &q, answers)?;
     }
-    if r.completes && r.minor {
-        let consent = Query::HasGuardianConsent {
-            proposal: r.proposal,
-        };
-        if !answer(answers, &consent)?.holds {
-            return Err(Refusal::new(RuleRef::I18, RefusalReason::VaultRefused));
-        }
+    // State-machine NOTE 14: the gate admits the proposal on the lead's
+    // attestation or on its guardian consent. A missing answer refuses the
+    // command (overview NOTE 2).
+    let admitted = match &r.gate {
+        Some(g) => answer(answers, &g.adult)?.holds || answer(answers, &g.consent)?.holds,
+        None => true,
+    };
+    if !admitted && r.rerun {
+        return Err(Refusal::new(RuleRef::I18, RefusalReason::VaultRefused));
     }
     if !r.rerun {
         out.push(Record::IrcReviewRecorded {
@@ -1425,7 +1490,7 @@ fn decide_review(
         return Ok(out);
     }
     match r.verdict {
-        IrcVerdict::Validate if r.completes => out.push(transition(
+        IrcVerdict::Validate if r.completes && admitted => out.push(transition(
             r.proposal,
             StateTag::IrcReview,
             StateTag::Negotiation,

@@ -53,6 +53,9 @@ pub const M_CONFORMANCE_STATES: usize = 21_711;
 
 /// The measured state count of M-CONFORMANCE without withdrawal, on production.
 /// Measured in close-out round 2, up from 14,470, for the reason above.
+/// Re-measured on production in M3 lane dom, fix round 1, after the
+/// NEGOTIATION gate derived the minor flag (state-machine NOTE 14): still
+/// 15,658, by the ignored `lifecycle_deadlock_diagnostic` run.
 pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 15_658;
 
 /// One action of M-CONFORMANCE on PC.

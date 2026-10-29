@@ -495,6 +495,7 @@ unit_enum!(QueryKind {
     WithinRecipientCap,
     AllRecipientsWithinCap,
     HasGuardianConsent,
+    IsVerifiedAdultAtDeadline,
     DeclaresAffiliationOnList,
     MeetsTieBreakCountry,
     ChangedSince,

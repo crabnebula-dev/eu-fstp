@@ -67,7 +67,15 @@
 //! - Test-author choices where the spec is silent:
 //!   - An account holds at most one Receiving binding per proposal. Adding
 //!     the lead, or an account already added, is refused.
-//!   - A guardian is added only to a proposal flagged as a minor's.
+//!   - A guardian is added only to a minor-flagged proposal. The flag is
+//!     derived, never read from the actor's `CreateDraft` field (R-ID-04
+//!     Derivation note). Every proposal is minor-flagged until its
+//!     IRC_REVIEW to NEGOTIATION gate. It stays flagged unless the vault's
+//!     ground truth shows an effective verified over-18 attestation of the
+//!     lead at the deadline of the created call when the gate passes
+//!     (state-machine NOTE 14, ADR-008 "Which deadline", interim). The
+//!     reference reads the vault facts, never production's `VaultOutcome`
+//!     records, so it judges both backends alike ([`View::fold_with`]).
 //!   - Drafting and Judging grants need accepted confidentiality terms
 //!     (Confidentiality on binding). Operations grants never need them.
 //!   - A committee member grant needs the reviewer's organisation, since
@@ -151,6 +159,7 @@ use fstp_domain::id::{
 use fstp_domain::record::Record;
 use fstp_domain::refusal::RuleRef;
 use fstp_domain::roles::{BindingScope, Role};
+use fstp_domain::rules::StateTag;
 use fstp_domain::time::Timestamp;
 
 use crate::vault::{GroundTruth, IdentityTag};
@@ -324,6 +333,8 @@ pub struct RefCall {
     pub seq: Option<u32>,
     /// The P-13 value of the version it froze, once published.
     pub snapshot_p13: Option<BTreeSet<ClassId>>,
+    /// Its deadline, the instant the lead's age counts at (R-ID-04).
+    pub deadline: Timestamp,
 }
 
 /// A proposal as the reference sees it.
@@ -333,8 +344,18 @@ pub struct RefProposal {
     pub call: CallId,
     /// Its lead.
     pub lead: AccountId,
-    /// Whether the lead is flagged as a minor.
-    pub minor: bool,
+    /// Whether, when its IRC_REVIEW to NEGOTIATION gate passed, the vault
+    /// facts showed an effective verified over-18 attestation of the lead
+    /// at the deadline of its call (R-ID-04, NOTE 14). `false` before the
+    /// gate, so the proposal is minor-flagged.
+    pub adult_at_gate: bool,
+}
+
+impl RefProposal {
+    /// Whether the proposal is minor-flagged (R-ID-04, NOTE 14).
+    pub fn minor_flagged(&self) -> bool {
+        !self.adult_at_gate
+    }
 }
 
 /// The live values of one policy version that SoD reads.
@@ -481,10 +502,26 @@ impl View {
         self.proposals.keys().next_back().map_or(0, |p| p.raw())
     }
 
-    /// Folds one core record. Records outside roles, calls, policy and
-    /// proposals leave the view unchanged. An error names a record the
-    /// reference cannot follow, which no engine may emit.
+    /// Folds one core record without the vault facts. Records outside
+    /// roles, calls, policy and proposals leave the view unchanged. An
+    /// error names a record the reference cannot follow, which no engine
+    /// may emit. Without the vault facts the IRC_REVIEW to NEGOTIATION
+    /// gate leaves the proposal minor-flagged, which fails closed. Only
+    /// views whose reader never asks for the flag are built this way.
     pub fn fold(&mut self, record: &Record) -> Result<(), String> {
+        self.fold_in(record, None)
+    }
+
+    /// Folds one core record with `truth`, the vault facts when the record
+    /// was written. At the IRC_REVIEW to NEGOTIATION gate the proposal
+    /// stays minor-flagged unless `truth` shows an effective verified
+    /// over-18 attestation of its lead at the deadline of its call
+    /// (R-ID-04 Derivation note, state-machine NOTE 14).
+    pub fn fold_with(&mut self, record: &Record, truth: &GroundTruth) -> Result<(), String> {
+        self.fold_in(record, Some(truth))
+    }
+
+    fn fold_in(&mut self, record: &Record, truth: Option<&GroundTruth>) -> Result<(), String> {
         match record {
             Record::ProgrammeCreated { programme, .. } => {
                 self.programmes.insert(*programme);
@@ -501,7 +538,10 @@ impl View {
                 self.heads.insert(version.programme, version.id);
             }
             Record::CallDrafted {
-                call, programme, ..
+                call,
+                programme,
+                deadline,
+                ..
             } => {
                 self.calls.insert(
                     *call,
@@ -509,8 +549,14 @@ impl View {
                         programme: *programme,
                         seq: None,
                         snapshot_p13: None,
+                        deadline: *deadline,
                     },
                 );
+            }
+            Record::CallEdited { call, deadline, .. } => {
+                if let Some(c) = self.calls.get_mut(call) {
+                    c.deadline = *deadline;
+                }
             }
             Record::CallPublished {
                 call, policy, seq, ..
@@ -534,7 +580,7 @@ impl View {
                 proposal,
                 call,
                 lead,
-                minor,
+                ..
             } => {
                 if self.proposals.contains_key(proposal) {
                     return Err(format!("proposal {proposal:?} created twice"));
@@ -544,7 +590,7 @@ impl View {
                     RefProposal {
                         call: *call,
                         lead: *lead,
-                        minor: *minor,
+                        adult_at_gate: false,
                     },
                 );
             }
@@ -613,6 +659,20 @@ impl View {
                 b.suspended = b.conflict_of_interest || b.ordinary_suspension;
             }
             Record::VaultEpochProcessed { epoch } => self.epoch = *epoch,
+            Record::Transitioned(t)
+                if t.from == StateTag::IrcReview && t.to == StateTag::Negotiation =>
+            {
+                let deadline = self
+                    .proposals
+                    .get(&t.proposal)
+                    .and_then(|p| self.calls.get(&p.call))
+                    .map(|c| c.deadline);
+                if let Some(p) = self.proposals.get_mut(&t.proposal) {
+                    p.adult_at_gate = truth
+                        .zip(deadline)
+                        .is_some_and(|(truth, d)| truth.is_adult_at(p.lead, d));
+                }
+            }
             Record::ConflictDetected(c) => {
                 self.detected.insert((c.account, c.proposal));
             }
@@ -1240,8 +1300,8 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             if view.bindings.contains_key(binding) {
                 return refuse("binding id reused");
             }
-            if guardian && !p.minor {
-                return refuse("guardian for an adult's proposal");
+            if guardian && !p.minor_flagged() {
+                return refuse("guardian for a proposal that is not minor-flagged");
             }
             let already = view
                 .bindings

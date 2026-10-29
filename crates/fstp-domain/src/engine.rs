@@ -525,7 +525,7 @@ pub fn apply(state: &mut State, seq: Seq, at: Timestamp, record: &Record) -> Res
         Some(Lane::Grant) => grant::apply(state, seq, at, record)?,
         Some(Lane::Payment) => payment::apply(state, seq, at, record)?,
         Some(Lane::Amendment) => amendment::apply(state, seq, at, record)?,
-        None => {}
+        None => crate::proposal::on_vault_outcome(state, record),
     }
     state.now_floor = at;
     Ok(())
