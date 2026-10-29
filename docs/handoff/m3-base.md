@@ -6,16 +6,18 @@ Written in lane W0 of M3 on 2026-10-28. It records the M2 commit that M3 builds 
 
 | Item | Value |
 | --- | --- |
-| Commit | `367b7be500bf2e416118fc0794c29168fa21fc62` (`367b7be`, "Draw scheduled role ends in the engine fuzz target") |
-| Branch | `m2/w7-fix`, the M2 close-out lane |
-| State | Pending the merge of PR #4 ("M2: final review fixes") into `m2-domain-core`. PR #4 was open when W0 ran. |
-| M2 crates at the M3 branch head | Identical to `367b7be`. `git diff 367b7be HEAD -- crates/` was empty before W0 started. |
+| Commit | `21c8709f37e8f1816d39dbf5dbc3bab032567dd3` (`21c8709`, "Merge pull request #4 from crabnebula-dev/m2/w7-fix"), the merge that closes M2 on `main`. W0 pinned `367b7be` before it existed |
+| Branch | `main`. PR #4 brought the M2 close-out lane `m2/w7-fix` in |
+| State | Daniel merged PR #4 on 2026-10-29. `m3/cell-runtime` merged `main` at `21c8709` the same day |
+| M2 crates at the M3 branch head | `367b7be..21c8709` adds one M2 commit, `f1dd458` (Q-W7-4 and Q-W7-7: grant facts name their determination, a new amount clears the contract). `m3/cell-runtime` already held it before the merge |
 
-Design section 0.5 names the merge commit that closes M2 as the base. That commit does not exist yet. Until it does, M3 pins `367b7be`. When PR #4 merges, the lead records the merge commit here and repeats the three re-derivations below. Any difference goes to Daniel before a lane depends on it.
+Design section 0.5 names the merge commit that closes M2 as the base. That commit is `21c8709`, recorded by the lead on 2026-10-29. The three re-derivations below were repeated at it, with no difference.
 
 Design section 0.5 names `docs/handoff/m3-exit-audit.md` for this record. The W0 lane scope names this file instead, so the record lives here. The exit audit (lane W6) cites it.
 
-## Re-derivations at `367b7be`
+## Re-derivations at `367b7be`, repeated at `21c8709`
+
+Repeated on 2026-10-29. `f1dd458` changes `fstp-domain` in `command.rs`, `grant.rs`, `amendment.rs` and the command codec, plus the testkit money references and models. It does not touch `CommandKind::high_risk`, the roster or the scheduled-end records. Each result below holds at `21c8709` unchanged.
 
 1. **High-risk table (I-78).** `fstp_domain::CommandKind::high_risk()` marks seven kinds: `CreateProgramme`, `GrantRole`, `EndRole`, `ReinstateBinding`, `ApprovePayment`, `ReleasePayment` and `PublishCall`. These are the seven the design names. The new `EndScheduledRole` is a system command and is not high-risk. Each of the seven is an entry of `fstp_cell_core::gate::HIGH_RISK_TABLE`. No difference.
 2. **Holdings rule (design section 8.2).** The M2 roster's `Binding::held` excludes a binding under a conflict-of-interest suspension (rule I-06). Design section 8.2 counts every suspended binding as holding for login. The design reading is stricter, so it stands. `fstp_auth::holds_management` must not reuse the roster's `held` predicate for that case. This is reported to Daniel as a note, not a conflict.
@@ -27,7 +29,7 @@ W0 added no third-party crate or npm package. Each seam below kept the designed 
 
 | Seam | Where | Waits for | Owner |
 | --- | --- | --- | --- |
-| moduletto (ML-KEM-768, ML-DSA-65) through `fstp_crypto::{mlkem, mldsa, hybrid_kem, composite}` | `fstp-keys::envelope` has the decoders only; `seal_key`, `open_key`, `seal_blob` and `open_blob` are not written. `fstp-audit` has no composite signing call. `fstp_cp_proto::CompositeSig` checks no grammar yet | Dependency landed 2026-10-28 and commit-ready: `fstp-crypto` depends on moduletto 0.1.0 at commit `46754f2fccb0a501be278fb2fab63b670101a33d` (ML-KEM only), recorded in ADR-001 A2, `deps/allowlist.txt`, `deps/adr-roots.txt` and the Tier B marker. deps-check passes with the unconfirmed Tier B warning, and `--release` fails on it (I-74). The ML-DSA-65 half still waits for moduletto PR #13 and a new pin | W1h removes the ML-KEM seam now, then W2f, W2g and W2h. The ML-DSA-65 seam stays until the pin moves |
+| moduletto (ML-KEM-768, ML-DSA-65) through `fstp_crypto::{mlkem, mldsa, hybrid_kem, composite}` | `fstp-keys::envelope` has the decoders only; `seal_key`, `open_key`, `seal_blob` and `open_blob` are not written. `fstp-audit` has no composite signing call. `fstp_cp_proto::CompositeSig` checks no grammar yet | Dependency landed 2026-10-28 and commit-ready: `fstp-crypto` depends on moduletto 0.1.0, first at commit `46754f2fccb0a501be278fb2fab63b670101a33d` (ML-KEM only) and from 2026-10-29 at `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` (ML-KEM and ML-DSA-65, the merge of moduletto PR #13), recorded in ADR-001 A2, `deps/allowlist.txt`, `deps/adr-roots.txt` and the Tier B marker. deps-check passes with the unconfirmed Tier B warning, and `--release` fails on it (I-74). The pin moved on 2026-10-29 (ADR-001 A2 pin move record). The ML-DSA-65 half now waits only for the fstp-crypto wiring | W1h removes the ML-KEM seam now, then W2f, W2g and W2h. The ML-DSA-65 seam closes when `mldsa` and `composite` call moduletto |
 | zeroize 1.9.1 with features `alloc` and `default` | `fstp_custody::SealKey` holds a plain `[u8; 32]`, and `fstp_keyd::RootMaterial` a plain array. Neither wipes on drop yet. `open_blob` will return `Zeroizing<Vec<u8>>` | Dependency landed 2026-10-28 and commit-ready: a direct dependency of `fstp-crypto`, `fstp-keys`, `fstp-custody` and `fstp-keyd`, with the root line `zeroize ADR-001 alloc,default` and the ADR-001 record line that names all four crates | W1h for the `fstp-crypto` secret types, W2f for `fstp-keys`, `fstp-custody` and `fstp-keyd`. W2f also rewrites the stale "zeroize is not a dependency" comments in `fstp-custody/src/lib.rs` and `fstp-keyd/src/lib.rs` |
 | tokio `signal` feature and `signal-hook-registry` | `fstp-rt` has no `signal` module. The stub binaries do not handle SIGTERM | Dependency landed 2026-10-28 and commit-ready: `signal` is enabled on the `fstp-rt` tokio line only, adding `signal-hook-registry 1.4.8` and `errno 0.3.14`. The ADR-002 record and the tokio root features are updated | W2l writes `fstp-rt/src/signal.rs` |
 | aws-lc-rs ML-KEM and ML-DSA as test oracles | `fstp-celltest` has no aws-lc-rs code yet. `reference::hybrid::combine` refuses | Dependency landed 2026-10-28 and commit-ready: aws-lc-rs 1.18.2 is a normal dependency of the test-only `fstp-celltest`, with no feature change (ADR-001 A6). Its library oracles under `src/reference` can name it | W1h test agent. It also rewrites the stale "aws-lc-rs is not a dependency yet" comment in `fstp-celltest/src/reference/hybrid.rs` |
