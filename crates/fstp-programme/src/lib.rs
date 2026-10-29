@@ -1,15 +1,28 @@
 //! The programme as data (M4 design section 3.1).
 //!
-//! A [`ProgrammeSpec`] is one programme as the creator captures it. People
-//! are never part of it (I-73). `compile` turns a spec into an M2 policy
-//! version and the programme artefacts, deterministically. `decompile` is
-//! its inverse on accepted specs. The crate also holds the `FIELDS` table,
-//! the shipped templates, the SuperSAFE fixture and the R-PG-04 `impact`
-//! function.
+//! A [`ProgrammeSpec`] is one programme as the creator captures it, in the
+//! ten creator steps of `SPEC/02-domain/programme-creator.md`. People are
+//! never part of it (I-73).
 //!
-//! Status: W0 stub. Lane W1a (L-SPEC) owns this crate and writes the
-//! designed types. Every operation refuses with
-//! [`ProgrammeError::NotImplemented`], so no test passes on a stub.
+//! - [`FIELDS`] names every field once, with its step, the parameters it
+//!   sets, its kind and the rules that bound it. Every programme-level
+//!   `CATALOGUE` entry has exactly one field.
+//! - [`decode_spec`] and [`encode_spec`] are the strict JSON form.
+//!   [`decode_field_value`] and [`encode_field_value`] decode one field.
+//!   Unknown members are refused, and amounts travel only as ADR-006
+//!   strings.
+//! - [`compile`] turns a spec into an M2 policy version and the programme
+//!   artefacts, deterministically. [`decompile`] is its exact inverse on
+//!   accepted specs. Gaps survive both ways.
+//! - [`FunderProfile::horizon_europe`] is the only profile in M4.
+//! - [`supersafe_fixture`] and [`shipped_templates`] hold SuperSAFE.
+//! - [`impact`] answers R-PG-04: which calls a change affects.
+//!   [`programme_effects`] names what a change does beyond any call.
+//!
+//! Interim readings, each pending Daniel, are marked where they are built:
+//! the JSON encodings of opaque values, the artefact fields the Guide binds
+//! and their encodings, the placement of parameters no creator step names
+//! (Q36), the synthetic placeholders and the impact effects (Q37, D12).
 
 #![deny(
     clippy::float_arithmetic,
@@ -18,71 +31,30 @@
     clippy::arithmetic_side_effects
 )]
 
-/// Why a programme operation failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProgrammeError {
-    /// The W0 stub of the named operation refuses.
-    NotImplemented(&'static str),
-}
+mod compile;
+mod impact;
+pub mod kinds;
+mod profile;
+mod spec;
+mod template;
+pub mod value;
 
-impl std::fmt::Display for ProgrammeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProgrammeError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
-        }
-    }
-}
-
-impl std::error::Error for ProgrammeError {}
-
-/// One programme as the creator captures it.
-///
-/// W0 placeholder with no fields. Lane W1a writes the ten creator steps of
-/// design section 3.1.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ProgrammeSpec {
-    _w0: (),
-}
-
-/// The output of [`compile`]: the policy version, the artefacts and the
-/// unset fields.
-///
-/// W0 placeholder with no fields. Lane W1a writes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Compiled {
-    _w0: (),
-}
-
-/// One decoded field value.
-///
-/// W0 placeholder with no fields. Lane W1a writes the per-field values.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldValue {
-    _w0: (),
-}
-
-/// Decodes a spec from its canonical JSON text. Unknown members are
-/// rejected, and amounts decode only as ADR-006 strings. Fuzzed
-/// (`spec_decode`).
-pub fn decode_spec(bytes: &[u8]) -> Result<ProgrammeSpec, ProgrammeError> {
-    let _ = bytes;
-    Err(ProgrammeError::NotImplemented(
-        "fstp_programme::decode_spec",
-    ))
-}
-
-/// Compiles a spec into an M2 policy version and the programme artefacts.
-/// Pure and deterministic. Fuzzed (`spec_compile`).
-pub fn compile(spec: &ProgrammeSpec) -> Result<Compiled, ProgrammeError> {
-    let _ = spec;
-    Err(ProgrammeError::NotImplemented("fstp_programme::compile"))
-}
-
-/// Decodes one field value with its field's strict decoder. Fuzzed
-/// (`field_value_decode`).
-pub fn decode_field_value(bytes: &[u8]) -> Result<FieldValue, ProgrammeError> {
-    let _ = bytes;
-    Err(ProgrammeError::NotImplemented(
-        "fstp_programme::decode_field_value",
-    ))
-}
+pub use compile::{
+    CompileError, CompileIds, Compiled, ProgrammeArtefacts, compile, decompile, opaque_text,
+};
+pub use impact::{
+    CallFacts, CallImpact, CorrigendumNeed, ImpactEffect, ImpactError, ProgrammeEffect,
+    PublishedLimits, call_facts, impact, impact_on, programme_effects,
+};
+pub use profile::FunderProfile;
+pub use spec::{
+    CommsStep, ContractStep, DecodeError, EligibilityStep, EvaluationStep, FIELDS, Field, FieldId,
+    FieldKind, FieldSpec, FieldValue, FunderStep, IdentityStep, MoneyStep, PeoplePolicyStep,
+    ProgrammeSpec, SpecSchema, Step, SupportStep, WhatWeFundStep, decode_field_value,
+    decode_field_value_in, decode_spec, encode_field_value, encode_spec,
+};
+pub use template::{
+    Fixture, Publisher, SUPERSAFE_FIXTURE, SUPERSAFE_TEMPLATE, Template, TemplateId,
+    decode_fixture, shipped_templates, supersafe_fixture, template_text,
+};
+pub use value::{INLINE_TEXT, Narrative, StoredText};

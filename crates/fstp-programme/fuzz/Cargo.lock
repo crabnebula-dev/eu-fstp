@@ -72,6 +72,8 @@ dependencies = [
 name = "fstp-programme-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-domain",
+ "fstp-json",
  "fstp-programme",
  "libfuzzer-sys",
 ]
