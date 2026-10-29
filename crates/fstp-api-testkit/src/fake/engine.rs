@@ -216,6 +216,10 @@ impl AsyncEngine for FakeEngine {
         self.dry_run_now(cmd, ctx)
     }
 
+    async fn dry_run_answers(&self, cmd: &Command, ctx: Ctx) -> (Result<(), Refusal>, Vec<Answer>) {
+        self.dry_run_with_answers(cmd, ctx)
+    }
+
     fn snapshot(&self) -> Arc<EngineState> {
         Arc::new(self.state())
     }

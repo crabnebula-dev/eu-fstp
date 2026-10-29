@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use fstp_api_core::{ApiCore, ApiError, Credential};
+use fstp_api_core::decode::{Method as ApiMethod, decode_route};
+use fstp_api_core::{ApiCore, ApiError, Credential, RequestHead};
+use fstp_json::ToJson;
 use fstp_http::{Headers, Method, Request, Response, StatusCode};
 
 use crate::Origin;
@@ -138,32 +140,38 @@ pub(crate) async fn answer(backend: &Backend, req: Request) -> Response {
     }
 }
 
-/// The one call into the API core.
-///
-/// Seam to lanes W3a and W3b, NotImplemented: `ApiCore::dispatch` takes a
-/// `RequestHead` and an `Op`, and the W0 stub of `fstp-api-core` offers
-/// neither a constructor for them nor a decoder from a route. This
-/// function needs `fstp_api_core` to expose three things: the operation
-/// decoder by method and route over `OpSpec::route`, a `RequestHead`
-/// built from the HTTP head, and the `OpResult` variants of design
-/// section 3.7. Until then every call answers the typed 501 of
-/// [`api_error`], and no request reaches a port by any other path.
+/// The one call into the API core: the route decoder of `fstp-api-core`,
+/// then `ApiCore::dispatch`, then the result as JSON with its status.
+/// No request reaches a port by any other path (I-84).
 async fn call_core(core: &ApiCore, cred: Credential, req: Request) -> Response {
-    let _ = (core, cred, req);
-    api_error(ApiError::NotImplemented(
-        "fstp_api_core route decoder and RequestHead (lanes W3a, W3b)",
-    ))
+    let method = match req.method {
+        Method::GET => ApiMethod::Get,
+        Method::POST => ApiMethod::Post,
+        Method::PUT => ApiMethod::Put,
+        Method::DELETE => ApiMethod::Delete,
+        _ => return reply::get_only(),
+    };
+    let path = req.target.path();
+    let below = path.strip_prefix("/api/v1").unwrap_or(path);
+    let op = match decode_route(method, below, &req.body) {
+        Ok(op) => op,
+        Err(e) => return api_error(e),
+    };
+    match core.dispatch(cred, &RequestHead::new(), op).await {
+        Ok(r) => {
+            let status = StatusCode::from_u16(r.http_status()).unwrap_or(StatusCode::OK);
+            Response::with_body(status, "application/json", r.to_json().to_compact().into_bytes())
+        }
+        Err(e) => api_error(e),
+    }
 }
 
 /// The response for an [`ApiError`]. It carries a stable code only and
 /// never names an account or an operation (R-CF-03).
 pub(crate) fn api_error(e: ApiError) -> Response {
-    match e {
-        ApiError::NotImplemented(_) => reply::json(
-            StatusCode::NOT_IMPLEMENTED,
-            br#"{"code":"not_implemented"}"#,
-        ),
-    }
+    let status =
+        StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    Response::with_body(status, "application/json", e.to_json().to_compact().into_bytes())
 }
 
 #[cfg(test)]

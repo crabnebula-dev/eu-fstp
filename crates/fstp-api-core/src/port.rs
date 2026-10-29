@@ -27,7 +27,7 @@ use fstp_domain::{Ctx, Via};
 use fstp_engine::EngineState;
 use fstp_ledger::Seq;
 
-use crate::{ActionDigest, ApiCore, ApiError, Credential, DispatchFuture, Op, RequestHead};
+use crate::{ActionDigest, ApiCore, Credential, DispatchFuture, Op, RequestHead};
 
 macro_rules! port_id {
     ($($(#[$doc:meta])* $n:ident),* $(,)?) => { $(
@@ -333,9 +333,27 @@ pub struct SessionInfo {
 
 /// The tenant settings the cell holds.
 ///
-/// W0 placeholder with no fields. Lane W2d writes them in `fstp-tenant`.
+/// Interim (W3b seam proposal for the lead): the three values dispatch
+/// reads. Lane W2d writes the full settings in `fstp-tenant`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TenantSettings {
-    _w0: (),
+    /// P-74: whether the MCP server is enabled, and for which roles.
+    pub mcp: fstp_access::McpSettings,
+    /// The tenant's inference record (design section 3.5). `None` before
+    /// onboarding records one, so a publication is refused (R-LA-05).
+    pub inference: Option<InferenceRecord>,
+    /// The tenant, bound into every action digest.
+    pub tenant: Option<TenantId>,
+}
+
+/// The tenant's inference configuration record: the `LlmConfigId` and
+/// the primary model a publication names (design section 3.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InferenceRecord {
+    /// The configuration.
+    pub config: fstp_domain::id::LlmConfigId,
+    /// The primary model, which must equal the programme's P-21 primary.
+    pub model: fstp_domain::policy::ModelRef,
 }
 
 /// A recorded second tenant admin approval (SoD-07).
@@ -359,6 +377,8 @@ pub struct Page {
 /// One page of in-app notices.
 ///
 /// W0 placeholder with no fields. The lead writes it with the M3 seam.
+/// Interim (W3b seam proposal): `Default` builds the empty page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NoticePage {
     _w0: (),
 }
@@ -498,8 +518,34 @@ pub trait AsyncEngine: Send + Sync {
         cmd: &fstp_engine::Command,
         ctx: Ctx,
     ) -> impl Future<Output = Result<(), Refusal>> + Send;
+    /// A dry run that also returns every vault answer it obtained, in
+    /// order, whether it was refused or not, so dispatch records each one
+    /// (`overview.md` NOTE 5). Interim (W3b seam proposal for the lead).
+    fn dry_run_answers(
+        &self,
+        cmd: &fstp_engine::Command,
+        ctx: Ctx,
+    ) -> impl Future<Output = (Result<(), Refusal>, Vec<Answer>)> + Send;
     /// The current engine state.
     fn snapshot(&self) -> Arc<EngineState>;
+}
+
+/// MCP bearer tokens (design sections 3.7 step 0 and 3.8). Interim (W3b
+/// seam proposal for the lead): ADR-013 is a draft, so the token store of
+/// `fstp-oauth` is not built. This port resolves a token to its grant.
+pub trait Tokens: Send + Sync {
+    /// The grant of a valid token at `now`.
+    fn grant(
+        &self,
+        token: &[u8],
+        now: Timestamp,
+    ) -> impl Future<Output = Result<fstp_access::GrantFacts, PortError>> + Send;
+    /// Revokes every token of `client` for `account` at once (R-MC-03).
+    fn revoke(
+        &self,
+        account: AccountId,
+        client: AgentClientId,
+    ) -> impl Future<Output = Result<(), PortError>> + Send;
 }
 
 /// Audit (I-24): one entry per call, in the same transaction as any append.
@@ -698,6 +744,8 @@ pub trait CellPorts: Send + Sync + 'static {
     type Clock: Clock;
     /// The id source.
     type Ids: Ids;
+    /// The MCP token grants.
+    type Tokens: Tokens;
 
     /// The sessions port.
     fn sessions(&self) -> &Self::Sessions;
@@ -738,6 +786,8 @@ pub trait CellPorts: Send + Sync + 'static {
     fn clock(&self) -> &Self::Clock;
     /// The id source.
     fn ids(&self) -> &Self::Ids;
+    /// The MCP token grants.
+    fn tokens(&self) -> &Self::Tokens;
 }
 
 /// The object-safe dispatch behind [`ApiCore`]. Private to this crate.
@@ -751,9 +801,11 @@ pub(crate) trait Dispatch: Send + Sync {
     ) -> DispatchFuture<'a>;
 }
 
-/// The ports of one cell inside an [`ApiCore`].
+/// The ports of one cell inside an [`ApiCore`], with the dispatch state
+/// beside them: pending actions and rate-limit counters, in memory.
 struct Core<P> {
     ports: P,
+    state: crate::dispatch::State,
 }
 
 impl<P: CellPorts> Dispatch for Core<P> {
@@ -763,8 +815,61 @@ impl<P: CellPorts> Dispatch for Core<P> {
         head: &'a RequestHead,
         op: Op,
     ) -> DispatchFuture<'a> {
-        let _ = (&self.ports, cred, head, op);
-        Box::pin(async { Err(ApiError::NotImplemented("fstp_api_core::ApiCore::dispatch")) })
+        Box::pin(crate::dispatch::run(
+            &self.ports,
+            &self.state,
+            cred,
+            head,
+            op,
+        ))
+    }
+}
+
+/// The dispatch seams over the ports (W3b seam proposal for the lead).
+impl<P: CellPorts> crate::dispatch::Seams for P {
+    fn grant(
+        &self,
+        token: &[u8],
+        now: Timestamp,
+    ) -> impl Future<Output = Result<fstp_access::GrantFacts, PortError>> + Send {
+        self.tokens().grant(token, now)
+    }
+
+    fn revoke_agent(
+        &self,
+        account: AccountId,
+        client: AgentClientId,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        self.tokens().revoke(account, client)
+    }
+
+    fn dry_run_answers(
+        &self,
+        cmd: &fstp_engine::Command,
+        ctx: Ctx,
+    ) -> impl Future<Output = (Result<(), Refusal>, Vec<Answer>)> + Send {
+        self.engine().dry_run_answers(cmd, ctx)
+    }
+
+    fn mcp_settings(&self) -> fstp_access::McpSettings {
+        self.tenant().settings().mcp.clone()
+    }
+
+    fn inference(&self) -> Option<(fstp_domain::id::LlmConfigId, fstp_domain::policy::ModelRef)> {
+        let s = self.tenant().settings();
+        s.inference.as_ref().map(|i| (i.config, i.model.clone()))
+    }
+
+    fn tenant_id(&self) -> Option<u128> {
+        self.tenant().settings().tenant.map(TenantId::raw)
+    }
+
+    fn record_audit(&self, e: AuditEntry) -> Result<(), PortError> {
+        self.audit().record(&mut Tx { _w0: () }, e)
+    }
+
+    fn call_ids(&self, state: &EngineState) -> Vec<fstp_domain::id::CallId> {
+        state.core.calls().iter().map(|(id, _)| id).collect()
     }
 }
 
@@ -772,6 +877,9 @@ impl<P: CellPorts> Dispatch for Core<P> {
 /// calls it (rule A2b).
 pub fn api_core<P: CellPorts>(ports: P) -> ApiCore {
     ApiCore {
-        inner: Box::new(Core { ports }),
+        inner: Box::new(Core {
+            ports,
+            state: crate::dispatch::State::default(),
+        }),
     }
 }

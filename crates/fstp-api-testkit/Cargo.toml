@@ -24,6 +24,7 @@ fstp-mcp.workspace = true
 fstp-signup.workspace = true
 fstp-web.workspace = true
 fstp-web-assets.workspace = true
+fstp-http.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
 fstp-ledger.workspace = true

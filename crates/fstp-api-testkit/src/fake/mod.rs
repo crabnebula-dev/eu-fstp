@@ -77,14 +77,24 @@ impl std::fmt::Debug for PortSeams {
     }
 }
 
-/// The values of [`PortSeams`], once `port.rs` can build them.
-///
-/// `TenantSettings` and `NoticePage` are W0 placeholders whose fields are
-/// private to `port.rs`. This refuses until the lead adds constructors.
+/// The values of [`PortSeams`]: MCP enabled for every role (the P-74
+/// SuperSAFE value), the inference record whose model is the fixture's
+/// P-21 primary, and a synthetic tenant id.
 pub fn port_seams() -> Result<PortSeams, NotImplemented> {
-    Err(NotImplemented::new(
-        "fstp_api_testkit::fake::port_seams: port.rs TenantSettings and NoticePage have no public constructor",
-    ))
+    let settings = TenantSettings {
+        mcp: fstp_access::McpSettings::all_roles(),
+        inference: Some(fstp_api_core::port::InferenceRecord {
+            config: fstp_domain::id::LlmConfigId::from_raw(1),
+            model: fstp_domain::policy::ModelRef(
+                fstp_domain_testkit::r#gen::policy::MODEL_A.to_owned(),
+            ),
+        }),
+        tenant: Some(fstp_api_core::port::TenantId::from_raw(0x7e7a_0001)),
+    };
+    Ok(PortSeams {
+        settings: Arc::new(settings),
+        notices: Arc::new(|_, _| NoticePage::default()),
+    })
 }
 
 /// Every fake port of one cell. Cloning shares every port.
@@ -150,6 +160,7 @@ impl CellPorts for FakePorts {
     type Prober = FakeProber;
     type Clock = FakeClock;
     type Ids = FakeIds;
+    type Tokens = FakeTokens;
 
     fn sessions(&self) -> &FakeSessions {
         &self.sessions
@@ -207,6 +218,9 @@ impl CellPorts for FakePorts {
     }
     fn ids(&self) -> &FakeIds {
         &self.ids
+    }
+    fn tokens(&self) -> &FakeTokens {
+        &self.tokens
     }
 }
 

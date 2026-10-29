@@ -132,3 +132,13 @@ impl FakeTokens {
             .all(|(_, revoked)| *revoked)
     }
 }
+
+impl fstp_api_core::port::Tokens for FakeTokens {
+    async fn grant(&self, token: &[u8], now: Timestamp) -> Result<GrantFacts, PortError> {
+        self.grant_facts(token, now)
+    }
+
+    async fn revoke(&self, account: AccountId, client: AgentClientId) -> Result<(), PortError> {
+        FakeTokens::revoke(self, account, client)
+    }
+}

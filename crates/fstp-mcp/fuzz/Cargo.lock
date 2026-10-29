@@ -150,11 +150,14 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-import",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
+ "fstp-programme",
 ]
 
 [[package]]

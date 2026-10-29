@@ -289,6 +289,12 @@ impl CallState {
         self.calls.get(&call)
     }
 
+    /// Every call, in id order. Proposed by lane W3b of M4, so the API
+    /// can list the open calls (R-PB-01).
+    pub fn iter(&self) -> impl Iterator<Item = (CallId, &CallView)> {
+        self.calls.iter().map(|(id, v)| (*id, v))
+    }
+
     /// The sequence number of the latest call published in `programme`, if any.
     /// Lane L-SOD reads it to pin cooling-off bars (P-12 NOTE 4).
     pub fn latest_published_seq(&self, programme: ProgrammeId) -> Option<CallSeq> {

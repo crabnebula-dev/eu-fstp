@@ -112,6 +112,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-creator"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-programme",
+]
+
+[[package]]
 name = "fstp-crypto"
 version = "0.1.0"
 dependencies = [
@@ -133,11 +145,14 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-import",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
+ "fstp-programme",
 ]
 
 [[package]]
@@ -148,6 +163,32 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
+]
+
+[[package]]
+name = "fstp-guide"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-html",
+ "fstp-programme",
+]
+
+[[package]]
+name = "fstp-html"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+]
+
+[[package]]
+name = "fstp-import"
+version = "0.1.0"
+dependencies = [
+ "fstp-findings",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-programme",
 ]
 
 [[package]]
@@ -175,6 +216,15 @@ name = "fstp-money"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+]
+
+[[package]]
+name = "fstp-programme"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-money",
 ]
 
 [[package]]

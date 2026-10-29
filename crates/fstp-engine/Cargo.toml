@@ -13,6 +13,11 @@ fstp-findings.workspace = true
 fstp-money.workspace = true
 fstp-ledger.workspace = true
 fstp-json.workspace = true
+# The import bridge (M4 W2b, design section 3.3, rule A3): only the engine
+# reaches fstp-import, and it resolves a proposal into the creator draft.
+fstp-import.workspace = true
+fstp-creator.workspace = true
+fstp-programme.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
