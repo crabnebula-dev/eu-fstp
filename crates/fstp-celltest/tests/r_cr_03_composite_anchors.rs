@@ -13,6 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+use fstp_audit::anchor::{ANCHOR_CONTEXT, RECEIPT_CONTEXT};
 use fstp_celltest::mc::audit_model::{
     prod_composite_public_key, prod_sign_anchor, prod_sign_receipt,
 };
@@ -36,7 +37,7 @@ fn public_key(k: &CompositeSigningKey) -> Vec<u8> {
 /// R-CR-03, ADR-010 "Anchors": an anchor of either chain carries a
 /// composite signature of `SIGNATURE_LEN` bytes over the ADR-010 anchor
 /// message, which verifies under the chain's composite key and binds the
-/// chain.
+/// chain. It is signed under the anchor context ADR-010 records.
 #[test]
 fn r_cr_03_anchors_carry_composite_signatures() {
     let k = key();
@@ -51,11 +52,11 @@ fn r_cr_03_anchors_carry_composite_signatures() {
             "{chain:?} anchor signature length"
         );
         let msg = r::anchor_message(CELL, chain, 3, &LINK, 1_000);
-        composite::verify(&pk, &msg, &sig)
+        composite::verify_with_context(&pk, &msg, ANCHOR_CONTEXT, &sig)
             .unwrap_or_else(|e| panic!("the {chain:?} anchor does not verify: {e}"));
         let other = r::anchor_message(CELL, chain.other(), 3, &LINK, 1_000);
         assert!(
-            composite::verify(&pk, &other, &sig).is_err(),
+            composite::verify_with_context(&pk, &other, ANCHOR_CONTEXT, &sig).is_err(),
             "a {chain:?} anchor verified as a {:?} anchor",
             chain.other()
         );
@@ -64,7 +65,7 @@ fn r_cr_03_anchors_carry_composite_signatures() {
 
 /// R-CR-03, ADR-010 "Receipt": a witness receipt carries a composite
 /// signature over the receipt message, which verifies under the
-/// witness's composite key.
+/// witness's composite key, under the receipt context ADR-010 records.
 #[test]
 fn r_cr_03_receipts_carry_composite_signatures() {
     let k = key();
@@ -85,7 +86,7 @@ fn r_cr_03_receipts_carry_composite_signatures() {
             "{chain:?} receipt signature length"
         );
         let msg = r::receipt_message(CELL, chain, &receipt);
-        composite::verify(&pk, &msg, &sig)
+        composite::verify_with_context(&pk, &msg, RECEIPT_CONTEXT, &sig)
             .unwrap_or_else(|e| panic!("the {chain:?} receipt does not verify: {e}"));
     }
 }
