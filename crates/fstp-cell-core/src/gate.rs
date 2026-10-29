@@ -20,7 +20,8 @@
 //!
 //! 1. The session has not ended by a record, and no binding of its
 //!    account ended after it started and at or before `now`, by any cause
-//!    and including a scheduled end (section 8.2).
+//!    and including a scheduled end (section 8.2). Nor did it start at or
+//!    before a completed recovery of its account (I-79, section 8.5).
 //! 2. `fstp_auth::admit_session` checks the P-72 lifetimes and refuses a
 //!    weak session of a management holder (I-77). Holdings come from the
 //!    engine roster and the tenant fold at `now`.
@@ -40,25 +41,38 @@
 //! records, relationship records, operator tickets and scheduled session
 //! ends ([`crate::SystemTask`]). Nor does it admit the auth commands that
 //! only a route issues once it verified what the record states:
-//! `GrantStepUp` after `POST /auth/stepup` verified an assertion (design
-//! section 8.4), `ProveRecoveryEmail` after the email proof, and the
-//! public and ceremony steps `RequestRecovery` and `CompleteRecovery`
-//! (design section 8.7). Those routes have no admission of their own yet
-//! (lane W3a), so they fail closed. [`admit_system`] admits a system
-//! task's own commands, with no session.
+//! `GrantStepUp`, `ProveRecoveryEmail`, `RequestRecovery` and
+//! `CompleteRecovery`. [`admit_system`] admits a system task's own
+//! commands, with no session.
 //!
 //! A step-up admits only when the ledger granted it (`StepUpGranted`),
 //! and then only the digest and the session its record names. P-71 is
 //! checked against the caller's assertion instant and against the entry
 //! instant of the grant (design sections 5.4 and 8.4).
 //!
-//! The route-only auth commands have no admission in this module yet.
-//! Each needs a typed proof that only its route holds: a verified
-//! step-up assertion (`fstp_auth::stepup::verify_step_up`), an email
-//! proof, a public recovery request, or a verified new passkey. Lane W3a
-//! adds that entry point here, inside `fstp-cell-core`, with its routes
-//! ([`ROUTE_ADMISSION_SEAM`]). Until then the `GrantStepUp` and
-//! `ProveRecoveryEmail` branches of `decide` run only from tests.
+//! The route admissions take what only a route holds (design sections
+//! 8.3 to 8.5 and 8.7):
+//!
+//! - [`admit_add_passkey`]: `RegisterCredential` as `AddPasskey`. The gate
+//!   verifies the registration itself, and the batch records that key.
+//! - [`admit_recovery_request`]: the public `RequestRecovery`, with the
+//!   deployment mode.
+//! - [`Admitted::with_sessions`]: the live session rows of any admitted
+//!   command, so `EndSession`, `RevokeCredential`,
+//!   `EndSessionsAtBindingEnd` and the grant and end reactions of design
+//!   section 5.1 name the sessions they end.
+//!
+//! Three route-only commands fail closed ([`ROUTE_ADMISSION_SEAM`]), since
+//! their route holds no proof this crate can verify yet:
+//!
+//! - `GrantStepUp`: [`admit_stepup_grant`] runs its ledger and session
+//!   checks, then refuses. The `fstp_auth::stepup::StepUp` it takes has
+//!   public fields, so a caller can write one with no assertion behind it.
+//! - `CompleteRecovery`: [`admit_recovery_completion`] recomputes the path
+//!   and verifies the new passkey, then refuses. Nothing binds the caller
+//!   to the case: the enrolment token and the email proof have no
+//!   lifetime under ADR-008 "Unset lifetimes".
+//! - `ProveRecoveryEmail`: it has no admission, for the same reason.
 //!
 //! Steps 1 and 3 are this crate's. Step 2 calls `fstp_auth::admit_session`
 //! and `fstp_auth::holds_management` (lanes W2b and W2c, integrated).
@@ -70,6 +84,7 @@ use fstp_domain::id::AccountId;
 use fstp_domain::roles::{Group, Role};
 use fstp_domain::time::Timestamp;
 
+use crate::inputs::{RouteInputs, SessionRows};
 use crate::tenant::{P71_DEFAULT_US, TenantCommand};
 use crate::{CellCommand, CellState, SystemTask};
 
@@ -386,6 +401,12 @@ pub enum Principal {
     BreakGlass([u8; 16]),
     /// A system task of the cell ([`admit_system`]).
     System(SystemTask),
+    /// A public or ceremony step for the account it names, which holds no
+    /// session: a recovery request or a recovery completion (design
+    /// section 8.7). Only [`admit_recovery_request`] builds it, after its
+    /// own checks. No admission builds it for a completion yet
+    /// ([`ROUTE_ADMISSION_SEAM`]).
+    Ceremony(AccountId),
 }
 
 /// The use of a step-up by one command.
@@ -446,6 +467,7 @@ pub struct Admitted {
     stepup: Option<StepUpUse>,
     at: Timestamp,
     command: Option<[u8; 16]>,
+    inputs: RouteInputs,
 }
 
 impl Admitted {
@@ -473,6 +495,26 @@ impl Admitted {
     /// caller gave one ([`admit_command`]).
     pub fn command_id(&self) -> Option<[u8; 16]> {
         self.command
+    }
+
+    /// The route or task inputs the command's batch is decided with
+    /// ([`RouteInputs`]).
+    pub fn inputs(&self) -> &RouteInputs {
+        &self.inputs
+    }
+
+    /// The same admission with the live session rows `rows`, which its
+    /// route or task read from `auth.session` (design section 4.2). The
+    /// batch then names the sessions it ends: the reactions of design
+    /// section 5.1, `EndSession`, `RevokeCredential` and
+    /// `EndSessionsAtBindingEnd`.
+    ///
+    /// Rows are data, not proof (module [`crate::inputs`]). They change no
+    /// check of the gate, and a row can only make a batch end a session.
+    #[must_use]
+    pub fn with_sessions(mut self, rows: SessionRows) -> Admitted {
+        self.inputs = self.inputs.with_sessions(rows);
+        self
     }
 }
 
@@ -556,9 +598,19 @@ fn admit_inner(
     {
         return Err(Deny::NotPermitted);
     }
-    // Step 1: a record or a binding end ended the session.
+    admit_in_session(s, session, action, command, stepup, now, policy)
+}
+
+/// Steps 1 and 2 of design section 5.4: the session has not ended, by a
+/// record or by a binding end after it started, and `fstp_auth` admits it
+/// under P-72 and I-77.
+fn session_checks(s: &CellState, session: &SessionView, now: Timestamp) -> Result<(), Deny> {
+    // Step 1: a record, a binding end or a completed recovery of the
+    // account ended the session (I-79: a completion ends every session
+    // of the account, not only those its route read).
     if s.auth().session_ended(session.id)
         || s.binding_ended_between(session.account, session.started, now)
+        || s.auth().ended_by_recovery(session.account, session.started)
     {
         return Err(Deny::SessionEnded);
     }
@@ -569,7 +621,23 @@ fn admit_inner(
         idle_us: tenant.p72_idle_us(),
         absolute_us: tenant.p72_absolute_us(),
     };
-    fstp_auth::admit_session(holds, session, now, &lifetimes).map_err(session_deny)?;
+    fstp_auth::admit_session(holds, session, now, &lifetimes).map_err(session_deny)
+}
+
+/// The checks of design section 5.4 after the route-only refusal: the
+/// session, the log readers and the step-up. The route admissions call it
+/// for their own command once their proof verified.
+fn admit_in_session(
+    s: &CellState,
+    session: &SessionView,
+    action: Action,
+    command: Option<[u8; 16]>,
+    stepup: Option<&StepUpView>,
+    now: Timestamp,
+    policy: &LoginPolicy,
+) -> Result<Admitted, Deny> {
+    session_checks(s, session, now)?;
+    let tenant = s.tenant().policy();
     // The audit and erasure logs are read by tenant admins and Auditors
     // only (ADR-007 "Retention and erasure", G30, design section 8.7).
     if matches!(
@@ -598,6 +666,7 @@ fn admit_inner(
         stepup: used,
         at: now,
         command,
+        inputs: RouteInputs::none(),
     })
 }
 
@@ -691,19 +760,34 @@ fn system_only(c: &CellCommand) -> bool {
     )
 }
 
-/// The missing admission of the route-only auth commands. A session
-/// never admits them, and [`admit_system`] admits no auth command. So
-/// `CellEngine::execute(Admitted)`, the only way a command reaches
-/// `DriverCore` (design section 5.4), cannot run them yet. Lane W3a owns
-/// the change: a typed admission in this module, with route proofs.
-pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate has no admission for GrantStepUp, RequestRecovery, ProveRecoveryEmail and CompleteRecovery: a typed admission with route proofs (a verified step-up assertion, an email proof, a public request, a verified new passkey) is added here by lane W3a (design sections 5.4, 8.4 and 8.5)";
+/// The route-only auth commands that no admission admits yet, each for
+/// want of a proof this crate can verify. A session never admits them,
+/// and no route admission does. So `CellEngine::execute(Admitted)` cannot
+/// run them, and they fail closed.
+///
+/// - `GrantStepUp` (design section 8.4, I-78): only
+///   `fstp_auth::stepup::verify_step_up` may vouch for an assertion. Its
+///   `StepUp` has public fields, and this crate cannot name the assertion
+///   type to verify it itself. A sealed proof, or an edge to
+///   `fstp-webauthn`, is a lead-owned change.
+/// - `CompleteRecovery` (design section 8.5, I-79): the one-time enrolment
+///   token or the email ceremony binds the caller to the case. Without it
+///   the approving admin, who sees the case id, could enrol their own key
+///   on the holder's account.
+/// - `ProveRecoveryEmail` (design section 8.5): its proof is the email
+///   token.
+///
+/// ADR-008 "Unset lifetimes" gives the recovery tokens no lifetime, so no
+/// route verifies them yet.
+pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate admits no GrantStepUp, CompleteRecovery or ProveRecoveryEmail (design sections 8.4 and 8.5, lane W3a). The step-up needs a proof that only fstp_auth::stepup::verify_step_up builds, a lead-owned change. The recovery steps need the enrolment or email token, which has no lifetime (ADR-008 \"Unset lifetimes\")";
 
 /// Whether only an auth route issues `c`, after it verified what the
 /// record states (design sections 8.4, 8.5 and 8.7): `GrantStepUp` after a
 /// step-up assertion, `ProveRecoveryEmail` after the email proof, and the
 /// public or ceremony steps `RequestRecovery` and `CompleteRecovery`,
-/// whose account holds no session. Those routes have no admission of
-/// their own yet ([`ROUTE_ADMISSION_SEAM`]), so they fail closed.
+/// whose account holds no session. A session never admits them. Only
+/// `RequestRecovery` has a route admission that admits today
+/// ([`ROUTE_ADMISSION_SEAM`]).
 fn route_only(c: &CellCommand) -> bool {
     use fstp_auth::AuthCommand as A;
     matches!(
@@ -715,6 +799,256 @@ fn route_only(c: &CellCommand) -> bool {
                 | A::CompleteRecovery { .. }
         )
     )
+}
+
+// ---------------------------------------------------------------------------
+// Route admissions (design sections 8.3 to 8.5 and 8.7).
+//
+// Each takes what its route holds. A new passkey is verified here,
+// through `fstp_auth`, from the browser's registration, so the batch's
+// key is always the output of the gate's own verification. The other
+// inputs are route data that can only restrict (session rows) or that
+// names the cell (the deployment mode). A route admission whose proof
+// this crate cannot verify runs its own checks and then refuses with
+// `Deny::NotImplemented(ROUTE_ADMISSION_SEAM)`, so a refusal still names
+// its cause and nothing is admitted on route data alone.
+
+/// Why a route admission refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteDeny {
+    /// The gate refused the session or the action (design section 5.4).
+    Gate(Deny),
+    /// The step-up assertion did not verify
+    /// (`fstp_auth::stepup::verify_step_up`).
+    StepUp(fstp_auth::stepup::StepUpDeny),
+    /// The new passkey did not pass its enrolment checks
+    /// (`fstp_auth::ceremony`).
+    Enrol(fstp_auth::ceremony::EnrolDeny),
+    /// The recovery completion was refused (`fstp_auth::recovery`).
+    Recovery(fstp_auth::recovery::RecoveryDeny),
+    /// The assertion names no live credential of the cell.
+    UnknownCredential,
+    /// The recovery case is not open.
+    UnknownCase,
+    /// The recovery case id is taken already.
+    CaseTaken,
+}
+
+/// `POST /auth/stepup` (design section 8.4, I-78): the checks of
+/// `GrantStepUp` for the step-up `stepup`, in `session`. It admits
+/// nothing yet ([`ROUTE_ADMISSION_SEAM`]).
+///
+/// `stepup` would be the `stepup` member of the `Granted` that
+/// `fstp_auth::stepup::verify_step_up` returned for the route's challenge,
+/// and `credential` the id of the credential that asserted. But
+/// `fstp_auth::stepup::StepUp` has public fields, so a caller can write
+/// one with `uv: true` and no assertion behind it. This crate cannot name
+/// the assertion type to verify it itself. So the gate checks what it can
+/// against the session and the ledger, and then refuses:
+///
+/// - the session passes steps 1 and 2 of design section 5.4, and its
+///   method is phishing resistant;
+/// - `credential` is a live credential of the ledger, owned by the
+///   session's account, so a stolen cookie with the thief's own passkey
+///   is refused;
+/// - the step-up names this session, a passkey with user verification,
+///   asserted at `now`, and not consumed;
+/// - then [`Deny::NotImplemented`] with [`ROUTE_ADMISSION_SEAM`], since
+///   nothing proves that an assertion verified.
+///
+/// Once a proof that only `verify_step_up` builds exists (a lead-owned
+/// change in `fstp-auth`), the command runs under the step-up id, which
+/// is the challenge id, as its command id ([`crate::stepup_id`]).
+///
+/// # Errors
+///
+/// Always: the first check that fails, or the seam refusal.
+pub fn admit_stepup_grant(
+    s: &CellState,
+    session: &SessionView,
+    stepup: &fstp_auth::stepup::StepUp,
+    credential: &[u8],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    use fstp_auth::stepup::StepUpDeny;
+    session_checks(s, session, now).map_err(RouteDeny::Gate)?;
+    if !phishing_resistant(session.method) {
+        return Err(RouteDeny::StepUp(StepUpDeny::MagicLinkSession));
+    }
+    let owner = s
+        .auth()
+        .credential(credential)
+        .filter(|c| !c.revoked)
+        .map(|c| c.account)
+        .ok_or(RouteDeny::UnknownCredential)?;
+    if owner != session.account {
+        return Err(RouteDeny::StepUp(StepUpDeny::OtherAccount));
+    }
+    let u = stepup;
+    if u.session != session.id {
+        return Err(RouteDeny::StepUp(StepUpDeny::OtherSession));
+    }
+    if !u.method.phishing_resistant() {
+        return Err(RouteDeny::StepUp(StepUpDeny::WeakMethod));
+    }
+    if !u.uv {
+        return Err(RouteDeny::StepUp(StepUpDeny::NoUserVerification));
+    }
+    if u.asserted_at != now {
+        return Err(RouteDeny::StepUp(StepUpDeny::Stale));
+    }
+    if u.consumed {
+        return Err(RouteDeny::StepUp(StepUpDeny::Consumed));
+    }
+    // I-78: a `StepUp` is no proof that an assertion verified, so the
+    // grant fails closed.
+    Err(RouteDeny::Gate(Deny::NotImplemented(ROUTE_ADMISSION_SEAM)))
+}
+
+/// `POST /auth/passkeys` (high risk `AddPasskey`, design sections 8.3 and
+/// 8.7): admits `RegisterCredential` of the passkey that `reg` registers,
+/// for the session's own account.
+///
+/// The registration is verified first, with user verification required
+/// for a management holder (ADR-008), and its credential id must be new
+/// to the cell. The command names that id. It then passes every check of
+/// [`admit_command`] under `command_id`, the step-up of `AddPasskey`
+/// included, and `fstp_auth::ceremony::admit_add_passkey`: the account
+/// holds a passkey already and the session is phishing resistant. The
+/// verified credential goes into the batch's inputs, so `decide` records
+/// the key that `fstp_webauthn` verified.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the session, the registration, the command id, the step-up, the instant and the policy"
+)]
+pub fn admit_add_passkey(
+    s: &CellState,
+    session: &SessionView,
+    reg: &fstp_auth::ceremony::Registration<'_>,
+    command_id: [u8; 16],
+    stepup: Option<&StepUpView>,
+    now: Timestamp,
+    policy: &LoginPolicy,
+) -> Result<Admitted, RouteDeny> {
+    session_checks(s, session, now).map_err(RouteDeny::Gate)?;
+    let holds = holds_management(s, session.account, now).map_err(RouteDeny::Gate)?;
+    let known = |id: &[u8]| s.auth().is_registered(id);
+    let cred =
+        fstp_auth::ceremony::verify_fresh_passkey(reg, holds, &known).map_err(RouteDeny::Enrol)?;
+    let cmd = CellCommand::Auth(fstp_auth::AuthCommand::RegisterCredential {
+        account: session.account,
+        credential: cred.id.clone(),
+    });
+    let mut admitted = admit_in_session(
+        s,
+        session,
+        Action::Command(cmd),
+        Some(command_id),
+        stepup,
+        now,
+        policy,
+    )
+    .map_err(RouteDeny::Gate)?;
+    // The step-up passed above, as the check of the high-risk action.
+    fstp_auth::ceremony::admit_add_passkey(
+        s.auth().has_any_credential(session.account),
+        session,
+        Ok(()),
+    )
+    .map_err(RouteDeny::Enrol)?;
+    admitted.inputs = std::mem::take(&mut admitted.inputs).with_credential(cred);
+    Ok(admitted)
+}
+
+/// `POST /auth/recovery` (public, design sections 8.5 and 8.7): admits
+/// `RequestRecovery` of case `case` for `account`, with the cell's
+/// deployment mode `mode` as its input. The route draws `case` at random
+/// and answers the same whether or not the account exists.
+///
+/// No session acts, so the principal is [`Principal::Ceremony`] for the
+/// account the request names. The batch only opens a case and records the
+/// path at request time. Every later step needs its own proof.
+pub fn admit_recovery_request(
+    s: &CellState,
+    case: [u8; 16],
+    account: AccountId,
+    mode: fstp_auth::recovery::Deployment,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    if s.auth().recovery(case).is_some() {
+        return Err(RouteDeny::CaseTaken);
+    }
+    Ok(Admitted {
+        action: Action::Command(CellCommand::Auth(fstp_auth::AuthCommand::RequestRecovery {
+            case,
+            account,
+        })),
+        principal: Principal::Ceremony(account),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none().with_mode(mode),
+    })
+}
+
+/// `POST /auth/recovery/{case}/complete` (ceremony, I-79, design sections
+/// 8.5 and 8.7): the checks of `CompleteRecovery` of case `case` with the
+/// new passkey that `reg` registers. It admits nothing yet
+/// ([`ROUTE_ADMISSION_SEAM`]).
+///
+/// The path is recomputed from the holdings at `now` and the deployment
+/// mode `mode`, and the case's recorded evidence, with the verified
+/// operator ticket `ticket` for `OperatorProcess`, must complete it
+/// (`fstp_auth::recovery::decide`). A role granted during an open email
+/// recovery therefore makes it fail. The new passkey is then verified with
+/// the UV rule of that path and a fresh credential id
+/// (`fstp_auth::recovery::new_passkey`).
+///
+/// Then it refuses with [`Deny::NotImplemented`] and
+/// [`ROUTE_ADMISSION_SEAM`]. Design section 8.5 binds the new passkey to
+/// the holder: "a new passkey in the same ceremony" as the email proof,
+/// or one "from a one-time enrolment token". Nothing here proves that the
+/// caller holds that token or ceremony. The case id alone is no proof,
+/// since the approving admin sees it in `.../{case}/approve`, and a
+/// completion revokes every passkey of the holder and enrols the caller's
+/// key. ADR-008 "Unset lifetimes" gives those tokens no lifetime, so no
+/// route verifies them yet.
+///
+/// Once that proof exists, the admission carries `_rows`, the live
+/// session rows of the holder that the completion ends, and runs under
+/// `_command_id`. No record holds a host console command either, so
+/// `HostConsole` never completes here.
+///
+/// # Errors
+///
+/// Always: the first check that fails, or the seam refusal.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the case, the registration, the session rows, the mode, the ticket, the command id and the instant"
+)]
+pub fn admit_recovery_completion(
+    s: &CellState,
+    case: [u8; 16],
+    reg: &fstp_auth::ceremony::Registration<'_>,
+    _rows: SessionRows,
+    mode: fstp_auth::recovery::Deployment,
+    ticket: Option<fstp_auth::recovery::VerifiedTicket>,
+    _command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    let c = crate::decide::recovery_case(s, case, ticket).map_err(|_| RouteDeny::UnknownCase)?;
+    let roster = RosterView::from_roster(s.engine().core.roster(), now);
+    let tenant = TenantView {
+        admins: s.tenant().admins(),
+    };
+    fstp_auth::recovery::decide(&c, &roster, &tenant, mode).map_err(RouteDeny::Recovery)?;
+    let known = |id: &[u8]| s.auth().is_registered(id);
+    fstp_auth::recovery::new_passkey(reg, &c, &roster, &tenant, mode, &known)
+        .map_err(RouteDeny::Recovery)?;
+    // I-79: nothing binds the caller to the case, so the completion fails
+    // closed.
+    Err(RouteDeny::Gate(Deny::NotImplemented(ROUTE_ADMISSION_SEAM)))
 }
 
 /// Admits a command of a system task, which holds no session (design
@@ -757,6 +1091,7 @@ pub fn admit_system(
         stepup: None,
         at: now,
         command: Some(command_id),
+        inputs: RouteInputs::none(),
     })
 }
 
@@ -861,6 +1196,7 @@ mod review_tests {
             stepup: None,
             at: Timestamp::from_micros(1_000_000),
             command: Some([0x31; 16]),
+            inputs: RouteInputs::none(),
         };
         let mut d = DriverCore::start(admitted);
         let mut s = CellState::genesis();

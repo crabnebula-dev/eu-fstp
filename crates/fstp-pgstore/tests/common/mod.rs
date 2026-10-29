@@ -658,6 +658,37 @@ impl Store {
         block_on(self.store.append_with(expected, at, command, batch, side))
     }
 
+    /// `PgRecordStore::append_committed`: the append of design section
+    /// 5.3 with production side effects, and what its commit left.
+    pub fn append_committed(
+        &mut self,
+        expected: Seq,
+        at: i64,
+        command: [u8; 16],
+        batch: Vec<Rec>,
+        side: &SideEffects,
+    ) -> Result<fstp_pgstore::Committed, fstp_pgstore::AppendFault> {
+        block_on(
+            self.store
+                .append_committed(expected, at, command, batch, side),
+        )
+    }
+
+    /// `PgRecordStore::stored_commit`.
+    pub fn stored_commit(&self, seq: Seq) -> Option<fstp_pgstore::StoredCommit> {
+        block_on(self.store.stored_commit(seq)).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// `PgRecordStore::read_chain_rows`.
+    pub fn read_chain_rows(&self) -> fstp_pgstore::ChainRows {
+        block_on(self.store.read_chain_rows()).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// The pinned witness receipt keys of the store.
+    pub fn witness_keys(&self) -> Vec<Vec<u8>> {
+        self.store.witness_keys().to_vec()
+    }
+
     /// `PgRecordStore::settle`: drives a due abort or in-doubt step.
     pub fn settle(&mut self) -> Result<Option<Resolution>, String> {
         block_on(self.store.settle()).map_err(|e| e.to_string())

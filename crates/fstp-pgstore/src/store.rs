@@ -47,12 +47,15 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fstp_audit::anchor::{Anchor, Receipt, encode_receipt};
+use fstp_audit::anchor::{Anchor, AnchorRow, Receipt, decode_receipt, encode_receipt};
 use fstp_audit::anchorer::{
     Anchorer, CommitOutcome, Next, Phase, PrepareWitness, Resolution, Step, WitnessFault,
 };
 use fstp_audit::witness::{MAX_PREPARE_ROWS, Prepare};
-use fstp_audit::{AuditError, CellId, ChainId, ChainWriter, CompositeSigningKey, Link, RowKind};
+use fstp_audit::{
+    AuditError, CellId, ChainId, ChainRow, ChainWriter, CompositeSigningKey, Link, RowKind,
+    StoredRow,
+};
 use fstp_json::{Object, Value};
 use fstp_keys::{DekId, ObjectId};
 use fstp_ledger::{
@@ -130,6 +133,13 @@ const INSERT_OUTBOX_SQL: &str = "INSERT INTO ops.outbox (id, kind, idem, dek, bo
 const INSERT_ANCHOR_SQL: &str = "INSERT INTO audit.anchor \
      (n, link, at, signature, witness_seq, receipt) VALUES ($1, $2, $3, $4, $5, $6)";
 const LINK_AT_SQL: &str = "SELECT link FROM audit.chain WHERE n = $1";
+const ROW_OF_SEQ_SQL: &str = "SELECT n, link FROM audit.chain WHERE ledger_seq = $1";
+const COVERING_ANCHOR_SQL: &str =
+    "SELECT witness_seq FROM audit.anchor WHERE n >= $1 ORDER BY n LIMIT 1";
+const CHAIN_ROWS_SQL: &str = "SELECT n, at, kind, ledger_seq, stored_hash, body, link \
+     FROM audit.chain WHERE n >= $1 ORDER BY n LIMIT $2";
+const ANCHOR_ROWS_SQL: &str = "SELECT n, link, at, signature, receipt \
+     FROM audit.anchor WHERE n >= $1 ORDER BY n LIMIT $2";
 const ALERT_EXISTS_SQL: &str = "SELECT EXISTS (SELECT 1 FROM ops.outbox WHERE idem = $1)";
 const INSERT_ALERT_SQL: &str = "INSERT INTO ops.outbox (id, kind, idem, dek, body, created_at) \
      VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (idem) DO NOTHING";
@@ -175,9 +185,16 @@ impl AnchorSigner for CompositeSigningKey {
 }
 
 /// A consumed step-up challenge: one `auth_log.stepup_consumed` row.
+///
+/// One id keys a step-up end to end: the challenge id of `POST
+/// /auth/stepup`. The route issues `GrantStepUp` under it as its command
+/// id, `fstp_cell_core::stepup_id` makes it the step-up id of
+/// `StepUpGranted`, and the consuming batch's `StepUpConsumed { id }`
+/// names it. So this row's `challenge_id` is the id of that
+/// `StepUpConsumed` record.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StepUpUse {
-    /// The challenge id.
+    /// The challenge id, which is the step-up id.
     pub challenge: [u8; 16],
     /// The index in the batch of the record that consumes it, so the row
     /// names that record's entry (`fstp-cell-core` appends
@@ -214,6 +231,47 @@ pub struct SideEffects {
     /// Messages to enqueue: one sealed `ops.outbox` row each, under its
     /// own data key (design gap G12).
     pub outbox: Vec<OutboxRow>,
+}
+
+/// What a committed append left (design sections 5.3 and 7.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Committed {
+    /// The ledger head after the append: the sequence of its last entry.
+    pub head: Seq,
+    /// The chain row number of that entry. A chain row number is not a
+    /// ledger sequence once event rows exist (design section 7.1).
+    pub n: u64,
+    /// The chain link of that entry, which the witness receipted.
+    pub link: Link,
+    /// The witness sequence of the receipt the append committed on.
+    pub witness_seq: u64,
+}
+
+/// The chain link of one stored ledger entry, and the witness receipt
+/// that covers it: the first anchor at or after its chain row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoredCommit {
+    /// The chain row number of the entry.
+    pub n: u64,
+    /// The chain link of the entry.
+    pub link: Link,
+    /// The witness sequence of the covering receipt. Every committed
+    /// append holds its receipt, so it is `None` only for rows the store
+    /// did not write (I-24).
+    pub witness_seq: Option<u64>,
+}
+
+/// The App chain as read back for `fstp_audit::verify` (design section
+/// 7.2 "Start-up"): every chain row, every stored ledger row and every
+/// anchor with its receipt, in order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChainRows {
+    /// The chain rows with their links, by row number.
+    pub rows: Vec<StoredRow>,
+    /// The stored ledger rows, sealed, by sequence.
+    pub stored: Vec<fstp_audit::StoredEntry>,
+    /// The `audit.anchor` rows, by row number.
+    pub anchors: Vec<AnchorRow>,
 }
 
 /// The idem digest of the `PossibleDeletion` alert for `(n, link)`:
@@ -297,11 +355,12 @@ fn key_ix_column(key_ix: u32) -> i32 {
 }
 
 /// A database error of a side-effect insert: a unique violation is a
-/// replay (I-77, I-78).
-fn side_fault(e: fstp_pgwire::Error) -> AppendFault {
+/// replay of that row, `replayed` (I-77, I-78). Each insert names its own
+/// table's replay, so a refusal names the row that conflicted.
+fn side_fault(e: fstp_pgwire::Error, replayed: AppendFault) -> AppendFault {
     let f = DbFault::from(e);
     if f.is_unique_violation() {
-        AppendFault::SideEffectReplayed
+        replayed
     } else {
         AppendFault::Fault(StoreFault::Database(f))
     }
@@ -348,6 +407,42 @@ fn entry_of<T>(
     let envelope = <Entry<Value> as fstp_json::FromJson>::from_json(&Value::Object(o))
         .map_err(|_| StoreFault::Corrupt("an entry envelope outside the ledger rules"))?;
     Ok(envelope.map_record(|_| record))
+}
+
+/// Runs `sql` page by page inside `tx` and hands each row to `each`.
+/// `sql` takes a start key `$1` and a row limit `$2`, and orders by that
+/// key. `each` returns the row's key, so the next page starts after it. A
+/// page whose rows pass the client's result limit is read again in
+/// halves, down to one row, as [`PgRecordStore::read_entries`] does.
+async fn read_pages<R: Runtime>(
+    tx: &mut Transaction<'_, R>,
+    sql: &'static str,
+    mut each: impl FnMut(&fstp_pgwire::Row) -> Result<u64, StoreFault>,
+) -> Result<(), StoreFault> {
+    let mut from: u64 = 1;
+    let mut page = READ_PAGE;
+    loop {
+        let start = i64_of(from)?;
+        let lim = i64::try_from(page).unwrap_or(i64::MAX);
+        let rows = match tx.query(sql, &[&start, &lim]).await {
+            Ok(rows) => rows,
+            Err(e) if e.kind() == ErrorKind::ResultTooLarge && page > 1 => {
+                page = page.div_ceil(2).max(1);
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let mut last = None;
+        for row in &rows {
+            last = Some(each(row)?);
+        }
+        let Some(last) = last.filter(|_| rows.len() >= page) else {
+            return Ok(());
+        };
+        from = last
+            .checked_add(1)
+            .ok_or(StoreFault::Corrupt("a row key past u64::MAX"))?;
+    }
 }
 
 /// The side-effect limits, checked before any row is written.
@@ -484,6 +579,12 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         &self.witness
     }
 
+    /// The pinned witness receipt keys (ADR-010 "Keys"). The start-up
+    /// verification checks the stored receipts under the same set.
+    pub fn witness_keys(&self) -> &[Vec<u8>] {
+        &self.witness_keys
+    }
+
     /// Where the anchorer core stands.
     pub fn phase(&self) -> &Phase {
         self.anchorer.phase()
@@ -569,6 +670,126 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         client.release();
         out.extend(read);
         Ok(())
+    }
+
+    /// The chain row and link of ledger entry `seq` and the witness
+    /// receipt that covers it: the first anchor at or after that row.
+    /// `None` for a sequence the store holds no entry of.
+    ///
+    /// # Errors
+    ///
+    /// A pool, database or stored-row fault.
+    pub async fn stored_commit(&self, seq: Seq) -> Result<Option<StoredCommit>, StoreFault> {
+        let Ok(seq) = i64::try_from(seq.raw()) else {
+            return Ok(None);
+        };
+        let mut client = self.pool.get().await?;
+        let Some(row) = client.query_opt(ROW_OF_SEQ_SQL, &[&seq]).await? else {
+            client.release();
+            return Ok(None);
+        };
+        let n: i64 = row.get(0)?;
+        let link: Vec<u8> = row.get(1)?;
+        let witness_seq = match client.query_opt(COVERING_ANCHOR_SQL, &[&n]).await? {
+            Some(r) => {
+                let w: i64 = r.get(0)?;
+                Some(u64_of(w)?)
+            }
+            None => None,
+        };
+        client.release();
+        Ok(Some(StoredCommit {
+            n: u64_of(n)?,
+            link: link_of(&link)?,
+            witness_seq,
+        }))
+    }
+
+    /// The App chain as `fstp_audit::verify` reads it: every chain row,
+    /// every stored ledger row and every anchor with its receipt (design
+    /// section 7.2 "Start-up").
+    ///
+    /// The three reads run in one transaction under
+    /// `pg_advisory_xact_lock(1)`, so no append commits between them and
+    /// the view is one state of the chain (`fstp_audit::verify::ChainView`
+    /// read rule). Each reads in pages, as [`PgRecordStore::read_entries`]
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// A pool, database or stored-row fault, or [`StoreFault::Corrupt`] for
+    /// a row outside the table rules, such as a chain row whose kind and
+    /// columns disagree or a receipt that does not decode.
+    pub async fn read_chain_rows(&self) -> Result<ChainRows, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let mut tx = client.transaction().await?;
+        tx.execute(LOCK_SQL, &[]).await?;
+        let mut out = ChainRows::default();
+        read_pages(&mut tx, CHAIN_ROWS_SQL, |row| {
+            let n: i64 = row.get(0)?;
+            let at: i64 = row.get(1)?;
+            let kind: i16 = row.get(2)?;
+            let ledger_seq: Option<i64> = row.get(3)?;
+            let stored_hash: Vec<u8> = row.get(4)?;
+            let body: Option<Vec<u8>> = row.get(5)?;
+            let link: Vec<u8> = row.get(6)?;
+            let kind = match (kind, ledger_seq, body) {
+                (1, Some(seq), None) => RowKind::Ledger { seq: u64_of(seq)? },
+                (2, None, Some(body)) => RowKind::Event { body },
+                _ => {
+                    return Err(StoreFault::Corrupt(
+                        "a chain row whose kind and columns differ",
+                    ));
+                }
+            };
+            let stored_hash = <[u8; 32]>::try_from(stored_hash.as_slice())
+                .map_err(|_| StoreFault::Corrupt("a stored hash that is not 32 bytes"))?;
+            out.rows.push(StoredRow {
+                row: ChainRow {
+                    n: u64_of(n)?,
+                    at,
+                    kind,
+                    stored_hash,
+                },
+                link: link_of(&link)?,
+            });
+            u64_of(n)
+        })
+        .await?;
+        read_pages(&mut tx, READ_SQL, |row| {
+            let bytes: Vec<u8> = row.get(0)?;
+            let e = decode_stored_entry(&bytes)?;
+            let seq = e.seq;
+            out.stored.push(e.to_audit());
+            Ok(seq)
+        })
+        .await?;
+        let cell = self.audit_cell();
+        read_pages(&mut tx, ANCHOR_ROWS_SQL, |row| {
+            let n: i64 = row.get(0)?;
+            let link: Vec<u8> = row.get(1)?;
+            let at: i64 = row.get(2)?;
+            let signature: Vec<u8> = row.get(3)?;
+            let receipt: Vec<u8> = row.get(4)?;
+            let receipt = decode_receipt(&receipt)
+                .map_err(|_| StoreFault::Corrupt("a stored receipt that does not decode"))?;
+            out.anchors.push(AnchorRow {
+                anchor: Anchor {
+                    cell,
+                    chain: ChainId::App,
+                    n: u64_of(n)?,
+                    link: link_of(&link)?,
+                    at,
+                    signature,
+                },
+                receipt,
+            });
+            u64_of(n)
+        })
+        .await?;
+        tx.commit().await?;
+        client.release();
+        Ok(out)
     }
 
     /// Drives every unfinished step of an earlier append to its end: an
@@ -846,10 +1067,10 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
     ///
     /// The contract refusals as [`AppendFault::Refused`], in the order of
     /// `fstp_ledger::RecordStore::append`, then [`AppendFault::StepUpStale`],
-    /// [`AppendFault::SideEffectReplayed`], [`AppendFault::OutboxDuplicate`],
-    /// an unresolved earlier prepare, a witness, signing, receipt or
-    /// database fault, or an unknown commit outcome. Only
-    /// [`AppendFault::Unknown`] may have committed.
+    /// [`AppendFault::StepUpReplayed`], [`AppendFault::SessionEndReplayed`],
+    /// [`AppendFault::OutboxDuplicate`], an unresolved earlier prepare, a
+    /// witness, signing, receipt or database fault, or an unknown commit
+    /// outcome. Only [`AppendFault::Unknown`] may have committed.
     pub async fn append_with(
         &mut self,
         expected: Seq,
@@ -858,6 +1079,31 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         batch: Vec<T>,
         side: &SideEffects,
     ) -> Result<Seq, AppendFault>
+    where
+        T: Canonical,
+    {
+        self.append_committed(expected, at, command, batch, side)
+            .await
+            .map(|c| c.head)
+    }
+
+    /// [`PgRecordStore::append_with`], reporting what the commit left: the
+    /// new ledger head, the chain row and link of its last entry, and the
+    /// witness sequence of the receipt it committed on (design sections
+    /// 5.3 and 7.2). A vault acknowledgement names that link (NOTE 4), and
+    /// the engine reports the receipt with the commit.
+    ///
+    /// # Errors
+    ///
+    /// As [`PgRecordStore::append_with`].
+    pub async fn append_committed(
+        &mut self,
+        expected: Seq,
+        at: i64,
+        command: [u8; 16],
+        batch: Vec<T>,
+        side: &SideEffects,
+    ) -> Result<Committed, AppendFault>
     where
         T: Canonical,
     {
@@ -894,7 +1140,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         command: [u8; 16],
         batch: &[T],
         side: &SideEffects,
-    ) -> Result<Seq, AppendFault>
+    ) -> Result<Committed, AppendFault>
     where
         T: Canonical,
     {
@@ -1023,7 +1269,12 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         match tx.commit().await {
             Ok(()) => {
                 let _ = self.anchorer.outcome(CommitOutcome::Committed);
-                Ok(staged.new_head)
+                Ok(Committed {
+                    head: staged.new_head,
+                    n: staged.head.0,
+                    link: staged.head.1,
+                    witness_seq: receipt.fields.witness_seq,
+                })
             }
             Err(e) if matches!(e.kind(), ErrorKind::Db | ErrorKind::RolledBack) => {
                 let _ = self.anchorer.outcome(CommitOutcome::Failed);
@@ -1215,7 +1466,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 &[&Uuid::from_bytes(s.challenge), &seq_of(s.record)?],
             )
             .await
-            .map_err(side_fault)?;
+            .map_err(|e| side_fault(e, AppendFault::StepUpReplayed))?;
         }
         for s in &side.sessions_ended {
             tx.execute(
@@ -1228,7 +1479,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 ],
             )
             .await
-            .map_err(side_fault)?;
+            .map_err(|e| side_fault(e, AppendFault::SessionEndReplayed))?;
         }
         for row in &side.outbox {
             self.insert_outbox_row(tx, row, at).await?;
