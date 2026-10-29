@@ -132,9 +132,10 @@ fn as_ref_ctx(c: &SealContext) -> Result<RefContext, String> {
 // ---------------------------------------------------------------------------
 // Production seams.
 
-/// The seam of [`prod_seal_key`] and [`prod_open_key`]: `fstp_keys`
-/// has no `seal_key` or `open_key` yet (design section 3.2). Lane W2f adds
-/// them, and these helpers then call them.
+/// The former seam of [`prod_seal_key`] and [`prod_open_key`]. Lane W2f
+/// added `fstp_keys::envelope::seal_key` and `open_key` (design section
+/// 3.2), which these helpers now call. A probe below still compares a
+/// refusal with this text, so a helper that fell back to the seam fails.
 const ENVELOPE_SEAM: &str =
     "fstp_keys::envelope has no seal_key or open_key yet (design section 3.2, lane W2f)";
 
@@ -143,8 +144,9 @@ fn prod_seal_key(
     dek: &[u8; 32],
     ctx: &SealContext,
 ) -> Result<Vec<u8>, String> {
-    let _ = (pk, dek, ctx);
-    Err(ENVELOPE_SEAM.to_owned())
+    let dek = fstp_keys::envelope::DataKey::from_bytes(dek).map_err(|e| format!("{e:?}"))?;
+    let sealed = fstp_keys::envelope::seal_key(pk, &dek, ctx).map_err(|e| format!("{e:?}"))?;
+    encode_sealed_key(&sealed).map_err(decode_err)
 }
 
 fn prod_open_key(
@@ -152,8 +154,10 @@ fn prod_open_key(
     sealed: &[u8],
     ctx: &SealContext,
 ) -> Result<[u8; 32], String> {
-    let _ = (sk, sealed, ctx);
-    Err(ENVELOPE_SEAM.to_owned())
+    let sealed = decode_sealed_key(sealed).map_err(decode_err)?;
+    fstp_keys::envelope::open_key(sk, &sealed, ctx)
+        .map(|k| *k.expose())
+        .map_err(|e| format!("{e:?}"))
 }
 
 fn decode_err(e: fstp_keys::envelope::DecodeError) -> String {

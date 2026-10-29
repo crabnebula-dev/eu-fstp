@@ -830,18 +830,10 @@ fn keyd_start(socket: &Path, volume: &Path) -> Result<(KeydCustody, KeydRun), St
     ))
 }
 
-/// The seam of [`keyd_stop`]: `fstp_keyd::serve` runs until shutdown and
-/// takes no stop handle. `fstp-celltest` cannot spawn the `fstp-keyd`
-/// binary to kill it, since the binary is in another package. Joining the
-/// server thread would block forever. Lane W2f adds a serve with a stop
-/// handle, or a way to run the binary as a child, and this helper then
-/// stops through it.
-const KEYD_STOP_SEAM: &str = "fstp-keyd has no serve with a stop handle, and fstp-celltest cannot run the fstp-keyd binary as a child to kill it, so no test can restart it (lane W2f)";
-
-/// Stops the server of `run`.
+/// Stops the server of `run` through `fstp_keyd::stop` (lane W2f), which
+/// returns once the server of this process on that socket has ended.
 fn keyd_stop_server(run: &KeydRun) -> Result<(), String> {
-    let _ = run;
-    Err(KEYD_STOP_SEAM.to_owned())
+    fstp_keyd::stop(&run.socket).map_err(|e| format!("fstp_keyd::stop: {e}"))
 }
 
 /// Stops `fstp-keyd`, waits until it has stopped, and removes its socket

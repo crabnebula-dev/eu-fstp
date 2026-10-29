@@ -372,18 +372,10 @@ fn keyd_start(socket: &Path, volume: &Path) -> Result<(KeydCustody, KeydRun), St
     ))
 }
 
-/// The seam of [`keyd_stop`]: `fstp_keyd::serve` runs until shutdown and
-/// takes no stop handle. `fstp-celltest` cannot spawn the `fstp-keyd`
-/// binary to kill it, since the binary is in another package. Joining the
-/// server thread would block forever. Lane W2f adds a serve with a stop
-/// handle, or a way to run the binary as a child, and this helper then
-/// stops through it.
-const KEYD_STOP_SEAM: &str = "fstp-keyd has no serve with a stop handle, and fstp-celltest cannot run the fstp-keyd binary as a child to kill it, so no test can restart it (lane W2f)";
-
-/// Stops the server of `run`.
+/// Stops the server of `run` through `fstp_keyd::stop` (lane W2f), which
+/// returns once the server of this process on that socket has ended.
 fn keyd_stop_server(run: &KeydRun) -> Result<(), String> {
-    let _ = run;
-    Err(KEYD_STOP_SEAM.to_owned())
+    fstp_keyd::stop(&run.socket).map_err(|e| format!("fstp_keyd::stop: {e}"))
 }
 
 /// Stops `fstp-keyd`, waits until it has stopped, and removes its socket
@@ -453,18 +445,27 @@ struct KeyTableEntry {
     holds_key: bool,
 }
 
-/// The seam of [`key_table_entries`]: the key table is sealed under a
-/// passphrase-derived key (ADR-004 part 2). `fstp-keyd` exposes no
-/// offline decoder of it under that passphrase, and `serve` takes no
-/// passphrase a test can give it. Lane W2f adds both, and this helper
-/// then calls the decoder. A keyd that only marks an epoch destroyed but
-/// keeps `K(e)` passes every other check here, so this one is needed.
-const KEY_TABLE_SEAM: &str = "fstp-keyd exposes no offline decoder of its key table under the passphrase, and serve takes no test passphrase (ADR-004 part 2, lane W2f)";
-
-/// Every entry of the key table on `volume`, decoded offline.
+/// Every entry of the key table on `volume`, decoded offline through
+/// `fstp_keyd::open_key_table` (lane W2f). The key table is sealed under
+/// a passphrase-derived key (ADR-004 part 2). `serve` reads the
+/// passphrase from the systemd credential `fstp-keyd-passphrase` in
+/// `$CREDENTIALS_DIRECTORY`, and this helper reads the same one. A keyd
+/// that only marks an epoch destroyed but keeps `K(e)` passes every
+/// other check here, so this one is needed.
 fn key_table_entries(volume: &Path) -> Result<Vec<KeyTableEntry>, String> {
-    let _ = volume;
-    Err(KEY_TABLE_SEAM.to_owned())
+    let passphrase = fstp_keyd::Passphrase::from_credentials()
+        .map_err(|e| format!("fstp_keyd::Passphrase::from_credentials: {e}"))?;
+    let table = fstp_keyd::open_key_table(volume, &passphrase)
+        .map_err(|e| format!("fstp_keyd::open_key_table: {e}"))?;
+    Ok(table
+        .entries
+        .iter()
+        .map(|e| KeyTableEntry {
+            chain: e.chain,
+            epoch: e.epoch.0,
+            holds_key: e.is_live(),
+        })
+        .collect())
 }
 
 /// Whether the key table entries hold `K(epoch)` of the App chain.
@@ -489,16 +490,23 @@ enum KeydDestroyStep {
     ReadBack,
 }
 
-/// The seam of [`keyd_receipt_steps`]: no ADR fixes the bytes of an
-/// `fstp-keyd` `DestroyReceipt`, and `fstp-keyd` exposes no decoder of
-/// them. Lane W2f records the receipt in ADR-004 and exposes the decoder,
-/// and this helper then calls it.
-const RECEIPT_SEAM: &str = "fstp-keyd exposes no decoder of its DestroyReceipt steps, and no ADR fixes its bytes (ADR-004 part 2, lane W2f)";
-
-/// The destroy steps an `fstp-keyd` receipt records, in order.
+/// The destroy steps an `fstp-keyd` receipt records, in order, through
+/// `fstp_keyd::decode_receipt` (lane W2f). The receipt bytes are written
+/// in `fstp_keyd::receipt`; their ADR-004 record is with the lead.
 fn keyd_receipt_steps(receipt: &DestroyReceipt) -> Result<Vec<KeydDestroyStep>, String> {
-    let _ = receipt;
-    Err(RECEIPT_SEAM.to_owned())
+    let decoded = fstp_keyd::decode_receipt(&receipt.0)
+        .map_err(|e| format!("fstp_keyd::decode_receipt: {e}"))?;
+    Ok(decoded
+        .steps
+        .into_iter()
+        .map(|s| match s {
+            fstp_keyd::DestroyStep::OverwriteKey => KeydDestroyStep::OverwriteKey,
+            fstp_keyd::DestroyStep::FsyncTable => KeydDestroyStep::FsyncTable,
+            fstp_keyd::DestroyStep::UnlinkEpochFile => KeydDestroyStep::UnlinkEpochFile,
+            fstp_keyd::DestroyStep::FsyncDirectory => KeydDestroyStep::FsyncDirectory,
+            fstp_keyd::DestroyStep::ReadBack => KeydDestroyStep::ReadBack,
+        })
+        .collect())
 }
 
 /// I-81, design section 3.3 and ADR-004 part 2 (G23, Q32 A): `fstp-keyd`
@@ -607,17 +615,14 @@ fn i81_teeth_restored_epoch_file_opens_without_destroy() {
     keyd_stop(run).unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// The seam of [`keyd_volume_check`]: `fstp-keyd` checks the key volume
-/// only inside `serve`, through `statfs`. No test can mount btrfs, ZFS,
-/// overlayfs or NFS. Lane W2f exposes the pure decision over the
-/// filesystem type, and this helper then calls it.
-const VOLUME_SEAM: &str =
-    "fstp-keyd exposes no pure key volume check over the statfs filesystem type (lane W2f)";
-
-/// Whether `fstp-keyd` accepts a key volume of filesystem type `magic`.
+/// Whether `fstp-keyd` accepts a key volume of filesystem type `magic`,
+/// through the pure decision `fstp_keyd::key_volume_accepted` (lane W2f).
+/// It is the decision `serve` makes: `fstp_keyd::volume::check_mount`
+/// maps the mount's type name to its `statfs` magic and asks it. No test
+/// can mount btrfs, ZFS, overlayfs or NFS, so the decision is tested
+/// apart from `serve`.
 fn keyd_volume_check(magic: u64) -> Result<bool, String> {
-    let _ = magic;
-    Err(VOLUME_SEAM.to_owned())
+    Ok(fstp_keyd::key_volume_accepted(magic))
 }
 
 /// Magic numbers that name no filesystem `fstp-keyd` knows, for the

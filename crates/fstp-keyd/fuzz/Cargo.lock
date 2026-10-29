@@ -135,6 +135,7 @@ dependencies = [
 name = "fstp-keyd-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-custody",
  "fstp-keyd",
  "libfuzzer-sys",
 ]

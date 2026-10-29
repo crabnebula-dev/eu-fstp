@@ -102,6 +102,7 @@ dependencies = [
 name = "fstp-keys-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-keys",
  "libfuzzer-sys",
 ]

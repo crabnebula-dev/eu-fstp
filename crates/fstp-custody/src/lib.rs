@@ -1,17 +1,22 @@
 //! The `Custody` trait and its backends' clients (I-80, M3 design section
-//! 3.3, ADR-004).
+//! 3.3, ADR-004 part 2 "Custody interface" and "Backends").
 //!
 //! Custody never exports root material. A caller holds only references,
-//! wrapped seal keys and receipts.
+//! wrapped seal keys and receipts. The trait has exactly the six
+//! operations of ADR-004 part 2, and none returns a root.
 //!
-//! Status: W0 stub. Lane W2f fills the crate. Every operation refuses with
-//! [`CustodyError::NotImplemented`].
+//! - [`keyd`]: the framed protocol of the file custody server `fstp-keyd`
+//!   and its client [`KeydCustody`] (Q32 A).
+//! - [`okms`]: the OVHcloud KMS client [`OkmsCustody`] and its response
+//!   decoder. Its network calls wait on Q11 (ADR-004 part 2).
 //!
-//! Seam: [`SealKey`] is designed as `Zeroizing<[u8; 32]>`. zeroize is not
-//! a dependency until Daniel accepts ADR-001 A1, so the type holds a plain
-//! array and does not wipe it yet (`docs/handoff/m3-base.md`).
+//! [`SealKey`] holds an epoch seal key `S(e)` in `Zeroizing` memory. It
+//! wipes on drop and implements no `Clone`, `Debug` or `ToJson`
+//! (ADR-004 part 2, ADR-001 A1).
 
 use std::future::Future;
+
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 pub mod keyd;
 pub mod okms;
@@ -61,17 +66,32 @@ pub struct RootLabel {
     pub epoch: Epoch,
 }
 
-/// A 32-byte seal key. It implements no `Clone`, no `Debug` and no
-/// `ToJson`.
-pub struct SealKey([u8; 32]);
+/// A 32-byte epoch seal key `S(e)`. It implements no `Clone`, no `Debug`
+/// and no `ToJson`, and wipes its bytes on drop (ADR-004 part 2).
+pub struct SealKey(Zeroizing<[u8; 32]>);
+
+impl ZeroizeOnDrop for SealKey {}
 
 impl SealKey {
     /// Wraps key bytes.
+    #[must_use]
     pub fn from_bytes(bytes: [u8; 32]) -> SealKey {
-        SealKey(bytes)
+        SealKey(Zeroizing::new(bytes))
+    }
+
+    /// A fresh seal key from the system generator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CustodyError::Crypto`] when the generator fails.
+    pub fn generate() -> Result<SealKey, CustodyError> {
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        fstp_crypto::random_bytes(&mut bytes[..]).map_err(CustodyError::Crypto)?;
+        Ok(SealKey(bytes))
     }
 
     /// The key bytes.
+    #[must_use]
     pub fn expose(&self) -> &[u8; 32] {
         &self.0
     }
@@ -115,17 +135,110 @@ pub struct UsagePage {
     pub next: UsageCursor,
 }
 
-/// Why a custody operation failed. Its display never holds key bytes.
+/// Why a backend refused a request it understood.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The request did not decode.
+    BadRequest,
+    /// The backend holds no root or key under this handle.
+    UnknownRoot,
+    /// The root is destroyed.
+    Destroyed,
+    /// The wrapped key did not unwrap under this root and AAD.
+    UnwrapFailed,
+    /// The epoch is older than one the chain already has.
+    StaleEpoch,
+    /// The backend holds no signing key for this handle.
+    NoSignKey,
+    /// The backend reached a limit, such as a seal count.
+    LimitReached,
+    /// The backend failed on its own side, such as its key volume.
+    Internal,
+    /// The client may not use this chain or key. Each `fstp-keyd` socket
+    /// serves a fixed set of chains (ADR-004 part 2, R-NF-08).
+    NotPermitted,
+}
+
+impl Refusal {
+    /// The one-byte code of the refusal on the keyd wire.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Refusal::BadRequest => 1,
+            Refusal::UnknownRoot => 2,
+            Refusal::Destroyed => 3,
+            Refusal::UnwrapFailed => 4,
+            Refusal::StaleEpoch => 5,
+            Refusal::NoSignKey => 6,
+            Refusal::LimitReached => 7,
+            Refusal::Internal => 8,
+            Refusal::NotPermitted => 9,
+        }
+    }
+
+    /// The refusal of a wire code, if the code is known.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Refusal> {
+        match code {
+            1 => Some(Refusal::BadRequest),
+            2 => Some(Refusal::UnknownRoot),
+            3 => Some(Refusal::Destroyed),
+            4 => Some(Refusal::UnwrapFailed),
+            5 => Some(Refusal::StaleEpoch),
+            6 => Some(Refusal::NoSignKey),
+            7 => Some(Refusal::LimitReached),
+            8 => Some(Refusal::Internal),
+            9 => Some(Refusal::NotPermitted),
+            _ => None,
+        }
+    }
+
+    const fn text(self) -> &'static str {
+        match self {
+            Refusal::BadRequest => "the backend could not decode the request",
+            Refusal::UnknownRoot => "the backend holds no such root",
+            Refusal::Destroyed => "the root is destroyed",
+            Refusal::UnwrapFailed => "the wrapped key did not unwrap",
+            Refusal::StaleEpoch => "the epoch is older than the chain's newest",
+            Refusal::NoSignKey => "the backend holds no such signing key",
+            Refusal::LimitReached => "the backend reached a limit",
+            Refusal::Internal => "the backend failed on its side",
+            Refusal::NotPermitted => "the client may not use this chain or key",
+        }
+    }
+}
+
+/// Why a custody operation failed. Its display never holds key bytes or
+/// input bytes: every variant carries static text or a code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CustodyError {
-    /// The operation is a W0 stub. It names the operation.
+    /// Kept for the stub backends that still refuse with it.
     NotImplemented(&'static str),
+    /// The backend refused the request.
+    Refused(Refusal),
+    /// The link to the backend failed. It names the stage.
+    Transport(&'static str),
+    /// The backend's answer broke the protocol. It names the rule.
+    Protocol(&'static str),
+    /// The client configuration is refused. It names the rule.
+    InvalidConfig(&'static str),
+    /// The backend waits on a decision that is not recorded yet. It names
+    /// the decision.
+    AwaitingDecision(&'static str),
+    /// The crypto layer refused.
+    Crypto(fstp_crypto::CryptoError),
 }
 
 impl std::fmt::Display for CustodyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CustodyError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
+            CustodyError::Refused(r) => write!(f, "custody refused: {}", r.text()),
+            CustodyError::Transport(s) => write!(f, "custody link failed: {s}"),
+            CustodyError::Protocol(s) => write!(f, "custody protocol: {s}"),
+            CustodyError::InvalidConfig(s) => write!(f, "custody client refused: {s}"),
+            CustodyError::AwaitingDecision(s) => write!(f, "custody waits on a decision: {s}"),
+            CustodyError::Crypto(e) => write!(f, "custody crypto: {e}"),
         }
     }
 }
@@ -172,84 +285,3 @@ pub trait Custody: Send + Sync + 'static {
         cursor: UsageCursor,
     ) -> impl Future<Output = Result<UsagePage, CustodyError>> + Send;
 }
-
-/// Implements every [`Custody`] method of a stub client as a refusal.
-macro_rules! refusing_custody {
-    ($ty:ty, $name:literal) => {
-        impl $crate::Custody for $ty {
-            fn create_root(
-                &self,
-                label: $crate::RootLabel,
-            ) -> impl std::future::Future<Output = Result<$crate::RootRef, $crate::CustodyError>>
-            + Send {
-                let _ = label;
-                std::future::ready(Err($crate::CustodyError::NotImplemented(concat!(
-                    $name,
-                    "::create_root"
-                ))))
-            }
-            fn wrap(
-                &self,
-                root: &$crate::RootRef,
-                key: &$crate::SealKey,
-                aad: &$crate::Aad,
-            ) -> impl std::future::Future<
-                Output = Result<$crate::WrappedSealKey, $crate::CustodyError>,
-            > + Send {
-                let _ = (root, key, aad);
-                std::future::ready(Err($crate::CustodyError::NotImplemented(concat!(
-                    $name, "::wrap"
-                ))))
-            }
-            fn unwrap(
-                &self,
-                root: &$crate::RootRef,
-                w: &$crate::WrappedSealKey,
-                aad: &$crate::Aad,
-            ) -> impl std::future::Future<Output = Result<$crate::SealKey, $crate::CustodyError>>
-            + Send {
-                let _ = (root, w, aad);
-                std::future::ready(Err($crate::CustodyError::NotImplemented(concat!(
-                    $name, "::unwrap"
-                ))))
-            }
-            fn destroy(
-                &self,
-                root: &$crate::RootRef,
-            ) -> impl std::future::Future<
-                Output = Result<$crate::DestroyReceipt, $crate::CustodyError>,
-            > + Send {
-                let _ = root;
-                std::future::ready(Err($crate::CustodyError::NotImplemented(concat!(
-                    $name,
-                    "::destroy"
-                ))))
-            }
-            fn sign(
-                &self,
-                key: &$crate::SignKeyRef,
-                digest: &[u8; 32],
-            ) -> impl std::future::Future<
-                Output = Result<$crate::EcdsaSignature, $crate::CustodyError>,
-            > + Send {
-                let _ = (key, digest);
-                std::future::ready(Err($crate::CustodyError::NotImplemented(concat!(
-                    $name, "::sign"
-                ))))
-            }
-            fn usage_since(
-                &self,
-                root: &$crate::RootRef,
-                cursor: $crate::UsageCursor,
-            ) -> impl std::future::Future<Output = Result<$crate::UsagePage, $crate::CustodyError>>
-            + Send {
-                let _ = (root, cursor);
-                std::future::ready(Err($crate::CustodyError::NotImplemented(concat!(
-                    $name,
-                    "::usage_since"
-                ))))
-            }
-        }
-    };
-}
-pub(crate) use refusing_custody;
