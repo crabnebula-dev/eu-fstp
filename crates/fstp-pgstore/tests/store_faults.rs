@@ -566,11 +566,10 @@ fn verify_production(
     })
 }
 
-/// The verifier found no change. Until lane W2g's signature checks are in
-/// this lane's base, a sound view ends at the signature step.
+/// The verifier found no change, signatures included.
 fn assert_no_tamper(got: &Result<fstp_audit::verify::Verified, AuditError>, when: &str) {
     assert!(
-        matches!(got, Ok(_) | Err(AuditError::AwaitsAcceptance(_))),
+        matches!(got, Ok(_)),
         "I-24: the verifier found a change {when}: {got:?}"
     );
 }

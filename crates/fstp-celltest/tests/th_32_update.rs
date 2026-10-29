@@ -20,7 +20,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use fstp_celltest::mc::licence_model::{ANNOUNCE_SEAM, release_stub};
+use fstp_celltest::mc::licence_model::release_stub;
 use fstp_celltest::reference::licence::{
     self as r, DAY_S, MetadataRefusal, MetadataStore, RefChannel, RefMetadata, RefVersion,
 };
@@ -401,14 +401,91 @@ fn th_32_t_update_m3_installs_nothing() {
 /// Whether the cell announces an update to a tenant admin after an
 /// update check that fetched `bytes`.
 ///
-/// Gap ([`ANNOUNCE_SEAM`]): the admin view of lane W3a has no API.
+/// Lane W3a: the cell's update task runs one check through
+/// `fstp_cell::egress::CnClient` over a transport that answers `bytes`,
+/// and the admin view `fstp_cell::tasks::release::ReleaseView` answers.
 fn prod_announces(bytes: &[u8]) -> Result<bool, String> {
+    use std::future::Future;
+    use std::sync::Mutex;
+
+    use fstp_cell::config::Mode;
+    use fstp_cell::egress::{CnClient, CnFault, CnTransport};
+    use fstp_cell::tasks::Clock;
+    use fstp_cell::tasks::release::{self, ReleaseSettings, ReleaseView};
+    use fstp_release::egress::{Channel, ProductVersion};
+    use fstp_release::licence::LicenceId;
+    use fstp_rt::Shutdown;
+
+    /// One instant. The first sleep past it ends the run.
+    struct Once {
+        now: i64,
+        stop: Shutdown,
+    }
+
+    impl Clock for Once {
+        fn now(&self) -> i64 {
+            self.now
+        }
+
+        fn sleep_until(&self, at: i64) -> impl Future<Output = ()> + Send {
+            if at > self.now {
+                self.stop.trigger();
+            }
+            std::future::ready(())
+        }
+    }
+
+    /// The update service, answering `bytes` once.
+    struct Answers(Mutex<Vec<u8>>);
+
+    impl CnTransport for Answers {
+        fn exchange(
+            &self,
+            _host: &'static str,
+            _request: Vec<u8>,
+        ) -> impl Future<Output = Result<Vec<u8>, CnFault>> + Send {
+            let body = std::mem::take(&mut *self.0.lock().unwrap());
+            let mut out = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            out.extend_from_slice(&body);
+            std::future::ready(Ok(out))
+        }
+    }
+
     if let Err(e) = fstp_release::metadata::decode_release_metadata(bytes)
         && let Some(m) = stub(&e)
     {
         return Err(m);
     }
-    Err(ANNOUNCE_SEAM.to_owned())
+    let stop = Shutdown::new();
+    let clock = Once {
+        now: NOW * 1_000_000,
+        stop: stop.clone(),
+    };
+    let client = CnClient::new(Mode::SelfHosted, Answers(Mutex::new(bytes.to_vec())));
+    let view = ReleaseView::default();
+    let settings = ReleaseSettings {
+        licence: Some(LicenceId([0x5A; 16])),
+        version: ProductVersion(RUNNING.major, RUNNING.minor, RUNNING.patch),
+        channel: Channel::Stable,
+    };
+    let signal = stop.signal();
+    fstp_rt::future::block_on(release::run(
+        &clock,
+        &client,
+        Mode::SelfHosted,
+        settings,
+        None,
+        &view,
+        &signal,
+    ));
+    if view.last(release::CallKind::Update).is_none() {
+        return Err("the update task ran no check".to_owned());
+    }
+    Ok(view.announces_update())
 }
 
 /// TH-32, design section 10.3: metadata cannot be verified until the

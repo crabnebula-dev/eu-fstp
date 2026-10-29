@@ -820,7 +820,10 @@ fn harness_fake_witness_keeps_one_outstanding_prepare() {
     let g = (0, genesis(cell, ChainId::App));
     let p1 = prepare_of(cell, g, [1; 32]);
     let r1 = block_on(w.prepare(&p1)).unwrap();
-    fstp_crypto::composite::verify(&w.public_key(), &r1.message(), &r1.signature).unwrap();
+    assert!(fstp_audit::anchor::receipt_signature_verifies(
+        &r1,
+        &[w.public_key()]
+    ));
     assert_eq!(block_on(w.prepare(&p1)), Ok(r1.clone()), "a retransmit");
     let rival = prepare_of(cell, g, [2; 32]);
     assert_eq!(

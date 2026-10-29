@@ -274,7 +274,7 @@ impl AnchorSigner for TestSigner {
         let msg = anchor_message(cell, chain, n, link, at);
         let sig = self
             .key
-            .sign(&msg)
+            .sign_with_context(&msg, fstp_audit::anchor::ANCHOR_CONTEXT)
             .map_err(|_| fstp_audit::AuditError::NotImplemented("the test signer"))?;
         Ok(Anchor {
             cell,
@@ -1681,7 +1681,7 @@ impl FakeWitness {
         let msg = receipt_message(self.cell, ChainId::App, &fields);
         let signature = self
             .key
-            .sign(&msg)
+            .sign_with_context(&msg, fstp_audit::anchor::RECEIPT_CONTEXT)
             .map_err(|_| WitnessFault::Refused)?
             .to_bytes()
             .to_vec();

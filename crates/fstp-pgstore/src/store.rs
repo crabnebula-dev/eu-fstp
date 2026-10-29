@@ -236,16 +236,10 @@ fn pinnable(key: &[u8]) -> bool {
 /// Whether one of the pinned witness keys signed the receipt `rc`. Both
 /// halves of the composite signature must verify (I-90).
 ///
-/// Lane W2g owns the receipt encoding. Its receipt verifier is not part
-/// of this lane's base, so the store checks the composite signature over
-/// `Receipt::message` here. Once W2g's
-/// `fstp_audit::anchor::receipt_signature_verifies` is merged, this check
-/// calls it, with the receipt context it fixes.
+/// The check is `fstp_audit::anchor::receipt_signature_verifies`, under
+/// the receipt context ADR-010 records.
 fn receipt_signed(rc: &Receipt, witness_keys: &[Vec<u8>]) -> bool {
-    let message = rc.message();
-    witness_keys
-        .iter()
-        .any(|k| fstp_crypto::composite::verify(k, &message, &rc.signature).is_ok())
+    fstp_audit::anchor::receipt_signature_verifies(rc, witness_keys)
 }
 
 /// The record store of one cell over its writer role (design section
