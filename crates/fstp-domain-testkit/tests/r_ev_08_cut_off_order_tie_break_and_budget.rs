@@ -32,7 +32,7 @@ fn story(backend: Backend, pr1: [u8; 2], pr2: Option<[u8; 2]>) -> Story {
     s
 }
 
-fn cut(n: u128, order: Vec<ProposalId>, nominated: u32, tie_break: bool) -> Step {
+fn cut(n: u128, order: Vec<ProposalId>, nominated: u32, tie_break: bool) -> Vec<Step> {
     cut_off(
         R1,
         cut_off_decision(n),

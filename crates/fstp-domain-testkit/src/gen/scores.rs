@@ -30,10 +30,10 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::{Answer, Answers, Query};
 use fstp_domain::policy::{
-    EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef, InferenceBinding,
-    IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues, McpBindingActions,
-    ModelRef, OpaqueValue, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity, SpdxId,
-    TieBreakRule, VotingRules,
+    AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
+    InferenceBinding, IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues,
+    McpBindingActions, ModelRef, OpaqueValue, PolicyVersion, ProximityLists, ReadAccess,
+    ReviewerAnonymity, SpdxId, TieBreakRule, VotingRules,
 };
 use fstp_domain::proposal::{
     EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, ReentryStage, Task,
@@ -59,6 +59,9 @@ use crate::harness::teeth::inject;
 
 /// The tenant admin who creates programmes and grants Judging roles.
 pub const ADMIN: AccountId = AccountId::from_raw(1);
+/// The second tenant admin who approves the activation of the scripted
+/// programme (M4 changes D1, D2 and D8). It builds nothing.
+pub const SCRIPT_APPROVER: AccountId = AccountId::from_raw(9_001);
 /// The programme manager who approves publication (R-PC-03).
 pub const MANAGER: AccountId = AccountId::from_raw(2);
 /// The call drafter, distinct from the approving manager.
@@ -297,6 +300,18 @@ impl Script {
             version: Box::new(version),
             author: MANAGER,
         })?;
+        // M4 changes D1, D2 and D8: the programme is a draft until its
+        // activation, by a tenant admin who built nothing.
+        let decision = DecisionId::from_raw(self.fresh());
+        self.push(crate::activation::forge_programme_activated(
+            fx.programme,
+            decision,
+            crate::activation::SETUP_REPORT,
+            crate::activation::SETUP_REVISION,
+            SCRIPT_APPROVER,
+            &[ADMIN, MANAGER].into_iter().collect(),
+            fstp_domain::record::RulesVersion::M4.0,
+        )?)?;
         for (account, role) in [
             (MANAGER, Role::ProgrammeManager),
             (DRAFTER, Role::CallDrafter),
@@ -634,6 +649,7 @@ fn policy_version(script: &mut Script, fx: &Fixture) -> Result<PolicyVersion, St
         p26: LicenceSet([SpdxId("MIT".to_owned())].into_iter().collect()),
         p39: NonZeroU8::MIN,
         p53: FunderProfileRef(opaque("p53")?),
+        p75: AgentContentAccess::Off,
         p77: McpBindingActions::DraftOnly,
         opaque: BTreeMap::new(),
     };

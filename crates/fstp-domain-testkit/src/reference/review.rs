@@ -38,14 +38,23 @@
 //! - Reads follow P-10 in stages 1 and 2 (R-AC-01). In SUBMITTED only the
 //!   FSTP coordinator reads, for the knock-out check, after declaring no
 //!   conflict on the proposal (R-CF-02 AC). DRAFT is private to the
-//!   applicant team, so any other reader is refused. Reads by the
-//!   proposal's own Receiving accounts, reads outside stages 1 and 2, and
-//!   coordinator reads in stages 1 and 2 are M4 visibility and unjudged.
-//!   Every read, judged or not, is refused while a conflict fact exists or
-//!   the vault answers `HasConflict` true at the current epoch. Every
-//!   read by someone outside the applicant team, in any state, is refused
-//!   before that reader declared no conflict, through an active assignment
-//!   or at proposal level (R-CF-02).
+//!   applicant team, so any other reader is refused. Every read by
+//!   someone outside the applicant team is refused while a conflict fact
+//!   exists or the vault answers `HasConflict` true at the current epoch.
+//!   Every such read, in any state, is refused before that reader
+//!   declared no conflict, through an active assignment or at proposal
+//!   level (R-CF-02).
+//! - M4 change D11 judges every read in every one of the 16 states
+//!   (`docs/handoff/m4-design.md` section 3.4, Q39 interim reading,
+//!   pending Daniel). The applicant team, through a held Receiving
+//!   binding, reads in every state. In stages 1 and 2 the coordinator
+//!   reads only under P-10 "operator staff only", after a proposal-level
+//!   declaration of no conflict, and then nobody else reads (O-43,
+//!   policy-parameters NOTE 1, change D4). In IRC_REVIEW an IRC member
+//!   reads through an active IRC assignment, and in NEGOTIATION an
+//!   assigned reviewer reads through an active reviewer assignment.
+//!   RANKED, DEFERRED, GRANTED, IN_EXECUTION and the terminal states admit
+//!   the applicant team only.
 //! - An assigned reviewer reads only through an active assignment: one
 //!   whose assignee declared no conflict, in the proposal's current call,
 //!   over an active committee member binding. Test-author choice: an
@@ -1550,8 +1559,17 @@ fn read_verdict(
     let Some(programme) = rev.programme_of(proposal) else {
         return refuse("unknown programme");
     };
-    if receiving_holder(view, actor, proposal) {
-        return Verdict::Unjudged;
+    // M4 change D11: the applicant team reads its own proposal in every
+    // state, through an active Receiving binding on it (R-AC-01).
+    let team = view.bindings.values().any(|b| {
+        b.account == actor
+            && b.proposal == Some(proposal)
+            && b.group == RefGroup::Receiving
+            && b.active()
+            && b.start <= now
+    });
+    if team {
+        return Verdict::Accept;
     }
     if rev.facts.contains(&(actor, proposal)) {
         return refuse("I-03: conflict fact");
@@ -1581,7 +1599,15 @@ fn read_verdict(
         StateTag::Stage1 | StateTag::Stage2 => {
             let member = holds_active(view, actor, Role::CommitteeMember, programme, now);
             if p10 == Some(ReadAccess::OperatorStaffOnly) {
-                return Verdict::Unjudged;
+                // O-43, policy-parameters NOTE 1 (decided 2026-10-25), M4
+                // change D4: under "operator staff only" the FSTP
+                // coordinator reads after declaring no conflict on the
+                // proposal, and nobody else outside the team reads.
+                return if coordinator && cleared {
+                    Verdict::Accept
+                } else {
+                    refuse("P-10 operator staff only: the declared FSTP coordinator reads")
+                };
             }
             if member && rev.active_assignment(actor, proposal, AssignmentKind::Reviewer) {
                 return Verdict::Accept;
@@ -1589,12 +1615,43 @@ fn read_verdict(
             if member && cleared && p10 == Some(ReadAccess::AllCommitteeMembers) {
                 return Verdict::Accept;
             }
-            if coordinator {
-                return Verdict::Unjudged;
-            }
+            // M4 change D11: under the two other P-10 options the
+            // coordinator does not read in stages 1 and 2.
             refuse("P-10")
         }
-        _ => Verdict::Unjudged,
+        // M4 change D11: an IRC member reads through an active IRC
+        // assignment in IRC_REVIEW (R-IR-01).
+        StateTag::IrcReview => {
+            let irc = holds_active(view, actor, Role::IrcMember, programme, now);
+            if irc && rev.active_assignment(actor, proposal, AssignmentKind::Irc) {
+                Verdict::Accept
+            } else {
+                refuse("IRC_REVIEW: only an IRC member with an active assignment reads")
+            }
+        }
+        // M4 change D11: an assigned reviewer reads in NEGOTIATION to set
+        // the amount (R-NG-03).
+        StateTag::Negotiation => {
+            let member = holds_active(view, actor, Role::CommitteeMember, programme, now);
+            if member && rev.active_assignment(actor, proposal, AssignmentKind::Reviewer) {
+                Verdict::Accept
+            } else {
+                refuse("NEGOTIATION: only an assigned reviewer reads")
+            }
+        }
+        // M4 change D11, Q39 interim reading: RANKED, DEFERRED, GRANTED,
+        // IN_EXECUTION and the terminal states admit the applicant team
+        // only. Committee members use the ranking view in RANKED.
+        StateTag::Ranked
+        | StateTag::Deferred
+        | StateTag::Granted
+        | StateTag::InExecution
+        | StateTag::Ineligible
+        | StateTag::NotSelected
+        | StateTag::Declined
+        | StateTag::Withdrawn
+        | StateTag::Completed
+        | StateTag::Terminated => refuse("Q39: only the applicant team reads in this state"),
     }
 }
 
@@ -2428,4 +2485,41 @@ pub fn check_i34_assign(
         ));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The committee ranking view (M4 change D9)
+// ---------------------------------------------------------------------------
+
+/// The weighted score of each criterion of `criteria` in the committee
+/// ranking view (R-EV-08, `SPEC/02-domain/roles-and-sod.md` Committee
+/// ranking view, M4 change D9): the mean over the reviewers whose scores
+/// count of the criterion's weight times the reviewer's score, as an exact
+/// ratio, in P-01 order.
+///
+/// `criteria` lists each criterion with its P-01 weight. `vectors` holds
+/// one score vector per counted reviewer, in P-01 order, from the
+/// effective score set after stage 2 (I-09). With no reviewer there is no
+/// mean, which is an error.
+pub fn weighted_criterion_scores(
+    criteria: &[(fstp_domain::id::CriterionId, u16)],
+    vectors: &[Vec<u8>],
+) -> Result<Vec<(fstp_domain::id::CriterionId, fstp_money::Ratio)>, String> {
+    let n = u64::try_from(vectors.len()).map_err(|_| "too many reviewers")?;
+    let den = core::num::NonZeroU64::new(n).ok_or("no reviewer score counts")?;
+    let mut out = Vec::new();
+    for (i, (id, weight)) in criteria.iter().enumerate() {
+        let mut sum: u64 = 0;
+        for v in vectors {
+            let score = v
+                .get(i)
+                .ok_or_else(|| format!("a score vector lacks criterion {id:?}"))?;
+            let weighted = u64::from(*weight)
+                .checked_mul(u64::from(*score))
+                .ok_or("weighted score overflow")?;
+            sum = sum.checked_add(weighted).ok_or("weighted sum overflow")?;
+        }
+        out.push((*id, fstp_money::Ratio::new(sum, den)));
+    }
+    Ok(out)
 }

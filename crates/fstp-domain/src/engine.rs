@@ -47,6 +47,8 @@
 //! 4. A binding action through MCP needs P-77 to allow it (R-MC-05). The
 //!    owning lane names the governing policy as a [`PolicyScope`], and lane
 //!    L-POL reads P-77 from it.
+//!    A `ReadContent` through MCP also needs P-75 on, unless the reader is
+//!    the applicant team (M4 change D6, `crate::visibility`).
 //! 5. In `decide` only: every query has an answer at the expected epoch.
 //!
 //! Shell-supplied ids are checked by the owning lane against
@@ -66,6 +68,7 @@ use std::collections::HashSet;
 
 use crate::id::{CallId, ProgrammeId, ProposalId, VaultEpoch};
 use crate::oracle::{Answers, Query};
+use crate::programme::DraftGate;
 use crate::record::Record;
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::rules::{ActorRule, ParamId, actor_rule};
@@ -166,7 +169,11 @@ const fn command_lane(kind: CommandKind) -> Lane {
     use CommandKind as K;
     match kind {
         K::CreateProgramme | K::EditPolicy => Lane::Policy,
-        K::DraftCall | K::EditCall | K::ApproveCallPublication | K::PublishCall => Lane::Programme,
+        K::ActivateProgramme
+        | K::DraftCall
+        | K::EditCall
+        | K::ApproveCallPublication
+        | K::PublishCall => Lane::Programme,
         K::GrantRole | K::EndRole | K::EndScheduledRole | K::ReinstateBinding | K::VaultChanged => {
             Lane::Roles
         }
@@ -192,6 +199,9 @@ const fn command_lane(kind: CommandKind) -> Lane {
         | K::AdmitToStage1
         | K::CloseStage1
         | K::RankAfterStage2
+        | K::OpenCutOffRound
+        | K::CastBallot
+        | K::DelegateVote
         | K::RecordCutOff
         | K::RecordIrcReview => Lane::Decision,
         K::DetermineAmount
@@ -221,7 +231,8 @@ const fn command_lane(kind: CommandKind) -> Lane {
 const fn record_lane(record: &Record) -> Option<Lane> {
     let lane = match record {
         Record::ProgrammeCreated { .. } | Record::PolicyVersionRecorded { .. } => Lane::Policy,
-        Record::CallDrafted { .. }
+        Record::ProgrammeActivated(_)
+        | Record::CallDrafted { .. }
         | Record::CallEdited { .. }
         | Record::CallApproved { .. }
         | Record::CallPublished { .. } => Lane::Programme,
@@ -253,6 +264,9 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         Record::KnockOutRecorded { .. }
         | Record::Stage1Closed(_)
         | Record::EffectiveScoreSet(_)
+        | Record::CutOffRoundOpened { .. }
+        | Record::BallotCast { .. }
+        | Record::VoteDelegated { .. }
         | Record::CutOffRecorded(_)
         | Record::IrcReviewRecorded { .. } => Lane::Decision,
         Record::AmountDetermined { .. }
@@ -337,6 +351,11 @@ fn shared_checks(state: &State, cmd: &Command, ctx: &Ctx) -> Result<(), Refusal>
             ));
         }
     }
+    if ctx.via == Via::Mcp
+        && let Command::ReadContent { proposal } = cmd
+    {
+        crate::visibility::mcp_read_allowed(state, *proposal, ctx)?;
+    }
     Ok(())
 }
 
@@ -349,17 +368,19 @@ fn expected_epoch(state: &State, cmd: &Command) -> VaultEpoch {
     }
 }
 
-/// The owning lane's vault questions for `cmd`.
+/// The owning lane's vault questions for `cmd`. `gate` reaches only the
+/// `GrantRole` guard of lane L-SOD, whose preview skips the draft gate.
 fn lane_queries(
     lane: Lane,
     state: &State,
     cmd: &Command,
     ctx: &Ctx,
+    gate: DraftGate,
 ) -> Result<Vec<Query>, Refusal> {
     match lane {
         Lane::Policy => policy::queries(state, cmd, ctx),
         Lane::Programme => programme::queries(state, cmd, ctx),
-        Lane::Roles => roles::queries(state, cmd, ctx),
+        Lane::Roles => roles::queries(state, cmd, ctx, gate),
         Lane::Assignment => assignment::queries(state, cmd, ctx),
         Lane::Proposal => proposal::queries(state, cmd, ctx),
         Lane::Decision => decision::queries(state, cmd, ctx),
@@ -389,18 +410,19 @@ fn lane_contribute_queries(
     }
 }
 
-/// The owning lane's records for `cmd`.
+/// The owning lane's records for `cmd`, with `gate` as in [`lane_queries`].
 fn lane_decide(
     lane: Lane,
     state: &State,
     cmd: &Command,
     ctx: &Ctx,
     answers: &Answers,
+    gate: DraftGate,
 ) -> Result<Vec<Record>, Refusal> {
     match lane {
         Lane::Policy => policy::decide(state, cmd, ctx, answers),
         Lane::Programme => programme::decide(state, cmd, ctx, answers),
-        Lane::Roles => roles::decide(state, cmd, ctx, answers),
+        Lane::Roles => roles::decide(state, cmd, ctx, answers, gate),
         Lane::Assignment => assignment::decide(state, cmd, ctx, answers),
         Lane::Proposal => proposal::decide(state, cmd, ctx, answers),
         Lane::Decision => decision::decide(state, cmd, ctx, answers),
@@ -451,9 +473,20 @@ fn lane_governing_policy(lane: Lane, state: &State, cmd: &Command) -> Result<Pol
 /// lane's questions, then each contributing lane's in the order of [`LANES`].
 /// A question asked twice is kept once, at its first position.
 pub fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Query>, Refusal> {
+    queries_gated(state, cmd, ctx, DraftGate::Enforce)
+}
+
+/// [`queries`] with `gate` for the draft gate of `GrantRole` (M4 change
+/// D3). `crate::roles::preview_grant_queries` passes `DraftGate::Skip`.
+pub(crate) fn queries_gated(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    gate: DraftGate,
+) -> Result<Vec<Query>, Refusal> {
     shared_checks(state, cmd, ctx)?;
     let owner = command_lane(cmd.kind());
-    let mut out = lane_queries(owner, state, cmd, ctx)?;
+    let mut out = lane_queries(owner, state, cmd, ctx, gate)?;
     for lane in LANES {
         if lane != owner {
             out.extend(lane_contribute_queries(lane, state, cmd, ctx)?);
@@ -473,7 +506,20 @@ pub fn decide(
     ctx: &Ctx,
     answers: &Answers,
 ) -> Result<Vec<Record>, Refusal> {
-    let needed = queries(state, cmd, ctx)?;
+    decide_gated(state, cmd, ctx, answers, DraftGate::Enforce)
+}
+
+/// [`decide`] with `gate` for the draft gate of `GrantRole` (M4 change
+/// D3). `crate::roles::preview_grant` passes `DraftGate::Skip` and keeps
+/// no record.
+pub(crate) fn decide_gated(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    answers: &Answers,
+    gate: DraftGate,
+) -> Result<Vec<Record>, Refusal> {
+    let needed = queries_gated(state, cmd, ctx, gate)?;
     let epoch = expected_epoch(state, cmd);
     for query in &needed {
         match answers.get(query) {
@@ -493,7 +539,7 @@ pub fn decide(
         }
     }
     let owner = command_lane(cmd.kind());
-    let mut batch = lane_decide(owner, state, cmd, ctx, answers)?;
+    let mut batch = lane_decide(owner, state, cmd, ctx, answers, gate)?;
     for lane in LANES {
         if lane != owner {
             let more = lane_contribute(lane, state, cmd, ctx, answers, &batch)?;

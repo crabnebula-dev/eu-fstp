@@ -54,11 +54,12 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::QueryKind;
 use fstp_domain::payment::PaymentLine;
+use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::policy::{
-    EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef, InferenceBinding,
-    IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues, McpBindingActions,
-    ModelRef, OpaqueValue, ParamId, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity,
-    SpdxId, TieBreakRule, VotingRules,
+    AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
+    InferenceBinding, IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues,
+    McpBindingActions, ModelRef, OpaqueValue, ParamId, PolicyVersion, ProximityLists, ReadAccess,
+    ReviewerAnonymity, SpdxId, TieBreakRule, VotingRules,
 };
 use fstp_domain::proposal::{
     EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, ReentryStage, Task,
@@ -730,11 +731,17 @@ pub(crate) enum RecordTag {
     AmendmentActivated,
     MilestoneClosed,
     PaymentRequestClosed,
+    // M4 changes D2 and D5.
+    ProgrammeActivated,
+    CutOffRoundOpened,
+    BallotCast,
+    VoteDelegated,
 }
 
 impl RecordTag {
-    /// Every tag, in declaration order of [`Record`].
-    pub(crate) const ALL: [RecordTag; 60] = [
+    /// Every tag: the M2 tags in declaration order of [`Record`], then the
+    /// tags of M4 changes D2 and D5.
+    pub(crate) const ALL: [RecordTag; 64] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -795,15 +802,22 @@ impl RecordTag {
         RecordTag::AmendmentActivated,
         RecordTag::MilestoneClosed,
         RecordTag::PaymentRequestClosed,
+        RecordTag::ProgrammeActivated,
+        RecordTag::CutOffRoundOpened,
+        RecordTag::BallotCast,
+        RecordTag::VoteDelegated,
     ];
 
-    /// The four payloads that only a witness builds. Tests cannot construct
-    /// them, so their round trip is checked over the fuzz seed corpus.
-    pub(crate) const WITNESS: [RecordTag; 4] = [
+    /// The payloads that only a witness or a core guard builds: the four of
+    /// M2 and, since M4 change D2, `ProgrammeActivated`, whose fields are
+    /// private. Tests cannot construct them, so their round trip is checked
+    /// over the fuzz seed corpus.
+    pub(crate) const WITNESS: [RecordTag; 5] = [
         RecordTag::Stage1Closed,
         RecordTag::EffectiveScoreSet,
         RecordTag::GrantDecided,
         RecordTag::PaymentReleased,
+        RecordTag::ProgrammeActivated,
     ];
 
     /// Whether only a witness builds this payload.
@@ -892,6 +906,10 @@ impl RecordTag {
             Record::AmendmentActivated { .. } => RecordTag::AmendmentActivated,
             Record::MilestoneClosed { .. } => RecordTag::MilestoneClosed,
             Record::PaymentRequestClosed { .. } => RecordTag::PaymentRequestClosed,
+            Record::ProgrammeActivated(_) => RecordTag::ProgrammeActivated,
+            Record::CutOffRoundOpened { .. } => RecordTag::CutOffRoundOpened,
+            Record::BallotCast { .. } => RecordTag::BallotCast,
+            Record::VoteDelegated { .. } => RecordTag::VoteDelegated,
         }
     }
 
@@ -1225,6 +1243,7 @@ pub(crate) fn frozen(g: &mut Gen, d: &mut Draw) -> G<FrozenValues> {
         p26: LicenceSet(g.vec(0..=4, spdx).into_iter().collect()),
         p39: nz8(g)?,
         p53: FunderProfileRef(opaque(g)?),
+        p75: *g.pick(&[AgentContentAccess::Off, AgentContentAccess::On]),
         p77: *g.pick(&[McpBindingActions::DraftOnly, McpBindingActions::Allowed]),
         opaque: opaque_map(g)?,
     })
@@ -1548,6 +1567,13 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::CreateProgramme => Command::CreateProgramme {
             policy: Box::new(policy(g, d)?),
         },
+        CommandKind::ActivateProgramme => Command::ActivateProgramme {
+            programme: id(g, d, ProgrammeId::from_raw),
+            decision: id(g, d, DecisionId::from_raw),
+            report: ReportDigest::from_bytes(digest(g).bytes()),
+            revision: g.u32(),
+            creator_builders: accounts(g, d),
+        },
         CommandKind::EditPolicy => Command::EditPolicy {
             base: id(g, d, PolicyVersionId::from_raw),
             version: Box::new(policy(g, d)?),
@@ -1716,14 +1742,24 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::ExpireStage2 => Command::ExpireStage2 {
             proposal: id(g, d, ProposalId::from_raw),
         },
-        CommandKind::RecordCutOff => Command::RecordCutOff {
-            decision: id(g, d, DecisionId::from_raw),
+        CommandKind::OpenCutOffRound => Command::OpenCutOffRound {
+            round: id(g, d, DecisionId::from_raw),
             call: id(g, d, CallId::from_raw),
             order: proposals(g, d),
             nominated: g.u32(),
             rationale: text(g, d),
             tie_breaks: opt_text(g, d),
-            ballots: ballots(g, d),
+        },
+        CommandKind::CastBallot => Command::CastBallot {
+            round: id(g, d, DecisionId::from_raw),
+            vote: *g.pick(&[Vote::For, Vote::Against, Vote::Abstain]),
+        },
+        CommandKind::DelegateVote => Command::DelegateVote {
+            round: id(g, d, DecisionId::from_raw),
+            to: id(g, d, AccountId::from_raw),
+        },
+        CommandKind::RecordCutOff => Command::RecordCutOff {
+            round: id(g, d, DecisionId::from_raw),
         },
         CommandKind::RecordIrcReview => Command::RecordIrcReview {
             assignment: id(g, d, AssignmentId::from_raw),
@@ -2202,10 +2238,30 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             by: id(g, d, AccountId::from_raw),
             reason: text(g, d),
         },
+        RecordTag::CutOffRoundOpened => Record::CutOffRoundOpened {
+            round: id(g, d, DecisionId::from_raw),
+            call: id(g, d, CallId::from_raw),
+            order: proposals(g, d),
+            nominated: g.u32(),
+            rationale: text(g, d),
+            tie_breaks: opt_text(g, d),
+            by: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::BallotCast => Record::BallotCast {
+            round: id(g, d, DecisionId::from_raw),
+            voter: id(g, d, AccountId::from_raw),
+            vote: *g.pick(&[Vote::For, Vote::Against, Vote::Abstain]),
+        },
+        RecordTag::VoteDelegated => Record::VoteDelegated {
+            round: id(g, d, DecisionId::from_raw),
+            from: id(g, d, AccountId::from_raw),
+            to: id(g, d, AccountId::from_raw),
+        },
         RecordTag::Stage1Closed
         | RecordTag::EffectiveScoreSet
         | RecordTag::GrantDecided
-        | RecordTag::PaymentReleased => {
+        | RecordTag::PaymentReleased
+        | RecordTag::ProgrammeActivated => {
             return Err(format!(
                 "{t:?} is a witness payload with no public constructor; \
                  its round trip is checked over the fuzz seed corpus"

@@ -3,7 +3,8 @@
 //! Written by lane L-SOD in step W3b. Lane L-LIFE extends the proposal
 //! lifecycle around it.
 //!
-//! - `CreateDraft` needs a published call that is open now. It records
+//! - `CreateDraft` needs a published call that is open now, in an active
+//!   programme (M4 change D3). It records
 //!   `ProposalCreated` with the lead and the actor's `minor` field. No
 //!   guard reads that field (R-ID-04). Lane L-SOD's contribution adds the
 //!   lead's Applicant binding.
@@ -197,9 +198,16 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             {
                 return Err(reused());
             }
-            if crate::programme::call(state, *call).is_none() {
+            let Some(view) = crate::programme::call(state, *call) else {
                 return Err(unknown());
-            }
+            };
+            // M4 change D3: nothing runs on a draft programme. A call of a
+            // draft cannot be published, so this is defence in depth.
+            crate::programme::draft_gate(
+                state,
+                view.programme(),
+                crate::programme::DraftGate::Enforce,
+            )?;
             if !crate::programme::is_open_at(state, *call, ctx.now) {
                 return Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState));
             }

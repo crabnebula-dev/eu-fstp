@@ -37,7 +37,7 @@ use fstp_domain::command::{
     Actor, Command as Core, ContractEvent, Ctx, DeclarationSubject, KnockOutResult, SystemCause,
     Via,
 };
-use fstp_domain::decision::{Ballot, IrcVerdict, Vote};
+use fstp_domain::decision::{IrcVerdict, Vote};
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CommandId, ContentDigest, ContractId,
@@ -46,6 +46,7 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::{Answer, Answers, OracleDown, Query, QueryKind};
 use fstp_domain::payment::PaymentLine;
+use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::policy::{ModelRef, SpdxId};
 use fstp_domain::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin};
 use fstp_domain::record::Record as CoreRecord;
@@ -172,7 +173,7 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
     let amendment = AmendmentId::from_raw;
     let binding = BindingId::from_raw;
     let plan = PlanVersionId::from_raw;
-    Some(match b.u8() % 56 {
+    Some(match b.u8() % 60 {
         0 => Core::DraftCall {
             call: call(b.id()),
             programme: ProgrammeId::from_raw(b.id()),
@@ -359,20 +360,9 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
         28 => Core::ExpireStage2 {
             proposal: proposal(b.id()),
         },
+        // M4 change D5: a cut-off counts only the ballots its members cast.
         29 => Core::RecordCutOff {
-            decision: decision(b.id()),
-            call: call(b.id()),
-            order: (0..b.u8() % 4).map(|_| proposal(b.id())).collect(),
-            nominated: u32::from(b.u8() % 4),
-            rationale: b.text(),
-            tie_breaks: b.opt_text(),
-            ballots: (0..b.u8() % 3)
-                .map(|_| Ballot {
-                    voter: b.account(),
-                    vote: [Vote::For, Vote::Against, Vote::Abstain][usize::from(b.u8() % 3)],
-                    delegated_by: if b.bool() { Some(b.account()) } else { None },
-                })
-                .collect(),
+            round: decision(b.id()),
         },
         30 => Core::RecordIrcReview {
             assignment: assignment(b.id()),
@@ -498,6 +488,32 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
         },
         52 => Core::EndScheduledRole {
             binding: binding(b.id()),
+        },
+        // M4 change D5: the round, each member's own ballot and delegation.
+        53 => Core::OpenCutOffRound {
+            round: decision(b.id()),
+            call: call(b.id()),
+            order: (0..b.u8() % 4).map(|_| proposal(b.id())).collect(),
+            nominated: u32::from(b.u8() % 4),
+            rationale: b.text(),
+            tie_breaks: b.opt_text(),
+        },
+        54 => Core::CastBallot {
+            round: decision(b.id()),
+            vote: [Vote::For, Vote::Against, Vote::Abstain][usize::from(b.u8() % 3)],
+        },
+        55 => Core::DelegateVote {
+            round: decision(b.id()),
+            to: b.account(),
+        },
+        // M4 change D2: the core activation, which no programme in this
+        // target reaches, since `CreateProgramme` is not generated.
+        56 => Core::ActivateProgramme {
+            programme: ProgrammeId::from_raw(b.id()),
+            decision: decision(b.id()),
+            report: ReportDigest::from_bytes([b.u8(); 32]),
+            revision: u32::from(b.u8()),
+            creator_builders: (0..b.u8() % 3).map(|_| b.account()).collect(),
         },
         _ => Core::ActivateAmendment {
             amendment: amendment(b.id()),

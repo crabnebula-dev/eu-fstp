@@ -11,7 +11,8 @@
 //! Stored record bytes are the hashed bytes (ADR-007), and an entry never
 //! changes after it is appended (I-23). So canonical bytes must be stable.
 //!
-//! The four witness payloads have no public constructor. Their round trip
+//! The witness payloads, the four of M2 and `ProgrammeActivated` since M4
+//! change D2, have no public constructor. Their round trip
 //! runs over the decoded seeds of the `record_decode` fuzz corpus, which
 //! lane L-CODEC supplies with the codec.
 
@@ -142,6 +143,9 @@ record_round_trip! {
     i23_codec_round_trip_record_amendment_proposed => AmendmentProposed,
     i23_codec_round_trip_record_amendment_routed => AmendmentRouted,
     i23_codec_round_trip_record_amendment_activated => AmendmentActivated,
+    r_ev_09_codec_round_trip_record_cut_off_round_opened => CutOffRoundOpened,
+    r_ev_09_codec_round_trip_record_ballot_cast => BallotCast,
+    r_ev_09_codec_round_trip_record_vote_delegated => VoteDelegated,
 }
 
 witness_round_trip! {
@@ -149,10 +153,12 @@ witness_round_trip! {
     i23_codec_round_trip_record_effective_score_set => EffectiveScoreSet,
     i23_codec_round_trip_record_grant_decided => GrantDecided,
     i23_codec_round_trip_record_payment_released => PaymentReleased,
+    i67_codec_round_trip_record_programme_activated => ProgrammeActivated,
 }
 
 command_round_trip! {
     th26_codec_round_trip_command_create_programme => CreateProgramme,
+    i67_codec_round_trip_command_activate_programme => ActivateProgramme,
     th26_codec_round_trip_command_edit_policy => EditPolicy,
     th26_codec_round_trip_command_draft_call => DraftCall,
     th26_codec_round_trip_command_edit_call => EditCall,
@@ -184,6 +190,9 @@ command_round_trip! {
     th26_codec_round_trip_command_submit_revision => SubmitRevision,
     th26_codec_round_trip_command_rank_after_stage2 => RankAfterStage2,
     th26_codec_round_trip_command_expire_stage2 => ExpireStage2,
+    r_ev_09_codec_round_trip_command_open_cut_off_round => OpenCutOffRound,
+    r_ev_09_codec_round_trip_command_cast_ballot => CastBallot,
+    r_ev_09_codec_round_trip_command_delegate_vote => DelegateVote,
     th26_codec_round_trip_command_record_cut_off => RecordCutOff,
     th26_codec_round_trip_command_record_irc_review => RecordIrcReview,
     th26_codec_round_trip_command_decline_after_concern => DeclineAfterConcern,
@@ -253,14 +262,15 @@ fn codec_generators_cover_every_command_kind() {
     });
 }
 
-/// Harness self-test: the record tags are distinct, and exactly four of
-/// them are witness payloads. Green without the codec.
+/// Harness self-test: the record tags are distinct, and exactly five of
+/// them are witness payloads, with `ProgrammeActivated` since M4 change
+/// D2. Green without the codec.
 #[test]
 fn codec_record_tags_are_distinct() {
     let all: std::collections::BTreeSet<RecordTag> = RecordTag::ALL.into_iter().collect();
     assert_eq!(all.len(), RecordTag::ALL.len());
     assert_eq!(
-        RecordTag::generated().len().saturating_add(4),
+        RecordTag::generated().len().saturating_add(5),
         RecordTag::ALL.len()
     );
 }

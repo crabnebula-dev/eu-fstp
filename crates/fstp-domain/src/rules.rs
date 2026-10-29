@@ -685,7 +685,9 @@ pub enum ActorRule {
     IrcMember,
     /// The proposal's IRC members collectively, at least P-15 of them.
     IrcMembers,
-    /// The committee, recorded by a committee member with the ballots.
+    /// The committee: a committee member or chair who is not recused. Since
+    /// M4 change D5 each member casts or delegates their own ballot, and a
+    /// member records the cut-off over the ballots cast.
     Committee,
     /// A reader allowed by P-10 (R-AC-01).
     ContentReader,
@@ -1173,6 +1175,9 @@ const COORDINATOR: ActorRule = ActorRule::Holder(Role::FstpCoordinator);
 /// when it defers instead, once a later call is published (NOTE 7).
 pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::CreateProgramme, ActorRule::TenantAdmin),
+    // M4 change D2, Q1 interim reading: a tenant admin outside the builder
+    // set, as for `CreateProgramme` (O-47).
+    (K::ActivateProgramme, ActorRule::TenantAdmin),
     (K::EditPolicy, PM),
     (
         K::DraftCall,
@@ -1220,6 +1225,11 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::SubmitRevision, ActorRule::Lead),
     (K::RankAfterStage2, ActorRule::AssignedReviewer),
     (K::ExpireStage2, ActorRule::System),
+    // M4 change D5, Q4 interim reading: each committee member acts for
+    // themselves in a round.
+    (K::OpenCutOffRound, ActorRule::Committee),
+    (K::CastBallot, ActorRule::Committee),
+    (K::DelegateVote, ActorRule::Committee),
     (K::RecordCutOff, ActorRule::Committee),
     (K::RecordIrcReview, ActorRule::IrcMember),
     (

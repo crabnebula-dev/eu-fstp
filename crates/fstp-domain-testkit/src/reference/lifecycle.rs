@@ -99,7 +99,11 @@
 //!   effective scores that never increase along it. A tie across the
 //!   cut-off position needs a recorded P-17 tie-break (R-EV-08 AC). The
 //!   ballots follow [`p16_outcome`]. The first `nominated` go to
-//!   IRC_REVIEW and the rest become NOT_SELECTED (NOTE 6).
+//!   IRC_REVIEW and the rest become NOT_SELECTED (NOTE 6). Since M4
+//!   change D5 the order, the position and the tie-break come from the
+//!   round that `CutOffRoundOpened` opened, and the ballots are those the
+//!   members cast for themselves in it ([`counted_ballots`]). The cut-off
+//!   names the round as its decision.
 //! - `RecordIrcReview` is the IRC assignee's, once per assignment and
 //!   round, while no concern is raised. The proposal enters NEGOTIATION
 //!   when every active IRC assignment of the current call validated, there
@@ -514,6 +518,33 @@ pub struct LifeView {
     pub breaches: BTreeSet<String>,
     /// Decision rows recorded with the System as actor (R-LA-03, NOTE 13).
     pub unrecorded: BTreeSet<String>,
+    /// The cut-off rounds opened, by round id (M4 change D5).
+    pub rounds: BTreeMap<DecisionId, LifeRound>,
+}
+
+/// One cut-off round as the reference folds it from its records (M4
+/// change D5): what was opened, each member's own ballot and each
+/// delegation, and whether its cut-off is recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LifeRound {
+    /// The call.
+    pub call: CallId,
+    /// The order of the call's RANKED proposals.
+    pub order: Vec<ProposalId>,
+    /// The cut-off rank position.
+    pub nominated: u32,
+    /// The rationale.
+    pub rationale: TextRef,
+    /// The P-17 tie-break.
+    pub tie_breaks: Option<TextRef>,
+    /// The ballot each member cast for themselves.
+    pub cast: BTreeMap<AccountId, Vote>,
+    /// Each delegation, from the delegating member to its holder.
+    pub delegated: BTreeMap<AccountId, AccountId>,
+    /// Whether the cut-off of the round is recorded.
+    pub recorded: bool,
+    /// Whether a later round of the same call replaced it.
+    pub superseded: bool,
 }
 
 impl Default for LifeView {
@@ -579,6 +610,7 @@ impl LifeView {
             milestones: BTreeSet::new(),
             breaches: BTreeSet::new(),
             unrecorded: BTreeSet::new(),
+            rounds: BTreeMap::new(),
         }
     }
 
@@ -831,8 +863,10 @@ impl LifeView {
     /// The remaining budget of `call` (R-EV-08, design 3.7, Q14): the
     /// budget minus the requested totals of the call's proposals in
     /// IRC_REVIEW, NEGOTIATION and later states. The requested total is the
-    /// submitted plan's, as the committee ranking view shows it, so the
-    /// recorded value is the value the committee saw.
+    /// effective plan's, as the committee ranking view shows it since M4
+    /// change D10, so the recorded value is the value the committee saw.
+    /// The effective plan is the plan of the latest effective score (I-09),
+    /// else the latest submitted revision, else the submitted plan.
     pub fn remaining_budget(&self, call: CallId) -> Option<Amount> {
         let c = self.calls.get(&call)?;
         let mut left = c.budget.amount();
@@ -840,8 +874,13 @@ impl LifeView {
             if p.current_call != call || !BUDGET_STATES.contains(&p.state) {
                 continue;
             }
-            let plan = p
-                .submitted
+            let effective = p
+                .effective
+                .last()
+                .map(|e| e.plan)
+                .or_else(|| p.revisions.last().copied())
+                .or(p.submitted);
+            let plan = effective
                 .and_then(|id| p.plans.get(&id))
                 .and_then(|pl| pl.total)?;
             left = left.checked_sub(plan.amount()).ok()?;
@@ -1086,6 +1125,55 @@ impl LifeView {
             }
             Record::CutOffRecorded(c) => {
                 self.decisions.insert(c.decision);
+                if let Some(r) = self.rounds.get_mut(&c.decision) {
+                    r.recorded = true;
+                }
+            }
+            // M4 change D5: a round, and each member's own ballot or
+            // delegation in it.
+            Record::CutOffRoundOpened {
+                round,
+                call,
+                order,
+                nominated,
+                rationale,
+                tie_breaks,
+                ..
+            } => {
+                self.decisions.insert(*round);
+                for r in self.rounds.values_mut() {
+                    if r.call == *call && !r.recorded {
+                        r.superseded = true;
+                    }
+                }
+                self.rounds.insert(
+                    *round,
+                    LifeRound {
+                        call: *call,
+                        order: order.clone(),
+                        nominated: *nominated,
+                        rationale: *rationale,
+                        tie_breaks: *tie_breaks,
+                        cast: BTreeMap::new(),
+                        delegated: BTreeMap::new(),
+                        recorded: false,
+                        superseded: false,
+                    },
+                );
+            }
+            Record::BallotCast { round, voter, vote } => {
+                self.rounds
+                    .get_mut(round)
+                    .ok_or_else(|| format!("ballot in unknown round {round:?}"))?
+                    .cast
+                    .insert(*voter, *vote);
+            }
+            Record::VoteDelegated { round, from, to } => {
+                self.rounds
+                    .get_mut(round)
+                    .ok_or_else(|| format!("delegation in unknown round {round:?}"))?
+                    .delegated
+                    .insert(*from, *to);
             }
             Record::IrcReviewRecorded {
                 assignment,
@@ -1609,7 +1697,7 @@ impl Want {
                     && c.nominated == want.nominated
                     && c.rationale == want.rationale
                     && c.tie_breaks == want.tie_breaks
-                    && c.ballots == want.ballots
+                    && ballot_multiset(&c.ballots) == ballot_multiset(&want.ballots)
                     && c.recused == want.recused
                     && c.recorder == want.recorder
             }
@@ -2048,6 +2136,12 @@ pub fn life_verdict(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> LifeVerdict {
         Command::ExpireStage2 { .. } => verdict_of(expire(cx, ask)),
         Command::ReEnter { .. } => verdict_of(reenter(cx, ask)),
         Command::RecordCutOff { .. } => verdict_of(cut_off(cx, ask)),
+        Command::OpenCutOffRound { .. }
+        | Command::CastBallot { .. }
+        | Command::DelegateVote { .. } => match round_act(cx, ask) {
+            Ok(()) => LifeVerdict::NotMine,
+            Err(why) => refuse(why),
+        },
         Command::RecordIrcReview { .. } => irc_review(cx, ask),
         Command::DeclineAfterConcern { .. } => verdict_of(decline(cx, ask)),
         _ => LifeVerdict::NotMine,
@@ -2656,20 +2750,233 @@ fn reenter(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
     })
 }
 
+/// The ballots that count in `round` (P-16 NOTE 8, M4 change D5): every
+/// ballot a member who may vote cast for themselves, and every delegated
+/// vote between two members who may vote, with the vote its holder cast,
+/// once the holder cast. A vote that was never cast counts for nobody.
+pub fn counted_ballots(round: &LifeRound, eligible: &BTreeSet<AccountId>) -> Vec<Ballot> {
+    let mut out: Vec<Ballot> = round
+        .cast
+        .iter()
+        .filter(|(m, _)| eligible.contains(*m))
+        .map(|(m, v)| Ballot {
+            voter: *m,
+            vote: *v,
+            delegated_by: None,
+        })
+        .collect();
+    for (from, to) in &round.delegated {
+        if eligible.contains(from)
+            && eligible.contains(to)
+            && let Some(v) = round.cast.get(to)
+        {
+            out.push(Ballot {
+                voter: *to,
+                vote: *v,
+                delegated_by: Some(*from),
+            });
+        }
+    }
+    out
+}
+
+/// Whether the vote of `round` can still pass (R-EV-09, P-16 NOTE 8): its
+/// cut-off is adopted once every member who may vote and has neither cast
+/// nor delegated casts For. A vote For never makes a decision less
+/// likely, so `false` means the vote has failed. A ballot set P-16 refuses,
+/// such as one with no possible quorum, cannot pass either.
+pub fn may_still_pass(
+    round: &LifeRound,
+    members: &BTreeSet<AccountId>,
+    recused: &BTreeSet<AccountId>,
+    chairs: &BTreeSet<AccountId>,
+) -> bool {
+    let eligible: BTreeSet<AccountId> = members.difference(recused).copied().collect();
+    let mut best = round.clone();
+    for m in &eligible {
+        if !best.cast.contains_key(m) && !best.delegated.contains_key(m) {
+            best.cast.insert(*m, Vote::For);
+        }
+    }
+    let ballots = counted_ballots(&best, &eligible);
+    p16_outcome(members, recused, chairs, &ballots).unwrap_or(false)
+}
+
+/// The ballots of `b` as a sorted list, so two ballot lists compare as
+/// multisets. A cut-off's ballots have no order of their own.
+pub fn ballot_multiset(b: &[Ballot]) -> Vec<(AccountId, Option<AccountId>, Vote)> {
+    let mut out: Vec<(AccountId, Option<AccountId>, Vote)> = b
+        .iter()
+        .map(|x| (x.voter, x.delegated_by, x.vote))
+        .collect();
+    out.sort();
+    out
+}
+
+/// The refusals of the round commands of M4 change D5, from
+/// `SPEC/02-domain/policy-parameters.md` NOTE 8, `roles-and-sod.md`
+/// Conflict declarations and the D5 rules (Q4 interim reading, pending
+/// Daniel). `Ok` means the reference admits the command, whose records the
+/// roles world synthesizes.
+///
+/// - The actor is a committee member or chair who is not recused.
+/// - `OpenCutOffRound`: a published call, a fresh round id, and an order
+///   as `RecordCutOff` needs it (NOTE 6, R-EV-08). Another round of the
+///   call still open over the call's RANKED proposals refuses it, unless
+///   that round's vote has failed: P-16 would not adopt its cut-off even
+///   if every member who may vote and has not voted cast For
+///   ([`may_still_pass`], interim, pending Daniel).
+/// - `CastBallot` and `DelegateVote`: an open round whose order still lists
+///   exactly the call's RANKED proposals. A member casts or delegates once.
+///   A delegation goes to another committee member who is not recused,
+///   has not delegated and holds no delegated vote, from a member who
+///   holds none.
+fn round_act(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<(), String> {
+    let a = account(ask).ok_or("D5: a committee member acts in a round")?;
+    let facts: &dyn ConflictFacts = cx.facts;
+    let ranked_now = |call: CallId| -> BTreeSet<ProposalId> {
+        cx.life
+            .proposals
+            .iter()
+            .filter(|(_, p)| p.state == StateTag::Ranked && p.current_call == call)
+            .map(|(id, _)| *id)
+            .collect()
+    };
+    let live = |r: &LifeRound| {
+        !r.recorded
+            && !r.superseded
+            && r.order.iter().copied().collect::<BTreeSet<_>>() == ranked_now(r.call)
+    };
+    let may_vote = |m: AccountId, call: CallId, programme: ProgrammeId| {
+        committee(cx.sod, programme, ask.now).contains(&m)
+            && !recused(cx.sod, cx.rev, facts, m, call)
+    };
+    let call = match ask.cmd {
+        Command::OpenCutOffRound { call, .. } => *call,
+        Command::CastBallot { round, .. } | Command::DelegateVote { round, .. } => {
+            let r = cx.life.rounds.get(round).ok_or("D5: no such round")?;
+            if !live(r) {
+                return Err("D5: the round is not open".to_owned());
+            }
+            r.call
+        }
+        _ => return Err("not a round command".to_owned()),
+    };
+    let c = cx.life.calls.get(&call).ok_or("unknown call")?;
+    if c.seq.is_none() {
+        return Err("the call is not published".to_owned());
+    }
+    if !may_vote(a, call, c.programme) {
+        return Err("I-03, R-EV-09: the actor is not a committee member who may vote".to_owned());
+    }
+    match ask.cmd {
+        Command::OpenCutOffRound {
+            round,
+            order,
+            nominated,
+            tie_breaks,
+            ..
+        } => {
+            if cx.life.decisions.contains(round) {
+                return Err("the round id is taken".to_owned());
+            }
+            let members = committee(cx.sod, c.programme, ask.now);
+            let recused_set: BTreeSet<AccountId> = members
+                .iter()
+                .copied()
+                .filter(|m| recused(cx.sod, cx.rev, facts, *m, call))
+                .collect();
+            let chairs = holders(cx.sod, Role::CommitteeChair, c.programme, ask.now);
+            if cx.life.rounds.values().any(|r| {
+                r.call == call && live(r) && may_still_pass(r, &members, &recused_set, &chairs)
+            }) {
+                return Err(
+                    "D5: a round of the call is open and its vote can still pass".to_owned(),
+                );
+            }
+            let listed: BTreeSet<ProposalId> = order.iter().copied().collect();
+            if order.is_empty() || listed.len() != order.len() || listed != ranked_now(call) {
+                return Err(
+                    "NOTE 6: the order lists exactly the call's RANKED proposals".to_owned(),
+                );
+            }
+            let n = usize::try_from(*nominated).map_err(|_| "nominated too large")?;
+            if n > order.len() {
+                return Err("NOTE 6: the cut-off lies beyond the order".to_owned());
+            }
+            let mut values = Vec::new();
+            for p in order {
+                let v = cx
+                    .life
+                    .proposals
+                    .get(p)
+                    .and_then(|x| x.effective.last())
+                    .map(|e| e.value)
+                    .ok_or("a ranked proposal has no effective score")?;
+                values.push(v);
+            }
+            if values
+                .windows(2)
+                .any(|w| matches!(w, [x, y] if x.compare(*y) == Some(Ordering::Less)))
+            {
+                return Err("NOTE 6: the order is not by effective score".to_owned());
+            }
+            let tie = n > 0
+                && n < values.len()
+                && matches!(
+                    (values.get(n.saturating_sub(1)), values.get(n)),
+                    (Some(x), Some(y)) if x.same(*y)
+                );
+            if tie && tie_breaks.is_none() {
+                return Err(
+                    "R-EV-08: a tie at the cut-off needs a recorded P-17 tie-break".to_owned(),
+                );
+            }
+            Ok(())
+        }
+        Command::CastBallot { round, .. } => {
+            let r = cx.life.rounds.get(round).ok_or("D5: no such round")?;
+            if r.cast.contains_key(&a) || r.delegated.contains_key(&a) {
+                return Err("P-16 NOTE 8: the member already cast or delegated".to_owned());
+            }
+            Ok(())
+        }
+        Command::DelegateVote { round, to } => {
+            let r = cx.life.rounds.get(round).ok_or("D5: no such round")?;
+            let holds = |m: &AccountId| r.delegated.values().any(|t| t == m);
+            if *to == a || !may_vote(*to, call, c.programme) {
+                return Err("P-16 NOTE 8: the vote goes to another member who may vote".to_owned());
+            }
+            if r.cast.contains_key(&a) || r.delegated.contains_key(&a) || holds(&a) {
+                return Err(
+                    "P-16 NOTE 8: the member already cast, delegated or holds a vote".to_owned(),
+                );
+            }
+            if r.delegated.contains_key(to) || holds(to) {
+                return Err("P-16 NOTE 8: a member holds at most one delegated vote".to_owned());
+            }
+            Ok(())
+        }
+        _ => Err("not a round command".to_owned()),
+    }
+}
+
 fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
-    let Command::RecordCutOff {
-        decision,
-        call,
-        order,
-        nominated,
-        rationale,
-        tie_breaks,
-        ballots,
-    } = ask.cmd
-    else {
+    let Command::RecordCutOff { round } = ask.cmd else {
         return Err("not a cut-off".to_owned());
     };
     let a = account(ask).ok_or("R-LA-03: a committee member records the cut-off")?;
+    let r = cx
+        .life
+        .rounds
+        .get(round)
+        .ok_or("D5: no such cut-off round was opened")?;
+    if r.recorded || r.superseded {
+        return Err("D5: the round is closed".to_owned());
+    }
+    let call = &r.call;
+    let (order, nominated, rationale, tie_breaks) =
+        (&r.order, &r.nominated, &r.rationale, &r.tie_breaks);
     let c = cx.life.calls.get(call).ok_or("unknown call")?;
     if c.seq.is_none() {
         return Err("the call is not published".to_owned());
@@ -2683,9 +2990,6 @@ fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         .collect();
     if !members.contains(&a) || recused_set.contains(&a) {
         return Err("the recorder is not a committee member who may vote".to_owned());
-    }
-    if cx.life.decisions.contains(decision) {
-        return Err("the decision id is taken".to_owned());
     }
     let ranked_now: BTreeSet<ProposalId> = cx
         .life
@@ -2729,7 +3033,9 @@ fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         return Err("R-EV-08: a tie at the cut-off needs a recorded P-17 tie-break".to_owned());
     }
     let chairs = holders(cx.sod, Role::CommitteeChair, c.programme, ask.now);
-    if !p16_outcome(&members, &recused_set, &chairs, ballots)? {
+    let eligible: BTreeSet<AccountId> = members.difference(&recused_set).copied().collect();
+    let ballots = counted_ballots(r, &eligible);
+    if !p16_outcome(&members, &recused_set, &chairs, &ballots)? {
         return Err("P-16: the cut-off is not adopted".to_owned());
     }
     let remaining = cx
@@ -2738,17 +3044,17 @@ fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         .ok_or("no remaining budget")?;
     let mut exp = Expect {
         wants: vec![Want::CutOff(Box::new(CutOffRecorded {
-            decision: *decision,
+            decision: *round,
             call: *call,
             order: order.clone(),
             nominated: *nominated,
             rationale: *rationale,
             tie_breaks: *tie_breaks,
-            ballots: ballots.clone(),
+            ballots,
             recused: recused_set,
             remaining_budget: remaining,
             recorder: a,
-            rules: RulesVersion::M2,
+            rules: RulesVersion::M4,
         }))],
         ..Expect::default()
     };
@@ -2765,7 +3071,7 @@ fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
             to,
             row,
             ask.actor,
-            Some(*decision),
+            Some(*round),
         ));
     }
     Ok(exp)

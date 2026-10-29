@@ -41,6 +41,7 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod activation;
 pub mod clock;
 pub mod harness;
 pub mod mc;

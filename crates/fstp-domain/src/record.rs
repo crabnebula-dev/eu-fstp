@@ -10,6 +10,9 @@
 //!   have private fields. Only a builder that takes the matching witness can
 //!   construct them (design section 3.5). They live in the lane modules that
 //!   own those witnesses.
+//! - Since M4 change D2 the activation payload [`ProgrammeActivated`] has
+//!   private fields too. Only the core activation guard in
+//!   `crate::policy::activation` and the record decoder build it.
 
 use std::collections::BTreeSet;
 
@@ -19,7 +22,9 @@ use fstp_money::{Currency, NonNegAmount};
 use crate::amendment::AmendmentRoute;
 use crate::assignment::{AssignmentKind, ReleaseCause};
 use crate::command::{Actor, ContractEvent, KnockOutResult};
-use crate::decision::{Ballot, EffectiveScoreSet, IrcVerdict, NegotiationFailure, Stage1Closed};
+use crate::decision::{
+    Ballot, EffectiveScoreSet, IrcVerdict, NegotiationFailure, Stage1Closed, Vote,
+};
 use crate::grant::{GrantDecided, IneligibleCost};
 use crate::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ContentDigest, ContractId,
@@ -28,6 +33,7 @@ use crate::id::{
 };
 use crate::oracle::QueryKind;
 use crate::payment::{PaymentLine, PaymentReleased};
+pub use crate::policy::activation::ProgrammeActivated;
 use crate::policy::{PolicyVersion, SpdxId};
 use crate::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin, ReentryStage, Task};
 use crate::refusal::RuleRef;
@@ -51,6 +57,15 @@ impl RulesVersion {
     /// outcome of its batch, and the fold derives the flag from that bit.
     /// A `GrantDecided` under [`RulesVersion::M2`] keeps the gate's flag.
     pub const MINOR_FLAG_2026_10_29: RulesVersion = RulesVersion(2);
+
+    /// The readings of milestone M4 (M4 design section 3.4, D7), each
+    /// interim, pending Daniel. A programme is activated by a tenant admin
+    /// outside its builder set (D2, Q1 and Q2). A cut-off counts only the
+    /// ballots that committee members cast in its round, and its decision
+    /// is the round (D5, Q4). The fold of a `CutOffRecorded` under it
+    /// closes its open round. One under an earlier version keeps its own
+    /// fresh decision id.
+    pub const M4: RulesVersion = RulesVersion(3);
 }
 
 /// A role binding (design section 2.6).
@@ -246,9 +261,14 @@ pub struct ScoreVoided {
 }
 
 /// The committee cut-off of one round (NOTE 6, R-EV-08, R-EV-09).
+///
+/// Under [`RulesVersion::M4`] the decision is the round that
+/// `CutOffRoundOpened` opened, and the ballots are exactly the ballots the
+/// members cast in it, each delegated vote with its delegate's ballot
+/// (M4 change D5).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CutOffRecorded {
-    /// The decision.
+    /// The decision: the round since M4 change D5.
     pub decision: DecisionId,
     /// The call.
     pub call: CallId,
@@ -360,6 +380,9 @@ pub enum Record {
         /// Its author.
         author: AccountId,
     },
+    /// A draft programme was activated by a second person who did not
+    /// build it (I-66, I-67, M4 change D2).
+    ProgrammeActivated(ProgrammeActivated),
     /// A call was drafted.
     CallDrafted {
         /// The call.
@@ -542,6 +565,42 @@ pub enum Record {
     },
     /// The effective score after stage 2 was set (I-09).
     EffectiveScoreSet(EffectiveScoreSet),
+    /// A committee member opened a cut-off round (M4 change D5, R-EV-08).
+    CutOffRoundOpened {
+        /// The round, the decision id of its cut-off.
+        round: DecisionId,
+        /// The call.
+        call: CallId,
+        /// The total order of the call's RANKED proposals.
+        order: Vec<ProposalId>,
+        /// The cut-off rank position.
+        nominated: u32,
+        /// The recorded rationale.
+        rationale: TextRef,
+        /// The recorded P-17 tie-break.
+        tie_breaks: Option<TextRef>,
+        /// The opening committee member.
+        by: AccountId,
+    },
+    /// A committee member cast their own ballot in a round (R-EV-09, D5).
+    BallotCast {
+        /// The round.
+        round: DecisionId,
+        /// The member who cast it, the command's actor.
+        voter: AccountId,
+        /// The vote.
+        vote: Vote,
+    },
+    /// A committee member delegated their own vote in a round to another
+    /// member (P-16 NOTE 8, D5).
+    VoteDelegated {
+        /// The round.
+        round: DecisionId,
+        /// The delegating member, the command's actor.
+        from: AccountId,
+        /// The member who holds the delegated vote.
+        to: AccountId,
+    },
     /// The committee cut-off was recorded.
     CutOffRecorded(CutOffRecorded),
     /// An IRC review was recorded.
