@@ -1,0 +1,45 @@
+# router_match corpus over the fixed table of web/fuzz/router_match.fuzz.ts.
+# Each line is <route name or none><TAB><JSON string path>[<TAB><JSON params>].
+none	""
+home	"/"	{}
+calls	"/calls"	{}
+calls	"/c%61lls"	{}
+call	"/calls/c1"	{"call":"c1"}
+call_guide	"/calls/c12/guide"	{"call":"c12"}
+none	"/calls/x1"
+none	"/calls/c1234567"
+none	"/CALLS"
+none	"/calls/"
+none	"/calls/c1/"
+none	"/calls//c1"
+none	"//calls"
+none	"/calls/c1?x=1"
+none	"/calls/c1#top"
+none	"calls"
+none	"/calls/.."
+none	"/calls/./c1"
+proposal_new	"/proposals/new"	{}
+proposal	"/proposals/p7"	{"proposal":"p7"}
+none	"/proposals/new2"
+draft	"/programmes/supersafe/draft"	{"programme":"supersafe"}
+public_call	"/p/supersafe/calls/c3"	{"slug":"supersafe","call":"c3"}
+none	"/p/super%2Fsafe/calls/c3"
+none	"/p/super%5Csafe/calls/c3"
+none	"/p/%2e%2e/calls/c3"
+none	"/p/%2E/calls/c3"
+search	"/search/caf%C3%A9"	{"term":"caf\u00e9"}
+search	"/search/a%20b"	{"term":"a b"}
+search	"/search/%41"	{"term":"A"}
+none	"/search/%zz"
+none	"/search/%E0%A4%A"
+none	"/search/%C3%28"
+none	"/search/a%00b"
+none	"/search/%7F"
+none	"/search/a%0Ab"
+none	"/search/%2541"
+none	"/search/%252F"
+none	"/search/a%C2%85b"
+none	"/search/%C2%9F"
+search	"/search/%C2%A0"	{"term":"\u00a0"}
+search	"/search/100%25"	{"term":"100%"}
+none	"/search/%25zz%2541"
