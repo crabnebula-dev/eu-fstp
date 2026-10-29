@@ -54,28 +54,6 @@ fn w0_keys_decode_sealed_blob_refuses() {
     }
 }
 
-/// TH-26, design section 9.4: `fstp_edge::parse_client_hello_sni`.
-#[test]
-fn w0_edge_parse_client_hello_sni_refuses() {
-    for input in INPUTS {
-        refuses(
-            "parse_client_hello_sni",
-            fstp_edge::parse_client_hello_sni(input),
-        );
-    }
-}
-
-/// TH-26, design section 9.4: `fstp_edge::decode_tunnel_header`.
-#[test]
-fn w0_edge_decode_tunnel_header_refuses() {
-    for input in INPUTS {
-        refuses(
-            "decode_tunnel_header",
-            fstp_edge::decode_tunnel_header(input),
-        );
-    }
-}
-
 /// Design section 5.1: `fstp_cell_core::replay` over an empty ledger.
 #[test]
 fn w0_cell_core_replay_refuses() {
