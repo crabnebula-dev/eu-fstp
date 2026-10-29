@@ -7,11 +7,64 @@
 //! `fstp-findings` name this crate uses is
 //! `fstp_findings::text::UntrustedText` (rule A4).
 //!
-//! M4 imports UTF-8 `text/plain` and `text/markdown` only.
+//! M4 imports UTF-8 `text/plain` and `text/markdown` only (Q24). The crate
+//! is pure: no I/O, no clock, no hashing, no floats (rule A10).
 //!
-//! Status: W0 stub. Lane W2b (L-IMPORT) owns this crate and writes the
-//! designed types. Every operation refuses with
-//! [`ImportError::NotImplemented`].
+//! # How an import runs
+//!
+//! 1. The shell [`normalise`]s the upload into an [`ExtractedText`],
+//!    stores the bytes in the blob store and takes the text's salted
+//!    digest. A programme manager's `import.upload` becomes
+//!    [`ImportCommand::RegisterDocument`].
+//! 2. The shell runs a [`Proposer`] over the text with the `FIELDS`
+//!    schema. The shell stores each value's normal text in the text store,
+//!    under its own data key, and gets a [`ValueTextRef`] back (ADR-007).
+//!    Each [`RawProposal`] is checked and bound to its ids and reference
+//!    with [`RawProposal::bind`]. The engine flags profile conflicts
+//!    against the draft and records the batch with
+//!    [`ImportCommand::RecordProposals`] as the system.
+//! 3. [`decide_import`] decides both commands over the [`ImportStore`].
+//!    Its records hold documents and proposals, never a draft value. So an
+//!    import proposal never alters a draft by itself (I-65). A recorded
+//!    proposal names its value by reference only, so no ledger body holds
+//!    imported text (ADR-007, design 4.2). After it appends a batch, the
+//!    engine hands the values to [`ImportStore::hold_recorded`]. After a
+//!    replay, the shell resolves each reference and calls
+//!    [`ImportStore::hold`].
+//! 4. A programme manager resolves one proposal at a time through the
+//!    engine bridge (`fstp_engine::bridge`). The bridge checks the binding,
+//!    calls [`check_resolution`] for the import side, and emits
+//!    [`ImportRecord::ProposalResolved`] and the creator's save with
+//!    import provenance in one entry. A dismissal emits only the import
+//!    record.
+//!
+//! Every value a proposer returns is an [`UntrustedValue`]: no `Display`,
+//! no `Deref`, a `Debug` that shows the length only, and one normal text.
+//!
+//! # Interim readings, pending Daniel
+//!
+//! Each is reversible, and each is marked where it is built.
+//!
+//! - The ids of programmes and accounts are [`ProgrammeRef`] and
+//!   [`AccountRef`], raw values of the domain ids (`ids` module).
+//! - [`ImportDocument::text_bytes`] and [`ImportProposal::text`] are
+//!   additions to the design's field lists. The first lets the store check
+//!   spans without the text. The second keeps the value out of the body.
+//! - The client's `shown` is the [`SaltedDigest`] of the stored text, not
+//!   the `ValueDigest` design 3.3 names, since no body holds an unkeyed
+//!   digest of a value. A confirmation, like an edit, carries the API
+//!   core's [`ValueDigest`] for the creator's save.
+//! - Recording accepts any JSON value within the bounds of
+//!   [`UntrustedValue`]. Strict per-field decoding runs when a value
+//!   enters the draft, in the bridge.
+//! - A batch with a proposal for a field that is not importable is refused
+//!   whole.
+//! - The standard size limit is 1 MiB, and the value and batch bounds are
+//!   [`MAX_VALUE_BYTES`], [`MAX_VALUE_DEPTH`], [`MAX_VALUE_NODES`],
+//!   [`MAX_SPANS`] and [`MAX_BATCH`].
+//! - The text class and owner under which the shell stores a value text
+//!   are the lead's, with the M3 text store. This crate holds only the
+//!   reference.
 
 #![deny(
     clippy::float_arithmetic,
@@ -20,106 +73,40 @@
     clippy::arithmetic_side_effects
 )]
 
-use fstp_findings::text::UntrustedText;
+mod codec;
+mod error;
+mod ids;
+mod model;
+mod proposer;
+mod store;
+mod text;
+mod value;
 
-/// Why an import operation failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImportError {
-    /// The W0 stub of the named operation refuses.
-    NotImplemented(&'static str),
-}
+#[cfg(test)]
+mod tests;
 
-impl std::fmt::Display for ImportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ImportError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
-        }
-    }
-}
-
-impl std::error::Error for ImportError {}
-
-/// The media types M4 imports.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ImportMedia {
-    /// UTF-8 `text/plain`.
-    TextPlain,
-    /// UTF-8 `text/markdown`, normalised as text and never rendered.
-    TextMarkdown,
-}
-
-/// Limits on one import (Q24).
-///
-/// W0 placeholder with no fields. Lane W2b writes the limits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ImportLimits {
-    _w0: (),
-}
-
-impl ImportLimits {
-    /// The default limits.
-    ///
-    /// The stub refuses, so no import runs under made-up limits.
-    pub fn standard() -> Result<ImportLimits, ImportError> {
-        Err(ImportError::NotImplemented(
-            "fstp_import::ImportLimits::standard",
-        ))
-    }
-}
-
-/// Normalised document text. It is untrusted. It has no `Display` and no
-/// `Deref<Target = str>`.
-pub struct ExtractedText(UntrustedText);
-
-impl ExtractedText {
-    /// The text as untrusted data. Pass it only through a data channel.
-    pub fn untrusted(&self) -> &UntrustedText {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for ExtractedText {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ExtractedText(..)")
-    }
-}
-
-/// A proposal as the proposer returned it.
-///
-/// W0 placeholder with no fields. Lane W2b writes `ImportProposal` and
-/// `UntrustedValue`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImportProposal {
-    _w0: (),
-}
-
-/// An import ledger record.
-///
-/// W0 placeholder with no fields. Lane W2b writes the variants.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImportRecord {
-    _w0: (),
-}
-
-/// Validates and normalises an uploaded document. Fuzzed
-/// (`import_text_decode`, T-FUZZ-IMPORT, T-FUZZ-UPLOAD).
-pub fn normalise(
-    bytes: &[u8],
-    media: ImportMedia,
-    limits: ImportLimits,
-) -> Result<ExtractedText, ImportError> {
-    let _ = (bytes, media, limits);
-    Err(ImportError::NotImplemented("fstp_import::normalise"))
-}
-
-/// Decodes proposer output. Fuzzed (`proposal_decode`).
-pub fn decode_proposal(bytes: &[u8]) -> Result<ImportProposal, ImportError> {
-    let _ = bytes;
-    Err(ImportError::NotImplemented("fstp_import::decode_proposal"))
-}
-
-/// Decodes a stored import record. Fuzzed (`import_record_decode`).
-pub fn decode_record(bytes: &[u8]) -> Result<ImportRecord, ImportError> {
-    let _ = bytes;
-    Err(ImportError::NotImplemented("fstp_import::decode_record"))
-}
+pub use codec::{
+    decode_fixture, decode_proposal, decode_record, encode_fixture, encode_proposal, encode_record,
+};
+pub use error::ImportError;
+pub use ids::{
+    AccountRef, BlobAddress, ImportConfigId, ImportDocumentId, ImportProposalId, ProgrammeRef,
+    SaltedDigest, TextDigest, ValueDigest, ValueTextId, ValueTextRef,
+};
+pub use model::{
+    ClientResolution, ConflictRule, ImportCommand, ImportDocument, ImportProposal, ImportRecord,
+    ImportResolution, RecordedProposal,
+};
+pub use proposer::{
+    BindIds, FakeProposer, FixtureEntry, HavocProposer, ImportConfig, NoProposer, Proposer,
+    ProposerError, RawProposal,
+};
+pub use store::{
+    AppliedValue, CheckedResolution, HoldError, ImportActor, ImportFoldError, ImportRefusal,
+    ImportStore, MAX_BATCH, ResolveRequest, StoredProposal, check_resolution, decide_import,
+    importable,
+};
+pub use text::{
+    ExtractedText, ImportLimits, ImportMedia, MAX_IMPORT_BYTES, MAX_SPANS, Span, normalise,
+};
+pub use value::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_NODES, UntrustedValue};
