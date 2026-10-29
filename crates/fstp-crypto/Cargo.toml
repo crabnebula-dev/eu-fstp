@@ -16,6 +16,8 @@ zeroize.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# The ML-KEM-768 ACVP subset is JSON, read with the in-house parser (ADR-004 test vector plan item 9).
+fstp-json.workspace = true
 
 [lints]
 workspace = true

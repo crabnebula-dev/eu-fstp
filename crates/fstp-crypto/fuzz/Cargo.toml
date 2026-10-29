@@ -1,0 +1,38 @@
+[package]
+name = "fstp-crypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-crypto = { path = ".." }
+
+[[bin]]
+name = "hybrid_ciphertext_decode"
+path = "fuzz_targets/hybrid_ciphertext_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "public_key_decode"
+path = "fuzz_targets/public_key_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "composite_signature_decode"
+path = "fuzz_targets/composite_signature_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
