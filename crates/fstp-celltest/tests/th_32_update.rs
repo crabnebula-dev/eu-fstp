@@ -11,18 +11,16 @@
 //!
 //! Each production claim has its own test. The rollback and expiry test
 //! compares a stateful production acceptance of verified metadata with
-//! [`MetadataStore::accept_with`] over sequences. The stub has no such
-//! API, so the test names `METADATA_STORE_SEAM` and stays red until lane
-//! W2j adds one. Until then TH-32 rollback refusal is shown on the
-//! reference only, and lane W1g asks the lead to record that in the
-//! design section 20 checklist. That nothing is installed, and that
+//! [`MetadataStore::accept_with`] over sequences. Lane W2j closed its
+//! seam with `fstp_release::metadata::MetadataStore`, which the test
+//! drives under a test composite release key. That nothing is installed, and that
 //! unverifiable metadata is refused at decode, are separate tests, so
 //! neither stands in for the rollback check.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use fstp_celltest::mc::licence_model::{ANNOUNCE_SEAM, METADATA_STORE_SEAM, release_stub};
+use fstp_celltest::mc::licence_model::{ANNOUNCE_SEAM, release_stub};
 use fstp_celltest::reference::licence::{
     self as r, DAY_S, MetadataRefusal, MetadataStore, RefChannel, RefMetadata, RefVersion,
 };
@@ -89,20 +87,37 @@ type Step = (Vec<u8>, i64);
 /// Production's stateful acceptance of verified release metadata: from an
 /// empty store, whether each step is accepted.
 ///
-/// Gap ([`METADATA_STORE_SEAM`]): the stub has `decode_release_metadata`
-/// and `may_apply` only, and no store. Lane W2j adds an acceptance API
-/// over verified metadata, with a test release root so tests can verify.
-/// Lane W1g then maps it here.
+/// Lane W2j closed `METADATA_STORE_SEAM` with
+/// `fstp_release::metadata::MetadataStore`. Each step stands for metadata
+/// that verified, so its body is signed again under a test composite
+/// release key, unchanged. The store then verifies it under that key
+/// before it reads any field, as a cell does.
 fn prod_accepts(steps: &[Step]) -> Result<Vec<bool>, String> {
-    // A stub decoder names itself first, so the seam shows only once
-    // `decode_release_metadata` answers.
-    if let Some((bytes, _)) = steps.first()
-        && let Err(e) = fstp_release::metadata::decode_release_metadata(bytes)
-        && let Some(m) = stub(&e)
-    {
-        return Err(m);
+    use fstp_crypto::composite::CompositeSigningKey;
+    use fstp_release::metadata::{
+        METADATA_BODY_LEN, METADATA_CONTEXT, MetadataStore, ReleaseSigningKey,
+    };
+    let signing = CompositeSigningKey::from_bytes(&[0x5a; 64])
+        .map_err(|e| format!("the test release key: {e:?}"))?;
+    let key = ReleaseSigningKey::from_bytes(&signing.public_key().to_bytes())
+        .map_err(|e| format!("the test release key: {e:?}"))?;
+    let mut store = MetadataStore::new();
+    let mut accepted = Vec::with_capacity(steps.len());
+    for (bytes, now) in steps {
+        let body = bytes.get(..METADATA_BODY_LEN).unwrap_or(bytes);
+        let sig = signing
+            .sign_with_context(body, METADATA_CONTEXT)
+            .map_err(|e| format!("signing under the test release key: {e:?}"))?;
+        let signed = [body, sig.to_bytes().as_slice()].concat();
+        match store.accept_signed(&signed, &key, *now) {
+            Ok(()) => accepted.push(true),
+            Err(e) => match stub(&e) {
+                Some(m) => return Err(m),
+                None => accepted.push(false),
+            },
+        }
     }
-    Err(METADATA_STORE_SEAM.to_owned())
+    Ok(accepted)
 }
 
 /// The TH-32 two-way property over a production acceptor: a sequence of

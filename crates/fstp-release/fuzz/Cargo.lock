@@ -121,6 +121,7 @@ dependencies = [
 name = "fstp-release-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-release",
  "libfuzzer-sys",
 ]
