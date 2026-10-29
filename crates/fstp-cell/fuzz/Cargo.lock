@@ -185,6 +185,7 @@ name = "fstp-edge"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+ "fstp-obs",
  "fstp-rt",
  "fstp-tls",
 ]

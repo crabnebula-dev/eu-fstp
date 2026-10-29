@@ -16,6 +16,12 @@
 //!
 //! Usage: `cargo run -p fstp-tls --example tls_fuzz_seeds -- [GROUP]...`
 
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: a developer tool that writes fuzz seeds and never ships"
+)]
+
 use std::error::Error;
 use std::io;
 use std::path::{Path, PathBuf};

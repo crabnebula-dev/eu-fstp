@@ -13,6 +13,7 @@ fstp-crypto.workspace = true
 fstp-rt.workspace = true
 # ADR-001 A1: `RootMaterial` wipes on drop (design sections 2.1 and 3.3).
 zeroize.workspace = true
+fstp-obs.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

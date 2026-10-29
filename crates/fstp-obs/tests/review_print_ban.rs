@@ -47,8 +47,10 @@ fn uses_print(src: &str, needles: &[String]) -> bool {
     })
 }
 
+/// Whitespace is ignored, so a multi-line `#![allow(\n    clippy::disallowed_macros,` counts.
 fn allows_ban(src: &str) -> bool {
-    src.contains("allow(clippy::disallowed_macros")
+    let flat: String = src.chars().filter(|c| !c.is_whitespace()).collect();
+    flat.contains("allow(clippy::disallowed_macros")
 }
 
 /// R-NF-02 (design section 11.1, W2l scope): the print ban must not break the

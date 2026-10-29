@@ -140,6 +140,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-obs"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+]
+
+[[package]]
 name = "fstp-pgwire"
 version = "0.1.0"
 dependencies = [
@@ -173,6 +180,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-http",
  "fstp-migrate",
+ "fstp-obs",
  "fstp-pgwire",
  "fstp-tls",
 ]

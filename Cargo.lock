@@ -116,6 +116,7 @@ dependencies = [
  "fstp-custody",
  "fstp-http",
  "fstp-keys",
+ "fstp-obs",
  "fstp-prop",
  "fstp-tls",
 ]
@@ -267,6 +268,7 @@ name = "fstp-edge"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+ "fstp-obs",
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
@@ -318,6 +320,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-crypto",
  "fstp-custody",
+ "fstp-obs",
  "fstp-prop",
  "fstp-rt",
  "zeroize",
@@ -441,6 +444,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-http",
  "fstp-migrate",
+ "fstp-obs",
  "fstp-pgwire",
  "fstp-prop",
  "fstp-release",
@@ -517,6 +521,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-http",
  "fstp-migrate",
+ "fstp-obs",
  "fstp-pgwire",
  "fstp-prop",
  "fstp-tls",

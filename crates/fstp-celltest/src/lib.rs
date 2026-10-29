@@ -11,6 +11,12 @@
 //! here answers a check with an empty result, so no test passes on a
 //! missing part.
 
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
+
 pub mod canary;
 pub mod custody_sim;
 pub mod egress;

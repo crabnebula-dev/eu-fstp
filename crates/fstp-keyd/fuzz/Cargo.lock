@@ -126,6 +126,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-crypto",
  "fstp-custody",
+ "fstp-obs",
  "fstp-rt",
  "zeroize",
 ]
@@ -145,6 +146,13 @@ dependencies = [
  "fstp-crypto",
  "fstp-json",
  "zeroize",
+]
+
+[[package]]
+name = "fstp-obs"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
 ]
 
 [[package]]

@@ -13,6 +13,7 @@ fstp-custody.workspace = true
 fstp-crypto.workspace = true
 fstp-http.workspace = true
 fstp-tls.workspace = true
+fstp-obs.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

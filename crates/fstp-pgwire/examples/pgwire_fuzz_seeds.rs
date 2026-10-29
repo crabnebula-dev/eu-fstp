@@ -6,6 +6,12 @@
 //!
 //! Usage: `cargo run -p fstp-pgwire --example pgwire_fuzz_seeds`
 
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: a developer tool that writes fuzz seeds and never ships"
+)]
+
 use std::error::Error;
 use std::num::NonZeroU32;
 use std::path::PathBuf;

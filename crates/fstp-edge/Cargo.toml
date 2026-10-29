@@ -11,6 +11,7 @@ publish.workspace = true
 fstp-tls.workspace = true
 fstp-rt.workspace = true
 fstp-json.workspace = true
+fstp-obs.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

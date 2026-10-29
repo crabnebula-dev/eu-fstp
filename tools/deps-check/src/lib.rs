@@ -41,6 +41,12 @@
 //! `--print-allowlist` prints an allowlist generated from the current graph,
 //! keeping existing notes, for review before it replaces the file.
 
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: a build tool that reports to the terminal and never ships"
+)]
+
 mod allowlist;
 mod cargo;
 mod funds;

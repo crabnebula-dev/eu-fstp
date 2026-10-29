@@ -1,13 +1,14 @@
 //! The `fstp-witness` binary (M3 design section 2.3). W0 stub: it refuses
-//! to start with a `NotImplemented` message.
+//! to start and logs a `NotImplemented` event.
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     match fstp_witness::run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("fstp-witness: {e} (NotImplemented)");
+        Err(_) => {
+            // R-NF-02: a typed event, never the error text.
+            let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::NotImplemented);
             ExitCode::FAILURE
         }
     }

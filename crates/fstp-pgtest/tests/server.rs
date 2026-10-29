@@ -3,6 +3,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
 
 use std::io::Write as _;
 use std::net::TcpStream;

@@ -23,6 +23,11 @@
 //! a tripwire at twice the count the reference stores.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
 
 use fstp_domain_testkit::r#gen::roster::Backend;
 use fstp_domain_testkit::harness::mc::check_exhaustive;
