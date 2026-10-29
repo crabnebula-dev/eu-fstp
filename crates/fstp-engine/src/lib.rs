@@ -22,6 +22,26 @@
 //! [`FindingStore`], [`FindingCommand`] and [`FindingRecord`] are the
 //! `fstp_findings` types, re-exported.
 //!
+//! M4 adds two modules here (M4 design section 3.4):
+//!
+//! - [`sweep`] holds the minimal deadline sweep of change D13. It lists
+//!   the due `ExpireStage2` and `ReEnter` commands that a cell issues as
+//!   the System on its clock (R-EV-07).
+//! - [`compose`] holds the activation and publication compositions of
+//!   change D2e (I-52, I-66, I-67). Both fail closed until the creator
+//!   part of the state exists. Its module documentation says why.
+//!
+//! The `Creator`, `Import` and `Tenant` envelope variants of M4 design
+//! section 4.2 are not here yet. They need `Cargo.toml` edges to
+//! `fstp-creator`, `fstp-import` and `fstp-tenant`, which the lead adds.
+//!
+//! Open gap, pending the lead and Daniel: D2e pairs every `CallPublished`
+//! with a `GuidePublished` in one entry (R-GA-01, I-52). That record comes
+//! from `fstp-guide`, which this crate cannot name yet. So `execute` still
+//! accepts a core `PublishCall` alone, and the fold accepts its unpaired
+//! `CallPublished`. Refusing it now would leave no way to publish a call,
+//! since every setup and cell publishes through the core command.
+//!
 //! # Handover seams
 //!
 //! Lane W2 owns this file and `driver`, and lane L-FIND-B owns `findings`.
