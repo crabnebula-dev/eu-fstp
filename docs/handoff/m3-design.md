@@ -1864,6 +1864,7 @@ Order from `.claude/CLAUDE.md`: `SPEC/02-domain/invariants.md`, then `SPEC/01-re
 | Erasure log for Auditors | Programme-scoped | Q42 |
 | Keyed digests | Lookup, CredLookup and Match keys rotate with erasure | Q6 |
 | Clear columns | Sealed where not needed for lookup; keyed digests for lookups | Q5 |
+| Relatives in reviewer-side facts | A kind 8 relationship fact names relatives by vault identity id (lane W2d). No reviewer knows those ids, so the relatives part of I-03 cannot fire from the origin yet. Once the attribute set is settled, the body takes attribute tuples resolved through the match key, never ids from the request | Q31, `TODO(legal)` of section 6.8 |
 
 ### 17.3 Corrections to the proposals
 
