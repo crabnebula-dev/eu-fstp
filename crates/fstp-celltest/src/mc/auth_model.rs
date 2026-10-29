@@ -28,9 +28,10 @@
 
 use fstp_auth::SessionView;
 use fstp_auth::{AuthCommand, EnabledMethods, LoginDeny, Method, SessionLifetimes};
+use fstp_cell_core::driver::{self, DriverCore, Event, ExecError, Need};
 use fstp_cell_core::gate::{self, Action, Deny, LoginPolicy, ReadAction};
 use fstp_cell_core::{CellCommand, CellCtx, CellRecord, CellRefusal, CellState, FoldError};
-use fstp_domain::command::Actor;
+use fstp_domain::command::{Actor, SystemCause};
 use fstp_domain::id::{AccountId, BindingId};
 use fstp_domain::oracle::Answers;
 use fstp_domain::roles::Role;
@@ -39,6 +40,7 @@ use fstp_domain_testkit::r#gen::roster::{
     A, ADMIN, ADMIN_2, B, P1, SodSetup, Step, T0, add_staff, end, grant, grant_until,
 };
 use fstp_domain_testkit::vault::{GroundTruth, IdentityTag};
+use fstp_ledger::{Entry, MemStore, RecordStore, Seq};
 use fstp_mc::{Model, Property};
 
 use crate::NotImplemented;
@@ -101,12 +103,13 @@ pub fn auth_truth() -> GroundTruth {
     truth
 }
 
-/// The operation a [`ProdCell`] cannot run yet: building the
-/// `fstp_ledger::Entry` values that `fstp_cell_core::apply` folds.
-/// `fstp-celltest` has no `fstp-ledger` dependency, and only the lead
-/// edits its manifest (lane W1b gap).
-pub const FOLD_SEAM: &str =
-    "ProdCell::fold: fstp-celltest has no fstp-ledger dependency to build Entry<CellRecord> (lead)";
+/// The seam that stood for building the `fstp_ledger::Entry` values that
+/// `fstp_cell_core::apply` folds. Closed by the lead: `fstp-celltest`
+/// depends on `fstp-ledger` since lane W2c, and every [`ProdCell`] batch
+/// is appended to an `fstp_ledger::MemStore` and folded from the entries
+/// the store returns. No production path returns it. The constant stays
+/// for the suites that name it.
+pub const FOLD_SEAM: &str = "ProdCell::fold: closed by the lead; every batch folds from the fstp_ledger entries its MemStore returns, and no production path returns this seam";
 
 /// The seam of [`ProdCell::suspend_for_conflict`]: a conflict-of-interest
 /// suspension is the vault reaction `VaultChanged`, a system command.
@@ -148,12 +151,339 @@ pub struct Appended {
     pub batch: Vec<CellRecord>,
 }
 
+/// Not a seam: a harness passkey could not be built. Its key comes from
+/// `fstp_crypto::sig` and its bytes from the [`crate::soft_authn`]
+/// builders, so this is a crypto or builder failure, which stops the run
+/// as a backend that did not answer.
+pub const PASSKEY_BUILD_FAILED: &str = "fstp_celltest::mc::auth_model::HarnessPasskey: the Ed25519 key or the registration bytes could not be built";
+
+/// The refusal text of a batch that `decide` recorded for
+/// `RegisterCredential` although no verified credential reached it. The
+/// verified key is a route input (`fstp_cell_core::RouteInput`), so such a
+/// batch is a production defect, and the harness refuses it.
+pub const DECIDED_WITHOUT_KEY: &str =
+    "fstp_cell_core::decide recorded RegisterCredential without the verified credential";
+
+/// The refusal text of an append whose step-up is older than P-71 at the
+/// commit instant. The store refuses it (design section 8.4,
+/// `SideEffects::stepup_fresh_until`), and so does the harness shell.
+pub const STEPUP_STALE_AT_COMMIT: &str =
+    "the append is later than its step-up's P-71 limit (SideEffects::stepup_fresh_until)";
+
+/// The refusal text of [`ProdCell::register_passkey`] for an account that
+/// holds a live passkey already. Every first passkey ceremony refuses it,
+/// and a second passkey is the high-risk action `AddPasskey` (design
+/// section 8.3, [`ProdCell::add_passkey`]).
+pub const SECOND_PASSKEY_REFUSED: &str = "a first passkey ceremony refuses an account that holds a passkey; a second passkey is AddPasskey, with a step-up (design section 8.3)";
+
+/// The first bytes of every command id that [`ProdCell::draw`] gives.
+/// They lie outside the reserved and system prefixes (`fstp:vc:`,
+/// `fstp:st:`).
+pub const DRAW_PREFIX: [u8; 4] = [0xCE, 0x11, 0xD7, 0xA0];
+
+/// The relying party host of every harness passkey: a synthetic cell host
+/// of three labels, as `fstp_webauthn::RelyingParty::new` requires (B11).
+pub const RP_HOST: &str = "cell-1.tenant.example";
+
+/// A synthetic passkey of the harness: an Ed25519 key from
+/// `fstp_crypto::sig` whose seed is derived from the credential id, so
+/// one id always names one key. Its registration is written with the
+/// [`crate::soft_authn`] builders, in the byte formats of WebAuthn Level 2,
+/// and verified by `fstp_webauthn` through `fstp_auth::ceremony`.
+///
+/// `SoftAuthenticator::register` still refuses (lane W1a), so the harness
+/// writes the registration from the authenticator's public builders.
+pub struct HarnessPasskey {
+    key: fstp_crypto::sig::Ed25519SigningKey,
+    id: Vec<u8>,
+}
+
+impl std::fmt::Debug for HarnessPasskey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HarnessPasskey")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl HarnessPasskey {
+    /// The passkey of credential id `credential`.
+    ///
+    /// # Errors
+    ///
+    /// [`PASSKEY_BUILD_FAILED`] when `fstp_crypto` refuses the seed.
+    pub fn of(credential: &[u8]) -> Result<HarnessPasskey, NotImplemented> {
+        let mut h = fstp_crypto::Sha256::new();
+        h.update(b"fstp-celltest-passkey-v1");
+        h.update(credential);
+        let seed = h.finish();
+        let key = fstp_crypto::sig::Ed25519SigningKey::from_seed(&seed)
+            .map_err(|_| NotImplemented::new(PASSKEY_BUILD_FAILED))?;
+        Ok(HarnessPasskey {
+            key,
+            id: credential.to_vec(),
+        })
+    }
+
+    /// The COSE public key.
+    pub fn public_key(&self) -> fstp_webauthn::CoseKey {
+        fstp_webauthn::CoseKey::Ed25519 {
+            x: self.key.public_key(),
+        }
+    }
+
+    /// A registration response over `challenge` for [`RP_HOST`]: client
+    /// data of `webauthn.create`, and a `none` attestation object whose
+    /// authenticator data attests this credential with sign count 0, user
+    /// presence and, when `uv`, user verification.
+    ///
+    /// # Errors
+    ///
+    /// [`PASSKEY_BUILD_FAILED`] when a builder refuses.
+    pub fn registration(
+        &self,
+        challenge: [u8; 32],
+        uv: bool,
+    ) -> Result<fstp_webauthn::RegistrationResponse, NotImplemented> {
+        use crate::soft_authn::{self as sa, Alg, AttestedCredential, Ceremony};
+        let client_data_json = sa::SoftAuthenticator::for_rp(RP_HOST)
+            .client_data(Ceremony::Create, challenge, &[])
+            .map_err(|_| NotImplemented::new(PASSKEY_BUILD_FAILED))?;
+        let attested = AttestedCredential {
+            aaguid: [0; 16],
+            id: self.id.clone(),
+            cose_key: sa::cose_key(Alg::Ed25519, &self.key.public_key(), None),
+        };
+        let flag_bits = if uv {
+            sa::flags::UP | sa::flags::UV
+        } else {
+            sa::flags::UP
+        };
+        let auth_data = sa::authenticator_data(RP_HOST, flag_bits, 0, Some(&attested));
+        Ok(fstp_webauthn::RegistrationResponse {
+            client_data_json,
+            attestation_object: sa::none_attestation_object(&auth_data),
+        })
+    }
+
+    /// An assertion over `challenge` for [`RP_HOST`]: client data of
+    /// `webauthn.get`, authenticator data with user presence, user
+    /// verification when `uv`, and sign count 0. The signature is this
+    /// key's Ed25519 signature over the authenticator data and the
+    /// SHA-256 of the client data (WebAuthn Level 2 section 6.3.3).
+    ///
+    /// # Errors
+    ///
+    /// [`PASSKEY_BUILD_FAILED`] when a builder or the signature refuses.
+    pub fn assertion(
+        &self,
+        challenge: [u8; 32],
+        uv: bool,
+    ) -> Result<fstp_webauthn::AssertionResponse, NotImplemented> {
+        use crate::soft_authn::{self as sa, Ceremony};
+        let client_data_json = sa::SoftAuthenticator::for_rp(RP_HOST)
+            .client_data(Ceremony::Get, challenge, &[])
+            .map_err(|_| NotImplemented::new(PASSKEY_BUILD_FAILED))?;
+        let flag_bits = if uv {
+            sa::flags::UP | sa::flags::UV
+        } else {
+            sa::flags::UP
+        };
+        let authenticator_data = sa::authenticator_data(RP_HOST, flag_bits, 0, None);
+        let mut message = authenticator_data.clone();
+        message.extend_from_slice(&fstp_crypto::sha256(&client_data_json));
+        let signature = self
+            .key
+            .sign(&message)
+            .map_err(|_| NotImplemented::new(PASSKEY_BUILD_FAILED))?;
+        Ok(fstp_webauthn::AssertionResponse {
+            credential_id: self.id.clone(),
+            client_data_json,
+            authenticator_data,
+            signature: signature.to_vec(),
+        })
+    }
+}
+
+/// The cell id of every harness step-up challenge: a synthetic id.
+pub const HARNESS_CELL: [u8; 16] = [0xCE; 16];
+
+/// The step-up request of the harness for `action_digest` in `session`
+/// at `at`. A route draws the id and the nonce at random. The harness
+/// derives them, so a run is reproducible.
+fn stepup_request(
+    session: [u8; 16],
+    action_digest: [u8; 32],
+    at: Timestamp,
+) -> Result<fstp_auth::stepup::StepUpRequest, ProdError> {
+    let mut h = fstp_crypto::Sha256::new();
+    h.update(b"fstp-celltest-stepup-nonce-v1");
+    h.update(&session);
+    h.update(&action_digest);
+    h.update(&at.micros().to_be_bytes());
+    let nonce = h.finish();
+    let mut id = [0u8; 16];
+    id.copy_from_slice(nonce.get(..16).unwrap_or(&[0; 16]));
+    let rp = fstp_webauthn::RelyingParty::new(RP_HOST)
+        .map_err(|_| ProdError::NotImplemented(PASSKEY_BUILD_FAILED))?;
+    Ok(fstp_auth::stepup::StepUpRequest {
+        id,
+        cell: HARNESS_CELL,
+        action_digest,
+        nonce,
+        rp,
+    })
+}
+
+/// The route check of `POST /auth/stepup` (design section 8.4), run by
+/// the harness: the passkey `credential` asserts over the challenge of
+/// `action_digest` in `session` at `at`, with user verification when
+/// `uv`, and `fstp_auth::stepup::verify_step_up` decides it against the
+/// credential that `state` holds.
+///
+/// So a magic-link session, a credential of another account, an unknown
+/// or revoked credential and an assertion without user verification are
+/// all refused, as the route refuses them. The inner `Err` is the
+/// route's refusal. A magic-link session is refused first, as
+/// `verify_step_up` does. Then an unknown or revoked credential gives
+/// `StepUpDeny::OtherAccount`, since the session's account holds none.
+///
+/// # Errors
+///
+/// [`PASSKEY_BUILD_FAILED`] when the harness cannot build the assertion.
+pub fn verify_harness_stepup(
+    state: &CellState,
+    session: &SessionView,
+    credential: &[u8],
+    action_digest: [u8; 32],
+    uv: bool,
+    at: Timestamp,
+) -> Result<Result<(), fstp_auth::stepup::StepUpDeny>, ProdError> {
+    verify_stepup_with(
+        state.auth().stored_credential(credential, 0),
+        session,
+        credential,
+        action_digest,
+        uv,
+        at,
+    )
+}
+
+/// [`verify_harness_stepup`] against `stored`, the owner and the stored
+/// form of `credential` as a registration record gives them
+/// (`fstp_auth::AuthRecord::stored_credential`), or `None` when no live
+/// credential has that id. The operational sign count is 0.
+///
+/// # Errors
+///
+/// [`PASSKEY_BUILD_FAILED`] when the harness cannot build the assertion.
+pub fn verify_stepup_with(
+    stored: Option<(AccountId, fstp_auth::StoredCredential)>,
+    session: &SessionView,
+    credential: &[u8],
+    action_digest: [u8; 32],
+    uv: bool,
+    at: Timestamp,
+) -> Result<Result<(), fstp_auth::stepup::StepUpDeny>, ProdError> {
+    use fstp_auth::stepup::StepUpDeny;
+    if !session.method.phishing_resistant() {
+        return Ok(Err(StepUpDeny::MagicLinkSession));
+    }
+    let Some((owner, stored)) = stored.filter(|(_, s)| s.id == credential) else {
+        return Ok(Err(StepUpDeny::OtherAccount));
+    };
+    let req = stepup_request(session.id, action_digest, at)?;
+    let challenge = fstp_auth::stepup::challenge(req.cell, session.id, action_digest, req.nonce);
+    let assertion = HarnessPasskey::of(credential)?.assertion(challenge, uv)?;
+    Ok(
+        fstp_auth::stepup::verify_step_up(session, &req, &assertion, &stored, owner, at)
+            .map(|_| ()),
+    )
+}
+
+/// The challenge of the harness registration of `credential` for
+/// `account`. A route draws a single-use random challenge. The harness
+/// derives one, so a run is reproducible.
+fn registration_challenge(account: AccountId, credential: &[u8]) -> [u8; 32] {
+    let mut h = fstp_crypto::Sha256::new();
+    h.update(b"fstp-celltest-registration-v1");
+    h.update(&account.raw().to_be_bytes());
+    h.update(credential);
+    h.finish()
+}
+
+/// The new passkey `credential` of `account`, as
+/// `fstp_auth::ceremony::verify_fresh_passkey` returns it: the harness
+/// registration ([`HarnessPasskey::registration`], with user
+/// verification) verified by `fstp_webauthn::verify_registration` for
+/// [`RP_HOST`], with user verification required, and an id that `known`
+/// does not hold.
+///
+/// # Errors
+///
+/// [`ProdError::Refused`] when verification refuses, and
+/// [`ProdError::NotImplemented`] with [`PASSKEY_BUILD_FAILED`] when the
+/// harness cannot build the registration.
+pub fn verified_passkey(
+    account: AccountId,
+    credential: &[u8],
+    known: &dyn fstp_auth::ceremony::CredentialIndex,
+) -> Result<fstp_webauthn::NewCredential, ProdError> {
+    let challenge = registration_challenge(account, credential);
+    let response = HarnessPasskey::of(credential)?.registration(challenge, true)?;
+    let rp = fstp_webauthn::RelyingParty::new(RP_HOST)
+        .map_err(|_| ProdError::NotImplemented(PASSKEY_BUILD_FAILED))?;
+    let reg = fstp_auth::ceremony::Registration {
+        response: &response,
+        rp: &rp,
+        challenge,
+    };
+    fstp_auth::ceremony::verify_fresh_passkey(&reg, true, known)
+        .map_err(|e| ProdError::Refused(format!("passkey verification: {e:?}")))
+}
+
+/// Whether the decided batch `batch` holds only records the store reads
+/// back unchanged, as `decide` checks for its own batches (I-23).
+fn storable(batch: &[CellRecord]) -> bool {
+    batch.iter().all(|r| {
+        fstp_cell_core::decode_cell_record(&fstp_cell_core::encode_cell_record(r))
+            .is_ok_and(|back| back == *r)
+    })
+}
+
+/// The refusal of `cmd` by production, with a refusal for a missing route
+/// input of session rows named as [`SESSIONS_SEAM`]: `decide` sees no
+/// session rows (design section 4.2), so the harness cannot give them.
+fn refusal_of(cmd: &CellCommand, e: CellRefusal) -> ProdError {
+    match (cmd, e) {
+        (CellCommand::Auth(a), CellRefusal::Domain(d))
+            if d == fstp_cell_core::ROUTE_INPUT_MISSING
+                && fstp_cell_core::route_inputs(a)
+                    .contains(&fstp_cell_core::RouteInput::SessionRows) =>
+        {
+            ProdError::NotImplemented(SESSIONS_SEAM)
+        }
+        (_, e) => refusal(e),
+    }
+}
+
 /// A production cell from genesis: `fstp_cell_core::replay` of an empty
 /// ledger, then `queries`, `decide`, an append and `apply` for each
 /// command. No state is built by hand (design section 14.1).
+///
+/// Every batch is appended to an `fstp_ledger::MemStore`, and the state
+/// is folded with `fstp_cell_core::apply` from the entries the store
+/// returns. So the state is always the replay of the store (I-23).
+///
+/// [`ProdCell::exec`] decides a command directly, as a test harness that
+/// writes the ledger may: it passes no gate. [`ProdCell::execute`] runs an
+/// admitted command through `fstp_cell_core::driver::DriverCore`, which
+/// adds the step-up consumption (design sections 5.1 and 5.2). The vault
+/// of both is the synthetic `GroundTruth`.
 #[derive(Clone, Debug)]
 pub struct ProdCell {
     log: Vec<Appended>,
+    store: MemStore<CellRecord>,
     state: CellState,
     truth: GroundTruth,
     drawn: u128,
@@ -165,6 +495,7 @@ impl ProdCell {
         let state = fstp_cell_core::replay(&[]).map_err(fold)?;
         Ok(ProdCell {
             log: Vec::new(),
+            store: MemStore::new(),
             state,
             truth,
             drawn: 0,
@@ -197,10 +528,17 @@ impl ProdCell {
         &self.log
     }
 
-    /// The next command id: a counter, so ids never repeat.
+    /// The next command id: [`DRAW_PREFIX`] and a counter, so ids never
+    /// repeat. The store refuses a repeated command id (ADR-007). The
+    /// prefix keeps the drawn ids apart from the small ids a caller of
+    /// [`ProdCell::exec_with_id`] passes, such as a shrunk generated id.
     pub fn draw(&mut self) -> [u8; 16] {
         self.drawn = self.drawn.saturating_add(1);
-        self.drawn.to_be_bytes()
+        let mut id = self.drawn.to_be_bytes();
+        if let Some(head) = id.get_mut(..DRAW_PREFIX.len()) {
+            head.copy_from_slice(&DRAW_PREFIX);
+        }
+        id
     }
 
     /// Runs `cmd` by `actor` at `at` and returns the batch it appended.
@@ -216,9 +554,9 @@ impl ProdCell {
     /// Runs `cmd` by `actor` at `at` under the command id `command`, and
     /// returns the batch it appended. A digest bound to a command id, such
     /// as the SoD-07 grant digest, needs the id known in advance.
-    ///
-    /// Gap: `CellCtx` carries no command id, so `decide` cannot see it
-    /// yet (lane W2c). The id still names the appended batch.
+    /// `fstp_cell_core::decide_with_id` decides under it, as the driver
+    /// does. A command id the ledger holds already is a retry: its stored
+    /// result stands, and the batch returned is empty (ADR-007).
     pub fn exec_with_id(
         &mut self,
         cmd: CellCommand,
@@ -236,43 +574,459 @@ impl ProdCell {
         at: Timestamp,
         id: Option<[u8; 16]>,
     ) -> Result<Vec<CellRecord>, ProdError> {
+        let command = match id {
+            Some(c) => c,
+            None => self.draw(),
+        };
+        if self.state.committed(command).is_some() {
+            // A retry: the stored result stands, and nothing is decided
+            // again (ADR-007), as `DriverCore` finishes a crash retry.
+            return Ok(Vec::new());
+        }
+        self.react(at)?;
         let x = CellCtx {
             actor,
             at: at.micros(),
         };
-        let qs = fstp_cell_core::queries(&self.state, &cmd, &x).map_err(refusal)?;
+        let qs = fstp_cell_core::queries_with_id(&self.state, &cmd, &x, command)
+            .map_err(|e| refusal_of(&cmd, e))?;
         let mut answers = Answers::new();
         for q in qs {
             let a = self.truth.answer(&q);
             answers.insert(q, a);
         }
-        let batch = fstp_cell_core::decide(&self.state, &cmd, &x, &answers).map_err(refusal)?;
+        let batch = fstp_cell_core::decide_with_id(&self.state, &cmd, &x, command, &answers)
+            .map_err(|e| refusal_of(&cmd, e))?;
         if batch.is_empty() {
             return Ok(batch);
         }
-        let command = match id {
-            Some(c) => c,
-            None => self.draw(),
-        };
         self.fold(at, command, &batch)?;
-        self.log.push(Appended {
-            at: at.micros(),
-            command,
-            batch: batch.clone(),
-        });
         Ok(batch)
     }
 
-    /// Appends `batch` and folds it into the state. A seam until the lead
-    /// adds `fstp-ledger` to this crate: it refuses with [`FOLD_SEAM`].
+    /// Processes the vault's change first when the vault epoch is ahead of
+    /// the state's (NOTE 3), as `DriverCore` does before a command. The
+    /// reaction is `VaultChanged` to the epoch of the `ChangedSince`
+    /// answer. `fstp_cell_core::decide_reaction` decides it over the
+    /// answers to `reaction_queries`, and it is appended under its reserved
+    /// command id (NOTE 4). The ground truth has no provisional facts, so
+    /// no acknowledgement follows.
+    fn react(&mut self, at: Timestamp) -> Result<(), ProdError> {
+        let ours = self.state.engine().epoch();
+        if self.truth.epoch() <= ours {
+            return Ok(());
+        }
+        let changed_q = fstp_domain::oracle::Query::ChangedSince { epoch: ours };
+        let answer = self.truth.answer(&changed_q);
+        let Some(changed) = answer.accounts.clone() else {
+            return Err(ProdError::Refused(
+                "the vault answered ChangedSince without the changed accounts".to_owned(),
+            ));
+        };
+        let target = answer.epoch;
+        let cmd = fstp_cell_core::vault_changed(target, changed);
+        let mut answers = Answers::new();
+        for q in fstp_cell_core::reaction_queries(&self.state, &cmd, at).map_err(refusal)? {
+            let a = self.truth.answer(&q);
+            answers.insert(q, a);
+        }
+        let batch =
+            fstp_cell_core::decide_reaction(&self.state, &cmd, at, &answers).map_err(refusal)?;
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.fold(
+            at,
+            fstp_cell_core::reaction_command_id(target.raw()),
+            &batch,
+        )
+    }
+
+    /// Appends `batch` at `at` under `command` with the state's head as the
+    /// expected head, then folds the entries the store returns with
+    /// `fstp_cell_core::apply`. The append and the fold run on copies, so
+    /// a refusal of either leaves the store and the state as they were.
     fn fold(
         &mut self,
         at: Timestamp,
         command: [u8; 16],
         batch: &[CellRecord],
     ) -> Result<(), ProdError> {
-        let _ = (at, command, batch, &mut self.state);
-        Err(ProdError::NotImplemented(FOLD_SEAM))
+        let expected = self.state.head();
+        let mut store = self.store.clone();
+        let head = store
+            .append(expected, at.micros(), command, batch.to_vec())
+            .map_err(|e| ProdError::Refused(format!("append: {e}")))?;
+        let mut entries = Vec::with_capacity(batch.len());
+        store
+            .read(
+                Seq::from_raw(expected.raw().saturating_add(1)),
+                batch.len(),
+                &mut entries,
+            )
+            .map_err(|e| ProdError::Refused(format!("read: {e}")))?;
+        let mut state = self.state.clone();
+        for e in &entries {
+            fstp_cell_core::apply(&mut state, e).map_err(fold)?;
+        }
+        if state.head() != head {
+            return Err(ProdError::Refused(format!(
+                "the fold reached head {} and the store {}",
+                state.head().raw(),
+                head.raw()
+            )));
+        }
+        self.store = store;
+        self.state = state;
+        self.log.push(Appended {
+            at: at.micros(),
+            command,
+            batch: batch.to_vec(),
+        });
+        Ok(())
+    }
+
+    /// Every entry of the ledger, in order, as the store returns them.
+    pub fn entries(&self) -> Vec<Entry<CellRecord>> {
+        let mut out = Vec::new();
+        // A read of the in-memory store never fails.
+        let _ = self.store.read(Seq::ZERO, usize::MAX, &mut out);
+        out
+    }
+
+    /// Registers the first passkey `credential` of `account` at `at`, as
+    /// a first passkey ceremony does (design section 8.3), and returns the
+    /// batch.
+    ///
+    /// Every first passkey ceremony refuses an account that holds a live
+    /// passkey: the invitation gives `EnrolDeny::InviteeNotNew`, and
+    /// self-registration needs a new account. So this refuses with
+    /// [`SECOND_PASSKEY_REFUSED`] then. A second passkey is the high-risk
+    /// action `AddPasskey`, with a step-up ([`ProdCell::add_passkey`]).
+    ///
+    /// `RegisterCredential` needs a verified key, which only a route holds
+    /// (`fstp_cell_core::RouteInput::VerifiedCredential`, lane W3a). So the
+    /// harness runs the route's part itself: `decide_with_id` makes every
+    /// ledger check of the command and must then refuse for the missing
+    /// route input alone. The passkey is then verified by
+    /// [`verified_passkey`], with user verification required, and its
+    /// `CredentialRegistered` record comes from
+    /// `fstp_auth::AuthRecord::registration`. A refusal for any other
+    /// cause is returned as it is.
+    pub fn register_passkey(
+        &mut self,
+        account: AccountId,
+        credential: Vec<u8>,
+        at: Timestamp,
+    ) -> Result<Vec<CellRecord>, ProdError> {
+        if self.state.auth().has_any_credential(account) {
+            return Err(ProdError::Refused(SECOND_PASSKEY_REFUSED.to_owned()));
+        }
+        let command = self.draw();
+        let cmd = CellCommand::Auth(AuthCommand::RegisterCredential {
+            account,
+            credential: credential.clone(),
+        });
+        self.react(at)?;
+        self.route_checks(&cmd, account, at, command)?;
+        let state = &self.state;
+        let cred = verified_passkey(account, &credential, &|id: &[u8]| {
+            state.auth().is_registered(id)
+        })?;
+        let batch = vec![CellRecord::Auth(fstp_auth::AuthRecord::registration(
+            account, &cred,
+        ))];
+        if !storable(&batch) {
+            return Err(ProdError::Refused(
+                "the registration record does not read back from the store".to_owned(),
+            ));
+        }
+        self.fold(at, command, &batch)?;
+        Ok(batch)
+    }
+
+    /// The ledger checks of a route-only command `cmd` by `actor` at `at`:
+    /// `decide_with_id` must refuse it for its missing route input alone
+    /// ([`fstp_cell_core::ROUTE_INPUT_MISSING`]). Any other refusal is
+    /// returned, and a batch is refused with [`DECIDED_WITHOUT_KEY`].
+    fn route_checks(
+        &self,
+        cmd: &CellCommand,
+        actor: AccountId,
+        at: Timestamp,
+        command: [u8; 16],
+    ) -> Result<(), ProdError> {
+        let x = CellCtx {
+            actor,
+            at: at.micros(),
+        };
+        match fstp_cell_core::decide_with_id(&self.state, cmd, &x, command, &Answers::new()) {
+            Err(CellRefusal::Domain(d)) if d == fstp_cell_core::ROUTE_INPUT_MISSING => Ok(()),
+            Err(e) => Err(refusal(e)),
+            Ok(_) => Err(ProdError::Refused(DECIDED_WITHOUT_KEY.to_owned())),
+        }
+    }
+
+    /// Runs the route `POST /auth/stepup` (design section 8.4) for the
+    /// passkey `credential` in `session`, for `action_digest`, asserted at
+    /// `at` with user verification when `uv`. It returns the id of the
+    /// step-up the ledger granted, or the route's refusal.
+    ///
+    /// The route verifies the passkey assertion, then issues
+    /// `GrantStepUp`. Its admission is lane W3a's
+    /// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`), so the harness runs
+    /// both parts. [`verify_harness_stepup`] makes the route check through
+    /// `fstp_auth::stepup::verify_step_up`. Only an accepted assertion is
+    /// granted: production's `decide` then records `StepUpGranted` for the
+    /// session's account, with the id it derives, at the entry instant
+    /// `at`. A refused one writes nothing, as the route writes nothing.
+    /// So every step-up in the ledger came from a passkey session, a
+    /// credential of the session's own account, and user verification.
+    pub fn grant_stepup(
+        &mut self,
+        session: &SessionView,
+        credential: &[u8],
+        action_digest: [u8; 32],
+        uv: bool,
+        at: Timestamp,
+    ) -> Result<Result<[u8; 16], fstp_auth::stepup::StepUpDeny>, ProdError> {
+        if let Err(deny) =
+            verify_harness_stepup(&self.state, session, credential, action_digest, uv, at)?
+        {
+            return Ok(Err(deny));
+        }
+        let cmd = CellCommand::Auth(AuthCommand::GrantStepUp {
+            session: session.id,
+            action_digest,
+        });
+        let account = session.account;
+        let session = session.id;
+        let batch = self.exec(cmd, account, at)?;
+        let ids: Vec<[u8; 16]> = batch
+            .iter()
+            .filter_map(|r| match r {
+                CellRecord::Auth(fstp_auth::AuthRecord::StepUpGranted {
+                    id,
+                    action_digest: d,
+                    session: s,
+                }) if *d == action_digest && *s == session => Some(*id),
+                _ => None,
+            })
+            .collect();
+        match ids.as_slice() {
+            [id] if batch.len() == 1 => Ok(Ok(*id)),
+            _ => Err(ProdError::Refused(format!(
+                "GrantStepUp recorded {batch:?}, not one StepUpGranted for its digest and session"
+            ))),
+        }
+    }
+
+    /// Runs the admitted command through `DriverCore` over this cell's
+    /// store and `GroundTruth` vault, and returns the command's batch.
+    /// The batch of a high-risk command carries `StepUpConsumed`, which
+    /// the driver adds (design section 5.1). A run that found the command
+    /// id stored already appended nothing, and the batch is empty.
+    ///
+    /// The vault answers every request from the ground truth at its
+    /// epoch, reactions included, and accepts every acknowledgement. The
+    /// shell holds no audit chain, so every link it reports is zero.
+    ///
+    /// The emulated store has its own commit clock, `commit_at`, apart
+    /// from the entry instant, which is the admission instant. As the
+    /// store does (design sections 5.3 and 8.4), it refuses an append
+    /// whose `SideEffects::stepup_fresh_until` lies before `commit_at`,
+    /// with [`STEPUP_STALE_AT_COMMIT`]. So a command admitted with a fresh
+    /// step-up and committed after its P-71 limit is refused by the
+    /// limit that `DriverCore` computed, not by a second gate check.
+    ///
+    /// # Errors
+    ///
+    /// The outer error is the driver's `NotImplemented`, a shell refusal
+    /// or a protocol fault. The inner one is how the driver ended the run.
+    pub fn execute(
+        &mut self,
+        admitted: gate::Admitted,
+        commit_at: Timestamp,
+    ) -> Result<Result<Vec<CellRecord>, ExecError>, ProdError> {
+        let command = admitted.command_id();
+        let mut run = DriverCore::start(admitted);
+        let mut ev: Option<Event> = None;
+        let mut committed: Vec<CellRecord> = Vec::new();
+        for _ in 0..256 {
+            match run.step(&mut self.state, ev.take()) {
+                driver::Step::Done(Ok(_)) => return Ok(Ok(committed)),
+                driver::Step::Done(Err(ExecError::NotImplemented(op))) => {
+                    return Err(ProdError::NotImplemented(op));
+                }
+                driver::Step::Done(Err(e)) => return Ok(Err(e)),
+                driver::Step::Need(n) => {
+                    ev = Some(self.meet(n, command, commit_at, &mut committed)?);
+                }
+            }
+        }
+        Err(ProdError::Refused(
+            "the driver did not finish in 256 steps".to_owned(),
+        ))
+    }
+
+    /// The event that meets the driver's need `n`. An append under
+    /// `command` puts its batch in `committed`. `commit_at` is the
+    /// store's commit clock.
+    fn meet(
+        &mut self,
+        n: Need,
+        command: Option<[u8; 16]>,
+        commit_at: Timestamp,
+        committed: &mut Vec<CellRecord>,
+    ) -> Result<Event, ProdError> {
+        Ok(match n {
+            Need::ReadFrom(from) => {
+                let mut out = Vec::new();
+                let start = Seq::from_raw(from.raw().saturating_add(1));
+                let read = self.store.read(start, usize::MAX, &mut out);
+                read.map_err(|e| ProdError::Refused(format!("read: {e}")))?;
+                Event::Read(out)
+            }
+            Need::Epoch => Event::Epoch(Ok(self.truth.epoch())),
+            Need::Ask { queries, .. } => {
+                let mut answers = Answers::new();
+                for q in queries {
+                    let a = self.truth.answer(&q);
+                    answers.insert(q, a);
+                }
+                Event::Answers(Ok(answers))
+            }
+            Need::Append {
+                expected,
+                at,
+                command: id,
+                batch,
+                side,
+            } => {
+                if side.stepup_consumed.is_some()
+                    && side
+                        .stepup_fresh_until
+                        .is_none_or(|until| commit_at.micros() > until)
+                {
+                    return Err(ProdError::Refused(STEPUP_STALE_AT_COMMIT.to_owned()));
+                }
+                let r = self.store.append(expected, at, id, batch.clone());
+                if r.is_ok() {
+                    if Some(id) == command {
+                        committed.clone_from(&batch);
+                    }
+                    self.log.push(Appended {
+                        at,
+                        command: id,
+                        batch,
+                    });
+                }
+                Event::Appended(r.map(|head| (head, [0; 32])))
+            }
+            Need::Ack { .. } => Event::Acked(Ok(())),
+        })
+    }
+
+    /// Runs the `AddPasskey` route for the admitted command, which
+    /// `gate::admit_command` admitted in `session` at `now`, and returns
+    /// its batch: the verified registration and `StepUpConsumed`.
+    ///
+    /// `DriverCore` cannot run it, since `decide` refuses
+    /// `RegisterCredential` without the verified key, a route input of
+    /// lane W3a. So the harness runs the route's part, from production
+    /// parts only. `decide_with_id` makes the ledger checks and must
+    /// refuse for the route input alone. `fstp_auth::ceremony::
+    /// enrol_add_passkey` applies the `AddPasskey` rule and verifies the
+    /// new passkey through `fstp_webauthn`, with user verification
+    /// required for a management holder. The batch consumes the admitted
+    /// step-up, as `DriverCore` does for a high-risk command, and its
+    /// freshness is checked again at `now`.
+    pub fn add_passkey(
+        &mut self,
+        admitted: &gate::Admitted,
+        session: &SessionView,
+        now: Timestamp,
+    ) -> Result<Vec<CellRecord>, ProdError> {
+        let (account, credential) = match admitted.action() {
+            Action::Command(CellCommand::Auth(AuthCommand::RegisterCredential {
+                account,
+                credential,
+            })) => (*account, credential.clone()),
+            other => {
+                return Err(ProdError::Refused(format!(
+                    "AddPasskey runs RegisterCredential, not {other:?}"
+                )));
+            }
+        };
+        let gate::Principal::Account(actor) = admitted.principal() else {
+            return Err(ProdError::Refused(
+                "the admitted AddPasskey has no account principal".to_owned(),
+            ));
+        };
+        if actor != session.account {
+            return Err(ProdError::Refused(
+                "the admitted AddPasskey was admitted for another session's account".to_owned(),
+            ));
+        }
+        let Some(command) = admitted.command_id() else {
+            return Err(ProdError::Refused(
+                "the admitted AddPasskey carries no command id".to_owned(),
+            ));
+        };
+        let Some(stepup) = admitted.stepup() else {
+            return Err(ProdError::Refused(
+                "the admitted AddPasskey carries no step-up".to_owned(),
+            ));
+        };
+        if self.state.committed(command).is_some() {
+            return Ok(Vec::new());
+        }
+        if stepup
+            .fresh_until()
+            .is_none_or(|until| now.micros() > until)
+        {
+            return Err(ProdError::Refused(STEPUP_STALE_AT_COMMIT.to_owned()));
+        }
+        let cmd = CellCommand::Auth(AuthCommand::RegisterCredential {
+            account,
+            credential: credential.clone(),
+        });
+        self.react(now)?;
+        // The actor is the admitted principal, so `decide` checks that the
+        // command names the actor's own account (`wrong_actor`).
+        self.route_checks(&cmd, actor, now, command)?;
+        let holds = gate::management_holders(&self.state, now).contains(&account)
+            || self.state.tenant().is_admin(account);
+        let challenge = registration_challenge(account, &credential);
+        let response = HarnessPasskey::of(&credential)?.registration(challenge, true)?;
+        let rp = fstp_webauthn::RelyingParty::new(RP_HOST)
+            .map_err(|_| ProdError::NotImplemented(PASSKEY_BUILD_FAILED))?;
+        let reg = fstp_auth::ceremony::Registration {
+            response: &response,
+            rp: &rp,
+            challenge,
+        };
+        let state = &self.state;
+        let record = fstp_auth::ceremony::enrol_add_passkey(
+            state.auth().has_any_credential(account),
+            session,
+            Ok(()),
+            holds,
+            &reg,
+            &|id: &[u8]| state.auth().is_registered(id),
+        )
+        .map_err(|e| ProdError::Refused(format!("AddPasskey: {e:?}")))?;
+        let batch = vec![
+            CellRecord::Auth(record),
+            CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed { id: stepup.id }),
+        ];
+        if !storable(&batch) {
+            return Err(ProdError::Refused(
+                "the AddPasskey batch does not read back from the store".to_owned(),
+            ));
+        }
+        self.fold(now, command, &batch)?;
+        Ok(batch)
     }
 
     /// Runs an M2 roster step of `fstp-domain-testkit` as a cell command.
@@ -287,6 +1041,116 @@ impl ProdCell {
         };
         let cmd = CellCommand::Engine(fstp_engine::Command::Core(s.cmd.clone()));
         self.exec(cmd, actor, at)
+    }
+
+    /// Runs an M2 step of `fstp-domain-testkit` at `at`, by an account
+    /// ([`ProdCell::exec_step`]), by the timeline
+    /// ([`ProdCell::exec_system`]) or by an M5 port
+    /// ([`ProdCell::exec_port_fact`]). A vault reaction is no step: the
+    /// cell runs it before a command when the vault epoch is ahead.
+    pub fn exec_any_step(&mut self, s: &Step, at: Timestamp) -> Result<Vec<CellRecord>, ProdError> {
+        match s.actor {
+            Actor::Account(_) => self.exec_step(s, at),
+            Actor::System(SystemCause::Timeline) => self.exec_system(
+                CellCommand::Engine(fstp_engine::Command::Core(s.cmd.clone())),
+                fstp_cell_core::SystemTask::Timeline,
+                at,
+            ),
+            Actor::System(SystemCause::Vault) => Err(ProdError::Refused(
+                "a vault reaction runs before a command, never as a step".to_owned(),
+            )),
+            Actor::System(port) => self.exec_port_fact(port, s.cmd.clone(), at),
+        }
+    }
+
+    /// Runs `cmd` of the system task `task` at `at` and returns the batch:
+    /// `fstp_cell_core::queries_system`, `decide_system`, an append and
+    /// `apply`, as the cell's own task does. The timeline decides only
+    /// the M2 commands that `fstp_domain::due` lists at `at`.
+    pub fn exec_system(
+        &mut self,
+        cmd: CellCommand,
+        task: fstp_cell_core::SystemTask,
+        at: Timestamp,
+    ) -> Result<Vec<CellRecord>, ProdError> {
+        let command = self.draw();
+        self.react(at)?;
+        let x = fstp_cell_core::SystemCtx {
+            task,
+            at: at.micros(),
+        };
+        let qs = fstp_cell_core::queries_system(&self.state, &cmd, &x, command).map_err(refusal)?;
+        let mut answers = Answers::new();
+        for q in qs {
+            let a = self.truth.answer(&q);
+            answers.insert(q, a);
+        }
+        let batch = fstp_cell_core::decide_system(&self.state, &cmd, &x, command, &answers)
+            .map_err(refusal)?;
+        if batch.is_empty() {
+            return Ok(batch);
+        }
+        self.fold(at, command, &batch)?;
+        Ok(batch)
+    }
+
+    /// Runs the fact `cmd` of the M5 port `port` at `at` and returns the
+    /// batch.
+    ///
+    /// Gap: the cell has no task for the M5 ports. `SystemTask` holds the
+    /// erasure runner and the timeline only. So the harness decides the
+    /// fact with the cell's own M2 decider, `fstp_engine::DomainDecider`,
+    /// over the cell's M2 state, with the port as the `System` actor and
+    /// no attestation. The records are production's, and the harness
+    /// appends and folds them, as a test harness that writes the ledger
+    /// directly may.
+    pub fn exec_port_fact(
+        &mut self,
+        port: SystemCause,
+        cmd: fstp_domain::Command,
+        at: Timestamp,
+    ) -> Result<Vec<CellRecord>, ProdError> {
+        use fstp_engine::Decider;
+        if matches!(port, SystemCause::Timeline | SystemCause::Vault) {
+            return Err(ProdError::Refused(format!(
+                "{port:?} is a cell task, not an M5 port"
+            )));
+        }
+        let command = self.draw();
+        self.react(at)?;
+        let ctx = fstp_domain::command::Ctx {
+            now: at,
+            actor: Actor::System(port),
+            command: fstp_domain::id::CommandId::from_bytes(command),
+            via: fstp_domain::command::Via::Web,
+            tenant_admin: false,
+            second_tenant_admin: None,
+            binds_tenant_admin: false,
+        };
+        let cmd = fstp_engine::Command::Core(cmd);
+        let domain = |r: fstp_domain::Refusal| ProdError::Refused(format!("{r:?}"));
+        let qs = fstp_engine::DomainDecider
+            .queries(self.state.engine(), &cmd, &ctx)
+            .map_err(domain)?;
+        let mut answers = Answers::new();
+        for q in qs {
+            let a = self.truth.answer(&q);
+            answers.insert(q, a);
+        }
+        let records = fstp_engine::DomainDecider
+            .decide(self.state.engine(), &cmd, &ctx, &answers)
+            .map_err(domain)?;
+        let batch: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
+        if batch.is_empty() {
+            return Ok(batch);
+        }
+        if !storable(&batch) {
+            return Err(ProdError::Refused(
+                "the port fact's batch does not read back from the store".to_owned(),
+            ));
+        }
+        self.fold(at, command, &batch)?;
+        Ok(batch)
     }
 
     /// Runs `GrantTenantAdmin` of `account` by `actor`.
@@ -586,7 +1450,10 @@ impl AuthBackend for Reference {
 /// Gaps against design sections 4.2, 5.1 and 8.2, reported by lane W1b:
 /// `decide` sees no session rows, so a batch that must end sessions
 /// refuses with [`SESSIONS_SEAM`]; a suspension refuses with
-/// [`SUSPEND_SEAM`].
+/// [`SUSPEND_SEAM`]. A credential revocation registers a verified passkey
+/// first ([`ProdCell::register_passkey`]). `RevokeCredential` then needs
+/// the session rows of the device, so it refuses with [`SESSIONS_SEAM`]
+/// as well.
 #[derive(Clone, Debug)]
 pub struct Production {
     _probe: (),
@@ -899,11 +1766,10 @@ impl AuthBackend for Production {
             Err(e) => return prod_ni(e),
         };
         let credential = credential_of(account, device);
-        let register = CellCommand::Auth(AuthCommand::RegisterCredential {
-            account,
-            credential: credential.clone(),
-        });
-        if let Err(e) = cell.exec(register, account, T0) {
+        // A verified passkey, registered at the latest recorded instant so
+        // the ledger stays time-monotone.
+        let at = cell.state().now_floor().max(T0);
+        if let Err(e) = cell.register_passkey(account, credential.clone(), at) {
             return prod_ni(e);
         }
         let revoke = CellCommand::Auth(AuthCommand::RevokeCredential {

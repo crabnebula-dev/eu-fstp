@@ -31,16 +31,19 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use fstp_auth::{AuthCommand, AuthRecord};
 use fstp_cell_core::driver::{DriverCore, Event, ExecError, Need, Step, VaultFault};
-use fstp_cell_core::gate::{self, Action, Admitted, Deny, LoginPolicy, StepUpView};
+use fstp_cell_core::gate::{self, Action, Admitted, Deny, LoginPolicy, Principal, StepUpView};
 use fstp_cell_core::text::TextCommand;
-use fstp_cell_core::{CellCommand, CellRecord, CellState, FoldError};
+use fstp_cell_core::{CellCommand, CellCtx, CellRecord, CellRefusal, CellState, FoldError};
 use fstp_domain::id::{AccountId, ContentDigest, VaultEpoch};
 use fstp_domain::oracle::{Answer, Answers, Query};
 use fstp_domain::time::Timestamp;
+use fstp_ledger::{Entry, MemStore, RecordStore, Seq};
 use fstp_mc::{Model, Property};
 
 use crate::NotImplemented;
+use crate::mc::auth_model::STEPUP_STALE_AT_COMMIT;
 use crate::reference::vault::{
     self as rv, RefAnswer, RefVault, RefWrite, is_reaction_command_id, reaction_command_id,
 };
@@ -55,6 +58,10 @@ use crate::reference::vault::{
 /// model reply ([`LEntry`]) carries a sequence and a command id but no
 /// records, so no `fstp_ledger::Entry` can be built from it. An empty read
 /// needs no ledger value, so it passes.
+///
+/// The seam is the M-DRIVER model's only. [`Shell`] keeps its ledger in an
+/// `fstp_ledger::MemStore` and answers every read with the stored
+/// entries, so the seam tests never meet it.
 pub const LEDGER_SEAM: &str = "fstp_celltest::mc::driver_model: a model read reply carries no records, so no fstp_ledger::Entry can be built for Event::Read (lane W1c)";
 
 /// The seam of the caller's command id, closed by lane W2c:
@@ -531,37 +538,317 @@ pub const POLICY: LoginPolicy = LoginPolicy {
     stepup_freshness_us: crate::reference::auth::P71_DEFAULT_US,
 };
 
-/// Admits `cmd` by `actor` at `at` through the gate, with a fresh strong
-/// step-up when the command is high risk. The step-up digest comes from
-/// `mc::stepup_model::prod_action_digest`, which refuses with its seam.
+/// Not a seam: a bare `CellState` with entries gives no ledger, so no
+/// step-up grant can be appended after its head. Pass [`Shell::state`],
+/// which carries the shell's ledger.
+pub const BARE_STATE_STEPUP: &str = "fstp_celltest::mc::driver_model::admit: a high-risk command over a bare CellState past genesis has no ledger to record its step-up in (pass Shell::state)";
+
+/// Not a seam: the shell's ledger refused a step-up route entry, or the
+/// entry did not fold, or the harness passkey could not be built.
+/// Production's own `decide` and `fstp_webauthn` made the records, so
+/// this is a harness fault, which ends the admission.
+pub const STEPUP_GRANT_FAILED: &str = "fstp_celltest::mc::driver_model: a step-up route entry did not append to the shell's ledger or did not fold, or the harness passkey could not be built";
+
+/// What [`admit`] asks the gate over: a folded state, and the ledger it
+/// is the replay of, when the caller holds one. [`Shell::state`] gives
+/// both. A bare `&CellState` converts with no ledger.
+#[derive(Clone, Copy, Debug)]
+pub struct GateState<'a> {
+    state: &'a CellState,
+    ledger: Option<&'a MemStore<CellRecord>>,
+}
+
+impl<'a> From<&'a CellState> for GateState<'a> {
+    fn from(state: &'a CellState) -> GateState<'a> {
+        GateState {
+            state,
+            ledger: None,
+        }
+    }
+}
+
+impl std::ops::Deref for GateState<'_> {
+    type Target = CellState;
+
+    fn deref(&self) -> &CellState {
+        self.state
+    }
+}
+
+impl<'a> GateState<'a> {
+    /// The folded state.
+    pub fn cell(&self) -> &'a CellState {
+        self.state
+    }
+
+    /// A copy of the state with the entries of `grant` folded after its
+    /// head, appended to a copy of the ledger. Over genesis an empty
+    /// ledger serves.
+    fn with_grant(&self, grant: &StepUpGrant) -> Result<CellState, NotImplemented> {
+        let mut store = match self.ledger {
+            Some(l) => l.clone(),
+            None if self.state.head() == Seq::ZERO => MemStore::new(),
+            None => return Err(NotImplemented::new(BARE_STATE_STEPUP)),
+        };
+        let mut state = self.state.clone();
+        for e in grant.entries() {
+            state = append_and_fold(&mut store, &state, &e)?;
+        }
+        Ok(state)
+    }
+}
+
+/// Appends the route entry `e` to `store` after `state`'s head, and
+/// returns `state` with the stored entries folded by
+/// `fstp_cell_core::apply`.
+fn append_and_fold(
+    store: &mut MemStore<CellRecord>,
+    state: &CellState,
+    e: &RouteEntry,
+) -> Result<CellState, NotImplemented> {
+    let failed = || NotImplemented::new(STEPUP_GRANT_FAILED);
+    let head = state.head();
+    store
+        .append(head, e.at.micros(), e.command, e.batch.clone())
+        .map_err(|_| failed())?;
+    let mut entries = Vec::with_capacity(e.batch.len());
+    store
+        .read(
+            Seq::from_raw(head.raw().saturating_add(1)),
+            e.batch.len(),
+            &mut entries,
+        )
+        .map_err(|_| failed())?;
+    let mut next = state.clone();
+    for x in &entries {
+        fstp_cell_core::apply(&mut next, x).map_err(|_| failed())?;
+    }
+    if next.head() == head {
+        return Err(failed());
+    }
+    Ok(next)
+}
+
+/// One append of the step-up route: its command id, its instant and its
+/// batch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteEntry {
+    /// The command id of the entry.
+    pub command: [u8; 16],
+    /// The entry instant.
+    pub at: Timestamp,
+    /// The records.
+    pub batch: Vec<CellRecord>,
+}
+
+/// What the route `POST /auth/stepup` appends for one command (design
+/// section 8.4): the `StepUpGranted` record, after the harness enrolment
+/// of the actor's first passkey when the actor holds none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepUpGrant {
+    /// The actor's first passkey, `CredentialRegistered`, when the ledger
+    /// held no live passkey of the actor ([`enrol_command_id`]).
+    pub enrolment: Option<RouteEntry>,
+    /// The command id of the grant's entry ([`stepup_command_id`]).
+    pub command: [u8; 16],
+    /// The step-up id that production derived.
+    pub id: [u8; 16],
+    /// The assertion instant, which is the entry instant.
+    pub at: Timestamp,
+    /// The `StepUpGranted` record.
+    pub record: CellRecord,
+}
+
+impl StepUpGrant {
+    /// The entries to append, in order: the enrolment, then the grant.
+    pub fn entries(&self) -> Vec<RouteEntry> {
+        let mut out: Vec<RouteEntry> = self.enrolment.iter().cloned().collect();
+        out.push(RouteEntry {
+            command: self.command,
+            at: self.at,
+            batch: vec![self.record.clone()],
+        });
+        out
+    }
+}
+
+/// A harness command id: a SHA-256 over `label` and `part`, whose first
+/// byte is 0x5F. So it lies outside the reserved and system prefixes
+/// (`fstp:vc:`, `fstp:st:`) and takes no reserved id.
+fn harness_command_id(label: &[u8], part: &[u8]) -> [u8; 16] {
+    let mut h = fstp_crypto::Sha256::new();
+    h.update(label);
+    h.update(part);
+    let d = h.finish();
+    let mut out = [0u8; 16];
+    out.copy_from_slice(d.get(..16).unwrap_or(&[0; 16]));
+    if let Some(first) = out.first_mut() {
+        *first = 0x5F;
+    }
+    out
+}
+
+/// The command id of the step-up grant for the command `command_id`.
+pub fn stepup_command_id(command_id: [u8; 16]) -> [u8; 16] {
+    harness_command_id(b"fstp-celltest-stepup-route-v1", &command_id)
+}
+
+/// The command id of the harness enrolment of `account`'s first passkey.
+/// An account is enrolled once: afterwards it holds a passkey.
+pub fn enrol_command_id(account: AccountId) -> [u8; 16] {
+    harness_command_id(
+        b"fstp-celltest-first-passkey-v1",
+        &account.raw().to_be_bytes(),
+    )
+}
+
+/// The step-up route for the command `command_id` of `actor` in the
+/// passkey session `session`, for `action_digest`, asserted at `at`, as
+/// production records it. `None` when the route or production refuses
+/// the grant, or when the ledger already holds the grant entry for this
+/// command id.
+///
+/// The route verifies a passkey assertion of the session's own account
+/// with user verification, then issues `GrantStepUp` (design section
+/// 8.4). Its admission is lane W3a's
+/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`). So the harness runs
+/// both parts and writes the ledger directly. An actor with no live
+/// passkey is enrolled first, with the passkey `credential_of(actor, 0)`
+/// verified through `fstp_webauthn`, as a first passkey ceremony does
+/// (`mc::auth_model::verified_passkey`). The passkey then asserts, and
+/// `fstp_auth::stepup::verify_step_up` decides
+/// (`mc::auth_model::verify_harness_stepup`). Only an accepted assertion
+/// is granted, with production's record and the id it derives. So the
+/// gate never sees a step-up of an account without a passkey.
+///
+/// # Errors
+///
+/// A `NotImplemented` of `decide`, or [`STEPUP_GRANT_FAILED`] for a
+/// harness passkey that cannot be built or a batch that is not one
+/// `StepUpGranted`.
+pub fn stepup_grant(
+    state: &CellState,
+    actor: AccountId,
+    session: &fstp_auth::SessionView,
+    action_digest: [u8; 32],
+    at: Timestamp,
+    command_id: [u8; 16],
+) -> Result<Option<StepUpGrant>, NotImplemented> {
+    use crate::mc::auth_model::{self as am, ProdError};
+    let harness = |e: ProdError| match e {
+        ProdError::NotImplemented(op) => NotImplemented::new(op),
+        ProdError::Refused(_) => NotImplemented::new(STEPUP_GRANT_FAILED),
+    };
+    let command = stepup_command_id(command_id);
+    if state.committed(command).is_some() || session.account != actor {
+        return Ok(None);
+    }
+    let credential = am::credential_of(actor, 0);
+    let mut enrolled = None;
+    let route = if state.auth().has_any_credential(actor) {
+        am::verify_harness_stepup(state, session, &credential, action_digest, true, at)
+            .map_err(harness)?
+    } else {
+        let cred = am::verified_passkey(actor, &credential, &|id: &[u8]| {
+            state.auth().is_registered(id)
+        })
+        .map_err(harness)?;
+        let record = AuthRecord::registration(actor, &cred);
+        let route = am::verify_stepup_with(
+            record.stored_credential(0),
+            session,
+            &credential,
+            action_digest,
+            true,
+            at,
+        )
+        .map_err(harness)?;
+        enrolled = Some(RouteEntry {
+            command: enrol_command_id(actor),
+            at,
+            batch: vec![CellRecord::Auth(record)],
+        });
+        route
+    };
+    if route.is_err() {
+        return Ok(None);
+    }
+    let cmd = CellCommand::Auth(AuthCommand::GrantStepUp {
+        session: session.id,
+        action_digest,
+    });
+    let x = CellCtx {
+        actor,
+        at: at.micros(),
+    };
+    match fstp_cell_core::decide_with_id(state, &cmd, &x, command, &Answers::new()) {
+        Ok(batch) => match batch.as_slice() {
+            [
+                record @ CellRecord::Auth(AuthRecord::StepUpGranted {
+                    id,
+                    action_digest: d,
+                    session: s,
+                }),
+            ] if *d == action_digest && *s == session.id => Ok(Some(StepUpGrant {
+                enrolment: enrolled,
+                command,
+                id: *id,
+                at,
+                record: record.clone(),
+            })),
+            _ => Err(NotImplemented::new(STEPUP_GRANT_FAILED)),
+        },
+        Err(CellRefusal::NotImplemented(op)) => Err(NotImplemented::new(op)),
+        Err(CellRefusal::Domain(_)) => Ok(None),
+    }
+}
+
+/// Admits `cmd` by `actor` at `at` through the gate, under `command_id`,
+/// in a passkey session ([`session_of`]).
+///
+/// A high-risk command gets a fresh strong step-up first. Its digest is
+/// production's (`mc::stepup_model::prod_action_digest`), and its
+/// records are the ones the step-up route writes ([`stepup_grant`]). The
+/// gate admits only a step-up the ledger granted. So the gate is asked
+/// over a copy of the state with the route's entries folded after the
+/// head of `on`'s ledger. [`Shell::execute`] then appends the same
+/// entries to the shell's ledger before the driver runs. When the route
+/// or production refuses the grant, the command comes without a step-up,
+/// and the gate refuses it as a route would.
 ///
 /// # Errors
 ///
 /// The gate's stub refusal or a seam, as [`AdmitError::NotImplemented`].
 /// A refusal of the command by the gate, as [`AdmitError::Denied`].
-pub fn admit(
-    state: &CellState,
+pub fn admit<'a>(
+    on: impl Into<GateState<'a>>,
     cmd: CellCommand,
     actor: AccountId,
     at: Timestamp,
     command_id: [u8; 16],
 ) -> Result<Admitted, AdmitError> {
+    let on: GateState<'a> = on.into();
     let session = session_of(actor, at);
     let action = Action::Command(cmd.clone());
     let high = gate::HighRiskAction::of(&action).map_err(deny)?;
-    let stepup = match high {
-        Some(_) => Some(StepUpView {
-            id: [0x5F; 16],
-            session: session.id,
-            action_digest: crate::mc::stepup_model::prod_action_digest(&cmd, command_id)?,
-            asserted_at: at,
-            strong: true,
-            consumed: false,
-        }),
-        None => None,
-    };
+    let mut granted: Option<CellState> = None;
+    let mut stepup: Option<StepUpView> = None;
+    if high.is_some() {
+        let action_digest = crate::mc::stepup_model::prod_action_digest(&cmd, command_id)?;
+        if let Some(g) = stepup_grant(on.state, actor, &session, action_digest, at, command_id)? {
+            granted = Some(on.with_grant(&g)?);
+            stepup = Some(StepUpView {
+                id: g.id,
+                session: session.id,
+                action_digest,
+                asserted_at: at,
+                strong: true,
+                consumed: false,
+            });
+        }
+    }
     gate::admit_command(
-        state,
+        granted.as_ref().unwrap_or(on.state),
         &session,
         action,
         command_id,
@@ -1337,10 +1624,10 @@ impl ShellVault {
     }
 }
 
-/// One entry the shell appended: the driver's batch as it was handed over.
+/// One batch the driver appended through the shell, as it was handed over.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellEntry {
-    /// The sequence.
+    /// The ledger head after the batch: the sequence of its last entry.
     pub seq: u64,
     /// UTC microseconds.
     pub at: i64,
@@ -1368,12 +1655,22 @@ pub enum Seen {
     Ack(u64),
 }
 
-/// The production shell: `DriverCore` over the shell's own ledger and a
-/// [`ShellVault`].
+/// The production shell: `DriverCore` over the shell's own ledger, an
+/// `fstp_ledger::MemStore`, and a [`ShellVault`].
+///
+/// The ledger has two writers. The driver appends the batches of the
+/// commands it runs ([`Shell::ledger`]). The step-up route appends the
+/// `StepUpGranted` record of each admitted step-up before its command
+/// runs ([`Shell::stepup_grants`]). The state is always the replay of the
+/// whole ledger ([`Shell::entries`], I-23).
+///
+/// The shell holds no audit chain, so every link it reports is zero.
 #[derive(Clone, Debug)]
 pub struct Shell {
     state: CellState,
+    store: MemStore<CellRecord>,
     ledger: Vec<ShellEntry>,
+    grants: Vec<StepUpGrant>,
     vault: ShellVault,
     seen: Vec<Seen>,
 }
@@ -1388,20 +1685,41 @@ impl Shell {
         let state = fstp_cell_core::replay(&[]).map_err(fold_ni)?;
         Ok(Shell {
             state,
+            store: MemStore::new(),
             ledger: Vec::new(),
+            grants: Vec::new(),
             vault,
             seen: Vec::new(),
         })
     }
 
-    /// The folded state.
-    pub fn state(&self) -> &CellState {
-        &self.state
+    /// The folded state, with the ledger it is the replay of, so that
+    /// [`admit`] can record a step-up grant on a copy.
+    pub fn state(&self) -> GateState<'_> {
+        GateState {
+            state: &self.state,
+            ledger: Some(&self.store),
+        }
     }
 
-    /// Every entry appended, in order.
+    /// Every batch the driver appended, in order. The step-up grants are
+    /// the route's appends, not the driver's: they are in
+    /// [`Shell::stepup_grants`] and [`Shell::entries`].
     pub fn ledger(&self) -> &[ShellEntry] {
         &self.ledger
+    }
+
+    /// Every step-up grant the shell appended before a command, in order.
+    pub fn stepup_grants(&self) -> &[StepUpGrant] {
+        &self.grants
+    }
+
+    /// Every entry of the ledger, in order, as the store returns them.
+    pub fn entries(&self) -> Vec<Entry<CellRecord>> {
+        let mut out = Vec::new();
+        // A read of the in-memory store never fails.
+        let _ = self.store.read(Seq::ZERO, usize::MAX, &mut out);
+        out
     }
 
     /// Every need answered, in order.
@@ -1414,15 +1732,50 @@ impl Shell {
         &mut self.vault
     }
 
-    /// Runs one admitted command to its end.
+    /// Runs one admitted command to its end, committed at the admission
+    /// instant ([`Shell::execute_at`]).
     ///
     /// # Errors
     ///
-    /// A stub refusal, [`LEDGER_SEAM`], or a need the shell cannot meet.
+    /// A stub refusal or a need the shell cannot meet.
     pub fn execute(
         &mut self,
         admitted: Admitted,
     ) -> Result<Result<fstp_cell_core::driver::Done, ExecError>, ShellError> {
+        let at = admitted.at();
+        self.execute_at(admitted, at)
+    }
+
+    /// Runs one admitted command to its end, with `commit_at` as the
+    /// clock of the shell's store.
+    ///
+    /// When the admission names a step-up that the ledger does not hold,
+    /// the shell first appends the route entries that [`admit`] folded
+    /// into the gate's copy. They are the same entries from
+    /// [`stepup_grant`], for the same command id, session and digest.
+    /// Then `DriverCore` runs.
+    ///
+    /// The store's commit clock is apart from the entry instant, which is
+    /// the admission instant. As the store does (design sections 5.3 and
+    /// 8.4), it refuses an append whose `SideEffects::stepup_fresh_until`
+    /// lies before `commit_at`, with a protocol fault that names
+    /// `mc::auth_model::STEPUP_STALE_AT_COMMIT`. So a command committed
+    /// after its step-up's P-71 limit is refused by the limit that
+    /// `DriverCore` computed.
+    ///
+    /// # Errors
+    ///
+    /// A stub refusal or a need the shell cannot meet.
+    pub fn execute_at(
+        &mut self,
+        admitted: Admitted,
+        commit_at: Timestamp,
+    ) -> Result<Result<fstp_cell_core::driver::Done, ExecError>, ShellError> {
+        if let Some(u) = admitted.stepup()
+            && self.state.auth().stepup_grant(u.id).is_none()
+        {
+            self.record_grant(&admitted, &u)?;
+        }
         let mut driver = DriverCore::start(admitted);
         let mut ev: Option<Event> = None;
         for _ in 0..256 {
@@ -1433,7 +1786,7 @@ impl Shell {
                     }
                     return Ok(r);
                 }
-                Step::Need(n) => ev = Some(self.meet(&n)?),
+                Step::Need(n) => ev = Some(self.meet(&n, commit_at)?),
             }
         }
         Err(ShellError::Protocol(
@@ -1441,21 +1794,59 @@ impl Shell {
         ))
     }
 
-    fn meet(&mut self, n: &Need) -> Result<Event, ShellError> {
-        let reply = match n {
-            Need::ReadFrom(from) => Reply::Read(
-                self.ledger
-                    .iter()
-                    .filter(|e| e.seq > from.raw())
-                    .map(|e| LEntry {
-                        seq: e.seq,
-                        command: e.command,
-                    })
-                    .collect(),
-            ),
+    /// Appends the route entries of the step-up `u` that the gate admitted
+    /// for `admitted`, and folds them.
+    fn record_grant(&mut self, admitted: &Admitted, u: &gate::StepUpUse) -> Result<(), ShellError> {
+        let protocol = |why: &str| ShellError::Protocol(why.to_owned());
+        let (Action::Command(_), Principal::Account(actor), Some(command_id)) = (
+            admitted.action(),
+            admitted.principal(),
+            admitted.command_id(),
+        ) else {
+            return Err(protocol(
+                "a step-up names no account command under a command id",
+            ));
+        };
+        let session = session_of(actor, u.asserted_at);
+        let grant = stepup_grant(
+            &self.state,
+            actor,
+            &session,
+            u.action_digest,
+            u.asserted_at,
+            command_id,
+        )?
+        .ok_or_else(|| protocol("the step-up route refuses the grant the gate admitted"))?;
+        if grant.id != u.id {
+            return Err(protocol(
+                "the admitted step-up is not the one the shell's route records",
+            ));
+        }
+        for e in grant.entries() {
+            self.state = append_and_fold(&mut self.store, &self.state, &e)?;
+        }
+        self.grants.push(grant);
+        Ok(())
+    }
+
+    fn meet(&mut self, n: &Need, commit_at: Timestamp) -> Result<Event, ShellError> {
+        Ok(match n {
+            Need::ReadFrom(from) => {
+                let mut out = Vec::new();
+                let start = Seq::from_raw(from.raw().saturating_add(1));
+                self.store
+                    .read(start, usize::MAX, &mut out)
+                    .map_err(|e| ShellError::Protocol(format!("read: {e}")))?;
+                Event::Read(out)
+            }
             Need::Epoch => {
                 self.seen.push(Seen::Epoch);
-                Reply::Epoch(self.vault.epoch())
+                Event::Epoch(
+                    self.vault
+                        .epoch()
+                        .map(VaultEpoch::from_raw)
+                        .ok_or(VaultFault::Unavailable),
+                )
             }
             Need::Ask {
                 queries,
@@ -1466,39 +1857,47 @@ impl Shell {
                     reaction_for: rf,
                     kinds: queries.iter().map(Query::kind).collect(),
                 });
-                Reply::Answers(self.vault.ask(rf, queries))
+                Event::Answers(match self.vault.ask(rf, queries) {
+                    Some(answers) => Ok(domain_answers(queries, &answers)),
+                    None => Err(VaultFault::Refused),
+                })
             }
             Need::Append {
                 expected,
                 at,
                 command,
                 batch,
-                ..
+                side,
             } => {
                 self.seen.push(Seen::Append(*command));
-                let head = self.ledger.last().map_or(0, |e| e.seq);
-                let r = if self.ledger.iter().any(|e| e.command == *command) {
-                    AppendReply::Duplicate
-                } else if head != expected.raw() {
-                    AppendReply::Stale(head)
-                } else {
-                    let seq = head.saturating_add(1);
+                // The store's own commit clock, not the entry instant.
+                if side.stepup_consumed.is_some()
+                    && side
+                        .stepup_fresh_until
+                        .is_none_or(|until| commit_at.micros() > until)
+                {
+                    return Err(ShellError::Protocol(STEPUP_STALE_AT_COMMIT.to_owned()));
+                }
+                let r = self.store.append(*expected, *at, *command, batch.clone());
+                if let Ok(head) = r {
                     self.ledger.push(ShellEntry {
-                        seq,
+                        seq: head.raw(),
                         at: *at,
                         command: *command,
                         batch: batch.clone(),
                     });
-                    AppendReply::Ok(seq)
-                };
-                Reply::Appended(r)
+                }
+                Event::Appended(r.map(|head| (head, [0; 32])))
             }
             Need::Ack { epoch, seq, .. } => {
                 self.seen.push(Seen::Ack(epoch.raw()));
-                Reply::Acked(self.vault.ack(epoch.raw(), seq.raw()))
+                Event::Acked(if self.vault.ack(epoch.raw(), seq.raw()) {
+                    Ok(())
+                } else {
+                    Err(VaultFault::Unavailable)
+                })
             }
-        };
-        Ok(production_event(n, &reply)?)
+        })
     }
 }
 
