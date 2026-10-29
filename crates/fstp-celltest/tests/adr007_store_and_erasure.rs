@@ -100,11 +100,14 @@ fn req(g: &mut Gen, head: u64) -> Req {
     }
 }
 
-/// The seam of the PostgreSQL side. Lane W2c landed
-/// `fstp_ledger::AsyncRecordStore`. `fstp_pgstore::Pool` still has no
-/// constructor and `PgRecordStore` implements no store trait yet, so no
-/// append reaches it (lane W2e).
-const PG_STORE_SEAM: &str = "fstp_pgstore::Pool has no constructor and PgRecordStore implements no fstp_ledger::AsyncRecordStore yet (lane W2e)";
+/// The seam of the PostgreSQL side. Lane W2e landed `fstp_pgstore::Pool`
+/// and `PgRecordStore`, which implements `fstp_ledger::AsyncRecordStore`.
+/// This seam takes one request and no store, so it cannot hold one
+/// `PgRecordStore` over a fresh database across the appends of one
+/// property case. It stays a refusal until the seam carries a store per
+/// case. `fstp-pgstore`'s `adr007_pg_store_matches_fstp_ledger_mem_store`
+/// runs this property over PostgreSQL against `fstp_ledger::MemStore`.
+const PG_STORE_SEAM: &str = "pg_append takes no store, so it cannot keep one PgRecordStore across the appends of a property case (lane W2e landed the store; the seam needs a store per case)";
 
 /// The PostgreSQL store's answer to `r`.
 fn pg_append(r: Req) -> Result<Result<u64, Refused>, NotImplemented> {
@@ -189,10 +192,11 @@ fn adr007_teeth_head_checked_before_command_is_caught() {
 /// The seam of text resolution. Lane W2c landed the erasure-log entry,
 /// `fstp_cell_core::state::ErasureEntry`, with the request time,
 /// `completed_at`, the cause and the authoriser, read from the cell state.
-/// [`resolve`] resolves through it. `TextStore::get` over the sealed texts
-/// is still lane W2e's, and a text the cell does not know refuses with
-/// this seam.
-const TEXT_SEAM: &str = "no TextStore::get over sealed texts yet (design section 5.6, lane W2e)";
+/// [`resolve`] resolves through it. Lane W2e landed
+/// `fstp_pgstore::TextStore::get` over the sealed texts. `ProdCell` holds
+/// no text store over a database, so a text the cell does not know still
+/// refuses with this seam until the cell runtime wires one (lane W3a).
+const TEXT_SEAM: &str = "ProdCell holds no fstp_pgstore::TextStore over a cell database (lane W3a; lane W2e landed TextStore::get)";
 
 /// How a text reference resolves.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -138,6 +138,8 @@ name = "fstp-pgstore"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-crypto",
+ "fstp-json",
  "fstp-keys",
  "fstp-ledger",
  "fstp-migrate",
@@ -149,6 +151,8 @@ dependencies = [
 name = "fstp-pgstore-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-crypto",
+ "fstp-keys",
  "fstp-pgstore",
  "libfuzzer-sys",
 ]

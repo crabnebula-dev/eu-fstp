@@ -397,9 +397,13 @@ name = "fstp-pgstore"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-cp-proto",
+ "fstp-crypto",
+ "fstp-json",
  "fstp-keys",
  "fstp-ledger",
  "fstp-migrate",
+ "fstp-pgtest",
  "fstp-pgwire",
  "fstp-prop",
  "fstp-rt",
