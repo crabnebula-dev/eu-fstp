@@ -3,6 +3,7 @@
 //! Module list from milestone M2 step W0. Each lane owns its own file.
 
 pub mod findings;
+pub mod minor;
 pub mod money;
 pub mod policy;
 pub mod review;

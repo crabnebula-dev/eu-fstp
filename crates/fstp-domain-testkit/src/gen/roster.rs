@@ -623,6 +623,11 @@ impl SodWorld {
         let ctx = self.ctx(step);
         let mut answers = Answers::new();
         for q in fstp_domain::queries(&self.state, &step.cmd, &ctx)? {
+            // State-machine NOTE 14: the vault gives no answer to an
+            // unresolved age conflict, so the query stays unanswered.
+            if !self.truth.answers(&q) {
+                continue;
+            }
             let a = answer(&self.truth, facts, &q);
             answers.insert(q, a);
         }

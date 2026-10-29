@@ -18,10 +18,13 @@
 //! directions, so a production gate that reads the actor's field fails
 //! with a disagreement before the state is checked.
 //!
-//! The deadline is that of the call PR1 was submitted to, the interim
-//! reading of ADR-008 ("Which deadline"). Whether the guard into GRANTED
-//! asks the attestation again is not decided, so no story here depends
-//! on it.
+//! The deadline is that of the call in which PR1 passes IRC review. For a
+//! re-entered proposal that is the later call (NOTE 8). Daniel decided
+//! this on 2026-10-29 (NOTE 14, ADR-008 "Which deadline"), replacing the
+//! interim reading of the submission call. The re-entry stories below
+//! were rewritten for it. The guard into GRANTED derives the flag again
+//! (decided the same day), and
+//! `r_id_04_i18_granted_guard_derives_the_flag_again.rs` tests it.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -328,8 +331,10 @@ fn gate_question(q: &Query) -> bool {
 
 /// R-ID-04, NOTE 14, overview NOTE 7: the gate asks the vault whether the
 /// lead has an effective verified over-18 attestation at the deadline of
-/// the call the proposal was submitted to, so the flag is derived only
-/// from vault answers.
+/// the call in which the proposal passes IRC review, so the flag is derived
+/// only from vault answers. Without a re-entry that is the call the
+/// proposal was submitted to (ADR-008 "Which deadline", decided
+/// 2026-10-29).
 #[test]
 fn r_id_04_gate_asks_the_vault_about_the_lead_at_the_deadline() {
     let (s, step) = last_validation(Vault::Adult);
@@ -438,9 +443,10 @@ const LATER_DEADLINE: fstp_domain::time::Timestamp =
 
 /// PR1 deferred from IRC_REVIEW of call 1 by a concern, then re-entered
 /// into IRC_REVIEW of call 2, whose deadline is [`LATER_DEADLINE`]. L1 is
-/// shown 18 or older from `adult_from`. IRC and IRC2 are assigned in call 2. Under the interim
-/// reading of ADR-008 ("Which deadline", pending Daniel), the gate asks
-/// about the deadline of call 1.
+/// shown 18 or older from `adult_from`. IRC and IRC2 are assigned in call
+/// 2. The gate asks about the deadline of call 2, the call in which PR1
+/// passes IRC review (NOTE 14, ADR-008 "Which deadline", decided
+/// 2026-10-29).
 fn reentered(backend: Backend, adult_from: fstp_domain::time::Timestamp) -> Story {
     let setup = story_setup(vec![(L1, PR1, false)], life_judges());
     let mut s = Story::new(&setup, backend, |t| {
@@ -535,37 +541,81 @@ fn reentered_adult_enters_on(b: Backend) {
     );
 }
 
-fn reentered_stays_on(b: Backend) {
+/// Rewritten on 2026-10-29 for state-machine NOTE 14 ("Which deadline"
+/// decided): it encoded the overturned interim reading, under which L1
+/// stayed minor-flagged at the deadline of call 1.
+fn reentered_later_deadline_enters_on(b: Backend) {
     let s = reentered_validated(b, LEAD_ADULT_AFTER_DEADLINE);
     assert_eq!(
         s.state(PR1),
-        Some(StateTag::IrcReview),
-        "R-ID-04, ADR-008 (\"Which deadline\", interim, pending Daniel): L1 is \
-         18 or older at the deadline of call 2 but not at that of call 1, \
-         where PR1 was submitted, so PR1 stays minor-flagged in IRC_REVIEW"
+        Some(StateTag::Negotiation),
+        "R-ID-04, NOTE 14, ADR-008 (\"Which deadline\", decided 2026-10-29): \
+         L1 is 18 or older at the deadline of call 2, in which the re-entered \
+         PR1 passes IRC review, though not at that of call 1, so PR1 is not \
+         minor-flagged and enters NEGOTIATION without a consent"
     );
 }
 
-/// R-ID-04, ADR-008 ("Which deadline", interim, pending Daniel): after a
-/// deferral and re-entry into a call with a later deadline, the gate still
-/// derives the flag at the deadline of the call the proposal was
-/// submitted to.
+/// R-ID-04, NOTE 14, ADR-008 ("Which deadline", decided 2026-10-29): after a
+/// deferral and re-entry into a call with a later deadline (NOTE 8), the
+/// gate derives the flag at the deadline of the later call, in which the
+/// proposal passes IRC review.
+///
+/// Rewritten for NOTE 14 from
+/// `r_id_04_reentered_proposal_is_flagged_at_the_submission_deadline`,
+/// which encoded the overturned submission-call reading.
 #[test]
-fn r_id_04_reentered_proposal_is_flagged_at_the_submission_deadline() {
-    reentered_stays_on(Backend::Production);
+fn r_id_04_reentered_proposal_is_derived_at_the_later_call_deadline() {
+    reentered_later_deadline_enters_on(Backend::Production);
 }
 
-/// R-ID-04, ADR-008 (interim): the re-entry story on the references alone.
+/// R-ID-04, NOTE 14: the re-entry story on the references alone.
+///
+/// Rewritten for NOTE 14 from
+/// `r_id_04_reentered_proposal_is_flagged_at_the_submission_deadline_reference`.
 #[test]
-fn r_id_04_reentered_proposal_is_flagged_at_the_submission_deadline_reference() {
-    reentered_stays_on(Backend::Reference);
+fn r_id_04_reentered_proposal_is_derived_at_the_later_call_deadline_reference() {
+    reentered_later_deadline_enters_on(Backend::Reference);
 }
 
-/// R-ID-04, overview NOTE 7, ADR-008 ("Which deadline", interim, pending
-/// Daniel): the last validation after a re-entry asks the vault about the
-/// lead at the deadline of call 1, and never at that of call 2.
+fn reentered_minor_at_both_deadlines_stays_on(b: Backend) {
+    let s = reentered_validated(
+        b,
+        fstp_domain_testkit::r#gen::minor::LEAD_ADULT_AFTER_LATER_DEADLINE,
+    );
+    assert_eq!(
+        s.state(PR1),
+        Some(StateTag::IrcReview),
+        "R-ID-04, I-18, NOTE 14: L1 is 18 or older only after the deadline of \
+         call 2, so the re-entered PR1 stays minor-flagged in IRC_REVIEW"
+    );
+}
+
+/// R-ID-04, I-18, NOTE 14 (decided 2026-10-29): a lead shown 18 or older
+/// only after the deadline of the later call leaves the re-entered
+/// proposal minor-flagged.
 #[test]
-fn r_id_04_reentered_gate_asks_about_the_submission_deadline() {
+fn r_id_04_reentered_proposal_of_a_lead_adult_only_after_the_later_deadline_stays() {
+    reentered_minor_at_both_deadlines_stays_on(Backend::Production);
+}
+
+/// R-ID-04, I-18: the story of a lead adult after both deadlines on the
+/// references alone.
+#[test]
+fn r_id_04_reentered_proposal_of_a_lead_adult_only_after_the_later_deadline_stays_reference() {
+    reentered_minor_at_both_deadlines_stays_on(Backend::Reference);
+}
+
+/// R-ID-04, overview NOTE 7, NOTE 14, ADR-008 ("Which deadline", decided
+/// 2026-10-29): the last validation after a re-entry asks the vault about
+/// the lead at the deadline of call 2, in which the proposal passes IRC
+/// review, and never at that of call 1.
+///
+/// Rewritten for NOTE 14 from
+/// `r_id_04_reentered_gate_asks_about_the_submission_deadline`, which
+/// encoded the overturned submission-call reading.
+#[test]
+fn r_id_04_reentered_gate_asks_about_the_later_call_deadline() {
     let mut s = reentered(Backend::Production, LEAD_ADULT_AFTER_DEADLINE);
     let a = irc_assignment_in_call_2(IRC);
     s.run(&irc_review(IRC, a, true))
@@ -582,13 +632,13 @@ fn r_id_04_reentered_gate_asks_about_the_submission_deadline() {
         .collect();
     let want = Query::IsVerifiedAdultAtDeadline {
         account: L1,
-        deadline: CALL_DEADLINE,
+        deadline: LATER_DEADLINE,
     };
     assert_eq!(
         asked,
         vec![&want],
-        "ADR-008 (interim): the gate asks about the deadline of call 1 only, \
-         and it asks {qs:?}"
+        "NOTE 14 (decided 2026-10-29): the gate asks about the deadline of \
+         call 2 only, and it asks {qs:?}"
     );
 }
 

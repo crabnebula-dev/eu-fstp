@@ -76,11 +76,14 @@ pub enum Query {
     ///
     /// The answer is yes only for an effective attestation that shows the
     /// lead 18 or older at `deadline` (overview NOTE 7). It releases no age
-    /// and no date of birth.
+    /// and no date of birth. While a verification shows the lead under 18
+    /// at `deadline` against such an attestation, the vault gives no answer
+    /// until a manual identity check resolves the conflict, so every guard
+    /// that asks fails closed (state-machine NOTE 14, decided 2026-10-29).
     IsVerifiedAdultAtDeadline {
         /// The proposal's lead.
         account: AccountId,
-        /// The deadline of the call the proposal was submitted to (ADR-008, "Which deadline", interim).
+        /// The deadline of the call in which the proposal passes IRC review, the later call after a re-entry (ADR-008, "Which deadline", decided 2026-10-29).
         deadline: Timestamp,
     },
     /// Does any team member declare an affiliation on this proximity list? (I-35)

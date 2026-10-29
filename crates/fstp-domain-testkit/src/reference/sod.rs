@@ -71,9 +71,16 @@
 //!     derived, never read from the actor's `CreateDraft` field (R-ID-04
 //!     Derivation note). Every proposal is minor-flagged until its
 //!     IRC_REVIEW to NEGOTIATION gate. It stays flagged unless the vault's
-//!     ground truth shows an effective verified over-18 attestation of the
-//!     lead at the deadline of the created call when the gate passes
-//!     (state-machine NOTE 14, ADR-008 "Which deadline", interim). The
+//!     ground truth answers that the lead has an effective verified over-18
+//!     attestation when the gate passes. The deadline is that of the call
+//!     in which the proposal passes IRC review, the later call after a
+//!     re-entry (state-machine NOTE 14, ADR-008 "Which deadline", decided
+//!     2026-10-29). The guard into GRANTED derives the flag again in the
+//!     same way, and that derivation then holds (decided 2026-10-29). In
+//!     NEGOTIATION a guardian is also added when the vault answers that the
+//!     lead is not shown 18 or older, since the guard into GRANTED then
+//!     needs a consent (ADR-008 "Second derivation"). No answer refuses it
+//!     (overview NOTE 2). Test-author reading, for Daniel to confirm. The
 //!     reference reads the vault facts, never production's `VaultOutcome`
 //!     records, so it judges both backends alike ([`View::fold_with`]).
 //!   - Drafting and Judging grants need accepted confidentiality terms
@@ -344,11 +351,21 @@ pub struct RefProposal {
     pub call: CallId,
     /// Its lead.
     pub lead: AccountId,
-    /// Whether, when its IRC_REVIEW to NEGOTIATION gate passed, the vault
-    /// facts showed an effective verified over-18 attestation of the lead
-    /// at the deadline of its call (R-ID-04, NOTE 14). `false` before the
-    /// gate, so the proposal is minor-flagged.
+    /// The call of its IRC review: the created call, or the call of its
+    /// latest re-entry (NOTE 8). Its deadline is the instant the lead's age
+    /// counts at (state-machine NOTE 14, decided 2026-10-29).
+    pub irc_call: CallId,
+    /// Whether, when its last flag derivation passed, the vault facts
+    /// answered that the lead has an effective verified over-18
+    /// attestation at the deadline of [`RefProposal::irc_call`] (R-ID-04,
+    /// NOTE 14). The IRC_REVIEW to NEGOTIATION gate derives the flag, and
+    /// the guard into GRANTED derives it again (decided 2026-10-29).
+    /// `false` before the gate, so the proposal is minor-flagged.
     pub adult_at_gate: bool,
+    /// Whether the proposal is in NEGOTIATION, from the transitions folded.
+    /// There `AddGuardian` asks the vault again (ADR-008 "Second
+    /// derivation", decided 2026-10-29).
+    pub negotiating: bool,
 }
 
 impl RefProposal {
@@ -513,10 +530,11 @@ impl View {
     }
 
     /// Folds one core record with `truth`, the vault facts when the record
-    /// was written. At the IRC_REVIEW to NEGOTIATION gate the proposal
-    /// stays minor-flagged unless `truth` shows an effective verified
-    /// over-18 attestation of its lead at the deadline of its call
-    /// (R-ID-04 Derivation note, state-machine NOTE 14).
+    /// was written. At the IRC_REVIEW to NEGOTIATION gate and again at the
+    /// NEGOTIATION to GRANTED guard, the proposal is minor-flagged unless
+    /// `truth` answers that its lead has an effective verified over-18
+    /// attestation at the deadline of its call of IRC review (R-ID-04
+    /// Derivation note, state-machine NOTE 14).
     pub fn fold_with(&mut self, record: &Record, truth: &GroundTruth) -> Result<(), String> {
         self.fold_in(record, Some(truth))
     }
@@ -590,7 +608,9 @@ impl View {
                     RefProposal {
                         call: *call,
                         lead: *lead,
+                        irc_call: *call,
                         adult_at_gate: false,
+                        negotiating: false,
                     },
                 );
             }
@@ -659,18 +679,31 @@ impl View {
                 b.suspended = b.conflict_of_interest || b.ordinary_suspension;
             }
             Record::VaultEpochProcessed { epoch } => self.epoch = *epoch,
-            Record::Transitioned(t)
-                if t.from == StateTag::IrcReview && t.to == StateTag::Negotiation =>
-            {
+            Record::ReEntered {
+                proposal, to_call, ..
+            } => {
+                if let Some(p) = self.proposals.get_mut(proposal) {
+                    p.irc_call = *to_call;
+                }
+            }
+            // State-machine NOTE 14 (decided 2026-10-29): the gate into
+            // NEGOTIATION derives the flag, and the guard into GRANTED
+            // derives it again, at the deadline of the call of IRC review.
+            Record::Transitioned(t) => {
+                if let Some(p) = self.proposals.get_mut(&t.proposal) {
+                    p.negotiating = t.to == StateTag::Negotiation;
+                }
+                let derives = (t.from == StateTag::IrcReview && t.to == StateTag::Negotiation)
+                    || (t.from == StateTag::Negotiation && t.to == StateTag::Granted);
                 let deadline = self
                     .proposals
                     .get(&t.proposal)
-                    .and_then(|p| self.calls.get(&p.call))
+                    .and_then(|p| self.calls.get(&p.irc_call))
                     .map(|c| c.deadline);
-                if let Some(p) = self.proposals.get_mut(&t.proposal) {
+                if derives && let Some(p) = self.proposals.get_mut(&t.proposal) {
                     p.adult_at_gate = truth
                         .zip(deadline)
-                        .is_some_and(|(truth, d)| truth.is_adult_at(p.lead, d));
+                        .is_some_and(|(truth, d)| truth.adult_answer(p.lead, d) == Some(true));
                 }
             }
             Record::ConflictDetected(c) => {
@@ -1301,7 +1334,29 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
                 return refuse("binding id reused");
             }
             if guardian && !p.minor_flagged() {
-                return refuse("guardian for a proposal that is not minor-flagged");
+                // ADR-008 "Second derivation" (decided 2026-10-29): in
+                // NEGOTIATION the guard into GRANTED derives the flag again,
+                // so a lead the vault no longer shows 18 or older may bind
+                // the guardian whose consent it needs. A missing answer
+                // refuses the command (overview NOTE 2).
+                if !p.negotiating {
+                    return refuse("guardian for a proposal that is not minor-flagged");
+                }
+                let answer = view
+                    .calls
+                    .get(&p.irc_call)
+                    .and_then(|c| truth.adult_answer(p.lead, c.deadline));
+                match answer {
+                    Some(false) => {}
+                    Some(true) => {
+                        return refuse("guardian for a lead the vault shows 18 or older");
+                    }
+                    None => {
+                        return refuse(
+                            "overview NOTE 2, NOTE 14: the vault gives no answer about the lead's attestation",
+                        );
+                    }
+                }
             }
             let already = view
                 .bindings

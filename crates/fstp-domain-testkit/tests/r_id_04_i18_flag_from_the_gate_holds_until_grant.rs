@@ -4,9 +4,10 @@
 //! the vault at the IRC_REVIEW to NEGOTIATION gate, never from the actor.
 //! NOTE 9 checks guardian consent again before GRANTED for a minor-flagged
 //! proposal (I-18: no minor-flagged proposal reaches GRANTED without
-//! consent). Whether the guard into GRANTED derives the flag again is not
-//! decided (ADR-008, "Second derivation", interim). So these stories keep
-//! the attestation unchanged after the gate, and hold under either answer.
+//! consent). The guard into GRANTED derives the flag again (NOTE 14,
+//! decided 2026-10-29). These stories keep the attestation unchanged after
+//! the gate, so the gate's flag and the second derivation agree here.
+//! `r_id_04_i18_granted_guard_derives_the_flag_again.rs` covers a change.
 //!
 //! - Lead c sends the `minor` field set, but the vault holds an effective
 //!   verified over-18 attestation and no consent. The proposal is not

@@ -624,6 +624,11 @@ impl ReviewWorld {
         let ctx = step.ctx(self.sod.now, MODEL_COMMAND);
         let mut answers = Answers::new();
         for q in fstp_domain::queries(&self.sod.state, &step.cmd, &ctx)? {
+            // State-machine NOTE 14: the vault gives no answer to an
+            // unresolved age conflict, so the query stays unanswered.
+            if !self.sod.truth.answers(&q) {
+                continue;
+            }
             let a = self.answer(&q);
             answers.insert(q, a);
         }

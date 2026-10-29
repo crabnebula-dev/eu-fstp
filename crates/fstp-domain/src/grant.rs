@@ -73,11 +73,29 @@
 //!   GRANTED or IN_EXECUTION, for a milestone of the effective contract version.
 //!
 //! The grant clearance (design 3.3) asks `IsVerified` for the lead,
-//! `HasGuardianConsent` for a minor-flagged proposal, `WithinRecipientCap` for the
+//! `IsVerifiedAdultAtDeadline` for the lead and `HasGuardianConsent` for
+//! the proposal, `WithinRecipientCap` for the
 //! determined amount, `InExcludedClass` and `SameIdentityAsAny` for every
 //! held Receiving account of the proposal (I-04, I-06, SoD-09), and the
 //! I-15 question. The candidate set of `SameIdentityAsAny` holds the
 //! Drafting and Judging accounts that would break I-01 with the binding.
+//!
+//! The guard into GRANTED derives the minor flag again (state-machine
+//! NOTE 14, ADR-008 "Second derivation", decided 2026-10-29). The flag kept
+//! from the negotiation gate does not decide alone. The attestation
+//! question names the deadline of the call in which the proposal passed
+//! IRC review, the same call as at the negotiation gate. A proposal whose
+//! lead the vault does not show 18 or older there needs a verified
+//! guardian consent (I-18). Both answers are recorded before the
+//! transition, so the fold keeps this derivation from GRANTED on. A
+//! missing answer refuses the command (overview NOTE 2). An unresolved age
+//! conflict reaches the domain only as such a missing answer.
+//! `DeclineNegotiation` asks the same two questions in the same way, so
+//! it finds guardian consent missing exactly when this guard would
+//! (NOTE 9). Both decisions carry
+//! [`RulesVersion::MINOR_FLAG_2026_10_29`]. The fold derives the flag at
+//! GRANTED only for a `GrantDecided` under that version. An older one
+//! keeps the gate's flag, so a ledger written before keeps its meaning.
 //!
 //! I-15 (decided 2026-10-25): the same applicant is the verified identity
 //! of the lead, tenant-wide. Its prior deliverables are every deliverable
@@ -251,8 +269,10 @@ impl IdentityCleared {
     }
 }
 
-/// I-18: the proposal is not minor-flagged, or the vault holds a verified
-/// guardian consent for it.
+/// I-18: the proposal is not minor-flagged at the guard into GRANTED, or
+/// the vault holds a verified guardian consent for it. The guard derives
+/// the flag again from the vault (state-machine NOTE 14, decided
+/// 2026-10-29).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MinorCleared {
     proposal: ProposalId,
@@ -265,7 +285,8 @@ impl MinorCleared {
         self.proposal
     }
 
-    /// Whether the proposal is minor-flagged, so consent was checked.
+    /// Whether the guard into GRANTED found the proposal minor-flagged, so
+    /// the consent decided.
     pub fn minor(&self) -> bool {
         self.minor
     }
@@ -416,7 +437,9 @@ impl GrantDecided {
         }
     }
 
-    /// The grant record of a full clearance, under the M2 readings.
+    /// The grant record of a full clearance, under the M2 readings with
+    /// Daniel's answers of 2026-10-29 on the minor flag
+    /// ([`RulesVersion::MINOR_FLAG_2026_10_29`]).
     pub fn from_clearance(c: &GrantClearance) -> GrantDecided {
         GrantDecided {
             proposal: c.amount.proposal,
@@ -426,7 +449,7 @@ impl GrantDecided {
             approval: c.approval,
             contract: c.contract.contract,
             epoch: c.cap.epoch,
-            rules: RulesVersion::M2,
+            rules: RulesVersion::MINOR_FLAG_2026_10_29,
         }
     }
 
@@ -530,6 +553,9 @@ struct Grant {
     plan: PlanVersionId,
     /// The milestones the programme manager closed (NOTE 12).
     closed: BTreeSet<MilestoneId>,
+    /// The rules version of its `GrantDecided`. The fold of the GRANTED
+    /// transition reads it (state-machine NOTE 14).
+    rules: RulesVersion,
 }
 
 /// One deliverable from the M5 checks (I-15).
@@ -597,6 +623,11 @@ impl MoneyState {
     /// The plan of the effective contract version of the grant `proposal`.
     pub fn contract_plan(&self, proposal: ProposalId) -> Option<PlanVersionId> {
         self.grants.get(&proposal).map(|g| g.plan)
+    }
+
+    /// The rules version of the `GrantDecided` of `proposal`, once granted.
+    pub fn grant_rules(&self, proposal: ProposalId) -> Option<RulesVersion> {
+        self.grants.get(&proposal).map(|g| g.rules)
     }
 
     /// Whether the programme manager closed `milestone` of the grant `proposal`.
@@ -698,10 +729,6 @@ pub(crate) const fn transition(
 pub(crate) struct Subject {
     /// The lead.
     pub(crate) lead: AccountId,
-    /// Whether the proposal is minor-flagged, as the NEGOTIATION gate
-    /// derived it from the vault (R-ID-04, state-machine NOTE 14). It is
-    /// never the actor's `CreateDraft` field.
-    pub(crate) minor: bool,
     /// The creation call, whose frozen policy governs the proposal (NOTE 8).
     pub(crate) call: CallId,
     /// The programme.
@@ -720,7 +747,6 @@ pub(crate) fn subject(state: &State, proposal: ProposalId) -> Result<Subject, Re
     let currency = crate::policy::programme_currency(state, programme).ok_or_else(unknown)?;
     Ok(Subject {
         lead: d.lead,
-        minor: crate::proposal::draft::minor_flagged(state, proposal),
         call: d.call,
         programme,
         state: tag,
@@ -1266,9 +1292,12 @@ fn decide_determine(
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ClearancePlan {
     lead: AccountId,
-    minor: bool,
     verified: Query,
-    consent: Option<Query>,
+    /// The lead's attestation at the deadline of the call of IRC review,
+    /// asked again to derive the minor flag (state-machine NOTE 14).
+    adult: Query,
+    /// The guardian consent, asked whatever the negotiation gate found.
+    consent: Query,
     cap: Query,
     lead_held: bool,
     receiving: Vec<ReceivingCheck>,
@@ -1280,8 +1309,11 @@ struct ClearancePlan {
 
 impl ClearancePlan {
     fn queries(&self) -> Vec<Query> {
-        let mut out = vec![self.verified.clone()];
-        out.extend(self.consent.iter().cloned());
+        let mut out = vec![
+            self.verified.clone(),
+            self.adult.clone(),
+            self.consent.clone(),
+        ];
         out.push(self.cap.clone());
         for r in &self.receiving {
             out.push(r.excluded.clone());
@@ -1303,9 +1335,9 @@ fn clearance_plan(
     let (repeat_local, repeat) = repeat_check(state, s.lead, proposal);
     Ok(ClearancePlan {
         lead: s.lead,
-        minor: s.minor,
         verified: Query::IsVerified { account: s.lead },
-        consent: s.minor.then_some(Query::HasGuardianConsent { proposal }),
+        adult: crate::proposal::draft::adult_query(state, proposal).ok_or_else(unknown)?,
+        consent: Query::HasGuardianConsent { proposal },
         cap: cap_query(state, proposal, determination.granted)?,
         lead_held,
         receiving,
@@ -1345,9 +1377,13 @@ fn clear(
     if !record_answer(out, &plan.verified, answers)? {
         fail(vault(RuleRef::Sod09));
     }
-    if let Some(q) = &plan.consent
-        && !record_answer(out, q, answers)?
-    {
+    // State-machine NOTE 14 (decided 2026-10-29): the guard derives the
+    // minor flag again from the vault. Both answers are recorded, and a
+    // missing one refuses the command (overview NOTE 2). A minor-flagged
+    // proposal needs a verified guardian consent (I-18).
+    let adult = record_answer(out, &plan.adult, answers)?;
+    let consent = record_answer(out, &plan.consent, answers)?;
+    if !adult && !consent {
         fail(vault(RuleRef::I18));
     }
     for r in &plan.receiving {
@@ -1401,7 +1437,7 @@ fn clear(
         },
         minor: MinorCleared {
             proposal,
-            minor: plan.minor,
+            minor: !adult,
         },
     })
 }
@@ -1644,6 +1680,10 @@ fn decide_fact(
         answers,
         &mut outcomes,
     )?;
+    // The answers precede the transition, so the fold derives the minor
+    // flag again from the recorded attestation bit (state-machine NOTE 14,
+    // decided 2026-10-29). They are all `VaultOutcome` records.
+    out.extend(outcomes);
     out.push(Record::GrantDecided(GrantDecided::from_clearance(&c)));
     // R-LA-03, NOTE 13: the row's actor is the applicant and the programme
     // manager. When the contract port completes the facts, the approving
@@ -1660,7 +1700,6 @@ fn decide_fact(
         actor,
         decision: Some(c.approval),
     }));
-    out.extend(outcomes);
     Ok(out)
 }
 
@@ -1671,10 +1710,13 @@ fn decide_fact(
 /// The questions of a `DeclineNegotiation`.
 struct DeclinePlan {
     proposal: ProposalId,
-    minor: bool,
     verified: Query,
     sod09: Option<Query>,
-    consent: Option<Query>,
+    /// The lead's attestation at the deadline of the call of IRC review,
+    /// asked as the guard into GRANTED asks it (state-machine NOTE 14).
+    adult: Query,
+    /// The guardian consent, asked whatever the negotiation gate found.
+    consent: Query,
     range_failed: bool,
     cap: Option<Query>,
     repeat_local: bool,
@@ -1753,7 +1795,6 @@ fn check_decline(state: &State, cmd: &Command, ctx: &Ctx) -> Result<DeclinePlan,
     let (repeat_local, repeat) = repeat_check(state, s.lead, *proposal);
     Ok(DeclinePlan {
         proposal: *proposal,
-        minor: s.minor,
         verified: Query::IsVerified { account: s.lead },
         sod09: sod09_query(
             state,
@@ -1761,9 +1802,10 @@ fn check_decline(state: &State, cmd: &Command, ctx: &Ctx) -> Result<DeclinePlan,
             s.programme,
             lead_opening(state, *proposal, s.lead),
         ),
-        consent: s.minor.then_some(Query::HasGuardianConsent {
+        adult: crate::proposal::draft::adult_query(state, *proposal).ok_or_else(unknown)?,
+        consent: Query::HasGuardianConsent {
             proposal: *proposal,
-        }),
+        },
         range_failed,
         cap,
         repeat_local,
@@ -1779,7 +1821,8 @@ impl DeclinePlan {
         out.extend(self.sod09.iter().cloned());
         out.extend(self.cap.iter().cloned());
         out.extend(self.repeat.iter().cloned());
-        out.extend(self.consent.iter().cloned());
+        out.push(self.adult.clone());
+        out.push(self.consent.clone());
         out
     }
 
@@ -1818,10 +1861,17 @@ impl DeclinePlan {
         if !self.repeat_local || shared {
             f.insert(NegotiationFailure::RepeatRecordIncomplete);
         }
-        if let Some(q) = &self.consent
-            && self.minor
-            && !record_answer(out, q, answers)?
-        {
+        // State-machine NOTE 14 (decided 2026-10-29), NOTE 9: consent is
+        // missing exactly when the guard into GRANTED would find it so. The
+        // decline derives the flag again in the same way, records both
+        // answers and refuses on a missing one (overview NOTE 2).
+        // Interim reading, pending Daniel: during an unresolved age
+        // conflict this refuses the decline even when another ground
+        // holds, since `engine::decide` refuses any command with an
+        // unanswered query it asks. A manual check or a withdrawal ends it.
+        let adult = record_answer(out, &self.adult, answers)?;
+        let consent = record_answer(out, &self.consent, answers)?;
+        if !adult && !consent {
             f.insert(NegotiationFailure::GuardianConsentMissing);
         }
         Ok(f)
@@ -1845,7 +1895,7 @@ fn decide_decline(
     let mut out = vec![Record::NegotiationDeclined {
         proposal: plan.proposal,
         reason,
-        rules: RulesVersion::M2,
+        rules: RulesVersion::MINOR_FLAG_2026_10_29,
     }];
     if let Some(amount) = plan.reserved {
         out.push(Record::CapReleased {
@@ -1853,6 +1903,9 @@ fn decide_decline(
             amount,
         });
     }
+    // The answers precede the transition, which drops the kept
+    // attestation bit, so no bit outlives the batch (state-machine NOTE 14).
+    out.extend(outcomes);
     out.push(transition(
         plan.proposal,
         StateTag::Negotiation,
@@ -1861,7 +1914,6 @@ fn decide_decline(
         ctx,
         None,
     ));
-    out.extend(outcomes);
     Ok(out)
 }
 
@@ -2226,6 +2278,7 @@ pub(crate) fn apply(
                     granted: g.granted,
                     plan: g.agreed_plan,
                     closed: BTreeSet::new(),
+                    rules: g.rules,
                 },
             );
             Ok(())
