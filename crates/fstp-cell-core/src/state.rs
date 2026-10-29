@@ -170,6 +170,7 @@ pub struct AuthState {
     recoveries: BTreeMap<[u8; 16], RecoveryCase>,
     invitations: BTreeMap<[u8; 16], Invitation>,
     first_admins: BTreeSet<AccountId>,
+    recovered: BTreeMap<AccountId, Timestamp>,
 }
 
 impl AuthState {
@@ -269,9 +270,27 @@ impl AuthState {
     pub fn first_admin_enrolled(&self, account: AccountId) -> bool {
         self.first_admins.contains(&account)
     }
+
+    /// Whether a session of `account` that started at `started` began at or
+    /// before the entry instant of the account's latest completed
+    /// recovery (I-79, design section 8.5).
+    ///
+    /// A completion "ends every session of the account". Its batch names
+    /// the sessions its route read, and the gate refuses the others from
+    /// this check on, as it does for a binding end (design section 5.4
+    /// step 1). The entry instant is the batch time, which the driver
+    /// takes at admission. A login with an old credential between that
+    /// instant and the commit starts after it, so this check does not
+    /// refuse it. Only the login route can close that window.
+    pub fn ended_by_recovery(&self, account: AccountId, started: Timestamp) -> bool {
+        self.recovered
+            .get(&account)
+            .is_some_and(|completed| started <= *completed)
+    }
 }
 
-/// A SoD-07 approval of one self-grant digest.
+/// A SoD-07 approval of one self-grant digest. A digest may hold several
+/// approvals, each from its own `SelfGrantApproved` record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Approval {
     /// The approving tenant admin.
@@ -288,7 +307,7 @@ pub struct TenantState {
     admins: BTreeMap<AccountId, Timestamp>,
     ever_admin: bool,
     admin_ends: Vec<(AccountId, Timestamp)>,
-    approvals: BTreeMap<[u8; 32], Approval>,
+    approvals: BTreeMap<[u8; 32], Vec<Approval>>,
     policy: TenantLoginPolicy,
 }
 
@@ -308,9 +327,23 @@ impl TenantState {
         self.admins.keys().copied().collect()
     }
 
-    /// The approval of `digest`, if any.
-    pub fn approval(&self, digest: &[u8; 32]) -> Option<Approval> {
-        self.approvals.get(digest).copied()
+    /// The approvals of `digest`, in ledger order. Empty when no admin
+    /// approved it.
+    ///
+    /// SoD-07, Q40: a digest may hold several approvals. An approval that
+    /// can never admit the grant, such as the grantor's own, must not
+    /// block a later approval by a second tenant admin. So each
+    /// `SelfGrantApproved` record adds one approval, and the grant uses
+    /// the first that admits it (`fstp_celltest::reference::auth::admit_self_grant`).
+    pub fn approvals(&self, digest: &[u8; 32]) -> &[Approval] {
+        self.approvals.get(digest).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a grant used an approval of `digest`. The digest names one
+    /// command id, so one grant at most can match it, and a used digest
+    /// takes no further approval (TH-05).
+    pub fn digest_used(&self, digest: &[u8; 32]) -> bool {
+        self.approvals(digest).iter().any(|a| a.used)
     }
 
     /// The tenant login policy, the defaults until one is set.
@@ -514,9 +547,22 @@ impl CellState {
     /// that a record has not ended yet: a scheduled end that is due
     /// (design section 5.1, `EndSessionsAtBindingEnd`).
     pub fn binding_end_due(&self, a: AccountId, now: Timestamp) -> bool {
-        self.bindings.values().any(|b| {
-            b.account == a && b.recorded_end.is_none() && b.scheduled_end.is_some_and(|e| e <= now)
-        })
+        !self.due_binding_ends(a, now).is_empty()
+    }
+
+    /// The scheduled end instants of `a`'s bindings that are due at `now`
+    /// and that no record has ended yet, in instant order (design section
+    /// 5.1, `EndSessionsAtBindingEnd`).
+    pub fn due_binding_ends(&self, a: AccountId, now: Timestamp) -> Vec<Timestamp> {
+        let mut out: Vec<Timestamp> = self
+            .bindings
+            .values()
+            .filter(|b| b.account == a && b.recorded_end.is_none())
+            .filter_map(|b| b.scheduled_end.filter(|e| *e <= now))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 }
 
@@ -786,6 +832,9 @@ fn fold_auth(
                 return Err(inconsistent());
             }
             c.completed = Some(*path);
+            // The latest completion of the account, for the gate (I-79).
+            let latest = a.recovered.entry(*account).or_insert(at);
+            *latest = (*latest).max(at);
         }
         R::InvitationIssued {
             invitation,
@@ -890,24 +939,30 @@ fn fold_tenant(t: &mut TenantState, at: Timestamp, r: &TenantRecord) -> Result<(
             grant_digest,
             expires_at,
         } => {
-            if t.approvals.get(grant_digest).is_some_and(|a| a.used) {
+            // A used digest named one command, which committed, so no
+            // later approval of it can admit anything (TH-05).
+            if t.digest_used(grant_digest) {
                 return Err(duplicate());
             }
-            t.approvals.insert(
-                *grant_digest,
-                Approval {
+            t.approvals
+                .entry(*grant_digest)
+                .or_default()
+                .push(Approval {
                     approver: *approver,
                     expires_at: *expires_at,
                     used: false,
-                },
-            );
+                });
         }
         TenantRecord::SelfGrantApprovalUsed { grant_digest } => {
-            let a = t.approvals.get_mut(grant_digest).ok_or_else(unknown)?;
-            if a.used {
+            if t.digest_used(grant_digest) {
                 return Err(duplicate());
             }
-            a.used = true;
+            let all = t.approvals.get_mut(grant_digest).ok_or_else(unknown)?;
+            // Every approval of the digest is spent with it: the digest
+            // holds the command id, so it names one grant only.
+            for a in all.iter_mut() {
+                a.used = true;
+            }
         }
         TenantRecord::LoginPolicySet { policy } => {
             // Structure only: "may only shorten" applies where a value is

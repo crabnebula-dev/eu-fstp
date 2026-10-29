@@ -27,14 +27,12 @@
 //!
 //! # What is not built here yet
 //!
-//! - No [`engine::CellStore`] over `fstp_pgstore::PgRecordStore` exists
-//!   yet. `PgRecordStore::append_with` gives the new head only, and a
-//!   `CellStore` must also give the chain link and the witness receipt of
-//!   each append, which the vault acknowledgement needs. Until then the
-//!   engine runs over the anchoring in-memory store of [`witness`], which
-//!   runs the append protocol of design section 5.3, or over
-//!   [`engine::Unanchored`] in tests. `PgRecordStore::new` already takes
-//!   the pinned witness keys and refuses an empty set.
+//! - [`engine::pg::PgCellStore`] is the [`engine::CellStore`] over
+//!   `fstp_pgstore::PgRecordStore`. It reports the chain link and the
+//!   witness receipt of each append, and [`engine::startup::start_pg`]
+//!   starts a cell over it. [`run`] does not build one yet: it needs the
+//!   database pool, the custody backend and the keystore from the
+//!   configuration, and the witness transport below.
 //! - The witness wire format and service are lane W2g's
 //!   (`fstp_witness::run` is not written). [`witness::WitnessLink`] is the
 //!   seam a transport fills.
@@ -133,9 +131,11 @@ pub fn read_config(path: &std::path::Path) -> Result<Vec<u8>, CellError> {
 /// # Errors
 ///
 /// [`CellError::Config`] for a missing or refused configuration. Then
-/// [`CellError::NotImplemented`] naming the production store: a serving
-/// cell needs `fstp_pgstore::PgRecordStore` (lane W2e) and the witness
-/// transport (lane W2g), and it never serves over an in-memory ledger.
+/// [`CellError::NotImplemented`] naming what a serving cell still needs:
+/// the witness transport (lane W2g), and the database pool, custody and
+/// keystore built from the configuration for
+/// [`engine::startup::start_pg`] (lane W3a). It never serves over an
+/// in-memory ledger.
 pub fn run() -> Result<(), CellError> {
     let path = std::env::var_os("FSTP_CELL_CONFIG")
         .ok_or(CellError::Config(config::ConfigError::Missing))?;
@@ -143,6 +143,6 @@ pub fn run() -> Result<(), CellError> {
     let cfg = config::decode(&bytes).map_err(CellError::Config)?;
     let _ = cfg;
     Err(CellError::NotImplemented(
-        "fstp_cell::run over fstp_pgstore::PgRecordStore (lane W2e) and the witness transport (lane W2g)",
+        "fstp_cell::run: the witness transport (lane W2g), and the pool, custody and keystore from the configuration for engine::startup::start_pg (lane W3a)",
     ))
 }

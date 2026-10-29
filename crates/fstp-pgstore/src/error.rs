@@ -188,9 +188,13 @@ pub enum AppendFault {
     /// The batch's step-up is past its freshness bound at commit, or the
     /// store has no clock to check it with (I-78).
     StepUpStale,
-    /// A side-effect row already exists: a step-up consumed again or a
-    /// session ended again. The whole append aborted (I-77, I-78).
-    SideEffectReplayed,
+    /// The `auth_log.stepup_consumed` row of the batch's step-up already
+    /// exists: the step-up was consumed again. The whole append aborted
+    /// (I-78).
+    StepUpReplayed,
+    /// An `auth_log.session_end` row of the batch already exists: a
+    /// session ended again. The whole append aborted (I-77).
+    SessionEndReplayed,
     /// An outbox row of the side effects has the `id` or the `idem` of a
     /// stored row, or of another row of the same append. The whole append
     /// aborted (TH-21).
@@ -211,7 +215,8 @@ impl fmt::Display for AppendFault {
         match self {
             AppendFault::Refused(e) => write!(f, "{e}"),
             AppendFault::StepUpStale => f.write_str("the step-up is past its freshness bound"),
-            AppendFault::SideEffectReplayed => f.write_str("a side-effect row already exists"),
+            AppendFault::StepUpReplayed => f.write_str("the step-up was consumed already"),
+            AppendFault::SessionEndReplayed => f.write_str("a session was ended already"),
             AppendFault::OutboxDuplicate => f.write_str("an outbox row already exists"),
             AppendFault::Pending(e) => write!(f, "an earlier prepare is unresolved: {e}"),
             AppendFault::Unknown => f.write_str("the commit outcome is unknown"),
@@ -235,7 +240,8 @@ impl From<AppendFault> for AppendError {
         match e {
             AppendFault::Refused(r) => r,
             AppendFault::StepUpStale
-            | AppendFault::SideEffectReplayed
+            | AppendFault::StepUpReplayed
+            | AppendFault::SessionEndReplayed
             | AppendFault::OutboxDuplicate
             | AppendFault::Pending(_)
             | AppendFault::Unknown

@@ -37,8 +37,9 @@
 //! `InDoubtAbsent { n, link }` (design section 7.2).
 //!
 //! [`MemDatabase`] keeps the tables in memory. It is the store of tests
-//! and of the demo path until `fstp_pgstore::PgRecordStore` (lane W2e)
-//! takes its place. The sealed rows and the chain are real. The
+//! and of the demo path. A serving cell runs
+//! [`crate::engine::pg::PgCellStore`] over `fstp_pgstore::PgRecordStore`
+//! instead. The sealed rows and the chain are real. The
 //! plaintext entries are kept beside them in a `fstp_ledger::MemStore`,
 //! so reads need no decryption, which a database store does instead.
 
