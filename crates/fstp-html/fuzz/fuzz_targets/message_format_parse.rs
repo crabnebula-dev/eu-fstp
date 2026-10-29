@@ -2,15 +2,33 @@
 //!
 //! Design checks: catalogue syntax.
 //!
-//! W0 skeleton. The code under test is a stub that refuses every input
-//! with a typed `NotImplemented` error. Until lane W1d lands it, the
-//! target checks only that no input panics and that a refusal formats.
+//! This target checks that no input panics and that the result is the
+//! same twice. An accepted message must meet the outer bounds of the
+//! grammar in `crates/fstp-html/tests/common/message.rs`: UTF-8 of 1 to
+//! 4096 bytes, with no control character except tab and line feed. The
+//! tests compare the parser with the full reference grammar.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let shown = format!("{:?}", fstp_html::parse_message_format(data));
-    assert!(!shown.is_empty());
+    let first = fstp_html::parse_message_format(data);
+    assert_eq!(first, fstp_html::parse_message_format(data));
+    match first {
+        Ok(_) => {
+            assert!(
+                !data.is_empty() && data.len() <= 4096,
+                "accepted out of bounds"
+            );
+            let s = std::str::from_utf8(data).ok();
+            assert!(s.is_some(), "accepted bytes that are not UTF-8");
+            let controls = s
+                .unwrap_or_default()
+                .chars()
+                .any(|c| c.is_control() && c != '\t' && c != '\n');
+            assert!(!controls, "accepted a control character");
+        }
+        Err(e) => assert!(!e.to_string().is_empty()),
+    }
 });
