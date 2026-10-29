@@ -237,7 +237,7 @@ impl ConformanceModel {
                 out.extend(assign_declared(R2, PC, current, AssignmentKind::Reviewer));
                 out
             }
-            ConfAction::CutOff(nominate) => vec![cut_off(
+            ConfAction::CutOff(nominate) => cut_off(
                 R1,
                 cut_off_decision(current.raw()),
                 current,
@@ -245,7 +245,7 @@ impl ConformanceModel {
                 u32::from(*nominate),
                 false,
                 ballots(&[R1, R2, R3], Vote::For),
-            )],
+            ),
             ConfAction::AssignIrc => {
                 let mut out = assign_declared(IRC, PC, current, AssignmentKind::Irc);
                 out.extend(assign_declared(IRC2, PC, current, AssignmentKind::Irc));

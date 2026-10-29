@@ -70,10 +70,10 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::Query;
 use fstp_domain::policy::{
-    ExclusionClasses, FrozenPolicy, FrozenValues, FunderProfileRef, InferenceBinding,
-    IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, McpBindingActions, OpaqueValue,
-    PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity, SpdxId, TieBreakRule,
-    VotingRules, is_frozen_opaque,
+    AgentContentAccess, ExclusionClasses, FrozenPolicy, FrozenValues, FunderProfileRef,
+    InferenceBinding, IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet,
+    McpBindingActions, OpaqueValue, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity,
+    SpdxId, TieBreakRule, VotingRules, is_frozen_opaque,
 };
 use fstp_domain::proposal::PlanOrigin;
 use fstp_domain::record::{Record, Transitioned};
@@ -425,6 +425,12 @@ pub fn apply_frozen(v: &mut PolicyVersion, param: ParamId, pick: u8) -> Result<(
             &[McpBindingActions::DraftOnly, McpBindingActions::Allowed],
             pick,
         ),
+        // P-75 is typed since M4 change D6.
+        ParamId::P75 => choose(
+            &mut f.p75,
+            &[AgentContentAccess::Off, AgentContentAccess::On],
+            pick,
+        ),
         ParamId::P24 => Err("P-24 has one value only, so no edit can change it".to_owned()),
         p if is_frozen_opaque(p) => {
             let c = opaque_candidates(p.spec_id())?;
@@ -461,6 +467,7 @@ pub fn frozen_diff(a: &FrozenValues, b: &FrozenValues) -> BTreeSet<ParamId> {
         (ParamId::P26, a.p26 != b.p26),
         (ParamId::P39, a.p39 != b.p39),
         (ParamId::P53, a.p53 != b.p53),
+        (ParamId::P75, a.p75 != b.p75),
         (ParamId::P77, a.p77 != b.p77),
     ];
     let mut out: BTreeSet<ParamId> = typed
@@ -967,7 +974,9 @@ pub fn act_steps(m: &TwinGhost, p: Option<ProposalId>, act: Act) -> Option<Vec<S
             if order.is_empty() {
                 return None;
             }
-            vec![cut_off(
+            // M4 change D5: the round opens, R1, R2 and R3 cast their own
+            // ballots, and R1 records the cut-off.
+            cut_off(
                 R1,
                 cut_off_decision(100u128.saturating_add(m.cut_offs)),
                 in_call,
@@ -975,7 +984,7 @@ pub fn act_steps(m: &TwinGhost, p: Option<ProposalId>, act: Act) -> Option<Vec<S
                 nominated,
                 tie,
                 ballots(&[R1, R2, R3], Vote::For),
-            )]
+            )
         }
         Act::AssignIrc(i) => assign_declared(i, p, c, AssignmentKind::Irc),
         Act::Irc(i, validate) => vec![irc_review(

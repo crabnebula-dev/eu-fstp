@@ -17,6 +17,7 @@ tagged_enum! {
     Command;
     fields {
         CreateProgramme { policy },
+        ActivateProgramme { programme, decision, report, revision, creator_builders },
         EditPolicy { base, version },
         ApproveCallPublication { call, decision },
         PublishCall { call, config, config_model },
@@ -48,7 +49,10 @@ tagged_enum! {
         SubmitRevision { proposal, plan },
         RankAfterStage2 { proposal },
         ExpireStage2 { proposal },
-        RecordCutOff { decision, call, order, nominated, rationale, tie_breaks, ballots },
+        OpenCutOffRound { round, call, order, nominated, rationale, tie_breaks },
+        CastBallot { round, vote },
+        DelegateVote { round, to },
+        RecordCutOff { round },
         RecordIrcReview { assignment, verdict },
         DeclineAfterConcern { proposal },
         ReEnter { proposal, call },

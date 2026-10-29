@@ -1236,15 +1236,22 @@ impl MoneyWorld {
         }
     }
 
-    /// The world after `step`, which must be accepted.
-    pub fn must(&self, step: &Step) -> Result<MoneyWorld, String> {
-        match self.step(step)? {
-            Some((w, _)) => Ok(w),
-            None => Err(format!(
-                "{:?} by {:?} was refused by production and the references",
-                step.cmd, step.actor
-            )),
+    /// The world after `steps`, each of which must be accepted. One step
+    /// or a sequence, such as a cut-off since M4 change D5.
+    pub fn must(&self, steps: &impl crate::r#gen::roster::Steps) -> Result<MoneyWorld, String> {
+        let mut w = self.clone();
+        for step in steps.as_steps() {
+            w = match w.step(step)? {
+                Some((next, _)) => next,
+                None => {
+                    return Err(format!(
+                        "{:?} by {:?} was refused by production and the references",
+                        step.cmd, step.actor
+                    ));
+                }
+            };
         }
+        Ok(w)
     }
 
     /// Folds `records` that a broken engine would emit into production

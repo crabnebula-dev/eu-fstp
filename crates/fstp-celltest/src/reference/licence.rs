@@ -1092,7 +1092,13 @@ pub const fn class_of(kind: CommandKind) -> RefClass {
         | CommandKind::WithdrawPaymentRequest
         | CommandKind::RequestPaymentChanges
         | CommandKind::ClosePaymentRequest => RefClass::Payments,
-        CommandKind::EditPolicy
+        // M4 changes D2 and D5: the activation and the round commands are
+        // not Q18 option B commands, so the strict reading protects them.
+        CommandKind::ActivateProgramme
+        | CommandKind::OpenCutOffRound
+        | CommandKind::CastBallot
+        | CommandKind::DelegateVote
+        | CommandKind::EditPolicy
         | CommandKind::DraftCall
         | CommandKind::EditCall
         | CommandKind::ApproveCallPublication

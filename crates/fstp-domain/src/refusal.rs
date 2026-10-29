@@ -56,6 +56,13 @@ pub enum RuleRef {
     I50,
     /// I-64: committed amounts drop to the paid total at closure.
     I64,
+    /// I-65: every imported value is confirmed or edited by a named
+    /// programme manager before it takes effect.
+    I65,
+    /// I-66: no activation while the validation report shows a failure.
+    I66,
+    /// I-67: activation needs a second person who did not build the programme.
+    I67,
     /// I-78: high-risk actions need a step-up.
     I78,
     /// I-84: MCP calls pass the same checks as the web interface.
@@ -167,7 +174,7 @@ pub enum RuleRef {
 impl RuleRef {
     /// Every variant except `Param`, in declaration order.
     /// `Param` variants are covered by `crate::rules::CATALOGUE`.
-    pub const ALL_FIXED: [RuleRef; 74] = [
+    pub const ALL_FIXED: [RuleRef; 77] = [
         RuleRef::I01,
         RuleRef::I02,
         RuleRef::I03,
@@ -190,6 +197,9 @@ impl RuleRef {
         RuleRef::I36,
         RuleRef::I50,
         RuleRef::I64,
+        RuleRef::I65,
+        RuleRef::I66,
+        RuleRef::I67,
         RuleRef::I78,
         RuleRef::I84,
         RuleRef::I85,
@@ -270,6 +280,9 @@ impl RuleRef {
             RuleRef::I36 => "I-36",
             RuleRef::I50 => "I-50",
             RuleRef::I64 => "I-64",
+            RuleRef::I65 => "I-65",
+            RuleRef::I66 => "I-66",
+            RuleRef::I67 => "I-67",
             RuleRef::I78 => "I-78",
             RuleRef::I84 => "I-84",
             RuleRef::I85 => "I-85",

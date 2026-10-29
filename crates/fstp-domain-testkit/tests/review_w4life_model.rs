@@ -13,7 +13,7 @@ use fstp_domain::record::Record;
 use fstp_domain::rules::StateTag;
 use fstp_domain::scoring::{ScoreKey, Stage};
 use fstp_domain_testkit::r#gen::review::{IRC, L1, L2, PR1, PR2, R1, R2, R3, plan_of, tag};
-use fstp_domain_testkit::r#gen::roster::{Backend, STAFF_PM, Step, call, publish};
+use fstp_domain_testkit::r#gen::roster::{Backend, STAFF_PM, Step, Steps, call, publish};
 use fstp_domain_testkit::mc::life_model::{
     IRC2, Story, assign_declared, ballots, cut_off, cut_off_decision, decline, expire, irc_review,
     life_judges, rank, revision_of, score, story_setup, submit_revision, system,
@@ -28,12 +28,16 @@ fn moves_to(records: &[Record], proposal: fstp_domain::id::ProposalId, to: State
 }
 
 /// Runs `step` on production alone. `Some` holds the records of an accepted step.
-fn production(s: &mut Story, step: &Step) -> Option<Vec<Record>> {
-    match s.world.rev.exec(step) {
-        Ok(Ok(records)) => Some(records),
-        Ok(Err(_)) => None,
-        Err(e) => panic!("harness: {e}"),
+fn production(s: &mut Story, steps: &impl Steps) -> Option<Vec<Record>> {
+    let mut out = Vec::new();
+    for step in steps.as_steps() {
+        match s.world.rev.exec(step) {
+            Ok(Ok(records)) => out.extend(records),
+            Ok(Err(_)) => return None,
+            Err(e) => panic!("harness: {e}"),
+        }
     }
+    Some(out)
 }
 
 /// PR1 in IRC_REVIEW in call 1, with IRC and IRC2 assigned and declared.

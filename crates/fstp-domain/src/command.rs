@@ -13,7 +13,7 @@ use fstp_money::NonNegAmount;
 
 use crate::amendment::AmendmentRoute;
 use crate::assignment::AssignmentKind;
-use crate::decision::{Ballot, IrcVerdict};
+use crate::decision::{IrcVerdict, Vote};
 use crate::grant::IneligibleCost;
 use crate::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CommandId, ContentDigest, ContractId,
@@ -22,6 +22,7 @@ use crate::id::{
     VaultEpoch,
 };
 use crate::payment::PaymentLine;
+use crate::policy::activation::ReportDigest;
 use crate::policy::{ModelRef, PolicyVersion, SpdxId};
 use crate::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin, Task};
 use crate::roles::Role;
@@ -131,6 +132,22 @@ pub enum Command {
     CreateProgramme {
         /// The first policy version. Its `programme` names the new programme.
         policy: Box<PolicyVersion>,
+    },
+    /// Activate a draft programme (I-66, I-67, M4 change D2). The approver
+    /// is the actor, a tenant admin outside the builder set. The engine
+    /// composes it from the creator's approval only (D2e).
+    ActivateProgramme {
+        /// The draft programme.
+        programme: ProgrammeId,
+        /// The activation decision.
+        decision: DecisionId,
+        /// The digest of the clean validation report the creator recomputed.
+        report: ReportDigest,
+        /// The draft revision the report covers.
+        revision: u32,
+        /// The builders the creator knows beyond the core's own: creator
+        /// record authors, import resolvers and acknowledgers (Q1).
+        creator_builders: BTreeSet<AccountId>,
     },
     /// Append a new policy version on top of the current head (I-23).
     EditPolicy {
@@ -429,10 +446,11 @@ pub enum Command {
         /// The proposal.
         proposal: ProposalId,
     },
-    /// Record the committee cut-off. Outcomes are computed per proposal (NOTE 6).
-    RecordCutOff {
-        /// The decision.
-        decision: DecisionId,
+    /// Open a cut-off round of a call (M4 change D5, R-EV-08). Members then
+    /// cast or delegate their own ballots in it.
+    OpenCutOffRound {
+        /// The new round, the decision id of its cut-off.
+        round: DecisionId,
         /// The call.
         call: CallId,
         /// The total order of the call's RANKED proposals.
@@ -443,8 +461,28 @@ pub enum Command {
         rationale: TextRef,
         /// The recorded P-17 tie-break, if any.
         tie_breaks: Option<TextRef>,
-        /// The ballots under P-16 (R-EV-09).
-        ballots: Vec<Ballot>,
+    },
+    /// Cast the actor's own ballot in a round (R-EV-09, D5). It names no
+    /// voter, so no member states another member's vote.
+    CastBallot {
+        /// The round.
+        round: DecisionId,
+        /// The vote.
+        vote: Vote,
+    },
+    /// Delegate the actor's own vote in a round to another committee
+    /// member (P-16 NOTE 8, D5).
+    DelegateVote {
+        /// The round.
+        round: DecisionId,
+        /// The member who holds the vote.
+        to: AccountId,
+    },
+    /// Record the cut-off of a round. It counts only the ballots cast in
+    /// the round under P-16, and outcomes are computed per proposal (NOTE 6).
+    RecordCutOff {
+        /// The round.
+        round: DecisionId,
     },
     /// Record one IRC review.
     RecordIrcReview {
@@ -650,6 +688,8 @@ pub enum Command {
 pub enum CommandKind {
     /// [`Command::CreateProgramme`].
     CreateProgramme,
+    /// [`Command::ActivateProgramme`].
+    ActivateProgramme,
     /// [`Command::EditPolicy`].
     EditPolicy,
     /// [`Command::DraftCall`].
@@ -712,6 +752,12 @@ pub enum CommandKind {
     RankAfterStage2,
     /// [`Command::ExpireStage2`].
     ExpireStage2,
+    /// [`Command::OpenCutOffRound`].
+    OpenCutOffRound,
+    /// [`Command::CastBallot`].
+    CastBallot,
+    /// [`Command::DelegateVote`].
+    DelegateVote,
     /// [`Command::RecordCutOff`].
     RecordCutOff,
     /// [`Command::RecordIrcReview`].
@@ -768,8 +814,9 @@ pub enum CommandKind {
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 58] = [
+    pub const ALL: [CommandKind; 62] = [
         CommandKind::CreateProgramme,
+        CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
         CommandKind::DraftCall,
         CommandKind::EditCall,
@@ -801,6 +848,9 @@ impl CommandKind {
         CommandKind::SubmitRevision,
         CommandKind::RankAfterStage2,
         CommandKind::ExpireStage2,
+        CommandKind::OpenCutOffRound,
+        CommandKind::CastBallot,
+        CommandKind::DelegateVote,
         CommandKind::RecordCutOff,
         CommandKind::RecordIrcReview,
         CommandKind::DeclineAfterConcern,
@@ -836,13 +886,15 @@ impl CommandKind {
     /// Covered: granting or changing a Drafting, Judging or Operations role
     /// (every `GrantRole`, `EndRole` and `ReinstateBinding`, since Receiving
     /// bindings arise from proposals), approving or releasing a payment, and
-    /// activating a programme or publishing a call. Creating a programme
-    /// counts as activating it (`SPEC/03-architecture/authentication.md`,
-    /// confirmed 2026-10-25).
+    /// activating a programme or publishing a call. Since M4 change D2 the
+    /// activation is its own step, `ActivateProgramme`. Creating a
+    /// programme stays high risk too, the strict reading of Q10 (M4 design
+    /// section 12.1 item 1, interim, pending Daniel).
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
             CommandKind::CreateProgramme
+                | CommandKind::ActivateProgramme
                 | CommandKind::GrantRole
                 | CommandKind::EndRole
                 | CommandKind::ReinstateBinding
@@ -884,6 +936,7 @@ impl Command {
     pub const fn kind(&self) -> CommandKind {
         match self {
             Command::CreateProgramme { .. } => CommandKind::CreateProgramme,
+            Command::ActivateProgramme { .. } => CommandKind::ActivateProgramme,
             Command::EditPolicy { .. } => CommandKind::EditPolicy,
             Command::DraftCall { .. } => CommandKind::DraftCall,
             Command::EditCall { .. } => CommandKind::EditCall,
@@ -915,6 +968,9 @@ impl Command {
             Command::SubmitRevision { .. } => CommandKind::SubmitRevision,
             Command::RankAfterStage2 { .. } => CommandKind::RankAfterStage2,
             Command::ExpireStage2 { .. } => CommandKind::ExpireStage2,
+            Command::OpenCutOffRound { .. } => CommandKind::OpenCutOffRound,
+            Command::CastBallot { .. } => CommandKind::CastBallot,
+            Command::DelegateVote { .. } => CommandKind::DelegateVote,
             Command::RecordCutOff { .. } => CommandKind::RecordCutOff,
             Command::RecordIrcReview { .. } => CommandKind::RecordIrcReview,
             Command::DeclineAfterConcern { .. } => CommandKind::DeclineAfterConcern,

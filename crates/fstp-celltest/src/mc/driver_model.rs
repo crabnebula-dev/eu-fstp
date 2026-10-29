@@ -1639,7 +1639,7 @@ pub mod paths {
             target,
             StateTag::Stage1 | StateTag::Stage2 | StateTag::Ranked
         ) {
-            eval.push(cut_off(
+            eval.extend(cut_off(
                 R1,
                 cut_off_decision(1),
                 call(1),

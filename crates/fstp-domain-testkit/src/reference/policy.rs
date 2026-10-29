@@ -52,6 +52,24 @@
 //! - A published call enforces the lower of the P-05 snapshot and the live
 //!   P-05, and every class of the P-13 snapshot or the live P-13 (P-05 and
 //!   P-13 NOTE 7). An unpublished call enforces the live values.
+//!
+//! Readings added for milestone M4, from `docs/handoff/m4-design.md`
+//! sections 3.2, 3.4 and 12.3 and `SPEC/02-domain/invariants.md` I-67.
+//! Each is interim, pending Daniel, as section 15.0 records:
+//!
+//! - A programme is a draft from its creation until an activation is
+//!   accepted (D1). Policy edits run on a draft. Call commands on a
+//!   draft are refused (D3).
+//! - The core builders of a draft are its creator and every author of a
+//!   policy version while it is a draft (Q1). The creator adds its own
+//!   builders through `creator_builders`.
+//! - The core `ActivateProgramme` is accepted only from an account the
+//!   shell attests as a tenant admin, outside the builder set and the
+//!   creator builders, on a draft, with a fresh decision id (D2, Q1). A
+//!   shared verified identity with a builder refuses it too (Q2). The
+//!   machines' vault gives every account its own identity.
+//! - The report digest and the revision are data in the core. The engine
+//!   pairs them with the creator's records once D2e lands.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
@@ -161,10 +179,11 @@ pub fn spec_live() -> Result<BTreeSet<String>, String> {
 }
 
 /// The frozen parameters that design section 2.4 gives a typed field of
-/// `FrozenValues`. The pure I-12 test ties this list to the struct.
-pub const TYPED_FROZEN: [&str; 18] = [
+/// `FrozenValues`, with P-75 since M4 change D6. The pure I-12 test ties
+/// this list to the struct.
+pub const TYPED_FROZEN: [&str; 19] = [
     "P-01", "P-02", "P-03", "P-04", "P-07", "P-09", "P-10", "P-11", "P-14", "P-15", "P-16", "P-17",
-    "P-21", "P-24", "P-26", "P-39", "P-53", "P-77",
+    "P-21", "P-24", "P-26", "P-39", "P-53", "P-75", "P-77",
 ];
 
 /// The live parameters that design section 2.4 gives a typed field of
@@ -297,6 +316,13 @@ pub struct ProgrammeGhost {
     pub last_author_p09: AccountId,
     /// How many calls the programme has published.
     pub published: u32,
+    /// Whether an activation was accepted. A programme starts as a draft
+    /// (M4 change D1).
+    pub active: bool,
+    /// The core builders while the programme is a draft: its creator and
+    /// every author of a policy version of it (I-67, Q1 interim reading).
+    /// The machines grant no binding, so no grantor joins the set here.
+    pub builders: BTreeSet<AccountId>,
 }
 
 /// One approval of a call.
@@ -564,9 +590,75 @@ impl Ghost {
             Command::PublishCall {
                 call, config_model, ..
             } => self.publish_verdict(who, *call, config_model),
+            Command::ActivateProgramme {
+                programme,
+                decision,
+                creator_builders,
+                ..
+            } => self.activate_verdict(who, tenant_admin, *programme, *decision, creator_builders),
             other => return Err(format!("not a policy or call command: {other:?}")),
         };
+        // M4 change D3: nothing runs on a draft programme beside policy
+        // edits. A call command on a draft is refused.
+        if v != Verdict::Refuse && self.on_draft(cmd) {
+            return Ok(Verdict::Refuse);
+        }
         Ok(v)
+    }
+
+    /// Whether `cmd` is a call command on a programme that is still a
+    /// draft (M4 change D3).
+    fn on_draft(&self, cmd: &Command) -> bool {
+        let programme = match cmd {
+            Command::DraftCall { programme, .. } => Some(*programme),
+            Command::EditCall { call, .. }
+            | Command::ApproveCallPublication { call, .. }
+            | Command::PublishCall { call, .. } => self.calls.get(call).map(|c| c.programme),
+            _ => None,
+        };
+        programme
+            .and_then(|p| self.programmes.get(&p))
+            .is_some_and(|p| !p.active)
+    }
+
+    /// Whether `programme` is known and activated (M4 change D1).
+    pub fn is_active(&self, programme: ProgrammeId) -> bool {
+        self.programmes.get(&programme).is_some_and(|p| p.active)
+    }
+
+    /// The core builders of `programme` (I-67), empty for an unknown one.
+    pub fn builders(&self, programme: ProgrammeId) -> BTreeSet<AccountId> {
+        self.programmes
+            .get(&programme)
+            .map(|p| p.builders.clone())
+            .unwrap_or_default()
+    }
+
+    /// The reference verdict on a core `ActivateProgramme` (I-67, M4 change
+    /// D2, Q1 and Q2 interim readings): the approver is a tenant admin
+    /// outside the builder set of a draft programme, with a fresh decision
+    /// id. Every account of the machines' vault has its own identity, so
+    /// `SameIdentityAsAny` never holds there.
+    fn activate_verdict(
+        &self,
+        who: AccountId,
+        tenant_admin: bool,
+        programme: ProgrammeId,
+        decision: DecisionId,
+        creator_builders: &BTreeSet<AccountId>,
+    ) -> Verdict {
+        let Some(p) = self.programmes.get(&programme) else {
+            return Verdict::Refuse;
+        };
+        if !tenant_admin
+            || p.active
+            || self.decisions.contains(&decision)
+            || p.builders.contains(&who)
+            || creator_builders.contains(&who)
+        {
+            return Verdict::Refuse;
+        }
+        Verdict::Accept
     }
 
     /// Whether `who` may draft and edit calls in `programme`.
@@ -723,6 +815,29 @@ impl Ghost {
                     by: who,
                 }]
             }
+            // I-67, M4 change D2: the activation names its approver and
+            // the builder set it was checked against, the core builders
+            // plus the creator's. The payload has private fields, so the
+            // expected record is built through the codec.
+            Command::ActivateProgramme {
+                programme,
+                decision,
+                report,
+                revision,
+                creator_builders,
+            } => {
+                let mut builders = self.builders(*programme);
+                builders.extend(creator_builders.iter().copied());
+                vec![crate::activation::forge_programme_activated(
+                    *programme,
+                    *decision,
+                    report.bytes(),
+                    *revision,
+                    who,
+                    &builders,
+                    fstp_domain::record::RulesVersion::M4.0,
+                )?]
+            }
             other => return Err(format!("not a policy or call command: {other:?}")),
         };
         Ok(out)
@@ -742,9 +857,23 @@ impl Ghost {
                         last_author_p01: who,
                         last_author_p09: who,
                         published: 0,
+                        active: false,
+                        builders: [who].into_iter().collect(),
                     },
                 );
                 self.versions.insert(policy.id, (**policy).clone());
+            }
+            Command::ActivateProgramme {
+                programme,
+                decision,
+                ..
+            } => {
+                let p = self
+                    .programmes
+                    .get_mut(programme)
+                    .ok_or("activation of an unknown programme")?;
+                p.active = true;
+                self.decisions.insert(*decision);
             }
             Command::EditPolicy { base, version } => {
                 let parent = self
@@ -763,6 +892,10 @@ impl Ghost {
                 }
                 if parent.frozen.p09 != version.frozen.p09 {
                     p.last_author_p09 = who;
+                }
+                if !p.active {
+                    // I-67: a policy author on the draft is a builder.
+                    p.builders.insert(who);
                 }
                 p.head = version.id;
                 self.versions.insert(version.id, (**version).clone());

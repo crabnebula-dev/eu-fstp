@@ -74,6 +74,7 @@ use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
 use crate::id::{AccountId, BindingId, CallId, OrganisationId, ProgrammeId, VaultEpoch};
 use crate::oracle::{Answer, Answers, Query};
+use crate::programme::DraftGate;
 use crate::record::{
     BindingEnded, BindingGranted, BindingReinstated, BindingSuspended, BindingVoided, OutboxEvent,
     Record,
@@ -186,7 +187,18 @@ impl GrantPlan {
 }
 
 /// Checks a `GrantRole` against the state and returns its plan.
-fn plan_grant(state: &State, cmd: &Command, ctx: &Ctx) -> Result<GrantPlan, Refusal> {
+///
+/// The check is a status gate, then the SoD guards (M4 change D3). Under
+/// `DraftGate::Enforce` a draft programme admits only a programme manager
+/// grant, so its builders hold the binding that I-65 names. Every other
+/// grant on a draft is refused with `RuleRef::I66` and `WrongState`. A
+/// preview skips the gate and runs the SoD guards alone.
+fn plan_grant(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    gate: DraftGate,
+) -> Result<GrantPlan, Refusal> {
     let Command::GrantRole {
         binding,
         account,
@@ -204,6 +216,9 @@ fn plan_grant(state: &State, cmd: &Command, ctx: &Ctx) -> Result<GrantPlan, Refu
     let actor = crate::policy::actor_account(ctx)?;
     if crate::policy::head(state, *programme).is_none() {
         return Err(unknown());
+    }
+    if *role != Role::ProgrammeManager {
+        crate::programme::draft_gate(state, *programme, gate)?;
     }
     if state.used_ids.contains(UsedId::Binding(*binding)) {
         return Err(reused());
@@ -999,10 +1014,54 @@ fn terminal_ends(
 // Engine entry points
 // ---------------------------------------------------------------------------
 
-/// The vault questions of the role and vault change commands.
-pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Query>, Refusal> {
+/// The vault questions of a `GrantRole` preview on `state` (M4 change D3,
+/// Q13 A interim reading, pending Daniel). They are the questions that
+/// `crate::queries` asks for the grant on a copy of `state` in which the
+/// programme is active: the shared engine checks, the SoD guards and the
+/// contributing lanes, without the draft gate. Any other command is
+/// refused with `Input` and `WrongState`.
+///
+/// The creator's live SoD check (creator step 9) asks these questions,
+/// records each answer as a query digest and the bit, and rate-limits the
+/// previews (overview NOTE 5, H-07). A refusal is shown by its rule only,
+/// never with an account (R-CF-03).
+pub fn preview_grant_queries(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+) -> Result<Vec<Query>, Refusal> {
+    if !matches!(cmd, Command::GrantRole { .. }) {
+        return Err(wrong_state());
+    }
+    crate::engine::queries_gated(state, cmd, ctx, DraftGate::Skip)
+}
+
+/// The outcome of a `GrantRole` preview on `state` under `answers` (M4
+/// change D3, Q13 A): `Ok` exactly when `crate::decide` would accept the
+/// grant on a copy of `state` in which the programme is active, and its
+/// refusal otherwise. It appends no record, and nothing is folded.
+pub fn preview_grant(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<(), Refusal> {
+    if !matches!(cmd, Command::GrantRole { .. }) {
+        return Err(wrong_state());
+    }
+    crate::engine::decide_gated(state, cmd, ctx, answers, DraftGate::Skip).map(|_| ())
+}
+
+/// The vault questions of the role and vault change commands. `gate` is
+/// `DraftGate::Skip` only for a `GrantRole` preview.
+pub(crate) fn queries(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    gate: DraftGate,
+) -> Result<Vec<Query>, Refusal> {
     match cmd {
-        Command::GrantRole { .. } => Ok(plan_grant(state, cmd, ctx)?.queries()),
+        Command::GrantRole { .. } => Ok(plan_grant(state, cmd, ctx, gate)?.queries()),
         Command::EndRole { binding, at } => {
             plan_end(state, *binding, *at, ctx)?;
             Ok(Vec::new())
@@ -1024,15 +1083,17 @@ pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Que
     }
 }
 
-/// The records of the role and vault change commands.
+/// The records of the role and vault change commands. `gate` is
+/// `DraftGate::Skip` only for a `GrantRole` preview.
 pub(crate) fn decide(
     state: &State,
     cmd: &Command,
     ctx: &Ctx,
     answers: &Answers,
+    gate: DraftGate,
 ) -> Result<Vec<Record>, Refusal> {
     match cmd {
-        Command::GrantRole { .. } => decide_grant(plan_grant(state, cmd, ctx)?, answers),
+        Command::GrantRole { .. } => decide_grant(plan_grant(state, cmd, ctx, gate)?, answers),
         Command::EndRole { binding, at } => plan_end(state, *binding, *at, ctx),
         Command::EndScheduledRole { binding } => plan_scheduled_end(state, *binding, ctx),
         Command::ReinstateBinding { binding, reason } => {
@@ -1277,6 +1338,8 @@ fn fold_grant(state: &mut State, g: &BindingGranted) -> Result<(), FoldError> {
             scheduled_end: None,
         },
     );
+    // I-67, Q1 A: a grantor on a draft programme is one of its builders.
+    crate::programme::note_builder(&mut state.calls, g.programme, g.granted_by);
     Ok(())
 }
 

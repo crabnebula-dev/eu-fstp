@@ -7,6 +7,7 @@
 //! - Free text appears only as a `TextRef` of id and digest (ADR-007).
 //! - The four payloads that only a witness builds decode through their
 //!   crate-private `from_decoded` seams. Their witnesses have no codec.
+//!   The activation payload of M4 change D2 decodes the same way.
 
 use std::collections::BTreeSet;
 
@@ -17,8 +18,11 @@ use super::wire::{Cx, Fields, Flat, R, Wire, flat_struct, tagged_enum};
 use crate::decision::{Basis, EffectiveScoreSet, Stage1Closed};
 use crate::grant::GrantDecided;
 use crate::id::VaultEpoch;
-use crate::id::{AccountId, ContractId, DecisionId, PlanVersionId, ProposalId, RequestId};
+use crate::id::{
+    AccountId, ContractId, DecisionId, PlanVersionId, ProgrammeId, ProposalId, RequestId,
+};
 use crate::payment::PaymentReleased;
+use crate::policy::activation::{ProgrammeActivated, ReportDigest};
 use crate::record::{
     Assigned, AssignmentReleased, BindingEnded, BindingGranted, BindingReinstated,
     BindingSuspended, BindingVoided, ConflictDeclared, ConflictDetected, ContentRead,
@@ -245,6 +249,44 @@ impl Flat for GrantDecided {
     }
 }
 
+/// The activation payload (M4 change D2), read through
+/// `ProgrammeActivated::from_decoded`. It holds no amount, so it has no
+/// `currency` member.
+impl Flat for ProgrammeActivated {
+    const NAMES: &'static [&'static str] = &[
+        "programme",
+        "decision",
+        "report",
+        "revision",
+        "approver",
+        "builders",
+        "rules",
+    ];
+
+    fn put_into(&self, o: &mut Object) {
+        let _ = o.insert("programme", self.programme().put());
+        let _ = o.insert("decision", self.decision().put());
+        let _ = o.insert("report", self.report().put());
+        let _ = o.insert("revision", self.revision().put());
+        let _ = o.insert("approver", self.approver().put());
+        let _ = o.insert("builders", self.builders().put());
+        let _ = o.insert("rules", self.rules().put());
+    }
+
+    fn take_from(f: &Fields<'_>, cx: Cx) -> R<Self> {
+        let programme: ProgrammeId = f.get("programme", cx)?;
+        let decision: DecisionId = f.get("decision", cx)?;
+        let report: ReportDigest = f.get("report", cx)?;
+        let revision: u32 = f.get("revision", cx)?;
+        let approver: AccountId = f.get("approver", cx)?;
+        let builders: BTreeSet<AccountId> = f.get("builders", cx)?;
+        let rules: RulesVersion = f.get("rules", cx)?;
+        Ok(ProgrammeActivated::from_decoded(
+            programme, decision, report, revision, approver, builders, rules,
+        ))
+    }
+}
+
 /// The release payload, read through `PaymentReleased::from_decoded`.
 impl Flat for PaymentReleased {
     const NAMES: &'static [&'static str] =
@@ -287,6 +329,9 @@ tagged_enum! {
         NoQuestionsRecorded { proposal, assignment },
         AnswersRecorded { proposal, text },
         RevisionSubmitted { proposal, plan },
+        CutOffRoundOpened { round, call, order, nominated, rationale, tie_breaks, by },
+        BallotCast { round, voter, vote },
+        VoteDelegated { round, from, to },
         IrcReviewRecorded { assignment, verdict },
         DeferralRecorded { proposal, from_call, left },
         ReEntered { proposal, from_call, to_call, stage },
@@ -329,6 +374,7 @@ tagged_enum! {
         ContentRead(ContentRead),
         ScoreRecorded(ScoreRecorded),
         ScoreVoided(ScoreVoided),
+        ProgrammeActivated(ProgrammeActivated),
         Stage1Closed(Stage1Closed),
         EffectiveScoreSet(EffectiveScoreSet),
         Transitioned(Transitioned),
