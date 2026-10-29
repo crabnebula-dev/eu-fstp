@@ -35,6 +35,7 @@ fstp-release-svc.workspace = true
 fstp-backup.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
+fstp-ledger.workspace = true
 fstp-migrate.workspace = true
 fstp-pgtest.workspace = true
 fstp-prop.workspace = true

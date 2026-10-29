@@ -11,6 +11,8 @@ cargo-fuzz = true
 libfuzzer-sys = "=0.4.13"
 fstp-cell-core = { path = ".." }
 fstp-domain = { path = "../../fstp-domain" }
+fstp-ledger = { path = "../../fstp-ledger" }
+fstp-auth = { path = "../../fstp-auth" }
 
 [[bin]]
 name = "cell_record_decode"

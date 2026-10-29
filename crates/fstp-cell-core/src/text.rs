@@ -30,4 +30,16 @@ pub enum TextRecord {
         /// The text references.
         ids: Vec<[u8; 16]>,
     },
+    /// The erasure of texts was requested: the erasure-log entry of each
+    /// text, with its cause and the account that authorised it (ADR-007,
+    /// design section 5.6). The request time is the entry time, and the
+    /// `TextsErased` record of the same texts gives `completed_at`.
+    ErasureRequested {
+        /// The text references.
+        ids: Vec<[u8; 16]>,
+        /// The cause, as a closed code.
+        cause: u16,
+        /// The account that authorised the erasure.
+        by: fstp_domain::id::AccountId,
+    },
 }

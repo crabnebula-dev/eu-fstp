@@ -3,26 +3,54 @@
 //!
 //! `CellCommand` and `CellRecord` extend the M2 engine envelope. The M2
 //! members `core` and `finding` decode through `fstp_engine::Record`
-//! unchanged, so every M2 record keeps its exact bytes.
+//! unchanged, so every M2 record keeps its exact bytes ([`codec`]).
 //!
-//! Status: W0 stub. Lane W2c fills the crate. The gate's high-risk table
-//! is data reviewed in W0 against `SPEC/03-architecture/authentication.md`
-//! and the M2 base (I-78). Every operation refuses with a typed
-//! `NotImplemented` error.
+//! - [`queries`] and [`decide`] run a command. An M2 command goes to the
+//!   M2 decider with the `Ctx` attestations read from the tenant fold
+//!   ([`attest`]), never from request fields. The cell commands are
+//!   decided in [`decide`] itself (design section 5.1).
+//! - [`apply`] and [`replay`] fold the ledger ([`state`]).
+//! - [`gate`] admits an action, and [`driver`] runs one admitted command.
+//!
+//! Lane W2c. The gate's session checks call `fstp-auth`, which lane W2b
+//! builds in parallel. Until it lands, those calls refuse with the
+//! stub's `NotImplemented`, and the gate passes that refusal on.
+
+#![deny(
+    clippy::float_arithmetic,
+    clippy::float_cmp,
+    clippy::cast_precision_loss,
+    clippy::arithmetic_side_effects
+)]
 
 pub mod codec;
+mod decide;
 pub mod driver;
 pub mod gate;
 pub mod ops;
 pub mod release;
+pub mod state;
 pub mod tenant;
 pub mod text;
 
 use fstp_domain::id::AccountId;
 use fstp_domain::oracle::{Answers, Query};
-use fstp_ledger::Entry;
+use fstp_domain::time::Timestamp;
+use fstp_ledger::{Entry, Seq};
 
-pub use codec::{decode_cell_command, decode_cell_record, record_from_canonical_at};
+pub use codec::{
+    decode_cell_command, decode_cell_record, encode_cell_command, encode_cell_record,
+    record_from_canonical_at, try_encode_cell_command,
+};
+pub use decide::{
+    ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, WRITE_KIND_GUARDIAN_CONSENT,
+    action_digest, attest_at, decide_reaction, reaction_queries, self_grant_digest,
+    try_action_digest, vault_changed, without_vault_outcomes,
+};
+pub use state::CellState;
+pub use state::{
+    SYSTEM_PREFIX, is_system_command_id, reaction_command_id, reaction_epoch, system_command_id,
+};
 
 /// A command of a cell.
 #[allow(
@@ -104,19 +132,6 @@ pub enum KeyRecord {
     },
 }
 
-/// The state of a cell, folded from its ledger.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CellState {
-    engine: fstp_engine::EngineState,
-}
-
-impl CellState {
-    /// The M2 engine state.
-    pub fn engine(&self) -> &fstp_engine::EngineState {
-        &self.engine
-    }
-}
-
 /// The context a cell command runs in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CellCtx {
@@ -126,31 +141,62 @@ pub struct CellCtx {
     pub at: i64,
 }
 
+/// A system task of the cell: a caller that holds no session and acts
+/// for no account (design sections 3.5 and 5.1).
+///
+/// Key records, scheduled session ends and the M2 commands that
+/// `fstp_domain::due` lists come from system tasks only. An account
+/// command never decides them, so no session can forge erasure evidence
+/// or end a binding (I-24, I-81, ADR-007). A task's command runs under an
+/// id in the namespace [`state::SYSTEM_PREFIX`], which no account may use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SystemTask {
+    /// The erasure runner (design section 3.5): `KeyCommand`.
+    ErasureRunner,
+    /// The timeline (design section 5.1, `fstp_domain::due`): the M2
+    /// System commands due at an instant, with the actor
+    /// `System(Timeline)`, and `EndSessionsAtBindingEnd`.
+    Timeline,
+}
+
+/// The context a system task's command runs in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemCtx {
+    /// The task.
+    pub task: SystemTask,
+    /// UTC microseconds.
+    pub at: i64,
+}
+
 /// Why a cell command was refused.
+///
+/// Every refusal of the cell is a domain refusal, with the rule and the
+/// reason of `fstp_domain::refusal`, so a caller handles one kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CellRefusal {
-    /// The M2 domain refused.
+    /// The M2 domain or the cell refused.
     Domain(fstp_domain::Refusal),
-    /// The operation is a W0 stub. It names the operation.
+    /// The command needs a record or an input that the sources do not
+    /// define yet. It names what is missing and the lane that owns it.
     NotImplemented(&'static str),
 }
 
 /// Why the fold refused a record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldError {
-    /// The M2 fold refused.
+    /// The M2 fold or the cell fold refused, with the M2 error kinds.
     Engine(fstp_domain::FoldError),
-    /// The fold is a W0 stub. It names the operation.
+    /// The fold met a record it cannot fold yet. It names the operation.
     NotImplemented(&'static str),
 }
 
 /// The attestations of `Ctx` for an M2 command, read only from the tenant
-/// fold.
+/// fold (design section 5.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Attestation {
     /// Whether the actor is a current tenant admin.
     pub tenant_admin: bool,
-    /// Whether a second tenant admin approved this grant.
+    /// Whether a second tenant admin approved this grant (SoD-07).
     pub second_tenant_admin: bool,
     /// Whether the grant binds a tenant admin.
     pub binds_tenant_admin: bool,
@@ -158,40 +204,115 @@ pub struct Attestation {
 
 /// The vault queries a command needs.
 pub fn queries(s: &CellState, c: &CellCommand, x: &CellCtx) -> Result<Vec<Query>, CellRefusal> {
-    let _ = (s, c, x);
-    Err(CellRefusal::NotImplemented("fstp_cell_core::queries"))
+    decide::queries_with(s, c, decide::Who::Account(x.actor), x.at, None)
 }
 
 /// Decides a command into records.
+///
+/// `CellCtx` carries no command id, so a self-grant decided here is never
+/// approved under SoD-07. The driver decides with the caller's command id
+/// ([`decide_with_id`]).
 pub fn decide(
     s: &CellState,
     c: &CellCommand,
     x: &CellCtx,
     a: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
-    let _ = (s, c, x, a);
-    Err(CellRefusal::NotImplemented("fstp_cell_core::decide"))
+    decide::decide_with(s, c, decide::Who::Account(x.actor), x.at, None, None, a)
 }
 
-/// Folds one entry.
+/// [`decide`] under the caller's command id, which the SoD-07 grant
+/// digest names (design section 5.1).
+pub fn decide_with_id(
+    s: &CellState,
+    c: &CellCommand,
+    x: &CellCtx,
+    command: [u8; 16],
+    a: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    decide::decide_with(
+        s,
+        c,
+        decide::Who::Account(x.actor),
+        x.at,
+        Some(command),
+        None,
+        a,
+    )
+}
+
+/// [`queries`] under the caller's command id.
+pub fn queries_with_id(
+    s: &CellState,
+    c: &CellCommand,
+    x: &CellCtx,
+    command: [u8; 16],
+) -> Result<Vec<Query>, CellRefusal> {
+    decide::queries_with(s, c, decide::Who::Account(x.actor), x.at, Some(command))
+}
+
+/// The vault queries of a system task's command ([`SystemTask`]).
+pub fn queries_system(
+    s: &CellState,
+    c: &CellCommand,
+    x: &SystemCtx,
+    command: [u8; 16],
+) -> Result<Vec<Query>, CellRefusal> {
+    decide::queries_with(s, c, decide::Who::System(x.task), x.at, Some(command))
+}
+
+/// Decides a system task's command under its command id. Each task
+/// decides its own commands only, and refuses every other with
+/// `WrongActor` ([`SystemTask`]).
+pub fn decide_system(
+    s: &CellState,
+    c: &CellCommand,
+    x: &SystemCtx,
+    command: [u8; 16],
+    a: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    decide::decide_with(
+        s,
+        c,
+        decide::Who::System(x.task),
+        x.at,
+        Some(command),
+        None,
+        a,
+    )
+}
+
+/// Folds one entry. The entry must follow the state's head, and its time
+/// must not be earlier than the latest recorded time of any member.
 pub fn apply(s: &mut CellState, e: &Entry<CellRecord>) -> Result<(), FoldError> {
-    let _ = (s, e);
-    Err(FoldError::NotImplemented("fstp_cell_core::apply"))
+    state::fold(s, e.seq, Timestamp::from_micros(e.at), e.command, &e.record)
 }
 
-/// Folds a ledger from genesis.
+/// Folds a ledger from genesis (I-23). Sequence numbers must run from 1
+/// without gaps.
 pub fn replay(entries: &[Entry<CellRecord>]) -> Result<CellState, FoldError> {
-    let _ = entries;
-    Err(FoldError::NotImplemented("fstp_cell_core::replay"))
+    let mut s = CellState::genesis();
+    for e in entries {
+        apply(&mut s, e)?;
+    }
+    Ok(s)
 }
 
-/// The `Ctx` attestations for an M2 command. The designed function is
-/// infallible; the stub returns a `Result` until lane W2c lands it.
+/// The `Ctx` attestations for an M2 command, read only from the tenant
+/// fold. Without a command id and an instant, no SoD-07 approval can be
+/// matched, so `second_tenant_admin` is false here ([`attest_at`]).
+///
+/// Design section 5.1 gives an infallible function. The `Result` is kept
+/// because the W1 suites call it so. It never refuses.
 pub fn attest(
     s: &CellState,
     actor: AccountId,
     cmd: &fstp_engine::Command,
 ) -> Result<Attestation, CellRefusal> {
-    let _ = (s, actor, cmd);
-    Err(CellRefusal::NotImplemented("fstp_cell_core::attest"))
+    Ok(decide::attestation(s, actor, cmd, None).public())
+}
+
+/// The sequence number one past `head`, or `None` at the end of the range.
+pub(crate) fn next_seq(head: Seq) -> Option<Seq> {
+    head.raw().checked_add(1).map(Seq::from_raw)
 }

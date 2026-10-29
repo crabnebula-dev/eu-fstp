@@ -100,10 +100,11 @@ fn req(g: &mut Gen, head: u64) -> Req {
     }
 }
 
-/// The seam of the PostgreSQL side: `fstp_pgstore::Pool` has no
-/// constructor and `fstp_ledger::AsyncRecordStore` does not exist yet, so
-/// no append reaches `PgRecordStore` (lanes W2c and W2e).
-const PG_STORE_SEAM: &str = "fstp_pgstore::Pool has no constructor and fstp_ledger::AsyncRecordStore does not exist (lanes W2c and W2e)";
+/// The seam of the PostgreSQL side. Lane W2c landed
+/// `fstp_ledger::AsyncRecordStore`. `fstp_pgstore::Pool` still has no
+/// constructor and `PgRecordStore` implements no store trait yet, so no
+/// append reaches it (lane W2e).
+const PG_STORE_SEAM: &str = "fstp_pgstore::Pool has no constructor and PgRecordStore implements no fstp_ledger::AsyncRecordStore yet (lane W2e)";
 
 /// The PostgreSQL store's answer to `r`.
 fn pg_append(r: Req) -> Result<Result<u64, Refused>, NotImplemented> {
@@ -185,10 +186,13 @@ fn adr007_teeth_head_checked_before_command_is_caught() {
 // ---------------------------------------------------------------------------
 // Erasure (ADR-007 "Retention and erasure", design section 5.6).
 
-/// The seam of text resolution: the stubs have no `TextStore::get` and no
-/// erasure-log entry type with its id, request time, `completed_at`, cause
-/// and authoriser (lanes W2c and W2e).
-const TEXT_SEAM: &str = "no TextStore::get and no erasure-log entry type in the stubs (design section 5.6, lanes W2c and W2e)";
+/// The seam of text resolution. Lane W2c landed the erasure-log entry,
+/// `fstp_cell_core::state::ErasureEntry`, with the request time,
+/// `completed_at`, the cause and the authoriser, read from the cell state.
+/// [`resolve`] resolves through it. `TextStore::get` over the sealed texts
+/// is still lane W2e's, and a text the cell does not know refuses with
+/// this seam.
+const TEXT_SEAM: &str = "no TextStore::get over sealed texts yet (design section 5.6, lane W2e)";
 
 /// How a text reference resolves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -198,8 +202,14 @@ enum Resolved {
 }
 
 fn resolve(cell: &ProdCell, id: [u8; 16]) -> Result<Resolved, NotImplemented> {
-    let _ = (cell, id);
-    Err(NotImplemented::new(TEXT_SEAM))
+    match (cell.state().erasure(id), cell.state().text(id)) {
+        (Some(entry), _) => Ok(Resolved::Erased {
+            id,
+            cause: entry.cause,
+        }),
+        (None, Some(_)) => Ok(Resolved::Text),
+        (None, None) => Err(NotImplemented::new(TEXT_SEAM)),
+    }
 }
 
 /// The erasure causes of design section 5.6, as closed codes.

@@ -166,40 +166,42 @@ pub fn session_index(id: [u8; 16]) -> u8 {
     }
 }
 
-/// The seam of [`prod_action_digest`]: `fstp-cell-core` exposes no
-/// canonical command encoding, and `gate::admit` takes no command id, so
-/// no step-up digest can match what the gate computes (design section
-/// 8.4, lane W2c). The harness owns this seam.
+/// The seam of [`prod_action_digest`], closed by lane W2c:
+/// `fstp_cell_core::action_digest` gives the digest, and
+/// `gate::admit_command` checks it under the command id (design section
+/// 8.4). The constant stays for the suites that name it.
 pub const DIGEST_SEAM: &str = "fstp_celltest::mc::stepup_model::prod_action_digest: fstp-cell-core exposes no canonical command encoding and gate::admit takes no command id (design section 8.4, lane W2c)";
 
 /// `SHA-256(canonical(command) || command_id)` as production computes it
-/// (design section 8.4). Refuses with [`DIGEST_SEAM`] until production
-/// exposes its canonical encoding and the gate takes the command id.
+/// (design section 8.4): `fstp_cell_core::action_digest`.
 pub fn prod_action_digest(
     cmd: &CellCommand,
     command_id: [u8; 16],
 ) -> Result<[u8; 32], NotImplemented> {
-    let _ = (cmd, command_id);
-    Err(NotImplemented::new(DIGEST_SEAM))
+    Ok(fstp_cell_core::action_digest(cmd, command_id))
 }
 
-/// The seam of [`prod_self_grant_digest`]: `fstp-cell-core` exposes no
-/// canonical `GrantRole` encoding without its `second_admin` field, and
-/// neither `CellCtx` nor `attest` takes a command id. So no SoD-07 grant
-/// digest can match what the tenant fold computes (design section 5.1,
-/// lane W2c). The harness owns this seam.
+/// The seam of [`prod_self_grant_digest`], closed by lane W2c:
+/// `fstp_cell_core::self_grant_digest` gives the digest, and
+/// `fstp_cell_core::attest_at` and `decide_with_id` take the command id
+/// (design section 5.1). It remains the refusal for a command that is not
+/// a `GrantRole`.
 pub const SELF_GRANT_DIGEST_SEAM: &str = "fstp_celltest::mc::stepup_model::prod_self_grant_digest: fstp-cell-core exposes no canonical GrantRole encoding without second_admin, and CellCtx and attest take no command id (design section 5.1, lane W2c)";
 
 /// `grant_digest = SHA-256(canonical(GrantRole without second_admin) ||
 /// command_id)` as production computes it (design section 5.1, SoD-07).
-/// Refuses with [`SELF_GRANT_DIGEST_SEAM`] until production exposes the
-/// encoding and the command id reaches `decide`.
+/// Production computes it with `fstp_cell_core::self_grant_digest`. A
+/// command that is not a `GrantRole` refuses with
+/// [`SELF_GRANT_DIGEST_SEAM`].
 pub fn prod_self_grant_digest(
     grant: &CellCommand,
     command_id: [u8; 16],
 ) -> Result<[u8; 32], NotImplemented> {
-    let _ = (grant, command_id);
-    Err(NotImplemented::new(SELF_GRANT_DIGEST_SEAM))
+    match grant {
+        CellCommand::Engine(g) => fstp_cell_core::self_grant_digest(g, command_id)
+            .ok_or(NotImplemented::new(SELF_GRANT_DIGEST_SEAM)),
+        _ => Err(NotImplemented::new(SELF_GRANT_DIGEST_SEAM)),
+    }
 }
 
 /// The seam of [`Production::commit`]: no pure entry point runs an
@@ -208,16 +210,19 @@ pub fn prod_self_grant_digest(
 /// from a batch (design section 5.1, lane W2c). The harness owns this seam.
 pub const CONSUME_SEAM: &str = "fstp_celltest::mc::stepup_model::Production::commit: no pure execute(Admitted) and no StepUpConsumed record to read consumption from (design section 5.1, lane W2c)";
 
-/// The seam of [`login_policy_p71`]: the canonical form of the login
-/// policy that `SetLoginPolicy` carries is not defined yet (design
-/// section 5.1, lane W2c). The harness owns this seam.
+/// The seam of [`login_policy_p71`], closed by lane W2c: the canonical
+/// form is `fstp_cell_core::tenant::TenantLoginPolicy` (design section
+/// 5.1). The constant stays for the suites that name it.
 pub const POLICY_SEAM: &str = "fstp_celltest::mc::stepup_model::login_policy_p71: the canonical login policy form of SetLoginPolicy is not defined (design section 5.1, lane W2c)";
 
 /// The canonical login policy that sets P-71 to `p71_us`, for
-/// `SetLoginPolicy`. Refuses with [`POLICY_SEAM`] until the form exists.
+/// `SetLoginPolicy`: `fstp_cell_core::tenant::TenantLoginPolicy`.
 pub fn login_policy_p71(p71_us: i64) -> Result<Vec<u8>, NotImplemented> {
-    let _ = p71_us;
-    Err(NotImplemented::new(POLICY_SEAM))
+    Ok(fstp_cell_core::tenant::TenantLoginPolicy {
+        p71_us: Some(p71_us),
+        ..Default::default()
+    }
+    .encode())
 }
 
 // ---------------------------------------------------------------------------
@@ -349,10 +354,13 @@ impl Production {
         let policy = LoginPolicy {
             stepup_freshness_us: p71_us,
         };
-        match gate::admit(
+        // The gate checks the step-up digest under the command id
+        // ([`DIGEST_SEAM`], closed by lane W2c).
+        match gate::admit_command(
             self.cell.state(),
             &prod_session(session),
             Action::Command(cell_command_in(session_index(session.id), c)),
+            command_id(c),
             view.as_ref(),
             now,
             &policy,

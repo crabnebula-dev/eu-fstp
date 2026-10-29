@@ -1,16 +1,32 @@
-//! Fuzz target `cell_command_decode` of `fstp-cell-core` (TH-26, H-05, M3 design section 15).
+//! Fuzz target `cell_command_decode` of `fstp-cell-core` (TH-26, H-05, M3
+//! design section 15).
 //!
-//! Design checks: every schema version round-trips.
+//! Design checks: decoding never panics; every accepted input re-encodes
+//! byte for byte, so the step-up action digest names one command (I-78,
+//! design section 8.4).
 //!
-//! W0 skeleton. The code under test is a stub that refuses every input
-//! with a typed `NotImplemented` error. Until lane W2c lands it, the
-//! target checks only that no input panics and that a refusal formats.
+//! [`reencode`] is `fstp_cell_core::encode_cell_command`.
 
 #![no_main]
 
+use fstp_cell_core::{CellCommand, decode_cell_command};
 use libfuzzer_sys::fuzz_target;
 
+/// The canonical bytes of `c`.
+fn reencode(c: &CellCommand) -> Option<Vec<u8>> {
+    Some(fstp_cell_core::encode_cell_command(c))
+}
+
 fuzz_target!(|data: &[u8]| {
-    let shown = format!("{:?}", fstp_cell_core::decode_cell_command(data));
-    assert!(!shown.is_empty());
+    let decoded = decode_cell_command(data);
+    assert!(!format!("{decoded:?}").is_empty());
+    if let Ok(c) = &decoded
+        && let Some(bytes) = reencode(c)
+    {
+        assert_eq!(
+            bytes.as_slice(),
+            data,
+            "accepted bytes re-encode differently"
+        );
+    }
 });
