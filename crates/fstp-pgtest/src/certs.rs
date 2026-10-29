@@ -184,57 +184,59 @@ pub fn to_spec(p: &Profile, issuer_spki_der: &[u8]) -> Result<CertSpec, CertErro
 
 /// The ECDSA secp256r1 key pairs behind the certificates.
 ///
-/// Every key pair comes from `fstp-crypto`. Until its `sig` module exists
-/// (lane W1h), [`signer::KeyPair::generate`] refuses, and so does every
-/// operation that needs a key.
+/// Every key pair comes from `fstp_crypto::sig` (lane W1h). No key is
+/// generated, encoded or used for signing by code written here.
 pub mod signer {
     use super::CertError;
 
-    /// The refusal while the `fstp-crypto` signing module is missing.
-    const WAITS: &str = "fstp_crypto::sig ECDSA P-256 key pairs (lane W1h)";
+    /// Maps an `fstp-crypto` refusal. Its display names no key bytes.
+    fn crypto(e: fstp_crypto::CryptoError) -> CertError {
+        CertError::Environment(e.to_string())
+    }
 
     /// An ECDSA secp256r1 key pair. Its private half never leaves the
     /// test process, except as the PKCS#8 file a server or psql reads.
     pub struct KeyPair {
-        _private: (),
+        key: fstp_crypto::sig::EcdsaP256KeyPair,
     }
 
     impl KeyPair {
-        /// A fresh key pair.
+        /// A fresh key pair from `fstp_crypto::sig`.
         ///
         /// # Errors
         ///
-        /// Refuses until lane W1h lands `fstp_crypto::sig`.
+        /// Refuses when the system random source fails.
         pub fn generate() -> Result<KeyPair, CertError> {
-            Err(CertError::NotImplemented(WAITS))
+            let key = fstp_crypto::sig::EcdsaP256KeyPair::generate().map_err(crypto)?;
+            Ok(KeyPair { key })
         }
 
         /// The subject public key info, DER.
         ///
         /// # Errors
         ///
-        /// Refuses until lane W1h lands `fstp_crypto::sig`.
+        /// Refuses when `fstp-crypto` cannot encode the key.
         pub fn spki_der(&self) -> Result<Vec<u8>, CertError> {
-            Err(CertError::NotImplemented(WAITS))
+            self.key.spki_der().map_err(crypto)
         }
 
         /// The private key as PKCS#8 DER.
         ///
         /// # Errors
         ///
-        /// Refuses until lane W1h lands `fstp_crypto::sig`.
+        /// Refuses when `fstp-crypto` cannot encode the key.
         pub fn pkcs8_der(&self) -> Result<Vec<u8>, CertError> {
-            Err(CertError::NotImplemented(WAITS))
+            let der = self.key.pkcs8_der().map_err(crypto)?;
+            Ok(der.to_vec())
         }
 
         /// An ECDSA P-256 SHA-256 signature over `message`, DER.
         ///
         /// # Errors
         ///
-        /// Refuses until lane W1h lands `fstp_crypto::sig`.
+        /// Refuses when `fstp-crypto` cannot sign.
         pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, CertError> {
-            let _ = message;
-            Err(CertError::NotImplemented(WAITS))
+            self.key.sign(message).map_err(crypto)
         }
     }
 }

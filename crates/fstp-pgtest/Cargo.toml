@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 # Certificates minted at runtime (M3 design section 2.2). In-house.
 fstp-pki.workspace = true
+# ECDSA P-256 key pairs for the test cluster CAs (lane W1h). In-house.
+fstp-crypto.workspace = true
 
 [dev-dependencies]
 

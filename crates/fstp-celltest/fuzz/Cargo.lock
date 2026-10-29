@@ -368,6 +368,7 @@ dependencies = [
 name = "fstp-pgtest"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-pki",
 ]
 

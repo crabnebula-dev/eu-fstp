@@ -15,8 +15,8 @@ fstp-ledger
 fstp-domain
 fstp-findings
 fstp-engine
-# M3, docs/handoff/m3-design.md section 15. fstp-crypto joins when lane
-# W1h lands its M3 fuzz targets; fstp-obs has no parser.
+# M3, docs/handoff/m3-design.md section 15. fstp-obs has no parser.
+fstp-crypto
 fstp-pki
 fstp-keys
 fstp-custody
