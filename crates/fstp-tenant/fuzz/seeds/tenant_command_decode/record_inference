@@ -1,0 +1,1 @@
+{"config":"3","fallbacks":["model-b"],"kind":"RecordInferenceConfig","primary":"model-a"}
