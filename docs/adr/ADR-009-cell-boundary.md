@@ -95,11 +95,13 @@ Sealed bytes under a cell's keys on a shared cluster, or in a cluster backup, st
 
 - `fstp-edge` reads the SNI from the ClientHello and never holds a tenant TLS key. A source scan refuses any TLS server configuration constructor in it (layering rule 5).
 - `parse_client_hello_sni` reads at most 16 KiB and is fuzzed (`client_hello_sni`).
-- No SNI, an encrypted ClientHello, an unknown host or a malformed hello closes the connection.
+- No SNI, an unknown host or a malformed hello closes the connection.
+- A ClientHello that carries the `encrypted_client_hello` extension is routed on its outer SNI, like any other hello, and its bytes pass unchanged (Daniel, 2026-10-29). Chromium-family browsers send a GREASE extension of that type by default, so closing such hellos would close those browsers. The edge never tries to tell GREASE from real ECH. The cell's TLS server holds no ECH keys and answers the outer hello.
 - The route table holds verified hosts only. Each host maps to exactly one cell and one kind: application or vault origin.
 - The edge opens one mTLS tunnel per client connection, with its tunnel certificate from the control-plane CA.
-- The first tunnel frame is a fixed-length header: version, address family, client address and port. The client's TLS stream follows unchanged (`i19_edge_forwards_bytes_after_client_hello_unchanged`).
-  - Record at first use: the exact byte layout and `TUNNEL_HEADER_LEN`.
+- The first tunnel frame is a fixed-length header: version, address family, client address, port and the routed host. The client's TLS stream follows unchanged (`i19_edge_forwards_bytes_after_client_hello_unchanged`).
+  - Daniel kept the host field on 2026-10-29. The receiver refuses a tunnel whose header host differs from the SNI its own TLS server sees, and never trusts the header host over it.
+  - Recorded at first use (lane W2i, 2026-10-29), version 1, `TUNNEL_HEADER_LEN` = 274 bytes: offset 0, version (1 byte); 1, address family, 4 or 6 (1); 2, client address, IPv4 as IPv4-mapped (16); 18, client port, big-endian (2); 20, host length, 1 to 253 (1); 21, the routed host in lowercase LDH, then zero bytes to the end (253). One spelling: the decoder refuses any other family, padding or host form.
 - `decode_tunnel_header` lives in `fstp-edge` and is fuzzed (`tunnel_header_decode`). `fstp-cell` and `fstp-vault` call it.
 - The edge logs host, cell id, byte counts and timings only, in the forms the metadata register sets.
 - **Client addresses.** Interim, pending Daniel (Q19). The address in the tunnel header serves in-memory rate limits only, at the edge and in the cell. It is never stored or logged. `TODO(legal)`: the basis for short-lived in-memory rate limiting on client addresses. It has no L- item yet. It is listed for Daniel under "Legal checks awaiting an L- number" in `SPEC/10-open-questions.md`, and this marker names the number once he assigns it.
@@ -284,5 +286,5 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 | Item | Value | Recorded |
 | --- | --- | --- |
 | Third-party crates added by this ADR | None | 2026-10-28 |
-| Tunnel header layout and `TUNNEL_HEADER_LEN` | Record at first use | Record at first use |
+| Tunnel header layout and `TUNNEL_HEADER_LEN` | Version 1, 274 bytes, with the routed host ("Edge and tunnel") | Recorded 2026-10-29 (lane W2i); host field kept by Daniel |
 | `METADATA_REGISTER` entries as built | Record at first use | Record at first use |

@@ -1331,7 +1331,7 @@ pub fn encode_tunnel_header(h: &TunnelHeader) -> [u8; TUNNEL_HEADER_LEN];
 pub fn decode_tunnel_header(b: &[u8]) -> Result<TunnelHeader, HeaderError>;      // fuzzed, used by the cell
 ```
 
-- No SNI, ECH, an unknown host or a malformed hello closes the connection.
+- No SNI, an unknown host or a malformed hello closes the connection. A hello with the ECH extension is routed on its outer SNI (Daniel, 2026-10-29; ADR-009).
 - The edge logs host, cell id, byte counts and timings only. It holds no tenant TLS key.
 - Client addresses go into the tunnel header for the cell's in-memory rate limits only (Q19).
 
@@ -2064,6 +2064,8 @@ Daniel gave further answers on 2026-10-29:
 | Under-18 verification after an attestation | Neither wins: a manual identity check (G9) resolves the conflict | The vault answers neither yes nor no until then, so the gate fails closed |
 | Refused release presentation | Leaves the ticket unused | The W1c reading stands |
 | WebAuthn attestation | Format `none` only for M3 | ADR-008 as written |
+| ECH at the edge | Route on the outer SNI; GREASE and real ECH alike | ADR-009 and section 9.4. The edge test `b5_th26_sni_encrypted_client_hello_closes` is replaced by a routing test |
+| Tunnel header host | Kept. Version 1, 274 bytes | ADR-009 records the layout. The receiver checks the host against its own SNI |
 
 ### 21.1 These block the milestone
 
