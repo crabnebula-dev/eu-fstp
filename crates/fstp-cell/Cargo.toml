@@ -19,6 +19,15 @@ fstp-http.workspace = true
 fstp-tls.workspace = true
 fstp-obs.workspace = true
 fstp-rt.workspace = true
+# In-house edges of the route layer (lane W3a agent one): the auth rules,
+# WebAuthn, domain ids, request bodies, digests and ledger types.
+fstp-auth.workspace = true
+fstp-webauthn.workspace = true
+fstp-domain.workspace = true
+fstp-json.workspace = true
+fstp-crypto.workspace = true
+fstp-ledger.workspace = true
+fstp-engine.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

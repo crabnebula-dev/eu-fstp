@@ -2657,16 +2657,15 @@ pub mod http {
     /// Why every call refuses for now.
     pub const HTTP_SEAM: &str = "fstp_celltest::world::CellHandle has no HTTP client and the cell has no auth routes yet (lanes W1a and W3a)";
 
-    /// The seam of [`production_routes`]: `fstp-cell` defines the `Route`
-    /// type but exposes no route table yet (design section 8.7, lane W3a).
-    /// The harness owns this seam.
+    /// The former seam of [`production_routes`], kept so callers that name
+    /// it still compile. Lane W3a closed the seam: `fstp-cell` exposes its
+    /// route table as `fstp_cell::routes::table` (design section 8.7).
     pub const ROUTE_TABLE_SEAM: &str = "fstp_celltest::mc::auth_model::http::production_routes: fstp-cell exposes no route table yet, only the Route type (design section 8.7, lane W3a)";
 
-    /// Every route of the production cell with its risk class. Refuses
-    /// with [`ROUTE_TABLE_SEAM`] until `fstp-cell` exposes its table, so a
-    /// test that compares it with the section 8.7 table is red, not vacuous.
+    /// Every route of the production cell with its risk class, from
+    /// `fstp_cell::routes::table`. It no longer refuses.
     pub fn production_routes() -> Result<Vec<fstp_cell::routes::Route>, NotImplemented> {
-        Err(NotImplemented::new(ROUTE_TABLE_SEAM))
+        Ok(fstp_cell::routes::table().to_vec())
     }
 
     /// A one-cell SaaS world for the machines.
