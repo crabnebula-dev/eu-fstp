@@ -53,6 +53,58 @@ pub struct Compiled {
     _w0: (),
 }
 
+/// One field of the creator steps (design section 3.1, `FieldId`).
+///
+/// W0 placeholder with no public constructor, added by lane W2b so that
+/// `fstp-import` can name fields. No value of it exists, so nothing
+/// names a real field. Lane W1a writes one variant per field of the
+/// steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FieldId {
+    _w0: (),
+}
+
+/// W0 declarations added by lane W2b, with the signatures lane W1a gives
+/// them, so that `fstp-import` can name fields. The stub has no field, so
+/// every lookup fails closed: no key decodes and no field is importable.
+impl FieldId {
+    /// The row of this field in [`FIELDS`].
+    pub fn spec(self) -> Option<&'static FieldSpec> {
+        let FieldId { _w0: () } = self;
+        None
+    }
+
+    /// The field's path in the spec's JSON form, `"<step>.<member>"`.
+    pub fn key(self) -> String {
+        let FieldId { _w0: () } = self;
+        String::new()
+    }
+
+    /// The field whose [`FieldId::key`] is `key`. The stub knows none.
+    pub fn from_key(key: &str) -> Option<FieldId> {
+        let _ = key;
+        None
+    }
+}
+
+/// One row of [`FIELDS`] (design section 3.1).
+///
+/// W0 declaration added by lane W2b with the two members `fstp-import`
+/// reads. Lane W1a writes the full row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldSpec {
+    /// The field.
+    pub id: FieldId,
+    /// Whether document import may propose a value (I-65).
+    pub importable: bool,
+}
+
+/// The `FIELDS` table (design section 3.1).
+///
+/// W0 declaration added by lane W2b. The stub table is empty, so no field
+/// is importable until lane W1a lands.
+pub const FIELDS: &[FieldSpec] = &[];
+
 /// One decoded field value.
 ///
 /// W0 placeholder with no fields. Lane W1a writes the per-field values.
