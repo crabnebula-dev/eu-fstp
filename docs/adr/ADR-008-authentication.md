@@ -233,7 +233,7 @@ Daniel answered three of the four readings on 2026-10-29. `state-machine.md` NOT
 - **Which deadline.** Decided 2026-10-29: the deadline of the call in which the proposal passes IRC review. A deferred proposal that re-enters under a later call (`state-machine.md` NOTE 8) uses that later call's deadline.
 - **Late verification.** Interim, pending Daniel. An attestation verified at or before that deadline counts. One verified later counts only if its attributes give the lead's age at that deadline.
 - **Override.** Decided 2026-10-29: when the vault holds a verified adult attestation and a verification that shows the lead under 18 at that deadline, neither wins. The conflict goes to a manual identity check (G9, "Manual identity checks" above). Proposed reading: until the check resolves it, `IsVerifiedAdultAtDeadline` does not answer, so the gate fails closed (`overview.md` NOTE 2) and the proposal stays where it is.
-- **Second derivation.** Decided 2026-10-29: the guard into GRANTED asks `IsVerifiedAdultAtDeadline` again. A verification in NEGOTIATION that shows the lead under 18 at the deadline then needs a verified guardian consent before GRANTED.
+- **Second derivation.** Decided 2026-10-29: the guard into GRANTED asks `IsVerifiedAdultAtDeadline` again. When it finds the lead not adult, guardian consent collection opens in NEGOTIATION: `AddGuardian` is allowed and the cell issues the guardian's write ticket. A GRANTED decision records a new rules version. A verification in NEGOTIATION that shows the lead under 18 at the deadline then needs a verified guardian consent before GRANTED.
 
 ## Break-glass
 

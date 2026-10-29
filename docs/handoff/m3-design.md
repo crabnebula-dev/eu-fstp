@@ -611,7 +611,7 @@ Shared-cluster backups still hold the cell's rows until their retention ends. Ev
 - `REVOKE CONNECT ON DATABASE ... FROM PUBLIC` on every database. CONNECT goes only to the cell's own roles.
 - No cell role is SUPERUSER, CREATEROLE, CREATEDB, REPLICATION or BYPASSRLS. None is a member of `pg_read_all_data`, `pg_write_all_data`, `pg_read_all_stats`, `pg_monitor`, `pg_signal_backend`, `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`.
 - `dblink`, `postgres_fdw` and every other extension are absent. `CREATE EXTENSION` is refused for every cell role.
-- `pg_stat_database`, `pg_stat_activity`, `pg_stat_statements` (absent anyway) and similar cross-database views are revoked from PUBLIC (G14). A test checks that `fstp-pgwire` sessions still work.
+- `pg_stat_database`, `pg_stat_activity`, `pg_stat_statements` (absent anyway) and similar cross-database views are revoked from PUBLIC (G14). EXECUTE on the `pg_stat_get_*` functions behind each revoked view is revoked from PUBLIC too, since they return the same rows (Daniel, 2026-10-29). A test checks that `fstp-pgwire` sessions still work.
 - `pg_hba.conf` holds one `hostssl <db> <role> <cell subnet> scram-sha-256 clientcert=verify-full` line per role and database. It has no `all` line and a final reject line.
 - **Superuser and provisioning (G4, Q4).** The superuser has one line only: `hostssl all fstp_super 127.0.0.1/32 scram-sha-256 clientcert=verify-full`. Its certificate and password are readable only by the `fstp-pgagent` OS user.
 - **Replication role (G22, Q4).** `fstp_repl` is the only role with REPLICATION. Its one line is `hostssl replication fstp_repl 127.0.0.1/32 scram-sha-256 clientcert=verify-full`, and only the `fstp-backup` OS user can read its key and password. It has no CONNECT on any cell database. Like the superuser, it is cluster machinery under the Q4 reading, and the I-82 privilege-graph and `pg_hba` tests cover it. No role with CREATEROLE or CREATEDB has any remote line. `fstp-pgagent` runs only typed jobs from `fstp-control`, each logged and approved by two operators for destructive jobs.
@@ -2067,6 +2067,10 @@ Daniel gave further answers on 2026-10-29:
 | WebAuthn attestation | Format `none` only for M3 | ADR-008 as written |
 | ECH at the edge | Route on the outer SNI; GREASE and real ECH alike | ADR-009 and section 9.4. The edge test `b5_th26_sni_encrypted_client_hello_closes` is replaced by a routing test |
 | Tunnel header host | Kept. Version 1, 274 bytes | ADR-009 records the layout. The receiver checks the host against its own SNI |
+| Consent after the GRANTED re-check | Collection reopens in NEGOTIATION | `AddGuardian` and the guardian ticket are allowed in NEGOTIATION when the GRANTED check finds the lead not adult. NOTE 14 |
+| Decline during an age conflict | Allowed when another decline ground holds | The decline treats the adult query as optional: an unanswered query removes only the ground that needs it. An engine change for that command |
+| G14 functions | Revoke the `pg_stat_get_*` functions too | Section 4.1. W2h revokes them and W1f checks it |
+| Rules version at GRANTED | A new rules version | Decisions under the new guard set carry it |
 
 ### 21.1 These block the milestone
 
