@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-edge = { path = ".." }
+fstp-rt = { path = "../../fstp-rt" }
+fstp-tls = { path = "../../fstp-tls" }
 
 [[bin]]
 name = "client_hello_sni"
