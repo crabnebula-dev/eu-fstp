@@ -2052,6 +2052,19 @@ Daniel answered the blocking set in the order it was presented. Later on 2026-10
 | I-80 epoch seal keys | Not root keys (later answer) | `S(e)` lives in process memory, is zeroised on drop and is covered by the memory scan. Only root epochs stay in custody (ADR-004 part 2) |
 | I-82 reading | Q4 A as a scoped milestone NOTE (later answer) | I-82 covers every role that can log in from another host, applied to the self-operated clusters. The managed control-plane cluster holds no cell data. Recorded in `SPEC/09-milestones.md` NOTE 2. The invariant text is unchanged |
 
+Daniel gave further answers on 2026-10-29:
+
+| Question | Answer | Effect on this design |
+| --- | --- | --- |
+| ADR-010 composite encoding | Accepted as transcribed from draft 19, with its three platform rows | W2g may sign and verify anchors and receipts |
+| Degenerate ML-DSA-65 keys | The check stays in `fstp-crypto`. The remaining gap is accepted | ADR-010 open point 1 closes |
+| KeyOp record | Both: a sealed `KeyOp` chain event and a `RecordKeyOp` ledger record, with one request id | ADR-004 Reconciliation. W2f, W2g and W2c record both; the vault has the chain event only |
+| GRANTED guard | Derives the minor flag again | `state-machine.md` NOTE 14. An M2 domain change |
+| Which deadline | The call in which the proposal passes IRC review, so a re-entered proposal uses the later call | NOTE 14 and ADR-008. Replaces the interim submission-call reading |
+| Under-18 verification after an attestation | Neither wins: a manual identity check (G9) resolves the conflict | The vault answers neither yes nor no until then, so the gate fails closed |
+| Refused release presentation | Leaves the ticket unused | The W1c reading stands |
+| WebAuthn attestation | Format `none` only for M3 | ADR-008 as written |
+
 ### 21.1 These block the milestone
 
 **Q1. moduletto for M3 (ADR-001 Tier B, I-74, I-75).** Key wrapping needs ML-KEM-768 now, and composite anchors need ML-DSA-65. moduletto is not in the local registry.

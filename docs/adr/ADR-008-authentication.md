@@ -44,7 +44,7 @@ Options considered for the WebAuthn implementation (Q10):
 | Manual identity checks | The tenant admin records them in M3. An Operations role "identity verifier" replaces this later | Answered (Q14 B now, A later) |
 | First tenant admin verification | The platform operator verifies the first tenant admin of each tenant. Two operator staff take part, the verification is logged, and it is shown to the tenant. That admin then records the checks of others | Answered (Daniel, 2026-10-28) |
 | Recorder without a verified identity | Refused. The operator verification gives the first tenant admin a verified identity, so this no longer blocks a tenant's first record | Interim, pending Daniel. No longer blocking |
-| Minor flag details | Deadline choice, late verification, override and a second derivation before GRANTED | Interim, pending Daniel (Q13 sub-points) |
+| Minor flag details | The deadline of the call of IRC review, a conflict goes to a manual check, and GRANTED derives the flag again. Late verification stays interim | Answered 2026-10-29, except late verification |
 | First admin delivery | Split across two staff and two channels now. A tenant-sealed token once M4 onboarding exists | Answered (Q35, both recommendations, 2026-10-28) |
 | Sessions on a binding end | Every session of the account ends | Interim, pending Daniel (Q16) |
 | Login email | Sealed in the cell, keyed lookup | Interim, pending Daniel (Q22) |
@@ -82,7 +82,7 @@ Interim, pending Daniel (Q22). The login email is a `TextRef` sealed in the cell
 
 `fstp-webauthn` is pure and does no I/O. It implements only what the platform uses.
 
-- **Attestation.** Format `none` only. No attestation statement is parsed or trusted.
+- **Attestation.** Format `none` only. No attestation statement is parsed or trusted. Daniel confirmed this for M3 on 2026-10-29.
 - **Algorithms.** ES256, EdDSA (Ed25519) and RS256 with a modulus of at least 2048 bits. Verification uses aws-lc-rs through `fstp-crypto` (ADR-001 Tier A).
 - **CBOR.** A strict subset: definite lengths, shortest form, no tags, no floats, no duplicate map keys, depth at most 4, input at most 64 KiB. Anything else is refused.
 - **Parsers and fuzz targets.** `cbor_decode`, `cose_key_decode`, `authenticator_data_decode`, `client_data_decode` (through `fstp-json`), `attestation_object_decode`, `assertion_verify` and `registration_verify`. Each exists from the crate's first commit (`.claude/CLAUDE.md`).
@@ -228,12 +228,12 @@ Answered (Daniel, 2026-10-28). `roles-and-sod.md` section "Manual identity check
 
 Daniel answered Q13 A on 2026-10-28: the vault collects an over-18 attestation before NEGOTIATION, and a one-bit query lets the NEGOTIATION gate admit a proposal whose lead has an effective verified adult attestation, or a verified guardian consent. `functional.md` R-ID-04, `state-machine.md` NOTE 14 and `overview.md` NOTE 7 state only that.
 
-The following readings are this draft's, not Daniel's answer. Each is interim, pending Daniel, and none enters `SPEC/` until he answers:
+Daniel answered three of the four readings on 2026-10-29. `state-machine.md` NOTE 14 records them. Late verification stays interim, pending Daniel.
 
-- **Which deadline.** The deadline of the call the proposal was submitted to. For a deferred proposal that re-enters under a later call (`state-machine.md` NOTE 8), whether that later call's deadline applies instead is part of the question.
-- **Late verification.** An attestation verified at or before that deadline counts. One verified later counts only if its attributes give the lead's age at that deadline.
-- **Override.** A verification that shows the lead under 18 at that deadline sets the flag, whatever any attestation says. `IsVerifiedAdultAtDeadline` then answers no.
-- **Second derivation.** The guard into GRANTED asks `IsVerifiedAdultAtDeadline` again. A verification in NEGOTIATION that shows the lead under 18 at the deadline then needs a verified guardian consent before GRANTED.
+- **Which deadline.** Decided 2026-10-29: the deadline of the call in which the proposal passes IRC review. A deferred proposal that re-enters under a later call (`state-machine.md` NOTE 8) uses that later call's deadline.
+- **Late verification.** Interim, pending Daniel. An attestation verified at or before that deadline counts. One verified later counts only if its attributes give the lead's age at that deadline.
+- **Override.** Decided 2026-10-29: when the vault holds a verified adult attestation and a verification that shows the lead under 18 at that deadline, neither wins. The conflict goes to a manual identity check (G9, "Manual identity checks" above). Proposed reading: until the check resolves it, `IsVerifiedAdultAtDeadline` does not answer, so the gate fails closed (`overview.md` NOTE 2) and the proposal stays where it is.
+- **Second derivation.** Decided 2026-10-29: the guard into GRANTED asks `IsVerifiedAdultAtDeadline` again. A verification in NEGOTIATION that shows the lead under 18 at the deadline then needs a verified guardian consent before GRANTED.
 
 ## Break-glass
 
@@ -293,7 +293,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 
 - **First tenant admin verification details.** The mechanism, the SoD-08 reading and the self-hosted reading under "First tenant admin verification" are proposals. Each is fixed by amendment before W2b merges.
 - **Reviews outside NEGOTIATION (blocking for any production claim of Q13 and Q14).** SoD-09 checks Drafting and Judging holders at binding time, with no proposal involved. Guardian checks (Q12 A) and manual over-18 checks (Q13 A) fall before NEGOTIATION. Each needs a person to see identity data outside the release window of `overview.md`. Options: a separate review operation on the vault origin with its own logged ticket, or no manual review outside NEGOTIATION, leaving those cases to EUDI in M4.
-- **Minor flag details.** The four readings under "Minor flag details" (which deadline, late verification, override, second derivation) wait for Daniel. Each is interim until he answers.
+- **Minor flag details.** Daniel answered which deadline, override and second derivation on 2026-10-29. Late verification still waits for him.
 - **Later Judging grants.** A recorder who later takes a Judging binding already saw what they reviewed. Daniel decides whether such a grant is refused in programmes where the recorder reviewed a subject.
 - **Risk class of recording.** Recording a verification is not in the `authentication.md` high-risk table. It is not added silently. Daniel decides whether it joins `STRICT_ADDITIONS`.
 - **Unset lifetimes.** The magic-link token, the recovery enrolment token, a recovery case and the staff assertion have no lifetime in the design. Each is fixed by amendment before W2b merges.

@@ -398,6 +398,7 @@ Per-epoch TPM objects (Q32, option B) are evaluated with the M9 self-hosted pack
 The rule "Root key use is logged by the backend, and the log is reconciled with the cell's audit chain" is built as follows.
 
 - Every custody call carries a request id. The call is recorded as a `KeyOp` event in the owning chain (App or Vault).
+- Daniel decided on 2026-10-29 that a custody call of the cell is recorded both ways: as a sealed `KeyOp` event in the App chain and as a `RecordKeyOp` ledger record (M3 design section 5.1). Both carry the same request id. Proposed reading: reconciliation compares the backend usage log with the chain events, and each event with its ledger record. The vault has no domain ledger, so a vault custody call has the Vault chain event only (ADR-010 open point 5).
 - Normally the `KeyOp` event is written before the call.
 - The start-up `unwrap` of `S(e)` is the one exception, because the chain cannot be written before `S(e)` is open. Its request id goes into an operational `keystore` row before the call, and the `KeyOp` event follows once the chain is open. This exception is an addition to M3 design section 3.3.
 - A daily task reads `usage_since` from the backend and compares. A backend entry without a matching request id raises `CustodyAnomaly` to tenant admins and the auditor view.
