@@ -2,3 +2,26 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-indexing-slicing-in-tests = true
+
+# R-NF-02 (M3 design section 11.1): shipped crates write typed events through
+# fstp-obs, not through the print macros or the raw stdout and stderr
+# handles. The macros are banned where they are written, and the functions
+# they expand to are banned as well, so a call that bypasses the macros is
+# caught too. The raw handles are banned, so `writeln!` or `write_all` on
+# them is caught. fstp-obs holds the one allowed writer of each stream.
+# Clippy does not see a file opened on a path such as /dev/stderr. The
+# R-NF-02 source scan in crates/fstp-obs/tests/r_nf_02_shipped_source.rs
+# refuses those path literals in shipped crates, and refuses an opt-out of
+# this ban outside the two fstp-obs writers.
+disallowed-macros = [
+    { path = "std::println", reason = "R-NF-02: write a fstp_obs::LogEvent instead" },
+    { path = "std::eprintln", reason = "R-NF-02: write a fstp_obs::LogEvent instead" },
+    { path = "std::print", reason = "R-NF-02: write a fstp_obs::LogEvent instead" },
+    { path = "std::eprint", reason = "R-NF-02: write a fstp_obs::LogEvent instead" },
+]
+disallowed-methods = [
+    { path = "std::io::_print", reason = "R-NF-02: write a fstp_obs::LogEvent instead" },
+    { path = "std::io::_eprint", reason = "R-NF-02: write a fstp_obs::LogEvent instead" },
+    { path = "std::io::stdout", reason = "R-NF-02: use fstp_obs::metric_to_stdout, the one writer of stdout" },
+    { path = "std::io::stderr", reason = "R-NF-02: use fstp_obs::log_to_stderr, the one writer of stderr" },
+]
