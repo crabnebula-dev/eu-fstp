@@ -140,28 +140,28 @@ fn composite_public_key(key: &composite::CompositeSigningKey) -> Result<Vec<u8>,
     Err(COMPOSITE_PK_SEAM.to_owned())
 }
 
-/// The seam of [`prod_seal_key`] and [`prod_open_key`]: `fstp_keys` has
-/// no `seal_key` or `open_key` yet (design section 3.2). Lane W2f adds
-/// them, and these helpers then call them.
-const ENVELOPE_SEAM: &str =
-    "fstp_keys::envelope has no seal_key or open_key yet (design section 3.2, lane W2f)";
-
+/// `fstp_keys::envelope::seal_key` (design section 3.2, lane W2f), as the
+/// sealed key's bytes.
 fn prod_seal_key(
     pk: &hybrid_kem::HybridPublicKey,
     dek: &[u8; 32],
     ctx: &SealContext,
 ) -> Result<Vec<u8>, String> {
-    let _ = (pk, dek, ctx);
-    Err(ENVELOPE_SEAM.to_owned())
+    let dek = fstp_keys::envelope::DataKey::from_bytes(dek).map_err(|e| format!("{e:?}"))?;
+    let sealed = fstp_keys::envelope::seal_key(pk, &dek, ctx).map_err(|e| format!("{e:?}"))?;
+    fstp_keys::envelope::encode_sealed_key(&sealed).map_err(|e| format!("{e:?}"))
 }
 
+/// `fstp_keys::envelope::open_key` over the decoded bytes, as key bytes.
 fn prod_open_key(
     sk: &HybridSecretKey,
     sealed: &[u8],
     ctx: &SealContext,
 ) -> Result<[u8; 32], String> {
-    let _ = (sk, sealed, ctx);
-    Err(ENVELOPE_SEAM.to_owned())
+    let sealed = fstp_keys::envelope::decode_sealed_key(sealed).map_err(|e| format!("{e:?}"))?;
+    fstp_keys::envelope::open_key(sk, &sealed, ctx)
+        .map(|k| *k.expose())
+        .map_err(|e| format!("{e:?}"))
 }
 
 /// A secret key with the X25519 half of `x` and the ML-KEM half of `m`.

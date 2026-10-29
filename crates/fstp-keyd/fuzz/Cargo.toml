@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-keyd = { path = ".." }
+fstp-custody = { path = "../../fstp-custody" }
 
 [[bin]]
 name = "keyd_request_decode"
@@ -21,6 +22,13 @@ bench = false
 [[bin]]
 name = "custody_file_decode"
 path = "fuzz_targets/custody_file_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mountinfo_decode"
+path = "fuzz_targets/mountinfo_decode.rs"
 test = false
 doc = false
 bench = false

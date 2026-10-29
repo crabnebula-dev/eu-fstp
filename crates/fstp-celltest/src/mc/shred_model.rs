@@ -160,29 +160,15 @@ impl ShredBackend for Mutant {
     }
 }
 
-/// The seam of [`Production::genesis`]: `fstp_keys::erasure::ChainState`
-/// has no way to add a group or a data key. `ChainState::genesis` makes a
-/// chain with no groups, and its fields are private. Lane W2f adds three
-/// admissions, and this backend then calls them. The first adds a data
-/// key group. The second admits a data key to a group's current
-/// generation, which provisioning and every new text or document need.
-/// The third adds a keyed digest group (`Lookup`, `CredLookup` or
-/// `Match`) with the subject data keys it digests, such as `g2` with
-/// `k0` and `k2` (design section 3.5, G24). Without the third,
-/// `plan_erasure` cannot name the digest group a batch must rotate. The
-/// model owns this seam.
-pub const ADMIT_SEAM: &str = "fstp_celltest::mc::shred_model::Production::genesis: fstp_keys::erasure::ChainState has no call that adds a data key group, admits a data key to a group, or adds a keyed digest group (Lookup, CredLookup or Match) with its subject data keys (design section 3.5, G24, lane W2f)";
-
-/// The seam of [`Production::request`]: `ChainState` has no call that
-/// records an erasure request (step 1, the `destroying` map). Lane W2f
-/// adds it, and this backend then calls it. The model owns this seam.
-pub const REQUEST_SEAM: &str = "fstp_celltest::mc::shred_model::Production::request: fstp_keys::erasure::ChainState has no call that records an erasure request (design section 3.5 step 1, lane W2f)";
-
 /// The production backend: `fstp_keys::erasure`.
 ///
-/// `next` and `apply` call production directly. `genesis` and `request`
-/// refuse with the named seams [`ADMIT_SEAM`] and [`REQUEST_SEAM`]. No
-/// reference logic stands in for production.
+/// Every call goes to production. `genesis` builds the chain through the
+/// three admissions of lane W2f: `ChainState::add_group` and
+/// `ChainState::admit` for each data key group, then
+/// `ChainState::add_digest_group` for each keyed digest group with its
+/// subjects (design section 3.5, G24). `request` calls
+/// `ChainState::request` (step 1). No reference logic stands in for
+/// production.
 #[derive(Clone, Copy, Debug)]
 pub struct Production {
     _probe: (),
@@ -262,6 +248,7 @@ pub fn from_prod(s: &Step) -> Result<RefStep, String> {
 fn fold_err(e: KeyFoldError) -> String {
     match e {
         KeyFoldError::NotImplemented(op) => NotImplemented::new(op).to_string(),
+        refused => format!("fstp_keys::erasure refused: {refused}"),
     }
 }
 
@@ -287,8 +274,10 @@ impl Production {
     /// Returns the refusal of `next`.
     pub fn new() -> Result<Production, NotImplemented> {
         match prod::next(&ChainState::genesis(Epoch(1))) {
-            Ok(_) => Ok(Production { _probe: () }),
             Err(KeyFoldError::NotImplemented(op)) => Err(NotImplemented::new(op)),
+            // Any other answer, a refusal included, is production
+            // answering.
+            Ok(_) | Err(_) => Ok(Production { _probe: () }),
         }
     }
 }
@@ -297,13 +286,30 @@ impl ShredBackend for Production {
     type Plan = ProdPlan;
 
     fn genesis(&self, layout: &Layout) -> Result<ProdPlan, String> {
-        let _ = (layout, ChainState::genesis(Epoch(1)));
-        Err(ADMIT_SEAM.to_owned())
+        let mut s = ChainState::genesis(Epoch(1));
+        for (g, keys) in (0..layout.group_count()).zip(layout.groups.iter()) {
+            if layout.is_digest(g) {
+                continue;
+            }
+            s.add_group(group_id(g)).map_err(fold_err)?;
+            for k in keys {
+                s.admit(group_id(g), dek_id(*k)).map_err(fold_err)?;
+            }
+        }
+        for g in (0..layout.group_count()).filter(|g| layout.is_digest(*g)) {
+            let subjects: Vec<DekId> = layout.subjects_of(g).iter().map(|k| dek_id(*k)).collect();
+            s.add_digest_group(group_id(g), &subjects)
+                .map_err(fold_err)?;
+        }
+        Ok(ProdPlan(s))
     }
 
+    /// Step 1 through `ChainState::request`. The model has no ledger, so
+    /// every request carries ledger sequence 0.
     fn request(&self, plan: &ProdPlan, dek: KeyIx) -> Result<ProdPlan, String> {
-        let _ = (plan, dek_id(dek));
-        Err(REQUEST_SEAM.to_owned())
+        let mut s = plan.0.clone();
+        s.request(dek_id(dek), 0).map_err(fold_err)?;
+        Ok(ProdPlan(s))
     }
 
     fn next(&self, plan: &ProdPlan) -> Result<Option<RefStep>, String> {
@@ -319,12 +325,13 @@ impl ShredBackend for Production {
         Ok(ProdPlan(s))
     }
 
-    /// The stored `ChainState` itself. The model stores it only at the
-    /// durable points of [`RefStep::is_durable`] and at requests, so a
-    /// production state stored there resumes as it is. If lane W2f stores
-    /// a pre-commit phase instead, it needs a restart call here.
+    /// `ChainState::restart` of the stored state. The model stores it only
+    /// at the durable points of [`RefStep::is_durable`] and at requests,
+    /// so a production state stored there resumes as it is. Lane W2f's
+    /// restart also resets a run stored before its commit to its first
+    /// step, which a shell that stores more often needs.
     fn restart(&self, stored: &ProdPlan) -> Result<ProdPlan, String> {
-        Ok(stored.clone())
+        Ok(ProdPlan(stored.0.restart()))
     }
 }
 
