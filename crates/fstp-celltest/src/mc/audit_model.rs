@@ -105,9 +105,12 @@ pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_r
 /// request id (lanes W2f and W1a).
 pub const RECONCILE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_reconcile: no reconciliation task exists, and Custody calls and the simulator usage log carry no request id (ADR-004 Reconciliation, lanes W2f and W1a)";
 
-/// `fstp-pgstore` exposes no append that chains ledger entries, so no
-/// production chain row of an erasure entry can be read (lane W2e).
-pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: fstp-pgstore exposes no append that writes ledger entries, chain rows and anchor rows (design section 5.3, lane W2e)";
+/// Lane W2e landed `fstp_pgstore::PgRecordStore`, whose append writes
+/// ledger entries, chain rows and anchor rows. This seam still needs a
+/// granted cell database, which waits on `fstp_control::pg::cell_role_plan`
+/// (lane W2h), and production anchor signing (lane W2g). The test that
+/// calls it also waits on [`VERIFY_SEAM`].
+pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: a granted cell database waits on fstp_control::pg::cell_role_plan (lane W2h) and anchor signing on fstp_audit::anchor::sign_anchor (lane W2g); lane W2e landed PgRecordStore";
 
 /// No cell keystore makes custody calls with request ids or writes their
 /// `KeyOp` events to the chain, and no reader decodes those events (ADR-004
