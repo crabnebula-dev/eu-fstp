@@ -12,6 +12,10 @@
 //! - Digests are lowercase hexadecimal strings of 64 characters.
 //! - Sets are lists in strictly ascending order.
 //! - A variant is an object with a `kind` member naming it.
+//! - A field is its `FieldId::key`, such as `"money.p05_recipient_cap"`.
+//!   A field value is a string holding its canonical RFC 8785 text from
+//!   `fstp_programme::encode_field_value`. It decodes with the field's
+//!   strict decoder and must re-encode byte for byte.
 //! - Decode errors carry a kind and member names only, never input
 //!   content (R-NF-02). No decode path panics.
 //!
@@ -33,7 +37,8 @@ use fstp_domain::time::Timestamp;
 use fstp_json::typed::{expect_object, reject_unknown};
 use fstp_json::{Array, FromJson, FromJsonError, Object, ToJson, Value};
 use fstp_ledger::Seq;
-use fstp_programme::FieldId;
+use fstp_money::Currency;
+use fstp_programme::{FieldId, FieldValue, decode_field_value_in, encode_field_value};
 
 use crate::check::{CallPackageElement, CheckId, CheckSubject, WarningKey};
 use crate::ids::{ImportDocumentId, ImportProposalId, InvitationId, TemplateId};
@@ -367,15 +372,56 @@ fn role(v: &Value) -> R<Role> {
     named(v, &roles, role_name)
 }
 
-/// Field ids come from `fstp-programme`, whose W0 stub declares no field
-/// yet (lane W1a). No field encodes or decodes until it does.
+/// A field id: its [`FieldId::key`], `"<step>.<member>"`, such as
+/// `"money.p05_recipient_cap"`.
 fn put_field(f: FieldId) -> Value {
-    match f {}
+    Value::String(f.key())
 }
 
+/// A field id from its key. Only the exact key of a field is accepted, so
+/// the decoded id encodes back to the same string.
 fn field(v: &Value) -> R<FieldId> {
-    let _ = take_str(v)?;
-    Err(FromJsonError::invalid("unknown field"))
+    let text = take_str(v)?;
+    match FieldId::from_key(text) {
+        Some(f) if f.key() == text => Ok(f),
+        _ => Err(FromJsonError::invalid("unknown field")),
+    }
+}
+
+/// The currency field values are decoded in.
+///
+/// ADR-006 fixes EUR, and `Currency::from_code` knows no other code, so
+/// every programme is in EUR. A second currency would need a currency
+/// member in the edit, and this constant would go.
+const VALUE_CURRENCY: Currency = Currency::Eur;
+
+/// A field value: a string holding its canonical RFC 8785 text, as
+/// [`encode_field_value`] writes it. The shell's [`ValueDigest`] is a
+/// digest of exactly these bytes.
+fn put_value(value: &FieldValue) -> Value {
+    Value::String(encode_field_value(value))
+}
+
+/// A field value of `f`, decoded by the field's strict decoder.
+///
+/// The text must re-encode byte for byte. So a value has one spelling on
+/// the wire and in the ledger, and its digest names one text.
+fn value_of(f: FieldId, v: &Value) -> R<FieldValue> {
+    let text = take_str(v)?;
+    let value = decode_field_value_in(f, VALUE_CURRENCY, text.as_bytes())
+        .map_err(|_| FromJsonError::invalid("field value does not decode"))?;
+    if encode_field_value(&value) != text {
+        return Err(FromJsonError::invalid("field value is not canonical"));
+    }
+    Ok(value)
+}
+
+fn put_value_digest(d: ValueDigest) -> Value {
+    hex32(d.digest().bytes())
+}
+
+fn value_digest(v: &Value) -> R<ValueDigest> {
+    digest(v).map(ValueDigest::new)
 }
 
 fn put_text_ref(t: TextRef) -> Value {
@@ -718,19 +764,30 @@ fn put_accounts(set: &BTreeSet<AccountId>) -> Value {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// A field edit. No field exists in the `fstp-programme` W0 stub, so the
-/// provenance is the only part written so far.
+/// A field edit: `{field, value, digest, provenance}`.
+///
+/// `value` is written under `field`, and the decoder reads it with the
+/// decoder of `field`. So an edit whose value belongs to another field
+/// never survives a round trip: it is refused, or it decodes as a value of
+/// `field`. Every decoded edit holds a value of its own field.
 fn put_edit(e: &FieldEdit) -> Value {
-    let _provenance = put_provenance(&e.provenance);
-    match e.field {}
+    obj(vec![
+        ("field", put_field(e.field)),
+        ("value", put_value(&e.value)),
+        ("digest", put_value_digest(e.digest)),
+        ("provenance", put_provenance(&e.provenance)),
+    ])
 }
 
 fn edit(v: &Value) -> R<FieldEdit> {
     let o = exact(v, &["field", "value", "digest", "provenance"])?;
-    let _digest = at(o, "digest", digest)?;
-    let _provenance = at(o, "provenance", provenance)?;
     let f = at(o, "field", field)?;
-    match f {}
+    Ok(FieldEdit {
+        field: f,
+        value: at(o, "value", |x| value_of(f, x))?,
+        digest: at(o, "digest", value_digest)?,
+        provenance: at(o, "provenance", provenance)?,
+    })
 }
 
 impl ToJson for CreatorCommand {
@@ -955,18 +1012,23 @@ impl FromJson for CreatorCommand {
 // Records
 // ---------------------------------------------------------------------------
 
+/// One saved field of a record: `{field, digest, provenance}`. The ledger
+/// body holds the value's digest, never the value.
 fn put_saved(f: &(FieldId, ValueDigest, Provenance)) -> Value {
-    let _digest = hex32(f.1.digest().bytes());
-    let _provenance = put_provenance(&f.2);
-    match f.0 {}
+    obj(vec![
+        ("field", put_field(f.0)),
+        ("digest", put_value_digest(f.1)),
+        ("provenance", put_provenance(&f.2)),
+    ])
 }
 
 fn saved(v: &Value) -> R<(FieldId, ValueDigest, Provenance)> {
     let o = exact(v, &["field", "digest", "provenance"])?;
-    let _digest = at(o, "digest", digest)?;
-    let _provenance = at(o, "provenance", provenance)?;
-    let f = at(o, "field", field)?;
-    match f {}
+    Ok((
+        at(o, "field", field)?,
+        at(o, "digest", value_digest)?,
+        at(o, "provenance", provenance)?,
+    ))
 }
 
 impl ToJson for CreatorRecord {

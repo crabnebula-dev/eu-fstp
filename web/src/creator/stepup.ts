@@ -9,10 +9,11 @@
 // Escape or cancel closes the dialog and nothing is sent. The action is
 // then retried once by core, and the server takes the proof (`StepUp::take`).
 //
-// Interim, pending Daniel and lanes W3b and W4e: the challenge is read in
-// the M3 options form `{challenge_id, public_key}`, and the proof goes to
-// the M3 route `POST /auth/stepup`. The ceremony itself is the M3 code of
-// `web/src/auth`, so this module holds no WebAuthn code of its own.
+// The challenge is the one core `api.ts` read from the answer, and core
+// `proveStepUp` runs the M3 ceremony for it: the assertion of
+// `web/src/auth`, then the M3 route `POST /auth/stepup`. So this module
+// holds no WebAuthn code of its own. Interim, pending Daniel and lanes W3b
+// and W4e, as core `stepup.ts` says.
 //
 // Core `h` has no `dialog` tag, so the one dialog element is made with
 // `document.createElement`. Its attributes and children go through core
@@ -22,9 +23,10 @@
 // dialog first, so its ceremony settles as cancelled. A dialog removed
 // any other way settles as cancelled at the next ceremony.
 
-import { ok, post } from "../auth/api.js";
-import { assertion, failureOf, optionsOf, type FailureCode, Failure } from "../auth/webauthn.js";
+import { type FailureCode, Failure } from "../auth/webauthn.js";
+import type { StepUpChallenge } from "../core/api.js";
 import { h } from "../core/dom.js";
+import { proveStepUp } from "../core/stepup.js";
 import type { Label } from "../core/i18n.js";
 import { hush, warn } from "./frame.js";
 import { t } from "./i18n.js";
@@ -38,7 +40,7 @@ interface Dialog {
 let shared: Dialog | null = null;
 /** The challenge of the open dialog and how to finish it. */
 let pending: {
-  readonly challenge: unknown;
+  readonly challenge: StepUpChallenge;
   readonly settle: (done: boolean) => void;
   /** The dialog this ceremony opened, so only its own close settles it. */
   readonly dialog: HTMLDialogElement;
@@ -59,16 +61,6 @@ function failureText(code: FailureCode): Label {
       return t.label("stepup.error.unavailable");
     case "malformed":
       return t.label("stepup.error.malformed");
-  }
-}
-
-/** Runs the M3 assertion for `challenge` and records the proof. */
-async function prove(challenge: unknown): Promise<void> {
-  const { challengeId, publicKey } = optionsOf(challenge);
-  const a = await assertion(publicKey);
-  const r = await post("/auth/stepup", { ...a, challenge_id: challengeId });
-  if (!ok(r)) {
-    throw failureOf(r.status);
   }
 }
 
@@ -122,7 +114,7 @@ function dialog(): Dialog {
     confirm.setAttribute("aria-busy", "true");
     confirm.setAttribute("aria-disabled", "true");
     hush(alert);
-    prove(p.challenge)
+    proveStepUp(p.challenge)
       .then(
         () => {
           // A dialog closed during the ceremony already settled as cancelled.
@@ -154,7 +146,7 @@ function dialog(): Dialog {
  * closes the dialog. A failed assertion shows in the dialog, which stays
  * open for another try or cancel.
  */
-export function ceremony(challenge: unknown): Promise<boolean> {
+export function ceremony(challenge: StepUpChallenge): Promise<boolean> {
   if (pending !== null && !pending.dialog.isConnected) {
     settle(pending.dialog, false);
   }

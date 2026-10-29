@@ -50,7 +50,7 @@ export async function loadInvitations(
   list: HTMLElement,
   item: (row: InvitationRow) => HTMLElement = invitationItem,
 ): Promise<InvitationRow[] | null> {
-  const o = await call("creator.list_invitations", [p], undefined, (v) => readInvitations(v) !== null);
+  const o = await call("creator.invitations", [p], undefined, (v) => readInvitations(v) !== null);
   if (report(alert, o) || o.kind !== "done") return null;
   const rows = readInvitations(o.body) ?? [];
   list.replaceChildren(...rows.map(item));

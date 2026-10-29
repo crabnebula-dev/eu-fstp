@@ -288,7 +288,7 @@ function paymentMode(alert: HTMLElement, current: unknown): HTMLElement {
         warn(alert, t.label("onboarding.payments.p20_none"));
         return;
       }
-      const o = await call("tenant.set_payment_mode", ["p20"], { value: chosen }, anyObject);
+      const o = await call("tenant.set_payment_mode", [], { value: chosen }, anyObject);
       if (report(alert, o)) return;
       status.textContent = t.label("onboarding.payments.p20_saved");
     }),
@@ -457,7 +457,7 @@ export function mount(step: OnboardingStep): void {
     });
     const parts: HTMLElement[] = [];
     if (step === "payments") {
-      const settings = await call("tenant.get_settings", [], undefined, (x) => record(x) !== null);
+      const settings = await call("tenant.settings", [], undefined, (x) => record(x) !== null);
       parts.push(paymentMode(alert, settings.kind === "done" ? record(settings.body)?.["p20"] : null));
     }
     parts.push(form, outcome, nextBox);

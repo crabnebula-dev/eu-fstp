@@ -6,21 +6,58 @@
 // browser adds `Origin`, which the server compares with the tenant origin.
 // Each parameter fills exactly one path segment. A response body counts
 // only after the generated validator of its operation accepts it.
+//
+// The answers of design section 3.7 `OpResult`, on the wire. Interim,
+// pending Daniel and lanes W3b and W4e, which build the server side:
+//
+// - `Done`: a 2xx JSON body, which is the operation's read model itself.
+// - `Pending`: a 2xx `PendingReceipt` of `gen/api.ts`,
+//   `{"status":"awaiting_confirmation","confirm_path","expires"}`.
+// - `StepUpRequired`: a 4xx `{"code":"step_up_required","challenge":C}`.
+//   `C` is `{"challenge_id","digest","public_key"}`: the M3 step-up
+//   options `{challenge_id, public_key}` of a challenge bound to the
+//   action digest `digest` (`StepUp::begin`).
+// - `StrongMethodRequired`: a 4xx `{"code":"strong_method_required"}`.
+// - A refusal: a 4xx `ApiErrorBody` of `gen/api.ts`, `{"code","rule"?}`.
+//
+// This module reads those shapes itself and imports nothing from
+// `gen/api.ts`. So a page test that serves its own operation table still
+// loads it.
 
 /** The fetch the API client calls: the page's `fetch`, or a test fake. */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
-/** An operation of the generated table. */
+/**
+ * An operation of the generated table, or of a test. The generated
+ * `Operation` of `gen/api.ts` is one. With `base` `"api"`, `path` is
+ * relative to `/api/v1`, as the generator writes it. A `"page"` operation
+ * is a public page, never an API call. Without `base`, `path` is the full
+ * path below `/api/v1/`.
+ */
 export interface OperationRef {
   readonly method: "GET" | "POST" | "PUT" | "DELETE";
   readonly path: string;
+  readonly base?: "api" | "page";
+}
+
+/**
+ * A step-up challenge bound to one action digest (design section 3.7
+ * step 7, `StepUpChallenge`). The M3 ceremony of `stepup.ts` answers it.
+ */
+export interface StepUpChallenge {
+  /** The M3 challenge id, 16 bytes in lowercase hex. */
+  readonly challengeId: string;
+  /** The action digest the challenge is bound to, 32 bytes in lowercase hex. */
+  readonly digest: string;
+  /** The WebAuthn request options in their JSON form, for the browser's own parser. */
+  readonly publicKey: Readonly<Record<string, unknown>>;
 }
 
 /** What one API call gives. It is returned, never thrown. */
 export type ApiOutcome =
   | { readonly kind: "done"; readonly body: unknown }
   | { readonly kind: "pending"; readonly confirmPath: string; readonly expires: string }
-  | { readonly kind: "step_up_required"; readonly challenge: unknown }
+  | { readonly kind: "step_up_required"; readonly challenge: StepUpChallenge }
   | { readonly kind: "strong_method_required" }
   | { readonly kind: "refused"; readonly code: string; readonly rule: string | null }
   | { readonly kind: "failed"; readonly reason: "network" | "invalid_response" | "request" };
@@ -93,9 +130,30 @@ function segmentValue(v: unknown): string | null {
   return encodeURIComponent(v);
 }
 
+/**
+ * The full path template of `op` below `/api/v1/`, or null. A generated
+ * operation with `base` `"api"` has a path relative to `/api/v1`, which
+ * starts with one `/`. A `"page"` operation, or any other base, is null.
+ */
+function fullPath(op: OperationRef): string | null {
+  const path: unknown = op.path;
+  const base: unknown = Object.hasOwn(op, "base") ? op.base : undefined;
+  if (typeof path !== "string") {
+    return null;
+  }
+  if (base === undefined) {
+    return path.startsWith(API_PREFIX) ? path : null;
+  }
+  if (base !== "api" || !path.startsWith("/") || path.startsWith("//")) {
+    return null;
+  }
+  return `${API_PREFIX.slice(0, -1)}${path}`;
+}
+
 /** The filled path of `op`, or null when the template or a parameter is refused. */
-function fillPath(path: unknown, params: Readonly<Record<string, string>>): string | null {
-  if (typeof path !== "string" || !path.startsWith(API_PREFIX)) {
+function fillPath(op: OperationRef, params: Readonly<Record<string, string>>): string | null {
+  const path = fullPath(op);
+  if (path === null) {
     return null;
   }
   if (typeof params !== "object" || params === null) {
@@ -145,6 +203,106 @@ function parseJson(text: string): { readonly ok: true; readonly value: unknown }
   }
 }
 
+/** `v` as a plain JSON object, or null. */
+function plain(v: unknown): Readonly<Record<string, unknown>> | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Readonly<Record<string, unknown>>) : null;
+}
+
+/** Whether `o` has exactly the members `names`. */
+function exactly(o: Readonly<Record<string, unknown>>, names: readonly string[]): boolean {
+  const keys = Object.keys(o);
+  return keys.length === names.length && names.every((n) => Object.hasOwn(o, n));
+}
+
+/** Whether `v` is lowercase hex of exactly `bytes` bytes. */
+function hexOf(v: unknown, bytes: number): v is string {
+  return typeof v === "string" && v.length === 2 * bytes && /^[0-9a-f]*$/.test(v);
+}
+
+/** The WebAuthn JSON form of a challenge: unpadded base64url, not empty. */
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The challenge of a step-up answer, or null. It is exactly
+ * `{"challenge_id","digest","public_key"}`: a 16-byte and a 32-byte
+ * lowercase hex string, and request options whose `challenge` is
+ * base64url. The browser's WebAuthn parser checks the options in full.
+ */
+function challengeOf(v: unknown): StepUpChallenge | null {
+  const o = plain(v);
+  if (o === null || !exactly(o, ["challenge_id", "digest", "public_key"])) {
+    return null;
+  }
+  const challengeId = o["challenge_id"];
+  const digest = o["digest"];
+  const publicKey = plain(o["public_key"]);
+  if (!hexOf(challengeId, 16) || !hexOf(digest, 32) || publicKey === null) {
+    return null;
+  }
+  const inner = publicKey["challenge"];
+  if (typeof inner !== "string" || !BASE64URL.test(inner)) {
+    return null;
+  }
+  return Object.freeze({ challengeId, digest, publicKey });
+}
+
+const STRONG_METHOD: ApiOutcome = Object.freeze({ kind: "strong_method_required" });
+
+/**
+ * A step-up answer, or null when the body names neither step-up code. A
+ * body that names one in any other shape is a malformed response, never a
+ * plain refusal, so a page never shows it as one.
+ */
+function stepUpAnswer(v: unknown): ApiOutcome | null {
+  const o = plain(v);
+  const code = o?.["code"];
+  if (o === null || (code !== "step_up_required" && code !== "strong_method_required")) {
+    return null;
+  }
+  if (code === "strong_method_required") {
+    return exactly(o, ["code"]) ? STRONG_METHOD : FAILED_RESPONSE;
+  }
+  const challenge = exactly(o, ["code", "challenge"]) ? challengeOf(o["challenge"]) : null;
+  return challenge === null ? FAILED_RESPONSE : Object.freeze({ kind: "step_up_required", challenge });
+}
+
+/**
+ * A same-origin path to confirm a pending action at: it starts with one
+ * `/` and holds printable ASCII other than `\` only.
+ */
+function confirmPathOf(v: unknown): string | null {
+  if (typeof v !== "string" || !v.startsWith("/") || v.startsWith("//")) {
+    return null;
+  }
+  for (let i = 0; i < v.length; i += 1) {
+    const c = v.charCodeAt(i);
+    if (c < 0x21 || c > 0x7e || c === 0x5c) {
+      return null;
+    }
+  }
+  return v;
+}
+
+/**
+ * A pending receipt of a 2xx answer (I-85), or null when the body is
+ * none. A receipt is `PendingReceipt` of `gen/api.ts`: exactly `status`
+ * `"awaiting_confirmation"`, `confirm_path` and `expires`, both strings.
+ * A body that names that status in any other shape, or whose path is not
+ * same-origin, is a malformed response.
+ */
+function pendingAnswer(v: unknown): ApiOutcome | null {
+  const o = plain(v);
+  if (o === null || o["status"] !== "awaiting_confirmation") {
+    return null;
+  }
+  const expires = o["expires"];
+  const confirmPath = confirmPathOf(o["confirm_path"]);
+  if (!exactly(o, ["status", "confirm_path", "expires"]) || confirmPath === null || typeof expires !== "string") {
+    return FAILED_RESPONSE;
+  }
+  return Object.freeze({ kind: "pending", confirmPath, expires });
+}
+
 /**
  * A refusal body, `{"code": "...", "rule": "..." | null}` and nothing
  * else, as design section 3.7 shows `ApiError`. Interim, pending Daniel
@@ -175,14 +333,18 @@ function refusal(v: unknown): ApiOutcome | null {
  *   `failed` with reason `request`. So does a body on a GET.
  * - A thrown `fetch`, or a body that cannot be read, gives `failed` with
  *   reason `network`.
- * - A 2xx response is `done` only when it declares `application/json`,
- *   its body parses, and `validate` accepts it. Otherwise it gives
- *   `failed` with reason `invalid_response`. Interim, pending Daniel:
- *   the declared type is required (see `isJson`).
- * - A 4xx JSON response in the refusal shape gives `refused`. Interim,
- *   pending Daniel: the wire format of step-up, pending actions and other
- *   statuses waits for lanes W3b and W4e, so every other response gives
- *   `failed` with reason `invalid_response`.
+ * - A 2xx response must declare `application/json` and its body must
+ *   parse. A pending receipt gives `pending`, when its confirmation path
+ *   is a same-origin path. Any other body is `done` only when `validate`
+ *   accepts it. Otherwise it gives `failed` with reason
+ *   `invalid_response`. Interim, pending Daniel: the declared type is
+ *   required (see `isJson`).
+ * - A 4xx JSON response that names `step_up_required` with a well-formed
+ *   challenge gives `step_up_required`, and exactly
+ *   `{"code":"strong_method_required"}` gives `strong_method_required`.
+ *   Any other shape that names either code is `invalid_response`, never
+ *   a refusal. A response in the refusal shape gives `refused`.
+ * - Every other response gives `failed` with reason `invalid_response`.
  */
 export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
   const fetchFn = opts.fetch;
@@ -199,7 +361,7 @@ export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
       if (typeof op !== "object" || op === null || !METHODS.has(op.method) || typeof validate !== "function") {
         return FAILED_REQUEST;
       }
-      const url = fillPath(op.path, params);
+      const url = fillPath(op, params);
       if (url === null) {
         return FAILED_REQUEST;
       }
@@ -242,6 +404,10 @@ export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
         if (!parsed.ok) {
           return FAILED_RESPONSE;
         }
+        const pending = pendingAnswer(parsed.value);
+        if (pending !== null) {
+          return pending;
+        }
         let accepted: unknown;
         try {
           accepted = validate(parsed.value);
@@ -251,7 +417,7 @@ export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
         return accepted === true ? Object.freeze({ kind: "done", body: parsed.value }) : FAILED_RESPONSE;
       }
       if (res.status >= 400 && res.status <= 499 && parsed.ok) {
-        return refusal(parsed.value) ?? FAILED_RESPONSE;
+        return stepUpAnswer(parsed.value) ?? refusal(parsed.value) ?? FAILED_RESPONSE;
       }
       return FAILED_RESPONSE;
     },
