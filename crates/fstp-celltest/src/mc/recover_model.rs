@@ -217,34 +217,57 @@ impl RecoverBackend for Reference {
     }
 }
 
-/// The seam of [`Production::approve`]: the stubs have no recovery
-/// approval check. Lane W2b adds `ApproveRecovery` (design section 8.5)
-/// as a pure check over the approver, the step-up and the vault answer,
-/// and this backend then calls it. The harness owns this seam.
-pub const APPROVE_SEAM: &str = "fstp_celltest::mc::recover_model::Production::approve: the stubs have no ApproveRecovery check (design section 8.5, lane W2b)";
+/// The case reference of every production case of the universe. An
+/// operator ticket names the case it is for (ADR-008).
+const PROD_CASE: [u8; 16] = [0xCA; 16];
 
-/// The seam of [`Production::ticket`]: `ApplyOperatorTicket` carries a
-/// byte form the stubs do not define, and no ticket check exists. Lane
-/// W2b adds the check over a decoded ticket, and this backend then calls
-/// it. The harness owns this seam.
-pub const TICKET_SEAM: &str = "fstp_celltest::mc::recover_model::Production::ticket: the stubs define no operator ticket form or check (design section 8.5, lane W2b)";
+/// Another case reference, for a ticket that does not name the case.
+const PROD_OTHER_CASE: [u8; 16] = [0xCB; 16];
 
-/// The seam of [`Production::complete`] and [`Production::completion`]:
-/// `fstp_auth::recovery::complete` takes only a path. It sees neither the
-/// roster at completion, the request-time path nor the evidence, so it
-/// cannot make the decision of design section 8.5. Its records have no
-/// credential revocation and no tenant-visible entry either. Lane W2b
-/// widens the API, and this backend then passes the request-time path and
-/// the evidence and takes the decision from production. The harness owns
-/// this seam.
-pub const COMPLETE_SEAM: &str = "fstp_celltest::mc::recover_model::Production::complete: fstp_auth::recovery::complete takes no roster, request-time path or evidence, and its records name no revocation (design section 8.5, lane W2b)";
+/// The earlier credential of the holder that a production completion
+/// must revoke.
+const PROD_CREDENTIAL: &[u8] = &[0xC1; 16];
+
+/// The earlier session of the holder that a production completion must end.
+const PROD_SESSION: [u8; 16] = [0x5E; 16];
+
+/// The credential id of the new passkey a production completion enrols.
+const PROD_NEW_CREDENTIAL: &[u8] = &[0xC2; 16];
+
+/// The new passkey a production completion enrols, as
+/// `fstp_auth::ceremony::verify_new_passkey` returns it: a synthetic
+/// Ed25519 key with user verification.
+fn prod_new_credential() -> fstp_webauthn::NewCredential {
+    fstp_webauthn::NewCredential {
+        id: PROD_NEW_CREDENTIAL.to_vec(),
+        key: fstp_webauthn::CoseKey::Ed25519 { x: [0xC2; 32] },
+        sign_count: 0,
+        user_verified: true,
+    }
+}
+
+/// Not a seam: the composite key that signs the universe's operator
+/// tickets could not be generated, or a ticket could not be signed or
+/// encoded. This is a crypto failure, which stops the run as a backend
+/// that did not answer.
+const TICKET_SIGNING_FAILED: &str = "fstp_celltest::mc::recover_model::Production::ticket: fstp_crypto::composite key generation or ticket signing failed";
+
+/// The control-plane key of the universe and the production verification
+/// outcome of each ticket shape signed under it.
+struct TicketSigner {
+    key: fstp_crypto::composite::CompositeSigningKey,
+    public_key: Vec<u8>,
+    verified: std::collections::BTreeMap<RefTicket, Result<prod::VerifiedTicket, prod::TicketDeny>>,
+}
 
 /// The production backend: `fstp_auth::recovery`.
 ///
-/// Only `recovery_path` exists in the production API. The approval, the
-/// ticket and the completion refuse with the named seams
-/// [`APPROVE_SEAM`], [`TICKET_SEAM`] and [`COMPLETE_SEAM`]. No reference
-/// logic stands in for production.
+/// Every decision comes from production: the path, the approval
+/// (`fstp_auth::recovery::approve`), the operator ticket
+/// (`verify_ticket` over composite-signed ticket bytes, then
+/// `check_ticket`) and the completion (`decide`, then
+/// `completion_records`). This backend only maps the universe's facts to
+/// production inputs. No reference logic stands in for production.
 #[derive(Clone, Copy, Debug)]
 pub struct Production {
     _probe: (),
@@ -300,6 +323,108 @@ impl Production {
         p.path(RefHoldings::ReceivingOnly, 1, RefDeployment::Saas)?;
         Ok(p)
     }
+
+    /// The production roster and tenant views of `roster` at `now`. The
+    /// holdings rule is production's (`RosterView::at`).
+    fn views(roster: &RefRoster, now: Timestamp) -> (fstp_auth::RosterView, fstp_auth::TenantView) {
+        let facts: Vec<fstp_auth::BindingFact> = roster
+            .bindings
+            .iter()
+            .map(|b| fstp_auth::BindingFact {
+                account: b.account,
+                role: b.role,
+                end: b.end,
+                suspended: b.suspended,
+                voided: b.voided,
+            })
+            .collect();
+        let grants: Vec<fstp_auth::AdminGrant> = roster
+            .admins
+            .iter()
+            .map(|g| fstp_auth::AdminGrant {
+                account: g.account,
+                end: g.end,
+            })
+            .collect();
+        (
+            fstp_auth::RosterView::at(&facts, now),
+            fstp_auth::TenantView::at(&grants, now),
+        )
+    }
+
+    /// The production approval of the universe's approval facts.
+    fn approval(a: &RefApproval) -> prod::Approval {
+        prod::Approval {
+            approver: a.approver,
+            approver_admin: a.approver_admin,
+            stepup: if a.stepup_ok {
+                Ok(())
+            } else {
+                Err(fstp_auth::stepup::StepUpDeny::Required)
+            },
+            identity: match a.same_identity {
+                None => Err(prod::VaultDown),
+                Some(same_identity) => Ok(prod::IdentityFacts {
+                    both_verified: a.both_verified,
+                    same_identity,
+                }),
+            },
+        }
+    }
+
+    /// The production verification of the ticket shape `t`: the ticket
+    /// names this case or another one, is signed under the universe's
+    /// control-plane key, and has one signature byte flipped when its
+    /// signature must not verify. `fstp_auth::recovery::verify_ticket`
+    /// decodes and verifies the bytes. Each shape is signed and verified
+    /// once, since composite verification is costly in a debug build.
+    fn verified(
+        t: &RefTicket,
+    ) -> Result<Result<prod::VerifiedTicket, prod::TicketDeny>, NotImplemented> {
+        static SIGNER: std::sync::OnceLock<Option<std::sync::Mutex<TicketSigner>>> =
+            std::sync::OnceLock::new();
+        let failed = || NotImplemented::new(TICKET_SIGNING_FAILED);
+        let signer = SIGNER
+            .get_or_init(|| {
+                let key = fstp_crypto::composite::generate().ok()?;
+                let public_key = key.public_key().to_bytes().to_vec();
+                Some(std::sync::Mutex::new(TicketSigner {
+                    key,
+                    public_key,
+                    verified: std::collections::BTreeMap::new(),
+                }))
+            })
+            .as_ref()
+            .ok_or_else(failed)?;
+        let mut s = signer.lock().map_err(|_| failed())?;
+        if let Some(v) = s.verified.get(t) {
+            return Ok(*v);
+        }
+        let ticket = prod::OperatorTicket {
+            case: if t.case_matches {
+                PROD_CASE
+            } else {
+                PROD_OTHER_CASE
+            },
+            staff_1: prod::StaffRef([t.staff_1; 16]),
+            staff_2: prod::StaffRef([t.staff_2; 16]),
+        };
+        let signature = s
+            .key
+            .sign_with_context(&ticket.message(), prod::TICKET_CONTEXT)
+            .map_err(|_| failed())?
+            .to_bytes();
+        let mut bytes =
+            fstp_auth::codec::encode_operator_ticket(&ticket, &signature).map_err(|_| failed())?;
+        if !t.signature_ok
+            && let Some(last) = bytes.last_mut()
+        {
+            *last ^= 0x01;
+        }
+        let v = prod::verify_ticket(&bytes, &s.public_key);
+        s.verified.insert(*t, v);
+        Ok(v)
+    }
 }
 
 impl RecoverBackend for Production {
@@ -315,13 +440,11 @@ impl RecoverBackend for Production {
     }
 
     fn approve(&self, holder: AccountId, a: &RefApproval) -> Result<bool, NotImplemented> {
-        let _ = (holder, a);
-        Err(NotImplemented::new(APPROVE_SEAM))
+        Ok(prod::approve(holder, &Self::approval(a)).is_ok())
     }
 
     fn ticket(&self, t: &RefTicket) -> Result<bool, NotImplemented> {
-        let _ = t;
-        Err(NotImplemented::new(TICKET_SEAM))
+        Ok(Self::verified(t)?.is_ok_and(|v| prod::check_ticket(&v, PROD_CASE).is_ok()))
     }
 
     fn complete(
@@ -333,8 +456,25 @@ impl RecoverBackend for Production {
         mode: RefDeployment,
         now: Timestamp,
     ) -> Result<Option<RefPath>, NotImplemented> {
-        let _ = (roster, holder, requested, e, mode, now);
-        Err(NotImplemented::new(COMPLETE_SEAM))
+        let ticket = match &e.ticket {
+            None => None,
+            Some(t) => Self::verified(t)?.ok(),
+        };
+        let case = prod::Case {
+            case: PROD_CASE,
+            holder,
+            requested: prod_path(requested),
+            evidence: prod::Evidence {
+                email: e.email,
+                approval: e.approval.as_ref().map(Self::approval),
+                ticket,
+                host_console: e.host_console,
+            },
+        };
+        let (rv, tv) = Self::views(roster, now);
+        Ok(prod::decide(&case, &rv, &tv, prod_mode(mode))
+            .ok()
+            .map(ref_path))
     }
 
     fn completion(
@@ -344,8 +484,36 @@ impl RecoverBackend for Production {
         path: RefPath,
         now: Timestamp,
     ) -> Result<RefCompletion, NotImplemented> {
-        let _ = (roster, holder, path, now);
-        Err(NotImplemented::new(COMPLETE_SEAM))
+        let _ = (roster, now);
+        let credentials = [PROD_CREDENTIAL.to_vec()];
+        let sessions = [PROD_SESSION];
+        let new_credential = prod_new_credential();
+        let records = prod::completion_records(
+            PROD_CASE,
+            holder,
+            prod_path(path),
+            &prod::Revocation {
+                credentials: &credentials,
+                sessions: &sessions,
+                new_credential: &new_credential,
+            },
+        );
+        let credentials_revoked = records.iter().any(|x| {
+            matches!(x, fstp_auth::AuthRecord::CredentialRevoked { account, credential }
+                if *account == holder && credential.as_slice() == PROD_CREDENTIAL)
+        });
+        let sessions_ended = records.iter().any(|x| {
+            matches!(x, fstp_auth::AuthRecord::SessionEnded { session } if *session == PROD_SESSION)
+        });
+        let shown_to_tenant = records.iter().any(|x| {
+            matches!(x, fstp_auth::AuthRecord::RecoveryCompleted { account, shown_to_tenant: true, .. }
+                if *account == holder)
+        });
+        Ok(RefCompletion {
+            credentials_revoked,
+            sessions_ended,
+            shown_to_tenant,
+        })
     }
 }
 
