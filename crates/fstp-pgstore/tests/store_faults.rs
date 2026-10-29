@@ -569,7 +569,7 @@ fn verify_production(
 /// The verifier found no change, signatures included.
 fn assert_no_tamper(got: &Result<fstp_audit::verify::Verified, AuditError>, when: &str) {
     assert!(
-        matches!(got, Ok(_)),
+        got.is_ok(),
         "I-24: the verifier found a change {when}: {got:?}"
     );
 }
