@@ -1,7 +1,9 @@
 //! Helpers shared by the M3 `fstp-crypto` tests (lane W1h, test agent).
 //!
-//! Nothing here calls `fstp-crypto`. The helpers decode hex, probe trait
-//! implementations at compile time and scan source files.
+//! The helpers decode hex and base64, probe trait implementations at
+//! compile time and scan source files. Only `composite_ref` calls
+//! `fstp-crypto`, and only its `sig` module, for the Ed25519 half of the
+//! reference composite.
 
 #![allow(
     dead_code,
@@ -14,6 +16,7 @@
     reason = "test helpers; each test binary uses a subset"
 )]
 
+pub mod composite_ref;
 pub mod hybrid_vectors;
 
 use std::fs;
@@ -38,6 +41,39 @@ pub fn arr<const N: usize>(s: &str) -> [u8; N] {
     assert_eq!(v.len(), N, "hex length");
     let mut out = [0u8; N];
     out.copy_from_slice(&v);
+    out
+}
+
+/// Decodes standard base64 (RFC 4648 section 4) with `=` padding, as the
+/// draft-ietf-lamps-pq-composite-sigs test vectors spell it. Panics on any
+/// other byte, on a misplaced `=` and on a length that is not a multiple
+/// of four. Test-only text decoding, not a cryptographic primitive.
+pub fn base64(s: &str) -> Vec<u8> {
+    fn value(c: u8) -> u32 {
+        match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a') + 26,
+            b'0'..=b'9' => u32::from(c - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => panic!("not a base64 digit: {c:#04x}"),
+        }
+    }
+    let bytes = s.as_bytes();
+    assert_eq!(bytes.len() % 4, 0, "base64 length");
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (i, quad) in bytes.chunks(4).enumerate() {
+        let last = i + 1 == bytes.len() / 4;
+        let pad = quad.iter().rev().take_while(|&&c| c == b'=').count();
+        assert!(pad <= 2 && (pad == 0 || last), "misplaced base64 padding");
+        let mut acc = 0u32;
+        for &c in &quad[..4 - pad] {
+            acc = (acc << 6) | value(c);
+        }
+        acc <<= 6 * pad as u32;
+        let three = [(acc >> 16) as u8, (acc >> 8) as u8, acc as u8];
+        out.extend_from_slice(&three[..3 - pad]);
+    }
     out
 }
 

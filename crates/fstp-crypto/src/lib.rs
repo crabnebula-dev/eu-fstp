@@ -23,9 +23,12 @@
 //! - [`sig`]: Ed25519, ECDSA P-256 and RSA PKCS#1 SHA-256 verification.
 //! - [`mlkem`]: ML-KEM-768 from moduletto. [`hybrid_kem`]: X25519 plus
 //!   ML-KEM-768 with the ADR-004 combiner.
-//! - [`mldsa`] and [`composite`]: ML-DSA-65 and the Ed25519 plus ML-DSA-65
-//!   composite. moduletto has no ML-DSA-65 at its pinned commit, so both
-//!   refuse every call with [`CryptoError::MlDsaUnavailable`] (I-75, I-90).
+//! - [`composite`]: the Ed25519 plus ML-DSA-65 composite of
+//!   draft-ietf-lamps-pq-composite-sigs version 19 (ADR-010), with
+//!   ML-DSA-65 from moduletto. Verification accepts only when both halves
+//!   verify (I-90). The `mldsa` module behind it is hidden from the docs
+//!   and is used by `composite` only, so ML-DSA-65 never stands alone
+//!   (I-75).
 //!
 //! Secret types implement no `Debug`, `Clone` or `Copy`, and wipe their
 //! bytes on drop (ADR-001 A1). Types that wrap an aws-lc-rs key rely on
@@ -85,10 +88,6 @@ pub enum CryptoError {
     /// The key has sealed [`aead::SEAL_LIMIT`] times (ADR-004 "Seal-count
     /// limit"). It seals no more.
     SealLimitReached,
-    /// ML-DSA-65 is not available: moduletto at the pinned commit has no
-    /// ML-DSA-65 (ADR-001 A2). Nothing falls back to a classical-only
-    /// signature (I-75, I-90).
-    MlDsaUnavailable,
 }
 
 impl fmt::Display for CryptoError {
@@ -103,7 +102,6 @@ impl fmt::Display for CryptoError {
             Self::OpenFailed => f.write_str("sealed body did not open"),
             Self::ZeroSharedSecret => f.write_str("X25519 agreement gave the all-zero result"),
             Self::SealLimitReached => f.write_str("key reached its seal-count limit"),
-            Self::MlDsaUnavailable => f.write_str("ML-DSA-65 is not available yet"),
         }
     }
 }

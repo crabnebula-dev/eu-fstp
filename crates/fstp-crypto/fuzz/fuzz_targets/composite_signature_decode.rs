@@ -5,12 +5,14 @@
 //!
 //! - `composite::CompositeSignature::from_bytes` never panics, accepts
 //!   only inputs of `composite::SIGNATURE_LEN` bytes, and an accepted
-//!   input re-encodes byte for byte. ADR-010 has not yet transcribed the
-//!   draft 19 layout, so it may still refuse every input.
+//!   input re-encodes byte for byte. ADR-010 transcribes the draft 19
+//!   layout, `mldsaSig || tradSig` with the 3309-byte ML-DSA-65 half first
+//!   (section 4.3).
 //! - `composite::verify` never panics and never accepts. The input is
 //!   split into a public key, a message and a signature, so an arbitrary
-//!   input never carries a valid composite signature (I-90). While
-//!   moduletto has no ML-DSA-65, verification refuses every input anyway.
+//!   input never carries a valid composite signature (I-90). Verification
+//!   checks both halves, the ML-DSA-65 half through moduletto at the pinned
+//!   commit `6c1ae92`.
 
 #![no_main]
 
