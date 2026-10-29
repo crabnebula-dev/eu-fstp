@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-webauthn = { path = ".." }
+fstp-crypto = { path = "../../fstp-crypto" }
 
 [[bin]]
 name = "cbor_decode"

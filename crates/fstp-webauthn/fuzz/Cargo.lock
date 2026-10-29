@@ -101,6 +101,7 @@ dependencies = [
 name = "fstp-webauthn-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-webauthn",
  "libfuzzer-sys",
 ]
