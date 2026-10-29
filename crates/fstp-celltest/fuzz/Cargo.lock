@@ -439,8 +439,10 @@ name = "fstp-vault"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-crypto",
  "fstp-custody",
  "fstp-http",
+ "fstp-json",
  "fstp-keys",
  "fstp-migrate",
  "fstp-obs",
@@ -448,12 +450,15 @@ dependencies = [
  "fstp-rt",
  "fstp-tls",
  "fstp-vault-core",
+ "fstp-vault-proto",
 ]
 
 [[package]]
 name = "fstp-vault-core"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
+ "fstp-json",
  "fstp-money",
  "fstp-vault-proto",
 ]

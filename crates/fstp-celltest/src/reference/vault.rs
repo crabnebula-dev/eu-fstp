@@ -1788,12 +1788,18 @@ pub mod wire {
     /// The fact write that carries `w`.
     pub fn fact_write(w: &RefWrite) -> FactWrite {
         let (kind, body) = match w {
+            // Lane W2d replaced W1c's `{account, person}`: R-ID-02 asks the
+            // record to hold the method, document type, checks, time and
+            // verifier (design section 6.7). The reference write has none,
+            // so a fixed synthetic record stands in, by a verifier id that
+            // no synthetic account takes. `identity` is the vault's id.
             RefWrite::VerificationRecorded { account, person } => (
                 WriteKind::VerificationRecorded.code(),
                 format!(
-                    "{{\"account\":\"{}\",\"person\":\"{}\"}}",
+                    "{{\"account\":\"{}\",\"at\":0,\"checks\":[\"document_authentic\",\"photo_match\"],\"document_type\":\"passport\",\"identity\":\"{}\",\"method\":\"manual\",\"verifier\":\"{}\"}}",
                     account.raw(),
-                    person.0
+                    person.0,
+                    u128::MAX
                 ),
             ),
             RefWrite::AdultAttestation {
