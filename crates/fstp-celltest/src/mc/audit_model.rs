@@ -42,15 +42,19 @@
 //! until their lane lands. A seam stays red after its lane merges until
 //! someone edits this file, so each merge must replace its seams here:
 //!
-//! - W2g replaces [`STORED_HASH_SEAM`], [`WITNESS_SEAM`],
-//!   [`ANCHORER_SEAM`], [`ADMIT_SEAM`], [`ANCHOR_SIGN_SEAM`] and
-//!   [`RECEIPT_SIGN_SEAM`]. It replaces [`VERIFY_SEAM`] together with lane
-//!   dsa. `Production::verify_opaque` must then pass the signatures and
-//!   keys of [`OpaqueSigs`], the ledger, the key history and the witness
-//!   log. It maps `Ok` and `Tamper` to answers instead of the seam.
-//! - W2g should also drive its anchorer step function here: the full
-//!   design section 5.3 sequence with crash points between the anchor
-//!   insert and COMMIT, in place of the three decisions of today.
+//! - Lane W2g replaced its seams. [`Production`] reaches `fstp_audit` for
+//!   the stored hash, the link, the admission decision and the verifier,
+//!   and `fstp_witness` for the sender rule and the witness core. Its
+//!   `may_commit`, `after_commit` and `resolve` drive the production
+//!   anchorer step function, `fstp_audit::anchorer::Anchorer`, through
+//!   design section 5.3 up to COMMIT. The model's own steps are W1e's and
+//!   stay unchanged. `Production::verify_opaque` passes the signatures
+//!   and keys of [`OpaqueSigs`], the ledger, the link column and the
+//!   witness log, and maps `Ok` and `Tamper` to answers.
+//! - Three seams stay, behind the ADR-010 composite encoding acceptance
+//!   (lane W2g hard limit): [`ANCHOR_SIGN_SEAM`], [`RECEIPT_SIGN_SEAM`]
+//!   and the signature checks of [`VERIFY_SEAM`]. Production signing and
+//!   verification refuse until Daniel accepts the table.
 //! - Lane dsa merged on 2026-10-29. Its two seams are gone:
 //!   `fstp_crypto::composite::generate` succeeds, and
 //!   [`prod_composite_public_key`] returns `key.public_key().to_bytes()`.
@@ -75,32 +79,26 @@ use crate::reference::hybrid::OracleError;
 // Production seams. The harness owns them; each names the lane that
 // removes it.
 
-/// `fstp-audit` has no function for the stored hash of the ADR-010 row
-/// layout, so no production stored hash can be compared (lane W2g).
-pub const STORED_HASH_SEAM: &str = "fstp_celltest::mc::audit_model::Production::stored_hash: fstp-audit exposes no stored-row hash of the ADR-010 row bytes (design section 7.1, lane W2g)";
+/// Not a seam since lane W2g: `fstp_audit::chain::stored_hash` refused a
+/// row, a kind 1 row without its entry or a body over its limit. The model
+/// never builds one, so this stops the run as a backend that did not
+/// answer.
+pub const STORED_HASH_SEAM: &str = "fstp_celltest::mc::audit_model::Production::stored_hash: fstp_audit::chain::stored_hash refused the row (a kind 1 row without its entry, or a body over its limit)";
 
-/// The stub `fstp_audit::verify::verify` takes rows, stored hashes,
-/// anchors and receipts only. It takes no anchor key history, no
-/// witness log with its abort and in-doubt records, and no stored link
-/// column. Its `Receipt` has no cell, chain, n, link or `received_at`, and
-/// no production composite key can sign a test anchor yet (lanes W2g and
-/// dsa).
-pub const VERIFY_SEAM: &str = "fstp_celltest::mc::audit_model::Production::verify: fstp_audit::verify takes no anchor key history, no witness abort or in-doubt records and no stored link, and Receipt lacks cell, chain, n, link and received_at (design section 7.1, ADR-010, lanes W2g and dsa)";
+/// `fstp_audit::verify` checks rows, ledger, anchor rows and the witness
+/// log since lane W2g, but every signature check refuses until Daniel
+/// accepts the ADR-010 composite encoding table (lane W2g hard limit).
+/// `Production::verify_opaque` answers `Ok` and `Tamper`, and maps that
+/// refusal to this seam.
+pub const VERIFY_SEAM: &str = "fstp_celltest::mc::audit_model::Production::verify: fstp_audit::verify refuses every signature check until ADR-010 composite encoding acceptance (Daniel) (lane W2g hard limit)";
 
-/// `fstp-witness` has no pure witness core for prepare, abort and
-/// in-doubt records, sender checks or receipts (lane W2g).
-pub const WITNESS_SEAM: &str = "fstp_celltest::mc::audit_model::Production::witness: fstp-witness exposes no pure witness core for prepare, abort, in-doubt and sender checks (ADR-010, lane W2g)";
+/// `fstp_audit::anchor::sign_anchor` refuses until Daniel accepts the
+/// ADR-010 composite encoding table (lane W2g hard limit).
+pub const ANCHOR_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_anchor: fstp_audit::anchor::sign_anchor refuses until ADR-010 composite encoding acceptance (Daniel) (lane W2g hard limit)";
 
-/// `fstp-audit` has no anchorer core for the commit, abort and in-doubt
-/// decisions of design section 7.2 (lane W2g).
-pub const ANCHORER_SEAM: &str = "fstp_celltest::mc::audit_model::Production::anchorer: fstp-audit exposes no anchorer core for commit, abort and in-doubt decisions (design section 7.2, lane W2g)";
-
-/// `fstp-audit` has no function that signs an anchor or encodes its
-/// signed message (ADR-010 "Anchors", lane W2g).
-pub const ANCHOR_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_anchor: fstp-audit exposes no anchor signing or anchor message function (ADR-010, lane W2g)";
-
-/// `fstp-witness` has no function that signs a receipt (lane W2g).
-pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_receipt: fstp-witness exposes no receipt signing function (ADR-010, lane W2g)";
+/// `fstp_witness::sign_receipt` refuses until Daniel accepts the ADR-010
+/// composite encoding table (lane W2g hard limit).
+pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_receipt: fstp_witness::sign_receipt refuses until ADR-010 composite encoding acceptance (Daniel) (lane W2g hard limit)";
 
 /// No crate has the reconciliation task of ADR-004, and neither the
 /// `Custody` trait nor the custody simulator's usage log carries a
@@ -116,15 +114,16 @@ pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: 
 /// Reconciliation, lane W2f).
 pub const KEY_OPS_SEAM: &str = "fstp_celltest::mc::audit_model::prod_cell_custody_round: no cell keystore makes custody calls with request ids and writes KeyOp events to its chain, and no reader decodes them (ADR-004 Reconciliation, lane W2f)";
 
-/// The cell has no admission decision that refuses writes and serves
-/// reads while the witness is unreachable (ADR-010 "Witness
-/// unavailable", lanes W2g and W3a).
-pub const ADMIT_SEAM: &str = "fstp_celltest::mc::audit_model::Production::admit: the cell has no admission decision for writes and reads while the witness is unreachable (ADR-010 Witness unavailable, lanes W2g and W3a)";
-
+/// A production refusal as `NotImplemented`: the stub's own operation, or
+/// `op` for any other refusal, such as the one that waits on the ADR-010
+/// composite encoding acceptance.
 fn ni(e: AuditError, op: &'static str) -> NotImplemented {
     match e {
         AuditError::NotImplemented(op) => NotImplemented::new(op),
-        AuditError::Tamper(_) => NotImplemented::new(op),
+        AuditError::Tamper(_)
+        | AuditError::Decode(_)
+        | AuditError::Invalid(_)
+        | AuditError::AwaitsAcceptance(_) => NotImplemented::new(op),
     }
 }
 
@@ -144,8 +143,9 @@ pub fn prod_kind(k: &RefRowKind) -> RowKind {
     }
 }
 
-/// A production composite signature over the ADR-010 anchor message.
-/// Refuses with [`ANCHOR_SIGN_SEAM`] until `fstp-audit` signs anchors.
+/// A production composite signature over the ADR-010 anchor message,
+/// through `fstp_audit::anchor::sign_anchor`. It refuses with
+/// [`ANCHOR_SIGN_SEAM`] until Daniel accepts the composite encoding table.
 pub fn prod_sign_anchor(
     key: &fstp_crypto::composite::CompositeSigningKey,
     cell: CellBytes,
@@ -154,20 +154,28 @@ pub fn prod_sign_anchor(
     link: &Hash,
     at: i64,
 ) -> Result<Vec<u8>, NotImplemented> {
-    let _ = (key, cell, chain, n, link, at);
-    Err(NotImplemented::new(ANCHOR_SIGN_SEAM))
+    fstp_audit::anchor::sign_anchor(key, CellId(cell), prod_chain(chain), n, &Link(*link), at)
+        .map(|a| a.signature)
+        .map_err(|e| ni(e, ANCHOR_SIGN_SEAM))
 }
 
-/// A production composite signature over the receipt message. Refuses
-/// with [`RECEIPT_SIGN_SEAM`] until `fstp-witness` signs receipts.
+/// A production composite signature over the receipt message, through
+/// `fstp_witness::sign_receipt`. It refuses with [`RECEIPT_SIGN_SEAM`]
+/// until Daniel accepts the composite encoding table.
 pub fn prod_sign_receipt(
     key: &fstp_crypto::composite::CompositeSigningKey,
     cell: CellBytes,
     chain: RefChain,
     receipt: &ReceiptFields,
 ) -> Result<Vec<u8>, NotImplemented> {
-    let _ = (key, cell, chain, receipt);
-    Err(NotImplemented::new(RECEIPT_SIGN_SEAM))
+    fstp_witness::sign_receipt(
+        key,
+        CellId(cell),
+        prod_chain(chain),
+        &prod_receipt_fields(receipt),
+    )
+    .map(|r| r.signature)
+    .map_err(|_| NotImplemented::new(RECEIPT_SIGN_SEAM))
 }
 
 /// The encoded public key `mldsaPK || tradPK` of a production composite
@@ -642,21 +650,156 @@ impl AuditBackend for Reference {
 const ORACLE_SIGN_FAILED: &str =
     "fstp_celltest::reference::audit::Keys::sign: the aws-lc-rs ML-DSA-65 oracle failed";
 
-/// The production backend: `fstp_audit` for the chain functions and the
-/// verifier, and `fstp_witness` for the witness core.
+/// The production backend: `fstp_audit` for the chain functions, the
+/// anchorer core and the verifier, and `fstp_witness` for the witness
+/// core (lane W2g).
 ///
-/// Gaps, reported by lane W1e: the stored hash, the witness core, the
-/// anchorer core and the verifier's inputs have no production API yet.
-/// Each refuses with its seam constant. Where a stub exists, the backend
-/// calls it first, so a run is red on the stub's own `NotImplemented`.
+/// Signing and signature checks refuse with
+/// [`fstp_audit::COMPOSITE_ENCODING_ACCEPTANCE`] until Daniel accepts the
+/// ADR-010 composite encoding table (lane W2g hard limit). So
+/// [`AuditBackend::sign_view`], [`AuditBackend::verify`] and
+/// [`AuditBackend::verify_opaque`] answer `NotImplemented` naming it for
+/// every view that holds a row, an anchor row or a witness record.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Production;
 
+/// Not a seam: the production anchorer core refused a step that the
+/// model drives in order. It stops the run as a backend that did not
+/// answer.
+pub const PROD_ANCHORER_OUT_OF_ORDER: &str = "fstp_celltest::mc::audit_model::Production: fstp_audit::anchorer::Anchorer refused a step driven in order";
+
+/// Not a seam: the production witness core refused for a reason the
+/// reference has no variant for (`WrongChain` or `Exhausted`).
+pub const PROD_WITNESS_UNMAPPED: &str = "fstp_celltest::mc::audit_model::Production: fstp_witness refused with a reason the reference does not model";
+
+fn anchorer_ni<T>(_: fstp_audit::anchorer::OutOfOrder) -> Result<T, NotImplemented> {
+    Err(NotImplemented::new(PROD_ANCHORER_OUT_OF_ORDER))
+}
+
+/// A production anchorer core driven through design section 5.3 steps 1
+/// to 6 and the prepare of `head`.
+fn prepared_anchorer(head: (u64, Link)) -> Result<fstp_audit::anchorer::Anchorer, NotImplemented> {
+    use fstp_audit::anchorer::{Anchorer, Step};
+    let mut a = Anchorer::new();
+    if let Err(e) = a.begin(true) {
+        return anchorer_ni(e);
+    }
+    for step in Step::ALL {
+        if let Err(e) = a.step_done(step) {
+            return anchorer_ni(e);
+        }
+    }
+    if let Err(e) = a.prepared(head) {
+        return anchorer_ni(e);
+    }
+    Ok(a)
+}
+
+/// The prospective head the anchorer seam methods drive. The decisions do
+/// not depend on its value.
+const DRIVEN_HEAD: (u64, Link) = (1, Link([0xD5; 32]));
+
+/// The receipt for [`DRIVEN_HEAD`].
+const DRIVEN_RECEIPT: fstp_audit::ReceiptFields = fstp_audit::ReceiptFields {
+    n: DRIVEN_HEAD.0,
+    link: DRIVEN_HEAD.1,
+    witness_seq: 1,
+    witness_link: Link([0xD6; 32]),
+    received_at: 0,
+};
+
+fn prod_sender(s: RefSender) -> fstp_witness::Sender {
+    match s {
+        RefSender::CellWitness { cell } => fstp_witness::Sender::CellWitness { cell: CellId(cell) },
+        RefSender::VaultWitness { cell } => {
+            fstp_witness::Sender::VaultWitness { cell: CellId(cell) }
+        }
+        RefSender::ControlPlane => fstp_witness::Sender::ControlPlane,
+    }
+}
+
+fn ref_refusal(r: fstp_witness::Refusal) -> Result<WitnessRefusal, NotImplemented> {
+    Ok(match r {
+        fstp_witness::Refusal::WrongSender => WitnessRefusal::WrongSender,
+        fstp_witness::Refusal::Outstanding => WitnessRefusal::Outstanding,
+        fstp_witness::Refusal::NotExtending => WitnessRefusal::NotExtending,
+        fstp_witness::Refusal::LinkMismatch => WitnessRefusal::LinkMismatch,
+        fstp_witness::Refusal::UnknownPrepare => WitnessRefusal::UnknownPrepare,
+        fstp_witness::Refusal::Withdrawn => WitnessRefusal::Withdrawn,
+        fstp_witness::Refusal::WrongChain | fstp_witness::Refusal::Exhausted => {
+            return Err(NotImplemented::new(PROD_WITNESS_UNMAPPED));
+        }
+    })
+}
+
+/// The production witness core for `cell`'s `chain` in the reference
+/// state `st`.
+fn prod_witness(
+    st: &RefWitnessState,
+    cell: CellBytes,
+    chain: RefChain,
+) -> fstp_witness::ChainWitness {
+    let link = |(n, l): (u64, Hash)| (n, Link(l));
+    fstp_witness::ChainWitness::resume(
+        CellId(cell),
+        prod_chain(chain),
+        fstp_witness::WitnessState {
+            confirmed: link(st.confirmed),
+            outstanding: st.outstanding.map(link),
+            withdrawn: st.withdrawn.iter().copied().map(link).collect(),
+            seq: st.seq,
+            head: Link(st.head),
+        },
+    )
+}
+
+/// The reference state of a production witness core.
+fn ref_witness_state(w: &fstp_witness::ChainWitness) -> RefWitnessState {
+    let s = w.state();
+    let hash = |(n, l): (u64, Link)| (n, l.0);
+    RefWitnessState {
+        confirmed: hash(s.confirmed),
+        outstanding: s.outstanding.map(hash),
+        withdrawn: s.withdrawn.iter().copied().map(hash).collect(),
+        seq: s.seq,
+        head: s.head.0,
+    }
+}
+
+fn ref_receipt(f: &fstp_audit::ReceiptFields) -> ReceiptFields {
+    ReceiptFields {
+        n: f.n,
+        link: f.link.0,
+        witness_seq: f.witness_seq,
+        witness_link: f.witness_link.0,
+        received_at: f.received_at,
+    }
+}
+
+fn prod_receipt_fields(f: &ReceiptFields) -> fstp_audit::ReceiptFields {
+    fstp_audit::ReceiptFields {
+        n: f.n,
+        link: Link(f.link),
+        witness_seq: f.witness_seq,
+        witness_link: Link(f.witness_link),
+        received_at: f.received_at,
+    }
+}
+
+fn prod_entry(e: &RefLedgerEntry) -> fstp_audit::StoredEntry {
+    fstp_audit::StoredEntry {
+        seq: e.seq,
+        at: e.at,
+        command: e.command,
+        schema: e.schema,
+        key_ix: e.key_ix,
+        body: e.body.clone(),
+    }
+}
+
 impl AuditBackend for Production {
     fn genesis(&self, cell: CellBytes, chain: RefChain) -> Result<Hash, NotImplemented> {
-        pchain::genesis(CellId(cell), prod_chain(chain))
-            .map(|l| l.0)
-            .map_err(|e| ni(e, "fstp_audit::chain::genesis answered a tamper"))
+        Ok(pchain::genesis(CellId(cell), prod_chain(chain)).0)
     }
 
     fn stored_hash(
@@ -665,8 +808,8 @@ impl AuditBackend for Production {
         kind: &RefRowKind,
         entry: Option<&RefLedgerEntry>,
     ) -> Result<Hash, NotImplemented> {
-        let _ = (at, kind, entry);
-        Err(NotImplemented::new(STORED_HASH_SEAM))
+        pchain::stored_hash(at, &prod_kind(kind), entry.map(prod_entry).as_ref())
+            .map_err(|e| ni(e, STORED_HASH_SEAM))
     }
 
     fn link(
@@ -685,9 +828,7 @@ impl AuditBackend for Production {
             kind: prod_kind(kind),
             stored_hash: *stored_hash,
         };
-        pchain::link(&Link(*prev), CellId(cell), prod_chain(chain), &row)
-            .map(|l| l.0)
-            .map_err(|e| ni(e, "fstp_audit::chain::link answered a tamper"))
+        Ok(pchain::link(&Link(*prev), CellId(cell), prod_chain(chain), &row).0)
     }
 
     fn accepts_sender(
@@ -696,8 +837,11 @@ impl AuditBackend for Production {
         cell: CellBytes,
         chain: RefChain,
     ) -> Result<bool, NotImplemented> {
-        let _ = (sender, cell, chain);
-        Err(NotImplemented::new(WITNESS_SEAM))
+        Ok(fstp_witness::accepts_sender(
+            prod_sender(sender),
+            CellId(cell),
+            prod_chain(chain),
+        ))
     }
 
     fn witness_prepare(
@@ -709,8 +853,25 @@ impl AuditBackend for Production {
         p: &RefPrepare,
         received_at: i64,
     ) -> Result<PrepareAnswer, NotImplemented> {
-        let _ = (st, cell, chain, sender, p, received_at);
-        Err(NotImplemented::new(WITNESS_SEAM))
+        let mut w = prod_witness(st, cell, chain);
+        // The core reads no signature (lane W2g hard limit), so the
+        // reference prepare's symbolic anchor carries none.
+        let prepare = fstp_audit::Prepare {
+            prev: (p.prev.0, Link(p.prev.1)),
+            stored_hashes: p.stored_hashes.clone(),
+            anchor: fstp_audit::Anchor {
+                cell: CellId(cell),
+                chain: prod_chain(chain),
+                n: p.anchor.n,
+                link: Link(p.anchor.link),
+                at: p.anchor.at,
+                signature: Vec::new(),
+            },
+        };
+        match w.prepare(prod_sender(sender), &prepare, received_at) {
+            Ok(receipt) => Ok(Ok((ref_witness_state(&w), ref_receipt(&receipt)))),
+            Err(refusal) => Ok(Err(ref_refusal(refusal)?)),
+        }
     }
 
     fn witness_abort(
@@ -722,8 +883,11 @@ impl AuditBackend for Production {
         n: u64,
         link: &Hash,
     ) -> Result<Result<RefWitnessState, WitnessRefusal>, NotImplemented> {
-        let _ = (st, cell, chain, sender, n, link);
-        Err(NotImplemented::new(WITNESS_SEAM))
+        let mut w = prod_witness(st, cell, chain);
+        match w.abort(prod_sender(sender), n, &Link(*link)) {
+            Ok(_) => Ok(Ok(ref_witness_state(&w))),
+            Err(refusal) => Ok(Err(ref_refusal(refusal)?)),
+        }
     }
 
     fn witness_in_doubt_absent(
@@ -735,13 +899,27 @@ impl AuditBackend for Production {
         n: u64,
         link: &Hash,
     ) -> Result<Result<RefWitnessState, WitnessRefusal>, NotImplemented> {
-        let _ = (st, cell, chain, sender, n, link);
-        Err(NotImplemented::new(WITNESS_SEAM))
+        let mut w = prod_witness(st, cell, chain);
+        match w.in_doubt_absent(prod_sender(sender), n, &Link(*link)) {
+            Ok(_) => Ok(Ok(ref_witness_state(&w))),
+            Err(refusal) => Ok(Err(ref_refusal(refusal)?)),
+        }
     }
 
+    /// Drives the production anchorer step function through design
+    /// section 5.3 to COMMIT: with the receipt, the anchor row is inserted
+    /// and COMMIT is allowed; without it, COMMIT is refused.
     fn may_commit(&self, receipted: bool) -> Result<bool, NotImplemented> {
-        let _ = receipted;
-        Err(NotImplemented::new(ANCHORER_SEAM))
+        let mut a = prepared_anchorer(DRIVEN_HEAD)?;
+        if receipted {
+            if let Err(e) = a.receipt(&DRIVEN_RECEIPT) {
+                return anchorer_ni(e);
+            }
+            if let Err(e) = a.anchor_inserted() {
+                return anchorer_ni(e);
+            }
+        }
+        Ok(a.commit_sent().is_ok())
     }
 
     fn admit(
@@ -749,27 +927,64 @@ impl AuditBackend for Production {
         op: RefOp,
         witness_up: bool,
     ) -> Result<Result<(), AdmitRefusal>, NotImplemented> {
-        let _ = (op, witness_up);
-        Err(NotImplemented::new(ADMIT_SEAM))
+        let op = match op {
+            RefOp::Read => fstp_audit::anchorer::Op::Read,
+            RefOp::Write => fstp_audit::anchorer::Op::Write,
+        };
+        Ok(
+            fstp_audit::anchorer::admit(op, witness_up).map_err(|e| match e {
+                fstp_audit::anchorer::AdmitRefusal::WitnessUnavailable => {
+                    AdmitRefusal::WitnessUnavailable
+                }
+            }),
+        )
     }
 
+    /// Drives the production anchorer step function through COMMIT and
+    /// reports `outcome` to it.
     fn after_commit(&self, outcome: CommitOutcome) -> Result<AfterCommit, NotImplemented> {
-        let _ = outcome;
-        Err(NotImplemented::new(ANCHORER_SEAM))
+        use fstp_audit::anchorer as a;
+        let mut core = prepared_anchorer(DRIVEN_HEAD)?;
+        let driven = core
+            .receipt(&DRIVEN_RECEIPT)
+            .and_then(|()| core.anchor_inserted())
+            .and_then(|()| core.commit_sent());
+        if let Err(e) = driven {
+            return anchorer_ni(e);
+        }
+        let o = match outcome {
+            CommitOutcome::Committed => a::CommitOutcome::Committed,
+            CommitOutcome::Failed => a::CommitOutcome::Failed,
+            CommitOutcome::Unknown => a::CommitOutcome::Unknown,
+        };
+        match core.outcome(o) {
+            Ok(a::AfterCommit::Done) => Ok(AfterCommit::Done),
+            Ok(a::AfterCommit::SendAbort) => Ok(AfterCommit::SendAbort),
+            Ok(a::AfterCommit::InDoubt) => Ok(AfterCommit::InDoubt),
+            Err(e) => anchorer_ni(e),
+        }
     }
 
+    /// Resolves through the production anchorer core in doubt about
+    /// `prepared`.
     fn resolve(
         &self,
         link_at_n: Option<Hash>,
         prepared: &Hash,
     ) -> Result<Resolution, NotImplemented> {
-        let _ = (link_at_n, prepared);
-        Err(NotImplemented::new(ANCHORER_SEAM))
+        use fstp_audit::anchorer as a;
+        let mut core = a::Anchorer::in_doubt((DRIVEN_HEAD.0, Link(*prepared)));
+        let at_n = link_at_n.map(Link);
+        match core.chain_read(at_n.as_ref()) {
+            Ok(a::Resolution::Committed) => Ok(Resolution::Committed),
+            Ok(a::Resolution::AbsentRaisePossibleDeletion) => {
+                Ok(Resolution::AbsentRaisePossibleDeletion)
+            }
+            Err(e) => anchorer_ni(e),
+        }
     }
 
     fn verify(&self, view: &RefChainView, keys: &Keys) -> Result<VerifyAnswer, NotImplemented> {
-        // The stub first, so a run is red on its own NotImplemented.
-        prod_verify_stub(view, None)?;
         verify_by_translation(self, view, keys)
     }
 
@@ -817,6 +1032,9 @@ impl AuditBackend for Production {
         })
     }
 
+    /// `fstp_audit::verify::verify` over `view`, with every signature and
+    /// key read from `sigs`. `Ok` and `Tamper` are answers. The refusal
+    /// pending the composite encoding acceptance is `NotImplemented`.
     fn verify_opaque(
         &self,
         view: &RefChainView,
@@ -824,52 +1042,97 @@ impl AuditBackend for Production {
         keys: &Keys,
     ) -> Result<VerifyAnswer, NotImplemented> {
         let _ = keys;
-        prod_verify_stub(view, Some(sigs))?;
-        Err(NotImplemented::new(VERIFY_SEAM))
+        prod_verify(view, sigs)
     }
 }
 
-/// Calls the `fstp_audit::verify` stub over `view`, with the signatures
-/// of `sigs` when given and empty ones otherwise. Refuses with the stub's
-/// own `NotImplemented`, and otherwise answers `Ok(())`.
-fn prod_verify_stub(view: &RefChainView, sigs: Option<&OpaqueSigs>) -> Result<(), NotImplemented> {
-    let rows: Vec<ChainRow> = view
+/// The production anchor row of `row`, signed with `sigs`.
+fn prod_anchor_row(row: &RefAnchorRow, sigs: &OpaqueRowSigs) -> fstp_audit::AnchorRow {
+    let a = &row.anchor;
+    let rc = &row.receipt;
+    fstp_audit::AnchorRow {
+        anchor: fstp_audit::Anchor {
+            cell: CellId(a.cell),
+            chain: prod_chain(a.chain),
+            n: a.fields.n,
+            link: Link(a.fields.link),
+            at: a.fields.at,
+            signature: sigs.anchor.clone(),
+        },
+        receipt: fstp_audit::Receipt {
+            cell: CellId(rc.cell),
+            chain: prod_chain(rc.chain),
+            fields: prod_receipt_fields(&rc.fields),
+            signature: sigs.receipt.clone(),
+        },
+    }
+}
+
+/// Calls `fstp_audit::verify::verify` over `view` with the signatures and
+/// keys of `sigs`, the ledger, the link column and the witness log.
+fn prod_verify(view: &RefChainView, sigs: &OpaqueSigs) -> Result<VerifyAnswer, NotImplemented> {
+    if sigs.anchors.len() != view.anchors.len() {
+        return Ok(Err("the signatures do not cover the view".to_owned()));
+    }
+    let rows: Vec<fstp_audit::StoredRow> = view
         .rows
         .iter()
-        .map(|r| ChainRow {
-            n: r.n,
-            at: r.at,
-            kind: prod_kind(&r.kind),
-            stored_hash: r.stored_hash,
+        .map(|r| fstp_audit::StoredRow {
+            row: ChainRow {
+                n: r.n,
+                at: r.at,
+                kind: prod_kind(&r.kind),
+                stored_hash: r.stored_hash,
+            },
+            link: Link(r.link),
         })
         .collect();
-    let sig_of = |i: usize| sigs.and_then(|s| s.anchors.get(i)).cloned();
-    let anchors: Vec<fstp_audit::Anchor> = view
+    let ledger: Vec<fstp_audit::StoredEntry> = view.ledger.iter().map(prod_entry).collect();
+    let anchors: Vec<fstp_audit::AnchorRow> = view
         .anchors
         .iter()
-        .enumerate()
-        .map(|(i, a)| fstp_audit::Anchor {
-            cell: CellId(a.anchor.cell),
-            chain: prod_chain(a.anchor.chain),
-            n: a.anchor.fields.n,
-            link: Link(a.anchor.fields.link),
-            at: a.anchor.fields.at,
-            signature: sig_of(i).map(|s| s.anchor).unwrap_or_default(),
-        })
+        .zip(&sigs.anchors)
+        .map(|(row, s)| prod_anchor_row(row, s))
         .collect();
-    let receipts: Vec<fstp_audit::Receipt> = view
-        .anchors
-        .iter()
-        .enumerate()
-        .map(|(i, a)| fstp_audit::Receipt {
-            witness_seq: a.receipt.fields.witness_seq,
-            witness_link: Link(a.receipt.fields.witness_link),
-            signature: sig_of(i).map(|s| s.receipt).unwrap_or_default(),
-        })
-        .collect();
-    match fstp_audit::verify::verify(&rows, &[], &anchors, &receipts) {
-        Err(AuditError::NotImplemented(op)) => Err(NotImplemented::new(op)),
-        Ok(_) | Err(AuditError::Tamper(_)) => Ok(()),
+    let mut prepares = sigs.prepares.iter();
+    let mut witness = Vec::new();
+    for w in &view.witness {
+        witness.push(match w {
+            RefWitnessRecord::Prepare(row) => {
+                let Some(s) = prepares.next() else {
+                    return Ok(Err("the signatures do not cover the view".to_owned()));
+                };
+                fstp_audit::WitnessRecord::Prepare(prod_anchor_row(row, s))
+            }
+            RefWitnessRecord::Abort { n, link } => fstp_audit::WitnessRecord::Abort {
+                n: *n,
+                link: Link(*link),
+            },
+            RefWitnessRecord::InDoubtAbsent { n, link } => {
+                fstp_audit::WitnessRecord::InDoubtAbsent {
+                    n: *n,
+                    link: Link(*link),
+                }
+            }
+        });
+    }
+    if prepares.next().is_some() {
+        return Ok(Err("the signatures do not cover the view".to_owned()));
+    }
+    let v = fstp_audit::ChainView {
+        cell: CellId(view.cell),
+        chain: prod_chain(view.chain),
+        rows: &rows,
+        ledger: &ledger,
+        anchors: &anchors,
+        witness: &witness,
+        anchor_keys: &sigs.anchor_keys,
+        witness_keys: &sigs.witness_keys,
+    };
+    match fstp_audit::verify::verify(&v) {
+        Ok(_) => Ok(Ok(())),
+        Err(AuditError::Tamper(t)) => Ok(Err(format!("{t:?}"))),
+        Err(e) => Err(ni(e, VERIFY_SEAM)),
     }
 }
 
