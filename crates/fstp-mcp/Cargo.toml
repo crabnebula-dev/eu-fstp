@@ -1,0 +1,20 @@
+[package]
+name = "fstp-mcp"
+description = "Sans-IO MCP server core: JSON-RPC 2.0, lifecycle, Streamable HTTP rules and response classification (I-84, I-86, M4 design section 3.8)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-api-core.workspace = true
+fstp-oauth.workspace = true
+fstp-http.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

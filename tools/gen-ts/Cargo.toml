@@ -1,0 +1,14 @@
+[package]
+name = "gen-ts"
+description = "Build tool: writes web/src/gen/api.ts from the OPS registry, and checks it with --check (M4 design section 1.1). Never ships."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+fstp-access.workspace = true
+
+[lints]
+workspace = true

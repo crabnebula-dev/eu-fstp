@@ -1,0 +1,38 @@
+[package]
+name = "fstp-guide-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-guide = { path = ".." }
+
+[[bin]]
+name = "guide_template_parse"
+path = "fuzz_targets/guide_template_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "guide_markdown_parse"
+path = "fuzz_targets/guide_markdown_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "guide_render"
+path = "fuzz_targets/guide_render.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

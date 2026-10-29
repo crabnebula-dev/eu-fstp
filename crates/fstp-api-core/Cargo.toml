@@ -1,0 +1,29 @@
+[package]
+name = "fstp-api-core"
+description = "ApiCore and its one dispatch, read models, pending actions and the cell ports (I-84, I-85, M4 design section 3.7)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-access.workspace = true
+fstp-engine.workspace = true
+fstp-domain.workspace = true
+fstp-ledger.workspace = true
+fstp-creator.workspace = true
+fstp-import.workspace = true
+fstp-public.workspace = true
+fstp-guide.workspace = true
+fstp-tenant.workspace = true
+fstp-json.workspace = true
+fstp-money.workspace = true
+fstp-crypto.workspace = true
+fstp-rt.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

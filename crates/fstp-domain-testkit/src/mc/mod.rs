@@ -1,7 +1,9 @@
 //! Models for fstp-mc (design section 6.3).
 //!
-//! Module list from milestone M2 step W0. Each lane owns its own file.
+//! Module list from milestone M2 step W0, with `ballot_model` from M4 step
+//! W0. Each lane owns its own file.
 
+pub mod ballot_model;
 pub mod conflict_model;
 pub mod conformance;
 pub mod excl_model;

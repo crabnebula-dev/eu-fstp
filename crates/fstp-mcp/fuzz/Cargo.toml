@@ -1,0 +1,52 @@
+[package]
+name = "fstp-mcp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-mcp = { path = ".." }
+
+[[bin]]
+name = "jsonrpc_decode"
+path = "fuzz_targets/jsonrpc_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_message_decode"
+path = "fuzz_targets/mcp_message_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tool_args_decode"
+path = "fuzz_targets/tool_args_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_headers_decode"
+path = "fuzz_targets/mcp_headers_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_http_post"
+path = "fuzz_targets/mcp_http_post.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

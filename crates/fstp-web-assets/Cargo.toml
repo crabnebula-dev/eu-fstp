@@ -1,0 +1,19 @@
+[package]
+name = "fstp-web-assets"
+description = "Loads the compiled frontend, verifies it against a SHA-256 manifest and serves it with fixed headers (ADR-014)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-http.workspace = true
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "fstp-access"
+description = "Principal, the OPS registry and its tool table, read rules and channel_policy (I-84, I-85, M4 design section 3.6)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-domain.workspace = true
+fstp-engine.workspace = true
+fstp-creator.workspace = true
+fstp-import.workspace = true
+fstp-tenant.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

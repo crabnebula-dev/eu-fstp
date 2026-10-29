@@ -1,0 +1,45 @@
+[package]
+name = "fstp-api-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-api-core = { path = ".." }
+
+[[bin]]
+name = "api_request_decode"
+path = "fuzz_targets/api_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "query_params_decode"
+path = "fuzz_targets/query_params_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cursor_decode"
+path = "fuzz_targets/cursor_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pending_request_decode"
+path = "fuzz_targets/pending_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -348,3 +348,87 @@ pub fn rust_tokens(data: &[u8]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Lines that each hold the sink `innerHTML` after a division or a regular
+/// expression the lexer must read correctly (ADR-014).
+const SINK_PROBES: [&str; 7] = [
+    ";innerHTML;",
+    ";a++ / 2; innerHTML; b / 1;",
+    ";a-- / 2; innerHTML; b / 1;",
+    ";n! / 2; innerHTML; b / 1;",
+    ";xs[0]! / 2; innerHTML; b / 1;",
+    ";!/'/.test(s); innerHTML;",
+    ";x.if(a) / 2; innerHTML; b / 1;",
+];
+
+/// The TypeScript source scan of `web/src` (M4 design section 9,
+/// `ts_token_scan`). Every token is a slice of the input on a line in
+/// range, identifiers and punctuation are well formed, and the scan
+/// reports only lines in range. When the input lexes closed, a banned sink
+/// appended on its own line is always found, so no input can hide a sink
+/// that follows it. Each line of `SINK_PROBES` is appended in turn, so a
+/// division the lexer reads as a regular expression fails the property.
+pub fn ts_token_scan(data: &[u8]) -> Result<(), String> {
+    use crate::web_scan::{self, TsKind};
+
+    let text = String::from_utf8_lossy(data);
+    let lines = text.split('\n').count();
+    let lexed = web_scan::lex_ts(&text);
+    let base = text.as_ptr() as usize;
+    let end = base.saturating_add(text.len());
+    for t in &lexed.toks {
+        let at = t.s.as_ptr() as usize;
+        if at < base || at.saturating_add(t.s.len()) > end {
+            return Err(format!("token {:?} is not a slice of the input", t.s));
+        }
+        if !(1..=lines).contains(&t.line) {
+            return Err(format!(
+                "token {:?} on line {} outside 1..={lines}",
+                t.s, t.line
+            ));
+        }
+        let ok = match t.kind {
+            TsKind::Ident => {
+                !t.s.is_empty()
+                    && t.s
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80)
+            }
+            TsKind::Punct => {
+                matches!(t.s, "++" | "--")
+                    || (t.s.len() == 1 && t.s.bytes().all(|b| b.is_ascii_graphic()))
+            }
+            TsKind::Num => {
+                t.s.bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_digit() || b == b'.')
+            }
+            TsKind::Regex => t.s.starts_with('/'),
+            TsKind::Str => true,
+        };
+        if !ok {
+            return Err(format!("malformed {:?} token {:?}", t.kind, t.s));
+        }
+    }
+    let dir = std::path::Path::new("core");
+    for (line, _) in web_scan::scan_ts(dir, &text) {
+        if !(1..=lines).contains(&line) {
+            return Err(format!("finding on line {line} outside 1..={lines}"));
+        }
+    }
+    if lexed.closed {
+        let want = lines.saturating_add(1);
+        for line in SINK_PROBES {
+            let probe = format!("{text}\n{line}\n");
+            let found = web_scan::scan_ts(dir, &probe)
+                .iter()
+                .any(|(l, what)| *l == want && what.contains("innerHTML"));
+            if !found {
+                return Err(format!(
+                    "the sink of {line:?} appended on line {want} is not found after {text:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}

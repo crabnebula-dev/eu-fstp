@@ -1,6 +1,6 @@
 //! CI gate for the dependency policy in CLAUDE.md.
 //!
-//! deps-check runs five gates over the repository and fails on any error:
+//! deps-check runs six gates over the repository and fails on any error:
 //!
 //! 1. Dependency allowlist (TH-15, H-10). It finds every cargo project in
 //!    the repository: the main workspace, the cargo-fuzz projects and any
@@ -25,8 +25,8 @@
 //! 4. Layering of the M2 domain crates (`docs/handoff/m2-design.md` section
 //!    1). No M2 crate reaches an I/O crate, `fstp-domain` has no dependency
 //!    path to `fstp-findings` or `fstp-engine` (I-10), and only
-//!    `fstp-domain-testkit` and `fstp-celltest` take a test-only crate as a
-//!    normal dependency.
+//!    `fstp-domain-testkit`, `fstp-celltest` and `fstp-api-testkit` take a
+//!    test-only crate as a normal dependency.
 //! 5. The M3 rules (`docs/handoff/m3-design.md` sections 2.4 to 2.6).
 //!    `layering_m3` holds layering rules 1 to 9, `runtime` rule 10 (one
 //!    async runtime per binary, only behind `fstp-rt`, ADR-002) and `funds`
@@ -36,6 +36,10 @@
 //!    B version without a confirmation in `deps/tier-b-confirmations.txt`,
 //!    and other builds report it. `git_source` admits a git package only
 //!    when its pinned source string matches the allowlist (ADR-001 A3).
+//!
+//! 6. The M4 rules (`docs/handoff/m4-design.md` sections 1.3 and 3.9).
+//!    `layering_m4` holds layering rules A1 to A10 with A2b and A9b, and
+//!    `web_scan` is the TypeScript source scan of `web/src` (ADR-014).
 //!
 //! Run it from the repository root with `cargo run -p deps-check --locked`.
 //! `--print-allowlist` prints an allowlist generated from the current graph,
@@ -56,6 +60,7 @@ mod git_source;
 mod graph;
 mod layering;
 mod layering_m3;
+mod layering_m4;
 mod lockfile;
 mod metadata;
 mod npm;
@@ -66,5 +71,6 @@ mod report;
 mod run;
 mod runtime;
 mod tier_b;
+mod web_scan;
 
 pub use run::run;

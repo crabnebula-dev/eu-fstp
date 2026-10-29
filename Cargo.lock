@@ -89,6 +89,67 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fstp-access"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-import",
+ "fstp-prop",
+ "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-api-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
+ "fstp-creator",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-guide",
+ "fstp-import",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-prop",
+ "fstp-public",
+ "fstp-rt",
+ "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-api-testkit"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
+ "fstp-api-core",
+ "fstp-creator",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-engine",
+ "fstp-guide",
+ "fstp-html",
+ "fstp-import",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-mc",
+ "fstp-mcp",
+ "fstp-money",
+ "fstp-oauth",
+ "fstp-programme",
+ "fstp-prop",
+ "fstp-public",
+ "fstp-rt",
+ "fstp-signup",
+ "fstp-tenant",
+ "fstp-web",
+ "fstp-web-assets",
+]
+
+[[package]]
 name = "fstp-audit"
 version = "0.1.0"
 dependencies = [
@@ -221,6 +282,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-creator"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-programme",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-crypto"
 version = "0.1.0"
 dependencies = [
@@ -304,6 +378,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-guide"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-html",
+ "fstp-programme",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-html"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-http"
 version = "0.1.0"
 dependencies = [
@@ -311,6 +403,17 @@ dependencies = [
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
+]
+
+[[package]]
+name = "fstp-import"
+version = "0.1.0"
+dependencies = [
+ "fstp-findings",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-programme",
+ "fstp-prop",
 ]
 
 [[package]]
@@ -358,6 +461,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-mcp"
+version = "0.1.0"
+dependencies = [
+ "fstp-api-core",
+ "fstp-http",
+ "fstp-json",
+ "fstp-oauth",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-migrate"
 version = "0.1.0"
 dependencies = [
@@ -373,6 +487,15 @@ dependencies = [
 name = "fstp-money"
 version = "0.1.0"
 dependencies = [
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-oauth"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
  "fstp-json",
  "fstp-prop",
 ]
@@ -430,8 +553,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-programme"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-prop"
 version = "0.1.0"
+
+[[package]]
+name = "fstp-public"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-html",
+ "fstp-json",
+ "fstp-programme",
+ "fstp-prop",
+]
 
 [[package]]
 name = "fstp-release"
@@ -463,6 +608,27 @@ version = "0.1.0"
 dependencies = [
  "fstp-prop",
  "tokio",
+]
+
+[[package]]
+name = "fstp-signup"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-html",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-tenant"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
 ]
 
 [[package]]
@@ -517,6 +683,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-web"
+version = "0.1.0"
+dependencies = [
+ "fstp-api-core",
+ "fstp-http",
+ "fstp-json",
+ "fstp-mcp",
+ "fstp-oauth",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-web-assets",
+]
+
+[[package]]
+name = "fstp-web-assets"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-webauthn"
 version = "0.1.0"
 dependencies = [
@@ -537,6 +727,13 @@ dependencies = [
  "fstp-pgwire",
  "fstp-prop",
  "fstp-tls",
+]
+
+[[package]]
+name = "gen-ts"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
 ]
 
 [[package]]

@@ -1,0 +1,18 @@
+[package]
+name = "fstp-oauth"
+description = "Sans-IO OAuth 2.1 authorisation server with PKCE, resource binding and a strict URL parser (M4 design section 3.8)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-json.workspace = true
+fstp-crypto.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

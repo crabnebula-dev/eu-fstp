@@ -9,7 +9,7 @@ Milestone M4 in `SPEC/09-milestones.md`: "Tenant onboarding, programme creator, 
 
 Status: final design for Daniel's review, revision 2. Revision 2 closes the completeness critique (section 0.5). No repository file was changed while writing it. Every repository change named here is staged by the implementing agent with a proposed commit message. Daniel creates, signs and pushes each commit.
 
-ADR-008 and ADR-009 are new ADRs this design proposes (section 10). They do not exist yet.
+ADR-013 and ADR-014 are new ADRs this design proposes (section 10). They do not exist yet.
 
 Labels such as `Q4`, `W3`, `D2`, `L-DOM`, `J4`, `TW-3` and `M-ACTIVATE` exist only in this document. They are not spec identifiers. In particular, lane labels such as `L-DOM` are not the `L-` legal checks of `SPEC/10-open-questions.md`. Every `I-`, `R-`, `P-`, `SoD-`, `TH-`, `T-`, `H-`, `O-`, `L-` and `ADR-` identifier is quoted from the repository. Crate, type, table, route and test names are design proposals.
 
@@ -222,7 +222,7 @@ The existing `tools/deps-check/src/layering.rs` gains these rules, each with its
 - `.github/workflows/ci.yml`: jobs for Node.js, `npm ci --ignore-scripts`, tsc, the TypeScript tests and fuzz harness, the pinned Playwright browsers, and a separate matrix job with its own timeout (section 8.3).
 - `web/playwright.config.ts` and an initial generated `web/src/gen/api.ts` from the stub `OPS`.
 - `tools/deps-check/src/{layering,web_scan,npm}.rs` and their registration and tests; new targets in `tools/deps-check/fuzz`.
-- `docs/adr/ADR-008-mcp-and-oauth-profile.md` and `docs/adr/ADR-009-frontend-architecture.md`, as drafts for Daniel's acceptance before the code they govern.
+- `docs/adr/ADR-013-mcp-and-oauth-profile.md` and `docs/adr/ADR-014-frontend-architecture.md`, as drafts for Daniel's acceptance before the code they govern.
 - `docs/adr/ADR-003-build-and-test-tools.md`: record rows for tsc, Playwright and the browser builds, and the Node.js host once Q7 is answered.
 - `web/package.json`, `web/package-lock.json`, `web/tsconfig.json`.
 
@@ -864,7 +864,7 @@ Transport and protocol:
 - Streamable HTTP at `https://{tenant domain}/mcp` and `/mcp/public`. `POST` takes one JSON-RPC message and answers `application/json`. `GET` answers 405, so no server-initiated stream exists. `DELETE` ends the MCP session.
 - The `Origin` header is checked against DNS rebinding. Native MCP clients send no `Origin`, so a request without one is accepted on the bearer token alone. `/mcp/public` holds no credential and serves only public data, so it also accepts a missing `Origin`. A present `Origin` must equal one of the tenant's own origins, or the request gets 403. A duplicated or unparsable `Origin` is refused. `Mcp-Session-Id` is 128 random bits from `fstp_crypto::random_bytes`, stored hashed.
 - Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list` and `tools/call`. No resources, prompts, sampling or elicitation in M4.
-- The MCP revision is pinned in ADR-008 (Q8). I propose the 2025-06-18 revision as the floor. I believe it removed JSON-RPC batching, requires the `MCP-Protocol-Version` header after initialisation, and requires RFC 9728 metadata and RFC 8707 resource indicators. I believe a later revision changed client registration guidance, including client ID metadata documents. ADR-008 must check the published text before it is accepted.
+- The MCP revision is pinned in ADR-013 (Q8). I propose the 2025-06-18 revision as the floor. I believe it removed JSON-RPC batching, requires the `MCP-Protocol-Version` header after initialisation, and requires RFC 9728 metadata and RFC 8707 resource indicators. I believe a later revision changed client registration guidance, including client ID metadata documents. ADR-013 must check the published text before it is accepted.
 - `serverInfo.name` is white-labelled (`mcp-server.md`) but carries no free text, so tenant text cannot reach agents as instructions (TH-63). It is the first label of the tenant's verified domain, matched against `^[a-z0-9][a-z0-9-]{0,30}$`. No `instructions` field is sent. `serverInfo.title` is not sent (Q43).
 - Tool names, descriptions and input schemas are `const` data in the `OPS` registry of `fstp-access`, the only tool table. `fstp-mcp` serves `fstp_api_core::meta::tools()` and defines no tool of its own (TH-63).
 
@@ -910,7 +910,7 @@ OAuth 2.1:
 - **Parsers in TypeScript, kept few and fuzzed.** These TypeScript modules parse input: `money.ts` (ADR-006 strings), `dom.ts` `safeUrl` (URLs), `router.ts` (paths against generated segments), the generated structural validators in `gen/api.ts` (server JSON after `JSON.parse`), and `i18n.ts` (message placeholders). Each has a target in the in-house harness `web/fuzz/` (section 9, Q33). Where a Rust parser exists for the same grammar, a differential test runs both on the same corpus: `money.ts` against `fstp-money`, and `safeUrl` against the `fstp-oauth` URL parser's subset.
 - **Money.** `money.ts` handles ADR-006 strings only. The browser never computes money. Totals and P-04 checks come from the server.
 - **Step-up.** On `step_up_required`, `stepup.ts` runs the M3 WebAuthn ceremony for the challenge's digest and retries once. On `strong_method_required`, it sends the user to add a passkey first, which is itself a high-risk action under M3's enrolment rules.
-- **Desktop client seam (M9).** The Tauri client in `desktop-client.md` cannot use the `__Host-` cookie, the `Origin` rule or this CSP. It will sign in as an OAuth 2.1 native public client through `fstp-oauth`, with PKCE and a loopback redirect. "Signing in the desktop client" is a high-risk step-up (`authentication.md`). It then calls `/api/v1` with a bearer token as `Via::Web`, since it shows the same interface. That token has its own audience, so an MCP token can never act as a desktop token (RFC 8707 binding). Bearer requests need no CSRF defence. ADR-009 records this seam. M4 builds none of it.
+- **Desktop client seam (M9).** The Tauri client in `desktop-client.md` cannot use the `__Host-` cookie, the `Origin` rule or this CSP. It will sign in as an OAuth 2.1 native public client through `fstp-oauth`, with PKCE and a loopback redirect. "Signing in the desktop client" is a high-risk step-up (`authentication.md`). It then calls `/api/v1` with a bearer token as `Via::Web`, since it shows the same interface. That token has its own audience, so an MCP token can never act as a desktop token (RFC 8707 binding). Bearer requests need no CSRF defence. ADR-014 records this seam. M4 builds none of it.
 - **Shell and assets.** `/app/` serves a shell with one `<script type="module">` and no inline script. Assets are at `/app/assets/{sha256}.js`, immutable, verified by `fstp-web-assets` at start.
 - **Headers on `/app`.** `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types fstp-dom`. Also `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin` and HSTS.
 - **CSRF.** M3's `__Host-` session cookie with `Secure`, `HttpOnly`, `SameSite=Strict` and `Path=/`. State-changing requests need `Origin` equal to the tenant origin and an `X-FSTP-Request: 1` header.
@@ -1599,8 +1599,8 @@ No new Rust crate is added.
 
 ADRs needed before implementation:
 
-- **ADR-008: MCP protocol and OAuth profile.** The pinned MCP revision, the transport subset, client registration mode, token formats and lifetimes, scopes and consent texts (Q8, Q25). It governs `fstp-mcp` and `fstp-oauth`.
-- **ADR-009: Frontend architecture and delivery.** No framework and no bundler, the generated operation types, the DOM rules, CSP and Trusted Types, the asset manifest, the source scan and the in-house test runner. It governs `web/` and `fstp-web-assets`.
+- **ADR-013: MCP protocol and OAuth profile.** The pinned MCP revision, the transport subset, client registration mode, token formats and lifetimes, scopes and consent texts (Q8, Q25). It governs `fstp-mcp` and `fstp-oauth`.
+- **ADR-014: Frontend architecture and delivery.** No framework and no bundler, the generated operation types, the DOM rules, CSP and Trusted Types, the asset manifest, the source scan and the in-house test runner. It governs `web/` and `fstp-web-assets`.
 - **ADR-003 amendment and records.** The Node.js host decision (Q7) and the tsc and Playwright records.
 - **ADR-005 completion (M3)** with OVHcloud, the database mode and the backup provider (section 7.1). M4 depends on it only for deployment.
 - **ADR-004 completion (M3)** with the custody backend (section 7.2). M4 does not depend on it.
@@ -1618,7 +1618,7 @@ No M4 decision is marked "ADR-required" in the spec. The ADRs above are needed b
 5. **Readings without a spec answer.** Builders, the approver, the pre-declaration summary and the ranking and IRC views are interim readings. Each sits in one function (Q1, Q9, Q16).
 6. **Validation needs later milestones.** Channel and sending-domain checks fail closed until M6 and M8. SuperSAFE's P-32 names Matrix and WhatsApp, so production activation of SuperSAFE waits for M8. This is safe, and Q5 asks Daniel to accept it.
 7. **Legal wording.** `LegalWordingPending` blocks real activation until legal review (Q6). The synthetic wording profile is test-only and labelled as not legal text.
-8. **MCP specification churn.** ADR-008 pins one revision. Recorded transcripts are conformance fixtures.
+8. **MCP specification churn.** ADR-013 pins one revision. Recorded transcripts are conformance fixtures.
 9. **In-house OAuth and URL parsing.** Strict subsets, exact matching and fuzzing from the first commit. H-23 reviews them in M10.
 10. **Frontend without a framework.** The small core, the source scan, Trusted Types, accessibility checks in every journey and manual review.
 11. **Node.js supply chain (TH-15).** Build and test only, pinned, scripts off, lockfile gate.
@@ -1735,7 +1735,7 @@ Ownership rules:
 
 | Step | Lane (agents) | Owns | Tests first | Depends on |
 | --- | --- | --- | --- | --- |
-| W0 | lead (1) | The shared files above; `crates/*/Cargo.toml` and `crates/*/fuzz/**` scaffolds of new crates until W0 merges; `tools/deps-check/src/{layering,web_scan,npm}.rs` and `tools/deps-check/fuzz/**`; `docs/adr/ADR-008*`, `docs/adr/ADR-009*`, the ADR-003 record draft; `web/{package.json,package-lock.json,tsconfig.json}`; `crates/fstp-api-core/src/port.rs`; the stub `web/src/gen/api.ts` | Layering tests for A1 to A10, A2b and A9b; every fuzz target builds; the npm gate rejects an unpinned package; the web scan rejects `innerHTML` | M2 merged with I-12 closed; answers to Q7 and Q8 |
+| W0 | lead (1) | The shared files above; `crates/*/Cargo.toml` and `crates/*/fuzz/**` scaffolds of new crates until W0 merges; `tools/deps-check/src/{layering,web_scan,npm}.rs` and `tools/deps-check/fuzz/**`; `docs/adr/ADR-013*`, `docs/adr/ADR-014*`, the ADR-003 record draft; `web/{package.json,package-lock.json,tsconfig.json}`; `crates/fstp-api-core/src/port.rs`; the stub `web/src/gen/api.ts` | Layering tests for A1 to A10, A2b and A9b; every fuzz target builds; the npm gate rejects an unpinned package; the web scan rejects `innerHTML` | M2 merged with I-12 closed; answers to Q7 and Q8 |
 | W1a | L-SPEC (2) | `crates/fstp-programme/**` | `r_pg_01_creator_table_maps_to_fields`, `r_pg_01_every_programme_parameter_has_one_field`, round trip, `r_pg_01_supersafe_fixture_matches_policy_defaults` | W0 |
 | W1b | L-DOM (2) | `crates/fstp-domain/src/{programme,visibility,command,rules,refusal,decision,record,engine}.rs`, `src/policy/{mod,activation}.rs`, `src/roles/commands.rs`, `src/proposal/{draft,intake}.rs`, `src/codec/**`, `crates/fstp-domain/tests/**`; testkit `src/{scenario.rs,activation.rs}` (until W2e), `src/gen/*.rs`, `src/mc/{life_model,findings_model}.rs`, `src/reference/{review,policy}.rs`, testkit `tests/{core_activation_*,o43_*,r_ev_09_*,d3_*,d9_*,d10_*,d11_*,i12_mcp_binding_reads_the_frozen_p77,i12_policy_validation}.rs`; `crates/fstp-engine/fuzz/fuzz_targets/decide_sequence.rs` | D1 to D12 except D2e; core I-67 guard; Draft refusals; `preview_grant` equivalence; O-43 reads; M-BALLOT; every M2 suite unchanged; tripwires re-measured | W0 |
 | W1c | L-WEBCORE (2) | `web/src/core/**`, `web/test/**`, `web/fuzz/**` | DOM builder refuses unsafe input; router and store tests; money strings only; the TypeScript fuzz targets of section 9 | W0 |
@@ -1887,7 +1887,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 - C: Bun.
 - Recommendation: A. Both allowlisted tools are distributed for it.
 
-**Q8. MCP and OAuth profile (ADR-008).**
+**Q8. MCP and OAuth profile (ADR-013).**
 
 - Revision: pin the newest dated revision at W0 after checking its text, with 2025-06-18 as the floor.
 - Registration A: open dynamic registration, rate-limited, with no metadata fetch.

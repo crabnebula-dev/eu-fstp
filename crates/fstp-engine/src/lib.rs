@@ -40,8 +40,11 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod bridge;
+pub mod compose;
 pub mod driver;
 pub mod findings;
+pub mod sweep;
 
 use fstp_domain::command::Ctx;
 use fstp_domain::engine::FoldError;

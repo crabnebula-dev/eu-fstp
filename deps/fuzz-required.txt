@@ -41,3 +41,18 @@ fstp-release
 fstp-release-svc
 fstp-backup
 fstp-celltest
+# M4, docs/handoff/m4-design.md sections 1.4 and 9. fstp-access holds no
+# parser and fstp-api-testkit is test code, so neither is listed.
+fstp-programme
+fstp-creator
+fstp-import
+fstp-html
+fstp-guide
+fstp-public
+fstp-tenant
+fstp-signup
+fstp-api-core
+fstp-oauth
+fstp-mcp
+fstp-web
+fstp-web-assets

@@ -1,0 +1,31 @@
+[package]
+name = "fstp-web-assets-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-web-assets = { path = ".." }
+
+[[bin]]
+name = "asset_manifest_decode"
+path = "fuzz_targets/asset_manifest_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "static_path_resolve"
+path = "fuzz_targets/static_path_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -19,7 +19,8 @@
 //!    `fstp-findings` or `fstp-engine`.
 //! 3. The testkit never ships. No crate other than `fstp-domain-testkit`
 //!    takes `fstp-domain-testkit`, `fstp-prop` or `fstp-mc` as a normal or
-//!    build dependency.
+//!    build dependency. The test-only harnesses `fstp-celltest` (M3) and
+//!    `fstp-api-testkit` (M4) are exempt too.
 //!
 //! A dependency path is what cargo builds for the crate and its tests: any
 //! edge out of the crate itself, then normal and build edges only. Dev
@@ -87,6 +88,10 @@ const TESTKIT: &str = "fstp-domain-testkit";
 /// It may take the test-only crates as normal dependencies, and
 /// `layering_m3` keeps every other crate from taking it.
 const CELLTEST: &str = "fstp-celltest";
+/// The M4 test kit, test only too (M4 design section 1.3, rule A9). It may
+/// take the test-only crates as normal dependencies, and `layering_m4`
+/// keeps every other crate from taking it.
+const API_TESTKIT: &str = "fstp-api-testkit";
 /// Test-only crates that never ship (rule 3).
 const TEST_ONLY: [&str; 3] = ["fstp-domain-testkit", "fstp-prop", "fstp-mc"];
 
@@ -222,7 +227,7 @@ pub(crate) fn check(meta: &Metadata) -> Vec<Finding> {
     }
 
     for (&krate, &start) in &members {
-        if krate == TESTKIT || krate == CELLTEST {
+        if krate == TESTKIT || krate == CELLTEST || krate == API_TESTKIT {
             continue;
         }
         let parent = reach(meta, start, &SHIPPED);

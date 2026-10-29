@@ -14,6 +14,7 @@ use crate::git_source;
 use crate::graph::{self, Context, ProjectKind};
 use crate::layering;
 use crate::layering_m3;
+use crate::layering_m4;
 use crate::lockfile::{self, Lockfile};
 use crate::metadata::{self, Metadata};
 use crate::npm;
@@ -23,6 +24,7 @@ use crate::repo::{self, ProjectDir};
 use crate::report::{self, ContextSummary, Finding, Report};
 use crate::runtime;
 use crate::tier_b;
+use crate::web_scan;
 
 /// Platforms whose roles the allowlist describes.
 const PLATFORMS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
@@ -464,6 +466,7 @@ pub fn run() -> ExitCode {
         for c in contexts.iter().filter(|c| &c.label == label) {
             findings.extend(layering::check(c.meta));
             findings.extend(layering_m3::check(c.meta));
+            findings.extend(layering_m4::check(c.meta));
             findings.extend(runtime::check(c.meta));
         }
     }
@@ -472,6 +475,7 @@ pub fn run() -> ExitCode {
     if let Some(meta) = workspace_meta {
         let sources = layering_m3::member_sources(meta, &mut findings);
         findings.extend(layering_m3::scan(&sources));
+        findings.extend(layering_m4::scan(&sources, meta));
         let allowed = match fs::read_to_string(root.join(funds::FUNDS_ALLOWED)) {
             Ok(t) => funds::parse_funds_allowed(&t).unwrap_or_else(|e| {
                 line_errors("policy-syntax", funds::FUNDS_ALLOWED, e, &mut findings);
@@ -490,6 +494,7 @@ pub fn run() -> ExitCode {
     }
 
     findings.extend(npm::check(&root, &walk));
+    findings.extend(web_scan::check(&root, &walk));
 
     // The Tier B release gate reads the main workspace's Linux contexts.
     let tier = match fs::read_to_string(root.join(tier_b::MIRROR)) {
