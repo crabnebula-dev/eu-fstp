@@ -1,0 +1,4 @@
+GET /api/v1/me/notices HTTP/1.1
+Host: tenant.fstp.test
+Cookie: __Host-fstp=5a5a
+
