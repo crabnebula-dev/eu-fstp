@@ -2,15 +2,25 @@
 //!
 //! Design checks: no panic; round trip; constant-length tokens only.
 //!
-//! W0 skeleton. The code under test is a stub that refuses every input
-//! with a typed `NotImplemented` error. Until lane W2b lands it, the
-//! target checks only that no input panics and that a refusal formats.
+//! ADR-008 fixes a token at 32 random bytes. The target checks that an
+//! accepted input is exactly 32 bytes, that the token holds them
+//! unchanged, and that `encode_token` gives the input bytes back.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 
+/// ADR-008: a token is 32 bytes.
+const TOKEN_LEN: usize = 32;
+
 fuzz_target!(|data: &[u8]| {
-    let shown = format!("{:?}", fstp_auth::codec::decode_token(data));
+    let got = fstp_auth::codec::decode_token(data);
+    let shown = format!("{got:?}");
     assert!(!shown.is_empty());
+    if let Ok(token) = got {
+        assert_eq!(data.len(), TOKEN_LEN, "accepted a token of another length");
+        assert_eq!(&token.0[..], data, "the token does not hold its input");
+        let bytes = fstp_auth::codec::encode_token(&token);
+        assert_eq!(&bytes[..], data, "the token does not re-encode");
+    }
 });

@@ -102,7 +102,9 @@ dependencies = [
 name = "fstp-auth"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-domain",
+ "fstp-domain-testkit",
  "fstp-json",
  "fstp-prop",
  "fstp-webauthn",
