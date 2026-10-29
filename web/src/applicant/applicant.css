@@ -1,0 +1,211 @@
+/*
+ * The stylesheet of the applicant and call pages (R-NF-03; M4 design
+ * section 3.9). It uses the M3 token values of web/src/auth/auth.css,
+ * whose text pairs meet WCAG 2.2 AA (4.5:1) in the light and dark sets.
+ * Focus is always visible. State is never shown by colour alone: every
+ * state, error and status also has its text.
+ *
+ * Interim, pending the lead and lane W1c: no shared token sheet exists
+ * yet, so this sheet repeats the M3 values.
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f3f4f8;
+  --fg: #1b1b1f;
+  --muted: #45464f;
+  --accent: #0b57d0;
+  --on-accent: #ffffff;
+  --border: #74777f;
+  --error: #b3261e;
+  --focus: #0b57d0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121316;
+    --surface: #1f2024;
+    --fg: #e3e2e6;
+    --muted: #c6c6d0;
+    --accent: #a8c7fa;
+    --on-accent: #062e6f;
+    --border: #8f9099;
+    --error: #ffb4ab;
+    --focus: #a8c7fa;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.fstp-header {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+}
+
+.fstp-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+label,
+legend {
+  font-weight: 600;
+}
+
+.fstp-field {
+  margin: 0.75rem 0;
+}
+
+.fstp-field > label {
+  display: block;
+  margin: 0 0 0.25rem;
+}
+
+.fstp-choice {
+  margin: 0.5rem 0;
+}
+
+input[type='text'],
+input[type='email'],
+input[type='date'],
+select,
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 40rem;
+  padding: 0.5rem 0.625rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+[aria-invalid='true'] {
+  border: 2px solid var(--error);
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+button:disabled {
+  cursor: progress;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.fstp-alert,
+.fstp-error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.fstp-summary {
+  border: 2px solid var(--error);
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.fstp-hint,
+.fstp-meta {
+  color: var(--muted);
+}
+
+.fstp-text {
+  white-space: pre-wrap;
+}
+
+.fstp-list {
+  padding-left: 1.25rem;
+}
+
+.fstp-list > li {
+  margin: 0 0 0.75rem;
+}
+
+.fstp-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 50%);
+  padding: 1rem;
+}
+
+.fstp-dialog {
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  max-width: 32rem;
+}
+
+.fstp-actions {
+  margin: 1rem 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.fstp-group .fstp-group {
+  margin-top: 1rem;
+}
+
+.fstp-footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  margin-top: 2rem;
+  padding: 0.5rem 1rem;
+}
