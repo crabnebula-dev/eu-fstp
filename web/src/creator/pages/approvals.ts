@@ -108,7 +108,7 @@ export function mount(): void {
   );
 
   void (async () => {
-    const o = await call("admin.list_approvals", [], undefined, (v) => readApprovals(v) !== null);
+    const o = await call("admin.approvals", [], undefined, (v) => readApprovals(v) !== null);
     if (report(alert, o) || o.kind !== "done") return;
     const rows = readApprovals(o.body) ?? [];
     const activations = rows.filter((r) => r.kind === "activation");

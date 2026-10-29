@@ -7,17 +7,17 @@
 //   from this module. An operation the table lacks is `unavailable`, and
 //   the page says so.
 // - Path parameters fill the operation's `{name}` segments in order, so
-//   this module never guesses a parameter name.
+//   this module never guesses a parameter name. A call must give exactly
+//   one value per segment.
 // - Bodies are sent with their members sorted, so the JSON text is the
 //   RFC 8785 canonical form the cell takes (design section 8.2).
 // - Every call runs through core `withStepUp`. When the server answers
 //   `step_up_required`, the step-up dialog opens and the call is retried
 //   once after the ceremony (ADR-014 "Step-up").
 //
-// Interim, pending Daniel: until the generator lands, the W0 stub table
-// is empty, so every operation is unavailable. Core `api.ts` reads no
-// step-up or pending-action wire yet (lanes W3b and W4e), so a
-// high-risk action shows as a failed reply until that wire is fixed.
+// The generated operation goes to core `api.ts` as it is: its path is
+// relative to `/api/v1` with `base` `"api"`. A `"page"` operation is a
+// public page and is never called from here.
 
 import { createApi, type ApiOutcome, type OperationRef } from "../core/api.js";
 import { withStepUp } from "../core/stepup.js";
@@ -34,11 +34,15 @@ const api = createApi({ fetch: (input, init) => fetch(input, init) });
 
 const PARAM = /^\{([a-z][a-z0-9_]*)\}$/;
 
-/** The operation named `name` in the generated table, or null. */
+/**
+ * The API operation named `name` in the generated table, or null. A name
+ * the registry lacks, or a public page, is null. Core `api.ts` checks the
+ * operation's base and path.
+ */
 function find(name: string): OperationRef | null {
   for (const op of OPERATIONS) {
     if (op.name === name) {
-      return { method: op.method, path: op.path };
+      return op.base === "page" ? null : op;
     }
   }
   return null;
@@ -93,10 +97,7 @@ export async function call(
     return { kind: "unavailable", name };
   }
   const names = paramNames(op.path);
-  // An operation whose route spells the values as literal segments, such
-  // as one route per tenant setting, takes no parameter for them.
-  const spelled = names.length === 0 && values.every((v) => op.path.split("/").includes(v));
-  if (names.length !== values.length && !spelled) {
+  if (names.length !== values.length) {
     return { kind: "failed", reason: "request" };
   }
   const params: Record<string, string> = {};

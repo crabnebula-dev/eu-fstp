@@ -233,7 +233,7 @@ export function mount(param: SettingParam): void {
   );
 
   const load = async (): Promise<void> => {
-    const o = await call("tenant.get_settings", [], undefined, (v) => readSettings(v) !== null);
+    const o = await call("tenant.settings", [], undefined, (v) => readSettings(v) !== null);
     if (report(alert, o) || o.kind !== "done") return;
     const settings = readSettings(o.body);
     if (settings === null) return;
@@ -249,10 +249,10 @@ export function mount(param: SettingParam): void {
           warn(alert, t.label("onboarding.setting.invalid"));
           return;
         }
-        const s = await call(OPS[param], [param], { value }, anyObject);
+        const s = await call(OPS[param], [], { value }, anyObject);
         if (report(alert, s)) return;
         status.textContent = t.label("onboarding.setting.saved");
-        const again = await call("tenant.get_settings", [], undefined, (v) => readSettings(v) !== null);
+        const again = await call("tenant.settings", [], undefined, (v) => readSettings(v) !== null);
         const fresh = again.kind === "done" ? readSettings(again.body) : null;
         if (fresh !== null) current.textContent = currentText(param, fresh[param]);
       }),

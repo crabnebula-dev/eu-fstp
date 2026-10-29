@@ -152,7 +152,7 @@ export function mount(p: string): void {
   );
 
   void (async () => {
-    const o = await call("import.list_proposals", [p], undefined, (v) => readProposals(v) !== null);
+    const o = await call("import.list", [p], undefined, (v) => readProposals(v) !== null);
     if (report(alert, o) || o.kind !== "done") return;
     const rows = proposalOrder(readProposals(o.body) ?? []);
     list.replaceChildren(...rows.map(item));
