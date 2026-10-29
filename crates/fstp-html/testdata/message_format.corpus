@@ -1,0 +1,54 @@
+# Shared corpus for the catalogue message grammar (R-NF-04).
+#
+# Read by crates/fstp-html/tests (message_format_parse) and meant for the
+# TypeScript i18n.ts target of lane W1c, so both parsers agree.
+# Interim grammar, pending Daniel: see crates/fstp-html/tests/common/message.rs.
+#
+# Format: "+ " then an accepted message, "- " then a refused one, "+" or "-"
+# alone for the empty input. Escapes: \\ \t \n \r \xHH (raw byte) \u{H..}.
++ Home
++ Deadline: {date}
++ {a}
++ {a}{b}
++ {a} and {a} again
++ {{
++ }}
++ {{literal}}
++ {{{a}}}
++ a{{b}}c
++ Fees & <costs> "quoted" 'single' `tick`
++ {snake_case_1}
++ {abcdefghijklmnopqrstuvwxyz012345}
++ line one\nline two\ttabbed
++ Gr\u{fc}\u{df}e \u{1F600}
++ \u{a0}non-breaking\u{200b}
++ \u{fffd}
++ \x20leading and trailing space\x20
+-
+- {
+- }
+- {a
+- a}
+- {}
+- {A}
+- {1a}
+- {_a}
+- {a-b}
+- {a b}
+- { a}
+- {a }
+- {a.b}
+- {\u{e9}}
+- {{a}
+- {a}}
+- {abcdefghijklmnopqrstuvwxyz0123456}
+- {a{b}}
+- carriage\rreturn
+- nul\u{0}byte
+- form\u{c}feed
+- del\u{7f}ete
+- c1\u{85}control
+- non\u{fffe}character
+- non\u{fdd0}character
+- invalid \xff byte
+- truncated \xc3

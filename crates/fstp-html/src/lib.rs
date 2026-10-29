@@ -2,14 +2,41 @@
 //!
 //! The crate holds:
 //!
-//! - an escaping HTML writer with no raw-insertion API;
-//! - the message catalogues for server-rendered text (R-NF-04);
-//! - the `Label` and `ApprovedText` kinds (I-72 seam);
-//! - a test sink that records every dynamic text node;
-//! - the well-formedness checker that tests and fuzz targets use.
+//! - an escaping HTML writer with no raw-insertion API ([`Document`],
+//!   [`Element`], [`Node`], [`SafeUrl`], [`HtmlDocument`]; I-68, TW-2);
+//! - the message catalogues for server-rendered text ([`Catalogues`];
+//!   R-NF-04);
+//! - the [`Label`] and [`ApprovedText`] kinds (I-72 seam, R-WL-05);
+//! - a test sink that records every dynamic text node
+//!   ([`Document::render_traced`]; I-87 seam);
+//! - the well-formedness checker that tests and fuzz targets use
+//!   ([`check_wellformed`]);
+//! - the `Accept-Language` parser and locale negotiation
+//!   ([`parse_accept_language`], [`negotiate_locale`]).
 //!
-//! Status: W0 stub. Lane W1d (L-HTML) owns this crate. Every operation
-//! refuses with [`HtmlError::NotImplemented`].
+//! Every rule the design leaves open is an interim reading, pending
+//! Daniel. Each is stated in the module that builds it.
+//!
+//! ```
+//! use fstp_html::{
+//!     CatalogueSource, Catalogues, Document, Element, EntrySource, Label, MessageKind, Node,
+//!     SafeUrl, check_wellformed,
+//! };
+//!
+//! let entries = [EntrySource { id: "nav.home", kind: MessageKind::Label, message: "Home" }];
+//! let cats = Catalogues::new(&CatalogueSource { locale: "en", entries: &entries }, &[])?;
+//! let page = Document::new("en")
+//!     .title(Node::label(&Label::new("nav.home"), &[]))
+//!     .body(
+//!         Element::new("p")
+//!             .text("<script>alert(1)</script>")
+//!             .child(Element::new("a").attr_url("href", SafeUrl::new("/p/x/")?).text("x")),
+//!     );
+//! let doc = page.render(&cats)?;
+//! check_wellformed(doc.as_bytes())?;
+//! assert!(doc.as_str().contains("&lt;script&gt;"));
+//! # Ok::<(), fstp_html::HtmlError>(())
+//! ```
 
 #![deny(
     clippy::float_arithmetic,
@@ -18,58 +45,25 @@
     clippy::arithmetic_side_effects
 )]
 
-/// Why an HTML operation failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HtmlError {
-    /// The W0 stub of the named operation refuses.
-    NotImplemented(&'static str),
-}
+mod catalogue;
+mod check;
+mod error;
+mod lang;
+mod message;
+mod subset;
+mod url;
+mod writer;
 
-impl std::fmt::Display for HtmlError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HtmlError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
-        }
-    }
-}
-
-impl std::error::Error for HtmlError {}
-
-/// One parsed catalogue message.
-///
-/// W0 placeholder with no fields. Lane W1d writes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MessageFormat {
-    _w0: (),
-}
-
-/// A parsed `Accept-Language` header.
-///
-/// W0 placeholder with no fields. Lane W1d writes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AcceptLanguage {
-    _w0: (),
-}
-
-/// Parses one catalogue message with its placeholders. Fuzzed
-/// (`message_format_parse`).
-pub fn parse_message_format(bytes: &[u8]) -> Result<MessageFormat, HtmlError> {
-    let _ = bytes;
-    Err(HtmlError::NotImplemented("fstp_html::parse_message_format"))
-}
-
-/// Parses an `Accept-Language` header value. Fuzzed
-/// (`accept_language_parse`).
-pub fn parse_accept_language(bytes: &[u8]) -> Result<AcceptLanguage, HtmlError> {
-    let _ = bytes;
-    Err(HtmlError::NotImplemented(
-        "fstp_html::parse_accept_language",
-    ))
-}
-
-/// Checks that `bytes` is a well-formed document of the writer's subset.
-/// Fuzzed (`html_wellformed_check`).
-pub fn check_wellformed(bytes: &[u8]) -> Result<(), HtmlError> {
-    let _ = bytes;
-    Err(HtmlError::NotImplemented("fstp_html::check_wellformed"))
-}
+pub use catalogue::{
+    ApprovedText, CatalogueSource, Catalogues, EntrySource, Label, LabelOverride, MAX_ID_BYTES,
+    MessageKind,
+};
+pub use check::check_wellformed;
+pub use error::HtmlError;
+pub use lang::{
+    AcceptLanguage, LanguageRange, MAX_ACCEPT_LANGUAGE_BYTES, MAX_LANGUAGE_RANGES,
+    negotiate_locale, parse_accept_language,
+};
+pub use message::{MAX_MESSAGE_BYTES, MAX_PLACEHOLDER_BYTES, MessageFormat, parse_message_format};
+pub use url::SafeUrl;
+pub use writer::{Document, Element, HtmlDocument, MAX_DEPTH, Node, TraceEvent, TracePlace};

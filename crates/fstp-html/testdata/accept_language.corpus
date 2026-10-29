@@ -1,0 +1,61 @@
+# Shared corpus for the Accept-Language grammar (R-NF-04, TH-26).
+#
+# Read by crates/fstp-html/tests (accept_language_parse).
+# Interim grammar, pending Daniel: see crates/fstp-html/tests/common/lang.rs.
+#
+# Format: "+ " then an accepted header value, "- " then a refused one, "+" or
+# "-" alone for the empty input. Escapes: \\ \t \n \r \xHH (raw byte) \u{H..}.
++
++ en
++ *
++ en-GB
++ en-gb, en;q=0.8, fr;q=0.7
++ da, en-gb;q=0.8, en;q=0.7
++ fr;q=1, en;q=1.000
++ de;q=0, *;q=0.5
++ en;Q=0.5
++ en ; q=0.5
++ en;q=0.
++ en;q=1.
++ en;q=0.001
++ en;q=0.999
++ ,,en,,
++ ,
++ \x20en\x20,\tfr\t
++ zh-Hant-TW
++ x-private
++ sgn-BE-FR
++ abcdefgh-12345678
++ en-1
++ EN-gb
+- en;q=1.1
+- en;q=1.001
+- en;q=2
+- en;q=0.0001
+- en;q=-0.5
+- en;q=.5
+- en;q=
+- en;q
+- en;
+- ;q=0.5
+- en;level=1
+- en;q=0.5;q=0.4
+- en; q =0.5
+- en;q= 0.5
+- en;q=0.5x
+- en_GB
+- e n
+- 1en
+- abcdefghi
+- en-abcdefghi
+- en-
+- -en
+- en--gb
+- **
+- en-*
+- "en"
+- \u{e9}n
+- en\nfr
+- en\rfr
+- en\x00
+- en\xff
