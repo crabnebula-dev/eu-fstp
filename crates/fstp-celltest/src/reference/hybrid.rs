@@ -21,7 +21,7 @@
 //!   ML-KEM-768 oracle for the differential test of item 10.
 //! - [`OracleMlDsa65`] and [`oracle_mldsa65_verify`], the bare aws-lc-rs
 //!   ML-DSA-65 oracle for the ACVP subset of T-CR-MLDSA (design section
-//!   7.4, TH-68), with a marked slot for the moduletto run.
+//!   7.4, TH-68) and the differential tests against moduletto.
 //! - [`FROZEN`], the frozen outputs of item 3.
 //! - A test module with the reference's own checks (items 1 to 5), the
 //!   cross-implementation round trips of item 4, the oracle half of item
@@ -570,9 +570,10 @@ pub const MLDSA65_SK_LEN: usize = 4032;
 pub const MLDSA65_SIG_LEN: usize = 3309;
 
 /// The bare aws-lc-rs ML-DSA-65 oracle (ADR-001 A6, design section 7.4).
-/// It runs the ACVP subset of T-CR-MLDSA now, and the differential tests
-/// against moduletto once its ML-DSA-65 lands. It is a test oracle only:
-/// production never signs with it (I-75, I-90).
+/// It runs the ACVP subset of T-CR-MLDSA, and the differential tests
+/// against moduletto at the pinned commit `6c1ae92`, through
+/// `fstp_crypto::mldsa::acvp`. It is a test oracle only: production never
+/// signs with it (I-75, I-90).
 ///
 /// aws-lc-rs offers pure ML-DSA with an empty context and hedged signing
 /// only. So the oracle cannot reproduce a deterministic ACVP signature,
@@ -1441,9 +1442,16 @@ mod tests {
 ///   tcId 39, which must fail ("modified message").
 ///
 /// The other cases need a context or the internal interface, which
-/// aws-lc-rs does not offer. They run against moduletto once its ML-DSA-65
-/// pull request (crabnebula-dev/moduletto#13) lands with deterministic
-/// entry points (ADR-001 A2).
+/// aws-lc-rs does not offer. moduletto at the pinned commit `6c1ae92` has
+/// deterministic entry points (ADR-001 A2 pin move record), so
+/// `crates/fstp-crypto/tests/mldsa_acvp.rs` runs a larger subset through
+/// `fstp_crypto::mldsa::acvp`.
+///
+/// The differential tests at the end compare moduletto, reached through
+/// `fstp_crypto::mldsa::acvp`, with this oracle (ADR-001 "Post-quantum
+/// signatures", ADR-010 "Verification of ML-DSA-65"). Keys from the same
+/// seed must be equal byte for byte, and each implementation's pure
+/// signatures with an empty context must verify under the other.
 #[cfg(test)]
 mod mldsa_acvp {
     #![allow(
@@ -1457,6 +1465,7 @@ mod mldsa_acvp {
 
     use super::*;
     use fstp_crypto::CryptoError;
+    use fstp_prop::{Config, check_with, prop_assert, prop_assert_eq};
 
     fn hex(s: &str) -> Vec<u8> {
         let clean: Vec<u8> = s.bytes().filter(u8::is_ascii_hexdigit).collect();
@@ -2462,29 +2471,131 @@ mod mldsa_acvp {
         ));
     }
 
-    /// T-CR-MLDSA slot for moduletto (I-75, I-90, ADR-001 A2): the same
-    /// ACVP sigGen cases through `fstp_crypto::mldsa`. moduletto has no
-    /// ML-DSA-65 at the pinned commit, so each call refuses with the typed
-    /// error, and no case is accepted on a classical half.
-    ///
-    /// When the pin moves to a commit with crabnebula-dev/moduletto#13,
-    /// this test fails on purpose. Its body then becomes the moduletto run
-    /// of the whole ML-DSA-65 subset, keyGen, sigGen and sigVer, with the
-    /// deterministic entry points that pull request adds.
+    // ------------------------------------- moduletto against the oracle
+
+    /// A random 32-byte value from the system generator.
+    fn random32() -> [u8; 32] {
+        fstp_crypto::random_array().unwrap()
+    }
+
+    /// T-CR-MLDSA (TH-68): on the 25 ACVP keyGen seeds, moduletto through
+    /// `fstp_crypto::mldsa::acvp` gives the ACVP `pk` and `sk`, pinned by
+    /// SHA-256, and the very bytes the oracle gives.
     #[test]
-    fn t_cr_mldsa_acvp_moduletto_slot_refuses_until_pr13() {
-        for case in &SIGGEN {
-            let (pk, msg, sig) = (hex(case.pk), hex(case.message), hex(case.signature));
+    fn t_cr_mldsa_differential_keygen_on_acvp_seeds() {
+        for case in &KEYGEN {
+            let seed: [u8; 32] = hex(case.seed).try_into().unwrap();
+            let (pk, sk) = fstp_crypto::mldsa::acvp::keygen(&seed).unwrap();
+            assert_eq!(sha256_hex(&pk), case.pk_sha256, "pk, tcId {}", case.tc_id);
             assert_eq!(
-                fstp_crypto::mldsa::verify(&pk, &msg, &sig),
-                Err(CryptoError::MlDsaUnavailable),
+                sha256_hex(&sk[..]),
+                case.sk_sha256,
+                "sk, tcId {}",
+                case.tc_id
+            );
+            let oracle = OracleMlDsa65::from_seed(&seed).unwrap();
+            assert_eq!(pk.to_vec(), oracle.public_key(), "tcId {}", case.tc_id);
+            assert_eq!(
+                sk[..].to_vec(),
+                oracle.private_key().unwrap(),
                 "tcId {}",
                 case.tc_id
             );
         }
-        assert!(matches!(
-            fstp_crypto::mldsa::generate(),
-            Err(CryptoError::MlDsaUnavailable)
-        ));
+    }
+
+    /// T-CR-MLDSA (TH-68), ADR-001 "Post-quantum signatures": on random
+    /// seeds, moduletto and the oracle derive equal public and expanded
+    /// private keys.
+    #[test]
+    fn t_cr_mldsa_differential_keygen_on_random_seeds() {
+        check_with(
+            "t_cr_mldsa_differential_keygen_on_random_seeds",
+            Config::default().with_cases(64),
+            |g| {
+                let seed: [u8; 32] = g.bytes(32..=32).try_into().unwrap();
+                let (pk, sk) = fstp_crypto::mldsa::acvp::keygen(&seed).unwrap();
+                let oracle = OracleMlDsa65::from_seed(&seed).unwrap();
+                prop_assert_eq!(pk.to_vec(), oracle.public_key());
+                prop_assert_eq!(sk[..].to_vec(), oracle.private_key().unwrap());
+                Ok(())
+            },
+        );
+    }
+
+    /// T-CR-MLDSA (TH-68), ADR-001 "Post-quantum signatures": every hedged
+    /// moduletto signature with an empty context, over a random message,
+    /// verifies under the oracle, and the same signature over the message
+    /// with one bit flipped does not.
+    #[test]
+    fn t_cr_mldsa_differential_moduletto_signatures_verify_under_aws_lc_rs() {
+        check_with(
+            "t_cr_mldsa_differential_moduletto_signatures_verify_under_aws_lc_rs",
+            Config::default().with_cases(64),
+            |g| {
+                let seed: [u8; 32] = g.bytes(32..=32).try_into().unwrap();
+                let msg = g.bytes(1..=512);
+                let bit = g.usize_in(0..=msg.len() * 8 - 1);
+                let (pk, sk) = fstp_crypto::mldsa::acvp::keygen(&seed).unwrap();
+                let sig = fstp_crypto::mldsa::acvp::sign(&sk[..], &msg, b"", &random32()).unwrap();
+                prop_assert!(oracle_mldsa65_verify(&pk, &msg, &sig));
+                let mut flipped = msg.clone();
+                flipped[bit / 8] ^= 1 << (bit % 8);
+                prop_assert!(!oracle_mldsa65_verify(&pk, &flipped, &sig));
+                Ok(())
+            },
+        );
+    }
+
+    /// T-CR-MLDSA (TH-68), ADR-001 "Post-quantum signatures": every oracle
+    /// signature over a random message verifies under moduletto with an
+    /// empty context. The same signature with one bit flipped, or under a
+    /// one-byte context, gives `InvalidSignature`.
+    #[test]
+    fn t_cr_mldsa_differential_aws_lc_rs_signatures_verify_under_moduletto() {
+        check_with(
+            "t_cr_mldsa_differential_aws_lc_rs_signatures_verify_under_moduletto",
+            Config::default().with_cases(64),
+            |g| {
+                let seed: [u8; 32] = g.bytes(32..=32).try_into().unwrap();
+                let msg = g.bytes(0..=512);
+                let bit = g.usize_in(0..=MLDSA65_SIG_LEN * 8 - 1);
+                let oracle = OracleMlDsa65::from_seed(&seed).unwrap();
+                let (pk, sig) = (oracle.public_key(), oracle.sign(&msg).unwrap());
+                let verify =
+                    |ctx: &[u8], s: &[u8]| fstp_crypto::mldsa::acvp::verify(&pk, &msg, ctx, s);
+                prop_assert_eq!(verify(b"", &sig), Ok(()));
+                let mut flipped = sig.clone();
+                flipped[bit / 8] ^= 1 << (bit % 8);
+                prop_assert_eq!(verify(b"", &flipped), Err(CryptoError::InvalidSignature));
+                prop_assert_eq!(verify(b"x", &sig), Err(CryptoError::InvalidSignature));
+                Ok(())
+            },
+        );
+    }
+
+    /// T-CR-MLDSA (TH-68): moduletto and the oracle agree on the ACVP
+    /// cases of this module. Both sigGen signatures verify under moduletto,
+    /// and the sigVer case fails under it with `InvalidSignature`.
+    #[test]
+    fn t_cr_mldsa_differential_acvp_cases_agree() {
+        for case in &SIGGEN {
+            let (pk, msg, sig) = (hex(case.pk), hex(case.message), hex(case.signature));
+            assert_eq!(
+                fstp_crypto::mldsa::acvp::verify(&pk, &msg, b"", &sig),
+                Ok(()),
+                "tcId {}",
+                case.tc_id
+            );
+        }
+        for case in &SIGVER_FAIL {
+            let (pk, msg, sig) = (hex(case.pk), hex(case.message), hex(case.signature));
+            assert_eq!(
+                fstp_crypto::mldsa::acvp::verify(&pk, &msg, b"", &sig),
+                Err(CryptoError::InvalidSignature),
+                "tcId {}",
+                case.tc_id
+            );
+        }
     }
 }

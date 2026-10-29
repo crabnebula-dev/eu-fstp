@@ -2,40 +2,45 @@
 //! sections 2.2 and 7.4, ADR-001 A2 "ML-DSA-65", ADR-010, T-CR-COMPOSITE
 //! for TH-67, T-CR-MLDSA for TH-68).
 //!
-//! moduletto at the pinned commit `46754f2` has no ML-DSA-65. Its pull
-//! request crabnebula-dev/moduletto#13 is open and unmerged. Until it
-//! lands, every `mldsa` call refuses with `CryptoError::MlDsaUnavailable`,
-//! composite key generation and signing refuse the same way, and composite
-//! verification refuses too. Nothing falls back to an Ed25519-only
-//! signature or to the aws-lc-rs ML-DSA, which is a test oracle only.
+//! moduletto is pinned at commit `6c1ae92`, the merge of its ML-DSA-65
+//! pull request crabnebula-dev/moduletto#13 (ADR-001 A2 pin move record
+//! of 2026-10-29). The W0 refusal tests of this file are therefore
+//! replaced, as it announced:
+//!
+//! - `i75_mldsa_generate_refuses_while_moduletto_has_no_mldsa`,
+//!   `i75_mldsa_verify_refuses_every_input` and
+//!   `i75_composite_verify_refuses_while_moduletto_has_no_mldsa` give way
+//!   to the ACVP subset in `mldsa_acvp.rs`, the draft 19 vector tests in
+//!   `composite_draft19.rs` and the differential tests in the `mldsa_acvp`
+//!   test module of `fstp_celltest::reference::hybrid`.
+//! - `i90_composite_generate_refuses_while_moduletto_has_no_mldsa` gives
+//!   way to `i90_composite_generate_gives_a_key_with_both_halves` in
+//!   `composite_api.rs`. Its claim, that no Ed25519-only key stands in for
+//!   a composite one, is checked there on a working key.
+//!
+//! The second item deviates from the plan this file recorded at W0, which
+//! said the `i90_*` tests stay. The old test asserted the stub's refusal,
+//! which cannot hold once composite key generation works. Its I-90 claim
+//! is kept, on a working key, by the test named above. The deviation is
+//! reported to Daniel in the M3 milestone report.
+//!
+//! What stays here is the FIPS 204 size check and the I-90 test that a
+//! valid Ed25519 signature alone never verifies as a composite, in any
+//! position a concatenation could put it. ADR-010 now fixes the draft 19
+//! layout, `mldsaSig || tradSig`, but the test keeps every position so it
+//! does not depend on the layout. The I-75 source scans are in
+//! `source_scans.rs`, unchanged.
 //!
 //! The API under test, as this file expects it:
 //!
 //! ```text
-//! fstp_crypto::CryptoError::MlDsaUnavailable
 //! fstp_crypto::mldsa::PUBLIC_KEY_LEN: usize   // 1952 (FIPS 204, ML-DSA-65)
 //! fstp_crypto::mldsa::SIGNATURE_LEN: usize    // 3309 (FIPS 204, ML-DSA-65)
-//! fstp_crypto::mldsa::MlDsa65SigningKey
-//! fstp_crypto::mldsa::generate() -> Result<MlDsa65SigningKey, CryptoError>
-//! fstp_crypto::mldsa::verify(public_key: &[u8], message: &[u8], signature: &[u8])
-//!     -> Result<(), CryptoError>
-//! fstp_crypto::composite::PUBLIC_KEY_LEN: usize   // from draft-ietf-lamps-pq-composite-sigs-19
-//! fstp_crypto::composite::SIGNATURE_LEN: usize    // from draft-ietf-lamps-pq-composite-sigs-19
-//! fstp_crypto::composite::CompositeSigningKey
-//! fstp_crypto::composite::generate() -> Result<CompositeSigningKey, CryptoError>
-//! fstp_crypto::composite::CompositeSigningKey::sign(&self, message: &[u8])
-//!     -> Result<CompositeSignature, CryptoError>
+//! fstp_crypto::composite::PUBLIC_KEY_LEN: usize   // 1984, draft 19 Appendix A
+//! fstp_crypto::composite::SIGNATURE_LEN: usize    // 3373, draft 19 Appendix A
 //! fstp_crypto::composite::verify(public_key: &[u8], message: &[u8], signature: &[u8])
 //!     -> Result<(), CryptoError>
 //! ```
-//!
-//! ADR-010 has not yet transcribed the composite encoding from draft 19,
-//! so this file fixes no layout. It places a valid Ed25519 half at every
-//! offset a concatenation could use.
-//!
-//! When the moduletto pull request lands and the pin moves, the `i75_*`
-//! refusal tests here are replaced by the ACVP and differential ML-DSA-65
-//! tests. The `i90_*` tests stay.
 
 #![allow(
     clippy::unwrap_used,
@@ -46,62 +51,16 @@
     reason = "test code asserts on known-good values"
 )]
 
-use fstp_crypto::CryptoError;
 use fstp_crypto::composite;
 use fstp_crypto::mldsa;
 use fstp_crypto::sig::{Ed25519SigningKey, ed25519_verify};
 use fstp_prop::{Config, check_with, prop_assert};
-
-fn unavailable<T>(r: &Result<T, CryptoError>) -> bool {
-    matches!(r, Err(CryptoError::MlDsaUnavailable))
-}
 
 /// FIPS 204 Table 2 sizes for ML-DSA-65.
 #[test]
 fn i75_mldsa_65_sizes() {
     assert_eq!(mldsa::PUBLIC_KEY_LEN, 1952);
     assert_eq!(mldsa::SIGNATURE_LEN, 3309);
-}
-
-/// I-75, ADR-001 A2: ML-DSA-65 key generation refuses with the typed
-/// error while moduletto has no ML-DSA-65.
-#[test]
-fn i75_mldsa_generate_refuses_while_moduletto_has_no_mldsa() {
-    assert!(unavailable(&mldsa::generate()));
-}
-
-/// I-75, ADR-001 A2: ML-DSA-65 verification refuses every input with the
-/// typed error, whatever its lengths.
-#[test]
-fn i75_mldsa_verify_refuses_every_input() {
-    check_with(
-        "i75_mldsa_verify_refuses_every_input",
-        Config::default().with_cases(256),
-        |g| {
-            let exact = g.bool();
-            let pk = if exact {
-                g.bytes(mldsa::PUBLIC_KEY_LEN..=mldsa::PUBLIC_KEY_LEN)
-            } else {
-                g.bytes(0..=64)
-            };
-            let sig = if exact {
-                g.bytes(mldsa::SIGNATURE_LEN..=mldsa::SIGNATURE_LEN)
-            } else {
-                g.bytes(0..=64)
-            };
-            let msg = g.bytes(0..=64);
-            prop_assert!(unavailable(&mldsa::verify(&pk, &msg, &sig)));
-            Ok(())
-        },
-    );
-}
-
-/// I-75, I-90, design section 7.4: composite key generation refuses with
-/// the typed error, so no composite signing key and no composite
-/// signature can exist yet. No Ed25519-only key stands in for one.
-#[test]
-fn i90_composite_generate_refuses_while_moduletto_has_no_mldsa() {
-    assert!(unavailable(&composite::generate()));
 }
 
 /// The candidate encodings of a composite public key and signature that
@@ -154,18 +113,4 @@ fn i90_composite_verify_refuses_an_ed25519_half_alone() {
             Ok(())
         },
     );
-}
-
-/// I-75, ADR-001 A2: while ML-DSA-65 is unavailable, composite
-/// verification refuses with the typed error, so a caller can tell the
-/// seam from a bad signature. A valid Ed25519 half does not change that.
-#[test]
-fn i75_composite_verify_refuses_while_moduletto_has_no_mldsa() {
-    let key = Ed25519SigningKey::generate().unwrap();
-    let pk = key.public_key();
-    let sig = key.sign(b"anchor").unwrap();
-    for (cpk, csig) in ed25519_only_candidates(&pk, &sig, 0) {
-        assert!(unavailable(&composite::verify(&cpk, b"anchor", &csig)));
-    }
-    assert!(unavailable(&composite::verify(&[], b"", &[])));
 }
