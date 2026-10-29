@@ -11,6 +11,13 @@
 //   `creator.save_fields` against the current revision. The step's check
 //   results then show in `#creator-step-checks`, and
 //   `#creator-step-status` carries `data-state="saved"`.
+// - The body is `{base, fields: [{field, value}]}`. `field` is the key of
+//   `FieldId::key`, and `value` is the field's JSON value, not a string of
+//   canonical text. The page sends no digest and no provenance.
+// - The cell adapter (lane W3b) canonicalises `value` with
+//   `fstp_json::to_canonical` and decodes it with `decode_field_value_in`.
+//   It then computes the `ValueDigest` and sets `Provenance::Manual`, so a
+//   client never asserts where a value came from.
 // - Step 9 also holds the invitations of the People step.
 
 import { h } from "../../core/dom.js";
@@ -70,7 +77,7 @@ export function mount(p: string, step: string): void {
         const d = draft;
         if (d === null) return;
         hush(alert);
-        const o = await call("creator.accept_narrative", [p], { base: d.revision, field: item.key }, anyObject);
+        const o = await call("creator.accept_narrative", [p, item.key], { base: d.revision }, anyObject);
         if (report(alert, o)) {
           note.textContent = t.label("creator.narrative.pending");
           item.editor.notes.append(accept);

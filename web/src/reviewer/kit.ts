@@ -14,13 +14,14 @@
 //
 // - Operations are looked up by their registry name in `gen/api.ts`. An
 //   operation the table does not hold yet is "not available", and no
-//   request is made. A path relative to `/api/v1` is read below it.
-// - A completed call answers `{"status":"done","data":...,"seq":...}`,
-//   the envelope of `fstp-api-core`. Only `data` reaches a page.
+//   request is made. The generated operation goes to core `api.ts` as it
+//   is, with its path relative to `/api/v1`.
+// - A completed call answers with its read model as the whole body, as
+//   core `api.ts` reads every page's answers.
 // - The read models are this lane's reading of design section 3.6. Each
 //   check is closed: an unknown or missing member refuses the answer.
 
-import { API_PREFIX, createApi, type ApiClient, type ApiOutcome, type OperationRef } from "../core/api.js";
+import { createApi, type ApiClient, type ApiOutcome, type OperationRef } from "../core/api.js";
 import { clearError, linkError } from "../core/a11y.js";
 import { h, type AttrValue, type Child } from "../core/dom.js";
 import { createI18n, type I18n, type Label } from "../core/i18n.js";
@@ -273,26 +274,6 @@ export const isAccepted: Guard<Accepted> = record<Accepted>({
   accepted: (v): v is true => v === true,
 });
 
-/** The envelope of a completed call, with its data checked by `data`. */
-function envelope(data: Guard<unknown>): (v: unknown) => boolean {
-  const seq = nullable(isId);
-  return (v) => {
-    if (typeof v !== "object" || v === null || Array.isArray(v)) {
-      return false;
-    }
-    const o = v as Readonly<Record<string, unknown>>;
-    const keys = Object.keys(o);
-    return (
-      keys.length === 3 &&
-      o["status"] === "done" &&
-      Object.hasOwn(o, "data") &&
-      Object.hasOwn(o, "seq") &&
-      seq(o["seq"]) &&
-      data(o["data"])
-    );
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Calls
 // ---------------------------------------------------------------------------
@@ -308,20 +289,14 @@ export type Problem =
 export type Answer<T> = { readonly ok: true; readonly data: T } | { readonly ok: false; readonly problem: Problem };
 
 /**
- * The operation `name` of the generated table, or null when the table
- * does not hold it yet. A path relative to `/api/v1` is read below it.
+ * The API operation `name` of the generated table, or null when the
+ * table does not hold it yet. A public page is null too.
  */
 export function opRef(name: string): OperationRef | null {
   for (const op of OPERATIONS) {
-    if (op.name !== name) {
-      continue;
+    if (op.name === name) {
+      return op.base === "page" ? null : op;
     }
-    const path = op.path.startsWith(API_PREFIX)
-      ? op.path
-      : op.path.startsWith("/")
-        ? `${API_PREFIX.slice(0, -1)}${op.path}`
-        : null;
-    return path === null ? null : { method: op.method, path };
   }
   return null;
 }
@@ -341,7 +316,7 @@ function problemOf(o: ApiOutcome): Problem {
 
 /**
  * Calls the operation `name` with `params` and `body`. Its data counts
- * only when `check` accepts it, inside the envelope of a completed call.
+ * only when `check` accepts the body of the completed call.
  */
 export async function callOp<T>(
   env: PageEnv,
@@ -354,11 +329,11 @@ export async function callOp<T>(
   if (op === null) {
     return { ok: false, problem: { kind: "unavailable" } };
   }
-  const outcome = await env.api.call(op, params, body, envelope(check));
+  const outcome = await env.api.call(op, params, body, check);
   if (outcome.kind !== "done") {
     return { ok: false, problem: problemOf(outcome) };
   }
-  const data = (outcome.body as Readonly<Record<string, unknown>>)["data"];
+  const data: unknown = outcome.body;
   return check(data) ? { ok: true, data } : { ok: false, problem: { kind: "failed", reason: "invalid_response" } };
 }
 

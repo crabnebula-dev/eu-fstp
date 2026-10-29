@@ -4,16 +4,13 @@
 // A page names an operation of the registry, such as `proposal.view`.
 // Its method and path come from the generated table in `gen/api.ts`, and
 // never from this lane. An operation the table does not hold is not
-// called, and the page says that the action is not available. The W0
-// table is empty, so every page refuses until lane W3a's table lands.
+// called, and the page says that the action is not available.
 //
-// Interim, pending the lead: the W0 stub writes no path form, while lane
-// W3a's table writes paths relative to `/api/v1`. Both forms are read: a
-// path that already starts with `/api/v1/` is kept, and another path
-// that starts with `/` is put below `/api/v1`. An entry whose `base` is
+// The generated table writes paths relative to `/api/v1` with `base`
+// `"api"`, and core `api.ts` reads that form. An entry whose `base` is
 // not `api` is a public page, never called from here.
 
-import { type ApiClient, type ApiOutcome, type OperationRef, API_PREFIX, createApi } from "../core/api.js";
+import { type ApiClient, type ApiOutcome, type OperationRef, createApi } from "../core/api.js";
 import { OPERATIONS } from "../gen/api.js";
 import { type Body, canonical } from "./wire.js";
 
@@ -54,25 +51,12 @@ export type Failure =
 /** What a call gives: the decoded value, or why there is none. */
 export type Outcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly failure: Failure };
 
-const METHODS: ReadonlySet<string> = new Set(["GET", "POST", "PUT", "DELETE"]);
-
-/** The method and full path of operation `name`, or null when the table lacks it. */
+/** The generated API operation `name`, or null when the table lacks it. */
 export function operationRef(name: ApplicantOp): OperationRef | null {
   for (const op of OPERATIONS) {
-    if (op.name !== name) {
-      continue;
+    if (op.name === name) {
+      return op.base === "page" ? null : op;
     }
-    const base: unknown = (op as { readonly base?: unknown }).base;
-    if ((base !== undefined && base !== "api") || !METHODS.has(op.method) || typeof op.path !== "string") {
-      return null;
-    }
-    if (op.path.startsWith(API_PREFIX)) {
-      return Object.freeze({ method: op.method, path: op.path });
-    }
-    if (op.path.startsWith("/") && !op.path.startsWith("//")) {
-      return Object.freeze({ method: op.method, path: `${API_PREFIX.slice(0, -1)}${op.path}` });
-    }
-    return null;
   }
   return null;
 }
