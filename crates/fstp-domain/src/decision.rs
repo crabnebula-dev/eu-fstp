@@ -66,8 +66,10 @@
 //! - The minor flag at the NEGOTIATION gate is derived from the vault and
 //!   never from the actor (R-ID-04, state-machine NOTE 14). A validation
 //!   that would complete the review asks whether the lead has an effective
-//!   verified over-18 attestation at the deadline of the call the proposal
-//!   was submitted to (ADR-008, "Which deadline", interim). It also asks
+//!   verified over-18 attestation at the deadline of the call in which the
+//!   proposal passes IRC review, its current call. For a proposal that
+//!   re-entered under a later call (NOTE 8) that is the later call
+//!   (ADR-008, "Which deadline", decided 2026-10-29). It also asks
 //!   whether the proposal has a verified guardian consent. With neither,
 //!   the proposal is minor-flagged. The validation is recorded and the
 //!   proposal stays in IRC_REVIEW until the consent is effective (I-18,
@@ -76,7 +78,9 @@
 //!   answer refuses the validation (overview NOTE 2).
 //! - [`awaiting_guardian_consent`] tells the cell when consent collection
 //!   is open, so it can issue the guardian's write ticket (R-NG-01, design
-//!   6.6 step 3).
+//!   6.6 step 3). [`awaiting_guardian_consent_in_negotiation`] does the
+//!   same in NEGOTIATION, where the guard into GRANTED derives the flag
+//!   again (ADR-008 "Second derivation", decided 2026-10-29).
 //! - Open point for Daniel, next to the GRANTED re-derivation: the batch of
 //!   the last validation holds `VaultOutcome` records for the attestation
 //!   and the consent. The cell must never show them to the IRC actor
@@ -360,6 +364,29 @@ pub fn effective_score(state: &State, proposal: ProposalId) -> Option<&Effective
 pub fn awaiting_guardian_consent(state: &State, proposal: ProposalId) -> bool {
     crate::proposal::draft::minor_flagged(state, proposal)
         && irc_completes(state, proposal, None, &BTreeSet::new())
+}
+
+/// Whether guardian consent collection may be needed for `proposal` in
+/// NEGOTIATION (ADR-008 "Second derivation", decided 2026-10-29).
+///
+/// It holds while the proposal is in NEGOTIATION. The guard into GRANTED
+/// derives the minor flag again, so a lead the vault no longer shows 18 or
+/// older needs a verified guardian consent first. The domain cannot know
+/// the vault's answer before it asks. So the cell asks
+/// [`minor_flag_query`] before it issues the guardian's write ticket, and
+/// issues it only on a no, as it does after the IRC review. Reading for
+/// Daniel to confirm, together with `AddGuardian` in NEGOTIATION.
+pub fn awaiting_guardian_consent_in_negotiation(state: &State, proposal: ProposalId) -> bool {
+    crate::proposal::intake::proposal_state(state, proposal) == Some(StateTag::Negotiation)
+}
+
+/// The question that derives the minor flag of `proposal` (R-ID-04,
+/// state-machine NOTE 14): `IsVerifiedAdultAtDeadline` for its lead at the
+/// deadline of the call in which it passes IRC review. Both gates ask it,
+/// and the cell asks it before it issues a guardian's write ticket. `None`
+/// for an unknown proposal.
+pub fn minor_flag_query(state: &State, proposal: ProposalId) -> Option<Query> {
+    crate::proposal::draft::adult_query(state, proposal)
 }
 
 // ---------------------------------------------------------------------------
@@ -1348,15 +1375,12 @@ struct Gate {
 }
 
 /// The gate's questions for `proposal`. The deadline is that of the call
-/// the proposal was submitted to (ADR-008, "Which deadline", interim).
+/// in which the proposal passes IRC review, which is the later call after
+/// a re-entry (NOTE 8, NOTE 14, ADR-008 "Which deadline", decided
+/// 2026-10-29).
 fn gate_questions(state: &State, proposal: ProposalId) -> Result<Gate, Refusal> {
-    let d = crate::proposal::draft::draft(state, proposal).ok_or_else(unknown)?;
-    let call = crate::programme::call(state, d.call).ok_or_else(unknown)?;
     Ok(Gate {
-        adult: Query::IsVerifiedAdultAtDeadline {
-            account: d.lead,
-            deadline: call.deadline(),
-        },
+        adult: crate::proposal::draft::adult_query(state, proposal).ok_or_else(unknown)?,
         consent: Query::HasGuardianConsent { proposal },
     })
 }

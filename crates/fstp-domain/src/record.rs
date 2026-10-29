@@ -43,6 +43,14 @@ pub struct RulesVersion(pub u16);
 impl RulesVersion {
     /// The readings of milestone M2, with Daniel's answers of 2026-10-25.
     pub const M2: RulesVersion = RulesVersion(1);
+
+    /// The M2 readings with Daniel's answers of 2026-10-29 on the minor
+    /// flag (state-machine NOTE 14). The guard into GRANTED derives the
+    /// flag again, and `DeclineNegotiation` asks the same questions. A
+    /// `GrantDecided` under it follows the `IsVerifiedAdultAtDeadline`
+    /// outcome of its batch, and the fold derives the flag from that bit.
+    /// A `GrantDecided` under [`RulesVersion::M2`] keeps the gate's flag.
+    pub const MINOR_FLAG_2026_10_29: RulesVersion = RulesVersion(2);
 }
 
 /// A role binding (design section 2.6).

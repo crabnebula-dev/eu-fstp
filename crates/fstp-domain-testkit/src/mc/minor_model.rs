@@ -24,9 +24,11 @@
 //! admission paths, and a proposal that stays minor-flagged with every
 //! validation recorded, so the model is not vacuous.
 //!
-//! The deadline is that of the call PR1 was submitted to (ADR-008, "Which
-//! deadline", interim). The model leaves out the guard into GRANTED,
-//! whose second derivation is not decided.
+//! PR1 is never deferred, so the call PR1 was submitted to is also the
+//! call in which it passes IRC review, whose deadline counts (NOTE 14,
+//! ADR-008 "Which deadline", decided 2026-10-29). The guard into GRANTED
+//! derives the flag again (decided the same day). M-MINOR-GRANT
+//! ([`crate::mc::minor_grant_model`]) models it.
 
 use fstp_domain::assignment::AssignmentKind;
 use fstp_domain::decision::Vote;

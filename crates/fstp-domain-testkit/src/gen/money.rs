@@ -1075,6 +1075,11 @@ impl MoneyWorld {
         let mut answers = Answers::new();
         let qs = fstp_domain::queries(state, &step.cmd, &ctx).map_err(|r| r.to_string())?;
         for q in qs {
+            // State-machine NOTE 14: the vault gives no answer to an
+            // unresolved age conflict, so the query stays unanswered.
+            if !self.life.rev.sod.truth.answers(&q) {
+                continue;
+            }
             let a = self.life.rev.answer(&q);
             answers.insert(q, a);
         }

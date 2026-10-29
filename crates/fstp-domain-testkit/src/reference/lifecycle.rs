@@ -168,6 +168,12 @@ pub trait LifeFacts: ConflictFacts {
     /// "Does this proposal's lead have an effective verified over-18
     /// attestation at the call deadline?" (overview NOTE 7)
     fn is_adult_at(&self, lead: AccountId, deadline: Timestamp) -> bool;
+
+    /// The vault's answer to that question, or `None` when it gives none.
+    /// It gives none while an adult attestation and an under-18
+    /// verification conflict at `deadline`, until a manual identity check
+    /// resolves them (state-machine NOTE 14, decided 2026-10-29).
+    fn adult_answer(&self, lead: AccountId, deadline: Timestamp) -> Option<bool>;
 }
 
 impl LifeFacts for GroundTruth {
@@ -177,6 +183,10 @@ impl LifeFacts for GroundTruth {
 
     fn is_adult_at(&self, lead: AccountId, deadline: Timestamp) -> bool {
         GroundTruth::is_adult_at(self, lead, deadline)
+    }
+
+    fn adult_answer(&self, lead: AccountId, deadline: Timestamp) -> Option<bool> {
+        GroundTruth::adult_answer(self, lead, deadline)
     }
 }
 
@@ -188,19 +198,35 @@ impl LifeFacts for WorldFacts<'_> {
     fn is_adult_at(&self, lead: AccountId, deadline: Timestamp) -> bool {
         self.truth.is_adult_at(lead, deadline)
     }
+
+    fn adult_answer(&self, lead: AccountId, deadline: Timestamp) -> Option<bool> {
+        self.truth.adult_answer(lead, deadline)
+    }
+}
+
+/// The vault's answer at the NEGOTIATION gate about `p`'s lead (R-ID-04,
+/// state-machine NOTE 14): whether the lead has an effective verified
+/// over-18 attestation at the deadline of the call in which `p` passes
+/// IRC review, its current call (decided 2026-10-29). For a proposal that
+/// re-entered under a later call (NOTE 8) that is the later call. `None`
+/// when the vault gives no answer, or the call is unknown, so the gate
+/// fails closed (overview NOTE 2). The actor's `minor` field is never read.
+pub fn gate_adult_answer<F: LifeFacts + ?Sized>(
+    life: &LifeView,
+    facts: &F,
+    p: &LifeProposal,
+) -> Option<bool> {
+    life.calls
+        .get(&p.current_call)
+        .and_then(|c| facts.adult_answer(p.lead, c.deadline))
 }
 
 /// Whether `p` is minor-flagged at the NEGOTIATION gate (R-ID-04,
-/// state-machine NOTE 14): its lead has no effective verified over-18
-/// attestation at the deadline of the call it was submitted to. The
-/// actor's `minor` field is never read. The deadline is that of the
-/// created call (ADR-008, "Which deadline", interim). An unknown call
-/// counts as minor-flagged, so the reading fails closed.
+/// state-machine NOTE 14): the vault does not answer yes to
+/// [`gate_adult_answer`]. A missing answer counts as minor-flagged, so the
+/// reading fails closed.
 pub fn minor_flagged<F: LifeFacts + ?Sized>(life: &LifeView, facts: &F, p: &LifeProposal) -> bool {
-    !life
-        .calls
-        .get(&p.created_call)
-        .is_some_and(|c| facts.is_adult_at(p.lead, c.deadline))
+    gate_adult_answer(life, facts, p) != Some(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -2819,7 +2845,17 @@ fn irc_review(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> LifeVerdict {
             // collection opens only once every reviewing IRC member has
             // validated (R-NG-01, guardian note). A refusal would never
             // open it. A repeat records nothing new, so it is refused.
-            if minor_flagged(cx.life, cx.facts, p) && !cx.facts.has_consent(proposal) {
+            // The gate asks about the deadline of the call in which the
+            // proposal passes IRC review (NOTE 14, decided 2026-10-29).
+            // When the vault gives no answer, as for an age conflict that
+            // waits for its manual check, the validation is refused
+            // (overview NOTE 2).
+            let Some(adult) = gate_adult_answer(cx.life, cx.facts, p) else {
+                return refuse(
+                    "overview NOTE 2, NOTE 14: the vault gives no answer about the lead's attestation",
+                );
+            };
+            if !adult && !cx.facts.has_consent(proposal) {
                 if rerun {
                     return refuse("I-18: no verified guardian consent");
                 }

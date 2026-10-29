@@ -9,6 +9,7 @@ pub mod findings_model;
 pub mod ledger_model;
 pub mod life_model;
 pub mod lifecycle_model;
+pub mod minor_grant_model;
 pub mod minor_model;
 pub mod money_model;
 pub mod pay_model;
