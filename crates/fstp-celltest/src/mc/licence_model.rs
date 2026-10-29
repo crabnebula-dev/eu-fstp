@@ -25,7 +25,8 @@ use fstp_domain::CommandKind;
 use fstp_mc::{Model, Property};
 use fstp_release::ReleaseError;
 use fstp_release::licence::{
-    self as prod, Ed25519Public, GateKind, LicenceId, LicenceKind, LicenceState, VerifiedToken,
+    self as prod, Ed25519Public, GateKind, KeySet, LicenceId, LicenceKind, LicenceState, PinnedKey,
+    VerifiedToken,
 };
 
 use crate::NotImplemented;
@@ -257,46 +258,41 @@ impl LicenceBackend for Reference {
     }
 }
 
-/// The seam that stands for a class without a production `GateKind` row.
+/// The seam that stood for a class without a production `GateKind` row.
 ///
 /// Design section 10.2: "The `permits` table already marks evaluation,
-/// payments, notifications and export as protected." The W0 stub's
-/// `GateKind` holds `ApplyUpdate` only, so the protected rows are a gap
-/// that lane W2j closes. Lane W1g then maps each new row in [`prod_gate`].
+/// payments, notifications and export as protected." Lane W2j closed it:
+/// `GateKind` has a row for every [`RefClass`], mapped in [`prod_gate`].
 pub const GATE_ROWS_SEAM: &str = "fstp_release::licence::GateKind has no row for this class (design section 10.2: the permits table marks evaluation, payments, notifications and export as protected; lane W2j)";
 
-/// The seam that stands for a licence kind production cannot express.
+/// The seam that stood for a licence kind production could not express.
 ///
-/// The W0 stub's `LicenceKind` holds `SelfHosted` only. The reference
-/// proposes `Commercial` and `Noncommercial` ([`RefKind`]), so a verified
-/// production token cannot say which licence it carries. Lane W2j closes
-/// it, and lane W1g then maps each kind in [`prod_token`] and
-/// [`ref_token`].
+/// The reference proposes `Commercial` and `Noncommercial` ([`RefKind`]).
+/// Lane W2j closed it: `LicenceKind` has both, mapped in [`prod_token`]
+/// and [`ref_token`].
 pub const KIND_SEAM: &str = "fstp_release::licence::LicenceKind cannot say commercial or noncommercial (W1g token format proposal, Q18, O-27; lane W2j)";
 
-/// The seam that stands for the missing production key set.
+/// The seam that stood for the missing production key set.
 ///
 /// Design section 10.2: the cell pins a key set, and a transition signed
-/// by a current key adds the next key from its `not_before` on. The stub's
-/// `decode_key_transition` takes no set and no `now` and returns no
-/// `not_before`, and `verify_token` takes one key. Lane W2j closes it,
-/// and lane W1g then maps [`ProdKeySet`] onto the new API.
+/// by a current key adds the next key from its `not_before` on. Lane W2j
+/// closed it with `fstp_release::licence::KeySet`, mapped in
+/// [`ProdKeySet`].
 pub const KEY_SET_SEAM: &str = "fstp_release::licence has no key set: decode_key_transition takes no pinned set or now and returns no not_before, and verify_token takes one key (design section 10.2; lane W2j)";
 
-/// The seam that stands for the missing production refresh handler.
+/// The seam that stood for the missing production refresh handler.
 ///
 /// Design section 10.2: the refresh response carries a token and may
-/// carry a key transition. The stub has no response decoder and no
-/// refresh step to compare with [`r::apply_refresh`]. Lane W2j closes it.
+/// carry a key transition. Lane W2j closed it with
+/// `fstp_release::licence::apply_refresh`, mapped in [`prod_refresh`].
 pub const REFRESH_SEAM: &str = "fstp_release has no refresh handler: no decoder of the refresh response and no apply step over the stored token and key set (design section 10.2, W1g response proposal; lane W2j)";
 
-/// The seam that stands for the missing stateful metadata acceptance.
+/// The seam that stood for the missing stateful metadata acceptance.
 ///
 /// Design section 10.3: "The cell stores the highest metadata version it
-/// has seen and refuses older or expired metadata." The stub has
-/// `decode_release_metadata(bytes)` and `may_apply(meta)` only. So there
-/// is no production state to compare with
-/// [`r::MetadataStore::accept_with`]. Lane W2j closes it.
+/// has seen and refuses older or expired metadata." Lane W2j closed it
+/// with `fstp_release::metadata::MetadataStore`, which
+/// `th_32_update.rs` compares with [`r::MetadataStore::accept_with`].
 pub const METADATA_STORE_SEAM: &str = "fstp_release::metadata has no stateful acceptance of verified metadata: no store of the highest metadata version and no expiry check (design section 10.3; lane W2j)";
 
 /// The seam that stands for the missing admin view of update checks.
@@ -327,8 +323,8 @@ pub fn seam_or_stub(e: &NotImplemented) -> String {
 
 /// The production backend: `fstp_release::licence`.
 ///
-/// Gap: `verify_token` takes one key, and the API has no key set. The
-/// backend tries each pinned key in turn, which is what a key set does.
+/// The import tries each pinned key in turn through `verify_token`, which
+/// is what `KeySet::verify_token` does over shipped keys.
 #[derive(Clone, Copy, Debug)]
 pub struct Production {
     _probe: (),
@@ -348,15 +344,12 @@ pub fn release_stub(e: &ReleaseError) -> Option<&'static str> {
 }
 
 /// The production token of a reference token.
-///
-/// Gap ([`KIND_SEAM`]): production has one kind, so both reference kinds
-/// map to it. The licence state does not read the kind, so a state test
-/// loses nothing it compares.
 pub const fn prod_token(t: &RefToken) -> VerifiedToken {
     VerifiedToken {
         licence: LicenceId(t.licence.0),
         kind: match t.kind {
-            RefKind::Commercial | RefKind::Noncommercial => LicenceKind::SelfHosted,
+            RefKind::Commercial => LicenceKind::Commercial,
+            RefKind::Noncommercial => LicenceKind::Noncommercial,
         },
         issued_at: t.issued_at,
         refresh_after: t.refresh_after,
@@ -368,11 +361,11 @@ pub const fn prod_token(t: &RefToken) -> VerifiedToken {
 ///
 /// # Errors
 ///
-/// Returns [`KIND_SEAM`]: the production kind names neither reference
-/// kind.
+/// None since lane W2j closed [`KIND_SEAM`].
 pub const fn ref_kind(k: LicenceKind) -> Result<RefKind, NotImplemented> {
     match k {
-        LicenceKind::SelfHosted => Err(NotImplemented::new(KIND_SEAM)),
+        LicenceKind::Commercial => Ok(RefKind::Commercial),
+        LicenceKind::Noncommercial => Ok(RefKind::Noncommercial),
     }
 }
 
@@ -380,8 +373,7 @@ pub const fn ref_kind(k: LicenceKind) -> Result<RefKind, NotImplemented> {
 ///
 /// # Errors
 ///
-/// Returns [`KIND_SEAM`] while the production kind names neither
-/// reference kind.
+/// As [`ref_kind`].
 pub fn ref_token(t: &VerifiedToken) -> Result<RefToken, NotImplemented> {
     Ok(RefToken {
         licence: RefLicenceId(t.licence.0),
@@ -415,19 +407,25 @@ pub const fn ref_state(s: LicenceState) -> RefState {
 /// The reference class of a production gate row.
 pub const fn ref_gate(k: GateKind) -> RefClass {
     match k {
+        GateKind::Evaluation => RefClass::Evaluation,
+        GateKind::Payments => RefClass::Payments,
+        GateKind::Notifications => RefClass::Notifications,
+        GateKind::Export => RefClass::Export,
+        GateKind::Setup => RefClass::Setup,
         GateKind::ApplyUpdate => RefClass::ApplyUpdate,
     }
 }
 
-/// The production gate row of a class, if `GateKind` has one.
+/// The production gate row of a class, if `GateKind` has one. Since lane
+/// W2j closed [`GATE_ROWS_SEAM`], every class has one.
 pub const fn prod_gate(c: RefClass) -> Option<GateKind> {
     match c {
+        RefClass::Evaluation => Some(GateKind::Evaluation),
+        RefClass::Payments => Some(GateKind::Payments),
+        RefClass::Notifications => Some(GateKind::Notifications),
+        RefClass::Export => Some(GateKind::Export),
+        RefClass::Setup => Some(GateKind::Setup),
         RefClass::ApplyUpdate => Some(GateKind::ApplyUpdate),
-        RefClass::Evaluation
-        | RefClass::Payments
-        | RefClass::Notifications
-        | RefClass::Export
-        | RefClass::Setup => None,
     }
 }
 
@@ -480,26 +478,70 @@ pub fn prod_permits(state: RefState, class: RefClass) -> Result<bool, NotImpleme
 ///
 /// # Errors
 ///
-/// Returns [`REFRESH_SEAM`]: the stub has no refresh handler.
+/// Returns the stub's [`NotImplemented`], or a refusal to hold the set.
 pub fn prod_refresh(
     stored: &RefToken,
     keys: &RefKeySet,
     response: &[u8],
     now: i64,
 ) -> Result<Option<r::Refreshed>, NotImplemented> {
-    let _ = (stored, keys, response, now);
-    Err(NotImplemented::new(REFRESH_SEAM))
+    let set = prod_key_set(keys)?;
+    match prod::apply_refresh(&prod_token(stored), &set, response, now) {
+        Ok(done) => Ok(Some(r::Refreshed {
+            token: ref_token(&done.token)?,
+            keys: ref_key_set(&done.keys),
+        })),
+        Err(e) => match release_stub(&e) {
+            Some(op) => Err(NotImplemented::new(op)),
+            None => Ok(None),
+        },
+    }
+}
+
+/// The production key set of a reference key set, in its join order.
+///
+/// # Errors
+///
+/// Refuses a set larger than `fstp_release::licence::MAX_KEYS`.
+fn prod_key_set(keys: &RefKeySet) -> Result<KeySet, NotImplemented> {
+    let pinned: Vec<PinnedKey> = keys
+        .keys
+        .iter()
+        .map(|p| PinnedKey {
+            key: Ed25519Public(p.key),
+            not_before: p.not_before,
+        })
+        .collect();
+    KeySet::from_pinned(&pinned).map_err(|e| {
+        NotImplemented::new(
+            release_stub(&e).unwrap_or("fstp_release::licence::KeySet::from_pinned refused"),
+        )
+    })
+}
+
+/// The reference key set of a production key set, in its join order.
+fn ref_key_set(set: &KeySet) -> RefKeySet {
+    RefKeySet {
+        keys: set
+            .keys()
+            .iter()
+            .map(|p| r::RefPinned {
+                key: p.key.0,
+                not_before: p.not_before,
+            })
+            .collect(),
+    }
 }
 
 /// Production's licence key set (design section 10.2): built from the
 /// shipped keys, changed only by accepted transitions, and asked which
 /// tokens verify at an instant. The tests compare it with [`RefKeySet`].
 ///
-/// Gap ([`KEY_SET_SEAM`]): the stub has no key set, so
-/// [`ProdKeySet::shipped`] refuses with the seam once the stub answers.
+/// Lane W2j closed [`KEY_SET_SEAM`]: this wraps
+/// `fstp_release::licence::KeySet`.
 #[derive(Clone, Debug)]
 pub struct ProdKeySet {
-    _probe: (),
+    set: KeySet,
 }
 
 impl ProdKeySet {
@@ -507,17 +549,16 @@ impl ProdKeySet {
     ///
     /// # Errors
     ///
-    /// Returns the stub's [`NotImplemented`], then [`KEY_SET_SEAM`].
+    /// Returns the stub's [`NotImplemented`], or a refusal to hold the
+    /// set.
     pub fn shipped(keys: &[[u8; 32]]) -> Result<ProdKeySet, NotImplemented> {
-        let _ = keys;
-        // A stub decoder names itself first, so the seam shows only once
-        // `decode_key_transition` answers.
-        if let Err(e) = prod::decode_key_transition(&[])
-            && let Some(op) = release_stub(&e)
-        {
-            return Err(NotImplemented::new(op));
-        }
-        Err(NotImplemented::new(KEY_SET_SEAM))
+        let keys: Vec<Ed25519Public> = keys.iter().copied().map(Ed25519Public).collect();
+        let set = KeySet::shipped(&keys).map_err(|e| {
+            NotImplemented::new(
+                release_stub(&e).unwrap_or("fstp_release::licence::KeySet::shipped refused"),
+            )
+        })?;
+        Ok(ProdKeySet { set })
     }
 
     /// Applies a signed transition at `now`: the accepted transition, or
@@ -525,14 +566,22 @@ impl ProdKeySet {
     ///
     /// # Errors
     ///
-    /// Returns [`KEY_SET_SEAM`].
+    /// Returns the stub's [`NotImplemented`].
     pub fn apply_transition(
         &mut self,
         bytes: &[u8],
         now: i64,
     ) -> Result<Option<RefTransition>, NotImplemented> {
-        let _ = (bytes, now);
-        Err(NotImplemented::new(KEY_SET_SEAM))
+        match self.set.apply_transition(bytes, now) {
+            Ok(t) => Ok(Some(RefTransition {
+                next_key: t.next_key().0,
+                not_before: t.not_before(),
+            })),
+            Err(e) => match release_stub(&e) {
+                Some(op) => Err(NotImplemented::new(op)),
+                None => Ok(None),
+            },
+        }
     }
 
     /// The keys of the set and their `not_before`, in any order. Callers
@@ -541,19 +590,24 @@ impl ProdKeySet {
     ///
     /// # Errors
     ///
-    /// Returns [`KEY_SET_SEAM`].
+    /// None.
     pub fn keys(&self) -> Result<RefKeySet, NotImplemented> {
-        Err(NotImplemented::new(KEY_SET_SEAM))
+        Ok(ref_key_set(&self.set))
     }
 
     /// The token, if a key of the set in force at `now` verifies it.
     ///
     /// # Errors
     ///
-    /// Returns [`KEY_SET_SEAM`].
+    /// Returns the stub's [`NotImplemented`].
     pub fn verify(&self, token: &[u8], now: i64) -> Result<Option<RefToken>, NotImplemented> {
-        let _ = (token, now);
-        Err(NotImplemented::new(KEY_SET_SEAM))
+        match self.set.verify_token(token, now) {
+            Ok(t) => ref_token(&t).map(Some),
+            Err(e) => match release_stub(&e) {
+                Some(op) => Err(NotImplemented::new(op)),
+                None => Ok(None),
+            },
+        }
     }
 }
 
