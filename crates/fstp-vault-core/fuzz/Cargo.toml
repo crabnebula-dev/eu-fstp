@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-vault-core = { path = ".." }
+fstp-vault-proto = { path = "../../fstp-vault-proto" }
 
 [[bin]]
 name = "fact_commit_sequence"

@@ -34,8 +34,8 @@
 //! the production reaction decide is not model checked here. A production
 //! cell backend that runs the reaction, `Join` and `Gate` through
 //! `DriverCore` and `fstp_cell_core::decide` follows once lane W2c lands
-//! them, together with a reaction ask that names its epoch (see
-//! [`REACTION_ASK_SEAM`]).
+//! them. The vault side already takes a reaction ask that names its epoch
+//! (`fstp_vault_core::ask_request`, lane W2d).
 //!
 //! Effective facts are the vault's own: the backend reports its effective
 //! epoch, and the facts are those of the writes up to that epoch. A
@@ -295,16 +295,6 @@ impl VcpVault for Reference {
     }
 }
 
-/// The seam of [`Production::ask`] for a reaction ask:
-/// `fstp_vault_core::ask` takes no `at` and no `reaction_for` (design
-/// section 6.3 names `ask(s, req: &Ask)`), so a reaction cannot see the
-/// provisional fact through it (lane W2d).
-///
-/// API request to lane W2d: `fstp_vault_core::ask` takes the reaction
-/// epoch (`reaction_for`). Once it does, [`Production::ask`] passes it
-/// through and this seam goes.
-pub const REACTION_ASK_SEAM: &str = "fstp_celltest::mc::vcp_model::Production::ask: fstp_vault_core::ask takes no reaction_for, so no reaction ask reaches the provisional fact (design section 6.3, lane W2d)";
-
 /// The halt of [`production_vault`] when `fstp_vault_core::write` refuses a
 /// fact write. The reference never refuses one (it queues), and the model
 /// gives the k-th written fact an epoch by its place in
@@ -386,11 +376,12 @@ impl VcpVault for Production {
         queries: &[Query],
     ) -> Result<AskReply, NotImplemented> {
         let (s, _) = production_vault(history)?;
-        if reaction_for.is_some() {
-            return Err(NotImplemented::new(REACTION_ASK_SEAM));
-        }
         let wq: Vec<fstp_vault_proto::WireQuery> = queries.iter().map(wire::query).collect();
-        match fstp_vault_core::ask(&s, &wq) {
+        let req = fstp_vault_core::Ask {
+            reaction_for,
+            queries: &wq,
+        };
+        match fstp_vault_core::ask_request(&s, &req) {
             Ok(answers) => Ok(AskReply::Answered(
                 answers.iter().map(wire::answer).collect(),
             )),

@@ -295,38 +295,31 @@ fn reference_release(
     v.release(bytes, &check).map(|_| ())
 }
 
-/// The seam of the production release tests: `fstp_vault_core` has no way
-/// to pin the cell's ticket keys and cell id (provisioning, design
-/// section 6.5) or to take the `NegotiationOpened` fact (design section
-/// 6.2), and `ReleaseClaims` carries no route (lane W2d).
-///
-/// API request to lane W2d: a provisioning call that pins the cell id and
-/// the current and next ticket keys, a `NegotiationOpened` write, and a
-/// route in `ReleaseClaims`. Once they exist, [`production_release`]
-/// provisions the state, pushes `listed`, presents the ticket once, or
-/// twice for `Replayed`, and returns the outcome of `release_allowed`.
-const PROVISION_SEAM: &str = "fstp_vault_core has no API to pin ticket keys and the cell id, take NegotiationOpened, or name the route of a release (design sections 6.2 and 6.5, lane W2d)";
-
-/// The production outcome, through `fstp_vault_core::release_allowed`.
+/// The production outcome: the vault service of lane W2d, sans I/O. It
+/// pins the cell id and the current and next ticket keys at provisioning,
+/// takes the `NegotiationOpened` fact for `listed`, and presents the
+/// ticket on `POST /r` once, or twice for `Replayed`. The service runs
+/// `fstp_vault_core::check_ticket` and `release_guard`, and keeps the used
+/// ticket ids, since single use is its part.
 fn production_release(
     m: Mutation,
     bytes: &[u8],
     listed: Option<AccountId>,
 ) -> Result<Result<(), ()>, String> {
-    let _ = (m, listed);
-    let s = fstp_vault_core::VaultState::default();
-    let claims = fstp_vault_core::ReleaseClaims {
-        ticket: bytes.to_vec(),
-    };
-    match fstp_vault_core::release_allowed(&s, &claims, NOW.micros()) {
-        Err(fstp_vault_core::CoreError::NotImplemented(op)) => {
-            Err(format!("{op} is NotImplemented"))
-        }
-        _ => Err(format!(
-            "{} (NotImplemented)",
-            NotImplemented::new(PROVISION_SEAM)
-        )),
+    let keys = pinned();
+    let mut v =
+        fstp_vault::Vault::new(CELL, &keys).map_err(|e| format!("provisioning refused: {e}"))?;
+    if let Some(a) = listed {
+        let accounts = BTreeSet::from([fstp_vault_proto::WireAccount(a.raw())]);
+        v.negotiation_opened(fstp_vault_proto::WireProposal(P.raw()), &accounts, 1)
+            .map_err(|e| format!("negotiation fact refused: {e}"))?;
     }
+    if m == Mutation::Replayed && v.post_release(bytes, NOW.micros()).is_err() {
+        return Ok(Err(()));
+    }
+    Ok(v.post_release(bytes, NOW.micros())
+        .map(|_| ())
+        .map_err(|_| ()))
 }
 
 /// I-17, ADR-009 "Tickets": the vault refuses a forged, tampered, expired,

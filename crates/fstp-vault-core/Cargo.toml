@@ -10,6 +10,9 @@ publish.workspace = true
 [dependencies]
 fstp-vault-proto.workspace = true
 fstp-money.workspace = true
+fstp-json.workspace = true
+# The Ed25519 ticket signature check (ADR-009 "Tickets"). No I/O (layering rule 1).
+fstp-crypto.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
