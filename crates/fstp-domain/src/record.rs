@@ -420,6 +420,15 @@ pub enum Record {
     BindingVoided(BindingVoided),
     /// A suspended binding was reinstated.
     BindingReinstated(BindingReinstated),
+    /// The end of an open binding was scheduled for a later instant, or
+    /// brought forward (Cooling-off NOTE, decided 2026-10-25). The binding
+    /// stays held until its `BindingEnded`, which pins the bar then.
+    BindingEndScheduled {
+        /// The binding.
+        binding: BindingId,
+        /// The scheduled end instant.
+        at: Timestamp,
+    },
     /// A vault epoch was processed (enforcement point 3).
     VaultEpochProcessed {
         /// The epoch.

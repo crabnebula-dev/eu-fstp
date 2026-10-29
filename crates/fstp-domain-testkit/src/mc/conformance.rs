@@ -46,10 +46,14 @@ use crate::mc::life_model::{
 use crate::mc::money_model::{Fact, McAction, McState, run_action};
 
 /// The measured state count of M-CONFORMANCE with withdrawal, on production.
-pub const M_CONFORMANCE_STATES: usize = 11_019;
+/// Measured in close-out round 2, up from 19,929. A new amount now clears
+/// the contract fact of the old one (Q-W7-4), so the contract fact is given
+/// again after a new determination.
+pub const M_CONFORMANCE_STATES: usize = 21_711;
 
 /// The measured state count of M-CONFORMANCE without withdrawal, on production.
-pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 8_530;
+/// Measured in close-out round 2, up from 14,470, for the reason above.
+pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 15_658;
 
 /// One action of M-CONFORMANCE on PC.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -167,6 +171,8 @@ impl ConformanceModel {
                 edited: false,
                 cap_blocked: false,
                 grant_blocked: false,
+                superseded: false,
+                contract_cleared: false,
                 deliverables: 0,
                 divergence: None,
             },
@@ -319,7 +325,21 @@ impl Model for ConformanceModel {
             }
             StateTag::Deferred => actions.push(ConfAction::ReEnter),
             StateTag::Negotiation => {
-                actions.push(ConfAction::Money(McAction::Determine(PC, 0)));
+                // The amount is never locked (NOTE 9, decided 2026-10-28),
+                // so a new determination stays open after acceptance and
+                // approval. A new amount clears both, so unbounded it would
+                // cycle with fresh decision ids. After acceptance or
+                // approval it is drawn while fewer than two exist, as in
+                // M-MONEY. Before, it is drawn as it always was.
+                let given = s
+                    .world
+                    .money
+                    .proposals
+                    .get(&PC)
+                    .is_some_and(|q| q.accepted.is_some() || q.approved.is_some());
+                if !given || crate::mc::money_model::determinations(&s.world, PC) < 2 {
+                    actions.push(ConfAction::Money(McAction::Determine(PC, 0)));
+                }
                 actions.push(ConfAction::Money(McAction::Grant(PC, Fact::Contract)));
                 actions.push(ConfAction::Money(McAction::Grant(PC, Fact::Approve)));
                 actions.push(ConfAction::Money(McAction::Decline(PC)));

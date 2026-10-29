@@ -9,6 +9,14 @@
 //! (the P-12 calls after the end are barred), holds a Judging role after
 //! the bar, and that a call was published while a binding was held.
 //!
+//! The scheduled end instance (Cooling-off NOTE, decided 2026-10-25) adds
+//! ends scheduled for two later instants, the bring-forward and the
+//! refused move later. Time moves on its own, and the System end is a
+//! step of its own, so every step between an instant and its System end
+//! is checked too. `transition("Cooling-off window")` checks that nothing
+//! but those ends is recorded there. Its tripwires were measured in W7 fix
+//! round 1.
+//!
 //! Each production run is exhaustive under a tripwire at twice the count
 //! measured on production (step W6). The `_reference` twins run the same
 //! model on the reference alone, which must pass every property, each under
@@ -21,7 +29,8 @@ use fstp_domain_testkit::harness::mc::check_exhaustive;
 use fstp_domain_testkit::mc::sod_model::{
     M_SOD_I01_P12_0_REFERENCE_STATES, M_SOD_I01_P12_0_STATES, M_SOD_I01_P12_1_REFERENCE_STATES,
     M_SOD_I01_P12_1_STATES, M_SOD_I01_P12_2_REFERENCE_STATES, M_SOD_I01_P12_2_STATES,
-    M_SOD_TWO_PROGRAMMES_STATES, SodConfig, SodModel, i01_config, i01_properties,
+    M_SOD_SCHEDULED_REFERENCE_STATES, M_SOD_SCHEDULED_STATES, M_SOD_TWO_PROGRAMMES_STATES,
+    SodConfig, SodModel, i01_config, i01_properties, scheduled_config, scheduled_properties,
     two_programmes_config, two_programmes_properties,
 };
 
@@ -105,5 +114,37 @@ fn i01_m_sod_two_programmes_reference() {
     let properties = two_programmes_properties::<SodModel>();
     if let Err(e) = check_exhaustive(&model, &properties, M_SOD_TWO_PROGRAMMES_STATES) {
         panic!("{e}");
+    }
+}
+
+/// I-01, SoD-01, SoD-05 (Cooling-off NOTE, decided 2026-10-25): M-SOD with
+/// scheduled ends. A binding stays held until its scheduled instant, and
+/// the System ends it then with the bar pinned at that instant.
+#[test]
+fn i01_m_sod_scheduled_end() {
+    let model = SodModel::new(scheduled_config(), Backend::Production)
+        .unwrap_or_else(|e| panic!("M-SOD start from genesis: {e}"));
+    let properties = scheduled_properties::<SodModel>();
+    match check_exhaustive(&model, &properties, M_SOD_SCHEDULED_STATES) {
+        Ok(o) => eprintln!(
+            "M-SOD scheduled ends on production: {} states",
+            o.stats.states
+        ),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+/// I-01 (Cooling-off NOTE): M-SOD with scheduled ends passes on the reference alone.
+#[test]
+fn i01_m_sod_scheduled_end_reference() {
+    let model = SodModel::new(scheduled_config(), Backend::Reference)
+        .unwrap_or_else(|e| panic!("M-SOD start from genesis: {e}"));
+    let properties = scheduled_properties::<SodModel>();
+    match check_exhaustive(&model, &properties, M_SOD_SCHEDULED_REFERENCE_STATES) {
+        Ok(o) => eprintln!(
+            "M-SOD scheduled ends on the reference: {} states",
+            o.stats.states
+        ),
+        Err(e) => panic!("{e}"),
     }
 }

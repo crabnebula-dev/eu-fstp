@@ -21,9 +21,11 @@ tagged_enum! {
         ApproveCallPublication { call, decision },
         PublishCall { call, config, config_model },
         GrantRole {
-            binding, account, programme, role, start, second_admin, confidentiality, organisation
+            binding, account, programme, role, start, second_admin, confidentiality, organisation,
+            end
         },
         EndRole { binding, at },
+        EndScheduledRole { binding },
         ReinstateBinding { binding, reason },
         VaultChanged { epoch, changed },
         CreateDraft { proposal, call, binding, minor },
@@ -50,8 +52,8 @@ tagged_enum! {
         RecordIrcReview { assignment, verdict },
         DeclineAfterConcern { proposal },
         ReEnter { proposal, call },
-        AcceptGrant { decision, proposal },
-        ApproveGrant { decision, proposal },
+        AcceptGrant { decision, proposal, determination },
+        ApproveGrant { decision, proposal, determination },
         ContractFact { proposal, contract, event },
         DeclineNegotiation { proposal },
         Withdraw { proposal },

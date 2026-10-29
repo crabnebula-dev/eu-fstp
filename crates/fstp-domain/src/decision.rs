@@ -15,19 +15,22 @@
 //!   condition, after a passed knock-out check. It needs at least P-03
 //!   active reviewer assignments, and every active assignee free of
 //!   conflict, so stage 1 can close later (R-EV-02, I-03). They span at
-//!   least P-39 organisations when every organisation is known (I-34), and
-//!   they are clear of the P-38 proximity lists (I-35).
+//!   least P-39 organisations (I-34), and an unknown organisation fails
+//!   the check. They are clear of the P-38 proximity lists (I-35).
 //! - `CloseStage1` (rows 4 and 5): the FSTP coordinator records it and
 //!   cannot choose its outcome (R-LA-03, NOTE 3, NOTE 13). The close needs
 //!   the I-07 quorum with every active assignee scored, and passes strictly
-//!   above P-02 (I-08).
+//!   above P-02 (I-08). The active assignees still span P-39 organisations
+//!   (I-34), since a release after admission can lower the count.
 //! - `RankAfterStage2` (row 6): an assigned reviewer, once a revision has
 //!   at least P-03 valid stage 2 scores, the window closed with answers,
 //!   or every active assigned reviewer recorded "no questions" (NOTE 4,
 //!   O-50). The last case also covers a round whose last outstanding
 //!   assignee was released. The effective score follows P-24 and names one
 //!   plan (I-09). The last "no questions" of a round ranks through
-//!   [`ranking_records`] too.
+//!   [`ranking_records`] too. Both need the active assignees to span P-39
+//!   organisations (I-34). Otherwise the last "no questions" is recorded
+//!   alone, and a reassignment completes the round.
 //! - `RecordCutOff` (rows 8 and 9): a committee member or chair who is not
 //!   recused records a rank position over the call's RANKED proposals, with
 //!   the ballots of P-16, the recused members and the remaining budget
@@ -649,8 +652,8 @@ fn admit_queries(state: &State, a: &Admission) -> Vec<Query> {
 
 /// The records of an admission: SUBMITTED to STAGE1 once the knock-out
 /// check passed and at least P-03 active assignments are free of conflict
-/// (R-EV-02, I-03), across at least P-39 organisations when every
-/// organisation is known (I-34), and clear of the proximity lists (I-35).
+/// (R-EV-02, I-03), across at least P-39 known organisations (I-34), and
+/// clear of the proximity lists (I-35).
 fn decide_admit(
     state: &State,
     a: &Admission,
@@ -684,15 +687,13 @@ fn decide_admit(
         return Err(Refusal::new(RuleRef::Rev02, RefusalReason::GuardFailed));
     }
     let programme = crate::assignment::programme_of(state, a.proposal)?;
-    let orgs: Vec<Option<_>> = free
+    // An unknown organisation fails closed (SoD-10, decided 2026-10-25).
+    let distinct: Option<BTreeSet<_>> = free
         .iter()
         .map(|(_, r)| committee_organisation(state, *r, programme, ctx.now))
         .collect();
-    if orgs.iter().all(Option::is_some) {
-        let distinct: BTreeSet<_> = orgs.iter().flatten().collect();
-        if distinct.len() < usize::from(values.p39.get()) {
-            return Err(Refusal::new(RuleRef::I34, RefusalReason::GuardFailed));
-        }
+    if distinct.is_none_or(|d| d.len() < usize::from(values.p39.get())) {
+        return Err(Refusal::new(RuleRef::I34, RefusalReason::GuardFailed));
     }
     for (id, q) in &a.proximity {
         if free.iter().any(|(f, _)| f == id) && answer(answers, q)?.holds {
@@ -740,6 +741,9 @@ fn plan_close(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Close, Refusal>
         state,
         &life::active_assignments(state, *proposal, call, AssignmentKind::Reviewer),
     );
+    // I-34 holds at the close too: a release after admission can leave
+    // the scores to fewer than P-39 organisations (SoD-10).
+    crate::assignment::require_reviewers_span_p39(state, *proposal, &reviewers, ctx.now)?;
     Ok(Close {
         actor,
         proposal: *proposal,
@@ -792,18 +796,18 @@ fn decide_close(
 
 /// The proposals whose stage 1 close trigger holds (NOTE 3): in STAGE1,
 /// every active reviewer assignment of the stage 1 call has a valid score,
-/// and at least P-03 valid scores from distinct reviewers exist.
+/// at least P-03 valid scores from distinct reviewers exist, and the
+/// active reviewers span at least P-39 organisations (I-34).
 pub(crate) fn stage1_ready(state: &State, now: Timestamp) -> Vec<ProposalId> {
-    let _ = now;
     crate::proposal::intake::submitted_proposals(state)
         .filter(|(_, s, _)| *s == StateTag::Stage1)
         .map(|(p, _, _)| p)
-        .filter(|p| stage1_closable(state, *p))
+        .filter(|p| stage1_closable(state, *p, now))
         .collect()
 }
 
 /// Whether the stage 1 close trigger of `proposal` holds, without the vault.
-fn stage1_closable(state: &State, proposal: ProposalId) -> bool {
+fn stage1_closable(state: &State, proposal: ProposalId, now: Timestamp) -> bool {
     let (Ok(values), Some(call)) = (
         life::governing(state, proposal),
         crate::proposal::draft::proposal_call(state, proposal),
@@ -814,7 +818,11 @@ fn stage1_closable(state: &State, proposal: ProposalId) -> bool {
     let scored: BTreeSet<AssignmentId> = valid.iter().map(|k| k.assignment).collect();
     let reviewers = life::assignees(state, &scored);
     let active = state.review.active_reviewers_in(proposal, call);
-    reviewers.len() >= usize::from(values.p03.get()) && active.is_subset(&scored)
+    let active_reviewers = life::assignees(state, &active);
+    reviewers.len() >= usize::from(values.p03.get())
+        && active.is_subset(&scored)
+        && crate::assignment::reviewers_span_p39(state, proposal, &active_reviewers, now)
+            .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -838,6 +846,18 @@ fn stage2_reviewers(state: &State, proposal: ProposalId) -> Result<BTreeSet<Acco
         state,
         &life::active_assignments(state, proposal, call, AssignmentKind::Reviewer),
     ))
+}
+
+/// The refusal of a ranking whose active reviewers in the current call
+/// span fewer than P-39 known organisations (I-34, SoD-10). A release in
+/// STAGE2 can take the count below P-39, and a reassignment restores it.
+pub(crate) fn require_stage2_organisations(
+    state: &State,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Result<(), Refusal> {
+    let reviewers = stage2_reviewers(state, proposal)?;
+    crate::assignment::require_reviewers_span_p39(state, proposal, &reviewers, now)
 }
 
 /// One revision with its stage 2 score and counted keys, when it has a quorum.
@@ -949,6 +969,7 @@ fn plan_rank(
     let assignment =
         qualifying_assignment(state, actor, *proposal, AssignmentKind::Reviewer, ctx.now)
             .ok_or(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive))?;
+    require_stage2_organisations(state, *proposal, ctx.now)?;
     Ok((actor, *proposal, assignment))
 }
 
@@ -1637,52 +1658,28 @@ fn irc_completes(
     !awaiting && remaining.len() >= usize::from(values.p15.get()) && remaining.iter().all(validated)
 }
 
-/// The proposal of an IRC assignment `id` released by `Unassign`.
-fn unassigned_irc(state: &State, cmd: &Command) -> Option<(AssignmentId, ProposalId)> {
-    let Command::Unassign { assignment } = cmd else {
-        return None;
-    };
-    state
-        .review
-        .get(*assignment)
-        .filter(|a| a.kind == AssignmentKind::Irc)
-        .map(|a| (*assignment, a.proposal))
-}
-
 /// The vault questions this lane needs for its contribution to the batch of
-/// a command that another lane owns. It reads only the state and the command.
-/// An `Unassign` that would complete the IRC review of a minor's proposal
-/// asks for the guardian consent (I-18, R-NG-02).
+/// a command that another lane owns. This lane contributes nothing, so it
+/// asks none.
 pub(crate) fn contribute_queries(
     state: &crate::state::State,
     cmd: &crate::command::Command,
     ctx: &crate::command::Ctx,
 ) -> Result<Vec<crate::oracle::Query>, crate::refusal::Refusal> {
-    let _ = ctx;
-    let Some((id, proposal)) = unassigned_irc(state, cmd) else {
-        return Ok(Vec::new());
-    };
-    let minor = crate::proposal::draft::draft(state, proposal).is_some_and(|d| d.minor);
-    if minor && irc_completes(state, proposal, None, &BTreeSet::from([id])) {
-        return Ok(vec![Query::HasGuardianConsent { proposal }]);
-    }
+    let _ = (state, cmd, ctx);
     Ok(Vec::new())
 }
 
 /// The records this lane adds to the batch of a command that another lane
-/// owns, given the records so far (`crate::engine` module docs).
+/// owns (`crate::engine` module docs). It adds none.
 ///
-/// A batch that releases IRC assignments completes the IRC review of each
-/// proposal whose remaining active IRC assignments, at least P-15, all
-/// validated (R-IR-01). The proposal then enters NEGOTIATION in the same
-/// batch, unless the batch already moves it. A minor's proposal enters
-/// only with a verified guardian consent, which only an `Unassign` asks
-/// for (I-18, R-NG-02). Without it the proposal stays in IRC_REVIEW.
-///
-/// The entry is a decision, so only a batch of a named human completes the
-/// review (R-LA-03, NOTE 13). After a release by the System, such as a
-/// vault reaction, the proposal stays in IRC_REVIEW. A validated IRC
-/// member then records the entry by repeating the validation.
+/// IRC_REVIEW to NEGOTIATION is the IRC members' row, computed only by
+/// `RecordIrcReview` with a conflict-free actor (R-IR-01, R-LA-03, I-03).
+/// So a batch that releases an IRC assignment never records the entry,
+/// whoever sends it: an `Unassign` by the coordinator, an `EndRole` by a
+/// tenant admin, or a conflicted declaration by the IRC member itself. The
+/// proposal stays in IRC_REVIEW, and a validated IRC member records the
+/// entry by repeating the validation once the review would complete.
 pub(crate) fn contribute(
     state: &crate::state::State,
     cmd: &crate::command::Command,
@@ -1690,54 +1687,8 @@ pub(crate) fn contribute(
     answers: &crate::oracle::Answers,
     batch: &[crate::record::Record],
 ) -> Result<Vec<crate::record::Record>, crate::refusal::Refusal> {
-    if !matches!(ctx.actor, Actor::Account(_)) {
-        return Ok(Vec::new());
-    }
-    let mut released: BTreeSet<AssignmentId> = BTreeSet::new();
-    let mut proposals: BTreeSet<ProposalId> = BTreeSet::new();
-    let mut moved: BTreeSet<ProposalId> = BTreeSet::new();
-    for r in batch {
-        match r {
-            Record::AssignmentReleased(x) => {
-                if let Some(a) = state.review.get(x.assignment)
-                    && a.kind == AssignmentKind::Irc
-                {
-                    released.insert(x.assignment);
-                    proposals.insert(a.proposal);
-                }
-            }
-            Record::Transitioned(t) => {
-                moved.insert(t.proposal);
-            }
-            _ => {}
-        }
-    }
-    let unassigned = unassigned_irc(state, cmd).map(|(_, p)| p);
-    let mut out = Vec::new();
-    for p in proposals {
-        if moved.contains(&p) || !irc_completes(state, p, None, &released) {
-            continue;
-        }
-        if crate::proposal::draft::draft(state, p).is_some_and(|d| d.minor) {
-            let consent = Query::HasGuardianConsent { proposal: p };
-            if unassigned != Some(p) {
-                continue;
-            }
-            record_answer(&mut out, &consent, answers)?;
-            if !answer(answers, &consent)?.holds {
-                continue;
-            }
-        }
-        out.push(transition(
-            p,
-            StateTag::IrcReview,
-            StateTag::Negotiation,
-            Row::IrcReviewToNegotiation,
-            ctx.actor,
-            None,
-        ));
-    }
-    Ok(out)
+    let _ = (state, cmd, ctx, answers, batch);
+    Ok(Vec::new())
 }
 
 /// The policy whose P-77 governs a binding action of this lane through MCP

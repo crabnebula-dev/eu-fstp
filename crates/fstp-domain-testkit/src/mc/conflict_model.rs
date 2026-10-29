@@ -702,12 +702,14 @@ pub fn havoc_config() -> ConflictConfig {
 }
 
 /// The two-proposal instance (design 6.3): R1, and PR1 of L1 and PR2 of
-/// L2, both submitted in one call. The run may make R1 a co-worker of L1
+/// L2, both submitted in one call. R2 of O2 holds a committee binding and
+/// is never assigned. It keeps P-39 = 2 organisations in reach, so the
+/// assignment of R1 alone is not refused under I-34 (W7 fix). The run may make R1 a co-worker of L1
 /// and the coordinator a co-worker of L2. A conflict on one proposal must
 /// leave every act on the other as it was.
 pub fn two_proposal_config() -> ConflictConfig {
     let mut setup = conflict_setup();
-    setup.judges.retain(|(a, _, _)| *a != R2 && *a != R3);
+    setup.judges.retain(|(a, _, _)| *a != R3);
     setup.drafts.push(DraftSpec {
         lead: L2,
         proposal: PR2,

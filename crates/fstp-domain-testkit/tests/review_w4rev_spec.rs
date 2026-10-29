@@ -11,11 +11,12 @@ use fstp_domain::command::{Actor, DeclarationSubject, SystemCause};
 use fstp_domain::id::{AssignmentId, BindingId};
 use fstp_domain::record::Record;
 use fstp_domain::refusal::RuleRef;
+use fstp_domain_testkit::r#gen::review::judge_binding;
 use fstp_domain_testkit::r#gen::review::{
     COORDINATOR, L1, L2, LIST_1, PR1, PR2, R1, R2, R3, STRANGER, assign, declare, handle,
     machine_accounts, machine_setup, records_of, review_truth, run_records, scenario_from, tag,
 };
-use fstp_domain_testkit::r#gen::roster::{Step, T0, add_member};
+use fstp_domain_testkit::r#gen::roster::{Step, T0, add_member, end};
 use fstp_domain_testkit::scenario::Scenario;
 use fstp_domain_testkit::vault::Relation;
 
@@ -152,12 +153,20 @@ fn review_i35_affiliation_declared_after_assignment_ends_the_assignment() {
 }
 
 /// I-34, SoD-10: the committee binding's organisation reaches `Assign`.
-/// R1 and R2 both record O1, P-39 = 2, so the second is refused.
+/// R1 and R2 record O1, R3 records O2 and R4 records O3, with P-39 = 2.
+/// An assignment is refused only once P-39 organisations are out of
+/// reach (W7 close-out, decided 2026-10-28). While R3 and R4 hold their
+/// bindings, R1 and then R2 are assigned to PR1. Once both bindings have
+/// ended, only O1 is left, so assigning R1 to PR2 is refused under I-34.
+/// A roster that dropped the organisations would refuse R1 at once.
 #[test]
 fn review_i34_committee_organisation_reaches_assign() {
     let mut s = start();
     ok(&mut s, &reviewer(9_801, PR1, R1));
-    match run_records(&mut s, &reviewer(9_802, PR1, R2), T0).unwrap() {
+    ok(&mut s, &reviewer(9_802, PR1, R2));
+    ok(&mut s, &end(judge_binding(3), T0));
+    ok(&mut s, &end(judge_binding(4), T0));
+    match run_records(&mut s, &reviewer(9_803, PR2, R1), T0).unwrap() {
         Err(r) => assert_eq!(r.rule, RuleRef::I34),
         Ok(records) => panic!(
             "a second O1 reviewer was assigned below P-39 organisations, \

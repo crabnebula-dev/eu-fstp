@@ -60,7 +60,9 @@ pub struct Ctx {
     ///
     /// Lane L-LIFE reads it for SoD-03 at `AddTeamMember` and `AddGuardian`.
     /// A tenant admin at tenant scope counts as holding an Operations role in
-    /// every programme of the tenant (interim reading, to be confirmed by Daniel).
+    /// every programme of the tenant. The role is tenant-wide, the shell
+    /// attests it, and the Roles table places it in Operations
+    /// (`SPEC/02-domain/roles-and-sod.md`, confirmed 2026-10-25).
     pub binds_tenant_admin: bool,
 }
 
@@ -203,13 +205,27 @@ pub enum Command {
         confidentiality: Option<TextRef>,
         /// The reviewer's organisation, for committee bindings (I-34).
         organisation: Option<OrganisationId>,
+        /// A scheduled end, after `start` (Cooling-off NOTE, decided
+        /// 2026-10-25). The binding stays held until the instant.
+        end: Option<Timestamp>,
     },
     /// End an active binding.
+    ///
+    /// At `ctx.now` the binding ends at once. A later instant schedules
+    /// the end, or brings an earlier scheduled end forward (Cooling-off
+    /// NOTE, decided 2026-10-25).
     EndRole {
         /// The binding.
         binding: BindingId,
         /// End time, never before `ctx.now`.
         at: Timestamp,
+    },
+    /// Record the scheduled end of a binding once its instant is reached.
+    /// [`crate::due`] lists it with a System actor from the instant on
+    /// (Cooling-off NOTE, decided 2026-10-25).
+    EndScheduledRole {
+        /// The binding.
+        binding: BindingId,
     },
     /// Reinstate a suspended binding after resolution.
     ReinstateBinding {
@@ -460,19 +476,26 @@ pub enum Command {
         /// Recorded deductions for ineligible costs.
         deductions: Vec<IneligibleCost>,
     },
-    /// The applicant accepts the grant.
+    /// The applicant accepts the grant of the current amount (NOTE 9).
     AcceptGrant {
         /// The decision.
         decision: DecisionId,
         /// The proposal.
         proposal: ProposalId,
+        /// The amount determination accepted, by its decision id. It must
+        /// be the current one (R-NG-03, NOTE 9, decided 2026-10-28).
+        determination: DecisionId,
     },
-    /// The programme manager approves the grant.
+    /// The programme manager approves the grant of the current amount
+    /// (NOTE 9).
     ApproveGrant {
         /// The decision.
         decision: DecisionId,
         /// The proposal.
         proposal: ProposalId,
+        /// The amount determination approved, by its decision id. It must
+        /// be the current one (R-NG-03, NOTE 9, decided 2026-10-28).
+        determination: DecisionId,
     },
     /// A fact from the M5 contract port.
     ContractFact {
@@ -641,6 +664,8 @@ pub enum CommandKind {
     GrantRole,
     /// [`Command::EndRole`].
     EndRole,
+    /// [`Command::EndScheduledRole`].
+    EndScheduledRole,
     /// [`Command::ReinstateBinding`].
     ReinstateBinding,
     /// [`Command::VaultChanged`].
@@ -743,7 +768,7 @@ pub enum CommandKind {
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 57] = [
+    pub const ALL: [CommandKind; 58] = [
         CommandKind::CreateProgramme,
         CommandKind::EditPolicy,
         CommandKind::DraftCall,
@@ -752,6 +777,7 @@ impl CommandKind {
         CommandKind::PublishCall,
         CommandKind::GrantRole,
         CommandKind::EndRole,
+        CommandKind::EndScheduledRole,
         CommandKind::ReinstateBinding,
         CommandKind::VaultChanged,
         CommandKind::CreateDraft,
@@ -810,9 +836,9 @@ impl CommandKind {
     /// Covered: granting or changing a Drafting, Judging or Operations role
     /// (every `GrantRole`, `EndRole` and `ReinstateBinding`, since Receiving
     /// bindings arise from proposals), approving or releasing a payment, and
-    /// activating a programme or publishing a call. M2 has no separate
-    /// activation step, so `CreateProgramme` counts as activating (interim
-    /// reading, to be confirmed by Daniel).
+    /// activating a programme or publishing a call. Creating a programme
+    /// counts as activating it (`SPEC/03-architecture/authentication.md`,
+    /// confirmed 2026-10-25).
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
@@ -841,6 +867,7 @@ impl CommandKind {
                 | CommandKind::RecordPlanVersion
                 | CommandKind::ReadContent
                 | CommandKind::VaultChanged
+                | CommandKind::EndScheduledRole
                 | CommandKind::ExpireStage2
                 | CommandKind::ReEnter
                 | CommandKind::ContractFact
@@ -864,6 +891,7 @@ impl Command {
             Command::PublishCall { .. } => CommandKind::PublishCall,
             Command::GrantRole { .. } => CommandKind::GrantRole,
             Command::EndRole { .. } => CommandKind::EndRole,
+            Command::EndScheduledRole { .. } => CommandKind::EndScheduledRole,
             Command::ReinstateBinding { .. } => CommandKind::ReinstateBinding,
             Command::VaultChanged { .. } => CommandKind::VaultChanged,
             Command::CreateDraft { .. } => CommandKind::CreateDraft,

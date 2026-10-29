@@ -22,8 +22,10 @@
 //!   check of one step.
 //! - [`LedgerMachine`] is the fstp-prop machine over commands of every
 //!   lane that exists: policy, calls, roles, drafts, intake, assignments
-//!   and the lifecycle up to NEGOTIATION, with vault changes. Its stage 2
-//!   paths include a revision with its scores and their corrections. Its
+//!   and the lifecycle with vault changes. Its stage 2 paths include a
+//!   revision with its scores and their corrections. Past NEGOTIATION,
+//!   PR1 runs the money commands: the amount, the grant facts, the start
+//!   of execution, one payment and the termination. Its
 //!   postcondition compares the I-23 correction commands with
 //!   [`LedgerGhost::reference`] in both directions.
 //! - [`LedgerModel`] is M-LEDGER: one proposal, two reviewers, a small
@@ -31,8 +33,10 @@
 //!   start. Its state carries the ledger.
 //!
 //! Readings taken where the design is silent:
-//! - Money commands (`DetermineAmount` and later) are left out. Lane
-//!   L-MONEY runs in parallel and its commands may still be stubs here.
+//! - The money machines decide on the domain state alone and keep no
+//!   ledger. So this machine runs the money commands, under a P-04
+//!   minimum below the submitted plan total. Amendments are left out: no
+//!   command records an amendment plan in M2 (I-15 repeat model).
 //! - Finding records have no canonical form in the testkit. The engine's
 //!   finding record is a placeholder with no value yet. Their bytes fall
 //!   back to their debug text, and the stored round trip skips them.
@@ -52,8 +56,8 @@ use fstp_domain::assignment::AssignmentKind;
 use fstp_domain::command::{Actor, Command, DeclarationSubject, SystemCause};
 use fstp_domain::decision::Vote;
 use fstp_domain::id::{
-    AccountId, AssignmentId, BindingId, CallId, ClassId, PlanVersionId, PolicyVersionId,
-    ProgrammeId, ProposalId,
+    AccountId, AssignmentId, BindingId, CallId, ClassId, LineId, PlanVersionId, PolicyVersionId,
+    ProgrammeId, ProposalId, RequestId,
 };
 use fstp_domain::policy::PolicyVersion;
 use fstp_domain::record::{Declared, Record as CoreRecord};
@@ -67,6 +71,7 @@ use fstp_ledger::{Canonical, Entry, Seq, verify_append_only};
 use fstp_mc::{Model, Property};
 use fstp_prop::{Gen, StateMachine};
 
+use crate::r#gen::money;
 use crate::r#gen::review::{
     COORDINATOR, IRC, L1, L2, PR1, PR2, R1, R2, R3, R4, assign, declare, handle, plan_of, read,
     submit, tag, unassign, withdraw,
@@ -886,7 +891,32 @@ pub fn ledger_judges() -> Vec<(AccountId, Role, Option<fstp_domain::id::Organisa
 /// The setup of the machine and the witness: [`PR1`] led by [`L1`] and
 /// [`PR2`] led by [`L2`], both in call 1, P-15 = 1.
 pub fn ledger_machine_setup() -> LifeSetup {
-    ledger_setup(ledger_judges(), &[(L1, PR1), (L2, PR2)], 1)
+    let mut judges = ledger_judges();
+    judges.extend([
+        (money::FINREL, Role::FinanceApprover, None),
+        (money::REL, Role::PaymentReleaser, None),
+    ]);
+    ledger_setup(judges, &[(L1, PR1), (L2, PR2)], 1)
+}
+
+/// The P-04 minimum of the ledger machine, in cents. It lies below the
+/// submitted plan total of [`MILESTONE_CENTS`], so the money acts of
+/// [`script`] can grant that plan (I-13).
+pub const MACHINE_P04_MIN_CENTS: i64 = 50_000;
+
+/// The commands from genesis of the ledger machine and its witness:
+/// [`genesis_steps`] with the P-04 minimum at [`MACHINE_P04_MIN_CENTS`].
+pub fn machine_genesis_steps(setup: &LifeSetup) -> Result<Vec<(Timestamp, Step)>, String> {
+    let mut steps = genesis_steps(setup)?;
+    for (_, s) in &mut steps {
+        if let Command::CreateProgramme { policy } = &mut s.cmd {
+            let max = policy.frozen.p04.max();
+            policy.frozen.p04 =
+                fstp_money::AmountRange::new(money::nonneg(MACHINE_P04_MIN_CENTS)?, max)
+                    .map_err(|e| format!("P-04: {e:?}"))?;
+        }
+    }
+    Ok(steps)
 }
 
 /// The binding of the `i`-th judge of [`ledger_judges`].
@@ -955,7 +985,7 @@ pub fn first_revision(proposal: ProposalId, live: PlanVersionId) -> Result<Step,
 /// Receiving binding. [`check_step`] holds after every step.
 pub fn witness_run() -> Result<LedgerRun, String> {
     let setup = ledger_machine_setup();
-    let mut run = LedgerRun::new(ledger_truth(&setup), &genesis_steps(&setup)?)?;
+    let mut run = LedgerRun::new(ledger_truth(&setup), &machine_genesis_steps(&setup)?)?;
     let t = T_EVAL;
     let mut steps: Vec<Step> = Vec::new();
     for r in [R1, R2] {
@@ -1144,6 +1174,36 @@ pub enum Act {
     Correct2(AccountId, [u8; 2]),
     /// `RankAfterStage2` by the reviewer.
     Rank(AccountId),
+    /// R1 determines the amount on the submitted plan (R-NG-03).
+    Determine,
+    /// The lead accepts the grant.
+    Accept,
+    /// The programme manager approves the grant.
+    Approve,
+    /// The contract port reports the contract EFFECTIVE.
+    Contract,
+    /// The System starts execution at the milestone start date.
+    Start,
+    /// The lead records an amendment plan that supersedes the submitted plan.
+    AmendPlan,
+    /// The lead proposes the amendment.
+    ProposeAmendment,
+    /// The programme manager routes it through a P-14 exemption.
+    RouteAmendment,
+    /// The contract port activates it.
+    ActivateAmendment,
+    /// The lead requests the payment of the amended milestone.
+    Request,
+    /// R1 accepts the payment line in full.
+    AcceptLine,
+    /// The finance approver approves the payment.
+    ApprovePay,
+    /// The payment releaser releases it (SoD-04).
+    Release,
+    /// The payment port confirms it paid.
+    Confirm,
+    /// The programme manager terminates the grant.
+    Terminate,
 }
 
 /// The scripted path of `proposal`. [`PR1`] reaches NEGOTIATION through
@@ -1195,6 +1255,21 @@ pub fn script(proposal: ProposalId, revise: bool) -> Vec<Act> {
             Act::Assign(IRC, Irc),
             Act::Declare(IRC, Irc),
             Act::Irc(IRC),
+            Act::Determine,
+            Act::Accept,
+            Act::Approve,
+            Act::Contract,
+            Act::Start,
+            Act::AmendPlan,
+            Act::ProposeAmendment,
+            Act::RouteAmendment,
+            Act::ActivateAmendment,
+            Act::Request,
+            Act::AcceptLine,
+            Act::ApprovePay,
+            Act::Release,
+            Act::Confirm,
+            Act::Terminate,
         ]
     } else {
         vec![
@@ -1546,7 +1621,99 @@ pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<S
         Act::Score2(r, v) => score(r, stage2_key(r, proposal), &v),
         Act::Correct2(r, v) => correct(r, stage2_key(r, proposal), &v),
         Act::Rank(r) => rank(r, proposal),
+        Act::Determine => money::determine(
+            R1,
+            proposal,
+            money::amount_decision(proposal, 1),
+            plan_of(proposal),
+            &[],
+        )?,
+        Act::Accept => money::accept_grant(lead, proposal),
+        Act::Approve => money::approve_grant(STAFF_PM, proposal),
+        Act::Contract => money::contract_effective(proposal),
+        Act::Start => money::start_execution(proposal),
+        Act::AmendPlan => money::money_plan(
+            lead,
+            proposal,
+            amended_plan(proposal),
+            fstp_domain::proposal::PlanOrigin::Amendment,
+            Some(plan_of(proposal)),
+            &[(amended_milestone(proposal), AMENDED_CENTS, T0)],
+        )?,
+        Act::ProposeAmendment => money::propose_amendment(
+            lead,
+            amendment_of(proposal),
+            proposal,
+            amended_plan(proposal),
+        ),
+        Act::RouteAmendment => money::route_amendment(
+            STAFF_PM,
+            amendment_of(proposal),
+            fstp_domain::amendment::AmendmentRoute::Exempt,
+        ),
+        Act::ActivateAmendment => {
+            money::activate_amendment(amendment_of(proposal), amended_contract(proposal))
+        }
+        Act::Request => money::request_payment(
+            lead,
+            payment_request(proposal),
+            proposal,
+            &[(
+                payment_line(proposal),
+                amended_milestone(proposal),
+                AMENDED_CENTS,
+            )],
+        )?,
+        Act::AcceptLine => money::accept_line(
+            R1,
+            payment_request(proposal),
+            payment_line(proposal),
+            AMENDED_CENTS,
+            false,
+        )?,
+        Act::ApprovePay => money::approve_payment(money::FINREL, payment_request(proposal)),
+        Act::Release => money::release_payment(money::REL, payment_request(proposal)),
+        Act::Confirm => money::confirm_paid(payment_request(proposal)),
+        Act::Terminate => money::terminate(STAFF_PM, proposal),
     })
+}
+
+/// The amount of the single milestone of a machine proposal's submitted
+/// plan, in cents (`crate::gen::review::milestone`).
+pub const MILESTONE_CENTS: i64 = 100_000;
+
+/// The amount of the single milestone of the amendment plan, in cents.
+/// It lies within the machine's P-04 and under P-05 (I-13, I-14).
+pub const AMENDED_CENTS: i64 = 120_000;
+
+/// The amendment plan of `proposal` in the ledger machine.
+pub fn amended_plan(proposal: ProposalId) -> PlanVersionId {
+    PlanVersionId::from_raw(4_500u128.saturating_add(proposal.raw()))
+}
+
+/// The milestone of [`amended_plan`].
+pub fn amended_milestone(proposal: ProposalId) -> fstp_domain::id::MilestoneId {
+    money::milestone_n(proposal, 10)
+}
+
+/// The amendment of `proposal` in the ledger machine.
+pub fn amendment_of(proposal: ProposalId) -> fstp_domain::id::AmendmentId {
+    fstp_domain::id::AmendmentId::from_raw(600u128.saturating_add(proposal.raw()))
+}
+
+/// The contract version that activates [`amendment_of`].
+pub fn amended_contract(proposal: ProposalId) -> fstp_domain::id::ContractId {
+    fstp_domain::id::ContractId::from_raw(54_100u128.saturating_add(proposal.raw()))
+}
+
+/// The payment request of `proposal` in the ledger machine.
+pub fn payment_request(proposal: ProposalId) -> RequestId {
+    RequestId::from_raw(30_000u128.saturating_add(proposal.raw()))
+}
+
+/// The line of [`payment_request`].
+pub fn payment_line(proposal: ProposalId) -> LineId {
+    LineId::from_raw(31_000u128.saturating_add(proposal.raw()))
 }
 
 /// A vault change of the ledger machine, processed in the same step.
@@ -1632,11 +1799,12 @@ pub struct LedgerOutput {
 /// Commands come from every lane that exists. They are policy edits, calls,
 /// role grants, ends and reinstatements, drafts and submissions from
 /// genesis, assignments, unassignments, declarations and reads. The
-/// lifecycle runs up to NEGOTIATION with score corrections, withdrawals,
-/// expiry, re-entry and declines. On one of two stage 2 paths the lead
-/// submits a revision that supersedes the submitted plan, which is scored,
-/// corrected and ranked. Vault changes suspend, void and release. Money
-/// commands are left out.
+/// lifecycle runs with score corrections, withdrawals, expiry, re-entry
+/// and declines. On one of two stage 2 paths the lead submits a revision
+/// that supersedes the submitted plan, which is scored, corrected and
+/// ranked. Past NEGOTIATION, PR1 runs the amount, the grant facts, the
+/// start of execution, one payment and the termination. Vault changes
+/// suspend, void and release.
 ///
 /// The postcondition checks the batch of every command. For `CorrectScore`,
 /// `EditPolicy`, `EndRole` and `ReinstateBinding` it also compares accept
@@ -1754,6 +1922,16 @@ impl LedgerMachine {
             } else {
                 LedgerMachine::core(now, reenter(p, call(2)), None)
             };
+        }
+        // The programme manager's decline of a negotiation. It is refused
+        // unless a NOTE 9 failure holds, for example after a vault change.
+        let negotiating = in_state(StateTag::Negotiation);
+        if let Some(p) = (!negotiating.is_empty() && g.bool()).then(|| *g.pick(&negotiating)) {
+            return LedgerMachine::core(
+                now,
+                money::decline_negotiation(Actor::Account(STAFF_PM), p),
+                None,
+            );
         }
         self.gen_noise(g, model, now)
     }
@@ -2001,7 +2179,7 @@ impl StateMachine for LedgerMachine {
         let (context, applied) = match cmd {
             LedgerCmd::Setup { .. } => {
                 let setup = ledger_machine_setup();
-                let built = genesis_steps(&setup)
+                let built = machine_genesis_steps(&setup)
                     .and_then(|steps| LedgerRun::new(ledger_truth(&setup), &steps));
                 let applied = built.map(|run| {
                     let records = core_of(&run.ledger);

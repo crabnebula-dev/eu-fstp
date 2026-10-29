@@ -33,7 +33,12 @@
 //!
 //! Shared checks, in order:
 //!
-//! 1. The command time is not before the latest recorded time.
+//! 1. The command time is not before the latest recorded time. While a
+//!    scheduled role end is due and not yet recorded, only the System end
+//!    itself and `VaultChanged` are decided. Every other command is refused
+//!    under SoD-05 until the System records the end (Cooling-off NOTE,
+//!    decided 2026-10-25). So every decision sees the binding ended at its
+//!    instant, and the end reads the calls and P-12 of that instant.
 //! 2. A System actor never arrives through MCP, and a high-risk command
 //!    never completes through MCP (I-85).
 //! 3. The actor is of a kind the command's actor rule admits, from
@@ -162,7 +167,9 @@ const fn command_lane(kind: CommandKind) -> Lane {
     match kind {
         K::CreateProgramme | K::EditPolicy => Lane::Policy,
         K::DraftCall | K::EditCall | K::ApproveCallPublication | K::PublishCall => Lane::Programme,
-        K::GrantRole | K::EndRole | K::ReinstateBinding | K::VaultChanged => Lane::Roles,
+        K::GrantRole | K::EndRole | K::EndScheduledRole | K::ReinstateBinding | K::VaultChanged => {
+            Lane::Roles
+        }
         K::DeclareConflict | K::Assign | K::Unassign | K::ReadContent | K::RecordRankingSummary => {
             Lane::Assignment
         }
@@ -223,6 +230,7 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::BindingSuspended(_)
         | Record::BindingVoided(_)
         | Record::BindingReinstated(_)
+        | Record::BindingEndScheduled { .. }
         | Record::VaultEpochProcessed { .. } => Lane::Roles,
         Record::Assigned(_)
         | Record::ConflictDeclared(_)
@@ -300,6 +308,13 @@ fn admits_actor_kind(rule: ActorRule, ctx: &Ctx) -> bool {
 fn shared_checks(state: &State, cmd: &Command, ctx: &Ctx) -> Result<(), Refusal> {
     if ctx.now < state.now_floor {
         return Err(Refusal::new(RuleRef::Ledger, RefusalReason::ClockBackwards));
+    }
+    if !matches!(
+        cmd,
+        Command::EndScheduledRole { .. } | Command::VaultChanged { .. }
+    ) && roles::end_overdue(state, ctx.now)
+    {
+        return Err(Refusal::new(RuleRef::Sod05, RefusalReason::WrongState));
     }
     if ctx.via == Via::Mcp {
         if matches!(ctx.actor, Actor::System(_)) {
@@ -542,12 +557,15 @@ pub fn replay<'a>(
     Ok(state)
 }
 
-/// The System commands enabled at `now`: `ExpireStage2` and `ReEnter` from
-/// lane L-LIFE, and `StartExecution` and `Complete` from lane L-MONEY (design
-/// section 3.6). Each is issued with a System actor. The two decline commands
-/// are not due: the programme manager records them (O-49). `CloseStage1` is not among them, see [`stage1_ready`].
+/// The System commands enabled at `now`: `EndScheduledRole` from lane
+/// L-SOD (Cooling-off NOTE, decided 2026-10-25), `ExpireStage2` and
+/// `ReEnter` from lane L-LIFE, and `StartExecution` and `Complete` from
+/// lane L-MONEY (design section 3.6). Each is issued with a System actor.
+/// The two decline commands are not due: the programme manager records
+/// them (O-49). `CloseStage1` is not among them, see [`stage1_ready`].
 pub fn due(state: &State, now: Timestamp) -> Vec<Command> {
-    let mut out = proposal::due(state, now);
+    let mut out = roles::due(state, now);
+    out.extend(proposal::due(state, now));
     out.extend(grant::due(state, now));
     out
 }

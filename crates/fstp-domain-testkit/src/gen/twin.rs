@@ -83,15 +83,16 @@ use fstp_domain::rules::{Freeze, Level, ParamId, Row, StateTag};
 use fstp_domain::scoring::{Criteria, Criterion, ScoreKey, Stage};
 use fstp_domain::time::{Days, MICROS_PER_DAY, Timestamp};
 use fstp_engine::EngineState;
-use fstp_ledger::Seq;
+use fstp_ledger::{Entry, Seq};
 use fstp_money::{AmountRange, Percent};
 use fstp_prop::{Gen, StateMachine};
 
 use crate::r#gen::money::{
-    FINREL, LA, LB, LC, MoneySetup, PA, PB, PC, REL, accept_grant, activate_amendment,
-    amendment_assignment, amount_decision, approve_grant, assign_amendment_declared,
-    contract_effective, decline_negotiation, determine, milestone_n, money_plan, nonneg,
-    propose_amendment, record_deliverable, route_amendment, start_execution, terminate,
+    FINREL, LA, LB, LC, MoneySetup, PA, PB, PC, REL, accept_decision, accept_grant_as,
+    activate_amendment, amendment_assignment, amount_decision, approve_decision, approve_grant_as,
+    assign_amendment_declared, contract_effective_as, contract_of_n, decline_negotiation,
+    determine, milestone_n, money_plan, nonneg, propose_amendment, record_deliverable,
+    route_amendment, start_execution, terminate,
 };
 use crate::r#gen::policy::{knock_outs, model, next_version, opaque, text};
 use crate::r#gen::review::{
@@ -99,6 +100,7 @@ use crate::r#gen::review::{
     records_of, run_records, submit, withdraw,
 };
 use crate::r#gen::roster::{Flags, P1, STAFF_PM, Step, call, end};
+use crate::harness::prop::ledger_step;
 use crate::mc::life_model::{
     IRC2, T_EVAL, admit, answer, ask, assign_declared, assignment_of, ballots, close, correct,
     cut_off, cut_off_decision, decline, expire, irc_review, knock_out, no_questions, rank, reenter,
@@ -995,9 +997,13 @@ pub fn act_steps(m: &TwinGhost, p: Option<ProposalId>, act: Act) -> Option<Vec<S
                 .map_or_else(|| plan_of(p), EffectiveScoreSet::plan);
             vec![determine(R1, p, amount_decision(p, n), agreed, &[]).ok()?]
         }
-        Act::Accept => vec![accept_grant(lead, p)],
-        Act::Approve => vec![approve_grant(STAFF_PM, p)],
-        Act::Contract => vec![contract_effective(p)],
+        // The grant facts name the current determination (Q-W7-7), and the
+        // contract port reports the contract of the current amount, since a
+        // new amount clears the old contract fact (Q-W7-4, decided
+        // 2026-10-28).
+        Act::Accept => vec![grant_fact_step(m, p, Act::Accept, 0)?],
+        Act::Approve => vec![grant_fact_step(m, p, Act::Approve, 0)?],
+        Act::Contract => vec![grant_fact_step(m, p, Act::Contract, 0)?],
         Act::DeclineNegotiation => vec![decline_negotiation(Actor::Account(STAFF_PM), p)],
         Act::Start => vec![start_execution(p)],
         Act::Terminate => vec![terminate(STAFF_PM, p)],
@@ -1020,14 +1026,47 @@ pub fn act_steps(m: &TwinGhost, p: Option<ProposalId>, act: Act) -> Option<Vec<S
         .map(|a| act_steps(m, Some(p), a))
         .collect::<Option<Vec<_>>>()?
         .concat(),
-        Act::GrantAll => [Act::Determine, Act::Accept, Act::Approve, Act::Contract]
-            .into_iter()
-            .map(|a| act_steps(m, Some(p), a))
-            .collect::<Option<Vec<_>>>()?
-            .concat(),
+        // The facts follow the determination of this step, so they name it.
+        Act::GrantAll => {
+            let mut out = act_steps(m, Some(p), Act::Determine)?;
+            for f in [Act::Accept, Act::Approve, Act::Contract] {
+                out.push(grant_fact_step(m, p, f, 1)?);
+            }
+            out
+        }
         Act::Read(r) => vec![read(r, p)],
         Act::Amend(cents, members) => amend_steps(m, p, cents, members)?,
     })
+}
+
+/// The grant fact `act` of `p` in `m`, after `ahead` more determinations
+/// than `m` records. The acceptance and the approval name that
+/// determination (Q-W7-7), and the contract is the one of that amount
+/// (Q-W7-4, decided 2026-10-28). `None` for another act.
+fn grant_fact_step(m: &TwinGhost, p: ProposalId, act: Act, ahead: u128) -> Option<Step> {
+    let n = m
+        .determinations
+        .get(&p)
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(ahead);
+    let lead = lead_of(p);
+    match act {
+        Act::Accept => Some(accept_grant_as(
+            lead,
+            p,
+            accept_decision(p),
+            amount_decision(p, n),
+        )),
+        Act::Approve => Some(approve_grant_as(
+            STAFF_PM,
+            p,
+            approve_decision(p),
+            amount_decision(p, n),
+        )),
+        Act::Contract => Some(contract_effective_as(p, contract_of_n(p, n))),
+        _ => None,
+    }
 }
 
 /// The id of the `n`-th amendment of `p`.
@@ -1385,6 +1424,33 @@ pub struct TwinPair {
 pub struct TwinSut {
     /// The twins.
     pub pair: Result<TwinPair, String>,
+    /// The ledgers of twins A and B before the latest command, for the
+    /// I-23 checks of the invariant (design 6.1).
+    pub previous: [Vec<Entry<fstp_engine::Record>>; 2],
+}
+
+impl TwinPair {
+    /// The ledgers of twins A and B as their stores hold them.
+    pub fn ledgers(&self) -> Result<[Vec<Entry<fstp_engine::Record>>; 2], String> {
+        let read = |t: &Twin| {
+            t.scenario
+                .entries()
+                .map_err(|e| format!("harness: the ledger read failed: {e:?}"))
+        };
+        Ok([read(&self.a)?, read(&self.b)?])
+    }
+
+    /// I-23 on both twins: each ledger extends its `previous` one and
+    /// replays to the driver's state (design 6.1).
+    pub fn check_ledgers(
+        &self,
+        previous: &[Vec<Entry<fstp_engine::Record>>; 2],
+    ) -> Result<(), String> {
+        let [a, b] = self.ledgers()?;
+        ledger_step(&previous[0], &a, self.a.scenario.state())
+            .map_err(|e| format!("twin A: {e}"))?;
+        ledger_step(&previous[1], &b, self.b.scenario.state()).map_err(|e| format!("twin B: {e}"))
+    }
 }
 
 impl TwinSut {
@@ -1401,7 +1467,11 @@ impl TwinSut {
                 approvals: 0,
             })
         });
-        TwinSut { pair }
+        let previous = match &pair {
+            Ok(p) => p.ledgers().unwrap_or_default(),
+            Err(_) => Default::default(),
+        };
+        TwinSut { pair, previous }
     }
 }
 
@@ -2089,6 +2159,17 @@ impl StateMachine for TwinMachine {
     fn run(&self, sut: &mut TwinSut, cmd: &TwinCmd) -> TwinOutput {
         self.last.replace(None);
         let context = format!("{cmd:?}");
+        if let Ok(p) = &sut.pair {
+            match p.ledgers() {
+                Ok(l) => sut.previous = l,
+                Err(e) => {
+                    return TwinOutput {
+                        context,
+                        verdict: Err(e),
+                    };
+                }
+            }
+        }
         let pair = match sut.pair.as_mut() {
             Ok(p) => p,
             Err(e) => {
@@ -2155,7 +2236,10 @@ impl StateMachine for TwinMachine {
 
     fn invariant(&self, _m: &TwinGhost, sut: &TwinSut) -> Result<(), String> {
         match &sut.pair {
-            Ok(p) => p.check(),
+            Ok(p) => {
+                p.check_ledgers(&sut.previous)?;
+                p.check()
+            }
             Err(e) => Err(format!("harness: genesis failed: {e}")),
         }
     }

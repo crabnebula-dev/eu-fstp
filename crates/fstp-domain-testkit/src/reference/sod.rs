@@ -70,13 +70,44 @@
 //!   - A guardian is added only to a proposal flagged as a minor's.
 //!   - Drafting and Judging grants need accepted confidentiality terms
 //!     (Confidentiality on binding). Operations grants never need them.
-//!     The organisation field is data only and never a reason to refuse.
+//!   - A committee member grant needs the reviewer's organisation, since
+//!     SoD-10 and I-34 count organisations from it (roles-and-sod.md,
+//!     Reviewer assignment, decided 2026-10-25). For other roles the field
+//!     is data only.
+//!   - A reviewer has one organisation per programme (SoD-10, decided
+//!     2026-10-28). A committee member grant that records an organisation
+//!     other than the one of a held committee binding of the account in
+//!     the programme, whatever its period, is refused (W7 fix round 2).
+//!     The reinstatement of a conflict-of-interest suspension is refused the
+//!     same way.
 //!   - A start before `now` is backdating and refused. A later start is
-//!     accepted. An end must be at `now`. An earlier end is backdating. A
-//!     later end is a scheduled end, which M2 refuses: the bar it pins
-//!     would count calls not yet published when the command is decided.
-//!     The spec allows an optional end date, so scheduled ends are an open
-//!     question for Daniel.
+//!     accepted. An end before `now` is backdating and refused. An end at
+//!     `now` ends the binding at once.
+//! - Scheduled ends (Cooling-off NOTE, decided 2026-10-25). An end may be
+//!   scheduled for a later instant, when the role is granted or afterwards.
+//!   The binding stays held until that instant. Its bar is pinned then,
+//!   from the calls published by that instant and the P-12 value in force
+//!   at it. A scheduled end can be brought forward, never moved earlier
+//!   than the current time. The reference reads it as follows.
+//!   - `EndRole` with `at` after `now` schedules the end. With a scheduled
+//!     end already set, an earlier `at` brings it forward and is accepted.
+//!     A later one moves it later and is refused. The same instant is
+//!     unjudged. An `EndRole` at `now` ends the binding at once, a
+//!     scheduled one too. A scheduled end at or before the start is
+//!     refused.
+//!   - `GrantRole` may carry an `end` member. It must lie after the start.
+//!   - The scheduled end is the record whose JSON type is
+//!     `BindingEndScheduled`, with the members `binding` and `at`. The
+//!     reference reads it from its JSON form, since the stub interface does
+//!     not declare it yet. The `end` member of `GrantRole` is read the same way.
+//!   - The binding stays open until its `BindingEnded`. The System records
+//!     that end at the instant, through a command that `due` lists then
+//!     ([`due_ends`]). The end record carries the scheduled instant, and
+//!     the bar of the calls published by then and the P-12 value then.
+//!   - Test-author reading of W7 fix round 1: from a scheduled instant
+//!     until the System records the end, every account command is
+//!     refused under SoD-05. So no command reads the binding as held after
+//!     its instant, and the end reads the calls and P-12 of the instant.
 //!   - The lead of a proposal acts only while its Applicant binding on that
 //!     proposal is held (enforcement point 2).
 //! - Identity discovery: the reaction to a vault change voids, in the same
@@ -114,7 +145,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::command::{Actor, Command};
 use fstp_domain::id::{
-    AccountId, BindingId, CallId, ClassId, PolicyVersionId, ProgrammeId, ProposalId, VaultEpoch,
+    AccountId, BindingId, CallId, ClassId, OrganisationId, PolicyVersionId, ProgrammeId,
+    ProposalId, VaultEpoch,
 };
 use fstp_domain::record::Record;
 use fstp_domain::refusal::RuleRef;
@@ -227,8 +259,13 @@ pub struct RefBinding {
     pub granted_by: AccountId,
     /// Whether the record carries the vault epoch of a SoD-09 answer.
     pub verified_epoch: Option<VaultEpoch>,
+    /// The organisation the record carries, for committee bindings (SoD-10).
+    pub organisation: Option<OrganisationId>,
     /// The end, once recorded.
     pub end: Option<RefEnd>,
+    /// The scheduled end instant, while the binding is open (Cooling-off
+    /// NOTE, decided 2026-10-25).
+    pub scheduled_end: Option<Timestamp>,
     /// Whether the binding is suspended now, for any reason.
     pub suspended: bool,
     /// Whether the suspension is a conflict-of-interest suspension: a
@@ -579,7 +616,20 @@ impl View {
             Record::ConflictDetected(c) => {
                 self.detected.insert((c.account, c.proposal));
             }
-            _ => {}
+            other => {
+                if let Some((binding, at)) = scheduled_end_of(other) {
+                    let b = self
+                        .bindings
+                        .get_mut(&binding)
+                        .ok_or_else(|| format!("unknown binding {binding:?} scheduled to end"))?;
+                    if !b.open() {
+                        return Err(format!(
+                            "binding {binding:?} is not open, yet its end is scheduled"
+                        ));
+                    }
+                    b.scheduled_end = Some(at);
+                }
+            }
         }
         Ok(())
     }
@@ -618,7 +668,9 @@ impl View {
                 latest_at_start: self.latest(g.programme),
                 granted_by: g.granted_by,
                 verified_epoch: g.verified_epoch,
+                organisation: g.organisation,
                 end: None,
+                scheduled_end: None,
                 suspended: false,
                 conflict_of_interest: false,
                 ordinary_suspension: false,
@@ -973,6 +1025,57 @@ fn receiving_rules(
     Verdict::Accept
 }
 
+/// Whether `account` holds a committee member binding in `programme`,
+/// other than `except`, that records an organisation other than
+/// `organisation` (SoD-10, decided 2026-10-28: one organisation per
+/// programme). Every held binding counts, whatever its period: one with a
+/// scheduled end not yet recorded, one that starts later, and an ordinary
+/// suspended one, since it can be reinstated. A voided binding or a
+/// conflict-of-interest suspension is not held (W7 fix round 2).
+pub fn other_organisation(
+    view: &View,
+    account: AccountId,
+    programme: ProgrammeId,
+    organisation: OrganisationId,
+    except: Option<BindingId>,
+) -> bool {
+    view.bindings_of(account, programme).any(|b| {
+        Some(b.binding) != except
+            && b.role == Role::CommitteeMember
+            && b.held()
+            && b.organisation.is_some_and(|o| o != organisation)
+    })
+}
+
+/// The rule a reference refusal names, read from the start of its reason,
+/// such as `SoD-05` or `I-06`. A reason that names no rule maps to
+/// [`RuleRef::Input`].
+pub fn rule_of(why: &str) -> RuleRef {
+    const RULES: [(&str, RuleRef); 14] = [
+        ("SoD-01", RuleRef::Sod01),
+        ("SoD-02", RuleRef::Sod02),
+        ("SoD-03", RuleRef::Sod03),
+        ("SoD-04", RuleRef::Sod04),
+        ("SoD-05", RuleRef::Sod05),
+        ("SoD-06", RuleRef::Sod06),
+        ("SoD-07", RuleRef::Sod07),
+        ("SoD-09", RuleRef::Sod09),
+        ("SoD-10", RuleRef::Sod10),
+        ("SoD-11", RuleRef::Sod11),
+        ("I-01", RuleRef::I01),
+        ("I-02", RuleRef::I02),
+        ("I-04", RuleRef::I04),
+        ("I-06", RuleRef::I06),
+    ];
+    RULES
+        .iter()
+        .find(|(name, _)| {
+            why.strip_prefix(name)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+        })
+        .map_or(RuleRef::Input, |(_, rule)| *rule)
+}
+
 /// The reference verdict on `ask` under `view` and the vault facts `truth`.
 ///
 /// It judges `GrantRole`, `EndRole`, `CreateDraft`, `AddTeamMember` and
@@ -990,6 +1093,14 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             _ => Verdict::Unjudged,
         };
     };
+    if !due_ends(view, ask.now).is_empty() {
+        // Cooling-off NOTE (decided 2026-10-25): the binding stays held
+        // until its instant, and its bar is pinned then. Test-author
+        // reading of W7 fix round 1: until the System records a due end,
+        // every account command is refused, so none reads the binding as
+        // held after its instant and the end reads the instant's state.
+        return refuse("SoD-05: a scheduled end is due and not yet recorded");
+    }
     match ask.cmd {
         Command::GrantRole {
             binding,
@@ -999,7 +1110,8 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             start,
             second_admin,
             confidentiality,
-            ..
+            organisation,
+            end: _,
         } => {
             if !ask.tenant_admin {
                 return refuse("actor");
@@ -1014,8 +1126,20 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             if group == RefGroup::Receiving {
                 return refuse("Receiving roles arise from proposals");
             }
+            if *role == Role::CommitteeMember && organisation.is_none() {
+                return refuse("SoD-10: a committee binding records the reviewer's organisation");
+            }
+            if *role == Role::CommitteeMember
+                && let Some(o) = organisation
+                && other_organisation(view, *account, *programme, *o, None)
+            {
+                return refuse("SoD-10: one organisation per reviewer per programme");
+            }
             if *start < ask.now {
                 return refuse("backdated start");
+            }
+            if grant_end(ask.cmd).is_some_and(|e| e <= *start) {
+                return refuse("a scheduled end lies after the start");
             }
             if group.needs_verification() && confidentiality.is_none() {
                 return refuse("confidentiality terms");
@@ -1059,10 +1183,21 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             if *at < ask.now {
                 return refuse("backdated end");
             }
-            if *at > ask.now {
-                return refuse("scheduled end, an open question for Daniel");
+            if *at > ask.now && b.scheduled_end.is_none_or(|s| *at < s) && *at <= b.start {
+                // Test-author reading: a scheduled end lies after the start,
+                // as at the grant.
+                return refuse("a scheduled end lies after the start");
             }
-            Verdict::Accept
+            // A later instant schedules the end (Cooling-off NOTE, decided
+            // 2026-10-25). A scheduled end can be brought forward, never
+            // moved later.
+            match b.scheduled_end {
+                Some(s) if *at > ask.now && *at > s => {
+                    refuse("a scheduled end is never moved later")
+                }
+                Some(s) if *at > ask.now && *at == s => Verdict::Unjudged,
+                _ => Verdict::Accept,
+            }
         }
         Command::CreateDraft {
             proposal,
@@ -1131,6 +1266,14 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             }
             if b.end.is_some() {
                 return refuse("binding ended");
+            }
+            if b.role == Role::CommitteeMember
+                && let Some(o) = b.organisation
+                && other_organisation(view, b.account, b.programme, o, Some(b.binding))
+            {
+                // SoD-10 (decided 2026-10-28): counted again, the binding
+                // would give the reviewer two organisations in the programme.
+                return refuse("SoD-10: one organisation per reviewer per programme");
             }
             match reinstate_clash(view, truth, b) {
                 Some(rule) => refuse(rule),
@@ -1277,6 +1420,145 @@ pub fn expected_end(view: &View, binding: BindingId) -> Option<(u32, u8)> {
     let b = view.bindings.get(&binding)?;
     let p12 = view.p12(b.programme);
     Some((view.latest(b.programme).saturating_add(u32::from(p12)), p12))
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled ends (Cooling-off NOTE, decided 2026-10-25)
+// ---------------------------------------------------------------------------
+
+/// The JSON type of the scheduled end record.
+pub const SCHEDULED_END_TYPE: &str = "BindingEndScheduled";
+
+/// The decimal string member `name` of the JSON object `v`.
+fn decimal_member(v: &fstp_json::Value, name: &str) -> Option<String> {
+    match v {
+        fstp_json::Value::Object(o) => match o.get(name) {
+            Some(fstp_json::Value::String(s)) => Some(s.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The binding and instant of a scheduled end record, read from its JSON
+/// form: type `BindingEndScheduled`, members `binding` and `at`. `None`
+/// for every other record.
+pub fn scheduled_end_of(record: &Record) -> Option<(BindingId, Timestamp)> {
+    use fstp_json::ToJson;
+    let v = record.to_json();
+    let fstp_json::Value::Object(o) = &v else {
+        return None;
+    };
+    match o.get("type") {
+        Some(fstp_json::Value::String(t)) if t == SCHEDULED_END_TYPE => {}
+        _ => return None,
+    }
+    let binding = decimal_member(&v, "binding")?.parse::<u128>().ok()?;
+    let at = decimal_member(&v, "at")?.parse::<i64>().ok()?;
+    Some((BindingId::from_raw(binding), Timestamp::from_micros(at)))
+}
+
+/// The scheduled end record of `binding` at `at`, built through the record
+/// codec from its JSON form, since the stub interface does not declare it
+/// yet. The error says that the codec does not know the record.
+pub fn scheduled_end_record(binding: BindingId, at: Timestamp) -> Result<Record, String> {
+    use fstp_json::FromJson;
+    let text = format!(
+        "{{\"type\":\"{SCHEDULED_END_TYPE}\",\"binding\":\"{}\",\"at\":\"{}\"}}",
+        binding.raw(),
+        at.micros()
+    );
+    let v = fstp_json::parse(text.as_bytes()).map_err(|e| format!("json: {e:?}"))?;
+    Record::from_json(&v).map_err(|e| {
+        format!("the record codec does not know {SCHEDULED_END_TYPE} yet (Cooling-off NOTE): {e:?}")
+    })
+}
+
+/// The scheduled end a `GrantRole` carries in its `end` member, if any.
+/// The member is read from the JSON form, since the stub interface does
+/// not declare it yet. A missing or null member is no scheduled end.
+pub fn grant_end(cmd: &Command) -> Option<Timestamp> {
+    use fstp_json::ToJson;
+    if !matches!(cmd, Command::GrantRole { .. }) {
+        return None;
+    }
+    let micros = decimal_member(&cmd.to_json(), "end")?.parse::<i64>().ok()?;
+    Some(Timestamp::from_micros(micros))
+}
+
+/// The scheduled end an accepted `ask` must record: an `EndRole` at a
+/// later instant than `now`, or a `GrantRole` with an `end` member.
+pub fn expected_scheduled(ask: &Ask<'_>) -> Option<(BindingId, Timestamp)> {
+    match ask.cmd {
+        Command::EndRole { binding, at } if *at > ask.now => Some((*binding, *at)),
+        Command::GrantRole { binding, .. } => grant_end(ask.cmd).map(|e| (*binding, e)),
+        _ => None,
+    }
+}
+
+/// The open bindings whose scheduled end is due at `now`, with the
+/// scheduled instant. The System records their ends then, through the
+/// command `due` lists.
+pub fn due_ends(view: &View, now: Timestamp) -> Vec<(BindingId, Timestamp)> {
+    view.bindings
+        .values()
+        .filter(|b| b.open())
+        .filter_map(|b| b.scheduled_end.map(|s| (b.binding, s)))
+        .filter(|(_, s)| *s <= now)
+        .collect()
+}
+
+/// Checks an accepted batch that schedules the end of `binding` at `at`:
+/// one scheduled end record for it at that instant, and no end yet.
+pub fn check_scheduled(
+    context: &str,
+    binding: BindingId,
+    at: Timestamp,
+    batch: &[Record],
+) -> Result<(), String> {
+    let found: Vec<(BindingId, Timestamp)> = batch
+        .iter()
+        .filter_map(scheduled_end_of)
+        .filter(|(b, _)| *b == binding)
+        .collect();
+    if found != vec![(binding, at)] {
+        return Err(format!(
+            "Cooling-off NOTE: {context}: the batch schedules {found:?}, the reference expects one {SCHEDULED_END_TYPE} of {binding:?} at {at:?}"
+        ));
+    }
+    if batch
+        .iter()
+        .any(|r| matches!(r, Record::BindingEnded(e) if e.binding == binding))
+    {
+        return Err(format!(
+            "Cooling-off NOTE: {context}: {binding:?} ends at once, yet it stays held until {at:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the batch of the System's scheduled ends at `now` against
+/// [`due_ends`] of `view_before`: exactly those bindings end, each at its
+/// scheduled instant, with the bar and P-12 value of [`expected_end`] now.
+pub fn check_due_ends(view_before: &View, now: Timestamp, batch: &[Record]) -> Result<(), String> {
+    let due = due_ends(view_before, now);
+    let ended: BTreeSet<BindingId> = batch
+        .iter()
+        .filter_map(|r| match r {
+            Record::BindingEnded(e) => Some(e.binding),
+            _ => None,
+        })
+        .collect();
+    let expected: BTreeSet<BindingId> = due.iter().map(|(b, _)| *b).collect();
+    if ended != expected {
+        return Err(format!(
+            "Cooling-off NOTE: the System ends {ended:?} at {now:?}, the reference expects {expected:?}"
+        ));
+    }
+    for (b, at) in due {
+        check_ended("the scheduled end", view_before, b, at, batch)?;
+    }
+    Ok(())
 }
 
 /// Whether the ended Receiving binding `b` breaks I-01 with a binding of

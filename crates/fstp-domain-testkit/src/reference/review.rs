@@ -53,8 +53,11 @@
 //!   stages 1 and 2 only.
 //! - `Assign` is the FSTP coordinator's (interim, design 2.7). A reviewer
 //!   assignment needs an active committee member binding, and is made in
-//!   SUBMITTED, STAGE1 or STAGE2. An IRC assignment needs an active IRC
-//!   member binding and is made in IRC_REVIEW (test-author choice).
+//!   SUBMITTED, STAGE1, STAGE2 or NEGOTIATION. NEGOTIATION is open so a
+//!   coordinator can restore P-39 organisations for the amount
+//!   determination (R-CF-02, R-NG-03, W7 reading). An IRC assignment
+//!   needs an active IRC member binding and is made in IRC_REVIEW
+//!   (test-author choice).
 //!   DRAFT and terminal states refuse both. Each assignment starts
 //!   awaiting its declaration.
 //! - `Assign` is refused when the reviewer has a conflict fact on the
@@ -68,12 +71,16 @@
 //! - P-11 anonymous needs a handle never issued before in the cell, on any
 //!   proposal, call or programme (R-AN-01). A missing handle is refused.
 //!   A handle under P-11 named is unjudged.
-//! - I-34 at assignment (test-author choice): while the proposal's
-//!   unreleased reviewer assignments span fewer than P-39 organisations,
-//!   a new reviewer must bring a new organisation. So every run of
-//!   assignments keeps `distinct >= min(count, P-39)` after each accepted
-//!   `Assign`. The organisation is the committee binding's field. A
-//!   reviewer without one is unjudged.
+//! - I-34 at assignment (W7 fix, test-author reading): an `Assign` is
+//!   refused only once P-39 organisations are out of reach, counting the
+//!   proposal's reviewers, the new one and every other active committee
+//!   member of the programme. Where only a conflicted member keeps them in
+//!   reach, production decides. The order of assignment no longer matters,
+//!   since admission, the stage 1 close, the ranking and the amount
+//!   determination check I-34 over the reviewers themselves. A reviewer
+//!   has one organisation per programme (SoD-10, decided 2026-10-28). The
+//!   organisation is the committee binding's field. A reviewer without
+//!   one is refused (SoD-10, decided 2026-10-25).
 //! - I-35: a reviewer whose organisation has a P-38 proximity list is
 //!   refused when the vault answers that a team member declares an
 //!   affiliation on that list. P-38 is live, so the head version counts. A
@@ -927,7 +934,14 @@ pub fn holds_active(
         .any(|b| b.role == role && b.active() && b.start <= now)
 }
 
-/// The organisation of `account`'s active committee member binding in `programme`.
+/// The organisation of `account`'s active committee member bindings in
+/// `programme`.
+///
+/// A reviewer has one organisation per programme (SoD-10, decided
+/// 2026-10-28). So the answer never depends on binding ids: when two
+/// active committee bindings of the account record different
+/// organisations, or one records none, the organisation is unknown. An
+/// unknown organisation fails I-34 and SoD-10 closed.
 pub fn committee_organisation(
     view: &sod::View,
     rev: &RevView,
@@ -935,9 +949,41 @@ pub fn committee_organisation(
     programme: ProgrammeId,
     now: Timestamp,
 ) -> Option<OrganisationId> {
-    view.bindings_of(account, programme)
+    let orgs: Option<BTreeSet<OrganisationId>> = view
+        .bindings_of(account, programme)
         .filter(|b| b.role == Role::CommitteeMember && b.active() && b.start <= now)
-        .find_map(|b| rev.organisations.get(&b.binding).copied())
+        .map(|b| rev.organisations.get(&b.binding).copied())
+        .collect();
+    let orgs = orgs?;
+    let mut it = orgs.into_iter();
+    match (it.next(), it.next()) {
+        (Some(o), None) => Some(o),
+        _ => None,
+    }
+}
+
+/// SoD-10 (decided 2026-10-28): no account holds two committee member
+/// bindings in one programme that record different organisations,
+/// whatever their periods (W7 fix round 2). The predicate reads the held
+/// bindings of the SoD view and the organisations the review view folded.
+pub fn check_one_organisation(view: &sod::View, rev: &RevView) -> Result<(), String> {
+    let held: Vec<(&sod::RefBinding, OrganisationId)> = view
+        .bindings
+        .values()
+        .filter(|b| b.role == Role::CommitteeMember && b.held())
+        .filter_map(|b| rev.organisations.get(&b.binding).map(|o| (b, *o)))
+        .collect();
+    for (i, (x, ox)) in held.iter().enumerate() {
+        for (y, oy) in held.iter().skip(i.saturating_add(1)) {
+            if x.account == y.account && x.programme == y.programme && ox != oy {
+                return Err(format!(
+                    "SoD-10: {:?} holds committee bindings of {ox:?} and {oy:?} in {:?}",
+                    x.account, x.programme
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Whether `account` holds a held Receiving binding on `proposal`.
@@ -1217,7 +1263,10 @@ fn assign_verdict(
     let role = match kind {
         AssignmentKind::Reviewer => {
             match life.state {
-                StateTag::Submitted | StateTag::Stage1 | StateTag::Stage2 => {}
+                StateTag::Submitted
+                | StateTag::Stage1
+                | StateTag::Stage2
+                | StateTag::Negotiation => {}
                 _ => unjudged = true,
             }
             Role::CommitteeMember
@@ -1280,12 +1329,26 @@ fn assign_verdict(
     }
     if kind == AssignmentKind::Reviewer {
         match committee_organisation(view, rev, reviewer, programme, now) {
-            None => unjudged = true,
+            None => return refuse("I-34, SoD-10: the reviewer's organisation is unknown"),
             Some(org) => {
-                let p39 = rev.governing_policy(proposal).map_or(0, |p| p.p39);
-                let orgs = assigned_organisations(view, rev, proposal, now);
-                if orgs.len() < usize::from(p39) && orgs.contains(&org) {
-                    return refuse("I-34");
+                let p39 = usize::from(rev.governing_policy(proposal).map_or(0, |p| p.p39));
+                let reach = |eligible: Option<&dyn ConflictFacts>| {
+                    let mut orgs = assigned_organisations(view, rev, proposal, now);
+                    orgs.insert(org);
+                    orgs.extend(
+                        open_seats(view, rev, eligible, proposal, reviewer, now).into_values(),
+                    );
+                    orgs.len()
+                };
+                // The assignment is refused only once P-39 organisations
+                // are out of reach, even with every other committee member
+                // of the programme (W7 fix, test-author reading). Where only
+                // a conflicted member keeps them in reach, production decides.
+                if reach(None) < p39 {
+                    return refuse("I-34: P-39 organisations can no longer be reached");
+                }
+                if reach(Some(facts)) < p39 {
+                    unjudged = true;
                 }
                 if let Some(list) = rev.proximity_list(programme, org)
                     && facts.declares_on_list(&team, list)
@@ -1302,6 +1365,60 @@ fn assign_verdict(
     } else {
         Verdict::Accept
     }
+}
+
+/// The committee members of the programme of `proposal` who could still
+/// take a reviewer seat on it, with their organisations (I-34, W7 fix).
+///
+/// A seat is open to each account with an active committee member binding
+/// and a known organisation, other than `reviewer` and the accounts that
+/// already hold an unreleased reviewer assignment on `proposal` in its
+/// current call. With `eligible` vault facts, a member with a conflict
+/// fact on the proposal or a vault conflict with its team is left out too
+/// (I-03).
+pub fn open_seats(
+    view: &sod::View,
+    rev: &RevView,
+    eligible: Option<&dyn ConflictFacts>,
+    proposal: ProposalId,
+    reviewer: AccountId,
+    now: Timestamp,
+) -> BTreeMap<AccountId, OrganisationId> {
+    let (Some(life), Some(programme)) = (rev.proposals.get(&proposal), rev.programme_of(proposal))
+    else {
+        return BTreeMap::new();
+    };
+    let assigned: BTreeSet<AccountId> = rev
+        .assignments
+        .values()
+        .filter(|a| {
+            a.proposal == proposal
+                && a.kind == AssignmentKind::Reviewer
+                && a.call == life.current_call
+                && a.unreleased()
+        })
+        .map(|a| a.reviewer)
+        .collect();
+    let team = team_of(view, proposal);
+    view.bindings
+        .values()
+        .filter(|b| {
+            b.programme == programme
+                && b.role == Role::CommitteeMember
+                && b.active()
+                && b.start <= now
+                && b.account != reviewer
+                && !assigned.contains(&b.account)
+        })
+        .filter(|b| {
+            eligible.is_none_or(|f| {
+                !rev.facts.contains(&(b.account, proposal)) && !f.has_conflict(b.account, &team)
+            })
+        })
+        .filter_map(|b| {
+            committee_organisation(view, rev, b.account, programme, now).map(|o| (b.account, o))
+        })
+        .collect()
 }
 
 /// The organisations of the unreleased reviewer assignments of `proposal`
@@ -2275,11 +2392,16 @@ pub fn check_i36_grants(before: &RevView, records: &[Record]) -> Result<(), Stri
     Ok(())
 }
 
-/// I-34 after an accepted `Assign` (test-author reading): when the
-/// proposal's assignments spanned fewer than P-39 organisations before,
-/// the new reviewer brought a new one. `before` is the view before the
-/// step, and `reviewer` the new assignee. A reviewer whose committee
-/// binding records no organisation is outside the reading.
+/// I-34 after an accepted `Assign` (W7 fix, test-author reading). The
+/// assignment is refused only once P-39 organisations are out of reach,
+/// so an accepted one leaves them in reach: the organisations of the
+/// proposal's reviewers, the new one included, and of every other active
+/// committee member of the programme span at least P-39. The order of
+/// assignment no longer matters, since admission, the stage 1 close, the
+/// ranking and the amount determination check I-34 over the reviewers
+/// themselves. `before` is the view before the step, and `reviewer` the
+/// new assignee. An accepted reviewer whose committee binding records no
+/// organisation breaks I-34 (SoD-10).
 pub fn check_i34_assign(
     view: &sod::View,
     before: &RevView,
@@ -2291,14 +2413,18 @@ pub fn check_i34_assign(
         return Ok(());
     };
     let Some(org) = committee_organisation(view, before, reviewer, programme, now) else {
-        return Ok(());
+        return Err(format!(
+            "I-34: {reviewer:?} was assigned to {proposal:?} with no known organisation"
+        ));
     };
     let p39 = usize::from(before.governing_policy(proposal).map_or(0, |p| p.p39));
-    let orgs_before = assigned_organisations(view, before, proposal, now);
-    if orgs_before.len() < p39 && orgs_before.contains(&org) {
+    let mut orgs = assigned_organisations(view, before, proposal, now);
+    orgs.insert(org);
+    orgs.extend(open_seats(view, before, None, proposal, reviewer, now).into_values());
+    if orgs.len() < p39 {
         return Err(format!(
-            "I-34: {proposal:?} spans {} organisations below P-39 = {p39}, and the new reviewer adds none",
-            orgs_before.len()
+            "I-34: {proposal:?} was assigned {reviewer:?} although only {} organisations remain in reach, below P-39 = {p39}",
+            orgs.len()
         ));
     }
     Ok(())

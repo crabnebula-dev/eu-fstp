@@ -11,13 +11,17 @@
 //! directions. Witnesses: granted at the P-04 minimum and maximum, a
 //! recipient's granted sum exactly P-05, a Sybil pair blocked by the cap,
 //! a grant on a recorded deduction (R-NG-03),
-//! and both amount failures of NOTE 9 recorded as NEGOTIATION to DECLINED.
+//! both amount failures of NOTE 9 recorded as NEGOTIATION to DECLINED, and
+//! a new amount that superseded a given acceptance or approval (NOTE 9,
+//! decided 2026-10-28). The grant facts come one by one too, so that last
+//! witness is reachable (W7 fix round 1).
 //!
-//! NOTE 9 as decided on 2026-10-26: a decline for the cap needs that even
-//! the P-04 minimum, or the locked amount once accepted or approved, lies
-//! above the headroom. The witness is b declined once a holds 4.00 or 3.00
-//! and P-05 is lowered to 4.00. The transition property checks that no
-//! step declines for the cap while that amount fits. Lead a was declined
+//! NOTE 9 as decided on 2026-10-26 and 2026-10-28: a decline for the cap
+//! needs that even the P-04 minimum lies above the headroom. The amount is
+//! never locked, so this holds after acceptance and approval too. The
+//! witness is b declined once a holds 4.00 or 3.00 and P-05 is lowered to
+//! 4.00. The transition property checks that no step declines for the cap
+//! while that amount fits. Lead a was declined
 //! that way under the old reading, once P-05 was lowered to 4.00 and b
 //! held 2.00. That step is now unreachable, and the state count was
 //! measured again on each backend. Production stores `M_MONEY_STATES`

@@ -54,9 +54,9 @@ use crate::r#gen::roster::{
 use crate::harness::prop::{ledger_step, two_way_exec};
 use crate::reference::review::{
     ConflictFacts, RevView, check_expected, check_handles, check_i02_assignments, check_i03,
-    check_i34_assign, check_i36, check_i36_grants, check_i36_held, check_rcf02, check_reaction,
-    committee_organisation, end_releases, expected, reaction_records, receiving_holder,
-    team_change_records, team_of, verdict,
+    check_i34_assign, check_i36, check_i36_grants, check_i36_held, check_one_organisation,
+    check_rcf02, check_reaction, committee_organisation, end_releases, expected, reaction_records,
+    receiving_holder, team_change_records, team_of, verdict,
 };
 use crate::reference::sod::{self, Verdict};
 use crate::scenario::Scenario;
@@ -879,9 +879,12 @@ impl RevFocus {
         max_commands: 40,
         cases: 128,
     };
-    /// I-34 and I-35: assignment runs over organisations and proximity lists.
+    /// I-34 and I-35: assignment runs over organisations and proximity
+    /// lists. Committee bindings end and the switcher joins as O3, so
+    /// P-39 organisations can fall out of reach. An `Assign` is then
+    /// refused under I-34 (W7 fix).
     pub const I34_I35: RevFocus = RevFocus {
-        weights: [10, 3, 0, 1, 4, 0, 0, 3, 0, 0, 0],
+        weights: [10, 3, 0, 1, 4, 0, 0, 3, 0, 1, 3],
         handle_reuse: 1,
         max_commands: 40,
         cases: 128,
@@ -1677,6 +1680,7 @@ impl StateMachine for ReviewMachine {
         check_i02_assignments(&view, &rev)?;
         sod::check_i02(&view)?;
         check_i36_held(&view, &rev)?;
+        check_one_organisation(&view, &rev)?;
         check_i36(&rev)
     }
 

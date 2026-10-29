@@ -80,10 +80,20 @@
 //! - The roster keeps every identity discovery it folds, in ledger order,
 //!   with the vault epoch of its record. A reinstatement or an end never
 //!   erases one (R-CF-04).
-//! - An end earlier or later than `ctx.now` is refused. A later end could
-//!   not pin its bar, because the calls published before it are unknown
-//!   when the command is decided. Scheduled ends are an open question for
-//!   Daniel. A start before `ctx.now` is refused (no backdating).
+//! - An end earlier than `ctx.now` is refused, and so is a start (no
+//!   backdating). A later end is a scheduled end (Cooling-off NOTE,
+//!   decided 2026-10-25), set by `EndRole` or by the `end` of `GrantRole`.
+//!   The binding stays held until the instant. The System records its end
+//!   through `EndScheduledRole`, which [`crate::due`] lists from the
+//!   instant on. That end carries the scheduled instant and pins the bar
+//!   when it is recorded. From the instant until that record, the engine
+//!   refuses every other command but `VaultChanged` under SoD-05. So no
+//!   decision reads the binding as held after its instant, no call is
+//!   published and no P-12 is edited in between, and the bar counts the
+//!   calls published by the instant and the P-12 value in force at it. A
+//!   scheduled end can be brought forward, to `ctx.now` too, which ends
+//!   the binding at once. Moving it later is refused, and so is scheduling
+//!   the same instant again or an instant at or before the start.
 
 pub(crate) mod commands;
 pub(crate) mod guards;
@@ -97,7 +107,7 @@ use crate::refusal::RuleRef;
 use crate::time::Timestamp;
 
 pub(crate) use commands::{
-    apply, contribute, contribute_queries, decide, governing_policy, queries,
+    apply, contribute, contribute_queries, decide, due, end_overdue, governing_policy, queries,
 };
 
 /// The four role groups of `SPEC/02-domain/roles-and-sod.md`.
@@ -292,6 +302,12 @@ pub struct Binding {
     /// The organisation the grant records, for committee bindings (I-34,
     /// SoD-10).
     pub organisation: Option<OrganisationId>,
+    /// The scheduled end instant, if any (Cooling-off NOTE, decided
+    /// 2026-10-25). The binding stays held until that instant. The System
+    /// records its end, which [`crate::due`] lists from that instant on,
+    /// and the engine decides no other command but `VaultChanged` until
+    /// the end is recorded.
+    pub scheduled_end: Option<Timestamp>,
 }
 
 impl Binding {
@@ -413,6 +429,14 @@ impl RosterState {
     /// The binding `id`, when it is held or voided.
     pub fn binding(&self, id: BindingId) -> Option<&Binding> {
         self.bindings.get(&id)
+    }
+
+    /// The binding `id`, when it is held, voided or ended. An ended
+    /// binding keeps its last state beneath the end (R-CF-04).
+    pub fn held_or_ended(&self, id: BindingId) -> Option<&Binding> {
+        self.bindings
+            .get(&id)
+            .or_else(|| self.ended.get(&id).map(|e| &e.binding))
     }
 
     /// Every held or voided binding, by id.

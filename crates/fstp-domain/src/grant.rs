@@ -22,11 +22,15 @@
 //! Commands this lane decides:
 //!
 //! - `DetermineAmount`, by an assigned reviewer of the proposal with a
-//!   [`crate::assignment::ReviewerAct`] (R-NG-03, I-03), in NEGOTIATION,
-//!   before the lead accepts and the programme manager approves. The
-//!   granted amount is the total of the plan the effective score carries
-//!   forward (I-09) minus the recorded deductions, each with a reason, and
-//!   lies within P-04 inclusive (I-13). The agreed plan is that plan or a
+//!   [`crate::assignment::ReviewerAct`] (R-NG-03, I-03), in NEGOTIATION.
+//!   The amount is never locked (NOTE 9, decided 2026-10-28). A new
+//!   determination after acceptance or approval supersedes the old one,
+//!   and the acceptance, the approval and the contract fact stop counting
+//!   (Q-W7-4). The active reviewers of the current call span at least P-39
+//!   organisations (I-34, SoD-10, decided 2026-10-28). The granted amount is
+//!   the total of the plan the effective score carries forward (I-09) minus
+//!   the recorded deductions, each with a reason, and lies within P-04
+//!   inclusive (I-13). The agreed plan is that plan or a
 //!   negotiated plan of the proposal, and its total equals the granted
 //!   amount (design 2.11). A deduction therefore needs a negotiated plan
 //!   that carries it. The vault confirms that the recipient stays within
@@ -48,13 +52,13 @@
 //!   the NOTE 9 failures holds. The reason recorded is the first failure
 //!   that holds, in declaration order. The batch releases the reservation.
 //!   The amount failures look at the smallest amount still open (NOTE 9,
-//!   decided 2026-10-26). That is the determined amount once the lead
-//!   accepted or the programme manager approved it, since it is then
-//!   locked. Before, it is the P-04 minimum, since the lead may still
-//!   propose a smaller negotiated plan. No grant amount can keep I-13 when
-//!   that amount lies outside P-04 or above the effective plan total. No
-//!   grant amount can keep I-14 when it does not fit the recipient's room
-//!   under the stricter of the snapshot and live P-05. A plan total above
+//!   decided 2026-10-26). That is the P-04 minimum at every point of
+//!   NEGOTIATION, since the amount is never locked and the lead may still
+//!   propose a smaller negotiated plan (decided 2026-10-28). No grant
+//!   amount can keep I-13 when that amount lies outside P-04 or above the
+//!   effective plan total. No grant amount can keep I-14 when it does not
+//!   fit the recipient's room under the stricter of the snapshot and live
+//!   P-05. A plan total above
 //!   the cap is no ground for declining while the P-04 minimum fits.
 //! - `StartExecution`, by the System, at the earliest milestone start date
 //!   of the effective contract version (NOTE 11).
@@ -88,8 +92,23 @@
 //!
 //! Readings of this lane, reported to Daniel:
 //!
-//! - The amount is locked once the lead accepted or the programme manager
-//!   approved, since both accepted the amount determined.
+//! - A new determination also clears any contract fact recorded for the
+//!   earlier amount, so the contract always matches the current amount
+//!   (Q-W7-4, decided 2026-10-28). The cleared contract is remembered, and
+//!   a redelivered EFFECTIVE fact for it is refused under R-NG-03.
+//! - `ContractFact` names no determination. A contract first reported
+//!   EFFECTIVE after a new determination counts for the current amount.
+//!   Whether the fact should name its determination, or the M5 seam
+//!   confirm it at countersignature, is open for Daniel (Q-W7-8).
+//! - The domain tracks no contract identity across proposals. The
+//!   cleared-contract guard reads only the proposal the fact names. A
+//!   contract signed for another proposal, or for a superseded amount of
+//!   another proposal, is not refused here. Until Daniel answers Q-W7-8,
+//!   the M5 contract port alone guarantees that a contract id belongs to
+//!   the proposal and the amount it is reported for.
+//! - `AcceptGrant` and `ApproveGrant` name the determination they accept.
+//!   Each is refused under R-NG-03 unless it names the current one (Q-W7-7,
+//!   decided 2026-10-28).
 //! - A grant fact before any determination is refused, as is a repeated
 //!   contract fact or one outside NEGOTIATION.
 //! - The lead records a negotiated plan in NEGOTIATION (step W5
@@ -536,6 +555,10 @@ pub struct MoneyState {
     grants: BTreeMap<ProposalId, Grant>,
     /// Deliverables.
     deliverables: BTreeMap<DeliverableId, Deliverable>,
+    /// The contracts whose EFFECTIVE fact a new determination cleared,
+    /// per proposal. Each was signed for a superseded amount, so its fact
+    /// never counts again (Q-W7-4, decided 2026-10-28).
+    superseded_contracts: BTreeSet<(ProposalId, ContractId)>,
     /// Amendments, kept for `crate::amendment`.
     pub(crate) amendments: BTreeMap<crate::id::AmendmentId, crate::amendment::Amendment>,
 }
@@ -547,6 +570,7 @@ impl MoneyState {
             negotiations: BTreeMap::new(),
             grants: BTreeMap::new(),
             deliverables: BTreeMap::new(),
+            superseded_contracts: BTreeSet::new(),
             amendments: BTreeMap::new(),
         }
     }
@@ -554,6 +578,15 @@ impl MoneyState {
     /// The open reservation of `proposal`, if any (I-14).
     pub fn reserved(&self, proposal: ProposalId) -> Option<NonNegAmount> {
         self.negotiations.get(&proposal).and_then(|n| n.reserved)
+    }
+
+    /// The decision id of the current amount determination of `proposal`,
+    /// if any. `AcceptGrant` and `ApproveGrant` name it (R-NG-03, NOTE 9,
+    /// Q-W7-7, decided 2026-10-28).
+    pub fn determination(&self, proposal: ProposalId) -> Option<DecisionId> {
+        self.negotiations
+            .get(&proposal)
+            .and_then(|n| n.determined.map(|d| d.decision))
     }
 
     /// The granted amount of `proposal`, the amended total after an amendment.
@@ -1114,10 +1147,23 @@ fn check_determine(state: &State, cmd: &Command, ctx: &Ctx) -> Result<DetermineP
         ctx.now,
     )
     .ok_or_else(inactive)?;
+    // I-34 holds at the amount determination too: the assigned reviewers
+    // decide it, so they span at least P-39 organisations (SoD-10,
+    // decided 2026-10-28).
+    let call = crate::proposal::life::current_call(state, *proposal)?;
+    let reviewers = crate::proposal::life::assignees(
+        state,
+        &crate::proposal::life::active_assignments(
+            state,
+            *proposal,
+            call,
+            AssignmentKind::Reviewer,
+        ),
+    );
+    crate::assignment::require_reviewers_span_p39(state, *proposal, &reviewers, ctx.now)?;
+    // The amount is never locked (NOTE 9, decided 2026-10-28). A new
+    // amount after acceptance or approval supersedes the old one.
     let n = state.money.negotiations.get(proposal).copied();
-    if n.is_some_and(|n| n.accepted.is_some() || n.approved.is_some()) {
-        return Err(guard(RuleRef::Rng03));
-    }
     if state.used_ids.contains(UsedId::Decision(*decision)) {
         return Err(reused());
     }
@@ -1429,8 +1475,10 @@ pub fn check_grant_preconditions(
 /// One of the three grant facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fact {
-    Accept(DecisionId, AccountId),
-    Approve(DecisionId, AccountId),
+    /// The acceptance, its author and the determination it names.
+    Accept(DecisionId, AccountId, DecisionId),
+    /// The approval, its author and the determination it names.
+    Approve(DecisionId, AccountId, DecisionId),
     Contract(ContractId),
 }
 
@@ -1446,11 +1494,19 @@ struct FactPlan {
 
 fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refusal> {
     let (proposal, fact) = match cmd {
-        Command::AcceptGrant { decision, proposal } => {
+        Command::AcceptGrant {
+            decision,
+            proposal,
+            determination,
+        } => {
             let lead = crate::proposal::life::require_lead(state, *proposal, ctx)?;
-            (*proposal, Fact::Accept(*decision, lead))
+            (*proposal, Fact::Accept(*decision, lead, *determination))
         }
-        Command::ApproveGrant { decision, proposal } => {
+        Command::ApproveGrant {
+            decision,
+            proposal,
+            determination,
+        } => {
             let by = crate::policy::actor_account(ctx)?;
             let s = subject(state, *proposal)?;
             crate::policy::require_holder(
@@ -1460,7 +1516,7 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
                 &[Role::ProgrammeManager],
                 ctx.now,
             )?;
-            (*proposal, Fact::Approve(*decision, by))
+            (*proposal, Fact::Approve(*decision, by, *determination))
         }
         Command::ContractFact {
             proposal,
@@ -1479,9 +1535,22 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
         .get(&proposal)
         .copied()
         .unwrap_or(Negotiation::new());
-    if n.determined.is_none() || n.reserved.is_none() {
+    let Some(current) = n.determined.map(|d| d.decision) else {
+        return Err(guard(RuleRef::Rng03));
+    };
+    if n.reserved.is_none() {
         return Err(guard(RuleRef::Rng03));
     }
+    // An acceptance or approval names the determination it accepts, and
+    // counts only for the current one (R-NG-03, NOTE 9, decided
+    // 2026-10-28). One composed against a superseded amount is refused.
+    let names_current = |named: DecisionId| {
+        if named == current {
+            Ok(())
+        } else {
+            Err(guard(RuleRef::Rng03))
+        }
+    };
     let mut after = n;
     let fresh = |d: DecisionId| {
         if state.used_ids.contains(UsedId::Decision(d)) {
@@ -1491,11 +1560,12 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
         }
     };
     let record = match fact {
-        Fact::Accept(d, by) => {
+        Fact::Accept(d, by, named) => {
             fresh(d)?;
             if n.accepted.is_some() {
                 return Err(wrong_state());
             }
+            names_current(named)?;
             after.accepted = Some(d);
             Record::GrantAccepted {
                 decision: d,
@@ -1503,11 +1573,12 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
                 by,
             }
         }
-        Fact::Approve(d, by) => {
+        Fact::Approve(d, by, named) => {
             fresh(d)?;
             if n.approved.is_some() {
                 return Err(wrong_state());
             }
+            names_current(named)?;
             after.approved = Some(d);
             after.approver = Some(by);
             Record::GrantApproved {
@@ -1517,6 +1588,12 @@ fn check_fact(state: &State, cmd: &Command, ctx: &Ctx) -> Result<FactPlan, Refus
             }
         }
         Fact::Contract(c) => {
+            // A contract whose fact a new determination cleared was signed
+            // for a superseded amount. Its redelivered fact is not a fact
+            // for the current amount (R-NG-03, Q-W7-4, decided 2026-10-28).
+            if state.money.superseded_contracts.contains(&(proposal, c)) {
+                return Err(guard(RuleRef::Rng03));
+            }
             if n.contract.is_some() {
                 return Err(wrong_state());
             }
@@ -1608,10 +1685,9 @@ struct DeclinePlan {
 /// `None` without an effective plan total (NOTE 9, decided 2026-10-26).
 /// The inner `None` means that no amount within P-04 can exist at all.
 ///
-/// Once the lead accepted or the programme manager approved, the
-/// determined amount is locked, so it alone is open. It counts only
-/// within P-04 as frozen for the governing call. Before, the lead may
-/// still propose a negotiated plan at any total from the P-04 minimum up
+/// The amount is never locked (decided 2026-10-28), so acceptance and
+/// approval change nothing here. At every point of NEGOTIATION the lead
+/// may propose a negotiated plan at any total from the P-04 minimum up
 /// to the effective plan total, and a matching deduction grants it
 /// (R-NG-03, design 2.11). A grant is never zero, though. The agreed plan
 /// total equals the granted amount, and every milestone carries a positive
@@ -1629,22 +1705,10 @@ fn reachable_amounts(
         return Ok(None);
     };
     let p04 = crate::assignment::governing_values(state, proposal)?.p04;
-    let locked = state
-        .money
-        .negotiations
-        .get(&proposal)
-        .filter(|n| n.accepted.is_some() || n.approved.is_some())
-        .and_then(|n| n.determined)
-        .map(|d| d.granted);
-    let smallest = match locked {
-        Some(l) => p04.contains(l).map_err(|_| invalid())?.then_some(l),
-        None => {
-            let floor = smallest_grant(p04.min())?;
-            (p04.contains(floor).map_err(|_| invalid())?
-                && at_most(floor.amount(), total.amount())?)
-            .then_some(floor)
-        }
-    };
+    let floor = smallest_grant(p04.min())?;
+    let smallest = (p04.contains(floor).map_err(|_| invalid())?
+        && at_most(floor.amount(), total.amount())?)
+    .then_some(floor);
     Ok(Some(smallest))
 }
 
@@ -2085,6 +2149,20 @@ pub(crate) fn apply(
                 granted: *granted,
                 agreed: *agreed,
             });
+            // A new amount supersedes the old one, so the acceptance and
+            // the approval of the old amount stop counting (NOTE 9,
+            // decided 2026-10-28). The contract fact of the old amount is
+            // cleared too, so the contract always matches the current
+            // amount (Q-W7-4, decided 2026-10-28).
+            n.accepted = None;
+            n.approved = None;
+            n.approver = None;
+            // The cleared contract was signed for the superseded amount, and
+            // a signed version is immutable (`contracts.md` Rules). Its fact
+            // is remembered so a redelivery never counts again.
+            if let Some(old) = n.contract.take() {
+                state.money.superseded_contracts.insert((*proposal, old));
+            }
             Ok(())
         }
         Record::CapReserved {

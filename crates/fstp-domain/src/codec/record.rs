@@ -278,6 +278,7 @@ tagged_enum! {
         CallApproved { call, decision, approver },
         CallPublished { call, policy, seq, config, by },
         VaultEpochProcessed { epoch },
+        BindingEndScheduled { binding, at },
         ProposalCreated { proposal, call, lead, minor },
         Submitted { proposal, plan, ethics, notice },
         KnockOutRecorded { decision, proposal, coordinator, outcomes, reason, rules },

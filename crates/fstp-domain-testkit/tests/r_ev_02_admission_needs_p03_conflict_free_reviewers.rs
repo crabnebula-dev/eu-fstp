@@ -3,8 +3,9 @@
 //! The stories run production commands from genesis and compare every step
 //! with the lifecycle reference in both directions.
 //!
-//! - One reviewer's committee binding records no organisation, so I-34
-//!   does not apply and the P-03 guard alone decides the admission.
+//! - Each reviewer is of its own organisation, so I-34 holds and the P-03
+//!   guard alone decides the admission. A committee binding always records
+//!   an organisation (SoD-10, decided 2026-10-25).
 //! - The vault answers a conflict for an active assignee at the processed
 //!   epoch, before any detection. The admission is refused under I-03,
 //!   since that assignee could never score and stage 1 could not close.
@@ -24,20 +25,10 @@ use fstp_domain_testkit::mc::life_model::{
     Story, admit, assign_declared, life_judges, story_setup,
 };
 
-/// PR1 submitted and checked in call 1 with `reviewers`, where R1's
-/// committee binding records no organisation.
+/// PR1 submitted and checked in call 1 with `reviewers`, each of its own
+/// organisation.
 fn checked(backend: Backend, reviewers: &[AccountId]) -> Story {
-    let judges = life_judges()
-        .into_iter()
-        .map(|(a, role, org)| {
-            if a == R1 {
-                (a, role, None)
-            } else {
-                (a, role, org)
-            }
-        })
-        .collect();
-    let setup = story_setup(vec![(L1, PR1, false)], judges);
+    let setup = story_setup(vec![(L1, PR1, false)], life_judges());
     let mut s = Story::new(&setup, backend, |_| {}).unwrap_or_else(|e| panic!("{e}"));
     s.checked(L1, PR1, reviewers)
         .unwrap_or_else(|e| panic!("PR1 checked: {e}"));
@@ -57,7 +48,7 @@ fn r_ev_02_p03_alone_decides_the_admission_on(b: Backend) {
         assert_eq!(
             refusal.map(|r| r.rule),
             Some(RuleRef::Rev02),
-            "R-EV-02: one reviewer of an unknown organisation is fewer than P-03 = 2"
+            "R-EV-02: one reviewer is fewer than P-03 = 2"
         );
     }
     let got = s.attempt(&admit(PR1)).unwrap_or_else(|e| panic!("{e}"));
@@ -73,7 +64,7 @@ fn r_ev_02_p03_alone_decides_the_admission_on(b: Backend) {
     assert_eq!(s.state(PR1), Some(StateTag::Stage1));
 }
 
-/// R-EV-02, row 3: with I-34 out of play, fewer than P-03 active reviewers
+/// R-EV-02, row 3: with I-34 holding, fewer than P-03 active reviewers
 /// refuse the admission, and P-03 of them admit it.
 #[test]
 fn r_ev_02_p03_alone_decides_the_admission() {

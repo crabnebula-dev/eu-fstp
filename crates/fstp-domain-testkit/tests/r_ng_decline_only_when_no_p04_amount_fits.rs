@@ -10,10 +10,12 @@
 //! The remaining room reads the stricter of the publication snapshot and
 //! the live P-05 (`SPEC/02-domain/contracts.md`, P-05 NOTE 7).
 //!
-//! Once the lead accepted or the programme manager approved, a new
-//! determination is refused, so the determined amount is locked. The
-//! locked amount then decides. The programme manager records the decline
-//! with its computed reason (NOTE 13, R-LA-03).
+//! The amount is never locked (NOTE 9, decided 2026-10-28). After the
+//! lead accepted or the programme manager approved, the assigned reviewers
+//! may still determine a new amount. It supersedes the old one, and the
+//! acceptance and approval are given again. So the decline reads the P-04
+//! minimum at every point of NEGOTIATION. The programme manager records
+//! the decline with its computed reason (NOTE 13, R-LA-03).
 //!
 //! Every story starts from genesis by production commands, with lead a,
 //! lead b of the same verified identity, and lead c, under P-04 = [2.00,
@@ -30,8 +32,9 @@ use fstp_domain::proposal::PlanOrigin;
 use fstp_domain::record::Record;
 use fstp_domain::rules::{Row, StateTag};
 use fstp_domain_testkit::r#gen::money::{
-    LA, LB, LC, MoneySetup, MoneyStory, PA, PB, accept_grant, amount_decision, approve_grant,
-    contract_effective, decline_negotiation, determine, edit_p05, milestone_n, money_plan,
+    LA, LB, LC, MoneySetup, MoneyStory, PA, PB, accept_decision_n, accept_grant, accept_grant_as,
+    amount_decision, approve_decision_n, approve_grant, approve_grant_as, contract_effective,
+    decline_negotiation, determine, edit_p05, milestone_n, money_plan,
 };
 use fstp_domain_testkit::r#gen::review::{R1, plan_of};
 use fstp_domain_testkit::r#gen::roster::{Backend, STAFF_PM, Step, T0};
@@ -205,13 +208,15 @@ fn p04_minimum_above_the_live_room(b: Backend) {
 
 /// (c) b starts unverified, so the vault groups b alone. a reserves 4.00
 /// and b reserves 3.00. The vault then verifies b, which leaves b a room
-/// of 2.00 (Identity discovery). While b's amount is open, the P-04
-/// minimum fits, so the decline is refused. After b's acceptance and the
-/// programme manager's approval the amount 3.00 is locked: a new
-/// determination is refused, the contract fact is refused under I-14, and
-/// the decline is recorded for no amount within the cap. It releases b's
-/// reservation, and a is then granted.
-fn locked_amount_decides(b: Backend) {
+/// of 2.00 (Identity discovery). The amount is never locked (NOTE 9,
+/// decided 2026-10-28). So after b's acceptance and the programme
+/// manager's approval the P-04 minimum still fits, and the decline stays
+/// refused. The contract fact is refused under I-14, since 3.00 exceeds
+/// the room. The lead records a negotiated plan of 2.00 and R1 determines
+/// 2.00 on it. The batch releases 3.00 before it reserves 2.00. The old
+/// acceptance and approval stop counting, so the contract fact and a new
+/// approval do not grant b. A new acceptance does, at exactly P-05 with a.
+fn new_amount_after_acceptance(b: Backend) {
     let mut setup = MoneySetup::sybil([400, 300, 100]);
     setup.unverified = vec![LB];
     let mut s = story_of(&setup, b);
@@ -225,33 +230,79 @@ fn locked_amount_decides(b: Backend) {
     s.refused(&decline_negotiation(Actor::Account(STAFF_PM), PB))
         .unwrap_or_else(|e| {
             panic!(
-                "NOTE 9 (decided 2026-10-26): b's amount is still open and the P-04 minimum \
-                 2.00 fits the room 2.00, so the decline is refused: {e}"
+                "NOTE 9 (decided 2026-10-26): the P-04 minimum 2.00 fits the room 2.00, so \
+                 the decline is refused: {e}"
             )
         });
     s.run(&accept_grant(LB, PB))
         .unwrap_or_else(|e| panic!("b accepts 3.00: {e}"));
     s.run(&approve_grant(STAFF_PM, PB))
         .unwrap_or_else(|e| panic!("the programme manager approves 3.00: {e}"));
-    let again = determine(R1, PB, amount_decision(PB, 2), plan_of(PB), &[]).unwrap();
-    s.refused(&again)
-        .unwrap_or_else(|e| panic!("R-NG-03: the accepted amount is locked: {e}"));
     s.refused(&contract_effective(PB)).unwrap_or_else(|e| {
-        panic!("I-14: a's 4.00 plus b's locked 3.00 exceeds 6.00, so GRANTED is disabled: {e}")
+        panic!("I-14: a's 4.00 plus b's 3.00 exceeds 6.00, so GRANTED is disabled: {e}")
     });
-    let recs = s
-        .run(&decline_negotiation(Actor::Account(STAFF_PM), PB))
+    s.refused(&decline_negotiation(Actor::Account(STAFF_PM), PB))
         .unwrap_or_else(|e| {
-            panic!("NOTE 9: the locked amount 3.00 lies above b's room 2.00, so b is declined: {e}")
+            panic!(
+                "NOTE 9 (decided 2026-10-28): the amount is never locked, so the P-04 \
+                 minimum 2.00 still fits after acceptance and approval: {e}"
+            )
         });
-    assert!(
-        recs.iter()
-            .any(|r| matches!(r, Record::CapReleased { proposal, .. } if *proposal == PB)),
-        "the decline releases b's reservation: {recs:?}"
+    let (plan, step) = negotiated_plan(LB, PB, 200);
+    s.run(&step)
+        .unwrap_or_else(|e| panic!("R-NG-03: the lead records a negotiated plan of 2.00: {e}"));
+    let again = determine(R1, PB, amount_decision(PB, 2), plan, &[100]).unwrap();
+    let recs = s.run(&again).unwrap_or_else(|e| {
+        panic!("NOTE 9, R-NG-03: R1 determines 2.00 after acceptance and approval: {e}")
+    });
+    let released = recs
+        .iter()
+        .position(|r| matches!(r, Record::CapReleased { proposal, .. } if *proposal == PB));
+    let reserved = recs
+        .iter()
+        .position(|r| matches!(r, Record::CapReserved { proposal, .. } if *proposal == PB));
+    match (released, reserved) {
+        (Some(x), Some(y)) => assert!(
+            x < y,
+            "I-14: the batch releases 3.00 before it reserves 2.00: {recs:?}"
+        ),
+        _ => panic!("I-14: the batch moves b's reservation to 2.00: {recs:?}"),
+    }
+    assert_eq!(
+        s.world.money.counted(PB),
+        200,
+        "I-14: only 2.00 counts for b"
     );
-    declined_for_the_cap(&s, &recs, PB);
+    s.run(&contract_effective(PB))
+        .unwrap_or_else(|e| panic!("the contract fact is recorded: {e}"));
+    assert_eq!(
+        s.state(PB),
+        Some(StateTag::Negotiation),
+        "NOTE 9: the old acceptance and approval no longer count"
+    );
+    s.run(&approve_grant_as(
+        STAFF_PM,
+        PB,
+        approve_decision_n(PB, 2),
+        amount_decision(PB, 2),
+    ))
+    .unwrap_or_else(|e| panic!("the programme manager approves 2.00: {e}"));
+    assert_eq!(
+        s.state(PB),
+        Some(StateTag::Negotiation),
+        "NOTE 9: the acceptance of 3.00 does not count for 2.00"
+    );
+    s.run(&accept_grant_as(
+        LB,
+        PB,
+        accept_decision_n(PB, 2),
+        amount_decision(PB, 2),
+    ))
+    .unwrap_or_else(|e| panic!("b accepts 2.00, which completes the facts: {e}"));
+    assert_eq!(s.state(PB), Some(StateTag::Granted));
+    assert_eq!(s.world.money.counted(PB), 200);
     s.grant_facts(PA)
-        .unwrap_or_else(|e| panic!("a is granted once b's reservation is released: {e}"));
+        .unwrap_or_else(|e| panic!("a is granted 4.00, which leaves the pair at P-05: {e}"));
     assert_eq!(s.state(PA), Some(StateTag::Granted));
     s.invariants().unwrap_or_else(|e| panic!("{e}"));
 }
@@ -350,15 +401,18 @@ fn r_ng_decline_when_the_p04_minimum_exceeds_the_live_room_on_the_reference() {
     p04_minimum_above_the_live_room(Backend::Reference);
 }
 
-/// NOTE 9, I-14, R-NG-03, Identity discovery: after acceptance and
-/// approval the locked amount decides the decline.
+/// NOTE 9 (decided 2026-10-28), I-14, R-NG-03, Identity discovery: the
+/// amount is never locked. After acceptance and approval the decline still
+/// reads the P-04 minimum, and a new amount needs a new acceptance and
+/// approval.
 #[test]
-fn r_ng_decline_after_acceptance_and_approval_reads_the_locked_amount() {
-    locked_amount_decides(Backend::Production);
+fn r_ng_decline_after_acceptance_and_approval_reads_the_p04_minimum() {
+    new_amount_after_acceptance(Backend::Production);
 }
 
-/// NOTE 9, I-14, R-NG-03, Identity discovery: the same story on the references alone.
+/// NOTE 9 (decided 2026-10-28), I-14, R-NG-03, Identity discovery: the
+/// same story on the references alone.
 #[test]
-fn r_ng_decline_after_acceptance_and_approval_reads_the_locked_amount_on_the_reference() {
-    locked_amount_decides(Backend::Reference);
+fn r_ng_decline_after_acceptance_and_approval_reads_the_p04_minimum_on_the_reference() {
+    new_amount_after_acceptance(Backend::Reference);
 }

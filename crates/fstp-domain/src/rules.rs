@@ -745,7 +745,7 @@ pub enum Guard {
     ActorConflictFree,
     /// At least P-03 active, declared, conflict-free assignments (R-EV-02).
     ReviewersAssignedWithoutConflict,
-    /// Assigned reviewers from at least P-39 organisations, when data exists (I-34).
+    /// Assigned reviewers from at least P-39 known organisations (I-34, SoD-10).
     ReviewerOrganisations,
     /// No reviewer on a proposal declaring an affiliation on their proximity list (I-35).
     ProximityClear,
@@ -986,7 +986,11 @@ pub const TRANSITIONS: &[TransitionRule] = &[
         S::NotSelected,
         ActorRule::SystemRecordedBy(Role::FstpCoordinator),
         &[K::CloseStage1],
-        &[G::Stage1Closed, G::ScoreNotAboveThreshold],
+        &[
+            G::Stage1Closed,
+            G::ScoreNotAboveThreshold,
+            G::ReviewerOrganisations,
+        ],
     ),
     rule(
         Row::Stage1ToStage2,
@@ -994,7 +998,11 @@ pub const TRANSITIONS: &[TransitionRule] = &[
         S::Stage2,
         ActorRule::SystemRecordedBy(Role::FstpCoordinator),
         &[K::CloseStage1],
-        &[G::Stage1Closed, G::ScoreAboveThreshold],
+        &[
+            G::Stage1Closed,
+            G::ScoreAboveThreshold,
+            G::ReviewerOrganisations,
+        ],
     ),
     rule(
         Row::Stage2ToRanked,
@@ -1002,7 +1010,11 @@ pub const TRANSITIONS: &[TransitionRule] = &[
         S::Ranked,
         ActorRule::AssignedReviewers,
         &[K::RankAfterStage2, K::RecordNoQuestions],
-        &[G::Stage2Concluded, G::EffectiveScoreFollowsP24],
+        &[
+            G::Stage2Concluded,
+            G::EffectiveScoreFollowsP24,
+            G::ReviewerOrganisations,
+        ],
     ),
     rule(
         Row::Stage2ToDeferred,
@@ -1174,6 +1186,7 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::PublishCall, PM),
     (K::GrantRole, ActorRule::TenantAdmin),
     (K::EndRole, ActorRule::TenantAdmin),
+    (K::EndScheduledRole, ActorRule::System),
     (K::ReinstateBinding, ActorRule::TenantAdmin),
     (K::VaultChanged, ActorRule::System),
     (K::CreateDraft, ActorRule::AnyAccount),

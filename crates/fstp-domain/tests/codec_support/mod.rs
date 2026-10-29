@@ -681,6 +681,7 @@ pub(crate) enum RecordTag {
     BindingSuspended,
     BindingVoided,
     BindingReinstated,
+    BindingEndScheduled,
     VaultEpochProcessed,
     ProposalCreated,
     PlanVersionRecorded,
@@ -733,7 +734,7 @@ pub(crate) enum RecordTag {
 
 impl RecordTag {
     /// Every tag, in declaration order of [`Record`].
-    pub(crate) const ALL: [RecordTag; 59] = [
+    pub(crate) const ALL: [RecordTag; 60] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -745,6 +746,7 @@ impl RecordTag {
         RecordTag::BindingSuspended,
         RecordTag::BindingVoided,
         RecordTag::BindingReinstated,
+        RecordTag::BindingEndScheduled,
         RecordTag::VaultEpochProcessed,
         RecordTag::ProposalCreated,
         RecordTag::PlanVersionRecorded,
@@ -841,6 +843,7 @@ impl RecordTag {
             Record::BindingSuspended(_) => RecordTag::BindingSuspended,
             Record::BindingVoided(_) => RecordTag::BindingVoided,
             Record::BindingReinstated(_) => RecordTag::BindingReinstated,
+            Record::BindingEndScheduled { .. } => RecordTag::BindingEndScheduled,
             Record::VaultEpochProcessed { .. } => RecordTag::VaultEpochProcessed,
             Record::ProposalCreated { .. } => RecordTag::ProposalCreated,
             Record::PlanVersionRecorded(_) => RecordTag::PlanVersionRecorded,
@@ -1588,10 +1591,14 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
             } else {
                 None
             },
+            end: if g.bool() { Some(ts(g)) } else { None },
         },
         CommandKind::EndRole => Command::EndRole {
             binding: id(g, d, BindingId::from_raw),
             at: ts(g),
+        },
+        CommandKind::EndScheduledRole => Command::EndScheduledRole {
+            binding: id(g, d, BindingId::from_raw),
         },
         CommandKind::ReinstateBinding => Command::ReinstateBinding {
             binding: id(g, d, BindingId::from_raw),
@@ -1738,10 +1745,12 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::AcceptGrant => Command::AcceptGrant {
             decision: id(g, d, DecisionId::from_raw),
             proposal: id(g, d, ProposalId::from_raw),
+            determination: id(g, d, DecisionId::from_raw),
         },
         CommandKind::ApproveGrant => Command::ApproveGrant {
             decision: id(g, d, DecisionId::from_raw),
             proposal: id(g, d, ProposalId::from_raw),
+            determination: id(g, d, DecisionId::from_raw),
         },
         CommandKind::ContractFact => Command::ContractFact {
             proposal: id(g, d, ProposalId::from_raw),
@@ -1916,6 +1925,10 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             by: id(g, d, AccountId::from_raw),
             reason: text(g, d),
         }),
+        RecordTag::BindingEndScheduled => Record::BindingEndScheduled {
+            binding: id(g, d, BindingId::from_raw),
+            at: ts(g),
+        },
         RecordTag::VaultEpochProcessed => Record::VaultEpochProcessed { epoch: epoch(g) },
         RecordTag::ProposalCreated => Record::ProposalCreated {
             proposal: id(g, d, ProposalId::from_raw),

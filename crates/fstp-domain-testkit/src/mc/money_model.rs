@@ -25,17 +25,19 @@ use std::collections::BTreeSet;
 
 use fstp_domain::command::Actor;
 use fstp_domain::decision::NegotiationFailure;
-use fstp_domain::id::{DeliverableId, LineId, PolicyVersionId, ProposalId, RequestId};
+use fstp_domain::id::{DecisionId, DeliverableId, LineId, PolicyVersionId, ProposalId, RequestId};
 use fstp_domain::proposal::PlanOrigin;
 use fstp_domain::record::{Record, RulesVersion};
 use fstp_domain::rules::{Row, StateTag};
 use fstp_mc::{Model, Property};
 
 use crate::r#gen::money::{
-    FINREL, LA, LB, MoneyDraft, MoneySetup, MoneyWorld, PA, PB, PC, REL, accept_grant, accept_line,
-    amount_decision, approve_grant, approve_payment, complete, confirm_paid, contract_effective,
-    contract_of, decline_negotiation, determine, edit_p05, money_plan, record_deliverable,
-    release_payment, request_payment, start_execution, terminate,
+    FINREL, LA, LB, MoneyDraft, MoneySetup, MoneyWorld, PA, PB, PC, REL, accept_decision_n,
+    accept_grant_as, accept_grant_naming, accept_line, amount_decision, approve_decision_n,
+    approve_grant_as, approve_grant_naming, approve_payment, complete, confirm_paid,
+    contract_effective_as, contract_of, contract_of_n, decline_negotiation, determine, edit_p05,
+    money_plan, record_deliverable, release_payment, request_payment, start_execution,
+    superseded_determination, terminate,
 };
 use crate::r#gen::review::{R1, plan_of, withdraw};
 use crate::r#gen::roster::{Backend, STAFF_PM, Step};
@@ -70,6 +72,12 @@ pub enum McAction {
     Grant(ProposalId, Fact),
     /// One grant fact alone.
     One(ProposalId, Fact),
+    /// An acceptance or approval under a fresh decision id that names the
+    /// determination the current one superseded (Q-W7-7, decided
+    /// 2026-10-28). For the contract fact, the port redelivers the EFFECTIVE
+    /// fact of a contract a new amount cleared (Q-W7-4, decided 2026-10-28).
+    /// Both sides refuse it, and an accepted one is a divergence.
+    Stale(ProposalId, Fact),
     /// The programme manager records NEGOTIATION to DECLINED.
     Decline(ProposalId),
     /// The lead withdraws.
@@ -151,6 +159,14 @@ pub struct McState {
     /// with a verified lead was refused by both sides, so GRANTED was
     /// disabled. The fact can be sent again later.
     pub grant_blocked: bool,
+    /// Ghost: a new amount was determined on a proposal that held a
+    /// given acceptance or approval, which it superseded (NOTE 9, decided
+    /// 2026-10-28).
+    pub superseded: bool,
+    /// Ghost: a new amount was determined on a proposal that held a
+    /// recorded contract fact, which it cleared (Q-W7-4, decided
+    /// 2026-10-28).
+    pub contract_cleared: bool,
     /// Deliverables recorded.
     pub deliverables: u8,
     /// Set when production and the references disagree.
@@ -182,12 +198,57 @@ fn line_of(r: RequestId) -> LineId {
     LineId::from_raw(r.raw().saturating_add(100_000))
 }
 
+/// The current amount determination of `p` in `w`, by its decision id.
+fn current_determination(w: &MoneyWorld, p: ProposalId) -> Option<DecisionId> {
+    w.money
+        .proposals
+        .get(&p)
+        .and_then(|q| q.determined.as_ref())
+        .map(|d| d.decision)
+}
+
 fn fact_step(w: &MoneyWorld, p: ProposalId, f: Fact) -> Option<Step> {
+    let n = determinations(w, p);
     Some(match f {
-        Fact::Accept => accept_grant(lead_of(w, p)?, p),
-        Fact::Approve => approve_grant(STAFF_PM, p),
-        Fact::Contract => contract_effective(p),
+        // A new amount needs a new acceptance and approval, each with a
+        // fresh decision id (NOTE 9, decided 2026-10-28). Each names the
+        // current determination (Q-W7-7, decided 2026-10-28).
+        Fact::Accept => accept_grant_as(
+            lead_of(w, p)?,
+            p,
+            accept_decision_n(p, n),
+            current_determination(w, p)?,
+        ),
+        Fact::Approve => approve_grant_as(
+            STAFF_PM,
+            p,
+            approve_decision_n(p, n),
+            current_determination(w, p)?,
+        ),
+        // A new amount clears the contract fact of the old one, so the port
+        // reports the contract of the new amount (Q-W7-4, decided
+        // 2026-10-28).
+        Fact::Contract => contract_effective_as(p, contract_of_n(p, n)),
     })
+}
+
+/// The acceptance or approval of `p` in `w` under a fresh decision id,
+/// naming the determination the current one superseded (Q-W7-7). `None`
+/// without one, and while the command codec does not know the member. For
+/// the contract fact, the redelivered fact of a contract a new amount
+/// cleared (Q-W7-4). `None` without one.
+fn stale_step(w: &MoneyWorld, p: ProposalId, f: Fact) -> Option<Step> {
+    let n = determinations(w, p);
+    let old = superseded_determination(&w.money, p)?;
+    match f {
+        Fact::Accept => accept_grant_naming(lead_of(w, p)?, p, accept_decision_n(p, n), old).ok(),
+        Fact::Approve => approve_grant_naming(STAFF_PM, p, approve_decision_n(p, n), old).ok(),
+        Fact::Contract => {
+            let q = w.money.proposals.get(&p)?;
+            let old = q.superseded_contracts.iter().next()?;
+            Some(contract_effective_as(p, *old))
+        }
+    }
 }
 
 /// The steps of `action` in `w`, or `None` where it does not apply.
@@ -242,6 +303,7 @@ fn steps(w: &MoneyWorld, versions: usize, action: &McAction) -> Option<Vec<Step>
             out
         }
         McAction::One(p, f) => vec![fact_step(w, *p, *f)?],
+        McAction::Stale(p, f) => vec![stale_step(w, *p, *f)?],
         McAction::Decline(p) => vec![decline_negotiation(Actor::Account(STAFF_PM), *p)],
         McAction::Withdraw(p) => vec![withdraw(lead_of(w, *p)?, *p)],
         McAction::SetP05(c) => {
@@ -432,6 +494,8 @@ impl MoneyMc {
             edited: false,
             cap_blocked: false,
             grant_blocked: false,
+            superseded: false,
+            contract_cleared: false,
             deliverables: 0,
             divergence: None,
         };
@@ -472,8 +536,10 @@ impl Model for MoneyMc {
             };
             match q.state {
                 StateTag::Negotiation => {
-                    let locked = q.accepted.is_some() || q.approved.is_some();
-                    if f.determine && !locked && determinations(&s.world, *p) < 2 {
+                    // The amount is never locked (NOTE 9, decided
+                    // 2026-10-28), so a determination after acceptance or
+                    // approval is drawn too.
+                    if f.determine && determinations(&s.world, *p) < 2 {
                         let total = s
                             .world
                             .money
@@ -496,6 +562,14 @@ impl Model for MoneyMc {
                         if f.facts {
                             for one in [Fact::Accept, Fact::Approve, Fact::Contract] {
                                 actions.push(McAction::One(*p, one));
+                            }
+                            if determinations(&s.world, *p) > 1 {
+                                for stale in [Fact::Accept, Fact::Approve] {
+                                    actions.push(McAction::Stale(*p, stale));
+                                }
+                            }
+                            if !q.superseded_contracts.is_empty() {
+                                actions.push(McAction::Stale(*p, Fact::Contract));
                             }
                         }
                     }
@@ -544,7 +618,39 @@ impl Model for MoneyMc {
     }
 
     fn step(&self, s: &McState, action: &McAction) -> Option<McState> {
-        run_action(s, action)
+        let mut next = run_action(s, action)?;
+        // A stale fact counts for no determination, so both sides refuse it
+        // (Q-W7-7, Q-W7-4, decided 2026-10-28). One both accepted is a
+        // divergence the two-way property reports.
+        if let McAction::Stale(..) = action
+            && next.divergence.is_none()
+        {
+            return Some(diverged(
+                s,
+                format!("{action:?}: a stale fact was accepted"),
+            ));
+        }
+        // The ghost of the NOTE 9 witness (decided 2026-10-28). Only the
+        // money models set it, so M-CONFORMANCE keeps its state space.
+        if let McAction::Determine(p, _) = action
+            && let Some(q) = s.world.money.proposals.get(p)
+            && (q.accepted.is_some() || q.approved.is_some())
+            && next.divergence.is_none()
+            && determinations(&next.world, *p) > determinations(&s.world, *p)
+        {
+            next.superseded = true;
+        }
+        // The ghost of the Q-W7-4 witness (decided 2026-10-28): a new
+        // amount on a proposal that held a recorded contract fact.
+        if let McAction::Determine(p, _) = action
+            && let Some(q) = s.world.money.proposals.get(p)
+            && q.contract.is_some()
+            && next.divergence.is_none()
+            && determinations(&next.world, *p) > determinations(&s.world, *p)
+        {
+            next.contract_cleared = true;
+        }
+        Some(next)
     }
 
     fn is_terminal(&self, s: &McState) -> bool {
@@ -572,7 +678,11 @@ impl Model for MoneyMc {
 /// deduction, and R1 determines the amount on it (R-NG-03). The action is
 /// atomic: when the determination is refused, the plan is not kept.
 /// Step W5 integration restored this branch, which lane L-MONEY had to
-/// leave out while negotiated plans were refused.
+/// leave out while negotiated plans were refused. The grant facts come
+/// both as the composite grant and one by one (W7 fix round 1). So a new
+/// amount can supersede a given acceptance or approval, and I-13 and I-14
+/// are checked over the release of the old reservation and the new one
+/// (NOTE 9, decided 2026-10-28).
 pub fn m_money() -> McConfig {
     McConfig {
         setup: MoneySetup::sybil([400, 200, 100]),
@@ -582,7 +692,7 @@ pub fn m_money() -> McConfig {
         families: Families {
             determine: true,
             grant: true,
-            facts: false,
+            facts: true,
             exits: true,
             p05: 400,
             execution: false,
@@ -708,24 +818,42 @@ pub fn after() -> McConfig {
     }
 }
 
-/// The state count of M-MONEY, measured on production by lane w6-decline
-/// after the decision of 2026-10-26. That decision makes the decline of
-/// lead a for the plan total unreachable. Production stores 594 states.
-/// The references store more (`M_MONEY_REFERENCE_STATES`), because they
-/// accept the `Either` grant-fact verdicts that production refuses.
-pub const M_MONEY_STATES: usize = 594;
-/// The state count of M-MONEY on the references, measured by lane
-/// w6-decline. It is the tripwire of the `_reference` twin (design 6.1).
-pub const M_MONEY_REFERENCE_STATES: usize = 840;
+/// The state count of M-MONEY, measured on production in close-out round
+/// 2. It was 20,304 in W7 fix round 1 and 594 before. A new amount now
+/// clears the contract fact of the old one (Q-W7-4), so the contract fact
+/// is given again, and the ghost of that clearing splits states. The
+/// stale acceptances and approvals of Q-W7-7 are refused and add none. The
+/// references store more (`M_MONEY_REFERENCE_STATES`), because they accept
+/// the `Either` grant-fact verdicts that production refuses.
+pub const M_MONEY_STATES: usize = 32_310;
+/// The state count of M-MONEY on the references, measured in close-out
+/// round 2, up from 22,332 in W7 fix round 1 and 840 before. A new amount
+/// now clears the contract fact of the old one (Q-W7-4), so the contract
+/// fact is given again, and the ghost of that clearing splits states. The
+/// stale acceptances and approvals of Q-W7-7 are refused and add none. It
+/// is the tripwire of the `_reference` twin (design 6.1).
+pub const M_MONEY_REFERENCE_STATES: usize = 35_544;
 /// The state count of the M-RACE reservation part, measured on production
-/// in step W6. The references store the same count.
-pub const M_RACE_RESERVATION_STATES: usize = 1_682;
-/// The state count of the I-15 repeat model, measured on production in
-/// step W6. The references store the same count.
-pub const M_MONEY_REPEAT_STATES: usize = 256;
+/// in the W7 review after the NOTE 9 decline change. Production stores
+/// fewer states than the references, as in M-MONEY.
+pub const M_RACE_RESERVATION_STATES: usize = 1_566;
+/// The state count of the M-RACE reservation part on the references,
+/// measured in the W7 review. It is the tripwire of the `_reference` twin
+/// (design 6.1).
+pub const M_RACE_RESERVATION_REFERENCE_STATES: usize = 1_682;
+/// The state count of the I-15 repeat model, measured on production in the
+/// W7 review. The references store `M_MONEY_REPEAT_REFERENCE_STATES`.
+pub const M_MONEY_REPEAT_STATES: usize = 234;
+/// The state count of the I-15 repeat model on the references, measured in
+/// the W7 review. It is the tripwire of the `_reference` twin.
+pub const M_MONEY_REPEAT_REFERENCE_STATES: usize = 256;
 /// The state count of the after-negotiation lifecycle, measured on
-/// production in step W6. The references store the same count.
-pub const M_AFTER_STATES: usize = 203;
+/// production in the W7 review. The references store
+/// `M_AFTER_REFERENCE_STATES`.
+pub const M_AFTER_STATES: usize = 111;
+/// The state count of the after-negotiation lifecycle on the references,
+/// measured in the W7 review. It is the tripwire of the `_reference` twin.
+pub const M_AFTER_REFERENCE_STATES: usize = 203;
 
 // ---------------------------------------------------------------------------
 // Properties
@@ -894,6 +1022,18 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
             "NOTE 9 witness: declined for the cap while even the P-04 minimum is above the headroom",
             declined_below_floor,
         ),
+        Property::reachable(
+            "NOTE 9 witness: a new amount superseded a given acceptance or approval",
+            |s: &McState| s.superseded,
+        ),
+        Property::reachable(
+            "Q-W7-4 witness: a new amount cleared a recorded contract fact",
+            |s: &McState| s.contract_cleared,
+        ),
+        Property::reachable(
+            "Q-W7-4 witness: granted on the contract of a new amount after one was cleared",
+            granted_on_a_new_contract,
+        ),
         Property::transition_with(
             "NOTE 9: no decline for the cap while the smallest open amount fits the headroom",
             cap_decline_transition,
@@ -902,23 +1042,16 @@ pub fn m_money_properties<'a, M: Model<State = McState, Action = McAction> + 'a>
 }
 
 /// The smallest amount still open for `p` in `s` and its cap headroom,
-/// cents. The smallest open amount is the determined amount once the lead
-/// accepted or the programme manager approved it. Before, it is the P-04
-/// minimum, or one cent when that minimum is zero, since a grant is never
-/// zero (NOTE 9, decided 2026-10-26). The headroom is the stricter of
-/// the snapshot and the live P-05, minus the other counted sums of the
-/// lead's recipient (I-14).
+/// cents. The amount is never locked (decided 2026-10-28), so the smallest
+/// open amount is the P-04 minimum at every point of NEGOTIATION. It is
+/// one cent when that minimum is zero, since a grant is never zero (NOTE
+/// 9, decided 2026-10-26). The headroom is the stricter of the snapshot
+/// and the live P-05, minus the other counted sums of the lead's recipient
+/// (I-14).
 pub fn smallest_and_headroom(s: &McState, p: ProposalId) -> Option<(i64, i64)> {
     let m = &s.world.money;
     let q = m.proposals.get(&p)?;
-    let locked = q
-        .accepted
-        .or(q.approved)
-        .and(q.determined.as_ref().map(|d| d.granted));
-    let smallest = match locked {
-        Some(l) => l,
-        None => m.governing(p)?.p04_min.max(1),
-    };
+    let smallest = m.governing(p)?.p04_min.max(1);
     let prog = m.programme_of(p)?;
     let cap = m.cap_of_call(q.call)?;
     let head = cap.saturating_sub(m.counted_for(s.world.truth(), prog, q.lead, Some(p)));
@@ -981,21 +1114,26 @@ pub fn declined_below_floor(s: &McState) -> bool {
     })
 }
 
+/// The race property of M-RACE: the two negotiations of one identity,
+/// each of 4.00 under P-05 6.00, are never both granted (I-14).
+pub fn race_never_both_granted(s: &McState) -> Result<(), String> {
+    if state_of(s, PA) == Some(StateTag::Granted) && state_of(s, PB) == Some(StateTag::Granted) {
+        Err(
+            "I-14 race: both negotiations of one identity were granted 4.00 under P-05 6.00"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
 /// The M-RACE reservation properties.
 pub fn race_properties<'a, M: Model<State = McState, Action = McAction> + 'a>()
 -> Vec<Property<'a, M>> {
     vec![
         two_way(),
         Property::always_with("I-14", i14),
-        Property::always_with("I-14 race: never both granted", |s: &McState| {
-            if state_of(s, PA) == Some(StateTag::Granted)
-                && state_of(s, PB) == Some(StateTag::Granted)
-            {
-                Err("I-14 race: both negotiations of one identity were granted 4.00 under P-05 6.00".to_owned())
-            } else {
-                Ok(())
-            }
-        }),
+        Property::always_with("I-14 race: never both granted", race_never_both_granted),
         Property::reachable("I-14 witness: a granted", |s: &McState| {
             state_of(s, PA) == Some(StateTag::Granted)
         }),
@@ -1137,6 +1275,15 @@ pub fn fault_above_cap(s: &McState) -> Option<McState> {
     forged_grant(s, PB, 300)
 }
 
+/// I-14 race fault: an engine that grants b 4.00 once a holds its grant
+/// of 4.00 under the same identity, so both negotiations pass the cap.
+pub fn fault_race_second_grant(s: &McState) -> Option<McState> {
+    if state_of(s, PA) != Some(StateTag::Granted) {
+        return None;
+    }
+    forged_grant(s, PB, 400)
+}
+
 /// I-15 fault: an engine that grants b while a's record is incomplete.
 pub fn fault_repeat_without_records(s: &McState) -> Option<McState> {
     let truth = s.world.truth();
@@ -1207,6 +1354,18 @@ pub fn negotiated_of(p: ProposalId, n: u128) -> fstp_domain::id::PlanVersionId {
 /// The milestone of [`negotiated_of`] for `p` and `n`.
 pub fn negotiated_milestone(p: ProposalId, n: u128) -> fstp_domain::id::MilestoneId {
     crate::r#gen::money::milestone_n(p, 30u128.saturating_add(n))
+}
+
+/// Whether a recorded contract fact was cleared by a new amount, and some
+/// proposal was granted on the contract of its second determination
+/// (Q-W7-4, decided 2026-10-28).
+pub fn granted_on_a_new_contract(s: &McState) -> bool {
+    s.contract_cleared
+        && s.world.money.proposals.iter().any(|(p, q)| {
+            q.state == StateTag::Granted
+                && determinations(&s.world, *p) > 1
+                && q.contract == Some(contract_of_n(*p, determinations(&s.world, *p)))
+        })
 }
 
 /// Whether some proposal was granted on a recorded deduction (R-NG-03).

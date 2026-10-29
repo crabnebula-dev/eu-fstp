@@ -905,6 +905,10 @@ pub struct LifeConfig {
     pub havoc: Vec<AccountId>,
     /// The revisions allowed.
     pub revisions: u8,
+    /// The reviewers the coordinator may assign in STAGE2 once a stage 2
+    /// reviewer was released. A release can leave fewer than P-39
+    /// organisations, and a new reviewer restores them (I-34, O-50).
+    pub spares: Vec<AccountId>,
     /// The action families.
     pub phases: Phases,
 }
@@ -1253,6 +1257,23 @@ impl Model for LifeModel {
                         .map(|r| LifeAction::Conflict(*r)),
                 );
             }
+            // I-34: after a release the remaining reviewers may span fewer
+            // than P-39 organisations. The coordinator then assigns a
+            // spare reviewer, who completes the round (O-50).
+            let released = s.world.life.proposals.get(&PR1).is_some_and(|p| {
+                s.world.life.assignments.values().any(|a| {
+                    a.proposal == PR1
+                        && a.call == p.current_call
+                        && a.kind == AssignmentKind::Reviewer
+                        && a.released
+                })
+            });
+            if released {
+                for r in &self.config.spares {
+                    actions.push(LifeAction::Assign(*r));
+                    actions.push(LifeAction::NoQuestions(*r));
+                }
+            }
         }
         if ph.revisions && state == StateTag::Stage2 {
             if s.revisions > 0 {
@@ -1395,6 +1416,7 @@ pub fn s1_config(weights: [u16; 2], p02_bp: u16) -> LifeConfig {
         conflicts: vec![R1, R2, R3],
         havoc: Vec::new(),
         revisions: 0,
+        spares: Vec::new(),
         phases: Phases {
             intake: false,
             stage1: true,
@@ -1453,6 +1475,7 @@ pub fn s2_config() -> LifeConfig {
         conflicts: vec![R2],
         havoc: Vec::new(),
         revisions: 1,
+        spares: vec![R3],
         phases: Phases {
             intake: false,
             stage1: false,
@@ -1494,16 +1517,17 @@ pub const M_LIFE_S1_EVEN_STATES: usize = 6_766;
 /// The state count of M-LIFE-S1 with weights (3, 1), measured on production
 /// in step W6. The references store 5_260.
 pub const M_LIFE_S1_WEIGHTED_STATES: usize = 6_202;
-/// The state count of M-LIFE-S2, measured on production in step W6. The
-/// references store 14_722.
-pub const M_LIFE_S2_STATES: usize = 19_220;
+/// The state count of M-LIFE-S2, measured on production in the W7 review,
+/// after I-34 was checked again at the ranking and a spare reviewer was
+/// added after a release. The references store 25_870.
+pub const M_LIFE_S2_STATES: usize = 34_824;
 /// The reference counts of M-LIFE-S1 (1, 1), M-LIFE-S1 (3, 1) and M-LIFE-S2,
 /// the tripwires of their `_reference` twins (design 6.1).
 pub const M_LIFE_S1_EVEN_REFERENCE_STATES: usize = 5_698;
 /// See [`M_LIFE_S1_EVEN_REFERENCE_STATES`].
 pub const M_LIFE_S1_WEIGHTED_REFERENCE_STATES: usize = 5_260;
 /// See [`M_LIFE_S1_EVEN_REFERENCE_STATES`].
-pub const M_LIFE_S2_REFERENCE_STATES: usize = 14_722;
+pub const M_LIFE_S2_REFERENCE_STATES: usize = 25_870;
 /// The state count of M-LIFE-S2 after ranking on the revised plan, measured
 /// on production in step W6. The references store the same count.
 pub const M_LIFE_S2_AFTER_STATES: usize = 192;
