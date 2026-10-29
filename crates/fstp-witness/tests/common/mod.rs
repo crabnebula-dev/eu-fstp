@@ -5,7 +5,9 @@
 //!   that names the missing designed API. The production agent re-points
 //!   the adapters, and the test files stay unchanged.
 //! - [`real_refusal`] tells a real refusal from the stub's
-//!   `NotImplemented` or a gap.
+//!   `NotImplemented`, a gap or the old acceptance refusal.
+//! - [`ANCHOR_CTX`] and [`RECEIPT_CTX`] pin the application contexts of
+//!   draft 19 that anchors and receipts are signed under.
 //!
 //! Links come from `fstp_audit::chain::link`, the one link function of
 //! ADR-010, which the witness must also use to recompute a prepare. The
@@ -27,19 +29,32 @@ pub(crate) mod codec;
 
 use fstp_witness::WitnessError;
 
-/// The text the interim refusal of receipt signing names (lane W2g
-/// scope, ADR-010 "Composite encoding").
+/// The text the old interim refusal of receipt signing named (ADR-010
+/// "Composite encoding"). Daniel accepted the table on 2026-10-29 (design
+/// section 21.0), so a refusal that still names it is a stub refusal.
 pub(crate) const ACCEPTANCE: &str = "ADR-010 composite encoding acceptance (Daniel)";
 
-/// Whether `e` is the W0 stub's `NotImplemented` or an adapter gap.
+/// The application context of draft 19 that every anchor signature
+/// passes: the anchor message label (ADR-010 open point 2, interim
+/// reading of lane W2g). The same value as in the `fstp-audit` tests.
+pub(crate) const ANCHOR_CTX: &[u8] = b"fstp-anchor-v1";
+
+/// The application context of every receipt signature: the receipt
+/// message label (ADR-010 open point 2, interim reading of lane W2g).
+pub(crate) const RECEIPT_CTX: &[u8] = b"fstp-receipt-v1";
+
+/// Whether `e` is a stub refusal: the W0 stub's `NotImplemented`, an
+/// adapter gap, or a refusal that still names [`ACCEPTANCE`]. The match
+/// is on the text, so the tests compile once `AwaitsAcceptance` is
+/// removed.
 pub(crate) fn is_stub_or_gap(e: &WitnessError) -> bool {
     match e {
-        WitnessError::NotImplemented(op) => !op.contains(ACCEPTANCE),
+        WitnessError::NotImplemented(_) => true,
         #[allow(
             unreachable_patterns,
-            reason = "the W0 stub has one variant; W2g adds refusal reasons"
+            reason = "W2g removes the acceptance variant once nothing returns it"
         )]
-        _ => false,
+        other => format!("{other:?}").contains(ACCEPTANCE),
     }
 }
 

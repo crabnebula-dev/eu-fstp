@@ -1,15 +1,13 @@
 //! R-CR-03: the signed messages of anchors and receipts (ADR-010
-//! "Anchors" and "Receipt"), and the interim refusal of anchor signing.
+//! "Anchors" and "Receipt").
 //!
 //! The anchor message is the ADR-010 proposal. The receipt message order
 //! is the W1e reading, since ADR-010 gives its label and fields only. Both
 //! are fixed with Daniel under ADR-010 open point 2.
 //!
-//! Lane W2g hard limit: no production code signs or verifies before
-//! Daniel accepts the composite encoding table. Anchor signing must then
-//! refuse with a typed refusal that names that acceptance. That test is
-//! an interim test. It turns red once the table is accepted, and is then
-//! replaced by a signing test.
+//! The interim test that wanted anchor signing to refuse is gone: Daniel
+//! accepted the composite encoding table on 2026-10-29 (design section
+//! 21.0). Anchor signing is tested in `signatures.rs`.
 
 #![allow(
     clippy::unwrap_used,
@@ -23,7 +21,7 @@
 mod common;
 
 use common::reference::{self as r, CELL, Chain, Hash, ReceiptFields, vectors as v};
-use common::{ACCEPTANCE, answered, api, hex32, is_acceptance_refusal};
+use common::{answered, api, hex32};
 use fstp_prop::{Gen, check, prop_assert_eq, prop_assert_ne};
 
 fn gen_hash(g: &mut Gen) -> Hash {
@@ -204,18 +202,4 @@ fn r_cr_03_anchor_and_receipt_messages_have_distinct_labels() {
         rc.map(|m| m.starts_with(r::RECEIPT_LABEL)),
     );
     assert_eq!(prefixes, (Ok(true), Ok(true)));
-}
-
-/// ADR-010 "Composite encoding", lane W2g hard limit (interim): anchor
-/// signing refuses with a typed refusal that names "ADR-010 composite
-/// encoding acceptance (Daniel)" until Daniel accepts the table. It never
-/// signs with Ed25519 alone or with the aws-lc-rs oracle.
-#[test]
-fn adr010_anchor_signing_refuses_until_the_composite_encoding_is_accepted() {
-    let key = fstp_crypto::composite::generate().expect("composite keygen");
-    let r = api::sign_anchor(&key, CELL, Chain::App, 2, &hex32(v::LINK2_APP), v::AT);
-    match r {
-        Err(e) if is_acceptance_refusal(&e) => {}
-        other => panic!("anchor signing must refuse naming {ACCEPTANCE:?}, got {other:?}"),
-    }
 }

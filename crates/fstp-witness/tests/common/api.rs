@@ -428,21 +428,290 @@ pub(crate) fn encode_file_store(records: &[FileRec]) -> Result<Vec<u8>, WitnessE
     fstp_witness::encode_file_store(&rs)
 }
 
-/// `fstp_witness::sign_receipt` of `receipt` for `cell`'s `chain` with a
-/// composite receipt key from a fixed test seed. Under the lane W2g hard
-/// limit it refuses with a refusal that names `common::ACCEPTANCE`.
-pub(crate) fn sign_receipt_with_a_fresh_key(
+// ---------------------------------------------------------------------------
+// Signatures (ADR-010 "Receipt", "Keys" and "Composite encoding",
+// R-CR-03, I-90).
+
+/// A composite signing key, `fstp_audit`'s re-export of
+/// `fstp_crypto::composite::CompositeSigningKey`.
+pub(crate) type Key = fstp_audit::CompositeSigningKey;
+
+/// The draft 19 composite signature length (ADR-010, row "Signature").
+pub(crate) const SIGNATURE_LEN: usize = fstp_audit::SIGNATURE_LEN;
+
+/// The length of the ML-DSA-65 half, first in the signature (ADR-010,
+/// row "Signature").
+pub(crate) const MLDSA_SIG_LEN: usize = 3309;
+
+/// The draft 19 composite public key length (ADR-010, row "Public key").
+pub(crate) const PUBLIC_KEY_LEN: usize = fstp_audit::PUBLIC_KEY_LEN;
+
+/// A composite key from the fixed test seed `seed`: 64 bytes of `seed`,
+/// the ML-DSA-65 seed then the Ed25519 private key (draft 19 section
+/// 4.2). Test keys only.
+pub(crate) fn key(seed: u8) -> Key {
+    Key::from_bytes(&[seed; 64]).expect("test composite key")
+}
+
+/// The encoded public key of `k`.
+pub(crate) fn public(k: &Key) -> Vec<u8> {
+    k.public_key().to_bytes().to_vec()
+}
+
+/// A composite signature made in the test over `msg` under the
+/// application context `ctx`.
+pub(crate) fn sign(k: &Key, msg: &[u8], ctx: &[u8]) -> Vec<u8> {
+    k.sign_with_context(msg, ctx)
+        .expect("composite sign")
+        .to_bytes()
+        .to_vec()
+}
+
+/// The ADR-010 anchor message, `fstp_audit::anchor::anchor_message`. Its
+/// bytes are pinned by vectors in the `fstp-audit` tests.
+pub(crate) fn anchor_message(
     cell: [u8; 16],
     chain: Chain,
-    receipt: &Receipt,
-) -> Result<Vec<u8>, WitnessError> {
-    let key = fstp_audit::CompositeSigningKey::from_bytes(&[0x5A; 64]).expect("test receipt key");
-    let fields = fstp_audit::anchor::ReceiptFields {
-        n: receipt.n,
-        link: Link(receipt.link),
-        witness_seq: receipt.witness_seq,
-        witness_link: Link(receipt.witness_link),
-        received_at: receipt.received_at,
+    n: u64,
+    link: &Hash,
+    at: i64,
+) -> Vec<u8> {
+    fstp_audit::anchor::anchor_message(CellId(cell), prod_chain(chain), n, &Link(*link), at)
+}
+
+/// The receipt message, `fstp_audit::anchor::receipt_message`. Its bytes
+/// are pinned by vectors in the `fstp-audit` tests.
+pub(crate) fn receipt_message(cell: [u8; 16], chain: Chain, r: &Receipt) -> Vec<u8> {
+    fstp_audit::anchor::receipt_message(CellId(cell), prod_chain(chain), &prod_fields(r))
+}
+
+fn prod_fields(r: &Receipt) -> fstp_audit::anchor::ReceiptFields {
+    fstp_audit::anchor::ReceiptFields {
+        n: r.n,
+        link: Link(r.link),
+        witness_seq: r.witness_seq,
+        witness_link: Link(r.witness_link),
+        received_at: r.received_at,
+    }
+}
+
+/// A signed anchor, as a prepare carries it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SignedAnchor {
+    /// The cell.
+    pub(crate) cell: [u8; 16],
+    /// The chain.
+    pub(crate) chain: Chain,
+    /// The head row number.
+    pub(crate) n: u64,
+    /// The head link.
+    pub(crate) link: Hash,
+    /// UTC microseconds.
+    pub(crate) at: i64,
+    /// The composite signature bytes.
+    pub(crate) signature: Vec<u8>,
+}
+
+impl SignedAnchor {
+    /// The anchor of `(n, link)` at `at`, signed in the test with `k`
+    /// under `ctx`.
+    pub(crate) fn signed(
+        k: &Key,
+        ctx: &[u8],
+        cell: [u8; 16],
+        chain: Chain,
+        n: u64,
+        link: Hash,
+        at: i64,
+    ) -> SignedAnchor {
+        let signature = sign(k, &anchor_message(cell, chain, n, &link, at), ctx);
+        SignedAnchor {
+            cell,
+            chain,
+            n,
+            link,
+            at,
+            signature,
+        }
+    }
+
+    fn prod(&self) -> Anchor {
+        Anchor {
+            cell: CellId(self.cell),
+            chain: prod_chain(self.chain),
+            n: self.n,
+            link: Link(self.link),
+            at: self.at,
+            signature: self.signature.clone(),
+        }
+    }
+}
+
+/// A signed receipt, as `fstp_witness::sign_receipt` returns it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SignedReceipt {
+    /// The cell.
+    pub(crate) cell: [u8; 16],
+    /// The chain.
+    pub(crate) chain: Chain,
+    /// The signed fields.
+    pub(crate) fields: Receipt,
+    /// The witness's composite signature bytes.
+    pub(crate) signature: Vec<u8>,
+}
+
+impl SignedReceipt {
+    fn prod(&self) -> fstp_audit::anchor::Receipt {
+        fstp_audit::anchor::Receipt {
+            cell: CellId(self.cell),
+            chain: prod_chain(self.chain),
+            fields: prod_fields(&self.fields),
+            signature: self.signature.clone(),
+        }
+    }
+}
+
+/// `fstp_witness::sign_receipt` of `fields` for `cell`'s `chain` with
+/// the witness's composite receipt key `k`. It signs under the receipt
+/// context and refuses row 0, witness sequence 0, or a composite signer
+/// failure, as `fstp_witness` does.
+pub(crate) fn sign_receipt(
+    k: &Key,
+    cell: [u8; 16],
+    chain: Chain,
+    fields: &Receipt,
+) -> Result<SignedReceipt, WitnessError> {
+    fstp_witness::sign_receipt(k, CellId(cell), prod_chain(chain), &prod_fields(fields)).map(|r| {
+        SignedReceipt {
+            cell: r.cell.0,
+            chain: from_prod_chain(r.chain),
+            fields: Receipt {
+                n: r.fields.n,
+                link: r.fields.link.0,
+                witness_seq: r.fields.witness_seq,
+                witness_link: r.fields.witness_link.0,
+                received_at: r.fields.received_at,
+            },
+            signature: r.signature,
+        }
+    })
+}
+
+/// `fstp_witness::receipt::check_anchor_signature` of `a` under the
+/// chain's anchor key history `keys`. `Ok` only when one key of the
+/// history verifies both halves under the anchor context (I-90).
+pub(crate) fn check_anchor_signature(
+    a: &SignedAnchor,
+    keys: &[Vec<u8>],
+) -> Result<(), WitnessError> {
+    fstp_witness::receipt::check_anchor_signature(&a.prod(), keys)
+}
+
+/// One event row appended to an empty chain through
+/// `fstp_audit::chain::ChainWriter`.
+#[derive(Clone, Debug)]
+pub(crate) struct OneRow {
+    /// The cell.
+    pub(crate) cell: [u8; 16],
+    /// The chain.
+    pub(crate) chain: Chain,
+    /// The genesis head it extends.
+    pub(crate) prev: (u64, Hash),
+    /// Its stored hash.
+    pub(crate) stored_hash: Hash,
+    /// Its row number, 1.
+    pub(crate) n: u64,
+    /// Its link.
+    pub(crate) link: Hash,
+    row: fstp_audit::StoredRow,
+}
+
+/// The first row of `cell`'s `chain`: an event at `at`.
+pub(crate) fn one_row(cell: [u8; 16], chain: Chain, at: i64) -> OneRow {
+    let mut w = fstp_audit::ChainWriter::genesis(CellId(cell), prod_chain(chain));
+    let prev = w.head();
+    let row = w
+        .append(
+            CellId(cell),
+            prod_chain(chain),
+            at,
+            RowKind::Event {
+                body: b"login".to_vec(),
+            },
+            None,
+        )
+        .expect("an event row");
+    OneRow {
+        cell,
+        chain,
+        prev: (prev.0, prev.1.0),
+        stored_hash: row.row.stored_hash,
+        n: row.row.n,
+        link: row.link.0,
+        row,
+    }
+}
+
+impl OneRow {
+    /// The prepare of this row, carrying `anchor`.
+    pub(crate) fn prepare(&self, anchor: &SignedAnchor) -> Prepare {
+        Prepare {
+            cell: self.cell,
+            chain: self.chain,
+            prev: self.prev,
+            stored_hashes: vec![self.stored_hash],
+            n: anchor.n,
+            link: anchor.link,
+            at: anchor.at,
+            signature: anchor.signature.clone(),
+        }
+    }
+}
+
+/// What `fstp_audit::verify` answered, in the terms these tests read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// The chain verified, with this many rows.
+    Verified(u64),
+    /// `Tamper::BadSignature { n }`.
+    BadSignature(u64),
+    /// Anything else, as text.
+    Other(String),
+}
+
+/// `fstp_audit::verify` over `row`, with `anchor` and `receipt` in both
+/// stored copies: the `audit.anchor` row and the witness log's prepare
+/// record. The anchor key history is `anchor_keys`, and the pinned
+/// witness keys are `witness_keys`.
+pub(crate) fn verify_one_row(
+    row: &OneRow,
+    anchor: &SignedAnchor,
+    receipt: &SignedReceipt,
+    anchor_keys: &[Vec<u8>],
+    witness_keys: &[Vec<u8>],
+) -> Verdict {
+    let anchor_row = fstp_audit::AnchorRow {
+        anchor: anchor.prod(),
+        receipt: receipt.prod(),
     };
-    fstp_witness::sign_receipt(&key, CellId(cell), prod_chain(chain), &fields).map(|r| r.signature)
+    let rows = [row.row.clone()];
+    let anchors = [anchor_row.clone()];
+    let witness = [fstp_audit::WitnessRecord::Prepare(anchor_row)];
+    let view = fstp_audit::ChainView {
+        cell: CellId(row.cell),
+        chain: prod_chain(row.chain),
+        rows: &rows,
+        ledger: &[],
+        anchors: &anchors,
+        witness: &witness,
+        anchor_keys,
+        witness_keys,
+    };
+    match fstp_audit::verify::verify(&view) {
+        Ok(v) => Verdict::Verified(v.rows),
+        Err(fstp_audit::AuditError::Tamper(fstp_audit::Tamper::BadSignature { n })) => {
+            Verdict::BadSignature(n)
+        }
+        Err(e) => Verdict::Other(format!("{e:?}")),
+    }
 }

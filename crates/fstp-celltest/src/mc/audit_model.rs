@@ -51,10 +51,13 @@
 //!   stay unchanged. `Production::verify_opaque` passes the signatures
 //!   and keys of [`OpaqueSigs`], the ledger, the link column and the
 //!   witness log, and maps `Ok` and `Tamper` to answers.
-//! - Three seams stay, behind the ADR-010 composite encoding acceptance
-//!   (lane W2g hard limit): [`ANCHOR_SIGN_SEAM`], [`RECEIPT_SIGN_SEAM`]
-//!   and the signature checks of [`VERIFY_SEAM`]. Production signing and
-//!   verification refuse until Daniel accepts the table.
+//! - Lane W2g closed its last three seams once Daniel accepted the
+//!   ADR-010 composite encoding table on 2026-10-29. [`prod_sign_anchor`]
+//!   and [`prod_sign_receipt`] return production composite signatures,
+//!   and `fstp_audit::verify` checks every signature. [`ANCHOR_SIGN_SEAM`],
+//!   [`RECEIPT_SIGN_SEAM`] and [`VERIFY_SEAM`] now name only a refusal
+//!   that the model never provokes, so each stops a run as a backend that
+//!   did not answer.
 //! - Lane dsa merged on 2026-10-29. Its two seams are gone:
 //!   `fstp_crypto::composite::generate` succeeds, and
 //!   [`prod_composite_public_key`] returns `key.public_key().to_bytes()`.
@@ -85,20 +88,22 @@ use crate::reference::hybrid::OracleError;
 /// answer.
 pub const STORED_HASH_SEAM: &str = "fstp_celltest::mc::audit_model::Production::stored_hash: fstp_audit::chain::stored_hash refused the row (a kind 1 row without its entry, or a body over its limit)";
 
-/// `fstp_audit::verify` checks rows, ledger, anchor rows and the witness
-/// log since lane W2g, but every signature check refuses until Daniel
-/// accepts the ADR-010 composite encoding table (lane W2g hard limit).
-/// `Production::verify_opaque` answers `Ok` and `Tamper`, and maps that
-/// refusal to this seam.
-pub const VERIFY_SEAM: &str = "fstp_celltest::mc::audit_model::Production::verify: fstp_audit::verify refuses every signature check until ADR-010 composite encoding acceptance (Daniel) (lane W2g hard limit)";
+/// Not a seam since lane W2g: `fstp_audit::verify` checks rows, ledger,
+/// anchor rows, the witness log and every signature.
+/// `Production::verify_opaque` answers `Ok` and `Tamper`. Any other
+/// refusal stops the run as a backend that did not answer, under this
+/// name.
+pub const VERIFY_SEAM: &str = "fstp_celltest::mc::audit_model::Production::verify: fstp_audit::verify refused with neither Ok nor a tamper";
 
-/// `fstp_audit::anchor::sign_anchor` refuses until Daniel accepts the
-/// ADR-010 composite encoding table (lane W2g hard limit).
-pub const ANCHOR_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_anchor: fstp_audit::anchor::sign_anchor refuses until ADR-010 composite encoding acceptance (Daniel) (lane W2g hard limit)";
+/// Not a seam since lane W2g: `fstp_audit::anchor::sign_anchor` refused
+/// an anchor. It refuses only row 0, which the model never signs, or a
+/// failed composite signer. Either stops the run.
+pub const ANCHOR_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_anchor: fstp_audit::anchor::sign_anchor refused (row 0, or the composite signer failed)";
 
-/// `fstp_witness::sign_receipt` refuses until Daniel accepts the ADR-010
-/// composite encoding table (lane W2g hard limit).
-pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_receipt: fstp_witness::sign_receipt refuses until ADR-010 composite encoding acceptance (Daniel) (lane W2g hard limit)";
+/// Not a seam since lane W2g: `fstp_witness::sign_receipt` refused a
+/// receipt. It refuses only row 0 or witness sequence 0, which the model
+/// never signs, or a failed composite signer. Either stops the run.
+pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_receipt: fstp_witness::sign_receipt refused (row 0, witness sequence 0, or the composite signer failed)";
 
 /// No crate has the reconciliation task of ADR-004, and neither the
 /// `Custody` trait nor the custody simulator's usage log carries a
@@ -115,15 +120,14 @@ pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: 
 pub const KEY_OPS_SEAM: &str = "fstp_celltest::mc::audit_model::prod_cell_custody_round: no cell keystore makes custody calls with request ids and writes KeyOp events to its chain, and no reader decodes them (ADR-004 Reconciliation, lane W2f)";
 
 /// A production refusal as `NotImplemented`: the stub's own operation, or
-/// `op` for any other refusal, such as the one that waits on the ADR-010
-/// composite encoding acceptance.
+/// `op` for any other refusal, such as a failed composite signer.
 fn ni(e: AuditError, op: &'static str) -> NotImplemented {
     match e {
         AuditError::NotImplemented(op) => NotImplemented::new(op),
         AuditError::Tamper(_)
         | AuditError::Decode(_)
         | AuditError::Invalid(_)
-        | AuditError::AwaitsAcceptance(_) => NotImplemented::new(op),
+        | AuditError::Signing(_) => NotImplemented::new(op),
     }
 }
 
@@ -144,8 +148,8 @@ pub fn prod_kind(k: &RefRowKind) -> RowKind {
 }
 
 /// A production composite signature over the ADR-010 anchor message,
-/// through `fstp_audit::anchor::sign_anchor`. It refuses with
-/// [`ANCHOR_SIGN_SEAM`] until Daniel accepts the composite encoding table.
+/// through `fstp_audit::anchor::sign_anchor`, under the anchor context of
+/// ADR-010 open point 2. A refusal is [`ANCHOR_SIGN_SEAM`].
 pub fn prod_sign_anchor(
     key: &fstp_crypto::composite::CompositeSigningKey,
     cell: CellBytes,
@@ -160,8 +164,8 @@ pub fn prod_sign_anchor(
 }
 
 /// A production composite signature over the receipt message, through
-/// `fstp_witness::sign_receipt`. It refuses with [`RECEIPT_SIGN_SEAM`]
-/// until Daniel accepts the composite encoding table.
+/// `fstp_witness::sign_receipt`, under the receipt context of ADR-010
+/// open point 2. A refusal is [`RECEIPT_SIGN_SEAM`].
 pub fn prod_sign_receipt(
     key: &fstp_crypto::composite::CompositeSigningKey,
     cell: CellBytes,
@@ -654,14 +658,90 @@ const ORACLE_SIGN_FAILED: &str =
 /// anchorer core and the verifier, and `fstp_witness` for the witness
 /// core (lane W2g).
 ///
-/// Signing and signature checks refuse with
-/// [`fstp_audit::COMPOSITE_ENCODING_ACCEPTANCE`] until Daniel accepts the
-/// ADR-010 composite encoding table (lane W2g hard limit). So
-/// [`AuditBackend::sign_view`], [`AuditBackend::verify`] and
-/// [`AuditBackend::verify_opaque`] answer `NotImplemented` naming it for
-/// every view that holds a row, an anchor row or a witness record.
+/// Since Daniel accepted the ADR-010 composite encoding table, it signs
+/// and checks for real. [`AuditBackend::sign_view`] signs every anchor
+/// with `fstp_audit::anchor::sign_anchor` and every receipt with
+/// `fstp_witness::sign_receipt`, under the composite keys of
+/// [`ProdSigner`]. Then [`AuditBackend::verify_opaque`] runs
+/// `fstp_audit::verify` over those signatures and keys, and
+/// [`AuditBackend::verify`] reaches it by translation.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Production;
+
+/// Which key of [`ProdSigner`] signs a message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SignerKey {
+    /// The anchor key of every chain.
+    Anchor,
+    /// The witness key.
+    Witness,
+}
+
+/// Signatures by key and message.
+type SignatureMemo = std::collections::HashMap<(SignerKey, Vec<u8>), Vec<u8>>;
+
+/// The production backend's two composite keys, generated once per
+/// process, and every signature made with them, by key and message.
+///
+/// M-AUDIT verifies many states, and most share their anchors and
+/// receipts. Fresh keys and signatures for each call kept the production
+/// run going for over an hour in a debug build. With this memo it takes
+/// about 20 seconds. A composite signature
+/// stays valid for its message and key, so one signature per message
+/// serves every view. Every check still runs `fstp_audit::verify` over
+/// production signatures. The keys never leave the backend.
+struct ProdSigner {
+    anchor: fstp_crypto::composite::CompositeSigningKey,
+    witness: fstp_crypto::composite::CompositeSigningKey,
+    memo: std::sync::Mutex<SignatureMemo>,
+}
+
+static PROD_SIGNER: std::sync::OnceLock<Option<ProdSigner>> = std::sync::OnceLock::new();
+
+/// The process's [`ProdSigner`]. A failed key generation is
+/// [`PROD_KEYGEN_FAILED`].
+fn prod_signer() -> Result<&'static ProdSigner, NotImplemented> {
+    PROD_SIGNER
+        .get_or_init(|| {
+            Some(ProdSigner {
+                anchor: fstp_crypto::composite::generate().ok()?,
+                witness: fstp_crypto::composite::generate().ok()?,
+                memo: std::sync::Mutex::new(std::collections::HashMap::new()),
+            })
+        })
+        .as_ref()
+        .ok_or_else(|| NotImplemented::new(PROD_KEYGEN_FAILED))
+}
+
+impl ProdSigner {
+    /// The signature of `message` under `key`, made by `sign` the first
+    /// time only. A refusal is not kept, so it repeats on the next call.
+    fn memo(
+        &self,
+        key: SignerKey,
+        message: Vec<u8>,
+        sign: impl FnOnce() -> Result<Vec<u8>, NotImplemented>,
+    ) -> Result<Vec<u8>, NotImplemented> {
+        let slot = (key, message);
+        // A poisoned lock only follows a panic in another test thread.
+        // The map holds whole entries only, so it stays usable.
+        let cached = self
+            .memo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&slot)
+            .cloned();
+        if let Some(sig) = cached {
+            return Ok(sig);
+        }
+        let sig = sign()?;
+        self.memo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(slot, sig.clone());
+        Ok(sig)
+    }
+}
 
 /// Not a seam: the production anchorer core refused a step that the
 /// model drives in order. It stops the run as a backend that did not
@@ -854,8 +934,9 @@ impl AuditBackend for Production {
         received_at: i64,
     ) -> Result<PrepareAnswer, NotImplemented> {
         let mut w = prod_witness(st, cell, chain);
-        // The core reads no signature (lane W2g hard limit), so the
-        // reference prepare's symbolic anchor carries none.
+        // The core reads no signature: the service checks the anchor
+        // before it. So the reference prepare's symbolic anchor carries
+        // none.
         let prepare = fstp_audit::Prepare {
             prev: (p.prev.0, Link(p.prev.1)),
             stored_hashes: p.stored_hashes.clone(),
@@ -988,35 +1069,56 @@ impl AuditBackend for Production {
         verify_by_translation(self, view, keys)
     }
 
+    /// Signs with the process's [`ProdSigner`] keys. Each message is
+    /// signed once, through `fstp_audit::anchor::sign_anchor` or
+    /// `fstp_witness::sign_receipt`, and later views reuse that signature.
     fn sign_view(&self, view: &RefChainView, keys: &Keys) -> Result<OpaqueSigs, NotImplemented> {
         let _ = keys;
-        let keygen = |_| NotImplemented::new(PROD_KEYGEN_FAILED);
-        let anchor_key = fstp_crypto::composite::generate().map_err(keygen)?;
-        let witness_key = fstp_crypto::composite::generate().map_err(keygen)?;
+        let signer = prod_signer()?;
+        let anchor_key = &signer.anchor;
+        let witness_key = &signer.witness;
         let sign_row = |row: &RefAnchorRow| {
             let a = &row.anchor;
             let rc = &row.receipt;
+            let amsg = fstp_audit::anchor::anchor_message(
+                CellId(a.cell),
+                prod_chain(a.chain),
+                a.fields.n,
+                &Link(a.fields.link),
+                a.fields.at,
+            );
+            let rmsg = fstp_audit::anchor::receipt_message(
+                CellId(rc.cell),
+                prod_chain(rc.chain),
+                &prod_receipt_fields(&rc.fields),
+            );
             Ok(OpaqueRowSigs {
-                anchor: prod_sign_anchor(
-                    &anchor_key,
-                    a.cell,
-                    a.chain,
-                    a.fields.n,
-                    &a.fields.link,
-                    a.fields.at,
-                )?,
-                receipt: prod_sign_receipt(&witness_key, rc.cell, rc.chain, &rc.fields)?,
+                anchor: signer.memo(SignerKey::Anchor, amsg, || {
+                    prod_sign_anchor(
+                        anchor_key,
+                        a.cell,
+                        a.chain,
+                        a.fields.n,
+                        &a.fields.link,
+                        a.fields.at,
+                    )
+                })?,
+                receipt: signer.memo(SignerKey::Witness, rmsg, || {
+                    prod_sign_receipt(witness_key, rc.cell, rc.chain, &rc.fields)
+                })?,
             })
         };
-        let other = |k: &fstp_crypto::composite::CompositeSigningKey| {
-            k.sign(OTHER_MESSAGE)
-                .map(|s| s.to_bytes().to_vec())
-                .map_err(keygen)
+        let other = |role: SignerKey, k: &fstp_crypto::composite::CompositeSigningKey| {
+            signer.memo(role, OTHER_MESSAGE.to_vec(), || {
+                k.sign(OTHER_MESSAGE)
+                    .map(|s| s.to_bytes().to_vec())
+                    .map_err(|_| NotImplemented::new(PROD_KEYGEN_FAILED))
+            })
         };
         let (anchors, prepares) = signed_rows(view);
         Ok(OpaqueSigs {
-            anchor_keys: vec![prod_composite_public_key(&anchor_key)?],
-            witness_keys: vec![prod_composite_public_key(&witness_key)?],
+            anchor_keys: vec![prod_composite_public_key(anchor_key)?],
+            witness_keys: vec![prod_composite_public_key(witness_key)?],
             anchors: anchors
                 .into_iter()
                 .map(sign_row)
@@ -1026,15 +1128,15 @@ impl AuditBackend for Production {
                 .map(sign_row)
                 .collect::<Result<_, _>>()?,
             other: OpaqueRowSigs {
-                anchor: other(&anchor_key)?,
-                receipt: other(&witness_key)?,
+                anchor: other(SignerKey::Anchor, anchor_key)?,
+                receipt: other(SignerKey::Witness, witness_key)?,
             },
         })
     }
 
     /// `fstp_audit::verify::verify` over `view`, with every signature and
-    /// key read from `sigs`. `Ok` and `Tamper` are answers. The refusal
-    /// pending the composite encoding acceptance is `NotImplemented`.
+    /// key read from `sigs`. `Ok` and `Tamper` are answers. Any other
+    /// refusal is `NotImplemented` naming [`VERIFY_SEAM`].
     fn verify_opaque(
         &self,
         view: &RefChainView,

@@ -18,12 +18,12 @@
 //!   prepare from one never received. ADR-010 refuses a *new* prepare
 //!   while one is outstanding, and a retransmit is not new.
 //!
-//! The core reads no signature. The anchor signature check and the
-//! receipt signature both wait on Daniel's acceptance of the composite
-//! encoding (ADR-010, lane W2g hard limit). The service runs
-//! [`crate::receipt::check_anchor_signature`] before [`ChainWitness::prepare`]
-//! and [`crate::receipt::sign_receipt`] after it, and both refuse today.
-//! So no receipt leaves the witness unsigned.
+//! The core reads no signature. The service runs
+//! [`crate::receipt::check_anchor_signature`] before
+//! [`ChainWitness::prepare`], and signs the fields it returns with
+//! [`crate::receipt::sign_receipt`]. A prepare whose anchor does not
+//! verify never reaches the core, and no receipt leaves the witness
+//! unsigned.
 
 use std::collections::BTreeSet;
 

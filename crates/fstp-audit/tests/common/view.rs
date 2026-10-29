@@ -19,8 +19,11 @@
 //!   row, a deleted or changed anchor row, a deleted withdrawal and an
 //!   abort of a present head. Each gets its exact tamper, so a missed one
 //!   fails whatever the signature state.
-//! - Only a changed signature byte needs the signature path, so for those
-//!   only "never `Ok`" is required.
+//! - Only a changed signature byte needs the signature path. Over
+//!   placeholder signatures [`apply`] requires only "never `Ok`" for it,
+//!   since the honest chain is unsigned too. Over composite signatures
+//!   [`apply_signed`] requires exactly `BadSignature { n }` of its head
+//!   (ADR-010 "Verifier").
 
 use fstp_audit::Tamper;
 use fstp_prop::Gen;
@@ -112,9 +115,10 @@ pub(crate) struct View {
 pub(crate) enum Sigs {
     /// Zero bytes of the composite signature length. No key verifies them.
     Placeholder,
-    /// Real composite signatures over the ADR-010 proposed messages, made
-    /// in the test with `fstp_crypto::composite`. The verifier must still
-    /// refuse them until Daniel accepts the composite encoding.
+    /// Real composite signatures over the ADR-010 messages, made in the
+    /// test with `fstp_crypto::composite` under the pinned application
+    /// contexts `common::ANCHOR_CTX` and `common::RECEIPT_CTX`. The
+    /// verifier must accept them.
     Composite {
         /// The chain's anchor key.
         anchor: Box<fstp_crypto::composite::CompositeSigningKey>,
@@ -135,9 +139,7 @@ impl Sigs {
     fn sign_anchor(&self, msg: &[u8]) -> Vec<u8> {
         match self {
             Sigs::Placeholder => vec![0; fstp_crypto::composite::SIGNATURE_LEN],
-            Sigs::Composite { anchor, .. } => {
-                anchor.sign(msg).expect("anchor sign").to_bytes().to_vec()
-            }
+            Sigs::Composite { anchor, .. } => super::signing::sign(anchor, msg, super::ANCHOR_CTX),
         }
     }
 
@@ -145,7 +147,7 @@ impl Sigs {
         match self {
             Sigs::Placeholder => vec![0; fstp_crypto::composite::SIGNATURE_LEN],
             Sigs::Composite { witness, .. } => {
-                witness.sign(msg).expect("receipt sign").to_bytes().to_vec()
+                super::signing::sign(witness, msg, super::RECEIPT_CTX)
             }
         }
     }
@@ -771,6 +773,23 @@ pub(crate) fn apply(v: &View, m: Mutation) -> Option<(View, Expect)> {
             });
             Expect::Exact(Tamper::AbortedButPresent { n: a.n })
         }
+    };
+    Some((w, expect))
+}
+
+/// [`apply`] over a view whose anchors and receipts carry composite
+/// signatures ([`Sigs::Composite`]). The honest view then verifies, so a
+/// changed signature byte of anchor row `k` must get exactly
+/// `BadSignature { n }` of its head. Every other verdict is [`apply`]'s.
+pub(crate) fn apply_signed(v: &View, m: Mutation) -> Option<(View, Expect)> {
+    let (w, expect) = apply(v, m)?;
+    let expect = match m {
+        Mutation::AnchorSignature(k) | Mutation::ReceiptSignature(k) => {
+            Expect::Exact(Tamper::BadSignature {
+                n: v.anchors.get(k)?.anchor.n,
+            })
+        }
+        _ => expect,
     };
     Some((w, expect))
 }

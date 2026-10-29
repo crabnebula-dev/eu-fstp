@@ -1,22 +1,22 @@
 //! I-24: `fstp_audit::verify` (design section 7.1, ADR-010 "Verifier").
 //!
-//! Lane W2g hard limit: the signature checks inside the verifier refuse
-//! until Daniel accepts the composite encoding table. The verifier must
-//! still fail closed. With signatures unchecked it never answers `Ok`.
+//! Daniel accepted the ADR-010 composite encoding table on 2026-10-29
+//! (design section 21.0), so the verifier checks every anchor and receipt
+//! signature. It answers `Ok` only for an untampered, fully signed chain.
+//! The signature tests themselves are in `signatures.rs`.
 //!
 //! Readings these tests build on (see `common::view`):
 //!
 //! - Row order, ledger coverage, stored hashes and links need no key. A
 //!   change there is reported as its tamper before any signature check.
-//! - An honest chain gets the interim refusal that names the acceptance,
-//!   never `Ok` and never a tamper.
 //! - Every structural change to the tail, the anchor rows and the witness
-//!   log gets its exact tamper too. A changed signature byte gets
-//!   anything but `Ok` or a stub refusal.
+//!   log gets its exact tamper too. Over placeholder signatures a changed
+//!   signature byte gets anything but `Ok` or a stub refusal.
+//! - An honest chain whose anchors carry placeholder signatures is
+//!   `BadSignature`, never `Ok`.
 //!
-//! Red until lane W2g lands the verifier with its designed inputs: the
-//! stored link column, the ledger entries, the witness log with its
-//! `Abort` and `InDoubtAbsent` records, and the key histories.
+//! Lane W2g landed the verifier's signature step. A refusal that still
+//! names the old acceptance stub fails every test here.
 
 #![allow(
     clippy::unwrap_used,
@@ -31,7 +31,7 @@ mod common;
 
 use common::reference::{CELL, Chain, OTHER_CELL};
 use common::view::{self, Expect, Mutation, Sigs, View};
-use common::{api, is_acceptance_refusal, is_stub_or_gap};
+use common::{api, is_stub_or_gap};
 use fstp_audit::{AuditError, Tamper};
 use fstp_prop::{Config, Gen, check, check_with, prop_assert};
 
@@ -39,14 +39,12 @@ fn gen_chain(g: &mut Gen) -> Chain {
     *g.pick(&Chain::ALL)
 }
 
-/// `Ok` when the verifier gave the interim acceptance refusal.
-fn refuses_pending_acceptance(v: &View) -> Result<(), String> {
-    match api::verify(v) {
-        Err(e) if is_acceptance_refusal(&e) => Ok(()),
-        other => Err(format!(
-            "an honest chain must get the acceptance refusal, got {other:?}"
-        )),
-    }
+/// The heads that the witness log prepared, committed or withdrawn.
+fn prepared(v: &View) -> Vec<u64> {
+    common::signing::prepared_heads(v)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect()
 }
 
 /// `Ok` when the verifier's answer for `v` meets `expect`.
@@ -86,47 +84,56 @@ fn keyless(m: Mutation) -> bool {
     )
 }
 
-/// I-24, lane W2g hard limit: an honest chain of either chain, with
-/// aborted and in-doubt batches at the witness, never verifies as `Ok`
-/// while the signature checks refuse. It gets the refusal that names the
-/// acceptance, and no tamper.
+/// I-90, R-CR-03: an honest chain of either chain, with aborted and
+/// in-doubt batches at the witness, whose anchors and receipts carry
+/// placeholder signatures that no key made, is `BadSignature` at one of
+/// its prepared heads. It is never `Ok`. This replaces the interim test
+/// that wanted the acceptance refusal.
 #[test]
-fn i24_verify_refuses_every_honest_chain_while_signatures_are_unchecked() {
+fn i90_verify_refuses_an_honest_chain_with_placeholder_signatures() {
     check(
-        "i24_verify_refuses_every_honest_chain_while_signatures_are_unchecked",
+        "i90_verify_refuses_an_honest_chain_with_placeholder_signatures",
         |g| {
             let chain = gen_chain(g);
-            refuses_pending_acceptance(&view::gen_view(g, CELL, chain, Sigs::Placeholder))
+            let v = view::gen_view(g, CELL, chain, Sigs::Placeholder);
+            let got = api::verify(&v);
+            prop_assert!(
+                matches!(&got, Err(AuditError::Tamper(Tamper::BadSignature { n }))
+                    if prepared(&v).contains(n)),
+                "unsigned anchors got {got:?}"
+            );
+            Ok(())
         },
     );
 }
 
-/// I-90, lane W2g hard limit: even anchors and receipts signed in the
-/// test with real composite keys over the ADR-010 proposed messages are
-/// refused, since no production code verifies before the acceptance.
-/// Interim: once the table is accepted this chain must verify instead.
+/// I-24, I-90, R-CR-03: an honest chain of either chain, with aborted
+/// and in-doubt batches at the witness, whose anchors and receipts are
+/// composite-signed under the pinned contexts, verifies. The answer
+/// counts every row. This replaces the interim test that wanted the
+/// acceptance refusal.
 #[test]
-fn i90_verify_refuses_composite_signed_chains_until_acceptance() {
+fn i24_verify_accepts_every_honest_signed_chain() {
     check_with(
-        "i90_verify_refuses_composite_signed_chains_until_acceptance",
-        Config::default().with_cases(12),
+        "i24_verify_accepts_every_honest_signed_chain",
+        Config::default().with_cases(16),
         |g| {
             let chain = gen_chain(g);
-            refuses_pending_acceptance(&view::gen_view(g, CELL, chain, Sigs::composite()))
+            let v = view::gen_view(g, CELL, chain, Sigs::composite());
+            let got = api::verify(&v);
+            let rows = u64::try_from(v.rows.len()).expect("small view");
+            prop_assert!(got == Ok(rows), "an honest signed chain got {got:?}");
+            Ok(())
         },
     );
 }
 
-/// I-24: an empty chain with an empty witness log is not tampered.
-/// Whatever the verifier answers, it is no tamper and no stub refusal.
+/// I-24: an empty chain with an empty witness log verifies with no rows.
 #[test]
 fn i24_verify_reports_no_tamper_for_an_empty_chain() {
     let v = view::Builder::new(CELL, Chain::App, Sigs::Placeholder).finish();
     let got = api::verify(&v);
-    assert!(
-        matches!(&got, Ok(0)) || matches!(&got, Err(e) if is_acceptance_refusal(e)),
-        "an empty chain got {got:?}"
-    );
+    assert_eq!(got, Ok(0), "an empty chain got {got:?}");
 }
 
 /// I-24, ADR-010 "Verifier": a change to rows or ledger entries that

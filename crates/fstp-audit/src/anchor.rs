@@ -9,21 +9,36 @@
 //!
 //! The anchor message is the ADR-010 proposal. The receipt message order
 //! is the W1e reading, since ADR-010 gives only its label and fields. Both
-//! are open under ADR-010 open point 2. Signing refuses with
-//! [`AuditError::AwaitsAcceptance`] until Daniel accepts the composite
-//! encoding table (lane W2g hard limit).
+//! are open under ADR-010 open point 2.
+//!
+//! Signatures follow the ADR-010 "Composite encoding" table, which Daniel
+//! accepted on 2026-10-29. Each message is signed with
+//! `Composite-ML-DSA.Sign` of draft 19 under its own application context:
+//! [`ANCHOR_CONTEXT`] for anchors and [`RECEIPT_CONTEXT`] for receipts.
+//! Both are interim readings of lane W2g under ADR-010 open point 2. The
+//! label inside the message and the context both separate the two kinds,
+//! so an anchor signature never verifies as a receipt signature, and the
+//! reverse. A signature checks out only when both halves verify (I-90).
+
+use fstp_crypto::composite;
 
 use crate::chain::{ChainId, Link};
 use crate::codec::Reader;
 use crate::{
-    AuditError, COMPOSITE_ENCODING_ACCEPTANCE, CellId, CompositeSigningKey, DecodeError, Invalid,
-    SIGNATURE_LEN,
+    AuditError, CellId, CompositeSigningKey, DecodeError, Invalid, PUBLIC_KEY_LEN, SIGNATURE_LEN,
 };
 
 /// The anchor message label (ADR-010 proposal).
 pub const ANCHOR_LABEL: &[u8] = b"fstp-anchor-v1";
 /// The receipt message label (ADR-010).
 pub const RECEIPT_LABEL: &[u8] = b"fstp-receipt-v1";
+/// The draft 19 application context `ctx` of every anchor signature.
+/// Interim reading of lane W2g, recorded in ADR-010 (row "Application
+/// context of platform messages", open point 2): the anchor label.
+pub const ANCHOR_CONTEXT: &[u8] = b"fstp-anchor-v1";
+/// The draft 19 application context `ctx` of every receipt signature.
+/// Interim reading of lane W2g, as [`ANCHOR_CONTEXT`]: the receipt label.
+pub const RECEIPT_CONTEXT: &[u8] = b"fstp-receipt-v1";
 /// The anchor message length: 14 + 16 + 1 + 8 + 32 + 8.
 pub const ANCHOR_MESSAGE_LEN: usize = 79;
 /// The receipt message length: 15 + 16 + 1 + 8 + 32 + 8 + 32 + 8.
@@ -139,18 +154,18 @@ pub fn receipt_message(cell: CellId, chain: ChainId, r: &ReceiptFields) -> Vec<u
     out
 }
 
-/// Signs the anchor of `cell`'s `chain` at head `(n, link)` with the
-/// chain's composite `Anchor` key (R-CR-03).
+/// Signs the anchor of `cell`'s `chain` at head `(n, link)` at `at` with
+/// the chain's composite `Anchor` key (R-CR-03, ADR-010 "Anchors").
 ///
-/// Lane W2g hard limit (ADR-010 "Composite encoding"): no production code
-/// signs before Daniel accepts the composite encoding table. This refuses
-/// for every input, reads no key byte, and never falls back to Ed25519
-/// alone or to the aws-lc-rs oracle.
+/// The signature is `Composite-ML-DSA.Sign` of draft 19 over
+/// [`anchor_message`] under [`ANCHOR_CONTEXT`], through
+/// `fstp_crypto::composite`. Both halves sign. Custody of `key` stays with
+/// the caller (lanes W2f and W3a).
 ///
 /// # Errors
 ///
-/// [`AuditError::AwaitsAcceptance`] naming
-/// [`COMPOSITE_ENCODING_ACCEPTANCE`].
+/// [`Invalid::RowNumberZero`] when `n` is 0, since rows start at 1. Then
+/// [`AuditError::Signing`] when the composite signer gives no signature.
 pub fn sign_anchor(
     key: &CompositeSigningKey,
     cell: CellId,
@@ -159,8 +174,48 @@ pub fn sign_anchor(
     link: &Link,
     at: i64,
 ) -> Result<Anchor, AuditError> {
-    let _ = (key, cell, chain, n, link, at);
-    Err(AuditError::AwaitsAcceptance(COMPOSITE_ENCODING_ACCEPTANCE))
+    if n == 0 {
+        return Err(Invalid::RowNumberZero.into());
+    }
+    let message = anchor_message(cell, chain, n, link, at);
+    let signature = key
+        .sign_with_context(&message, ANCHOR_CONTEXT)
+        .map_err(AuditError::Signing)?;
+    Ok(Anchor {
+        cell,
+        chain,
+        n,
+        link: *link,
+        at,
+        signature: signature.to_bytes().to_vec(),
+    })
+}
+
+/// Whether `sig` is a composite signature over `message` under the
+/// context `ctx` by one key of `keys` (I-90: both halves verify). A
+/// signature or key of another length never verifies, and nothing
+/// panics on one.
+fn signed_by_any(keys: &[Vec<u8>], message: &[u8], ctx: &[u8], sig: &[u8]) -> bool {
+    sig.len() == SIGNATURE_LEN
+        && keys
+            .iter()
+            .filter(|k| k.len() == PUBLIC_KEY_LEN)
+            .any(|k| composite::verify_with_context(k, message, ctx, sig).is_ok())
+}
+
+/// Whether the anchor's signature verifies over its [`anchor_message`]
+/// under [`ANCHOR_CONTEXT`] and one key of `anchor_keys`, the chain's
+/// anchor key history (ADR-010 "Keys"). Old keys stay in the history, so
+/// any of them may have signed. Both halves must verify (I-90).
+pub fn anchor_signature_verifies(a: &Anchor, anchor_keys: &[Vec<u8>]) -> bool {
+    signed_by_any(anchor_keys, &a.message(), ANCHOR_CONTEXT, &a.signature)
+}
+
+/// Whether the receipt's signature verifies over its [`receipt_message`]
+/// under [`RECEIPT_CONTEXT`] and one key of `witness_keys`, the witness
+/// keys the cell pins (ADR-010 "Keys"). Both halves must verify (I-90).
+pub fn receipt_signature_verifies(rc: &Receipt, witness_keys: &[Vec<u8>]) -> bool {
+    signed_by_any(witness_keys, &rc.message(), RECEIPT_CONTEXT, &rc.signature)
 }
 
 fn chain_of(b: u8) -> Result<ChainId, DecodeError> {
