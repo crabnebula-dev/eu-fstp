@@ -4,10 +4,10 @@
 //! measured count, as in M2. Lane W4 records each measured count here.
 //!
 //! Status: M-AUTH, M-STEPUP and M-RECOVER were measured by the lead on
-//! 2026-10-29, after lane W1b merged, and M-VCP and M-DRIVER after lane
-//! W1c merged. Every other count is [`NOT_MEASURED`], which is zero. A
-//! tripwire of zero states stops every run at once, so no model can pass
-//! on a placeholder.
+//! 2026-10-29 after lane W1b merged. M-VCP and M-DRIVER followed lane W1c,
+//! M-SHRED lane W1d and M-AUDIT lane W1e. Every other count is
+//! [`NOT_MEASURED`], which is zero. A tripwire of zero states stops every
+//! run at once, so no model can pass on a placeholder.
 
 /// The placeholder for a count that is not measured yet.
 pub const NOT_MEASURED: usize = 0;
@@ -23,9 +23,9 @@ pub const M_VCP: usize = 33796;
 /// M-DRIVER (I-23).
 pub const M_DRIVER: usize = 2262;
 /// M-SHRED (I-81).
-pub const M_SHRED: usize = NOT_MEASURED;
+pub const M_SHRED: usize = 99514;
 /// M-AUDIT (I-24).
-pub const M_AUDIT: usize = NOT_MEASURED;
+pub const M_AUDIT: usize = 90834;
 /// M-PLACE (I-82, I-83).
 pub const M_PLACE: usize = NOT_MEASURED;
 /// M-LICENCE (I-39).

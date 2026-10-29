@@ -3,9 +3,9 @@
 //! TH-67. M3 claims R-CR-03 for anchors only (design section 20).
 //!
 //! Lane W1e wrote these tests before the production code. They are red
-//! until `fstp_crypto::composite` signs (lane dsa), its signing key
-//! exposes its public key (`PUBLIC_KEY_SEAM`), and `fstp-audit` and
-//! `fstp-witness` sign anchors and receipts (lane W2g). They use the
+//! until `fstp-audit` and `fstp-witness` sign anchors and receipts (lane
+//! W2g). `fstp_crypto::composite` signs and exposes its public key since
+//! lane dsa merged. They use the
 //! `fstp_crypto::composite` API only and assume no byte layout of the
 //! composite signature: draft-ietf-lamps-pq-composite-sigs-19 is
 //! transcribed by ADR-010, not here.

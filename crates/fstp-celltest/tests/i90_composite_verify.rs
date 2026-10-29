@@ -3,10 +3,9 @@
 //! runs it for anchors in M3. These are T-CR-COMPOSITE tests for TH-67.
 //!
 //! Lane W1e wrote these tests before the production code. They are red
-//! until `fstp_crypto::composite` signs and verifies (lane dsa), its key
-//! exposes its public key (`PUBLIC_KEY_SEAM`), and `fstp_audit::verify`
-//! takes the anchor key history and the witness log (`VERIFY_SEAM`, lane
-//! W2g).
+//! until `fstp_audit::verify` takes the anchor key history and the
+//! witness log (`VERIFY_SEAM`, lane W2g). `fstp_crypto::composite` signs,
+//! verifies and exposes its public key since lane dsa merged.
 //!
 //! No test assumes a byte layout of the production composite signature.
 //! The production sweep flips every byte and splices at every offset, so

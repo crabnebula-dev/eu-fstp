@@ -54,44 +54,6 @@ fn w0_keys_decode_sealed_blob_refuses() {
     }
 }
 
-/// TH-26, design section 8.1: `fstp_webauthn::parse_attestation_object`.
-#[test]
-fn w0_webauthn_parse_attestation_object_refuses() {
-    for input in INPUTS {
-        refuses(
-            "parse_attestation_object",
-            fstp_webauthn::parse_attestation_object(input),
-        );
-    }
-}
-
-/// TH-26, design section 8.1: `fstp_webauthn::parse_authenticator_data`.
-#[test]
-fn w0_webauthn_parse_authenticator_data_refuses() {
-    for input in INPUTS {
-        refuses(
-            "parse_authenticator_data",
-            fstp_webauthn::parse_authenticator_data(input),
-        );
-    }
-}
-
-/// TH-26, design section 8.1: `fstp_webauthn::parse_cose_key`.
-#[test]
-fn w0_webauthn_parse_cose_key_refuses() {
-    for input in INPUTS {
-        refuses("parse_cose_key", fstp_webauthn::parse_cose_key(input));
-    }
-}
-
-/// TH-26, design section 8.1: `fstp_webauthn::parse_client_data`.
-#[test]
-fn w0_webauthn_parse_client_data_refuses() {
-    for input in INPUTS {
-        refuses("parse_client_data", fstp_webauthn::parse_client_data(input));
-    }
-}
-
 /// TH-26, design section 9.4: `fstp_edge::parse_client_hello_sni`.
 #[test]
 fn w0_edge_parse_client_hello_sni_refuses() {

@@ -51,10 +51,9 @@
 //! - W2g should also drive its anchorer step function here: the full
 //!   design section 5.3 sequence with crash points between the anchor
 //!   insert and COMMIT, in place of the three decisions of today.
-//! - Lane dsa removes [`PROD_KEYGEN_SEAM`] when
-//!   `fstp_crypto::composite::generate` succeeds. It replaces
-//!   [`PUBLIC_KEY_SEAM`] with `key.public_key().to_bytes()` once
-//!   `CompositeSigningKey::public_key` exists on this branch.
+//! - Lane dsa merged on 2026-10-29. Its two seams are gone:
+//!   `fstp_crypto::composite::generate` succeeds, and
+//!   [`prod_composite_public_key`] returns `key.public_key().to_bytes()`.
 //! - W2e replaces [`STORE_SEAM`]. W2f replaces [`KEY_OPS_SEAM`]. W2f and
 //!   W1a replace [`RECONCILE_SEAM`].
 
@@ -102,10 +101,6 @@ pub const ANCHOR_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_an
 
 /// `fstp-witness` has no function that signs a receipt (lane W2g).
 pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_receipt: fstp-witness exposes no receipt signing function (ADR-010, lane W2g)";
-
-/// `fstp_crypto::composite::CompositeSigningKey` exposes no public key,
-/// so no production signature can be verified under its key (lane dsa).
-pub const PUBLIC_KEY_SEAM: &str = "fstp_celltest::mc::audit_model::prod_composite_public_key: fstp_crypto::composite::CompositeSigningKey exposes no public key (lane dsa)";
 
 /// No crate has the reconciliation task of ADR-004, and neither the
 /// `Custody` trait nor the custody simulator's usage log carries a
@@ -175,13 +170,13 @@ pub fn prod_sign_receipt(
     Err(NotImplemented::new(RECEIPT_SIGN_SEAM))
 }
 
-/// The encoded public key of a production composite key. Refuses with
-/// [`PUBLIC_KEY_SEAM`] until the key exposes it.
+/// The encoded public key `mldsaPK || tradPK` of a production composite
+/// key (draft 19 section 4.1, ADR-010). It keeps the `Result` of the other
+/// `prod_*` functions, so callers stay unchanged.
 pub fn prod_composite_public_key(
     key: &fstp_crypto::composite::CompositeSigningKey,
 ) -> Result<Vec<u8>, NotImplemented> {
-    let _ = key;
-    Err(NotImplemented::new(PUBLIC_KEY_SEAM))
+    Ok(key.public_key().to_bytes().to_vec())
 }
 
 /// The production reconciliation of a backend usage log with the
@@ -296,9 +291,10 @@ pub struct OpaqueSigs {
 /// The message of [`OpaqueSigs::other`].
 pub const OTHER_MESSAGE: &[u8] = b"fstp-celltest audit another message";
 
-/// `fstp_crypto::composite::generate` refused, so the production backend
-/// holds no key to sign a view with (lane dsa).
-pub const PROD_KEYGEN_SEAM: &str = "fstp_celltest::mc::audit_model::Production::sign_view: fstp_crypto::composite::generate refused, so no production anchor or witness key exists (lane dsa)";
+/// Not a seam: `fstp_crypto::composite` generated or signed nothing in the
+/// production backend. Since lane dsa this means a crypto failure, which
+/// stops the run as a backend that did not answer.
+pub const PROD_KEYGEN_FAILED: &str = "fstp_celltest::mc::audit_model::Production::sign_view: fstp_crypto::composite key generation or signing failed";
 
 /// The witness core's answer to a prepare.
 pub type PrepareAnswer = Result<(RefWitnessState, ReceiptFields), WitnessRefusal>;
@@ -779,7 +775,7 @@ impl AuditBackend for Production {
 
     fn sign_view(&self, view: &RefChainView, keys: &Keys) -> Result<OpaqueSigs, NotImplemented> {
         let _ = keys;
-        let keygen = |_| NotImplemented::new(PROD_KEYGEN_SEAM);
+        let keygen = |_| NotImplemented::new(PROD_KEYGEN_FAILED);
         let anchor_key = fstp_crypto::composite::generate().map_err(keygen)?;
         let witness_key = fstp_crypto::composite::generate().map_err(keygen)?;
         let sign_row = |row: &RefAnchorRow| {
