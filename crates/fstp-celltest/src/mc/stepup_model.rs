@@ -16,17 +16,33 @@
 //! 8.3). This is the takeover path of a stolen mailbox.
 //!
 //! The model runs over a [`StepUpBackend`]: [`Reference`],
-//! [`Production`] (`fstp_cell_core::gate::admit` over a production cell
-//! from genesis) or a [`Mutant`] with one seeded defect. Admission and
-//! commit decisions are both compared with the reference.
+//! [`Production`] (`fstp_cell_core::gate::admit_command` over a
+//! production cell from genesis, and the commit through `DriverCore`) or
+//! a [`Mutant`] with one seeded defect. Admission and commit decisions are
+//! both compared with the reference.
 
 use fstp_auth::AuthCommand;
-use fstp_cell_core::CellCommand;
+use fstp_cell_core::driver::ExecError;
 use fstp_cell_core::gate::{self, Action, Deny, LoginPolicy, StepUpView};
-use fstp_domain::id::{AccountId, BindingId, RequestId};
+use fstp_cell_core::tenant::TenantCommand;
+use fstp_cell_core::{CellCommand, CellRecord};
+use fstp_domain::assignment::AssignmentKind;
+use fstp_domain::command::{Actor, DeclarationSubject};
+use fstp_domain::decision::Vote;
+use fstp_domain::id::{AccountId, BindingId, LineId, RequestId};
 use fstp_domain::roles::Role;
+use fstp_domain::scoring::{ScoreKey, Stage};
 use fstp_domain::time::Timestamp;
-use fstp_domain_testkit::r#gen::roster::{A, ADMIN, B, P1, T0, grant};
+use fstp_domain_testkit::r#gen::money::{self, FIN, LC, MoneyDraft, MoneySetup, PC};
+use fstp_domain_testkit::r#gen::review::{COORDINATOR, IRC, R1, R2, R3, declare, plan_of, submit};
+use fstp_domain_testkit::r#gen::roster::{
+    A, ADMIN, ADMIN_2, B, P1, STAFF_PM, Step, T0, call, grant,
+};
+use fstp_domain_testkit::mc::life_model::{
+    IRC2, admit as admit_to_stage1, assign_declared, assignment_of, ballots, close, cut_off,
+    cut_off_decision, irc_review, knock_out, no_questions, score,
+};
+use fstp_domain_testkit::vault::{GroundTruth, IdentityTag};
 use fstp_mc::{Model, Property};
 
 use crate::NotImplemented;
@@ -138,15 +154,47 @@ pub fn cell_command(c: u8) -> CellCommand {
     cell_command_in(S_ADMIN, c)
 }
 
+/// The start of the role grants of the production universe: twice the
+/// default P-71 after [`ASSERTED_AT`], so later than every tick. The
+/// domain refuses a grant whose start lies before its command instant (no
+/// backdating, design 2.6), and every commit of M-STEPUP lies at or before
+/// `ASSERTED_AT + P-71 + 1 µs`.
+pub const GRANT_START: Timestamp = Timestamp::from_micros(
+    ASSERTED_AT
+        .micros()
+        .saturating_add(r::P71_DEFAULT_US)
+        .saturating_add(r::P71_DEFAULT_US),
+);
+
 /// The production cell command of command `c` in session `session`.
 /// `AddPasskey` names the session's own account, so the applicant's
-/// magic-link session asks to add a passkey to its own account.
+/// magic-link session asks to add a passkey to its own account. The role
+/// grants start at [`GRANT_START`], so production decides them at every
+/// tick of the universe.
 pub fn cell_command_in(session: u8, c: u8) -> CellCommand {
     let core = |cmd| CellCommand::Engine(fstp_engine::Command::Core(cmd));
     let own = if session == S_MAGIC { B } else { ADMIN };
     match c {
-        0 => core(grant(BindingId::from_raw(2_001), A, P1, Role::CommitteeMember, T0).cmd),
-        1 => core(grant(BindingId::from_raw(2_002), B, P1, Role::FinanceApprover, T0).cmd),
+        0 => core(
+            grant(
+                BindingId::from_raw(2_001),
+                A,
+                P1,
+                Role::CommitteeMember,
+                GRANT_START,
+            )
+            .cmd,
+        ),
+        1 => core(
+            grant(
+                BindingId::from_raw(2_002),
+                B,
+                P1,
+                Role::FinanceApprover,
+                GRANT_START,
+            )
+            .cmd,
+        ),
         2 => core(fstp_domain::Command::ReleasePayment {
             request: RequestId::from_raw(1),
         }),
@@ -204,16 +252,18 @@ pub fn prod_self_grant_digest(
     }
 }
 
-/// The seam of [`Production::commit`]. Lanes W2b and W2c closed their
-/// part: `StepUpConsumed { id }` exists, and `DriverCore` appends it in
-/// the batch of an admitted high-risk command. What is left is the
-/// harness's. `DriverCore` reads ledger entries (`Event::Read`), so a
-/// driver loop over `ProdCell` needs `fstp-ledger` in this crate, which
-/// is also [`super::auth_model::FOLD_SEAM`] (the lead's). The gate also
-/// admits only a step-up the ledger granted, so the harness must record
-/// `StepUpGranted` for each model step-up. Its route-only admission is
-/// `fstp_cell_core::gate::ROUTE_ADMISSION_SEAM` (lane W3a).
-pub const CONSUME_SEAM: &str = "fstp_celltest::mc::stepup_model::Production::commit: a DriverCore loop over ProdCell needs fstp-ledger entries (FOLD_SEAM, the lead), and each model step-up needs a StepUpGranted record, whose admission is lane W3a's (design sections 5.1, 5.4 and 8.4)";
+/// The seam that stood for [`Production::commit`], closed by the lead.
+/// Lanes W2b and W2c gave `StepUpConsumed { id }`, which `DriverCore`
+/// appends in the batch of an admitted high-risk command. The commit now
+/// runs `DriverCore` over the `fstp-ledger` store of a [`ProdCell`]
+/// ([`ProdCell::execute`]). The harness runs the step-up route for each
+/// model step-up before the gate ([`ProdCell::grant_stepup`]): the
+/// assertion is verified by `fstp_auth::stepup::verify_step_up`, and only
+/// an accepted one is recorded as `StepUpGranted`, as a test harness that
+/// writes the ledger may. The route's own admission is lane W3a's
+/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`). No production path
+/// returns this constant. It stays for the suites that name it.
+pub const CONSUME_SEAM: &str = "fstp_celltest::mc::stepup_model::Production::commit: closed by the lead; the commit runs DriverCore over the fstp-ledger store of a ProdCell, and no production path returns this seam (design sections 5.1, 5.4 and 8.4)";
 
 /// The seam of [`login_policy_p71`], closed by lane W2c: the canonical
 /// form is `fstp_cell_core::tenant::TenantLoginPolicy` (design section
@@ -293,18 +343,243 @@ impl StepUpBackend for Reference {
     }
 }
 
-/// The production backend: `gate::admit` over a production cell from
-/// genesis with tenant admin `ADMIN`.
+/// The call deadline of the production cell's money path. It lies before
+/// every tick of the universe, so the payment request is approved before
+/// any step-up is asserted: the ledger is time-monotone (design section
+/// 2.2), and every step-up is asserted at [`ASSERTED_AT`].
+pub const RELEASE_DEADLINE: Timestamp = Timestamp::from_micros(2_000_000_000);
+
+/// The instant of the money path after the deadline: one second after
+/// [`RELEASE_DEADLINE`], and before [`ASSERTED_AT`].
+pub const RELEASE_AT: Timestamp = Timestamp::from_micros(2_001_000_000);
+
+/// The payment request that `ReleasePayment` (command 2) releases.
+pub const RELEASE_REQUEST: RequestId = RequestId::from_raw(1);
+
+/// The one line of [`RELEASE_REQUEST`].
+pub const RELEASE_LINE: LineId = LineId::from_raw(1);
+
+/// The binding that makes the admin a payment releaser of `P1`.
+pub const RELEASER_BINDING: BindingId = BindingId::from_raw(2_003);
+
+/// The grant of the money path and its one payment request, in cents.
+const RELEASE_CENTS: i64 = 400;
+
+/// The money setup of the production cell: programme `P1` with P-04 =
+/// [2.00, 4.00] and P-05 = 6.00, lead c's proposal of one 4.00 milestone,
+/// reviewers R1 and R2, and FIN as finance approver.
+fn release_setup() -> MoneySetup {
+    MoneySetup {
+        p04: (200, 400),
+        p05: 600,
+        drafts: vec![MoneyDraft::one(LC, PC, RELEASE_CENTS)],
+        staff: vec![(FIN, Role::FinanceApprover)],
+        shared: Vec::new(),
+        unverified: Vec::new(),
+        consents: Vec::new(),
+        reviewers: vec![R1, R2],
+        identities: Vec::new(),
+    }
+}
+
+/// The synthetic vault of the production cell: the money setup's vault,
+/// and a and b of the role grants with their own verified identities, as
+/// in [`crate::mc::auth_model::auth_truth`].
+fn release_truth(setup: &MoneySetup) -> GroundTruth {
+    let mut truth = setup.truth();
+    truth.set_identity(A, IdentityTag::new(1_101));
+    truth.set_identity(B, IdentityTag::new(1_102));
+    truth.verify(A);
+    truth.verify(B);
+    truth
+}
+
+/// The M2 steps to lead c's proposal submitted, all at `T0`: the money
+/// setup's draft steps, with the call deadline at [`RELEASE_DEADLINE`],
+/// then the submission.
+fn draft_path(setup: &MoneySetup) -> Result<Vec<Step>, String> {
+    let mut out = setup.draft_steps()?;
+    for s in &mut out {
+        if let fstp_domain::Command::DraftCall { deadline, .. } = &mut s.cmd {
+            *deadline = RELEASE_DEADLINE;
+        }
+    }
+    out.push(submit(LC, PC, plan_of(PC), false));
+    Ok(out)
+}
+
+/// The M2 steps from the submission to [`RELEASE_REQUEST`] in
+/// PAYMENT_APPROVED, all at [`RELEASE_AT`], as `MoneySetup::world` and
+/// `MoneyStory::execute` run them. Stage 1 and stage 2 with "no
+/// questions", the cut-off and the IRC review take the proposal to
+/// NEGOTIATION. The amount determination, the acceptance, the approval,
+/// the contract fact and the start of execution take it to IN_EXECUTION.
+/// Lead c then requests the milestone, R1 accepts the line and FIN
+/// approves. So the admin who releases is neither the acceptor nor the
+/// approver (I-05, SoD-04).
+fn release_path(setup: &MoneySetup) -> Result<Vec<Step>, String> {
+    let c1 = call(1);
+    let reviewer = |r| assignment_of(r, PC, c1, AssignmentKind::Reviewer);
+    let mut out = Vec::new();
+    for r in setup.reviewers.iter().copied() {
+        out.extend(assign_declared(r, PC, c1, AssignmentKind::Reviewer));
+    }
+    out.push(declare(
+        COORDINATOR,
+        DeclarationSubject::Proposal(PC),
+        false,
+        false,
+    ));
+    out.push(knock_out(PC, true));
+    out.push(admit_to_stage1(PC));
+    for r in setup.reviewers.iter().copied() {
+        let key = ScoreKey {
+            assignment: reviewer(r),
+            stage: Stage::One,
+            plan: plan_of(PC),
+        };
+        out.push(score(r, key, &[2, 2]));
+    }
+    out.push(close(Actor::Account(COORDINATOR), PC));
+    for r in setup.reviewers.iter().copied() {
+        out.push(no_questions(r, PC, reviewer(r)));
+    }
+    out.push(cut_off(
+        R1,
+        cut_off_decision(1),
+        c1,
+        vec![PC],
+        1,
+        false,
+        ballots(&[R1, R2, R3], Vote::For),
+    ));
+    for i in [IRC, IRC2] {
+        out.extend(assign_declared(i, PC, c1, AssignmentKind::Irc));
+    }
+    for i in [IRC, IRC2] {
+        out.push(irc_review(
+            i,
+            assignment_of(i, PC, c1, AssignmentKind::Irc),
+            true,
+        ));
+    }
+    let determination = money::amount_decision(PC, 1);
+    out.push(money::determine(R1, PC, determination, plan_of(PC), &[])?);
+    out.push(money::accept_grant_as(
+        LC,
+        PC,
+        money::accept_decision(PC),
+        determination,
+    ));
+    out.push(money::approve_grant_as(
+        STAFF_PM,
+        PC,
+        money::approve_decision(PC),
+        determination,
+    ));
+    out.push(money::contract_effective(PC));
+    out.push(money::start_execution(PC));
+    out.push(money::request_payment(
+        LC,
+        RELEASE_REQUEST,
+        PC,
+        &[(RELEASE_LINE, money::milestone_n(PC, 0), RELEASE_CENTS)],
+    )?);
+    out.push(money::accept_line(
+        R1,
+        RELEASE_REQUEST,
+        RELEASE_LINE,
+        RELEASE_CENTS,
+        false,
+    )?);
+    out.push(money::approve_payment(FIN, RELEASE_REQUEST));
+    Ok(out)
+}
+
+/// Runs `steps` at `at` in `cell`, naming the step a refusal stopped at.
+fn run_path(cell: &mut ProdCell, steps: &[Step], at: Timestamp) -> Result<(), ProdError> {
+    for (i, s) in steps.iter().enumerate() {
+        cell.exec_any_step(s, at).map_err(|e| match e {
+            ProdError::NotImplemented(op) => ProdError::NotImplemented(op),
+            ProdError::Refused(why) => ProdError::Refused(format!(
+                "money path step {i} {:?} by {:?}: {why}",
+                s.cmd.kind(),
+                s.actor
+            )),
+        })?;
+    }
+    Ok(())
+}
+
+/// Makes the admin a payment releaser of `P1` at `T0`, so the admin's
+/// session can run `ReleasePayment`. A grant by the admin to the admin
+/// is a self-grant, which needs a second tenant admin (SoD-07). So
+/// `ADMIN_2` is made tenant admin, grants the binding, and its tenant
+/// admin grant ends again, which leaves one tenant admin.
+fn grant_releaser(cell: &mut ProdCell) -> Result<(), ProdError> {
+    cell.exec_tenant_admin_grant(ADMIN, ADMIN_2, T0)?;
+    let mut step = grant(RELEASER_BINDING, ADMIN, P1, Role::PaymentReleaser, T0);
+    if let fstp_domain::Command::GrantRole { second_admin, .. } = &mut step.cmd {
+        *second_admin = None;
+    }
+    step.actor = Actor::Account(ADMIN_2);
+    cell.exec_step(&step, T0)?;
+    cell.exec(
+        CellCommand::Tenant(TenantCommand::EndTenantAdmin { account: ADMIN_2 }),
+        ADMIN,
+        T0,
+    )?;
+    Ok(())
+}
+
+/// The production backend: `gate::admit_command` over a production cell
+/// from genesis with tenant admin `ADMIN`, and the commit through
+/// `DriverCore` over that cell.
 ///
-/// Gaps, reported by lane W1b. A step-up's digest must be production's
-/// own, so an admission with a step-up refuses with [`DIGEST_SEAM`]. The
-/// commit-time freshness check has no API of its own, so commit asks
-/// `gate::admit` again at the commit instant. Consumption must come from
-/// the batch, so a commit refuses with [`CONSUME_SEAM`] after the gate.
+/// The cell holds what each command of the universe needs
+/// ([`Production::new`]). Each decision runs on a copy of the cell, so no
+/// decision changes the next.
+///
+/// Before the gate, the harness runs the step-up route for the model's
+/// step-up in the copy ([`ProdCell::grant_stepup`]). The passkey of the
+/// step-up session's account asserts, and `fstp_auth::stepup::
+/// verify_step_up` decides. An accepted step-up is recorded as
+/// `StepUpGranted` by production's `decide`, and the gate's view names
+/// the id that production derived. The route grants a passkey assertion
+/// with user verification only, so a granted step-up is strong. A refused
+/// one writes nothing: a step-up without user verification and one from
+/// the magic-link session. The view then names an id the ledger never
+/// granted, and the gate refuses it as it would in production.
+///
+/// Single use is production's own. For a step-up the model marks
+/// consumed, the harness first commits its command in the copy, through
+/// the same path as a commit, so `StepUpConsumed` is in the ledger. The
+/// view says it is not consumed, so only the ledger refuses the replay.
+///
+/// The commit admits the command at the step-up's assertion instant,
+/// the earliest instant a route can admit it, and runs it with the commit
+/// instant as the store's clock. So P-71 at commit is checked by the
+/// store against `SideEffects::stepup_fresh_until`, the limit that
+/// `DriverCore` computed (design sections 5.3 and 8.4), not by a second
+/// gate check. The trait gives the commit no admission instant, and P-71
+/// at admission is checked by [`StepUpBackend::admit`] at that instant.
+/// An admitted command runs through `DriverCore` ([`ProdCell::execute`]),
+/// whose batch carries `StepUpConsumed` for a high-risk command (design
+/// section 5.1). `AddPasskey` runs through the harness route
+/// [`ProdCell::add_passkey`], since `decide` refuses `RegisterCredential`
+/// without the verified key that only a route holds. A command that
+/// production refuses at commit is not committed, and the two-way property
+/// compares that with the reference.
 #[derive(Clone, Debug)]
 pub struct Production {
     cell: ProdCell,
 }
+
+/// Not a seam: production refused to record a model step-up that the
+/// route accepted, the replay of a consumed step-up did not consume it,
+/// or the driver ended a commit in a way no M-STEPUP decision covers.
+/// This stops the run as a backend that did not answer.
+pub const STEPUP_HARNESS_FAILED: &str = "fstp_celltest::mc::stepup_model::Production: the harness could not record a model step-up or replay its consumption, or the driver ended a commit outside the M-STEPUP decisions";
 
 fn deny_ni(d: Deny) -> Result<bool, NotImplemented> {
     match d {
@@ -313,40 +588,153 @@ fn deny_ni(d: Deny) -> Result<bool, NotImplemented> {
     }
 }
 
-/// The production view of step-up `u`. Its digest is production's digest
-/// of the command the model's step-up was requested for, in its session.
-fn prod_view(u: &RefStepUp) -> Result<StepUpView, NotImplemented> {
-    let action_digest = match command_of(&u.action_digest) {
-        Some(c) => {
-            prod_action_digest(&cell_command_in(session_index(u.session), c), command_id(c))?
-        }
-        None => u.action_digest,
-    };
-    Ok(StepUpView {
-        id: u.id,
-        session: u.session,
-        action_digest,
-        asserted_at: u.asserted_at,
-        strong: u.method.phishing_resistant() && u.uv,
-        consumed: u.consumed,
+fn prod_err(e: ProdError) -> NotImplemented {
+    match e {
+        ProdError::NotImplemented(op) => NotImplemented::new(op),
+        ProdError::Refused(_) => NotImplemented::new(STEPUP_HARNESS_FAILED),
+    }
+}
+
+/// Production's digest of the command that the model's step-up `u` was
+/// requested for, in its session.
+fn prod_digest(u: &RefStepUp) -> Result<[u8; 32], NotImplemented> {
+    match command_of(&u.action_digest) {
+        Some(c) => prod_action_digest(&cell_command_in(session_index(u.session), c), command_id(c)),
+        None => Ok(u.action_digest),
+    }
+}
+
+/// The passkey a session's account asserts a step-up with: the device
+/// the session logged in with, or device 0 for a magic-link session.
+fn stepup_credential(s: &RefSession) -> Vec<u8> {
+    credential_of(s.account, s.device.unwrap_or(0))
+}
+
+/// Whether `batch` consumes the step-up the admission named.
+fn consumes(batch: &[CellRecord], admitted: &gate::Admitted) -> bool {
+    admitted.stepup().is_some_and(|u| {
+        batch.iter().any(|r| {
+            matches!(r, CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed { id }) if *id == u.id)
+        })
     })
 }
 
+/// Runs the admitted command in `cell` with `commit_at` as the store's
+/// clock: `AddPasskey` through [`ProdCell::add_passkey`], every other
+/// command through `DriverCore` ([`ProdCell::execute`]).
+fn run_admitted(
+    cell: &mut ProdCell,
+    admitted: &gate::Admitted,
+    session: &RefSession,
+    commit_at: Timestamp,
+) -> Result<Result<Vec<CellRecord>, ExecError>, ProdError> {
+    if matches!(
+        admitted.action(),
+        Action::Command(CellCommand::Auth(AuthCommand::RegisterCredential { .. }))
+    ) {
+        cell.add_passkey(admitted, &prod_session(session), commit_at)
+            .map(Ok)
+    } else {
+        cell.execute(admitted.clone(), commit_at)
+    }
+}
+
 impl Production {
-    /// The production backend over a bootstrapped production cell in
-    /// which the applicant b holds a passkey, registered at `T0`. So
-    /// `AddPasskey` in b's magic-link session adds a second passkey,
-    /// and only the magic-link rule refuses it (design section 8.3).
+    /// The production backend over a production cell from genesis that
+    /// holds what each command of the universe needs. The admin is tenant
+    /// admin, and the admin and the applicant b each hold a verified
+    /// passkey, registered at `T0` by a first passkey ceremony
+    /// ([`ProdCell::register_passkey`]). So `AddPasskey` adds a second
+    /// passkey in either session, and in b's magic-link session only the
+    /// magic-link rule refuses it (design section 8.3).
+    ///
+    /// The admin is a payment releaser of `P1` ([`grant_releaser`]), and
+    /// [`RELEASE_REQUEST`] is in PAYMENT_APPROVED, accepted by R1 and
+    /// approved by FIN ([`release_path`]). So `ReleasePayment` commits in
+    /// the admin's session with a fresh strong step-up, as the reference
+    /// commits it. Every step is a production command. The contract fact
+    /// is decided by the cell's M2 decider for the contract port
+    /// ([`ProdCell::exec_port_fact`]).
     pub fn new() -> Result<Production, ProdError> {
-        let mut cell = ProdCell::bootstrapped()?;
-        let first = CellCommand::Auth(AuthCommand::RegisterCredential {
-            account: B,
-            credential: credential_of(B, 0),
-        });
-        cell.exec(first, B, T0)?;
+        let setup = release_setup();
+        let mut cell = ProdCell::genesis(release_truth(&setup))?;
+        cell.exec_tenant_admin_grant(ADMIN, ADMIN, T0)?;
+        cell.register_passkey(ADMIN, credential_of(ADMIN, 0), T0)?;
+        cell.register_passkey(B, credential_of(B, 0), T0)?;
+        run_path(
+            &mut cell,
+            &draft_path(&setup).map_err(ProdError::Refused)?,
+            T0,
+        )?;
+        grant_releaser(&mut cell)?;
+        run_path(
+            &mut cell,
+            &release_path(&setup).map_err(ProdError::Refused)?,
+            RELEASE_AT,
+        )?;
         Ok(Production { cell })
     }
 
+    /// A copy of the cell after the step-up route for `u`, and the gate's
+    /// view of it. `session` is the session the decision runs in, which
+    /// the route sees when `u` belongs to it.
+    fn granted(
+        &self,
+        u: &RefStepUp,
+        session: &RefSession,
+        p71_us: i64,
+    ) -> Result<(ProdCell, StepUpView), NotImplemented> {
+        let mut cell = self.cell.clone();
+        let action_digest = prod_digest(u)?;
+        let own = if u.session == session.id {
+            *session
+        } else {
+            self::session(session_index(u.session))
+        };
+        let route = if u.method.phishing_resistant() {
+            cell.grant_stepup(
+                &prod_session(&own),
+                &stepup_credential(&own),
+                action_digest,
+                u.uv,
+                u.asserted_at,
+            )
+            .map_err(prod_err)?
+            .ok()
+        } else {
+            None
+        };
+        let Some(id) = route else {
+            // The route refused, so the ledger holds no grant for the id
+            // the client names.
+            let view = StepUpView {
+                id: u.id,
+                session: u.session,
+                action_digest,
+                asserted_at: u.asserted_at,
+                strong: false,
+                consumed: false,
+            };
+            return Ok((cell, view));
+        };
+        let view = StepUpView {
+            id,
+            session: u.session,
+            action_digest,
+            asserted_at: u.asserted_at,
+            strong: true,
+            consumed: false,
+        };
+        if u.consumed {
+            replay_consumption(&mut cell, u, &own, &view, p71_us)?;
+        }
+        Ok((cell, view))
+    }
+
+    /// The gate's admission of `c` in `session` at `now`, with the cell
+    /// the decision runs on, or `None` when the gate refuses. Without a
+    /// step-up nothing is recorded, so the cell is copied only when the
+    /// gate admits.
     fn gate(
         &self,
         session: &RefSession,
@@ -354,25 +742,71 @@ impl Production {
         stepup: Option<&RefStepUp>,
         now: Timestamp,
         p71_us: i64,
-    ) -> Result<Option<gate::Admitted>, NotImplemented> {
-        let view = stepup.map(prod_view).transpose()?;
-        let policy = LoginPolicy {
-            stepup_freshness_us: p71_us,
-        };
-        // The gate checks the step-up digest under the command id
-        // ([`DIGEST_SEAM`], closed by lane W2c).
-        match gate::admit_command(
-            self.cell.state(),
-            &prod_session(session),
-            Action::Command(cell_command_in(session_index(session.id), c)),
-            command_id(c),
-            view.as_ref(),
-            now,
-            &policy,
-        ) {
-            Ok(a) => Ok(Some(a)),
-            Err(d) => deny_ni(d).map(|_| None),
+    ) -> Result<Option<(ProdCell, gate::Admitted)>, NotImplemented> {
+        match stepup {
+            Some(u) => {
+                let (cell, view) = self.granted(u, session, p71_us)?;
+                let admitted = admit_in(&cell, session, c, Some(&view), now, p71_us)?;
+                Ok(admitted.map(|a| (cell, a)))
+            }
+            None => {
+                let admitted = admit_in(&self.cell, session, c, None, now, p71_us)?;
+                Ok(admitted.map(|a| (self.cell.clone(), a)))
+            }
         }
+    }
+}
+
+/// The gate's admission of `c` in `session` at `now` over `cell`, with
+/// the step-up `view`, or `None` when the gate refuses. The gate checks
+/// the step-up digest under the command id ([`DIGEST_SEAM`], closed by
+/// lane W2c).
+fn admit_in(
+    cell: &ProdCell,
+    session: &RefSession,
+    c: u8,
+    view: Option<&StepUpView>,
+    now: Timestamp,
+    p71_us: i64,
+) -> Result<Option<gate::Admitted>, NotImplemented> {
+    let policy = LoginPolicy {
+        stepup_freshness_us: p71_us,
+    };
+    match gate::admit_command(
+        cell.state(),
+        &prod_session(session),
+        Action::Command(cell_command_in(session_index(session.id), c)),
+        command_id(c),
+        view,
+        now,
+        &policy,
+    ) {
+        Ok(a) => Ok(Some(a)),
+        Err(d) => {
+            deny_ni(d)?;
+            Ok(None)
+        }
+    }
+}
+
+/// Commits, in `cell`, the command that the consumed model step-up `u`
+/// was requested for, in `session` at its assertion instant, under the
+/// step-up `view` the ledger granted. So the ledger holds the step-up's
+/// `StepUpConsumed`, as it does once a command consumed it.
+fn replay_consumption(
+    cell: &mut ProdCell,
+    u: &RefStepUp,
+    session: &RefSession,
+    view: &StepUpView,
+    p71_us: i64,
+) -> Result<(), NotImplemented> {
+    let failed = || NotImplemented::new(STEPUP_HARNESS_FAILED);
+    let c = command_of(&u.action_digest).ok_or_else(failed)?;
+    let admitted =
+        admit_in(cell, session, c, Some(view), u.asserted_at, p71_us)?.ok_or_else(failed)?;
+    match run_admitted(cell, &admitted, session, u.asserted_at).map_err(prod_err)? {
+        Ok(batch) if consumes(&batch, &admitted) => Ok(()),
+        _ => Err(failed()),
     }
 }
 
@@ -396,9 +830,20 @@ impl StepUpBackend for Production {
         now: Timestamp,
         p71_us: i64,
     ) -> Result<Option<bool>, NotImplemented> {
-        match self.gate(session, c, stepup, now, p71_us)? {
-            None => Ok(None),
-            Some(_admitted) => Err(NotImplemented::new(CONSUME_SEAM)),
+        // The admission instant: the step-up's assertion instant, never
+        // later than the commit. The store checks P-71 at `now`.
+        let admit_at = stepup.map_or(now, |u| u.asserted_at.min(now));
+        let Some((mut cell, admitted)) = self.gate(session, c, stepup, admit_at, p71_us)? else {
+            return Ok(None);
+        };
+        match run_admitted(&mut cell, &admitted, session, now) {
+            Ok(Ok(batch)) if !batch.is_empty() => Ok(Some(consumes(&batch, &admitted))),
+            // Production refused the command at commit: the store refused
+            // an append past the step-up's P-71 limit, or `decide` or the
+            // `AddPasskey` route refused it.
+            Ok(Err(ExecError::Refused(_))) | Err(ProdError::Refused(_)) => Ok(None),
+            Err(ProdError::NotImplemented(op)) => Err(NotImplemented::new(op)),
+            Ok(_) => Err(NotImplemented::new(STEPUP_HARNESS_FAILED)),
         }
     }
 }
