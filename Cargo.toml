@@ -69,7 +69,7 @@ rustls-webpki = { version = "=0.103.16", default-features = false, features = ["
 zeroize = { version = "=1.9.1" }
 # ADR-001 Tier B, A2 and A3: git dependency pinned to one full commit, default features only.
 # Release-gated (I-74). Only fstp-crypto depends on it (design section 2.4 rule 8).
-moduletto = { git = "https://github.com/crabnebula-dev/moduletto", rev = "46754f2fccb0a501be278fb2fab63b670101a33d" }
+moduletto = { git = "https://github.com/crabnebula-dev/moduletto", rev = "6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683" }
 
 # In-house crates.
 fstp-prop = { path = "crates/fstp-prop" }

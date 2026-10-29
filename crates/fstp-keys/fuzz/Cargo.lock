@@ -152,7 +152,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "moduletto"
 version = "0.1.0"
-source = "git+https://github.com/crabnebula-dev/moduletto?rev=46754f2fccb0a501be278fb2fab63b670101a33d#46754f2fccb0a501be278fb2fab63b670101a33d"
+source = "git+https://github.com/crabnebula-dev/moduletto?rev=6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683#6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683"
 dependencies = [
  "libm",
  "subtle",

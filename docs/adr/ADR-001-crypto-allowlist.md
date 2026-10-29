@@ -122,7 +122,7 @@ Exact versions and resolved trees at first use. `deps/allowlist.txt` ties each c
 | rustls-pki-types | A | 1.15.1 (`=1.15.1`) | `std`, with default features off. Resolved: `alloc`, `default`, `std` | 2026-10-24, M1, `fstp-tls` |
 | rustls-webpki | A | 0.103.16 (through rustls) | `alloc`, `aws-lc-rs`, `std` | 2026-10-24, M1, through rustls |
 | zeroize | A tree, root since A1 | 1.9.1 (`=1.9.1`) | Default features, which enable `alloc`. Resolved: `alloc`, `default`. `derive` is refused | 2026-10-28, M3 lane W0: direct dependency of `fstp-crypto`, `fstp-keys`, `fstp-custody` and `fstp-keyd` |
-| moduletto | B | 0.1.0, git commit `46754f2fccb0a501be278fb2fab63b670101a33d` | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
+| moduletto | B | 0.1.0, git commit `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` (moved 2026-10-29 from `46754f2fccb0a501be278fb2fab63b670101a33d`, A2 pin move record) | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
 
 Resolved tree. The runtime and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu, and are the same on both. The platform row, added 2026-10-25, covers every other target.
 
@@ -243,6 +243,17 @@ Pinning:
 - The hybrid rule (I-75, I-90) and the release gate (I-74) apply unchanged. A new commit counts as a version change for the release gate, even when the manifest version stays the same.
 - Until the pin exists (design section 17.2), production code waits for it. Tests use the aws-lc-rs ML-KEM and ML-DSA oracles through `fstp-celltest` only. No classical fallback ships (I-75).
 - Deterministic entry points (Q1 sub-question): answered for ML-KEM by `keygen_derand` and `encaps_derand`. ML-KEM-768 ACVP and combiner vectors therefore run against moduletto. For ML-DSA-65 the answer follows the pull request.
+
+Pin move record, 2026-10-29 (the M3 dependency owner, design section 2.5):
+
+- Daniel merged moduletto pull request #13 (ML-DSA-65, FIPS 204) on 2026-10-29. Its merge commit is `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` ("Merge pull request #13 from crabnebula-dev/ml-dsa-65").
+- The pin moves from `46754f2fccb0a501be278fb2fab63b670101a33d` to that commit. Lockfile source: `git+https://github.com/crabnebula-dev/moduletto?rev=6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683#6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683`. The workspace `Cargo.lock`, every fuzz project `Cargo.lock` and `deps/allowlist.txt` record that string.
+- The manifest version stays `0.1.0`. The move still counts as a version change for the release gate (Pinning, below). `deps/tier-b-confirmations.txt` holds no confirmation for the new commit, so `deps-check --release` fails on it (I-74).
+- Manifest changes between the two commits: the description, comments, a new `ct-bench` feature, and the required features of the `ct_dudect` example. The dependency lines are unchanged.
+- Features: `default` only, as before. Resolved: `alloc`, `default`, `libm`, `std`, unchanged (`cargo tree --locked -e features -i moduletto`, 2026-10-29). `ct-bench` is refused, like `valgrind-ct`. It exposes the signing-loop count for the timing test and is not for production.
+- Resolved tree: unchanged. moduletto brings `libm 0.2.16`, `subtle 2.6.1` and `zeroize 1.9.1`, with the versions, checksums and features recorded above (`cargo tree --locked -e normal -p moduletto`, 2026-10-29). No package enters or leaves the platform tree.
+- Primitives at the new pin: ML-KEM-512 and ML-KEM-768 (FIPS 203), and ML-DSA-65 (FIPS 204). ML-DSA-65 has deterministic key generation from a seed and signing with explicit randomness. Its ACVP keyGen, sigGen and sigVer vectors run in moduletto's own tests at that commit.
+- `mldsa` and `composite` in `fstp-crypto` may now call moduletto's ML-DSA-65. The aws-lc-rs ML-DSA stays a test oracle only (A6).
 
 ### A3. deps-check git-source rule
 
