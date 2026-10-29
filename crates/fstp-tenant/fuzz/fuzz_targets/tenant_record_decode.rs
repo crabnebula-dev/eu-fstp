@@ -1,16 +1,26 @@
 //! Fuzz target `tenant_record_decode` of `fstp-tenant` (TH-26, H-05, M4 design section 9).
 //!
-//! Design checks: round trip.
-//!
-//! W0 skeleton. The code under test is a stub that refuses every input
-//! with a typed `NotImplemented` error. Until lane W2d lands it, the
-//! target checks only that no input panics and that a refusal formats.
+//! Design checks: round trip. No input panics. A refusal is a typed
+//! decoding error. An accepted input is canonical text, so encoding the
+//! decoded record gives the same bytes again (ADR-007).
 
 #![no_main]
 
+use fstp_tenant::TenantError;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let shown = format!("{:?}", fstp_tenant::decode_record(data));
-    assert!(!shown.is_empty());
+    match fstp_tenant::decode_record(data) {
+        Ok(rec) => {
+            let again = fstp_tenant::encode_record(&rec);
+            assert_eq!(again.as_deref(), Ok(data), "round trip changed the bytes");
+        }
+        Err(e) => {
+            assert!(
+                matches!(e, TenantError::Decode(_)),
+                "untyped refusal: {e:?}"
+            );
+            assert!(!e.to_string().is_empty());
+        }
+    }
 });

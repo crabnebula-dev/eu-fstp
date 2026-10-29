@@ -1,13 +1,26 @@
-//! Tenant onboarding (M4 design section 3.5).
+//! Tenant onboarding in the cell (M4 design section 3.5, lane W2d).
 //!
-//! The crate holds the onboarding steps, the tenant-level settings (P-20,
-//! P-69 to P-72, P-74) as ledger records, the tenant defaults that prefill
-//! the programme fields for P-18, P-21 and P-45, the tenant admin set
-//! (Q31) and the inference configuration record. P-73 and P-78 are not
-//! settable in M4.
+//! The crate is pure. It holds:
 //!
-//! Status: W0 stub. Lane W2d (L-TENANT) owns this crate. Every operation
-//! refuses with [`TenantError::NotImplemented`].
+//! - the onboarding steps, each of which validates before the next opens
+//!   (R-TN-01), with checks that need a prober failing closed where none
+//!   exists (Q5);
+//! - the tenant admin set, its invitations bound to their invitee, and
+//!   the single-use, expiring SoD-07 self-grant approvals, as ledger
+//!   records (Q31 A, interim pending Daniel);
+//! - the tenant-level settings P-20, P-69 to P-72 and P-74, one high-risk
+//!   operation per parameter. P-73 and P-78 are not settable in M4;
+//! - the tenant defaults that prefill the programme fields P-18, P-21 and
+//!   P-45. They are never parameters themselves;
+//! - the inference configuration record that `call.publish` reads.
+//!
+//! The shell runs a command in three steps. It asks [`queries`] what the
+//! command needs from the vault, the control plane, the domain and the
+//! prober. It calls [`decide`] with the answers, and folds the returned
+//! records with [`TenantState::apply_all`]. [`TenantState::replay`] folds a stored
+//! ledger, and the fold checks every rule a record alone can show.
+//!
+//! Every value in this crate is integer or text. No float appears.
 
 #![deny(
     clippy::float_arithmetic,
@@ -16,47 +29,29 @@
     clippy::arithmetic_side_effects
 )]
 
-/// Why an operation of this crate failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TenantError {
-    /// The W0 stub of the named operation refuses.
-    NotImplemented(&'static str),
-}
+mod codec;
+mod command;
+mod decide;
+mod refusal;
+pub mod rules;
+mod state;
+mod types;
 
-impl std::fmt::Display for TenantError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TenantError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
-        }
-    }
-}
-
-impl std::error::Error for TenantError {}
-
-/// A tenant command.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TenantCommand {
-    _w0: (),
-}
-
-/// Decodes a tenant command from its JSON text. Fuzzed (`tenant_command_decode`).
-pub fn decode_command(bytes: &[u8]) -> Result<TenantCommand, TenantError> {
-    let _ = bytes;
-    Err(TenantError::NotImplemented("fstp_tenant::decode_command"))
-}
-
-/// A tenant ledger record.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TenantRecord {
-    _w0: (),
-}
-
-/// Decodes a stored tenant record. Fuzzed (`tenant_record_decode`).
-pub fn decode_record(bytes: &[u8]) -> Result<TenantRecord, TenantError> {
-    let _ = bytes;
-    Err(TenantError::NotImplemented("fstp_tenant::decode_record"))
-}
+pub use codec::{
+    CURRENT_SCHEMA, MAX_P69_WIRE_BYTES, MAX_TEXT_BYTES, PUBLISHED_SCHEMAS, decode_command,
+    decode_record, decode_record_at, encode_command, encode_record,
+};
+pub use command::{TenantCommand, TenantCtx, TenantKind, TenantRecord};
+pub use decide::{ProbeOutcome, TenantAnswers, TenantQuery, decide, queries};
+pub use refusal::{DecodeError, FoldError, TenantError, TenantRefusal};
+pub use rules::ProbeKind;
+pub use state::{
+    AdminInvitation, InferenceConfig, SelfGrantApproval, TenantDefaults, TenantSettings,
+    TenantState,
+};
+pub use types::{
+    AgreementVersions, ApprovalId, BankInterface, BrandingPackage, CellKind, DomainName, GrantRef,
+    InferenceDefault, InvitationId, LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep,
+    PaymentMode, ProviderRef, RpMode, SettingValue, StepFailure, StepOutcome, StepStatus,
+    StepValues, TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
+};
