@@ -1,0 +1,16 @@
+# validators seeds: JSON texts, each as a JSON string. The target parses each
+# with JSON.parse and runs every generated validator on the value.
+seed	"{}"
+seed	"[]"
+seed	"null"
+seed	"true"
+seed	"0"
+seed	"1234.5"
+seed	"\"1234.50\""
+seed	"\"1234.5\""
+seed	"{\"amount\":\"1234.50\"}"
+seed	"{\"amount\":1234.5}"
+seed	"{\"__proto__\":{\"x\":1}}"
+seed	"{\"id\":\"p1\",\"extra\":true}"
+seed	"[{\"a\":[null,{}]}]"
+seed	"\"\\u0000\""
