@@ -234,16 +234,25 @@ const PROD_SESSION: [u8; 16] = [0x5E; 16];
 /// The credential id of the new passkey a production completion enrols.
 const PROD_NEW_CREDENTIAL: &[u8] = &[0xC2; 16];
 
-/// The new passkey a production completion enrols, as
-/// `fstp_auth::ceremony::verify_new_passkey` returns it: a synthetic
-/// Ed25519 key with user verification.
-fn prod_new_credential() -> fstp_webauthn::NewCredential {
-    fstp_webauthn::NewCredential {
-        id: PROD_NEW_CREDENTIAL.to_vec(),
-        key: fstp_webauthn::CoseKey::Ed25519 { x: [0xC2; 32] },
-        sign_count: 0,
-        user_verified: true,
-    }
+/// Not a seam: the harness could not build or verify the new passkey of a
+/// completion. Its registration is written by the harness and verified by
+/// `fstp_webauthn`, so this is a harness or crypto failure, which stops
+/// the run as a backend that did not answer.
+const NEW_PASSKEY_FAILED: &str = "fstp_celltest::mc::recover_model::Production::completion: the new passkey of the completion could not be built or did not verify";
+
+/// The new passkey a production completion of `holder`'s recovery enrols,
+/// as `fstp_auth::ceremony::verify_fresh_passkey` returns it. The harness
+/// registration of a synthetic Ed25519 key, with user verification, is
+/// verified through `fstp_webauthn` (`mc::auth_model::verified_passkey`).
+/// Its id is new: only the earlier credential is registered.
+fn prod_new_credential(holder: AccountId) -> Result<fstp_webauthn::NewCredential, NotImplemented> {
+    let known = |id: &[u8]| id == PROD_CREDENTIAL;
+    crate::mc::auth_model::verified_passkey(holder, PROD_NEW_CREDENTIAL, &known).map_err(
+        |e| match e {
+            crate::mc::auth_model::ProdError::NotImplemented(op) => NotImplemented::new(op),
+            crate::mc::auth_model::ProdError::Refused(_) => NotImplemented::new(NEW_PASSKEY_FAILED),
+        },
+    )
 }
 
 /// Not a seam: the composite key that signs the universe's operator
@@ -487,7 +496,7 @@ impl RecoverBackend for Production {
         let _ = (roster, now);
         let credentials = [PROD_CREDENTIAL.to_vec()];
         let sessions = [PROD_SESSION];
-        let new_credential = prod_new_credential();
+        let new_credential = prod_new_credential(holder)?;
         let records = prod::completion_records(
             PROD_CASE,
             holder,

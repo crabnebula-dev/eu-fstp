@@ -188,11 +188,17 @@ dependencies = [
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
+ "fstp-auth",
  "fstp-cell-core",
  "fstp-cp-proto",
+ "fstp-crypto",
  "fstp-custody",
+ "fstp-domain",
  "fstp-edge",
+ "fstp-engine",
  "fstp-http",
+ "fstp-json",
+ "fstp-ledger",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-prop",
@@ -200,6 +206,7 @@ dependencies = [
  "fstp-rt",
  "fstp-tls",
  "fstp-vault-proto",
+ "fstp-webauthn",
 ]
 
 [[package]]

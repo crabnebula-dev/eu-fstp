@@ -8,7 +8,7 @@
 //!
 //! The half forgeries use the draft 19 signature layout of ADR-010, row
 //! "Signature": `mldsaSig || tradSig`, with the ML-DSA-65 half first
-//! (`fstp_crypto::mldsa::SIGNATURE_LEN` bytes) and the Ed25519 half last.
+//! (`fstp_crypto::composite::MLDSA_SIGNATURE_LEN` bytes) and the Ed25519 half last.
 
 use fstp_crypto::composite::{self, CompositeSigningKey};
 
@@ -17,7 +17,7 @@ use super::view::{AnchorRow, View, WitnessRec};
 use super::{ANCHOR_CTX, RECEIPT_CTX};
 
 /// The length of the ML-DSA-65 half (ADR-010, row "Signature").
-pub(crate) const MLDSA_SIG_LEN: usize = fstp_crypto::mldsa::SIGNATURE_LEN;
+pub(crate) const MLDSA_SIG_LEN: usize = fstp_crypto::composite::MLDSA_SIGNATURE_LEN;
 
 /// A fresh composite key.
 pub(crate) fn key() -> CompositeSigningKey {

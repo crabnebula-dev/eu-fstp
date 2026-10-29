@@ -162,7 +162,7 @@ fn i90_verify_metadata_needs_both_signature_halves() {
         let m = gen_any(g);
         let good = sign_metadata(&m, a);
         let other = sign_metadata(&m, b);
-        let split = METADATA_BODY_LEN + fstp_crypto::mldsa::SIGNATURE_LEN;
+        let split = METADATA_BODY_LEN + fstp_crypto::composite::MLDSA_SIGNATURE_LEN;
         let mixed = if g.bool() {
             [
                 &good[..METADATA_BODY_LEN],
