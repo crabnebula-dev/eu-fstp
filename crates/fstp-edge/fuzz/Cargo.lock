@@ -101,6 +101,8 @@ name = "fstp-edge-fuzz"
 version = "0.0.0"
 dependencies = [
  "fstp-edge",
+ "fstp-rt",
+ "fstp-tls",
  "libfuzzer-sys",
 ]
 
