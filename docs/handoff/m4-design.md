@@ -1825,6 +1825,20 @@ Each question lists options and a recommendation. Until you answer, the design b
 
 Settled through the M3 answers of 2026-10-28 (`m3-design.md` section 21.0): Q7 by M3 Q39 A (Node.js and npm under an ADR-003 amendment), and Q23 by M3 Q13 A (an over-18 attestation in the vault before NEGOTIATION, not a date of birth). M3 Q10 A places EUDI login and verification in M4.
 
+### 15.0 Daniel's answers (2026-10-29)
+
+Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a demo on 2026-10-30. His answers:
+
+| Question | Answer | Effect on this design |
+| --- | --- | --- |
+| Every question of sections 15.1 and 15.2 | Each recommendation is built as an interim reading | Each is marked "Interim, pending Daniel" where it is built, listed in the exit audit, and reversible. A later answer replaces it |
+| ADR numbering | M3 has since used ADR-008 to ADR-012 | This design's ADR-008 (MCP protocol and OAuth profile) becomes ADR-013, and its ADR-009 (frontend architecture and delivery) becomes ADR-014. Every later reference here means the new number |
+| ADR-014, frontend | Accepted as section 3.9 describes it | No framework, no bundler, tsc only, the DOM rules, CSP with Trusted Types, generated operation types, the asset manifest, the source scan and the in-house test runner. W0 writes the ADR text from section 3.9 |
+| ADR-013, MCP and OAuth | Not yet answered (Q8, Q25) | W1e and W3c wait for it. The pages path does not need it |
+| Q7 Node.js host | Answered under M3 Q39 A | ADR-003 amendment of 2026-10-28, with Node.js 24.11.1 and npm 11.6.2 recorded on 2026-10-29 |
+| Q23 minor flag | Answered under M3 Q13 A and the answers of 2026-10-29 | `state-machine.md` NOTE 14 |
+| Review depth | One review round per lane for the demo path, no adversarial verify pass | Deferred findings are logged for W7, which runs in full before M4 closes |
+
 ### 15.1 These block the milestone
 
 **Q1. Who approves activation, and who counts as a builder (I-67)?** The spec names no approving role.
