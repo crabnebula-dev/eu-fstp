@@ -14,9 +14,16 @@ fstp-ledger.workspace = true
 fstp-audit.workspace = true
 fstp-keys.workspace = true
 fstp-rt.workspace = true
+# In-house: AES-256-GCM, HMAC and randomness (fstp-crypto), and the entry
+# envelope the store rebuilds on read (fstp-json).
+fstp-crypto.workspace = true
+fstp-json.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+fstp-pgtest.workspace = true
+# In-house: the role suffix grammar the apply_grant tests tie to.
+fstp-cp-proto.workspace = true
 
 [lints]
 workspace = true

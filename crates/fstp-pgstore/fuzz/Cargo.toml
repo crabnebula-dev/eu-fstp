@@ -10,6 +10,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-pgstore = { path = ".." }
+# In-house: the fixed test key and its data key id.
+fstp-crypto = { path = "../../fstp-crypto" }
+fstp-keys = { path = "../../fstp-keys" }
 
 [[bin]]
 name = "stored_entry_decode"

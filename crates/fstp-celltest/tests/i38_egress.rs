@@ -622,11 +622,6 @@ fn other_destinations() -> Vec<Destination> {
     .collect()
 }
 
-/// The connector's API gap. `fstp_cell::egress::connect` takes a
-/// `Destination` and no host, and shows no host it resolves. So no test
-/// can ask it to reach a CrabNebula host for another destination.
-const CONNECTOR_SEAM: &str = "fstp_cell::egress::connect takes no host and shows no resolved host, so the refusal of a CrabNebula host for any destination but Destination::CrabNebula(CnCall) cannot be driven (design section 14.4; lane W3a)";
-
 #[allow(
     unreachable_patterns,
     reason = "lane W3a adds typed refusals to CellError; until then NotImplemented is its only variant"
@@ -642,19 +637,51 @@ fn cell_stub(e: &CellError) -> Option<&'static str> {
 /// the cell's connector refuses a CrabNebula host for every destination
 /// other than `Destination::CrabNebula(CnCall)`.
 ///
-/// Gap ([`CONNECTOR_SEAM`]): the stub connector refuses everything with
-/// NotImplemented, and its API takes no host. Lane W3a gives it a way to
-/// name a host, and this half then drives each destination of
-/// [`other_destinations`] against both production hosts.
+/// Lane W3a: `fstp_cell::egress::check_host` takes the host the connector
+/// would open. This half drives each destination of
+/// [`other_destinations`] against both production hosts. It also checks
+/// that each call reaches its own host, so a connector that refuses
+/// everything does not pass.
 fn connector_refusals() -> Result<(), String> {
     for d in other_destinations() {
         if let Err(e) = fstp_cell::egress::connect(&d)
             && let Some(op) = cell_stub(&e)
         {
-            return Err(format!("{op} is NotImplemented ({d:?}): {CONNECTOR_SEAM}"));
+            return Err(format!("{op} is NotImplemented ({d:?})"));
+        }
+        for host in [egress::LICENCE_HOST, egress::UPDATE_HOST] {
+            if fstp_cell::egress::check_host(&d, host).is_ok() {
+                return Err(format!(
+                    "the connector opens {d:?} at the CrabNebula host {host}"
+                ));
+            }
         }
     }
-    Err(CONNECTOR_SEAM.to_owned())
+    let version = ProductVersion(0, 3, 0);
+    for call in [
+        CnCall::Update(UpdateCheck {
+            version,
+            channel: Channel::Stable,
+        }),
+        CnCall::Licence(LicenceRefresh {
+            licence: LicenceId([0x5A; 16]),
+            version,
+        }),
+    ] {
+        let to = Destination::CrabNebula(call);
+        if fstp_cell::egress::check_host(&to, call.host()).is_err() {
+            return Err(format!("the connector refuses {call:?} at its own host"));
+        }
+        let other = if call.host() == egress::LICENCE_HOST {
+            egress::UPDATE_HOST
+        } else {
+            egress::LICENCE_HOST
+        };
+        if fstp_cell::egress::check_host(&to, other).is_ok() {
+            return Err(format!("the connector sends {call:?} to {other}"));
+        }
+    }
+    Ok(())
 }
 
 /// I-38, design sections 10.1 and 14.4: only `fstp_release::egress`
@@ -664,8 +691,8 @@ fn connector_refusals() -> Result<(), String> {
 /// Two halves. The source half requires that no other shipped crate names
 /// the request paths or `CnCall`. A text scan alone is easy to get past,
 /// for example with a path built by `concat!`. So the behavioural half
-/// drives the connector, and it stays red on [`CONNECTOR_SEAM`] until lane
-/// W3a lands.
+/// drives the connector through `fstp_cell::egress::check_host` (lane
+/// W3a).
 #[test]
 fn i38_only_egress_reaches_crabnebula_hosts() {
     let offenders = source_offenders();

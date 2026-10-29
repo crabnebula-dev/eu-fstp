@@ -1091,7 +1091,14 @@ impl<'a> Lexer<'a> {
                 if s == "r" && next == Some(b'#') {
                     let from = self.i.saturating_add(1);
                     let to = self.ident_end(from);
-                    if to > from {
+                    // A raw identifier starts like any identifier, never
+                    // with a digit: `r#2` is `r`, `#` and a number.
+                    let starts = self
+                        .text
+                        .as_bytes()
+                        .get(from)
+                        .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_' || *b >= 0x80);
+                    if to > from && starts {
                         self.i = to;
                         self.push(from, to, line, LexKind::Ident);
                         return;
@@ -1897,7 +1904,8 @@ mod tests {
     /// I-19, design section 2.4 rules 5 and 9: every string literal form
     /// lexes as one string, so code after a raw byte string, a C string or
     /// a raw C string is still read. Block comments nest, as in Rust, and a
-    /// raw identifier reads as its name.
+    /// raw identifier reads as its name. A digit after `r#` starts no raw
+    /// identifier (the `rust_tokens` fuzz crash on `;cr;r#2#\0`).
     #[test]
     fn i19_tokens_read_every_literal_prefix() {
         let text = concat!(
@@ -1930,6 +1938,23 @@ mod tests {
         assert!(lex(text).closed);
         assert!(!lex("br#\"open").closed);
         assert!(!lex("/* /* */").closed);
+    }
+
+    /// A digit after `r#` starts no raw identifier, so no token is a bare
+    /// number read as an identifier (the `rust_tokens` fuzz crash).
+    #[test]
+    fn i19_tokens_raw_prefix_before_a_digit_is_no_identifier() {
+        for text in [";cr;r#2#\0", "2r#3#", "r#9"] {
+            let lexed = lex(text);
+            let bad: Vec<&str> = lexed
+                .lexemes
+                .iter()
+                .filter(|l| l.kind == LexKind::Ident)
+                .filter(|l| l.s.bytes().next().is_some_and(|b| b.is_ascii_digit()))
+                .map(|l| l.s)
+                .collect();
+            assert!(bad.is_empty(), "{text:?} gave identifiers {bad:?}");
+        }
     }
 
     /// I-19, design section 2.4 rule 5: a grouped server import after a
