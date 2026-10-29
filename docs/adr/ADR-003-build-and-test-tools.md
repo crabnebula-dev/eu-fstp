@@ -27,8 +27,8 @@ Daniel allowlisted three build and test tools. None of them ships in runtime art
 | cargo-fuzz | 0.13.2, crate SHA-256 `5acfd01930e49823e58c30dd8012d3338a620377d7c7d4cc140ca4b2169400e2` | `cargo install cargo-fuzz --version 0.13.2 --locked` in CI, which builds it from its published lockfile | 2026-10-24 |
 | libfuzzer-sys | 0.4.13, crate SHA-256 `a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2`. Resolved features: `default`, `link_libfuzzer` | `libfuzzer-sys = "=0.4.13"` in each fuzz project manifest (`crates/*/fuzz/Cargo.toml`, `tools/*/fuzz/Cargo.toml`), plus that project's committed `Cargo.lock` | 2026-10-24 |
 | Nightly toolchain for fuzzing | `nightly-2026-10-24`, rustc 1.101.0-nightly (48f4b0553 2026-10-23) | `FUZZ_TOOLCHAIN` in `tools/fuzz-all.sh`, which CI installs through rustup | 2026-10-24 |
-| TypeScript compiler (tsc) | Recorded at first use |  |  |
-| Playwright | Recorded at first use |  |  |
+| TypeScript compiler (tsc) | `typescript` 6.0.3, integrity `sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==`. No dependencies | `web/package.json` and `e2e/package.json` at the exact version, their lockfiles and `deps/npm-allowlist.txt` | 2026-10-29 |
+| Playwright | `@playwright/test` 1.64.1, with `playwright` 1.64.1 and `playwright-core` 1.64.1. No package has an install script | `e2e/package.json` at the exact version, `e2e/package-lock.json` and `deps/npm-allowlist.txt` | 2026-10-29 |
 
 libFuzzer resolved tree. The test and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu. They are the same in every fuzz project and on both platforms. The platform row, added 2026-10-25, covers every other target.
 
@@ -105,10 +105,10 @@ tsc and Playwright run on Node.js, and Playwright installs through npm. The Deci
 
 | Tool | Approved version | Pinned by | Recorded |
 | --- | --- | --- | --- |
-| Node.js | Record at first use: exact version, plus the archive SHA-256 for each CI platform | Record at first use | Record at first use |
-| npm | Record at first use: the version bundled with the pinned Node.js | The pinned Node.js archive | Record at first use |
-| `web/` npm tree | Record at first use | `web/package-lock.json` and the npm allowlist | Record at first use |
-| `e2e/` npm tree | Record at first use | `e2e/package-lock.json` and the npm allowlist | Record at first use |
+| Node.js | 24.11.1. Archive SHA-256 from nodejs.org `SHASUMS256.txt`: `node-v24.11.1-linux-x64.tar.xz` `60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8`, `node-v24.11.1-linux-arm64.tar.xz` `6b0863fb9f627bf4a6c5948dce1de4398174a2e05dbe717503d828e211ca01f0`, `node-v24.11.1-darwin-arm64.tar.xz` `064b017da9efd6b5d2bd0fadd56d3b8a50fcb369af3ccf91102c7a07a6cf4deb` (development hosts) | The CI step that fetches the archive and checks its SHA-256 (lane W4) | 2026-10-29 |
+| npm | 11.6.2, bundled with Node.js 24.11.1. Lockfile format version 3 | The pinned Node.js archive | 2026-10-29 |
+| `web/` npm tree | `typescript` 6.0.3 only | `web/package-lock.json` and the npm allowlist | 2026-10-29 |
+| `e2e/` npm tree | `@playwright/test` 1.64.1, `playwright` 1.64.1, `playwright-core` 1.64.1, `typescript` 6.0.3 | `e2e/package-lock.json` and the npm allowlist | 2026-10-29 |
 | Playwright browsers | Record at first use | The controlled CI step | Record at first use |
 
 The tsc and Playwright rows in the record table above are filled at first use as before.
