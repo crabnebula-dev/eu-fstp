@@ -257,8 +257,8 @@ pub(crate) fn encode_receipt(r: &ReceiptRec) -> Result<Vec<u8>, AuditError> {
 }
 
 /// `fstp_audit::anchor::sign_anchor` with the chain's composite `Anchor`
-/// key. Under the lane W2g hard limit it refuses with a refusal that names
-/// `common::ACCEPTANCE`.
+/// key: the signature bytes. It signs under the anchor context and
+/// refuses row 0, or a composite signer failure, as `fstp_audit` does.
 pub(crate) fn sign_anchor(
     key: &fstp_crypto::composite::CompositeSigningKey,
     cell: [u8; 16],
@@ -267,8 +267,28 @@ pub(crate) fn sign_anchor(
     link: &Hash,
     at: i64,
 ) -> Result<Vec<u8>, AuditError> {
-    anchor::sign_anchor(key, CellId(cell), prod_chain(chain), n, &Link(*link), at)
-        .map(|a| a.signature)
+    sign_anchor_rec(key, cell, chain, n, link, at).map(|a| a.signature)
+}
+
+/// `fstp_audit::anchor::sign_anchor`: the whole anchor it returns.
+pub(crate) fn sign_anchor_rec(
+    key: &fstp_crypto::composite::CompositeSigningKey,
+    cell: [u8; 16],
+    chain: Chain,
+    n: u64,
+    link: &Hash,
+    at: i64,
+) -> Result<AnchorRec, AuditError> {
+    anchor::sign_anchor(key, CellId(cell), prod_chain(chain), n, &Link(*link), at).map(|a| {
+        AnchorRec {
+            cell: a.cell.0,
+            chain: from_prod_chain(a.chain),
+            n: a.n,
+            link: a.link.0,
+            at: a.at,
+            signature: a.signature,
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +304,13 @@ fn prod_anchor_row(a: &super::view::AnchorRow) -> AnchorRow {
 /// `fstp_audit::verify::verify` over everything `view` holds. It answers
 /// the number of verified rows.
 pub(crate) fn verify(view: &View) -> Result<u64, AuditError> {
+    verify_full(view).map(|(rows, _)| rows)
+}
+
+/// `fstp_audit::verify::verify` over everything `view` holds. It answers
+/// the number of verified rows and the `(n, link)` of every possible
+/// deletion it lists.
+pub(crate) fn verify_full(view: &View) -> Result<(u64, Vec<(u64, Hash)>), AuditError> {
     let rows: Vec<StoredRow> = view
         .rows
         .iter()
@@ -319,7 +346,14 @@ pub(crate) fn verify(view: &View) -> Result<u64, AuditError> {
         anchor_keys: &view.anchor_keys,
         witness_keys: &view.witness_keys,
     };
-    fstp_audit::verify::verify(&v).map(|ok| ok.rows)
+    fstp_audit::verify::verify(&v).map(|ok| {
+        let gone = ok
+            .possible_deletions
+            .into_iter()
+            .map(|(n, l)| (n, l.0))
+            .collect();
+        (ok.rows, gone)
+    })
 }
 
 // ---------------------------------------------------------------------------

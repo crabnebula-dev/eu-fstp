@@ -28,12 +28,14 @@ pub mod recovery;
 pub mod session;
 pub mod stepup;
 
+/// The credential types that [`AuthRecord`] carries, so a fold of auth
+/// records names them without its own `fstp-webauthn` edge.
+pub use fstp_webauthn::{CoseKey, NewCredential, StoredCredential};
 pub use holdings::{AdminGrant, BindingFact, is_management_role};
 pub use recovery::RecoveryPath;
 
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
-use fstp_webauthn::{CoseKey, StoredCredential};
 
 /// One second in microseconds.
 pub const SECOND_US: i64 = 1_000_000;

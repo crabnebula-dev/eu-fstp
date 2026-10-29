@@ -12,9 +12,13 @@
 //! - [`apply`] and [`replay`] fold the ledger ([`state`]).
 //! - [`gate`] admits an action, and [`driver`] runs one admitted command.
 //!
-//! Lane W2c. The gate's session checks call `fstp-auth`, which lane W2b
-//! builds in parallel. Until it lands, those calls refuse with the
-//! stub's `NotImplemented`, and the gate passes that refusal on.
+//! The auth member is encoded and decoded by `fstp_auth::codec`, so each
+//! auth record and command has one spelling. The gate's session checks
+//! call `fstp_auth` (lanes W2b and W2c, integrated). An auth command whose
+//! batch needs an input that only a route holds is refused with the
+//! domain refusal [`ROUTE_INPUT_MISSING`]. [`route_inputs`] names the
+//! input, and [`RouteInput::OWNER`] names lane W3a. The gate admits no
+//! route-only auth command yet ([`gate::ROUTE_ADMISSION_SEAM`]).
 
 #![deny(
     clippy::float_arithmetic,
@@ -43,9 +47,9 @@ pub use codec::{
     record_from_canonical_at, try_encode_cell_command,
 };
 pub use decide::{
-    ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, WRITE_KIND_GUARDIAN_CONSENT,
-    action_digest, attest_at, decide_reaction, reaction_queries, self_grant_digest,
-    try_action_digest, vault_changed, without_vault_outcomes,
+    ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, ROUTE_INPUT_MISSING, RouteInput,
+    WRITE_KIND_GUARDIAN_CONSENT, action_digest, attest_at, decide_reaction, reaction_queries,
+    route_inputs, self_grant_digest, try_action_digest, vault_changed, without_vault_outcomes,
 };
 pub use state::CellState;
 pub use state::{

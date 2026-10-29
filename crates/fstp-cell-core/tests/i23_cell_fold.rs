@@ -622,16 +622,28 @@ fn sod_07_approval_lapses_after_its_expiry() {
 // ---------------------------------------------------------------------------
 // Step-up consumption (I-78).
 
-/// I-78, design section 5.1: the fold refuses a second consumption of one
-/// step-up, so replay checks single use by structure.
+/// I-78, design sections 5.1 and 8.4: the fold refuses a second
+/// consumption of one step-up, so replay checks single use by structure.
+/// Each ledger first records the grant, since every step-up is logged
+/// with the action it authorised.
 #[test]
 fn i78_fold_refuses_a_second_step_up_consumption() {
     let id = [0x5C; 16];
+    let granted = CellRecord::Auth(fstp_auth::AuthRecord::StepUpGranted {
+        id,
+        action_digest: [0x5D; 32],
+        session: [0x51; 16],
+    });
     let consumed = step_up_consumed(id).unwrap();
     assert!(is_step_up_consumed(&consumed, id).unwrap());
-    let once = ledger(&[(T0, cid(1), vec![consumed.clone()])]).unwrap();
+    let once = ledger(&[
+        (T0, cid(3), vec![granted.clone()]),
+        (T0, cid(1), vec![consumed.clone()]),
+    ])
+    .unwrap();
     assert!(replay(&once).is_ok());
     let twice = ledger(&[
+        (T0, cid(3), vec![granted]),
         (T0, cid(1), vec![consumed.clone()]),
         (T0, cid(2), vec![consumed]),
     ])

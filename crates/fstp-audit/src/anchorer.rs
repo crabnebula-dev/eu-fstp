@@ -8,6 +8,9 @@
 //!
 //! - COMMIT is sent only with the receipt for the prospective head's own
 //!   `(n, link)` (`no-unwitnessed-commit`).
+//! - The service takes a receipt through [`Anchorer::signed_receipt`]: for
+//!   this cell and chain, signed by a pinned witness key. A receipt that
+//!   fails that check is never committed on, and the prepare is aborted.
 //! - A known failure after the prepare sends `Abort { n, link }`, and no
 //!   new append begins until the witness records it, or answers that it
 //!   holds no such outstanding prepare.
@@ -29,8 +32,9 @@
 
 use std::future::Future;
 
-use crate::anchor::{Receipt, ReceiptFields};
-use crate::chain::Link;
+use crate::CellId;
+use crate::anchor::{Receipt, ReceiptFields, receipt_signature_verifies};
+use crate::chain::{ChainId, Link};
 use crate::witness::Prepare;
 
 /// A request kind, for admission.
@@ -276,6 +280,17 @@ pub struct OutOfOrder {
     pub asked: Asked,
 }
 
+/// Why [`Anchorer::signed_receipt`] refused a receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptRefused {
+    /// The step is out of order, or the receipt is for another head. The
+    /// phase is unchanged.
+    OutOfOrder(OutOfOrder),
+    /// The receipt names another cell or chain, or no pinned witness key
+    /// verifies its signature. The core must abort the prepare.
+    NotSigned,
+}
+
 /// What a caller asked of the core.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Asked {
@@ -502,6 +517,47 @@ impl Anchorer {
             receipt: *receipt,
         };
         Ok(())
+    }
+
+    /// Records the witness's signed receipt, after checking it. The
+    /// receipt must name `cell` and `chain`, and its signature must
+    /// verify under one key of `witness_keys`, the witness keys the cell
+    /// pins (ADR-010 "Keys", I-90). Then it goes to [`Anchorer::receipt`].
+    /// The cell service takes every receipt through this call, never
+    /// through [`Anchorer::receipt`] alone (W3a obligation).
+    ///
+    /// A receipt that fails the check came from no pinned witness, or was
+    /// garbled on the way. The witness may still hold the prepare, so the
+    /// core moves to [`Phase::MustAbort`], as [`Anchorer::failed`] does.
+    /// No COMMIT is sent on it.
+    ///
+    /// # Errors
+    ///
+    /// [`ReceiptRefused::OutOfOrder`] when no prepare waits or a verified
+    /// receipt is for another head. The phase is unchanged.
+    /// [`ReceiptRefused::NotSigned`] when the check fails. The next step
+    /// is [`Next::SendAbort`].
+    pub fn signed_receipt(
+        &mut self,
+        cell: CellId,
+        chain: ChainId,
+        receipt: &Receipt,
+        witness_keys: &[Vec<u8>],
+    ) -> Result<(), ReceiptRefused> {
+        let Phase::Prepared { head } = self.phase else {
+            return self
+                .refuse(Asked::Receipt)
+                .map_err(ReceiptRefused::OutOfOrder);
+        };
+        if receipt.cell != cell
+            || receipt.chain != chain
+            || !receipt_signature_verifies(receipt, witness_keys)
+        {
+            self.phase = Phase::MustAbort { head };
+            return Err(ReceiptRefused::NotSigned);
+        }
+        self.receipt(&receipt.fields)
+            .map_err(ReceiptRefused::OutOfOrder)
     }
 
     /// Records that the anchor and the receipt are inserted into

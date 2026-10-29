@@ -136,22 +136,25 @@ pub(crate) fn attest_at(
     Ok(fstp_cell_core::attest_at(s, actor, cmd, command_id, now))
 }
 
-/// The record that consumes a step-up. Design section 5.1 names
-/// `StepUpConsumed { id }`, and `fstp_auth::AuthRecord` has no such
-/// variant (`fstp_celltest::mc::stepup_model::CONSUME_SEAM`).
+/// The record that consumes a step-up: design section 5.1 names
+/// `StepUpConsumed { id }`. The seam closed when lanes W2b and W2c were
+/// integrated. The constant stays for the suites that name it.
 pub(crate) const CONSUME_SEAM: &str =
     "AuthRecord has no StepUpConsumed { id } (design section 5.1, lanes W2b and W2c)";
 
 /// `CellRecord::Auth(AuthRecord::StepUpConsumed { id })`.
 pub(crate) fn step_up_consumed(id: [u8; 16]) -> Result<CellRecord, Seam> {
-    let _ = id;
-    Err(Seam(CONSUME_SEAM))
+    Ok(CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed {
+        id,
+    }))
 }
 
 /// Whether `r` is the consumption of step-up `id`.
 pub(crate) fn is_step_up_consumed(r: &CellRecord, id: [u8; 16]) -> Result<bool, Seam> {
-    let _ = (r, id);
-    Err(Seam(CONSUME_SEAM))
+    Ok(matches!(
+        r,
+        CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed { id: x }) if *x == id
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +312,43 @@ pub(crate) fn with_admins(admins: &[AccountId]) -> Result<CellState, String> {
             )
         })
         .collect();
+    state_of(&ledger(&batches)?)
+}
+
+/// The `StepUpGranted` record that `POST /auth/stepup` writes for `su`
+/// once its assertion verified: its id, digest and session (design
+/// section 8.4).
+pub(crate) fn grant_record(su: &StepUpView) -> CellRecord {
+    CellRecord::Auth(fstp_auth::AuthRecord::StepUpGranted {
+        id: su.id,
+        action_digest: su.action_digest,
+        session: su.session,
+    })
+}
+
+/// The command id of the batch that grants a step-up in these suites.
+pub(crate) const GRANT_COMMAND: [u8; 16] = cid(0xB5);
+
+/// The state in which each of `admins` was made tenant admin at `T0`,
+/// and the ledger then granted `su` at its assertion instant. Every
+/// step-up the gate admits is one the ledger granted (design sections
+/// 5.4 and 8.4).
+pub(crate) fn with_admins_granted(
+    admins: &[AccountId],
+    su: &StepUpView,
+) -> Result<CellState, String> {
+    let mut batches: Vec<Batch> = admins
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            (
+                fstp_domain_testkit::r#gen::roster::T0,
+                cid(0xA0 + u8::try_from(i).unwrap_or(0)),
+                vec![admin_granted(*a)],
+            )
+        })
+        .collect();
+    batches.push((su.asserted_at, GRANT_COMMAND, vec![grant_record(su)]));
     state_of(&ledger(&batches)?)
 }
 
@@ -490,6 +530,10 @@ pub(crate) fn table_commands() -> Result<Vec<(&'static str, CellCommand)>, Strin
             CellCommand::Ops(OpsCommand::ApproveBreakGlass {
                 request: [0x42; 16],
             }),
+        ),
+        (
+            "ApproveRecovery",
+            CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x43; 16] }),
         ),
     ])
 }

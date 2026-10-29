@@ -442,11 +442,15 @@ fn seam_note4_reaction_is_appended_under_a_reserved_id_then_acked() {
     };
     assert!(command.starts_with(&RESERVED), "{command:?}");
     assert!(!batch.is_empty() && batch.iter().all(|r| matches!(r, CellRecord::Engine(_))));
+    // The acknowledgement names the last entry of the reaction's batch
+    // (`Need::Ack`). The M2 reaction records its `ChangedSince` outcome
+    // before `EpochAdvanced`, so the batch may hold more than one entry.
+    let last = Seq::from_raw(batch.len() as u64);
     assert!(!sh.acked.is_empty(), "no acknowledgement");
     assert!(
         sh.acked
             .iter()
-            .all(|x| *x == (1, 1, link_of(Seq::from_raw(1)))),
+            .all(|x| *x == (1, last.raw(), link_of(last))),
         "{:?}",
         sh.acked
     );
@@ -466,8 +470,8 @@ fn seam_note4_reaction_is_appended_under_a_reserved_id_then_acked() {
         unreachable!()
     };
     assert!(!command.starts_with(&RESERVED));
-    assert_eq!(*expected, Seq::from_raw(1));
-    assert!(done.head > Seq::from_raw(1));
+    assert_eq!(*expected, last);
+    assert!(done.head > last);
     assert_eq!(s.engine().epoch(), VaultEpoch::from_raw(1));
 }
 
@@ -495,18 +499,23 @@ fn seam_note4_restart_acks_a_committed_reaction_again() {
     let mut sh = Shell::new(1);
     sh.ack_fault = Some(VaultFault::Unavailable);
     let _ = sh.run(&mut DriverCore::start(a.clone()), &mut s);
+    // The committed reaction ends at the store's head (`Need::Ack` names
+    // the last entry of its batch).
+    let reaction = sh.store.head();
     sh.ack_fault = None;
     sh.acked.clear();
     sh.needs.clear();
     let mut fresh = fstp_cell_core::replay(&[]).unwrap();
     let done = sh.run(&mut DriverCore::start(a), &mut fresh).unwrap();
     assert!(
-        sh.acked.iter().any(|(e, q, _)| (*e, *q) == (1, 1)),
+        sh.acked
+            .iter()
+            .any(|(e, q, _)| (*e, *q) == (1, reaction.raw())),
         "no ack of the committed reaction: {:?}",
         sh.acked
     );
     assert_eq!(sh.appends().len(), 1, "the reaction was appended again");
-    assert_eq!(done.head, Seq::from_raw(2));
+    assert_eq!(done.head, Seq::from_raw(reaction.raw() + 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +603,6 @@ fn i78_driver_append_consumes_the_step_up() {
             vec![common::admin_granted(ADMIN)],
         )
         .unwrap();
-    let s = fstp_cell_core::replay(&sh.entries()).unwrap();
     let c = CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN_2 });
     let id = cid(0x32);
     let sess = passkey(ADMIN);
@@ -603,6 +611,16 @@ fn i78_driver_append_consumes_the_step_up() {
         action_digest(&c, id).unwrap_or_else(|e| panic!("{e}")),
         NOW,
     );
+    // The step-up route recorded the grant (design section 8.4).
+    sh.store
+        .append(
+            sh.store.head(),
+            NOW.micros(),
+            common::GRANT_COMMAND,
+            vec![common::grant_record(&su)],
+        )
+        .unwrap();
+    let s = fstp_cell_core::replay(&sh.entries()).unwrap();
     let a = admit_with_id(&s, &sess, Action::Command(c), id, Some(&su), NOW, &POLICY)
         .unwrap_or_else(|e| panic!("{e}"))
         .unwrap();

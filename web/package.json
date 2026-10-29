@@ -2,6 +2,7 @@
   "name": "fstp-web",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "description": "In-house TypeScript pages, compiled by tsc (ADR-003). No framework.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "devDependencies": {

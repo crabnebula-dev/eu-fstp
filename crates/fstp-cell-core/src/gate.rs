@@ -38,15 +38,30 @@
 //!
 //! A session never admits a command that only a system task issues: key
 //! records, relationship records, operator tickets and scheduled session
-//! ends ([`crate::SystemTask`]). Nor does it admit `GrantStepUp` through
-//! the command path: design section 8.4 records `StepUpGranted` only after
-//! `POST /auth/stepup` verified an assertion, and that route has no
-//! admission of its own yet (fail closed). [`admit_system`] admits a
-//! system task's own commands, with no session.
+//! ends ([`crate::SystemTask`]). Nor does it admit the auth commands that
+//! only a route issues once it verified what the record states:
+//! `GrantStepUp` after `POST /auth/stepup` verified an assertion (design
+//! section 8.4), `ProveRecoveryEmail` after the email proof, and the
+//! public and ceremony steps `RequestRecovery` and `CompleteRecovery`
+//! (design section 8.7). Those routes have no admission of their own yet
+//! (lane W3a), so they fail closed. [`admit_system`] admits a system
+//! task's own commands, with no session.
 //!
-//! Lane W2c. Steps 1 and 3 are this crate's. Step 2 calls `fstp-auth`,
-//! which lane W2b builds in parallel. Until it lands, the stub refuses,
-//! and the gate passes that on as [`Deny::NotImplemented`].
+//! A step-up admits only when the ledger granted it (`StepUpGranted`),
+//! and then only the digest and the session its record names. P-71 is
+//! checked against the caller's assertion instant and against the entry
+//! instant of the grant (design sections 5.4 and 8.4).
+//!
+//! The route-only auth commands have no admission in this module yet.
+//! Each needs a typed proof that only its route holds: a verified
+//! step-up assertion (`fstp_auth::stepup::verify_step_up`), an email
+//! proof, a public recovery request, or a verified new passkey. Lane W3a
+//! adds that entry point here, inside `fstp-cell-core`, with its routes
+//! ([`ROUTE_ADMISSION_SEAM`]). Until then the `GrantStepUp` and
+//! `ProveRecoveryEmail` branches of `decide` run only from tests.
+//!
+//! Steps 1 and 3 are this crate's. Step 2 calls `fstp_auth::admit_session`
+//! and `fstp_auth::holds_management` (lanes W2b and W2c, integrated).
 
 use fstp_auth::{
     AuthError, Method, RosterView, SessionDeny, SessionLifetimes, SessionView, TenantView,
@@ -177,6 +192,9 @@ fn cell_entry(c: &CellCommand) -> Option<&'static str> {
         CellCommand::Tenant(TenantCommand::SetLoginPolicy { .. }) => Some("SetLoginPolicy"),
         CellCommand::Ops(crate::ops::OpsCommand::ApproveBreakGlass { .. }) => {
             Some("ApproveBreakGlass")
+        }
+        CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { .. }) => {
+            Some("ApproveRecovery")
         }
         _ => None,
     }
@@ -482,10 +500,10 @@ pub enum Deny {
     EnrolPasskeyFirst,
     /// The action is not permitted.
     NotPermitted,
-    /// A check the gate needs is not available yet: an `fstp-auth`
-    /// operation that is still a W0 stub (lane W2b), or the step-up digest
-    /// check through [`admit`], which has no command id. It names the
-    /// operation.
+    /// A check the gate needs is not available: the step-up digest check
+    /// through [`admit`], which has no command id. The `fstp-auth` W0 stub
+    /// refusals also map here, though no `fstp-auth` operation returns one
+    /// since lane W2b. It names the operation.
     NotImplemented(&'static str),
 }
 
@@ -530,15 +548,11 @@ fn admit_inner(
     now: Timestamp,
     policy: &LoginPolicy,
 ) -> Result<Admitted, Deny> {
-    // System commands and the step-up record never come through a
-    // session (module documentation). This reads no session, so it runs
-    // first.
+    // System commands and the route-only auth commands never come
+    // through a session (module documentation). This reads no session,
+    // so it runs first.
     if let Action::Command(c) = &action
-        && (system_only(c)
-            || matches!(
-                c,
-                CellCommand::Auth(fstp_auth::AuthCommand::GrantStepUp { .. })
-            ))
+        && (system_only(c) || route_only(c))
     {
         return Err(Deny::NotPermitted);
     }
@@ -627,22 +641,36 @@ fn check_stepup(
     if !fstp_crypto::constant_time_eq(&u.action_digest, &want) {
         return Err(Deny::StepUpMismatch);
     }
-    if s.auth().stepup(u.id).is_some_and(|d| d != u.action_digest) {
+    // The step-up must exist in the ledger: every step-up is logged with
+    // the action it authorised (`StepUpGranted`, design sections 5.4 and
+    // 8.4). It authorises its recorded digest in its recorded session
+    // only. A step-up the ledger never granted is no step-up.
+    let Some(grant) = s.auth().stepup_grant(u.id) else {
+        return Err(Deny::StepUpMismatch);
+    };
+    if !fstp_crypto::constant_time_eq(&grant.action_digest, &u.action_digest)
+        || grant.session != session.id
+    {
         return Err(Deny::StepUpMismatch);
     }
     if !u.strong {
         return Err(Deny::StepUpFromWeakMethod);
     }
-    if !within(u.asserted_at, now, p71_us) {
+    // P-71 holds for the caller's assertion instant and for the logged
+    // one, the entry instant of the grant. A view that claims a later
+    // assertion than the ledger logged gains nothing.
+    if !within(u.asserted_at, now, p71_us) || !within(grant.granted_at, now, p71_us) {
         return Err(Deny::StepUpStale);
     }
     if u.consumed || s.auth().consumed(u.id) {
         return Err(Deny::StepUpStale);
     }
+    // The commit checks freshness again from the earlier of the two
+    // instants, so it is never later than either check above allows.
     Ok(StepUpUse {
         id: u.id,
         action_digest: u.action_digest,
-        asserted_at: u.asserted_at,
+        asserted_at: u.asserted_at.min(grant.granted_at),
         p71_us,
     })
 }
@@ -660,6 +688,32 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
+    )
+}
+
+/// The missing admission of the route-only auth commands. A session
+/// never admits them, and [`admit_system`] admits no auth command. So
+/// `CellEngine::execute(Admitted)`, the only way a command reaches
+/// `DriverCore` (design section 5.4), cannot run them yet. Lane W3a owns
+/// the change: a typed admission in this module, with route proofs.
+pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate has no admission for GrantStepUp, RequestRecovery, ProveRecoveryEmail and CompleteRecovery: a typed admission with route proofs (a verified step-up assertion, an email proof, a public request, a verified new passkey) is added here by lane W3a (design sections 5.4, 8.4 and 8.5)";
+
+/// Whether only an auth route issues `c`, after it verified what the
+/// record states (design sections 8.4, 8.5 and 8.7): `GrantStepUp` after a
+/// step-up assertion, `ProveRecoveryEmail` after the email proof, and the
+/// public or ceremony steps `RequestRecovery` and `CompleteRecovery`,
+/// whose account holds no session. Those routes have no admission of
+/// their own yet ([`ROUTE_ADMISSION_SEAM`]), so they fail closed.
+fn route_only(c: &CellCommand) -> bool {
+    use fstp_auth::AuthCommand as A;
+    matches!(
+        c,
+        CellCommand::Auth(
+            A::GrantStepUp { .. }
+                | A::RequestRecovery { .. }
+                | A::ProveRecoveryEmail { .. }
+                | A::CompleteRecovery { .. }
+        )
     )
 }
 

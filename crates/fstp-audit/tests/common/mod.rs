@@ -9,9 +9,14 @@
 //! - [`api`] is the one place that calls `fstp-audit`. Each adapter either
 //!   calls the stub, or refuses with a gap constant where the designed API
 //!   does not exist yet. The production agent re-points the adapters.
+//! - [`signing`] signs anchors and receipts in the test with
+//!   `fstp_crypto::composite`, under the pinned [`ANCHOR_CTX`] and
+//!   [`RECEIPT_CTX`], and builds the signature forgeries the verifier must
+//!   name.
 //! - [`real_refusal`] tells a real refusal from the W0 stub's
-//!   `NotImplemented` or a gap. A refusal test that accepted either would
-//!   pass against the stub for the wrong reason.
+//!   `NotImplemented`, a gap or the old acceptance refusal. A refusal test
+//!   that accepted any of them would pass against the stub for the wrong
+//!   reason.
 //!
 //! `fstp-celltest` cannot be a dev-dependency here. Layering rule 1 reads
 //! every dependency kind of a pure core, and `fstp-celltest` reaches tokio.
@@ -30,25 +35,42 @@
 pub(crate) mod api;
 pub(crate) mod codec;
 pub(crate) mod reference;
+pub(crate) mod signing;
 pub(crate) mod view;
 
 use fstp_audit::AuditError;
 
-/// The text the interim refusal of every signing and signature check
-/// names (lane W2g scope, ADR-010 "Composite encoding").
+/// The text the old interim refusal of every signing and signature check
+/// named (ADR-010 "Composite encoding"). Daniel accepted the table on
+/// 2026-10-29 (design section 21.0), so a refusal that still names it is
+/// a stub refusal.
 pub(crate) const ACCEPTANCE: &str = "ADR-010 composite encoding acceptance (Daniel)";
 
-/// Whether `e` is the W0 stub's `NotImplemented` or an adapter gap, and
-/// not the interim acceptance refusal.
+/// The application context `ctx` of draft 19 that every anchor signature
+/// passes (ADR-010 "Composite encoding", row "Application context of
+/// platform messages", open point 2). Interim reading of lane W2g: the
+/// anchor message label. Pinned here once, so the tests change in one
+/// place if Daniel decides otherwise.
+pub(crate) const ANCHOR_CTX: &[u8] = b"fstp-anchor-v1";
+
+/// The application context of every receipt signature, as
+/// [`ANCHOR_CTX`]: the receipt message label (interim reading of lane
+/// W2g, ADR-010 open point 2).
+pub(crate) const RECEIPT_CTX: &[u8] = b"fstp-receipt-v1";
+
+/// Whether `e` is a stub refusal: the W0 stub's `NotImplemented`, an
+/// adapter gap, or a refusal that still names [`ACCEPTANCE`]. None of
+/// them is an answer since the table was accepted. The match is on the
+/// text, so the tests compile once `AwaitsAcceptance` is removed.
 pub(crate) fn is_stub_or_gap(e: &AuditError) -> bool {
     match e {
-        AuditError::NotImplemented(op) => !op.contains(ACCEPTANCE),
+        AuditError::NotImplemented(_) => true,
         AuditError::Tamper(_) => false,
         #[allow(
             unreachable_patterns,
-            reason = "the W0 stub has two variants; W2g may add refusal reasons"
+            reason = "W2g removes the acceptance variant once nothing returns it"
         )]
-        _ => false,
+        other => format!("{other:?}").contains(ACCEPTANCE),
     }
 }
 

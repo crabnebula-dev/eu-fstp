@@ -20,6 +20,9 @@
 //! `fstp_engine::apply`, so callers fold into a copy.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
+
+use fstp_auth::{CoseKey, RecoveryPath};
 
 use fstp_domain::FoldError as DomainFold;
 use fstp_domain::id::{AccountId, BindingId, CallId, ProposalId};
@@ -80,28 +83,165 @@ pub fn reaction_command_id(epoch: u64) -> [u8; 16] {
     id
 }
 
-/// The auth part: credentials, step-ups and ended sessions.
+/// One registered credential, as its `CredentialRegistered` record names
+/// it, with what later records say of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Credential {
+    /// The owning account.
+    pub account: AccountId,
+    /// The verified public key. A replay rebuilds the stored credential
+    /// from it (design section 4.2).
+    pub key: CoseKey,
+    /// Whether the registration gave user verification (ADR-008).
+    pub user_verified: bool,
+    /// Whether a `CredentialRevoked` record revoked it.
+    pub revoked: bool,
+    /// Whether a `CredentialSuspect` record marked its sign count as gone
+    /// down (ADR-008 "Sign counts").
+    pub suspect: bool,
+}
+
+impl Hash for Credential {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.account.hash(h);
+        // `CoseKey` implements no `Hash`. Its canonical COSE bytes name
+        // it alone (`fstp_auth::codec::cose_key_bytes`).
+        fstp_auth::codec::cose_key_bytes(&self.key).hash(h);
+        self.user_verified.hash(h);
+        self.revoked.hash(h);
+        self.suspect.hash(h);
+    }
+}
+
+/// A step-up as its `StepUpGranted` record names it, with the entry
+/// instant of that record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StepUpGrant {
+    /// The action digest it authorises (design section 8.4).
+    pub action_digest: [u8; 32],
+    /// The session it was made in. It authorises a command of that
+    /// session only.
+    pub session: [u8; 16],
+    /// The entry instant of the `StepUpGranted` record. `POST
+    /// /auth/stepup` records it once the assertion verified, so it is the
+    /// logged assertion time. The gate checks P-71 against it as well as
+    /// against the caller's view (design section 8.4).
+    pub granted_at: Timestamp,
+}
+
+/// One recovery case, as its records name it (I-79, design section 8.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RecoveryCase {
+    /// The account to recover.
+    pub account: AccountId,
+    /// The path computed at request time. A completion recomputes it.
+    pub requested: RecoveryPath,
+    /// Whether the email proof was given.
+    pub email_proven: bool,
+    /// The second tenant admin who approved the case, if any.
+    pub approver: Option<AccountId>,
+    /// The path the case completed by, once it completed.
+    pub completed: Option<RecoveryPath>,
+}
+
+/// One invitation, as its records name it (design section 8.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Invitation {
+    /// The invited account.
+    pub account: AccountId,
+    /// The SHA-256 digest of the token. The token itself is never stored.
+    pub token_digest: [u8; 32],
+    /// Whether it is the first tenant admin's invitation.
+    pub first_admin: bool,
+    /// Whether the token is drawn as two halves (Q35).
+    pub split: bool,
+    /// Whether an enrolment used it.
+    pub consumed: bool,
+}
+
+/// The auth part: credentials, step-ups, ended sessions, recovery cases
+/// and invitations.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AuthState {
-    credentials: BTreeSet<(AccountId, Vec<u8>)>,
-    stepups: BTreeMap<[u8; 16], [u8; 32]>,
+    credentials: BTreeMap<Vec<u8>, Credential>,
+    stepups: BTreeMap<[u8; 16], StepUpGrant>,
     consumed: BTreeSet<[u8; 16]>,
     ended_sessions: BTreeSet<[u8; 16]>,
+    recoveries: BTreeMap<[u8; 16], RecoveryCase>,
+    invitations: BTreeMap<[u8; 16], Invitation>,
+    first_admins: BTreeSet<AccountId>,
 }
 
 impl AuthState {
-    /// Whether `account` registered `credential`.
+    /// Whether `account` holds the live credential `credential`:
+    /// registered to it and not revoked.
     pub fn has_credential(&self, account: AccountId, credential: &[u8]) -> bool {
-        self.credentials.contains(&(account, credential.to_vec()))
+        self.credentials
+            .get(credential)
+            .is_some_and(|c| c.account == account && !c.revoked)
     }
 
-    /// Whether `account` holds any credential.
+    /// Whether `account` holds any live credential.
     pub fn has_any_credential(&self, account: AccountId) -> bool {
-        self.credentials.iter().any(|(a, _)| *a == account)
+        self.credentials
+            .values()
+            .any(|c| c.account == account && !c.revoked)
+    }
+
+    /// Whether a credential with id `credential` was ever registered, to
+    /// any account and revoked or not. A new registration must not reuse
+    /// it (WebAuthn Level 2 section 7.1 step 22,
+    /// `fstp_auth::ceremony::check_new_id`).
+    pub fn is_registered(&self, credential: &[u8]) -> bool {
+        self.credentials.contains_key(credential)
+    }
+
+    /// The credential with id `credential`, if it was registered.
+    pub fn credential(&self, credential: &[u8]) -> Option<&Credential> {
+        self.credentials.get(credential)
+    }
+
+    /// The ids of the live credentials of `account`, in id order.
+    ///
+    /// A recovery completion revokes exactly these, as the credentials of
+    /// `fstp_auth::recovery::Revocation` (I-79, design section 8.5). The
+    /// fold refuses a second revocation of one credential, so a completion
+    /// that also names a credential revoked earlier does not fold.
+    pub fn live_credentials(&self, account: AccountId) -> Vec<Vec<u8>> {
+        self.credentials
+            .iter()
+            .filter(|(_, c)| c.account == account && !c.revoked)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// The owner and the stored credential of the live credential
+    /// `credential`, with the sign count `sign_count` from the
+    /// operational row (`AuthRecord::stored_credential`). `None` for a
+    /// revoked or unknown credential.
+    pub fn stored_credential(
+        &self,
+        credential: &[u8],
+        sign_count: u32,
+    ) -> Option<(AccountId, fstp_auth::StoredCredential)> {
+        let c = self.credentials.get(credential).filter(|c| !c.revoked)?;
+        Some((
+            c.account,
+            fstp_auth::StoredCredential {
+                id: credential.to_vec(),
+                key: c.key.clone(),
+                sign_count,
+            },
+        ))
     }
 
     /// The action digest step-up `id` was granted for.
     pub fn stepup(&self, id: [u8; 16]) -> Option<[u8; 32]> {
+        self.stepups.get(&id).map(|g| g.action_digest)
+    }
+
+    /// The grant of step-up `id`: its action digest and its session.
+    pub fn stepup_grant(&self, id: [u8; 16]) -> Option<StepUpGrant> {
         self.stepups.get(&id).copied()
     }
 
@@ -113,6 +253,21 @@ impl AuthState {
     /// Whether a record ended session `id`.
     pub fn session_ended(&self, id: [u8; 16]) -> bool {
         self.ended_sessions.contains(&id)
+    }
+
+    /// Recovery case `case`, once it was requested.
+    pub fn recovery(&self, case: [u8; 16]) -> Option<RecoveryCase> {
+        self.recoveries.get(&case).copied()
+    }
+
+    /// Invitation `id`, once it was issued.
+    pub fn invitation(&self, id: [u8; 16]) -> Option<Invitation> {
+        self.invitations.get(&id).copied()
+    }
+
+    /// Whether `account` enrolled as the first tenant admin.
+    pub fn first_admin_enrolled(&self, account: AccountId) -> bool {
+        self.first_admins.contains(&account)
     }
 }
 
@@ -389,7 +544,7 @@ pub(crate) fn fold(
             fstp_engine::apply(&mut s.engine, seq, at, r).map_err(FoldError::Engine)?;
             index_engine(s, at, r);
         }
-        CellRecord::Auth(r) => fold_auth(&mut s.auth, r)?,
+        CellRecord::Auth(r) => fold_auth(&mut s.auth, &s.tenant, at, r)?,
         CellRecord::Tenant(r) => fold_tenant(&mut s.tenant, at, r)?,
         CellRecord::Text(r) => fold_text(s, at, r)?,
         CellRecord::Key(r) => fold_key(s, r)?,
@@ -465,27 +620,255 @@ fn index_engine(s: &mut CellState, at: Timestamp, r: &fstp_engine::Record) {
     }
 }
 
-fn fold_auth(a: &mut AuthState, r: &fstp_auth::AuthRecord) -> Result<(), FoldError> {
+/// Folds an auth record. Structural, as every cell fold: ids must be new
+/// where a record creates them and known where a record names them.
+///
+/// - A credential id is registered once, to one account, for good. A
+///   revocation or a suspect mark names a credential of that account, and
+///   a credential is revoked once. So a recovery completion revokes the
+///   live credentials only, [`AuthState::live_credentials`]. A batch that
+///   revokes a credential again does not fold.
+/// - A step-up is granted once, at the entry instant `at`, and consumed
+///   once. A consumption names a granted step-up: every step-up is
+///   logged with the action it authorised (I-78, design section 8.4), so
+///   a consumption with no grant is refused as unknown.
+/// - A recovery case is requested once. Its email proof, its approval and
+///   its completion each name an open case, once. An approval follows the
+///   email proof (design section 8.5), and a completion names the case's
+///   own account.
+/// - A completion names a path whose recorded evidence the case holds
+///   (I-79, design section 8.5): the email proof for every path but
+///   `HostConsole`, and an approval as well for `SecondAdmin`. The fold
+///   checks only what the records state. The approval's step-up outcome
+///   and identity answers, the operator ticket and the host console
+///   command are in no auth record, so `fstp_auth::recovery::complete`
+///   on the completion route checks them (lane W3a).
+/// - The path is taken from the completion record, which recomputes it,
+///   so it may differ from the requested path. The fold refuses a path
+///   that the current tenant admins rule out (`path_fits_admins`). It
+///   cannot see the roster's management roles or the deployment mode. So
+///   only the W3a completion route, through `fstp_auth::recovery::complete`,
+///   tells `OperatorProcess` from `HostConsole`, and `EmailThenPasskey`
+///   from a management path for an account that is no tenant admin. That
+///   route builds its `TenantView` from this fold's tenant admins, as
+///   `decide` does.
+/// - An invitation is issued once and consumed once.
+fn fold_auth(
+    a: &mut AuthState,
+    tenant: &TenantState,
+    at: Timestamp,
+    r: &fstp_auth::AuthRecord,
+) -> Result<(), FoldError> {
     use fstp_auth::AuthRecord as R;
     match r {
         R::CredentialRegistered {
             account,
             credential,
+            key,
+            user_verified,
         } => {
-            if !a.credentials.insert((*account, credential.clone())) {
+            if a.credentials.contains_key(credential) {
                 return Err(duplicate());
             }
+            a.credentials.insert(
+                credential.clone(),
+                Credential {
+                    account: *account,
+                    key: key.clone(),
+                    user_verified: *user_verified,
+                    revoked: false,
+                    suspect: false,
+                },
+            );
         }
-        R::StepUpGranted { id, action_digest } => {
-            if a.stepups.insert(*id, *action_digest).is_some() {
+        R::CredentialRevoked {
+            account,
+            credential,
+        } => {
+            let c = a.credentials.get_mut(credential).ok_or_else(unknown)?;
+            if c.account != *account {
+                return Err(inconsistent());
+            }
+            if c.revoked {
+                return Err(duplicate());
+            }
+            c.revoked = true;
+        }
+        R::CredentialSuspect {
+            account,
+            credential,
+        } => {
+            let c = a.credentials.get_mut(credential).ok_or_else(unknown)?;
+            if c.account != *account {
+                return Err(inconsistent());
+            }
+            c.suspect = true;
+        }
+        R::StepUpGranted {
+            id,
+            action_digest,
+            session,
+        } => {
+            if a.stepups.contains_key(id) {
+                return Err(duplicate());
+            }
+            a.stepups.insert(
+                *id,
+                StepUpGrant {
+                    action_digest: *action_digest,
+                    session: *session,
+                    granted_at: at,
+                },
+            );
+        }
+        R::StepUpConsumed { id } => {
+            if !a.stepups.contains_key(id) {
+                return Err(unknown());
+            }
+            if !a.consumed.insert(*id) {
                 return Err(duplicate());
             }
         }
         R::SessionEnded { session } => {
             a.ended_sessions.insert(*session);
         }
+        R::RecoveryRequested {
+            case,
+            account,
+            path,
+        } => {
+            if a.recoveries.contains_key(case) {
+                return Err(duplicate());
+            }
+            a.recoveries.insert(
+                *case,
+                RecoveryCase {
+                    account: *account,
+                    requested: *path,
+                    email_proven: false,
+                    approver: None,
+                    completed: None,
+                },
+            );
+        }
+        R::RecoveryEmailProven { case } => {
+            let c = open_case(a, case)?;
+            if c.email_proven {
+                return Err(duplicate());
+            }
+            c.email_proven = true;
+        }
+        R::RecoveryApproved { case, approver } => {
+            let c = open_case(a, case)?;
+            if !c.email_proven {
+                return Err(inconsistent());
+            }
+            if c.approver.is_some() {
+                return Err(duplicate());
+            }
+            c.approver = Some(*approver);
+        }
+        R::RecoveryCompleted {
+            case,
+            account,
+            path,
+            ..
+        } => {
+            let c = a.recoveries.get_mut(case).ok_or_else(unknown)?;
+            if c.completed.is_some() {
+                return Err(duplicate());
+            }
+            if c.account != *account {
+                return Err(inconsistent());
+            }
+            if !path_fits_admins(tenant, *account, *path) || !recorded_evidence_completes(c, *path)
+            {
+                return Err(inconsistent());
+            }
+            c.completed = Some(*path);
+        }
+        R::InvitationIssued {
+            invitation,
+            account,
+            token_digest,
+            first_admin,
+            split,
+        } => {
+            if a.invitations.contains_key(invitation) {
+                return Err(duplicate());
+            }
+            a.invitations.insert(
+                *invitation,
+                Invitation {
+                    account: *account,
+                    token_digest: *token_digest,
+                    first_admin: *first_admin,
+                    split: *split,
+                    consumed: false,
+                },
+            );
+        }
+        R::InvitationConsumed { invitation } => {
+            let i = a.invitations.get_mut(invitation).ok_or_else(unknown)?;
+            if i.consumed {
+                return Err(duplicate());
+            }
+            i.consumed = true;
+        }
+        R::FirstAdminEnrolled { account } => {
+            if !a.first_admins.insert(*account) {
+                return Err(duplicate());
+            }
+        }
     }
     Ok(())
+}
+
+/// Whether the recorded evidence of case `c` covers a completion by
+/// `path`, as far as auth records state it (I-79, design section 8.5,
+/// `fstp_auth::recovery::decide`). Every path but `HostConsole` needs the
+/// email proof, and `SecondAdmin` needs an approval as well.
+fn recorded_evidence_completes(c: &RecoveryCase, path: RecoveryPath) -> bool {
+    match path {
+        RecoveryPath::EmailThenPasskey | RecoveryPath::OperatorProcess => c.email_proven,
+        RecoveryPath::SecondAdmin => c.email_proven && c.approver.is_some(),
+        RecoveryPath::HostConsole => true,
+    }
+}
+
+/// Whether the path table of `fstp_auth::recovery::path_of` can give
+/// `path` for `account` with the current tenant admins of `tenant` (I-79,
+/// design section 8.5). The fold sees the tenant admins but neither the
+/// roster's management roles nor the deployment mode. So it tries every
+/// holdings class that the admin set leaves open, and both modes.
+///
+/// A completion recomputes its path at completion, so the path may differ
+/// from the requested one. This check refuses only a path that no roster
+/// and no mode could give with these admins. For example, it refuses
+/// `HostConsole` or `OperatorProcess` while another tenant admin exists,
+/// and `SecondAdmin` while none does.
+fn path_fits_admins(tenant: &TenantState, account: AccountId, path: RecoveryPath) -> bool {
+    use fstp_auth::recovery::{Deployment, Holdings, path_of};
+    let others = tenant.admins.keys().filter(|a| **a != account).count();
+    let holdings: &[Holdings] = if tenant.is_admin(account) {
+        &[Holdings::TenantAdmin]
+    } else {
+        &[Holdings::ReceivingOnly, Holdings::Management]
+    };
+    holdings.iter().any(|h| {
+        [Deployment::Saas, Deployment::SelfHosted]
+            .iter()
+            .any(|m| path_of(*h, others, *m) == path)
+    })
+}
+
+/// The open recovery case `case`: requested and not completed.
+fn open_case<'a>(a: &'a mut AuthState, case: &[u8; 16]) -> Result<&'a mut RecoveryCase, FoldError> {
+    let c = a.recoveries.get_mut(case).ok_or_else(unknown)?;
+    if c.completed.is_some() {
+        return Err(inconsistent());
+    }
+    Ok(c)
 }
 
 fn fold_tenant(t: &mut TenantState, at: Timestamp, r: &TenantRecord) -> Result<(), FoldError> {

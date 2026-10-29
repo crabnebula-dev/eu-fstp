@@ -135,6 +135,21 @@ pub(crate) fn has_python_name(path: &Path) -> bool {
         || (name.starts_with("requirements") && (name.ends_with(".txt") || name.ends_with(".in")))
 }
 
+/// The installed npm trees that `npm ci --ignore-scripts` writes. They are
+/// git-ignored and never committed (the npm gate refuses any other
+/// `node_modules` tree).
+const INSTALLED_NPM_TREES: [&str; 2] = ["web/node_modules", "e2e/node_modules"];
+
+/// Whether `rel` lies inside an installed npm tree. Python files and Python
+/// shebangs there still fail. Only the line scan for Python invocations
+/// skips them: it reads third-party JavaScript, whose language names such
+/// as `"python"` (Playwright's code generator) are not invocations. Those
+/// packages are pinned and reviewed through `deps/npm-allowlist.txt`, and
+/// no package script runs, since installs use `--ignore-scripts`.
+fn in_installed_npm_tree(rel: &Path) -> bool {
+    INSTALLED_NPM_TREES.iter().any(|t| rel.starts_with(t))
+}
+
 /// Whether the invocation scan reads this file. `head` is its first bytes.
 fn is_script(path: &Path, head: &[u8]) -> bool {
     SCRIPT_EXTENSIONS.contains(&lower_ext(path).as_str())
@@ -195,7 +210,7 @@ pub(crate) fn scan(root: &Path, walk: &Walk) -> Scan {
             ));
             continue;
         }
-        if !is_script(&f.rel, &head) {
+        if !is_script(&f.rel, &head) || in_installed_npm_tree(&f.rel) {
             continue;
         }
         match read_prefix(&path, SCRIPT_PREFIX) {
@@ -453,6 +468,43 @@ pub(crate) mod tests {
             ),
         ];
         assert_eq!(scan_codes(&t), want);
+    }
+
+    #[test]
+    fn installed_npm_trees_skip_only_the_invocation_scan() {
+        let t = TempDir::new("npmtree");
+        t.write(
+            "e2e/node_modules/pkg/lib.js",
+            b"const langs = ['python'];\nexec('python3 x');\n",
+        );
+        t.write("web/node_modules/pkg/tool.py", b"print(1)\n");
+        t.write("web/node_modules/pkg/run", b"#!/usr/bin/env python3\n");
+        t.write("tools/x.sh", b"python3 - <<EOF\n");
+        let codes = scan_codes(&t);
+        assert!(
+            !codes
+                .iter()
+                .any(|(c, r)| *c == "python-invocation" && r.contains("node_modules")),
+            "{codes:?}"
+        );
+        assert!(
+            codes
+                .iter()
+                .any(|(c, r)| *c == "python-file" && r.contains("tool.py")),
+            "{codes:?}"
+        );
+        assert!(
+            codes
+                .iter()
+                .any(|(c, r)| *c == "python-shebang" && r.contains("pkg/run")),
+            "{codes:?}"
+        );
+        assert!(
+            codes
+                .iter()
+                .any(|(c, r)| *c == "python-invocation" && r.contains("tools/x.sh")),
+            "{codes:?}"
+        );
     }
 
     #[test]

@@ -48,8 +48,15 @@ fn gate_admin(
     now: Timestamp,
     policy: &LoginPolicy,
 ) -> Result<Admitted, Deny> {
+    // The ledger granted the offered step-up as its view states it, at
+    // its assertion instant (design section 8.4). So the checks below
+    // meet the view's own digest, session, method and age.
+    let s = match su {
+        Some(u) => common::with_admins_granted(&[ADMIN], u).unwrap(),
+        None => cell(),
+    };
     admit_with_id(
-        &cell(),
+        &s,
         &passkey(ADMIN),
         Action::Command(c.clone()),
         ID,
@@ -119,6 +126,8 @@ fn i78_magic_link_session_never_takes_a_high_risk_action() {
                     fstp_auth::AuthRecord::CredentialRegistered {
                         account: A,
                         credential: vec![9, 0],
+                        key: fstp_auth::CoseKey::Ed25519 { x: [9; 32] },
+                        user_verified: true,
                     },
                 )],
             ),
