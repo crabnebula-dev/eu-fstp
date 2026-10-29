@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 fstp-engine.workspace = true
 fstp-domain.workspace = true
+fstp-findings.workspace = true
 fstp-auth.workspace = true
 fstp-keys.workspace = true
 fstp-ledger.workspace = true
@@ -18,6 +19,11 @@ fstp-json.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# In-house test-only crates: the M2 corpus, generators and reference engine
+# runs (fstp-domain-testkit), and the money types the domain codec
+# generators build (fstp-money).
+fstp-domain-testkit.workspace = true
+fstp-money.workspace = true
 
 [lints]
 workspace = true

@@ -129,6 +129,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-domain",
  "fstp-engine",
+ "fstp-findings",
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",

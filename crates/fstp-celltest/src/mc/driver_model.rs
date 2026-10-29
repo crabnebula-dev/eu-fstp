@@ -48,27 +48,26 @@ use crate::reference::vault::{
 // ---------------------------------------------------------------------------
 // Seams.
 
-/// The seam of every production event that carries ledger values:
-/// `Event::Read` holds `fstp_ledger::Entry` values and `Event::Appended`
-/// holds `fstp_ledger::Seq` and `AppendError`. `fstp-celltest` has no
-/// `fstp-ledger` dependency, and only the lead edits its manifest (design
-/// section 2.5). An empty read needs no ledger value, so it passes.
-pub const LEDGER_SEAM: &str = "fstp_celltest::mc::driver_model: fstp-celltest has no fstp-ledger dependency to build Entry, Seq and AppendError for DriverCore events (lead, design section 2.5)";
+/// The seam of every production event that carries ledger values.
+/// `fstp-celltest` depends on `fstp-ledger` since lane W2c, so
+/// [`production_event`] builds `Event::Appended` from `fstp_ledger::Seq`
+/// and `AppendError`. A non-empty read still refuses with this seam: a
+/// model reply ([`LEntry`]) carries a sequence and a command id but no
+/// records, so no `fstp_ledger::Entry` can be built from it. An empty read
+/// needs no ledger value, so it passes.
+pub const LEDGER_SEAM: &str = "fstp_celltest::mc::driver_model: a model read reply carries no records, so no fstp_ledger::Entry can be built for Event::Read (lane W1c)";
 
-/// The seam of the caller's command id: `DriverCore::start` takes only an
-/// `Admitted`, which carries no command id, so a retry cannot name the
-/// command it repeats (design section 5.2, lane W2c). The production
-/// backend therefore cannot run the crash retry under the caller's id.
-/// While this seam stands, an append under any id other than the caller's
-/// or a reaction's halts the run as `NotImplemented` with this seam, not
-/// as an I-23 failure.
+/// The seam of the caller's command id, closed by lane W2c:
+/// `DriverCore::start_with_id` takes the caller's command id, and
+/// `gate::admit_command` binds the step-up digest to it (design section
+/// 5.2). [`Production::start`] passes `retry_id` or `Cmd::id`, so the
+/// crash retry runs under the caller's id. `DriverCore` refuses an id with
+/// the reserved prefix `fstp:vc:` before it reads anything. The constant
+/// stays as the refusal of a command index outside the universe.
 ///
-/// API request to lane W2c: `Admitted` or `DriverCore::start` carries the
-/// caller's command id, and `DriverCore` refuses one with the reserved
-/// prefix `fstp:vc:`. Once it lands, [`Production::start`] passes
-/// `retry_id` or `Cmd::id`, the halt above goes, and M-DRIVER gains a third
-/// command whose id has the reserved prefix, whose run must finish refused
-/// and append nothing (`seam_driver_core_refuses_reserved_command_id`).
+/// Still open for lane W1c: M-DRIVER can gain a third command whose id has
+/// the reserved prefix, whose run must finish refused and append nothing
+/// (`seam_driver_core_refuses_reserved_command_id`).
 pub const COMMAND_ID_SEAM: &str =
     "DriverCore::start takes no caller command id (design section 5.2, lane W2c)";
 
@@ -561,7 +560,16 @@ pub fn admit(
         }),
         None => None,
     };
-    gate::admit(state, &session, action, stepup.as_ref(), at, &POLICY).map_err(deny)
+    gate::admit_command(
+        state,
+        &session,
+        action,
+        command_id,
+        stepup.as_ref(),
+        at,
+        &POLICY,
+    )
+    .map_err(deny)
 }
 
 fn fold_ni(e: FoldError) -> NotImplemented {
@@ -597,14 +605,16 @@ pub struct ProdRun {
     state: CellState,
     driver: DriverCore,
     need: Option<Need>,
-    caller: [u8; 16],
 }
 
 /// The production event for `reply` to `need`.
 ///
 /// # Errors
 ///
-/// [`LEDGER_SEAM`] for any event that carries ledger values.
+/// [`LEDGER_SEAM`] for a non-empty read, whose model entries carry no
+/// records. A duplicate reply names no earlier entry, so the event names
+/// `Seq::ZERO`, which the driver does not read. An append reply carries no
+/// chain link, so the event names link zero.
 pub fn production_event(need: &Need, reply: &Reply) -> Result<Event, NotImplemented> {
     match (need, reply) {
         (Need::ReadFrom(_), Reply::Read(entries)) if entries.is_empty() => {
@@ -621,6 +631,15 @@ pub fn production_event(need: &Need, reply: &Reply) -> Result<Event, NotImplemen
             Ok(())
         } else {
             Err(VaultFault::Unavailable)
+        })),
+        (Need::Append { .. }, Reply::Appended(r)) => Ok(Event::Appended(match r {
+            AppendReply::Ok(seq) => Ok((fstp_ledger::Seq::from_raw(*seq), [0; 32])),
+            AppendReply::Duplicate => Err(fstp_ledger::AppendError::DuplicateCommand {
+                at: fstp_ledger::Seq::ZERO,
+            }),
+            AppendReply::Stale(head) => Err(fstp_ledger::AppendError::StaleHead {
+                head: fstp_ledger::Seq::from_raw(*head),
+            }),
         })),
         _ => Err(NotImplemented::new(LEDGER_SEAM)),
     }
@@ -697,11 +716,11 @@ impl DriverBackend for Production {
             .get(cmd.index())
             .cloned()
             .ok_or(NotImplemented::new(COMMAND_ID_SEAM))?;
+        let caller = retry_id.unwrap_or(cmd.id());
         Ok(ProdRun {
             state: self.genesis.clone(),
-            driver: DriverCore::start(admitted),
+            driver: DriverCore::start_with_id(admitted, caller),
             need: None,
-            caller: retry_id.unwrap_or(cmd.id()),
         })
     }
 
@@ -712,12 +731,6 @@ impl DriverBackend for Production {
         };
         match run.driver.step(&mut run.state, ev) {
             Step::Need(n) => {
-                if let Need::Append { command, .. } = &n
-                    && *command != run.caller
-                    && !is_reaction_command_id(*command)
-                {
-                    return Err(NotImplemented::new(COMMAND_ID_SEAM));
-                }
                 let out = model_need(&n);
                 run.need = Some(n);
                 Ok(out)

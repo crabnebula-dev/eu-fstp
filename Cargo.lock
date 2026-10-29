@@ -146,10 +146,13 @@ dependencies = [
  "fstp-auth",
  "fstp-crypto",
  "fstp-domain",
+ "fstp-domain-testkit",
  "fstp-engine",
+ "fstp-findings",
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-money",
  "fstp-prop",
 ]
 
@@ -173,6 +176,7 @@ dependencies = [
  "fstp-engine",
  "fstp-keyd",
  "fstp-keys",
+ "fstp-ledger",
  "fstp-mc",
  "fstp-migrate",
  "fstp-obs",

@@ -64,6 +64,9 @@ pub mod amendment;
 pub mod grant;
 pub mod payment;
 
+// M3 lane W2c: read-only accessors for the cell (M3 design section 0.5).
+pub mod view;
+
 pub use command::{Actor, Command, CommandKind, Ctx, SystemCause, Via};
 pub use engine::{FoldError, apply, decide, due, queries, replay, stage1_ready};
 pub use oracle::{Answer, Answers, OracleDown, Query, QueryKind};

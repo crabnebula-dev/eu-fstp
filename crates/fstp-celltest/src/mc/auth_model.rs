@@ -123,8 +123,10 @@ pub const SUSPEND_SEAM: &str = "fstp_celltest::mc::auth_model::ProdCell::suspend
 pub const SESSIONS_SEAM: &str = "fstp_celltest::mc::auth_model::ProdCell::open_session: fstp_cell_core::decide sees no session rows, so a batch cannot name the sessions it ends (design sections 4.2 and 5.1, lane W2c)";
 
 /// The seam of a production session check under lifetimes other than the
-/// P-72 defaults: the gate reads P-72 from the tenant fold, and the
-/// login policy form is not defined yet (lane W2c).
+/// P-72 defaults, closed by lane W2c: the gate reads P-72 from the tenant
+/// fold, whose form is `fstp_cell_core::tenant::TenantLoginPolicy`.
+/// [`Production::session_in`] sets the lifetimes with `SetLoginPolicy` by
+/// the tenant admin. The constant stays for the suites that name it.
 pub const P72_SEAM: &str = "fstp_celltest::mc::auth_model::Production::session_in: the gate reads P-72 from the tenant fold, whose login policy form is not defined (lane W2c)";
 
 /// The credential id the auth models give device `device` of `account`.
@@ -777,18 +779,49 @@ impl AuthBackend for Production {
         now: Timestamp,
         p72: RefLifetimes,
     ) -> Result<bool, NotImplemented> {
-        if p72 != RefLifetimes::DEFAULT {
-            return Err(NotImplemented::new(P72_SEAM));
-        }
         if s.ended.is_some_and(|(at, _)| at.micros() <= now.micros()) {
             // An ended session has an `auth_log.session_end` row, and the
             // shell finds no session for its cookie.
             return Ok(false);
         }
-        let cell = match self.cell_for(roster, now) {
+        let mut cell = match self.cell_for(roster, now) {
             Ok(c) => c,
             Err(e) => return prod_ni(e).map(|_| false),
         };
+        if p72 != RefLifetimes::DEFAULT {
+            // The tenant admin sets P-72 through the login policy
+            // ([`P72_SEAM`], closed by lane W2c). A value that lengthens a
+            // default is refused as an invalid value, and the defaults then
+            // apply. Any other refusal is a production defect, surfaced.
+            let policy = fstp_cell_core::tenant::TenantLoginPolicy {
+                p71_us: None,
+                p72_idle_us: Some(p72.idle_us),
+                p72_absolute_us: Some(p72.absolute_us),
+            };
+            let cmd = CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::SetLoginPolicy {
+                policy: policy.encode(),
+            });
+            let lengthens = format!(
+                "{:?}",
+                fstp_domain::refusal::Refusal::new(
+                    fstp_domain::refusal::RuleRef::Input,
+                    fstp_domain::refusal::RefusalReason::InvalidValue,
+                )
+            );
+            // At the latest recorded instant, so a binding end recorded after
+            // T0 cannot make the command earlier than the ledger.
+            let at = cell.state().now_floor().max(T0);
+            match cell.exec(cmd, ADMIN, at) {
+                Ok(_) => {}
+                Err(ProdError::Refused(r)) if r == lengthens => {}
+                Err(ProdError::Refused(_)) => {
+                    return Err(NotImplemented::new(
+                        "fstp_celltest::mc::auth_model::Production::session_in: SetLoginPolicy was refused for a cause other than a value that lengthens a default (lane W2c)",
+                    ));
+                }
+                Err(e) => return prod_ni(e).map(|_| false),
+            }
+        }
         session_admitted(gate::admit(
             cell.state(),
             &prod_session(s),
