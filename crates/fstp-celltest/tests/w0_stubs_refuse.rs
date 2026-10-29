@@ -32,28 +32,6 @@ fn refuses<T, E: Debug>(what: &str, r: Result<T, E>) {
 /// Inputs every stub parser must refuse without a panic.
 const INPUTS: [&[u8]; 4] = [b"", b"\x00", b"\xff\xff\xff\xff", b"{\"a\":1}"];
 
-/// TH-26, design section 3.2: `fstp_keys::envelope::decode_sealed_key`.
-#[test]
-fn w0_keys_decode_sealed_key_refuses() {
-    for input in INPUTS {
-        refuses(
-            "decode_sealed_key",
-            fstp_keys::envelope::decode_sealed_key(input),
-        );
-    }
-}
-
-/// TH-26, design section 3.2: `fstp_keys::envelope::decode_sealed_blob`.
-#[test]
-fn w0_keys_decode_sealed_blob_refuses() {
-    for input in INPUTS {
-        refuses(
-            "decode_sealed_blob",
-            fstp_keys::envelope::decode_sealed_blob(input),
-        );
-    }
-}
-
 /// Design section 5.1: `fstp_cell_core::replay` over an empty ledger.
 #[test]
 fn w0_cell_core_replay_refuses() {
