@@ -109,11 +109,18 @@ dependencies = [
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
+ "fstp-audit",
  "fstp-cell-core",
  "fstp-cp-proto",
+ "fstp-crypto",
  "fstp-custody",
+ "fstp-domain",
  "fstp-edge",
+ "fstp-engine",
  "fstp-http",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-ledger",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-release",

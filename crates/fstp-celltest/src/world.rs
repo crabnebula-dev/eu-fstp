@@ -15,9 +15,11 @@
 //! keeps a file store. So no self-hosted world shares a cluster with a
 //! SaaS world in the same test binary.
 //!
-//! Status in lane W1a: worlds without cells start. Cells need the cell
-//! runtime of lane W3a, so a world with cells refuses with
-//! [`NotImplemented`].
+//! Status after lane W3a: worlds without cells start. A world with cells
+//! provisions each cell through the production role plan and runs it
+//! over the PostgreSQL store. Neither exists yet (lanes W2h and W2e), so
+//! a world with cells refuses with [`NotImplemented`] naming the missing
+//! part ([`World::start`]).
 
 use std::fmt;
 use std::io::ErrorKind;
@@ -136,23 +138,86 @@ pub struct World {
 impl World {
     /// Starts a world with the clusters [`cluster_plan`] names.
     ///
+    /// # Smoke test
+    ///
+    /// Design section 14.3, I-82 and I-83: a one-cell SaaS world in shared
+    /// mode runs a real cell. Its handle is cell 0. Its databases follow the
+    /// grammar `^[cv]_[0-9a-f]{32}$` of design section 4.1: `c_<cell>` on
+    /// the application cluster and `v_<cell>` on the vault cluster. An empty
+    /// cycle runs on it. This example is red until the role plan of lane
+    /// W2h and the PostgreSQL store of lane W2e land (see "Cells" below).
+    ///
+    /// ```
+    /// use fstp_celltest::world::{
+    ///     ClusterKind, CycleScript, DbMode, VaultLayout, World, WorldSpec,
+    /// };
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let world = World::start(WorldSpec {
+    ///     cells: 1,
+    ///     mode: DbMode::Shared,
+    ///     vault_layout: VaultLayout::SeparateCluster,
+    ///     self_hosted: false,
+    ///     process_mode: false,
+    /// })?;
+    /// assert_eq!(world.cell(0).map(|c| c.index()), Some(0));
+    /// assert!(world.cell(1).is_none());
+    ///
+    /// let cell_db = |name: &str, prefix: &str| {
+    ///     name.strip_prefix(prefix).is_some_and(|hex| {
+    ///         hex.len() == 32 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    ///     })
+    /// };
+    /// let dbs = world.databases()?;
+    /// let on = |kind: ClusterKind, prefix: &str| {
+    ///     dbs.iter().filter(|d| d.kind == kind && cell_db(&d.name, prefix)).count()
+    /// };
+    /// assert_eq!((on(ClusterKind::Application, "c_"), on(ClusterKind::Vault, "v_")), (1, 1));
+    ///
+    /// world.run_cycle(0, &CycleScript::default()).result?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Cells
+    ///
+    /// A world provisions each cell through the production role plan,
+    /// `fstp_control::pg::cell_role_plan` (I-82), never through roles of
+    /// its own. It creates the plan's login roles on the cell's clusters,
+    /// then each database with its `pg_hba` lines. The grant rows need
+    /// the application and vault migrations and `fstp_meta.apply_grant`.
+    /// The cell then runs over `fstp_pgstore::PgRecordStore`.
+    ///
+    /// Lane W3a reading: the cell runtime of `fstp-cell` exists, but the
+    /// role plan (lane W2h), the migrations and the PostgreSQL store (lane
+    /// W2e) do not. A harness that made roles or stores of its own would
+    /// let the I-82 and I-83 sweeps pass on the harness, not on
+    /// production. So a world with cells refuses, naming the first
+    /// missing part, before any cluster starts.
+    ///
     /// # Errors
     ///
-    /// Refuses a world with cells until the cell runtime exists (lane
-    /// W3a). Returns the start error of any cluster.
+    /// [`WorldError::NotImplemented`] naming the missing production part
+    /// of a world with cells. Returns the start error of any cluster.
     pub fn start(spec: WorldSpec) -> Result<World, WorldError> {
-        if spec.cells > 0 {
-            return Err(WorldError::NotImplemented(NotImplemented::new(
-                "fstp_celltest::world::World::start with cells (the cell runtime of lane W3a)",
-            )));
+        let mut plans = Vec::with_capacity(usize::from(spec.cells));
+        for _ in 0..spec.cells {
+            plans.push(cell_plan()?);
         }
         let clusters = cluster_plan(&spec)
             .iter()
             .map(|(kind, name)| ClusterHandle::start_named(*kind, name))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut cells = Vec::with_capacity(plans.len());
+        for (i, plan) in plans.iter().enumerate() {
+            let index = u8::try_from(i)
+                .map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))?;
+            provision_cell(&spec, &clusters, index, plan)?;
+            cells.push(start_cell(index)?);
+        }
         Ok(World {
             spec,
-            cells: Vec::new(),
+            cells,
             clusters,
             egress: EgressLog::new(),
         })
@@ -168,14 +233,23 @@ impl World {
         self.cells.get(usize::from(i))
     }
 
-    /// Runs a call cycle on one cell.
+    /// Runs a call cycle on one cell. An empty script runs on any cell of
+    /// the world. Each step drives the cell's HTTP routes with the
+    /// software authenticator, which lane W3a agent one and the slice of
+    /// lane W3b build, so a script with steps refuses until they land.
     pub fn run_cycle(&self, cell: u8, script: &CycleScript) -> CycleReport {
-        let _ = (cell, script);
-        CycleReport {
-            result: Err(NotImplemented::new(
-                "fstp_celltest::world::World::run_cycle (the cell runtime of lane W3a)",
-            )),
-        }
+        let result = if self.cell(cell).is_none() {
+            Err(NotImplemented::new(
+                "fstp_celltest::world::World::run_cycle on a cell the world does not hold",
+            ))
+        } else if script.steps.is_empty() {
+            Ok(())
+        } else {
+            Err(NotImplemented::new(
+                "fstp_celltest::world::World::run_cycle steps (the cell routes of lane W3a agent one and the slice of lane W3b)",
+            ))
+        };
+        CycleReport { result }
     }
 
     /// Every database, object directory, log and metrics sink: each
@@ -238,6 +312,118 @@ impl World {
     pub fn cluster(&self, kind: ClusterKind) -> Option<&ClusterHandle> {
         self.clusters.iter().find(|c| c.kind == kind)
     }
+}
+
+/// A fresh cell id and its production role plan (I-82).
+fn cell_plan() -> Result<fstp_control::pg::RolePlan, WorldError> {
+    let mut id = [0u8; 16];
+    fstp_crypto::random_bytes(&mut id)
+        .map_err(|_| WorldError::Store("no random cell id".to_owned()))?;
+    #[allow(
+        unreachable_patterns,
+        reason = "lane W2h adds typed refusals to ControlError; until then NotImplemented is its only variant"
+    )]
+    fstp_control::pg::cell_role_plan(fstp_cp_proto::CellId(id)).map_err(|e| match e {
+        fstp_control::ControlError::NotImplemented(_) => {
+            WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World::start with cells: the cell role plan fstp_control::pg::cell_role_plan (lane W2h) provisions each cell",
+            ))
+        }
+        other => WorldError::Store(format!("the cell role plan refused: {other}")),
+    })
+}
+
+/// The name of a cell database, `c_<hex>` or `v_<hex>` (design section 4.1).
+fn database_name(db: fstp_control::pg::CellDatabase, cell: &fstp_cp_proto::CellId) -> String {
+    let prefix = match db {
+        fstp_control::pg::CellDatabase::App => "c",
+        fstp_control::pg::CellDatabase::Vault => "v",
+    };
+    let hex: String = cell.0.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{prefix}_{hex}")
+}
+
+/// The cluster of `kind` that holds cell `index`: the shared one, or the
+/// cell's own in dedicated mode.
+fn cell_cluster(
+    spec: &WorldSpec,
+    clusters: &[ClusterHandle],
+    kind: ClusterKind,
+    index: u8,
+) -> Result<&'static fstp_pgtest::PgServer, WorldError> {
+    let dedicated = format!("{}_{index}", kind_label(kind));
+    clusters
+        .iter()
+        .find(|c| {
+            c.kind() == kind
+                && (spec.self_hosted || spec.mode == DbMode::Shared || c.name() == dedicated)
+        })
+        .map(ClusterHandle::server)
+        .ok_or_else(|| {
+            WorldError::Store(format!("no {} cluster for cell {index}", kind_label(kind)))
+        })
+}
+
+/// Applies `plan` to the cell's clusters: its login roles, then each
+/// database with the `pg_hba` lines of its roles. The grant rows need the
+/// migrations and `fstp_meta.apply_grant` of lane W2e, so a plan with
+/// grant rows refuses here until they land.
+fn provision_cell(
+    spec: &WorldSpec,
+    clusters: &[ClusterHandle],
+    index: u8,
+    plan: &fstp_control::pg::RolePlan,
+) -> Result<(), WorldError> {
+    use fstp_control::pg::CellDatabase;
+    if !plan.grants.is_empty() {
+        return Err(WorldError::NotImplemented(NotImplemented::new(
+            "fstp_celltest::world::World::start with cells: the grant rows need the cell migrations and fstp_meta.apply_grant (lane W2e)",
+        )));
+    }
+    for db in [CellDatabase::App, CellDatabase::Vault] {
+        let kind = match db {
+            CellDatabase::App => ClusterKind::Application,
+            CellDatabase::Vault => ClusterKind::Vault,
+        };
+        let server = cell_cluster(spec, clusters, kind, index)?;
+        let dbname = database_name(db, &plan.cell);
+        let mut roles = Vec::new();
+        for r in plan.roles.iter().filter(|r| r.database == db) {
+            let role = format!("{dbname}_{}", r.role.suffix());
+            server
+                .create_login_role(&role)
+                .map_err(|e| WorldError::Cluster {
+                    kind,
+                    message: e.to_string(),
+                })?;
+            if plan
+                .hba
+                .iter()
+                .any(|h| h.database == db && h.role == r.role)
+            {
+                roles.push(role);
+            }
+        }
+        let refs: Vec<&str> = roles.iter().map(String::as_str).collect();
+        server
+            .create_database_for(&dbname, &refs)
+            .map_err(|e| WorldError::Cluster {
+                kind,
+                message: e.to_string(),
+            })?;
+    }
+    Ok(())
+}
+
+/// Starts cell `index` over its provisioned databases. The cell runtime
+/// of `fstp-cell` runs over `fstp_pgstore::PgRecordStore`, which lane W2e
+/// builds, so this refuses until it lands. No in-memory ledger stands in
+/// for a world cell.
+fn start_cell(index: u8) -> Result<CellHandle, WorldError> {
+    let _ = index;
+    Err(WorldError::NotImplemented(NotImplemented::new(
+        "fstp_celltest::world::World::start with cells: the cell ledger fstp_pgstore::PgRecordStore (lane W2e)",
+    )))
 }
 
 /// One database of a world's cluster.

@@ -423,14 +423,20 @@ fn vault_start_check(t: Target) -> StartVerdict {
 /// The cell start check of design section 9.2 for one target, the mirror
 /// of [`vault_start_check`].
 ///
-/// Gap, reported by lane W1f and raised to the lead for lane W3a, as for
-/// the vault: `fstp-cell` exposes only `run()`.
+/// Lane W3a: `fstp_cell::engine::startup::accepts_database` takes the
+/// marker, the OU and the registered SPKI kind.
 fn cell_start_check(t: Target) -> StartVerdict {
-    let _ = t;
-    Err(fstp_celltest::NotImplemented::new(
-        "fstp_cell start check over (placement marker, server OU, registered SPKI) \
-         (lane W3a; design gap raised by lane W1f)",
-    ))
+    use fstp_cell::engine::startup::{ClusterRole, DatabaseView, accepts_database};
+    let role = |k: ClusterKind| match k {
+        ClusterKind::Application => ClusterRole::Application,
+        ClusterKind::Vault => ClusterRole::Vault,
+        ClusterKind::Control | ClusterKind::Witness => ClusterRole::Other,
+    };
+    Ok(accepts_database(&DatabaseView {
+        marker: t.marker,
+        server_ou: role(t.ou),
+        registered_spki: role(t.spki),
+    }))
 }
 
 /// Every target where `check` disagrees with the reference rule for a

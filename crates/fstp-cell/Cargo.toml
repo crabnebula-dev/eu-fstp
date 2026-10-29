@@ -19,9 +19,26 @@ fstp-http.workspace = true
 fstp-tls.workspace = true
 fstp-obs.workspace = true
 fstp-rt.workspace = true
+# In-house edges of lane W3a (agent two): the ledger store trait and entries,
+# the domain and engine types the driver and the timeline name, the audit
+# chain and anchorer core, the erasure planner, and the canonical JSON and
+# crypto calls of the key-op records and the chain links.
+fstp-ledger.workspace = true
+fstp-domain.workspace = true
+fstp-engine.workspace = true
+fstp-audit.workspace = true
+fstp-keys.workspace = true
+fstp-json.workspace = true
+fstp-crypto.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# In-house test-only crates: the witness core the scripted witness peer runs,
+# the session view the erasure tests admit a tenant admin with, and the M2
+# generators of the equivalence test (design section 14.6).
+fstp-witness.workspace = true
+fstp-auth.workspace = true
+fstp-domain-testkit.workspace = true
 
 [lints]
 workspace = true

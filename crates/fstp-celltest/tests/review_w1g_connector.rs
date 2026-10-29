@@ -92,12 +92,9 @@ fn only_egress_verdict() -> Result<(), String> {
     connector_refusals()
 }
 
-/// `CONNECTOR_SEAM` of `i38_egress.rs`.
-const CONNECTOR_SEAM: &str = "fstp_cell::egress::connect takes no host and shows no resolved host, so the refusal of a CrabNebula host for any destination but Destination::CrabNebula(CnCall) cannot be driven (design section 14.4; lane W3a)";
-
 /// `connector_refusals` of `i38_egress.rs`: the behavioural half, which
 /// drives the connector for every destination other than
-/// `Destination::CrabNebula` and stays red on the seam.
+/// `Destination::CrabNebula` at both CrabNebula hosts (lane W3a).
 fn connector_refusals() -> Result<(), String> {
     let others = [
         Destination::AppDatabase,
@@ -109,10 +106,20 @@ fn connector_refusals() -> Result<(), String> {
     ];
     for d in others {
         if let Err(CellError::NotImplemented(op)) = connect(&d) {
-            return Err(format!("{op} is NotImplemented ({d:?}): {CONNECTOR_SEAM}"));
+            return Err(format!("{op} is NotImplemented ({d:?})"));
+        }
+        for host in [
+            fstp_release::egress::LICENCE_HOST,
+            fstp_release::egress::UPDATE_HOST,
+        ] {
+            if fstp_cell::egress::check_host(&d, host).is_ok() {
+                return Err(format!(
+                    "the connector opens {d:?} at the CrabNebula host {host}"
+                ));
+            }
         }
     }
-    Err(CONNECTOR_SEAM.to_owned())
+    Ok(())
 }
 
 /// I-38, design section 14.4: `i38_only_egress_reaches_crabnebula_hosts`
