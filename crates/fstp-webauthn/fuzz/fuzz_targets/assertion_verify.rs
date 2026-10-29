@@ -1,48 +1,53 @@
-//! Fuzz target `assertion_verify` of `fstp-webauthn` (TH-26, H-05, M3 design section 15).
+//! Fuzz target `assertion_verify` of `fstp-webauthn` (TH-26, H-05, M3
+//! design section 15, I-77, I-78, ADR-008).
 //!
-//! Design checks: a mutation of a signed byte never verifies.
+//! Design checks: no panic; a mutation of a signed byte never verifies.
+//! The input draws the stored and asserted counters, whether UV is
+//! required, and edits to the authenticator data, the client data, the
+//! signature and the credential id of a valid Ed25519 assertion. Ed25519
+//! signatures are not malleable, so for every input:
 //!
-//! W0 skeleton. The code under test is a stub that refuses every input
-//! with a typed `NotImplemented` error. Until lane W2a lands it, the
-//! target checks only that no input panics and that a refusal formats.
+//! - `verify_assertion` never panics and is deterministic.
+//! - An accepted assertion has the authenticator data, client data,
+//!   signature and credential id of the valid one, unchanged.
+//! - It meets the sign count rule: both counts zero, or the new count
+//!   greater than the stored one, and it reports the new count.
 
 #![no_main]
 
+mod common;
+
+use common::{Input, assertion, mutate};
+use fstp_webauthn::verify_assertion;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    use fstp_webauthn::{
-        AssertionExpect, AssertionResponse, CoseKey, RelyingParty, StoredCredential,
-    };
-    let Ok(rp) = RelyingParty::new("cell.example.org") else {
+    let mut input = Input(data);
+    let counter = input.u32() % 4;
+    let stored = input.u32() % 4;
+    let uv = input.byte().is_multiple_of(2);
+    let Some((base, cred, expect)) = assertion(counter, stored, uv) else {
         return;
     };
-    let third = data.len() / 3;
-    let response = AssertionResponse {
-        credential_id: vec![1; 16],
-        client_data_json: data.get(..third).unwrap_or_default().to_vec(),
-        authenticator_data: data
-            .get(third..third.saturating_mul(2))
-            .unwrap_or_default()
-            .to_vec(),
-        signature: data
-            .get(third.saturating_mul(2)..)
-            .unwrap_or_default()
-            .to_vec(),
-    };
-    let credential = StoredCredential {
-        id: vec![1; 16],
-        key: CoseKey::Ed25519 { x: [0; 32] },
-        sign_count: 0,
-    };
-    let expect = AssertionExpect {
-        rp,
-        challenge: [0; 32],
-        user_verification: true,
-    };
-    let shown = format!(
-        "{:?}",
-        fstp_webauthn::verify_assertion(&response, &credential, &expect)
+    let mut resp = base.clone();
+    mutate(&mut input, &mut resp.authenticator_data);
+    mutate(&mut input, &mut resp.client_data_json);
+    mutate(&mut input, &mut resp.signature);
+    mutate(&mut input, &mut resp.credential_id);
+    let got = verify_assertion(&resp, &cred, &expect);
+    assert_eq!(
+        got,
+        verify_assertion(&resp, &cred, &expect),
+        "not deterministic"
     );
-    assert!(!shown.is_empty());
+    let Ok(ok) = got else {
+        return;
+    };
+    assert_eq!(resp, base, "a changed assertion verified");
+    assert!(
+        (counter == 0 && stored == 0) || counter > stored,
+        "count {counter} verified after {stored}"
+    );
+    assert_eq!(ok.sign_count, counter);
+    assert!(ok.user_verified, "the valid assertion carries UV");
 });
