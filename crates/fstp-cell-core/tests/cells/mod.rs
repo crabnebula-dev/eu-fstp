@@ -66,6 +66,143 @@ fn id32(g: &mut Gen) -> [u8; 32] {
     out
 }
 
+/// The P-256 base point, a key `fstp_webauthn::parse_cose_key` accepts.
+const P256_G: ([u8; 32], [u8; 32]) = (
+    [
+        0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40,
+        0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98,
+        0xc2, 0x96,
+    ],
+    [
+        0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e,
+        0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf,
+        0x51, 0xf5,
+    ],
+);
+
+/// A COSE key of each admitted algorithm (ADR-008): Ed25519 of any 32
+/// bytes, the P-256 base point, or an odd 2048-bit RSA modulus.
+pub(crate) fn cose_key(g: &mut Gen) -> fstp_auth::CoseKey {
+    match g.u8_in(0..=2) {
+        0 => fstp_auth::CoseKey::Ed25519 { x: id32(g) },
+        1 => fstp_auth::CoseKey::Es256 {
+            x: P256_G.0,
+            y: P256_G.1,
+        },
+        _ => {
+            let mut n: Vec<u8> = (0..256).map(|_| g.u8()).collect();
+            n[0] |= 0x80;
+            n[255] |= 0x01;
+            fstp_auth::CoseKey::Rs256 {
+                n,
+                e: vec![0x01, 0x00, 0x01],
+            }
+        }
+    }
+}
+
+/// A credential id of 1 to 64 bytes.
+fn credential(g: &mut Gen) -> Vec<u8> {
+    g.bytes(1..=64)
+}
+
+/// A recovery path.
+fn path(g: &mut Gen) -> fstp_auth::RecoveryPath {
+    *g.pick(&fstp_auth::RecoveryPath::ALL)
+}
+
+/// An auth record of a variant drawn from all of its variants, each in
+/// the shape the auth codec accepts.
+pub(crate) fn auth_record(g: &mut Gen) -> AuthRecord {
+    match g.u8_in(0..=14) {
+        0 => AuthRecord::CredentialRegistered {
+            account: account(g),
+            credential: credential(g),
+            key: cose_key(g),
+            user_verified: g.bool(),
+        },
+        1 => AuthRecord::StepUpGranted {
+            id: id16(g),
+            action_digest: id32(g),
+            session: id16(g),
+        },
+        2 => AuthRecord::SessionEnded { session: id16(g) },
+        3 => AuthRecord::CredentialRevoked {
+            account: account(g),
+            credential: credential(g),
+        },
+        4 => AuthRecord::CredentialSuspect {
+            account: account(g),
+            credential: credential(g),
+        },
+        5 => AuthRecord::StepUpConsumed { id: id16(g) },
+        6 => AuthRecord::RecoveryRequested {
+            case: id16(g),
+            account: account(g),
+            path: path(g),
+        },
+        7 => AuthRecord::RecoveryEmailProven { case: id16(g) },
+        8 => AuthRecord::RecoveryApproved {
+            case: id16(g),
+            approver: account(g),
+        },
+        9 => {
+            let path = path(g);
+            AuthRecord::RecoveryCompleted {
+                case: id16(g),
+                account: account(g),
+                path,
+                shown_to_tenant: path.shown_to_tenant(),
+            }
+        }
+        10 | 11 => {
+            let first_admin = g.bool();
+            AuthRecord::InvitationIssued {
+                invitation: id16(g),
+                account: account(g),
+                token_digest: id32(g),
+                first_admin,
+                split: first_admin && g.bool(),
+            }
+        }
+        12 => AuthRecord::InvitationConsumed {
+            invitation: id16(g),
+        },
+        _ => AuthRecord::FirstAdminEnrolled {
+            account: account(g),
+        },
+    }
+}
+
+/// An auth command of a variant drawn from all of its variants.
+pub(crate) fn auth_command(g: &mut Gen) -> AuthCommand {
+    match g.u8_in(0..=7) {
+        0 => AuthCommand::RegisterCredential {
+            account: account(g),
+            credential: credential(g),
+        },
+        1 => AuthCommand::RevokeCredential {
+            account: account(g),
+            credential: credential(g),
+        },
+        2 => AuthCommand::GrantStepUp {
+            session: id16(g),
+            action_digest: id32(g),
+        },
+        3 => AuthCommand::EndSession { session: id16(g) },
+        4 => AuthCommand::RequestRecovery {
+            case: id16(g),
+            account: account(g),
+        },
+        5 => AuthCommand::ProveRecoveryEmail { case: id16(g) },
+        6 => AuthCommand::ApproveRecovery { case: id16(g) },
+        _ => AuthCommand::CompleteRecovery {
+            case: id16(g),
+            credential: credential(g),
+        },
+    }
+}
+
 /// A canonical JSON object text: `{}` or `{"k":<n>}` with a small integer.
 fn canonical_bytes(g: &mut Gen) -> Vec<u8> {
     if g.bool() {
@@ -102,17 +239,7 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
     Ok(match member {
         "core" => CellRecord::Engine(fstp_engine::Record::Core(core_record(g)?)),
         "finding" => CellRecord::Engine(fstp_engine::Record::Finding(finding_record(g))),
-        "auth" => CellRecord::Auth(match g.u8_in(0..=2) {
-            0 => AuthRecord::CredentialRegistered {
-                account: account(g),
-                credential: g.bytes(1..=64),
-            },
-            1 => AuthRecord::StepUpGranted {
-                id: id16(g),
-                action_digest: id32(g),
-            },
-            _ => AuthRecord::SessionEnded { session: id16(g) },
-        }),
+        "auth" => CellRecord::Auth(auth_record(g)),
         "tenant" => CellRecord::Tenant(match g.u8_in(0..=4) {
             0 => TenantRecord::TenantAdminGranted {
                 account: account(g),
@@ -193,20 +320,7 @@ pub(crate) fn core_command(g: &mut Gen) -> Result<fstp_domain::Command, String> 
 pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, String> {
     Ok(match member {
         "core" => CellCommand::Engine(fstp_engine::Command::Core(core_command(g)?)),
-        "auth" => CellCommand::Auth(match g.u8_in(0..=2) {
-            0 => AuthCommand::RegisterCredential {
-                account: account(g),
-                credential: g.bytes(1..=64),
-            },
-            1 => AuthCommand::RevokeCredential {
-                account: account(g),
-                credential: g.bytes(1..=64),
-            },
-            _ => AuthCommand::GrantStepUp {
-                session: id16(g),
-                action_digest: id32(g),
-            },
-        }),
+        "auth" => CellCommand::Auth(auth_command(g)),
         "tenant" => CellCommand::Tenant(match g.u8_in(0..=3) {
             0 => TenantCommand::GrantTenantAdmin {
                 account: account(g),

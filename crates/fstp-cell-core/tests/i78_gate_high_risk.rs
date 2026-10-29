@@ -44,7 +44,7 @@ const ADMIN_2: AccountId = AccountId::from_raw(2);
 /// Table entries with no command or action in the stubs yet. Each names
 /// where it arrives. The coverage test fails if an entry is neither built
 /// nor listed here, so the list cannot hide a new entry.
-const NO_STUB_ACTION: [(&str, &str); 9] = [
+const NO_STUB_ACTION: [(&str, &str); 8] = [
     ("TenantExport", "M9 export"),
     ("VaultExport", "M9 export"),
     (
@@ -56,10 +56,6 @@ const NO_STUB_ACTION: [(&str, &str); 9] = [
     ("ChangeEmail", "no M3 route"),
     ("ChangeBankDetails", "M5 payments"),
     ("PublishTemplate", "M4 templates"),
-    (
-        "ApproveRecovery",
-        "fstp-auth recovery step, no AuthCommand variant yet",
-    ),
 ];
 
 /// I-78: every table entry is classified by `of` (through a cell command,

@@ -689,10 +689,11 @@ impl DriverCore {
         .map_err(ExecError::Refused)?;
         let mut side = SideEffects::default();
         if let Some(u) = stepup {
-            // The batch must carry `StepUpConsumed { id }`, so replay checks
-            // single use by structure (design section 5.1). Until the
-            // record exists, a command with a step-up fails closed.
-            batch.push(step_up_consumed(u.id)?);
+            // The batch carries `StepUpConsumed { id }`, so replay checks
+            // single use by structure (design section 5.1).
+            batch.push(CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed {
+                id: u.id,
+            }));
             side.stepup_consumed = Some(u.id);
             // An overflow leaves no valid instant, so the commit fails.
             side.stepup_fresh_until = Some(u.fresh_until().unwrap_or(i64::MIN));
@@ -815,16 +816,4 @@ fn fold_batch(
         state::fold(s, seq, at, command, r)?;
     }
     Ok(())
-}
-
-/// The record that consumes step-up `id`.
-///
-/// Design section 5.1 names `StepUpConsumed { id }`. `fstp_auth::AuthRecord`
-/// has no such variant yet (lane W2b), so this refuses, and a command with
-/// a step-up fails closed rather than commit without its consumption.
-fn step_up_consumed(id: [u8; 16]) -> Result<CellRecord, ExecError> {
-    let _ = id;
-    Err(ExecError::NotImplemented(
-        "StepUpConsumed: fstp_auth::AuthRecord has no StepUpConsumed { id } (design section 5.1, lane W2b)",
-    ))
 }

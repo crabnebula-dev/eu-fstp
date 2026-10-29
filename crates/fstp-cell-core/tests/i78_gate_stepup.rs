@@ -119,6 +119,8 @@ fn i78_magic_link_session_never_takes_a_high_risk_action() {
                     fstp_auth::AuthRecord::CredentialRegistered {
                         account: A,
                         credential: vec![9, 0],
+                        key: fstp_auth::CoseKey::Ed25519 { x: [9; 32] },
+                        user_verified: true,
                     },
                 )],
             ),

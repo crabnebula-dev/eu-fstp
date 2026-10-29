@@ -29,26 +29,6 @@ fn refuses<T, E: Debug>(what: &str, r: Result<T, E>) {
     }
 }
 
-/// Inputs every stub parser must refuse without a panic.
-const INPUTS: [&[u8]; 4] = [b"", b"\x00", b"\xff\xff\xff\xff", b"{\"a\":1}"];
-
-/// Design section 5.1: `fstp_cell_core::replay` over an empty ledger.
-#[test]
-fn w0_cell_core_replay_refuses() {
-    refuses("replay", fstp_cell_core::replay(&[]));
-}
-
-/// I-78, design section 5.4 step 3: `HighRiskAction::of` classifies no
-/// action until lane W2c fills it from `HIGH_RISK_TABLE`.
-#[test]
-fn w0_cell_core_high_risk_action_of_refuses() {
-    use fstp_cell_core::gate::{Action, HighRiskAction, ReadAction};
-    refuses(
-        "HighRiskAction::of",
-        HighRiskAction::of(&Action::Read(ReadAction::ReadContent)),
-    );
-}
-
 /// I-82, design sections 4.1 and 9.2: `fstp_control::pg::cell_role_plan`.
 #[test]
 fn w0_control_cell_role_plan_refuses() {

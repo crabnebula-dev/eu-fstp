@@ -133,13 +133,20 @@ fn client_hello(host: &str, random: &[u8; 32]) -> Vec<u8> {
     rec
 }
 
+/// A routable host. The last label is never all digits, since the edge
+/// refuses such a host as a numeric address (fstp-edge `HostName`).
 fn host(g: &mut Gen) -> String {
-    let labels = g.vec(2..=4, |g| {
+    let mut labels = g.vec(2..=4, |g| {
         let n = g.usize_in(1..=12);
         (0..n)
             .map(|_| char::from(*g.pick(b"abcdefghijklmnopqrstuvwxyz0123456789")))
             .collect::<String>()
     });
+    if let Some(last) = labels.last_mut()
+        && last.bytes().all(|c| c.is_ascii_digit())
+    {
+        last.insert(0, 'a');
+    }
     labels.join(".")
 }
 
@@ -178,8 +185,9 @@ fn i19_edge_forwards_bytes_after_client_hello_unchanged() {
             let header = TunnelHeader {
                 host: name,
                 client: g.bytes(16..=16).try_into().unwrap(),
+                port: u16::from_be_bytes(g.bytes(2..=2).try_into().unwrap()),
             };
-            let bytes = encode_tunnel_header(&header).map_err(|e| format!("{e:?}"))?;
+            let bytes = encode_tunnel_header(&header);
             let back = decode_tunnel_header(&bytes).map_err(|e| format!("{e:?}"))?;
             prop_assert_eq!(&back, &header);
             Ok(())

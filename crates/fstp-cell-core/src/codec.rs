@@ -14,6 +14,10 @@
 //! - `auth`, `tenant`, `text`, `key`, `release` and `ops` hold an object
 //!   whose member `type` names the variant. The variant's fields sit beside
 //!   it, under their own names.
+//! - The `auth` object is the one `fstp_auth::codec` writes, and it is
+//!   read back through `decode_auth_record` or `decode_auth_command`. So
+//!   an auth record or command has one spelling inside the envelope and
+//!   alone, and the auth codec's limits apply to it.
 //!
 //! Field spellings follow the M2 codec. Account and proposal ids and
 //! 64-bit integers are decimal strings. Ids and digests are lowercase
@@ -60,8 +64,9 @@ pub const MAX_INPUT: usize = 4 * 1024 * 1024;
 /// such as a login policy or a key operation: 4 KiB.
 pub const MAX_OPAQUE: usize = 4 * 1024;
 
-/// The largest credential id: 1 KiB, the WebAuthn bound on credential ids.
-pub const MAX_CREDENTIAL: usize = 1024;
+/// The largest credential id: 1023 bytes, the WebAuthn bound on credential
+/// ids, as the auth codec holds it.
+pub const MAX_CREDENTIAL: usize = fstp_auth::codec::MAX_CREDENTIAL_LEN;
 
 /// The most text ids one erasure names.
 pub const MAX_TEXT_IDS: usize = 1024;
@@ -244,9 +249,7 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
         "core" | "finding" => fstp_engine::Record::from_json(value)
             .map(CellRecord::Engine)
             .map_err(body(if member == "core" { "core" } else { "finding" })),
-        "auth" => auth_record(inner)
-            .map(CellRecord::Auth)
-            .map_err(body("auth")),
+        "auth" => auth_record(inner).map(CellRecord::Auth),
         "tenant" => tenant_record(inner)
             .map(CellRecord::Tenant)
             .map_err(body("tenant")),
@@ -276,52 +279,50 @@ impl ToJson for CellRecord {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The auth member: fstp-auth's codec (design sections 5.1 and 15).
+//
+// The value under `auth` is the object whose RFC 8785 text
+// `fstp_auth::codec::encode_auth_record` or `encode_auth_command` gives.
+// So each auth record and command has one spelling, alone or inside the
+// cell envelope. The decoders pass the member's canonical text to
+// `decode_auth_record` or `decode_auth_command`, so the limits and the
+// checks of the auth codec apply here too.
+
+/// The JSON form of an auth record, as fstp-auth's codec encodes it.
 fn auth_record_json(r: &fstp_auth::AuthRecord) -> Value {
-    use fstp_auth::AuthRecord as R;
-    match r {
-        R::CredentialRegistered {
-            account,
-            credential,
-        } => tagged(
-            "CredentialRegistered",
-            vec![
-                ("account", account_json(*account)),
-                ("credential", hex(credential)),
-            ],
-        ),
-        R::StepUpGranted { id, action_digest } => tagged(
-            "StepUpGranted",
-            vec![("action_digest", hex(action_digest)), ("id", hex(id))],
-        ),
-        R::SessionEnded { session } => tagged("SessionEnded", vec![("session", hex(session))]),
-    }
+    r.to_json()
 }
 
-fn auth_record(v: &Value) -> Result<fstp_auth::AuthRecord, FromJsonError> {
-    use fstp_auth::AuthRecord as R;
-    let (tag, o) = variant(v)?;
-    match tag {
-        "CredentialRegistered" => {
-            fields(o, &["account", "credential"])?;
-            Ok(R::CredentialRegistered {
-                account: account_from(o, "account")?,
-                credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
-            })
-        }
-        "StepUpGranted" => {
-            fields(o, &["action_digest", "id"])?;
-            Ok(R::StepUpGranted {
-                id: array_from(o, "id")?,
-                action_digest: array_from(o, "action_digest")?,
-            })
-        }
-        "SessionEnded" => {
-            fields(o, &["session"])?;
-            Ok(R::SessionEnded {
-                session: array_from(o, "session")?,
-            })
-        }
-        _ => Err(unknown_variant()),
+/// An auth record through `fstp_auth::codec::decode_auth_record`.
+fn auth_record(v: &Value) -> Result<fstp_auth::AuthRecord, DecodeError> {
+    fstp_auth::codec::decode_auth_record(&canonical_bytes(v)).map_err(auth_body)
+}
+
+/// The JSON form of an auth command, as fstp-auth's codec encodes it.
+fn auth_command_json(c: &fstp_auth::AuthCommand) -> Value {
+    c.to_json()
+}
+
+/// An auth command through `fstp_auth::codec::decode_auth_command`.
+fn auth_command(v: &Value) -> Result<fstp_auth::AuthCommand, DecodeError> {
+    fstp_auth::codec::decode_auth_command(&canonical_bytes(v)).map_err(auth_body)
+}
+
+/// A static reason for an auth codec error. It holds no input content.
+fn auth_body(e: fstp_auth::codec::CodecError) -> DecodeError {
+    use fstp_auth::codec::CodecError as E;
+    let reason = match e {
+        E::Length => "wrong length",
+        E::Size => "empty or too large for the auth codec",
+        E::Json => "outside the auth codec limits",
+        E::NotCanonical => "not canonical",
+        E::Schema(_) => "outside the auth schema",
+        E::OtherCell => "names another cell",
+    };
+    DecodeError::Body {
+        member: "auth",
+        reason,
     }
 }
 
@@ -564,9 +565,7 @@ fn command_from_value(value: &Value) -> Result<CellCommand, DecodeError> {
         "finding" => finding_command(inner)
             .map(|c| CellCommand::Engine(fstp_engine::Command::Finding(c)))
             .map_err(body("finding")),
-        "auth" => auth_command(inner)
-            .map(CellCommand::Auth)
-            .map_err(body("auth")),
+        "auth" => auth_command(inner).map(CellCommand::Auth),
         "tenant" => tenant_command(inner)
             .map(CellCommand::Tenant)
             .map_err(body("tenant")),
@@ -686,71 +685,6 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
                 config: LlmConfigId::from_raw(u128_from(o, "config")?),
                 config_model: ModelRef(model),
                 findings,
-            })
-        }
-        _ => Err(unknown_variant()),
-    }
-}
-
-fn auth_command_json(c: &fstp_auth::AuthCommand) -> Value {
-    use fstp_auth::AuthCommand as C;
-    match c {
-        C::RegisterCredential {
-            account,
-            credential,
-        } => tagged(
-            "RegisterCredential",
-            vec![
-                ("account", account_json(*account)),
-                ("credential", hex(credential)),
-            ],
-        ),
-        C::RevokeCredential {
-            account,
-            credential,
-        } => tagged(
-            "RevokeCredential",
-            vec![
-                ("account", account_json(*account)),
-                ("credential", hex(credential)),
-            ],
-        ),
-        C::GrantStepUp {
-            session,
-            action_digest,
-        } => tagged(
-            "GrantStepUp",
-            vec![
-                ("action_digest", hex(action_digest)),
-                ("session", hex(session)),
-            ],
-        ),
-    }
-}
-
-fn auth_command(v: &Value) -> Result<fstp_auth::AuthCommand, FromJsonError> {
-    use fstp_auth::AuthCommand as C;
-    let (tag, o) = variant(v)?;
-    match tag {
-        "RegisterCredential" => {
-            fields(o, &["account", "credential"])?;
-            Ok(C::RegisterCredential {
-                account: account_from(o, "account")?,
-                credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
-            })
-        }
-        "RevokeCredential" => {
-            fields(o, &["account", "credential"])?;
-            Ok(C::RevokeCredential {
-                account: account_from(o, "account")?,
-                credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
-            })
-        }
-        "GrantStepUp" => {
-            fields(o, &["action_digest", "session"])?;
-            Ok(C::GrantStepUp {
-                session: array_from(o, "session")?,
-                action_digest: array_from(o, "action_digest")?,
             })
         }
         _ => Err(unknown_variant()),

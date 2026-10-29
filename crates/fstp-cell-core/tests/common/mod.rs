@@ -136,22 +136,25 @@ pub(crate) fn attest_at(
     Ok(fstp_cell_core::attest_at(s, actor, cmd, command_id, now))
 }
 
-/// The record that consumes a step-up. Design section 5.1 names
-/// `StepUpConsumed { id }`, and `fstp_auth::AuthRecord` has no such
-/// variant (`fstp_celltest::mc::stepup_model::CONSUME_SEAM`).
+/// The record that consumes a step-up: design section 5.1 names
+/// `StepUpConsumed { id }`. The seam closed when lanes W2b and W2c were
+/// integrated. The constant stays for the suites that name it.
 pub(crate) const CONSUME_SEAM: &str =
     "AuthRecord has no StepUpConsumed { id } (design section 5.1, lanes W2b and W2c)";
 
 /// `CellRecord::Auth(AuthRecord::StepUpConsumed { id })`.
 pub(crate) fn step_up_consumed(id: [u8; 16]) -> Result<CellRecord, Seam> {
-    let _ = id;
-    Err(Seam(CONSUME_SEAM))
+    Ok(CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed {
+        id,
+    }))
 }
 
 /// Whether `r` is the consumption of step-up `id`.
 pub(crate) fn is_step_up_consumed(r: &CellRecord, id: [u8; 16]) -> Result<bool, Seam> {
-    let _ = (r, id);
-    Err(Seam(CONSUME_SEAM))
+    Ok(matches!(
+        r,
+        CellRecord::Auth(fstp_auth::AuthRecord::StepUpConsumed { id: x }) if *x == id
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +493,10 @@ pub(crate) fn table_commands() -> Result<Vec<(&'static str, CellCommand)>, Strin
             CellCommand::Ops(OpsCommand::ApproveBreakGlass {
                 request: [0x42; 16],
             }),
+        ),
+        (
+            "ApproveRecovery",
+            CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x43; 16] }),
         ),
     ])
 }

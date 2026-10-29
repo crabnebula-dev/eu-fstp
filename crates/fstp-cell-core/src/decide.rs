@@ -13,10 +13,9 @@
 //!
 //! - While a scheduled binding end is overdue, every cell command of an
 //!   account is refused as M2 refuses its commands (SoD-05, Cooling-off
-//!   NOTE), except the credential and step-up records and the two
-//!   commands that only end access (`EndBreakGlass`, `EndTenantAdmin`).
-//!   A holder check
-//!   also counts a binding only until its scheduled end instant (design
+//!   NOTE), except the auth commands and the two commands that only end
+//!   access (`EndBreakGlass`, `EndTenantAdmin`). A holder check also
+//!   counts a binding only until its scheduled end instant (design
 //!   section 8.2).
 //!
 //! Readings taken, for Daniel's review:
@@ -364,9 +363,11 @@ fn system_only(c: &CellCommand) -> bool {
 /// Refuses an account's cell command while a scheduled binding end is
 /// overdue, as M2 `shared_checks` refuses its own commands (SoD-05, the
 /// Cooling-off NOTE). No decision then reads a binding as held after its
-/// end instant. The credential and step-up records are left open: they
+/// end instant. The auth commands are left open. Credentials and step-ups
 /// read no binding, and the gate ends the sessions the end would have
-/// ended (design section 5.4 step 2).
+/// ended (design section 5.4 step 2). A recovery approval reads the
+/// holdings at its instant, which count a binding only until its
+/// scheduled end (design section 8.2).
 ///
 /// Reading: `EndBreakGlass` and `EndTenantAdmin` are left open too. They
 /// read no binding and only reduce access, so refusing them would only
@@ -449,6 +450,9 @@ pub(crate) fn queries_with(
         CellCommand::Release(ReleaseCommand::IssueWriteTicket {
             kind: WRITE_KIND_GUARDIAN_CONSENT,
         }) => guardian_plan(s, actor, now).map(|p| p.queries()),
+        CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { case }) => {
+            approval_plan(s, *case, actor, now).map(|p| p.queries())
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -511,7 +515,7 @@ fn decide_unchecked(
     overdue(s, c, now)?;
     match c {
         CellCommand::Engine(cmd) => decide_engine(s, cmd, actor, now, command, answers),
-        CellCommand::Auth(cmd) => decide_auth(s, cmd, actor, at, command),
+        CellCommand::Auth(cmd) => decide_auth(s, cmd, actor, now, command, stepup_at, answers),
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
@@ -578,14 +582,85 @@ fn decide_engine(
     Ok(out)
 }
 
+/// An input that only an auth route holds, and that `decide` does not
+/// see. Lane W3a owns those routes ([`RouteInput::OWNER`]).
+///
+/// An auth command whose batch needs one is refused with the closed
+/// domain refusal `FactsIncomplete` and `AnswerMissing`, as a missing
+/// vault answer is. It is not the stub refusal `NotImplemented`, which
+/// I-23 forbids from `decide`. [`route_inputs`] lists what each auth
+/// command needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RouteInput {
+    /// The new passkey that `fstp_auth::ceremony::verify_new_passkey`
+    /// verified (design section 8.3).
+    VerifiedCredential,
+    /// The live session rows of the account, an operational table
+    /// (design section 4.2). A batch that ends sessions names them.
+    SessionRows,
+    /// Whether the cell is SaaS or self-hosted, which picks the recovery
+    /// path of a sole tenant admin (design section 8.5).
+    DeploymentMode,
+}
+
+impl RouteInput {
+    /// The lane that owns the routes holding these inputs.
+    pub const OWNER: &'static str = "W3a";
+}
+
+/// The route inputs the batch of `c` needs beyond the ledger and the
+/// vault answers. Empty for a command that `decide` decides alone.
+pub fn route_inputs(c: &fstp_auth::AuthCommand) -> &'static [RouteInput] {
+    use fstp_auth::AuthCommand as C;
+    match c {
+        C::RegisterCredential { .. } => &[RouteInput::VerifiedCredential],
+        C::RevokeCredential { .. } | C::EndSession { .. } => &[RouteInput::SessionRows],
+        C::RequestRecovery { .. } => &[RouteInput::DeploymentMode],
+        C::CompleteRecovery { .. } => &[
+            RouteInput::VerifiedCredential,
+            RouteInput::SessionRows,
+            RouteInput::DeploymentMode,
+        ],
+        C::GrantStepUp { .. } | C::ProveRecoveryEmail { .. } | C::ApproveRecovery { .. } => &[],
+    }
+}
+
+/// The refusal of a command whose batch needs `input` ([`RouteInput`]).
+fn needs(input: RouteInput) -> CellRefusal {
+    let _ = input;
+    refuse(RuleRef::FactsIncomplete, RefusalReason::AnswerMissing)
+}
+
+/// Decides an auth command (design section 8).
+///
+/// Each command first passes the checks `decide` can make from the
+/// ledger. A command whose batch needs an input that only a route holds
+/// is then refused ([`RouteInput`], [`route_inputs`]):
+/// - `RegisterCredential` needs the credential that
+///   `fstp_auth::ceremony::verify_new_passkey` verified (design 8.3).
+/// - `RevokeCredential` and `EndSession` need the live session rows, an
+///   operational table that `decide` does not see (design 4.2). Revoking
+///   a device ends the sessions it logged in, and only a session's own
+///   account ends it (`fstp_auth::session`).
+/// - `RequestRecovery` needs the cell's deployment mode for the path
+///   (`fstp_auth::recovery::request`).
+/// - `CompleteRecovery` needs the verified new passkey, the session rows
+///   it ends and the deployment mode (`fstp_auth::recovery::complete`).
+///
+/// `GrantStepUp`, `ProveRecoveryEmail` and `ApproveRecovery` are decided
+/// here. The gate admits neither of the first two through a session,
+/// since only their routes verify the assertion or the email proof.
 fn decide_auth(
     s: &CellState,
     cmd: &fstp_auth::AuthCommand,
     actor: AccountId,
-    at: i64,
+    now: Timestamp,
     command: Option<[u8; 16]>,
+    stepup_at: Option<Timestamp>,
+    answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     use fstp_auth::{AuthCommand as C, AuthRecord as R};
+    let auth = s.auth();
     match cmd {
         C::RegisterCredential {
             account,
@@ -597,27 +672,32 @@ fn decide_auth(
             if credential.is_empty() || credential.len() > MAX_CREDENTIAL {
                 return Err(invalid());
             }
-            if s.auth().has_credential(*account, credential) {
+            if auth.is_registered(credential) {
                 return Err(reused());
             }
-            Ok(vec![CellRecord::Auth(R::CredentialRegistered {
-                account: *account,
-                credential: credential.clone(),
-            })])
+            Err(needs(RouteInput::VerifiedCredential))
         }
         C::RevokeCredential {
             account,
             credential,
         } => {
-            if *account != actor && !s.tenant().is_admin(actor) {
+            // Only the credential's own account revokes it, and only a live
+            // credential (R-LG-04).
+            if *account != actor {
                 return Err(wrong_actor());
             }
-            if !s.auth().has_credential(*account, credential) {
+            let live: Vec<fstp_auth::session::CredentialOwner> = auth
+                .live_credentials(*account)
+                .into_iter()
+                .map(|c| fstp_auth::session::CredentialOwner {
+                    account: *account,
+                    credential: c,
+                })
+                .collect();
+            if !fstp_auth::session::may_revoke_credential(&live, actor, *account, credential) {
                 return Err(unknown());
             }
-            Err(CellRefusal::NotImplemented(
-                "RevokeCredential: fstp_auth::AuthRecord has no revocation record (lane W2b)",
-            ))
+            Err(needs(RouteInput::SessionRows))
         }
         C::GrantStepUp {
             session,
@@ -626,15 +706,173 @@ fn decide_auth(
             let mut payload = Vec::with_capacity(48);
             payload.extend_from_slice(session);
             payload.extend_from_slice(action_digest);
-            let id = derive_id(b"stepup", command, actor, at, &payload);
-            if s.auth().stepup(id).is_some() {
+            let id = derive_id(b"stepup", command, actor, now.micros(), &payload);
+            if auth.stepup(id).is_some() {
                 return Err(reused());
             }
             Ok(vec![CellRecord::Auth(R::StepUpGranted {
                 id,
                 action_digest: *action_digest,
+                session: *session,
             })])
         }
+        C::EndSession { session } => {
+            if auth.session_ended(*session) {
+                return Err(unknown());
+            }
+            Err(needs(RouteInput::SessionRows))
+        }
+        C::RequestRecovery { case, .. } => {
+            if auth.recovery(*case).is_some() {
+                return Err(reused());
+            }
+            Err(needs(RouteInput::DeploymentMode))
+        }
+        C::ProveRecoveryEmail { case } => {
+            let c = open_case(s, *case)?;
+            // The email proof is the holder's own.
+            if c.account != actor {
+                return Err(wrong_actor());
+            }
+            if c.email_proven {
+                return Err(reused());
+            }
+            Ok(vec![CellRecord::Auth(R::RecoveryEmailProven {
+                case: *case,
+            })])
+        }
+        C::ApproveRecovery { case } => {
+            let plan = approval_plan(s, *case, actor, now)?;
+            let verified = |q: &Query| answers.get(q).map(|a| a.holds);
+            let identity = match (
+                verified(&plan.approver_verified()),
+                verified(&plan.holder_verified()),
+                verified(&plan.same_identity()),
+            ) {
+                (Some(a), Some(h), Some(same)) => Ok(fstp_auth::recovery::IdentityFacts {
+                    both_verified: a && h,
+                    same_identity: same,
+                }),
+                // A missing answer is a vault that did not answer (fail
+                // closed, design section 8.5).
+                _ => Err(fstp_auth::recovery::VaultDown),
+            };
+            // The approval is the high-risk action `ApproveRecovery`. The
+            // gate checked its step-up, and the driver passes the step-up's
+            // assertion instant. Without one the approval is refused.
+            let stepup = match stepup_at {
+                Some(_) => Ok(()),
+                None => Err(fstp_auth::stepup::StepUpDeny::Required),
+            };
+            let tenant = tenant_view(s);
+            let approval = fstp_auth::recovery::Approval::new(actor, &tenant, stepup, identity);
+            fstp_auth::recovery::approve(plan.holder, &approval).map_err(approval_refusal)?;
+            Ok(vec![CellRecord::Auth(R::RecoveryApproved {
+                case: *case,
+                approver: actor,
+            })])
+        }
+        C::CompleteRecovery { case, .. } => {
+            open_case(s, *case)?;
+            Err(needs(RouteInput::VerifiedCredential))
+        }
+    }
+}
+
+/// The open recovery case `case`: requested and not completed.
+fn open_case(s: &CellState, case: [u8; 16]) -> Result<crate::state::RecoveryCase, CellRefusal> {
+    let c = s.auth().recovery(case).ok_or_else(unknown)?;
+    if c.completed.is_some() {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    Ok(c)
+}
+
+/// The tenant admins of the tenant fold, as `fstp-auth` reads them.
+fn tenant_view(s: &CellState) -> fstp_auth::TenantView {
+    fstp_auth::TenantView {
+        admins: s.tenant().admins(),
+    }
+}
+
+/// What a recovery approval asks the vault about.
+struct ApprovalPlan {
+    approver: AccountId,
+    holder: AccountId,
+}
+
+impl ApprovalPlan {
+    fn approver_verified(&self) -> Query {
+        Query::IsVerified {
+            account: self.approver,
+        }
+    }
+
+    fn holder_verified(&self) -> Query {
+        Query::IsVerified {
+            account: self.holder,
+        }
+    }
+
+    fn same_identity(&self) -> Query {
+        Query::SameIdentityAsAny {
+            subject: self.approver,
+            others: BTreeSet::from([self.holder]),
+        }
+    }
+
+    fn queries(&self) -> Vec<Query> {
+        vec![
+            self.approver_verified(),
+            self.holder_verified(),
+            self.same_identity(),
+        ]
+    }
+}
+
+/// The approval of case `case` by `approver` at `now`, before the vault
+/// is asked (I-79, design section 8.5). The case is open, its email proof
+/// was given and no approval was recorded. The path recomputed from the
+/// holdings at `now` must be `SecondAdmin`: no other path takes an
+/// approval. That path does not depend on the deployment mode.
+fn approval_plan(
+    s: &CellState,
+    case: [u8; 16],
+    approver: AccountId,
+    now: Timestamp,
+) -> Result<ApprovalPlan, CellRefusal> {
+    let c = open_case(s, case)?;
+    if !c.email_proven {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    if c.approver.is_some() {
+        return Err(reused());
+    }
+    let roster = fstp_auth::RosterView::from_roster(s.engine().core.roster(), now);
+    let tenant = tenant_view(s);
+    let holdings = fstp_auth::recovery::Holdings::of(&roster, &tenant, c.account);
+    let path = fstp_auth::recovery::path_of(
+        holdings,
+        tenant.others(c.account),
+        fstp_auth::recovery::Deployment::Saas,
+    );
+    if path != fstp_auth::RecoveryPath::SecondAdmin {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    Ok(ApprovalPlan {
+        approver,
+        holder: c.account,
+    })
+}
+
+/// The cell refusal of a refused recovery approval.
+fn approval_refusal(d: fstp_auth::recovery::ApprovalDeny) -> CellRefusal {
+    use fstp_auth::recovery::ApprovalDeny as D;
+    match d {
+        D::SelfApproval | D::NotAdmin => wrong_actor(),
+        D::StepUp(_) => refuse(RuleRef::I78, RefusalReason::GuardFailed),
+        D::SameIdentity => refuse(RuleRef::Actor, RefusalReason::GuardFailed),
+        D::VaultDown => answer_missing(),
     }
 }
 
