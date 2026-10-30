@@ -14,10 +14,10 @@ use fstp_domain::id::{
     PolicyVersionId, ProgrammeId, TextId, TextRef, VaultEpoch,
 };
 use fstp_domain::policy::{
-    EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef, InferenceBinding,
-    IrcExemptions, KnockOutCriteria, LicenceSet, LiveValues, McpBindingActions, ModelRef,
-    OpaqueValue, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity, TieBreakRule,
-    VotingRules, is_frozen_opaque,
+    AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
+    InferenceBinding, IrcExemptions, KnockOutCriteria, LicenceSet, LiveValues, McpBindingActions,
+    ModelRef, OpaqueValue, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity,
+    TieBreakRule, VotingRules, is_frozen_opaque,
 };
 use fstp_domain::record::{
     BindingEnded, BindingGranted, BindingReinstated, BindingSuspended, BindingVoided, Record,
@@ -109,6 +109,7 @@ fn policy(p05: i64, p58: Option<i64>) -> PolicyVersion {
             p26: LicenceSet(BTreeSet::new()),
             p39: NonZeroU8::new(2).unwrap(),
             p53: profile_ref(),
+            p75: AgentContentAccess::Off,
             p77: McpBindingActions::DraftOnly,
             opaque: frozen_opaque,
         },

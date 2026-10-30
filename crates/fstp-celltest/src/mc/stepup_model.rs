@@ -444,7 +444,7 @@ fn release_path(setup: &MoneySetup) -> Result<Vec<Step>, String> {
     for r in setup.reviewers.iter().copied() {
         out.push(no_questions(r, PC, reviewer(r)));
     }
-    out.push(cut_off(
+    out.extend(cut_off(
         R1,
         cut_off_decision(1),
         c1,

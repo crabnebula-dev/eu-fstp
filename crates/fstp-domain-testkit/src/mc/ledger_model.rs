@@ -101,6 +101,7 @@ pub fn stored_json(record: &Record) -> Option<Value> {
     match record {
         Record::Core(r) => Some(envelope_to_json(EnvelopeKind::Core, r.to_json())),
         Record::Finding(_) => None,
+        Record::Creator(_) | Record::Import(_) => Some(record.to_json()),
     }
 }
 
@@ -156,6 +157,10 @@ fn decode_record(schema: u16, value: &Value) -> Result<Record, String> {
             .map(Record::Core)
             .map_err(|e| format!("the core record does not decode: {e:?}")),
         EnvelopeKind::Finding => Err("the testkit has no finding decoder".to_owned()),
+        EnvelopeKind::Creator | EnvelopeKind::Import => {
+            fstp_engine::record_from_json_at(schema, value)
+                .map_err(|e| format!("the engine record does not decode: {e:?}"))
+        }
     }
 }
 
@@ -712,7 +717,7 @@ fn core_of(entries: &[Entry<Record>]) -> Vec<CoreRecord> {
         .iter()
         .filter_map(|e| match &e.record {
             Record::Core(r) => Some(r.clone()),
-            Record::Finding(_) => None,
+            Record::Finding(_) | Record::Creator(_) | Record::Import(_) => None,
         })
         .collect()
 }
@@ -2560,7 +2565,7 @@ pub fn transition_i23(before: &LedgerState, after: &LedgerState) -> Result<(), S
 fn holds(s: &LedgerState, f: impl Fn(&CoreRecord) -> bool) -> bool {
     s.run.ledger.iter().any(|e| match &e.record {
         Record::Core(r) => f(r),
-        Record::Finding(_) => false,
+        Record::Finding(_) | Record::Creator(_) | Record::Import(_) => false,
     })
 }
 
