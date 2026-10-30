@@ -124,6 +124,9 @@ pub struct FakeVault {
     truth: Arc<Mutex<GroundTruth>>,
     down: Arc<Mutex<bool>>,
     log: Arc<Mutex<Log>>,
+    /// The Q35 answers: whether every P-13 class is known, and whether
+    /// every partner organisation declared its P-38 list.
+    q35: Arc<Mutex<(bool, bool)>>,
 }
 
 impl FakeVault {
@@ -133,7 +136,43 @@ impl FakeVault {
             truth: Arc::new(Mutex::new(truth)),
             down: Arc::new(Mutex::new(false)),
             log: Arc::new(Mutex::new(Log::default())),
+            q35: Arc::new(Mutex::new((true, true))),
         }
+    }
+
+    /// Sets the Q35 answers of the synthetic vault: whether it knows
+    /// every P-13 class, and whether every partner organisation declared
+    /// its P-38 list. Both hold by default.
+    pub fn set_q35(&self, classes_known: bool, lists_declared: bool) {
+        *lock(&self.q35) = (classes_known, lists_declared);
+    }
+
+    /// The answer of `classes_defined` now, as the port gives it. The
+    /// creator environment, which is synchronous, asks here.
+    pub fn classes_defined_now(
+        &self,
+        programme: ProgrammeId,
+        classes: &ExclusionClasses,
+    ) -> Result<Answer, OracleDown> {
+        let holds = lock(&self.q35).0;
+        self.one_bit(
+            holds,
+            fake_digest(&("classes_defined", programme, &classes.0)),
+        )
+    }
+
+    /// The answer of `proximity_lists_declared` now, as the port gives
+    /// it. The creator environment, which is synchronous, asks here.
+    pub fn proximity_lists_declared_now(
+        &self,
+        programme: ProgrammeId,
+        orgs: &BTreeSet<OrganisationId>,
+    ) -> Result<Answer, OracleDown> {
+        let holds = lock(&self.q35).1;
+        self.one_bit(
+            holds,
+            fake_digest(&("proximity_lists_declared", programme, orgs)),
+        )
     }
 
     /// The engine's oracle over the same facts, with its own log.
@@ -256,28 +295,24 @@ impl Vault for FakeVault {
         )))
     }
 
-    /// The synthetic vault knows every class (Q35, synthetic vault only).
+    /// Whether the synthetic vault knows every class (Q35, synthetic
+    /// vault only). It does unless [`FakeVault::set_q35`] says otherwise.
     async fn classes_defined(
         &self,
         programme: ProgrammeId,
         classes: &ExclusionClasses,
     ) -> Result<Answer, OracleDown> {
-        self.one_bit(
-            true,
-            fake_digest(&("classes_defined", programme, &classes.0)),
-        )
+        self.classes_defined_now(programme, classes)
     }
 
-    /// Every partner organisation declared its list (Q35, synthetic vault
-    /// only).
+    /// Whether every partner organisation declared its list (Q35,
+    /// synthetic vault only). It holds unless [`FakeVault::set_q35`] says
+    /// otherwise.
     async fn proximity_lists_declared(
         &self,
         programme: ProgrammeId,
         orgs: &BTreeSet<OrganisationId>,
     ) -> Result<Answer, OracleDown> {
-        self.one_bit(
-            true,
-            fake_digest(&("proximity_lists_declared", programme, orgs)),
-        )
+        self.proximity_lists_declared_now(programme, orgs)
     }
 }

@@ -44,6 +44,15 @@ export function mountNew(): void {
 const MAX_DOCUMENT_BYTES = 1_000_000;
 
 /**
+ * The server's limit on a whole request body, in bytes
+ * (`fstp_web::BODY_LIMIT`). JSON escaping grows the text, so a document
+ * under the size above can still give a larger body. The encoded body
+ * is checked against this limit, so such a document gets the size
+ * message, not a generic refusal.
+ */
+const MAX_BODY_BYTES = 1_048_576;
+
+/**
  * The text of `bytes` as strict UTF-8 (design section 3.3), or null. A
  * byte sequence that is not UTF-8 is refused, never replaced.
  */
@@ -166,7 +175,12 @@ export function mountStart(p: string): void {
         warn(alert, t.label("creator.import.not_utf8"));
         return;
       }
-      const o = await call("import.upload", [p], { media, text }, anyObject);
+      const body = { media, text };
+      if (new TextEncoder().encode(JSON.stringify(body)).byteLength > MAX_BODY_BYTES) {
+        warn(alert, t.label("creator.import.too_large"));
+        return;
+      }
+      const o = await call("import.upload", [p], body, anyObject);
       if (report(alert, o)) return;
       go(PATHS.imports(p));
     }),

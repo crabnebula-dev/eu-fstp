@@ -3,6 +3,11 @@
 //! identity attribute and no vault fact. Ids are the only references. The
 //! [`crate::McpSafe`] marker is implemented by hand for each of them.
 //!
+//! One exception is web only: the creator's invitation list names each
+//! pending invitee's email to the programme managers who invited them
+//! ([`ReadModel::carries_email`]). The dispatch refuses it through MCP,
+//! and a test checks that no tool's operation is served by it (I-86).
+//!
 //! Every model has a JSON encoding with decimal strings for ids, instants
 //! and amounts (ADR-006), and snake_case member names (interim, pending
 //! Daniel).
@@ -91,6 +96,9 @@ pub enum ReadModel {
     Verification(VerificationState),
     /// `committee.round`: one cut-off round (R-EV-08, R-EV-09).
     Round(RoundView),
+    /// A read model of the creator pages, or the reply of a creator
+    /// command that names what it drew (lane m4wire).
+    Creator(crate::creator::CreatorModel),
 }
 
 /// A decimal string.
@@ -173,10 +181,27 @@ impl ToJson for ReadModel {
             ReadModel::AssignmentView(v) => v.to_json(),
             ReadModel::Verification(v) => v.to_json(),
             ReadModel::Round(v) => v.to_json(),
+            ReadModel::Creator(m) => m.to_json(),
         }
     }
 }
 
+impl ReadModel {
+    /// Whether the model carries an email. Only the creator's invitation
+    /// list does, and it is web only: the dispatch refuses it through MCP
+    /// before it reads anything, and no tool's operation is served by
+    /// it (I-86; tested below).
+    pub fn carries_email(&self) -> bool {
+        match self {
+            ReadModel::Creator(m) => m.carries_email(),
+            _ => false,
+        }
+    }
+}
+
+/// I-86: every model but the web-only invitation list is identity free
+/// ([`ReadModel::carries_email`]). That one never reaches an MCP
+/// response, by the dispatch guard and the registry test below.
 impl McpSafe for ReadModel {}
 
 /// The status of a call as JSON spells it.
@@ -1365,6 +1390,83 @@ pub(crate) mod reply_shape_tests {
         }
     }
 
+    /// A report with a failure that names both cap values and an
+    /// acknowledged warning (R-PG-01 AC, I-66).
+    fn creator_report() -> crate::creator::CreatorModel {
+        use fstp_creator::{CheckDetail, CheckId, CheckResult, CheckSubject, Severity};
+        let p = ProgrammeId::from_raw(7);
+        let cap = CheckResult {
+            check: CheckId::CapAboveCeiling,
+            severity: Severity::Failure,
+            subject: CheckSubject::Draft,
+            detail: CheckDetail::Cap {
+                p05: "450000.00".to_owned(),
+                p58: "400000.00".to_owned(),
+            },
+        };
+        let roster = CheckResult {
+            check: CheckId::RosterShort,
+            severity: Severity::Warning,
+            subject: CheckSubject::Draft,
+            detail: CheckDetail::None,
+        };
+        let results = [(cap, false), (roster, true)]
+            .iter()
+            .map(|(r, ack)| crate::creator::report_row(p, r, *ack).unwrap())
+            .collect();
+        crate::creator::CreatorModel::Report {
+            revision: fstp_creator::DraftRevision::new(4, fstp_ledger::Seq::from_raw(20)),
+            results,
+        }
+    }
+
+    /// An invitation row, refused by `rule` if one is given.
+    fn invitation(rule: Option<&'static str>) -> crate::creator::InvitationRow {
+        crate::creator::InvitationRow {
+            id: fstp_creator::InvitationId::from_raw(12),
+            email: "m2@e2e.invalid".to_owned(),
+            role: "programme_manager",
+            state: if rule.is_some() {
+                "verified"
+            } else {
+                "invited"
+            },
+            sod: if rule.is_some() { "fail" } else { "unchecked" },
+            rule,
+        }
+    }
+
+    /// The operations whose reply the creator model `c` is.
+    fn creator_served_as(c: &crate::creator::CreatorModel) -> &'static [&'static str] {
+        use crate::creator::CreatorModel as C;
+        match c {
+            C::Opened { .. } => &["creator.open_draft"],
+            C::Report { .. } => &["creator.get_report"],
+            C::Invitations(_) => &["creator.invitations"],
+            C::Programmes(_) => &["creator.list_programmes"],
+            C::Templates(_) => &["creator.list_templates"],
+            C::Approvals(_) => &["admin.approvals"],
+            C::Impact(_) => &["creator.impact"],
+            // Unshaped, see [`unshaped`].
+            C::Draft { .. } | C::Proposals(_) => &[],
+        }
+    }
+
+    /// The read models that carry an arbitrary JSON value, which no
+    /// `fstp_access::Shape` kind states: the draft's spec and a proposed
+    /// import value (lane m4wire). Their members are checked by the
+    /// tests of `creator.rs` and the readers of
+    /// `web/src/creator/model.ts`.
+    fn unshaped(m: &ReadModel) -> bool {
+        matches!(
+            m,
+            ReadModel::Creator(
+                crate::creator::CreatorModel::Draft { .. }
+                    | crate::creator::CreatorModel::Proposals(_)
+            )
+        )
+    }
+
     /// The operations whose reply `m` is, by name. The match has no
     /// wildcard, so a new read model fails to compile here until it names
     /// its operation and so its shape.
@@ -1399,6 +1501,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::AssignmentView(_) => &["review.assignments"],
             ReadModel::Verification(_) => &["me.get_verification"],
             ReadModel::Round(_) => &["committee.round"],
+            ReadModel::Creator(c) => creator_served_as(c),
         }
     }
 
@@ -1471,6 +1574,42 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Round(round_view(RoundStatus::Open)),
             ReadModel::Round(round_view(RoundStatus::Recorded)),
             ReadModel::Round(round_view(RoundStatus::Superseded)),
+            ReadModel::Creator(crate::creator::CreatorModel::Opened {
+                programme: ProgrammeId::from_raw(7),
+            }),
+            ReadModel::Creator(creator_report()),
+            ReadModel::Creator(crate::creator::CreatorModel::Invitations(vec![
+                invitation(Some("SoD-09")),
+                invitation(None),
+            ])),
+            ReadModel::Creator(crate::creator::CreatorModel::Programmes(vec![
+                ProgrammeId::from_raw(1),
+            ])),
+            ReadModel::Creator(crate::creator::CreatorModel::Templates(vec![(
+                1,
+                1,
+                "SuperSAFE".to_owned(),
+            )])),
+            ReadModel::Creator(crate::creator::CreatorModel::Approvals(vec![
+                crate::creator::ApprovalRow {
+                    programme: ProgrammeId::from_raw(7),
+                    revision: fstp_creator::DraftRevision::new(4, fstp_ledger::Seq::from_raw(20)),
+                    approvable: true,
+                },
+            ])),
+            ReadModel::Creator(crate::creator::CreatorModel::Impact(vec![
+                crate::creator::ImpactRow {
+                    call: CallId::from_raw(1),
+                },
+            ])),
+            ReadModel::Creator(crate::creator::CreatorModel::Draft {
+                spec: Value::Object(Object::new()),
+                revision: fstp_creator::DraftRevision::new(1, fstp_ledger::Seq::from_raw(3)),
+                active: false,
+                pending_narratives: std::collections::BTreeMap::new(),
+                requested: false,
+            }),
+            ReadModel::Creator(crate::creator::CreatorModel::Proposals(Vec::new())),
         ]
     }
 
@@ -1484,7 +1623,11 @@ pub(crate) mod reply_shape_tests {
         let mut named = std::collections::BTreeSet::new();
         for m in &samples {
             let ops = served_as(m);
-            assert_eq!(ops.is_empty(), *m == ReadModel::Accepted, "{m:?}");
+            assert_eq!(
+                ops.is_empty(),
+                *m == ReadModel::Accepted || unshaped(m),
+                "{m:?}"
+            );
             for op in ops {
                 assert_fits(op, m);
                 named.insert(*op);
@@ -1506,8 +1649,37 @@ pub(crate) mod reply_shape_tests {
         }
     }
 
+    /// I-86: only the web-only invitation list carries an email, and
+    /// every operation it serves has no MCP tool. So no MCP response can
+    /// hold an email, though `McpSafe` covers `ReadModel` as a whole.
+    #[test]
+    fn i86_no_tool_serves_an_email_bearing_read_model() {
+        let mut bearing = 0usize;
+        for m in &one_of_each() {
+            let has_email = m.to_json().to_compact().contains('@');
+            assert_eq!(m.carries_email(), has_email, "{m:?}");
+            if !m.carries_email() {
+                continue;
+            }
+            bearing += 1;
+            let ops = served_as(m);
+            assert!(!ops.is_empty(), "{m:?}");
+            for op in ops {
+                let spec = fstp_access::OPS
+                    .iter()
+                    .find(|s| s.name == *op)
+                    .unwrap_or_else(|| panic!("{op} is not in the registry"));
+                assert!(
+                    spec.tool.is_none(),
+                    "I-86: {op} serves an email and has an MCP tool"
+                );
+            }
+        }
+        assert_eq!(bearing, 1, "the invitation list is the one sample");
+    }
+
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 27;
+    const VARIANTS: usize = 28;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1541,6 +1713,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::AssignmentView(_) => 24,
             ReadModel::Verification(_) => 25,
             ReadModel::Round(_) => 26,
+            ReadModel::Creator(_) => 27,
         }
     }
 

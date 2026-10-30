@@ -217,12 +217,14 @@ pub fn agent_revoke(client: AgentClientId) -> Result<Op, ApiError> {
 }
 
 /// `creator.approve_activation`: `POST /programmes/{p}/activation`
-/// (high-risk, no tool).
+/// (high-risk, no tool). The body names the revision approved, as the
+/// approval inbox sends it (`fstp_api_core::creator`, lane m4wire). The
+/// I-85 tests judge the channel only, so revision 1 of entry 1 serves.
 pub fn approve_activation(programme: ProgrammeId) -> Result<Op, ApiError> {
     decode_route(
         Method::Post,
         &format!("/programmes/{}/activation", programme.raw()),
-        &body(Vec::new()),
+        &body(vec![("revision", Value::String("1.1".to_owned()))]),
     )
 }
 

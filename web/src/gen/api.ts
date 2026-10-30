@@ -2695,6 +2695,93 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "creator.open_draft": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "programme": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "creator.get_report": {
+    kind: "object",
+    fields: {
+      "revision": { schema: { kind: "string" }, optional: false },
+      "results": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "check": { schema: { kind: "string" }, optional: false },
+          "severity": { schema: { kind: "enum", values: ["failure", "warning"] }, optional: false },
+          "acknowledged": { schema: { kind: "bool" }, optional: false },
+          "key": { schema: { kind: "string" }, optional: false },
+          "field": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "detail": { schema: {
+            kind: "object",
+            fields: {
+              "invitation": { schema: { kind: "id" }, optional: true },
+              "probe": { schema: { kind: "string" }, optional: true },
+              "colour": { schema: { kind: "string" }, optional: true },
+              "element": { schema: { kind: "string" }, optional: true },
+              "section": { schema: { kind: "string" }, optional: true },
+              "placeholder": { schema: { kind: "string" }, optional: true },
+              "obligation": { schema: { kind: "string" }, optional: true },
+              "p05": { schema: { kind: "amount" }, optional: true },
+              "p58": { schema: { kind: "amount" }, optional: true },
+              "rule": { schema: { kind: "string" }, optional: true },
+              "status": { schema: { kind: "enum", values: ["not_checked"] }, optional: true },
+              "unavailable": { schema: { kind: "string" }, optional: true },
+              "outcome": { schema: { kind: "string" }, optional: true },
+            },
+          }, optional: true },
+        },
+      } }, optional: false },
+    },
+  },
+  "creator.invitations": {
+    kind: "object",
+    fields: {
+      "invitations": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          "email": { schema: { kind: "string" }, optional: false },
+          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
+          "state": { schema: { kind: "enum", values: ["invited", "accepted", "verified", "granted"] }, optional: false },
+          "sod": { schema: { kind: "enum", values: ["pass", "fail", "unchecked"] }, optional: false },
+          "rule": { schema: { kind: "string" }, optional: true },
+        },
+      } }, optional: false },
+    },
+  },
+  "admin.approvals": {
+    kind: "object",
+    fields: {
+      "approvals": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          ["kind"]: { schema: { kind: "enum", values: ["activation", "self_grant"] }, optional: false },
+          "programme": { schema: { kind: "id" }, optional: false },
+          "revision": { schema: { kind: "string" }, optional: true },
+          "approvable": { schema: { kind: "bool" }, optional: false },
+          "name": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
+          "approval": { schema: { kind: "id" }, optional: true },
+          "role": { schema: { kind: "string" }, optional: true },
+          "grantee": { schema: { kind: "string" }, optional: true },
+        },
+      } }, optional: false },
+      "unlisted": { schema: { kind: "array", items: { kind: "enum", values: ["self_grant"] } }, optional: true },
+    },
+  },
+  "creator.impact": {
+    kind: "object",
+    fields: {
+      "calls": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "call": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "people.get_invitation": {
     kind: "object",
     fields: {

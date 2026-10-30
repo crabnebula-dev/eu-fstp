@@ -13,7 +13,7 @@
 //!
 //! Interim, pending Daniel: an entry is keyed by the name of the
 //! operation whose reply it describes. Command operations answer
-//! `{"accepted": true}` today and have no entry. Three commands answer
+//! `{"accepted": true}` today and have no entry. Four commands answer
 //! with data a page reads next, and each has an entry:
 //!
 //! - `proposal.create` names the drawn proposal (J4).
@@ -21,6 +21,8 @@
 //!   and the drawn plan, which a stage 2 revision names (R-EV-05).
 //! - `committee.open_round` names the drawn round, which the ballot and
 //!   the delegation address. Its entry fixes that reply, `{"round": id}`.
+//! - `creator.open_draft` names the drawn programme, which the creator
+//!   pages open next (lane m4wire).
 //!
 //! Dispatch serves `committee.open_round` as
 //! `fstp_api_core::model::RoundOpened`, with the drawn id.
@@ -242,6 +244,25 @@ const PROPOSAL_ROW: Shape = Shape::Object(&[
     m("proposal", Shape::Id),
     m("state", Shape::Enum(STATE_NAMES)),
     m("title", Shape::String),
+]);
+
+/// The detail of a validation report row: string values only (lane
+/// m4wire). Each member names a subject or a detail of the creator's
+/// `CheckResult`.
+const REPORT_DETAIL: Shape = Shape::Object(&[
+    opt("invitation", Shape::Id),
+    opt("probe", Shape::String),
+    opt("colour", Shape::String),
+    opt("element", Shape::String),
+    opt("section", Shape::String),
+    opt("placeholder", Shape::String),
+    opt("obligation", Shape::String),
+    opt("p05", Shape::Amount),
+    opt("p58", Shape::Amount),
+    opt("rule", Shape::String),
+    opt("status", Shape::Enum(&["not_checked"])),
+    opt("unavailable", Shape::String),
+    opt("outcome", Shape::String),
 ]);
 
 /// The reply shape of each operation whose `data` the API core serves,
@@ -506,6 +527,84 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 m("version", Shape::Int),
                 m("name", Shape::String),
             ])),
+        )]),
+    ),
+    // Lane m4wire, R-PG-01: the draft the server drew, which the creator
+    // pages open next.
+    (
+        "creator.open_draft",
+        Shape::Object(&[m("accepted", Shape::Bool), m("programme", Shape::Id)]),
+    ),
+    // Lane m4wire, I-66, R-PG-01 AC: each row names its check, its
+    // severity, whether a live acknowledgement holds and the key an
+    // acknowledgement names. The detail holds string values only, never
+    // an account (R-CF-03).
+    (
+        "creator.get_report",
+        Shape::Object(&[
+            m("revision", Shape::String),
+            m(
+                "results",
+                Shape::Array(&Shape::Object(&[
+                    m("check", Shape::String),
+                    m("severity", Shape::Enum(&["failure", "warning"])),
+                    m("acknowledged", Shape::Bool),
+                    m("key", Shape::String),
+                    m("field", Shape::Nullable(&Shape::String)),
+                    opt("detail", REPORT_DETAIL),
+                ])),
+            ),
+        ]),
+    ),
+    // Lane m4wire, SoD-09, D3: each invitation with its live SoD check,
+    // which names a rule only, never an account (R-CF-03).
+    (
+        "creator.invitations",
+        Shape::Object(&[m(
+            "invitations",
+            Shape::Array(&Shape::Object(&[
+                m("id", Shape::Id),
+                m("email", Shape::String),
+                m("role", Shape::Enum(INVITED_ROLES)),
+                m(
+                    "state",
+                    Shape::Enum(&["invited", "accepted", "verified", "granted"]),
+                ),
+                m("sod", Shape::Enum(&["pass", "fail", "unchecked"])),
+                opt("rule", Shape::String),
+            ])),
+        )]),
+    ),
+    // Lane m4wire, I-67, SoD-07: the approval inbox. An activation row
+    // says whether the viewer may approve it. A self-grant row (the
+    // tenant lane) names its approval, the role and the grantee's handle.
+    // `unlisted` names each kind of approval the server cannot list yet,
+    // so the inbox never reads as complete when it is not.
+    (
+        "admin.approvals",
+        Shape::Object(&[
+            m(
+                "approvals",
+                Shape::Array(&Shape::Object(&[
+                    m("kind", Shape::Enum(&["activation", "self_grant"])),
+                    m("programme", Shape::Id),
+                    opt("revision", Shape::String),
+                    m("approvable", Shape::Bool),
+                    opt("name", Shape::Nullable(&Shape::String)),
+                    opt("approval", Shape::Id),
+                    opt("role", Shape::String),
+                    opt("grantee", Shape::String),
+                ])),
+            ),
+            opt("unlisted", Shape::Array(&Shape::Enum(&["self_grant"]))),
+        ]),
+    ),
+    // Lane m4wire, R-PG-04: the calls an edit of the draft affects.
+    (
+        "creator.impact",
+        Shape::Object(&[m(
+            "calls",
+            Shape::Array(&Shape::Object(&[m("call", Shape::Id)])),
         )]),
     ),
     // SoD-09, J2: the role, the terms version, the programme's P-75 and

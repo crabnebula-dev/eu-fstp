@@ -528,6 +528,32 @@ pub trait AsyncEngine: Send + Sync {
     ) -> impl Future<Output = (Result<(), Refusal>, Vec<Answer>)> + Send;
     /// The current engine state.
     fn snapshot(&self) -> Arc<EngineState>;
+    /// The shell's creator facts for `cmd` by `ctx` (design section 3.2,
+    /// `CreatorInputs`): the facts the engine port's
+    /// `fstp_engine::CreatorEnvironment` answers for the same command. The
+    /// API core reads them for the validation report, the invitations and
+    /// the approval inbox, so a read shows what a decision would see.
+    ///
+    /// The engine replaces the parts it owns before it decides: the count
+    /// of unresolved imports and the vault answers of the builders. The
+    /// API core does the same for its reads.
+    ///
+    /// Interim (lane m4wire seam proposal for the lead). The default
+    /// supplies no shell fact, as `fstp_engine::NoEnvironment` does, so
+    /// every check that needs one fails closed.
+    fn creator_inputs(
+        &self,
+        state: &EngineState,
+        cmd: &fstp_creator::CreatorCommand,
+        ctx: &Ctx,
+    ) -> fstp_creator::CreatorInputs {
+        fstp_engine::CreatorEnvironment::creator_inputs(
+            &fstp_engine::NoEnvironment,
+            state,
+            cmd,
+            ctx,
+        )
+    }
 }
 
 /// MCP bearer tokens (design sections 3.7 step 0 and 3.8). Interim (W3b

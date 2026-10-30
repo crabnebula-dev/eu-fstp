@@ -63,17 +63,49 @@ pub(crate) enum ParamKind {
     /// the capability of a read that admits a caller with no account, so
     /// it is never a guessable id (SoD-09).
     LinkToken,
+    /// A field key of the programme spec, `<step>.<member>`: two tokens
+    /// of `[a-z0-9_]` joined by one dot (lane m4wire). The creator codec
+    /// judges whether it names a field.
+    FieldKey,
+    /// One of the previews of journey J1 (`creator::PREVIEWS`).
+    Preview,
 }
 
 /// The spelling of the path parameter `name`.
 pub(crate) fn param_kind(name: &str) -> ParamKind {
     match name {
-        "slug" | "step" | "field" => ParamKind::Token,
+        "slug" | "step" => ParamKind::Token,
+        // Lane m4wire: the narrative acceptance names its field by key,
+        // and a preview by its kind.
+        "field" => ParamKind::FieldKey,
+        "preview" => ParamKind::Preview,
         // Lane m4reg: the invitation landing, its acceptance and its
         // verification take the token of the link (SoD-09).
         "invitation_token" => ParamKind::LinkToken,
         _ => ParamKind::Id,
     }
+}
+
+/// Whether `s` is a valid value of the path parameter `name`.
+pub(crate) fn param_str_ok(name: &str, s: &str) -> bool {
+    match param_kind(name) {
+        ParamKind::Id => canonical_id(s).is_some(),
+        ParamKind::Token => token(s),
+        ParamKind::LinkToken => link_token(s),
+        ParamKind::FieldKey => field_key(s),
+        ParamKind::Preview => crate::creator::PREVIEWS.contains(&s),
+    }
+}
+
+/// Whether `s` is shaped as a field key: `<step>.<member>`, each part 1
+/// to 64 characters of `[a-z0-9_]`.
+pub(crate) fn field_key(s: &str) -> bool {
+    let part = |p: &str| {
+        (1..=64).contains(&p.len())
+            && p.bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
+    };
+    s.split_once('.').is_some_and(|(a, b)| part(a) && part(b))
 }
 
 /// Whether `s` is a canonical decimal `u128`: digits only, no leading
@@ -108,11 +140,7 @@ pub(crate) fn param_ok(name: &str, v: &Value) -> bool {
     let Some(s) = v.as_str() else {
         return false;
     };
-    match param_kind(name) {
-        ParamKind::Id => canonical_id(s).is_some(),
-        ParamKind::Token => token(s),
-        ParamKind::LinkToken => link_token(s),
-    }
+    param_str_ok(name, s)
 }
 
 /// What a command takes from the state or the cell beside the request.
@@ -516,6 +544,12 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
     if matches!(spec.kind, OpKind::Command(_)) {
         // A command kind with no form never runs, and is not judged.
         return Ok(());
+    }
+    if matches!(
+        spec.kind,
+        OpKind::Creator(_) | OpKind::Bridge(_) | OpKind::Import(_)
+    ) {
+        return crate::creator::check(spec, request, &params);
     }
     let members: Vec<&str> = body.collect();
     match body_rule(spec) {
