@@ -7,11 +7,12 @@
 
 use std::num::NonZeroU16;
 
+use fstp_domain::policy::{FunderProfileRef, OpaqueValue};
 use fstp_money::Currency;
 
 use crate::kinds::{FlowDownObligation, ProfileRef};
 use crate::spec::{FieldId, FieldValue, ProgrammeSpec};
-use crate::value::Token;
+use crate::value::{Codec, Token};
 
 /// The obligations every contract passes on under the Horizon Europe
 /// profile (`02-domain/contracts.md`, I-49).
@@ -46,6 +47,21 @@ impl FunderProfile {
             profile: Token::trusted(self.name),
             version: self.version,
         }
+    }
+
+    /// The P-53 value a compiled policy holds for this profile: the
+    /// canonical opaque text of [`FunderProfile::reference`].
+    pub fn policy_ref(&self) -> Option<FunderProfileRef> {
+        OpaqueValue::from_value(&self.reference().encode())
+            .ok()
+            .map(FunderProfileRef)
+    }
+
+    /// The profile whose P-53 value is `r`. Only the Horizon Europe
+    /// profile ships in M4, so any other value names no profile.
+    pub fn for_policy_ref(r: &FunderProfileRef) -> Option<FunderProfile> {
+        let he = FunderProfile::horizon_europe();
+        (he.policy_ref().as_ref() == Some(r)).then_some(he)
     }
 
     /// The currency of every programme under this profile (ADR-006).

@@ -12,10 +12,15 @@ use fstp_domain::id::{AccountId, ProgrammeId};
 use fstp_domain::roles::{Group, Role};
 use fstp_domain::state::State;
 use fstp_domain::time::Timestamp;
+use fstp_programme::{CompileIds, Field, FieldId, FieldKind, FieldValue, FunderProfile, compile};
 
 use crate::check::{CheckId, Severity};
+use crate::draft;
 use crate::inputs::CreatorInputs;
-use crate::model::{CreatorCommand, CreatorRecord, DraftRevision, ImportFieldEdit, Provenance};
+use crate::model::{
+    CreatorCommand, CreatorRecord, DraftRevision, ImportFieldEdit, Provenance, StartingPoint,
+    ValueDigest,
+};
 use crate::probe::ProbeKind;
 use crate::state::{CreatorState, Draft};
 use crate::validate::{DraftFacts, draft_facts, validate_at};
@@ -58,7 +63,12 @@ pub enum CreatorRefusal {
     /// and is not a tenant admin. Interim, pending Daniel: readings R5
     /// and R6 let a tenant admin acknowledge and request too.
     NotProgrammeManager,
-    /// A save named no field.
+    /// A save named no field, or holds nothing that can be saved: an
+    /// edit whose value is not of its field, a value that does not compile
+    /// under the draft's funder profile, P-09 wording that is still inline
+    /// (ADR-007), a start that names another funder profile, or an
+    /// acceptance of a field that holds no template narrative waiting for
+    /// it. Interim, pending Daniel: one refusal for every invalid save.
     NothingToSave,
     /// A save from a client claims a provenance other than `Manual`.
     /// Import provenance arrives only through the engine bridge (I-65).
@@ -117,16 +127,6 @@ impl std::fmt::Display for CreatorRefusal {
 
 impl std::error::Error for CreatorRefusal {}
 
-/// Opening needs the profile-default policy, compiled from the funder
-/// profile.
-const OPEN_SEAM: &str = "OpenDraft: the profile-default policy from fstp_programme::compile over the funder profile (design 3.1; lanes W1a and W2c)";
-
-/// Saves and starts compile the draft spec into a core `EditPolicy`.
-const COMPILE_SEAM: &str = "the draft spec, the field table and fstp_programme::compile with its core EditPolicy (design 3.1 and 3.2; lane W1a)";
-
-/// A template holds the draft spec and its digest.
-const TEMPLATE_SEAM: &str = "SaveAsTenantTemplate: the draft spec and its digest from fstp_programme (design 3.1; lane W1a)";
-
 /// Decides one creator command (design section 3.2).
 pub fn decide_creator(
     core: &State,
@@ -157,7 +157,11 @@ pub(crate) fn decide_with(
         })
     };
     match cmd {
-        CreatorCommand::OpenDraft { programme, .. } => {
+        CreatorCommand::OpenDraft {
+            programme,
+            version,
+            profile,
+        } => {
             if !is_admin(actor, ctx, ext) {
                 return Err(CreatorRefusal::NotTenantAdmin);
             }
@@ -165,7 +169,23 @@ pub(crate) fn decide_with(
             {
                 return Err(CreatorRefusal::DraftExists);
             }
-            Err(CreatorRefusal::Unavailable(OPEN_SEAM))
+            // The profile-default policy: the blank spec of the funder
+            // profile, compiled with the ids the command names (design
+            // 3.2). The programme starts in `Draft` status (D1).
+            let p = FunderProfile::for_policy_ref(profile)
+                .ok_or(CreatorRefusal::Unavailable(draft::NO_PROFILE))?;
+            let compiled = compile(&p.blank(), &p, CompileIds::new(*programme, *version, None))
+                .map_err(|_| CreatorRefusal::Unavailable(draft::NO_PROFILE))?;
+            Ok(CreatorDecision {
+                records: vec![CreatorRecord::DraftOpened {
+                    programme: *programme,
+                    profile: profile.clone(),
+                    by: actor,
+                }],
+                core: vec![Command::CreateProgramme {
+                    policy: Box::new(compiled.policy),
+                }],
+            })
         }
         CreatorCommand::ApplyStart {
             programme,
@@ -175,12 +195,29 @@ pub(crate) fn decide_with(
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
             manager(core, *programme, actor, ctx.now)?;
-            if let crate::model::StartingPoint::Clone { source } = start
+            if let StartingPoint::Clone { source } = start
                 && core.policy().programme(*source).is_none()
             {
                 return Err(CreatorRefusal::UnknownSource);
             }
-            Err(CreatorRefusal::Unavailable(COMPILE_SEAM))
+            // A start writes the whole draft policy in one core
+            // `EditPolicy` (design 3.2).
+            let head =
+                fstp_domain::policy::head(core, *programme).ok_or(CreatorRefusal::UnknownDraft)?;
+            let version = draft::fresh_version(core, ctx)?;
+            let policy = draft::start_policy(core, creator, d, head, start, version)?;
+            Ok(CreatorDecision {
+                records: vec![CreatorRecord::StartApplied {
+                    programme: *programme,
+                    revision: *base,
+                    start: start.clone(),
+                    by: actor,
+                }],
+                core: vec![Command::EditPolicy {
+                    base: head.id,
+                    version: Box::new(policy),
+                }],
+            })
         }
         CreatorCommand::SaveFields {
             programme,
@@ -196,15 +233,32 @@ pub(crate) fn decide_with(
             if fields.iter().any(|f| f.provenance != Provenance::Manual) {
                 return Err(CreatorRefusal::ProvenanceNotManual);
             }
-            Err(CreatorRefusal::Unavailable(COMPILE_SEAM))
+            let edits: Vec<Edit<'_>> = fields
+                .iter()
+                .map(|f| Edit {
+                    field: f.field,
+                    value: &f.value,
+                    digest: f.digest,
+                    provenance: f.provenance.clone(),
+                })
+                .collect();
+            save(core, d, *programme, *base, actor, ctx, &edits)
         }
         CreatorCommand::AcceptNarrative {
-            programme, base, ..
+            programme,
+            base,
+            field,
         } => {
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
             manager(core, *programme, actor, ctx.now)?;
-            Err(CreatorRefusal::Unavailable(COMPILE_SEAM))
+            accept_narrative(d, *field)?;
+            records(vec![CreatorRecord::NarrativeAccepted {
+                programme: *programme,
+                revision: *base,
+                field: *field,
+                by: actor,
+            }])
         }
         CreatorCommand::Invite {
             programme,
@@ -318,14 +372,21 @@ pub(crate) fn decide_with(
             // saved as a template too, and the fold admits its record
             // after activation. Its saver joins the builder set only
             // before activation.
-            if creator.draft(*programme).is_none() {
-                return Err(CreatorRefusal::UnknownDraft);
-            }
+            let d = creator
+                .draft(*programme)
+                .ok_or(CreatorRefusal::UnknownDraft)?;
             manager_or_admin(core, *programme, actor, ctx, ext)?;
-            if creator.template_taken(*template) {
+            // A shipped template keeps its id, so a tenant-private one
+            // cannot take it.
+            if creator.template_taken(*template) || draft::is_shipped(*template) {
                 return Err(CreatorRefusal::TemplateExists);
             }
-            Err(CreatorRefusal::Unavailable(TEMPLATE_SEAM))
+            records(vec![CreatorRecord::TemplateSaved {
+                template: *template,
+                programme: *programme,
+                spec: draft::spec_ref(*programme, d.head()),
+                by: actor,
+            }])
         }
     }
 }
@@ -343,6 +404,11 @@ pub(crate) fn decide_with(
 /// and the actor holds an active programme manager binding on the draft.
 /// The resolver becomes a builder through the `FieldsSaved` record and
 /// through [`CreatorState::observe_import_resolution`].
+///
+/// The value then takes the path of a client save: one `FieldsSaved`
+/// with [`ImportFieldEdit::provenance`], and one core `EditPolicy` when
+/// the field is a policy field. After the entry is appended, the engine
+/// holds the value with [`CreatorState::hold_import`].
 pub fn decide_import_save(
     core: &State,
     creator: &CreatorState,
@@ -355,10 +421,104 @@ pub fn decide_import_save(
     let d = open_draft(creator, programme)?;
     at_head(d, base)?;
     manager(core, programme, actor, ctx.now)?;
-    // The edit compiles into the draft spec once lane W1a lands, as a
-    // client save does. Until then the save refuses with the seam.
-    let _ = edit;
-    Err(CreatorRefusal::Unavailable(COMPILE_SEAM))
+    let edits = [Edit {
+        field: edit.field,
+        value: &edit.value,
+        digest: edit.digest,
+        provenance: edit.provenance(),
+    }];
+    save(core, d, programme, base, actor, ctx, &edits)
+}
+
+/// One field edit of a save, from a client or from the import bridge.
+struct Edit<'a> {
+    field: FieldId,
+    value: &'a FieldValue,
+    digest: ValueDigest,
+    provenance: Provenance,
+}
+
+/// Decides a save of `edits` on the draft `d` of `programme` at `base`
+/// by `actor` (design 3.2, "How a save becomes policy").
+///
+/// The save records one `FieldsSaved` with each digest and provenance.
+/// When it touches a policy field, it composes exactly one core
+/// `EditPolicy` on the head: the head policy with the saved policy values,
+/// compiled as the next version. The core decides it with the same actor,
+/// so `validate` (I-50 and the M2 checks), authorship and I-23 apply
+/// unchanged. An artefact-only save composes no core command.
+///
+/// Each edit must carry a value of its own field. A value that does not
+/// compile under the draft's profile, or P-09 wording that is still inline
+/// (ADR-007), is refused as an invalid save.
+fn save(
+    core: &State,
+    d: &Draft,
+    programme: ProgrammeId,
+    base: DraftRevision,
+    actor: AccountId,
+    ctx: &Ctx,
+    edits: &[Edit<'_>],
+) -> Result<CreatorDecision, CreatorRefusal> {
+    if edits.is_empty() || edits.iter().any(|e| e.value.field() != e.field) {
+        return Err(CreatorRefusal::NothingToSave);
+    }
+    let policy_values: Vec<&FieldValue> = edits
+        .iter()
+        .filter(|e| draft::kind(e.field) == Some(FieldKind::Policy))
+        .map(|e| e.value)
+        .collect();
+    let mut composed = Vec::new();
+    if !policy_values.is_empty() {
+        let head =
+            fstp_domain::policy::head(core, programme).ok_or(CreatorRefusal::UnknownDraft)?;
+        let profile = draft::profile_of(d)?;
+        let version = draft::fresh_version(core, ctx)?;
+        let policy = draft::edited_policy(head, &profile, &policy_values, version)?;
+        composed.push(Command::EditPolicy {
+            base: head.id,
+            version: Box::new(policy),
+        });
+    }
+    Ok(CreatorDecision {
+        records: vec![CreatorRecord::FieldsSaved {
+            programme,
+            revision: base,
+            fields: edits
+                .iter()
+                .map(|e| (e.field, e.digest, e.provenance.clone()))
+                .collect(),
+            by: actor,
+        }],
+        core: composed,
+    })
+}
+
+/// Checks that `field` holds template narrative the programme manager can
+/// accept: the latest start is a shipped template whose value of `field`
+/// waits for acceptance, and no save or acceptance of the field followed.
+///
+/// Only artefact narrative can be accepted. P-09 wording from a template
+/// is inline text, which no ledger body may hold (ADR-007), so the
+/// programme manager saves it as stored text instead. Interim, pending
+/// Daniel.
+fn accept_narrative(d: &Draft, field: FieldId) -> Result<(), CreatorRefusal> {
+    let Some(StartingPoint::Template { template, version }) = d.start() else {
+        return Err(CreatorRefusal::NothingToSave);
+    };
+    let t = draft::shipped_template(*template, *version).ok_or(CreatorRefusal::NothingToSave)?;
+    let waiting = match t.spec.get(field) {
+        Field::Set(v) => draft::needs_acceptance(&v),
+        Field::Unset => false,
+    };
+    if !waiting
+        || draft::kind(field) != Some(FieldKind::Artefact)
+        || d.fields().contains_key(&field)
+        || d.narratives().contains(&field)
+    {
+        return Err(CreatorRefusal::NothingToSave);
+    }
+    Ok(())
 }
 
 /// The checks an approval of `programme` at `revision` needs before its

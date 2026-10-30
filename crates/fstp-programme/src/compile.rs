@@ -414,6 +414,58 @@ pub fn decompile(
     spec
 }
 
+/// The policy fields of `policy` as a spec, with every artefact field a
+/// gap. Total.
+///
+/// The free text that [`decompile`] rejoins from the artefacts is not in
+/// a policy. So each P-01 criterion name, P-13 class description and P-55
+/// activity name reads back as empty inline text, and each P-09 wording
+/// as the `TextRef` the policy holds, or empty inline text for
+/// [`INLINE_TEXT`]. None of these texts reaches a policy, so `compile` of
+/// the result, with the same ids, gives `policy` back for every policy
+/// that `compile` returned.
+///
+/// The creator edits a draft policy with it: the head policy as a spec,
+/// the saved values set, compiled again (M4 design section 3.2, "How a
+/// save becomes policy"). Interim, pending Daniel.
+pub fn policy_spec(policy: &PolicyVersion) -> ProgrammeSpec {
+    let blank = || Narrative::Inline(String::new());
+    let f = &policy.frozen;
+    let activity_ids: Vec<ActivityTypeId> = f
+        .opaque
+        .get(&ParamId::P55)
+        .and_then(parse)
+        .and_then(|v| {
+            v.as_array()?
+                .iter()
+                .map(|x| {
+                    crate::value::decode_id(x)
+                        .ok()
+                        .map(ActivityTypeId::from_raw)
+                })
+                .collect::<Option<Vec<_>>>()
+        })
+        .unwrap_or_default();
+    let artefacts = ProgrammeArtefacts {
+        values: BTreeMap::new(),
+        criterion_names: f.p01.items().iter().map(|c| (c.id, blank())).collect(),
+        knock_out_texts: f
+            .p09
+            .0
+            .iter()
+            .map(|k| {
+                let text = crate::value::StoredText::new(k.text)
+                    .map(Narrative::Stored)
+                    .unwrap_or_else(blank);
+                (k.id, text)
+            })
+            .collect(),
+        class_descriptions: policy.live.p13.0.iter().map(|c| (*c, blank())).collect(),
+        activity_names: activity_ids.into_iter().map(|a| (a, blank())).collect(),
+    };
+    decompile(policy, &artefacts, &BTreeSet::new())
+}
+
 /// The parsed JSON of an opaque value.
 fn parse(o: &OpaqueValue) -> Option<Value> {
     fstp_json::parse_str(o.as_str()).ok()

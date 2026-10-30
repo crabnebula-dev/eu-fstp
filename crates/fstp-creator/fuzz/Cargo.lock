@@ -49,6 +49,7 @@ name = "fstp-creator-fuzz"
 version = "0.0.0"
 dependencies = [
  "fstp-creator",
+ "fstp-programme",
  "libfuzzer-sys",
 ]
 
