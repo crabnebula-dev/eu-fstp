@@ -61,13 +61,23 @@
 //!   command, so `EndSession`, `RevokeCredential`,
 //!   `EndSessionsAtBindingEnd` and the grant and end reactions of design
 //!   section 5.1 name the sessions they end.
+//! - [`admit_verified_stepup`]: `GrantStepUp` under the challenge id. The
+//!   gate verifies the passkey assertion itself through
+//!   `fstp_auth::stepup::verify_step_up` (lane int5).
+//! - [`admit_invitation_enrolment`]: `EnrolByInvitation`, the first
+//!   passkey of an invited account. The gate matches the proof to the
+//!   invitation and verifies the registration (design section 8.3).
+//! - [`admit_first_admin_invitation`]: `IssueFirstAdminInvitation` of
+//!   provisioning, with the deployment mode (design section 9.2 step 10).
 //!
-//! Three route-only commands fail closed ([`ROUTE_ADMISSION_SEAM`]), since
-//! their route holds no proof this crate can verify yet:
+//! These fail closed ([`ROUTE_ADMISSION_SEAM`]), since their route holds
+//! no proof this crate can verify yet:
 //!
-//! - `GrantStepUp`: [`admit_stepup_grant`] runs its ledger and session
-//!   checks, then refuses. The `fstp_auth::stepup::StepUp` it takes has
-//!   public fields, so a caller can write one with no assertion behind it.
+//! - `GrantStepUp` from a `fstp_auth::stepup::StepUp` alone:
+//!   [`admit_stepup_grant`] runs its ledger and session checks, then
+//!   refuses. A `StepUp` has public fields, so a caller can write one with
+//!   no assertion behind it. [`admit_verified_stepup`] takes the assertion
+//!   instead.
 //! - `CompleteRecovery`: [`admit_recovery_completion`] recomputes the path
 //!   and verifies the new passkey, then refuses. Nothing binds the caller
 //!   to the case: the enrolment token and the email proof have no
@@ -757,19 +767,19 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
+            | CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. })
     )
 }
 
-/// The route-only auth commands that no admission admits yet, each for
-/// want of a proof this crate can verify. A session never admits them,
-/// and no route admission does. So `CellEngine::execute(Admitted)` cannot
-/// run them, and they fail closed.
+/// The route-only steps that no admission admits, each for want of a
+/// proof this crate can verify. A session never admits them. So
+/// `CellEngine::execute(Admitted)` cannot run them, and they fail closed.
 ///
-/// - `GrantStepUp` (design section 8.4, I-78): only
-///   `fstp_auth::stepup::verify_step_up` may vouch for an assertion. Its
-///   `StepUp` has public fields, and this crate cannot name the assertion
-///   type to verify it itself. A sealed proof, or an edge to
-///   `fstp-webauthn`, is a lead-owned change.
+/// - `GrantStepUp` from a `StepUp` alone (design section 8.4, I-78): only
+///   `fstp_auth::stepup::verify_step_up` may vouch for an assertion, and a
+///   `StepUp` has public fields. [`admit_verified_stepup`] runs that
+///   verification over the assertion itself, through the in-house
+///   `fstp-webauthn` edge (lane int5).
 /// - `CompleteRecovery` (design section 8.5, I-79): the one-time enrolment
 ///   token or the email ceremony binds the caller to the case. Without it
 ///   the approving admin, who sees the case id, could enrol their own key
@@ -779,7 +789,7 @@ fn system_only(c: &CellCommand) -> bool {
 ///
 /// ADR-008 "Unset lifetimes" gives the recovery tokens no lifetime, so no
 /// route verifies them yet.
-pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate admits no GrantStepUp, CompleteRecovery or ProveRecoveryEmail (design sections 8.4 and 8.5, lane W3a). The step-up needs a proof that only fstp_auth::stepup::verify_step_up builds, a lead-owned change. The recovery steps need the enrolment or email token, which has no lifetime (ADR-008 \"Unset lifetimes\")";
+pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate admits no GrantStepUp from a StepUp alone, and no CompleteRecovery or ProveRecoveryEmail (design sections 8.4 and 8.5, lane W3a). A step-up is admitted only with its assertion, which admit_verified_stepup verifies through fstp_auth::stepup::verify_step_up. The recovery steps need the enrolment or email token, which has no lifetime (ADR-008 \"Unset lifetimes\")";
 
 /// Whether only an auth route issues `c`, after it verified what the
 /// record states (design sections 8.4, 8.5 and 8.7): `GrantStepUp` after a
@@ -797,7 +807,7 @@ fn route_only(c: &CellCommand) -> bool {
                 | A::RequestRecovery { .. }
                 | A::ProveRecoveryEmail { .. }
                 | A::CompleteRecovery { .. }
-        )
+        ) | CellCommand::Tenant(TenantCommand::EnrolByInvitation { .. })
     )
 }
 
@@ -836,7 +846,8 @@ pub enum RouteDeny {
 
 /// `POST /auth/stepup` (design section 8.4, I-78): the checks of
 /// `GrantStepUp` for the step-up `stepup`, in `session`. It admits
-/// nothing yet ([`ROUTE_ADMISSION_SEAM`]).
+/// nothing ([`ROUTE_ADMISSION_SEAM`]): the route calls
+/// [`admit_verified_stepup`] with the assertion instead.
 ///
 /// `stepup` would be the `stepup` member of the `Granted` that
 /// `fstp_auth::stepup::verify_step_up` returned for the route's challenge,
@@ -856,9 +867,8 @@ pub enum RouteDeny {
 /// - then [`Deny::NotImplemented`] with [`ROUTE_ADMISSION_SEAM`], since
 ///   nothing proves that an assertion verified.
 ///
-/// Once a proof that only `verify_step_up` builds exists (a lead-owned
-/// change in `fstp-auth`), the command runs under the step-up id, which
-/// is the challenge id, as its command id ([`crate::stepup_id`]).
+/// [`admit_verified_stepup`] verifies the assertion itself and runs the
+/// command under the challenge id as its command id ([`crate::stepup_id`]).
 ///
 /// # Errors
 ///
@@ -901,8 +911,165 @@ pub fn admit_stepup_grant(
         return Err(RouteDeny::StepUp(StepUpDeny::Consumed));
     }
     // I-78: a `StepUp` is no proof that an assertion verified, so the
-    // grant fails closed.
+    // grant fails closed. [`admit_verified_stepup`] takes the assertion.
     Err(RouteDeny::Gate(Deny::NotImplemented(ROUTE_ADMISSION_SEAM)))
+}
+
+/// `POST /auth/stepup` (design section 8.4, I-78): admits `GrantStepUp`
+/// for the passkey assertion `assertion` over the step-up challenge of
+/// `req`, in `session`.
+///
+/// The gate verifies the assertion itself, through
+/// `fstp_auth::stepup::verify_step_up`, so the grant never rests on a
+/// `StepUp` that a caller wrote by hand ([`admit_stepup_grant`]). In
+/// order:
+///
+/// - the session passes steps 1 and 2 of design section 5.4, and its
+///   method is phishing resistant;
+/// - the assertion names a live credential of the ledger, with the sign
+///   count `sign_count` of its operational row;
+/// - `verify_step_up` verifies the assertion with UV over the challenge
+///   `SHA-256("fstp-stepup-v1" || cell || session || action_digest ||
+///   nonce)`, and the credential belongs to the session's account.
+///
+/// The command runs under the challenge id `req.id` as its command id, so
+/// the step-up id is that challenge id (`crate::stepup_id`), and a replay
+/// of the same assertion is a duplicate of the first grant (ADR-007). The
+/// `Granted` it returns carries the new sign count for the route to
+/// store.
+///
+/// # Errors
+///
+/// The first check that fails.
+pub fn admit_verified_stepup(
+    s: &CellState,
+    session: &SessionView,
+    req: &fstp_auth::stepup::StepUpRequest,
+    assertion: &fstp_webauthn::AssertionResponse,
+    sign_count: u32,
+    now: Timestamp,
+) -> Result<(Admitted, fstp_auth::stepup::Granted), RouteDeny> {
+    use fstp_auth::stepup::StepUpDeny;
+    session_checks(s, session, now).map_err(RouteDeny::Gate)?;
+    if !phishing_resistant(session.method) {
+        return Err(RouteDeny::StepUp(StepUpDeny::MagicLinkSession));
+    }
+    let (owner, stored) = s
+        .auth()
+        .stored_credential(&assertion.credential_id, sign_count)
+        .ok_or(RouteDeny::UnknownCredential)?;
+    let granted = fstp_auth::stepup::verify_step_up(session, req, assertion, &stored, owner, now)
+        .map_err(RouteDeny::StepUp)?;
+    let command = CellCommand::Auth(fstp_auth::AuthCommand::GrantStepUp {
+        session: session.id,
+        action_digest: req.action_digest,
+    });
+    Ok((
+        Admitted {
+            action: Action::Command(command),
+            principal: Principal::Account(session.account),
+            stepup: None,
+            at: now,
+            command: Some(req.id),
+            inputs: RouteInputs::none(),
+        },
+        granted,
+    ))
+}
+
+/// `POST /auth/invitations/{token}/register` (ceremony, design section
+/// 8.3, G10, Q35): admits `EnrolByInvitation` for the invitation that
+/// `proof` matches, with the new passkey that `reg` registers.
+///
+/// - The invitation is the one whose stored digest is the digest of the
+///   proof: `split_token_digest` of two halves, `token_digest` of one
+///   token. No invitation holds it: the token does not match.
+/// - `fstp_auth::ceremony::admit_invitation`: unused, at most 72 hours
+///   old at `now`, the shape of the proof is the shape of the invitation,
+///   the digest matches in constant time, and the invitee holds no
+///   passkey.
+/// - `fstp_auth::ceremony::verify_fresh_passkey`, with UV required for
+///   the first admin's invitation and for a holder of a management role
+///   (ADR-008 "User verification"), and a credential id new to the cell.
+///
+/// No session acts, so the principal is [`Principal::Ceremony`] for the
+/// invited account. The verified credential goes into the batch's inputs,
+/// so `decide` records the key that `fstp_webauthn` verified. The command
+/// runs under `command_id`.
+///
+/// # Errors
+///
+/// The first check that fails.
+pub fn admit_invitation_enrolment(
+    s: &CellState,
+    proof: &fstp_auth::ceremony::InvitationProof,
+    reg: &fstp_auth::ceremony::Registration<'_>,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    use fstp_auth::ceremony::{
+        EnrolDeny, InvitationProof, admit_invitation, split_token_digest, token_digest,
+        verify_fresh_passkey,
+    };
+    let digest = match proof {
+        InvitationProof::Token(t) => token_digest(t),
+        InvitationProof::Halves(a, b) => split_token_digest(a, b),
+    };
+    let (id, inv) = s
+        .auth()
+        .invitation_by_digest(&digest)
+        .ok_or(RouteDeny::Enrol(EnrolDeny::InvitationToken))?;
+    let view = inv.ceremony_view(id);
+    admit_invitation(&view, proof, s.auth().has_any_credential(inv.account), now)
+        .map_err(RouteDeny::Enrol)?;
+    let holds = holds_management(s, inv.account, now).map_err(RouteDeny::Gate)?;
+    let known = |c: &[u8]| s.auth().is_registered(c);
+    let cred =
+        verify_fresh_passkey(reg, holds || inv.first_admin, &known).map_err(RouteDeny::Enrol)?;
+    let command = CellCommand::Tenant(TenantCommand::EnrolByInvitation {
+        invitation: id,
+        credential: cred.id.clone(),
+    });
+    Ok(Admitted {
+        action: Action::Command(command),
+        principal: Principal::Ceremony(inv.account),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none().with_credential(cred),
+    })
+}
+
+/// Provisioning (design sections 8.3 and 9.2 step 10, Q35): admits
+/// `IssueFirstAdminInvitation` of `invitation` for the new account
+/// `account`, with the token digest `token_digest`, as the system task
+/// `SystemTask::Provisioning` under `command_id`. The cell's deployment
+/// mode `mode` is the task's input, so a SaaS cell records a split token.
+/// `decide` applies the provisioning rule of
+/// `fstp_auth::ceremony::issue_invitation`.
+///
+/// # Errors
+///
+/// [`admit_system`]'s refusal.
+pub fn admit_first_admin_invitation(
+    s: &CellState,
+    invitation: [u8; 16],
+    account: AccountId,
+    token_digest: [u8; 32],
+    mode: fstp_auth::recovery::Deployment,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, Deny> {
+    let action = Action::Command(CellCommand::Tenant(
+        TenantCommand::IssueFirstAdminInvitation {
+            invitation,
+            account,
+            token_digest,
+        },
+    ));
+    let mut admitted = admit_system(s, action, SystemTask::Provisioning, command_id, now)?;
+    admitted.inputs = std::mem::take(&mut admitted.inputs).with_mode(mode);
+    Ok(admitted)
 }
 
 /// `POST /auth/passkeys` (high risk `AddPasskey`, design sections 8.3 and
@@ -1080,6 +1247,10 @@ pub fn admit_system(
         (SystemTask::Timeline, CellCommand::Engine(fstp_engine::Command::Core(core))) => {
             !matches!(core, fstp_domain::Command::VaultChanged { .. })
         }
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),
+        ) => true,
         _ => false,
     };
     if !admitted {

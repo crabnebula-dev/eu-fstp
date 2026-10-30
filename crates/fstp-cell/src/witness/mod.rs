@@ -12,11 +12,11 @@
 //!   5.3 over a [`store::Database`], with the `fstp_audit` anchorer core:
 //!   prepare, receipt, commit, abort and in-doubt resolution.
 //!
-//! # Seams
+//! # Transport
 //!
-//! - The witness wire format and the witness service are lane W2g's.
-//!   `fstp_witness::run` is not written and no reply format is fixed, so
-//!   no TLS link is built here. A transport implements [`WitnessLink`].
+//! [`link::TlsWitnessLink`] carries the messages over mutual TLS with the
+//! framing of `fstp_witness::wire` (lane int5). Any other transport
+//! implements [`WitnessLink`].
 //!
 //! # Receipts
 //!
@@ -28,6 +28,7 @@
 //! committed on, and its prepare is aborted. The start-up verification
 //! (`fstp_audit::verify`) checks every stored receipt under the same pins.
 
+pub mod link;
 pub mod store;
 
 use std::future::Future;

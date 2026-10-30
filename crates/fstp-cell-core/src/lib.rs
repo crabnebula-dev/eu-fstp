@@ -33,6 +33,8 @@
     clippy::arithmetic_side_effects
 )]
 
+#[cfg(test)]
+mod ceremony_tests;
 pub mod codec;
 mod decide;
 pub mod driver;
@@ -170,6 +172,9 @@ pub enum SystemTask {
     /// System commands due at an instant, with the actor
     /// `System(Timeline)`, and `EndSessionsAtBindingEnd`.
     Timeline,
+    /// Provisioning (design section 9.2 step 10): the first tenant admin's
+    /// `IssueFirstAdminInvitation`, with the cell's deployment mode.
+    Provisioning,
 }
 
 /// The context a system task's command runs in.

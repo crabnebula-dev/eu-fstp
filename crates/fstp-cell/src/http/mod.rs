@@ -16,6 +16,7 @@ pub mod body;
 pub mod cookie;
 pub mod front;
 pub mod pages;
+pub mod tunnel;
 
 pub use body::BodyRefusal;
 pub use cookie::{

@@ -7,6 +7,8 @@
 //! - [`catalogue`] and [`MIGRATIONS`]: the vault database `v_<cell>`.
 //! - [`start`]: the I-83 start check over the placement marker, the server
 //!   certificate OU and the registered SPKI (design section 9.2).
+//! - [`service`]: the run loop of the internal listener and the vault
+//!   origin, over the database and the sans-IO core (lane int5).
 //! - [`config`]: the process configuration, with a closed member set.
 //! - [`match_key`]: the identity match key of design section 6.4 (Q17).
 //! - [`egress`]: the closed set of outbound destinations (B4a).
@@ -21,6 +23,7 @@ pub mod codec;
 pub mod config;
 pub mod egress;
 pub mod origin;
+pub mod service;
 pub mod start;
 pub mod store;
 
@@ -94,17 +97,17 @@ pub fn match_key(key: &[u8; 32], tuple: &[u8]) -> [u8; MATCH_KEY_LEN] {
     fstp_crypto::hmac_sha256(key, tuple)
 }
 
-/// Runs the vault service until shutdown.
+/// The binary's entry. It refuses: the process configuration, the vault
+/// keystore that gives the sealing keys, and the vault chain writer are
+/// not built (ADR-010 open point 5). [`service::serve`] is the run loop,
+/// which a world starts with the parts it holds.
 ///
 /// # Errors
 ///
-/// [`VaultError::NotImplemented`]: the process waits on the sealing calls
-/// of `fstp-keys` and on custody (lane W2f), and on the vault chain writer
-/// of `fstp-audit` (lane W2g). Every fact body and negotiation fact is
-/// sealed at rest, so the vault does not start without them.
+/// [`VaultError::NotImplemented`].
 pub fn run() -> Result<(), VaultError> {
     Err(VaultError::NotImplemented(
-        "fstp_vault::run (waits on fstp-keys sealing and custody, lane W2f, and the vault chain, lane W2g)",
+        "fstp_vault::run: the process configuration, the vault keystore and the vault chain writer (ADR-010 open point 5); fstp_vault::service::serve is the run loop",
     ))
 }
 

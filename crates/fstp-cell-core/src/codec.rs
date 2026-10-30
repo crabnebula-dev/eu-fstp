@@ -707,6 +707,28 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
         TenantCommand::SetLoginPolicy { policy } => {
             tagged("SetLoginPolicy", vec![("policy", opaque_json(policy))])
         }
+        TenantCommand::IssueFirstAdminInvitation {
+            invitation,
+            account,
+            token_digest,
+        } => tagged(
+            "IssueFirstAdminInvitation",
+            vec![
+                ("account", account_json(*account)),
+                ("invitation", hex(invitation)),
+                ("token_digest", hex(token_digest)),
+            ],
+        ),
+        TenantCommand::EnrolByInvitation {
+            invitation,
+            credential,
+        } => tagged(
+            "EnrolByInvitation",
+            vec![
+                ("credential", hex(credential)),
+                ("invitation", hex(invitation)),
+            ],
+        ),
     }
 }
 
@@ -735,6 +757,21 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
             fields(o, &["policy"])?;
             Ok(TenantCommand::SetLoginPolicy {
                 policy: opaque_from(o, "policy")?,
+            })
+        }
+        "IssueFirstAdminInvitation" => {
+            fields(o, &["account", "invitation", "token_digest"])?;
+            Ok(TenantCommand::IssueFirstAdminInvitation {
+                invitation: array_from(o, "invitation")?,
+                account: account_from(o, "account")?,
+                token_digest: array_from(o, "token_digest")?,
+            })
+        }
+        "EnrolByInvitation" => {
+            fields(o, &["credential", "invitation"])?;
+            Ok(TenantCommand::EnrolByInvitation {
+                invitation: array_from(o, "invitation")?,
+                credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
             })
         }
         _ => Err(unknown_variant()),
