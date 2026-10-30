@@ -39,6 +39,7 @@
 mod assets;
 mod auth;
 mod control;
+mod demo;
 mod scenario;
 mod wire;
 

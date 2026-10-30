@@ -16,6 +16,8 @@
 //!   `POST /test/scenario/review {stage}`: a fresh cell seeded through
 //!   production commands ([`crate::scenario`]).
 //!
+//! - `GET /demo` and its links: the demo page for a person ([`crate::demo`]).
+//!
 //! A request that carries `Origin`, or a `Sec-Fetch-Site` other than
 //! `none`, is refused, so no browser page can reset the cell or mark an
 //! identity verified while a demo runs. So is one whose `Host` is not the
@@ -103,6 +105,12 @@ fn local(info: &SiteInfo, req: &Request) -> bool {
     {
         return false;
     }
+    loopback_host(info, req)
+}
+
+/// Whether `req` names the loopback control address as its one `Host`,
+/// with the control port or no port.
+pub(crate) fn loopback_host(info: &SiteInfo, req: &Request) -> bool {
     let port = info
         .control
         .trim_start_matches("http://")
@@ -120,6 +128,10 @@ fn local(info: &SiteInfo, req: &Request) -> bool {
 
 /// Answers one control request.
 pub(crate) async fn handle(site: &Site, req: Request) -> Response {
+    let path = req.target.path();
+    if path == "/demo" || path.starts_with("/demo/") {
+        return crate::demo::handle(site, req).await;
+    }
     if !local(&site.info, &req) {
         return wire::refuse(StatusCode::FORBIDDEN, "control");
     }

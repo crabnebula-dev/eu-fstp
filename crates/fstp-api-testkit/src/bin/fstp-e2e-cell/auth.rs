@@ -191,6 +191,20 @@ impl AuthState {
         });
     }
 
+    /// Every unused one-time enrolment link with its account, for the demo
+    /// page.
+    pub(crate) fn open_invites(&self) -> Vec<(AccountId, String)> {
+        self.invites
+            .iter()
+            .map(|(t, i)| (i.account, format!("{}/auth/invite#{t}", self.origin)))
+            .collect()
+    }
+
+    /// Every message the cell sent, oldest first, for the demo page.
+    pub(crate) fn all_messages(&self) -> Vec<Mail> {
+        self.mailbox.clone()
+    }
+
     /// Every message to `to`, oldest first.
     pub(crate) fn messages(&self, to: &str) -> Vec<Mail> {
         self.mailbox

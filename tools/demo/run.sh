@@ -126,6 +126,7 @@ start() {
   echo "fstp-e2e-cell runs (pid $(cat "$STATE/pid")), synthetic data only."
   echo "  cell origin   $ORIGIN   (sign in: $ORIGIN/auth/login)"
   echo "  control base  $CONTROL"
+  echo "  demo page     $CONTROL/demo   (people, mailbox, scenes; open this first)"
   echo "  manifest      $STATE/stack.json"
   echo
   # shellcheck disable=SC2086

@@ -1022,6 +1022,30 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
     Ok((inner, people, canaries))
 }
 
+/// The label of a review persona, such as `Committee member R1`.
+pub(crate) fn persona_label(account: AccountId) -> Option<&'static str> {
+    PERSONAS
+        .iter()
+        .find(|p| p.account == account)
+        .map(|p| p.label)
+}
+
+/// A fresh cell seeded at review `stage`, for the demo page.
+pub(crate) async fn demo_review(site: &Site, stage: &str) -> Result<(), String> {
+    let stage = ReviewAt::parse(stage).ok_or_else(|| "stage".to_owned())?;
+    let (inner, _) = build_review(&site.info, stage).await?;
+    site.replace(inner);
+    Ok(())
+}
+
+/// A fresh cell seeded at applicant state `at`, for the demo page.
+pub(crate) async fn demo_applicant(site: &Site, at: &str) -> Result<(), String> {
+    let at = At::parse(at).ok_or_else(|| "at".to_owned())?;
+    let (inner, _) = build_applicant(&site.info, at).await?;
+    site.replace(inner);
+    Ok(())
+}
+
 /// `POST /test/scenario/review {stage}`.
 pub(crate) async fn review(site: &Site, req: &Request) -> Response {
     let Some(body) = wire::body(req) else {
