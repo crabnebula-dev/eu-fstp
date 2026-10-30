@@ -18,8 +18,12 @@
 //! The template marks each statement that still needs approved wording
 //! with `TODO(legal)` (`guide-for-applicants.md`, Rules). A marker is any
 //! occurrence of that text, at any place on any line. The one exception
-//! is the code span of the text, a backtick on each side, which names the
-//! marker rather than placing one, as the template's preamble does.
+//! is the code span of the text, a backtick on each side, in the template
+//! header: the text up to and including the first thematic break, which
+//! `parse_template` never renders. There it names the marker rather than
+//! placing one, as the shipped template's preamble does. Past the header,
+//! a code span of the text is a marker like any other. A template with
+//! no thematic break has no header, so nothing is exempt (Q6).
 //!
 //! - A profile with a marker anywhere in its template is pending, so
 //!   `LegalWordingPending` fails validation (Q6). Its wording is approved
@@ -228,10 +232,36 @@ fn heading_level(line: &str) -> Option<usize> {
     (hashes > 0 && rest.starts_with(' ')).then_some(hashes)
 }
 
+/// The byte offset just after the template header of `text`: the text up
+/// to and including the first thematic break, with the rule
+/// [`crate::parse_template`] uses. That break is a line that is exactly
+/// `---` and follows a blank line or starts the text. Zero when `text`
+/// has no such line, so it has no header.
+fn header_end(text: &str) -> usize {
+    let mut at = 0usize;
+    let mut after_blank = true;
+    for line in text.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        at = at.saturating_add(line.len());
+        if after_blank && content == "---" {
+            return at;
+        }
+        after_blank = content.is_empty();
+    }
+    0
+}
+
 /// Whether `text` holds a marker (module documentation): an occurrence of
-/// [`LEGAL_MARKER`] that is not the code span of the marker text.
+/// [`LEGAL_MARKER`] that is not the code span of the marker text in the
+/// template header. The header is never rendered. Past it, a code span
+/// counts as a marker too (Q6), so no rendered text can hide one behind
+/// backticks.
 fn holds_marker(text: &str) -> bool {
+    let header = header_end(text);
     text.match_indices(LEGAL_MARKER).any(|(at, m)| {
+        if at >= header {
+            return true;
+        }
         let before = text.get(..at).is_some_and(|s| s.ends_with('`'));
         let after = at
             .checked_add(m.len())
@@ -265,7 +295,9 @@ fn section_status(guide: &str, heading: &str) -> WordingStatus {
                 }
                 break;
             }
-            if holds_marker(body) {
+            // A section body is never preamble, so a code span of the
+            // marker counts here too (Q6).
+            if body.contains(LEGAL_MARKER) {
                 marked = true;
             }
             if !body.trim().is_empty() {
@@ -297,7 +329,7 @@ mod tests {
         }
     }
 
-    const TWO: &str = "# T\n\nSections marked `TODO(legal)` need approved wording.\n\n## 9. Financial support to third parties\n\nText.\n\n### Sub\n\nMore.\n\n## 10. Contract and payments\n\nPaid in two parts.\n\n## 11. Visibility and publication\n\nWorded.\n";
+    const TWO: &str = "# T\n\nSections marked `TODO(legal)` need approved wording.\n\n---\n\n## 9. Financial support to third parties\n\nText.\n\n### Sub\n\nMore.\n\n## 10. Contract and payments\n\nPaid in two parts.\n\n## 11. Visibility and publication\n\nWorded.\n";
 
     /// R-GA-01, Q6: the shipped Horizon Europe profile keeps both legal
     /// sections pending, so its wording blocks activation.
@@ -364,6 +396,99 @@ mod tests {
                 .map(|s| s.status)
                 .collect::<Vec<_>>(),
             vec![WordingStatus::Pending, WordingStatus::Supplied]
+        );
+    }
+
+    /// Q6 reproducer: a code span of the marker counted as approved
+    /// wording anywhere, so a backticked marker in a section body let the
+    /// profile pass. The exemption holds only in the template header, up
+    /// to and including the first thematic break, which is never rendered.
+    /// In a legal section, in another section and in a subsection the
+    /// profile stays pending.
+    #[test]
+    fn q6_backticked_marker_in_a_section_body_stays_pending() {
+        for (from, to, legal) in [
+            ("Text.", "Text `TODO(legal)` here.", Some(0)),
+            ("Worded.", "`TODO(legal)`", Some(1)),
+            (
+                "Paid in two parts.",
+                "Paid `TODO(legal)` in two parts.",
+                None,
+            ),
+            ("More.", "More `TODO(legal)`.", Some(0)),
+        ] {
+            let text = TWO.replace(from, to);
+            let p = Over(&text).profile(HORIZON_EUROPE).unwrap();
+            assert!(p.legal_wording_pending(), "{to}");
+            for (i, s) in p.legal_sections().iter().enumerate() {
+                let want = if legal == Some(i) {
+                    WordingStatus::Pending
+                } else {
+                    WordingStatus::Supplied
+                };
+                assert_eq!(s.status, want, "{to}: {}", s.heading);
+            }
+        }
+        // The header's code span still names the marker.
+        assert!(
+            !Over(TWO)
+                .profile(HORIZON_EUROPE)
+                .unwrap()
+                .legal_wording_pending()
+        );
+        // A code span under a heading inside the header is not rendered,
+        // so it still names the marker.
+        let early = TWO.replace("# T\n", "# T\n\n## Notes\n\nSee `TODO(legal)`.\n");
+        assert!(
+            !Over(&early)
+                .profile(HORIZON_EUROPE)
+                .unwrap()
+                .legal_wording_pending()
+        );
+        // Past the header, before any numbered section, the text is
+        // rendered, so a code span there is a marker.
+        let rendered = TWO.replace(
+            "---\n\n",
+            "---\n\n## Notes\n\nSee `TODO(legal)`.\n\nA paragraph with `TODO(legal)`.\n\n",
+        );
+        assert!(
+            Over(&rendered)
+                .profile(HORIZON_EUROPE)
+                .unwrap()
+                .legal_wording_pending()
+        );
+        // With no thematic break the template has no header, so the
+        // preamble's code span is a marker too.
+        let headerless = TWO.replace("---\n\n", "");
+        assert!(
+            Over(&headerless)
+                .profile(HORIZON_EUROPE)
+                .unwrap()
+                .legal_wording_pending()
+        );
+    }
+
+    /// Q6: the header ends with the first thematic break that follows a
+    /// blank line or starts the text, the rule of `parse_template`.
+    #[test]
+    fn q6_the_first_thematic_break_ends_the_header() {
+        assert_eq!(header_end("a\n\n---\n\nb\n"), 7);
+        assert_eq!(header_end("---\nb\n"), 4);
+        assert_eq!(header_end("a\n\n---"), 6);
+        assert_eq!(header_end("a\n---\n"), 0);
+        assert_eq!(header_end("a\n\n----\n"), 0);
+        assert_eq!(header_end("a\n\n--- \n"), 0);
+        assert_eq!(header_end("a\n## 1. b\n"), 0);
+        // The offsets agree with the header `parse_template` finds.
+        let t = crate::parse_template(TWO.as_bytes()).unwrap();
+        assert_eq!(t.header, 3);
+        let header = TWO.get(..header_end(TWO)).unwrap();
+        assert!(header.ends_with("---\n"));
+        assert!(
+            crate::parse_template(header.as_bytes())
+                .unwrap()
+                .body()
+                .is_empty()
         );
     }
 

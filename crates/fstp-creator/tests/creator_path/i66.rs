@@ -15,24 +15,26 @@ use fstp_programme::{FIELDS, FieldId};
 use fstp_prop::{check, prop_assert, prop_assert_eq};
 
 use crate::harness::{
-    Cell, Fail, GUIDE_CHECKS, M1, OUT, P, TB, decode, draft_with, edit, guide_works,
+    Cell, Fail, GUIDE_CHECKS, M1, OUT, P, TB, decode, draft_with, edit, profile_over,
     shipped_profile, synthetic_spec, valid_draft,
 };
 
-/// I-66, I-51, I-52: on the valid synthetic draft, while the Guide API
-/// refuses, the two Guide checks fail closed and name `fstp_guide` as the
-/// missing source, and no other check fails. Once the Guide API works,
-/// the report shows no failure at all.
+/// I-66, I-51, I-52: on the valid synthetic draft the Guide checks run
+/// over the Guide API, and the report shows no failure at all. A profile
+/// whose Guide template the API refuses fails the two Guide checks
+/// closed, each naming `fstp_guide` as the missing source, and no other
+/// check fails.
 #[test]
-fn i66_i51_i52_guide_checks_fail_closed_while_the_guide_refuses() {
-    let cell = valid_draft();
-    let profile = cell.env.profile.clone().unwrap();
+fn i66_i51_i52_guide_checks_fail_closed_when_the_guide_refuses() {
+    let mut cell = valid_draft();
     let report = cell.report(Some(TB));
     let failures: Vec<_> = report.failures().collect();
-    if guide_works(&profile) {
-        assert!(failures.is_empty(), "{failures:?}");
-        return;
-    }
+    assert!(failures.is_empty(), "{failures:?}");
+    let profile = cell.env.profile.clone().unwrap();
+    let broken = format!("{}\n{{{{no.such.key}}}}\n", profile.guide_template());
+    cell.env.profile = Some(profile_over(broken));
+    let report = cell.report(Some(TB));
+    let failures: Vec<_> = report.failures().collect();
     let checks: BTreeSet<CheckId> = failures.iter().map(|r| r.check).collect();
     assert_eq!(checks, GUIDE_CHECKS.into_iter().collect(), "{failures:?}");
     for r in failures {
@@ -87,6 +89,12 @@ enum Seed {
     P39AboveP03,
     /// P-77 allowed while score tools exist (a warning).
     AiAct,
+    /// A Guide template whose Complaints section heading is renamed
+    /// (I-52).
+    GuideSectionMissing,
+    /// The programme name left unset, so `{{programme.name}}` does not
+    /// resolve (I-51).
+    GuideBindingUnresolved,
 }
 
 impl Seed {
@@ -113,6 +121,8 @@ impl Seed {
             Seed::P04AboveP05 => CheckId::P04MaxAboveP05,
             Seed::P39AboveP03 => CheckId::P39AboveP03,
             Seed::AiAct => CheckId::AiActReassessment,
+            Seed::GuideSectionMissing => CheckId::GuideSectionMissing,
+            Seed::GuideBindingUnresolved => CheckId::GuideBindingUnresolved,
         }
     }
 
@@ -138,6 +148,8 @@ impl Seed {
             Seed::P04AboveP05,
             Seed::P39AboveP03,
             Seed::AiAct,
+            Seed::GuideSectionMissing,
+            Seed::GuideBindingUnresolved,
         ];
         for probe in ProbeKind::ALL {
             out.push(Seed::Probe(probe, ProbeOutcome::Fail));
@@ -152,6 +164,7 @@ impl Seed {
         let mut spec = synthetic_spec();
         let omit = match self {
             Seed::Omit(f) => Some(f),
+            Seed::GuideBindingUnresolved => Some(FieldId::ProgrammeName),
             _ => None,
         };
         match self {
@@ -223,6 +236,13 @@ impl Seed {
             }
             Seed::ImportUnresolved => cell.env.unresolved_imports = 1,
             Seed::AiAct => cell.env.ports.score_tools = true,
+            Seed::GuideSectionMissing => {
+                let text = cell.env.profile.as_ref().map_or(String::new(), |p| {
+                    p.guide_template()
+                        .replace("## 14. Complaints", "## 14. Remarks")
+                });
+                cell.env.profile = Some(profile_over(text));
+            }
             _ => {}
         }
     }
@@ -250,8 +270,9 @@ fn invite(cell: &mut Cell, invitee: Invitee) {
 /// stays a draft.
 ///
 /// Not seeded here: `PolicyInvalid` and `CapAboveCeiling`, which the core
-/// `EditPolicy` guard keeps out of a saved draft (see the I-50 test), and
-/// the Guide checks, which the Guide test covers. `RosterShort` is the
+/// `EditPolicy` guard keeps out of a saved draft (see the I-50 test).
+/// The Guide checks are seeded through the Guide API: a renamed required
+/// section and an unresolved placeholder. `RosterShort` is the
 /// acknowledged warning of every case.
 #[test]
 fn i66_seeded_failure_never_activates() {
@@ -278,6 +299,28 @@ fn i66_seeded_failure_never_activates() {
             seed.check().name(),
             report.results()
         );
+        if let Seed::GuideSectionMissing = seed {
+            prop_assert!(
+                report
+                    .failures()
+                    .any(|r| r.check == CheckId::GuideSectionMissing
+                        && r.subject
+                            == fstp_creator::CheckSubject::GuideSection("Complaints".to_owned())),
+                "GuideSectionMissing does not name Complaints"
+            );
+        }
+        if let Seed::GuideBindingUnresolved = seed {
+            prop_assert!(
+                report
+                    .failures()
+                    .any(|r| r.check == CheckId::GuideBindingUnresolved
+                        && r.subject
+                            == fstp_creator::CheckSubject::Placeholder(
+                                "programme.name".to_owned()
+                            )),
+                "GuideBindingUnresolved does not name programme.name"
+            );
+        }
         if let Seed::Omit(f) = seed {
             prop_assert!(
                 report.failures().any(|r| r.check == CheckId::FieldUnset

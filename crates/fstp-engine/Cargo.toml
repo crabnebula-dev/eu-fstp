@@ -21,6 +21,8 @@ fstp-programme.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# The creator path tests load a test Guide profile (tests/m4_creator_path.rs).
+fstp-guide.workspace = true
 
 [lints]
 workspace = true

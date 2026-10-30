@@ -9,7 +9,8 @@
 //!   below spots each construct the subset tests refuse, by its marker:
 //!   HTML and autolinks, fences, block quotes, indented code, setext
 //!   underlines, images, references and footnotes, strikethrough,
-//!   character references, backslash escapes and hard breaks. The scan
+//!   character references, backslash escapes, hard breaks and GFM tables
+//!   whose delimiter row is not the subset's `| --- |`. The scan
 //!   covers code spans too, because the subset refuses those markers
 //!   everywhere, code spans included (`th26_markdown_subset.rs`);
 //! - an accepted input round-trips: parsing `MarkdownDoc::to_markdown`
@@ -40,6 +41,28 @@ fn tag_in(line: &str) -> bool {
     })
 }
 
+/// Whether `line` is a GFM table delimiter row, with or without outer
+/// bars: cells of `-` signs split on `|`, each with an optional `:` at
+/// either end and spaces around it.
+fn delimiter_row(line: &str) -> bool {
+    let inner = line.strip_prefix('|').unwrap_or(line);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    !inner.is_empty()
+        && inner.split('|').all(|c| {
+            let c = c.trim_matches(' ');
+            let c = c.strip_prefix(':').unwrap_or(c);
+            let c = c.strip_suffix(':').unwrap_or(c);
+            !c.is_empty() && c.bytes().all(|b| b == b'-')
+        })
+}
+
+/// Whether `line` is the delimiter row of the subset, `| --- | --- |`.
+fn subset_delimiter_row(line: &str) -> bool {
+    line.strip_prefix("| ")
+        .and_then(|r| r.strip_suffix(" |"))
+        .is_some_and(|inner| inner.split(" | ").all(|c| c == "---"))
+}
+
 /// Whether `data` holds a marker of a construct outside the subset.
 fn outside_subset(data: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(data) else {
@@ -54,6 +77,8 @@ fn outside_subset(data: &[u8]) -> bool {
         .match_indices('&')
         .any(|(at, _)| reference_at(&text[at + 1..]));
     let mut prev_blank = true;
+    // Whether a GFM table started since the last blank line.
+    let mut in_table = false;
     for line in text.split('\n') {
         let blank = line.trim().is_empty();
         let trimmed = line.trim_start_matches(' ');
@@ -62,6 +87,10 @@ fn outside_subset(data: &[u8]) -> bool {
         let bare = trimmed.trim_end();
         let underline = !bare.is_empty()
             && (bare.bytes().all(|c| c == b'=') || bare.bytes().all(|c| c == b'-'));
+        // A delimiter row under a header line starts a GFM table. Only the
+        // subset form `| --- |` starts a table of the subset.
+        let delimiter = head && !blank && delimiter_row(bare);
+        let gfm_table = delimiter && !prev_blank && !in_table && !subset_delimiter_row(line);
         let definition = trimmed.starts_with('[')
             && trimmed
                 .find(']')
@@ -72,8 +101,14 @@ fn outside_subset(data: &[u8]) -> bool {
             || (!blank && (indent >= 4 || trimmed.starts_with('\t')))
             || (!blank && (line.ends_with("  ") || line.ends_with('\\')))
             || (head && underline && !prev_blank)
+            || gfm_table
         {
             return true;
+        }
+        if blank {
+            in_table = false;
+        } else if delimiter && !prev_blank {
+            in_table = true;
         }
         prev_blank = blank;
     }

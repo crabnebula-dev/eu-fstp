@@ -19,9 +19,8 @@ use fstp_programme::{
 };
 
 use crate::harness::{
-    Cell, Fail, GUIDE_CHECKS, M1, OUT, P, Rec, TA, TB, V1, adr006, blank_policy, decode, digest,
-    edit, expected_open_entry, forged, guide_works, he, open_draft_command, reference_builders,
-    valid_draft,
+    Cell, Fail, M1, OUT, P, Rec, TA, TB, V1, adr006, blank_policy, decode, digest, edit,
+    expected_open_entry, forged, he, open_draft_command, reference_builders, valid_draft,
 };
 
 /// The core `EditPolicy` commands of a creator decision.
@@ -407,9 +406,8 @@ fn i66_request_activation_records_the_report_at_the_head() {
 /// warning and requests activation, and TB, a tenant admin who built
 /// nothing, approves.
 ///
-/// While the Guide API refuses, the approval is refused with the first
-/// Guide check, the only failures are the two Guide checks, and nothing
-/// is appended. Once the Guide works, the entry records every probe, the
+/// The Guide checks run over the real Guide API and the approved-wording
+/// profile, so the report is clean. The entry records every probe, the
 /// approval and the core activation, and the programme is active with TA
 /// and M1 as its builders.
 #[test]
@@ -417,26 +415,9 @@ fn r_pg_03_i66_i67_second_admin_approves_the_valid_synthetic_draft() {
     let mut cell = valid_draft();
     cell.request(M1).unwrap_or_else(|f| panic!("{f:?}"));
     let entries = cell.entries.len();
-    let profile = cell.env.profile.clone().unwrap();
+    let failures: BTreeSet<CheckId> = cell.report(Some(TB)).failures().map(|r| r.check).collect();
+    assert!(failures.is_empty(), "{failures:?}");
     let got = cell.approve(TB, 900);
-    if !guide_works(&profile) {
-        let failures: BTreeSet<CheckId> =
-            cell.report(Some(TB)).failures().map(|r| r.check).collect();
-        assert_eq!(
-            failures,
-            GUIDE_CHECKS.into_iter().collect(),
-            "only the Guide checks may fail while the Guide refuses"
-        );
-        assert_eq!(
-            got.err(),
-            Some(Fail::Creator(fstp_creator::CreatorRefusal::Uncleared(
-                fstp_creator::Uncleared::Failure(CheckId::GuideSectionMissing)
-            )))
-        );
-        assert_eq!(cell.entries.len(), entries);
-        assert_eq!(cell.status(), Some(ProgrammeStatus::Draft));
-        return;
-    }
     let entry = got.unwrap_or_else(|f| panic!("the clean approval is refused: {f:?}"));
     let probes: Vec<ProbeKind> = entry
         .iter()

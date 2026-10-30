@@ -353,6 +353,16 @@ impl CreatorState {
         self.hold(programme, edit.field, edit.digest, edit.value.clone())
     }
 
+    /// Whether the value of `field` on the draft of `programme` is held
+    /// under the digest of the field's latest save. The engine reads it
+    /// before it holds a value again after a replay.
+    pub fn is_held(&self, programme: ProgrammeId, field: FieldId) -> bool {
+        self.drafts
+            .get(&programme)
+            .and_then(|d| d.fields.get(&field))
+            .is_some_and(|(digest, _)| self.held(programme, field, *digest).is_some())
+    }
+
     /// The held value of `field` on `programme` under `digest`.
     pub(crate) fn held(
         &self,

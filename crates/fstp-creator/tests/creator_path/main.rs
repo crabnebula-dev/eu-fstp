@@ -26,9 +26,9 @@
 //!    `CreatorState::observe_core`.
 //! 6. After a `SaveFields` entry, the shell holds the saved values with
 //!    `CreatorState::hold_saved`, since the ledger body keeps only their
-//!    digests (ADR-007). The engine driver holds import values the same
-//!    way. Until it holds creator values too, the checks that read an
-//!    artefact value fail closed in an engine cell.
+//!    digests (ADR-007). The engine driver does the same after it
+//!    appends a save or an import resolution
+//!    (`crates/fstp-engine/tests/m4_creator_path.rs`).
 //!
 //! The tests of the commands after `OpenDraft` open their draft with the
 //! entry a correct `OpenDraft` appends, which
@@ -37,11 +37,10 @@
 //!
 //! # The Guide
 //!
-//! `fstp_guide::parse_template` and `fstp_guide::render` refuse with
-//! `NotImplemented` until lane m4guide lands. While they refuse, the
-//! Guide checks must fail closed with a reason that names `fstp_guide`.
-//! Once they work, the same tests expect a clean report and an active
-//! programme. [`harness::guide_works`] tells the two cases apart.
+//! The Guide checks run over `fstp_guide::parse_template` and
+//! `fstp_guide::preview`. The valid synthetic draft gives a clean report
+//! and an active programme. A Guide template the API refuses fails both
+//! Guide checks closed, with a reason that names `fstp_guide`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]

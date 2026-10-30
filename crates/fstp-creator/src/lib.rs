@@ -52,13 +52,14 @@
 //!
 //! Each seam refuses or fails closed. None answers with a made-up value.
 //!
-//! - `fstp-guide` (lane m4guide) parses and renders the Guide. Until
-//!   `fstp_guide::parse_template` and `fstp_guide::render` succeed, the
-//!   checks `GuideSectionMissing` and `GuideBindingUnresolved` fail closed
-//!   with [`CheckDetail::Unavailable`], naming `fstp_guide`.
-//! - The engine driver holds the values of an appended save. Until it calls
-//!   [`CreatorState::hold_saved`], the checks that read an artefact value,
-//!   such as `FlowDownMissing`, fail closed.
+//! - `fstp-guide` previews the Guide over the draft spec. The checks
+//!   `GuideSectionMissing` and `GuideBindingUnresolved` read
+//!   `fstp_guide::preview`. A template that does not parse fails both
+//!   closed with [`CheckDetail::Unavailable`], naming `fstp_guide`.
+//! - The engine driver holds the values of an appended save and of a
+//!   confirmed or edited import resolution. A value it cannot hold, such
+//!   as a save it only replayed, fails the checks that read it closed,
+//!   such as `FlowDownMissing` and the Guide placeholders.
 //! - A start from a tenant-private template needs the shell's template
 //!   spec store, and refuses with [`CreatorRefusal::Unavailable`] until
 //!   then.

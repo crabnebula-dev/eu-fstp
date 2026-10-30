@@ -108,13 +108,10 @@ pub(crate) fn approved_profile() -> GuideProfile {
     p
 }
 
-/// Whether the Guide API parses and renders the template of `profile`.
-/// Until lane m4guide lands, `fstp_guide::parse_template` refuses with
-/// `NotImplemented`, and the Guide checks must fail closed.
-pub(crate) fn guide_works(profile: &GuideProfile) -> bool {
-    fstp_guide::parse_template(profile.guide_template().as_bytes())
-        .and_then(|t| fstp_guide::render(&t))
-        .is_ok()
+/// The Horizon Europe profile over the Guide text `text`, through a test
+/// source (rule A9b).
+pub(crate) fn profile_over(text: String) -> GuideProfile {
+    OneGuide(text).profile(HORIZON_EUROPE).unwrap()
 }
 
 /// The checks that need the Guide API (design 3.2: `GuideSectionMissing`

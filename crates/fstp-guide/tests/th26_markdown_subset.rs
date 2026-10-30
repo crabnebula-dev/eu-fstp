@@ -115,6 +115,13 @@ const OUTSIDE_SUBSET: &[(&str, &str)] = &[
     ("two-space hard break", "Line one  \nline two.\n"),
     ("javascript link", "[x](javascript:alert(1))\n"),
     ("data link", "[x](data:text/html,hi)\n"),
+    ("GFM table without bars", "a | b\n:-- | ---\n"),
+    (
+        "GFM table with aligned cells",
+        "Item | Value\n:---: | ---:\n",
+    ),
+    ("GFM table with a trailing bar", "a |\n:- |\n"),
+    ("GFM aligned delimiter row with bars", "| a |\n| :-- |\n"),
 ];
 
 /// TH-26, R-GA-01: every construct of the subset is accepted on its own.

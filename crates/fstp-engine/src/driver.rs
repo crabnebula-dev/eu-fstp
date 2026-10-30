@@ -22,8 +22,39 @@
 //! store, unless the store holds a log the fold refuses. Every fold groups
 //! the records of one command id into one entry (`apply_in`, `finish`), so
 //! the entry pairings of the crate root hold on the trial fold of a batch,
-//! on catch-up and on replay alike. After it appends a `RecordProposals`
-//! batch, the driver holds the batch's values in the import store.
+//! on catch-up and on replay alike.
+//!
+//! # Held values
+//!
+//! A ledger body keeps the digest of a saved or proposed value, never the
+//! value (ADR-007). So after an entry is appended, the driver holds the
+//! values the later checks read, outside the ledger:
+//!
+//! - a `RecordProposals` batch: each proposal value, in the import store;
+//! - a creator `SaveFields`: each saved value, in the creator
+//!   (`CreatorState::hold_saved`);
+//! - a confirmed or edited `ResolveImport`: the saved value, in the
+//!   creator (`CreatorState::hold_import`). It is the value
+//!   `bridge::applied_edit` gives on the state the command was decided
+//!   in, never a value of the client's command itself.
+//!
+//! A save is held only for a field and digest that the appended entry's
+//! `FieldsSaved` names, and the creator holds a value only under the
+//! digest of the field's latest save. An `ApplyStart` and an
+//! `AcceptNarrative` need no hold: a start from a shipped template, and
+//! the narrative it offers, read the template, which ships with the
+//! platform. A clone start copies the source's policy, which the core
+//! holds. Its free texts read back empty, so the Guide checks that read
+//! them fail closed until they are saved again.
+//!
+//! After every catch-up, and after [`Engine::hold_import`], the driver
+//! holds again every confirmed import value whose proposal value the
+//! import store holds (`bridge::rehold_confirmed`). Nothing else can be
+//! recovered from the ledger, which keeps only digests. A client save or
+//! an edited import value that this engine did not append, such as one it
+//! replayed at [`Engine::open_with`], stays unheld. Every check that reads
+//! such a value fails closed until the shell holds it from its value
+//! store, through [`Engine::hold_value`] or [`Engine::hold_import`].
 //!
 //! A finding command skips step 2, so it never appends a core record
 //! (I-10). When it has vault questions and the vault is ahead, it is
@@ -63,14 +94,18 @@
 //! M3 driver computes them with `fstp-crypto` over the canonical query
 //! encoding of lane L-CODEC.
 
+use fstp_creator::{
+    CreatorCommand, CreatorRecord, FieldEdit, ImportFieldEdit, Provenance, ValueDigest,
+};
 use fstp_domain::command::{Actor, Ctx, SystemCause, Via};
 use fstp_domain::engine::FoldError;
-use fstp_domain::id::{CommandId, VaultEpoch};
+use fstp_domain::id::{CommandId, ProgrammeId, VaultEpoch};
 use fstp_domain::oracle::{Answers, Query};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::time::Timestamp;
-use fstp_import::ImportCommand;
+use fstp_import::{ImportCommand, ImportProposal};
 use fstp_ledger::{AppendError, Entry, RecordStore, Seq, StoreError};
+use fstp_programme::FieldId;
 
 use crate::compose::{CreatorEnvironment, NoEnvironment};
 use crate::{Command, EngineState, IdentityOracle, Record, apply_in, finish};
@@ -392,8 +427,8 @@ impl From<CatchUpError> for ExecError {
 
 /// What one decide-and-append attempt gave.
 enum Attempt {
-    /// The batch was appended. The new head.
-    Appended(Seq),
+    /// The batch was appended. The new head, and the values to hold.
+    Appended(Seq, Vec<Hold>),
     /// Another writer moved the head first, or the vault moved during the
     /// questions. Start again from a fresh state. When the vault moved, the
     /// newer epoch the answer carried.
@@ -532,8 +567,8 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
                 VaultStep::Again => continue,
             }
             match self.attempt(&cmd, &ctx)? {
-                Attempt::Appended(seq) => {
-                    self.hold_recorded(&cmd);
+                Attempt::Appended(seq, holds) => {
+                    self.hold_recorded(holds);
                     return Ok(seq);
                 }
                 Attempt::Duplicate(at) => return Err(ExecError::Duplicate { at }),
@@ -544,30 +579,58 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
         Err(ExecError::Contended)
     }
 
-    /// Holds the values of an appended `RecordProposals` batch in the
-    /// import store (design 3.3). The fold accepted the batch, so each
-    /// reference is named and new. Returns whether every value is held. A
-    /// value that is not held fails closed: its proposal can only be
-    /// dismissed until [`Engine::hold_import`] holds it.
-    fn hold_recorded(&mut self, cmd: &Command) -> bool {
-        match cmd {
-            Command::Import(ImportCommand::RecordProposals { proposals, .. }) => {
-                self.state.import.hold_recorded(proposals).is_ok()
-            }
-            _ => true,
+    /// Holds the values of an appended entry (module documentation, "Held
+    /// values"). Returns whether every value is held. A value that is not
+    /// held fails closed: a proposal can only be dismissed until
+    /// [`Engine::hold_import`] holds it, and a creator check that reads a
+    /// saved value refuses to pass.
+    fn hold_recorded(&mut self, holds: Vec<Hold>) -> bool {
+        let mut all = true;
+        for hold in holds {
+            all &= match hold {
+                Hold::Proposals(proposals) => self.state.import.hold_recorded(&proposals).is_ok(),
+                Hold::Saved { programme, fields } => {
+                    self.state.creator.hold_saved(programme, &fields)
+                }
+                Hold::Import { programme, edit } => {
+                    self.state.creator.hold_import(programme, &edit)
+                }
+            };
         }
+        crate::bridge::rehold_confirmed(&mut self.state);
+        all
     }
 
     /// Holds `value` under `text` in the import store, as the shell
     /// resolved it from the text store after a replay (design 3.3). The
     /// held values are a cache of the text store and take no part in the
-    /// state's equality.
+    /// state's equality. A confirmed resolution of a proposal that names
+    /// `text` then has its value held in the creator again (module
+    /// documentation, "Held values").
     pub fn hold_import(
         &mut self,
         text: fstp_import::ValueTextRef,
         value: fstp_import::UntrustedValue,
     ) -> Result<(), fstp_import::HoldError> {
-        self.state.import.hold(text, value)
+        self.state.import.hold(text, value)?;
+        crate::bridge::rehold_confirmed(&mut self.state);
+        Ok(())
+    }
+
+    /// Holds `value` as the value of `field` on the draft of `programme`,
+    /// saved under `digest`, as the shell resolved it from its value store
+    /// after a replay (module documentation, "Held values"). Returns
+    /// whether it is held. The field's latest save must carry `digest`,
+    /// and `value` must be a value of `field`, so a value is held only for
+    /// the save that recorded it.
+    pub fn hold_value(
+        &mut self,
+        programme: ProgrammeId,
+        field: FieldId,
+        digest: ValueDigest,
+        value: fstp_programme::FieldValue,
+    ) -> bool {
+        self.state.creator.hold(programme, field, digest, value)
     }
 
     /// [`Engine::execute`] for a finding command, without step 2. It never
@@ -595,7 +658,7 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
                 }
             }
             match self.attempt(cmd, ctx)? {
-                Attempt::Appended(seq) => return Ok(seq),
+                Attempt::Appended(seq, _) => return Ok(seq),
                 Attempt::Duplicate(at) => return Err(ExecError::Duplicate { at }),
                 Attempt::Again(Some(_)) => return Err(ExecError::Refused(stale_facts())),
                 Attempt::Again(None) => {}
@@ -675,7 +738,7 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
             ..*ctx
         };
         match self.attempt(&cmd, &vctx)? {
-            Attempt::Appended(_) => progress.processed = Some(target),
+            Attempt::Appended(_, _) => progress.processed = Some(target),
             Attempt::Duplicate(at) => {
                 // Another driver may have processed this epoch. Fold what it
                 // appended and check that the epoch was reached.
@@ -715,6 +778,9 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
             .decide(&self.state, cmd, ctx, &answers)
             .map_err(ExecError::Refused)?;
         self.trial_fold(ctx.now, ctx.command.bytes(), &batch)?;
+        // The values to hold are read on the state the batch was decided
+        // in, before the append moves it.
+        let holds = holds_of(&self.state, cmd, ctx, &batch);
         match self
             .store
             .append(self.head, ctx.now.micros(), ctx.command.bytes(), batch)
@@ -722,7 +788,7 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
             Ok(seq) => {
                 self.catch_up()
                     .map_err(|cause| ExecError::AppendedUnfolded { head: seq, cause })?;
-                Ok(Attempt::Appended(seq))
+                Ok(Attempt::Appended(seq, holds))
             }
             Err(AppendError::StaleHead { .. }) => Ok(Attempt::Again(None)),
             Err(AppendError::DuplicateCommand { at }) => Ok(Attempt::Duplicate(at)),
@@ -785,9 +851,92 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
             }
         }
         finish(&mut next).map_err(CatchUpError::Fold)?;
+        crate::bridge::rehold_confirmed(&mut next);
         self.state = next;
         self.head = head;
         Ok(())
+    }
+}
+
+/// A value an appended entry saved or proposed, which the driver holds
+/// outside the ledger (module documentation, "Held values").
+#[derive(Clone, Debug)]
+enum Hold {
+    /// The proposals of a `RecordProposals` batch, for the import store.
+    Proposals(Vec<ImportProposal>),
+    /// The fields of a creator `SaveFields` that the entry recorded.
+    Saved {
+        /// The draft.
+        programme: ProgrammeId,
+        /// The saved fields.
+        fields: Vec<FieldEdit>,
+    },
+    /// The field edit of a confirmed or edited import resolution that the
+    /// entry recorded.
+    Import {
+        /// The draft.
+        programme: ProgrammeId,
+        /// The edit.
+        edit: ImportFieldEdit,
+    },
+}
+
+/// Whether `batch` holds a creator `FieldsSaved` on `programme` that saves
+/// `field` under `digest` with `provenance`.
+fn saves(
+    batch: &[Record],
+    programme: ProgrammeId,
+    field: FieldId,
+    digest: ValueDigest,
+    provenance: &Provenance,
+) -> bool {
+    batch.iter().any(|r| match r {
+        Record::Creator(CreatorRecord::FieldsSaved {
+            programme: p,
+            fields,
+            ..
+        }) => {
+            *p == programme
+                && fields
+                    .iter()
+                    .any(|(f, d, pr)| *f == field && *d == digest && pr == provenance)
+        }
+        _ => false,
+    })
+}
+
+/// The values to hold once `batch`, decided for `cmd` in `state`, is
+/// appended (module documentation, "Held values").
+fn holds_of(state: &EngineState, cmd: &Command, ctx: &Ctx, batch: &[Record]) -> Vec<Hold> {
+    match cmd {
+        Command::Import(ImportCommand::RecordProposals { proposals, .. }) => {
+            vec![Hold::Proposals(proposals.clone())]
+        }
+        Command::Creator(CreatorCommand::SaveFields {
+            programme, fields, ..
+        }) => vec![Hold::Saved {
+            programme: *programme,
+            fields: fields
+                .iter()
+                .filter(|f| saves(batch, *programme, f.field, f.digest, &f.provenance))
+                .cloned()
+                .collect(),
+        }],
+        Command::Bridge(b) => match crate::bridge::applied_edit(state, b, ctx) {
+            Some((programme, edit))
+                if saves(
+                    batch,
+                    programme,
+                    edit.field,
+                    edit.digest,
+                    &edit.provenance(),
+                ) =>
+            {
+                vec![Hold::Import { programme, edit }]
+            }
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
     }
 }
 

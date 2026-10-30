@@ -158,7 +158,7 @@ pub(crate) fn profile_facts(profile: Option<&FunderProfile>) -> ProfileFacts {
 /// The content facts of the draft of `programme`, over the draft spec: the
 /// core head policy, which every start and policy save compiles, the set
 /// fields of the draft and the held values (module `draft`), and the
-/// Guide API.
+/// Guide API over the draft spec (`fstp_guide::preview`, module `guide`).
 pub(crate) fn content_facts(
     core: &State,
     creator: &CreatorState,
@@ -221,7 +221,7 @@ pub(crate) fn content_facts(
         Field::Set(FieldValue::P23(p)) => p.enabled,
         _ => true,
     };
-    let guide = guide_facts(profile, &unset);
+    let guide = guide_facts(creator, programme, draft, head, profile, &set);
     Ok(ContentFacts {
         flow_down_missing: flow_down_missing(creator, programme, draft, has(FieldId::FlowDown)),
         unset,

@@ -500,7 +500,30 @@ fn classify(no: u32, l: &str) -> Result<Class<'_>, GuideError> {
     if l.starts_with('|') {
         return Ok(Class::Row(l));
     }
+    if gfm_delimiter_row(l) {
+        return Err(md(
+            no,
+            "a GFM table delimiter row is outside the subset; a table is `| cell |` rows with the delimiter row `| --- |`",
+        ));
+    }
     Ok(Class::Text(l))
+}
+
+/// Whether `l` is a GFM table delimiter row, with or without outer bars:
+/// cells of `-` signs split on `|`, each with an optional `:` at either
+/// end and spaces around it. Under a header line GFM reads such a row as
+/// a table, whatever its first character, so [`classify`] refuses one
+/// that is not a row of the subset.
+fn gfm_delimiter_row(l: &str) -> bool {
+    let inner = l.strip_prefix('|').unwrap_or(l);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    !inner.is_empty()
+        && inner.split('|').all(|c| {
+            let c = c.trim_matches(' ');
+            let c = c.strip_prefix(':').unwrap_or(c);
+            let c = c.strip_suffix(':').unwrap_or(c);
+            !c.is_empty() && c.bytes().all(|b| b == b'-')
+        })
 }
 
 /// The cells of a table row `| cell | cell |`.
