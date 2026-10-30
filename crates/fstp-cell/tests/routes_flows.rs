@@ -372,41 +372,92 @@ fn i78_stepup_challenge_is_not_consumed_by_a_refused_request() {
 }
 
 /// I-78, ADR-007, design section 8.4: a step-up assertion that verifies is
-/// issued as `GrantStepUp` under its challenge id, so a replay of it is a
-/// duplicate. The gate has no admission yet for that route-only command
-/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`), so the route fails
-/// closed with 501. Neither the assertion nor its replay records anything,
-/// and the challenge stays in place.
+/// issued as `GrantStepUp` under its challenge id. It answers 200 and
+/// records one `StepUpGranted` for the session and the action digest of
+/// the challenge. A replay of the assertion over the same challenge runs
+/// under the same command id, so the store answers it as a duplicate: 200
+/// with `duplicate` true, no new entry and the same grant. The route never
+/// deletes the challenge. The grant then admits the high-risk command it
+/// names.
 #[test]
-fn i78_verified_stepup_records_nothing_while_the_gate_refuses_grant_stepup() {
+fn i78_verified_stepup_grants_once_under_its_challenge_id() {
+    use fstp_cell::routes::Backend;
     let c = cell();
     let owner = c.admin_session().unwrap();
+    let session = fstp_rt::future::block_on(
+        c.backend()
+            .sessions_of(fstp_cell::routes::memory::LOCAL_ADMIN),
+    )
+    .unwrap()
+    .first()
+    .unwrap()
+    .id;
     let high = CellCommand::Tenant(TenantCommand::SetLoginPolicy {
         policy: TenantLoginPolicy::default().encode(),
     });
+    let command_id = [7; 16];
     let options = c.serve(request(
         "POST",
         "/auth/stepup/options",
         Some(&owner),
-        Some(&command_body(&high, [7; 16])),
+        Some(&command_body(&high, command_id)),
     ));
     assert_eq!(status(&options), 200);
     let id = challenge_id_of(&options);
-    let head = || {
-        fstp_rt::future::block_on(fstp_cell::routes::Backend::state(c.backend()))
-            .unwrap()
-            .head()
-    };
-    let before = head();
-    for attempt in ["first", "replay"] {
-        let resp = c.serve(c.admin_stepup_request(&owner, id).unwrap());
-        assert_eq!(status(&resp), 501, "the {attempt} assertion");
-        assert_eq!(head(), before, "the {attempt} assertion recorded an entry");
-        assert!(
-            c.backend().peek_challenge(id).is_some(),
-            "the {attempt} assertion consumed the challenge"
-        );
-    }
+    let state = || fstp_rt::future::block_on(c.backend().state()).unwrap();
+    let before = state().head();
+    assert!(state().auth().stepup_grant(id).is_none());
+
+    let first = c.serve(c.admin_stepup_request(&owner, id).unwrap());
+    let text = String::from_utf8_lossy(&first.body).into_owned();
+    assert_eq!(status(&first), 200, "{text}");
+    assert!(text.contains("\"duplicate\":false"), "{text}");
+    let granted = state().head();
+    assert_eq!(
+        granted.raw(),
+        before.raw() + 1,
+        "the grant recorded {before:?} to {granted:?}"
+    );
+    let grant = state()
+        .auth()
+        .stepup_grant(id)
+        .expect("no StepUpGranted under the challenge id");
+    assert_eq!(grant.session, session);
+    assert_eq!(
+        grant.action_digest,
+        fstp_cell_core::action_digest(&high, command_id)
+    );
+    assert!(
+        c.backend().peek_challenge(id).is_some(),
+        "the challenge went"
+    );
+
+    let replay = c.serve(c.admin_stepup_request(&owner, id).unwrap());
+    let text = String::from_utf8_lossy(&replay.body).into_owned();
+    assert_eq!(status(&replay), 200, "{text}");
+    assert!(text.contains("\"duplicate\":true"), "{text}");
+    assert_eq!(state().head(), granted, "the replay recorded an entry");
+    assert_eq!(state().auth().stepup_grant(id), Some(grant));
+
+    let mut body = String::from_utf8(command_body(&high, command_id)).unwrap();
+    body.pop();
+    body.push_str(&format!(",\"stepup\":\"{}\"}}", hex(&id)));
+    let resp = c.serve(request(
+        "POST",
+        "/api/v1/commands",
+        Some(&owner),
+        Some(body.as_bytes()),
+    ));
+    assert_eq!(
+        status(&resp),
+        200,
+        "{}",
+        String::from_utf8_lossy(&resp.body)
+    );
+    assert!(
+        state().head() > granted,
+        "the admitted command recorded nothing"
+    );
 }
 
 /// I-78, design section 8.4: a high-risk command that names a step-up
