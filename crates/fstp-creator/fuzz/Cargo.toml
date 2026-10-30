@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-creator = { path = ".." }
+fstp-programme = { path = "../../fstp-programme" }
 
 [[bin]]
 name = "creator_command_decode"
@@ -28,6 +29,13 @@ bench = false
 [[bin]]
 name = "validate_total"
 path = "fuzz_targets/validate_total.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "guide_scan"
+path = "fuzz_targets/guide_scan.rs"
 test = false
 doc = false
 bench = false

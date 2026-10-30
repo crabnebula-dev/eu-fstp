@@ -46,6 +46,13 @@
 //! provenance without the matching `ProposalResolved` before it, and an
 //! entry whose confirmation or edit saves nothing (crate root).
 //!
+//! After the entry is appended, the driver holds the saved value in the
+//! creator (`CreatorState::hold_import`), from [`applied_edit`] on the
+//! state the resolution was decided in, and only when the appended
+//! `FieldsSaved` names that field, digest and provenance. After a replay,
+//! [`rehold_confirmed`] holds a confirmed value again from the import
+//! store. An edited value cannot be recovered from the ledger.
+//!
 //! Interim, pending Daniel: an upload needs the same binding as a
 //! resolution, and both import commands need an open draft.
 
@@ -304,9 +311,53 @@ struct Plan {
     save: Option<CreatorDecision>,
 }
 
+/// What a resolution checked: the import record and, for a confirmation
+/// or an edit, the field edit its save applies.
+struct Checked {
+    record: fstp_import::ImportRecord,
+    edit: Option<(ProgrammeId, DraftRevision, ImportFieldEdit)>,
+}
+
 /// The checks and the save of one resolution, steps 1 to 3 of the module
 /// documentation.
 fn plan(state: &EngineState, cmd: &BridgeCommand, ctx: &Ctx) -> Result<Plan, Refusal> {
+    let Checked { record, edit } = check(state, cmd, ctx)?;
+    let save = match edit {
+        None => None,
+        Some((programme, base, edit)) => Some(
+            fstp_creator::decide_import_save(
+                &state.core,
+                &state.creator,
+                programme,
+                base,
+                &edit,
+                ctx,
+            )
+            .map_err(crate::compose::creator_refusal)?,
+        ),
+    };
+    Ok(Plan { record, save })
+}
+
+/// The field edit the save of `cmd` applies in `state`, if the
+/// resolution passes its checks and confirms or edits a value. The value
+/// is the one `fstp_import::check_resolution` applied: the stored
+/// proposal's for a confirmation, decoded by the field's strict decoder.
+///
+/// The driver reads it on the state the command was decided in, and
+/// holds it only when the appended entry saved this field with this
+/// digest and provenance (`driver.rs`, `Engine::execute`).
+pub(crate) fn applied_edit(
+    state: &EngineState,
+    cmd: &BridgeCommand,
+    ctx: &Ctx,
+) -> Option<(ProgrammeId, ImportFieldEdit)> {
+    let (programme, _, edit) = check(state, cmd, ctx).ok()?.edit?;
+    Some((programme, edit))
+}
+
+/// Steps 1 to 3 of the module documentation, before the creator's save.
+fn check(state: &EngineState, cmd: &BridgeCommand, ctx: &Ctx) -> Result<Checked, Refusal> {
     let BridgeCommand::ResolveImport {
         programme,
         proposal,
@@ -333,9 +384,9 @@ fn plan(state: &EngineState, cmd: &BridgeCommand, ctx: &Ctx) -> Result<Plan, Ref
         if state.creator.head(*programme) != Some(*base) {
             return Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState));
         }
-        return Ok(Plan {
+        return Ok(Checked {
             record: checked.record,
-            save: None,
+            edit: None,
         });
     };
     let head = fstp_domain::policy::head(&state.core, *programme)
@@ -360,19 +411,67 @@ fn plan(state: &EngineState, cmd: &BridgeCommand, ctx: &Ctx) -> Result<Plan, Ref
             }
         },
     };
-    let save = fstp_creator::decide_import_save(
-        &state.core,
-        &state.creator,
-        *programme,
-        *base,
-        &edit,
-        ctx,
-    )
-    .map_err(crate::compose::creator_refusal)?;
-    Ok(Plan {
+    Ok(Checked {
         record: checked.record,
-        save: Some(save),
+        edit: Some((*programme, *base, edit)),
     })
+}
+
+/// Holds again, in the creator, the value of every confirmed import
+/// resolution whose proposal value the import store holds (I-65). Returns
+/// how many values it held.
+///
+/// A confirmation saves the stored proposal's value unchanged, so the
+/// ledger's `FieldsSaved` digest and the import store's held value name
+/// the same value. Only the latest save of a field counts: a field saved
+/// again later holds its later digest, which this value does not match.
+///
+/// The driver calls it after every catch-up and after
+/// `Engine::hold_import`, so a replayed confirmation is held again once
+/// the shell holds its proposal value. An edited value lives only in the
+/// client's resolution, and the ledger keeps only its digest, so after a
+/// replay it stays unheld and its checks keep failing closed. The same
+/// holds for a client save the engine did not append itself.
+pub(crate) fn rehold_confirmed(state: &mut EngineState) -> usize {
+    let mut found: Vec<(ProgrammeId, FieldId, ValueDigest, FieldValue)> = Vec::new();
+    for (programme, draft) in state.creator.drafts() {
+        let Some(head) = fstp_domain::policy::head(&state.core, programme) else {
+            continue;
+        };
+        for (field, (digest, provenance)) in draft.fields() {
+            let fstp_creator::Provenance::Import {
+                proposal,
+                resolution: fstp_creator::ImportResolution::Confirmed,
+            } = provenance
+            else {
+                continue;
+            };
+            if state.creator.is_held(programme, *field) {
+                continue;
+            }
+            let Some(value) = state
+                .import
+                .value_of(ImportProposalId::from_raw(proposal.raw()))
+            else {
+                continue;
+            };
+            if let Ok(v) = fstp_programme::decode_field_value_in(
+                *field,
+                head.currency,
+                value.as_data().as_bytes(),
+            ) {
+                found.push((programme, *field, *digest, v));
+            }
+        }
+    }
+    found
+        .into_iter()
+        .filter(|(programme, field, digest, value)| {
+            state
+                .creator
+                .hold(*programme, *field, *digest, value.clone())
+        })
+        .count()
 }
 
 /// The vault questions of a bridge command: those of the core commands

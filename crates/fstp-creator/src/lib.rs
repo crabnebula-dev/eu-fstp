@@ -36,23 +36,33 @@
 //! - [`clear_activation`] checks the approver against the builder set and
 //!   the vault answers, and yields the [`ActivationClearance`].
 //!
+//! # The draft spec
+//!
+//! - A start and every save that touches a policy field compile the draft
+//!   spec with `fstp_programme::compile` into one core `EditPolicy`, so the
+//!   core head policy is the compiled draft policy (I-51). The head is read
+//!   back with `fstp_programme::policy_spec`.
+//! - A save records each value's digest, never the value (ADR-007). The
+//!   shell holds the values outside the ledger with
+//!   [`CreatorState::hold_saved`] and [`CreatorState::hold_import`], as the
+//!   import store holds proposal values. A saved value that is not held
+//!   fails its checks closed.
+//!
 //! # Seams to parallel lanes
 //!
 //! Each seam refuses or fails closed. None answers with a made-up value.
 //!
-//! - `fstp-programme` (lane W1a) compiles a draft spec into a policy. Until
-//!   its `compile` and field table land, `OpenDraft`, `ApplyStart`,
-//!   `SaveFields`, `AcceptNarrative` and `SaveAsTenantTemplate` refuse
-//!   with [`CreatorRefusal::Unavailable`]. The content checks of the
-//!   report, such as `FieldUnset` and `CallPackageIncomplete`, report a
-//!   failure with [`CheckDetail::Unavailable`].
-//! - `fstp-guide` (lane W2c) supplies the funder profile's wording status
-//!   and the Guide preview. Until then `LegalWordingPending` and the Guide
-//!   checks fail closed.
-//! - `fstp-domain` change D2 (lane W1b) adds the core
-//!   `ActivateProgramme`. Until then an approval yields the creator
-//!   records only. The engine composes the core command from the
-//!   [`ActivationApproved`] record (change D2e, lane W2e).
+//! - `fstp-guide` previews the Guide over the draft spec. The checks
+//!   `GuideSectionMissing` and `GuideBindingUnresolved` read
+//!   `fstp_guide::preview`. A template that does not parse fails both
+//!   closed with [`CheckDetail::Unavailable`], naming `fstp_guide`.
+//! - The engine driver holds the values of an appended save and of a
+//!   confirmed or edited import resolution. A value it cannot hold, such
+//!   as a save it only replayed, fails the checks that read it closed,
+//!   such as `FlowDownMissing` and the Guide placeholders.
+//! - A start from a tenant-private template needs the shell's template
+//!   spec store, and refuses with [`CreatorRefusal::Unavailable`] until
+//!   then.
 
 #![deny(
     clippy::float_arithmetic,
@@ -64,6 +74,8 @@
 mod check;
 mod codec;
 mod decide;
+mod draft;
+mod guide;
 mod ids;
 mod inputs;
 mod model;
@@ -85,6 +97,7 @@ pub use codec::{
     encode_record, validate_draft,
 };
 pub use decide::{CreatorDecision, CreatorRefusal, decide_creator, decide_import_save};
+pub use guide::{GuideScan, guide_scan};
 pub use ids::{ImportDocumentId, ImportProposalId, InvitationId, TemplateId};
 pub use inputs::{
     CreatorInputs, PortPresence, PreviewOutcome, PreviewTarget, SodPreview, VaultChecks,

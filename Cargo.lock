@@ -375,6 +375,7 @@ dependencies = [
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-guide",
  "fstp-import",
  "fstp-json",
  "fstp-ledger",

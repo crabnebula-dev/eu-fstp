@@ -288,13 +288,11 @@ fn clean_facts() -> DraftFacts {
 
 fn empty_content() -> ContentFacts {
     ContentFacts {
-        compiled: None,
         unset: BTreeSet::new(),
-        action_dates: None,
+        action_dates_reversed: Ok(false),
         call_package_missing: BTreeSet::new(),
-        guide_sections_missing: BTreeSet::new(),
-        guide_bindings_unresolved: BTreeSet::new(),
-        flow_down_missing: BTreeSet::new(),
+        guide: Ok(crate::guide::GuideScan::default()),
+        flow_down_missing: Ok(BTreeSet::new()),
         precheck_enabled: false,
     }
 }
@@ -415,13 +413,10 @@ fn i66_r_pg_01_cap_row_names_both_values() {
             p58: "300000.00".to_owned()
         }
     );
-    // A compiled draft with P-58 below P-05 gives the cap row only, not
-    // a second PolicyInvalid row for the same I-50 refusal.
-    let mut facts = clean_facts();
-    let mut content = empty_content();
-    content.compiled = Some(policy(40_000_000, Some(39_999_999)));
-    facts.content = Ok(content);
-    let r = validate_at(&w.core, &w.creator, P, &facts, &passing());
+    // A draft head with P-58 below P-05 gives the cap row only, not a
+    // second PolicyInvalid row for the same I-50 refusal.
+    let w = World::opened(policy(40_000_000, Some(39_999_999)));
+    let r = validate_at(&w.core, &w.creator, P, &clean_facts(), &passing());
     let failures: Vec<CheckId> = r.failures().map(|f| f.check).collect();
     assert_eq!(failures, vec![CheckId::CapAboveCeiling]);
 }
@@ -454,10 +449,11 @@ fn i66_missing_answers_fail_closed() {
     );
 }
 
-/// I-66, Q6: the public report fails closed while the parallel sources
-/// are stubs: wording counts as pending and every content check fails.
+/// I-66, Q6: the public report fails closed on a draft with no saved
+/// field, no profile and a head policy that lacks P-23: wording counts as
+/// pending and every content check fails.
 #[test]
-fn i66_public_validate_fails_closed_on_the_seams() {
+fn i66_public_validate_fails_closed_without_sources() {
     let w = opened();
     let facts = crate::validate::draft_facts(&w.core, &w.creator, P, None);
     let r = validate_at(&w.core, &w.creator, P, &facts, &passing());
@@ -790,10 +786,10 @@ fn i66_acknowledgement_names_a_shown_warning() {
     );
 }
 
-/// I-66: the public decider fails closed while the content sources are
-/// stubs, so no draft activates on them.
+/// I-66: the public decider fails closed on a draft with no saved field
+/// and no profile, so it never activates.
 #[test]
-fn i66_public_decider_never_activates_on_the_seams() {
+fn i66_public_decider_never_activates_without_sources() {
     let mut w = opened();
     let inputs = passing();
     w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
@@ -810,9 +806,11 @@ fn i66_public_decider_never_activates_on_the_seams() {
     );
 }
 
-/// The seams refuse with a named gap and never record anything.
+/// R-PG-02, D1: an opening under a P-53 that names no shipped funder
+/// profile refuses with the named gap, a second opening and an empty save
+/// are refused, and a clone needs a source in the cell (I-19).
 #[test]
-fn seams_refuse_with_a_named_gap() {
+fn r_pg_02_open_and_save_guards_refuse_with_a_named_reason() {
     let w = opened();
     let inputs = passing();
     let open = CreatorCommand::OpenDraft {

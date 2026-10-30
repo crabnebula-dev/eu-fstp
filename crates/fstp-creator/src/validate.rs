@@ -11,15 +11,16 @@ use fstp_domain::policy::{McpBindingActions, PolicyVersion, ValidationWarning};
 use fstp_domain::refusal::RuleRef;
 use fstp_domain::roles::Role;
 use fstp_domain::state::State;
-use fstp_domain::time::Timestamp;
 use fstp_guide::FunderProfile;
 use fstp_ledger::Seq;
 use fstp_money::NonNegAmount;
-use fstp_programme::FieldId;
+use fstp_programme::kinds::FlowDownObligation;
+use fstp_programme::{FIELDS, Field, FieldId, FieldValue};
 
 use crate::check::{
     CallPackageElement, CheckDetail, CheckId, CheckResult, CheckSubject, Severity, WarningKey,
 };
+use crate::guide::{GuideScan, guide_facts};
 use crate::inputs::{CreatorInputs, PreviewOutcome};
 use crate::model::{DraftRevision, Invitee, ReportDigest};
 use crate::probe::{ProbeKind, ProbeOutcome};
@@ -93,24 +94,21 @@ pub(crate) struct ProfileFacts {
     pub(crate) ceiling: Option<NonNegAmount>,
 }
 
-/// The facts of the compiled draft the content checks read.
+/// The facts of the draft the content checks read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ContentFacts {
-    /// The compiled draft policy, which may differ from the core head.
-    pub(crate) compiled: Option<PolicyVersion>,
-    /// `Compiled::unset`.
+    /// The fields with no value (`Compiled::unset` of the draft spec).
     pub(crate) unset: BTreeSet<FieldId>,
-    /// The P-57 action start and end.
-    pub(crate) action_dates: Option<(Timestamp, Timestamp)>,
+    /// Whether the P-57 start lies after its end, or why that is unknown.
+    pub(crate) action_dates_reversed: Result<bool, &'static str>,
     /// The I-48 elements the draft lacks.
     pub(crate) call_package_missing: BTreeSet<CallPackageElement>,
-    /// The required Guide sections the preview lacks (I-52).
-    pub(crate) guide_sections_missing: BTreeSet<String>,
-    /// The Guide placeholders that do not resolve (I-51).
-    pub(crate) guide_bindings_unresolved: BTreeSet<String>,
-    /// The flow-down obligations the draft lacks (I-49).
-    pub(crate) flow_down_missing: BTreeSet<String>,
-    /// Whether P-23 is enabled.
+    /// The Guide facts (I-51, I-52), or why the Guide checks cannot run.
+    pub(crate) guide: Result<GuideScan, &'static str>,
+    /// The flow-down obligations the draft lacks (I-49), or why the
+    /// draft's list is unknown.
+    pub(crate) flow_down_missing: Result<BTreeSet<String>, &'static str>,
+    /// Whether P-23 is enabled. An unreadable P-23 counts as enabled.
     pub(crate) precheck_enabled: bool,
 }
 
@@ -125,38 +123,139 @@ pub(crate) struct DraftFacts {
     pub(crate) content: Result<ContentFacts, Unavailable>,
 }
 
-/// The source of the content checks while `fstp-programme` and
-/// `fstp-guide` are W0 stubs.
-pub(crate) const CONTENT_SEAM: &str = "fstp_programme::compile over the draft spec and fstp_guide::preview (design 3.1 and 3.2; lanes W1a and W2c)";
+/// The profile checks fail closed without a profile.
+const NO_PROFILE_PASSED: &str =
+    "no funder profile was passed (fstp_guide::FunderProfile from the cell's profile source)";
 
-/// The source of the profile checks while `fstp_guide::FunderProfile` is a
-/// W0 stub.
-pub(crate) const PROFILE_SEAM: &str =
-    "the wording status of fstp_guide::FunderProfile (design 3.10; lane W2c)";
+/// The flow-down list of a saved value that is not held.
+pub(crate) const FLOW_DOWN_NOT_HELD: &str = "the saved flow-down list, which the shell has not held (CreatorState::hold_saved after the save's entry)";
 
-/// The profile facts. `fstp_guide::FunderProfile` exposes no wording
-/// status or ceiling yet (lane W2c), so the wording counts as pending and
-/// no profile ceiling applies. Both fail closed.
+/// The flow-down obligations come from the draft's funder profile.
+const FLOW_DOWN_NO_PROFILE: &str =
+    "the flow-down obligations of the draft's funder profile, which names no shipped profile";
+
+/// The P-57 value of a set field does not read back from the policy.
+const ACTION_DATES_UNREADABLE: &str = "the P-57 value of the draft policy";
+
+/// The profile facts: the wording status of the Guide profile (Q6). The
+/// Guide profile sets no per-recipient ceiling, so P-58 of the draft is
+/// the only ceiling. Without a profile the wording counts as pending.
 pub(crate) fn profile_facts(profile: Option<&FunderProfile>) -> ProfileFacts {
-    let _ = profile;
-    ProfileFacts {
-        wording_pending: true,
-        unknown: Some(PROFILE_SEAM),
-        ceiling: None,
+    match profile {
+        Some(p) => ProfileFacts {
+            wording_pending: p.legal_wording_pending(),
+            unknown: None,
+            ceiling: None,
+        },
+        None => ProfileFacts {
+            wording_pending: true,
+            unknown: Some(NO_PROFILE_PASSED),
+            ceiling: None,
+        },
     }
 }
 
-/// The content facts of the draft. `fstp-programme` has no `compile` over
-/// a draft spec and `fstp-guide` no preview yet (lanes W1a and W2c), so
-/// the facts are unavailable and every content check fails closed.
+/// The content facts of the draft of `programme`, over the draft spec: the
+/// core head policy, which every start and policy save compiles, the set
+/// fields of the draft and the held values (module `draft`), and the
+/// Guide API over the draft spec (`fstp_guide::preview`, module `guide`).
 pub(crate) fn content_facts(
     core: &State,
     creator: &CreatorState,
     programme: ProgrammeId,
     profile: Option<&FunderProfile>,
 ) -> Result<ContentFacts, Unavailable> {
-    let _ = (core, creator, programme, profile);
-    Err(Unavailable(CONTENT_SEAM))
+    let draft = creator
+        .draft(programme)
+        .ok_or(Unavailable("no draft of this programme"))?;
+    let head = fstp_domain::policy::head(core, programme)
+        .ok_or(Unavailable("the draft has no policy version"))?;
+    let set = draft.set_fields();
+    let unset: BTreeSet<FieldId> = FIELDS
+        .iter()
+        .map(|f| f.id)
+        .filter(|f| !set.contains(f))
+        .collect();
+    let policy = fstp_programme::policy_spec(head);
+    let action_dates_reversed = if set.contains(&FieldId::P57) {
+        match policy.get(FieldId::P57) {
+            Field::Set(FieldValue::P57(d)) => Ok(d.start > d.end),
+            _ => Err(ACTION_DATES_UNREADABLE),
+        }
+    } else {
+        Ok(false)
+    };
+    let has = |f: FieldId| set.contains(&f);
+    let activities = matches!(
+        policy.get(FieldId::P55),
+        Field::Set(FieldValue::P55(k)) if !k.items().is_empty()
+    );
+    let mut call_package_missing = BTreeSet::new();
+    for (element, present) in [
+        (CallPackageElement::MaximumPerRecipient, has(FieldId::P05)),
+        (
+            CallPackageElement::ExactAmountCriteria,
+            has(FieldId::AmountCriteria),
+        ),
+        (
+            CallPackageElement::ClosedActivityList,
+            has(FieldId::P55) && activities,
+        ),
+        (
+            CallPackageElement::PersonsSupported,
+            has(FieldId::PersonsSupported),
+        ),
+        (CallPackageElement::AwardCriteria, has(FieldId::P01)),
+        // Interim, pending Daniel: the award procedure is the stage 1
+        // threshold, the reviewer minimum and the committee voting rules.
+        (
+            CallPackageElement::AwardProcedure,
+            has(FieldId::P02) && has(FieldId::P03) && has(FieldId::P16),
+        ),
+    ] {
+        if !present {
+            call_package_missing.insert(element);
+        }
+    }
+    let precheck_enabled = match policy.get(FieldId::P23) {
+        Field::Set(FieldValue::P23(p)) => p.enabled,
+        _ => true,
+    };
+    let guide = guide_facts(creator, programme, draft, head, profile, &set);
+    Ok(ContentFacts {
+        flow_down_missing: flow_down_missing(creator, programme, draft, has(FieldId::FlowDown)),
+        unset,
+        action_dates_reversed,
+        call_package_missing,
+        guide,
+        precheck_enabled,
+    })
+}
+
+/// The obligations of the draft profile's flow-down set (I-49) that the
+/// draft's list lacks, by identifier. A gap lacks every obligation. A
+/// saved list that is not held is unknown, so the check fails closed.
+fn flow_down_missing(
+    creator: &CreatorState,
+    programme: ProgrammeId,
+    draft: &Draft,
+    set: bool,
+) -> Result<BTreeSet<String>, &'static str> {
+    let profile = crate::draft::profile_of(draft).map_err(|_| FLOW_DOWN_NO_PROFILE)?;
+    let listed: BTreeSet<FlowDownObligation> = if set {
+        match crate::draft::field_value(creator, programme, draft, FieldId::FlowDown) {
+            Some(FieldValue::FlowDown(l)) => l.items().iter().copied().collect(),
+            _ => return Err(FLOW_DOWN_NOT_HELD),
+        }
+    } else {
+        BTreeSet::new()
+    };
+    Ok(profile
+        .flow_down()
+        .iter()
+        .filter(|o| !listed.contains(o))
+        .map(|o| o.as_str().to_owned())
+        .collect())
 }
 
 /// The facts of `programme` for a decision or report.
@@ -221,13 +320,9 @@ pub(crate) fn validate_at(
         );
         return finish(programme, DraftRevision::new(0, Seq::ZERO), rows);
     };
-    let head = fstp_domain::policy::head(core, programme);
-    let policy = match &facts.content {
-        Ok(ContentFacts {
-            compiled: Some(v), ..
-        }) => Some(v),
-        _ => head,
-    };
+    // Every start and every policy save compiles the draft spec into the
+    // core head, so the head is the compiled draft policy (I-51).
+    let policy = fstp_domain::policy::head(core, programme);
     policy_rows(&mut rows, policy, &facts.profile);
     content_rows(&mut rows, &facts.content, inputs);
     if facts.profile.wording_pending {
@@ -365,7 +460,8 @@ fn policy_rows(rows: &mut Rows, policy: Option<&PolicyVersion>, profile: &Profil
     }
 }
 
-/// The checks that read the compiled draft.
+/// The checks that read the draft spec. Without a draft or a head policy
+/// each fails closed.
 const CONTENT_CHECKS: [CheckId; 7] = [
     CheckId::FieldUnset,
     CheckId::ActionDatesInconsistent,
@@ -397,14 +493,18 @@ fn content_rows(
             CheckDetail::None,
         );
     }
-    if let Some((start, end)) = c.action_dates
-        && start > end
-    {
-        rows.push(
+    match c.action_dates_reversed {
+        Ok(false) => {}
+        Ok(true) => rows.push(
             CheckId::ActionDatesInconsistent,
             CheckSubject::Draft,
             CheckDetail::None,
-        );
+        ),
+        Err(why) => rows.push(
+            CheckId::ActionDatesInconsistent,
+            CheckSubject::Draft,
+            CheckDetail::Unavailable(why),
+        ),
     }
     for e in &c.call_package_missing {
         rows.push(
@@ -413,26 +513,50 @@ fn content_rows(
             CheckDetail::None,
         );
     }
-    for s in &c.guide_sections_missing {
-        rows.push(
-            CheckId::GuideSectionMissing,
-            CheckSubject::GuideSection(s.clone()),
-            CheckDetail::None,
-        );
+    match &c.guide {
+        Ok(GuideScan {
+            sections_missing,
+            unresolved,
+        }) => {
+            for s in sections_missing {
+                rows.push(
+                    CheckId::GuideSectionMissing,
+                    CheckSubject::GuideSection(s.clone()),
+                    CheckDetail::None,
+                );
+            }
+            for p in unresolved {
+                rows.push(
+                    CheckId::GuideBindingUnresolved,
+                    CheckSubject::Placeholder(p.clone()),
+                    CheckDetail::None,
+                );
+            }
+        }
+        Err(why) => {
+            for check in [
+                CheckId::GuideSectionMissing,
+                CheckId::GuideBindingUnresolved,
+            ] {
+                rows.push(check, CheckSubject::Draft, CheckDetail::Unavailable(why));
+            }
+        }
     }
-    for p in &c.guide_bindings_unresolved {
-        rows.push(
-            CheckId::GuideBindingUnresolved,
-            CheckSubject::Placeholder(p.clone()),
-            CheckDetail::None,
-        );
-    }
-    for o in &c.flow_down_missing {
-        rows.push(
+    match &c.flow_down_missing {
+        Ok(missing) => {
+            for o in missing {
+                rows.push(
+                    CheckId::FlowDownMissing,
+                    CheckSubject::FlowDown(o.clone()),
+                    CheckDetail::None,
+                );
+            }
+        }
+        Err(why) => rows.push(
             CheckId::FlowDownMissing,
-            CheckSubject::FlowDown(o.clone()),
-            CheckDetail::None,
-        );
+            CheckSubject::Draft,
+            CheckDetail::Unavailable(why),
+        ),
     }
     if c.precheck_enabled && !inputs.ports.precheck {
         rows.push(

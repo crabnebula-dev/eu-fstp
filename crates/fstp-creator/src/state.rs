@@ -4,18 +4,20 @@
 //! cannot come from `decide_creator`, such as a second opening of a draft.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 use fstp_domain::id::{AccountId, BindingId, ContentDigest, OrganisationId, ProgrammeId};
 use fstp_domain::policy::FunderProfileRef;
 use fstp_domain::record::Record;
 use fstp_domain::roles::Role;
 use fstp_ledger::Seq;
-use fstp_programme::FieldId;
+use fstp_programme::{FieldId, FieldValue};
 
 use crate::check::WarningKey;
 use crate::ids::{InvitationId, TemplateId};
 use crate::model::{
-    CreatorRecord, DraftRevision, Invitee, Provenance, ReportDigest, StartingPoint, ValueDigest,
+    CreatorRecord, DraftRevision, FieldEdit, ImportFieldEdit, Invitee, Provenance, ReportDigest,
+    StartingPoint, ValueDigest,
 };
 use crate::probe::ProbeSet;
 
@@ -110,6 +112,7 @@ pub struct Draft {
     builders: BTreeSet<AccountId>,
     fields: BTreeMap<FieldId, (ValueDigest, Provenance)>,
     start: Option<StartingPoint>,
+    start_fields: BTreeSet<FieldId>,
     narratives: BTreeSet<FieldId>,
     invitations: BTreeMap<InvitationId, Invitation>,
     acks: BTreeMap<WarningKey, u32>,
@@ -147,7 +150,8 @@ impl Draft {
         &self.builders
     }
 
-    /// Each saved field with its value digest and provenance.
+    /// Each field saved since the latest start, with its value digest and
+    /// provenance.
     pub fn fields(&self) -> &BTreeMap<FieldId, (ValueDigest, Provenance)> {
         &self.fields
     }
@@ -155,6 +159,25 @@ impl Draft {
     /// The latest starting point.
     pub fn start(&self) -> Option<&StartingPoint> {
         self.start.as_ref()
+    }
+
+    /// The fields the latest start set, P-53 aside. A template start sets
+    /// every template value but the narrative that waits for
+    /// `AcceptNarrative`. A blank or import start sets none.
+    pub fn start_fields(&self) -> &BTreeSet<FieldId> {
+        &self.start_fields
+    }
+
+    /// The fields that hold a value: P-53, which the opening sets, the
+    /// fields of the latest start, every field saved since and every
+    /// accepted narrative. Every other field is a gap, which the report
+    /// shows as `FieldUnset` (design 3.1).
+    pub fn set_fields(&self) -> BTreeSet<FieldId> {
+        let mut out = self.start_fields.clone();
+        out.insert(FieldId::P53);
+        out.extend(self.fields.keys().copied());
+        out.extend(self.narratives.iter().copied());
+        out
     }
 
     /// The narrative fields whose template text was accepted.
@@ -239,7 +262,13 @@ impl Draft {
 
 /// The creator projection of one cell: every draft and every
 /// tenant-private template.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+///
+/// It also holds the value of each saved field outside the ledger, keyed
+/// by the digest the save recorded, as the import store holds proposal
+/// values. The held values are a cache of the shell's value store and
+/// take no part in the state's equality, so a replayed state equals the
+/// live one.
+#[derive(Clone, Debug, Default)]
 pub struct CreatorState {
     drafts: BTreeMap<ProgrammeId, Draft>,
     invitations: BTreeSet<InvitationId>,
@@ -247,9 +276,106 @@ pub struct CreatorState {
     /// The programme of every binding granted on a draft. The later
     /// binding records carry only the binding id.
     bindings: BTreeMap<BindingId, ProgrammeId>,
+    /// The held value of each saved field, with the digest it was held
+    /// under.
+    held: BTreeMap<(ProgrammeId, FieldId), (ValueDigest, FieldValue)>,
+}
+
+impl PartialEq for CreatorState {
+    fn eq(&self, other: &CreatorState) -> bool {
+        self.drafts == other.drafts
+            && self.invitations == other.invitations
+            && self.templates == other.templates
+            && self.bindings == other.bindings
+    }
+}
+
+impl Eq for CreatorState {}
+
+impl Hash for CreatorState {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.drafts.hash(state);
+        self.invitations.hash(state);
+        self.templates.hash(state);
+        self.bindings.hash(state);
+    }
 }
 
 impl CreatorState {
+    /// Holds `value` as the value of `field` on the draft of `programme`,
+    /// saved under `digest`. Returns whether it is held.
+    ///
+    /// The draft's field table must hold `digest` for `field`, so a value
+    /// is held only for the save that recorded it, and `value` must be a
+    /// value of `field`. A later save of the field records another digest,
+    /// and the earlier value stops counting until its own save is the
+    /// latest again.
+    ///
+    /// The shell calls it after the entry of a save is appended, from the
+    /// command's values, and after a replay from its value store. Until
+    /// it does, every check that reads the value fails closed.
+    pub fn hold(
+        &mut self,
+        programme: ProgrammeId,
+        field: FieldId,
+        digest: ValueDigest,
+        value: FieldValue,
+    ) -> bool {
+        if value.field() != field {
+            return false;
+        }
+        let saved = self
+            .drafts
+            .get(&programme)
+            .and_then(|d| d.fields.get(&field))
+            .map(|(d, _)| *d);
+        if saved != Some(digest) {
+            return false;
+        }
+        self.held.insert((programme, field), (digest, value));
+        true
+    }
+
+    /// Holds every value of a `SaveFields` the engine just appended on
+    /// `programme`. Returns whether each is held. A value whose field
+    /// the same save edits again later is not held.
+    pub fn hold_saved(&mut self, programme: ProgrammeId, fields: &[FieldEdit]) -> bool {
+        let mut all = true;
+        for f in fields {
+            all &= self.hold(programme, f.field, f.digest, f.value.clone());
+        }
+        all
+    }
+
+    /// Holds the value of an import resolution the engine just appended
+    /// on `programme` (I-65). Returns whether it is held.
+    pub fn hold_import(&mut self, programme: ProgrammeId, edit: &ImportFieldEdit) -> bool {
+        self.hold(programme, edit.field, edit.digest, edit.value.clone())
+    }
+
+    /// Whether the value of `field` on the draft of `programme` is held
+    /// under the digest of the field's latest save. The engine reads it
+    /// before it holds a value again after a replay.
+    pub fn is_held(&self, programme: ProgrammeId, field: FieldId) -> bool {
+        self.drafts
+            .get(&programme)
+            .and_then(|d| d.fields.get(&field))
+            .is_some_and(|(digest, _)| self.held(programme, field, *digest).is_some())
+    }
+
+    /// The held value of `field` on `programme` under `digest`.
+    pub(crate) fn held(
+        &self,
+        programme: ProgrammeId,
+        field: FieldId,
+        digest: ValueDigest,
+    ) -> Option<&FieldValue> {
+        self.held
+            .get(&(programme, field))
+            .filter(|(d, _)| *d == digest)
+            .map(|(_, v)| v)
+    }
+
     /// The state before any record.
     pub fn genesis() -> CreatorState {
         CreatorState::default()
@@ -299,6 +425,7 @@ impl CreatorState {
                     builders,
                     fields: BTreeMap::new(),
                     start: None,
+                    start_fields: BTreeSet::new(),
                     narratives: BTreeSet::new(),
                     invitations: BTreeMap::new(),
                     acks: BTreeMap::new(),
@@ -319,6 +446,12 @@ impl CreatorState {
         {
             return Err(CreatorFoldError::TemplateExists);
         }
+        // The fields a start sets read other drafts for a clone, so they
+        // are computed before the draft is borrowed.
+        let started = match record {
+            CreatorRecord::StartApplied { start, .. } => crate::draft::start_fields(self, start),
+            _ => BTreeSet::new(),
+        };
         let draft = self
             .drafts
             .get_mut(&programme)
@@ -350,7 +483,15 @@ impl CreatorState {
         }
         match record {
             CreatorRecord::DraftOpened { .. } => {}
-            CreatorRecord::StartApplied { start, .. } => draft.start = Some(start.clone()),
+            CreatorRecord::StartApplied { start, .. } => {
+                // A start replaces the draft content (interim, pending
+                // Daniel), so earlier saves and acceptances no longer
+                // hold a value.
+                draft.start = Some(start.clone());
+                draft.start_fields = started;
+                draft.fields.clear();
+                draft.narratives.clear();
+            }
             CreatorRecord::FieldsSaved { fields, .. } => {
                 for (f, d, p) in fields {
                     draft.fields.insert(*f, (*d, p.clone()));

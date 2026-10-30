@@ -41,6 +41,7 @@ pub mod value;
 
 pub use compile::{
     CompileError, CompileIds, Compiled, ProgrammeArtefacts, compile, decompile, opaque_text,
+    policy_spec,
 };
 pub use impact::{
     CallFacts, CallImpact, CorrigendumNeed, ImpactEffect, ImpactError, ProgrammeEffect,

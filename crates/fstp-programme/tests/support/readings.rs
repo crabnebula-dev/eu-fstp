@@ -21,7 +21,8 @@
 use std::collections::BTreeSet;
 
 use fstp_domain::policy::{
-    EffectiveScoreRule, McpBindingActions, PolicyVersion, ReadAccess, ReviewerAnonymity,
+    AgentContentAccess, EffectiveScoreRule, McpBindingActions, PolicyVersion, ReadAccess,
+    ReviewerAnonymity,
 };
 use fstp_domain::roles::CoolingOff;
 use fstp_domain::rules::ParamId;
@@ -482,7 +483,12 @@ pub(crate) fn readings() -> Vec<SuperSafeReading> {
             "Enabled for all roles, plus public research tools",
             NotProgramme,
         ),
-        r(P75, "Off", Opaque("false")),
+        // D6 (M4 design 3.4) made P-75 a typed field of `FrozenValues`.
+        r(
+            P75,
+            "Off",
+            Typed(|v| expect("P-75", v.frozen.p75, AgentContentAccess::Off)),
+        ),
         r(P76, "Off; programme opts in", Opaque("false")),
         r(
             P77,
