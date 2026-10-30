@@ -136,11 +136,13 @@ dependencies = [
  "fstp-ledger",
  "fstp-obs",
  "fstp-pgstore",
+ "fstp-pgwire",
  "fstp-release",
  "fstp-rt",
  "fstp-tls",
  "fstp-vault-proto",
  "fstp-webauthn",
+ "fstp-witness",
 ]
 
 [[package]]
@@ -155,6 +157,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-webauthn",
 ]
 
 [[package]]
@@ -175,6 +178,7 @@ dependencies = [
  "fstp-domain-testkit",
  "fstp-edge",
  "fstp-engine",
+ "fstp-http",
  "fstp-keyd",
  "fstp-keys",
  "fstp-ledger",
@@ -183,11 +187,13 @@ dependencies = [
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgtest",
+ "fstp-pgwire",
  "fstp-pki",
  "fstp-prop",
  "fstp-release",
  "fstp-release-svc",
  "fstp-rt",
+ "fstp-tls",
  "fstp-vault",
  "fstp-vault-core",
  "fstp-vault-proto",
@@ -210,10 +216,12 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-custody",
  "fstp-http",
+ "fstp-json",
  "fstp-migrate",
  "fstp-obs",
  "fstp-pgwire",
  "fstp-pki",
+ "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
 ]
@@ -505,6 +513,7 @@ dependencies = [
  "fstp-audit",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-edge",
  "fstp-http",
  "fstp-json",
  "fstp-keys",
@@ -515,6 +524,7 @@ dependencies = [
  "fstp-tls",
  "fstp-vault-core",
  "fstp-vault-proto",
+ "fstp-witness",
 ]
 
 [[package]]
@@ -549,10 +559,13 @@ version = "0.1.0"
 dependencies = [
  "fstp-audit",
  "fstp-cp-proto",
+ "fstp-crypto",
  "fstp-http",
  "fstp-migrate",
  "fstp-obs",
  "fstp-pgwire",
+ "fstp-pki",
+ "fstp-rt",
  "fstp-tls",
 ]
 

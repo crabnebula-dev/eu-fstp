@@ -1,4 +1,5 @@
--- The vault database v_<cell> (M3 design section 4.3).
+-- The vault database v_<cell> (M3 design section 4.3). Migration 3 of the
+-- vault set, after fstp_meta (1) and fstp_meta.apply_grant (2).
 -- fstp_vault::CATALOGUE lists every table and column below.
 
 CREATE SCHEMA vault;

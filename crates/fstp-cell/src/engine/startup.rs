@@ -1,6 +1,10 @@
 //! The start-up path of a cell (design sections 3.4, 5.5, 7.2
 //! "Start-up", 10.2; I-24, I-39, I-80).
 //!
+//! [`start`] runs it over the in-memory anchoring store, and [`start_pg`]
+//! over the PostgreSQL record store ([`PgCellStore`], design section 5.3).
+//! Both run every phase below in the same order ([`StartStore`]).
+//!
 //! The order:
 //!
 //! 1. The configuration decodes ([`crate::config::decode`]), and the
@@ -32,21 +36,25 @@
 //!
 //! Each phase is reported as it completes.
 
+use std::future::Future;
 use std::net::SocketAddr;
 
+use fstp_audit::anchorer::Resolution;
 use fstp_audit::verify::ChainView;
+use fstp_audit::witness::WitnessRecord;
 use fstp_audit::{CellId, ChainId};
 use fstp_custody::Custody;
 use fstp_obs::LogEvent;
 use fstp_rt::{Listener as _, Runtime, Shutdown};
 
-use super::{CellEngine, VaultClient};
+use super::pg::PgCellStore;
+use super::{CellEngine, CellStore, VaultClient};
 use crate::config::{CellConfig, Mode};
 use crate::egress::{CnClient, CnTransport};
 use crate::tasks::erasure::{self, ErasureHandle, ErasureRunner, Keystore};
 use crate::tasks::release::{self, LicenceHold, ReleaseSettings, ReleaseView};
 use crate::tasks::{SystemClock, timeline};
-use crate::witness::store::{AnchoredStore, Database, Resolved, StoreKeys};
+use crate::witness::store::{AnchoredStore, ChainRead, Database, Resolved, StoreKeys};
 use crate::witness::{WitnessClient, WitnessLink};
 
 /// The kind of a database cluster, as the start check reads it from the
@@ -136,6 +144,9 @@ pub enum StartRefusal {
     /// The witness could not be reached, so no open prepare could be
     /// resolved and the chain cannot be verified.
     Witness,
+    /// The pinned witness receipt keys are empty or do not decode
+    /// (ADR-010 "Keys", I-90). Nothing reached the witness.
+    WitnessPins,
     /// The store could not be read, or the ledger does not fold.
     Store,
     /// The chain did not verify against the witness.
@@ -160,10 +171,11 @@ pub struct StartParts<C, D, L, V, T> {
     pub db: D,
     /// The witness client of the App chain.
     pub witness: WitnessClient<L>,
-    /// The anchor and ledger keys of the store.
+    /// The anchor and ledger keys of the store, and the pinned witness
+    /// receipt keys. The store checks each new receipt under those pins
+    /// before COMMIT, and the start-up verification checks every stored
+    /// receipt under the same set (ADR-010 "Keys", I-24).
     pub keys: StoreKeys,
-    /// The pinned witness receipt keys, encoded.
-    pub witness_keys: Vec<Vec<u8>>,
     /// The vault client.
     pub vault: V,
     /// The transport to the CrabNebula services of a self-hosted cell.
@@ -174,8 +186,38 @@ pub struct StartParts<C, D, L, V, T> {
     pub listen: [(ListenerKind, SocketAddr); 3],
 }
 
-/// A started cell.
-pub struct StartedCell<R: Runtime, D, L> {
+/// The parts a cell starts from over its PostgreSQL database (design
+/// section 5.3): the parts of [`StartParts`], with the record store in
+/// place of the database, the witness client and the store keys.
+pub struct PgStartParts<C, R: Runtime, L, V, T> {
+    /// The configuration bytes.
+    pub config: Vec<u8>,
+    /// What the cell reads of its database before it uses it (I-83).
+    pub database: DatabaseView,
+    /// The App chain's custody backend.
+    pub custody: C,
+    /// The App chain's keystore.
+    pub keystore: Keystore,
+    /// The record store over the cell database's writer role, with its
+    /// ledger keys, anchor signer, pinned witness receipt keys and the
+    /// witness client of the App chain. Its cell must be the configured
+    /// cell.
+    pub store: PgCellStore<R, WitnessClient<L>>,
+    /// The App chain's composite `Anchor` public key, encoded. The
+    /// start-up verification checks every stored anchor under it.
+    pub anchor_key: Vec<u8>,
+    /// The vault client.
+    pub vault: V,
+    /// The transport to the CrabNebula services of a self-hosted cell.
+    pub crabnebula: Option<T>,
+    /// The licence token a self-hosted cell holds.
+    pub licence: Option<LicenceHold>,
+    /// Where to bind each listener. Port 0 picks a free port.
+    pub listen: [(ListenerKind, SocketAddr); 3],
+}
+
+/// A started cell over the store `S`.
+pub struct StartedCell<R: Runtime, S> {
     /// The configuration.
     pub config: CellConfig,
     /// The engine.
@@ -190,10 +232,109 @@ pub struct StartedCell<R: Runtime, D, L> {
     /// The admin view of the licence and update calls.
     pub release: ReleaseView,
     /// The engine task, which gives the store back once it ends.
-    pub engine_task: fstp_rt::JoinHandle<AnchoredStore<D, WitnessClient<L>>>,
+    pub engine_task: fstp_rt::JoinHandle<S>,
 }
 
-/// Starts a cell from `parts` and reports each phase to `report`.
+/// What the start-up path needs of a cell's anchoring store, beyond the
+/// engine's [`CellStore`] (ADR-010 "Start-up", design section 7.2).
+pub trait StartStore: CellStore {
+    /// Learns the witness's open prepare and resolves it from the chain
+    /// before the cell serves: a present row committed, and a missing one
+    /// raises `PossibleDeletion` and is recorded as `InDoubtAbsent`.
+    fn resolve_open_prepare(
+        &mut self,
+    ) -> impl Future<Output = Result<Resolved, StartRefusal>> + Send;
+
+    /// The witness log of the App chain.
+    fn witness_log(&self) -> impl Future<Output = Result<Vec<WitnessRecord>, StartRefusal>> + Send;
+
+    /// The chain as stored, for the start-up verification.
+    fn stored_chain(&self) -> impl Future<Output = Result<ChainRead, StartRefusal>> + Send;
+
+    /// The pinned witness receipt keys. The start-up verification checks
+    /// every stored receipt under the set the store checks new ones with.
+    fn pinned_witness_keys(&self) -> Vec<Vec<u8>>;
+}
+
+impl<D: Database, L: WitnessLink> StartStore for AnchoredStore<D, WitnessClient<L>> {
+    async fn resolve_open_prepare(&mut self) -> Result<Resolved, StartRefusal> {
+        self.start().await.map_err(|_| StartRefusal::Witness)
+    }
+
+    async fn witness_log(&self) -> Result<Vec<WitnessRecord>, StartRefusal> {
+        self.witness()
+            .log()
+            .await
+            .map_err(|_| StartRefusal::Witness)
+    }
+
+    async fn stored_chain(&self) -> Result<ChainRead, StartRefusal> {
+        Ok(self.db().read_chain())
+    }
+
+    fn pinned_witness_keys(&self) -> Vec<Vec<u8>> {
+        self.witness_keys().to_vec()
+    }
+}
+
+impl<R: Runtime, L: WitnessLink> StartStore for PgCellStore<R, WitnessClient<L>> {
+    async fn resolve_open_prepare(&mut self) -> Result<Resolved, StartRefusal> {
+        let open = self
+            .inner()
+            .witness()
+            .outstanding()
+            .await
+            .map_err(|_| StartRefusal::Witness)?;
+        let Some(head) = open else {
+            return Ok(Resolved::Nothing);
+        };
+        match self.inner_mut().resolve_in_doubt(head).await {
+            Ok(Resolution::Committed) => Ok(Resolved::Committed),
+            Ok(Resolution::AbsentRaisePossibleDeletion) => Ok(Resolved::AbsentRecorded),
+            Err(_) => Err(StartRefusal::Witness),
+        }
+    }
+
+    async fn witness_log(&self) -> Result<Vec<WitnessRecord>, StartRefusal> {
+        self.inner()
+            .witness()
+            .log()
+            .await
+            .map_err(|_| StartRefusal::Witness)
+    }
+
+    async fn stored_chain(&self) -> Result<ChainRead, StartRefusal> {
+        let c = self
+            .inner()
+            .read_chain_rows()
+            .await
+            .map_err(|_| StartRefusal::Store)?;
+        Ok(ChainRead {
+            rows: c.rows,
+            stored: c.stored,
+            anchors: c.anchors,
+        })
+    }
+
+    fn pinned_witness_keys(&self) -> Vec<Vec<u8>> {
+        self.inner().witness_keys().to_vec()
+    }
+}
+
+/// The parts every start path shares, after its store parts are taken.
+struct Common<C, V, T> {
+    config: Vec<u8>,
+    database: DatabaseView,
+    custody: C,
+    keystore: Keystore,
+    vault: V,
+    crabnebula: Option<T>,
+    licence: Option<LicenceHold>,
+    listen: [(ListenerKind, SocketAddr); 3],
+}
+
+/// Starts a cell from `parts` over the in-memory anchoring store and
+/// reports each phase to `report`.
 ///
 /// # Errors
 ///
@@ -203,7 +344,7 @@ pub async fn start<R, C, D, L, V, T>(
     rt: &R,
     parts: StartParts<C, D, L, V, T>,
     report: &mut (dyn FnMut(StartPhase) + Send),
-) -> Result<StartedCell<R, D, L>, StartRefusal>
+) -> Result<StartedCell<R, AnchoredStore<D, WitnessClient<L>>>, StartRefusal>
 where
     R: Runtime,
     C: Custody,
@@ -211,6 +352,108 @@ where
     L: WitnessLink,
     V: VaultClient,
     T: CnTransport,
+{
+    let StartParts {
+        config,
+        database,
+        custody,
+        keystore,
+        db,
+        witness,
+        keys,
+        vault,
+        crabnebula,
+        licence,
+        listen,
+    } = parts;
+    let anchor_key = keys.anchor.public_key().to_bytes().to_vec();
+    let common = Common {
+        config,
+        database,
+        custody,
+        keystore,
+        vault,
+        crabnebula,
+        licence,
+        listen,
+    };
+    // ADR-010 "Keys", I-90: a pin set that accepts no receipt is refused
+    // when the store is built, before any prepare reaches the witness.
+    let open = move |cell: [u8; 16]| {
+        AnchoredStore::new(db, witness, cell, keys).map_err(|_| StartRefusal::WitnessPins)
+    };
+    start_with(rt, common, anchor_key, open, report).await
+}
+
+/// Starts a cell from `parts` over its PostgreSQL record store
+/// ([`PgCellStore`], design section 5.3) and reports each phase to
+/// `report`. The phases and their order are those of [`start`].
+///
+/// # Errors
+///
+/// The first [`StartRefusal`]. A store whose cell is not the configured
+/// cell is refused as a configuration that names another cell.
+pub async fn start_pg<R, C, L, V, T>(
+    rt: &R,
+    parts: PgStartParts<C, R, L, V, T>,
+    report: &mut (dyn FnMut(StartPhase) + Send),
+) -> Result<StartedCell<R, PgCellStore<R, WitnessClient<L>>>, StartRefusal>
+where
+    R: Runtime,
+    C: Custody,
+    L: WitnessLink,
+    V: VaultClient,
+    T: CnTransport,
+{
+    let PgStartParts {
+        config,
+        database,
+        custody,
+        keystore,
+        store,
+        anchor_key,
+        vault,
+        crabnebula,
+        licence,
+        listen,
+    } = parts;
+    let common = Common {
+        config,
+        database,
+        custody,
+        keystore,
+        vault,
+        crabnebula,
+        licence,
+        listen,
+    };
+    let open = move |cell: [u8; 16]| {
+        if store.inner().cell() == cell {
+            Ok(store)
+        } else {
+            Err(StartRefusal::Config(crate::config::ConfigError::Invalid(
+                "cell",
+            )))
+        }
+    };
+    start_with(rt, common, anchor_key, open, report).await
+}
+
+/// The start-up path of [`start`] and [`start_pg`] over the store that
+/// `open` gives for the configured cell.
+async fn start_with<R, C, V, T, S>(
+    rt: &R,
+    parts: Common<C, V, T>,
+    anchor_key: Vec<u8>,
+    open: impl FnOnce([u8; 16]) -> Result<S, StartRefusal>,
+    report: &mut (dyn FnMut(StartPhase) + Send),
+) -> Result<StartedCell<R, S>, StartRefusal>
+where
+    R: Runtime,
+    C: Custody,
+    V: VaultClient,
+    T: CnTransport,
+    S: StartStore,
 {
     let config = crate::config::decode(&parts.config).map_err(StartRefusal::Config)?;
     // The licence the refresh names: the configured one, or else the one
@@ -242,9 +485,9 @@ where
         .map_err(|_| StartRefusal::Custody)?;
     report(StartPhase::GroupSecretsOpened);
     let cell = config.cell.0;
-    let anchor_key = parts.keys.anchor.public_key().to_bytes().to_vec();
-    let mut store = AnchoredStore::new(parts.db, parts.witness, cell, parts.keys);
-    match store.start().await.map_err(|_| StartRefusal::Witness)? {
+    let mut store = open(cell)?;
+    let witness_keys = store.pinned_witness_keys();
+    match store.resolve_open_prepare().await? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
         Resolved::AbsentRecorded => {
@@ -254,12 +497,8 @@ where
             report(StartPhase::InDoubtAbsentRecorded);
         }
     }
-    let log = store
-        .witness()
-        .log()
-        .await
-        .map_err(|_| StartRefusal::Witness)?;
-    let chain = store.db().read_chain();
+    let log = store.witness_log().await?;
+    let chain = store.stored_chain().await?;
     let shutdown = Shutdown::new();
     let (engine, engine_task) =
         CellEngine::start(rt, store, parts.vault, &shutdown, super::DEFAULT_QUEUE)
@@ -274,7 +513,7 @@ where
         anchors: &chain.anchors,
         witness: &log,
         anchor_keys: std::slice::from_ref(&anchor_key),
-        witness_keys: &parts.witness_keys,
+        witness_keys: &witness_keys,
     };
     if fstp_audit::verify::verify(&view).is_err() {
         shutdown.trigger();

@@ -115,6 +115,8 @@ enum StartRefusal {
     ChainTamper,
     /// Custody could not unwrap the seal key.
     Custody,
+    /// The pinned witness receipt keys are empty (ADR-010 "Keys").
+    WitnessPins,
     /// Any other cause.
     #[allow(
         dead_code,
@@ -138,6 +140,8 @@ enum Fault {
     },
     /// Custody refuses every unwrap.
     CustodyUnavailable,
+    /// The start-up parts pin no witness receipt key.
+    NoWitnessPin,
     /// The CrabNebula licence and update services accept the connection
     /// and never answer.
     CrabNebulaHangs,
@@ -497,6 +501,7 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
         let keys = StoreKeys {
             anchor: composite::generate().map_err(|_| "no anchor key")?,
             ledger: DataKey::generate().map_err(|_| "no ledger key")?,
+            witness: witness_key,
         };
         // Before the start: genesis of the key chain, whose two custody
         // calls are the two committed entries, each with its receipt.
@@ -505,7 +510,8 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
             next_unknown: None,
             tamper: false,
         };
-        let mut store = AnchoredStore::new(db, client(&peer), CELL, keys);
+        let mut store = AnchoredStore::new(db, client(&peer), CELL, keys)
+            .map_err(|_| "the store refused its keys")?;
         store
             .start()
             .await
@@ -530,7 +536,8 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
             // holds its prepare, and the row exists only if `present`.
             let (mut db, w, keys) = store.into_parts();
             db.next_unknown = Some(present);
-            store = AnchoredStore::new(db, w, CELL, keys);
+            store =
+                AnchoredStore::new(db, w, CELL, keys).map_err(|_| "the store refused its keys")?;
             let shutdown = Shutdown::new();
             let (engine, task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
                 .await
@@ -539,8 +546,11 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
             drop(engine);
             store = task.await.map_err(|_| "the setup engine failed")?;
         }
-        let (mut db, _, keys) = store.into_parts();
+        let (mut db, _, mut keys) = store.into_parts();
         db.tamper = fault == Fault::ChainTampered;
+        if fault == Fault::NoWitnessPin {
+            keys.witness.clear();
+        }
         if fault == Fault::CustodyUnavailable {
             custody.0.refuse_unwrap.store(true, Ordering::Release);
         }
@@ -557,7 +567,6 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
             db,
             witness: client(&peer),
             keys,
-            witness_keys: witness_key,
             vault: GenesisVault,
             crabnebula: (mode == Mode::SelfHosted).then_some(Hangs),
             licence: None,
@@ -580,6 +589,7 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
             }
             Err(ProdRefusal::ChainTamper) => Err(StartRefusal::ChainTamper),
             Err(ProdRefusal::Custody) => Err(StartRefusal::Custody),
+            Err(ProdRefusal::WitnessPins) => Err(StartRefusal::WitnessPins),
             Err(_) => Err(StartRefusal::Other),
         };
         Ok(Trace { phases, outcome })
@@ -725,6 +735,20 @@ fn i80_cell_unwraps_its_seal_key_through_custody_before_it_replays_the_ledger() 
 fn i80_cell_refuses_to_start_without_custody() {
     let t = start_cell(Mode::Saas, Fault::CustodyUnavailable).unwrap_or_else(|e| panic!("{e}"));
     let ok = t.outcome == Err(StartRefusal::Custody)
+        && position(&t, Phase::LedgerReplayed).is_none()
+        && first_listener(&t).is_none()
+        && position(&t, Phase::Started).is_none();
+    assert!(ok, "{t:?}");
+}
+
+/// I-24, ADR-010 "Keys": a cell whose start-up parts pin no witness
+/// receipt key refuses to start before it resolves any prepare. It
+/// replays nothing, binds no listener and never logs `Started`.
+#[test]
+fn i24_cell_refuses_to_start_without_a_pinned_witness_key() {
+    let t = start_cell(Mode::Saas, Fault::NoWitnessPin).unwrap_or_else(|e| panic!("{e}"));
+    let ok = t.outcome == Err(StartRefusal::WitnessPins)
+        && position(&t, Phase::InDoubtCommitted).is_none()
         && position(&t, Phase::LedgerReplayed).is_none()
         && first_listener(&t).is_none()
         && position(&t, Phase::Started).is_none();

@@ -12,9 +12,8 @@
 //! - Every accepted body stays refused once padded past 1 MiB with JSON
 //!   white space, which no M3 route needs (size limits).
 //!
-//! Lane W3a's test author wrote these checks before the decoder exists.
-//! While the W0 stub refuses every input, no input is accepted, so only
-//! the first two checks run.
+//! The seeds under `fuzz/seeds/command_request_decode` are accepted
+//! bodies, so the minor and size checks run from the first input.
 
 #![no_main]
 

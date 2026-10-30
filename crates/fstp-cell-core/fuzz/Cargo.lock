@@ -98,6 +98,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-webauthn",
 ]
 
 [[package]]

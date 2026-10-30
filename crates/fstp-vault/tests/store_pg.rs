@@ -129,8 +129,10 @@ fn internal(v: &mut Vault, req: &VaultRequest) -> VaultResponse {
     fstp_vault_proto::decode_response(&v.internal_bytes(&bytes, NOW)).unwrap()
 }
 
-/// R-NF-08, design sections 4.3 and 4.6: the vault migrations create
+/// R-NF-08, design sections 4.3, 4.5 and 4.6: the vault migrations create
 /// exactly the catalogued tables, with the catalogued columns in order.
+/// Every schema but `pg_catalog` and `information_schema` is checked, so
+/// the runner's ledger and any new schema are covered too.
 #[test]
 fn r_nf_08_vault_migrations_create_exactly_the_catalogued_columns() {
     let mut db = fresh();
@@ -146,7 +148,7 @@ fn r_nf_08_vault_migrations_create_exactly_the_catalogued_columns() {
         assert_eq!(got, want, "{}.{}", t.schema, t.name);
     }
     let rows = block_on(db.query(
-        "SELECT table_schema::text, table_name::text FROM information_schema.tables WHERE table_schema IN ('vault', 'vault_audit', 'keystore') ORDER BY 1, 2",
+        "SELECT table_schema::text, table_name::text FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2",
         &[],
     ))
     .unwrap();
