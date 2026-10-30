@@ -1367,6 +1367,236 @@ mod tests {
         let open = |who, st| at("committee.open_round", who, st, SS, PASS);
         assert_eq!(open(Who::AssignedReviewerConflicted, S1), Expected::Allow);
     }
+
+    /// The operations lane m4reg adds for the M4 demo pages: the reads the
+    /// onboarding, creator start, invitation and assignment pages call,
+    /// and the three D5 committee ballot commands (design section 2.2,
+    /// J0, J1, J2, J5 and J7).
+    const M4REG_OPS: [&str; 9] = [
+        "tenant.list_admins",
+        "me.get_verification",
+        "creator.list_programmes",
+        "creator.list_templates",
+        "people.get_invitation",
+        "review.assignments",
+        "committee.open_round",
+        "committee.cast",
+        "committee.delegate",
+    ];
+
+    fn anonymous() -> Session {
+        Session {
+            login: None,
+            step_up: StepUp::Absent,
+            channel: Via::Web,
+        }
+    }
+
+    /// I-84, design section 8.3: each m4reg operation is in `OPS` and in
+    /// the reference, so the matrix judges it on both sides. Red until the
+    /// registry holds them.
+    #[test]
+    fn i84_m4reg_demo_operations_are_in_ops_and_the_reference() {
+        let r = reference();
+        let unknown: Vec<&str> = M4REG_OPS
+            .iter()
+            .copied()
+            .filter(|n| r.op(n).is_none())
+            .collect();
+        assert!(unknown.is_empty(), "unknown to the reference: {unknown:?}");
+        let missing: Vec<&str> = M4REG_OPS
+            .iter()
+            .copied()
+            .filter(|n| !OPS.iter().any(|o| o.name == *n))
+            .collect();
+        assert!(missing.is_empty(), "OPS lacks: {missing:?}");
+        let m = matrix().unwrap_or_else(|e| panic!("{e}"));
+        for n in M4REG_OPS {
+            assert!(
+                !m.missing_from_ops().contains(&n) && !m.unknown_to_reference().contains(&n),
+                "{n} is on one side only"
+            );
+        }
+    }
+
+    /// SoD-07, design section 2.2 J0: the admin list of the Administrators
+    /// step opens to every tenant admin, the sole admin included, and to
+    /// nobody else. It has no tool.
+    #[test]
+    fn sod07_reference_list_admins_is_tenant_admin_only() {
+        use crate::reference::authz::OnboardStep;
+        let admins = StateProfile::Onboarding(OnboardStep::Administrators);
+        let list = |who, st, s| at("tenant.list_admins", who, st, SS, s);
+        assert_eq!(list(Who::SoleTenantAdmin, admins, PASS), Expected::Allow);
+        assert_eq!(list(Who::TenantAdmin, admins, PASS), Expected::Allow);
+        assert_eq!(
+            list(Who::Unbound, admins, PASS),
+            Expected::Deny(AuthClass::Visibility)
+        );
+        assert_eq!(
+            list(Who::Anonymous, admins, anonymous()),
+            Expected::Deny(AuthClass::Actor)
+        );
+        let active = StateProfile::ProgrammeActive;
+        assert_eq!(
+            list(Who::ProgrammeManager, active, PASS),
+            Expected::Deny(AuthClass::Visibility)
+        );
+        assert_eq!(
+            list(Who::TenantAdmin, active, mcp(true)),
+            Expected::Deny(AuthClass::NotExposed)
+        );
+        assert_eq!(
+            list(
+                Who::TenantAdmin,
+                active,
+                web(Login::MagicLink, StepUp::Absent)
+            ),
+            Expected::Deny(AuthClass::LoginStrength),
+            "I-77 covers a tenant admin"
+        );
+    }
+
+    /// I-86, design section 2.2 J0: any account reads its own verification
+    /// state through the web, and never through MCP, since no vault fact
+    /// reaches an agent. A caller with no account reads nothing.
+    #[test]
+    fn i86_reference_own_verification_state_is_web_only() {
+        use crate::reference::authz::OnboardStep;
+        let s = StateProfile::Onboarding(OnboardStep::Identity);
+        let get = |who, st, sess| at("me.get_verification", who, st, SS, sess);
+        assert_eq!(get(Who::SoleTenantAdmin, s, PASS), Expected::Allow);
+        assert_eq!(get(Who::Unbound, s, PASS), Expected::Allow);
+        assert_eq!(
+            get(Who::Anonymous, s, anonymous()),
+            Expected::Deny(AuthClass::Actor)
+        );
+        let draft = StateProfile::Proposal(StateTag::Draft);
+        assert_eq!(get(Who::Lead, draft, PASS), Expected::Allow);
+        assert_eq!(
+            get(Who::Lead, draft, mcp(true)),
+            Expected::Deny(AuthClass::NotExposed)
+        );
+    }
+
+    /// R-PG-02, `programme-creator.md` Starting points: the clone sources
+    /// and the template catalogue open to a tenant admin and to a
+    /// programme manager of any programme of the tenant. A Judging role,
+    /// an applicant and an ended manager are refused.
+    #[test]
+    fn r_pg_02_reference_creator_start_lists_need_a_manager_or_admin() {
+        let draft = StateProfile::ProgrammeDraft;
+        let s1 = S1;
+        for op in ["creator.list_programmes", "creator.list_templates"] {
+            for (who, st) in [
+                (Who::TenantAdmin, draft),
+                (Who::TenantAdminBuilder, draft),
+                (Who::SoleTenantAdmin, draft),
+                (Who::ProgrammeManager, draft),
+                (Who::OtherProgrammeManager, draft),
+                (Who::ProgrammeManagerDrafter, s1),
+            ] {
+                assert_eq!(at(op, who, st, SS, PASS), Expected::Allow, "{op} {who:?}");
+            }
+            for (who, st) in [
+                (Who::Unbound, draft),
+                (Who::EndedProgrammeManager, draft),
+                (Who::CallDrafter, s1),
+                (Who::Coordinator, s1),
+                (Who::CommitteeMember, s1),
+                (Who::Lead, s1),
+                (Who::Auditor, s1),
+            ] {
+                assert_eq!(
+                    at(op, who, st, SS, PASS),
+                    Expected::Deny(AuthClass::Visibility),
+                    "{op} {who:?}"
+                );
+            }
+            assert_eq!(
+                at(op, Who::Anonymous, draft, SS, anonymous()),
+                Expected::Deny(AuthClass::Actor)
+            );
+            assert_eq!(
+                at(op, Who::ProgrammeManager, draft, SS, mcp(true)),
+                Expected::Deny(AuthClass::NotExposed),
+                "{op} has no tool"
+            );
+        }
+    }
+
+    /// SoD-09, design section 2.2 J2: the invitation landing admits the
+    /// holder of the link before any account exists, so a caller with no
+    /// credential reads it. It is no MCP tool, and I-77 still refuses a
+    /// weak session of an account it covers.
+    #[test]
+    fn sod09_reference_invitation_landing_admits_the_token_holder() {
+        let draft = StateProfile::ProgrammeDraft;
+        let get = |who, st, sess| at("people.get_invitation", who, st, SS, sess);
+        assert_eq!(get(Who::Anonymous, draft, anonymous()), Expected::Allow);
+        assert_eq!(get(Who::Unbound, draft, PASS), Expected::Allow);
+        assert_eq!(
+            get(Who::Unbound, draft, web(Login::MagicLink, StepUp::Absent)),
+            Expected::Allow,
+            "an account with no binding may use a magic link"
+        );
+        assert_eq!(
+            get(Who::ProgrammeManager, draft, mcp(true)),
+            Expected::Deny(AuthClass::NotExposed)
+        );
+        assert_eq!(
+            get(
+                Who::CommitteeMember,
+                S1,
+                web(Login::MagicLink, StepUp::Absent)
+            ),
+            Expected::Deny(AuthClass::LoginStrength)
+        );
+    }
+
+    /// R-AC-01, I-21, R-EV-01, design section 2.2 J5: one proposal's
+    /// assignment view opens to the coordinator of its programme from
+    /// SUBMITTED on, outside INELIGIBLE, declared or not. No applicant,
+    /// reviewer or other staff role reads it, and it is no MCP tool.
+    #[test]
+    fn r_ac_01_reference_assignment_view_is_the_coordinators() {
+        let view = |who, st, sess| at("review.assignments", who, st, SS, sess);
+        let submitted = StateProfile::Proposal(StateTag::Submitted);
+        for st in [submitted, S1, StateProfile::Proposal(StateTag::Negotiation)] {
+            assert_eq!(view(Who::Coordinator, st, PASS), Expected::Allow, "{st:?}");
+            assert_eq!(
+                view(Who::CoordinatorUndeclared, st, PASS),
+                Expected::Allow,
+                "{st:?}"
+            );
+        }
+        for s in [StateTag::Draft, StateTag::Ineligible] {
+            let st = StateProfile::Proposal(s);
+            assert_eq!(
+                view(Who::CoordinatorUndeclared, st, PASS),
+                Expected::Deny(AuthClass::Visibility),
+                "{s:?}"
+            );
+        }
+        for who in [
+            Who::Lead,
+            Who::TeamMember,
+            Who::AssignedReviewer,
+            Who::CommitteeChair,
+            Who::ProgrammeManager,
+            Who::TenantAdmin,
+        ] {
+            assert_eq!(
+                view(who, S1, PASS),
+                Expected::Deny(AuthClass::Visibility),
+                "{who:?}"
+            );
+        }
+        assert_eq!(
+            view(Who::Coordinator, S1, mcp(true)),
+            Expected::Deny(AuthClass::NotExposed)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1660,6 +1890,125 @@ mod read_rules_over_built_states {
             Err(DenyRule::Rac01),
             "a manager of P1 is no manager of another programme"
         );
+    }
+
+    /// The read named `name`, as its `Debug` spells it. Lane m4reg adds
+    /// these kinds, so the tests find them by name and fail, rather than
+    /// fail to compile, while they are missing.
+    fn m4reg_kind(name: &str) -> ReadKind {
+        ReadKind::ALL
+            .iter()
+            .copied()
+            .find(|k| format!("{k:?}") == name)
+            .unwrap_or_else(|| panic!("ReadKind has no {name} yet (lane m4reg)"))
+    }
+
+    /// R-AC-01, R-EV-01, design section 2.2 J5: over a built state, one
+    /// proposal's assignment view (`review.assignments`) admits the FSTP
+    /// coordinator of its programme before any declaration, and refuses
+    /// the lead, a committee member and a caller with no account.
+    #[test]
+    fn r_ac_01_assignment_view_opens_to_the_coordinator_only() {
+        let kind = m4reg_kind("ListProposalAssignments");
+        let s = submitted();
+        let st = s.state();
+        let target = ReadTarget::Proposal(PR1);
+        let coordinator = web(COORDINATOR, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(kind, target, &coordinator, st), Ok(()));
+        let lead = web(L1, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(kind, target, &lead, st), Err(DenyRule::Rac01));
+        let reviewer = web(R1, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(kind, target, &reviewer, st), Err(DenyRule::Rac01));
+        let pm = web(STAFF_PM, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(kind, target, &pm, st), Err(DenyRule::Rac01));
+        assert_eq!(
+            read(kind, target, &Principal::anonymous(), st),
+            Err(DenyRule::Actor)
+        );
+    }
+
+    /// SoD-07, design section 2.2 J0: over a built state, the admin list
+    /// (`tenant.list_admins`) admits a tenant admin of the attested set
+    /// and refuses a programme manager and a caller with no account.
+    #[test]
+    fn sod07_admin_list_opens_to_tenant_admins_only() {
+        let kind = m4reg_kind("ListTenantAdmins");
+        let s = submitted();
+        let st = s.state();
+        let admin = web(ADMIN, LoginMethod::Passkey, &[ADMIN], st);
+        assert_eq!(read(kind, ReadTarget::None, &admin, st), Ok(()));
+        let pm = web(STAFF_PM, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(kind, ReadTarget::None, &pm, st), Err(DenyRule::Rac01));
+        assert_eq!(
+            read(kind, ReadTarget::None, &Principal::anonymous(), st),
+            Err(DenyRule::Actor)
+        );
+    }
+
+    /// I-86, design section 2.2 J0: over a built state, the caller's own
+    /// verification state (`me.get_verification`) admits any account and
+    /// refuses a caller with no account.
+    #[test]
+    fn i86_own_verification_state_opens_to_any_account() {
+        let kind = m4reg_kind("GetMyVerification");
+        let s = submitted();
+        let st = s.state();
+        for account in [L1, R1, ADMIN] {
+            let p = web(account, LoginMethod::Passkey, &[ADMIN], st);
+            assert_eq!(read(kind, ReadTarget::None, &p, st), Ok(()), "{account:?}");
+        }
+        assert_eq!(
+            read(kind, ReadTarget::None, &Principal::anonymous(), st),
+            Err(DenyRule::Actor)
+        );
+    }
+
+    /// R-PG-02, design section 2.2 J1: over a built state, the clone
+    /// sources (`creator.list_programmes`) and the template catalogue
+    /// (`creator.list_templates`) admit a programme manager and a tenant
+    /// admin, and refuse the coordinator, a committee member, an applicant
+    /// lead and a caller with no account.
+    #[test]
+    fn r_pg_02_creator_start_lists_open_to_managers_and_admins() {
+        let s = submitted();
+        let st = s.state();
+        for name in ["ListProgrammes", "ListTemplates"] {
+            let kind = m4reg_kind(name);
+            let pm = web(STAFF_PM, LoginMethod::Passkey, &[], st);
+            assert_eq!(read(kind, ReadTarget::None, &pm, st), Ok(()), "{name}");
+            let admin = web(ADMIN, LoginMethod::Passkey, &[ADMIN], st);
+            assert_eq!(read(kind, ReadTarget::None, &admin, st), Ok(()), "{name}");
+            for account in [COORDINATOR, R1, L1] {
+                let p = web(account, LoginMethod::Passkey, &[], st);
+                assert_eq!(
+                    read(kind, ReadTarget::None, &p, st),
+                    Err(DenyRule::Rac01),
+                    "{name} {account:?}"
+                );
+            }
+            assert_eq!(
+                read(kind, ReadTarget::None, &Principal::anonymous(), st),
+                Err(DenyRule::Actor),
+                "{name}"
+            );
+        }
+    }
+
+    /// SoD-09, design section 2.2 J2: over a built state, the invitation
+    /// landing (`people.get_invitation`) admits a caller with no account,
+    /// since the invitee reads it before enrolling, and any account. The
+    /// token check belongs to the read model, outside the rule.
+    #[test]
+    fn sod09_invitation_landing_admits_a_caller_with_no_account() {
+        let kind = m4reg_kind("GetInvitation");
+        let s = submitted();
+        let st = s.state();
+        assert_eq!(
+            read(kind, ReadTarget::None, &Principal::anonymous(), st),
+            Ok(())
+        );
+        let lead = web(L1, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(kind, ReadTarget::None, &lead, st), Ok(()));
     }
 
     /// I-84, I-85, R-MC-05, P-74: on every operation both sides know, the

@@ -4,9 +4,9 @@
 //! The crate holds [`Principal`], with private fields and checked
 //! constructors, the [`OPS`] registry with every [`ToolDef`] (the only
 //! tool table), the read rules and [`authorize_read`], scopes,
-//! classifications, the session rule [`session_admits`] and
-//! [`channel_policy`], the one pure function where the web and MCP
-//! channels differ.
+//! classifications, the reply shapes [`REPLIES`], the session rule
+//! [`session_admits`] and [`channel_policy`], the one pure function where
+//! the web and MCP channels differ.
 //!
 //! The crate holds no parser, so it has no fuzz project (design section
 //! 9). It names `fstp-import` for operation kinds only (rule A3), and no
@@ -27,6 +27,7 @@ mod channel;
 mod principal;
 mod reads;
 mod registry;
+mod replies;
 
 // I-84 compile-fail twins. Doc comments only, owned by the test author.
 #[cfg(doctest)]
@@ -46,6 +47,9 @@ pub use registry::{
     LATER, Method, Milestone, OPS, OpKind, OpSpec, PendingKind, PortKind, PublicKind,
     RoleOrApplicant, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER, Schema, Scope,
     SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
+};
+pub use replies::{
+    INVITED_ROLES, Member, REPLIES, STATE_NAMES, Shape, invitable, reply, role_wire_name,
 };
 
 #[cfg(test)]

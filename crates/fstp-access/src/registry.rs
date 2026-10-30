@@ -14,11 +14,23 @@
 //! tool is `fstp_prepare_call_publication` (Q32), and every tenant setting
 //! is high-risk (Q10).
 //!
-//! Gap for the lead: the committee operations `committee.open_round`,
-//! `committee.cast` and `committee.delegate` need the command kinds that
-//! change D5 adds to `CommandKind` (`OpenCutOffRound`, `CastBallot` and
-//! `DelegateVote`). Lane W1b adds them in parallel, so they are not in
-//! this table yet.
+//! Lane m4reg added the operations the M4 demo pages call that the
+//! journey tables leave out or that waited for change D5:
+//!
+//! - the committee ballots `committee.open_round`, `committee.cast` and
+//!   `committee.delegate`, with the names and routes of journey J7;
+//! - the reads `tenant.list_admins`, `me.get_verification`,
+//!   `creator.list_programmes`, `creator.list_templates`,
+//!   `people.get_invitation` and `review.assignments`.
+//!
+//! Interim, pending Daniel: the design names none of these six reads.
+//! Each takes the name its page calls, and its route sits beside the
+//! write of the same screen.
+//!
+//! SoD-09: the invitation landing, its acceptance and its verification
+//! address the invitation by the token of its link, `{invitation_token}`,
+//! never by its decimal id. The landing admits a caller with no account,
+//! so a guessable id would let anyone enumerate invitations.
 
 use fstp_domain::CommandKind;
 use fstp_domain::roles::Role;
@@ -679,6 +691,18 @@ pub const OPS: &[OpSpec] = &[
     )
     .hr()
     .acting(ADMIN),
+    // SoD-07: onboarding finishes only with two verified admins, so the
+    // Administrators step lists them.
+    OpSpec::read("tenant.list_admins", RK::ListTenantAdmins, "/admin/admins")
+        .acting(ADMIN)
+        .class(Personal),
+    // I-86: the caller's own verification state, never through MCP.
+    OpSpec::read(
+        "me.get_verification",
+        RK::GetMyVerification,
+        "/me/verification",
+    )
+    .class(Personal),
     OpSpec::new(
         "tenant.set_login_methods",
         OpKind::Tenant(TenantKind::SetSetting(TenantParam::P70)),
@@ -761,6 +785,16 @@ pub const OPS: &[OpSpec] = &[
     )
     .hr()
     .acting(ADMIN),
+    // R-PG-02: the clone sources and the template catalogue of the
+    // creator start page.
+    OpSpec::read(
+        "creator.list_programmes",
+        RK::ListProgrammes,
+        "/programmes",
+    )
+    .acting(MANAGER_OR_ADMIN),
+    OpSpec::read("creator.list_templates", RK::ListTemplates, "/templates")
+        .acting(MANAGER_OR_ADMIN),
     OpSpec::new(
         "creator.invite",
         OpKind::Creator(CreatorKind::Invite),
@@ -895,19 +929,26 @@ pub const OPS: &[OpSpec] = &[
         "/programmes/{programme}/imports/proposals/{import_proposal}/resolution",
     )
     .acting(MANAGER),
-    // J1 and J2: people and roles.
+    // J1 and J2: people and roles. SoD-09: the invitation landing, read
+    // before the invitee enrols. The link token is its only capability.
+    OpSpec::read(
+        "people.get_invitation",
+        RK::GetInvitation,
+        "/invitations/{invitation_token}",
+    )
+    .class(Personal),
     OpSpec::new(
         "people.accept_invitation",
         OpKind::M3Port(PortKind::AcceptInvitation),
         Post,
-        "/invitations/{invitation}/accept",
+        "/invitations/{invitation_token}/accept",
     )
     .class(Personal),
     OpSpec::new(
         "people.begin_verification",
         OpKind::M3Port(PortKind::BeginInvitationVerification),
         Post,
-        "/invitations/{invitation}/verification",
+        "/invitations/{invitation_token}/verification",
     )
     .class(Personal),
     OpSpec::read(
@@ -1280,6 +1321,13 @@ pub const OPS: &[OpSpec] = &[
         "/proposals/{proposal}/knock-out",
     )
     .acting(COORDINATOR),
+    // R-AC-01: one proposal's assignments, for the assignment screen.
+    OpSpec::read(
+        "review.assignments",
+        RK::ListProposalAssignments,
+        "/proposals/{proposal}/assignments",
+    )
+    .acting(COORDINATOR),
     OpSpec::command(
         "review.assign",
         CK::Assign,
@@ -1426,8 +1474,7 @@ pub const OPS: &[OpSpec] = &[
     )
     .binding()
     .acting(REVIEWER),
-    // J7: the committee. The round commands wait for change D5 (see the
-    // module comment).
+    // J7: the committee and the cut-off rounds of change D5.
     OpSpec::read("committee.ranking", RK::GetRankingView, "/calls/{call}/ranking")
         .acting(COMMITTEE)
         .tool(
@@ -1436,8 +1483,29 @@ pub const OPS: &[OpSpec] = &[
             &IN_CALL,
             Scope::RankingRead,
         ),
+    OpSpec::command(
+        "committee.open_round",
+        CK::OpenCutOffRound,
+        Post,
+        "/calls/{call}/cut-off-rounds",
+    )
+    .acting(COMMITTEE),
     OpSpec::read("committee.round", RK::GetCutOffRound, "/cut-off-rounds/{round}")
         .acting(COMMITTEE),
+    OpSpec::command(
+        "committee.cast",
+        CK::CastBallot,
+        Post,
+        "/cut-off-rounds/{round}/ballot",
+    )
+    .acting(COMMITTEE),
+    OpSpec::command(
+        "committee.delegate",
+        CK::DelegateVote,
+        Post,
+        "/cut-off-rounds/{round}/delegation",
+    )
+    .acting(COMMITTEE),
     OpSpec::command(
         "committee.record_cutoff",
         CK::RecordCutOff,
@@ -1593,11 +1661,10 @@ pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
     OpKind::Import(ImportKind::RecordProposals),
 ];
 
-/// Kinds only the engine composes from a creator decision. The domain
-/// change D2 adds `CommandKind::ActivateProgramme`, which belongs here.
-/// Until lane W1b lands it, no such kind exists, so the list is empty and
-/// no operation can reach an activation (I-66).
-pub const COMPOSED_ONLY: &[CommandKind] = &[];
+/// Kinds only the engine composes from a creator decision: the core
+/// `ActivateProgramme` of change D2. No operation has it as its kind, so
+/// only `creator.approve_activation` reaches an activation (I-66).
+pub const COMPOSED_ONLY: &[CommandKind] = &[CK::ActivateProgramme];
 
 /// Kinds whose operations arrive in a later milestone: the grant,
 /// contract, payment and amendment kinds of M5.

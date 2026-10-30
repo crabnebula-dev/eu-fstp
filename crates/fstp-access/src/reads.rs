@@ -32,17 +32,30 @@
 //! - Content reads in RANKED, DEFERRED and the terminal states admit the
 //!   applicant team only (Q39).
 //! - Through MCP, a content reader outside the team is refused unless P-75
-//!   is on (change D6). P-75 is untyped in the frozen values until D6
-//!   lands, so it counts as on only when its canonical value is `true`.
+//!   is on (change D6). It reads the typed frozen P-75 of the call, as the
+//!   domain's own MCP check does.
 //! - The proposal's call is the call of its latest Receiving binding,
 //!   since the domain has no public accessor for the current call yet.
+//!
+//! Interim readings of lane m4reg, for the reads the M4 demo pages call.
+//! The design names none of them, so each name follows its page:
+//!
+//! - `ListTenantAdmins` is a tenant admin read, as the settings are.
+//! - `GetMyVerification` is the caller's own object.
+//! - `ListProgrammes` and `ListTemplates` open to a tenant admin and to a
+//!   programme manager of any programme. A cell serves one tenant, so
+//!   every programme of the state is the tenant's.
+//! - `GetInvitation` admits anyone who holds the link, since the invitee
+//!   reads it before enrolling. Its read model must resolve the link's
+//!   token, never a guessable id (SoD-09).
+//! - `ListProposalAssignments` is the FSTP coordinator's, from SUBMITTED
+//!   on and outside INELIGIBLE (see `ASSIGNABLE` for the open seam).
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
 use fstp_domain::id::{AccountId, AssignmentId, CallId, ProgrammeId, ProposalId};
-use fstp_domain::policy::ReadAccess;
+use fstp_domain::policy::{AgentContentAccess, ReadAccess};
 use fstp_domain::roles::{BindingScope, Group, Role};
-use fstp_domain::rules::ParamId;
 use fstp_domain::time::Timestamp;
 use fstp_domain::{State, StateTag};
 use fstp_engine::EngineState;
@@ -94,11 +107,18 @@ pub enum ReadKind {
     ListApprovals,
     GetTenantSettings,
     GetOnboarding,
+    // Lane m4reg: the reads the M4 demo pages call (module documentation).
+    ListTenantAdmins,
+    GetMyVerification,
+    ListProgrammes,
+    ListTemplates,
+    GetInvitation,
+    ListProposalAssignments,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 38] = [
+    pub const ALL: [ReadKind; 44] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -137,6 +157,12 @@ impl ReadKind {
         ReadKind::ListApprovals,
         ReadKind::GetTenantSettings,
         ReadKind::GetOnboarding,
+        ReadKind::ListTenantAdmins,
+        ReadKind::GetMyVerification,
+        ReadKind::ListProgrammes,
+        ReadKind::ListTemplates,
+        ReadKind::GetInvitation,
+        ReadKind::ListProposalAssignments,
     ];
 }
 
@@ -167,6 +193,15 @@ pub enum ReadRule {
     FindingsReader,
     /// A holder of the role in the target's programme.
     Holder(Role),
+    /// A holder of the role in any programme of the tenant, through an
+    /// active programme binding outside the Receiving group. The creator
+    /// start lists need no target programme (R-PG-02).
+    HolderAnywhere(Role),
+    /// Anyone who holds an invitation link, with or without an account.
+    /// The invitee reads the landing before enrolling. The read model
+    /// serves only the invitation that the link's token names, so the
+    /// token is the capability (SoD-09).
+    InvitationLink,
     /// The IRC assignee of the target IRC assignment, declared free of
     /// conflict.
     IrcAssignee,
@@ -188,6 +223,37 @@ const COMMITTEE: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Holder(Role::CommitteeChair),
 ]);
 const DRAFT_READER: ReadRule = ReadRule::AnyOf(&[ReadRule::DraftManager, ReadRule::TenantAdmin]);
+/// The creator start lists: a tenant admin, or a programme manager of any
+/// programme of the tenant (R-PG-02, J1).
+const CREATOR_START: ReadRule = ReadRule::AnyOf(&[
+    ReadRule::HolderAnywhere(Role::ProgrammeManager),
+    ReadRule::TenantAdmin,
+]);
+/// The states where the coordinator reads one proposal's assignments:
+/// every state from SUBMITTED on, except INELIGIBLE. A draft is the
+/// team's alone (I-21).
+///
+/// Interim reading, pending the lead or Daniel: R-EV-01 gives a
+/// knocked-out proposal no further review, so INELIGIBLE is closed. The
+/// domain opens reviewer assignment in SUBMITTED, before the knock-out,
+/// and no `ReleaseCause` covers a failed knock-out. Such assignments
+/// therefore stay in INELIGIBLE, and this read does not show them.
+const ASSIGNABLE: &[StateTag] = &[
+    StateTag::Submitted,
+    StateTag::Stage1,
+    StateTag::NotSelected,
+    StateTag::Stage2,
+    StateTag::Ranked,
+    StateTag::IrcReview,
+    StateTag::Deferred,
+    StateTag::Declined,
+    StateTag::Negotiation,
+    StateTag::Withdrawn,
+    StateTag::Granted,
+    StateTag::InExecution,
+    StateTag::Completed,
+    StateTag::Terminated,
+];
 
 /// For each read, its rule and the proposal states where it is open (D11).
 pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
@@ -283,6 +349,24 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         OPEN_ALWAYS,
     ),
     (ReadKind::GetOnboarding, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    (
+        ReadKind::ListTenantAdmins,
+        ReadRule::TenantAdmin,
+        OPEN_ALWAYS,
+    ),
+    (ReadKind::GetMyVerification, ReadRule::Own, OPEN_ALWAYS),
+    (ReadKind::ListProgrammes, CREATOR_START, OPEN_ALWAYS),
+    (ReadKind::ListTemplates, CREATOR_START, OPEN_ALWAYS),
+    (
+        ReadKind::GetInvitation,
+        ReadRule::InvitationLink,
+        OPEN_ALWAYS,
+    ),
+    (
+        ReadKind::ListProposalAssignments,
+        ReadRule::Holder(Role::FstpCoordinator),
+        ASSIGNABLE,
+    ),
 ];
 
 /// The row of `READ_RULES` for `kind`.
@@ -495,7 +579,7 @@ pub fn authorize_read(
 
 fn admits_anyone(rule: ReadRule) -> bool {
     match rule {
-        ReadRule::Public => true,
+        ReadRule::Public | ReadRule::InvitationLink => true,
         ReadRule::AnyOf(rules) => rules.iter().any(|r| admits_anyone(*r)),
         _ => false,
     }
@@ -584,13 +668,15 @@ fn judge(
     let Some(account) = p.account() else {
         return match rule {
             ReadRule::Public => open(!ctx.unpublished),
+            ReadRule::InvitationLink => Ok(rule),
             ReadRule::AnyOf(rules) => any_of(rules, p, state, ctx, now),
             _ => deny(DenyRule::Actor),
         };
     };
     match rule {
         ReadRule::Public => open(!ctx.unpublished),
-        ReadRule::Own => Ok(rule),
+        ReadRule::Own | ReadRule::InvitationLink => Ok(rule),
+        ReadRule::HolderAnywhere(role) => open(holds_anywhere(state, account, role, now)),
         ReadRule::TenantAdmin => open(p.tenant_admin()),
         ReadRule::Team => match ctx.proposal {
             Some(x) => open(team(state, account, x, now)),
@@ -693,6 +779,18 @@ fn holds_in(
     })
 }
 
+/// Whether `account` holds an active programme binding of `role` in any
+/// programme at `now`, outside the Receiving group.
+fn holds_anywhere(state: &State, account: AccountId, role: Role, now: Timestamp) -> bool {
+    state.roster().bindings().any(|(_, b)| {
+        b.account == account
+            && b.role == role
+            && b.scope == BindingScope::Programme
+            && b.group() != Group::Receiving
+            && b.active_at(now)
+    })
+}
+
 /// The assignee check of the score sheet, the stage 2 thread, the
 /// findings and the IRC case. The target assignment must be the caller's
 /// and of `kind`. A conflict refuses with I-03 and a missing declaration
@@ -751,16 +849,15 @@ fn p10(state: &State, ctx: &Context<'_>) -> Option<ReadAccess> {
     call.frozen().map(|f| f.values().p10)
 }
 
-/// Whether P-75 is on for the call that governs the target. P-75 is
-/// untyped until change D6, so only the canonical value `true` turns it
-/// on. Every other value, and a missing one, keeps it off.
+/// Whether P-75 is on for the call that governs the target: its typed
+/// frozen value since change D6. An unpublished or unknown call keeps it
+/// off.
 fn p75_on(state: &State, ctx: &Context<'_>) -> bool {
     let Some(call) = ctx.call.and_then(|c| state.calls().get(c)) else {
         return false;
     };
     call.frozen()
-        .and_then(|f| f.values().opaque.get(&ParamId::P75))
-        .is_some_and(|v| v.as_str() == "true")
+        .is_some_and(|f| f.values().p75 == AgentContentAccess::On)
 }
 
 /// Full content of the proposal for a reader outside the team (R-AC-01,
