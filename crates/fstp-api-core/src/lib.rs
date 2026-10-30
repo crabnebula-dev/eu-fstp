@@ -29,15 +29,19 @@
 )]
 
 mod action;
+mod content;
 pub mod decode;
 mod dispatch;
 mod forms;
 pub mod ids;
+mod journal;
 pub mod meta;
 pub mod model;
+mod pageforms;
 pub mod pending;
 pub mod port;
 pub mod rate;
+pub mod views;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -277,42 +281,69 @@ impl OpResult {
     }
 }
 
-/// The response body of a call:
+/// How long the browser may take for a step-up assertion, in
+/// milliseconds, as the request options state it. P-71 bounds the proof
+/// itself (interim, pending Daniel).
+const STEP_UP_TIMEOUT_MS: u32 = 120_000;
+
+/// The wire id of a step-up challenge: the first 16 bytes of the SHA-256
+/// of its bytes. The M3 route that takes the assertion names the
+/// challenge by this id (`POST /auth/stepup {challenge_id}`), so the
+/// challenge bytes never travel as a key (interim, pending Daniel and the
+/// M3 step-up port).
+pub fn step_up_challenge_id(challenge: &[u8]) -> [u8; 16] {
+    let h = fstp_crypto::sha256(challenge);
+    let mut id = [0u8; 16];
+    for (slot, b) in id.iter_mut().zip(h.iter()) {
+        *slot = *b;
+    }
+    id
+}
+
+/// The response body of a call, as `web/src/core/api.ts` reads it:
 ///
-/// - `{"status":"done","data":...,"seq":"..."}`;
-/// - `{"status":"awaiting_confirmation","id","confirm_path","expires"}`;
-/// - `{"status":"step_up_required","action":"<hex>","challenge":"<hex>"}`;
-/// - `{"status":"strong_method_required"}`.
+/// - `Done`: the read model itself;
+/// - `Pending`: `{"status":"awaiting_confirmation","confirm_path","expires"}`;
+/// - `StepUpRequired`: `{"code":"step_up_required","challenge":C}`, where
+///   `C` is `{"challenge_id","digest","public_key"}`: the challenge's wire
+///   id, the action digest it binds, and WebAuthn request options in their
+///   JSON form, with user verification required;
+/// - `StrongMethodRequired`: `{"code":"strong_method_required"}`.
 ///
-/// Ids, instants and the ledger head are decimal strings, digests and
-/// challenges lowercase hex (interim, pending Daniel).
+/// Ids, instants and amounts are decimal strings, digests and ids
+/// lowercase hex, and the challenge unpadded base64url (interim, pending
+/// Daniel). The ledger head of a command stays with the adapter.
 impl ToJson for OpResult {
     fn to_json(&self) -> Value {
         let mut o = Object::new();
         match self {
-            OpResult::Done { body, seq } => {
-                let _ = o.insert("status", Value::from("done"));
-                let _ = o.insert("data", body.to_json());
-                let _ = o.insert(
-                    "seq",
-                    seq.map_or(Value::Null, |s| Value::String(s.raw().to_string())),
-                );
-            }
+            OpResult::Done { body, .. } => return body.to_json(),
             OpResult::Pending(r) => {
                 let _ = o.insert("status", Value::from("awaiting_confirmation"));
-                if let Value::Object(r) = r.to_json() {
-                    for (k, v) in r.into_members() {
-                        let _ = o.insert(k, v);
-                    }
-                }
+                let _ = o.insert("confirm_path", Value::from(r.confirm_path.as_str()));
+                let _ = o.insert("expires", Value::String(r.expires.micros().to_string()));
             }
             OpResult::StepUpRequired(ch) => {
-                let _ = o.insert("status", Value::from("step_up_required"));
-                let _ = o.insert("action", Value::String(ch.action.hex()));
-                let _ = o.insert("challenge", Value::String(action::hex(&ch.challenge)));
+                let mut options = Object::new();
+                let _ = options.insert("challenge", Value::String(action::b64url(&ch.challenge)));
+                let _ = options.insert("userVerification", Value::from("required"));
+                let _ = options.insert(
+                    "timeout",
+                    fstp_json::Number::from_lexeme(&STEP_UP_TIMEOUT_MS.to_string())
+                        .map_or(Value::Null, Value::from),
+                );
+                let mut c = Object::new();
+                let _ = c.insert(
+                    "challenge_id",
+                    Value::String(action::hex(&step_up_challenge_id(&ch.challenge))),
+                );
+                let _ = c.insert("digest", Value::String(ch.action.hex()));
+                let _ = c.insert("public_key", Value::Object(options));
+                let _ = o.insert("code", Value::from("step_up_required"));
+                let _ = o.insert("challenge", Value::Object(c));
             }
             OpResult::StrongMethodRequired => {
-                let _ = o.insert("status", Value::from("strong_method_required"));
+                let _ = o.insert("code", Value::from("strong_method_required"));
             }
         }
         Value::Object(o)
@@ -364,5 +395,72 @@ impl ApiCore {
         op: Op,
     ) -> Result<OpResult, ApiError> {
         self.inner.dispatch(cred, head, op).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    /// I-78, ADR-014 "Step-up": a step-up answer is the code and a
+    /// challenge of exactly `challenge_id`, `digest` and `public_key`, whose
+    /// id is the first 16 bytes of the SHA-256 of the challenge, as
+    /// `web/src/core/api.ts` reads it.
+    #[test]
+    fn i78_step_up_answer_names_its_challenge_and_digest() {
+        let ch = port::StepUpChallenge {
+            action: ActionDigest([7; 32]),
+            challenge: b"challenge".to_vec(),
+        };
+        let v = OpResult::StepUpRequired(ch).to_json();
+        let o = v.as_object().unwrap();
+        assert_eq!(
+            o.get("code").and_then(Value::as_str),
+            Some("step_up_required")
+        );
+        let c = o.get("challenge").and_then(Value::as_object).unwrap();
+        let keys: Vec<&str> = c.keys().collect();
+        assert_eq!(keys, ["challenge_id", "digest", "public_key"]);
+        let id = action::hex(&step_up_challenge_id(b"challenge"));
+        assert_eq!(
+            c.get("challenge_id").and_then(Value::as_str),
+            Some(id.as_str())
+        );
+        assert_eq!(id.len(), 32);
+        assert_eq!(
+            c.get("digest").and_then(Value::as_str),
+            Some(ActionDigest([7; 32]).hex().as_str())
+        );
+        let pk = c.get("public_key").and_then(Value::as_object).unwrap();
+        assert_eq!(
+            pk.get("challenge").and_then(Value::as_str),
+            Some("Y2hhbGxlbmdl")
+        );
+        assert_eq!(
+            pk.get("userVerification").and_then(Value::as_str),
+            Some("required")
+        );
+    }
+
+    /// I-85, design section 3.7: a completed call answers with its read
+    /// model itself, and a pending one with exactly its status, path and
+    /// expiry.
+    #[test]
+    fn i85_done_and_pending_answers() {
+        let done = OpResult::Done {
+            body: ReadModel::Accepted,
+            seq: None,
+        };
+        assert_eq!(done.to_json().to_compact(), r#"{"accepted":true}"#);
+        let pending = OpResult::Pending(PendingReceipt {
+            id: port::PendingId::from_raw(5),
+            confirm_path: "/app/pending/5".to_owned(),
+            expires: fstp_domain::time::Timestamp::from_micros(9),
+        });
+        let v = pending.to_json();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["status", "confirm_path", "expires"]);
     }
 }

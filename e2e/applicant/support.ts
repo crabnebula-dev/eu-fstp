@@ -696,6 +696,12 @@ export interface ControlFacts {
 }
 
 const DOB_WORDS = /\b(date of birth|birth ?date|birthday|dob|born|age)\b/i;
+/**
+ * The ids of a plan milestone's start and due day controls, as
+ * `web/src/applicant/planform.ts` names them under the prefixes `plan`
+ * and `stage2-plan`: `<prefix>-t<task>-m<milestone>-{start,due}`.
+ */
+const MILESTONE_DAY_ID = /^(plan|stage2-plan)-t\d+-m\d+-(start|due)$/;
 const IDENTITY_WORDS = /\b(passport|identity (card|document|number)|id (card|document|number)|national id|social security|tax id)\b/i;
 const PAYMENT_WORDS = /\b(iban|bic|swift|bank|card number|cvv|cvc|payment|account number|sort code|routing number)\b/i;
 
@@ -711,7 +717,15 @@ export function forbiddenField(c: ControlFacts): string | null {
   const words = `${c.id} ${c.name} ${c.label}`.replace(/[-_]/g, ' ');
   const ac = c.autocomplete.toLowerCase().split(/\s+/);
   if (c.tag === 'input' && c.type === 'file') return 'attachment (Q24)';
-  if (ac.some((t) => t.startsWith('bday')) || (c.tag === 'input' && c.type === 'date') || DOB_WORDS.test(words)) {
+  // The plan editor's milestone start and due days are date controls,
+  // which RecordPlanVersion needs. Every other date control counts as a
+  // date of birth, and DOB words flag even a plan editor control.
+  const milestoneDay = c.tag === 'input' && c.type === 'date' && MILESTONE_DAY_ID.test(c.id);
+  if (
+    ac.some((t) => t.startsWith('bday')) ||
+    (c.tag === 'input' && c.type === 'date' && !milestoneDay) ||
+    DOB_WORDS.test(words)
+  ) {
     return 'date of birth';
   }
   if (ac.some((t) => t.startsWith('cc-') || t.startsWith('transaction-')) || PAYMENT_WORDS.test(words)) {

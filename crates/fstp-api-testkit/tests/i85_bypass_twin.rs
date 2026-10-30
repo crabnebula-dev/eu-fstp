@@ -16,8 +16,8 @@
 use fstp_api_core::ActionDigest;
 use fstp_api_core::port::{AsyncEngine, ExecError, ExecMeta, OpName};
 use fstp_api_testkit::fake::fixture::{
-    ADMIN, AGENT, CALL_PUBLISH, OTHER, OWNER, P1, START, World, ctx, new_member, pending_world,
-    publish_command,
+    ADMIN, ADMIN_2, AGENT, CALL_PUBLISH, OTHER, OWNER, P1, START, World, ctx, new_member,
+    pending_world, publish_command,
 };
 use fstp_api_testkit::fake::{FakeEngine, FakeVault};
 use fstp_domain::command::{CommandKind, Via};
@@ -96,6 +96,13 @@ fn sample(kind: CommandKind) -> Option<Sample> {
             actor: OWNER,
             cmd: publish_command(CALL_PUBLISH),
             legal_on_web: true,
+        },
+        // M4 change D2: the second tenant admin's activation. P1 is active
+        // already, so its web twin is refused by another guard.
+        CommandKind::ActivateProgramme => Sample {
+            actor: ADMIN_2,
+            cmd: fstp_domain_testkit::activation::activate_command(P1),
+            legal_on_web: false,
         },
         _ => return None,
     };

@@ -127,6 +127,7 @@ dependencies = [
  "fstp-access",
  "fstp-api-core",
  "fstp-creator",
+ "fstp-crypto",
  "fstp-domain",
  "fstp-domain-testkit",
  "fstp-engine",
@@ -148,6 +149,7 @@ dependencies = [
  "fstp-tenant",
  "fstp-web",
  "fstp-web-assets",
+ "fstp-webauthn",
 ]
 
 [[package]]

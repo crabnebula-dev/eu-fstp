@@ -24,9 +24,9 @@ const WEB = join(__dirname, '..', '..', 'web');
 
 /** The operations these tests reach, as the generated table would list them. */
 const OPS: readonly (readonly [string, string, string])[] = [
-  ['tenant.get_settings', 'GET', '/api/v1/admin/settings'],
-  ['tenant.set_login_methods', 'PUT', '/api/v1/admin/settings/{param}'],
-  ['tenant.set_mcp', 'PUT', '/api/v1/admin/settings/{param}'],
+  ['tenant.settings', 'GET', '/api/v1/admin/settings'],
+  ['tenant.set_login_methods', 'PUT', '/api/v1/admin/settings/login-methods'],
+  ['tenant.set_mcp', 'PUT', '/api/v1/admin/settings/mcp'],
   ['tenant.get_step', 'GET', '/api/v1/admin/onboarding/{step}'],
   ['tenant.save_step', 'PUT', '/api/v1/admin/onboarding/{step}'],
   ['people.get_invitation', 'GET', '/api/v1/invitations/{invitation}'],

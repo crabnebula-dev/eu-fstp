@@ -43,6 +43,12 @@
  *   never ignored wholesale, since Chromium then disables WebAuthn.
  * - The control base is loopback HTTP of the test-only devstack. It is
  *   never part of a cell origin. Its routes are in [`Control`].
+ * - The M4 e2e cell (`fstp-e2e-cell`, M4 design section 1.2) serves plain
+ *   HTTP on loopback under `.localhost` instead. Chromium resolves those
+ *   names to loopback and treats them as secure contexts (RFC 6761), so
+ *   WebAuthn and the `__Host-` cookie still work. A manifest may then name
+ *   `http:` cell and vault origins and no SPKI pin, but only when every
+ *   cell and vault host ends in `.localhost`. Interim, pending Daniel.
  *
  * Without a manifest every stack spec fails at its first step, with a
  * message that names the missing piece. No spec is skipped.
@@ -96,10 +102,23 @@ function str(v: unknown, what: string): string {
   return v;
 }
 
-function bareOrigin(v: unknown, what: string, scheme: 'https:' | 'http:'): string {
+/** Whether `host` is a loopback name under `.localhost` (RFC 6761). */
+function isLocalhostName(host: string): boolean {
+  return host.endsWith('.localhost');
+}
+
+/**
+ * `v` as a bare origin of `scheme`. `cell` takes `https:`, or `http:` for
+ * a host under `.localhost` (the e2e cell).
+ */
+function bareOrigin(v: unknown, what: string, scheme: 'https:' | 'http:' | 'cell'): string {
   const s = str(v, what);
   const u = new URL(s);
-  if (u.protocol !== scheme || u.origin !== s) {
+  const schemeOk =
+    scheme === 'cell'
+      ? u.protocol === 'https:' || (u.protocol === 'http:' && isLocalhostName(u.hostname))
+      : u.protocol === scheme;
+  if (!schemeOk || u.origin !== s) {
     throw new StackMissing(`stack manifest: ${what} must be a bare ${scheme}// origin`);
   }
   return s;
@@ -110,8 +129,11 @@ function cellOf(v: unknown, name: string): CellEndpoints {
     throw new StackMissing(`stack manifest: cells.${name} is missing`);
   }
   const o = v as Record<string, unknown>;
-  const origin = bareOrigin(o['origin'], `cells.${name}.origin`, 'https:');
-  const vault = bareOrigin(o['vault_origin'], `cells.${name}.vault_origin`, 'https:');
+  const origin = bareOrigin(o['origin'], `cells.${name}.origin`, 'cell');
+  const vault = bareOrigin(o['vault_origin'], `cells.${name}.vault_origin`, 'cell');
+  if (new URL(origin).protocol !== new URL(vault).protocol) {
+    throw new StackMissing(`stack manifest: cells.${name} mixes http: and https: origins`);
+  }
   const control = bareOrigin(o['control'], `cells.${name}.control`, 'http:');
   const cu = new URL(origin);
   const vu = new URL(vault);
@@ -141,13 +163,23 @@ function readManifest(path: string): StackManifest {
     throw new StackMissing('stack manifest: cells is missing');
   }
   const c = cells as Record<string, unknown>;
+  const a = cellOf(c['a'], 'a');
+  const b = cellOf(c['b'], 'b');
+  const plain = [a, b].every((x) => new URL(x.origin).protocol === 'http:');
+  const mixed = !plain && [a, b].some((x) => new URL(x.origin).protocol === 'http:');
+  if (mixed) {
+    throw new StackMissing('stack manifest: the cells mix http: and https: origins');
+  }
   const pins = m['spki_pins'];
-  if (!Array.isArray(pins) || pins.length === 0) {
+  if (!Array.isArray(pins) || (pins.length === 0 && !plain)) {
     throw new StackMissing('stack manifest: spki_pins must list the served leaf SPKIs');
+  }
+  if (plain && pins.length !== 0) {
+    throw new StackMissing('stack manifest: a plain loopback stack names no SPKI pin');
   }
   return {
     version: 1,
-    cells: { a: cellOf(c['a'], 'a'), b: cellOf(c['b'], 'b') },
+    cells: { a, b },
     resolver_rules: str(m['resolver_rules'], 'resolver_rules'),
     spki_pins: pins.map((p, i) => str(p, `spki_pins[${i}]`)),
   };
@@ -185,10 +217,11 @@ function launchArgs(): string[] {
   if (MANIFEST instanceof StackMissing) {
     return [];
   }
-  return [
-    `--host-resolver-rules=${MANIFEST.resolver_rules}`,
-    `--ignore-certificate-errors-spki-list=${MANIFEST.spki_pins.join(',')}`,
-  ];
+  const args = [`--host-resolver-rules=${MANIFEST.resolver_rules}`];
+  if (MANIFEST.spki_pins.length > 0) {
+    args.push(`--ignore-certificate-errors-spki-list=${MANIFEST.spki_pins.join(',')}`);
+  }
+  return args;
 }
 
 // ---------------------------------------------------------------------------

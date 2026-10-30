@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use fstp_api_core::decode::{Method as ApiMethod, decode_route};
 use fstp_api_core::{ApiCore, ApiError, Credential, RequestHead};
-use fstp_json::ToJson;
 use fstp_http::{Headers, Method, Request, Response, StatusCode};
+use fstp_json::ToJson;
 
 use crate::Origin;
 use crate::origin::parse_origin_header;
@@ -160,7 +160,11 @@ async fn call_core(core: &ApiCore, cred: Credential, req: Request) -> Response {
     match core.dispatch(cred, &RequestHead::new(), op).await {
         Ok(r) => {
             let status = StatusCode::from_u16(r.http_status()).unwrap_or(StatusCode::OK);
-            Response::with_body(status, "application/json", r.to_json().to_compact().into_bytes())
+            Response::with_body(
+                status,
+                "application/json",
+                r.to_json().to_compact().into_bytes(),
+            )
         }
         Err(e) => api_error(e),
     }
@@ -169,9 +173,12 @@ async fn call_core(core: &ApiCore, cred: Credential, req: Request) -> Response {
 /// The response for an [`ApiError`]. It carries a stable code only and
 /// never names an account or an operation (R-CF-03).
 pub(crate) fn api_error(e: ApiError) -> Response {
-    let status =
-        StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    Response::with_body(status, "application/json", e.to_json().to_compact().into_bytes())
+    let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    Response::with_body(
+        status,
+        "application/json",
+        e.to_json().to_compact().into_bytes(),
+    )
 }
 
 #[cfg(test)]

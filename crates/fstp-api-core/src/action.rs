@@ -28,6 +28,27 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     s
 }
 
+/// Unpadded base64url text of `bytes` (RFC 4648 section 5), as WebAuthn
+/// JSON options spell binary members.
+pub(crate) fn b64url(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let sym = |i: usize| A.get(i & 63).map_or('A', |c| char::from(*c));
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for chunk in bytes.chunks(3) {
+        let at = |i: usize| chunk.get(i).map_or(0usize, |b| usize::from(*b));
+        let n = at(0).wrapping_shl(16) | at(1).wrapping_shl(8) | at(2);
+        out.push(sym(n.wrapping_shr(18)));
+        out.push(sym(n.wrapping_shr(12)));
+        if chunk.len() > 1 {
+            out.push(sym(n.wrapping_shr(6)));
+        }
+        if chunk.len() > 2 {
+            out.push(sym(n));
+        }
+    }
+    out
+}
+
 /// The value of one lowercase hexadecimal digit.
 fn nibble(c: u8) -> Option<u8> {
     match c {
@@ -84,6 +105,17 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    /// I-78, ADR-014 "Step-up": the challenge travels as unpadded base64url
+    /// in the WebAuthn options (RFC 4648 section 5 vectors).
+    #[test]
+    fn i78_challenge_base64url_vectors() {
+        assert_eq!(b64url(b""), "");
+        assert_eq!(b64url(b"f"), "Zg");
+        assert_eq!(b64url(b"foob"), "Zm9vYg");
+        assert_eq!(b64url(b"foobar"), "Zm9vYmFy");
+        assert_eq!(b64url(&[0xfb, 0xff]), "-_8");
+    }
 
     /// I-85: the hexadecimal form round-trips and refuses uppercase and
     /// the wrong length.

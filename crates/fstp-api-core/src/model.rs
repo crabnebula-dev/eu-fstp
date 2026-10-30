@@ -26,6 +26,9 @@ use crate::port::{LoginMethod, SessionId, SessionInfo};
 pub enum ReadModel {
     /// A command completed. It returns no read model.
     Accepted,
+    /// A command completed and drew new ids, each named by the command
+    /// member it fills, such as `proposal` for `CreateDraft`.
+    Created(Vec<(&'static str, u128)>),
     /// `pending.list`: the caller's own pending actions (I-85).
     PendingActions(Vec<PendingView>),
     /// `calls.list_open`: the calls open at the instant of the read.
@@ -40,6 +43,38 @@ pub enum ReadModel {
     Sessions(Vec<SessionSummary>),
     /// `me.begin_verification`: where the browser goes to verify.
     Redirect(String),
+    /// `intake.queue`: the P-09 criteria and the submitted proposals.
+    IntakeQueue(crate::views::IntakeQueue),
+    /// `call.board`: the call's proposals in review.
+    Board(Vec<crate::views::ProposalRow>),
+    /// `review.declaration_view`: title and neutral summary only (Q9).
+    DeclarationView(crate::views::DeclarationView),
+    /// `review.read_content` and `irc.case`: the submitted proposal.
+    Content(crate::views::ContentView),
+    /// `review.score_sheet`: what the reviewer scores now.
+    ScoreSheet(crate::views::ScoreSheet),
+    /// `review.stage2_thread`: the stage 2 questions and answers.
+    Stage2Thread(crate::views::Stage2Thread),
+    /// `committee.ranking`: the ranked proposals of the call.
+    Ranking(Vec<crate::views::RankingRow>),
+    /// `review.notifiable_conflicts`: one draft per notifiable conflict.
+    Notifiable(Vec<ProposalId>),
+    /// `proposal.get_workspace`: the team's private draft (I-21).
+    Workspace(crate::views::WorkspaceView),
+    /// `proposal.record_plan`: the plan was recorded, with its total as
+    /// the cell computed it (ADR-006). The browser never computes money.
+    PlanSaved(String),
+    /// `proposal.view`: one of the caller's own proposals.
+    OwnProposal(ProposalSummary),
+    /// `stage2.view`: the questions under their P-11 handles, by day (TH-08).
+    Stage2Questions(Vec<crate::views::Question>),
+    /// `me.notices`: the caller's notices.
+    Notices(Vec<crate::views::Notice>),
+    /// `negotiation.view`: whether the caller acknowledged the notice (R-NG-06).
+    Negotiation {
+        /// Whether the caller acknowledged the negotiation notice.
+        acknowledged: bool,
+    },
 }
 
 /// A decimal string.
@@ -63,6 +98,14 @@ impl ToJson for ReadModel {
                 let _ = o.insert("accepted", Value::Bool(true));
                 Value::Object(o)
             }
+            ReadModel::Created(ids) => {
+                let mut o = Object::new();
+                let _ = o.insert("accepted", Value::Bool(true));
+                for (name, id) in ids {
+                    let _ = o.insert(*name, dec(id));
+                }
+                Value::Object(o)
+            }
             ReadModel::PendingActions(v) => array(v),
             ReadModel::OpenCalls(v) => array(v),
             ReadModel::Call(c) => c.to_json(),
@@ -72,6 +115,41 @@ impl ToJson for ReadModel {
             ReadModel::Redirect(to) => {
                 let mut o = Object::new();
                 let _ = o.insert("redirect", Value::from(to.as_str()));
+                Value::Object(o)
+            }
+            ReadModel::IntakeQueue(q) => q.to_json(),
+            ReadModel::Board(rows) => array(rows),
+            ReadModel::DeclarationView(v) => v.to_json(),
+            ReadModel::Content(v) => v.to_json(),
+            ReadModel::ScoreSheet(v) => v.to_json(),
+            ReadModel::Stage2Thread(v) => v.to_json(),
+            ReadModel::Ranking(rows) => array(rows),
+            ReadModel::Notifiable(ps) => Value::Array(
+                ps.iter()
+                    .map(|p| {
+                        let mut o = Object::new();
+                        let _ = o.insert("proposal", dec(p.raw()));
+                        Value::Object(o)
+                    })
+                    .collect(),
+            ),
+            ReadModel::Workspace(w) => w.to_json(),
+            ReadModel::OwnProposal(p) => p.to_json(),
+            ReadModel::PlanSaved(total) => {
+                let mut o = Object::new();
+                let _ = o.insert("accepted", Value::Bool(true));
+                let _ = o.insert("total", Value::from(total.as_str()));
+                Value::Object(o)
+            }
+            ReadModel::Stage2Questions(qs) => {
+                let mut o = Object::new();
+                let _ = o.insert("questions", array(qs));
+                Value::Object(o)
+            }
+            ReadModel::Notices(ns) => array(ns),
+            ReadModel::Negotiation { acknowledged } => {
+                let mut o = Object::new();
+                let _ = o.insert("acknowledged", Value::Bool(*acknowledged));
                 Value::Object(o)
             }
         }
@@ -110,6 +188,12 @@ pub struct CallSummary {
     pub currency: &'static str,
     /// Whether the call is open at the instant of the read.
     pub open: bool,
+    /// The call's title: its published text (R-PB-01), when read.
+    pub title: Option<String>,
+    /// P-04, the grant range, as ADR-006 strings, once published.
+    pub grant_range: Option<(String, String)>,
+    /// P-05, the cap per recipient, as an ADR-006 string, when known.
+    pub recipient_max: Option<String>,
 }
 
 impl CallSummary {
@@ -126,6 +210,14 @@ impl CallSummary {
             budget: budget.to_string(),
             currency: budget.currency().code(),
             open: v.is_open_at(now),
+            title: None,
+            grant_range: v.frozen().map(|f| {
+                (
+                    f.values().p04.min().amount().to_string(),
+                    f.values().p04.max().amount().to_string(),
+                )
+            }),
+            recipient_max: None,
         }
     }
 }
@@ -142,6 +234,16 @@ impl ToJson for CallSummary {
         let _ = o.insert("budget", Value::from(self.budget.as_str()));
         let _ = o.insert("currency", Value::from(self.currency));
         let _ = o.insert("open", Value::Bool(self.open));
+        if let Some(t) = &self.title {
+            let _ = o.insert("title", Value::from(t.as_str()));
+        }
+        if let Some((min, max)) = &self.grant_range {
+            let _ = o.insert("grant_min", Value::from(min.as_str()));
+            let _ = o.insert("grant_max", Value::from(max.as_str()));
+        }
+        if let Some(r) = &self.recipient_max {
+            let _ = o.insert("recipient_max", Value::from(r.as_str()));
+        }
         Value::Object(o)
     }
 }
@@ -160,6 +262,8 @@ pub struct ProposalSummary {
     pub state: String,
     /// The caller's role on it: `lead`, `member` or `guardian`.
     pub role: &'static str,
+    /// Its title: the submitted one, else the team's draft title.
+    pub title: Option<String>,
 }
 
 impl ToJson for ProposalSummary {
@@ -169,6 +273,9 @@ impl ToJson for ProposalSummary {
         let _ = o.insert("call", dec(self.call.raw()));
         let _ = o.insert("state", Value::from(self.state.as_str()));
         let _ = o.insert("role", Value::from(self.role));
+        if let Some(t) = &self.title {
+            let _ = o.insert("title", Value::from(t.as_str()));
+        }
         Value::Object(o)
     }
 }

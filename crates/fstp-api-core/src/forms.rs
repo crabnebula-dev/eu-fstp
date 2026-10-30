@@ -122,6 +122,16 @@ pub(crate) enum Derive {
     EndAt,
     /// `handle` is drawn under P-11 anonymous and `null` under named.
     Handle,
+    /// A plan from the page form (`pageforms.rs`): the content digest of
+    /// its description, the origin, the currency of the proposal's
+    /// programme and drawn milestone ids. The superseded plan is the one
+    /// [`name_plans`] named before the digest. A codec form passes
+    /// unchanged.
+    PlanForm,
+    /// A submission names the plan that [`name_plans`] put in the request
+    /// before the digest. Without one it is refused, and nothing is
+    /// derived here, so a confirmation never picks a later plan (I-85).
+    LatestPlan,
 }
 
 /// The form of one command kind.
@@ -234,17 +244,26 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
             drawn: &["binding"],
             ..form(kind)
         },
+        // The page form sends `description` and `tasks` (`pageforms.rs`);
+        // the codec form, as a tool sends it, `origin`, `content` and
+        // `currency` beside them.
         K::RecordPlanVersion => CmdForm {
             params: PROPOSAL,
-            required: &["origin", "tasks", "content", "currency"],
-            optional: &["supersedes"],
+            required: &["tasks"],
+            optional: &["origin", "content", "currency", "supersedes", "description"],
             drawn: &["plan"],
+            texts: &["description"],
+            derive: Derive::PlanForm,
             ..form(kind)
         },
+        // Without a `plan`, the submission names the proposal's latest
+        // recorded plan (the page form, `pageforms.rs`).
         K::Submit => CmdForm {
             params: PROPOSAL,
-            required: &["plan", "ethics", "notice"],
+            required: &["ethics", "notice"],
+            optional: &["plan"],
             texts: &["ethics.text"],
+            derive: Derive::LatestPlan,
             ..form(kind)
         },
         K::AnswerQuestions => CmdForm {
@@ -338,6 +357,9 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
         K::RecordIrcReview => CmdForm {
             params: &[("irc_assignment", Some("assignment"))],
             required: &["verdict"],
+            // A concern's text is sent to the applicant (R-IR-02), so
+            // the server stores it like every other free text.
+            texts: &["verdict.concern"],
             ..form(kind)
         },
         K::DeclareConflict => CmdForm {
@@ -405,6 +427,13 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::Pending(PendingKind::Confirm) => BodyRule::Exactly(&["shown"]),
         OpKind::Pending(PendingKind::Discard) | OpKind::Agent(AgentKind::Revoke) => BodyRule::Empty,
         OpKind::M3Port(PortKind::ApproveBreakGlass) => BodyRule::Exactly(&["approve"]),
+        OpKind::M3Port(PortKind::SaveWorkspace) => {
+            BodyRule::Exactly(&["narrative", "summary", "title"])
+        }
+        OpKind::M3Port(PortKind::StateCountry) => BodyRule::Exactly(&["country"]),
+        OpKind::M3Port(PortKind::AcknowledgeNegotiationNotice) => {
+            BodyRule::Exactly(&["notice_version"])
+        }
         OpKind::M3Port(
             PortKind::ApproveRecovery | PortKind::EndSession | PortKind::BeginVerification,
         ) => BodyRule::Empty,
@@ -498,6 +527,7 @@ fn check_command(f: &CmdForm, request: &Object, members: Vec<&str>) -> Result<()
         match at(request, path) {
             Some(Value::String(s)) if s.len() <= TEXT_LIMIT => {}
             Some(Value::Null) | None if is_optional(f, path) => {}
+            None if in_other_variant(request, path) => {}
             _ => return Err(bad()),
         }
     }
@@ -516,12 +546,26 @@ fn check_command(f: &CmdForm, request: &Object, members: Vec<&str>) -> Result<()
         inference: None,
         second_admin: None,
         trial: true,
+        plan_unknown: false,
     };
     let refs = texts(f, request)
         .into_iter()
         .map(|(p, s)| (p, text_ref(1, s)))
         .collect();
     build(f, request, &refs, &cx, &mut || Ok(1)).map(|_| ())
+}
+
+/// Whether the text at `path` is absent because its parent is a tagged
+/// value of another variant, such as the `Validate` verdict of an IRC
+/// review, which has no `concern`. The trial build then judges the
+/// variant through the command codec.
+fn in_other_variant(request: &Object, path: &str) -> bool {
+    let Some((parent, _)) = path.rsplit_once('.') else {
+        return false;
+    };
+    at(request, parent)
+        .and_then(Value::as_object)
+        .is_some_and(|o| o.get("type").and_then(Value::as_str).is_some())
 }
 
 /// Whether the text at `path` may be absent or `null`.
@@ -565,6 +609,61 @@ pub(crate) struct BuildCtx<'a> {
     /// supply get placeholder values, so only the request's shape is
     /// judged.
     pub(crate) trial: bool,
+    /// Whether the API core's journal does not hold the plan history of
+    /// the request's proposal (`journal.rs`), so a plan member it would
+    /// have named is missing for that reason.
+    pub(crate) plan_unknown: bool,
+}
+
+/// What the journal knows of a proposal's latest plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LatestPlan {
+    /// The latest plan, or `None` when none was recorded.
+    Known(Option<fstp_domain::id::PlanVersionId>),
+    /// The journal does not hold the proposal's history.
+    Unknown,
+}
+
+/// The refusal of a plan member the journal cannot name.
+fn plan_unknown() -> ApiError {
+    ApiError::NotImplemented(
+        "the latest plan of a proposal recorded outside this API core: a domain read accessor (lane W1b)",
+    )
+}
+
+/// Names the plan members the server supplies, in `request`, before the
+/// action digest and any pending request are made (I-85, design section
+/// 3.7 step 6). The digest, the pending view and a later confirmation
+/// then all carry the same plan.
+///
+/// - A submission without `plan` names the latest plan.
+/// - A page form plan (`description` and no `content`) without
+///   `supersedes` names the latest plan, or `null` when none was
+///   recorded.
+///
+/// A member the request names stays. An unknown history names nothing,
+/// and [`build`] refuses the request.
+pub(crate) fn name_plans(form: &CmdForm, request: &mut Object, latest: LatestPlan) {
+    let LatestPlan::Known(latest) = latest else {
+        return;
+    };
+    match form.derive {
+        Derive::LatestPlan => {
+            if let Some(p) = latest
+                && request.get("plan").is_none_or(Value::is_null)
+            {
+                let _ = request.insert("plan", dec(p.raw()));
+            }
+        }
+        Derive::PlanForm => {
+            let page_form = request.contains_key("description") && !request.contains_key("content");
+            if page_form && !request.contains_key("supersedes") {
+                let v = latest.map_or(Value::Null, |p| dec(p.raw()));
+                let _ = request.insert("supersedes", v);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// A decimal string.
@@ -734,12 +833,101 @@ pub(crate) fn build(
             };
             let _ = o.insert("handle", handle);
         }
+        Derive::PlanForm => plan_form(&mut o, request, cx, draw)?,
+        Derive::LatestPlan => {
+            if o.get("plan").is_none_or(Value::is_null) {
+                // Dispatch named the latest plan before the digest
+                // (`name_plans`). Nothing is derived here.
+                if !cx.trial {
+                    if cx.plan_unknown {
+                        return Err(plan_unknown());
+                    }
+                    // No plan was recorded, so there is nothing to submit.
+                    return Err(ApiError::refused(crate::ErrorCode::Refused, "R-SB-01"));
+                }
+                let _ = o.insert("plan", dec(1));
+            }
+        }
     }
     let cmd = fstp_domain::codec::command_from_json(&Value::Object(o)).map_err(|_| bad())?;
     if cmd.kind() != f.kind {
         return Err(bad());
     }
     Ok(Command::Core(cmd))
+}
+
+/// The members of a `RecordPlanVersion` from its page form
+/// (`pageforms.rs`), or a check of its codec form.
+///
+/// In the page form, `description` holds the stored text's reference, so
+/// the plan's content digest is that text's digest. The origin is the
+/// submission's, the currency is the programme's, the plan supersedes the
+/// one dispatch named ([`name_plans`]), and every milestone gets a drawn
+/// id, no activity and no deliverable (activity types arrive with the
+/// negotiated plan).
+fn plan_form(
+    o: &mut Object,
+    request: &Object,
+    cx: &BuildCtx<'_>,
+    draw: &mut dyn FnMut() -> Result<u128, ApiError>,
+) -> Result<(), ApiError> {
+    let bad = || ApiError::bad_request(REQUEST_RULE);
+    let description = o.remove("description");
+    let Some(Value::Object(text)) = description else {
+        // The codec form names every member itself.
+        for m in ["origin", "content", "currency"] {
+            if o.get(m).is_none_or(Value::is_null) {
+                return Err(bad());
+            }
+        }
+        return Ok(());
+    };
+    let digest = text.get("digest").cloned().ok_or_else(bad)?;
+    let _ = o.insert("content", digest);
+    let _ = o.insert("origin", Value::from("Submitted"));
+    // Dispatch named the superseded plan before the digest
+    // (`name_plans`). Nothing is derived here.
+    if !o.contains_key("supersedes") {
+        if !cx.trial && cx.plan_unknown {
+            return Err(plan_unknown());
+        }
+        let _ = o.insert("supersedes", Value::Null);
+    }
+    let currency = if cx.trial {
+        fstp_money::Currency::Eur
+    } else {
+        let p = id_param(request, "proposal").ok_or_else(bad)?;
+        call_of_proposal(cx.state, ProposalId::from_raw(p))
+            .and_then(|c| programme_of_call(cx.state, c))
+            .and_then(|g| cx.state.core.policy().head(g))
+            .map(|v| v.currency)
+            .ok_or_else(|| ApiError::refused(crate::ErrorCode::NotFound, "Input"))?
+    };
+    let _ = o.insert("currency", Value::from(currency.code()));
+    let tasks = o
+        .get_mut("tasks")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(bad)?;
+    for t in tasks.iter_mut() {
+        let milestones = t
+            .as_object_mut()
+            .and_then(|x| x.get_mut("milestones"))
+            .and_then(Value::as_array_mut)
+            .ok_or_else(bad)?;
+        for m in milestones.iter_mut() {
+            let m = m.as_object_mut().ok_or_else(bad)?;
+            if !m.contains_key("id") {
+                let _ = m.insert("id", dec(draw()?));
+            }
+            if !m.contains_key("activity") {
+                let _ = m.insert("activity", Value::Null);
+            }
+            if !m.contains_key("deliverables") {
+                let _ = m.insert("deliverables", Value::Array(fstp_json::Array::new()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The JSON form of a text reference, as the command codec spells it.
@@ -806,5 +994,24 @@ mod tests {
         assert_eq!(canonical_id("1e3"), None);
         assert!(token("supersafe-2026"));
         assert!(!token("Upper"));
+    }
+
+    /// I-85, design section 3.7 step 6: a submission without a plan gets
+    /// the latest plan before its digest, a named plan stays, and an
+    /// unknown history names nothing, so the build refuses it.
+    #[test]
+    fn i85_name_plans_names_the_plan_before_the_digest() {
+        let form = command_form(CommandKind::Submit).unwrap();
+        let latest = LatestPlan::Known(Some(fstp_domain::id::PlanVersionId::from_raw(7)));
+        let mut bare = Object::new();
+        name_plans(&form, &mut bare, latest);
+        assert_eq!(bare.get("plan"), Some(&Value::from("7")));
+        let mut named = Object::new();
+        let _ = named.insert("plan", Value::from("5"));
+        name_plans(&form, &mut named, latest);
+        assert_eq!(named.get("plan"), Some(&Value::from("5")));
+        let mut unknown = Object::new();
+        name_plans(&form, &mut unknown, LatestPlan::Unknown);
+        assert_eq!(unknown.get("plan"), None);
     }
 }

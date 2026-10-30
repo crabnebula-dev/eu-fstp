@@ -124,6 +124,18 @@ impl FakeStepUp {
         self.finish_now(s, &ch.challenge)
     }
 
+    /// The open challenge whose wire id is `id`
+    /// (`fstp_api_core::step_up_challenge_id`): its session and bytes.
+    /// The e2e cell's M3 step-up route finds the challenge an assertion
+    /// answers by this id.
+    pub fn challenge_for(&self, id: &[u8; 16]) -> Option<(SessionId, Vec<u8>)> {
+        lock(&self.state)
+            .challenges
+            .iter()
+            .find(|(c, _, _)| fstp_api_core::step_up_challenge_id(c) == *id)
+            .map(|(c, s, _)| (*s, c.clone()))
+    }
+
     /// The proofs not yet taken, stale ones included.
     pub fn held(&self) -> Vec<HeldProof> {
         lock(&self.state).proofs.clone()

@@ -21,14 +21,14 @@ const WEB = join(__dirname, '..', '..', 'web');
 
 /** The operations these checks reach, as the generated table would list them. */
 const OPS: readonly (readonly [string, string, string])[] = [
-  ['tenant.get_settings', 'GET', '/api/v1/admin/settings'],
-  ['tenant.set_mcp', 'PUT', '/api/v1/admin/settings/{param}'],
+  ['tenant.settings', 'GET', '/api/v1/admin/settings'],
+  ['tenant.set_mcp', 'PUT', '/api/v1/admin/settings/mcp'],
   ['tenant.get_step', 'GET', '/api/v1/admin/onboarding/{step}'],
   ['tenant.save_step', 'PUT', '/api/v1/admin/onboarding/{step}'],
-  ['admin.list_approvals', 'GET', '/api/v1/admin/approvals'],
+  ['admin.approvals', 'GET', '/api/v1/admin/approvals'],
   ['admin.approve_self_grant', 'POST', '/api/v1/admin/approvals/{approval}'],
   ['creator.get_draft', 'GET', '/api/v1/programmes/{programme}/draft'],
-  ['creator.list_invitations', 'GET', '/api/v1/programmes/{programme}/invitations'],
+  ['creator.invitations', 'GET', '/api/v1/programmes/{programme}/invitations'],
   ['creator.list_templates', 'GET', '/api/v1/creator/templates'],
   ['roles.grant', 'POST', '/api/v1/programmes/{programme}/roles'],
   ['import.upload', 'POST', '/api/v1/programmes/{programme}/imports'],

@@ -46,7 +46,8 @@ const ENTRY =
 /**
  * Serves the built pages, the fake operation table and the fake answers.
  * Every request below `/api/v1` is pushed to the returned list, reads
- * included.
+ * included. A completed call answers with its read model itself, as
+ * `web/src/core/api.ts` reads `Done` (M4 design section 3.7).
  */
 export async function serve(page: Page, ops: readonly FakeOp[], answers: Answers): Promise<SeenRequest[]> {
   const dist = join(webDir(), 'dist');
@@ -65,7 +66,7 @@ export async function serve(page: Page, ops: readonly FakeOp[], answers: Answers
     if (p === '/dist/gen/api.js') {
       await route.fulfill({
         contentType: 'text/javascript',
-        body: `export const OPERATIONS = ${JSON.stringify(ops)};\n`,
+        body: `export const OPERATIONS = ${JSON.stringify(ops.map((o) => ({ ...o, base: 'api' })))};\n`,
       });
       return;
     }
@@ -88,7 +89,7 @@ export async function serve(page: Page, ops: readonly FakeOp[], answers: Answers
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ status: 'done', data: answers[key], seq: null }),
+        body: JSON.stringify(answers[key]),
       });
       return;
     }

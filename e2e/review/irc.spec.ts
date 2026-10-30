@@ -52,6 +52,23 @@ async function validate(page: Page): Promise<void> {
   expect(await clickWrite(page, REVIEW_UI.irc.submit, /\/review$/)).toBeLessThan(300);
 }
 
+/**
+ * The state of proposal `key` once its IRC review has ended, as the FSTP
+ * coordinator's call board shows it. The IRC case reads only while the
+ * proposal is in IRC_REVIEW (`fstp_access::READ_RULES`, D11), so the
+ * IRC member's own page cannot show the state that follows it.
+ */
+async function expectOutcome(
+  person: () => Promise<Page>,
+  seeded: Seeded,
+  key: ProposalKey,
+  tag: string,
+): Promise<void> {
+  const c1 = await signIn(person, seeded, 'c1');
+  await openPage(c1, seeded.cell.origin, REVIEW_PAGES.board(seeded.s.call));
+  await expect(c1.locator(REVIEW_UI.board.row(proposal(seeded.s, key).id))).toHaveAttribute('data-state', tag);
+}
+
 test.describe('J8 IRC', () => {
   test('r_cf_02_irc_member_declares_before_reading_the_case', async ({ person, request }) => {
     const seeded = await seed(request, 'irc_review');
@@ -105,8 +122,7 @@ test.describe('J8 IRC', () => {
 
     await declareNone(i2, seeded, 'x', 'i2');
     await validate(i2);
-    await i2.reload();
-    await expectState(i2, 'NEGOTIATION');
+    await expectOutcome(person, seeded, 'x', 'NEGOTIATION');
   });
 
   test('i18_minor_without_consent_stays_in_irc_review', async ({ person, request }) => {
@@ -129,8 +145,7 @@ test.describe('J8 IRC', () => {
     await validate(i1);
     await declareNone(i2, seeded, 'x', 'i2');
     await validate(i2);
-    await i2.reload();
-    await expectState(i2, 'NEGOTIATION');
+    await expectOutcome(person, seeded, 'x', 'NEGOTIATION');
   });
 
   test('r_ir_02_concern_needs_its_text_and_defers_the_proposal', async ({ person, request }) => {
@@ -147,7 +162,6 @@ test.describe('J8 IRC', () => {
 
     await i1.locator(REVIEW_UI.irc.concernText).fill('Synthetic: the plan is not frugal enough.');
     expect(await clickWrite(i1, REVIEW_UI.irc.submit, /\/review$/)).toBeLessThan(300);
-    await i1.reload();
-    await expectState(i1, 'DEFERRED');
+    await expectOutcome(person, seeded, 'u', 'DEFERRED');
   });
 });

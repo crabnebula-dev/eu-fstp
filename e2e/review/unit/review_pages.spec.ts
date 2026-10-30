@@ -56,7 +56,7 @@ async function serve(page: Page, ops: readonly FakeOp[], answers: Answers): Prom
     if (p === '/dist/gen/api.js') {
       await route.fulfill({
         contentType: 'text/javascript',
-        body: `export const OPERATIONS = ${JSON.stringify(ops)};\n`,
+        body: `export const OPERATIONS = ${JSON.stringify(ops.map((o) => ({ ...o, base: 'api' })))};\n`,
       });
       return;
     }
@@ -79,7 +79,7 @@ async function serve(page: Page, ops: readonly FakeOp[], answers: Answers): Prom
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ status: 'done', data: answers[key], seq: null }),
+        body: JSON.stringify(answers[key]),
       });
       return;
     }

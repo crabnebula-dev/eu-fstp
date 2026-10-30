@@ -351,6 +351,11 @@ fn build_policy(
         ),
         p39: *take!(values, P39),
         p53: dp::FunderProfileRef(opaque(&take!(values, P53).encode(), FieldId::P53)?),
+        p75: if *take!(values, P75) {
+            dp::AgentContentAccess::On
+        } else {
+            dp::AgentContentAccess::Off
+        },
         p77: *take!(values, P77),
         opaque: frozen_opaque,
     };
@@ -511,6 +516,7 @@ fn read(
         }
         FieldId::P39 => FieldValue::P39(f.p39),
         FieldId::P53 => FieldValue::P53(from_opaque(&f.p53.0, c)?),
+        FieldId::P75 => FieldValue::P75(f.p75 == dp::AgentContentAccess::On),
         FieldId::P77 => FieldValue::P77(f.p77),
         FieldId::P05 => FieldValue::P05(l.p05),
         FieldId::P12 => FieldValue::P12(l.p12),

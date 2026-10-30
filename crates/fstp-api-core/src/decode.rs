@@ -180,7 +180,8 @@ fn static_name(pattern: &'static str, name: &str) -> Option<&'static str> {
 }
 
 /// Checks a request object for `spec` and wraps it.
-fn finish(spec: &'static OpSpec, request: Object, from_tool: bool) -> Result<Op, ApiError> {
+fn finish(spec: &'static OpSpec, mut request: Object, from_tool: bool) -> Result<Op, ApiError> {
+    crate::pageforms::rewrite(spec, &mut request)?;
     forms::check(spec, &request)?;
     Ok(Op {
         spec,

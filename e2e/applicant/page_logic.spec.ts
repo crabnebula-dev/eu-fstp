@@ -516,6 +516,12 @@ test.describe('R-SB-01 predicate', () => {
       c({ label: 'IBAN' }),
       c({ id: 'bank-account' }),
       c({ type: 'file', id: 'annex' }),
+      // A date control outside the plan editor, even one whose words name
+      // a start or a due day, counts as a date of birth.
+      c({ type: 'date', id: 'start-date', label: 'Start' }),
+      c({ type: 'date', id: 'due', name: 'due' }),
+      c({ type: 'date', id: 'plan-start', label: 'Start day' }),
+      c({ type: 'date', id: 'plan-t1-m1-start', label: 'Date of birth' }),
     ];
     expect(flagged.filter((x) => forbiddenField(x) === null)).toEqual([]);
     const spared = [
@@ -529,6 +535,8 @@ test.describe('R-SB-01 predicate', () => {
       c({ type: 'radio', id: 'ethics-none', label: 'No ethics issue' }),
       c({ type: 'email', id: 'copy-email', label: 'Email address for a copy', autocomplete: 'email' }),
       c({ tag: 'textarea', id: 'stage2-answer', label: 'Your answer' }),
+      c({ type: 'date', id: 'plan-t1-m1-start', label: 'Start day' }),
+      c({ type: 'date', id: 'stage2-plan-t2-m3-due', label: 'Due day' }),
     ];
     expect(spared.filter((x) => forbiddenField(x) !== null).map((x) => x.id)).toEqual([]);
   });

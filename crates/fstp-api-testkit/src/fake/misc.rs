@@ -18,12 +18,19 @@ use super::lock;
 #[derive(Clone, Debug, Default)]
 pub struct FakeAccounts {
     invited: Arc<Mutex<usize>>,
+    names: Arc<Mutex<BTreeMap<AccountId, String>>>,
 }
 
 impl FakeAccounts {
     /// How many invitations were made.
     pub fn invited(&self) -> usize {
         *lock(&self.invited)
+    }
+
+    /// Gives `a` the pseudonymous display handle `handle`, such as the
+    /// synthetic label of a committee member. Never an email.
+    pub fn name(&self, a: AccountId, handle: &str) {
+        lock(&self.names).insert(a, handle.to_owned());
     }
 }
 
@@ -35,8 +42,12 @@ impl Accounts for FakeAccounts {
         Ok(InvitationLink(format!("/fake/invitations/{n}")))
     }
 
-    /// A handle made from the raw account id, never an email.
+    /// The handle given by [`FakeAccounts::name`], else one made from the
+    /// raw account id. Never an email.
     async fn display_handle(&self, a: AccountId) -> Result<DisplayHandle, PortError> {
+        if let Some(n) = lock(&self.names).get(&a) {
+            return Ok(DisplayHandle(n.clone()));
+        }
         Ok(DisplayHandle(format!("person-{:x}", a.raw())))
     }
 }

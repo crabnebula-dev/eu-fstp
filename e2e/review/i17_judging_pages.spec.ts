@@ -117,24 +117,29 @@ test.describe('I-17 Judging pages carry no identity attribute', () => {
     await openPage(r1, cell.origin, REVIEW_PAGES.ranking(s.call));
     await expect(r1.locator(REVIEW_UI.ranking.table)).toBeVisible();
 
-    /** Adds `applicant_email` at the top, or inside the first object of the first array. */
+    /**
+     * Adds `applicant_email` to the first row, or inside the first object
+     * of the first list of that row. A completed read answers with its
+     * read model itself (design section 3.7), and the ranking view is a
+     * list of rows (`web/src/committee/models.ts`).
+     */
     const tamper = (nested: boolean) => async (route: Route) => {
       const res = await route.fetch();
       const body = (await res.json()) as unknown;
-      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-        throw new Error('the ranking view is not a JSON object');
+      if (!Array.isArray(body) || typeof body[0] !== 'object' || body[0] === null) {
+        throw new Error('the ranking view is not a list of rows');
       }
-      const top = body as Record<string, unknown>;
+      const row = body[0] as Record<string, unknown>;
       if (nested) {
-        const list = Object.values(top).find(
+        const list = Object.values(row).find(
           (v): v is unknown[] => Array.isArray(v) && typeof v[0] === 'object' && v[0] !== null,
         );
-        if (list === undefined) throw new Error('the ranking view has no list of rows');
+        if (list === undefined) throw new Error('the first ranking row has no list');
         (list[0] as Record<string, unknown>)['applicant_email'] = canary;
       } else {
-        top['applicant_email'] = canary;
+        row['applicant_email'] = canary;
       }
-      await route.fulfill({ response: res, json: top });
+      await route.fulfill({ response: res, json: body });
     };
 
     for (const nested of [false, true]) {

@@ -32,6 +32,8 @@ fstp-json.workspace = true
 fstp-money.workspace = true
 fstp-rt.workspace = true
 fstp-domain-testkit.workspace = true
+fstp-crypto.workspace = true
+fstp-webauthn.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true
 
