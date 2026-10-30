@@ -40,6 +40,7 @@ mod assets;
 mod auth;
 mod control;
 mod demo;
+mod onboarding;
 mod scenario;
 mod wire;
 
@@ -238,6 +239,9 @@ impl Handler for CellOrigin {
             let inner = site.inner();
             if path == "/auth" || path.starts_with("/auth/") {
                 return auth::handle(&site.info, &inner, req).await;
+            }
+            if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
+                return onboarding::invite_admin(&inner, req).await;
             }
             inner.web.serve(req).await
         }

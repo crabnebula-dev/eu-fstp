@@ -1,0 +1,1 @@
+{"at":0,"command":"00000000000000000000000000000001","record":{"onboarding":{"by":"11","kind":"StepSaved","outcome":"validated","step":"organisation","values":{"data_protection_contact":{"digest":"0707070707070707070707070707070707070707070707070707070707070707","id":"1"},"signatories":["11"]}}},"schema":1,"seq":"1"}

@@ -7,23 +7,25 @@
 //! 4.2). Core commands go to `fstp_domain::decide`, which never sees the
 //! other parts. Finding commands go to `findings::decide_finding`, which
 //! returns only finding records (I-10). Creator, bridge and import
-//! commands go to [`compose`] and [`bridge`].
+//! commands go to [`compose`] and [`bridge`], and tenant commands to
+//! [`tenant`].
 //!
 //! - [`apply_in`] folds one envelope record of a ledger entry into an
 //!   [`EngineState`]. Records with the same command id form one entry. A
 //!   core record goes to `fstp_domain::apply` on the core part, and the
 //!   creator observes it. A finding record goes to the finding store only,
 //!   after a check against its call's published pin. A creator record goes
-//!   to the creator projection, and an import record to the import store.
-//!   Every entry keeps the ledger time-monotone across all parts (design
-//!   section 2.2). [`finish`] closes the last entry. [`apply`] folds a
-//!   record as an entry of its own.
+//!   to the creator projection, an import record to the import store, and
+//!   a tenant record to the tenant part. Every entry keeps the ledger
+//!   time-monotone across all parts (design section 2.2). [`finish`]
+//!   closes the last entry. [`apply`] folds a record as an entry of its
+//!   own.
 //! - [`replay`] folds a whole ledger from genesis and checks that sequence
 //!   numbers run from 1 without gaps.
 //! - [`envelope_to_json`] and [`envelope_from_json`] give the stored JSON
 //!   shape of an envelope around the inner record's own JSON value.
 //!   [`Record`] implements `ToJson` and `FromJson` over that shape with the
-//!   domain, finding, creator and import record codecs.
+//!   domain, finding, creator, import and tenant record codecs.
 //!
 //! [`FindingStore`], [`FindingCommand`] and [`FindingRecord`] are the
 //! `fstp_findings` types, re-exported.
@@ -60,12 +62,16 @@
 //! every programme a person creates through the API has a draft and
 //! activates only through its approval.
 //!
+//! # Tenant onboarding
+//!
+//! A tenant record goes to the tenant part only ([`tenant`]). The fold
+//! refuses a tenant record before the provisioning record, and a second
+//! provisioning record. A tenant command goes to
+//! `fstp_tenant::decide`, which sees only the tenant state and the answers
+//! the engine gives it (lane m4tenant).
+//!
 //! # Seams
 //!
-//! - Tenant onboarding: the `Tenant` envelope of design section 4.2 needs
-//!   an in-house `Cargo.toml` edge from this crate to `fstp-tenant` and
-//!   the lockfile lines that go with it. The lead owns both, so there is
-//!   no tenant variant yet.
 //! - Publication (I-52): `compose::publication` fails closed until the
 //!   Guide renderer of lane W2c yields `GuidePublished`. So `execute`
 //!   still accepts a core `PublishCall`, and the fold its `CallPublished`.
@@ -88,6 +94,7 @@ pub mod compose;
 pub mod driver;
 pub mod findings;
 pub mod sweep;
+pub mod tenant;
 
 use fstp_creator::{
     ActivationApproved, CreatorCommand, CreatorFoldError, CreatorRecord, CreatorState, Provenance,
@@ -110,6 +117,7 @@ pub use driver::{
     CatchUpError, CreatorDecider, Decider, DomainDecider, Engine, ExecError, MAX_ATTEMPTS,
     OpenError, RESERVED_COMMAND_PREFIX, is_reserved_command_id,
 };
+pub use tenant::{Provisioning, TenantEntry, TenantFacts, TenantPart, TenantRequest};
 
 // ---------------------------------------------------------------------------
 // Finding seam. The types come from `fstp-findings` (lane L-FIND-A), and
@@ -240,8 +248,12 @@ pub struct EngineState {
     /// The import store. Neither the core nor the creator reads it. The
     /// creator gets only the count of unresolved proposals (I-65).
     pub import: ImportStore,
-    /// The time of the latest creator or import entry, or the Unix epoch
-    /// before the first.
+    /// The tenant part: the onboarding state, the tenant settings and the
+    /// tenant admin set (Q31 A). Neither the core, the creator nor the
+    /// import store reads it.
+    pub tenant: TenantPart,
+    /// The time of the latest creator, import or tenant entry, or the Unix
+    /// epoch before the first.
     pub envelope_floor: Timestamp,
     /// The entry being folded. Closed by [`finish`] and by the next entry.
     open: Option<OpenEntry>,
@@ -264,6 +276,7 @@ impl EngineState {
             finding_floor: Timestamp::from_micros(0),
             creator: CreatorState::genesis(),
             import: ImportStore::genesis(),
+            tenant: TenantPart::default(),
             envelope_floor: Timestamp::from_micros(0),
             open: None,
         }
@@ -312,6 +325,9 @@ pub enum Command {
     /// An import command, decided by `bridge::decide_import_command`
     /// (design section 3.3).
     Import(ImportCommand),
+    /// A tenant command with the shell's facts, decided by
+    /// `fstp_tenant::decide` over the tenant part (design section 3.5).
+    Tenant(TenantRequest),
 }
 
 /// Hashes the side and the inner command. A creator command hashes its
@@ -341,6 +357,10 @@ impl core::hash::Hash for Command {
                 4u8.hash(state);
                 i.hash(state);
             }
+            Command::Tenant(t) => {
+                5u8.hash(state);
+                t.command.kind().hash(state);
+            }
         }
     }
 }
@@ -360,6 +380,8 @@ pub enum Record {
     Creator(CreatorRecord),
     /// An import record, folded into the import store.
     Import(ImportRecord),
+    /// A tenant record, folded into the tenant part.
+    Tenant(TenantEntry),
 }
 
 /// The identity vault as the engine sees it (design section 3.1).
@@ -480,6 +502,10 @@ pub fn apply_in(
         }
         Record::Import(i) => {
             apply_import(state, entry, i)?;
+            state.envelope_floor = at;
+        }
+        Record::Tenant(t) => {
+            tenant::apply_tenant(&mut state.tenant, t)?;
             state.envelope_floor = at;
         }
     }
@@ -665,15 +691,19 @@ pub enum EnvelopeKind {
     Creator,
     /// An import record, stored under the member `import`.
     Import,
+    /// A tenant record, stored under the member `onboarding`. M3's cell
+    /// envelope already stores its own tenant records under `tenant`.
+    Tenant,
 }
 
 impl EnvelopeKind {
     /// Every side, in member order.
-    pub const ALL: [EnvelopeKind; 4] = [
+    pub const ALL: [EnvelopeKind; 5] = [
         EnvelopeKind::Core,
         EnvelopeKind::Finding,
         EnvelopeKind::Creator,
         EnvelopeKind::Import,
+        EnvelopeKind::Tenant,
     ];
 
     /// The member name of this side in the stored form.
@@ -683,6 +713,7 @@ impl EnvelopeKind {
             EnvelopeKind::Finding => "finding",
             EnvelopeKind::Creator => "creator",
             EnvelopeKind::Import => "import",
+            EnvelopeKind::Tenant => "onboarding",
         }
     }
 
@@ -693,13 +724,14 @@ impl EnvelopeKind {
             Record::Finding(_) => EnvelopeKind::Finding,
             Record::Creator(_) => EnvelopeKind::Creator,
             Record::Import(_) => EnvelopeKind::Import,
+            Record::Tenant(_) => EnvelopeKind::Tenant,
         }
     }
 }
 
 /// The stored JSON form of an envelope: an object with exactly one member,
-/// `core`, `finding`, `creator` or `import`, whose value is the inner
-/// record's own JSON form.
+/// `core`, `finding`, `creator`, `import` or `onboarding`, whose value is
+/// the inner record's own JSON form.
 pub fn envelope_to_json(kind: EnvelopeKind, inner: Value) -> Value {
     let mut o = Object::with_capacity(1);
     o.insert(kind.member(), inner);
@@ -735,6 +767,7 @@ impl ToJson for Record {
             Record::Finding(f) => f.to_json(),
             Record::Creator(c) => c.to_json(),
             Record::Import(i) => i.to_json(),
+            Record::Tenant(t) => tenant::entry_to_json(t),
         };
         envelope_to_json(kind, inner)
     }
@@ -759,6 +792,9 @@ impl FromJson for Record {
                 .map_err(at),
             EnvelopeKind::Import => ImportRecord::from_json(inner)
                 .map(Record::Import)
+                .map_err(at),
+            EnvelopeKind::Tenant => tenant::entry_from_json(inner)
+                .map(Record::Tenant)
                 .map_err(at),
         }
     }

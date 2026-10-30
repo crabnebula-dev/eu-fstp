@@ -109,7 +109,8 @@ pub fn finding_record(r: &fstp_engine::Record) -> Option<&FindingRecord> {
         fstp_engine::Record::Finding(f) => (f as &dyn Any).downcast_ref::<FindingRecord>(),
         fstp_engine::Record::Core(_)
         | fstp_engine::Record::Creator(_)
-        | fstp_engine::Record::Import(_) => None,
+        | fstp_engine::Record::Import(_)
+        | fstp_engine::Record::Tenant(_) => None,
     }
 }
 
@@ -774,7 +775,9 @@ pub fn engine_core<D: Decider>(
                     step.cmd.kind()
                 ));
             }
-            other @ (fstp_engine::Record::Creator(_) | fstp_engine::Record::Import(_)) => {
+            other @ (fstp_engine::Record::Creator(_)
+            | fstp_engine::Record::Import(_)
+            | fstp_engine::Record::Tenant(_)) => {
                 return Err(format!(
                     "the core command {:?} emitted the non-core record {other:?}",
                     step.cmd.kind()

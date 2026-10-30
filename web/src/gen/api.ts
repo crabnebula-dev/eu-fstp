@@ -2664,6 +2664,106 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "tenant.get_step": {
+    kind: "object",
+    fields: {
+      "step": { schema: { kind: "enum", values: ["organisation", "agreements", "branding", "domains_and_email", "identity", "inference", "payments", "channels", "administrators"] }, optional: false },
+      "status": { schema: { kind: "enum", values: ["locked", "open", "saved", "validated", "skipped", "unavailable"] }, optional: false },
+      "revision": { schema: { kind: "id" }, optional: false },
+      ["values"]: { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "data_protection_contact": { schema: { kind: "string" }, optional: true },
+          "signatories": { schema: { kind: "array", items: { kind: "id" } }, optional: true },
+          "dpa": { schema: { kind: "id" }, optional: true },
+          "saas_terms": { schema: { kind: "id" }, optional: true },
+          "sub_processors": { schema: { kind: "id" }, optional: true },
+          "package": { schema: { kind: "enum", values: ["default", "white_label"] }, optional: true },
+          "sending_domain": { schema: { kind: "string" }, optional: true },
+          "p18": { schema: { kind: "array", items: { kind: "enum", values: ["document_upload", "eudi_wallet"] } }, optional: true },
+          "p45": { schema: { kind: "enum", values: ["crabnebula_intermediary", "tenant_registration"] }, optional: true },
+          "fallbacks": { schema: { kind: "array", items: { kind: "string" } }, optional: true },
+          "primary": { schema: { kind: "string" }, optional: true },
+          "provider": { schema: { kind: "string" }, optional: true },
+          "bank_interface": { schema: { kind: "enum", values: ["connect", "not_connected"] }, optional: true },
+          "matrix_homeserver": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
+          "whatsapp": { schema: { kind: "bool" }, optional: true },
+          "admins": { schema: { kind: "array", items: { kind: "id" } }, optional: true },
+        },
+      } }, optional: false },
+      "outcome": { schema: { kind: "nullable", inner: { kind: "enum", values: ["validated", "invalid_values", "probe_failed", "prober_absent", "too_few_admins", "agreements_not_recorded", "payment_mode_unset", "unavailable_m5", "unavailable_m6", "unavailable_m8", "unavailable_m9"] } }, optional: false },
+      "accepted": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "dpa": { schema: { kind: "id" }, optional: false },
+          "saas_terms": { schema: { kind: "id" }, optional: false },
+          "sub_processors": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "tenant.save_step": {
+    kind: "object",
+    fields: {
+      "step": { schema: { kind: "enum", values: ["organisation", "agreements", "branding", "domains_and_email", "identity", "inference", "payments", "channels", "administrators"] }, optional: false },
+      "status": { schema: { kind: "enum", values: ["locked", "open", "saved", "validated", "skipped", "unavailable"] }, optional: false },
+      "revision": { schema: { kind: "id" }, optional: false },
+      ["values"]: { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "data_protection_contact": { schema: { kind: "string" }, optional: true },
+          "signatories": { schema: { kind: "array", items: { kind: "id" } }, optional: true },
+          "dpa": { schema: { kind: "id" }, optional: true },
+          "saas_terms": { schema: { kind: "id" }, optional: true },
+          "sub_processors": { schema: { kind: "id" }, optional: true },
+          "package": { schema: { kind: "enum", values: ["default", "white_label"] }, optional: true },
+          "sending_domain": { schema: { kind: "string" }, optional: true },
+          "p18": { schema: { kind: "array", items: { kind: "enum", values: ["document_upload", "eudi_wallet"] } }, optional: true },
+          "p45": { schema: { kind: "enum", values: ["crabnebula_intermediary", "tenant_registration"] }, optional: true },
+          "fallbacks": { schema: { kind: "array", items: { kind: "string" } }, optional: true },
+          "primary": { schema: { kind: "string" }, optional: true },
+          "provider": { schema: { kind: "string" }, optional: true },
+          "bank_interface": { schema: { kind: "enum", values: ["connect", "not_connected"] }, optional: true },
+          "matrix_homeserver": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
+          "whatsapp": { schema: { kind: "bool" }, optional: true },
+          "admins": { schema: { kind: "array", items: { kind: "id" } }, optional: true },
+        },
+      } }, optional: false },
+      "outcome": { schema: { kind: "nullable", inner: { kind: "enum", values: ["validated", "invalid_values", "probe_failed", "prober_absent", "too_few_admins", "agreements_not_recorded", "payment_mode_unset", "unavailable_m5", "unavailable_m6", "unavailable_m8", "unavailable_m9"] } }, optional: false },
+      "accepted": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "dpa": { schema: { kind: "id" }, optional: false },
+          "saas_terms": { schema: { kind: "id" }, optional: false },
+          "sub_processors": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "tenant.settings": {
+    kind: "object",
+    fields: {
+      "p20": { schema: { kind: "nullable", inner: { kind: "enum", values: ["execution", "record_only"] } }, optional: false },
+      "p69": { schema: { kind: "string" }, optional: false },
+      "p70": { schema: { kind: "array", items: { kind: "enum", values: ["eudi_wallet", "magic_link", "opaque", "passkey"] } }, optional: false },
+      "p71": { schema: { kind: "string" }, optional: false },
+      "p72": { schema: {
+        kind: "object",
+        fields: {
+          "absolute_us": { schema: { kind: "string" }, optional: false },
+          "idle_us": { schema: { kind: "string" }, optional: false },
+        },
+      }, optional: false },
+      "p74": { schema: {
+        kind: "object",
+        fields: {
+          "enabled": { schema: { kind: "bool" }, optional: false },
+          "public_tools": { schema: { kind: "bool" }, optional: false },
+          "roles": { schema: { kind: "nullable", inner: { kind: "array", items: { kind: "string" } } }, optional: false },
+        },
+      }, optional: false },
+    },
+  },
   "me.get_verification": {
     kind: "object",
     fields: {

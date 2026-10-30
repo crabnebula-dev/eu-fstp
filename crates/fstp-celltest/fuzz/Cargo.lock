@@ -304,6 +304,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-programme",
+ "fstp-tenant",
 ]
 
 [[package]]
@@ -487,6 +488,15 @@ name = "fstp-rt"
 version = "0.1.0"
 dependencies = [
  "tokio",
+]
+
+[[package]]
+name = "fstp-tenant"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-ledger",
 ]
 
 [[package]]

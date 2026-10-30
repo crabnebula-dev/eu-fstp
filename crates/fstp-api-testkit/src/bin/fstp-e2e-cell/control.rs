@@ -1,7 +1,8 @@
 //! The test-control routes of one cell, on its loopback control base only
 //! (layering rule A9, design section 8.7). No cell origin answers them.
 //!
-//! - `POST /test/reset`: the cell at first start. Its ledger is empty,
+//! - `POST /test/reset`: the cell at first start. Its ledger holds only
+//!   the provisioning record of its SaaS tenant (`crate::onboarding`),
 //!   the synthetic vault knows only the first tenant admin, and the reply
 //!   is `{first_admin: {url, email}}`, the admin's one-time enrolment link.
 //! - `GET /test/mailbox?to=<email>`: `{messages: [{kind, link}]}`, oldest
@@ -65,12 +66,15 @@ pub(crate) fn email(tag: &str) -> Result<String, String> {
     Ok(format!("synthetic-{tag}-{}@e2e.invalid", wire::hex(&r)))
 }
 
-/// The cell at first start: no ledger entry, one tenant admin invited.
+/// The cell at first start: its ledger holds the provisioning record of a
+/// SaaS tenant whose first admin is invited (Q31 A, `crate::onboarding`).
 pub(crate) fn fresh(info: &SiteInfo) -> Result<Fresh, String> {
     let mut truth = GroundTruth::new();
     truth.set_identity(FIRST_ADMIN, FIRST_ADMIN_IDENTITY);
+    let mut store = MemStore::new();
+    crate::onboarding::provision(&mut store, FIRST_ADMIN, RESET_START.micros())?;
     let world = World {
-        store: MemStore::new(),
+        store,
         truth,
         start: RESET_START,
         admins: BTreeSet::from([FIRST_ADMIN]),

@@ -509,6 +509,10 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
             _ => return Err(ApiError::bad_request(REQUEST_RULE)),
         }
     }
+    // The tenant operations have their own strict decoders (lane m4tenant).
+    if let Some(r) = crate::tenant::check(spec, request) {
+        return r;
+    }
     let body = request.keys().filter(|k| !params.contains(k));
     if let Some(f) = op_form(spec) {
         return check_command(&f, request, body.collect());

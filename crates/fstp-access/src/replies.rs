@@ -244,6 +244,90 @@ const PROPOSAL_ROW: Shape = Shape::Object(&[
     m("title", Shape::String),
 ]);
 
+/// One onboarding step as `tenant.get_step` answers it and a step save
+/// replies (R-TN-01, lane m4tenant). `values` holds the members of
+/// whichever step was saved, so each member is optional. `accepted` holds
+/// the agreement versions the control plane recorded.
+const ONBOARDING_STEP: Shape = Shape::Object(&[
+    m(
+        "step",
+        Shape::Enum(&[
+            "organisation",
+            "agreements",
+            "branding",
+            "domains_and_email",
+            "identity",
+            "inference",
+            "payments",
+            "channels",
+            "administrators",
+        ]),
+    ),
+    m(
+        "status",
+        Shape::Enum(&[
+            "locked",
+            "open",
+            "saved",
+            "validated",
+            "skipped",
+            "unavailable",
+        ]),
+    ),
+    m("revision", Shape::Id),
+    m(
+        "values",
+        Shape::Nullable(&Shape::Object(&[
+            opt("data_protection_contact", Shape::String),
+            opt("signatories", Shape::Array(&Shape::Id)),
+            opt("dpa", Shape::Id),
+            opt("saas_terms", Shape::Id),
+            opt("sub_processors", Shape::Id),
+            opt("package", Shape::Enum(&["default", "white_label"])),
+            opt("sending_domain", Shape::String),
+            opt(
+                "p18",
+                Shape::Array(&Shape::Enum(&["document_upload", "eudi_wallet"])),
+            ),
+            opt(
+                "p45",
+                Shape::Enum(&["crabnebula_intermediary", "tenant_registration"]),
+            ),
+            opt("fallbacks", Shape::Array(&Shape::String)),
+            opt("primary", Shape::String),
+            opt("provider", Shape::String),
+            opt("bank_interface", Shape::Enum(&["connect", "not_connected"])),
+            opt("matrix_homeserver", Shape::Nullable(&Shape::String)),
+            opt("whatsapp", Shape::Bool),
+            opt("admins", Shape::Array(&Shape::Id)),
+        ])),
+    ),
+    m(
+        "outcome",
+        Shape::Nullable(&Shape::Enum(&[
+            "validated",
+            "invalid_values",
+            "probe_failed",
+            "prober_absent",
+            "too_few_admins",
+            "agreements_not_recorded",
+            "payment_mode_unset",
+            "unavailable_m5",
+            "unavailable_m6",
+            "unavailable_m8",
+            "unavailable_m9",
+        ])),
+    ),
+    m(
+        "accepted",
+        Shape::Nullable(&Shape::Object(&[
+            m("dpa", Shape::Id),
+            m("saas_terms", Shape::Id),
+            m("sub_processors", Shape::Id),
+        ])),
+    ),
+]);
+
 /// The reply shape of each operation whose `data` the API core serves,
 /// by operation name.
 pub const REPLIES: &[(&str, Shape)] = &[
@@ -476,6 +560,44 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 m("verified", Shape::Bool),
             ])),
         )]),
+    ),
+    // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its
+    // save. The values are those of `fstp-tenant`'s codec, with the data
+    // protection contact as its text.
+    ("tenant.get_step", ONBOARDING_STEP),
+    ("tenant.save_step", ONBOARDING_STEP),
+    // R-LG-03: each tenant setting in the codec form of its parameter.
+    (
+        "tenant.settings",
+        Shape::Object(&[
+            m(
+                "p20",
+                Shape::Nullable(&Shape::Enum(&["execution", "record_only"])),
+            ),
+            m("p69", Shape::String),
+            m(
+                "p70",
+                Shape::Array(&Shape::Enum(&[
+                    "eudi_wallet",
+                    "magic_link",
+                    "opaque",
+                    "passkey",
+                ])),
+            ),
+            m("p71", Shape::String),
+            m(
+                "p72",
+                Shape::Object(&[m("absolute_us", Shape::String), m("idle_us", Shape::String)]),
+            ),
+            m(
+                "p74",
+                Shape::Object(&[
+                    m("enabled", Shape::Bool),
+                    m("public_tools", Shape::Bool),
+                    m("roles", Shape::Nullable(&Shape::Array(&Shape::String))),
+                ]),
+            ),
+        ]),
     ),
     // I-86: the state only, and no other vault fact.
     (

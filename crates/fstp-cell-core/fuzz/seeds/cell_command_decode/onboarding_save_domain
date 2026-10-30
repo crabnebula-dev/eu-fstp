@@ -1,0 +1,1 @@
+{"onboarding":{"command":{"base":"2","kind":"SaveStep","step":"domains_and_email","values":{"sending_domain":"mail.e2e.invalid"}},"probes":[{"check":"sending_domain","domain":"mail.e2e.invalid","outcome":"passed"}]}}

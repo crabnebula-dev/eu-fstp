@@ -127,6 +127,9 @@ pub trait Decider {
 /// - A bridge command goes to `bridge::bridge_queries` and
 ///   `bridge::resolve_import`, and an import command to
 ///   `bridge::decide_import_command`, which asks no vault question.
+/// - A tenant command goes to `tenant::tenant_queries` and
+///   `tenant::decide_tenant`, which see only the tenant part, the core
+///   roster for the Receiving check, and the vault answers.
 ///
 /// Before any of them but a finding command, the engine refuses a time
 /// before the latest entry of any part, so the ledger stays time-monotone
@@ -180,6 +183,10 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             Ok(Vec::new())
         }
+        Command::Tenant(t) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::tenant::tenant_queries(state, t, ctx)
+        }
     }
 }
 
@@ -211,6 +218,10 @@ fn route_decide(
         Command::Import(i) => {
             crate::ledger_clock(state, ctx)?;
             crate::bridge::decide_import_command(state, i, ctx)
+        }
+        Command::Tenant(t) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::tenant::decide_tenant(state, t, ctx, answers)
         }
     }
 }

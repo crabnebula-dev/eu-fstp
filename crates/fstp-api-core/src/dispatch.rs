@@ -120,6 +120,9 @@ use crate::port::{
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
+/// The tenant operations (lane m4tenant).
+mod tenant;
+
 /// What dispatch needs beside the W0 ports. `port.rs` implements it for
 /// every `CellPorts` once the lead closes the seams (module
 /// documentation).
@@ -327,10 +330,15 @@ const fn access_method(m: LoginMethod) -> fstp_access::LoginMethod {
     }
 }
 
-/// The attested tenant admin set, as far as it concerns `account`.
-fn admins_of<P: CellPorts>(ports: &P, account: AccountId) -> BTreeSet<AccountId> {
+/// The tenant admin set, as far as it concerns `account`: the ledger's
+/// once it holds the tenant part (Q31 A, `tenant::is_admin`).
+fn admins_of<P: CellPorts>(
+    ports: &P,
+    state: &EngineState,
+    account: AccountId,
+) -> BTreeSet<AccountId> {
     let mut set = BTreeSet::new();
-    if ports.tenant().is_tenant_admin(account) {
+    if tenant::is_admin(ports, state, account) {
         set.insert(account);
     }
     set
@@ -369,7 +377,7 @@ async fn resolve<P: Seams>(
                         session: fstp_access::SessionId::from_raw(s.session.raw()),
                         method: access_method(s.method),
                     };
-                    let p = Principal::web(&facts, &admins_of(ports, s.account), state, now);
+                    let p = Principal::web(&facts, &admins_of(ports, state, s.account), state, now);
                     Ok(Caller {
                         p,
                         session: Some(s.session),
@@ -387,7 +395,7 @@ async fn resolve<P: Seams>(
         // own, so fresh random tokens allocate nothing (design section 3.7
         // step 4). Its calls are limited as anonymous calls are.
         Credential::Bearer(token) => match ports.grant(token, now).await {
-            Ok(g) => match Principal::mcp(&g, &admins_of(ports, g.account), state, now) {
+            Ok(g) => match Principal::mcp(&g, &admins_of(ports, state, g.account), state, now) {
                 Ok(p) => Ok(Caller {
                     p,
                     session: None,
@@ -477,7 +485,7 @@ impl<P: Seams> Call<'_, P> {
             via,
             tenant_admin: self.caller.p.tenant_admin(),
             second_tenant_admin: None,
-            binds_tenant_admin: binds_admin(self.ports, account, cmd),
+            binds_tenant_admin: binds_admin(self.ports, &self.state, account, cmd),
         }
     }
 }
@@ -522,8 +530,14 @@ fn refuse_early<P: Seams>(
 }
 
 /// Whether the account `cmd` binds is a tenant admin (design section
-/// 3.7: from the attested admin set only).
-fn binds_admin<P: CellPorts>(ports: &P, actor: AccountId, cmd: &Command) -> bool {
+/// 3.7: from the attested admin set only, which the ledger owns under
+/// Q31 A).
+fn binds_admin<P: CellPorts>(
+    ports: &P,
+    state: &EngineState,
+    actor: AccountId,
+    cmd: &Command,
+) -> bool {
     use fstp_domain::command::Command as Core;
     let bound = match cmd {
         Command::Core(
@@ -534,7 +548,7 @@ fn binds_admin<P: CellPorts>(ports: &P, actor: AccountId, cmd: &Command) -> bool
         Command::Core(Core::CreateDraft { .. }) => actor,
         _ => return false,
     };
-    ports.tenant().is_tenant_admin(bound)
+    tenant::is_admin(ports, state, bound)
 }
 
 /// Runs one call through every step of design section 3.7.
@@ -605,7 +619,7 @@ pub(crate) async fn run<P: Seams>(
         return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-77")));
     }
     // Step 3, with the strictest P-77 first: only `Prepare` depends on it.
-    let settings = ports.mcp_settings();
+    let settings = tenant::mcp_settings(ports, &call.state);
     let verdict = fstp_access::channel_policy(
         spec,
         &call.caller.p,
@@ -647,9 +661,7 @@ pub(crate) async fn run<P: Seams>(
         OpKind::Bridge(_) | OpKind::Import(_) => Err(call.refuse(ApiError::NotImplemented(
             "import operations: the engine bridge (lane W2b)",
         ))),
-        OpKind::Tenant(_) => Err(call.refuse(ApiError::NotImplemented(
-            "tenant operations: the engine's tenant envelope (lanes W2d, W2e)",
-        ))),
+        OpKind::Tenant(kind) => tenant::command(&call, &op, kind).await,
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
             "finding marks: the finding request form (lane W3b, after M4 W5)",
         ))),
@@ -724,7 +736,7 @@ fn build_ctx<'a, P: Seams>(call: &'a Call<'_, P>, second_admin: Option<AccountId
     BuildCtx {
         state: &call.state,
         now: call.now,
-        inference: call.ports.inference(),
+        inference: tenant::inference(call.ports, &call.state),
         second_admin,
         trial: false,
         plan_unknown: false,
@@ -854,7 +866,7 @@ async fn second_admin<P: Seams>(
         .approval(crate::port::ApprovalId::from_raw(id))
         .await
         .map_err(|e| port_failed(e, "SoD-07"))?;
-    if !call.ports.tenant().is_tenant_admin(a.approver) {
+    if !tenant::is_admin(call.ports, &call.state, a.approver) {
         return Err(ApiError::refused(ErrorCode::Refused, "SoD-07"));
     }
     Ok(Some(a.approver))
@@ -1527,6 +1539,9 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             ReadModel::Verification(own_verification(call, a).await?)
+        }
+        ReadKind::GetOnboarding | ReadKind::GetTenantSettings | ReadKind::ListTenantAdmins => {
+            tenant::read(call, op, kind).await?
         }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
