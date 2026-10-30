@@ -11,9 +11,8 @@
 //!
 //! - `ScramVerifier`: ADR-011 gives `SCRAM-SHA-256$<iterations>:<salt>$
 //!   <StoredKey>:<ServerKey>` with base64 fields and no quote or
-//!   backslash. The minimum iteration count is recorded at first use, so
-//!   these tests pin only that 4096 and more are accepted and that zero is
-//!   refused.
+//!   backslash. ADR-011 records 4096 as the minimum iteration count, so
+//!   these tests pin that 4096 and more are accepted and 4095 is refused.
 //! - `PopSig`: the fstp-pki `pop` module signs with ASN.1 DER ECDSA P-256
 //!   SHA-256 and bounds a signature to 8 to 72 bytes.
 //! - `CompositeSig`: ADR-010 fixes `mldsaSig || tradSig`, 3373 bytes, the
@@ -107,6 +106,8 @@ fn i19_scram_verifier_refuses_other_forms() {
         with(&|v| v.iterations = "abc".to_owned()),
         with(&|v| v.iterations = String::new()),
         with(&|v| v.iterations = "0".to_owned()),
+        with(&|v| v.iterations = "4095".to_owned()),
+        with(&|v| v.iterations = "2147483648".to_owned()),
         with(&|v| v.iterations = "-4096".to_owned()),
         with(&|v| v.iterations = "04096".to_owned()),
         with(&|v| v.iterations = "+4096".to_owned()),
