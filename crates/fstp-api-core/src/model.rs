@@ -978,6 +978,9 @@ mod reply_shape_tests {
             budget: "400000.00".to_owned(),
             currency: "EUR",
             open: true,
+            title: Some("Synthetic call".to_owned()),
+            grant_range: Some(("1000.00".to_owned(), "60000.00".to_owned())),
+            recipient_max: Some("60000.00".to_owned()),
         }
     }
 
@@ -1003,6 +1006,7 @@ mod reply_shape_tests {
             call: CallId::from_raw(7),
             state: "SUBMITTED".to_owned(),
             role: "lead",
+            title: Some("Synthetic proposal".to_owned()),
         };
         assert_fits("proposal.list_own", &ReadModel::OwnProposals(vec![own]));
         let mine = AssignmentSummary {
