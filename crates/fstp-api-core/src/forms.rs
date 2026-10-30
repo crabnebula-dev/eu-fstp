@@ -55,12 +55,19 @@ pub(crate) enum ParamKind {
     Id,
     /// A lowercase token: `[a-z0-9_-]{1,64}`.
     Token,
+    /// The secret token of a link, `[0-9a-f]{32,128}` (lane m4reg). It is
+    /// the capability of a read that admits a caller with no account, so
+    /// it is never a guessable id (SoD-09).
+    LinkToken,
 }
 
 /// The spelling of the path parameter `name`.
 pub(crate) fn param_kind(name: &str) -> ParamKind {
     match name {
         "slug" | "step" | "field" => ParamKind::Token,
+        // Lane m4reg: the invitation landing, its acceptance and its
+        // verification take the token of the link (SoD-09).
+        "invitation_token" => ParamKind::LinkToken,
         _ => ParamKind::Id,
     }
 }
@@ -85,6 +92,13 @@ pub(crate) fn token(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_')
 }
 
+/// Whether `s` is a link token: 32 to 128 lowercase hexadecimal digits.
+pub(crate) fn link_token(s: &str) -> bool {
+    (32..=128).contains(&s.len())
+        && s.bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+
 /// Whether `v` is a valid value of the path parameter `name`.
 pub(crate) fn param_ok(name: &str, v: &Value) -> bool {
     let Some(s) = v.as_str() else {
@@ -93,6 +107,7 @@ pub(crate) fn param_ok(name: &str, v: &Value) -> bool {
     match param_kind(name) {
         ParamKind::Id => canonical_id(s).is_some(),
         ParamKind::Token => token(s),
+        ParamKind::LinkToken => link_token(s),
     }
 }
 
@@ -333,6 +348,26 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
             optional: &["tie_breaks"],
             drawn: &["decision"],
             texts: &["rationale", "tie_breaks"],
+            ..form(kind)
+        },
+        // Lane m4reg, change D5: the server draws the round id, and the
+        // ballot and the delegation name no voter (R-EV-08, R-EV-09).
+        K::OpenCutOffRound => CmdForm {
+            params: CALL,
+            required: &["order", "nominated", "rationale"],
+            optional: &["tie_breaks"],
+            drawn: &["round"],
+            texts: &["rationale", "tie_breaks"],
+            ..form(kind)
+        },
+        K::CastBallot => CmdForm {
+            params: &[("round", Some("round"))],
+            required: &["vote"],
+            ..form(kind)
+        },
+        K::DelegateVote => CmdForm {
+            params: &[("round", Some("round"))],
+            required: &["to"],
             ..form(kind)
         },
         K::RecordIrcReview => CmdForm {

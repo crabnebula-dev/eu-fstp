@@ -160,6 +160,7 @@ fn match_route(pattern: &'static str, path: &str) -> Option<Vec<(&'static str, S
                 let ok = match forms::param_kind(name) {
                     forms::ParamKind::Id => forms::canonical_id(g).is_some(),
                     forms::ParamKind::Token => forms::token(g),
+                    forms::ParamKind::LinkToken => forms::link_token(g),
                 };
                 if !ok {
                     return None;

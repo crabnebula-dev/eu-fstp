@@ -2,7 +2,7 @@
 //! registry. Every name and path in the registry is ASCII, and every
 //! string goes through [`ts_str`], so no registry text can end a literal.
 
-use fstp_access::{Classification, Method, OpSpec, Scope, SessionNeed, route_params};
+use fstp_access::{Classification, Method, OpSpec, Scope, SessionNeed, Shape, route_params};
 
 /// The header of the generated file.
 const HEADER: &str = "\
@@ -17,7 +17,103 @@ const HEADER: &str = "\
 //
 // Paths are relative to API_PREFIX, except the public pages (base \"page\"),
 // which are served at their own path with no script.
+//
+// SCHEMAS holds the reply shape of each operation whose data the API core
+// serves, from the REPLIES table of fstp-access. VALIDATORS holds one
+// structural validator per entry. Objects are closed, and an amount is an
+// ADR-006 EUR string, never a JSON number.
 ";
+
+/// The imports of the generated file: the ADR-006 amount reader, so the
+/// validators judge amounts exactly as the pages read them.
+const IMPORTS: &str = "import { parseAmount } from \"../core/money.js\";\n";
+
+/// The schema types and the validators over `SCHEMAS` (design sections
+/// 3.7 and 3.9). `fitsSchema` refuses members an object shape does not
+/// name, as the server's decoders do.
+const SCHEMA_TYPES: &str = r#"
+/** The structure of one JSON value of a reply. */
+export type Schema =
+  | { readonly kind: "string" }
+  | { readonly kind: "id" }
+  | { readonly kind: "amount" }
+  | { readonly kind: "bool" }
+  | { readonly kind: "int" }
+  | { readonly kind: "null" }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "array"; readonly items: Schema }
+  | { readonly kind: "nullable"; readonly inner: Schema }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, SchemaField>> };
+
+/** One member of an object schema. */
+export interface SchemaField {
+  readonly schema: Schema;
+  readonly optional: boolean;
+}
+"#;
+
+/// The structural validators, after `SCHEMAS`.
+const VALIDATOR_TAIL: &str = r#"
+/** Whether `v` is a plain object parsed from JSON. */
+function isPlainObject(v: unknown): v is Readonly<Record<string, unknown>> {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+}
+
+/** Whether `o` has `k` as its own member. */
+function hasOwn(o: object, k: string): boolean {
+  return Object.prototype.hasOwnProperty.call(o, k);
+}
+
+/**
+ * Whether `v`, a value from `JSON.parse`, fits `s`. Objects are closed:
+ * a member `s` does not name is refused, and a missing member passes only
+ * when it is optional. An id is a non-empty string, an int a safe
+ * integer, and an amount an ADR-006 EUR string. It never throws.
+ */
+export function fitsSchema(s: Schema, v: unknown): boolean {
+  switch (s.kind) {
+    case "string":
+      return typeof v === "string";
+    case "id":
+      return typeof v === "string" && v !== "";
+    case "amount":
+      return parseAmount(v, "EUR").ok;
+    case "bool":
+      return typeof v === "boolean";
+    case "int":
+      return typeof v === "number" && Number.isSafeInteger(v);
+    case "null":
+      return v === null;
+    case "enum":
+      return typeof v === "string" && s.values.includes(v);
+    case "array":
+      return Array.isArray(v) && v.every((x: unknown) => fitsSchema(s.items, x));
+    case "nullable":
+      return v === null || fitsSchema(s.inner, v);
+    case "object": {
+      if (!isPlainObject(v)) {
+        return false;
+      }
+      for (const k of Object.keys(v)) {
+        if (!hasOwn(s.fields, k)) {
+          return false;
+        }
+      }
+      for (const [k, f] of Object.entries(s.fields)) {
+        if (hasOwn(v, k) ? !fitsSchema(f.schema, v[k]) : !f.optional) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+}
+
+/** One structural validator per entry of `SCHEMAS`, by operation name. */
+export const VALIDATORS: Readonly<Record<string, (v: unknown) => boolean>> = Object.freeze(
+  Object.fromEntries(Object.entries(SCHEMAS).map(([name, s]) => [name, (v: unknown): boolean => fitsSchema(s, v)])),
+);
+"#;
 
 /// The fixed part after the operation table: lookups and the structural
 /// validators for the JSON bodies the API core returns (design section
@@ -209,9 +305,80 @@ fn param_type(op: &OpSpec) -> String {
     }
 }
 
-/// The whole file for `ops`.
-pub(crate) fn render(ops: &[OpSpec]) -> String {
+/// `n` spaces.
+fn pad(n: usize) -> String {
+    " ".repeat(n)
+}
+
+/// The words a schema literal uses as its own keys.
+const SCHEMA_KEYWORDS: [&str; 7] = [
+    "kind", "values", "items", "inner", "fields", "schema", "optional",
+];
+
+/// The key of an object member in a schema literal. A member named like
+/// a schema keyword, such as the `kind` of an assignment, is written as a
+/// computed key, so a reader of the text never takes it for the keyword.
+fn member_key(name: &str) -> String {
+    if SCHEMA_KEYWORDS.contains(&name) {
+        format!("[{}]", ts_str(name))
+    } else {
+        ts_str(name)
+    }
+}
+
+/// The TypeScript literal of `s`. The first line carries no indentation,
+/// and every later line is indented from `indent`.
+fn shape(s: &Shape, indent: usize) -> String {
+    let kind = ts_str(s.kind());
+    match s {
+        Shape::Enum(values) => {
+            let values: Vec<String> = values.iter().map(|v| ts_str(v)).collect();
+            format!("{{ kind: {kind}, values: [{}] }}", values.join(", "))
+        }
+        Shape::Array(items) => format!("{{ kind: {kind}, items: {} }}", shape(items, indent)),
+        Shape::Nullable(inner) => format!("{{ kind: {kind}, inner: {} }}", shape(inner, indent)),
+        Shape::Object(members) => {
+            let inner = indent.saturating_add(2);
+            let field = inner.saturating_add(2);
+            let mut out = format!(
+                "{{\n{}kind: {kind},\n{}fields: {{\n",
+                pad(inner),
+                pad(inner)
+            );
+            for m in *members {
+                out.push_str(&format!(
+                    "{}{}: {{ schema: {}, optional: {} }},\n",
+                    pad(field),
+                    member_key(m.name),
+                    shape(&m.shape, field),
+                    m.optional
+                ));
+            }
+            out.push_str(&format!("{}}},\n{}}}", pad(inner), pad(indent)));
+            out
+        }
+        _ => format!("{{ kind: {kind} }}"),
+    }
+}
+
+/// The `SCHEMAS` table of `replies`, by operation name.
+fn schemas(replies: &[(&str, Shape)]) -> String {
+    let mut out = String::from(
+        "\n/** The reply shape of each operation whose data the API core serves, by operation name. */\n",
+    );
+    out.push_str("export const SCHEMAS: Readonly<Record<string, Schema>> = {\n");
+    for (name, s) in replies {
+        out.push_str(&format!("  {}: {},\n", ts_str(name), shape(s, 2)));
+    }
+    out.push_str("};\n");
+    out
+}
+
+/// The whole file for `ops` and their reply shapes `replies`.
+pub(crate) fn render(ops: &[OpSpec], replies: &[(&str, Shape)]) -> String {
     let mut out = String::from(HEADER);
+    out.push('\n');
+    out.push_str(IMPORTS);
     out.push('\n');
     out.push_str("/** The prefix of every API route. */\n");
     out.push_str("export const API_PREFIX = \"/api/v1\";\n\n");
@@ -306,5 +473,8 @@ pub(crate) fn render(ops: &[OpSpec]) -> String {
     }
     out.push_str("];\n");
     out.push_str(TAIL);
+    out.push_str(SCHEMA_TYPES);
+    out.push_str(&schemas(replies));
+    out.push_str(VALIDATOR_TAIL);
     out
 }

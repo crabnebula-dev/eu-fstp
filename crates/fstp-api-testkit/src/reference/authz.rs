@@ -721,6 +721,14 @@ pub enum Rule {
     /// A programme manager of P or a tenant admin. Reading: A1 invites the
     /// first programme manager, who invites the rest in step 9.
     Inviter,
+    /// A tenant admin, or a programme manager of any programme of the
+    /// tenant. Reading: the creator start page lists the tenant's
+    /// programmes as clone sources and the template catalogue. A clone
+    /// comes from "an existing programme in the same tenant"
+    /// (`programme-creator.md` Starting points, R-PG-02), and a programme
+    /// manager chooses the starting point (J1). An ended binding holds no
+    /// role, so it lists nothing.
+    CreatorStart,
     /// A call drafter or programme manager of P. Reading: the decided M2
     /// actor rule for drafting a call.
     CallAuthor,
@@ -733,6 +741,15 @@ pub enum Rule {
     /// The FSTP coordinator of P, declared and free of conflict: the
     /// knock-out check (`roles-and-sod.md` Conflict declarations).
     CoordinatorDeclared,
+    /// The FSTP coordinator of P, in every state of X from SUBMITTED on,
+    /// except INELIGIBLE. Reading: the assignment view of one proposal
+    /// serves `review.assign` and `review.unassign` (J5). A draft is the
+    /// team's alone until it is submitted (I-21, R-AC-01). A knocked-out
+    /// proposal receives no further review (R-EV-01), so INELIGIBLE is
+    /// closed, pending a reading for the assignments it still carries.
+    /// The view holds no content, so I-03, which bars a reviewer, does not
+    /// bar it.
+    AssignmentBoard,
     /// Any account outside Drafting, Judging and Operations in P: the
     /// draft's creator (SoD-01, SoD-03, SoD-05, SoD-06).
     NewApplicant,
@@ -808,7 +825,7 @@ impl Rule {
                 &[Some(Role::TenantAdmin)]
             }
             Rule::ProgrammeManager | Rule::CallApprover => &[Some(Role::ProgrammeManager)],
-            Rule::DraftManager | Rule::Inviter => {
+            Rule::DraftManager | Rule::Inviter | Rule::CreatorStart => {
                 &[Some(Role::ProgrammeManager), Some(Role::TenantAdmin)]
             }
             Rule::CallAuthor => &[Some(Role::ProgrammeManager), Some(Role::CallDrafter)],
@@ -817,7 +834,9 @@ impl Rule {
                 Some(Role::CallDrafter),
                 Some(Role::FstpCoordinator),
             ],
-            Rule::Coordinator | Rule::CoordinatorDeclared => &[Some(Role::FstpCoordinator)],
+            Rule::Coordinator | Rule::CoordinatorDeclared | Rule::AssignmentBoard => {
+                &[Some(Role::FstpCoordinator)]
+            }
             Rule::NewApplicant => &[
                 None,
                 Some(Role::Applicant),
@@ -980,8 +999,19 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),
     RefOp::act("admin.approve_break_glass", T::None, R::TenantAdmin).hr(),
+    // Lane m4reg, the Administrators step: the tenant's admins and whether
+    // each verified identity, since onboarding finishes only with two
+    // verified admins (J0, SoD-07).
+    RefOp::read("tenant.list_admins", T::None, R::TenantAdmin),
+    // Lane m4reg: the caller's own verification state, beside
+    // `me.begin_verification`. Reading: any account reads its own state,
+    // as it may begin its own verification.
+    RefOp::read("me.get_verification", T::None, R::AnyAccount),
     // J1: the creator and import.
     RefOp::act("creator.open_draft", T::None, R::TenantAdmin).hr(),
+    // Lane m4reg, the creator start page: clone sources and templates.
+    RefOp::read("creator.list_programmes", T::None, R::CreatorStart),
+    RefOp::read("creator.list_templates", T::None, R::CreatorStart),
     RefOp::act("creator.invite", T::Programme, R::Inviter),
     RefOp::read("creator.invitations", T::Programme, R::DraftManager),
     // Reading: whoever may invite may withdraw the invitation.
@@ -1015,6 +1045,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("import.list", T::Programme, R::DraftManager),
     RefOp::act("import.resolve", T::Programme, R::ProgrammeManager),
     // J1 and J2: people and roles.
+    // Lane m4reg, the invitation landing (J2). Reading: the invitation
+    // token in the request is the capability. The invitee reads the
+    // landing before enrolling a passkey, so the read admits a caller with
+    // no account. A token that names no open invitation refuses as an
+    // input, outside authorisation. The read has no tool, and it is not a
+    // public page: it carries the programme's P-75 and P-77 choices for
+    // the confidentiality terms.
+    RefOp::read("people.get_invitation", T::None, R::Anyone),
     RefOp::act("people.accept_invitation", T::None, R::AnyAccount),
     RefOp::act("people.begin_verification", T::None, R::AnyAccount),
     RefOp::read("roles.list", T::Programme, R::TenantAdmin),
@@ -1116,6 +1154,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("review.declare_proposal", T::Proposal, R::Coordinator).binding(),
     RefOp::read("review.read_content", T::Proposal, R::Content).tool("fstp_get_proposal_content"),
     RefOp::act("review.knock_out", T::Proposal, R::CoordinatorDeclared).binding(),
+    // Lane m4reg: one proposal's assignments, candidates and the P-39 and
+    // proximity results as pass or fail, for the assignment screen (J5).
+    RefOp::read("review.assignments", T::Proposal, R::AssignmentBoard),
     RefOp::act("review.assign", T::Proposal, R::Coordinator).binding(),
     RefOp::act("review.unassign", T::Assignment, R::Coordinator).binding(),
     RefOp::act("review.admit", T::Proposal, R::Coordinator).binding(),
@@ -1216,10 +1257,14 @@ fn admit(
         Rule::SecondAdmin => open(who.tenant_admin() && who != Who::SoleTenantAdmin),
         Rule::ProgrammeManager => open(who.manager()),
         Rule::DraftManager | Rule::Inviter => open(who.manager() || who.tenant_admin()),
+        Rule::CreatorStart => {
+            open(who.tenant_admin() || who.manager() || who == Who::OtherProgrammeManager)
+        }
         Rule::CallAuthor => open(who.manager() || who == Who::CallDrafter),
         Rule::CallApprover => open(who == Who::ProgrammeManager),
         Rule::CallStaff => open(who.manager() || who == Who::CallDrafter || who.coordinator()),
         Rule::Coordinator => open(who.coordinator()),
+        Rule::AssignmentBoard => open(who.coordinator() && x.is_some_and(|s| among(s, &ASSIGNED))),
         Rule::CoordinatorDeclared => assignee(
             Who::Coordinator,
             Who::CoordinatorUndeclared,

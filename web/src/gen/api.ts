@@ -9,6 +9,13 @@
 //
 // Paths are relative to API_PREFIX, except the public pages (base "page"),
 // which are served at their own path with no script.
+//
+// SCHEMAS holds the reply shape of each operation whose data the API core
+// serves, from the REPLIES table of fstp-access. VALIDATORS holds one
+// structural validator per entry. Objects are closed, and an amount is an
+// ADR-006 EUR string, never a JSON number.
+
+import { parseAmount } from "../core/money.js";
 
 /** The prefix of every API route. */
 export const API_PREFIX = "/api/v1";
@@ -53,6 +60,8 @@ export type OpName =
   | "tenant.complete"
   | "tenant.settings"
   | "tenant.invite_admin"
+  | "tenant.list_admins"
+  | "me.get_verification"
   | "tenant.set_login_methods"
   | "tenant.set_step_up_freshness"
   | "tenant.set_session_lifetimes"
@@ -64,6 +73,8 @@ export type OpName =
   | "admin.approve_recovery"
   | "admin.approve_break_glass"
   | "creator.open_draft"
+  | "creator.list_programmes"
+  | "creator.list_templates"
   | "creator.invite"
   | "creator.withdraw_invitation"
   | "creator.invitations"
@@ -81,6 +92,7 @@ export type OpName =
   | "import.upload"
   | "import.list"
   | "import.resolve"
+  | "people.get_invitation"
   | "people.accept_invitation"
   | "people.begin_verification"
   | "roles.list"
@@ -129,6 +141,7 @@ export type OpName =
   | "review.declare_proposal"
   | "review.read_content"
   | "review.knock_out"
+  | "review.assignments"
   | "review.assign"
   | "review.unassign"
   | "review.admit"
@@ -147,7 +160,10 @@ export type OpName =
   | "review.findings"
   | "review.mark_finding"
   | "committee.ranking"
+  | "committee.open_round"
   | "committee.round"
+  | "committee.cast"
+  | "committee.delegate"
   | "committee.record_cutoff"
   | "me.irc_cases"
   | "irc.declare"
@@ -204,6 +220,8 @@ export interface OpParams {
   readonly "tenant.complete": Readonly<Record<never, string>>;
   readonly "tenant.settings": Readonly<Record<never, string>>;
   readonly "tenant.invite_admin": Readonly<Record<never, string>>;
+  readonly "tenant.list_admins": Readonly<Record<never, string>>;
+  readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
   readonly "tenant.set_step_up_freshness": Readonly<Record<never, string>>;
   readonly "tenant.set_session_lifetimes": Readonly<Record<never, string>>;
@@ -215,6 +233,8 @@ export interface OpParams {
   readonly "admin.approve_recovery": { readonly "recovery": string };
   readonly "admin.approve_break_glass": { readonly "break_glass": string };
   readonly "creator.open_draft": Readonly<Record<never, string>>;
+  readonly "creator.list_programmes": Readonly<Record<never, string>>;
+  readonly "creator.list_templates": Readonly<Record<never, string>>;
   readonly "creator.invite": { readonly "programme": string };
   readonly "creator.withdraw_invitation": { readonly "programme": string; readonly "invitation": string };
   readonly "creator.invitations": { readonly "programme": string };
@@ -232,8 +252,9 @@ export interface OpParams {
   readonly "import.upload": { readonly "programme": string };
   readonly "import.list": { readonly "programme": string };
   readonly "import.resolve": { readonly "programme": string; readonly "import_proposal": string };
-  readonly "people.accept_invitation": { readonly "invitation": string };
-  readonly "people.begin_verification": { readonly "invitation": string };
+  readonly "people.get_invitation": { readonly "invitation_token": string };
+  readonly "people.accept_invitation": { readonly "invitation_token": string };
+  readonly "people.begin_verification": { readonly "invitation_token": string };
   readonly "roles.list": { readonly "programme": string };
   readonly "roles.grant": { readonly "programme": string };
   readonly "roles.end": { readonly "programme": string; readonly "binding": string };
@@ -280,6 +301,7 @@ export interface OpParams {
   readonly "review.declare_proposal": { readonly "proposal": string };
   readonly "review.read_content": { readonly "proposal": string };
   readonly "review.knock_out": { readonly "proposal": string };
+  readonly "review.assignments": { readonly "proposal": string };
   readonly "review.assign": { readonly "proposal": string };
   readonly "review.unassign": { readonly "assignment": string };
   readonly "review.admit": { readonly "proposal": string };
@@ -298,7 +320,10 @@ export interface OpParams {
   readonly "review.findings": { readonly "assignment": string };
   readonly "review.mark_finding": { readonly "finding": string };
   readonly "committee.ranking": { readonly "call": string };
+  readonly "committee.open_round": { readonly "call": string };
   readonly "committee.round": { readonly "round": string };
+  readonly "committee.cast": { readonly "round": string };
+  readonly "committee.delegate": { readonly "round": string };
   readonly "committee.record_cutoff": { readonly "round": string };
   readonly "me.irc_cases": Readonly<Record<never, string>>;
   readonly "irc.declare": { readonly "irc_assignment": string };
@@ -328,6 +353,8 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.complete",
   "tenant.settings",
   "tenant.invite_admin",
+  "tenant.list_admins",
+  "me.get_verification",
   "tenant.set_login_methods",
   "tenant.set_step_up_freshness",
   "tenant.set_session_lifetimes",
@@ -339,6 +366,8 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.approve_recovery",
   "admin.approve_break_glass",
   "creator.open_draft",
+  "creator.list_programmes",
+  "creator.list_templates",
   "creator.invite",
   "creator.withdraw_invitation",
   "creator.invitations",
@@ -356,6 +385,7 @@ export const OP_NAMES: readonly OpName[] = [
   "import.upload",
   "import.list",
   "import.resolve",
+  "people.get_invitation",
   "people.accept_invitation",
   "people.begin_verification",
   "roles.list",
@@ -404,6 +434,7 @@ export const OP_NAMES: readonly OpName[] = [
   "review.declare_proposal",
   "review.read_content",
   "review.knock_out",
+  "review.assignments",
   "review.assign",
   "review.unassign",
   "review.admit",
@@ -422,7 +453,10 @@ export const OP_NAMES: readonly OpName[] = [
   "review.findings",
   "review.mark_finding",
   "committee.ranking",
+  "committee.open_round",
   "committee.round",
+  "committee.cast",
+  "committee.delegate",
   "committee.record_cutoff",
   "me.irc_cases",
   "irc.declare",
@@ -528,6 +562,34 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "phishing_resistant",
     classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.list_admins",
+    method: "GET",
+    path: "/admin/admins",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "admins" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.get_verification",
+    method: "GET",
+    path: "/me/verification",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "verification" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
     tool: null,
   },
   {
@@ -681,6 +743,34 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: true,
     binding: false,
     session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "creator.list_programmes",
+    method: "GET",
+    path: "/programmes",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "creator.list_templates",
+    method: "GET",
+    path: "/templates",
+    base: "api",
+    segments: [{ kind: "literal", text: "templates" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
     classification: "confidential",
     tool: null,
   },
@@ -923,12 +1013,26 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "people.get_invitation",
+    method: "GET",
+    path: "/invitations/{invitation_token}",
+    base: "api",
+    segments: [{ kind: "literal", text: "invitations" }, { kind: "param", name: "invitation_token" }],
+    params: ["invitation_token"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "people.accept_invitation",
     method: "POST",
-    path: "/invitations/{invitation}/accept",
+    path: "/invitations/{invitation_token}/accept",
     base: "api",
-    segments: [{ kind: "literal", text: "invitations" }, { kind: "param", name: "invitation" }, { kind: "literal", text: "accept" }],
-    params: ["invitation"],
+    segments: [{ kind: "literal", text: "invitations" }, { kind: "param", name: "invitation_token" }, { kind: "literal", text: "accept" }],
+    params: ["invitation_token"],
     body: true,
     highRisk: false,
     binding: false,
@@ -939,10 +1043,10 @@ export const OPERATIONS: readonly Operation[] = [
   {
     name: "people.begin_verification",
     method: "POST",
-    path: "/invitations/{invitation}/verification",
+    path: "/invitations/{invitation_token}/verification",
     base: "api",
-    segments: [{ kind: "literal", text: "invitations" }, { kind: "param", name: "invitation" }, { kind: "literal", text: "verification" }],
-    params: ["invitation"],
+    segments: [{ kind: "literal", text: "invitations" }, { kind: "param", name: "invitation_token" }, { kind: "literal", text: "verification" }],
+    params: ["invitation_token"],
     body: true,
     highRisk: false,
     binding: false,
@@ -1595,6 +1699,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "review.assignments",
+    method: "GET",
+    path: "/proposals/{proposal}/assignments",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assignments" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "review.assign",
     method: "POST",
     path: "/proposals/{proposal}/assignments",
@@ -1847,6 +1965,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: { name: "fstp_get_ranking_view", scope: "ranking:read", prepareOnly: false },
   },
   {
+    name: "committee.open_round",
+    method: "POST",
+    path: "/calls/{call}/cut-off-rounds",
+    base: "api",
+    segments: [{ kind: "literal", text: "calls" }, { kind: "param", name: "call" }, { kind: "literal", text: "cut-off-rounds" }],
+    params: ["call"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "committee.round",
     method: "GET",
     path: "/cut-off-rounds/{round}",
@@ -1856,6 +1988,34 @@ export const OPERATIONS: readonly Operation[] = [
     body: false,
     highRisk: false,
     binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "committee.cast",
+    method: "POST",
+    path: "/cut-off-rounds/{round}/ballot",
+    base: "api",
+    segments: [{ kind: "literal", text: "cut-off-rounds" }, { kind: "param", name: "round" }, { kind: "literal", text: "ballot" }],
+    params: ["round"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "committee.delegate",
+    method: "POST",
+    path: "/cut-off-rounds/{round}/delegation",
+    base: "api",
+    segments: [{ kind: "literal", text: "cut-off-rounds" }, { kind: "param", name: "round" }, { kind: "literal", text: "delegation" }],
+    params: ["round"],
+    body: true,
+    highRisk: false,
+    binding: true,
     session: "any",
     classification: "confidential",
     tool: null,
@@ -2193,3 +2353,249 @@ export function isPendingReceipt(v: unknown): v is PendingReceipt {
     typeof v["expires"] === "string"
   );
 }
+
+/** The structure of one JSON value of a reply. */
+export type Schema =
+  | { readonly kind: "string" }
+  | { readonly kind: "id" }
+  | { readonly kind: "amount" }
+  | { readonly kind: "bool" }
+  | { readonly kind: "int" }
+  | { readonly kind: "null" }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "array"; readonly items: Schema }
+  | { readonly kind: "nullable"; readonly inner: Schema }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, SchemaField>> };
+
+/** One member of an object schema. */
+export interface SchemaField {
+  readonly schema: Schema;
+  readonly optional: boolean;
+}
+
+/** The reply shape of each operation whose data the API core serves, by operation name. */
+export const SCHEMAS: Readonly<Record<string, Schema>> = {
+  "pending.list": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "id": { schema: { kind: "id" }, optional: false },
+      "agent": { schema: { kind: "id" }, optional: false },
+      "op": { schema: { kind: "string" }, optional: false },
+      "request": { schema: { kind: "string" }, optional: false },
+      "digest": { schema: { kind: "string" }, optional: false },
+      "created": { schema: { kind: "string" }, optional: false },
+      "expires": { schema: { kind: "string" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["open", "confirmed", "expired", "discarded"] }, optional: false },
+      "confirm_path": { schema: { kind: "string" }, optional: false },
+    },
+  } },
+  "calls.list_open": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "programme": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["draft", "approved", "published"] }, optional: false },
+      "opens": { schema: { kind: "string" }, optional: false },
+      "deadline": { schema: { kind: "string" }, optional: false },
+      "deadline_zone": { schema: { kind: "string" }, optional: false },
+      "budget": { schema: { kind: "amount" }, optional: false },
+      "currency": { schema: { kind: "enum", values: ["EUR"] }, optional: false },
+      "open": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
+  "calls.get": {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "programme": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["draft", "approved", "published"] }, optional: false },
+      "opens": { schema: { kind: "string" }, optional: false },
+      "deadline": { schema: { kind: "string" }, optional: false },
+      "deadline_zone": { schema: { kind: "string" }, optional: false },
+      "budget": { schema: { kind: "amount" }, optional: false },
+      "currency": { schema: { kind: "enum", values: ["EUR"] }, optional: false },
+      "open": { schema: { kind: "bool" }, optional: false },
+    },
+  },
+  "proposal.list_own": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+      "role": { schema: { kind: "enum", values: ["lead", "member", "guardian"] }, optional: false },
+    },
+  } },
+  "me.assignments": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "assignment": { schema: { kind: "id" }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["reviewer", "irc", "amendment"] }, optional: false },
+      "awaiting_declaration": { schema: { kind: "bool" }, optional: false },
+      "active": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
+  "me.sessions": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "session": { schema: { kind: "id" }, optional: false },
+      "method": { schema: { kind: "enum", values: ["passkey", "magic_link", "opaque", "eudi_wallet"] }, optional: false },
+      "started": { schema: { kind: "string" }, optional: false },
+    },
+  } },
+  "me.begin_verification": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "tenant.list_admins": {
+    kind: "object",
+    fields: {
+      "admins": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "account": { schema: { kind: "id" }, optional: false },
+          "handle": { schema: { kind: "string" }, optional: false },
+          "verified": { schema: { kind: "bool" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "me.get_verification": {
+    kind: "object",
+    fields: {
+      "status": { schema: { kind: "enum", values: ["unverified", "pending", "verified"] }, optional: false },
+    },
+  },
+  "creator.list_programmes": {
+    kind: "object",
+    fields: {
+      "programmes": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          "name": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "creator.list_templates": {
+    kind: "object",
+    fields: {
+      "templates": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          "version": { schema: { kind: "int" }, optional: false },
+          "name": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "people.get_invitation": {
+    kind: "object",
+    fields: {
+      "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
+      "terms_version": { schema: { kind: "int" }, optional: false },
+      "p75": { schema: { kind: "nullable", inner: { kind: "bool" } }, optional: false },
+      "p77": { schema: { kind: "nullable", inner: { kind: "enum", values: ["draft_only", "allowed"] } }, optional: false },
+      "state": { schema: { kind: "enum", values: ["invited", "accepted", "verified", "granted"] }, optional: false },
+    },
+  },
+  "review.assignments": {
+    kind: "object",
+    fields: {
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+      "assigned": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "assignment": { schema: { kind: "id" }, optional: false },
+          "label": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+      "candidates": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "account": { schema: { kind: "id" }, optional: false },
+          "label": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+      "checks": { schema: {
+        kind: "object",
+        fields: {
+          "p39": { schema: { kind: "enum", values: ["pass", "fail"] }, optional: false },
+          "proximity": { schema: { kind: "enum", values: ["pass", "fail"] }, optional: false },
+        },
+      }, optional: false },
+    },
+  },
+  "committee.open_round": {
+    kind: "object",
+    fields: {
+      "round": { schema: { kind: "id" }, optional: false },
+    },
+  },
+};
+
+/** Whether `v` is a plain object parsed from JSON. */
+function isPlainObject(v: unknown): v is Readonly<Record<string, unknown>> {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+}
+
+/** Whether `o` has `k` as its own member. */
+function hasOwn(o: object, k: string): boolean {
+  return Object.prototype.hasOwnProperty.call(o, k);
+}
+
+/**
+ * Whether `v`, a value from `JSON.parse`, fits `s`. Objects are closed:
+ * a member `s` does not name is refused, and a missing member passes only
+ * when it is optional. An id is a non-empty string, an int a safe
+ * integer, and an amount an ADR-006 EUR string. It never throws.
+ */
+export function fitsSchema(s: Schema, v: unknown): boolean {
+  switch (s.kind) {
+    case "string":
+      return typeof v === "string";
+    case "id":
+      return typeof v === "string" && v !== "";
+    case "amount":
+      return parseAmount(v, "EUR").ok;
+    case "bool":
+      return typeof v === "boolean";
+    case "int":
+      return typeof v === "number" && Number.isSafeInteger(v);
+    case "null":
+      return v === null;
+    case "enum":
+      return typeof v === "string" && s.values.includes(v);
+    case "array":
+      return Array.isArray(v) && v.every((x: unknown) => fitsSchema(s.items, x));
+    case "nullable":
+      return v === null || fitsSchema(s.inner, v);
+    case "object": {
+      if (!isPlainObject(v)) {
+        return false;
+      }
+      for (const k of Object.keys(v)) {
+        if (!hasOwn(s.fields, k)) {
+          return false;
+        }
+      }
+      for (const [k, f] of Object.entries(s.fields)) {
+        if (hasOwn(v, k) ? !fitsSchema(f.schema, v[k]) : !f.optional) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+}
+
+/** One structural validator per entry of `SCHEMAS`, by operation name. */
+export const VALIDATORS: Readonly<Record<string, (v: unknown) => boolean>> = Object.freeze(
+  Object.fromEntries(Object.entries(SCHEMAS).map(([name, s]) => [name, (v: unknown): boolean => fitsSchema(s, v)])),
+);

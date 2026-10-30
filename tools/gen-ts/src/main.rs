@@ -1,6 +1,7 @@
 //! `gen-ts` writes `web/src/gen/api.ts` from the `OPS` registry of
-//! `fstp-access`: the types, the operation table, the route segments and
-//! the structural validators (M4 design sections 1.1 and 3.9, ADR-014).
+//! `fstp-access`: the types, the operation table, the route segments, the
+//! reply shapes of `REPLIES` as `SCHEMAS`, and one structural validator
+//! per shape in `VALIDATORS` (M4 design sections 1.1 and 3.9, ADR-014).
 //! CI runs it with `--check`, as `gen-sqlstate.sh --check` runs. It is a
 //! build tool and never ships.
 //!
@@ -53,7 +54,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let path = args.root.join(API_TS);
-    let out = render::render(fstp_access::OPS);
+    let out = render::render(fstp_access::OPS, fstp_access::REPLIES);
     if args.check {
         return match std::fs::read(&path) {
             Ok(bytes) if bytes == out.as_bytes() => ExitCode::SUCCESS,

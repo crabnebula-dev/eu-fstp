@@ -442,14 +442,23 @@ fn ops_high_risk_and_binding_follow_the_domain() {
         assert_eq!(found.kind, OpKind::Command(kind), "{name} kind");
     }
     let mut checked = 0usize;
+    let mut kinds: BTreeSet<String> = BTreeSet::new();
     for o in OPS {
         if let OpKind::Command(k) = o.kind {
             assert_eq!(o.high_risk, k.high_risk(), "{} high_risk", o.name);
             assert_eq!(o.binding, k.binding_action(), "{} binding", o.name);
             checked += 1;
+            kinds.insert(kind_name(k));
         }
     }
-    assert!(checked >= 37, "only {checked} command operations");
+    // Of the 37 routed kinds, `CreateProgramme`, `EditPolicy` and
+    // `ReadContent` are carried by creator and read operations, so 34 are
+    // the kind of a command operation. `DeclareConflict` sits on three
+    // operations (coordinator, reviewer and IRC declarations), so there
+    // are 36 command operations. (Lane m4reg corrected the floor here from
+    // 37, which counted kinds, not operations.)
+    assert_eq!(kinds.len(), 34, "command kinds of command operations");
+    assert!(checked >= 36, "only {checked} command operations");
 }
 
 /// The high-risk table of `authentication.md`, row by row, mapped to the
@@ -907,49 +916,90 @@ fn states_ok(states: &[StateTag]) -> bool {
     set.len() == states.len()
 }
 
-/// The exhaustive match ties this test to `ReadKind`: a new read fails to
-/// compile here until it is placed in `READ_RULES` and given an operation.
+/// Every read, by the name its `Debug` spells: the 38 reads of design
+/// section 3.6, then the six reads lane m4reg adds for the demo pages
+/// (`tenant.list_admins`, `me.get_verification`, `creator.list_programmes`,
+/// `creator.list_templates`, `people.get_invitation` and
+/// `review.assignments`). The list replaces an exhaustive match, which
+/// could not name the m4reg kinds before they exist. A read missing here
+/// fails `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
+const READ_NAMES: [&str; 44] = [
+    "ListOpenCalls",
+    "GetPublicCall",
+    "GetGuide",
+    "ListOwnProposals",
+    "GetOwnProposal",
+    "GetOwnWorkspace",
+    "GetOwnStage2Thread",
+    "GetOwnNotices",
+    "GetNegotiationLanding",
+    "ListMyAssignments",
+    "GetDeclarationView",
+    "GetContent",
+    "GetScoreSheet",
+    "GetStage2Thread",
+    "GetFindings",
+    "GetRankingView",
+    "GetCutOffRound",
+    "ListMyIrcCases",
+    "GetIrcCase",
+    "GetIntakeQueue",
+    "GetCallBoard",
+    "GetDraft",
+    "GetReport",
+    "GetPreview",
+    "GetImpact",
+    "ListImportProposals",
+    "ListInvitations",
+    "ListBindings",
+    "GetAuditLog",
+    "GetVaultOutcomes",
+    "ListMyAgents",
+    "ListMyAgentActivity",
+    "ListMyPendingActions",
+    "ListMySessions",
+    "ListNotifiableConflicts",
+    "ListApprovals",
+    "GetTenantSettings",
+    "GetOnboarding",
+    "ListTenantAdmins",
+    "GetMyVerification",
+    "ListProgrammes",
+    "ListTemplates",
+    "GetInvitation",
+    "ListProposalAssignments",
+];
+
+/// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the
+/// list does not name, which no row counter holds.
 fn read_index(k: ReadKind) -> usize {
-    match k {
-        ReadKind::ListOpenCalls => 0,
-        ReadKind::GetPublicCall => 1,
-        ReadKind::GetGuide => 2,
-        ReadKind::ListOwnProposals => 3,
-        ReadKind::GetOwnProposal => 4,
-        ReadKind::GetOwnWorkspace => 5,
-        ReadKind::GetOwnStage2Thread => 6,
-        ReadKind::GetOwnNotices => 7,
-        ReadKind::GetNegotiationLanding => 8,
-        ReadKind::ListMyAssignments => 9,
-        ReadKind::GetDeclarationView => 10,
-        ReadKind::GetContent => 11,
-        ReadKind::GetScoreSheet => 12,
-        ReadKind::GetStage2Thread => 13,
-        ReadKind::GetFindings => 14,
-        ReadKind::GetRankingView => 15,
-        ReadKind::GetCutOffRound => 16,
-        ReadKind::ListMyIrcCases => 17,
-        ReadKind::GetIrcCase => 18,
-        ReadKind::GetIntakeQueue => 19,
-        ReadKind::GetCallBoard => 20,
-        ReadKind::GetDraft => 21,
-        ReadKind::GetReport => 22,
-        ReadKind::GetPreview => 23,
-        ReadKind::GetImpact => 24,
-        ReadKind::ListImportProposals => 25,
-        ReadKind::ListInvitations => 26,
-        ReadKind::ListBindings => 27,
-        ReadKind::GetAuditLog => 28,
-        ReadKind::GetVaultOutcomes => 29,
-        ReadKind::ListMyAgents => 30,
-        ReadKind::ListMyAgentActivity => 31,
-        ReadKind::ListMyPendingActions => 32,
-        ReadKind::ListMySessions => 33,
-        ReadKind::ListNotifiableConflicts => 34,
-        ReadKind::ListApprovals => 35,
-        ReadKind::GetTenantSettings => 36,
-        ReadKind::GetOnboarding => 37,
-    }
+    let name = format!("{k:?}");
+    READ_NAMES
+        .iter()
+        .position(|n| *n == name)
+        .unwrap_or(usize::MAX)
+}
+
+/// D11, design section 3.6, lane m4reg: `ReadKind::ALL` holds exactly the
+/// reads of [`READ_NAMES`], each once, so no read escapes the row check
+/// below. Red until lane m4reg adds its six reads.
+#[test]
+fn d11_read_kinds_are_the_design_reads_and_the_m4reg_reads() {
+    let all: Vec<String> = ReadKind::ALL.iter().map(|k| format!("{k:?}")).collect();
+    let set: BTreeSet<&str> = all.iter().map(String::as_str).collect();
+    assert_eq!(
+        set.len(),
+        all.len(),
+        "ReadKind::ALL repeats a read: {all:?}"
+    );
+    let want: BTreeSet<&str> = READ_NAMES.iter().copied().collect();
+    let missing: Vec<&&str> = want.difference(&set).collect();
+    let extra: Vec<&&str> = set.difference(&want).collect();
+    assert!(missing.is_empty(), "ReadKind::ALL lacks {missing:?}");
+    assert!(
+        extra.is_empty(),
+        "reads READ_NAMES does not list: {extra:?}"
+    );
 }
 
 /// D11, R-AC-01, I-21, design section 3.6 ("Every state has a rule"): each
@@ -960,7 +1010,7 @@ fn read_index(k: ReadKind) -> usize {
 /// but the team, which the matrix checks per principal.
 #[test]
 fn d11_read_rules_judge_every_read_in_every_state() {
-    let mut rows = [0usize; 38];
+    let mut rows = [0usize; READ_NAMES.len()];
     for (k, _, states) in READ_RULES {
         let i = read_index(*k);
         if let Some(n) = rows.get_mut(i) {
