@@ -268,8 +268,19 @@ function values(step: OnboardingStep, form: HTMLElement, view: StepView, admins:
   }
 }
 
-/** The P-20 section of the Payments step: a tenant setting with its own step-up. */
-function paymentMode(alert: HTMLElement, current: unknown): HTMLElement {
+/**
+ * The P-20 section of the Payments step: a tenant setting with its own
+ * step-up. A change of P-20 is a tenant record, so it moves the tenant
+ * revision a step save names as its base. `saved` runs once the change
+ * is recorded, before the section reports it, and `track` receives each
+ * change in flight, so a step save waits for it and sends the fresh base.
+ */
+function paymentMode(
+  alert: HTMLElement,
+  current: unknown,
+  saved: () => Promise<void>,
+  track: (work: Promise<void>) => void,
+): HTMLElement {
   const status = h("p", { id: "setting-p20-status", role: "status", class: "fstp-status" });
   const fieldset = choices(
     "radio",
@@ -281,16 +292,21 @@ function paymentMode(alert: HTMLElement, current: unknown): HTMLElement {
   const save = h("button", { id: "setting-p20-save", type: "button" }, [t.label("onboarding.payments.p20_save")]);
   save.addEventListener(
     "click",
-    busy(save, async () => {
-      hush(alert);
-      const chosen = checked(fieldset, "p20")[0];
-      if (chosen === undefined) {
-        warn(alert, t.label("onboarding.payments.p20_none"));
-        return;
-      }
-      const o = await call("tenant.set_payment_mode", [], { value: chosen }, anyObject);
-      if (report(alert, o)) return;
-      status.textContent = t.label("onboarding.payments.p20_saved");
+    busy(save, () => {
+      const work = (async (): Promise<void> => {
+        hush(alert);
+        const chosen = checked(fieldset, "p20")[0];
+        if (chosen === undefined) {
+          warn(alert, t.label("onboarding.payments.p20_none"));
+          return;
+        }
+        const o = await call("tenant.set_payment_mode", [], { value: chosen }, anyObject);
+        if (report(alert, o)) return;
+        await saved();
+        status.textContent = t.label("onboarding.payments.p20_saved");
+      })();
+      track(work);
+      return work;
     }),
   );
   return h("section", { id: "setting-p20", "aria-labelledby": "setting-p20-title" }, [
@@ -406,6 +422,21 @@ export function mount(step: OnboardingStep): void {
       outcome.textContent = t.label("onboarding.outcome.last", { outcome: outcomeText(view.outcome) });
     }
     let base = view.revision;
+    // A tenant setting changed on this page (P-20) moves the revision. A
+    // save waits for such a change in flight and then sends the fresh base.
+    let settling: Promise<void> = Promise.resolve();
+    const refreshBase = async (): Promise<void> => {
+      const again = await loadSteps(alert);
+      if (again === null) return;
+      const n = stepNav(step, statusesOf(again));
+      nav.replaceWith(n);
+      nav = n;
+      const v = again.get(step);
+      if (v !== undefined) base = v.revision;
+    };
+    const track = (work: Promise<void>): void => {
+      settling = work.catch(() => undefined);
+    };
     const save = h("button", { id: "onboarding-save", type: "submit", class: "fstp-primary" }, [t.label("onboarding.save")]);
     const form = h("form", { id: "onboarding-form", novalidate: true }, [...controls(step, view, admins), save]);
     form.addEventListener(
@@ -416,6 +447,7 @@ export function mount(step: OnboardingStep): void {
       },
     );
     const run = busy(save, async () => {
+      await settling;
       hush(alert);
       outcome.removeAttribute("data-outcome");
       const sent = values(step, form, view, admins);
@@ -458,7 +490,7 @@ export function mount(step: OnboardingStep): void {
     const parts: HTMLElement[] = [];
     if (step === "payments") {
       const settings = await call("tenant.settings", [], undefined, (x) => record(x) !== null);
-      parts.push(paymentMode(alert, settings.kind === "done" ? record(settings.body)?.["p20"] : null));
+      parts.push(paymentMode(alert, settings.kind === "done" ? record(settings.body)?.["p20"] : null, refreshBase, track));
     }
     parts.push(form, outcome, nextBox);
     if (step === "administrators") {

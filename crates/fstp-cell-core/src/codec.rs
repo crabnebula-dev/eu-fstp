@@ -249,6 +249,11 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
         "core" | "finding" => fstp_engine::Record::from_json(value)
             .map(CellRecord::Engine)
             .map_err(body(if member == "core" { "core" } else { "finding" })),
+        // The engine's tenant side (lane m4tenant). M3's own tenant
+        // records keep the member `tenant`.
+        "onboarding" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("onboarding")),
         "auth" => auth_record(inner).map(CellRecord::Auth),
         "tenant" => tenant_record(inner)
             .map(CellRecord::Tenant)
@@ -565,6 +570,9 @@ fn command_from_value(value: &Value) -> Result<CellCommand, DecodeError> {
         "finding" => finding_command(inner)
             .map(|c| CellCommand::Engine(fstp_engine::Command::Finding(c)))
             .map_err(body("finding")),
+        "onboarding" => fstp_engine::tenant::request_from_json(inner)
+            .map(|c| CellCommand::Engine(fstp_engine::Command::Tenant(c)))
+            .map_err(body("onboarding")),
         "auth" => auth_command(inner).map(CellCommand::Auth),
         "tenant" => tenant_command(inner)
             .map(CellCommand::Tenant)
@@ -598,6 +606,12 @@ impl ToJson for CellCommand {
             CellCommand::Engine(fstp_engine::Command::Bridge(c)) => wrap("bridge", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Import(c)) => {
                 wrap("import", fstp_engine::bridge::import_command_json(c))
+            }
+            // Lane m4tenant. The cell's own tenant commands hold the
+            // member `tenant`, so the engine's tenant request goes under
+            // `onboarding`, as its records do. The decoder reads it back.
+            CellCommand::Engine(fstp_engine::Command::Tenant(c)) => {
+                wrap("onboarding", fstp_engine::tenant::request_json(c))
             }
             CellCommand::Auth(c) => wrap("auth", auth_command_json(c)),
             CellCommand::Tenant(c) => wrap("tenant", tenant_command_json(c)),

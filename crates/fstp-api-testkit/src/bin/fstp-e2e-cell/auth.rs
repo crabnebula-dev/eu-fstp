@@ -128,6 +128,9 @@ pub(crate) struct AuthState {
     challenges: BTreeMap<[u8; 16], Challenge>,
     session_passkey: BTreeMap<u128, Vec<u8>>,
     mailbox: Vec<Mail>,
+    /// The open tenant admin invitation of each invited account, until
+    /// the account enrols (lane m4tenant, `crate::onboarding`).
+    admin_invitations: BTreeMap<AccountId, fstp_tenant::InvitationId>,
 }
 
 impl AuthState {
@@ -146,6 +149,7 @@ impl AuthState {
             challenges: BTreeMap::new(),
             session_passkey: BTreeMap::new(),
             mailbox: Vec::new(),
+            admin_invitations: BTreeMap::new(),
         }
     }
 
@@ -172,6 +176,24 @@ impl AuthState {
         let token = hex(&wire::random::<16>()?);
         self.invites.insert(token.clone(), Invite { account });
         Ok(format!("{}/auth/invite#{token}", self.origin))
+    }
+
+    /// Records that `account` was invited as a tenant admin under
+    /// `invitation`.
+    pub(crate) fn admin_invitation(
+        &mut self,
+        account: AccountId,
+        invitation: fstp_tenant::InvitationId,
+    ) {
+        self.admin_invitations.insert(account, invitation);
+    }
+
+    /// Takes the open tenant admin invitation of `account`, if any.
+    pub(crate) fn taken_admin_invitation(
+        &mut self,
+        account: AccountId,
+    ) -> Option<fstp_tenant::InvitationId> {
+        self.admin_invitations.remove(&account)
     }
 
     /// A fresh synthetic identity, never drawn before in this cell state
@@ -578,6 +600,11 @@ fn invite_register(inner: &Inner, token: &str, req: &Request) -> Response {
             Err(why) => return refuse(StatusCode::FORBIDDEN, why),
         }
     };
+    // An invited tenant admin takes the invitation with the enrolment, as
+    // the M3 ceremony would (design J0, `crate::onboarding`).
+    if crate::onboarding::accept(inner, registered.0).is_err() {
+        return refuse(StatusCode::FORBIDDEN, "admin_invitation");
+    }
     open_session(inner, registered.0, registered.1)
 }
 

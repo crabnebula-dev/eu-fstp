@@ -18,6 +18,7 @@ fstp-json.workspace = true
 fstp-import.workspace = true
 fstp-creator.workspace = true
 fstp-programme.workspace = true
+fstp-tenant.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

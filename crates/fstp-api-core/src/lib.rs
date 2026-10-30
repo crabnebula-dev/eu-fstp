@@ -41,6 +41,7 @@ mod pageforms;
 pub mod pending;
 pub mod port;
 pub mod rate;
+pub mod tenant;
 pub mod views;
 
 use std::future::Future;

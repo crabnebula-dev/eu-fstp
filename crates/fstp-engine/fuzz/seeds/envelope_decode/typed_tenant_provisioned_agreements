@@ -1,0 +1,1 @@
+{"at":0,"command":"00000000000000000000000000000001","record":{"onboarding":{"agreements":{"dpa":"1","saas_terms":"1","sub_processors":"1"},"cell":"saas","first_admin":"11","kind":"TenantProvisioned"}},"schema":1,"seq":"1"}

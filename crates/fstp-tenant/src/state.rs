@@ -576,6 +576,13 @@ impl TenantState {
         self.saved.get(&step).map(|(v, _)| v)
     }
 
+    /// The current outcome of the latest save of `step`, as the step view
+    /// names it. A change of P-20 may turn a validated Payments save into
+    /// a failed one (lane m4tenant: the read model shows it).
+    pub fn saved_outcome(&self, step: OnboardingStep) -> Option<StepOutcome> {
+        self.saved.get(&step).map(|(_, o)| *o)
+    }
+
     /// The status of `step` for the onboarding view.
     pub fn status(&self, step: OnboardingStep) -> StepStatus {
         if !step.required_in(self.cell) {

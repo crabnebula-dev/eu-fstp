@@ -2,8 +2,8 @@
 //!
 //! The input is parsed as JSON and decoded as a ledger entry. The record is
 //! then split by the envelope layer into its side, `core`, `finding`,
-//! `creator` or `import`, and the inner record's JSON value. The target
-//! checks:
+//! `creator`, `import` or `onboarding`, and the inner record's JSON value.
+//! The target checks:
 //!
 //! - nothing panics, and a refusal formats without panicking;
 //! - joining the parts again gives the stored record value exactly;

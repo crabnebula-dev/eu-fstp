@@ -381,6 +381,7 @@ dependencies = [
  "fstp-money",
  "fstp-programme",
  "fstp-prop",
+ "fstp-tenant",
 ]
 
 [[package]]

@@ -1,0 +1,1 @@
+{"at":0,"command":"00000000000000000000000000000001","record":{"onboarding":{"by":"11","kind":"SettingChanged","param":"P-74","value":{"enabled":true,"public_tools":false,"roles":["Applicant"]}}},"schema":1,"seq":"1"}

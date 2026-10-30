@@ -91,6 +91,9 @@ pub enum ReadModel {
     Verification(VerificationState),
     /// `committee.round`: one cut-off round (R-EV-08, R-EV-09).
     Round(RoundView),
+    /// The tenant reads and the reply of a step save (R-TN-01, SoD-07,
+    /// R-LG-03, lane m4tenant).
+    Tenant(crate::tenant::TenantView),
 }
 
 /// A decimal string.
@@ -173,6 +176,7 @@ impl ToJson for ReadModel {
             ReadModel::AssignmentView(v) => v.to_json(),
             ReadModel::Verification(v) => v.to_json(),
             ReadModel::Round(v) => v.to_json(),
+            ReadModel::Tenant(v) => v.to_json(),
         }
     }
 }
@@ -1399,6 +1403,11 @@ pub(crate) mod reply_shape_tests {
             ReadModel::AssignmentView(_) => &["review.assignments"],
             ReadModel::Verification(_) => &["me.get_verification"],
             ReadModel::Round(_) => &["committee.round"],
+            ReadModel::Tenant(crate::tenant::TenantView::Step(_)) => {
+                &["tenant.get_step", "tenant.save_step"]
+            }
+            ReadModel::Tenant(crate::tenant::TenantView::Settings(_)) => &["tenant.settings"],
+            ReadModel::Tenant(crate::tenant::TenantView::Admins(_)) => &["tenant.list_admins"],
         }
     }
 
@@ -1471,7 +1480,17 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Round(round_view(RoundStatus::Open)),
             ReadModel::Round(round_view(RoundStatus::Recorded)),
             ReadModel::Round(round_view(RoundStatus::Superseded)),
+            ReadModel::Tenant(crate::tenant::TenantView::Admins(TenantAdmins::new([
+                AdminRow {
+                    account: AccountId::from_raw(1),
+                    handle: DisplayHandle("admin-1".to_owned()),
+                    verified: true,
+                },
+            ]))),
         ]
+        .into_iter()
+        .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
+        .collect()
     }
 
     /// TH-26, ADR-006, ADR-014: every read model the API core serves fits
@@ -1507,7 +1526,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 27;
+    const VARIANTS: usize = 28;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1541,6 +1560,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::AssignmentView(_) => 24,
             ReadModel::Verification(_) => 25,
             ReadModel::Round(_) => 26,
+            ReadModel::Tenant(_) => 27,
         }
     }
 

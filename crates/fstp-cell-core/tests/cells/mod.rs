@@ -28,8 +28,16 @@ use fstp_prop::Gen;
 use crate::codec_support::{Draw, RecordTag, command, record};
 
 /// The stored member names of the cell envelope (design section 5.1).
-pub(crate) const MEMBERS: [&str; 8] = [
-    "core", "finding", "auth", "tenant", "text", "key", "release", "ops",
+pub(crate) const MEMBERS: [&str; 9] = [
+    "core",
+    "finding",
+    "onboarding",
+    "auth",
+    "tenant",
+    "text",
+    "key",
+    "release",
+    "ops",
 ];
 
 /// The member a cell record is stored under.
@@ -39,6 +47,9 @@ pub(crate) fn member_of(r: &CellRecord) -> &'static str {
         CellRecord::Engine(fstp_engine::Record::Finding(_)) => "finding",
         CellRecord::Engine(fstp_engine::Record::Creator(_)) => "creator",
         CellRecord::Engine(fstp_engine::Record::Import(_)) => "import",
+        // The engine's tenant side (lane m4tenant). M3's own tenant
+        // records keep `tenant`.
+        CellRecord::Engine(fstp_engine::Record::Tenant(_)) => "onboarding",
         CellRecord::Auth(_) => "auth",
         CellRecord::Tenant(_) => "tenant",
         CellRecord::Text(_) => "text",
@@ -241,6 +252,7 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
     Ok(match member {
         "core" => CellRecord::Engine(fstp_engine::Record::Core(core_record(g)?)),
         "finding" => CellRecord::Engine(fstp_engine::Record::Finding(finding_record(g))),
+        "onboarding" => engine_tenant_record(g)?,
         "auth" => CellRecord::Auth(auth_record(g)),
         "tenant" => CellRecord::Tenant(match g.u8_in(0..=4) {
             0 => TenantRecord::TenantAdminGranted {
@@ -309,8 +321,16 @@ pub(crate) fn any_record(g: &mut Gen) -> Result<CellRecord, String> {
 
 /// The command members of the cell envelope. M2 finding commands are
 /// left out: no generator covers them yet (lane W1 gap, reported).
-pub(crate) const COMMAND_MEMBERS: [&str; 7] =
-    ["core", "auth", "tenant", "text", "key", "release", "ops"];
+pub(crate) const COMMAND_MEMBERS: [&str; 8] = [
+    "core",
+    "onboarding",
+    "auth",
+    "tenant",
+    "text",
+    "key",
+    "release",
+    "ops",
+];
 
 /// An M2 core command of a kind drawn from every kind.
 pub(crate) fn core_command(g: &mut Gen) -> Result<fstp_domain::Command, String> {
@@ -322,6 +342,7 @@ pub(crate) fn core_command(g: &mut Gen) -> Result<fstp_domain::Command, String> 
 pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, String> {
     Ok(match member {
         "core" => CellCommand::Engine(fstp_engine::Command::Core(core_command(g)?)),
+        "onboarding" => engine_tenant_command(g)?,
         "auth" => CellCommand::Auth(auth_command(g)),
         "tenant" => CellCommand::Tenant(match g.u8_in(0..=3) {
             0 => TenantCommand::GrantTenantAdmin {
@@ -382,4 +403,96 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
 pub(crate) fn any_command(g: &mut Gen) -> Result<CellCommand, String> {
     let member = *g.pick(&COMMAND_MEMBERS);
     command_in(g, member)
+}
+
+// ---------------------------------------------------------------------------
+// The engine's tenant side (lane m4tenant, M4 design sections 3.5 and 4.2).
+//
+// The bodies are those of the `fstp-tenant` fuzz seeds, so this crate needs
+// no `fstp-tenant` edge. The tenant codec's own suites cover every variant
+// in depth. These cover the routing of the `onboarding` member.
+
+/// Inner bodies of tenant records, in the tenant codec's form.
+const TENANT_RECORDS: [&str; 7] = [
+    r#"{"account":"2","invitation":"7","kind":"AdminAdded"}"#,
+    r#"{"by":"1","invitation":"7","invitee":"2","kind":"AdminInvited","token_digest":"6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"}"#,
+    r#"{"by":"2","kind":"OnboardingCompleted"}"#,
+    r#"{"by":"1","config":"3","fallbacks":[],"kind":"InferenceConfigRecorded","primary":"model-a"}"#,
+    r#"{"by":"1","kind":"SettingChanged","param":"P-70","value":["magic_link","passkey"]}"#,
+    r#"{"by":"1","kind":"StepSaved","outcome":"prober_absent","step":"channels","values":{"matrix_homeserver":"matrix.example.org","whatsapp":true}}"#,
+    r#"{"by":"1","kind":"StepValidated","step":"branding"}"#,
+];
+
+/// Inner bodies of tenant commands, in the tenant codec's form.
+const TENANT_COMMANDS: [&str; 6] = [
+    r#"{"kind":"Complete"}"#,
+    r#"{"invitation":"7","invitee":"2","kind":"InviteAdmin","token_digest":"6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b"}"#,
+    r#"{"base":"0","kind":"SaveStep","step":"identity","values":{"p18":["document_upload","eudi_wallet"],"p45":"tenant_registration"}}"#,
+    r#"{"base":"5","kind":"SaveStep","step":"inference","values":{"fallbacks":[],"primary":"model-a","provider":"placeholder"}}"#,
+    r#"{"kind":"SetSetting","param":"P-74","value":{"enabled":true,"public_tools":false,"roles":["Applicant","Auditor"]}}"#,
+    r#"{"approval":"1","grant":{"grantee":"2","programme":"1","role":"Programme manager"},"kind":"ApproveSelfGrant"}"#,
+];
+
+fn parsed(text: &str) -> Result<fstp_json::Value, String> {
+    fstp_json::parse(text.as_bytes()).map_err(|e| format!("parse {text}: {e:?}"))
+}
+
+/// An engine tenant record: a provisioning record, or a tenant record.
+pub(crate) fn engine_tenant_record(g: &mut Gen) -> Result<CellRecord, String> {
+    use fstp_json::{Object, Value};
+    let inner = if g.bool() {
+        let mut o = Object::new();
+        let saas = g.bool();
+        if saas && g.bool() {
+            let mut a = Object::new();
+            for k in ["dpa", "saas_terms", "sub_processors"] {
+                a.insert(k, Value::from(g.u32().to_string()));
+            }
+            o.insert("agreements", Value::Object(a));
+        }
+        o.insert(
+            "cell",
+            Value::from(if saas { "saas" } else { "self_hosted" }),
+        );
+        o.insert("first_admin", Value::from(g.u64().to_string()));
+        o.insert("kind", Value::from("TenantProvisioned"));
+        Value::Object(o)
+    } else {
+        parsed(g.pick(&TENANT_RECORDS))?
+    };
+    let mut o = Object::new();
+    o.insert("onboarding", inner);
+    fstp_engine::record_from_json_at(fstp_ledger::SCHEMA_V1, &Value::Object(o))
+        .map(CellRecord::Engine)
+        .map_err(|e| format!("engine tenant record: {e:?}"))
+}
+
+/// An engine tenant command: a tenant command with prober outcomes, in
+/// the order of their kinds, and sometimes a configuration id.
+pub(crate) fn engine_tenant_command(g: &mut Gen) -> Result<CellCommand, String> {
+    use fstp_json::{Array, Object, Value};
+    let outcome = |g: &mut Gen| Value::from(*g.pick(&["passed", "failed", "absent"]));
+    let mut probes = Array::new();
+    if g.bool() {
+        let mut p = Object::new();
+        p.insert("check", Value::from("sending_domain"));
+        p.insert("domain", Value::from("mail.e2e.invalid"));
+        p.insert("outcome", outcome(g));
+        probes.push(Value::Object(p));
+    }
+    if g.bool() {
+        let mut p = Object::new();
+        p.insert("check", Value::from("channels"));
+        p.insert("outcome", outcome(g));
+        probes.push(Value::Object(p));
+    }
+    let mut o = Object::new();
+    o.insert("command", parsed(g.pick(&TENANT_COMMANDS))?);
+    if g.bool() {
+        o.insert("inference_config", Value::from(g.u64().to_string()));
+    }
+    o.insert("probes", Value::Array(probes));
+    fstp_engine::tenant::request_from_json(&Value::Object(o))
+        .map(|r| CellCommand::Engine(fstp_engine::Command::Tenant(r)))
+        .map_err(|e| format!("engine tenant command: {e:?}"))
 }

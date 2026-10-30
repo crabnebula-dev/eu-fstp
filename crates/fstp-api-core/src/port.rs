@@ -274,6 +274,9 @@ pub enum TextOwner {
     Proposal(ProposalId),
     /// A programme.
     Programme(ProgrammeId),
+    /// The tenant, for its onboarding texts such as the data protection
+    /// contact (Q22, lane m4tenant).
+    Tenant,
 }
 
 /// A reference to a stored text.

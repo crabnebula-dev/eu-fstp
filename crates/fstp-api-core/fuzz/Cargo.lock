@@ -166,6 +166,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-programme",
+ "fstp-tenant",
 ]
 
 [[package]]
