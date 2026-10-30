@@ -16,9 +16,7 @@ use fstp_audit::anchorer::WitnessFault;
 use fstp_audit::witness::WitnessRecord;
 use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link};
 use fstp_cell::egress::{CnFault, CnTransport};
-use fstp_cell::engine::startup::{
-    APPLICATION_MARKER, ClusterRole, DatabaseView, ListenerKind, StartParts,
-};
+use fstp_cell::engine::startup::{ListenerKind, StartParts};
 use fstp_cell::engine::{CellEngine, VaultClient};
 use fstp_cell::tasks::erasure::ErasureRunner;
 use fstp_cell::witness::store::{AnchoredStore, MemDatabase, StoreKeys};
@@ -296,11 +294,6 @@ fn review_started_saas_cell_runs_the_timeline() {
                 hex(&CELL)
             )
             .into_bytes(),
-            database: DatabaseView {
-                marker: APPLICATION_MARKER,
-                server_ou: ClusterRole::Application,
-                registered_spki: ClusterRole::Application,
-            },
             custody,
             keystore,
             db,

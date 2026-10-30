@@ -194,8 +194,9 @@ pub fn app_grants() -> Vec<(RoleName, &'static str, Vec<Privilege>)> {
 }
 
 /// The tables of the vault database, from design section 4.3, with the
-/// keystore tables of section 4.2.
-pub const VAULT_TABLES: [&str; 14] = [
+/// keystore tables of section 4.2. `vault.country_condition` holds the
+/// P-17 country conditions, named by Daniel on 2026-10-30 (design 21.0).
+pub const VAULT_TABLES: [&str; 15] = [
     "vault.epoch",
     "vault.fact",
     "vault.identity",
@@ -204,6 +205,7 @@ pub const VAULT_TABLES: [&str; 14] = [
     "vault.negotiation",
     "vault.ticket_used",
     "vault.query_log",
+    "vault.country_condition",
     "keystore.root",
     "keystore.group_key",
     "keystore.data_key",
@@ -229,8 +231,17 @@ pub enum VaultPin {
     AtLeast(&'static [Privilege]),
 }
 
-/// The reference pin for `role` on the vault table `object`.
+/// The reference pin for `role` on the vault table `object`. A country
+/// condition is fixed once set (NOTE 6), so the `vault` role holds exactly
+/// SELECT and INSERT on `vault.country_condition`, and no other role holds
+/// anything on it.
 pub fn vault_pin(role: RoleName, object: &str) -> VaultPin {
+    if object == "vault.country_condition" {
+        return match role {
+            RoleName::Vault => VaultPin::Exactly(SI),
+            _ => VaultPin::Exactly(&[]),
+        };
+    }
     match (role, schema_of(object)) {
         (RoleName::Keys, "keystore") => VaultPin::Exactly(FULL),
         (RoleName::Vault, "vault_audit") => VaultPin::Exactly(SI),

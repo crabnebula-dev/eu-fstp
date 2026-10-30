@@ -3,12 +3,15 @@
 //!
 //! [`start`] runs it over the in-memory anchoring store, and [`start_pg`]
 //! over the PostgreSQL record store ([`PgCellStore`], design section 5.3).
-//! Both run every phase below in the same order ([`StartStore`]).
+//! Both run the phases below in the same order ([`StartStore`]).
 //!
 //! The order:
 //!
 //! 1. The configuration decodes ([`crate::config::decode`]), and the
 //!    database passes the I-83 placement check ([`accepts_database`]).
+//!    That check runs on [`start_pg`] only, over the [`DatabaseView`]
+//!    that `crate::process::check_database` read from a live connection.
+//!    The in-memory store of [`start`] is on no cluster.
 //! 2. The current seal key `S(e)` of the App chain is unwrapped through
 //!    custody, then the group secrets are opened under it (I-80). The
 //!    ledger is sealed under those keys, so both come first.
@@ -70,14 +73,67 @@ pub enum ClusterRole {
 }
 
 /// What the cell sees of its database at start (design section 9.2).
+///
+/// Its fields are private, and only `crate::process::check_database`
+/// builds one: from the placement marker it reads over a live
+/// connection, and the OU and SPKI registration of the server certificate
+/// that connection verified. So a caller of [`start_pg`] cannot claim a
+/// placement that no connection showed (I-83).
+///
+/// I-83: outside this crate, a view cannot be written down.
+///
+/// ```compile_fail
+/// use fstp_cell::engine::startup::{APPLICATION_MARKER, ClusterRole, DatabaseView};
+/// let _ = DatabaseView {
+///     marker: APPLICATION_MARKER,
+///     server_ou: ClusterRole::Application,
+///     registered_spki: ClusterRole::Application,
+/// };
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DatabaseView {
     /// `fstp_meta.placement.kind`: 1 application, 2 vault.
-    pub marker: u8,
+    marker: u8,
     /// The kind named by the server certificate's subject OU.
-    pub server_ou: ClusterRole,
+    server_ou: ClusterRole,
     /// The kind the server SPKI is registered for at the control plane.
-    pub registered_spki: ClusterRole,
+    registered_spki: ClusterRole,
+}
+
+impl DatabaseView {
+    /// The view of a database whose placement marker is `marker`, on a
+    /// server whose certificate OU names `server_ou` and whose SPKI is
+    /// registered for `registered_spki`. Only
+    /// `crate::process::check_database` calls it.
+    pub(crate) const fn new(
+        marker: u8,
+        server_ou: ClusterRole,
+        registered_spki: ClusterRole,
+    ) -> DatabaseView {
+        DatabaseView {
+            marker,
+            server_ou,
+            registered_spki,
+        }
+    }
+
+    /// `fstp_meta.placement.kind`: 1 application, 2 vault.
+    #[must_use]
+    pub const fn marker(&self) -> u8 {
+        self.marker
+    }
+
+    /// The kind named by the server certificate's subject OU.
+    #[must_use]
+    pub const fn server_ou(&self) -> ClusterRole {
+        self.server_ou
+    }
+
+    /// The kind the server SPKI is registered for at the control plane.
+    #[must_use]
+    pub const fn registered_spki(&self) -> ClusterRole {
+        self.registered_spki
+    }
 }
 
 /// The placement marker of an application database (design section 4.2).
@@ -157,12 +213,14 @@ pub enum StartRefusal {
     KeyRecord,
 }
 
-/// The parts a cell starts from.
+/// The parts a cell starts from over the in-memory anchoring store.
+///
+/// They carry no [`DatabaseView`]. The in-memory store is not on a
+/// cluster, so it has no placement marker or server certificate to check.
+/// The I-83 start check runs on [`start_pg`], the path over a cluster.
 pub struct StartParts<C, D, L, V, T> {
     /// The configuration bytes.
     pub config: Vec<u8>,
-    /// What the cell reads of its database before it uses it (I-83).
-    pub database: DatabaseView,
     /// The App chain's custody backend.
     pub custody: C,
     /// The App chain's keystore.
@@ -193,6 +251,8 @@ pub struct PgStartParts<C, R: Runtime, L, V, T> {
     /// The configuration bytes.
     pub config: Vec<u8>,
     /// What the cell reads of its database before it uses it (I-83).
+    /// Only `crate::process::check_database` builds one, from a live
+    /// connection to the database.
     pub database: DatabaseView,
     /// The App chain's custody backend.
     pub custody: C,
@@ -324,7 +384,9 @@ impl<R: Runtime, L: WitnessLink> StartStore for PgCellStore<R, WitnessClient<L>>
 /// The parts every start path shares, after its store parts are taken.
 struct Common<C, V, T> {
     config: Vec<u8>,
-    database: DatabaseView,
+    /// The checked view of a database on a cluster, or `None` for the
+    /// in-memory store, which is on none.
+    database: Option<DatabaseView>,
     custody: C,
     keystore: Keystore,
     vault: V,
@@ -355,7 +417,6 @@ where
 {
     let StartParts {
         config,
-        database,
         custody,
         keystore,
         db,
@@ -369,7 +430,7 @@ where
     let anchor_key = keys.anchor.public_key().to_bytes().to_vec();
     let common = Common {
         config,
-        database,
+        database: None,
         custody,
         keystore,
         vault,
@@ -419,7 +480,7 @@ where
     } = parts;
     let common = Common {
         config,
-        database,
+        database: Some(database),
         custody,
         keystore,
         vault,
@@ -470,7 +531,9 @@ where
         (None, h) => h.map(|h| h.token.licence),
     };
     report(StartPhase::ConfigDecoded);
-    if !accepts_database(&parts.database) {
+    if let Some(database) = &parts.database
+        && !accepts_database(database)
+    {
         return Err(StartRefusal::Placement);
     }
     let seal = parts

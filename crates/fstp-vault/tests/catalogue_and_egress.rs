@@ -2,8 +2,9 @@
 //! and the vault's closed egress (B4a, ADR-009 "Outbound destinations").
 //!
 //! `fstp_vault::CATALOGUE` lists the tables of `v_<cell>` next to the
-//! vault migrations. The `vault` schema has the eight tables of design
-//! section 4.3 with exactly its columns, plus `vault_audit.chain` and
+//! vault migrations. The `vault` schema has the nine tables of design
+//! section 4.3 with exactly its columns, `vault.country_condition`
+//! included (Daniel, 2026-10-30), plus `vault_audit.chain` and
 //! `vault_audit.anchor`. The column classes and the keystore tables
 //! follow section 4.5 and lane W2e's union test in `fstp-celltest`.
 //!
@@ -25,7 +26,7 @@ use fstp_vault::{CATALOGUE, VaultDestination};
 
 /// The `vault` tables of design section 4.3 and their columns, in
 /// declaration order.
-const VAULT_TABLES: [(&str, &[&str]); 8] = [
+const VAULT_TABLES: [(&str, &[&str]); 9] = [
     (
         "epoch",
         &[
@@ -69,6 +70,7 @@ const VAULT_TABLES: [(&str, &[&str]); 8] = [
     ),
     ("ticket_used", &["ticket_id", "used_at"]),
     ("query_log", &["n", "at", "query_digest", "holds", "epoch"]),
+    ("country_condition", &["programme_id", "countries"]),
 ];
 
 fn find(schema: &str, name: &str) -> Option<&'static TableSpec> {

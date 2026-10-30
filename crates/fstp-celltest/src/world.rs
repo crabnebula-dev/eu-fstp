@@ -521,10 +521,8 @@ impl World {
     ///   anchor keys, which provisioning writes as the migrator. No world
     ///   part runs the control plane, so `cp_service` is not.
     /// - Every grant comes from the plan through `ApplyGrants`, the
-    ///   placement marker that the I-83 start checks read included. One
-    ///   grant follows outside the plan: SELECT and INSERT on
-    ///   `vault.p17_condition` for the vault role, whose name the
-    ///   `apply_grant` grammar refuses ([`P17_CONDITION_GRANT_SEAM`]).
+    ///   placement marker that the I-83 start checks read included. No
+    ///   grant follows outside the plan.
     ///
     /// # Cells
     ///
@@ -1256,7 +1254,6 @@ fn provision_cell(
         for (_, job) in grants.iter().filter(|(c, _)| *c == id) {
             run_job(cluster, job)?;
         }
-        apply_p17_condition_seam(cluster, &dbname, db, plan.cell, &migrator)?;
     }
     Ok(logins)
 }
@@ -1934,47 +1931,6 @@ impl CellRuntime {
         let _ = self.services.rt.block_on(r.vault.shutdown(CELL_DRAIN));
         lock(&self.services.edge.table).remove_cell_by_id(cell);
     }
-}
-
-/// Seam, reported to the lead (lane m3grants): the one grant a world
-/// applies outside `fstp_control::pg::cell_role_plan`. The vault store
-/// reads and writes `vault.p17_condition`, so the `vault` role needs
-/// SELECT and INSERT on it. Design section 4.3 does not list that table.
-/// ADR-011 and design section 4.1 fix the object grammar of
-/// `fstp_meta.apply_grant` as `^[a-z_]{1,30}\.[a-z_]{1,30}$`, which
-/// refuses its digits, so no plan row can name it. Closing the seam needs
-/// a decision: rename the table into the grammar, or amend ADR-011.
-///
-/// Until then the world grants it as the migrator, in the vault database
-/// only, to the cell's own `vault` role, with a name rendered from the
-/// production grammar ([`apply_p17_condition_seam`]). A production
-/// provisioning through `fstp-pgagent` lacks this grant.
-pub const P17_CONDITION_GRANT_SEAM: &str = "fstp_celltest::world: SELECT, INSERT on vault.p17_condition for the vault role, outside fstp_control::pg::cell_role_plan, since the apply_grant object grammar of ADR-011 refuses digits";
-
-/// The object of [`P17_CONDITION_GRANT_SEAM`].
-pub const P17_CONDITION_TABLE: &str = "vault.p17_condition";
-
-/// Applies [`P17_CONDITION_GRANT_SEAM`] to the vault database `dbname` of
-/// `cell` on `cluster`, as its migrator `migrator`. The application
-/// database gets nothing.
-fn apply_p17_condition_seam(
-    cluster: &ClusterHandle,
-    dbname: &str,
-    db: CellDatabase,
-    cell: CellId,
-    migrator: &str,
-) -> Result<(), WorldError> {
-    if db != CellDatabase::Vault {
-        return Ok(());
-    }
-    let role = fstp_control::pg::role_name(db, cell, RoleName::Vault)
-        .map_err(|e| step_failed(cluster, P17_CONDITION_GRANT_SEAM, &e))?;
-    sql_as(
-        cluster,
-        dbname,
-        migrator,
-        &format!("GRANT SELECT, INSERT ON {P17_CONDITION_TABLE} TO \"{role}\";"),
-    )
 }
 
 /// The world's registration of cluster server keys (I-83, design section

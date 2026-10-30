@@ -24,22 +24,16 @@
 //!   rights on the keystore only and the `vault` role exactly INSERT and
 //!   SELECT on `vault_audit`. On the `vault` tables the `vault` role holds
 //!   SELECT, INSERT and UPDATE, except INSERT and SELECT only on
-//!   `vault.ticket_used` and `vault.query_log`. Those two are logs, and an
-//!   UPDATE of a used ticket would let it be presented again. No vault
-//!   role holds DELETE;
+//!   `vault.ticket_used`, `vault.query_log` and
+//!   `vault.country_condition`. The first two are logs, and an UPDATE of a
+//!   used ticket would let it be presented again. A P-17 country
+//!   condition is fixed once set (NOTE 6), and its table refuses UPDATE
+//!   for every role. No vault role holds DELETE;
 //! - the placement marker `fstp_meta.placement` (design section 4.1) is
 //!   read at start by the role the process runs as: the `app` role in the
 //!   application database and the `vault` role in the vault database
 //!   (design section 9.2, "At start"). Each holds SELECT on it and nothing
 //!   more. No other role reads it, and the migrator owns it.
-//!
-//! Seam, reported to the lead: the vault store reads and writes
-//! `vault.p17_condition`, which design section 4.3 does not list. ADR-011
-//! and design section 4.1 fix the object grammar of
-//! `fstp_meta.apply_grant` as `^[a-z_]{1,30}\.[a-z_]{1,30}$`, which
-//! refuses its digits. So the plan holds no row for that table, and the
-//! grammar is not widened here. The test world grants it outside the plan
-//! (`fstp_celltest::world::P17_CONDITION_GRANT_SEAM`).
 
 use std::fmt::Write as _;
 use std::net::IpAddr;
@@ -255,7 +249,7 @@ pub const APP_TABLES: [&str; 18] = [
 
 /// The tables of the vault database (design section 4.3, with the
 /// keystore of section 4.2).
-pub const VAULT_TABLES: [&str; 14] = [
+pub const VAULT_TABLES: [&str; 15] = [
     "vault.epoch",
     "vault.fact",
     "vault.identity",
@@ -264,6 +258,7 @@ pub const VAULT_TABLES: [&str; 14] = [
     "vault.negotiation",
     "vault.ticket_used",
     "vault.query_log",
+    "vault.country_condition",
     "keystore.root",
     "keystore.group_key",
     "keystore.data_key",
@@ -340,7 +335,7 @@ fn vault_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
         (RoleName::Keys, "keystore") => FULL,
         (RoleName::Vault, "vault_audit") => SI,
         (RoleName::Vault, "vault") => match object {
-            "vault.ticket_used" | "vault.query_log" => SI,
+            "vault.ticket_used" | "vault.query_log" | "vault.country_condition" => SI,
             _ => SIU,
         },
         // The I-83 start check of `fstp-vault` (design section 9.2).
@@ -609,8 +604,7 @@ mod tests {
     /// the placement marker to the role each start check reads it as, the
     /// `app` role in the application database and the `vault` role in the
     /// vault database, and to no other role. No row names a vault table
-    /// outside the catalogue of design section 4.3, so
-    /// `vault.p17_condition` has none.
+    /// outside the catalogue of design section 4.3.
     #[test]
     fn i83_plan_grants_the_placement_marker_to_the_start_check_roles_only() {
         let plan = cell_role_plan(CellId([7; 16])).unwrap();
@@ -637,6 +631,38 @@ mod tests {
                 CellDatabase::Vault => VAULT_TABLES.contains(&g.object),
             };
             assert!(known || META_TABLES.contains(&g.object), "{g:?}");
+        }
+    }
+
+    /// I-82, NOTE 6, design sections 4.1 and 4.3: the P-17 country
+    /// conditions are granted through the plan. The `vault` role holds
+    /// exactly SELECT and INSERT on `vault.country_condition`, since a
+    /// condition is fixed once set, and no other role holds anything on
+    /// it. The name fits the `apply_grant` object grammar of ADR-011.
+    #[test]
+    fn i82_plan_grants_the_country_condition_to_the_vault_role_only() {
+        let plan = cell_role_plan(CellId([9; 16])).unwrap();
+        let rows: Vec<(CellDatabase, RoleName, Vec<Privilege>)> = plan
+            .grants
+            .iter()
+            .filter(|g| g.object == "vault.country_condition")
+            .map(|g| (g.database, g.role, g.privileges.clone()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![(
+                CellDatabase::Vault,
+                RoleName::Vault,
+                vec![Privilege::Select, Privilege::Insert]
+            )]
+        );
+        let (schema, table) = "vault.country_condition".split_once('.').unwrap();
+        for part in [schema, table] {
+            assert!(
+                (1..=30).contains(&part.len())
+                    && part.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "{part} is outside the apply_grant object grammar"
+            );
         }
     }
 

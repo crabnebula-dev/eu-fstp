@@ -42,8 +42,7 @@ use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link};
 use fstp_cell::config::{ConfigError, Mode};
 use fstp_cell::egress::{CnFault, CnTransport};
 use fstp_cell::engine::startup::{
-    APPLICATION_MARKER, ClusterRole, DatabaseView, ListenerKind, StartParts, StartPhase,
-    StartRefusal as ProdRefusal,
+    ListenerKind, StartParts, StartPhase, StartRefusal as ProdRefusal,
 };
 use fstp_cell::engine::{CellEngine, VaultClient};
 use fstp_cell::tasks::erasure::ErasureRunner;
@@ -557,11 +556,6 @@ fn start_cell(mode: Mode, fault: Fault) -> Result<Trace, &'static str> {
         let loopback = SocketAddr::from(([127, 0, 0, 1], 0));
         let parts = StartParts {
             config: config_bytes(mode, false),
-            database: DatabaseView {
-                marker: APPLICATION_MARKER,
-                server_ou: ClusterRole::Application,
-                registered_spki: ClusterRole::Application,
-            },
             custody,
             keystore,
             db,
