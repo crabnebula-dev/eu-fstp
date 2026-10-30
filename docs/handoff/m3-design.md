@@ -2071,6 +2071,9 @@ Daniel gave further answers on 2026-10-29:
 | Decline during an age conflict | Allowed when another decline ground holds | The decline treats the adult query as optional: an unanswered query removes only the ground that needs it. An engine change for that command |
 | G14 functions | Revoke the `pg_stat_get_*` functions too | Section 4.1. W2h revokes them and W1f checks it |
 | Rules version at GRANTED | A new rules version | Decisions under the new guard set carry it |
+| Witness column classes (2026-10-30) | Add three public classes | Section 4.5 gains three closed classes: a public digest (link hashes), a signature (composite signatures) and public key material (pinned certificates and public keys). None holds personal data or content, and each is checked by type and length. The witness catalogue classes its columns with them, so the i19 and R-NF-08 catalogue tests can pass |
+| Witness anchor key (2026-10-30) | Accept lane int5's key | Section 4.4 is amended: `witness.anchor` and `witness.withdrawal` are keyed on (cell_id, chain, witness_seq), with (cell_id, chain, n, link) unique. A cell may prepare n again with another link after its abort is recorded, and a withdrawn head is never receipted again. The three extra tables of ADR-010 open point 4 are accepted |
+| vault.p17_condition grant (2026-10-30) | Rename the table | The table gets a letters-only name in the vault migrations and code, recorded in section 4.3. The `apply_grant` grammar of ADR-011 stays as accepted, and the vault role's SELECT and INSERT move into `cell_role_plan`. `P17_CONDITION_GRANT_SEAM` is then deleted |
 
 ### 21.1 These block the milestone
 
