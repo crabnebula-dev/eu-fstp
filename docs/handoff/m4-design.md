@@ -1838,6 +1838,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | Q7 Node.js host | Answered under M3 Q39 A | ADR-003 amendment of 2026-10-28, with Node.js 24.11.1 and npm 11.6.2 recorded on 2026-10-29 |
 | Q23 minor flag | Answered under M3 Q13 A and the answers of 2026-10-29 | `state-machine.md` NOTE 14 |
 | Review depth | One review round per lane for the demo path, no adversarial verify pass | Deferred findings are logged for W7, which runs in full before M4 closes |
+| D2e for every programme (2026-10-30) | Strict now | D2e of section 3.4 applies to every programme, not only to drafted ones. `DomainDecider` refuses every core `ActivateProgramme` through `execute` with `RuleRef::I66`, and the fold refuses every `ProgrammeActivated` without its `Creator(ActivationApproved)`. Every M2 test setup and e2e seed reaches an active programme through the creator path or a paired entry the test kit owns. `review_d2e_undrafted` must pass |
 
 ### 15.1 These block the milestone
 
