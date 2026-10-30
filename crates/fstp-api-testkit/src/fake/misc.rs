@@ -115,6 +115,7 @@ impl BreakGlass for FakeBreakGlass {
 #[derive(Debug, Default)]
 struct Probes {
     outcomes: BTreeMap<ProbeKind, ProbeOutcome>,
+    absent: BTreeSet<ProbeKind>,
     seen: Vec<ProbeKind>,
 }
 
@@ -128,20 +129,49 @@ pub struct FakeProber {
 impl FakeProber {
     /// Sets the outcome of every later probe of `kind`.
     pub fn set(&self, kind: ProbeKind, outcome: ProbeOutcome) {
-        lock(&self.state).outcomes.insert(kind, outcome);
+        let mut s = lock(&self.state);
+        s.outcomes.insert(kind, outcome);
+        s.absent.remove(&kind);
+    }
+
+    /// Marks the probe of `kind` as absent: no prober exists for it (Q5).
+    /// The creator environment then reports it absent. `set` clears it.
+    pub fn set_absent(&self, kind: ProbeKind) {
+        lock(&self.state).absent.insert(kind);
+    }
+
+    /// Whether the probe of `kind` is absent.
+    pub fn is_absent(&self, kind: ProbeKind) -> bool {
+        lock(&self.state).absent.contains(&kind)
     }
 
     /// Every probe run, in order.
     pub fn seen(&self) -> Vec<ProbeKind> {
         lock(&self.state).seen.clone()
     }
+
+    /// Runs one probe now and records it, as `Prober::probe` does. The
+    /// engine port's creator environment, which is synchronous, runs the
+    /// probes of an approval here (design 3.2 "Fresh probes").
+    pub fn run(&self, p: ProbeKind) -> ProbeOutcome {
+        let mut s = lock(&self.state);
+        s.seen.push(p);
+        s.outcomes.get(&p).copied().unwrap_or(ProbeOutcome::Pass)
+    }
+
+    /// The outcome the next probe of `p` would give, without running it.
+    pub fn outcome(&self, p: ProbeKind) -> ProbeOutcome {
+        lock(&self.state)
+            .outcomes
+            .get(&p)
+            .copied()
+            .unwrap_or(ProbeOutcome::Pass)
+    }
 }
 
 impl Prober for FakeProber {
     async fn probe(&self, p: ProbeKind) -> ProbeOutcome {
-        let mut s = lock(&self.state);
-        s.seen.push(p);
-        s.outcomes.get(&p).copied().unwrap_or(ProbeOutcome::Pass)
+        self.run(p)
     }
 }
 
@@ -170,6 +200,17 @@ impl FakeTenant {
             admins: Arc::new(Mutex::new(admins)),
             approvals: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    /// The attested admin set.
+    pub fn admins(&self) -> BTreeSet<AccountId> {
+        lock(&self.admins).clone()
+    }
+
+    /// The shared attested admin set, which the engine port's creator
+    /// environment reads (`shell.rs`).
+    pub fn admin_set(&self) -> Arc<Mutex<BTreeSet<AccountId>>> {
+        self.admins.clone()
     }
 
     /// Whether the attested admin set holds `a`.

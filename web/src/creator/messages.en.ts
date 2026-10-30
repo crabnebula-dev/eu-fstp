@@ -397,6 +397,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.approvals.grant_approved": "Approved. A tenant admin can now grant the role to {handle}.",
   "creator.approvals.own_grant": "This is your own grant, so another tenant admin approves it.",
   "creator.approvals.no_self_grants": "No role grant to an admin's own account waits.",
+  "creator.approvals.self_grants_unlisted":
+    "This inbox cannot list role grants to an admin's own account yet, so none is shown here.",
 };
 
 // TODO(legal): the privacy notice, accessibility statement and Data Act

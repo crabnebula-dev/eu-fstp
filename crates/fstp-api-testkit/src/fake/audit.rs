@@ -85,8 +85,11 @@ impl FakeVaultAudit {
     }
 }
 
-impl VaultAudit for FakeVaultAudit {
-    async fn record(
+impl FakeVaultAudit {
+    /// Records one answer now, as `VaultAudit::record` does. The engine
+    /// port's creator environment, which is synchronous, records the
+    /// answers of its SoD previews here (`overview.md` NOTE 5).
+    pub fn record_now(
         &self,
         q: QueryDigest,
         answer: bool,
@@ -103,5 +106,16 @@ impl VaultAudit for FakeVaultAudit {
             epoch,
         });
         Ok(())
+    }
+}
+
+impl VaultAudit for FakeVaultAudit {
+    async fn record(
+        &self,
+        q: QueryDigest,
+        answer: bool,
+        epoch: VaultEpoch,
+    ) -> Result<(), PortError> {
+        self.record_now(q, answer, epoch)
     }
 }

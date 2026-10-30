@@ -29,10 +29,16 @@ pub const QUERY_LIMIT: usize = 2048;
 
 /// The parse limits of a request body.
 fn limits() -> ParseLimits {
+    limits_with(forms::TEXT_LIMIT)
+}
+
+/// The parse limits of a request body whose strings may hold up to
+/// `strings` bytes.
+fn limits_with(strings: usize) -> ParseLimits {
     ParseLimits::default()
         .with_max_input_bytes(BODY_LIMIT)
         .with_max_depth(16)
-        .with_max_string_bytes(forms::TEXT_LIMIT)
+        .with_max_string_bytes(strings)
         .with_max_container_len(10_000)
         .with_max_nodes(100_000)
         .with_max_memory_bytes(8 << 20)
@@ -136,10 +142,28 @@ impl Method {
 /// Parses a body that must be one JSON object. An empty body is the
 /// empty object.
 fn body_object(body: &[u8]) -> Result<Object, ApiError> {
+    body_object_with(body, &limits())
+}
+
+/// Parses the body of `spec`. An upload carries its document as one
+/// string, up to the body limit (Q24, lane m4wire). Every other string
+/// is held to the text limit.
+fn body_object_for(spec: &OpSpec, body: &[u8]) -> Result<Object, ApiError> {
+    if matches!(
+        spec.kind,
+        OpKind::Import(fstp_access::ImportKind::RegisterDocument)
+    ) {
+        return body_object_with(body, &limits_with(BODY_LIMIT));
+    }
+    body_object(body)
+}
+
+/// Parses a body that must be one JSON object under `limits`.
+fn body_object_with(body: &[u8], limits: &ParseLimits) -> Result<Object, ApiError> {
     if body.is_empty() {
         return Ok(Object::new());
     }
-    match fstp_json::parse_with(body, &limits()) {
+    match fstp_json::parse_with(body, limits) {
         Ok(Value::Object(o)) => Ok(o),
         _ => Err(bad()),
     }
@@ -157,12 +181,7 @@ fn match_route(pattern: &'static str, path: &str) -> Option<Vec<(&'static str, S
     for (p, g) in pat.iter().zip(got.iter()) {
         match p.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             Some(name) => {
-                let ok = match forms::param_kind(name) {
-                    forms::ParamKind::Id => forms::canonical_id(g).is_some(),
-                    forms::ParamKind::Token => forms::token(g),
-                    forms::ParamKind::LinkToken => forms::link_token(g),
-                };
-                if !ok {
+                if !forms::param_str_ok(name, g) {
                     return None;
                 }
                 let name = static_name(pattern, name)?;
@@ -227,7 +246,7 @@ pub(crate) fn decode_route_in(
     if method == Method::Get && !body.is_empty() {
         return Err(bad());
     }
-    let mut request = body_object(body)?;
+    let mut request = body_object_for(spec, body)?;
     for (name, value) in params {
         if request.insert(name, Value::String(value)).is_some() {
             // A body member may not repeat a path parameter.
@@ -259,7 +278,7 @@ pub(crate) fn decode_tool_in(
         .iter()
         .find(|s| s.tool.is_some_and(|t| t.name == tool))
         .ok_or(ApiError::refused(crate::ErrorCode::NotFound, "tool"))?;
-    let request = body_object(arguments)?;
+    let request = body_object_for(spec, arguments)?;
     let input = spec.tool.map(|t| t.input);
     if let Some(input) = input
         && !input.body
@@ -321,7 +340,7 @@ pub(crate) fn decode_request_in(ops: &'static [OpSpec], bytes: &[u8]) -> Result<
             if tail.len() > BODY_LIMIT {
                 return Err(bad());
             }
-            finish(spec, body_object(tail)?, false)
+            finish(spec, body_object_for(spec, tail)?, false)
         }
         1 => {
             let routed: Vec<&'static OpSpec> = ops.iter().filter(|s| s.route.is_some()).collect();

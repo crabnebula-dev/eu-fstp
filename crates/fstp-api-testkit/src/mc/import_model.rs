@@ -1432,17 +1432,13 @@ pub fn check_i65_step(
 
 /// The one place where the I-65 suites call production code.
 ///
-/// Wiring status: `fstp-import` is built (lane W2b), so the normaliser
-/// and the fake proposer are wired to it. The engine envelope, the
-/// creator, the testkit fakes and `fstp-programme` are still W0 stubs in
-/// this worktree, and `fstp-engine/Cargo.toml` has no edge to
-/// `fstp-import` or `fstp-creator`. Each function below states the
-/// designed call. Where a stub exists, the function calls it, so the
-/// refusal comes from the stub. Where the designed item is not declared
-/// in any stub, the function returns a [`NotImplemented`] that names the
-/// missing item and its lane. The lane report lists each such gap.
+/// Wiring status (lane m4wire): [`ProductionSystem`] runs the production
+/// engine, `fstp_engine::Engine` with `CreatorDecider` over the cell's
+/// creator environment (`fake/shell.rs`), on a draft cell rebuilt from
+/// the draft's ledger at each step (`fake/draft_cell.rs`). The normaliser
+/// and the fake proposer are wired to `fstp-import`.
 ///
-/// Wiring contract for the implementer:
+/// Wiring contract for the implementer, as built:
 ///
 /// - `open` starts from genesis. TA issues `OpenDraft` (core
 ///   `CreateProgramme`), grants M1 and M2 the programme manager role
@@ -1451,7 +1447,9 @@ pub fn check_i65_step(
 ///   then saves the setup fields. Every check of the validation report
 ///   other than `FieldUnset`, `CapAboveCeiling`, `ImportUnresolved` and
 ///   acknowledgeable warnings is then clean under the recording-fake
-///   probes and the synthetic wording profile.
+///   probes and the synthetic wording profile. While
+///   `fstp_creator::decide_creator` refuses the opening at its compile
+///   seam, `open` refuses with [`GAP_OPEN`] (lane m4creator).
 /// - `Base::Stale` is the `DraftRevision` right after `OpenDraft`.
 /// - `RefShown::Of(v)` for proposal `p` is sent as a salted digest, which
 ///   is per stored text (ADR-007). It is the `text` digest of `p` when `v`
@@ -1464,95 +1462,260 @@ pub fn check_i65_step(
 ///   It is accepted when the approval is.
 /// - `entries` maps each ledger entry to the reference records of the
 ///   universe, drops every other record and drops entries left empty.
+///
+/// Readings of the adapter: the salted digest of a stored value is
+/// SHA-256 over the proposal id and the value's normal text, so equal
+/// states hash equally. The held values are held again on every rebuild,
+/// as the shell does after a replay (design 3.3). A refusal maps to the
+/// reference refusal the failed check names, and a refusal no reference
+/// refusal names fails the step with [`GAP_STEP`].
 pub mod production {
-    use fstp_engine::EngineState;
-    use fstp_ledger::Entry;
+    use std::collections::{BTreeMap, BTreeSet};
 
+    use fstp_api_core::port::{ProbeKind as PortProbe, ProbeOutcome as PortOutcome};
+    use fstp_creator::{
+        CreatorCommand, CreatorRecord, DraftRevision, FieldEdit, Provenance, ValueDigest,
+    };
+    use fstp_domain::command::{Actor, Ctx, SystemCause};
+    use fstp_domain::id::{
+        AccountId, BindingId, ContentDigest, DecisionId, PolicyVersionId, ProgrammeId, TextId,
+        TextRef,
+    };
+    use fstp_domain::refusal::{RefusalReason, RuleRef};
+    use fstp_domain::roles::{BindingStatus, Role};
+    use fstp_domain::time::Timestamp;
+    use fstp_domain_testkit::vault::GroundTruth;
+    use fstp_engine::{Command, EngineState, Record};
+    use fstp_import::{
+        ClientResolution, ImportCommand, ImportDocument, ImportProposal, ImportRecord,
+        ImportResolution,
+    };
     use fstp_json::{Array, Number, Object, Value};
+    use fstp_ledger::{Entry, MemStore, RecordStore};
     use fstp_programme::{FIELDS, FieldId};
 
     use super::{
-        Entries, PropId, RawProposal, RefCommand, RefField, RefMedia, RefSetup, RefValue, Span,
-        StepVerdict,
+        Applied, Base, DocId, Entries, M1, M2, PropId, RawProposal, RecordedProposal, RefCommand,
+        RefEvent, RefField, RefMedia, RefProv, RefRefusal, RefResolution, RefRule, RefSetup,
+        RefShown, RefValue, Resolved, Span, StepVerdict, TA, TB, X, is_tenant_admin,
     };
     use crate::NotImplemented;
+    use crate::fake::draft_cell::{self, DraftCell, VaultAccount};
 
-    /// Missing: the import routing of the engine. Built: the import store
-    /// of `fstp_import` with `decide_import` (design 3.3; lane W2b).
-    /// Designed and missing: `fstp_engine::Command::Import` routed to
-    /// `fstp_import::decide_import` over `EngineState::import`, with the
-    /// upload's binding check `fstp_engine::bridge::resolver` and the
-    /// profile conflicts computed against the draft (design 4.2; lane W2e;
-    /// the `fstp-engine` edge to `fstp-import`: lead).
-    pub const GAP_IMPORT_STORE: NotImplemented = NotImplemented::new(
-        "fstp_engine::Command::Import routed to fstp_import::decide_import over EngineState::import (design 4.2; lane W2e; fstp-engine edge to fstp-import: lead)",
+    /// The opening refused: `fstp_creator::decide_creator` refuses
+    /// `OpenDraft` at its compile seam until lane m4creator merges.
+    pub const GAP_OPEN: NotImplemented = NotImplemented::new(
+        "CreatorCommand::OpenDraft through Engine::execute: fstp_creator::decide_creator refuses at its compile seam (lane m4creator)",
     );
 
-    /// Missing: the engine envelope. Designed items:
-    /// `fstp_engine::Command::{Creator, Bridge, Import}`,
-    /// `Record::{Creator, Import}` and `EngineState { creator, import }`
-    /// (design 4.2; lane W2e). `fstp-engine/Cargo.toml` also lacks the
-    /// edges to `fstp-import` and `fstp-creator` (lead).
-    pub const GAP_ENGINE: NotImplemented = NotImplemented::new(
-        "fstp_engine::Command::{Creator, Bridge, Import}, Record::{Creator, Import}, EngineState { creator, import } (design 4.2; lane W2e; fstp-engine edges to fstp-import and fstp-creator: lead)",
+    /// The setup's saves refused: `fstp_creator::decide_creator` refuses
+    /// `SaveFields` at its compile seam until lane m4creator merges.
+    pub const GAP_SAVES: NotImplemented = NotImplemented::new(
+        "CreatorCommand::SaveFields of the setup through Engine::execute: fstp_creator::decide_creator refuses at its compile seam (lane m4creator)",
     );
 
-    /// Missing: the bridge command. Built: the binding check
-    /// `fstp_engine::bridge::resolver`, and the import side
-    /// `fstp_import::{ClientResolution, check_resolution}` (lane W2b).
-    /// Designed and missing: `BridgeCommand::ResolveImport { programme,
-    /// proposal, shown, resolution, base }` with `conflict_acknowledged`,
-    /// and `resolve_import` over it. They name `fstp-import`,
-    /// `fstp-creator` and `fstp-programme` types, and `fstp-engine` has no
-    /// edge to them (lead).
-    pub const GAP_BRIDGE: NotImplemented = NotImplemented::new(
-        "fstp_engine::bridge::BridgeCommand::ResolveImport and resolve_import over it (design 3.3; lane W2b; fstp-engine edges to fstp-import, fstp-creator and fstp-programme: lead)",
+    /// A production step that failed for a reason outside the model.
+    pub const GAP_STEP: NotImplemented = NotImplemented::new(
+        "a production step failed outside the model's refusals (see the adapter's mapping)",
     );
 
-    /// Missing: the creator side. Designed items:
-    /// `fstp_creator::{CreatorCommand::{OpenDraft, SaveFields},
-    /// CreatorRecord::FieldsSaved, Provenance::Import, ImportResolution,
-    /// DraftRevision, ValueDigest}` (design 3.2; lane W2a).
-    pub const GAP_CREATOR: NotImplemented = NotImplemented::new(
-        "fstp_creator::{CreatorCommand::{OpenDraft, SaveFields}, CreatorRecord::FieldsSaved, Provenance::Import, ImportResolution, DraftRevision, ValueDigest} (design 3.2; lane W2a)",
-    );
+    /// The draft programme of every production run.
+    pub const PLAN_P: ProgrammeId = ProgrammeId::from_raw(0x4d49_0001);
 
-    /// Missing: the activation path. Designed items:
-    /// `CreatorCommand::{AcknowledgeWarning, RequestActivation,
-    /// ApproveActivation}` composed with core `ActivateProgramme`, over
-    /// the fake probes and vault (design 3.2, D2e; lanes W2a, W2e, W3b).
-    pub const GAP_ACTIVATION: NotImplemented = NotImplemented::new(
-        "CreatorCommand::{AcknowledgeWarning, RequestActivation, ApproveActivation} with core ActivateProgramme (design 3.2, D2e; lanes W2a, W2e, W3b)",
-    );
+    /// The instant of the first entry of a run. Each step is one second
+    /// later than the one before.
+    const T0: i64 = 1_000_000;
 
-    /// One draft on production: the engine state and its ledger.
-    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-    pub struct ProductionSystem {
-        state: EngineState,
-        ledger: Vec<Entry<fstp_engine::Record>>,
+    /// The length of every registered document's normalised text. The
+    /// import store checks the evidence spans against it.
+    const DOC_BYTES: u32 = 65_536;
+
+    /// The production id of a model document.
+    fn doc_id(d: DocId) -> fstp_import::ImportDocumentId {
+        fstp_import::ImportDocumentId::from_raw(0x4d49_d000u128.saturating_add(u128::from(d.0)))
     }
 
-    /// The parts of a production draft that twin A and twin B must share:
-    /// the engine state with the import store emptied, and the records of
-    /// each entry with every import record removed and empty entries
-    /// dropped.
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct ProductionTwinView {
-        /// The engine state without the import store.
-        pub state: EngineState,
-        /// The ledger without import records.
-        pub ledger: Vec<Vec<fstp_engine::Record>>,
+    /// The model document of a production id, if it is one.
+    fn ref_doc(id: fstp_import::ImportDocumentId) -> Option<DocId> {
+        let n = id.raw().checked_sub(0x4d49_d000)?;
+        u8::try_from(n).ok().map(DocId)
+    }
+
+    /// The production id of a model proposal.
+    fn prop_id(p: PropId) -> fstp_import::ImportProposalId {
+        fstp_import::ImportProposalId::from_raw(0x4d49_9000u128.saturating_add(u128::from(p.0)))
+    }
+
+    /// The model proposal of a production id, if it is one.
+    fn ref_prop(id: fstp_import::ImportProposalId) -> Option<PropId> {
+        let n = id.raw().checked_sub(0x4d49_9000)?;
+        u8::try_from(n).ok().map(PropId)
+    }
+
+    /// The salted digest of proposal `p`'s stored value (module
+    /// documentation).
+    fn salted(p: PropId, v: &RefValue) -> Result<[u8; 32], NotImplemented> {
+        let data = untrusted(v).map_err(|_| GAP_STEP)?;
+        let mut bytes = vec![p.0];
+        bytes.extend_from_slice(data.as_data().as_bytes());
+        Ok(fstp_crypto::sha256(&bytes))
+    }
+
+    /// The media of a model media type.
+    fn media(m: RefMedia) -> fstp_import::ImportMedia {
+        match m {
+            RefMedia::Plain => fstp_import::ImportMedia::TextPlain,
+            RefMedia::Markdown => fstp_import::ImportMedia::TextMarkdown,
+        }
+    }
+
+    /// The model media type of a media.
+    fn ref_media(m: fstp_import::ImportMedia) -> RefMedia {
+        match m {
+            fstp_import::ImportMedia::TextPlain => RefMedia::Plain,
+            fstp_import::ImportMedia::TextMarkdown => RefMedia::Markdown,
+        }
+    }
+
+    /// The default funder profile reference of a new draft (P-53).
+    fn default_profile() -> Result<fstp_domain::policy::FunderProfileRef, NotImplemented> {
+        let v = fstp_json::parse(br#"{"profile":"horizon-europe","version":1}"#)
+            .map_err(|_| GAP_STEP)?;
+        fstp_domain::policy::OpaqueValue::from_value(&v)
+            .map(fstp_domain::policy::FunderProfileRef)
+            .map_err(|_| GAP_STEP)
+    }
+
+    /// The field edit of `value` for `field`, decoded by the field's
+    /// strict decoder, with the SHA-256 of its canonical text.
+    fn field_edit(field: FieldId, value: &Value, provenance: Provenance) -> Option<FieldEdit> {
+        let text = fstp_json::to_canonical(value).ok()?;
+        let decoded = fstp_programme::decode_field_value(field, text.as_bytes()).ok()?;
+        let canonical = fstp_programme::encode_field_value(&decoded);
+        Some(FieldEdit {
+            field,
+            value: decoded,
+            digest: ValueDigest::new(ContentDigest::from_bytes(fstp_crypto::sha256(
+                canonical.as_bytes(),
+            ))),
+            provenance,
+        })
+    }
+
+    /// One draft on production: its ledger and vault facts, with what the
+    /// adapter issued: the actor of each command, the value of each save,
+    /// and each recorded proposal's value. Each step rebuilds the engine
+    /// from the ledger, so the state compares and hashes.
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct ProductionSystem {
+        truth: GroundTruth,
+        store: MemStore<Record>,
+        state: EngineState,
+        ledger: Vec<Entry<fstp_engine::Record>>,
+        /// The actor of each command the adapter issued, by command id.
+        actors: BTreeMap<[u8; 16], AccountId>,
+        /// The universe values each save names, by command id.
+        saves: BTreeMap<[u8; 16], Vec<(RefField, RefValue)>>,
+        /// Each recorded proposal's value.
+        values: BTreeMap<PropId, RefValue>,
+        /// The revision right after `OpenDraft`.
+        stale: Option<DraftRevision>,
+        /// The number of the next command, which also sets its instant.
+        n: u32,
+    }
+
+    /// What one engine run gave.
+    enum Run {
+        /// The command appended.
+        Appended,
+        /// The engine refused it with this rule and reason.
+        Refused(RuleRef, RefusalReason),
     }
 
     impl ProductionSystem {
         /// Opens the draft of `setup` on production, as the wiring
-        /// contract states. Designed calls: `fake::fake_ports()` (lane
-        /// W3b), then [`GAP_ENGINE`] and [`GAP_CREATOR`].
+        /// contract states.
         pub fn open(setup: &RefSetup) -> Result<ProductionSystem, NotImplemented> {
-            let _ = setup;
-            let ports = crate::fake::fake_ports()?;
-            let _ = ports;
-            Err(GAP_ENGINE)
+            let accounts: Vec<VaultAccount> = [TA, TB, M1, M2, X]
+                .into_iter()
+                .zip(1u64..)
+                .map(|(account, person)| VaultAccount {
+                    account,
+                    person: Some(person),
+                    verified: true,
+                })
+                .collect();
+            let mut s = ProductionSystem {
+                truth: draft_cell::truth_of(&accounts),
+                store: MemStore::new(),
+                state: EngineState::genesis(),
+                ledger: Vec::new(),
+                actors: BTreeMap::new(),
+                saves: BTreeMap::new(),
+                values: BTreeMap::new(),
+                stale: None,
+                n: 1,
+            };
+            let open = CreatorCommand::OpenDraft {
+                programme: PLAN_P,
+                version: PolicyVersionId::from_raw(PLAN_P.raw()),
+                profile: default_profile()?,
+            };
+            match s.run(Command::Creator(open), TA, None)? {
+                Run::Appended => {}
+                Run::Refused(RuleRef::NotImplemented, _) => return Err(GAP_OPEN),
+                Run::Refused(..) => return Err(GAP_STEP),
+            }
+            s.stale = s.state.creator.head(PLAN_P);
+            for m in [M1, M2] {
+                if !matches!(s.grant(TA, m)?, StepVerdict::Accepted) {
+                    return Err(GAP_STEP);
+                }
+            }
+            s.save_fixture()?;
+            for (field, value) in &setup.fields {
+                let cmd = RefCommand::Save {
+                    by: M1,
+                    field: *field,
+                    value: value.clone(),
+                    base: Base::Head,
+                };
+                if !matches!(s.apply(&cmd)?, StepVerdict::Accepted) {
+                    return Err(GAP_SAVES);
+                }
+            }
+            Ok(s)
+        }
+
+        /// M1 saves every field outside the universe to its SuperSAFE
+        /// fixture value, in one save.
+        fn save_fixture(&mut self) -> Result<(), NotImplemented> {
+            let fixture = fstp_programme::supersafe_fixture().map_err(|_| GAP_STEP)?;
+            let universe: BTreeSet<FieldId> = RefField::ALL
+                .into_iter()
+                .filter_map(|f| field_id(f).ok())
+                .collect();
+            let mut fields = Vec::new();
+            for spec in FIELDS {
+                if universe.contains(&spec.id) {
+                    continue;
+                }
+                if let fstp_programme::Field::Set(v) = fixture.spec.get(spec.id) {
+                    let text = fstp_programme::encode_field_value(&v);
+                    let json = fstp_json::parse(text.as_bytes()).map_err(|_| GAP_STEP)?;
+                    fields.push(field_edit(spec.id, &json, Provenance::Manual).ok_or(GAP_STEP)?);
+                }
+            }
+            let base = self.state.creator.head(PLAN_P).ok_or(GAP_STEP)?;
+            let save = CreatorCommand::SaveFields {
+                programme: PLAN_P,
+                base,
+                fields,
+            };
+            match self.run(Command::Creator(save), M1, None)? {
+                Run::Appended => Ok(()),
+                Run::Refused(..) => Err(GAP_SAVES),
+            }
         }
 
         /// The engine state.
@@ -1560,34 +1723,772 @@ pub mod production {
             &self.state
         }
 
-        /// Runs `cmd` through the engine and maps the outcome. Designed
-        /// calls: `Engine::execute` with `Command::Creator(SaveFields)`,
-        /// `Command::Core(GrantRole | EndRole)`,
-        /// `Command::Import(RegisterDocument | RecordProposals)` and
-        /// `Command::Bridge(ResolveImport)`.
-        pub fn apply(&mut self, cmd: &RefCommand) -> Result<StepVerdict, NotImplemented> {
-            match cmd {
-                RefCommand::Register { .. } | RefCommand::Propose { .. } => Err(GAP_IMPORT_STORE),
-                RefCommand::Resolve { .. } => Err(GAP_BRIDGE),
-                RefCommand::Activate { .. } => Err(GAP_ACTIVATION),
-                RefCommand::Save { .. }
-                | RefCommand::Grant { .. }
-                | RefCommand::EndBinding { .. } => Err(GAP_CREATOR),
+        /// The draft cell over the ledger now, with every recorded value
+        /// held again.
+        fn cell(&self) -> Result<DraftCell, NotImplemented> {
+            let probes = [
+                PortProbe::Channel,
+                PortProbe::SendingDomain,
+                PortProbe::Inference,
+            ]
+            .into_iter()
+            .map(|p| (p, Some(PortOutcome::Pass)))
+            .collect();
+            let admins: BTreeSet<AccountId> = [TA, TB].into_iter().collect();
+            let mut cell = DraftCell::open(
+                self.store.clone(),
+                self.truth.clone(),
+                admins,
+                &probes,
+                false,
+            )
+            .map_err(|_| GAP_STEP)?;
+            let recorded: Vec<(fstp_import::ValueTextRef, PropId)> = cell
+                .state()
+                .import
+                .proposals()
+                .filter_map(|p| ref_prop(p.proposal().id).map(|id| (p.proposal().text, id)))
+                .collect();
+            for (text, id) in recorded {
+                if let Some(v) = self.values.get(&id) {
+                    let value = untrusted(v).map_err(|_| GAP_STEP)?;
+                    cell.engine.hold_import(text, value).map_err(|_| GAP_STEP)?;
+                }
+            }
+            Ok(cell)
+        }
+
+        /// The context of the next command by `actor`.
+        fn ctx(&mut self, actor: AccountId) -> Ctx {
+            let n = self.n;
+            self.n = n.saturating_add(1);
+            let at = T0.saturating_add(i64::from(n).saturating_mul(1_000_000));
+            let admins: BTreeSet<AccountId> = [TA, TB].into_iter().collect();
+            draft_cell::ctx(actor, Timestamp::from_micros(at), n, &admins)
+        }
+
+        /// Runs `cmd` by `actor` through the engine, and keeps the ledger.
+        /// `saved` names the universe values a save writes.
+        fn run(
+            &mut self,
+            cmd: Command,
+            actor: AccountId,
+            saved: Option<Vec<(RefField, RefValue)>>,
+        ) -> Result<Run, NotImplemented> {
+            let ctx = self.ctx(actor);
+            self.run_ctx(cmd, ctx, actor, saved)
+        }
+
+        /// Runs `cmd` with `ctx` through the engine, and keeps the ledger.
+        fn run_ctx(
+            &mut self,
+            cmd: Command,
+            ctx: Ctx,
+            actor: AccountId,
+            saved: Option<Vec<(RefField, RefValue)>>,
+        ) -> Result<Run, NotImplemented> {
+            let mut cell = self.cell()?;
+            let id = ctx.command.bytes();
+            let out = match cell.execute(cmd, ctx) {
+                Ok(_) => Run::Appended,
+                Err(fstp_engine::ExecError::Refused(r)) => Run::Refused(r.rule, r.reason),
+                Err(_) => return Err(GAP_STEP),
+            };
+            if matches!(out, Run::Appended) {
+                let _ = self.actors.insert(id, actor);
+                if let Some(s) = saved {
+                    let _ = self.saves.insert(id, s);
+                }
+            }
+            self.state = cell.state().clone();
+            self.store = cell.into_store();
+            self.ledger = draft_cell::entries(&self.store).map_err(|_| GAP_STEP)?;
+            Ok(out)
+        }
+
+        /// The revision a command names under `base`.
+        fn named(&self, base: Base) -> Option<DraftRevision> {
+            match base {
+                Base::Head => self.state.creator.head(PLAN_P),
+                Base::Stale => self.stale,
             }
         }
 
-        /// The ledger mapped to reference records. Designed reads:
-        /// `Record::Creator(CreatorRecord::{DraftOpened, FieldsSaved,
-        /// ActivationApproved})`, `Record::Import(ImportRecord::..)` and
-        /// the core `RoleGranted`, `RoleEnded` and `ProgrammeActivated`.
-        pub fn entries(&self) -> Result<Entries, NotImplemented> {
-            Err(GAP_ENGINE)
+        /// Whether the draft is active.
+        fn active(&self) -> bool {
+            self.state
+                .creator
+                .draft(PLAN_P)
+                .is_some_and(|d| d.active().is_some())
         }
 
-        /// The twin view. Designed: the state with `import` reset to
-        /// `ImportStore::default()`, and every `Record::Import` removed.
+        /// The active programme manager binding of `a` on the draft.
+        fn binding_of(&self, a: AccountId) -> Option<BindingId> {
+            self.state.core.roster().bindings().find_map(|(id, b)| {
+                (b.account == a
+                    && b.programme == PLAN_P
+                    && b.role == Role::ProgrammeManager
+                    && matches!(b.status, BindingStatus::Active))
+                .then_some(id)
+            })
+        }
+
+        /// `GrantRole` of programme manager on the draft to `to` by `by`.
+        fn grant(&mut self, by: AccountId, to: AccountId) -> Result<StepVerdict, NotImplemented> {
+            if self.active() {
+                return Ok(StepVerdict::Refused(RefRefusal::Active));
+            }
+            if !is_tenant_admin(by) {
+                let ctx = self.ctx(by);
+                return self.grant_cmd(by, to, ctx);
+            }
+            if self.binding_of(to).is_some() {
+                // The domain refuses a second binding of one role in one
+                // programme. The reference names it AlreadyBound.
+                let ctx = self.ctx(by);
+                return Ok(match self.grant_cmd(by, to, ctx)? {
+                    StepVerdict::Accepted => StepVerdict::Accepted,
+                    StepVerdict::Refused(_) => StepVerdict::Refused(RefRefusal::AlreadyBound),
+                });
+            }
+            let ctx = self.ctx(by);
+            self.grant_cmd(by, to, ctx)
+        }
+
+        /// Runs the `GrantRole` of `to` by `by` with `ctx`.
+        fn grant_cmd(
+            &mut self,
+            by: AccountId,
+            to: AccountId,
+            mut ctx: Ctx,
+        ) -> Result<StepVerdict, NotImplemented> {
+            ctx.binds_tenant_admin = is_tenant_admin(to);
+            let binding = BindingId::from_raw(0x4d49_b000u128.saturating_add(u128::from(self.n)));
+            let cmd = fstp_domain::Command::GrantRole {
+                binding,
+                account: to,
+                programme: PLAN_P,
+                role: Role::ProgrammeManager,
+                start: ctx.now,
+                second_admin: None,
+                confidentiality: Some(TextRef::new(
+                    TextId::from_raw(binding.raw()),
+                    ContentDigest::from_bytes([0x4d; 32]),
+                )),
+                organisation: None,
+                end: None,
+            };
+            Ok(match self.run_ctx(Command::Core(cmd), ctx, by, None)? {
+                Run::Appended => StepVerdict::Accepted,
+                Run::Refused(RuleRef::Actor, _) => StepVerdict::Refused(RefRefusal::NotTenantAdmin),
+                Run::Refused(..) if self.active() => StepVerdict::Refused(RefRefusal::Active),
+                Run::Refused(..) => StepVerdict::Refused(RefRefusal::AlreadyBound),
+            })
+        }
+
+        /// The reference refusal of a refused save or resolution.
+        fn save_refusal(
+            &self,
+            rule: RuleRef,
+            reason: RefusalReason,
+        ) -> Result<RefRefusal, NotImplemented> {
+            use RefusalReason as Why;
+            Ok(match (rule, reason) {
+                _ if self.active() => RefRefusal::Active,
+                (RuleRef::Actor, Why::BindingInactive) | (RuleRef::I65, Why::BindingInactive) => {
+                    RefRefusal::NotManager
+                }
+                (RuleRef::Input, Why::WrongState) => RefRefusal::StaleRevision,
+                _ => return Err(GAP_STEP),
+            })
+        }
+
+        /// Runs `cmd` through the engine and maps the outcome.
+        pub fn apply(&mut self, cmd: &RefCommand) -> Result<StepVerdict, NotImplemented> {
+            match cmd {
+                RefCommand::Grant { by, to } => self.grant(*by, *to),
+                RefCommand::EndBinding { by, who } => self.end_binding(*by, *who),
+                RefCommand::Save {
+                    by,
+                    field,
+                    value,
+                    base,
+                } => self.save(*by, *field, value, *base),
+                RefCommand::Register { by, doc, media: m } => self.register(*by, *doc, *m),
+                RefCommand::Propose { doc, proposals } => self.propose(*doc, proposals),
+                RefCommand::Resolve {
+                    by,
+                    proposal,
+                    shown,
+                    resolution,
+                    conflict_acknowledged,
+                    base,
+                } => self.resolve(
+                    *by,
+                    *proposal,
+                    shown,
+                    resolution,
+                    *conflict_acknowledged,
+                    *base,
+                ),
+                RefCommand::Activate { by } => self.activate(*by),
+            }
+        }
+
+        /// `EndRole` of `who`'s programme manager binding by `by`.
+        fn end_binding(
+            &mut self,
+            by: AccountId,
+            who: AccountId,
+        ) -> Result<StepVerdict, NotImplemented> {
+            if self.active() {
+                return Ok(StepVerdict::Refused(RefRefusal::Active));
+            }
+            if !is_tenant_admin(by) {
+                return Ok(StepVerdict::Refused(RefRefusal::NotTenantAdmin));
+            }
+            let Some(binding) = self.binding_of(who) else {
+                return Ok(StepVerdict::Refused(RefRefusal::NotBound));
+            };
+            let ctx = self.ctx(by);
+            let end = fstp_domain::Command::EndRole {
+                binding,
+                at: ctx.now,
+            };
+            Ok(match self.run_ctx(Command::Core(end), ctx, by, None)? {
+                Run::Appended => StepVerdict::Accepted,
+                Run::Refused(RuleRef::Actor, _) => StepVerdict::Refused(RefRefusal::NotTenantAdmin),
+                Run::Refused(..) => return Err(GAP_STEP),
+            })
+        }
+
+        /// `SaveFields` of one universe field with manual provenance. A
+        /// value the field's strict decoder refuses never reaches the
+        /// engine, as the API decoder refuses it.
+        fn save(
+            &mut self,
+            by: AccountId,
+            field: RefField,
+            value: &RefValue,
+            base: Base,
+        ) -> Result<StepVerdict, NotImplemented> {
+            if self.active() {
+                return Ok(StepVerdict::Refused(RefRefusal::Active));
+            }
+            let id = field_id(field).map_err(|_| GAP_STEP)?;
+            let json = json_value(value).map_err(|_| GAP_STEP)?;
+            let base_rev = self.named(base).ok_or(GAP_STEP)?;
+            let Some(edit) = field_edit(id, &json, Provenance::Manual) else {
+                return Ok(StepVerdict::Refused(RefRefusal::ValueRejected));
+            };
+            let save = CreatorCommand::SaveFields {
+                programme: PLAN_P,
+                base: base_rev,
+                fields: vec![edit],
+            };
+            let saved = Some(vec![(field, value.clone())]);
+            match self.run(Command::Creator(save), by, saved)? {
+                Run::Appended => Ok(StepVerdict::Accepted),
+                Run::Refused(RuleRef::NotImplemented, _) => Err(GAP_SAVES),
+                Run::Refused(rule, reason) => {
+                    self.save_refusal(rule, reason).map(StepVerdict::Refused)
+                }
+            }
+        }
+
+        /// `RegisterDocument` of `doc` by `by`.
+        fn register(
+            &mut self,
+            by: AccountId,
+            doc: DocId,
+            m: RefMedia,
+        ) -> Result<StepVerdict, NotImplemented> {
+            let document = ImportDocument {
+                id: doc_id(doc),
+                programme: fstp_import::ProgrammeRef::from_raw(PLAN_P.raw()),
+                blob: fstp_import::BlobAddress::from_bytes([doc.0; 32]),
+                media: media(m),
+                digest: fstp_import::TextDigest::from_bytes([doc.0.wrapping_add(1); 32]),
+                text_bytes: DOC_BYTES,
+                uploaded_by: fstp_import::AccountRef::from_raw(by.raw()),
+            };
+            let cmd = Command::Import(ImportCommand::RegisterDocument(document));
+            Ok(match self.run(cmd, by, None)? {
+                Run::Appended => StepVerdict::Accepted,
+                Run::Refused(rule, reason) => StepVerdict::Refused(match (rule, reason) {
+                    _ if self.active() => RefRefusal::Active,
+                    (RuleRef::I65, RefusalReason::BindingInactive) => RefRefusal::NotManager,
+                    (RuleRef::Actor, _) => RefRefusal::NotManager,
+                    (RuleRef::Ledger, RefusalReason::IdReused) => RefRefusal::DuplicateDocument,
+                    _ => return Err(GAP_STEP),
+                }),
+            })
+        }
+
+        /// `RecordProposals` of `doc`, run as the system. Each value's
+        /// text reference carries its salted digest (module
+        /// documentation).
+        fn propose(
+            &mut self,
+            doc: DocId,
+            raw: &[RawProposal],
+        ) -> Result<StepVerdict, NotImplemented> {
+            let mut proposals = Vec::with_capacity(raw.len());
+            for p in raw {
+                let id = prop_id(p.id);
+                proposals.push(ImportProposal {
+                    id,
+                    document: doc_id(doc),
+                    field: field_id(p.field).map_err(|_| GAP_STEP)?,
+                    value: untrusted(&p.value).map_err(|_| GAP_STEP)?,
+                    text: fstp_import::ValueTextRef::new(
+                        fstp_import::ValueTextId::from_raw(id.raw()),
+                        fstp_import::SaltedDigest::from_bytes(salted(p.id, &p.value)?),
+                    ),
+                    evidence: p
+                        .evidence
+                        .iter()
+                        .map(|s| fstp_import::Span {
+                            start: s.start,
+                            end: s.end,
+                        })
+                        .collect(),
+                    config: fstp_import::ImportConfigId::from_raw(1),
+                    conflicts_with_profile: Vec::new(),
+                });
+            }
+            let mut ctx = self.ctx(M1);
+            ctx.actor = Actor::System(SystemCause::Timeline);
+            ctx.tenant_admin = false;
+            let cmd = Command::Import(ImportCommand::RecordProposals {
+                document: doc_id(doc),
+                proposals,
+            });
+            Ok(match self.run_ctx(cmd, ctx, M1, None)? {
+                Run::Appended => {
+                    for p in raw {
+                        let _ = self.values.insert(p.id, p.value.clone());
+                    }
+                    StepVerdict::Accepted
+                }
+                Run::Refused(rule, reason) => StepVerdict::Refused(match (rule, reason) {
+                    _ if self.active() => RefRefusal::Active,
+                    (RuleRef::Input, RefusalReason::UnknownEntity) => RefRefusal::UnknownDocument,
+                    (RuleRef::Ledger, RefusalReason::IdReused) => RefRefusal::DuplicateProposal,
+                    (RuleRef::Input, RefusalReason::InvalidValue) if raw.is_empty() => {
+                        RefRefusal::EmptyBatch
+                    }
+                    (RuleRef::Input, RefusalReason::InvalidValue)
+                        if raw.iter().any(|p| !p.field.importable()) =>
+                    {
+                        RefRefusal::NotImportable
+                    }
+                    _ => return Err(GAP_STEP),
+                }),
+            })
+        }
+
+        /// The salted digest `shown` names for proposal `p` (module
+        /// documentation).
+        fn shown(&self, p: PropId, shown: &RefShown) -> Result<[u8; 32], NotImplemented> {
+            match shown {
+                RefShown::Forged(b) => Ok(*b),
+                RefShown::Of(v) => {
+                    if self.values.get(&p) == Some(v) {
+                        return salted(p, v);
+                    }
+                    match self.values.iter().find(|(_, x)| *x == v) {
+                        Some((other, x)) => salted(*other, x),
+                        None => {
+                            let data = untrusted(v).map_err(|_| GAP_STEP)?;
+                            let mut bytes = b"fresh:".to_vec();
+                            bytes.extend_from_slice(data.as_data().as_bytes());
+                            Ok(fstp_crypto::sha256(&bytes))
+                        }
+                    }
+                }
+            }
+        }
+
+        /// `ResolveImport` of `proposal` by `by`.
+        fn resolve(
+            &mut self,
+            by: AccountId,
+            proposal: PropId,
+            shown: &RefShown,
+            resolution: &RefResolution,
+            conflict_acknowledged: bool,
+            base: Base,
+        ) -> Result<StepVerdict, NotImplemented> {
+            if self.active() {
+                return Ok(StepVerdict::Refused(RefRefusal::Active));
+            }
+            let digest = self.shown(proposal, shown)?;
+            let valued = |v: &RefValue| -> Result<
+                (fstp_import::UntrustedValue, fstp_import::ValueDigest),
+                NotImplemented,
+            > {
+                let value = untrusted(v).map_err(|_| GAP_STEP)?;
+                let d = fstp_import::ValueDigest::from_bytes(fstp_crypto::sha256(
+                    value.as_data().as_bytes(),
+                ));
+                Ok((value, d))
+            };
+            let (client, applied) = match resolution {
+                RefResolution::Confirm(v) => {
+                    let (value, digest) = valued(v)?;
+                    (
+                        ClientResolution::Confirm { value, digest },
+                        Some((v.clone(), Applied::Confirmed)),
+                    )
+                }
+                RefResolution::Edit(v) => {
+                    let (value, digest) = valued(v)?;
+                    (
+                        ClientResolution::Edit { value, digest },
+                        Some((v.clone(), Applied::Edited)),
+                    )
+                }
+                RefResolution::Dismiss => (ClientResolution::Dismiss, None),
+            };
+            let Some(base_rev) = self.named(base) else {
+                return Err(GAP_STEP);
+            };
+            let cmd = Command::Bridge(fstp_engine::BridgeCommand::ResolveImport {
+                programme: PLAN_P,
+                proposal: prop_id(proposal),
+                shown: fstp_import::SaltedDigest::from_bytes(digest),
+                resolution: client,
+                conflict_acknowledged,
+                base: base_rev,
+            });
+            let field = self
+                .state
+                .import
+                .proposal(prop_id(proposal))
+                .and_then(|p| ref_field(p.proposal().field).ok());
+            let saved = match (&applied, field) {
+                (Some((v, _)), Some(f)) => Some(vec![(f, v.clone())]),
+                _ => None,
+            };
+            match self.run(cmd, by, saved)? {
+                Run::Appended => Ok(StepVerdict::Accepted),
+                Run::Refused(RuleRef::NotImplemented, _) => Err(GAP_SAVES),
+                Run::Refused(rule, reason) => self
+                    .resolve_refusal(rule, reason, proposal, shown, resolution)
+                    .map(StepVerdict::Refused),
+            }
+        }
+
+        /// The reference refusal of a refused resolution: the check that
+        /// failed, found again from the stored proposal.
+        fn resolve_refusal(
+            &self,
+            rule: RuleRef,
+            reason: RefusalReason,
+            proposal: PropId,
+            shown: &RefShown,
+            resolution: &RefResolution,
+        ) -> Result<RefRefusal, NotImplemented> {
+            use RefusalReason as Why;
+            let stored = self.state.import.proposal(prop_id(proposal));
+            let value = self.values.get(&proposal);
+            Ok(match (rule, reason) {
+                (RuleRef::I65, Why::BindingInactive) => RefRefusal::NotManager,
+                (RuleRef::Input, Why::UnknownEntity) => RefRefusal::UnknownProposal,
+                (RuleRef::I65, Why::WrongState) if stored.is_some_and(|s| s.is_resolved()) => {
+                    RefRefusal::AlreadyResolved
+                }
+                (RuleRef::I65, Why::GuardFailed) => RefRefusal::ConflictNotAcknowledged,
+                (RuleRef::Input, Why::WrongState) => RefRefusal::StaleRevision,
+                (RuleRef::Input, Why::InvalidValue) => RefRefusal::NotImportable,
+                (RuleRef::I65, Why::InvalidValue) => {
+                    let shown_ok = matches!(shown, RefShown::Of(v) if Some(v) == value);
+                    match resolution {
+                        _ if !shown_ok => RefRefusal::ShownMismatch,
+                        RefResolution::Confirm(v) if Some(v) != value => RefRefusal::ConfirmDiffers,
+                        RefResolution::Edit(v) if Some(v) == value => RefRefusal::EditUnchanged,
+                        _ => RefRefusal::ValueRejected,
+                    }
+                }
+                _ => return Err(GAP_STEP),
+            })
+        }
+
+        /// The activation path of `Activate { by }` (wiring contract).
+        fn activate(&mut self, by: AccountId) -> Result<StepVerdict, NotImplemented> {
+            if self.active() {
+                return Ok(StepVerdict::Refused(RefRefusal::Active));
+            }
+            if !is_tenant_admin(by) {
+                return Ok(StepVerdict::Refused(RefRefusal::NotTenantAdmin));
+            }
+            let warnings: Vec<fstp_creator::WarningKey> = self
+                .report()?
+                .warnings()
+                .filter(|w| {
+                    !self
+                        .state
+                        .creator
+                        .draft(PLAN_P)
+                        .is_some_and(|d| d.ack_live(&w.key()))
+                })
+                .map(fstp_creator::CheckResult::key)
+                .collect();
+            for warning in warnings {
+                let revision = self.state.creator.head(PLAN_P).ok_or(GAP_STEP)?;
+                let ack = CreatorCommand::AcknowledgeWarning {
+                    programme: PLAN_P,
+                    revision,
+                    warning,
+                };
+                let _ = self.run(Command::Creator(ack), M1, None)?;
+            }
+            let revision = self.state.creator.head(PLAN_P).ok_or(GAP_STEP)?;
+            let request = CreatorCommand::RequestActivation {
+                programme: PLAN_P,
+                revision,
+            };
+            let _ = self.run(Command::Creator(request), M1, None)?;
+            let revision = self.state.creator.head(PLAN_P).ok_or(GAP_STEP)?;
+            let approve = CreatorCommand::ApproveActivation {
+                programme: PLAN_P,
+                revision,
+                decision: DecisionId::from_raw(0x4d49_dec0u128.saturating_add(u128::from(self.n))),
+            };
+            Ok(match self.run(Command::Creator(approve), by, None)? {
+                Run::Appended => StepVerdict::Accepted,
+                Run::Refused(RuleRef::Actor, _) => StepVerdict::Refused(RefRefusal::NotTenantAdmin),
+                Run::Refused(RuleRef::I67, _) => {
+                    StepVerdict::Refused(RefRefusal::ApproverIsBuilder)
+                }
+                Run::Refused(RuleRef::I66, _) => StepVerdict::Refused(self.uncleared()?),
+                Run::Refused(..) => return Err(GAP_STEP),
+            })
+        }
+
+        /// The first failure of the report now that the model names.
+        fn uncleared(&self) -> Result<RefRefusal, NotImplemented> {
+            let report = self.report()?;
+            let names: Vec<&str> = report.failures().map(|r| r.check.name()).collect();
+            Ok(if names.contains(&"ImportUnresolved") {
+                RefRefusal::Unresolved
+            } else if names.contains(&"FieldUnset") {
+                RefRefusal::FieldUnset
+            } else if names.contains(&"CapAboveCeiling") {
+                RefRefusal::CapAboveCeiling
+            } else {
+                return Err(GAP_STEP);
+            })
+        }
+
+        /// The validation report of the draft now.
+        fn report(&self) -> Result<fstp_creator::ValidationReport, NotImplemented> {
+            let cell = self.cell()?;
+            let head = cell.state().creator.head(PLAN_P).ok_or(GAP_STEP)?;
+            let cmd = CreatorCommand::RequestActivation {
+                programme: PLAN_P,
+                revision: head,
+            };
+            let admins: BTreeSet<AccountId> = [TA, TB].into_iter().collect();
+            let ctx = draft_cell::ctx(M1, Timestamp::from_micros(T0), 0, &admins);
+            let inputs = cell.inputs(&cmd, &ctx, None);
+            let profile = inputs.profile.clone().ok_or(GAP_STEP)?;
+            Ok(fstp_creator::validate(
+                &cell.state().core,
+                &cell.state().creator,
+                PLAN_P,
+                &profile,
+                &inputs,
+            ))
+        }
+
+        /// The ledger mapped to reference records (wiring contract).
+        pub fn entries(&self) -> Result<Entries, NotImplemented> {
+            let mut out = Vec::new();
+            let mut managers: BTreeMap<BindingId, AccountId> = BTreeMap::new();
+            let mut i = 0usize;
+            while let Some(first) = self.ledger.get(i) {
+                let mut events = Vec::new();
+                let mut j = i;
+                while let Some(e) = self.ledger.get(j) {
+                    if e.command != first.command {
+                        break;
+                    }
+                    if let Some(ev) = self.event(&e.record, &first.command, &mut managers)? {
+                        events.push(ev);
+                    }
+                    j = j.saturating_add(1);
+                }
+                if !events.is_empty() {
+                    out.push(events);
+                }
+                i = j;
+            }
+            Ok(out)
+        }
+
+        /// The reference record of one production record, if it is one of
+        /// the universe.
+        fn event(
+            &self,
+            record: &Record,
+            command: &[u8; 16],
+            managers: &mut BTreeMap<BindingId, AccountId>,
+        ) -> Result<Option<RefEvent>, NotImplemented> {
+            Ok(match record {
+                Record::Creator(CreatorRecord::DraftOpened { programme, by, .. })
+                    if *programme == PLAN_P =>
+                {
+                    Some(RefEvent::Opened { by: *by })
+                }
+                Record::Creator(CreatorRecord::FieldsSaved {
+                    programme,
+                    fields,
+                    by,
+                    ..
+                }) if *programme == PLAN_P => {
+                    let values = self.saves.get(command);
+                    let mut saved = Vec::new();
+                    for (f, _, prov) in fields {
+                        let Ok(rf) = ref_field(*f) else {
+                            continue;
+                        };
+                        let value = values
+                            .and_then(|v| v.iter().find(|(x, _)| *x == rf))
+                            .map(|(_, v)| v.clone())
+                            .or_else(|| match prov {
+                                Provenance::Import { proposal, .. } => ref_prop(
+                                    fstp_import::ImportProposalId::from_raw(proposal.raw()),
+                                )
+                                .and_then(|p| self.values.get(&p).cloned()),
+                                _ => None,
+                            })
+                            .ok_or(GAP_STEP)?;
+                        let prov = match prov {
+                            Provenance::Import {
+                                proposal,
+                                resolution,
+                            } => RefProv::Import {
+                                proposal: ref_prop(fstp_import::ImportProposalId::from_raw(
+                                    proposal.raw(),
+                                ))
+                                .ok_or(GAP_STEP)?,
+                                resolution: match resolution {
+                                    fstp_creator::ImportResolution::Confirmed => Applied::Confirmed,
+                                    fstp_creator::ImportResolution::Edited => Applied::Edited,
+                                },
+                            },
+                            _ => RefProv::Manual,
+                        };
+                        saved.push((rf, value, prov));
+                    }
+                    (!saved.is_empty()).then_some(RefEvent::Saved {
+                        by: *by,
+                        fields: saved,
+                    })
+                }
+                Record::Creator(CreatorRecord::ActivationApproved(a))
+                    if a.programme() == PLAN_P =>
+                {
+                    Some(RefEvent::Activated { by: a.approver() })
+                }
+                Record::Core(fstp_domain::Record::BindingGranted(g))
+                    if g.programme == PLAN_P && g.role == Role::ProgrammeManager =>
+                {
+                    let _ = managers.insert(g.binding, g.account);
+                    Some(RefEvent::Granted {
+                        by: g.granted_by,
+                        to: g.account,
+                    })
+                }
+                Record::Core(fstp_domain::Record::BindingEnded(e)) => {
+                    match (managers.get(&e.binding), self.actors.get(command)) {
+                        (Some(who), Some(by)) => Some(RefEvent::Ended { by: *by, who: *who }),
+                        _ => None,
+                    }
+                }
+                Record::Import(ImportRecord::DocumentRegistered(d)) => {
+                    ref_doc(d.id).map(|doc| RefEvent::Registered {
+                        doc,
+                        by: AccountId::from_raw(d.uploaded_by.raw()),
+                        media: ref_media(d.media),
+                    })
+                }
+                Record::Import(ImportRecord::ProposalsRecorded {
+                    document,
+                    proposals,
+                }) => {
+                    let Some(doc) = ref_doc(*document) else {
+                        return Ok(None);
+                    };
+                    let mut recorded = Vec::new();
+                    for p in proposals {
+                        let id = ref_prop(p.id).ok_or(GAP_STEP)?;
+                        recorded.push(RecordedProposal {
+                            id,
+                            field: ref_field(p.field).map_err(|_| GAP_STEP)?,
+                            value: self.values.get(&id).cloned().ok_or(GAP_STEP)?,
+                            evidence: p
+                                .evidence
+                                .iter()
+                                .map(|s| Span {
+                                    start: s.start,
+                                    end: s.end,
+                                })
+                                .collect(),
+                            conflicts: p
+                                .conflicts_with_profile
+                                .iter()
+                                .map(|r| match r {
+                                    fstp_import::ConflictRule::I50 => RefRule::I50,
+                                })
+                                .collect(),
+                        });
+                    }
+                    Some(RefEvent::Recorded {
+                        doc,
+                        proposals: recorded,
+                    })
+                }
+                Record::Import(ImportRecord::ProposalResolved {
+                    proposal,
+                    resolution,
+                    by,
+                }) => ref_prop(*proposal).map(|p| RefEvent::Resolved {
+                    proposal: p,
+                    resolution: match resolution {
+                        ImportResolution::Confirmed => Resolved::Confirmed,
+                        ImportResolution::Edited => Resolved::Edited,
+                        ImportResolution::Dismissed => Resolved::Dismissed,
+                    },
+                    by: AccountId::from_raw(by.raw()),
+                }),
+                _ => None,
+            })
+        }
+
+        /// The twin view: the state with `import` reset to
+        /// `ImportStore::default()`, and every `Record::Import` removed,
+        /// entries left empty dropped.
         pub fn twin_view(&self) -> Result<ProductionTwinView, NotImplemented> {
-            Err(GAP_ENGINE)
+            let mut state = self.state.clone();
+            state.import = fstp_import::ImportStore::default();
+            let mut ledger: Vec<Vec<fstp_engine::Record>> = Vec::new();
+            let mut last: Option<[u8; 16]> = None;
+            for e in &self.ledger {
+                if matches!(e.record, Record::Import(_)) {
+                    continue;
+                }
+                if last != Some(e.command) {
+                    ledger.push(Vec::new());
+                    last = Some(e.command);
+                }
+                if let Some(entry) = ledger.last_mut() {
+                    entry.push(e.record.clone());
+                }
+            }
+            Ok(ProductionTwinView { state, ledger })
         }
 
         /// Whether `fstp_engine::replay` of the ledger gives the state.
@@ -1601,12 +2502,77 @@ pub mod production {
         /// Teeth, the alternative bridge: appends one entry with
         /// `CreatorRecord::FieldsSaved` of `proposal`'s value under
         /// `Provenance::Import { proposal, resolution: Confirmed }` and no
-        /// `ProposalResolved`, through the public fold, as
-        /// `harness::teeth::inject_entry` does in M2.
+        /// `ProposalResolved`, by the document's uploader.
+        ///
+        /// The engine fold refuses such an entry (`fstp_engine` crate
+        /// root, the import pairing), a second line under I-65. The entry
+        /// is appended to the ledger past the fold, as an alternative
+        /// bridge would write it, so the I-65 predicate over raw records
+        /// meets it. The state stays the fold of the earlier entries.
         pub fn inject_auto_apply(&mut self, proposal: PropId) -> Result<bool, NotImplemented> {
-            let _ = proposal;
-            Err(GAP_CREATOR)
+            let Some(stored) = self.state.import.proposal(prop_id(proposal)) else {
+                return Ok(false);
+            };
+            if stored.is_resolved() {
+                return Ok(false);
+            }
+            let Some(value) = self.values.get(&proposal).cloned() else {
+                return Ok(false);
+            };
+            let field = stored.proposal().field;
+            let document = stored.proposal().document;
+            let by = self
+                .state
+                .import
+                .document(document)
+                .map(|d| AccountId::from_raw(d.uploaded_by.raw()))
+                .unwrap_or(M1);
+            let Some(edit) = field_edit(
+                field,
+                &json_value(&value).map_err(|_| GAP_STEP)?,
+                Provenance::Manual,
+            ) else {
+                return Ok(false);
+            };
+            let revision = self.state.creator.head(PLAN_P).ok_or(GAP_STEP)?;
+            let record = CreatorRecord::FieldsSaved {
+                programme: PLAN_P,
+                revision,
+                fields: vec![(
+                    field,
+                    edit.digest,
+                    Provenance::Import {
+                        proposal: fstp_creator::ImportProposalId::from_raw(prop_id(proposal).raw()),
+                        resolution: fstp_creator::ImportResolution::Confirmed,
+                    },
+                )],
+                by,
+            };
+            let ctx = self.ctx(by);
+            let id = ctx.command.bytes();
+            let head = self.store.head();
+            self.store
+                .append(head, ctx.now.micros(), id, vec![Record::Creator(record)])
+                .map_err(|_| GAP_STEP)?;
+            let _ = self.actors.insert(id, by);
+            let _ = self
+                .saves
+                .insert(id, vec![(ref_field(field).map_err(|_| GAP_STEP)?, value)]);
+            self.ledger = draft_cell::entries(&self.store).map_err(|_| GAP_STEP)?;
+            Ok(true)
         }
+    }
+
+    /// The parts of a production draft that twin A and twin B must share:
+    /// the engine state with the import store emptied, and the records of
+    /// each entry with every import record removed and empty entries
+    /// dropped.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ProductionTwinView {
+        /// The engine state without the import store.
+        pub state: EngineState,
+        /// The ledger without import records.
+        pub ledger: Vec<Vec<fstp_engine::Record>>,
     }
 
     /// Normalises an uploaded document with the standard limits and

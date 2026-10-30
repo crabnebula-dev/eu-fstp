@@ -396,6 +396,17 @@ export function readApprovals(body: unknown): ApprovalRow[] | null {
   return out;
 }
 
+/**
+ * The kinds of approval the server names as `unlisted` in the reply of
+ * `admin.approvals`: kinds it cannot list yet, which the inbox must not
+ * show as empty. An absent or malformed member reads as none.
+ */
+export function readUnlisted(body: unknown): readonly string[] {
+  const list = record(body)?.["unlisted"];
+  if (!Array.isArray(list)) return [];
+  return (list as unknown[]).filter((k): k is string => typeof k === "string");
+}
+
 /** One evidence span of an import proposal, as text. */
 export interface Evidence {
   readonly text: string;

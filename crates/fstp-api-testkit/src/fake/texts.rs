@@ -49,6 +49,18 @@ impl FakeTexts {
     }
 }
 
+impl FakeTexts {
+    /// Stores a text now, as `TextStore::put` does. The import shell,
+    /// which is synchronous, stores each proposed value's text here.
+    pub fn put_now(&self, class: TextClass, owner: TextOwner, bytes: &[u8]) -> TextRef {
+        let mut s = lock(&self.state);
+        let n = s.next;
+        s.next = n.saturating_add(1);
+        s.rows.insert(n, (class, owner, bytes.to_vec()));
+        TextRef(n)
+    }
+}
+
 impl TextStore for FakeTexts {
     async fn put(
         &self,
@@ -56,11 +68,7 @@ impl TextStore for FakeTexts {
         owner: TextOwner,
         bytes: &[u8],
     ) -> Result<TextRef, PortError> {
-        let mut s = lock(&self.state);
-        let n = s.next;
-        s.next = n.saturating_add(1);
-        s.rows.insert(n, (class, owner, bytes.to_vec()));
-        Ok(TextRef(n))
+        Ok(self.put_now(class, owner, bytes))
     }
 
     async fn get(&self, r: TextRef, clearance: &ReadClearance) -> Result<Vec<u8>, PortError> {
@@ -87,6 +95,14 @@ type Blobs = BTreeMap<(BlobOwner, BlobRef), Vec<u8>>;
 #[derive(Clone, Debug, Default)]
 pub struct FakeBlobs {
     rows: Arc<Mutex<Blobs>>,
+}
+
+impl FakeBlobs {
+    /// The bytes stored under `r` for `owner`, read by the shell or a test
+    /// with no clearance.
+    pub fn peek(&self, owner: BlobOwner, r: BlobRef) -> Option<Vec<u8>> {
+        lock(&self.rows).get(&(owner, r)).cloned()
+    }
 }
 
 impl BlobStore for FakeBlobs {

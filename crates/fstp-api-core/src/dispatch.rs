@@ -120,6 +120,7 @@ use crate::port::{
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
+mod creator_ops;
 /// The tenant operations (lane m4tenant).
 mod tenant;
 
@@ -181,6 +182,9 @@ pub(crate) struct State {
     /// "pending" for a bounded time while the vault has not confirmed
     /// them (I-86).
     begun: Mutex<Begun>,
+    /// The tenant templates and uploads this core took (lane m4wire,
+    /// `creator.rs`).
+    creator: Mutex<crate::creator::CreatorMemory>,
 }
 
 /// The most accounts [`Begun`] holds. Past it, a new account's state
@@ -306,6 +310,11 @@ pub(crate) fn rule_text(r: RuleRef) -> &'static str {
 /// The API error of a domain refusal.
 fn refusal(r: Refusal) -> ApiError {
     match r.rule {
+        // A seam of a parallel lane refused, such as the creator's compile
+        // seam (lane m4wire). It names no rule, so it stays a stub answer.
+        RuleRef::NotImplemented => ApiError::NotImplemented(
+            "the engine refused at a seam of a parallel lane (RuleRef::NotImplemented)",
+        ),
         RuleRef::OracleDown => ApiError::refused(ErrorCode::Unavailable, "oracle"),
         RuleRef::Actor => ApiError::refused(ErrorCode::Unauthenticated, "actor"),
         rule => ApiError::refused(ErrorCode::Refused, rule_text(rule)),
@@ -655,12 +664,9 @@ pub(crate) async fn run<P: Seams>(
         OpKind::Pending(PendingKind::Discard) => discard(&call, &op),
         OpKind::Agent(kind) => agent(&call, &op, kind).await,
         OpKind::M3Port(kind) => m3_port(&call, &op, kind).await,
-        OpKind::Creator(_) => Err(call.refuse(ApiError::NotImplemented(
-            "creator operations: the engine's creator envelope (lanes W2a, W2e)",
-        ))),
-        OpKind::Bridge(_) | OpKind::Import(_) => Err(call.refuse(ApiError::NotImplemented(
-            "import operations: the engine bridge (lane W2b)",
-        ))),
+        OpKind::Creator(_) | OpKind::Bridge(_) | OpKind::Import(_) => {
+            creator_ops::command(&call, &op).await
+        }
         OpKind::Tenant(kind) => tenant::command(&call, &op, kind).await,
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
             "finding marks: the finding request form (lane W3b, after M4 W5)",
@@ -1543,12 +1549,27 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetOnboarding | ReadKind::GetTenantSettings | ReadKind::ListTenantAdmins => {
             tenant::read(call, op, kind).await?
         }
+        // Lane m4wire: the creator pages and the approval inbox.
+        ReadKind::GetDraft
+        | ReadKind::GetReport
+        | ReadKind::GetPreview
+        | ReadKind::GetImpact
+        | ReadKind::ListInvitations
+        | ReadKind::ListImportProposals
+        | ReadKind::ListProgrammes
+        | ReadKind::ListTemplates
+        | ReadKind::ListApprovals => ReadModel::Creator(creator_ops::read(call, op, kind).await?),
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
             )));
         }
     };
+    // I-86: a model that carries an email is served to the web only. The
+    // creator read refuses it earlier. This is the backstop.
+    if body.carries_email() && call.caller.via() != Via::Web {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-86")));
+    }
     call.accept(body)
 }
 

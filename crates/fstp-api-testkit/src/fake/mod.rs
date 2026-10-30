@@ -23,6 +23,12 @@
 pub mod audit;
 pub mod cell;
 pub mod clock;
+#[cfg(test)]
+mod creator_forged_tests;
+pub mod creator_requests;
+#[cfg(test)]
+mod creator_wire_tests;
+pub mod draft_cell;
 pub mod engine;
 pub mod fixture;
 pub mod ids;
@@ -30,6 +36,7 @@ pub mod misc;
 mod reads;
 pub mod requests;
 pub mod sessions;
+pub mod shell;
 pub mod step_up;
 pub mod texts;
 pub mod tokens;
@@ -241,9 +248,20 @@ impl FakePorts {
     pub fn new(world: &fixture::World, seams: PortSeams) -> Result<FakePorts, NotImplemented> {
         let clock = FakeClock::new(world.start);
         let vault = FakeVault::new(world.truth.clone());
-        let engine = FakeEngine::open(world, vault.oracle())
-            .map_err(|_| NotImplemented::new("fstp_api_testkit::fake::FakePorts::new: engine"))?;
         let tenant = FakeTenant::new(seams.settings, world.admins.clone());
+        let prober = FakeProber::default();
+        let vault_audit = FakeVaultAudit::default();
+        let texts = FakeTexts::default();
+        let blobs = FakeBlobs::default();
+        let env = shell::CellEnvironment::new(
+            &vault,
+            prober.clone(),
+            tenant.admin_set(),
+            vault_audit.clone(),
+        );
+        let imports = shell::ImportShell::new(blobs.clone(), texts.clone());
+        let engine = FakeEngine::open_with(world, vault.oracle(), env, Some(imports))
+            .map_err(|_| NotImplemented::new("fstp_api_testkit::fake::FakePorts::new: engine"))?;
         let sessions = FakeSessions::new(clock.clone(), tenant.clone());
         Ok(FakePorts {
             sessions,
@@ -252,16 +270,16 @@ impl FakePorts {
             vault,
             engine,
             audit: FakeAudit::default(),
-            texts: FakeTexts::default(),
-            blobs: FakeBlobs::default(),
+            texts,
+            blobs,
             precheck: FakePrecheck,
             sealer: FakeSealer::default(),
-            vault_audit: FakeVaultAudit::default(),
+            vault_audit,
             recovery: FakeRecovery::default(),
             break_glass: FakeBreakGlass::default(),
             tenant,
             outbox: FakeOutbox::new(seams.notices),
-            prober: FakeProber::default(),
+            prober,
             clock,
             ids: FakeIds::default(),
             tokens: FakeTokens::default(),

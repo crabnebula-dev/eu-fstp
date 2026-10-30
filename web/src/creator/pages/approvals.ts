@@ -24,7 +24,7 @@ import { h } from "../../core/dom.js";
 import { roleLabel } from "../../people/i18n.js";
 import { busy, frame, hush, ready } from "../frame.js";
 import { t } from "../i18n.js";
-import { readApprovals, type ApprovalRow } from "../model.js";
+import { readApprovals, readUnlisted, type ApprovalRow } from "../model.js";
 import { anyObject, call, report } from "../ops.js";
 import { PATHS, link, loadDraft } from "./common.js";
 
@@ -123,7 +123,10 @@ export function mount(): void {
       }
     }
     grants.replaceChildren(...own);
-    if (own.length === 0) {
+    // A kind the server names as unlisted is never shown as empty.
+    if (readUnlisted(o.body).includes("self_grant")) {
+      grants.append(h("li", { "data-unlisted": "self_grant" }, [t.label("creator.approvals.self_grants_unlisted")]));
+    } else if (own.length === 0) {
       grants.append(h("li", {}, [t.label("creator.approvals.no_self_grants")]));
     }
     ready(main);
