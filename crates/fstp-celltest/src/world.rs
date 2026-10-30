@@ -2007,6 +2007,37 @@ fn apply_plan_gaps(
         .map_err(|e| step_failed(cluster, "the plan gap grants", &e))
 }
 
+/// The world's registration of cluster server keys (I-83, design section
+/// 9.2): the SHA-256 digest of each cluster's server SubjectPublicKeyInfo
+/// and the cluster's kind. The control plane records both at cluster
+/// registration. Here the world reads the certificate `fstp-pgtest`
+/// issued to each server from that server's TLS directory.
+fn registered_server_keys(
+    clusters: &[ClusterHandle],
+) -> Result<Vec<([u8; 32], ClusterKind)>, WorldError> {
+    let fail = |c: &ClusterHandle, what: &str| {
+        WorldError::Store(format!("the server key of cluster {}: {what}", c.name()))
+    };
+    let mut out = Vec::with_capacity(clusters.len());
+    for c in clusters {
+        let path = c.server().dir().join("tls").join("server.pem");
+        let pem = std::fs::read(&path).map_err(|e| fail(c, &e.to_string()))?;
+        let text = std::str::from_utf8(&pem).map_err(|e| fail(c, &e.to_string()))?;
+        let body: String = text
+            .lines()
+            .skip_while(|l| !l.starts_with("-----BEGIN CERTIFICATE-----"))
+            .skip(1)
+            .take_while(|l| !l.starts_with("-----END"))
+            .collect();
+        let der = fstp_pgwire::base64::decode(body.as_bytes())
+            .map_err(|_| fail(c, "the certificate PEM does not decode"))?;
+        let cert = fstp_witness::peer::read_cert(&der)
+            .map_err(|e| fail(c, &format!("the certificate does not read: {e:?}")))?;
+        out.push((fstp_crypto::sha256(cert.spki), c.kind()));
+    }
+    Ok(out)
+}
+
 /// Starts world cell `index` of `plan` over its provisioned databases
 /// (design section 9.2 steps 5, 6, 8, 9 and 10):
 ///
@@ -2057,6 +2088,7 @@ fn start_cell(
     };
     let app_cluster = cell_cluster(spec, clusters, ClusterKind::Application, index)?;
     let vault_cluster = cell_cluster(spec, clusters, ClusterKind::Vault, index)?;
+    let server_keys = registered_server_keys(clusters)?;
     let app_db = database_name(CellDatabase::App, &plan.cell);
     let vault_db = database_name(CellDatabase::Vault, &plan.cell);
     // Step 1.
@@ -2125,9 +2157,21 @@ fn start_cell(
                     &vault_db,
                     &login(CellDatabase::Vault, RoleName::Vault)?,
                 )?,
-                // Caller claims: the open I-83 seam of fstp_vault::service.
-                server_ou: fstp_vault::start::ClusterRole::Vault,
-                registered_spki: fstp_vault::start::ClusterRole::Vault,
+                // I-83: the vault reads the OU and the SPKI from its live
+                // connection and looks the SPKI up in this registration.
+                registered_servers: server_keys
+                    .iter()
+                    .map(|(digest, kind)| fstp_vault::service::RegisteredSpki {
+                        digest: *digest,
+                        role: match kind {
+                            ClusterKind::Application => fstp_vault::start::ClusterRole::Application,
+                            ClusterKind::Vault => fstp_vault::start::ClusterRole::Vault,
+                            ClusterKind::Control | ClusterKind::Witness => {
+                                fstp_vault::start::ClusterRole::Other
+                            }
+                        },
+                    })
+                    .collect(),
                 sealer: std::sync::Arc::new(sealer),
                 ticket_keys: vec![ticket.public_key()],
                 internal_tls: server(&vault_internal, Some(&cell_ca.pem))
@@ -2203,9 +2247,19 @@ fn start_cell(
             &app_db,
             &login(CellDatabase::App, RoleName::App)?,
         )?,
-        // Caller claims: the open I-83 seam of fstp_cell::process.
-        server_ou: ClusterRole::Application,
-        registered_spki: ClusterRole::Application,
+        // I-83: the cell reads the OU and the SPKI from its live
+        // connections and looks each SPKI up in this registration.
+        registered_servers: server_keys
+            .iter()
+            .map(|(digest, kind)| fstp_cell::process::RegisteredSpki {
+                digest: *digest,
+                role: match kind {
+                    ClusterKind::Application => ClusterRole::Application,
+                    ClusterKind::Vault => ClusterRole::Vault,
+                    ClusterKind::Control | ClusterKind::Witness => ClusterRole::Other,
+                },
+            })
+            .collect(),
         custody: WorldCustody::default(),
         keystore: None,
         keys: fstp_cell::process::CellKeys {

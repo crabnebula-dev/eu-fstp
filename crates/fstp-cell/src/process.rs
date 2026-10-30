@@ -5,7 +5,17 @@
 //! [`start`] runs, in order:
 //!
 //! 1. It opens the `c_<cell>_writer` and `c_<cell>_app` pools (design
-//!    section 4.7) and reads the placement marker as the app role (I-83).
+//!    section 4.7) and runs the I-83 start check of design section 9.2
+//!    before anything else touches the database, custody or the witness
+//!    ([`check_database`]). It reads the placement marker as the app
+//!    role. It takes the server certificate OU and the SPKI from the leaf
+//!    certificate that each connection of each pool verified
+//!    ([`fstp_pgwire::Client::server_certificate_der`]), through the
+//!    server check of every pool configuration
+//!    ([`application_server_check`]). The cell refuses
+//!    anything but an application database on a server whose OU is
+//!    `application` and whose SPKI digest the control plane registered
+//!    for an application cluster only.
 //! 2. It builds the record store over the writer pool, with the ledger
 //!    keys, the App chain's `Anchor` key, the witness client of the App
 //!    chain over [`crate::witness::link::TlsWitnessLink`] and the pinned
@@ -35,15 +45,22 @@
 //! itself is held in memory by its owner (`crate::tasks::erasure`). The
 //! outbox data keys are held in process memory ([`MemoryOutboxKeys`]).
 //!
-//! Open I-83 seam, reported to Daniel and the lead: design section 9.2
-//! has the start check the placement marker, the database server's
-//! certificate OU and the registration of its SPKI. Only the marker is
-//! read from the database here. `fstp_pgwire::Client` does not expose the
-//! server's leaf certificate, so the OU and the SPKI registration are
-//! [`CellProcessParts::server_ou`] and
-//! [`CellProcessParts::registered_spki`], which the caller asserts. A world
-//! passes the kind of the cluster it connected to. The fix is to expose
-//! the leaf from `fstp_pgwire` (lead-owned) and derive both here.
+//! The caller hands in no claim about its database server. It hands in
+//! the registration set ([`CellProcessParts::registered_servers`]): each
+//! cluster's server SPKI digest and kind, as the control plane recorded
+//! them at cluster registration (`cp.cluster` `kind` and `server_spki`).
+//! The OU and the SPKI come from the live connections only. The SPKI and
+//! the first subject OU are read by `fstp_witness::peer::read_cert`, the
+//! in-house fuzzed DER reader of the witness's sender check. Every
+//! subject OU is read by `fstp_pgwire::x509::subject_organizational_units`,
+//! fuzzed as well. A subject with more than one OU names no cluster kind.
+//!
+//! A pool opens later connections over the same configuration, for
+//! example after one broke. So the OU and SPKI check does not run only at
+//! start: [`start`] adds it to the writer and app configurations as a
+//! [`fstp_pgwire::ServerCheck`] ([`application_server_check`]). Every
+//! connection of every pool, the app pool of the route backend included,
+//! then runs it before its startup message.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -62,7 +79,7 @@ use crate::CellError;
 use crate::config::Mode;
 use crate::engine::pg::PgCellStore;
 use crate::engine::startup::{
-    ClusterRole, DatabaseView, ListenerKind, PgStartParts, StartRefusal, start_pg,
+    ClusterRole, DatabaseView, ListenerKind, PgStartParts, StartRefusal, accepts_database, start_pg,
 };
 use crate::engine::{CellEngine, VaultClient};
 use crate::http::front::{Front, FrontConfig, StderrLog};
@@ -108,13 +125,10 @@ pub struct CellProcessParts<C, V> {
     pub writer: fstp_pgwire::Config,
     /// The `c_<cell>_app` login.
     pub app: fstp_pgwire::Config,
-    /// The kind the database server's certificate OU names. A caller
-    /// claim, not read from the session: see "Open I-83 seam" in the
-    /// module documentation.
-    pub server_ou: ClusterRole,
-    /// The kind the server's SPKI is registered for. A caller claim, like
-    /// [`CellProcessParts::server_ou`].
-    pub registered_spki: ClusterRole,
+    /// The control plane's registration of cluster server keys (module
+    /// documentation). The start check looks up each live server's SPKI
+    /// digest here ([`check_database`]).
+    pub registered_servers: Vec<RegisteredSpki>,
     /// The App chain's custody backend.
     pub custody: C,
     /// The keystore of the App chain, or `None` on a first start.
@@ -235,14 +249,166 @@ fn config_bytes(cell: [u8; 16], mode: Mode) -> Vec<u8> {
     format!("{{\"cell\":\"{hex}\",\"mode\":\"{mode}\",\"version\":\"0.3.0\"}}").into_bytes()
 }
 
-/// The placement marker of the cell database, read as the app role.
-async fn placement_marker<R: Runtime>(app: &Pool<R>) -> Result<u8, CellError> {
-    let mut c = app.get().await.map_err(store_err)?;
-    let rows = c
+/// The subject OU of an application cluster's server certificate (design
+/// sections 1.3 and 4.1), as `fstp_pki::cert::ClusterKindOu::Application`
+/// spells it. The cell does not depend on `fstp-pki`.
+pub const APPLICATION_OU: &str = "application";
+
+/// The subject OU of a vault cluster's server certificate, as
+/// `fstp_pki::cert::ClusterKindOu::Vault` spells it.
+pub const VAULT_OU: &str = "vault";
+
+/// One cluster server key as the control plane registered it (design
+/// section 9.2): the SHA-256 digest of the server certificate's
+/// SubjectPublicKeyInfo DER, and the kind of the cluster it was
+/// registered for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisteredSpki {
+    /// SHA-256 over the SubjectPublicKeyInfo DER, tag and length included.
+    pub digest: [u8; 32],
+    /// The kind of the cluster the key was registered for.
+    pub role: ClusterRole,
+}
+
+/// The kind that the subject OU of the server certificate `cert_der`
+/// names. The subject must hold exactly one OU, and it must be
+/// [`APPLICATION_OU`] or [`VAULT_OU`]. A certificate that does not read,
+/// a subject without an OU or with two, and any other OU name
+/// [`ClusterRole::Other`].
+///
+/// Both in-house readers must agree on the OU: the first subject OU of
+/// `fstp_witness::peer::read_cert` and the only one that
+/// `fstp_pgwire::x509::subject_organizational_units` lists.
+#[must_use]
+pub fn server_ou_role(cert_der: &[u8]) -> ClusterRole {
+    let Ok(cert) = fstp_witness::peer::read_cert(cert_der) else {
+        return ClusterRole::Other;
+    };
+    let Ok(ous) = fstp_pgwire::x509::subject_organizational_units(cert_der) else {
+        return ClusterRole::Other;
+    };
+    let [ou] = ous.as_slice() else {
+        return ClusterRole::Other;
+    };
+    if cert.names.subject_ou.as_deref() != Some(*ou) {
+        return ClusterRole::Other;
+    }
+    if *ou == APPLICATION_OU.as_bytes() {
+        ClusterRole::Application
+    } else if *ou == VAULT_OU.as_bytes() {
+        ClusterRole::Vault
+    } else {
+        ClusterRole::Other
+    }
+}
+
+/// Whether the server certificate `cert_der` is that of an application
+/// cluster: its OU names one ([`server_ou_role`]) and `registered` gives
+/// its SPKI that kind only ([`registered_role`]).
+#[must_use]
+pub fn is_application_server(cert_der: &[u8], registered: &[RegisteredSpki]) -> bool {
+    server_ou_role(cert_der) == ClusterRole::Application
+        && registered_role(cert_der, registered) == ClusterRole::Application
+}
+
+/// The server check that [`start`] adds to the writer and app
+/// configurations: it accepts a server only when
+/// [`is_application_server`] holds for its verified leaf under
+/// `registered`. Every connection of a pool over such a configuration
+/// runs it, so a pool that reconnects later is held to the I-83 server
+/// check of design section 9.2 too. A refused connection fails with
+/// [`fstp_pgwire::ErrorKind::ServerRefused`].
+#[must_use]
+pub fn application_server_check(registered: &[RegisteredSpki]) -> fstp_pgwire::ServerCheck {
+    let registered = registered.to_vec();
+    fstp_pgwire::ServerCheck::new(move |der: &[u8]| is_application_server(der, &registered))
+}
+
+/// The SHA-256 digest of the SubjectPublicKeyInfo of the certificate
+/// `cert_der`, or `None` when the certificate does not read.
+#[must_use]
+pub fn server_spki_digest(cert_der: &[u8]) -> Option<[u8; 32]> {
+    fstp_witness::peer::read_cert(cert_der)
+        .ok()
+        .map(|c| fstp_crypto::sha256(c.spki))
+}
+
+/// The kind that `registered` gives the SPKI of the server certificate
+/// `cert_der`. It is the one kind every registration of that digest
+/// names. A key with no registration, a key registered for two kinds, or
+/// a certificate that does not read names [`ClusterRole::Other`], so the
+/// start check refuses it.
+#[must_use]
+pub fn registered_role(cert_der: &[u8], registered: &[RegisteredSpki]) -> ClusterRole {
+    let Some(digest) = server_spki_digest(cert_der) else {
+        return ClusterRole::Other;
+    };
+    let mut roles = registered
+        .iter()
+        .filter(|r| r.digest == digest)
+        .map(|r| r.role);
+    match roles.next() {
+        Some(first) if roles.all(|r| r == first) => first,
+        _ => ClusterRole::Other,
+    }
+}
+
+/// What the cell sees of its database: the placement marker `marker`
+/// read over a connection, and the OU and the SPKI registration of the
+/// server certificate `cert_der` that the same connection verified.
+#[must_use]
+pub fn database_view(marker: u8, cert_der: &[u8], registered: &[RegisteredSpki]) -> DatabaseView {
+    DatabaseView {
+        marker,
+        server_ou: server_ou_role(cert_der),
+        registered_spki: registered_role(cert_der, registered),
+    }
+}
+
+/// The I-83 start check of design section 9.2 over the live connection
+/// `client`: the placement marker it reads, and the OU and the SPKI of
+/// the leaf certificate its server presented, checked against
+/// `registered`. Returns the view it accepted.
+///
+/// # Errors
+///
+/// The refusal of [`StartRefusal::Placement`] when the view is not that
+/// of an application database on an application cluster
+/// (`crate::engine::startup::accepts_database`). [`CellError::Store`]
+/// or [`CellError::Config`] when the marker does not read.
+pub async fn check_database<R: Runtime>(
+    client: &mut fstp_pgwire::Client<R>,
+    registered: &[RegisteredSpki],
+) -> Result<DatabaseView, CellError> {
+    let marker = placement_marker(client).await?;
+    let view = database_view(marker, client.server_certificate_der(), registered);
+    if !accepts_database(&view) {
+        return Err(refusal(StartRefusal::Placement));
+    }
+    Ok(view)
+}
+
+/// The error of a pool step. A connection that the server check of
+/// [`application_server_check`] refused is the I-83 placement refusal.
+/// Any other failure is a store error.
+fn pool_err(e: fstp_pgstore::PoolError) -> CellError {
+    match e {
+        fstp_pgstore::PoolError::Connect(fstp_pgstore::DbFault {
+            kind: fstp_pgwire::ErrorKind::ServerRefused,
+            ..
+        }) => refusal(StartRefusal::Placement),
+        other => store_err(other),
+    }
+}
+
+/// The placement marker of the cell database, read over `client`.
+async fn placement_marker<R: Runtime>(
+    client: &mut fstp_pgwire::Client<R>,
+) -> Result<u8, CellError> {
+    let rows = client
         .query("SELECT kind FROM fstp_meta.placement", &[])
         .await
         .map_err(store_err)?;
-    c.release();
     let [row] = rows.as_slice() else {
         return Err(CellError::Config(crate::config::ConfigError::Invalid(
             "placement",
@@ -298,8 +464,7 @@ where
         host,
         writer,
         app,
-        server_ou,
-        registered_spki,
+        registered_servers,
         custody,
         keystore,
         keys,
@@ -311,16 +476,28 @@ where
         pages,
         listen,
     } = parts;
+    // I-83 first: nothing below runs against a database that fails it.
+    // Every connection of the three pools, now and later, checks the
+    // server's OU and SPKI before its startup message.
+    let server_check = application_server_check(&registered_servers);
+    let writer = writer.server_check(server_check.clone());
+    let app = app.server_check(server_check);
     let reader_pool = Pool::open(rt.clone(), cell, Role::Writer, writer.clone(), 1)
         .await
-        .map_err(store_err)?;
+        .map_err(pool_err)?;
     let writer_pool = Pool::open(rt.clone(), cell, Role::Writer, writer, POOL_CLIENTS)
         .await
-        .map_err(store_err)?;
+        .map_err(pool_err)?;
     let app_pool = Pool::open(rt.clone(), cell, Role::App, app, POOL_CLIENTS)
         .await
-        .map_err(store_err)?;
-    let marker = placement_marker(&app_pool).await?;
+        .map_err(pool_err)?;
+    // The placement marker, and the view `start_pg` checks again.
+    let database = {
+        let mut c = app_pool.get().await.map_err(pool_err)?;
+        let checked = check_database(&mut c, &registered_servers).await;
+        c.release();
+        checked?
+    };
     let anchor_key = keys.anchor.public_key().to_bytes().to_vec();
     let link = TlsWitnessLink::new(rt.clone(), witness.clone(), CellId(cell), ChainId::App);
     let client = WitnessClient::new(link, CellId(cell), ChainId::App, witness.ca_digest);
@@ -351,11 +528,6 @@ where
     let (store, keystore) = match keystore {
         Some(k) => (store, k),
         None => genesis(rt, store, vault.clone(), custody.clone(), cell).await?,
-    };
-    let database = DatabaseView {
-        marker,
-        server_ou,
-        registered_spki,
     };
     let started = start_pg(
         rt,
