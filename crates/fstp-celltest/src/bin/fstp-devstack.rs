@@ -1,6 +1,6 @@
 //! The `fstp-devstack` binary (M3 design sections 0.1 and 2.3). Local
-//! development only. Lane W3b owns it. `tools/devstack/run.sh` builds and
-//! runs it.
+//! development only. Lane W3b owns it. `tools/devstack/run.sh` compiles
+//! the auth pages with the pinned `tsc`, then builds and runs it.
 //!
 //! The contract that `tests/slice_devstack.rs` checks: the binary starts
 //! one SaaS-mode world on localhost, with its clusters, a cell, the vault
@@ -15,11 +15,18 @@
 //! The enrolment link opens the invitation page `/auth/invite`, with both
 //! halves of the split first-admin token in its fragment, first half
 //! first (design section 8.3, `web/src/auth/pages/invite.ts`). A
-//! fragment never reaches a server log or a `Referer` field. The link is
-//! printed only when the cell's route table has `GET /auth/invite` and
-//! that page answers 200 on the cell origin. Today the cell serves no
-//! page of `web/src/auth` (lanes W3a and W3c), so the stack refuses with
-//! [`ENROL_PAGE_SEAM`] rather than print a link that opens nothing.
+//! fragment never reaches a server log or a `Referer` field. The page is
+//! one of the compiled auth pages (`fstp_cell::http::pages::PAGE_PATHS`),
+//! not a route of `fstp_cell::routes::table`, which transcribes design
+//! section 8.7 (a conflict with `tests/slice_devstack.rs`, raised by lane
+//! int4). So the stack first loads the compiled pages
+//! (`fstp_celltest::world::auth_pages`) and refuses to start without
+//! them: a link that opens nothing is never printed. It passes them to
+//! the world (`World::start_with_pages`), whose cell serves them. The
+//! cell and vault URLs are printed only as the exact origins, with no
+//! port, since the relying party origin carries none (I-20). Once the
+//! world runs a cell, the link is printed only when `GET /auth/invite`
+//! answers 200 on the cell origin.
 //!
 //! The binary registers its termination handlers before the world starts,
 //! so a SIGTERM during the start is queued rather than fatal. A world that
@@ -36,9 +43,10 @@
 use std::io::Write as _;
 use std::process::ExitCode;
 
-use fstp_celltest::NotImplemented;
+use fstp_cell::http::pages::PAGE_PATHS;
 use fstp_celltest::world::{
-    CellHandle, DbMode, HttpRequest, VaultLayout, World, WorldError, WorldSpec,
+    AUTH_PAGES_ENV, CellHandle, CellUrls, DbMode, HttpRequest, VaultLayout, World, WorldError,
+    WorldSpec, auth_pages,
 };
 use fstp_rt::signal::{Signals as _, TerminationListener as _};
 use fstp_rt::tokio::TokioRuntime;
@@ -46,18 +54,12 @@ use fstp_rt::tokio::TokioRuntime;
 /// The page the enrolment link opens (design section 8.3).
 const ENROL_PAGE: &str = "/auth/invite";
 
-/// The refusal when the cell does not serve [`ENROL_PAGE`].
-const ENROL_PAGE_SEAM: &str = "fstp-devstack enrolment link: the cell route table fstp_cell::routes::table has no GET /auth/invite, and the cell serves no tsc-compiled page of web/src/auth, so the link would open nothing (lanes W3a and W3c)";
-
-/// Checks that the cell serves [`ENROL_PAGE`]: its route table has the
-/// page, and a `GET` of it on the cell origin answers 200.
+/// Checks that the cell serves [`ENROL_PAGE`]: it is a compiled page
+/// path, and a `GET` of it on the cell origin answers 200.
 fn check_enrol_page(cell: &CellHandle, origin: &str) -> Result<(), WorldError> {
-    let routed = fstp_cell::routes::table()
-        .iter()
-        .any(|r| matches!(r.parts(), ("GET", ENROL_PAGE, _)));
-    if !routed {
-        return Err(WorldError::NotImplemented(NotImplemented::new(
-            ENROL_PAGE_SEAM,
+    if !PAGE_PATHS.contains(&ENROL_PAGE) {
+        return Err(WorldError::Store(format!(
+            "{ENROL_PAGE} is not a page path of fstp_cell::http::pages"
         )));
     }
     let authority = origin
@@ -70,6 +72,28 @@ fn check_enrol_page(cell: &CellHandle, origin: &str) -> Result<(), WorldError> {
             "GET {ENROL_PAGE} on the cell origin answered {}",
             reply.status
         )));
+    }
+    Ok(())
+}
+
+/// Checks that the cell and vault URLs are the exact origins
+/// `https://<host>/` and `https://id.<host>/`, with no port. The relying
+/// party origin carries no port (I-20, `fstp_webauthn::RelyingParty`),
+/// and the cell checks `Origin` and the client data against it byte for
+/// byte. So a URL on another port would let a browser load the pages and
+/// then refuse every login with 403. The world's edge listens on loopback
+/// port 443 (`fstp_celltest::world::CELL_FRONT_SEAM`).
+fn check_origins(cell: &CellHandle, urls: &CellUrls) -> Result<(), WorldError> {
+    let host = cell.host();
+    for (name, got, want) in [
+        ("cell", &urls.cell, format!("https://{host}/")),
+        ("vault", &urls.vault, format!("https://id.{host}/")),
+    ] {
+        if *got != want {
+            return Err(WorldError::Store(format!(
+                "the {name} URL {got} is not the origin {want}: the relying party origin carries no port"
+            )));
+        }
     }
     Ok(())
 }
@@ -94,6 +118,7 @@ fn announce(world: &World) -> Result<Vec<(&'static str, String)>, WorldError> {
         .cell(0)
         .ok_or_else(|| WorldError::Store("the one-cell world holds no cell 0".to_owned()))?;
     let urls = cell.urls()?;
+    check_origins(cell, &urls)?;
     let witness = world.witness_url()?;
     check_enrol_page(cell, &urls.cell)?;
     let invitation = cell.first_admin_invitation()?;
@@ -127,7 +152,22 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let world = match World::start(SPEC) {
+    // Before the slow world start: a browser needs the compiled pages.
+    let pages = match auth_pages() {
+        Ok(Some(pages)) => pages,
+        Ok(None) => {
+            eprintln!(
+                "fstp-devstack: the auth pages are not compiled (web/dist/auth, or {AUTH_PAGES_ENV}); run tools/devstack/run.sh, which compiles web/src/auth with web/node_modules/.bin/tsc"
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("fstp-devstack: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Each cell of the world serves the loaded pages on its origin.
+    let world = match World::start_with_pages(SPEC, Some(pages)) {
         Ok(world) => world,
         Err(e) => {
             eprintln!("fstp-devstack: the world did not start: {e}");

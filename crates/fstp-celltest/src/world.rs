@@ -206,9 +206,11 @@ impl fmt::Debug for FirstAdminInvitation {
 /// them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CellUrls {
-    /// The cell origin through the world's edge, `https://<host>:<port>/`.
+    /// The cell origin through the world's edge, `https://<host>/`. The
+    /// edge listens on loopback port 443, since the relying party origin
+    /// carries no port (I-20, [`CELL_FRONT_SEAM`]).
     pub cell: String,
-    /// The vault origin through the same edge, `https://id.<host>:<port>/`.
+    /// The vault origin through the same edge, `https://id.<host>/`.
     pub vault: String,
     /// The loopback health listener, `http://127.0.0.1:<port>/healthz`.
     pub health: String,
@@ -493,14 +495,13 @@ impl World {
     ///
     /// # Cells
     ///
-    /// The vault migration set defines no `fstp_meta.placement` and no
-    /// `fstp_meta.apply_grant` (lane W2d), so provisioning refuses at step
-    /// 7 of the vault database. The application database is complete by
-    /// then. Past that, the `witness` service set is missing, and a cell
-    /// starts through `fstp_cell::engine::startup::start_pg`, whose
-    /// production parts do not exist yet ([`start_cell`]). A world never
-    /// stands in its own parts for them, so no sweep passes on the
-    /// harness.
+    /// Both cell databases provision completely, steps 4 to 7, with
+    /// their placement rows and grant rows (lane int4). Past that, the
+    /// `witness` service set has no migration directory, so the service
+    /// databases refuse ([`missing_service_seam`]). Then a cell starts
+    /// through `fstp_cell::engine::startup::start_pg`, whose production
+    /// parts do not exist yet ([`start_cell`]). A world never stands in
+    /// its own parts for them, so no sweep passes on the harness.
     ///
     /// # Errors
     ///
@@ -508,6 +509,22 @@ impl World {
     /// part of a world with cells. [`WorldError::Cluster`] for a cluster
     /// that does not start or a job, migration or grant that fails on it.
     pub fn start(spec: WorldSpec) -> Result<World, WorldError> {
+        World::start_with_pages(spec, None)
+    }
+
+    /// [`World::start`] whose cells serve the compiled auth pages `pages`
+    /// on their origin (design section 11.2, [`auth_pages`]), so a browser
+    /// can log in there. `fstp-devstack` starts its world this way. Each
+    /// started cell's front is then `fstp_cell::http::Front::with_pages`
+    /// over these pages ([`start_cell`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`].
+    pub fn start_with_pages(
+        spec: WorldSpec,
+        pages: Option<fstp_cell::http::pages::Pages>,
+    ) -> Result<World, WorldError> {
         let mut plans = Vec::with_capacity(usize::from(spec.cells));
         for _ in 0..spec.cells {
             plans.push(cell_plan()?);
@@ -521,7 +538,7 @@ impl World {
             for cluster in clusters.iter().filter(|c| is_agent_kind(c.kind())) {
                 prepare_cluster(cluster)?;
             }
-            match start_cells(&spec, &clusters, &plans) {
+            match start_cells(&spec, &clusters, &plans, pages.as_ref()) {
                 Ok(started) => cells = started,
                 Err(e) => {
                     remember_failed(&spec, &clusters, &plans);
@@ -813,11 +830,10 @@ fn placement_kind(db: CellDatabase) -> u8 {
     }
 }
 
-/// The seam of the vault database's provisioning step 7.
-const VAULT_META_SEAM: &str = "fstp_celltest::world::World::start with cells: the vault migration set fstp_vault::MIGRATIONS defines no fstp_meta.placement and no fstp_meta.apply_grant, so the vault database takes no placement row and no grant rows (lane W2d)";
-
 /// Whether the migrated database `dbname` defines the placement table
-/// and the grant function that step 7 uses.
+/// and the grant function that step 7 uses. Both migration sets define
+/// them (`fstp_pgstore::MIGRATIONS` and `fstp_vault::MIGRATIONS`, design
+/// section 4.6), so a database without them failed its migrations.
 fn has_meta(cluster: &ClusterHandle, dbname: &str) -> Result<bool, WorldError> {
     let have = superuser_sql(
         cluster,
@@ -1042,6 +1058,7 @@ fn start_cells(
     spec: &WorldSpec,
     clusters: &[ClusterHandle],
     plans: &[RolePlan],
+    pages: Option<&fstp_cell::http::pages::Pages>,
 ) -> Result<Vec<CellHandle>, WorldError> {
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -1053,7 +1070,7 @@ fn start_cells(
     provision_services(clusters)?;
     let mut cells = Vec::with_capacity(plans.len());
     for (i, (plan, logins)) in plans.iter().zip(logins).enumerate() {
-        cells.push(start_cell(index(i)?, plan, logins)?);
+        cells.push(start_cell(index(i)?, plan, logins, pages)?);
     }
     Ok(cells)
 }
@@ -1124,9 +1141,11 @@ fn provision_cell(
             sql_as(cluster, &dbname, &migrator, m.sql)?;
         }
         if !has_meta(cluster, &dbname)? {
-            return Err(WorldError::NotImplemented(NotImplemented::new(
-                VAULT_META_SEAM,
-            )));
+            return Err(step_failed(
+                cluster,
+                &dbname,
+                &"the migrations defined no fstp_meta.placement or fstp_meta.apply_grant",
+            ));
         }
         let marker = placement_kind(db);
         sql_as(
@@ -1249,15 +1268,71 @@ fn provision_service(
 /// of that start are missing, and a world stands in none of its own.
 const CELL_START_SEAM: &str = "fstp_celltest::world::World::start with cells: the cell start needs the writer pool and the fstp_migrate runner over it, so each migration set leaves its ledger (fstp-celltest cannot name fstp-pgwire; the lead adds the in-house edge), the witness service and its store (fstp_witness::run, lane W2g), the cell's vault client over the vault service (fstp_vault::run, lanes W2d and W3a), and the route backend over the application database (fstp_cell::routes::Backend, lane W3a)";
 
+/// How a world cell's front is wired once [`CELL_START_SEAM`] closes,
+/// recorded for the lead (review findings of lane int4):
+///
+/// - The front is `fstp_cell::http::Front::with_pages` over the pages
+///   [`World::start_with_pages`] took. That constructor needs the
+///   `dev-pages` feature of `fstp-cell`, which this crate then enables on
+///   its `fstp-cell` line. Cargo unifies features over one build, so a
+///   release build of `fstp-cell` must not build this crate with it.
+/// - The edge listens on loopback port 443, and [`CellUrls`] carry no
+///   port. The relying party origin is `https://<host>` with no port
+///   (I-20, `fstp_webauthn::RelyingParty`), and the front's `Origin`
+///   check and the client data check compare it byte for byte. A cell on
+///   another port would refuse every POST of a browser with 403.
+pub const CELL_FRONT_SEAM: &str = "fstp_celltest::world cell front: Front::with_pages over the World::start_with_pages pages (fstp-cell feature dev-pages on the fstp-celltest line, a lead manifest change), and the edge on loopback port 443, since the relying party origin https://<host> carries no port (I-20)";
+
 /// Starts cell `index` of `plan` over its provisioned databases, as its
 /// roles log in with `logins`. It refuses with [`CELL_START_SEAM`]: no
 /// in-memory ledger, witness, vault or route backend stands in for a
 /// world cell. The started cell's handle keeps `logins`.
-fn start_cell(index: u8, plan: &RolePlan, logins: CellLogins) -> Result<CellHandle, WorldError> {
-    let _ = (index, plan, logins);
+///
+/// When the cell start lands, its front takes `pages` through
+/// `fstp_cell::http::Front::with_pages` when they are given, and
+/// `Front::new` otherwise ([`CELL_FRONT_SEAM`]).
+fn start_cell(
+    index: u8,
+    plan: &RolePlan,
+    logins: CellLogins,
+    pages: Option<&fstp_cell::http::pages::Pages>,
+) -> Result<CellHandle, WorldError> {
+    let _ = (index, plan, logins, pages);
     Err(WorldError::NotImplemented(NotImplemented::new(
         CELL_START_SEAM,
     )))
+}
+
+/// The environment variable that names the `tsc` output directory of
+/// `web/src/auth`, when it is not `web/dist/auth` of the workspace.
+pub const AUTH_PAGES_ENV: &str = "FSTP_AUTH_PAGES";
+
+/// The compiled auth pages a world cell serves on its origin (design
+/// section 11.2): the `tsc` output of `web/src/auth` in
+/// [`AUTH_PAGES_ENV`] or `web/dist/auth`, with the shell and stylesheet
+/// of `web/src/auth` (`fstp_cell::http::pages::Pages::load`).
+/// `tools/devstack/run.sh` compiles them with the pinned `tsc`.
+///
+/// `cargo test` never runs Node (design section 11.2), so a compiled
+/// directory may be absent: that is `Ok(None)`, and a cell then serves no
+/// page. [`World::start_with_pages`] passes these pages to each cell it
+/// starts, whose front serves them ([`CELL_FRONT_SEAM`]).
+///
+/// # Errors
+///
+/// A compiled directory that exists but does not load, as
+/// `fstp_cell::http::pages::PagesError` names it.
+pub fn auth_pages() -> Result<Option<fstp_cell::http::pages::Pages>, WorldError> {
+    use crate::mc::place_model::db;
+    let web = db::workspace_root().join("web");
+    let compiled = std::env::var_os(AUTH_PAGES_ENV)
+        .map_or_else(|| web.join("dist").join("auth"), std::path::PathBuf::from);
+    if !compiled.is_dir() {
+        return Ok(None);
+    }
+    fstp_cell::http::pages::Pages::load(&compiled, &web.join("src").join("auth"))
+        .map(Some)
+        .map_err(|e| WorldError::Store(format!("the compiled auth pages: {e}")))
 }
 
 /// One database of a world's cluster.

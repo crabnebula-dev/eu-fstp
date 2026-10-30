@@ -17,10 +17,20 @@
 //! | `ReplayedChallenge` | The client data carries the previous challenge |
 //! | `CounterRegression` | The counter is one below the last one used |
 //!
-//! Seam: key pairs and signatures need `fstp_crypto::sig` (lane W1h), so
-//! [`SoftAuthenticator::register`] and [`SoftAuthenticator::assert`]
-//! refuse with [`NotImplemented`] until it lands. The builders do not
-//! need it.
+//! [`SoftAuthenticator::register`] makes a new credential with a fresh
+//! key pair from `fstp_crypto::sig`: an ECDSA P-256 key for ES256, or an
+//! Ed25519 key. Its registration is a `none` attestation over the
+//! builders above. [`SoftAuthenticator::assert`] signs the authenticator
+//! data and the SHA-256 of the client data with the credential's key
+//! (WebAuthn Level 2 section 6.3.3). Both take the faults of the table,
+//! each through the builder that writes its field. `CounterRegression`
+//! has no meaning for a registration, whose counter is 0, so `register`
+//! refuses it. A refused call leaves the authenticator unchanged.
+//!
+//! The keys never leave the authenticator, and its `Debug` form shows no
+//! key.
+
+use fstp_crypto::sig::{EcdsaP256KeyPair, Ed25519SigningKey, P256_POINT_LEN};
 
 use crate::NotImplemented;
 
@@ -120,13 +130,117 @@ pub mod flags {
     pub const AT: u8 = 0x40;
 }
 
+/// Why [`SoftAuthenticator::register`] or [`SoftAuthenticator::assert`]
+/// returned no value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SoftAuthnError {
+    /// A requested fault could not be applied.
+    Fault(FaultRefused),
+    /// The authenticator holds no credential with the given id.
+    UnknownCredential,
+    /// `fstp_crypto` could not make a key, an id or a signature.
+    Crypto,
+}
+
+impl std::fmt::Display for SoftAuthnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SoftAuthnError::Fault(r) => write!(f, "{r}"),
+            SoftAuthnError::UnknownCredential => {
+                write!(f, "the authenticator holds no such credential")
+            }
+            SoftAuthnError::Crypto => write!(f, "fstp_crypto could not make a key or signature"),
+        }
+    }
+}
+
+impl std::error::Error for SoftAuthnError {}
+
+impl From<FaultRefused> for SoftAuthnError {
+    fn from(r: FaultRefused) -> Self {
+        SoftAuthnError::Fault(r)
+    }
+}
+
+/// A registration the authenticator made: the browser's response and
+/// the new credential's id, which the attested data also carries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SoftRegistration {
+    /// The response a browser would send.
+    pub response: fstp_webauthn::RegistrationResponse,
+    /// The new credential id, 16 random bytes.
+    pub credential_id: Vec<u8>,
+}
+
+/// A credential's private key.
+enum SoftKey {
+    Es256(EcdsaP256KeyPair),
+    Ed25519(Ed25519SigningKey),
+}
+
+impl SoftKey {
+    /// A fresh key for `alg` and its COSE public key.
+    fn generate(alg: Alg) -> Result<(SoftKey, Vec<u8>), SoftAuthnError> {
+        match alg {
+            Alg::Ed25519 => {
+                let key = Ed25519SigningKey::generate().map_err(|_| SoftAuthnError::Crypto)?;
+                let cose = cose_key(alg, &key.public_key(), None);
+                Ok((SoftKey::Ed25519(key), cose))
+            }
+            Alg::Es256 => {
+                let key = EcdsaP256KeyPair::generate().map_err(|_| SoftAuthnError::Crypto)?;
+                let spki = key.spki_der().map_err(|_| SoftAuthnError::Crypto)?;
+                // The SPKI ends with the uncompressed point 0x04 || x || y.
+                let point = spki
+                    .len()
+                    .checked_sub(P256_POINT_LEN)
+                    .and_then(|at| spki.get(at..))
+                    .ok_or(SoftAuthnError::Crypto)?;
+                let (Some(x), Some(y)) = (point.get(1..33), point.get(33..65)) else {
+                    return Err(SoftAuthnError::Crypto);
+                };
+                let cose = cose_key(alg, x, Some(y));
+                Ok((SoftKey::Es256(key), cose))
+            }
+        }
+    }
+
+    /// The WebAuthn signature over `message`: an ASN.1 DER ECDSA value for
+    /// ES256, 64 bytes for Ed25519.
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, SoftAuthnError> {
+        match self {
+            SoftKey::Es256(k) => k.sign(message).map_err(|_| SoftAuthnError::Crypto),
+            SoftKey::Ed25519(k) => k
+                .sign(message)
+                .map(|s| s.to_vec())
+                .map_err(|_| SoftAuthnError::Crypto),
+        }
+    }
+}
+
+/// A credential the authenticator holds.
+struct SoftCredential {
+    id: Vec<u8>,
+    key: SoftKey,
+}
+
 /// The software authenticator.
-#[derive(Debug)]
 pub struct SoftAuthenticator {
     rp_id: String,
-    credentials: usize,
+    credentials: Vec<SoftCredential>,
     counter: u32,
     last_challenge: Option<[u8; 32]>,
+}
+
+impl std::fmt::Debug for SoftAuthenticator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The keys are secret: the form names how many there are only.
+        f.debug_struct("SoftAuthenticator")
+            .field("rp_id", &self.rp_id)
+            .field("credentials", &self.credentials.len())
+            .field("counter", &self.counter)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SoftAuthenticator {
@@ -145,7 +259,7 @@ impl SoftAuthenticator {
     pub fn for_rp(rp_id: &str) -> SoftAuthenticator {
         SoftAuthenticator {
             rp_id: rp_id.to_owned(),
-            credentials: 0,
+            credentials: Vec::new(),
             counter: 0,
             last_challenge: None,
         }
@@ -153,7 +267,13 @@ impl SoftAuthenticator {
 
     /// The number of credentials it holds.
     pub fn credentials(&self) -> usize {
-        self.credentials
+        self.credentials.len()
+    }
+
+    /// The ids of the credentials it holds, in registration order.
+    #[must_use]
+    pub fn credential_ids(&self) -> Vec<Vec<u8>> {
+        self.credentials.iter().map(|c| c.id.clone()).collect()
     }
 
     /// The relying party id.
@@ -242,38 +362,117 @@ impl SoftAuthenticator {
         Ok(authenticator_data(&rp, f, counter, None))
     }
 
-    /// A registration of a new `alg` credential for `challenge`.
+    /// A registration of a new `alg` credential for `challenge`: a fresh
+    /// key pair from `fstp_crypto::sig`, a random 16-byte credential id,
+    /// and a `none` attestation object whose authenticator data carries
+    /// UP, UV and the counter 0 (WebAuthn Level 2 sections 6.1 and 6.5).
+    /// The authenticator keeps the credential for [`Self::assert`].
+    ///
+    /// `WrongOrigin` and `ReplayedChallenge` change the client data,
+    /// `WrongRpIdHash` and `NoUserVerification` the authenticator data.
+    /// A faulted registration still adds its credential, so a test can
+    /// show that the relying party refused a key the authenticator holds.
     ///
     /// # Errors
     ///
-    /// Refuses until `fstp_crypto::sig` lands (lane W1h).
+    /// [`SoftAuthnError::Fault`] with [`FaultRefused::NotThisBuilder`] for
+    /// `CounterRegression`, and as [`Self::client_data`] refuses
+    /// `ReplayedChallenge`. [`SoftAuthnError::Crypto`] when no key or id
+    /// can be drawn. The authenticator is unchanged then.
     pub fn register(
         &mut self,
         alg: Alg,
         challenge: [u8; 32],
         faults: &[Fault],
-    ) -> Result<fstp_webauthn::RegistrationResponse, NotImplemented> {
-        let _ = (alg, challenge, faults);
-        Err(NotImplemented::new(
-            "fstp_celltest::soft_authn: credential keys need fstp_crypto::sig (lane W1h)",
-        ))
+    ) -> Result<SoftRegistration, SoftAuthnError> {
+        if faults.contains(&Fault::CounterRegression) {
+            return Err(FaultRefused::NotThisBuilder(Fault::CounterRegression).into());
+        }
+        let (key, cose) = SoftKey::generate(alg)?;
+        let id = fstp_crypto::random_array::<16>()
+            .map_err(|_| SoftAuthnError::Crypto)?
+            .to_vec();
+        let client: Vec<Fault> = faults
+            .iter()
+            .copied()
+            .filter(|f| f.in_client_data())
+            .collect();
+        let client_data_json = self.client_data(Ceremony::Create, challenge, &client)?;
+        let rp = if faults.contains(&Fault::WrongRpIdHash) {
+            format!("wrong.{}", self.rp_id)
+        } else {
+            self.rp_id.clone()
+        };
+        let mut f = flags::UP;
+        if !faults.contains(&Fault::NoUserVerification) {
+            f |= flags::UV;
+        }
+        let attested = AttestedCredential {
+            aaguid: [0; 16],
+            id: id.clone(),
+            cose_key: cose,
+        };
+        let auth_data = authenticator_data(&rp, f, 0, Some(&attested));
+        self.credentials.push(SoftCredential {
+            id: id.clone(),
+            key,
+        });
+        Ok(SoftRegistration {
+            response: fstp_webauthn::RegistrationResponse {
+                client_data_json,
+                attestation_object: none_attestation_object(&auth_data),
+            },
+            credential_id: id,
+        })
     }
 
-    /// An assertion with the credential `id` for `challenge`.
+    /// An assertion with the credential `id` for `challenge`: the client
+    /// data of [`Self::client_data`], the authenticator data of
+    /// [`Self::assertion_data`] with the next counter, and the credential
+    /// key's signature over the authenticator data and the SHA-256 of the
+    /// client data (WebAuthn Level 2 section 6.3.3).
+    ///
+    /// Each fault goes to the builder that writes its field.
     ///
     /// # Errors
     ///
-    /// Refuses until `fstp_crypto::sig` lands (lane W1h).
+    /// [`SoftAuthnError::UnknownCredential`] for an id it does not hold.
+    /// [`SoftAuthnError::Fault`] as the builders refuse: a replay with no
+    /// earlier, other challenge, or a counter regression from 0.
+    /// [`SoftAuthnError::Crypto`] when signing fails. The authenticator is
+    /// unchanged by a fault or id refusal.
     pub fn assert(
         &mut self,
         id: &[u8],
         challenge: [u8; 32],
         faults: &[Fault],
-    ) -> Result<fstp_webauthn::AssertionResponse, NotImplemented> {
-        let _ = (id, challenge, faults);
-        Err(NotImplemented::new(
-            "fstp_celltest::soft_authn: signatures need fstp_crypto::sig (lane W1h)",
-        ))
+    ) -> Result<fstp_webauthn::AssertionResponse, SoftAuthnError> {
+        if !self.credentials.iter().any(|c| c.id == id) {
+            return Err(SoftAuthnError::UnknownCredential);
+        }
+        // Checked first, so a refused regression changes no challenge.
+        if faults.contains(&Fault::CounterRegression) && self.counter == 0 {
+            return Err(FaultRefused::CounterAtZero.into());
+        }
+        let (client, data): (Vec<Fault>, Vec<Fault>) =
+            faults.iter().copied().partition(|f| f.in_client_data());
+        let client_data_json = self.client_data(Ceremony::Get, challenge, &client)?;
+        let authenticator_data = self.assertion_data(&data)?;
+        let mut message = authenticator_data.clone();
+        message.extend_from_slice(&fstp_crypto::sha256(&client_data_json));
+        let signature = self
+            .credentials
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or(SoftAuthnError::UnknownCredential)?
+            .key
+            .sign(&message)?;
+        Ok(fstp_webauthn::AssertionResponse {
+            credential_id: id.to_vec(),
+            client_data_json,
+            authenticator_data,
+            signature,
+        })
     }
 }
 
@@ -447,4 +646,202 @@ fn cbor_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
 fn cbor_text(out: &mut Vec<u8>, text: &str) {
     cbor_head(out, 3, u64::try_from(text.len()).unwrap_or(u64::MAX));
     out.extend_from_slice(text.as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    //! Self-tests of the keyed calls against the production verifier
+    //! `fstp_webauthn` (design section 14.3).
+
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use fstp_webauthn::{
+        AssertionExpect, RegistrationExpect, RelyingParty, StoredCredential, WebAuthnError,
+        verify_assertion, verify_registration,
+    };
+
+    const RP: &str = "cell.fstp.test";
+    const CHALLENGE: [u8; 32] = [0x11; 32];
+
+    fn rp() -> RelyingParty {
+        RelyingParty::new(RP).unwrap()
+    }
+
+    fn reg_expect(challenge: [u8; 32]) -> RegistrationExpect {
+        RegistrationExpect {
+            rp: rp(),
+            challenge,
+            user_verification: true,
+        }
+    }
+
+    fn asn_expect(challenge: [u8; 32]) -> AssertionExpect {
+        AssertionExpect {
+            rp: rp(),
+            challenge,
+            user_verification: true,
+        }
+    }
+
+    /// A registered credential of `alg` and its stored form.
+    fn enrolled(alg: Alg) -> (SoftAuthenticator, StoredCredential) {
+        let mut a = SoftAuthenticator::for_rp(RP);
+        let reg = a.register(alg, CHALLENGE, &[]).unwrap();
+        let cred = verify_registration(&reg.response, &reg_expect(CHALLENGE)).unwrap();
+        assert_eq!(cred.id, reg.credential_id);
+        let stored = StoredCredential {
+            id: cred.id,
+            key: cred.key,
+            sign_count: cred.sign_count,
+        };
+        (a, stored)
+    }
+
+    /// Design section 14.3, ADR-008: an ES256 and an Ed25519 registration
+    /// verify through `fstp_webauthn::verify_registration` with UV, and the
+    /// authenticator then holds the credential.
+    #[test]
+    fn harness_soft_authn_registrations_verify_for_both_algorithms() {
+        for alg in [Alg::Es256, Alg::Ed25519] {
+            let mut a = SoftAuthenticator::for_rp(RP);
+            let reg = a.register(alg, CHALLENGE, &[]).unwrap();
+            let cred = verify_registration(&reg.response, &reg_expect(CHALLENGE))
+                .unwrap_or_else(|e| panic!("{alg:?}: {e:?}"));
+            assert!(cred.user_verified, "{alg:?}");
+            assert_eq!(cred.sign_count, 0, "{alg:?}");
+            assert_eq!(a.credential_ids(), vec![reg.credential_id], "{alg:?}");
+        }
+    }
+
+    /// Design section 14.3: assertions with both key kinds verify through
+    /// `fstp_webauthn::verify_assertion`, with a rising counter.
+    #[test]
+    fn harness_soft_authn_assertions_verify_for_both_algorithms() {
+        for alg in [Alg::Es256, Alg::Ed25519] {
+            let (mut a, mut stored) = enrolled(alg);
+            for round in 1..=2u8 {
+                let challenge = [round; 32];
+                let asn = a.assert(&stored.id, challenge, &[]).unwrap();
+                let ok = verify_assertion(&asn, &stored, &asn_expect(challenge))
+                    .unwrap_or_else(|e| panic!("{alg:?} round {round}: {e:?}"));
+                assert_eq!(ok.sign_count, u32::from(round), "{alg:?}");
+                stored.sign_count = ok.sign_count;
+            }
+        }
+    }
+
+    /// Design section 14.3: each registration fault is refused by the
+    /// production verifier with the error of the field it changes.
+    #[test]
+    fn harness_soft_authn_registration_faults_are_refused() {
+        let cases = [
+            (Fault::WrongOrigin, WebAuthnError::Origin),
+            (Fault::WrongRpIdHash, WebAuthnError::RpIdHash),
+            (Fault::NoUserVerification, WebAuthnError::UserVerification),
+        ];
+        for (fault, want) in cases {
+            let mut a = SoftAuthenticator::for_rp(RP);
+            let reg = a.register(Alg::Ed25519, CHALLENGE, &[fault]).unwrap();
+            assert_eq!(
+                verify_registration(&reg.response, &reg_expect(CHALLENGE)),
+                Err(want),
+                "{fault:?}"
+            );
+        }
+        let mut a = SoftAuthenticator::for_rp(RP);
+        a.register(Alg::Ed25519, [1; 32], &[]).unwrap();
+        let replay = a
+            .register(Alg::Ed25519, [2; 32], &[Fault::ReplayedChallenge])
+            .unwrap();
+        assert_eq!(
+            verify_registration(&replay.response, &reg_expect([2; 32])),
+            Err(WebAuthnError::Challenge)
+        );
+        assert_eq!(
+            a.register(Alg::Ed25519, CHALLENGE, &[Fault::CounterRegression])
+                .map(|_| ()),
+            Err(SoftAuthnError::Fault(FaultRefused::NotThisBuilder(
+                Fault::CounterRegression
+            )))
+        );
+        assert_eq!(a.credentials(), 2, "a refused registration added a key");
+    }
+
+    /// Design section 14.3: each assertion fault is refused by the
+    /// production verifier with the error of the field it changes.
+    #[test]
+    fn harness_soft_authn_assertion_faults_are_refused() {
+        let cases = [
+            (Fault::WrongOrigin, WebAuthnError::Origin),
+            (Fault::WrongRpIdHash, WebAuthnError::RpIdHash),
+            (Fault::NoUserVerification, WebAuthnError::UserVerification),
+        ];
+        for (fault, want) in cases {
+            let (mut a, stored) = enrolled(Alg::Es256);
+            let asn = a.assert(&stored.id, CHALLENGE, &[fault]).unwrap();
+            assert_eq!(
+                verify_assertion(&asn, &stored, &asn_expect(CHALLENGE)),
+                Err(want),
+                "{fault:?}"
+            );
+        }
+        let (mut a, mut stored) = enrolled(Alg::Ed25519);
+        let first = a.assert(&stored.id, [1; 32], &[]).unwrap();
+        stored.sign_count = verify_assertion(&first, &stored, &asn_expect([1; 32]))
+            .unwrap()
+            .sign_count;
+        let replay = a
+            .assert(&stored.id, [2; 32], &[Fault::ReplayedChallenge])
+            .unwrap();
+        assert_eq!(
+            verify_assertion(&replay, &stored, &asn_expect([2; 32])),
+            Err(WebAuthnError::Challenge)
+        );
+        let back = a
+            .assert(&stored.id, [3; 32], &[Fault::CounterRegression])
+            .unwrap();
+        assert!(
+            matches!(
+                verify_assertion(&back, &stored, &asn_expect([3; 32])),
+                Err(WebAuthnError::SignCountRegression { .. })
+            ),
+            "a regressed counter verified"
+        );
+    }
+
+    /// Design section 14.3: an unknown credential and a regression from 0
+    /// are refused, and neither changes the authenticator.
+    #[test]
+    fn harness_soft_authn_assert_refusals_leave_the_authenticator_unchanged() {
+        let (mut a, stored) = enrolled(Alg::Ed25519);
+        let before = format!("{a:?}");
+        assert_eq!(
+            a.assert(b"unknown", CHALLENGE, &[]).map(|_| ()),
+            Err(SoftAuthnError::UnknownCredential)
+        );
+        assert_eq!(
+            a.assert(&stored.id, CHALLENGE, &[Fault::CounterRegression])
+                .map(|_| ()),
+            Err(SoftAuthnError::Fault(FaultRefused::CounterAtZero))
+        );
+        assert_eq!(format!("{a:?}"), before);
+        // The refused regression recorded no challenge either.
+        assert_eq!(
+            a.assert(&stored.id, CHALLENGE, &[Fault::ReplayedChallenge])
+                .map(|_| ()),
+            Err(SoftAuthnError::Fault(FaultRefused::NoEarlierChallenge))
+        );
+    }
+
+    /// Design section 14.3: the `Debug` form names no key material.
+    #[test]
+    fn harness_soft_authn_debug_shows_no_key() {
+        let (a, _) = enrolled(Alg::Es256);
+        let text = format!("{a:?}");
+        assert_eq!(
+            text,
+            format!("SoftAuthenticator {{ rp_id: \"{RP}\", credentials: 1, counter: 0, .. }}")
+        );
+    }
 }

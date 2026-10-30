@@ -1,11 +1,13 @@
 //! The tables of the vault database `v_<cell>` (design sections 4.3 and
 //! 4.5, R-NF-08), next to the vault migrations in `migrations/vault/`.
 //!
-//! The `vault` schema holds the eight tables of design section 4.3 with
-//! exactly its columns, plus `vault.p17_condition`, which section 4.3 does
-//! not have yet (reported to Daniel). `vault_audit` holds the vault's own chain and
-//! anchors (I-24), and `keystore` the vault chain's keys, with the shapes
-//! of section 4.2.
+//! `fstp_meta.placement` is the placement marker of design sections 4.1
+//! and 9.2, kind 2 for a vault database (I-83). The `vault` schema holds
+//! the eight tables of design section 4.3 with exactly its columns, plus
+//! `vault.p17_condition`, which section 4.3 does not have yet (reported
+//! to Daniel). `vault_audit` holds the vault's own chain and anchors
+//! (I-24), and `keystore` the vault chain's keys, with the shapes of
+//! section 4.2.
 //!
 //! Readings, reported to Daniel:
 //!
@@ -15,8 +17,14 @@
 //! - `vault_audit.chain` has no ledger, so its `epoch` column takes the
 //!   place of `ledger_seq` in `audit.chain`: a kind 1 row records a vault
 //!   epoch, a kind 2 row an event such as a ticket use.
+//! - The migration ledger `fstp_migrate.schema_migrations`, which the
+//!   `fstp-migrate` runner creates, has the shape and classes of
+//!   `fstp_pgstore::CATALOGUE`. Its `name` and `checksum` describe the
+//!   binary's own migrations and carry `None`.
 
-use fstp_migrate::catalogue::ColumnClass::{Enum, KeyedDigest, RandomId, Sealed, Sequence, Time};
+use fstp_migrate::catalogue::ColumnClass::{
+    Count, Enum, KeyedDigest, RandomId, Sealed, Sequence, Time,
+};
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
 const fn col(name: &'static str, class: ColumnClass) -> ColumnSpec {
@@ -32,6 +40,28 @@ const fn open(name: &'static str) -> ColumnSpec {
 
 /// The tables of the vault database (`v_<cell>`).
 pub const CATALOGUE: &[TableSpec] = &[
+    TableSpec {
+        schema: "fstp_meta",
+        name: "placement",
+        class: TableClass::Placement,
+        columns: &[
+            col("cell_id", RandomId),
+            col("cluster_id", RandomId),
+            col("kind", Enum),
+        ],
+    },
+    TableSpec {
+        schema: "fstp_migrate",
+        name: "schema_migrations",
+        class: TableClass::Migration,
+        columns: &[
+            col("version", Sequence),
+            open("name"),
+            open("checksum"),
+            col("applied_at", Time),
+            col("statement_count", Count),
+        ],
+    },
     TableSpec {
         schema: "vault",
         name: "epoch",

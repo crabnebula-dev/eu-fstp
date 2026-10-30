@@ -4,6 +4,8 @@
 //! - [`front`] is the tunnel listener's front and the loopback health
 //!   listener. It runs the checks every route shares, sets the cell CSP
 //!   and writes one typed log event per request.
+//! - [`pages`] holds the compiled auth pages of `web/src/auth`, which the
+//!   front serves on the cell origin when they are loaded.
 //! - [`cookie`] writes and reads the `__Host-fstp` session cookie (B11).
 //! - [`body`] decodes request bodies: canonical JSON, schema members only,
 //!   and no `minor` member at any depth (I-18).
@@ -13,6 +15,7 @@
 pub mod body;
 pub mod cookie;
 pub mod front;
+pub mod pages;
 
 pub use body::BodyRefusal;
 pub use cookie::{

@@ -57,6 +57,10 @@ pub enum ChallengePurpose {
     Login,
     /// A step-up for one action digest in one session.
     StepUp,
+    /// The registration of a first passkey in an invitation ceremony
+    /// (design section 8.3), bound to the digest of the invitation proof
+    /// its options call named.
+    Registration,
 }
 
 /// One row of `auth.challenge` (design section 4.2).
@@ -68,7 +72,9 @@ pub struct ChallengeRow {
     pub purpose: ChallengePurpose,
     /// The session of a step-up challenge.
     pub session: Option<[u8; 16]>,
-    /// The action digest of a step-up challenge.
+    /// The action digest of a step-up challenge, or the invitation proof
+    /// digest a registration challenge is bound to
+    /// (`fstp_auth::ceremony::token_digest` or `split_token_digest`).
     pub action_digest: Option<[u8; 32]>,
     /// The nonce the challenge was made from, or the challenge itself for
     /// a login.
@@ -193,8 +199,9 @@ pub trait Backend: Send + Sync + 'static {
         std::future::ready(Err(BackendFault::Unavailable))
     }
 
-    /// Takes login challenge `id`, at most once: a second take finds
-    /// nothing. Only the passkey login route takes a challenge.
+    /// Takes login or registration challenge `id`, at most once: a second
+    /// take finds nothing. Only the passkey login route and the ceremony
+    /// routes take a challenge, each only of its own purpose.
     fn take_challenge(
         &self,
         id: [u8; 16],
