@@ -120,18 +120,21 @@ export interface RoundRow {
 
 /** The viewer's own part in the round. */
 export interface RoundViewer {
-  /** A conflict on any ranked proposal of the call recuses the member from the vote. */
-  readonly recused: boolean;
+  /** A conflict on any ranked proposal of the call recuses the member from the vote. Null on a round that is not open, where none is judged. */
+  readonly recused: boolean | null;
   readonly own_vote: Vote | null;
   /** The member the viewer delegated to, by account id. */
   readonly delegated_to: string | null;
 }
 
+/** The status of a round. Only an open round takes ballots, delegations and the record (D5). */
+export type RoundStatus = "open" | "recorded" | "superseded";
+
 /** `GetCutOffRound`: one round of the cut-off vote (D5). */
 export interface RoundView {
   readonly round: string;
   readonly call: string;
-  readonly recorded: boolean;
+  readonly status: RoundStatus;
   readonly order: readonly RoundRow[];
   readonly nominated: number;
   readonly rationale: string;
@@ -145,14 +148,14 @@ export interface RoundView {
 export const isRoundView: Guard<RoundView> = record<RoundView>({
   round: isId,
   call: isId,
-  recorded: isBool,
+  status: oneOf<RoundStatus>("open", "recorded", "superseded"),
   order: list(record<RoundRow>({ proposal: isId, state: isStateTag })),
   nominated: isCount,
   rationale: isText,
   tie_break: nullable(isText),
   ballots_cast: isCount,
   viewer: record<RoundViewer>({
-    recused: isBool,
+    recused: nullable(isBool),
     own_vote: nullable(oneOf<Vote>("For", "Against", "Abstain")),
     delegated_to: nullable(isId),
   }),

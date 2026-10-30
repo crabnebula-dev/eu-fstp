@@ -63,6 +63,22 @@
 //! - A bearer token that resolves to no grant is anonymous and keeps no
 //!   rate counter of its own. The public rate-limit key of Q19 will limit
 //!   such calls once it exists.
+//!
+//! Interim readings of lane m4disp, pending Daniel:
+//!
+//! - A read that shows other people's vault answers, such as the SoD-11
+//!   check of the assignment view or the recusals of a round, asks the
+//!   vault at read time. Each answer is recorded as a dry run's answers
+//!   are, and such reads share the H-07 limit per account.
+//! - A cut-off round is read from the journal of the rounds this core
+//!   opened (`journal.rs`). Any other round fails closed.
+//! - The caller's own list of proposals keeps a proposal that reached a
+//!   terminal state, since the domain ends the team's Receiving bindings
+//!   there. `proposal.view` keeps the `Team` rule of the access crate.
+//! - `stage2.revise` is the domain's `SubmitRevision` of a plan the lead
+//!   recorded first through `proposal.record_plan`. The engine port
+//!   executes one command per call, so the two do not run atomically in
+//!   one entry (design section 2.2 J4, a seam for the lead).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -74,12 +90,13 @@ use fstp_access::{
 };
 use fstp_domain::command::{Actor, Ctx, Via};
 use fstp_domain::id::{
-    AccountId, AssignmentId, CallId, CommandId, LlmConfigId, ProgrammeId, ProposalId, TextRef,
+    AccountId, AssignmentId, CallId, CommandId, DecisionId, LlmConfigId, OrganisationId,
+    ProgrammeId, ProposalId, TextRef,
 };
-use fstp_domain::oracle::Answer;
+use fstp_domain::oracle::{Answer, Query};
 use fstp_domain::policy::{McpBindingActions, ModelRef};
 use fstp_domain::refusal::{Refusal, RuleRef};
-use fstp_domain::roles::{BindingScope, Role};
+use fstp_domain::roles::{Binding, BindingScope, BindingStatus, Role};
 use fstp_domain::time::Timestamp;
 use fstp_engine::{Command, EngineState};
 use fstp_json::{Object, Value};
@@ -87,17 +104,18 @@ use fstp_json::{Object, Value};
 use crate::content::{ContentStore, SaveError, Workspace};
 use crate::decode::{decode_pending_request, pending_request_text};
 use crate::forms::{self, BuildCtx, CmdForm};
-use crate::journal::{Journal, ThreadEntry, Unknown};
+use crate::journal::{Journal, RoundStatus, ThreadEntry, Unknown};
 use crate::model::{AssignmentSummary, CallSummary, ProposalSummary, SessionSummary};
 use crate::pending::{
     InsertError, PENDING_LIFETIME_MICROS, PendingAction, PendingReceipt, PendingStatus,
     PendingStore, confirm_path,
 };
 use crate::port::{
-    AgentClientId, AsyncEngine, AuditEntry, BreakGlass, BreakGlassId, CellPorts, Clock, ExecError,
-    ExecMeta, Ids, LoginMethod, OpName, Outcome, PendingId, PortError, QueryDigest, Recovery,
-    RecoveryId, SessionId, Sessions, SessionsAdmin, StepUp, StepUpRef, TenantConfig, TextClass,
-    TextOwner, TextStore, Vault, VaultAudit, VerificationPurpose,
+    Accounts, AgentClientId, AsyncEngine, AsyncIdentityOracle, AuditEntry, BreakGlass,
+    BreakGlassId, CellPorts, Clock, ExecError, ExecMeta, Ids, LoginMethod, OpName, Outcome,
+    PendingId, PortError, QueryDigest, Recovery, RecoveryId, SessionId, Sessions, SessionsAdmin,
+    StepUp, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore, Vault, VaultAudit,
+    VerificationPurpose,
 };
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
@@ -143,8 +161,9 @@ pub(crate) trait Seams: CellPorts {
     fn call_ids(&self, state: &EngineState) -> Vec<CallId>;
 }
 
-/// The state of one API core beside its ports: the pending actions and
-/// the rate-limit counters, in memory only.
+/// The state of one API core beside its ports: the pending actions, the
+/// rate-limit counters, the content and journal projections, and the
+/// accounts that began an identity verification, in memory only.
 #[derive(Debug, Default)]
 #[allow(
     dead_code,
@@ -155,6 +174,58 @@ pub(crate) struct State {
     rates: Mutex<Rates>,
     content: Mutex<ContentStore>,
     journal: Mutex<Journal>,
+    /// The verifications begun through this core, so their state reads
+    /// "pending" for a bounded time while the vault has not confirmed
+    /// them (I-86).
+    begun: Mutex<Begun>,
+}
+
+/// The most accounts [`Begun`] holds. Past it, a new account's state
+/// reads as the vault answers it, without "pending".
+const MAX_BEGUN: usize = 1_000_000;
+
+/// How long a begun verification reads "pending": one hour.
+///
+/// Interim, pending a vault query for a verification in flight (a port
+/// seam the lead owns): the vault port answers `IsVerified` only, so a
+/// verification it rejects or the person abandons cannot be seen here.
+/// The bound keeps such a verification from reading "pending" for
+/// longer than one hour. A verification the vault confirms reads
+/// "verified" at once, whatever the bound.
+pub(crate) const VERIFICATION_PENDING_MICROS: i64 = 3_600_000_000;
+
+/// The instant each account last began a verification through this core,
+/// in memory only (I-86). Bounded by [`MAX_BEGUN`].
+#[derive(Debug, Default)]
+pub(crate) struct Begun {
+    at: BTreeMap<AccountId, Timestamp>,
+}
+
+impl Begun {
+    /// Records that `account` began a verification at `now`. A full map
+    /// first drops every entry no longer pending, and records nothing if
+    /// it is still full.
+    fn begin(&mut self, account: AccountId, now: Timestamp) {
+        if self.at.len() >= MAX_BEGUN && !self.at.contains_key(&account) {
+            self.at.retain(|_, t| still_pending(*t, now));
+        }
+        if self.at.len() < MAX_BEGUN || self.at.contains_key(&account) {
+            let _ = self.at.insert(account, now);
+        }
+    }
+
+    /// Whether a verification `account` began reads "pending" at `now`:
+    /// it began less than [`VERIFICATION_PENDING_MICROS`] ago.
+    fn pending(&self, account: AccountId, now: Timestamp) -> bool {
+        self.at
+            .get(&account)
+            .is_some_and(|t| still_pending(*t, now))
+    }
+}
+
+/// Whether a verification begun at `began` still reads "pending" at `now`.
+fn still_pending(began: Timestamp, now: Timestamp) -> bool {
+    now.micros() < began.micros().saturating_add(VERIFICATION_PENDING_MICROS)
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -745,10 +816,9 @@ fn text_owner(state: &EngineState, request: &Object) -> Option<TextOwner> {
     if let Some(p) = forms::id_param(request, "programme") {
         return Some(TextOwner::Programme(ProgrammeId::from_raw(p)));
     }
-    for name in ["call", "round"] {
-        if let Some(c) = forms::id_param(request, name) {
-            return forms::programme_of_call(state, CallId::from_raw(c)).map(TextOwner::Programme);
-        }
+    // A round id is never read as a call id. No round command has a text.
+    if let Some(c) = forms::id_param(request, "call") {
+        return forms::programme_of_call(state, CallId::from_raw(c)).map(TextOwner::Programme);
     }
     None
 }
@@ -929,7 +999,7 @@ async fn command<P: Seams>(
     match call.ports.engine().execute(cmd, ctx, meta).await {
         Ok(seq) => Ok(OpResult::Done {
             body: {
-                executed(call, &appended);
+                executed(call, account, &appended);
                 plan_saved(&appended).unwrap_or_else(|| accepted(&form, &ids))
             },
             seq: Some(seq),
@@ -938,11 +1008,16 @@ async fn command<P: Seams>(
     }
 }
 
-/// Folds a command that appended into the projections of this core: the
-/// journal of its read models, and the content frozen at submission.
-fn executed<P: Seams>(call: &Call<'_, P>, cmd: &Command) {
+/// Folds a command that `actor` appended into the projections of this
+/// core: the journal of its read models and rounds, and the content
+/// frozen at submission.
+fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
     use fstp_domain::command::Command as Core;
-    lock(&call.st.journal).fold(cmd, &call.state, call.now);
+    {
+        let mut journal = lock(&call.st.journal);
+        journal.fold(cmd, &call.state, call.now);
+        journal.fold_round(cmd, actor);
+    }
     match cmd {
         Command::Core(Core::CreateDraft { proposal, .. }) => {
             lock(&call.st.content).created(*proposal);
@@ -962,7 +1037,9 @@ fn executed<P: Seams>(call: &Call<'_, P>, cmd: &Command) {
 ///
 /// `OpenCutOffRound` answers `{"round": id}` with the drawn round alone,
 /// since the ballot, the delegation and the round read address it
-/// (change D5, `committee.open_round` in `fstp_access::REPLIES`).
+/// (change D5, `committee.open_round` in `fstp_access::REPLIES`). A
+/// recorded plan answers through [`plan_saved`] instead, with its drawn
+/// plan id, which a stage 2 revision names (R-EV-05).
 fn accepted(form: &CmdForm, ids: &[u128]) -> ReadModel {
     if form.kind == fstp_domain::CommandKind::OpenCutOffRound {
         let round = form
@@ -1173,7 +1250,7 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let appended = cmd.clone();
     match call.ports.engine().execute(cmd, ctx, meta).await {
         Ok(seq) => {
-            executed(call, &appended);
+            executed(call, account, &appended);
             let _ = lock(&call.st.pending).confirm(a.id, call.now);
             Ok(OpResult::Done {
                 body: accepted(&form, &ids),
@@ -1207,10 +1284,10 @@ fn read_target(op: &Op) -> ReadTarget {
             return ReadTarget::Assignment(AssignmentId::from_raw(a));
         }
     }
-    for name in ["call", "round"] {
-        if let Some(c) = forms::id_param(r, name) {
-            return ReadTarget::Call(CallId::from_raw(c));
-        }
+    // A round is judged through its call, which `read` resolves from the
+    // journal (change D5). Its own id is never read as a call id.
+    if let Some(c) = forms::id_param(r, "call") {
+        return ReadTarget::Call(CallId::from_raw(c));
     }
     if let Some(p) = forms::id_param(r, "programme") {
         return ReadTarget::Programme(ProgrammeId::from_raw(p));
@@ -1229,10 +1306,11 @@ fn read_denied(rule: DenyRule) -> ApiError {
 
 /// A read: `authorize_read`, then the read model.
 async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<OpResult, ApiError> {
-    let rop = ReadOp {
-        kind,
-        target: read_target(op),
+    let target = match kind {
+        ReadKind::GetCutOffRound => round_target(call, op)?,
+        _ => read_target(op),
     };
+    let rop = ReadOp { kind, target };
     if let Err(d) = fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
         return Err(call.refuse(read_denied(d.rule())));
     }
@@ -1285,7 +1363,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let Some(a) = account else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
-            let mut own = own_proposals(&call.state, a, call.now);
+            let mut own = own_proposals(&call.state, a, call.now, Ended::Final);
             let content = lock(&call.st.content);
             for p in &mut own {
                 // An unknown proposal shows no title, never an empty one.
@@ -1304,7 +1382,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let p = proposal_param(call, op)?;
-            let Some(mut mine) = own_proposals(&call.state, a, call.now)
+            let Some(mut mine) = own_proposals(&call.state, a, call.now, Ended::Excluded)
                 .into_iter()
                 .find(|x| x.proposal == p)
             else {
@@ -1433,6 +1511,23 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let c = call_param(call, op)?;
             ReadModel::Ranking(ranking(call, c, viewer)?)
         }
+        ReadKind::GetCutOffRound => {
+            let Some(viewer) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            let r = round_param(call, op)?;
+            ReadModel::Round(round_view(call, r, viewer).await?)
+        }
+        ReadKind::ListProposalAssignments => {
+            let p = proposal_param(call, op)?;
+            ReadModel::AssignmentView(assignment_view(call, p).await?)
+        }
+        ReadKind::GetMyVerification => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::Verification(own_verification(call, a).await?)
+        }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1442,15 +1537,67 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
     call.accept(body)
 }
 
-/// The caller's proposals: one per Receiving binding active at `now`.
-fn own_proposals(state: &EngineState, account: AccountId, now: Timestamp) -> Vec<ProposalSummary> {
+/// Whether a read of the caller's proposals also lists those whose
+/// Receiving bindings ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ended {
+    /// Active bindings only, as every act and the `Team` read rule need.
+    Excluded,
+    /// Also each proposal in a terminal state on which the caller held a
+    /// Receiving binding until the domain ended it there.
+    Final,
+}
+
+/// Whether an ended Receiving binding gives its holder the final-state
+/// read of [`Ended::Final`]: only one that was active when it ended. A
+/// suspended binding is inactive for every action (`roles-and-sod.md`),
+/// even where it still counts as held, and a voided one never counts.
+fn gives_final_read(b: &Binding) -> bool {
+    matches!(b.status, BindingStatus::Active)
+}
+
+/// The caller's proposals: one per Receiving binding active at `now`,
+/// and with [`Ended::Final`] one per proposal in a terminal state whose
+/// Receiving binding of the caller ended.
+///
+/// A Receiving binding ends when its proposal reaches a terminal state
+/// (`roles-and-sod.md`, Receiving bindings). The team then still reads
+/// the final state of its own proposal, such as WITHDRAWN or
+/// NOT_SELECTED, through this list (R-SB-03, R-EV-04). A voided or
+/// suspended binding gives no such read, and neither does an ended one
+/// of a proposal still under way.
+fn own_proposals(
+    state: &EngineState,
+    account: AccountId,
+    now: Timestamp,
+    ended: Ended,
+) -> Vec<ProposalSummary> {
+    let roster = state.core.roster();
+    let active = roster
+        .bindings()
+        .map(|(_, b)| *b)
+        .filter(|b| b.active_at(now));
+    let finals = roster
+        .ended()
+        .map(|(_, e)| e.binding)
+        .filter(|b| ended == Ended::Final && gives_final_read(b))
+        .filter(|b| {
+            b.proposal().is_some_and(|p| {
+                fstp_domain::view::proposal_state(&state.core, p)
+                    .is_some_and(fstp_domain::StateTag::is_terminal)
+            })
+        });
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    for (_, b) in state.core.roster().bindings() {
+    for b in active.chain(finals) {
         let BindingScope::Proposal { proposal, call } = b.scope else {
             continue;
         };
-        if b.account != account || !b.active_at(now) || !seen.insert(proposal) {
+        let receiving = matches!(
+            b.role,
+            Role::Applicant | Role::ApplicantTeamMember | Role::Guardian
+        );
+        if b.account != account || !receiving || !seen.insert(proposal) {
             continue;
         }
         let role = match b.role {
@@ -1613,7 +1760,7 @@ async fn m3_port<P: Seams>(
             let p = ProposalId::from_raw(id("proposal")?);
             let negotiating = fstp_domain::view::proposal_state(&call.state.core, p)
                 == Some(fstp_domain::StateTag::Negotiation);
-            let team = own_proposals(&call.state, account, call.now)
+            let team = own_proposals(&call.state, account, call.now, Ended::Excluded)
                 .iter()
                 .any(|x| x.proposal == p);
             if !negotiating || !team {
@@ -1715,7 +1862,10 @@ async fn m3_port<P: Seams>(
                 .begin_verification(purpose, account)
                 .await
             {
-                Ok(to) => call.accept(ReadModel::Redirect(to.0)),
+                Ok(to) => {
+                    lock(&call.st.begun).begin(account, call.now);
+                    call.accept(ReadModel::Redirect(to.0))
+                }
                 Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
             }
         }
@@ -2152,6 +2302,388 @@ fn ranking<P: Seams>(
     Ok(out)
 }
 
+/// The refusal of a read of a cut-off round this core did not see
+/// opened (`journal.rs`, fail closed).
+fn round_unknown() -> ApiError {
+    ApiError::NotImplemented(
+        "a cut-off round opened outside this API core: a domain read accessor of the rounds (lane W1b)",
+    )
+}
+
+/// The `round` path parameter of a read.
+fn round_param<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<DecisionId, ApiError> {
+    forms::id_param(&op.request, "round")
+        .map(DecisionId::from_raw)
+        .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))
+}
+
+/// The read target of a round: its call, from the journal (change D5).
+///
+/// A round this core did not see opened resolves to a call the state
+/// does not hold. `authorize_read` judges such a target against a
+/// context in which no relation holds (`reads.rs`). So a caller with no
+/// account is refused as an actor, and every other caller gets the
+/// COMMITTEE rule's own R-AC-01, as an outsider of a known round does.
+/// The refusal then tells no caller whether such a round exists, and
+/// none reaches the read model. Interim, pending a domain read of the
+/// rounds (lane W1b): a member of the round's own committee is refused
+/// in the same way.
+fn round_target<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<ReadTarget, ApiError> {
+    let r = round_param(call, op)?;
+    let known = lock(&call.st.journal).round(r).map(|x| x.call);
+    Ok(ReadTarget::Call(
+        known.unwrap_or_else(|| absent_call(&call.state)),
+    ))
+}
+
+/// A call id the state does not hold: the least such raw value. The
+/// search ends within one more step than the state has calls.
+fn absent_call(state: &EngineState) -> CallId {
+    let calls = state.core.calls();
+    (0..=u128::MAX)
+        .map(CallId::from_raw)
+        .find(|c| calls.get(*c).is_none())
+        .unwrap_or(CallId::from_raw(u128::MAX))
+}
+
+/// Admits one read that asks the vault, under the per-account limit of
+/// H-07: each answer such a read shows tells the caller one bit about
+/// other people. The limit is checked before the first question and
+/// charged once per read.
+fn vault_read_admitted<P: Seams>(call: &Call<'_, P>, account: AccountId) -> Result<(), ApiError> {
+    let limit = rate::DRY_RUN_VAULT_PER_ACCOUNT;
+    let admitted = {
+        let mut rates = lock(&call.st.rates);
+        let ok = rates.admits(&Key::VaultDryRun(account), limit, call.now);
+        if ok {
+            rates.hit(Key::VaultDryRun(account), limit, call.now);
+        }
+        ok
+    };
+    if admitted {
+        Ok(())
+    } else {
+        Err(call.refuse(ApiError::refused(ErrorCode::RateLimited, "H-07")))
+    }
+}
+
+/// One vault answer of a read, recorded as its query digest and answer
+/// bit (`overview.md` NOTE 5). A vault that cannot answer, or a record
+/// that fails, refuses the read (fail closed).
+async fn ask_vault<P: Seams>(call: &Call<'_, P>, q: &Query) -> Result<Answer, ApiError> {
+    let a = call
+        .ports
+        .vault()
+        .answer(q)
+        .await
+        .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle")))?;
+    call.ports
+        .vault_audit()
+        .record(QueryDigest(a.digest.bytes()), a.holds, a.epoch)
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "NOTE 5")))?;
+    Ok(a)
+}
+
+/// The label of a Judging member: the pseudonymous display handle of
+/// the accounts port. Never an email (I-17, R-CF-03).
+async fn label_of<P: Seams>(call: &Call<'_, P>, a: AccountId) -> Result<String, ApiError> {
+    call.ports
+        .accounts()
+        .display_handle(a)
+        .await
+        .map(|h| h.0)
+        .map_err(|e| call.refuse(port_failed(e, "label")))
+}
+
+/// The organisation on the active committee member binding of `account`
+/// in `programme` at `now`, as SoD-10 and I-34 count it. `None` for no
+/// such binding, or one with no organisation.
+fn committee_organisation(
+    state: &EngineState,
+    account: AccountId,
+    programme: ProgrammeId,
+    now: Timestamp,
+) -> Option<OrganisationId> {
+    state
+        .core
+        .roster()
+        .bindings()
+        .map(|(_, b)| b)
+        .find(|b| {
+            b.account == account
+                && b.role == Role::CommitteeMember
+                && b.programme == programme
+                && b.scope == BindingScope::Programme
+                && b.active_at(now)
+        })
+        .and_then(|b| b.organisation)
+}
+
+/// `review.assignments`: one proposal's assignment view for the FSTP
+/// coordinator (R-AC-01, R-CF-03, J5). Assignees and candidates appear
+/// by label only. The checks state pass or fail, with no reason and no
+/// account:
+///
+/// - SoD-10 and I-34: the unreleased reviewer assignees span at least
+///   P-39 organisations, read from their committee bindings. An unknown
+///   organisation fails the check, as the domain fails closed on it.
+/// - SoD-11 and I-35: for each assignee whose organisation has a P-38
+///   list, the vault answers whether a team member declares an
+///   affiliation on it. The check passes when no answer holds. Each
+///   answer is recorded (`overview.md` NOTE 5), and the read is limited
+///   as H-07 limits dry runs.
+///
+/// The domain runs both guards again at every assignment and admission.
+async fn assignment_view<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+) -> Result<crate::model::AssignmentView, ApiError> {
+    use crate::model::{AssignedRow, AssignmentChecks, AssignmentView, CandidateRow};
+    let Some(account) = call.account() else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+    };
+    let not_found = || call.refuse(ApiError::refused(ErrorCode::NotFound, "Input"));
+    let board = crate::model::assignment_board(&call.state, p, call.now).ok_or_else(not_found)?;
+    let c = call_of(&call.state, p).ok_or_else(not_found)?;
+    let programme = forms::programme_of_call(&call.state, c).ok_or_else(not_found)?;
+    let p39 = usize::from(frozen_values(call, c)?.p39.get());
+    let orgs: Option<BTreeSet<OrganisationId>> = board
+        .assigned
+        .iter()
+        .map(|a| committee_organisation(&call.state, a.reviewer, programme, call.now))
+        .collect();
+    let p39_pass = orgs.is_some_and(|o| o.len() >= p39);
+    let team: BTreeSet<AccountId> = call
+        .state
+        .core
+        .roster()
+        .bindings()
+        .map(|(_, b)| b)
+        .filter(|b| b.held() && b.proposal() == Some(p))
+        .map(|b| b.account)
+        .collect();
+    let lists = fstp_domain::policy::live_values(&call.state.core, programme).map(|l| &l.p38.0);
+    let mut queries: Vec<Query> = Vec::new();
+    for a in &board.assigned {
+        let list = committee_organisation(&call.state, a.reviewer, programme, call.now)
+            .and_then(|org| lists.and_then(|l| l.get(&org)).copied());
+        if let Some(list) = list {
+            let q = Query::DeclaresAffiliationOnList {
+                team: team.clone(),
+                list,
+            };
+            if !queries.contains(&q) {
+                queries.push(q);
+            }
+        }
+    }
+    if !queries.is_empty() {
+        vault_read_admitted(call, account)?;
+    }
+    let mut proximity_pass = true;
+    for q in &queries {
+        if ask_vault(call, q).await?.holds {
+            proximity_pass = false;
+        }
+    }
+    let mut assigned = Vec::new();
+    for a in &board.assigned {
+        assigned.push(AssignedRow {
+            assignment: a.assignment,
+            label: label_of(call, a.reviewer).await?,
+        });
+    }
+    let mut candidates = Vec::new();
+    for m in &board.candidates {
+        candidates.push(CandidateRow {
+            account: *m,
+            label: label_of(call, *m).await?,
+        });
+    }
+    Ok(AssignmentView::new(
+        board.state,
+        assigned,
+        candidates,
+        AssignmentChecks {
+            p39: p39_pass,
+            proximity: proximity_pass,
+        },
+    ))
+}
+
+/// `me.get_verification`: the caller's own verification state (I-86).
+/// The vault is asked `IsVerified` for the caller's account and no
+/// other, and the answer is recorded (`overview.md` NOTE 5). A
+/// verification the caller began through this core reads "pending"
+/// until the vault confirms it, for at most
+/// [`VERIFICATION_PENDING_MICROS`] (interim, see there). It then reads
+/// "unverified" again.
+async fn own_verification<P: Seams>(
+    call: &Call<'_, P>,
+    account: AccountId,
+) -> Result<crate::model::VerificationState, ApiError> {
+    use crate::model::{VerificationState, VerificationStatus};
+    let answer = ask_vault(call, &Query::IsVerified { account }).await?;
+    let begun = lock(&call.st.begun).pending(account, call.now);
+    Ok(VerificationState {
+        status: VerificationStatus::of(answer.holds, begun),
+    })
+}
+
+/// The active committee members and chairs of `programme` at `now`: the
+/// members of its cut-off votes.
+fn committee_members(
+    state: &EngineState,
+    programme: ProgrammeId,
+    now: Timestamp,
+) -> BTreeSet<AccountId> {
+    state
+        .core
+        .roster()
+        .bindings()
+        .map(|(_, b)| b)
+        .filter(|b| {
+            matches!(b.role, Role::CommitteeMember | Role::CommitteeChair)
+                && b.programme == programme
+                && b.scope == BindingScope::Programme
+                && b.active_at(now)
+        })
+        .map(|b| b.account)
+        .collect()
+}
+
+/// `committee.round`: one cut-off round for committee member `viewer`
+/// (R-EV-08, R-EV-09, P-16 NOTE 8, change D5).
+///
+/// - The status is open, recorded or superseded. Only an open round takes
+///   ballots, delegations and the record of its cut-off.
+/// - The order lists the proposals the round was opened with, by id, with
+///   their states now. It counts the ballots and names no voter.
+/// - The viewer reads their own ballot or delegation only. While the
+///   round is open, the vault is asked the recusal questions of the
+///   viewer (Conflict declarations). A recused viewer gets no delegates.
+///   On a round that is not open no recusal is judged, so it reads null.
+/// - The delegates are the members the domain would accept a delegation
+///   to: active members of the committee other than the viewer, who have
+///   not delegated and hold no delegated vote, and are not recused. They
+///   are offered only to a viewer who may still delegate.
+///
+/// Every vault answer is recorded (`overview.md` NOTE 5), and the read is
+/// limited as H-07 limits dry runs. A round this core did not see opened
+/// fails closed.
+async fn round_view<P: Seams>(
+    call: &Call<'_, P>,
+    r: DecisionId,
+    viewer: AccountId,
+) -> Result<crate::model::RoundView, ApiError> {
+    use crate::model::{CandidateRow, RoundRow, RoundView, RoundViewer};
+    let facts = lock(&call.st.journal).round(r).cloned();
+    let facts = facts.ok_or_else(|| call.refuse(round_unknown()))?;
+    let core = &call.state.core;
+    let programme = forms::programme_of_call(&call.state, facts.call)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    let mut order = Vec::new();
+    for p in &facts.order {
+        let state = fstp_domain::view::proposal_state(core, *p)
+            .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "ranking")))?;
+        order.push(RoundRow {
+            proposal: *p,
+            state,
+        });
+    }
+    let (rationale, tie_break) = {
+        let content = lock(&call.st.content);
+        let rationale = known_text(call, &content, facts.rationale)?;
+        let tie_break = facts
+            .tie_breaks
+            .map(|t| known_text(call, &content, t))
+            .transpose()?;
+        (rationale, tie_break)
+    };
+    let open = facts.status == RoundStatus::Open;
+    let own_vote = facts.cast.get(&viewer).copied();
+    let delegated_to = facts.delegated.get(&viewer).copied();
+    let holds_vote = |m: &AccountId| facts.delegated.values().any(|t| t == m);
+    let members = committee_members(&call.state, programme, call.now);
+    let may_delegate = open
+        && members.contains(&viewer)
+        && own_vote.is_none()
+        && delegated_to.is_none()
+        && !holds_vote(&viewer);
+    let candidates: Vec<AccountId> = if may_delegate {
+        members
+            .iter()
+            .filter(|m| **m != viewer && !facts.delegated.contains_key(m) && !holds_vote(m))
+            .copied()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let asked: Vec<AccountId> = if open {
+        std::iter::once(viewer)
+            .chain(candidates.iter().copied())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut queries: Vec<Query> = Vec::new();
+    for m in &asked {
+        for q in fstp_domain::assignment::cut_off_recusal_queries(core, *m, facts.call) {
+            if !queries.contains(&q) {
+                queries.push(q);
+            }
+        }
+    }
+    if !queries.is_empty() {
+        vault_read_admitted(call, viewer)?;
+    }
+    let mut answers = fstp_domain::oracle::Answers::new();
+    for q in queries {
+        let a = ask_vault(call, &q).await?;
+        answers.insert(q, a);
+    }
+    let recused = |m: AccountId| -> Result<bool, ApiError> {
+        if !open {
+            return Ok(false);
+        }
+        fstp_domain::assignment::recused_from_cut_off(core, m, facts.call, &answers)
+            .map_err(|e| call.refuse(refusal(e)))
+    };
+    let viewer_recused = recused(viewer)?;
+    let mut delegates = Vec::new();
+    if !viewer_recused {
+        for m in candidates {
+            if !recused(m)? {
+                delegates.push(CandidateRow {
+                    account: m,
+                    label: label_of(call, m).await?,
+                });
+            }
+        }
+    }
+    Ok(RoundView {
+        round: r,
+        call: facts.call,
+        status: match facts.status {
+            RoundStatus::Open => crate::model::RoundStatus::Open,
+            RoundStatus::Recorded => crate::model::RoundStatus::Recorded,
+            RoundStatus::Superseded => crate::model::RoundStatus::Superseded,
+        },
+        order,
+        nominated: facts.nominated,
+        rationale,
+        tie_break,
+        ballots_cast: u32::try_from(facts.cast.len()).unwrap_or(u32::MAX),
+        viewer: RoundViewer {
+            recused: open.then_some(viewer_recused),
+            own_vote,
+            delegated_to,
+        },
+        delegates,
+    })
+}
+
 /// Whether `account` holds an active Receiving binding of the lead or a
 /// team member on `proposal` at `now`, and the proposal is a draft: the
 /// workspace is the drafting team's alone (I-21). A guardian consents and
@@ -2266,11 +2798,13 @@ fn notices<P: Seams>(
     Ok(out)
 }
 
-/// The body of a recorded plan: its total, summed by the cell (ADR-006,
-/// design section 3.9). `None` for any other command, or a total that
-/// does not fit.
+/// The body of a recorded plan: the id the server drew for it, which a
+/// stage 2 revision names (R-EV-05), and its total, summed by the cell
+/// (ADR-006, design section 3.9). `None` for any other command, or a
+/// total that does not fit.
 fn plan_saved(cmd: &Command) -> Option<ReadModel> {
-    let Command::Core(fstp_domain::command::Command::RecordPlanVersion { tasks, .. }) = cmd else {
+    let Command::Core(fstp_domain::command::Command::RecordPlanVersion { plan, tasks, .. }) = cmd
+    else {
         return None;
     };
     let mut total: Option<fstp_money::Amount> = None;
@@ -2281,7 +2815,10 @@ fn plan_saved(cmd: &Command) -> Option<ReadModel> {
             Some(t) => t.checked_add(a).ok()?,
         });
     }
-    total.map(|t| ReadModel::PlanSaved(t.to_string()))
+    total.map(|t| ReadModel::PlanSaved {
+        plan: plan.raw(),
+        total: t.to_string(),
+    })
 }
 
 /// The summary of a published call: its fields, its title from the
@@ -2321,6 +2858,62 @@ mod tests {
             fstp_json::to_canonical(&body.to_json()).unwrap(),
             r#"{"round":"9"}"#
         );
+    }
+
+    /// R-SB-03, R-EV-04, `roles-and-sod.md` Receiving bindings: an ended
+    /// Receiving binding gives the final-state read only when it was
+    /// active as it ended. An ordinary suspension still counts as held,
+    /// yet it is inactive for every action, so it gives no such read.
+    /// Neither does a voided binding.
+    #[test]
+    fn r_sb_03_suspended_or_voided_binding_gives_no_final_state_read() {
+        let base = Binding {
+            account: AccountId::from_raw(7),
+            programme: ProgrammeId::from_raw(1),
+            role: Role::Applicant,
+            scope: BindingScope::Proposal {
+                proposal: ProposalId::from_raw(11),
+                call: CallId::from_raw(1),
+            },
+            start: Timestamp::from_micros(0),
+            opened: 1,
+            status: BindingStatus::Active,
+            suspended_beneath: None,
+            granted: 0,
+            organisation: None,
+            scheduled_end: None,
+        };
+        assert!(gives_final_read(&base));
+        let suspended = Binding {
+            status: BindingStatus::Suspended(RuleRef::I04),
+            ..base
+        };
+        assert!(suspended.held(), "an ordinary suspension still counts");
+        assert!(!gives_final_read(&suspended));
+        let voided = Binding {
+            status: BindingStatus::Voided(RuleRef::I04),
+            ..base
+        };
+        assert!(!gives_final_read(&voided));
+    }
+
+    /// I-86: a begun verification reads "pending" for less than
+    /// [`VERIFICATION_PENDING_MICROS`] after its latest begin, and then
+    /// no longer, so one the vault rejected does not read "pending"
+    /// until a restart. Beginning again restarts the bound, and another
+    /// account never reads the caller's begin.
+    #[test]
+    fn i86_begun_verification_stops_reading_pending_after_its_bound() {
+        let a = AccountId::from_raw(7);
+        let at = |m: i64| Timestamp::from_micros(m);
+        let mut begun = Begun::default();
+        begun.begin(a, at(1_000));
+        assert!(begun.pending(a, at(1_000)));
+        assert!(begun.pending(a, at(1_000 + VERIFICATION_PENDING_MICROS - 1)));
+        assert!(!begun.pending(a, at(1_000 + VERIFICATION_PENDING_MICROS)));
+        assert!(!begun.pending(AccountId::from_raw(8), at(1_000)));
+        begun.begin(a, at(1_000 + VERIFICATION_PENDING_MICROS));
+        assert!(begun.pending(a, at(1_000 + VERIFICATION_PENDING_MICROS)));
     }
 
     /// J4, TH-26: creating a draft still answers the drawn proposal, so

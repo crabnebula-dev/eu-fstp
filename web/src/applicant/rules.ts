@@ -95,6 +95,25 @@ export function negotiationOpen(s: ProposalState): boolean {
   return s === "NEGOTIATION";
 }
 
+/**
+ * The terminal states of the state machine. A proposal that reaches one
+ * ends its team's Receiving bindings (`roles-and-sod.md`), so the team
+ * reads its final state through its own list (R-SB-03, R-EV-04).
+ */
+const TERMINAL: ReadonlySet<ProposalState> = new Set<ProposalState>([
+  "INELIGIBLE",
+  "NOT_SELECTED",
+  "DECLINED",
+  "WITHDRAWN",
+  "COMPLETED",
+  "TERMINATED",
+]);
+
+/** Whether `s` is a terminal state, which has no exits. */
+export function isTerminal(s: ProposalState): boolean {
+  return TERMINAL.has(s);
+}
+
 // ---------------------------------------------------------------------------
 // Roles
 // ---------------------------------------------------------------------------

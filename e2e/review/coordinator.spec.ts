@@ -96,9 +96,16 @@ test.describe('J5 FSTP coordinator', () => {
     expect(await clickWrite(c1, REVIEW_UI.knockOut.submit, /\/knock-out$/)).toBeLessThan(300);
     await expectState(c1, 'INELIGIBLE');
 
-    // No further review: the assignment page offers no assignment.
+    // No further review: the assignment view is closed in INELIGIBLE
+    // (`fstp-access` READ_RULES, R-AC-01), so the page offers no
+    // assignment and no admission.
+    expectRefusal(
+      await apiGet(c1, cell.origin, REVIEW_API.assignmentsOf(z.id)),
+      'assignment view of an INELIGIBLE proposal',
+      'R-AC-01',
+    );
     await openPage(c1, cell.origin, REVIEW_PAGES.assignments(z.id));
-    await expectState(c1, 'INELIGIBLE');
+    await expect(c1.locator('[role="alert"]')).toContainText('R-AC-01');
     await expect(c1.locator(REVIEW_UI.assign.submit)).toHaveCount(0);
     await expect(c1.locator(REVIEW_UI.assign.admit)).toHaveCount(0);
   });
@@ -142,6 +149,22 @@ test.describe('J5 FSTP coordinator', () => {
     }
     await expectNoCanary(c1, s.identity_canaries, 'assignment page', responses);
 
+    // R-EV-02, R-CF-02: admission needs at least P-03 assignees declared
+    // free of conflict, so each new assignee declares on their own
+    // assignment first, which they find in their own list.
+    for (const who of ['r1', 'r2', 'r4'] as const) {
+      const reviewer = await signIn(person, seeded, who);
+      const mine = await apiGet(reviewer, cell.origin, '/api/v1/me/assignments');
+      expectAccepted(mine, `${who}'s assignments`);
+      const rows = JSON.parse(mine.body) as readonly { assignment: string; proposal: string; kind: string }[];
+      const row = rows.find((r) => r.proposal === x.id && r.kind === 'reviewer');
+      if (row === undefined) throw new Error(`${who} has no reviewer assignment of x`);
+      await openPage(reviewer, cell.origin, REVIEW_PAGES.assignment(row.assignment));
+      await reviewer.locator(REVIEW_UI.declaration.no).check();
+      expect(await clickWrite(reviewer, REVIEW_UI.declaration.submit, /\/declaration$/), who).toBeLessThan(300);
+    }
+
+    await openPage(c1, cell.origin, REVIEW_PAGES.assignments(x.id));
     expect(await clickWrite(c1, REVIEW_UI.assign.admit, /\/admission$/)).toBeLessThan(300);
     await expectState(c1, 'STAGE1');
   });

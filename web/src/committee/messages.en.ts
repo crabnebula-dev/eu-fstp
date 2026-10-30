@@ -49,6 +49,7 @@ export const COMMITTEE_LABELS: Readonly<Record<string, string>> = {
   "com.round.no_tie_break": "None",
   "com.round.cast_count": "Ballots cast: {count}",
   "com.round.recorded": "The cut-off is recorded. Outcomes are computed from the order and the position.",
+  "com.round.superseded": "A later round of this call replaced this one. Nothing can be cast, delegated or recorded here.",
   "com.round.recused": "You are recused from this call's cut-off vote, so you cannot vote or delegate.",
   "com.round.vote_legend": "Your vote on this cut-off",
   "com.round.for": "For",

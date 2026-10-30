@@ -430,8 +430,9 @@ export interface PlanSaved {
 }
 
 /**
- * `proposal.record_plan` and `stage2.revise`: `{accepted: true, total?}`,
- * where `total` is the cell's ADR-006 plan total. Interim, pending lanes
+ * `proposal.record_plan` and `stage2.revise`: `{accepted: true, plan?, total?}`,
+ * where `total` is the cell's ADR-006 plan total and `plan` the recorded
+ * plan, which these pages do not read. Interim, pending lanes
  * W3b and W5: the cell may answer with `accepted` alone.
  */
 export function decodePlanSaved(v: unknown): PlanSaved | null {

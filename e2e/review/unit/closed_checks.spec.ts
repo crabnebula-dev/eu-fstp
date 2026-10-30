@@ -115,7 +115,7 @@ async function samples(): Promise<Sample[]> {
       value: {
         round: '7',
         call: '5',
-        recorded: false,
+        status: 'open',
         order: [{ proposal: '11', state: 'RANKED' }],
         nominated: 1,
         rationale: 'Synthetic rationale.',

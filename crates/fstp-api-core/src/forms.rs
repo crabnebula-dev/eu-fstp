@@ -18,7 +18,11 @@
 //! - Ids the server draws (bindings, decisions, calls, proposals, plans,
 //!   assignments, handles) and values from attested records (the P-21
 //!   configuration of a publication) are never request members.
-//! - A cut-off round is named by its call until change D5 adds its id.
+//! - A cut-off round is named by the round id the server drew when it
+//!   opened (change D5). The ballot, the delegation and the record carry
+//!   no other member of the round.
+//! - A page form plan records a stage 2 revision while its proposal is in
+//!   STAGE2, and the plan of the submission otherwise (R-EV-05).
 //! - `PUT /assignments/{assignment}/scores/{score}` names the score by
 //!   the plan version it scored, with the stage in the body.
 //! - `EndRole` takes an optional `at`. Without it the binding ends at the
@@ -361,12 +365,11 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
             derive: Derive::ProposalOfAssignment,
             ..form(kind)
         },
+        // Change D5: the record names its round only. The order, the
+        // position, the rationale and the ballots are the round's own
+        // (R-EV-08, R-EV-09).
         K::RecordCutOff => CmdForm {
-            params: &[("round", Some("call"))],
-            required: &["order", "nominated", "rationale", "ballots"],
-            optional: &["tie_breaks"],
-            drawn: &["decision"],
-            texts: &["rationale", "tie_breaks"],
+            params: &[("round", Some("round"))],
             ..form(kind)
         },
         // Lane m4reg, change D5: the server draws the round id, and the
@@ -896,9 +899,10 @@ pub(crate) fn build(
 ///
 /// In the page form, `description` holds the stored text's reference, so
 /// the plan's content digest is that text's digest. The origin is the
-/// submission's, the currency is the programme's, the plan supersedes the
-/// one dispatch named ([`name_plans`]), and every milestone gets a drawn
-/// id, no activity and no deliverable (activity types arrive with the
+/// stage 2 revision in STAGE2 and the submission's otherwise. The
+/// currency is the programme's, the plan supersedes the one dispatch
+/// named ([`name_plans`]), and every milestone gets a drawn id, no
+/// activity and no deliverable (activity types arrive with the
 /// negotiated plan).
 fn plan_form(
     o: &mut Object,
@@ -919,7 +923,20 @@ fn plan_form(
     };
     let digest = text.get("digest").cloned().ok_or_else(bad)?;
     let _ = o.insert("content", digest);
-    let _ = o.insert("origin", Value::from("Submitted"));
+    // A plan of a proposal in STAGE2 is its stage 2 revision (R-EV-05).
+    // Every other page plan is the plan of the submission, which the
+    // domain admits in DRAFT only.
+    let in_stage2 = !cx.trial
+        && id_param(request, "proposal").is_some_and(|p| {
+            fstp_domain::view::proposal_state(&cx.state.core, ProposalId::from_raw(p))
+                == Some(fstp_domain::StateTag::Stage2)
+        });
+    let origin = if in_stage2 {
+        "Stage2Revision"
+    } else {
+        "Submitted"
+    };
+    let _ = o.insert("origin", Value::from(origin));
     // Dispatch named the superseded plan before the digest
     // (`name_plans`). Nothing is derived here.
     if !o.contains_key("supersedes") {
@@ -1048,5 +1065,36 @@ mod tests {
         let mut unknown = Object::new();
         name_plans(&form, &mut unknown, LatestPlan::Unknown);
         assert_eq!(unknown.get("plan"), None);
+    }
+
+    /// R-EV-08, R-EV-09, change D5: the record of a cut-off names its
+    /// round only, as the ballot and the delegation do. The order, the
+    /// position, the rationale and the ballots are the round's own, so a
+    /// request carrying any of them is refused.
+    #[test]
+    fn r_ev_08_record_cutoff_names_its_round_only() {
+        let spec = fstp_access::op("committee.record_cutoff").unwrap();
+        let mut request = Object::new();
+        let _ = request.insert("round", Value::from("9"));
+        assert_eq!(check(spec, &request), Ok(()));
+        let form = op_form(spec).unwrap();
+        let state = EngineState::genesis();
+        let cx = BuildCtx {
+            state: &state,
+            now: Timestamp::from_micros(0),
+            inference: None,
+            second_admin: None,
+            trial: false,
+            plan_unknown: false,
+        };
+        let cmd = build(&form, &request, &BTreeMap::new(), &cx, &mut || Ok(1)).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Core(Core::RecordCutOff {
+                round: fstp_domain::id::DecisionId::from_raw(9),
+            })
+        );
+        let _ = request.insert("nominated", Value::Number(fstp_json::Number::from(1u32)));
+        assert!(check(spec, &request).is_err());
     }
 }

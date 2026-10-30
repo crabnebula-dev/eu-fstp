@@ -22,9 +22,10 @@
 //!
 //! Interim readings, pending Daniel and the lead:
 //!
-//! - The committee's cut-off commands go through the engine, since the
-//!   registry routes no `committee.open_round`, `committee.cast` or
-//!   `committee.delegate` yet (W3a gap).
+//! - The `irc_review` stage records its cut-off round through the engine.
+//!   The API core's journal does not know a round recorded so, and
+//!   `committee.round` fails closed on it. The committee journeys open,
+//!   cast and record their rounds through the API core.
 //! - P-01 has no criterion wording in the domain, so the pages label the
 //!   criteria by number.
 
