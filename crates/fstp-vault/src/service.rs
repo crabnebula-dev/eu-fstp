@@ -5,10 +5,14 @@
 //! [`serve`] runs the service on one runtime through `fstp-rt` until its
 //! [`VaultHandle`] shuts it down:
 //!
-//! 1. It connects to `v_<cell>` as `v_<cell>_vault`, reads the placement
-//!    marker and refuses anything but a vault database whose server
-//!    certificate OU and registered SPKI both name a vault cluster (I-83,
-//!    `crate::start::accepts_database`).
+//! 1. It connects to `v_<cell>` as `v_<cell>_vault` and runs the I-83
+//!    start check of design section 9.2 over that connection
+//!    ([`check_database`]). It reads the placement marker, and takes the
+//!    server certificate OU and the SPKI from the leaf certificate the
+//!    server presented ([`fstp_pgwire::Client::server_certificate_der`]).
+//!    It refuses anything but a vault database on a server whose OU is
+//!    `vault` and whose SPKI digest the control plane registered for a
+//!    vault cluster only (`crate::start::accepts_database`).
 //! 2. It loads the vault from its rows (`crate::store::load`).
 //! 3. It serves the internal listener: mutual TLS with the cell CA as the
 //!    only root, so only the cell's own `cell-app` certificate reaches the
@@ -29,14 +33,22 @@
 //! such as the epoch read, are answered. No vault fact, query log row or
 //! acknowledgement is stored until the vault chain records them.
 //!
-//! Open I-83 seam, reported to Daniel and the lead: of the three start
-//! checks of design section 9.2, only the placement marker is read from
-//! the database. `fstp_pgwire::Client` does not expose the server's leaf
-//! certificate, so the OU and the SPKI registration are
-//! [`VaultParts::server_ou`] and [`VaultParts::registered_spki`], which
-//! the caller asserts. A vault pointed at an application cluster whose
-//! database carries a vault marker would start. The fix is to expose the
-//! leaf from `fstp_pgwire` (lead-owned) and derive both here.
+//! The caller hands in no claim about its database server. It hands in
+//! the registration set ([`VaultParts::registered_servers`]): each
+//! cluster's server SPKI digest and kind, as the control plane recorded
+//! them at cluster registration (`cp.cluster` `kind` and `server_spki`).
+//! The OU and the SPKI come from the live connection only. The SPKI and
+//! the first subject OU are read by `fstp_witness::peer::read_cert`, the
+//! in-house fuzzed DER reader that also reads the `cell-app` OU of the
+//! internal listener. Every subject OU is read by
+//! `fstp_pgwire::x509::subject_organizational_units`, fuzzed as well. A
+//! subject with more than one OU names no cluster kind.
+//!
+//! The vault opens one database connection. [`serve`] also adds the
+//! same OU and SPKI check to its configuration as a
+//! [`fstp_pgwire::ServerCheck`] ([`vault_server_check`]). So the
+//! connection, and any cancel connection opened for it later, refuses a
+//! server that fails it before the startup message.
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -65,19 +77,153 @@ pub const CELL_APP_OU: &str = "cell-app";
 /// The largest request body either listener takes.
 pub const MAX_BODY: u64 = 256 * 1024;
 
+/// The subject OU of a vault cluster's server certificate (design
+/// sections 1.3 and 4.1). It is `fstp_pki::cert::ClusterKindOu::Vault`,
+/// spelt out because the vault does not depend on `fstp-pki`.
+pub const VAULT_OU: &str = "vault";
+
+/// The subject OU of an application cluster's server certificate, as
+/// `fstp_pki::cert::ClusterKindOu::Application` spells it.
+pub const APPLICATION_OU: &str = "application";
+
+/// One cluster server key as the control plane registered it (design
+/// section 9.2): the SHA-256 digest of the server certificate's
+/// SubjectPublicKeyInfo DER, and the kind of the cluster it was
+/// registered for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisteredSpki {
+    /// SHA-256 over the SubjectPublicKeyInfo DER, tag and length included.
+    pub digest: [u8; 32],
+    /// The kind of the cluster the key was registered for.
+    pub role: ClusterRole,
+}
+
+/// The kind that the subject OU of the server certificate `cert_der`
+/// names. The subject must hold exactly one OU, and it must be
+/// [`VAULT_OU`] or [`APPLICATION_OU`]. A certificate that does not read,
+/// a subject without an OU or with two, and any other OU name
+/// [`ClusterRole::Other`].
+///
+/// Both in-house readers must agree on the OU: the first subject OU of
+/// `fstp_witness::peer::read_cert` and the only one that
+/// `fstp_pgwire::x509::subject_organizational_units` lists.
+#[must_use]
+pub fn server_ou_role(cert_der: &[u8]) -> ClusterRole {
+    let Ok(cert) = fstp_witness::peer::read_cert(cert_der) else {
+        return ClusterRole::Other;
+    };
+    let Ok(ous) = fstp_pgwire::x509::subject_organizational_units(cert_der) else {
+        return ClusterRole::Other;
+    };
+    let [ou] = ous.as_slice() else {
+        return ClusterRole::Other;
+    };
+    if cert.names.subject_ou.as_deref() != Some(*ou) {
+        return ClusterRole::Other;
+    }
+    if *ou == VAULT_OU.as_bytes() {
+        ClusterRole::Vault
+    } else if *ou == APPLICATION_OU.as_bytes() {
+        ClusterRole::Application
+    } else {
+        ClusterRole::Other
+    }
+}
+
+/// Whether the server certificate `cert_der` is that of a vault cluster:
+/// its OU names one ([`server_ou_role`]) and `registered` gives its SPKI
+/// that kind only ([`registered_role`]).
+#[must_use]
+pub fn is_vault_server(cert_der: &[u8], registered: &[RegisteredSpki]) -> bool {
+    server_ou_role(cert_der) == ClusterRole::Vault
+        && registered_role(cert_der, registered) == ClusterRole::Vault
+}
+
+/// The server check that [`serve`] adds to the vault database
+/// configuration: it accepts a server only when [`is_vault_server`]
+/// holds for its verified leaf under `registered`. Every connection and
+/// cancel connection over the configuration runs it before anything is
+/// sent past the TLS handshake. A refused connection fails with
+/// [`fstp_pgwire::ErrorKind::ServerRefused`].
+#[must_use]
+pub fn vault_server_check(registered: &[RegisteredSpki]) -> fstp_pgwire::ServerCheck {
+    let registered = registered.to_vec();
+    fstp_pgwire::ServerCheck::new(move |der: &[u8]| is_vault_server(der, &registered))
+}
+
+/// The SHA-256 digest of the SubjectPublicKeyInfo of the certificate
+/// `cert_der`, or `None` when the certificate does not read.
+#[must_use]
+pub fn server_spki_digest(cert_der: &[u8]) -> Option<[u8; 32]> {
+    fstp_witness::peer::read_cert(cert_der)
+        .ok()
+        .map(|c| fstp_crypto::sha256(c.spki))
+}
+
+/// The kind that `registered` gives the SPKI of the server certificate
+/// `cert_der`. It is the one kind every registration of that digest
+/// names. A key with no registration, a key registered for two kinds, or
+/// a certificate that does not read names [`ClusterRole::Other`], so the
+/// start check refuses it.
+#[must_use]
+pub fn registered_role(cert_der: &[u8], registered: &[RegisteredSpki]) -> ClusterRole {
+    let Some(digest) = server_spki_digest(cert_der) else {
+        return ClusterRole::Other;
+    };
+    let mut roles = registered
+        .iter()
+        .filter(|r| r.digest == digest)
+        .map(|r| r.role);
+    match roles.next() {
+        Some(first) if roles.all(|r| r == first) => first,
+        _ => ClusterRole::Other,
+    }
+}
+
+/// What the vault sees of its database: the placement marker `marker`
+/// read over a connection, and the OU and the SPKI registration of the
+/// server certificate `cert_der` that the same connection verified.
+#[must_use]
+pub fn database_view(marker: u8, cert_der: &[u8], registered: &[RegisteredSpki]) -> DatabaseView {
+    DatabaseView {
+        marker,
+        server_ou: server_ou_role(cert_der),
+        registered_spki: registered_role(cert_der, registered),
+    }
+}
+
+/// The I-83 start check of design section 9.2 over the live connection
+/// `client`: the placement marker it reads, and the OU and the SPKI of
+/// the leaf certificate its server presented, checked against
+/// `registered`. Returns the view it accepted.
+///
+/// # Errors
+///
+/// [`VaultError::Malformed`] when the view is not that of a vault
+/// database on a vault cluster (`crate::start::accepts_database`), and
+/// the errors of [`placement_marker`].
+pub async fn check_database<R: Runtime>(
+    client: &mut Client<R>,
+    registered: &[RegisteredSpki],
+) -> Result<DatabaseView, VaultError> {
+    let marker = placement_marker(client).await?;
+    let view = database_view(marker, client.server_certificate_der(), registered);
+    if !accepts_database(&view) {
+        return Err(VaultError::Malformed("not a vault database (I-83)"));
+    }
+    Ok(view)
+}
+
 /// What the vault starts from.
 pub struct VaultParts {
     /// The cell.
     pub cell: [u8; 16],
     /// The `v_<cell>_vault` login.
     pub db: fstp_pgwire::Config,
-    /// The kind the database server's certificate OU names. A caller
-    /// claim, not read from the session: see "Open I-83 seam" in the
-    /// module documentation.
-    pub server_ou: ClusterRole,
-    /// The kind the server's SPKI is registered for. A caller claim, like
-    /// [`VaultParts::server_ou`].
-    pub registered_spki: ClusterRole,
+    /// The control plane's registration of cluster server keys (module
+    /// documentation). The start check looks up the live server's SPKI
+    /// digest here ([`check_database`]).
+    pub registered_servers: Vec<RegisteredSpki>,
     /// Seals and opens the stored values.
     pub sealer: Arc<dyn Sealer>,
     /// The cell's ticket public keys, current and next.
@@ -461,8 +607,7 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
     let VaultParts {
         cell,
         db,
-        server_ou,
-        registered_spki,
+        registered_servers,
         sealer,
         ticket_keys,
         internal_tls,
@@ -472,18 +617,17 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
         internal_listen,
         origin_listen,
     } = parts;
-    let mut client: Client<R> = Client::connect(&rt, &db)
-        .await
-        .map_err(|_| VaultError::Unavailable("the vault database"))?;
-    let marker = placement_marker(&mut client).await?;
-    let view = DatabaseView {
-        marker,
-        server_ou,
-        registered_spki,
-    };
-    if !accepts_database(&view) {
-        return Err(VaultError::Malformed("not a vault database (I-83)"));
-    }
+    // The server check runs on this connection and on any cancel
+    // connection before anything passes the TLS handshake (I-83).
+    let db = db.server_check(vault_server_check(&registered_servers));
+    let mut client: Client<R> = Client::connect(&rt, &db).await.map_err(|e| {
+        if e.kind() == fstp_pgwire::ErrorKind::ServerRefused {
+            VaultError::Malformed("not a vault database (I-83)")
+        } else {
+            VaultError::Unavailable("the vault database")
+        }
+    })?;
+    check_database(&mut client, &registered_servers).await?;
     let vault = load(&mut client, sealer.as_ref(), cell, &ticket_keys).await?;
     let shared = Arc::new(Shared {
         held: AsyncMutex::new(Held { vault }),

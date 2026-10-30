@@ -109,6 +109,33 @@ fn th26_hostile_server_seeds_and_mutations() {
     run("pg_hostile_server", 40, harness::hostile_server);
 }
 
+#[test]
+fn th26_i83_cert_subject_ou_seeds_and_mutations() {
+    run("pg_cert_subject_ou", 300, harness::cert_subject_ou);
+}
+
+/// I-83: the certificate seeds read as the OUs their subjects list, so the
+/// subject OU fuzzer starts from certificates the reader accepts.
+#[test]
+fn i83_cert_subject_ou_seeds_read_as_their_subjects() {
+    use fstp_pgwire::x509::subject_organizational_units as ous;
+    let read = |name: &str| -> Vec<Vec<u8>> {
+        ous(&seed("pg_cert_subject_ou", name))
+            .unwrap()
+            .into_iter()
+            .map(<[u8]>::to_vec)
+            .collect()
+    };
+    assert_eq!(read("one-ou"), vec![b"vault".to_vec()]);
+    assert_eq!(
+        read("two-ous"),
+        vec![b"vault".to_vec(), b"application".to_vec()]
+    );
+    assert_eq!(read("multi-valued-rdn").len(), 2);
+    assert!(read("no-ou").is_empty());
+    assert!(read("test-server").is_empty());
+}
+
 /// The transcript seed drives every operation of the harness as scripted,
 /// so the hostile-server fuzzer starts from deep states.
 #[test]
