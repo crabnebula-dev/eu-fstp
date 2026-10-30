@@ -19,7 +19,11 @@
 //!    again from step 1.
 //!
 //! After every call, accepted or not, the state equals the replay of the
-//! store, unless the store holds a log the fold refuses.
+//! store, unless the store holds a log the fold refuses. Every fold groups
+//! the records of one command id into one entry (`apply_in`, `finish`), so
+//! the entry pairings of the crate root hold on the trial fold of a batch,
+//! on catch-up and on replay alike. After it appends a `RecordProposals`
+//! batch, the driver holds the batch's values in the import store.
 //!
 //! A finding command skips step 2, so it never appends a core record
 //! (I-10). When it has vault questions and the vault is ahead, it is
@@ -65,9 +69,11 @@ use fstp_domain::id::{CommandId, VaultEpoch};
 use fstp_domain::oracle::{Answers, Query};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::time::Timestamp;
+use fstp_import::ImportCommand;
 use fstp_ledger::{AppendError, Entry, RecordStore, Seq, StoreError};
 
-use crate::{Command, EngineState, IdentityOracle, Record, apply};
+use crate::compose::{CreatorEnvironment, NoEnvironment};
+use crate::{Command, EngineState, IdentityOracle, Record, apply_in, finish};
 
 /// How many times [`Engine::execute`] decides before it gives up under
 /// contention. Each stale head, moving vault or processed vault change
@@ -106,16 +112,108 @@ pub trait Decider {
     ) -> Result<Vec<Record>, Refusal>;
 }
 
-/// The domain core: `fstp_domain::queries` and `decide` for core commands.
+/// The production decision functions, with no shell facts for the
+/// creator ([`NoEnvironment`]).
 ///
-/// A core command sees only the core part of the state, never the finding
-/// store (I-10). Before it, the engine refuses a time before the latest
-/// entry of either side, so the ledger stays time-monotone (design section
-/// 2.2). That check reads the time of the latest finding entry, never a
-/// finding. Finding commands go through the finding seam in the crate
-/// root, which lane L-FIND-B routes to `decide_finding`.
+/// - A core command goes to `fstp_domain::queries` and `decide`, which see
+///   only the core part of the state, never the finding store, the creator
+///   or the import store (I-10, I-65). A core `ActivateProgramme` of a
+///   programme with a creator draft is refused with `RuleRef::I66`: only
+///   the creator's approval composes it (D2e).
+/// - A finding command goes through the finding seam in the crate root,
+///   which lane L-FIND-B routes to `decide_finding`.
+/// - A creator command goes to `compose::creator_queries` and
+///   `compose::decide_creator_command`.
+/// - A bridge command goes to `bridge::bridge_queries` and
+///   `bridge::resolve_import`, and an import command to
+///   `bridge::decide_import_command`, which asks no vault question.
+///
+/// Before any of them but a finding command, the engine refuses a time
+/// before the latest entry of any part, so the ledger stays time-monotone
+/// (design section 2.2). That check reads the time of the latest entry,
+/// never a finding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DomainDecider;
+
+/// The production decision functions of [`DomainDecider`], with the
+/// shell's creator facts from `E` (design 3.2, `CreatorInputs`). A shell
+/// that serves creator commands opens its engine with this decider and
+/// updates the environment, such as the probe results of the request,
+/// through [`Engine::decider_mut`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct CreatorDecider<E>(pub E);
+
+/// The refusal of a core `ActivateProgramme` that did not come from the
+/// creator's approval (D2e, I-66).
+fn outside_activation(state: &EngineState, c: &fstp_domain::Command) -> Result<(), Refusal> {
+    match c {
+        fstp_domain::Command::ActivateProgramme { programme, .. } if state.drafted(*programme) => {
+            Err(Refusal::new(RuleRef::I66, RefusalReason::GuardFailed))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The vault questions of `cmd`, with the creator facts of `env`.
+fn route_queries(
+    state: &EngineState,
+    cmd: &Command,
+    ctx: &Ctx,
+    env: &dyn CreatorEnvironment,
+) -> Result<Vec<Query>, Refusal> {
+    match cmd {
+        Command::Core(c) => {
+            crate::ledger_clock(state, ctx)?;
+            outside_activation(state, c)?;
+            fstp_domain::queries(&state.core, c, ctx)
+        }
+        Command::Finding(f) => crate::finding_queries(state, f, ctx),
+        Command::Creator(c) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::creator_queries(state, c, ctx, env)
+        }
+        Command::Bridge(b) => {
+            crate::ledger_clock(state, ctx)?;
+            Ok(crate::bridge::bridge_queries(state, b, ctx))
+        }
+        Command::Import(_) => {
+            crate::ledger_clock(state, ctx)?;
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// The records of `cmd`, with the creator facts of `env`.
+fn route_decide(
+    state: &EngineState,
+    cmd: &Command,
+    ctx: &Ctx,
+    answers: &Answers,
+    env: &dyn CreatorEnvironment,
+) -> Result<Vec<Record>, Refusal> {
+    match cmd {
+        Command::Core(c) => {
+            crate::ledger_clock(state, ctx)?;
+            outside_activation(state, c)?;
+            fstp_domain::decide(&state.core, c, ctx, answers)
+                .map(|records| records.into_iter().map(Record::Core).collect())
+        }
+        Command::Finding(f) => crate::decide_finding(state, f, ctx, answers),
+        Command::Creator(c) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::decide_creator_command(state, c, ctx, answers, env)
+                .map_err(crate::compose::CreatorFailure::refusal)
+        }
+        Command::Bridge(b) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::bridge::resolve_import(state, b, ctx, answers)
+        }
+        Command::Import(i) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::bridge::decide_import_command(state, i, ctx)
+        }
+    }
+}
 
 impl Decider for DomainDecider {
     fn queries(
@@ -124,13 +222,7 @@ impl Decider for DomainDecider {
         cmd: &Command,
         ctx: &Ctx,
     ) -> Result<Vec<Query>, Refusal> {
-        match cmd {
-            Command::Core(c) => {
-                crate::ledger_clock(state, ctx)?;
-                fstp_domain::queries(&state.core, c, ctx)
-            }
-            Command::Finding(f) => crate::finding_queries(state, f, ctx),
-        }
+        route_queries(state, cmd, ctx, &NoEnvironment)
     }
 
     fn decide(
@@ -140,14 +232,28 @@ impl Decider for DomainDecider {
         ctx: &Ctx,
         answers: &Answers,
     ) -> Result<Vec<Record>, Refusal> {
-        match cmd {
-            Command::Core(c) => {
-                crate::ledger_clock(state, ctx)?;
-                fstp_domain::decide(&state.core, c, ctx, answers)
-                    .map(|records| records.into_iter().map(Record::Core).collect())
-            }
-            Command::Finding(f) => crate::decide_finding(state, f, ctx, answers),
-        }
+        route_decide(state, cmd, ctx, answers, &NoEnvironment)
+    }
+}
+
+impl<E: CreatorEnvironment> Decider for CreatorDecider<E> {
+    fn queries(
+        &self,
+        state: &EngineState,
+        cmd: &Command,
+        ctx: &Ctx,
+    ) -> Result<Vec<Query>, Refusal> {
+        route_queries(state, cmd, ctx, &self.0)
+    }
+
+    fn decide(
+        &self,
+        state: &EngineState,
+        cmd: &Command,
+        ctx: &Ctx,
+        answers: &Answers,
+    ) -> Result<Vec<Record>, Refusal> {
+        route_decide(state, cmd, ctx, answers, &self.0)
     }
 }
 
@@ -373,6 +479,12 @@ impl<S, O, D> Engine<S, O, D> {
         &self.decider
     }
 
+    /// The decider, for a shell that updates its creator environment
+    /// before a command, such as the probe results of the request.
+    pub fn decider_mut(&mut self) -> &mut D {
+        &mut self.decider
+    }
+
     /// The sequence number of the last entry folded into the state.
     pub fn head(&self) -> Seq {
         self.head
@@ -420,13 +532,42 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
                 VaultStep::Again => continue,
             }
             match self.attempt(&cmd, &ctx)? {
-                Attempt::Appended(seq) => return Ok(seq),
+                Attempt::Appended(seq) => {
+                    self.hold_recorded(&cmd);
+                    return Ok(seq);
+                }
                 Attempt::Duplicate(at) => return Err(ExecError::Duplicate { at }),
                 Attempt::Again(answered) => progress.saw(answered),
             }
         }
         self.catch_up()?;
         Err(ExecError::Contended)
+    }
+
+    /// Holds the values of an appended `RecordProposals` batch in the
+    /// import store (design 3.3). The fold accepted the batch, so each
+    /// reference is named and new. Returns whether every value is held. A
+    /// value that is not held fails closed: its proposal can only be
+    /// dismissed until [`Engine::hold_import`] holds it.
+    fn hold_recorded(&mut self, cmd: &Command) -> bool {
+        match cmd {
+            Command::Import(ImportCommand::RecordProposals { proposals, .. }) => {
+                self.state.import.hold_recorded(proposals).is_ok()
+            }
+            _ => true,
+        }
+    }
+
+    /// Holds `value` under `text` in the import store, as the shell
+    /// resolved it from the text store after a replay (design 3.3). The
+    /// held values are a cache of the text store and take no part in the
+    /// state's equality.
+    pub fn hold_import(
+        &mut self,
+        text: fstp_import::ValueTextRef,
+        value: fstp_import::UntrustedValue,
+    ) -> Result<(), fstp_import::HoldError> {
+        self.state.import.hold(text, value)
     }
 
     /// [`Engine::execute`] for a finding command, without step 2. It never
@@ -573,7 +714,7 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
             .decider
             .decide(&self.state, cmd, ctx, &answers)
             .map_err(ExecError::Refused)?;
-        self.trial_fold(ctx.now, &batch)?;
+        self.trial_fold(ctx.now, ctx.command.bytes(), &batch)?;
         match self
             .store
             .append(self.head, ctx.now.micros(), ctx.command.bytes(), batch)
@@ -592,7 +733,12 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
     /// Folds `batch` on a copy of the state, as the entries after the head
     /// at `now`. A batch the fold refuses is never appended. A batch that
     /// would number past `u64::MAX` is left to the store, which refuses it.
-    fn trial_fold(&self, now: Timestamp, batch: &[Record]) -> Result<(), ExecError> {
+    fn trial_fold(
+        &self,
+        now: Timestamp,
+        command: [u8; 16],
+        batch: &[Record],
+    ) -> Result<(), ExecError> {
         let mut next = self.state.clone();
         let mut seq = self.head;
         for record in batch {
@@ -600,9 +746,9 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
                 return Ok(());
             };
             seq = Seq::from_raw(raw);
-            apply(&mut next, seq, now, record).map_err(ExecError::Unfoldable)?;
+            apply_in(&mut next, seq, now, Some(command), record).map_err(ExecError::Unfoldable)?;
         }
-        Ok(())
+        finish(&mut next).map_err(ExecError::Unfoldable)
     }
 
     /// Step 1: folds every stored entry after `head`, in order.
@@ -627,16 +773,18 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
                 if Some(entry.seq.raw()) != expected {
                     return Err(CatchUpError::Fold(FoldError::OutOfOrder));
                 }
-                apply(
+                apply_in(
                     &mut next,
                     entry.seq,
                     Timestamp::from_micros(entry.at),
+                    Some(entry.command),
                     &entry.record,
                 )
                 .map_err(CatchUpError::Fold)?;
                 head = entry.seq;
             }
         }
+        finish(&mut next).map_err(CatchUpError::Fold)?;
         self.state = next;
         self.head = head;
         Ok(())

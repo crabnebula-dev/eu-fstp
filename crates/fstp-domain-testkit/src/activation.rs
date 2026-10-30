@@ -1,17 +1,20 @@
 //! The activation step of every setup, and the core I-67 builder reference (M4 design section 3.4, D1, D2 and D8).
 //!
-//! Lane W1b (L-DOM) owns this file until step W2e, which takes it over
-//! (M4 design section 13). It needs the `pub mod activation;` line in
-//! `src/lib.rs`, which the M4 W0 lane did not add.
+//! Lane W1b (L-DOM) owned this file until step W2e. The engine lane
+//! (m4eng) holds it now (M4 design section 13).
 //!
 //! - Since D1, `CreateProgramme` creates a programme in `Draft` status.
 //!   Nothing runs on a draft beside policy edits and programme manager
 //!   grants (D3). So every setup activates each programme right after
 //!   creating it, through [`activation_step`] or [`activate`].
-//! - Until D2e lands, activation is the core `ActivateProgramme` by a
-//!   second tenant admin through `Scenario::execute`, which the engine
-//!   still accepts (D8 sequencing, step 1). W2e switches [`activate`] to
-//!   the creator's `ApproveActivation` in the commit that lands D2e.
+//! - Activation is the core `ActivateProgramme` by a second tenant admin
+//!   through `Scenario::execute`. Since D2e the engine refuses that path
+//!   for a programme with a creator draft, and folds its activation only
+//!   with the creator's approval. A setup programme comes from a core
+//!   `CreateProgramme` and has no draft, so the engine still accepts it
+//!   (interim, pending Daniel). [`activate`] switches to the creator's
+//!   `ApproveActivation` once `fstp_creator::decide_creator` opens drafts
+//!   (D8 sequencing, step 2).
 //! - [`reference_builders`] is the core builder set, folded from raw
 //!   records and written from `SPEC/02-domain/invariants.md` I-67 and the
 //!   interim reading of Q1 (M4 design sections 3.2 and 12.3): the opener,

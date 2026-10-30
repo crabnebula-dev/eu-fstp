@@ -138,7 +138,7 @@ fn scenario_records(entries: &[Entry<EngineRecord>]) -> Vec<(Record, Timestamp)>
         .iter()
         .filter_map(|e| match &e.record {
             EngineRecord::Core(r) => Some((r.clone(), Timestamp::from_micros(e.at))),
-            EngineRecord::Finding(_) => None,
+            EngineRecord::Finding(_) | EngineRecord::Creator(_) | EngineRecord::Import(_) => None,
         })
         .collect()
 }

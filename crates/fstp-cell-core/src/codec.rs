@@ -592,6 +592,13 @@ impl ToJson for CellCommand {
             CellCommand::Engine(fstp_engine::Command::Finding(c)) => {
                 wrap("finding", finding_command_json(c))
             }
+            // M4 forms (lane m4eng). The decoder does not read them back yet;
+            // the lead adds them with the cell routes of M4.
+            CellCommand::Engine(fstp_engine::Command::Creator(c)) => wrap("creator", c.to_json()),
+            CellCommand::Engine(fstp_engine::Command::Bridge(c)) => wrap("bridge", c.to_json()),
+            CellCommand::Engine(fstp_engine::Command::Import(c)) => {
+                wrap("import", fstp_engine::bridge::import_command_json(c))
+            }
             CellCommand::Auth(c) => wrap("auth", auth_command_json(c)),
             CellCommand::Tenant(c) => wrap("tenant", tenant_command_json(c)),
             CellCommand::Text(c) => wrap("text", text_command_json(c)),

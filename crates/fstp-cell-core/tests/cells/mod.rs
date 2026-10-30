@@ -37,6 +37,8 @@ pub(crate) fn member_of(r: &CellRecord) -> &'static str {
     match r {
         CellRecord::Engine(fstp_engine::Record::Core(_)) => "core",
         CellRecord::Engine(fstp_engine::Record::Finding(_)) => "finding",
+        CellRecord::Engine(fstp_engine::Record::Creator(_)) => "creator",
+        CellRecord::Engine(fstp_engine::Record::Import(_)) => "import",
         CellRecord::Auth(_) => "auth",
         CellRecord::Tenant(_) => "tenant",
         CellRecord::Text(_) => "text",

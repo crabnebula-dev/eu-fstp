@@ -895,7 +895,7 @@ pub fn core_records(entries: &[Entry<EngineRecord>]) -> Vec<Record> {
         .iter()
         .filter_map(|e| match &e.record {
             EngineRecord::Core(r) => Some(r.clone()),
-            EngineRecord::Finding(_) => None,
+            EngineRecord::Finding(_) | EngineRecord::Creator(_) | EngineRecord::Import(_) => None,
         })
         .collect()
 }

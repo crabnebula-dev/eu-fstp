@@ -9,9 +9,13 @@
 //! in `crates/fstp-guide/profiles/**`. The synthetic legal-wording profile
 //! lives in `fstp-api-testkit` and reaches this crate only through a
 //! testkit implementation of [`ProfileSource`] (layering rule A9b).
+//! [`FunderProfile`] has no public constructor, so a profile comes only
+//! from a source.
 //!
-//! Status: W0 stub. Lane W2c (L-GUIDE-PUBLIC) owns this crate. Every
-//! operation refuses with [`GuideError::NotImplemented`].
+//! Status: the profiles and their sources are built (module `profile`,
+//! lane m4eng). The template parser, the Markdown parser and the renderer
+//! are W0 stubs of lane W2c (L-GUIDE-PUBLIC). Each refuses with
+//! [`GuideError::NotImplemented`].
 
 #![deny(
     clippy::float_arithmetic,
@@ -19,6 +23,13 @@
     clippy::cast_precision_loss,
     clippy::arithmetic_side_effects
 )]
+
+mod profile;
+
+pub use profile::{
+    FunderProfile, HORIZON_EUROPE, LEGAL_MARKER, LEGAL_SECTIONS, LegalSection, MAX_GUIDE_BYTES,
+    ProfileError, ProfileFiles, ProfileSource, ShippedProfiles, WordingStatus,
+};
 
 /// Why a Guide operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,34 +70,6 @@ pub struct MarkdownDoc {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedGuide {
     _w0: (),
-}
-
-/// A funder profile, as a profile source supplies it.
-///
-/// W0 placeholder with no fields. Lane W2c writes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FunderProfile {
-    _w0: (),
-}
-
-/// A source of funder profiles. In production only [`ShippedProfiles`]
-/// implements it (layering rule A9b).
-pub trait ProfileSource {
-    /// The profile with the given name.
-    fn profile(&self, name: &str) -> Result<FunderProfile, GuideError>;
-}
-
-/// The profiles compiled from `crates/fstp-guide/profiles/**`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ShippedProfiles;
-
-impl ProfileSource for ShippedProfiles {
-    fn profile(&self, name: &str) -> Result<FunderProfile, GuideError> {
-        let _ = name;
-        Err(GuideError::NotImplemented(
-            "fstp_guide::ShippedProfiles::profile",
-        ))
-    }
 }
 
 /// Parses a Guide template. Unknown placeholders are rejected. Fuzzed

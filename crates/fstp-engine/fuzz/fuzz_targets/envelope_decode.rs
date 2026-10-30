@@ -1,8 +1,9 @@
 //! Fuzz target for the engine envelope decoder (TH-26, H-05).
 //!
 //! The input is parsed as JSON and decoded as a ledger entry. The record is
-//! then split by the envelope layer into its side, `core` or `finding`, and
-//! the inner record's JSON value. The target checks:
+//! then split by the envelope layer into its side, `core`, `finding`,
+//! `creator` or `import`, and the inner record's JSON value. The target
+//! checks:
 //!
 //! - nothing panics, and a refusal formats without panicking;
 //! - joining the parts again gives the stored record value exactly;
@@ -26,10 +27,7 @@ use libfuzzer_sys::fuzz_target;
 
 /// The side `record` is stored on.
 fn side(record: &Record) -> EnvelopeKind {
-    match record {
-        Record::Core(_) => EnvelopeKind::Core,
-        Record::Finding(_) => EnvelopeKind::Finding,
-    }
+    EnvelopeKind::of(record)
 }
 
 /// Decodes `v` as a stored entry, with the record decoded under the
