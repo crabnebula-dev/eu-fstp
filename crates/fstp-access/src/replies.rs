@@ -17,7 +17,8 @@
 //! with data a page reads next, and each has an entry:
 //!
 //! - `proposal.create` names the drawn proposal (J4).
-//! - `proposal.record_plan` carries the total the cell summed (ADR-006).
+//! - `proposal.record_plan` carries the total the cell summed (ADR-006)
+//!   and the drawn plan, which a stage 2 revision names (R-EV-05).
 //! - `committee.open_round` names the drawn round, which the ballot and
 //!   the delegation address. Its entry fixes that reply, `{"round": id}`.
 //!
@@ -273,8 +274,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ("me.assignments", OWN_ASSIGNMENTS),
     // R-IR-01: the caller's IRC assignments, the same rows.
     ("me.irc_cases", OWN_ASSIGNMENTS),
-    // J4: the drawn proposal the workspace opens next. No other drawn id
-    // leaves the server.
+    // J4: the drawn proposal the workspace opens next. Of the other drawn
+    // ids, only a recorded plan and an opened round leave the server.
     (
         "proposal.create",
         Shape::Object(&[m("accepted", Shape::Bool), m("proposal", Shape::Id)]),
@@ -288,11 +289,17 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("narrative", Shape::String),
         ]),
     ),
-    // ADR-006, design section 3.9: the total the cell summed. A plan with
-    // no milestone has no total, and the reply is `{"accepted": true}`.
+    // ADR-006, design section 3.9: the total the cell summed, and the id
+    // the server drew for the plan, which a stage 2 revision names when
+    // it is submitted (R-EV-05). The two travel together. A plan with no
+    // milestone has neither, and the reply is `{"accepted": true}`.
     (
         "proposal.record_plan",
-        Shape::Object(&[m("accepted", Shape::Bool), opt("total", Shape::Amount)]),
+        Shape::Object(&[
+            m("accepted", Shape::Bool),
+            opt("plan", Shape::Id),
+            opt("total", Shape::Amount),
+        ]),
     ),
     // TH-08: each question under its P-11 handle, with its day only.
     (
@@ -550,6 +557,50 @@ pub const REPLIES: &[(&str, Shape)] = &[
     (
         "committee.open_round",
         Shape::Object(&[m("round", Shape::Id)]),
+    ),
+    // R-EV-08, R-EV-09, P-16 NOTE 8, change D5: one round. It counts the
+    // ballots and names no voter. Its status is open, recorded or
+    // superseded, and only an open round takes ballots, delegations and
+    // the record. The viewer reads their own vote or delegation only.
+    // Recusal is judged on an open round only and is null otherwise. The
+    // delegates are labels of members who are not recused. The order
+    // lists proposals by id with their state now.
+    (
+        "committee.round",
+        Shape::Object(&[
+            m("round", Shape::Id),
+            m("call", Shape::Id),
+            m("status", Shape::Enum(&["open", "recorded", "superseded"])),
+            m(
+                "order",
+                Shape::Array(&Shape::Object(&[
+                    m("proposal", Shape::Id),
+                    m("state", Shape::Enum(STATE_NAMES)),
+                ])),
+            ),
+            m("nominated", Shape::Int),
+            m("rationale", Shape::String),
+            m("tie_break", Shape::Nullable(&Shape::String)),
+            m("ballots_cast", Shape::Int),
+            m(
+                "viewer",
+                Shape::Object(&[
+                    m("recused", Shape::Nullable(&Shape::Bool)),
+                    m(
+                        "own_vote",
+                        Shape::Nullable(&Shape::Enum(&["For", "Against", "Abstain"])),
+                    ),
+                    m("delegated_to", Shape::Nullable(&Shape::Id)),
+                ]),
+            ),
+            m(
+                "delegates",
+                Shape::Array(&Shape::Object(&[
+                    m("account", Shape::Id),
+                    m("label", Shape::String),
+                ])),
+            ),
+        ]),
     ),
 ];
 
