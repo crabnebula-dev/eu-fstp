@@ -22,15 +22,19 @@
 //! - [`lock`] is the async mutex the service and the cell's link use.
 //!
 //! [`CATALOGUE`] holds the column maps of the witness database (design
-//! section 4.4): `witness.anchor` with the design's columns, and the
-//! receipt, withdrawal, CA and anchor key records that ADR-010 adds
-//! (open point 4). Lane int5 reading, reported to Daniel and the lead:
-//! the core numbers `witness_seq` per cell and chain from 1, and lets a
-//! cell prepare the same `n` again with another link once the abort is
-//! recorded (ADR-010 "Abort"). So `witness.anchor` is keyed by `(cell_id,
-//! chain, witness_seq)`, where design section 4.4 declares `witness_seq`
-//! UNIQUE over the whole table and `PRIMARY KEY (cell_id, chain, n)`. The
-//! columns are the design's.
+//! section 4.4): `witness.anchor`, and the receipt, withdrawal, CA and
+//! anchor key records of ADR-010 open point 4. The core numbers
+//! `witness_seq` per cell and chain from 1, and lets a cell prepare the
+//! same `n` again with another link once the abort is recorded (ADR-010
+//! "Abort"). So `witness.anchor` and `witness.withdrawal` are keyed by
+//! `(cell_id, chain, witness_seq)`, with `(cell_id, chain, n, link)`
+//! unique. Daniel accepted that key and the three extra tables on
+//! 2026-10-30 (design sections 4.4 and 21.0).
+//!
+//! Every column has a class of design section 4.5. Links are
+//! `PublicDigest`, composite signatures `Signature`, and pinned CA
+//! certificates and anchor public keys `PublicKeyMaterial` (Daniel,
+//! 2026-10-30).
 //!
 //! [`run`], the binary's entry, still refuses: the process configuration
 //! and the receipt key's custody entry are not designed yet (ADR-010
@@ -149,12 +153,6 @@ const fn col(name: &'static str, class: ColumnClass) -> ColumnSpec {
     }
 }
 
-/// A column whose class the closed list of design section 4.5 does not
-/// cover. Open for Daniel; the R-NF-08 test refuses it until decided.
-const fn open(name: &'static str) -> ColumnSpec {
-    ColumnSpec { name, class: None }
-}
-
 /// The tables of the witness database (design section 4.4, ADR-010 open
 /// point 4), in the order the migrations create them.
 pub const CATALOGUE: &[TableSpec] = &[
@@ -175,12 +173,12 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("cell_id", ColumnClass::RandomId),
             col("chain", ColumnClass::Enum),
             col("n", ColumnClass::Sequence),
-            open("link"),
+            col("link", ColumnClass::PublicDigest),
             col("at", ColumnClass::Time),
-            open("signature"),
+            col("signature", ColumnClass::Signature),
             col("received_at", ColumnClass::Time),
             col("witness_seq", ColumnClass::Sequence),
-            open("witness_link"),
+            col("witness_link", ColumnClass::PublicDigest),
         ],
     },
     TableSpec {
@@ -191,7 +189,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("cell_id", ColumnClass::RandomId),
             col("chain", ColumnClass::Enum),
             col("witness_seq", ColumnClass::Sequence),
-            open("signature"),
+            col("signature", ColumnClass::Signature),
         ],
     },
     TableSpec {
@@ -204,9 +202,9 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("witness_seq", ColumnClass::Sequence),
             col("kind", ColumnClass::Enum),
             col("n", ColumnClass::Sequence),
-            open("link"),
+            col("link", ColumnClass::PublicDigest),
             col("received_at", ColumnClass::Time),
-            open("witness_link"),
+            col("witness_link", ColumnClass::PublicDigest),
         ],
     },
     TableSpec {
@@ -215,7 +213,7 @@ pub const CATALOGUE: &[TableSpec] = &[
         class: TableClass::Operational,
         columns: &[
             col("cell_id", ColumnClass::RandomId),
-            open("ca_cert"),
+            col("ca_cert", ColumnClass::PublicKeyMaterial),
             col("registered_at", ColumnClass::Time),
         ],
     },
@@ -226,7 +224,7 @@ pub const CATALOGUE: &[TableSpec] = &[
         columns: &[
             col("cell_id", ColumnClass::RandomId),
             col("chain", ColumnClass::Enum),
-            open("public_key"),
+            col("public_key", ColumnClass::PublicKeyMaterial),
             col("registered_at", ColumnClass::Time),
         ],
     },

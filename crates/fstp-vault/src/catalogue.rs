@@ -3,17 +3,19 @@
 //!
 //! `fstp_meta.placement` is the placement marker of design sections 4.1
 //! and 9.2, kind 2 for a vault database (I-83). The `vault` schema holds
-//! the eight tables of design section 4.3 with exactly its columns, plus
-//! `vault.p17_condition`, which section 4.3 does not have yet (reported
-//! to Daniel). `vault_audit` holds the vault's own chain and anchors
-//! (I-24), and `keystore` the vault chain's keys, with the shapes of
-//! section 4.2.
+//! the nine tables of design section 4.3 with exactly its columns, the
+//! P-17 country conditions of `vault.country_condition` included. Daniel
+//! named that table on 2026-10-30 (design section 21.0). `vault_audit`
+//! holds the vault's own chain and anchors (I-24), and `keystore` the
+//! vault chain's keys, with the shapes of section 4.2.
 //!
 //! Readings, reported to Daniel:
 //!
-//! - A column whose class section 4.5 has not settled carries `None`, as
-//!   lane W0 did for `witness.anchor`: chain links, stored-row digests,
-//!   signatures, receipts, custody handles and public keys.
+//! - A column whose class section 4.5 has not settled carries `None`:
+//!   the chain's links and stored-row digests, receipts, custody handles
+//!   and public keys. The `vault_audit.anchor` link is a `PublicDigest`
+//!   and its signature a `Signature`, the classes Daniel added on
+//!   2026-10-30 for the witness columns of the same kind.
 //! - `vault_audit.chain` has no ledger, so its `epoch` column takes the
 //!   place of `ledger_seq` in `audit.chain`: a kind 1 row records a vault
 //!   epoch, a kind 2 row an event such as a ticket use.
@@ -23,7 +25,7 @@
 //!   binary's own migrations and carry `None`.
 
 use fstp_migrate::catalogue::ColumnClass::{
-    Count, Enum, KeyedDigest, RandomId, Sealed, Sequence, Time,
+    Count, Enum, KeyedDigest, PublicDigest, RandomId, Sealed, Sequence, Signature, Time,
 };
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
@@ -150,7 +152,7 @@ pub const CATALOGUE: &[TableSpec] = &[
     },
     TableSpec {
         schema: "vault",
-        name: "p17_condition",
+        name: "country_condition",
         class: TableClass::Operational,
         columns: &[col("programme_id", RandomId), col("countries", Enum)],
     },
@@ -174,9 +176,9 @@ pub const CATALOGUE: &[TableSpec] = &[
         class: TableClass::AuditEvent,
         columns: &[
             col("n", Sequence),
-            open("link"),
+            col("link", PublicDigest),
             col("at", Time),
-            open("signature"),
+            col("signature", Signature),
             col("witness_seq", Sequence),
             open("receipt"),
         ],

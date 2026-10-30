@@ -80,6 +80,10 @@ fn reference_graph(rows: &CatalogueRows) -> PrivilegeGraph {
     }
 }
 
+/// The P-17 country conditions of the vault database (design 4.3, named
+/// by Daniel on 2026-10-30).
+const COUNTRY_CONDITION: &str = "vault.country_condition";
+
 fn random_cell(g: &mut Gen) -> CellId {
     let b = g.bytes(16..=16);
     CellId(b.try_into().unwrap_or([0; 16]))
@@ -126,8 +130,8 @@ fn accepting(h: &HbaRow) -> bool {
 /// of design section 4.3,
 /// the `keys` role reaches only the keystore, and no role holds UPDATE or
 /// DELETE on `vault_audit`. Each vault grant matches the reference pin of
-/// `place_model::vault_pin`: exact where design section 4.1 pins it, and a
-/// floor of SELECT and INSERT for the `vault` role elsewhere.
+/// [`pin`]: exact where design section 4.1 or NOTE 6 pins it, and a floor
+/// of SELECT and INSERT for the `vault` role elsewhere.
 #[test]
 fn i82_role_plan_matches_design_section_4_1() {
     fstp_prop::check("i82_role_plan_matches_design_section_4_1", |g: &mut Gen| {
@@ -194,7 +198,7 @@ fn i82_role_plan_matches_design_section_4_1() {
                 "vault grant to {:?}",
                 gr.role
             );
-            prop_assert!(VAULT_TABLES.contains(&gr.object), "{gr:?}");
+            prop_assert!(VAULT_TABLES.into_iter().any(|t| t == gr.object), "{gr:?}");
             if gr.role == RoleName::Keys {
                 prop_assert_eq!(schema_of(gr.object), "keystore", "{gr:?}");
             }
@@ -213,7 +217,7 @@ fn i82_role_plan_matches_design_section_4_1() {
         // The reference pins of the vault database (design section 4.1,
         // "same pattern"): exact where it pins them, a floor elsewhere.
         for role in roles_of(CellDatabase::Vault) {
-            for object in VAULT_TABLES {
+            for object in VAULT_TABLES.into_iter() {
                 let got = vault.get(&(*role, object)).cloned().unwrap_or_default();
                 match vault_pin(*role, object) {
                     VaultPin::Exactly(want) => {
@@ -976,18 +980,16 @@ fn live_table_acls(server: &PgServer, dbname: &str) -> BTreeSet<String> {
     out.lines().map(str::to_owned).collect()
 }
 
-/// I-82, ADR-011, design section 4.1: in each cell database of a world,
-/// the table and column grants beyond the owner's are exactly the rows of
-/// `cell_role_plan` for that database, plus one named seam. The seam is
-/// SELECT and INSERT on `vault.p17_condition` for the cell's own `vault`
-/// role, in its vault database only
-/// (`fstp_celltest::world::P17_CONDITION_GRANT_SEAM`). No grant goes to
-/// PUBLIC, to a role of another cell or to any column.
-///
-/// The seam rows leave this test once Daniel settles the table's rename
-/// or an ADR-011 amendment of the `apply_grant` object grammar.
+/// I-82, ADR-011, design sections 4.1 and 4.3: in each cell database of a
+/// world, the table and column grants beyond the owner's are exactly the
+/// rows of `cell_role_plan` for that database. No grant goes to PUBLIC, to
+/// a role of another cell or to any column. The vault role's SELECT and
+/// INSERT on `vault.country_condition` come from the plan too, since
+/// Daniel named the table into the `apply_grant` grammar on 2026-10-30
+/// (design section 21.0). So the plan holds every grant, and none is
+/// added outside it.
 #[test]
-fn i82_cell_database_grants_are_the_plan_and_the_named_seam_only() {
+fn i82_cell_database_grants_are_the_plan_only() {
     let w = world(2, DbMode::Shared);
     let mut checked = 0usize;
     for i in 0..2 {
@@ -1010,12 +1012,13 @@ fn i82_cell_database_grants_are_the_plan_and_the_named_seam_only() {
                 }
             }
             if db == CellDatabase::Vault {
+                // The plan itself holds the country condition grant.
                 for privilege in ["SELECT", "INSERT"] {
-                    want.insert(format!(
-                        "{}|{}|{privilege}",
-                        role_name(db, cell, RoleName::Vault),
-                        fstp_celltest::world::P17_CONDITION_TABLE
-                    ));
+                    let row = format!(
+                        "{}|{COUNTRY_CONDITION}|{privilege}",
+                        role_name(db, cell, RoleName::Vault)
+                    );
+                    assert!(want.contains(&row), "the plan lacks {row}");
                 }
             }
             let dbname = database_name(db, cell);

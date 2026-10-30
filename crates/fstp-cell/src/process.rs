@@ -353,22 +353,14 @@ pub fn registered_role(cert_der: &[u8], registered: &[RegisteredSpki]) -> Cluste
     }
 }
 
-/// What the cell sees of its database: the placement marker `marker`
-/// read over a connection, and the OU and the SPKI registration of the
-/// server certificate `cert_der` that the same connection verified.
-#[must_use]
-pub fn database_view(marker: u8, cert_der: &[u8], registered: &[RegisteredSpki]) -> DatabaseView {
-    DatabaseView {
-        marker,
-        server_ou: server_ou_role(cert_der),
-        registered_spki: registered_role(cert_der, registered),
-    }
-}
-
 /// The I-83 start check of design section 9.2 over the live connection
 /// `client`: the placement marker it reads, and the OU and the SPKI of
 /// the leaf certificate its server presented, checked against
 /// `registered`. Returns the view it accepted.
+///
+/// It is the only place a [`DatabaseView`] is built, so the view that
+/// `crate::engine::startup::start_pg` checks again always comes from a
+/// live connection (I-83).
 ///
 /// # Errors
 ///
@@ -381,7 +373,12 @@ pub async fn check_database<R: Runtime>(
     registered: &[RegisteredSpki],
 ) -> Result<DatabaseView, CellError> {
     let marker = placement_marker(client).await?;
-    let view = database_view(marker, client.server_certificate_der(), registered);
+    let cert_der = client.server_certificate_der();
+    let view = DatabaseView::new(
+        marker,
+        server_ou_role(cert_der),
+        registered_role(cert_der, registered),
+    );
     if !accepts_database(&view) {
         return Err(refusal(StartRefusal::Placement));
     }

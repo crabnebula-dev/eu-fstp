@@ -21,13 +21,18 @@ CREATE SCHEMA witness;
 
 -- A receipted prepare: the anchor the cell signed, and where it sits in
 -- the witness chain.
+--
+-- The classes of design section 4.5 (Daniel, 2026-10-30): link and
+-- witness_link are PublicDigest, 32 bytes. signature is a Signature, the
+-- composite of 3373 bytes, mldsaSig (3309) then tradSig (64) (ADR-010
+-- "Composite encoding").
 CREATE TABLE witness.anchor (
   cell_id      bytea    NOT NULL CHECK (octet_length(cell_id) = 16),
   chain        smallint NOT NULL CHECK (chain IN (1, 2)),
   n            bigint   NOT NULL CHECK (n >= 1),
   link         bytea    NOT NULL CHECK (octet_length(link) = 32),
   at           bigint   NOT NULL,
-  signature    bytea    NOT NULL,
+  signature    bytea    NOT NULL CHECK (octet_length(signature) = 3373),
   received_at  bigint   NOT NULL,
   witness_seq  bigint   NOT NULL CHECK (witness_seq >= 1),
   witness_link bytea    NOT NULL CHECK (octet_length(witness_link) = 32),
@@ -41,7 +46,7 @@ CREATE TABLE witness.receipt (
   cell_id     bytea    NOT NULL,
   chain       smallint NOT NULL,
   witness_seq bigint   NOT NULL,
-  signature   bytea    NOT NULL,
+  signature   bytea    NOT NULL CHECK (octet_length(signature) = 3373),
   PRIMARY KEY (cell_id, chain, witness_seq),
   FOREIGN KEY (cell_id, chain, witness_seq) REFERENCES witness.anchor (cell_id, chain, witness_seq)
 );
@@ -66,19 +71,24 @@ CREATE TABLE witness.withdrawal (
 -- "Witnesses", design section 9.2), as their DER certificates. A
 -- cell-witness or vault-witness certificate is accepted only from its own
 -- cell's CA.
+-- ca_cert is PublicKeyMaterial. DER has no fixed length, so it is
+-- bounded by fstp_witness::peer::MAX_CERT_LEN (16384), the longest
+-- certificate the witness reads.
 CREATE TABLE witness.cell_ca (
   cell_id       bytea  PRIMARY KEY CHECK (octet_length(cell_id) = 16),
-  ca_cert       bytea  NOT NULL,
+  ca_cert       bytea  NOT NULL CHECK (octet_length(ca_cert) BETWEEN 1 AND 16384),
   registered_at bigint NOT NULL
 );
 
 -- The anchor key history of each chain (ADR-010 "Keys"): the composite
 -- public keys a prepare's anchor signature may verify under. Old keys
 -- stay, so anchors signed before a rotation still verify.
+-- public_key is PublicKeyMaterial: a composite public key of 1984 bytes,
+-- the ML-DSA-65 key (1952) then the Ed25519 key (32).
 CREATE TABLE witness.anchor_key (
   cell_id       bytea    NOT NULL REFERENCES witness.cell_ca (cell_id),
   chain         smallint NOT NULL CHECK (chain IN (1, 2)),
-  public_key    bytea    NOT NULL,
+  public_key    bytea    NOT NULL CHECK (octet_length(public_key) = 1984),
   registered_at bigint   NOT NULL,
   PRIMARY KEY (cell_id, chain, public_key)
 );
