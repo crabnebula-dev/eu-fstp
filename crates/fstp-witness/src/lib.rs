@@ -12,28 +12,39 @@
 //!   and "Keys"). The service runs the anchor check before
 //!   [`ChainWitness::prepare`] and signs the receipt fields it returns.
 //!
-//! [`CATALOGUE`] holds the `witness.anchor` column map of design section
-//! 4.4, reviewed in W0. ADR-010 adds prepare, abort, in-doubt and restore
-//! records; design section 4.4 does not list their tables yet, so they
-//! are not here (ADR-010 open point 4).
+//! - [`wire`] frames the requests and replies of a witness connection.
+//! - [`peer`] tells the sender of a connection from its client
+//!   certificate, among the pinned cell CAs.
+//! - [`store`] is the PostgreSQL store of a SaaS witness, and
+//!   [`MIGRATIONS`] its migration set.
+//! - [`service`] is the run loop: the mutual TLS listener, the store and
+//!   the receipts, on one runtime through `fstp-rt` ([`serve`]).
+//! - [`lock`] is the async mutex the service and the cell's link use.
 //!
-//! Open design conflict, raised for Daniel and the lead before any lane
-//! writes the witness database store. The core numbers `witness_seq` per
-//! cell and chain from 1, as W1e does. It also lets a cell prepare the
-//! same `n` again with another link once the abort is recorded (ADR-010
-//! "Abort"). Design section 4.4 declares `witness_seq` UNIQUE across the
-//! whole table and `PRIMARY KEY (cell_id, chain, n)`. A second cell's
-//! first prepare then breaks the UNIQUE constraint, and a re-prepare of
-//! an aborted `n` breaks the key. [`CATALOGUE`] keeps the design's
-//! columns unchanged until the decision lands in ADR-010 open point 4.
+//! [`CATALOGUE`] holds the column maps of the witness database (design
+//! section 4.4): `witness.anchor` with the design's columns, and the
+//! receipt, withdrawal, CA and anchor key records that ADR-010 adds
+//! (open point 4). Lane int5 reading, reported to Daniel and the lead:
+//! the core numbers `witness_seq` per cell and chain from 1, and lets a
+//! cell prepare the same `n` again with another link once the abort is
+//! recorded (ADR-010 "Abort"). So `witness.anchor` is keyed by `(cell_id,
+//! chain, witness_seq)`, where design section 4.4 declares `witness_seq`
+//! UNIQUE over the whole table and `PRIMARY KEY (cell_id, chain, n)`. The
+//! columns are the design's.
 //!
-//! [`run`], the service over TLS and PostgreSQL, is not written yet. Its
-//! TLS and database wiring are missing.
+//! [`run`], the binary's entry, still refuses: the process configuration
+//! and the receipt key's custody entry are not designed yet (ADR-010
+//! "Keys", open point 6). [`serve`] is the run loop a world starts.
 
 pub mod chain_witness;
 pub mod file_store;
+pub mod lock;
 pub mod message;
+pub mod peer;
 pub mod receipt;
+pub mod service;
+pub mod store;
+pub mod wire;
 
 use fstp_audit::{CryptoError, DecodeError, Invalid};
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
@@ -44,6 +55,33 @@ pub use crate::chain_witness::{
 pub use crate::file_store::{FileRecord, decode_file_store, encode_file_store, load_file_store};
 pub use crate::message::{WitnessMessage, decode_witness_message, encode_witness_message};
 pub use crate::receipt::sign_receipt;
+pub use crate::service::{WitnessHandle, WitnessParts, serve};
+
+/// The witness migrations, in order (design sections 4.4 and 4.6):
+///
+/// 1. `meta`: `fstp_meta.placement` with kind 4 only, and the shared
+///    trigger function.
+/// 2. `apply_grant`: `fstp_migrate::catalogue::APPLY_GRANT_SQL` and
+///    `APPLY_GRANT_REVOKE_SQL`, the shared text of the application and
+///    vault sets, byte for byte.
+/// 3. `witness`: the witness tables of [`CATALOGUE`].
+pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
+    fstp_migrate::Migration::new(
+        1,
+        "meta",
+        include_str!("../migrations/witness/0001_meta.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        2,
+        "apply_grant",
+        include_str!("../migrations/witness/0002_apply_grant.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        3,
+        "witness",
+        include_str!("../migrations/witness/0003_witness.sql"),
+    ),
+];
 
 /// Why a witness operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +98,15 @@ pub enum WitnessError {
     Signing(CryptoError),
     /// The operation is not written yet. It names the operation.
     NotImplemented(&'static str),
+    /// The witness database failed or refused.
+    Store(store::StoreError),
+    /// The TLS configuration did not build.
+    Tls,
+    /// A registered CA certificate does not read, or has no
+    /// subjectKeyIdentifier.
+    BadCa,
+    /// A listener failed.
+    Io(std::io::ErrorKind),
 }
 
 impl std::fmt::Display for WitnessError {
@@ -70,6 +117,10 @@ impl std::fmt::Display for WitnessError {
             WitnessError::BadSignature => f.write_str("anchor signature does not verify"),
             WitnessError::Signing(e) => write!(f, "receipt signing failed: {e}"),
             WitnessError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
+            WitnessError::Store(e) => write!(f, "witness store: {e:?}"),
+            WitnessError::Tls => f.write_str("witness TLS configuration refused"),
+            WitnessError::BadCa => f.write_str("a registered CA certificate does not read"),
+            WitnessError::Io(k) => write!(f, "witness listener: {k:?}"),
         }
     }
 }
@@ -104,31 +155,93 @@ const fn open(name: &'static str) -> ColumnSpec {
     ColumnSpec { name, class: None }
 }
 
-/// The tables of the witness database (design section 4.4).
-pub const CATALOGUE: &[TableSpec] = &[TableSpec {
-    schema: "witness",
-    name: "anchor",
-    class: TableClass::AuditEvent,
-    columns: &[
-        col("cell_id", ColumnClass::RandomId),
-        col("chain", ColumnClass::Enum),
-        col("n", ColumnClass::Sequence),
-        open("link"),
-        col("at", ColumnClass::Time),
-        open("signature"),
-        col("received_at", ColumnClass::Time),
-        col("witness_seq", ColumnClass::Sequence),
-        open("witness_link"),
-    ],
-}];
+/// The tables of the witness database (design section 4.4, ADR-010 open
+/// point 4), in the order the migrations create them.
+pub const CATALOGUE: &[TableSpec] = &[
+    TableSpec {
+        schema: "fstp_meta",
+        name: "placement",
+        class: TableClass::Placement,
+        columns: &[
+            col("cluster_id", ColumnClass::RandomId),
+            col("kind", ColumnClass::Enum),
+        ],
+    },
+    TableSpec {
+        schema: "witness",
+        name: "anchor",
+        class: TableClass::AuditEvent,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            col("chain", ColumnClass::Enum),
+            col("n", ColumnClass::Sequence),
+            open("link"),
+            col("at", ColumnClass::Time),
+            open("signature"),
+            col("received_at", ColumnClass::Time),
+            col("witness_seq", ColumnClass::Sequence),
+            open("witness_link"),
+        ],
+    },
+    TableSpec {
+        schema: "witness",
+        name: "receipt",
+        class: TableClass::AuditEvent,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            col("chain", ColumnClass::Enum),
+            col("witness_seq", ColumnClass::Sequence),
+            open("signature"),
+        ],
+    },
+    TableSpec {
+        schema: "witness",
+        name: "withdrawal",
+        class: TableClass::AuditEvent,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            col("chain", ColumnClass::Enum),
+            col("witness_seq", ColumnClass::Sequence),
+            col("kind", ColumnClass::Enum),
+            col("n", ColumnClass::Sequence),
+            open("link"),
+            col("received_at", ColumnClass::Time),
+            open("witness_link"),
+        ],
+    },
+    TableSpec {
+        schema: "witness",
+        name: "cell_ca",
+        class: TableClass::Operational,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            open("ca_cert"),
+            col("registered_at", ColumnClass::Time),
+        ],
+    },
+    TableSpec {
+        schema: "witness",
+        name: "anchor_key",
+        class: TableClass::Operational,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            col("chain", ColumnClass::Enum),
+            open("public_key"),
+            col("registered_at", ColumnClass::Time),
+        ],
+    },
+];
 
-/// Runs the witness until shutdown. Not written yet: the service needs
-/// its TLS and database wiring. The witness core, the anchor check and
-/// receipt signing it would run are written.
+/// The binary's entry. It refuses: the process configuration and the
+/// receipt key's custody entry are not designed (ADR-010 "Keys", open
+/// point 6). [`serve`] is the run loop, which a world starts with the
+/// parts it holds.
 ///
 /// # Errors
 ///
 /// [`WitnessError::NotImplemented`].
 pub fn run() -> Result<(), WitnessError> {
-    Err(WitnessError::NotImplemented("fstp_witness::run"))
+    Err(WitnessError::NotImplemented(
+        "fstp_witness::run: the process configuration and the receipt key's custody entry (ADR-010 Keys, open point 6); fstp_witness::serve is the run loop",
+    ))
 }

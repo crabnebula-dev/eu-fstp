@@ -8,19 +8,17 @@
 //! parser. Option replies carry the WebAuthn JSON members that
 //! `parseRequestOptionsFromJSON` reads, with base64url challenges.
 //!
+//! A verified step-up assertion commits `GrantStepUp` under its challenge
+//! id, through `fstp_cell_core::gate::admit_verified_stepup`. An
+//! invitation registration commits the first passkey, through
+//! `fstp_cell_core::gate::admit_invitation_enrolment` (lane int5).
+//!
 //! Steps that need an API the sources do not offer yet fail closed with
 //! 501 after every check that applies before them:
-//! - `GrantStepUp` after a verified step-up assertion: the route asks
-//!   `fstp_cell_core::gate::admit_stepup_grant` and runs the grant under
-//!   the challenge id. That admission refuses until the gate can verify
-//!   the step-up proof (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`).
 //! - `EndSession` and `RevokeCredential`: `decide` takes no session rows
 //!   (`fstp_cell_core::RouteInput::SessionRows`).
 //! - Adding a passkey: the step-up digest of `AddPasskey` names a
 //!   credential id that the options call cannot know yet.
-//! - The invitation enrolment: the options call and the register checks
-//!   are built (design section 8.3), and the commit needs
-//!   [`INVITATION_SEAM`].
 //! - Self-registration, the recovery request and its email proof, and the
 //!   recovery completion: their routes are not written yet. Int3 added
 //!   `admit_recovery_request` and `admit_recovery_completion`, which
@@ -32,10 +30,11 @@ use fstp_auth::ceremony::{
 };
 use fstp_auth::codec::Token;
 use fstp_auth::session::{LoginRefusal, may_end_session, verify_passkey_login};
-use fstp_auth::stepup::{Granted, StepUpRequest, challenge as stepup_challenge, verify_step_up};
+use fstp_auth::stepup::{StepUpRequest, challenge as stepup_challenge};
 use fstp_auth::{Method, SessionLifetimes, SessionView};
 use fstp_cell_core::gate::{
-    Action, HighRiskAction, ReadAction, RouteDeny, admit_stepup_grant, management_holders,
+    Action, HighRiskAction, ReadAction, RouteDeny, admit_invitation_enrolment,
+    admit_verified_stepup, management_holders,
 };
 use fstp_cell_core::{CellCommand, CellState};
 use fstp_domain::id::AccountId;
@@ -494,14 +493,6 @@ const MAX_ATTESTATION: usize = 64 * 1024;
 /// 8.1): EdDSA, ES256 and RS256, in the cell's order of preference.
 const ALGORITHMS: [&str; 3] = ["-8", "-7", "-257"];
 
-/// The invitation enrolment cannot commit yet: `fstp-cell-core` has no
-/// command form and no gate admission for it, and `CellState` finds no
-/// invitation by its token digest. Provisioning has no command that
-/// records the first admin's `InvitationIssued` either (design section
-/// 9.2 step 10). The register route therefore fails closed with 501 after
-/// its own checks, and records nothing.
-pub const INVITATION_SEAM: &str = "fstp_cell_core admits no invitation enrolment (design section 8.3): no AuthCommand records InvitationConsumed and FirstAdminEnrolled with the verified passkey, no gate admission takes the invitation proof, CellState has no lookup of an invitation by its token digest, and no command records the provisioning InvitationIssued of design section 9.2 step 10";
-
 /// The invitation proof in the `{token}` path parameter: 64 lowercase
 /// hexadecimal digits for one token, or 128 for the two halves of a split
 /// first-admin token, first half first (design section 8.3, Q35, a
@@ -542,7 +533,8 @@ fn proof_digest(proof: &InvitationProof) -> [u8; 32] {
 /// call cannot tell which, since it never looks the invitation up. So it
 /// asks for UV always, and an authenticator never skips UV only to be
 /// refused at enrolment once its challenge is spent. Interim, pending
-/// [`INVITATION_SEAM`]: the enrolment applies the rule of the invitation.
+/// The enrolment applies the rule of the invitation
+/// (`fstp_cell_core::gate::admit_invitation_enrolment`).
 fn creation_options<B>(ctx: &Ctx<B>, challenge: &[u8; 32], user: &[u8; 16]) -> Value {
     let host = ctx.cfg.rp.parts().0.to_owned();
     let mut selection = Object::with_capacity(2);
@@ -664,13 +656,14 @@ fn decode_registration(bytes: &[u8]) -> Result<RegistrationBody, BodyRefusal> {
 /// otherwise). A single token is checked without the UV rule, which
 /// depends on its invitation.
 ///
-/// What follows needs [`INVITATION_SEAM`]: the invitation of the proof
-/// must be found and admitted (`fstp_auth::ceremony::admit_invitation`),
-/// the passkey verified again with the UV rule of the invitation and a
-/// fresh credential id (`fstp_auth::ceremony::enrol_by_invitation`), and
-/// the batch must record `InvitationConsumed`, `CredentialRegistered` and,
-/// for the first admin, `FirstAdminEnrolled`. The route fails closed with
-/// 501 there, with the challenge spent, and records nothing.
+/// Then `fstp_cell_core::gate::admit_invitation_enrolment` finds the
+/// invitation of the proof and admits it (`fstp_auth::ceremony::admit_invitation`),
+/// and verifies the passkey again with the UV rule of the invitation and
+/// a fresh credential id. Any refusal there is 401, the same reply for
+/// every cause, with the challenge spent. The batch records
+/// `InvitationConsumed`, `CredentialRegistered` and, for the first admin,
+/// `FirstAdminEnrolled` and the tenant admin grant. The reply names the
+/// new head, as a command reply does.
 pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
     let proof = match invitation_proof(req) {
         Ok(p) => p,
@@ -710,14 +703,25 @@ pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request)
     // Only the first admin's invitation is drawn as two halves (Q35), so
     // a split proof enrols a management passkey, which needs UV (ADR-008
     // "User verification"). A single token is checked again with the rule
-    // of its invitation once INVITATION_SEAM closes
-    // (`enrol_by_invitation`: holdings or first admin).
+    // of its invitation by the admission below (holdings or first admin).
     let uv_required = matches!(proof, InvitationProof::Halves(..));
     if verify_new_passkey(&registration, uv_required).is_err() {
         return login_refused(Rule::Adr008);
     }
-    // INVITATION_SEAM: no admission and no command records the enrolment.
-    Reply::not_built()
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let command_id = match random::<16>() {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+    let now = ctx.backend.now();
+    match admit_invitation_enrolment(&s, &proof, &registration, command_id, now) {
+        Ok(admitted) => run(ctx, admitted).await,
+        Err(RouteDeny::Gate(d)) => denied(d),
+        Err(_) => login_refused(Rule::Adr008),
+    }
 }
 
 /// The session's own live credentials.
@@ -802,12 +806,8 @@ pub(crate) async fn stepup_options<B: Backend>(
 /// grant, never as a second grant (ADR-007). The route reads the
 /// challenge and never deletes it.
 ///
-/// The grant goes through the gate's route admission
-/// `fstp_cell_core::gate::admit_stepup_grant` ([`grant_stepup`]). That
-/// admission refuses until the gate can verify the step-up proof
-/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`). A verified step-up
-/// therefore fails closed with 501 after every check, and nothing is
-/// recorded.
+/// The gate verifies the assertion itself and admits the grant through
+/// `fstp_cell_core::gate::admit_verified_stepup` ([`grant_stepup`]).
 pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Caller) -> Reply {
     let b = match decode_assertion(&req.body) {
         Ok(b) => b,
@@ -851,9 +851,6 @@ pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Cal
         Ok(c) => c,
         Err(f) => return unavailable(f),
     };
-    let Some((owner, stored)) = s.auth().stored_credential(&credential, count) else {
-        return stepup_refused();
-    };
     let request = StepUpRequest {
         id: row.id,
         cell: ctx.cfg.cell,
@@ -861,67 +858,67 @@ pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Cal
         nonce: row.nonce,
         rp: ctx.cfg.rp.clone(),
     };
-    match verify_step_up(&caller.view, &request, &b.assertion, &stored, owner, now) {
-        Ok(granted) => {
-            if let Err(f) = ctx
-                .backend
-                .set_sign_count(credential.clone(), granted.assertion.sign_count)
-                .await
-            {
-                return unavailable(f);
-            }
-            grant_stepup(ctx, &s, caller, &granted, &credential, row.id, now).await
-        }
-        // A regressed sign count should record `CredentialSuspect`, as at
-        // login. No auth command records it yet.
-        Err(_) => stepup_refused(),
-    }
+    grant_stepup(ctx, &s, caller, &request, &b.assertion, count, now).await
 }
 
-/// Commits `GrantStepUp` for the verified step-up assertion `granted`, of
-/// the credential `credential`, through the gate's route admission
-/// `fstp_cell_core::gate::admit_stepup_grant` (design section 8.4, I-78).
+/// Commits `GrantStepUp` for the step-up assertion `assertion` over the
+/// challenge of `request`, through the gate's route admission
+/// `fstp_cell_core::gate::admit_verified_stepup` (design section 8.4,
+/// I-78). The gate verifies the assertion with UV, and the credential's
+/// ownership by the session's account, from the ledger and the stored
+/// sign count `count`.
 ///
-/// The command runs under the challenge id `challenge` as its command id,
-/// so one challenge grants at most one step-up: a replayed assertion runs
-/// under the same command id, and the store answers it as a duplicate of
-/// the first grant, never as a second grant (ADR-007). The step-up id is
-/// that challenge id too (`fstp_cell_core::stepup_id`), so the action
-/// request names it.
+/// The command runs under the challenge id as its command id, so one
+/// challenge grants at most one step-up: a replayed assertion runs under
+/// the same command id, and the store answers it as a duplicate of the
+/// first grant, never as a second grant (ADR-007). The step-up id is that
+/// challenge id too (`fstp_cell_core::stepup_id`), so the action request
+/// names it.
 ///
-/// Every gate refusal answers through `denied`. While the gate cannot
-/// verify the step-up proof it refuses with
-/// `Deny::NotImplemented(ROUTE_ADMISSION_SEAM)`, so the route answers 501
-/// and records nothing. A refusal of the step-up itself is 403 under
-/// I-78. An admission that names another command id, session or digest
-/// than this route verified is refused with 500, before the engine.
+/// A gate refusal of the session answers through `denied`, and a refusal
+/// of the step-up itself is 403 under I-78. A regressed sign count should
+/// record `CredentialSuspect`, as at login. No auth command records it
+/// yet, so it is refused only. An admission that names another command
+/// id, session or digest than this route asked for is refused with 500,
+/// before the engine. The new sign count is stored before the commit.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the route context, the state, the caller, the challenge, the assertion, its sign count and the instant"
+)]
 async fn grant_stepup<B: Backend>(
     ctx: &Ctx<B>,
     s: &CellState,
     caller: &Caller,
-    granted: &Granted,
-    credential: &[u8],
-    challenge: [u8; 16],
+    request: &StepUpRequest,
+    assertion: &AssertionResponse,
+    count: u32,
     now: Timestamp,
 ) -> Reply {
-    let digest = granted.stepup.action_digest;
-    if granted.stepup.id != challenge {
-        return stepup_refused();
-    }
-    let admitted = match admit_stepup_grant(s, &caller.view, &granted.stepup, credential, now) {
-        Ok(a) => a,
-        Err(RouteDeny::Gate(d)) => return denied(d),
-        Err(_) => return stepup_refused(),
-    };
+    let (admitted, granted) =
+        match admit_verified_stepup(s, &caller.view, request, assertion, count, now) {
+            Ok(x) => x,
+            Err(RouteDeny::Gate(d)) => return denied(d),
+            Err(_) => return stepup_refused(),
+        };
     let names_this_grant = matches!(
         admitted.action(),
         Action::Command(CellCommand::Auth(fstp_auth::AuthCommand::GrantStepUp {
             session,
             action_digest,
-        })) if *session == caller.row.id && *action_digest == digest
+        })) if *session == caller.row.id && *action_digest == request.action_digest
     );
-    if admitted.command_id() != Some(challenge) || !names_this_grant {
+    if admitted.command_id() != Some(request.id) || !names_this_grant {
         return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+    }
+    if let Err(f) = ctx
+        .backend
+        .set_sign_count(
+            assertion.credential_id.clone(),
+            granted.assertion.sign_count,
+        )
+        .await
+    {
+        return unavailable(f);
     }
     run(ctx, admitted).await
 }

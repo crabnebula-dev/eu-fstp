@@ -25,24 +25,33 @@
 //! - A commit the store refused because its step-up went stale after
 //!   admission is [`engine::stepup_refusal`], a refusal naming I-78.
 //!
+//! # The serving cell (lane int5)
+//!
+//! - [`process::start`] starts a cell over its PostgreSQL database: the
+//!   writer and app pools, [`engine::pg::PgCellStore`] with the witness
+//!   link [`witness::link::TlsWitnessLink`], the first start's key chain,
+//!   [`engine::startup::start_pg`], and the tunnel, health and internal
+//!   listeners. A world starts its cells this way.
+//! - [`routes::pg::PgBackend`] is the route backend over the engine and
+//!   the operational rows of the application database.
+//! - [`vault::HttpVaultClient`] is the vault client over the vault's
+//!   internal mutual TLS listener.
+//!
 //! # What is not built here yet
 //!
-//! - [`engine::pg::PgCellStore`] is the [`engine::CellStore`] over
-//!   `fstp_pgstore::PgRecordStore`. It reports the chain link and the
-//!   witness receipt of each append, and [`engine::startup::start_pg`]
-//!   starts a cell over it. [`run`] does not build one yet: it needs the
-//!   database pool, the custody backend and the keystore from the
-//!   configuration, and the witness transport below.
-//! - The witness wire format and service are lane W2g's
-//!   (`fstp_witness::run` is not written). [`witness::WitnessLink`] is the
-//!   seam a transport fills.
+//! - [`run`], the binary's entry, does not start a cell yet: the
+//!   configuration names no database logins, custody backend, keys,
+//!   certificates or witness endpoint (design section 9.5 fixes no
+//!   grammar). [`process::start`] takes them as parts.
 
 pub mod config;
 pub mod egress;
 pub mod engine;
 pub mod http;
+pub mod process;
 pub mod routes;
 pub mod tasks;
+pub mod vault;
 pub mod witness;
 
 pub use config::CellConfig;
@@ -131,11 +140,9 @@ pub fn read_config(path: &std::path::Path) -> Result<Vec<u8>, CellError> {
 /// # Errors
 ///
 /// [`CellError::Config`] for a missing or refused configuration. Then
-/// [`CellError::NotImplemented`] naming what a serving cell still needs:
-/// the witness transport (lane W2g), and the database pool, custody and
-/// keystore built from the configuration for
-/// [`engine::startup::start_pg`] (lane W3a). It never serves over an
-/// in-memory ledger.
+/// [`CellError::NotImplemented`]: the configuration names none of the
+/// parts of [`process::start`] yet. It never serves over an in-memory
+/// ledger.
 pub fn run() -> Result<(), CellError> {
     let path = std::env::var_os("FSTP_CELL_CONFIG")
         .ok_or(CellError::Config(config::ConfigError::Missing))?;
@@ -143,6 +150,6 @@ pub fn run() -> Result<(), CellError> {
     let cfg = config::decode(&bytes).map_err(CellError::Config)?;
     let _ = cfg;
     Err(CellError::NotImplemented(
-        "fstp_cell::run: the witness transport (lane W2g), and the pool, custody and keystore from the configuration for engine::startup::start_pg (lane W3a)",
+        "fstp_cell::run: the configuration names no database logins, custody, keys, certificates or witness endpoint for fstp_cell::process::start (design section 9.5)",
     ))
 }

@@ -155,8 +155,27 @@ pub struct Invitation {
     pub first_admin: bool,
     /// Whether the token is drawn as two halves (Q35).
     pub split: bool,
+    /// The entry instant of its `InvitationIssued` record. The 72-hour
+    /// lifetime runs from it (ADR-008, Q37).
+    pub issued_at: Timestamp,
     /// Whether an enrolment used it.
     pub consumed: bool,
+}
+
+impl Invitation {
+    /// The invitation as the `fstp-auth` ceremony rules read it, under its
+    /// id `id` (`fstp_auth::ceremony::admit_invitation`).
+    pub fn ceremony_view(&self, id: [u8; 16]) -> fstp_auth::ceremony::Invitation {
+        fstp_auth::ceremony::Invitation {
+            id,
+            account: self.account,
+            token_digest: self.token_digest,
+            first_admin: self.first_admin,
+            split: self.split,
+            issued_at: self.issued_at,
+            consumed: self.consumed,
+        }
+    }
 }
 
 /// The auth part: credentials, step-ups, ended sessions, recovery cases
@@ -269,6 +288,58 @@ impl AuthState {
     /// Whether `account` enrolled as the first tenant admin.
     pub fn first_admin_enrolled(&self, account: AccountId) -> bool {
         self.first_admins.contains(&account)
+    }
+
+    /// Whether any account enrolled as the first tenant admin. Provisioning
+    /// then issues no further first-admin invitation (ADR-008 "Ceremonies
+    /// and the first passkey").
+    pub fn any_first_admin(&self) -> bool {
+        !self.first_admins.is_empty()
+    }
+
+    /// The invitation whose stored token digest is `digest`, with its id
+    /// (design section 8.3). The comparison runs in constant time over
+    /// every invitation. Two invitations under one digest find neither, so
+    /// a proof never picks between them (fail closed).
+    pub fn invitation_by_digest(&self, digest: &[u8; 32]) -> Option<([u8; 16], Invitation)> {
+        let mut found = None;
+        let mut matches = 0usize;
+        for (id, inv) in &self.invitations {
+            if fstp_crypto::constant_time_eq(&inv.token_digest, digest) {
+                matches = matches.saturating_add(1);
+                found = Some((*id, *inv));
+            }
+        }
+        if matches == 1 { found } else { None }
+    }
+
+    /// Whether a first-admin invitation is unused and within its 72 hours
+    /// at `now`. An expired one does not block a new one
+    /// (`fstp_auth::ceremony::Issuer::Provisioning`).
+    pub fn first_admin_invitation_open(&self, now: Timestamp) -> bool {
+        self.invitations.values().any(|i| {
+            i.first_admin
+                && !i.consumed
+                && now
+                    .micros()
+                    .checked_sub(i.issued_at.micros())
+                    .is_some_and(|age| (0..=fstp_auth::ceremony::INVITATION_US).contains(&age))
+        })
+    }
+
+    /// Whether any auth record names `account`: a credential, an
+    /// invitation that an enrolment used, a recovery case or a first-admin
+    /// enrolment. An invitation that no enrolment used does not count
+    /// (`invitee_new` of `fstp_auth::ceremony::issue_invitation`), so the
+    /// account of an expired invitation may be invited again.
+    pub fn names_account(&self, account: AccountId) -> bool {
+        self.credentials.values().any(|c| c.account == account)
+            || self
+                .invitations
+                .values()
+                .any(|i| i.account == account && i.consumed)
+            || self.recoveries.values().any(|r| r.account == account)
+            || self.first_admins.contains(&account)
     }
 
     /// Whether a session of `account` that started at `started` began at or
@@ -853,6 +924,7 @@ fn fold_auth(
                     token_digest: *token_digest,
                     first_admin: *first_admin,
                     split: *split,
+                    issued_at: at,
                     consumed: false,
                 },
             );

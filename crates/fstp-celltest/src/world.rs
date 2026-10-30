@@ -15,18 +15,21 @@
 //! keeps a file store. So no self-hosted world shares a cluster with a
 //! SaaS world in the same test binary.
 //!
-//! Status after lane W3b: worlds without cells start. A world with cells
-//! prepares each self-operated cluster and provisions each cell as
-//! `fstp-control` and `fstp-pgagent` would, from the production role
-//! plan, jobs, `pg_hba` renderer and migration sets ([`World::start`],
-//! "Provisioning"). It then refuses with [`NotImplemented`], naming the
-//! first production part that is still missing ([`World::start`],
-//! "Cells").
+//! Status after lane int5: a SaaS world with cells prepares each
+//! self-operated cluster and provisions each cell as `fstp-control` and
+//! `fstp-pgagent` would, from the production role plan, jobs, `pg_hba`
+//! renderer and migration sets ([`World::start`], "Provisioning"). It then
+//! starts real cells: the witness over its database, the edge on
+//! loopback, and per cell its vault and its cell process over their
+//! databases, with the first admin's split invitation ([`World::start`],
+//! "Cells"). A self-hosted world with cells still refuses with
+//! [`NotImplemented`]: its local witness keeps a file store, which has no
+//! run loop.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::ErrorKind;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -111,9 +114,10 @@ impl From<NotImplemented> for WorldError {
 }
 
 /// One HTTP request to a cell listener, as a browser on the cell origin
-/// sends it. The harness adds no field: the caller sets `Host`, `Origin`,
-/// `Cookie` and `Content-Type` itself, so a test controls every byte the
-/// cell sees above TLS.
+/// sends it. The caller sets `Host`, `Origin`, `Cookie` and `Content-Type`
+/// itself. The harness adds `Connection: close` and the `Content-Length`
+/// of the body only, so a test controls every other byte the cell sees
+/// above TLS.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
     /// The method, such as `POST`.
@@ -207,21 +211,18 @@ impl fmt::Debug for FirstAdminInvitation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CellUrls {
     /// The cell origin through the world's edge, `https://<host>/`. The
-    /// edge listens on loopback port 443, since the relying party origin
-    /// carries no port (I-20, [`CELL_FRONT_SEAM`]).
+    /// relying party origin carries no port (I-20,
+    /// `fstp_webauthn::RelyingParty`), and the front's `Origin` check and
+    /// the client data check compare it byte for byte. So the origin has
+    /// no port only when loopback port 443 reaches the edge: the edge
+    /// listens there, or a forwarder does. Otherwise the edge's port is in
+    /// the URL, and a browser on it is refused every POST with 403.
     pub cell: String,
     /// The vault origin through the same edge, `https://id.<host>/`.
     pub vault: String,
     /// The loopback health listener, `http://127.0.0.1:<port>/healthz`.
     pub health: String,
 }
-
-/// The seam of the transports and reads of a started cell (lane W3b).
-/// A [`CellHandle`] exists only once [`World::start`] has started its
-/// cell, so these refusals are never reached before the cell start of
-/// lane W3b lands. That lane replaces each body.
-const CELL_HANDLE_SEAM: &str =
-    "fstp_celltest::world::CellHandle transports and reads of a started cell (lane W3b)";
 
 /// The login credentials of a cell's roles, by database and role. The
 /// harness mints them at provisioning, as the cell and vault components
@@ -238,7 +239,11 @@ pub struct CellHandle {
     id: [u8; 16],
     host: String,
     logins: CellLogins,
+    runtime: Option<std::sync::Arc<CellRuntime>>,
 }
+
+/// The refusal of a call on a cell that runs no listener.
+const NOT_STARTED: &str = "fstp_celltest::world::CellHandle of a cell that runs no listener";
 
 impl CellHandle {
     /// The login of `role` on the cell's `db` database, as provisioning
@@ -282,18 +287,22 @@ impl CellHandle {
         )
     }
 
+    fn runtime(&self) -> Result<&CellRuntime, WorldError> {
+        self.runtime
+            .as_deref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
     /// Sends `req` to the cell's tunnel listener, the way a browser
     /// reaches it: through the world's edge, with the cell host as SNI
-    /// (design sections 1.4 and 9.4, ADR-009).
+    /// (design sections 1.4 and 9.4, ADR-009). The harness adds only
+    /// `Connection: close`, and the answer is read to its end.
     ///
     /// # Errors
     ///
     /// Fails when the transport fails. A reply of any status is `Ok`.
     pub fn request(&self, req: &HttpRequest) -> Result<HttpReply, WorldError> {
-        let _ = req;
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            CELL_HANDLE_SEAM,
-        )))
+        self.runtime()?.request(&self.host, req)
     }
 
     /// Where the cell's listeners are reached on this host.
@@ -302,9 +311,18 @@ impl CellHandle {
     ///
     /// Fails when the cell runs no listener.
     pub fn urls(&self) -> Result<CellUrls, WorldError> {
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            CELL_HANDLE_SEAM,
-        )))
+        let rt = self.runtime()?;
+        let port = rt.services.edge.addr.port();
+        let suffix = if rt.port_443_reaches_edge(&self.host) {
+            String::new()
+        } else {
+            format!(":{port}")
+        };
+        Ok(CellUrls {
+            cell: format!("https://{}{suffix}/", self.host),
+            vault: format!("https://id.{}{suffix}/", self.host),
+            health: format!("http://{}/healthz", rt.health),
+        })
     }
 
     /// Sends `req` to the cell's loopback health listener (design section
@@ -314,10 +332,7 @@ impl CellHandle {
     ///
     /// Fails when the transport fails. A reply of any status is `Ok`.
     pub fn health(&self, req: &HttpRequest) -> Result<HttpReply, WorldError> {
-        let _ = req;
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            CELL_HANDLE_SEAM,
-        )))
+        self.runtime()?.health(req)
     }
 
     /// The first tenant admin's invitation, as the two staff channels
@@ -328,9 +343,7 @@ impl CellHandle {
     ///
     /// Fails when the world did not receive both halves.
     pub fn first_admin_invitation(&self) -> Result<FirstAdminInvitation, WorldError> {
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            CELL_HANDLE_SEAM,
-        )))
+        Ok(lock(&self.runtime()?.running).invitation)
     }
 
     /// The cell's ledger after decryption, read through the cell's own
@@ -343,9 +356,24 @@ impl CellHandle {
     pub fn ledger(
         &self,
     ) -> Result<Vec<fstp_ledger::Entry<fstp_cell_core::CellRecord>>, WorldError> {
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            CELL_HANDLE_SEAM,
-        )))
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        let cell = running
+            .cell
+            .as_ref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        rt.services
+            .rt
+            .block_on(cell.ledger())
+            .map_err(|e| WorldError::Store(format!("the cell ledger: {e}")))
+    }
+}
+
+impl Drop for CellHandle {
+    fn drop(&mut self) {
+        if let Some(rt) = self.runtime.take() {
+            rt.stop(&self.id);
+        }
     }
 }
 
@@ -382,8 +410,7 @@ impl World {
     /// mode runs a real cell. Its handle is cell 0. Its databases follow the
     /// grammar `^[cv]_[0-9a-f]{32}$` of design section 4.1: `c_<cell>` on
     /// the application cluster and `v_<cell>` on the vault cluster. An empty
-    /// cycle runs on it. This example is red until a cell starts (see
-    /// "Cells" below).
+    /// cycle runs on it.
     ///
     /// ```
     /// use fstp_celltest::world::{
@@ -478,10 +505,9 @@ impl World {
     /// Readings of lane W3b:
     ///
     /// - The migration sets run through `psql` with `SET ROLE` to the
-    ///   migrator, as the `fstp-control` provisioning tests run them.
-    ///   `fstp-celltest` cannot name `fstp-pgwire`, so it cannot run the
-    ///   `fstp_migrate` runner, and the sets leave no `fstp_migrate` ledger.
-    ///   The cell start needs that runner ([`start_cell`]).
+    ///   migrator, as the `fstp-control` provisioning tests run them, so
+    ///   the sets leave no `fstp_migrate` ledger. No cell or vault start
+    ///   reads one.
     /// - The roles get LOGIN at creation, through `fstp-pgtest`. The
     ///   `SetRoleCredential` job is not played, since no SCRAM verifier
     ///   helper exists, so `CreateRoles` takes its branch for an existing
@@ -489,19 +515,30 @@ impl World {
     /// - The cluster ids are random per cluster and process. No
     ///   `cp.cluster`, `cp.cell` or `cp.job` row is written, since no
     ///   production code writes them yet.
-    /// - The service roles of design section 4.1, such as `cp_service`
-    ///   and `witness_service`, are not created. No world part runs a
-    ///   service that would log in as one.
+    /// - Of the service roles of design section 4.1, only
+    ///   `witness_service` is created, with INSERT and SELECT on the
+    ///   witness records and SELECT only on the registry of cell CAs and
+    ///   anchor keys, which provisioning writes as the migrator. No world
+    ///   part runs the control plane, so `cp_service` is not.
+    /// - After the plan's grants, the rows of [`PLAN_GAPS`] are granted:
+    ///   the plan grants no role the placement marker that the I-83 start
+    ///   checks read, and the vault role no right on
+    ///   `vault.p17_condition`.
     ///
     /// # Cells
     ///
     /// Both cell databases provision completely, steps 4 to 7, with
-    /// their placement rows and grant rows (lane int4). Past that, the
-    /// `witness` service set has no migration directory, so the service
-    /// databases refuse ([`missing_service_seam`]). Then a cell starts
-    /// through `fstp_cell::engine::startup::start_pg`, whose production
-    /// parts do not exist yet ([`start_cell`]). A world never stands in
-    /// its own parts for them, so no sweep passes on the harness.
+    /// their placement rows and grant rows (lane int4). The `cp` and
+    /// `witness` service databases follow. Then each cell starts
+    /// ([`start_cell`], lane int5), with the production parts only:
+    /// `fstp_witness::serve` over the witness database and
+    /// `fstp_vault::service::serve` over `v_<cell>`, then
+    /// `fstp_cell::process::start` over `c_<cell>`, which runs
+    /// `fstp_cell::engine::startup::start_pg`. The world holds the test
+    /// PKI, the custody roots and the edge, as design section 14.3 lists
+    /// them, and reaches every cell through the edge with the cell host as
+    /// SNI ([`CellHandle::request`]). The witness and the edge serve every
+    /// world of the process. A cell stops when its handle drops.
     ///
     /// # Errors
     ///
@@ -644,6 +681,17 @@ impl World {
         self.clusters.iter().find(|c| c.kind == kind)
     }
 
+    /// The services of the world, once a cell started. A world without
+    /// cells starts none.
+    fn services(&self) -> Result<&'static Services, WorldError> {
+        self.cells
+            .iter()
+            .find_map(|c| c.runtime.as_ref().map(|r| r.services))
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(
+                WITNESS_SEAM,
+            )))
+    }
+
     /// The witness's receipt public keys, encoded, as each cell of the
     /// world pins them (ADR-010 "Keys", I-90). A test checks every stored
     /// receipt under this set.
@@ -652,27 +700,60 @@ impl World {
     ///
     /// Fails when the world runs no witness.
     pub fn witness_keys(&self) -> Result<Vec<Vec<u8>>, WorldError> {
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            WITNESS_SEAM,
-        )))
+        Ok(vec![self.services()?.witness.receipt_public_key()])
     }
 
-    /// Where the world's witness is reached on this host.
+    /// Where the world's witness is reached on this host. It speaks the
+    /// framed protocol of `fstp_witness::wire` over mutual TLS, so the
+    /// URL names its scheme `https` for the TLS only.
     ///
     /// # Errors
     ///
     /// Fails when the world runs no witness.
     pub fn witness_url(&self) -> Result<String, WorldError> {
-        Err(WorldError::NotImplemented(NotImplemented::new(
-            WITNESS_SEAM,
-        )))
+        Ok(format!(
+            "https://{}/",
+            self.services()?.witness.local_addr()
+        ))
+    }
+
+    /// The certificate of the CA that signs the world's public host
+    /// certificates, PEM. A browser that trusts it reaches the cell and
+    /// vault origins without a certificate warning (design section 9.2
+    /// step 5, where a public CA signs them).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the world runs no cell.
+    pub fn origin_ca_pem(&self) -> Result<Vec<u8>, WorldError> {
+        Ok(self.services()?.origin.pem.clone())
+    }
+
+    /// Where the world's edge listens on loopback.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the world runs no cell.
+    pub fn edge_addr(&self) -> Result<SocketAddr, WorldError> {
+        Ok(self.services()?.edge.addr)
     }
 }
 
-/// The seam of the world's witness. No world runs one yet: the witness
-/// service and its database store are not written (`fstp_witness::run`,
-/// lane W2g), and no cell starts without one ([`World::start`]).
-const WITNESS_SEAM: &str = "fstp_celltest::world::World witness: the witness service and its store (fstp_witness::run, lane W2g)";
+/// A world ends with its handle: each cell stops (its listeners, its
+/// engine and its vault drain, [`CellHandle`]), and its databases, roles
+/// and `pg_hba` lines go at the next world start, as those of a failed
+/// start do. So the shared clusters hold the cells of live worlds only.
+impl Drop for World {
+    fn drop(&mut self) {
+        let ids: Vec<CellId> = self.cells.iter().map(|c| CellId(c.id)).collect();
+        self.cells.clear();
+        retire(&self.spec, &self.clusters, &ids);
+    }
+}
+
+/// The refusal of a world part that only a world with a started cell
+/// runs: the witness and the edge start with the first cell.
+const WITNESS_SEAM: &str = "fstp_celltest::world::World witness: the witness and the edge start with the first cell of the process";
 
 /// A fresh cell id and its production role plan (I-82).
 fn cell_plan() -> Result<RolePlan, WorldError> {
@@ -728,6 +809,9 @@ struct ClusterState {
     /// The outcome of the service databases, once they were tried. A
     /// failure stays, so no later world runs over half a database.
     services: Option<Result<(), WorldError>>,
+    /// The login of the service role of the cluster's service database:
+    /// `witness_service` on the witness cluster (design section 4.1).
+    service: Option<RoleLogin>,
 }
 
 /// The state of the cluster `name`, created on first use.
@@ -748,6 +832,7 @@ fn cluster_state(name: &str) -> Result<&'static Mutex<ClusterState>, WorldError>
         cells: Vec::new(),
         failed: Vec::new(),
         services: None,
+        service: None,
     })));
     states.insert(name.to_owned(), state);
     Ok(state)
@@ -923,7 +1008,15 @@ fn drop_cell(cluster: &ClusterHandle, cell: CellId) -> Result<(), WorldError> {
 /// Marks every cell of `plans` as failed on its clusters, so the next
 /// world start drops what this one provisioned ([`prepare_cluster`]).
 fn remember_failed(spec: &WorldSpec, clusters: &[ClusterHandle], plans: &[RolePlan]) {
-    for (i, plan) in plans.iter().enumerate() {
+    let cells: Vec<CellId> = plans.iter().map(|p| p.cell).collect();
+    retire(spec, clusters, &cells);
+}
+
+/// Marks each cell of `cells`, at its index, as done on its clusters, so
+/// the next world start drops its databases, roles and `pg_hba` lines
+/// ([`prepare_cluster`]).
+fn retire(spec: &WorldSpec, clusters: &[ClusterHandle], cells: &[CellId]) {
+    for (i, cell) in cells.iter().enumerate() {
         let Ok(index) = u8::try_from(i) else {
             continue;
         };
@@ -935,8 +1028,8 @@ fn remember_failed(spec: &WorldSpec, clusters: &[ClusterHandle], plans: &[RolePl
                 continue;
             };
             let mut state = lock(state);
-            if !state.failed.contains(&plan.cell) {
-                state.failed.push(plan.cell);
+            if !state.failed.contains(cell) {
+                state.failed.push(*cell);
             }
         }
     }
@@ -1070,7 +1163,7 @@ fn start_cells(
     provision_services(clusters)?;
     let mut cells = Vec::with_capacity(plans.len());
     for (i, (plan, logins)) in plans.iter().zip(logins).enumerate() {
-        cells.push(start_cell(index(i)?, plan, logins, pages)?);
+        cells.push(start_cell(spec, clusters, index(i)?, plan, logins, pages)?);
     }
     Ok(cells)
 }
@@ -1162,6 +1255,7 @@ fn provision_cell(
         for (_, job) in grants.iter().filter(|(c, _)| *c == id) {
             run_job(cluster, job)?;
         }
+        apply_plan_gaps(cluster, &dbname, db, plan.cell, &migrator)?;
     }
     Ok(logins)
 }
@@ -1204,7 +1298,7 @@ fn provision_services(clusters: &[ClusterHandle]) -> Result<(), WorldError> {
                     .collect();
                 let mut outcome = Ok(());
                 for set in &sets {
-                    if let Err(e) = provision_service(cluster, set) {
+                    if let Err(e) = provision_service(cluster, set, &mut state) {
                         outcome = Err(e);
                         break;
                     }
@@ -1225,6 +1319,7 @@ fn provision_services(clusters: &[ClusterHandle]) -> Result<(), WorldError> {
 fn provision_service(
     cluster: &ClusterHandle,
     set: &crate::mc::place_model::db::MigrationSet,
+    state: &mut ClusterState,
 ) -> Result<(), WorldError> {
     use crate::mc::place_model::db;
     let dir = db::workspace_root()
@@ -1244,9 +1339,23 @@ fn provision_service(
         .server()
         .create_login_role(&migrator)
         .map_err(|e| step_failed(cluster, "the service migrator", &e))?;
+    // The witness service connects as its own role (design section 4.1),
+    // which holds CONNECT on the witness database only.
+    let service = (set.set == WITNESS_SET)
+        .then(|| {
+            cluster
+                .server()
+                .create_login_role(WITNESS_SERVICE_ROLE)
+                .map_err(|e| step_failed(cluster, "the witness service role", &e))
+        })
+        .transpose()?;
+    let mut connect = vec![migrator.as_str()];
+    if service.is_some() {
+        connect.push(WITNESS_SERVICE_ROLE);
+    }
     cluster
         .server()
-        .create_database_for(set.set, &[migrator.as_str()])
+        .create_database_for(set.set, &connect)
         .map_err(|e| step_failed(cluster, "the service database", &e))?;
     superuser_sql(
         cluster,
@@ -1259,48 +1368,1109 @@ fn provision_service(
             .map_err(|e| step_failed(cluster, &file.display().to_string(), &e))?;
         sql_as(cluster, set.set, &migrator, &sql)?;
     }
+    if let Some(login) = service {
+        // Step 7 of design section 9.2 for the witness database: its
+        // placement row, then the service role's rights. witness_service
+        // holds INSERT and SELECT on the witness records only (design
+        // section 4.1), and the tables refuse UPDATE and DELETE for every
+        // role. It reads the registry of cell CAs and anchor keys but
+        // cannot write it: provisioning registers a cell as the migrator
+        // (`fstp_witness::store::registration_sql`).
+        sql_as(
+            cluster,
+            set.set,
+            &migrator,
+            &format!(
+                "INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
+                 GRANT USAGE ON SCHEMA fstp_meta, witness TO {WITNESS_SERVICE_ROLE};\n\
+                 GRANT SELECT ON fstp_meta.placement TO {WITNESS_SERVICE_ROLE};\n\
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal \
+                 TO {WITNESS_SERVICE_ROLE};\n\
+                 GRANT SELECT ON witness.cell_ca, witness.anchor_key TO {WITNESS_SERVICE_ROLE};",
+                crate::canary::lower_hex(&state.id.0)
+            ),
+        )?;
+        state.service = Some(login);
+    }
     Ok(())
 }
 
-/// The seam of a cell start. A world cell starts through
-/// `fstp_cell::engine::startup::start_pg`, with the custody simulator,
-/// and its routes serve on the started listeners. Four production parts
-/// of that start are missing, and a world stands in none of its own.
-const CELL_START_SEAM: &str = "fstp_celltest::world::World::start with cells: the cell start needs the writer pool and the fstp_migrate runner over it, so each migration set leaves its ledger (fstp-celltest cannot name fstp-pgwire; the lead adds the in-house edge), the witness service and its store (fstp_witness::run, lane W2g), the cell's vault client over the vault service (fstp_vault::run, lanes W2d and W3a), and the route backend over the application database (fstp_cell::routes::Backend, lane W3a)";
+/// The witness service migration set.
+const WITNESS_SET: &str = "witness";
 
-/// How a world cell's front is wired once [`CELL_START_SEAM`] closes,
-/// recorded for the lead (review findings of lane int4):
-///
-/// - The front is `fstp_cell::http::Front::with_pages` over the pages
-///   [`World::start_with_pages`] took. That constructor needs the
-///   `dev-pages` feature of `fstp-cell`, which this crate then enables on
-///   its `fstp-cell` line. Cargo unifies features over one build, so a
-///   release build of `fstp-cell` must not build this crate with it.
-/// - The edge listens on loopback port 443, and [`CellUrls`] carry no
-///   port. The relying party origin is `https://<host>` with no port
-///   (I-20, `fstp_webauthn::RelyingParty`), and the front's `Origin`
-///   check and the client data check compare it byte for byte. A cell on
-///   another port would refuse every POST of a browser with 403.
-pub const CELL_FRONT_SEAM: &str = "fstp_celltest::world cell front: Front::with_pages over the World::start_with_pages pages (fstp-cell feature dev-pages on the fstp-celltest line, a lead manifest change), and the edge on loopback port 443, since the relying party origin https://<host> carries no port (I-20)";
+/// The witness service role of design section 4.1.
+pub const WITNESS_SERVICE_ROLE: &str = "witness_service";
 
-/// Starts cell `index` of `plan` over its provisioned databases, as its
-/// roles log in with `logins`. It refuses with [`CELL_START_SEAM`]: no
-/// in-memory ledger, witness, vault or route backend stands in for a
-/// world cell. The started cell's handle keeps `logins`.
+// ---------------------------------------------------------------------------
+// The running parts of a world: the PKI, custody, the witness, the edge,
+// and each cell with its vault (lane int5).
+
+/// The test PKI of a world: ECDSA P-256 CAs from `fstp_crypto::sig`,
+/// certificates written by `fstp-pki` (design section 1.3).
+mod pki {
+    use std::net::IpAddr;
+
+    use fstp_pki::cert::{
+        CertKind, CertSpec, DistinguishedName, SignatureAlgorithm, Validity, assemble,
+        key_identifier, tbs,
+    };
+    use fstp_pki::pem::{PemLabel, encode};
+
+    use super::WorldError;
+
+    /// How far in the past every certificate starts.
+    const BACKDATE: i64 = 300;
+    /// The lifetime of a CA: 30 days.
+    const CA_LIFETIME: i64 = 2_592_000;
+    /// The lifetime of a leaf: the 7 days of `fstp_pki::CLIENT_MAX_LIFETIME`.
+    const LEAF_LIFETIME: i64 = 604_800;
+
+    fn err(what: &str, e: &dyn std::fmt::Display) -> WorldError {
+        WorldError::Store(format!("the world PKI: {what}: {e}"))
+    }
+
+    fn now() -> Result<i64, WorldError> {
+        let d = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| err("the clock", &e))?;
+        i64::try_from(d.as_secs()).map_err(|e| err("the clock", &e))
+    }
+
+    fn serial() -> Result<Vec<u8>, WorldError> {
+        let mut s = fstp_crypto::random_array::<16>()
+            .map_err(|e| err("a serial", &e))?
+            .to_vec();
+        if let Some(first) = s.first_mut() {
+            *first = (*first & 0x7f) | 0x01;
+        }
+        Ok(s)
+    }
+
+    /// Unpadded-free standard base64 with padding, for the key PEM.
+    fn base64(der: &[u8]) -> String {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut s = String::with_capacity(der.len().saturating_mul(2));
+        for chunk in der.chunks(3) {
+            let b = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
+            let n = (b(0) << 16) | (b(1) << 8) | b(2);
+            for k in 0..4usize {
+                if k <= chunk.len() {
+                    let shift = 18usize.saturating_sub(k.saturating_mul(6));
+                    let idx = usize::try_from((n >> shift) & 63).unwrap_or(0);
+                    s.push(char::from(A.get(idx).copied().unwrap_or(b'A')));
+                } else {
+                    s.push('=');
+                }
+            }
+        }
+        s
+    }
+
+    /// A PKCS#8 private key as PEM.
+    pub(super) fn key_pem(der: &[u8]) -> Vec<u8> {
+        let b64 = base64(der);
+        let mut out = String::from("-----BEGIN PRIVATE KEY-----\n");
+        for line in b64.as_bytes().chunks(64) {
+            out.push_str(std::str::from_utf8(line).unwrap_or(""));
+            out.push('\n');
+        }
+        out.push_str("-----END PRIVATE KEY-----\n");
+        out.into_bytes()
+    }
+
+    /// A certificate and its key.
+    pub(super) struct Issued {
+        /// The certificate, PEM.
+        pub(super) cert_pem: Vec<u8>,
+        /// Its private key, PEM.
+        pub(super) key_pem: Vec<u8>,
+    }
+
+    /// A CA of the world. Its key never leaves the test process.
+    pub(super) struct Ca {
+        name: String,
+        key: fstp_crypto::sig::EcdsaP256KeyPair,
+        /// The CA certificate, DER.
+        pub(super) der: Vec<u8>,
+        /// The CA certificate, PEM.
+        pub(super) pem: Vec<u8>,
+        /// The SHA-256 digest of its SubjectPublicKeyInfo.
+        pub(super) spki_digest: [u8; 32],
+    }
+
+    impl Ca {
+        /// A fresh self-signed CA named `name`.
+        pub(super) fn new(name: &str) -> Result<Ca, WorldError> {
+            let key =
+                fstp_crypto::sig::EcdsaP256KeyPair::generate().map_err(|e| err("a CA key", &e))?;
+            let spki = key.spki_der().map_err(|e| err("a CA key", &e))?;
+            let dn = DistinguishedName {
+                common_name: name.to_owned(),
+                organizational_unit: None,
+            };
+            let now = now()?;
+            let spec = CertSpec {
+                serial: serial()?,
+                issuer: dn.clone(),
+                subject: dn,
+                validity: Validity {
+                    not_before: now.saturating_sub(BACKDATE),
+                    not_after: now.saturating_add(CA_LIFETIME),
+                },
+                spki_der: spki.clone(),
+                issuer_key_id: None,
+                kind: CertKind::Ca,
+                dns_names: Vec::new(),
+                ip_addrs: Vec::new(),
+                algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            };
+            let t = tbs(&spec).map_err(|e| err("a CA", &e))?;
+            let sig = key.sign(t.as_der()).map_err(|e| err("a CA", &e))?;
+            let der = assemble(&t, &sig).map_err(|e| err("a CA", &e))?;
+            let pem = encode(PemLabel::Certificate, &der)
+                .map_err(|e| err("a CA", &e))?
+                .into_bytes();
+            Ok(Ca {
+                name: name.to_owned(),
+                key,
+                der,
+                pem,
+                spki_digest: fstp_crypto::sha256(&spki),
+            })
+        }
+
+        /// A leaf of `kind` with subject `cn` and `ou`, for `dns` and `ips`.
+        pub(super) fn issue(
+            &self,
+            kind: CertKind,
+            cn: &str,
+            ou: Option<&str>,
+            dns: &[&str],
+            ips: &[IpAddr],
+        ) -> Result<Issued, WorldError> {
+            let key =
+                fstp_crypto::sig::EcdsaP256KeyPair::generate().map_err(|e| err("a key", &e))?;
+            let issuer_spki = self.key.spki_der().map_err(|e| err("a CA key", &e))?;
+            let now = now()?;
+            let not_before = now.saturating_sub(BACKDATE);
+            let spec = CertSpec {
+                serial: serial()?,
+                issuer: DistinguishedName {
+                    common_name: self.name.clone(),
+                    organizational_unit: None,
+                },
+                subject: DistinguishedName {
+                    common_name: cn.to_owned(),
+                    organizational_unit: ou.map(str::to_owned),
+                },
+                validity: Validity {
+                    not_before,
+                    not_after: not_before.saturating_add(LEAF_LIFETIME.saturating_sub(1)),
+                },
+                spki_der: key.spki_der().map_err(|e| err("a key", &e))?,
+                issuer_key_id: Some(key_identifier(&issuer_spki).map_err(|e| err("a key id", &e))?),
+                kind,
+                dns_names: dns.iter().map(|d| (*d).to_owned()).collect(),
+                ip_addrs: ips.to_vec(),
+                algorithm: SignatureAlgorithm::EcdsaP256Sha256,
+            };
+            let t = tbs(&spec).map_err(|e| err("a leaf", &e))?;
+            let sig = self.key.sign(t.as_der()).map_err(|e| err("a leaf", &e))?;
+            let der = assemble(&t, &sig).map_err(|e| err("a leaf", &e))?;
+            let cert_pem = encode(PemLabel::Certificate, &der)
+                .map_err(|e| err("a leaf", &e))?
+                .into_bytes();
+            let pkcs8 = key.pkcs8_der().map_err(|e| err("a key", &e))?;
+            Ok(Issued {
+                cert_pem,
+                key_pem: key_pem(&pkcs8),
+            })
+        }
+    }
+}
+
+/// The custody of a world's cells: roots held in the test process,
+/// seal keys wrapped under them with AES-256-GCM. It stands in for the
+/// custody backend of design section 3.3 the way `fstp-custody-sim`
+/// does, and holds synthetic roots only.
+#[derive(Clone, Default)]
+struct WorldCustody {
+    roots: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, [u8; 32]>>>,
+}
+
+impl fstp_custody::Custody for WorldCustody {
+    fn create_root(
+        &self,
+        label: fstp_custody::RootLabel,
+    ) -> impl std::future::Future<Output = Result<fstp_custody::RootRef, fstp_custody::CustodyError>>
+    + Send {
+        let made = (|| {
+            let key =
+                fstp_crypto::random_array::<32>().map_err(fstp_custody::CustodyError::Crypto)?;
+            let handle =
+                fstp_crypto::random_array::<16>().map_err(fstp_custody::CustodyError::Crypto)?;
+            lock(&self.roots).insert(handle.to_vec(), key);
+            Ok(fstp_custody::RootRef {
+                backend: fstp_custody::BackendId::Simulator,
+                cell: label.cell,
+                chain: label.chain,
+                epoch: label.epoch,
+                handle: fstp_custody::CustodyHandle(handle.to_vec()),
+            })
+        })();
+        std::future::ready(made)
+    }
+
+    fn wrap(
+        &self,
+        root: &fstp_custody::RootRef,
+        key: &fstp_custody::SealKey,
+        aad: &fstp_custody::Aad,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_custody::WrappedSealKey, fstp_custody::CustodyError>,
+    > + Send {
+        use fstp_custody::{CustodyError, Refusal};
+        let r = (|| {
+            let rk = *lock(&self.roots)
+                .get(&root.handle.0)
+                .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
+            let k = fstp_crypto::aead::Key::from_bytes(&rk).map_err(CustodyError::Crypto)?;
+            let s =
+                fstp_crypto::aead::seal(&k, &aad.0, key.expose()).map_err(CustodyError::Crypto)?;
+            let mut out = s.nonce.to_vec();
+            out.extend_from_slice(&s.body);
+            Ok(fstp_custody::WrappedSealKey(out))
+        })();
+        std::future::ready(r)
+    }
+
+    fn unwrap(
+        &self,
+        root: &fstp_custody::RootRef,
+        w: &fstp_custody::WrappedSealKey,
+        aad: &fstp_custody::Aad,
+    ) -> impl std::future::Future<Output = Result<fstp_custody::SealKey, fstp_custody::CustodyError>>
+    + Send {
+        use fstp_custody::{CustodyError, Refusal};
+        let r = (|| {
+            let rk = *lock(&self.roots)
+                .get(&root.handle.0)
+                .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
+            let k = fstp_crypto::aead::Key::from_bytes(&rk).map_err(CustodyError::Crypto)?;
+            let (nonce, body) =
+                w.0.split_at_checked(fstp_crypto::aead::NONCE_LEN)
+                    .ok_or(CustodyError::Refused(Refusal::UnwrapFailed))?;
+            let nonce: [u8; fstp_crypto::aead::NONCE_LEN] = nonce
+                .try_into()
+                .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+            let pt = fstp_crypto::aead::open(&k, &nonce, &aad.0, body)
+                .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+            let bytes: [u8; 32] = pt
+                .as_slice()
+                .try_into()
+                .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+            Ok(fstp_custody::SealKey::from_bytes(bytes))
+        })();
+        std::future::ready(r)
+    }
+
+    fn destroy(
+        &self,
+        root: &fstp_custody::RootRef,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError>,
+    > + Send {
+        let gone = lock(&self.roots).remove(&root.handle.0).is_some();
+        std::future::ready(if gone {
+            Ok(fstp_custody::DestroyReceipt(root.handle.0.clone()))
+        } else {
+            Err(fstp_custody::CustodyError::Refused(
+                fstp_custody::Refusal::UnknownRoot,
+            ))
+        })
+    }
+
+    fn sign(
+        &self,
+        _key: &fstp_custody::SignKeyRef,
+        _digest: &[u8; 32],
+    ) -> impl std::future::Future<
+        Output = Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError>,
+    > + Send {
+        std::future::ready(Err(fstp_custody::CustodyError::Refused(
+            fstp_custody::Refusal::NoSignKey,
+        )))
+    }
+
+    fn usage_since(
+        &self,
+        _root: &fstp_custody::RootRef,
+        _cursor: fstp_custody::UsageCursor,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_custody::UsagePage, fstp_custody::CustodyError>,
+    > + Send {
+        std::future::ready(Ok(fstp_custody::UsagePage::default()))
+    }
+}
+
+type Rt = fstp_rt::tokio::TokioRuntime;
+
+/// The name the witness server certificate carries.
+const WITNESS_NAME: &str = "witness.fstp.localhost";
+
+/// The environment variable that names the edge port, when the edge
+/// cannot bind loopback port 443 itself.
+pub const EDGE_PORT_ENV: &str = "FSTP_EDGE_PORT";
+
+/// The longest life of one edge connection.
+const EDGE_CONNECTION_LIFETIME: Duration = Duration::from_secs(2 * 3600);
+
+/// The edge of a world: the SNI router on loopback, with the route table
+/// of every cell of the process (design section 9.4, ADR-009).
+struct Edge {
+    addr: SocketAddr,
+    table: std::sync::Arc<Mutex<fstp_edge::RouteTable>>,
+}
+
+/// What every world of a test binary shares: the runtime, the CAs, the
+/// witness and the edge. Like the clusters, they live for the process.
+struct Services {
+    rt: Rt,
+    /// The control-plane CA: the witness server certificate, the tunnel
+    /// certificates and the edge's tunnel client certificate.
+    control: pki::Ca,
+    /// The CA of the public host certificates, which stands in for a
+    /// public CA (design section 9.2 step 5). A browser trusts it once
+    /// its certificate is installed ([`World::origin_ca_pem`]).
+    origin: pki::Ca,
+    witness: fstp_witness::WitnessHandle<Rt>,
+    edge: Edge,
+}
+
+impl fmt::Debug for Services {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Services")
+            .field("edge", &self.edge.addr)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The services of the process, started on first use over the witness
+/// cluster `witness` and its service login.
+fn services(witness: &ClusterHandle) -> Result<&'static Services, WorldError> {
+    static SERVICES: OnceLock<Result<Services, WorldError>> = OnceLock::new();
+    SERVICES
+        .get_or_init(|| start_services(witness))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn start_services(witness_cluster: &ClusterHandle) -> Result<Services, WorldError> {
+    let fail = |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("{what}: {e}"));
+    let rt = Rt::new_multi_thread(4).map_err(|e| fail("the world runtime", &e))?;
+    let control = pki::Ca::new("fstp world control-plane CA")?;
+    let origin = pki::Ca::new("fstp world origin CA")?;
+    let login = lock(cluster_state(witness_cluster.name())?)
+        .service
+        .clone()
+        .ok_or_else(|| WorldError::Store("the witness database has no service login".to_owned()))?;
+    let db = pg_config(witness_cluster.server(), "witness", &login)?;
+    let server = control.issue(
+        fstp_pki::cert::CertKind::Server,
+        WITNESS_NAME,
+        None,
+        &[WITNESS_NAME],
+        &[],
+    )?;
+    let key = fstp_crypto::composite::generate().map_err(|e| fail("the receipt key", &e))?;
+    let witness = rt
+        .block_on(fstp_witness::serve(
+            rt.clone(),
+            fstp_witness::WitnessParts {
+                db,
+                receipt_key: key,
+                server_chain_pem: server.cert_pem,
+                server_key_pem: server.key_pem,
+                listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            },
+        ))
+        .map_err(|e| fail("the witness", &e))?;
+    let edge = rt.block_on(start_edge(&rt, &control))?;
+    Ok(Services {
+        rt,
+        control,
+        origin,
+        witness,
+        edge,
+    })
+}
+
+/// The pgwire configuration of `login` on `dbname` of `server`.
+fn pg_config(
+    server: &fstp_pgtest::PgServer,
+    dbname: &str,
+    login: &RoleLogin,
+) -> Result<fstp_pgwire::Config, WorldError> {
+    let fail = |e: fstp_pgwire::Error| WorldError::Store(format!("a database login: {e}"));
+    let p = login.conn_params(server, dbname);
+    let tls = fstp_pgwire::ClientTls::new(p.server_ca_pem, p.client_cert_pem, p.client_key_pem)
+        .map_err(fail)?;
+    Ok(fstp_pgwire::Config::new(
+        p.host.clone(),
+        p.port,
+        p.user.as_str(),
+        fstp_pgwire::Password::new(p.password.as_str()).map_err(fail)?,
+        p.dbname.clone(),
+        tls,
+    )
+    .map_err(fail)?
+    .connect_timeout(Some(Duration::from_secs(20))))
+}
+
+/// Starts the edge: loopback port 443 when the process may bind it, and
+/// otherwise the port in [`EDGE_PORT_ENV`] or a free one.
+async fn start_edge(rt: &Rt, control: &pki::Ca) -> Result<Edge, WorldError> {
+    use fstp_rt::{Listener as _, Runtime as _};
+    let fail =
+        |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("the edge: {what}: {e}"));
+    let listener = match rt
+        .bind_tcp(SocketAddr::from((Ipv4Addr::LOCALHOST, 443)))
+        .await
+    {
+        Ok(l) => l,
+        Err(_) => {
+            let port = std::env::var(EDGE_PORT_ENV)
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0);
+            rt.bind_tcp(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+                .await
+                .map_err(|e| fail("the listener", &e))?
+        }
+    };
+    let addr = listener
+        .local_addr()
+        .map_err(|e| fail("the listener", &e))?;
+    let client = control.issue(fstp_pki::cert::CertKind::Client, "edge", None, &[], &[])?;
+    let tls = fstp_tls::ClientConfig::mutual(&control.pem, &client.cert_pem, &client.key_pem)
+        .map_err(|e| fail("the tunnel client", &e))?;
+    let opener = fstp_edge::TlsTunnelOpener::new(rt.clone(), tls);
+    let table = std::sync::Arc::new(Mutex::new(fstp_edge::RouteTable::new()));
+    let loop_table = std::sync::Arc::clone(&table);
+    let loop_rt = rt.clone();
+    drop(rt.spawn(async move {
+        let mut listener = listener;
+        loop {
+            let Ok((client, peer)) = listener.accept().await else {
+                loop_rt.sleep(Duration::from_millis(50)).await;
+                continue;
+            };
+            let table = lock(&loop_table).clone();
+            let opener = opener.clone();
+            let splice_rt = loop_rt.clone();
+            drop(loop_rt.spawn(async move {
+                // The edge bounds each connection's life (fstp_edge::serve
+                // leaves deadlines to its caller).
+                let splice = fstp_edge::serve(client, peer, &table, &opener);
+                let _ = fstp_rt::timeout(&splice_rt, EDGE_CONNECTION_LIFETIME, splice).await;
+            }));
+        }
+    }));
+    Ok(Edge { addr, table })
+}
+
+/// The DNS label of a cell id: its 32 lowercase hex digits.
+fn cell_label(cell: &[u8; 16]) -> String {
+    crate::canary::lower_hex(cell)
+}
+
+/// The tenant host of a world cell: three labels under `.localhost`, which
+/// every browser and resolver sends to loopback (RFC 6761 section 6.3).
+fn cell_host(cell: &[u8; 16]) -> String {
+    format!(
+        "c{}.fstp.localhost",
+        cell_label(cell).get(..12).unwrap_or("")
+    )
+}
+
+/// The parts of a started world cell.
+struct Running {
+    cell: Option<fstp_cell::process::RunningCell<Rt>>,
+    vault: fstp_vault::service::VaultHandle<Rt>,
+    invitation: FirstAdminInvitation,
+}
+
+/// What a started cell's handle reaches (design section 14.3).
+struct CellRuntime {
+    services: &'static Services,
+    running: Mutex<Running>,
+    health: SocketAddr,
+}
+
+impl fmt::Debug for CellRuntime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CellRuntime")
+            .field("health", &self.health)
+            .finish_non_exhaustive()
+    }
+}
+
+/// How long a world cell may take to drain at the end of its world.
+const CELL_DRAIN: Duration = Duration::from_secs(20);
+
+impl CellRuntime {
+    /// Stops the cell and its vault, and removes its routes.
+    fn stop(&self, cell: &[u8; 16]) {
+        let (running, vault_addr) = {
+            let mut r = lock(&self.running);
+            (r.cell.take(), r.vault.internal_addr())
+        };
+        let _ = vault_addr;
+        if let Some(c) = running {
+            let _ = self.services.rt.block_on(c.shutdown(CELL_DRAIN));
+        }
+        let r = lock(&self.running);
+        let _ = self.services.rt.block_on(r.vault.shutdown(CELL_DRAIN));
+        lock(&self.services.edge.table).remove_cell_by_id(cell);
+    }
+}
+
+/// The supplementary grants a world applies after the production plan,
+/// as the migrator: the plan of `fstp_control::pg::cell_role_plan` grants
+/// no role SELECT on `fstp_meta.placement`, which the I-83 start checks of
+/// the cell and the vault read, and none on `vault.p17_condition`, which
+/// the vault store reads and writes. Reported to the plan's owner, lane
+/// int5. Each row stays inside its own cell's database.
 ///
-/// When the cell start lands, its front takes `pages` through
-/// `fstp_cell::http::Front::with_pages` when they are given, and
-/// `Front::new` otherwise ([`CELL_FRONT_SEAM`]).
+/// The placement rows run through `fstp_meta.apply_grant`. The object
+/// grammar of that function (design section 4.1) takes lowercase letters
+/// and underscores only, so it refuses `vault.p17_condition` for its
+/// digits. That row is a plain `GRANT` from the migrator, rendered from
+/// fixed names.
+pub const PLAN_GAPS: [(CellDatabase, &str, &str, &str); 3] = [
+    (CellDatabase::App, "SELECT", "fstp_meta.placement", "app"),
+    (
+        CellDatabase::Vault,
+        "SELECT",
+        "fstp_meta.placement",
+        "vault",
+    ),
+    (
+        CellDatabase::Vault,
+        "SELECT, INSERT",
+        "vault.p17_condition",
+        "vault",
+    ),
+];
+
+/// Whether `object` passes the object grammar of `fstp_meta.apply_grant`:
+/// two parts of 1 to 30 lowercase letters or underscores.
+fn apply_grant_object(object: &str) -> bool {
+    let part = |p: &str| {
+        (1..=30).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+    };
+    object
+        .split_once('.')
+        .is_some_and(|(s, t)| part(s) && part(t))
+}
+
+/// Applies the [`PLAN_GAPS`] rows of `db` to `dbname` on `cluster`.
+fn apply_plan_gaps(
+    cluster: &ClusterHandle,
+    dbname: &str,
+    db: CellDatabase,
+    cell: CellId,
+    migrator: &str,
+) -> Result<(), WorldError> {
+    let mut sql = format!(
+        "DO $g$ BEGIN PERFORM pg_catalog.set_config('role', '{migrator}', true); \
+         PERFORM pg_catalog.set_config('fstp.cell', '{}', true);",
+        crate::canary::lower_hex(&cell.0)
+    );
+    for (d, privs, object, suffix) in PLAN_GAPS {
+        if d != db {
+            continue;
+        }
+        if apply_grant_object(object) {
+            sql.push_str(&format!(
+                " PERFORM fstp_meta.apply_grant('{privs}', '{object}', '{suffix}');"
+            ));
+        } else {
+            let role = fstp_control::pg::role_name(db, cell, RoleName::Vault)
+                .map_err(|e| step_failed(cluster, "the plan gap grants", &e))?;
+            sql.push_str(&format!(" GRANT {privs} ON {object} TO \"{role}\";"));
+        }
+    }
+    sql.push_str(" END $g$");
+    superuser_sql(cluster, dbname, &sql)
+        .map(drop)
+        .map_err(|e| step_failed(cluster, "the plan gap grants", &e))
+}
+
+/// Starts world cell `index` of `plan` over its provisioned databases
+/// (design section 9.2 steps 5, 6, 8, 9 and 10):
+///
+/// 1. The cell CA, the cell's keys and its custody. The witness pins the
+///    cell CA and the App chain's anchor key.
+/// 2. The vault over `v_<cell>`, with its internal listener and its
+///    origin's tunnel listener.
+/// 3. The cell over `c_<cell>` through `fstp_cell::process::start`, which
+///    creates epoch 0 of its key chain on its first start.
+/// 4. The edge routes for `<cell host>` and `id.<cell host>`.
+/// 5. The first tenant admin's invitation, drawn by the cell as two
+///    halves. The world plays both staff channels and keeps both.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one start, step by step, as the design lists it"
+)]
 fn start_cell(
+    spec: &WorldSpec,
+    clusters: &[ClusterHandle],
     index: u8,
     plan: &RolePlan,
     logins: CellLogins,
     pages: Option<&fstp_cell::http::pages::Pages>,
 ) -> Result<CellHandle, WorldError> {
-    let _ = (index, plan, logins, pages);
-    Err(WorldError::NotImplemented(NotImplemented::new(
-        CELL_START_SEAM,
-    )))
+    use fstp_cell::engine::startup::ClusterRole;
+    use fstp_pki::cert::CertKind;
+    if spec.self_hosted {
+        return Err(WorldError::NotImplemented(NotImplemented::new(
+            "fstp_celltest::world a self-hosted cell: the local witness with its file store (ADR-010 Self-hosted witness) has no run loop",
+        )));
+    }
+    let witness_cluster = clusters
+        .iter()
+        .find(|c| c.kind() == ClusterKind::Witness)
+        .ok_or_else(|| WorldError::Store("the world runs no witness cluster".to_owned()))?;
+    let s = services(witness_cluster)?;
+    let fail =
+        |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("cell {index}: {what}: {e}"));
+    let cell = plan.cell.0;
+    let hex = cell_label(&cell);
+    let host = cell_host(&cell);
+    let vault_host = format!("id.{host}");
+    let login = |db: CellDatabase, role: RoleName| {
+        logins
+            .get(&(db, role))
+            .cloned()
+            .ok_or_else(|| WorldError::Store(format!("cell {index}: no {role:?} login")))
+    };
+    let app_cluster = cell_cluster(spec, clusters, ClusterKind::Application, index)?;
+    let vault_cluster = cell_cluster(spec, clusters, ClusterKind::Vault, index)?;
+    let app_db = database_name(CellDatabase::App, &plan.cell);
+    let vault_db = database_name(CellDatabase::Vault, &plan.cell);
+    // Step 1.
+    let cell_ca = pki::Ca::new(&format!("cell CA {}", hex.get(..12).unwrap_or("")))?;
+    let anchor = fstp_crypto::composite::generate().map_err(|e| fail("the anchor key", &e))?;
+    let anchor_public = anchor.public_key().to_bytes().to_vec();
+    // Provisioning writes the registration as the witness migrator, and
+    // the witness reloads its registry: witness_service may only read it.
+    let registered_at = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| fail("the clock", &e))?
+            .as_micros(),
+    )
+    .map_err(|e| fail("the clock", &e))?;
+    sql_as(
+        witness_cluster,
+        WITNESS_SET,
+        &format!("{WITNESS_SET}_migrator"),
+        &fstp_witness::store::registration_sql(
+            fstp_audit::CellId(cell),
+            &cell_ca.der,
+            &[(fstp_audit::ChainId::App, anchor_public)],
+            registered_at,
+        ),
+    )?;
+    s.rt.block_on(s.witness.reload_registry())
+        .map_err(|e| fail("the witness registration", &e))?;
+    let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
+    let tunnel_name = format!("c{hex}.tunnel.fstp.localhost");
+    let vault_tunnel_name = format!("v{hex}.tunnel.fstp.localhost");
+    let tls_err = |what: &'static str| move |e: fstp_tls::TlsError| fail(what, &e);
+    let server = |cert: &pki::Issued, roots: Option<&[u8]>| {
+        let b = fstp_tls::ServerConfig::builder(&cert.cert_pem, &cert.key_pem);
+        match roots {
+            Some(r) => b.require_client_auth(r).build(),
+            None => b.build(),
+        }
+    };
+    // Step 2: the vault.
+    let vault_internal = cell_ca.issue(CertKind::Server, "vault", None, &[], &loopback)?;
+    let vault_tunnel = s.control.issue(
+        CertKind::Server,
+        &vault_tunnel_name,
+        None,
+        &[&vault_tunnel_name],
+        &[],
+    )?;
+    let vault_origin = s
+        .origin
+        .issue(CertKind::Server, &vault_host, None, &[&vault_host], &[])?;
+    let ticket =
+        fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the ticket key", &e))?;
+    let sealer = fstp_vault::service::AeadSealer::new(
+        fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?,
+        fstp_crypto::aead::Key::generate().map_err(|e| fail("the vault data key", &e))?,
+        fstp_crypto::random_array::<32>().map_err(|e| fail("the vault digest key", &e))?,
+    );
+    let vault =
+        s.rt.block_on(fstp_vault::service::serve(
+            s.rt.clone(),
+            fstp_vault::service::VaultParts {
+                cell,
+                db: pg_config(
+                    vault_cluster.server(),
+                    &vault_db,
+                    &login(CellDatabase::Vault, RoleName::Vault)?,
+                )?,
+                // Caller claims: the open I-83 seam of fstp_vault::service.
+                server_ou: fstp_vault::start::ClusterRole::Vault,
+                registered_spki: fstp_vault::start::ClusterRole::Vault,
+                sealer: std::sync::Arc::new(sealer),
+                ticket_keys: vec![ticket.public_key()],
+                internal_tls: server(&vault_internal, Some(&cell_ca.pem))
+                    .map_err(tls_err("the vault internal TLS"))?,
+                tunnel_tls: std::sync::Arc::new(
+                    server(&vault_tunnel, Some(&s.control.pem))
+                        .map_err(tls_err("the vault tunnel TLS"))?,
+                ),
+                origin_tls: std::sync::Arc::new(
+                    server(&vault_origin, None).map_err(tls_err("the vault origin TLS"))?,
+                ),
+                origin_host: vault_host.clone(),
+                internal_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+                origin_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            },
+        ))
+        .map_err(|e| fail("the vault", &e))?;
+    // Step 3: the cell.
+    let cell_app = cell_ca.issue(
+        CertKind::Client,
+        "cell-app",
+        Some(fstp_vault::service::CELL_APP_OU),
+        &[],
+        &[],
+    )?;
+    let vault_client = fstp_cell::vault::HttpVaultClient::new(
+        s.rt.clone(),
+        format!("https://{}", vault.internal_addr()),
+        fstp_tls::ClientConfig::mutual(&cell_ca.pem, &cell_app.cert_pem, &cell_app.key_pem)
+            .map_err(tls_err("the vault client TLS"))?,
+    );
+    let cell_witness = cell_ca.issue(
+        CertKind::Client,
+        "cell-witness",
+        Some(fstp_witness::peer::OU_CELL_WITNESS),
+        &[],
+        &[],
+    )?;
+    let witness = fstp_cell::witness::link::WitnessEndpoint {
+        addr: s.witness.local_addr(),
+        server_name: WITNESS_NAME.to_owned(),
+        tls: fstp_tls::ClientConfig::mutual(
+            &s.control.pem,
+            &cell_witness.cert_pem,
+            &cell_witness.key_pem,
+        )
+        .map_err(tls_err("the witness client TLS"))?,
+        ca_digest: s.control.spki_digest,
+    };
+    let cell_tunnel =
+        s.control
+            .issue(CertKind::Server, &tunnel_name, None, &[&tunnel_name], &[])?;
+    let cell_origin = s
+        .origin
+        .issue(CertKind::Server, &host, None, &[&host], &[])?;
+    let cell_internal = cell_ca.issue(CertKind::Server, "cell", None, &[], &loopback)?;
+    let ledger_key = fstp_pgstore::LedgerKey::new(
+        1,
+        fstp_keys::DekId(fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?),
+        fstp_crypto::aead::Key::generate().map_err(|e| fail("the ledger key", &e))?,
+    );
+    let parts = fstp_cell::process::CellProcessParts {
+        cell,
+        mode: fstp_cell::config::Mode::Saas,
+        host: host.clone(),
+        writer: pg_config(
+            app_cluster.server(),
+            &app_db,
+            &login(CellDatabase::App, RoleName::Writer)?,
+        )?,
+        app: pg_config(
+            app_cluster.server(),
+            &app_db,
+            &login(CellDatabase::App, RoleName::App)?,
+        )?,
+        // Caller claims: the open I-83 seam of fstp_cell::process.
+        server_ou: ClusterRole::Application,
+        registered_spki: ClusterRole::Application,
+        custody: WorldCustody::default(),
+        keystore: None,
+        keys: fstp_cell::process::CellKeys {
+            anchor,
+            ledger: std::sync::Arc::new(fstp_pgstore::LedgerKeys::new(ledger_key)),
+            cred_lookup: fstp_crypto::random_array::<32>()
+                .map_err(|e| fail("the CredLookup key", &e))?,
+        },
+        witness,
+        witness_keys: vec![s.witness.receipt_public_key()],
+        vault: SharedVault(std::sync::Arc::new(vault_client)),
+        tunnel_tls: fstp_cell::http::tunnel::TunnelTls {
+            tunnel: std::sync::Arc::new(
+                server(&cell_tunnel, Some(&s.control.pem))
+                    .map_err(tls_err("the cell tunnel TLS"))?,
+            ),
+            origin: std::sync::Arc::new(
+                server(&cell_origin, None).map_err(tls_err("the cell origin TLS"))?,
+            ),
+        },
+        internal_tls: std::sync::Arc::new(
+            server(&cell_internal, Some(&cell_ca.pem)).map_err(tls_err("the cell internal TLS"))?,
+        ),
+        pages: pages.cloned(),
+        listen: fstp_cell::process::Listen {
+            tunnel: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            internal: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            health: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        },
+    };
+    let running = match s.rt.block_on(fstp_cell::process::start(&s.rt, parts)) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            return Err(fail("the cell", &e));
+        }
+    };
+    let bound = running.bound();
+    // Step 4: the routes.
+    let route = || -> Result<(), WorldError> {
+        let h = fstp_edge::HostName::parse(host.as_bytes())
+            .map_err(|e| fail("the host", &format!("{e:?}")))?;
+        lock(&s.edge.table)
+            .add_cell(
+                h,
+                fstp_edge::CellEndpoint {
+                    cell,
+                    address: bound.tunnel,
+                    tls_name: tunnel_name.clone(),
+                },
+                fstp_edge::CellEndpoint {
+                    cell,
+                    address: vault.origin_addr(),
+                    tls_name: vault_tunnel_name.clone(),
+                },
+            )
+            .map_err(|e| fail("the routes", &format!("{e:?}")))
+    };
+    // Step 5: the first admin's invitation.
+    let invitation = route().and_then(|()| {
+        s.rt.block_on(running.issue_first_admin_invitation())
+            .map_err(|e| fail("the first admin invitation", &e))
+            .and_then(|t| match t.second {
+                Some(second) => Ok(FirstAdminInvitation {
+                    first: t.first,
+                    second,
+                }),
+                None => Err(WorldError::Store(format!(
+                    "cell {index}: a SaaS invitation came whole"
+                ))),
+            })
+    });
+    let invitation = match invitation {
+        Ok(i) => i,
+        Err(e) => {
+            let _ = s.rt.block_on(running.shutdown(CELL_DRAIN));
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            lock(&s.edge.table).remove_cell_by_id(&cell);
+            return Err(e);
+        }
+    };
+    Ok(CellHandle {
+        index,
+        id: cell,
+        host,
+        logins,
+        runtime: Some(std::sync::Arc::new(CellRuntime {
+            services: s,
+            running: Mutex::new(Running {
+                cell: Some(running),
+                vault,
+                invitation,
+            }),
+            health: bound.health,
+        })),
+    })
+}
+
+/// One vault client shared by the cell's engine and its first start.
+#[derive(Clone)]
+struct SharedVault(std::sync::Arc<fstp_cell::vault::HttpVaultClient<Rt>>);
+
+impl fstp_cell::engine::VaultClient for SharedVault {
+    fn epoch(
+        &self,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_domain::id::VaultEpoch, fstp_cell_core::driver::VaultFault>,
+    > + Send {
+        let v = std::sync::Arc::clone(&self.0);
+        async move { v.epoch().await }
+    }
+
+    fn ask(
+        &self,
+        queries: &[fstp_domain::oracle::Query],
+        reaction_for: Option<fstp_domain::id::VaultEpoch>,
+        at: fstp_domain::time::Timestamp,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_domain::oracle::Answers, fstp_cell_core::driver::VaultFault>,
+    > + Send {
+        self.0.ask(queries, reaction_for, at)
+    }
+
+    fn ack(
+        &self,
+        epoch: fstp_domain::id::VaultEpoch,
+        seq: fstp_ledger::Seq,
+        link: [u8; 32],
+    ) -> impl std::future::Future<Output = Result<(), fstp_cell_core::driver::VaultFault>> + Send
+    {
+        self.0.ack(epoch, seq, link)
+    }
+}
+
+/// One HTTP/1.1 exchange over `stream`: `req` with `Connection: close`,
+/// then the whole answer.
+async fn exchange<S: fstp_rt::Connection>(
+    mut stream: S,
+    req: &HttpRequest,
+) -> Result<HttpReply, WorldError> {
+    use fstp_rt::IoExt as _;
+    let fail =
+        |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("the exchange: {what}: {e}"));
+    let method =
+        fstp_http::Method::from_bytes(req.method.as_bytes()).map_err(|e| fail("the method", &e))?;
+    let target = fstp_http::RequestTarget::origin(&req.path).map_err(|e| fail("the path", &e))?;
+    let mut r = fstp_http::Request::new(method.clone(), target);
+    for (name, value) in &req.headers {
+        r = r
+            .try_with_header(name, value.clone())
+            .map_err(|e| fail("a header", &e))?;
+    }
+    r = r
+        .try_with_header("connection", "close")
+        .map_err(|e| fail("a header", &e))?;
+    r.body = req.body.clone();
+    let mut bytes = Vec::new();
+    fstp_http::encode_request(&r, fstp_http::Framing::ContentLength, &mut bytes)
+        .map_err(|e| fail("the request", &e))?;
+    stream
+        .write_all(&bytes)
+        .await
+        .map_err(|e| fail("the write", &e))?;
+    stream.flush().await.map_err(|e| fail("the write", &e))?;
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer, 32 << 20).await;
+    let limits = fstp_http::Limits {
+        max_body_bytes: 16 << 20,
+        ..fstp_http::Limits::default()
+    };
+    match fstp_http::parse_response(&answer, &method, &limits, true)
+        .map_err(|e| fail("the answer", &e))?
+    {
+        fstp_http::Parsed::Complete { message, .. } => Ok(HttpReply {
+            status: message.status.as_u16(),
+            headers: message
+                .headers
+                .iter()
+                .map(|(n, v)| (n.as_str().to_owned(), v.as_bytes().to_vec()))
+                .collect(),
+            body: message.body,
+        }),
+        fstp_http::Parsed::Incomplete => Err(WorldError::Store(
+            "the exchange: the answer ended early".to_owned(),
+        )),
+    }
+}
+
+/// How long one exchange with a world listener may take.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(60);
+
+impl CellRuntime {
+    /// Sends `req` through the edge with `host` as SNI, as a browser does.
+    fn request(&self, host: &str, req: &HttpRequest) -> Result<HttpReply, WorldError> {
+        use fstp_rt::Runtime as _;
+        let s = self.services;
+        let tls = fstp_tls::ClientConfig::new(&s.origin.pem)
+            .map_err(|e| WorldError::Store(format!("the browser TLS: {e}")))?;
+        let addr = s.edge.addr;
+        let host = host.to_owned();
+        let req = req.clone();
+        s.rt.block_on(async {
+            let run = async {
+                let tcp =
+                    s.rt.connect_tcp(addr)
+                        .await
+                        .map_err(|e| WorldError::Store(format!("the edge: {e}")))?;
+                let stream = fstp_tls::connect(&tls, &host, tcp)
+                    .await
+                    .map_err(|e| WorldError::Store(format!("the cell TLS: {e}")))?;
+                exchange(stream, &req).await
+            };
+            fstp_rt::timeout(&s.rt, EXCHANGE_TIMEOUT, run)
+                .await
+                .map_err(|_| WorldError::Store("the exchange timed out".to_owned()))?
+        })
+    }
+
+    /// Sends `req` to the loopback health listener over plain HTTP.
+    fn health(&self, req: &HttpRequest) -> Result<HttpReply, WorldError> {
+        use fstp_rt::Runtime as _;
+        let s = self.services;
+        let addr = self.health;
+        let req = req.clone();
+        s.rt.block_on(async {
+            let run = async {
+                let tcp =
+                    s.rt.connect_tcp(addr)
+                        .await
+                        .map_err(|e| WorldError::Store(format!("the health listener: {e}")))?;
+                exchange(tcp, &req).await
+            };
+            fstp_rt::timeout(&s.rt, EXCHANGE_TIMEOUT, run)
+                .await
+                .map_err(|_| WorldError::Store("the exchange timed out".to_owned()))?
+        })
+    }
+
+    /// Whether `127.0.0.1:443` reaches this world's edge for `host`: a TLS
+    /// handshake there for `host` verifies under the world's origin CA,
+    /// which only this process's cells hold certificates of.
+    fn port_443_reaches_edge(&self, host: &str) -> bool {
+        use fstp_rt::Runtime as _;
+        let s = self.services;
+        if s.edge.addr.port() == 443 {
+            return true;
+        }
+        let Ok(tls) = fstp_tls::ClientConfig::new(&s.origin.pem) else {
+            return false;
+        };
+        let host = host.to_owned();
+        s.rt.block_on(async {
+            let probe = async {
+                let tcp =
+                    s.rt.connect_tcp(SocketAddr::from((Ipv4Addr::LOCALHOST, 443)))
+                        .await
+                        .ok()?;
+                fstp_tls::connect(&tls, &host, tcp).await.ok()
+            };
+            matches!(
+                fstp_rt::timeout(&s.rt, Duration::from_secs(5), probe).await,
+                Ok(Some(_))
+            )
+        })
+    }
 }
 
 /// The environment variable that names the `tsc` output directory of
@@ -1316,7 +2486,7 @@ pub const AUTH_PAGES_ENV: &str = "FSTP_AUTH_PAGES";
 /// `cargo test` never runs Node (design section 11.2), so a compiled
 /// directory may be absent: that is `Ok(None)`, and a cell then serves no
 /// page. [`World::start_with_pages`] passes these pages to each cell it
-/// starts, whose front serves them ([`CELL_FRONT_SEAM`]).
+/// starts, whose front is `fstp_cell::http::Front::with_pages` over them.
 ///
 /// # Errors
 ///

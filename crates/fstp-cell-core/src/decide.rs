@@ -376,6 +376,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
+            | CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. })
     )
 }
 
@@ -398,7 +399,9 @@ fn overdue(s: &CellState, c: &CellCommand, now: Timestamp) -> Result<(), CellRef
         CellCommand::Engine(_)
             | CellCommand::Auth(_)
             | CellCommand::Ops(OpsCommand::EndBreakGlass { .. })
-            | CellCommand::Tenant(TenantCommand::EndTenantAdmin { .. })
+            | CellCommand::Tenant(
+                TenantCommand::EndTenantAdmin { .. } | TenantCommand::EnrolByInvitation { .. }
+            )
     ) {
         return Ok(());
     }
@@ -627,6 +630,10 @@ fn decide_unchecked(
             };
             decide_auth(s, cmd, &call, answers)
         }
+        CellCommand::Tenant(TenantCommand::EnrolByInvitation {
+            invitation,
+            credential,
+        }) => decide_enrolment(s, *invitation, credential, actor, now, inputs),
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
@@ -656,6 +663,14 @@ fn decide_system(
             Ok(records.into_iter().map(CellRecord::Engine).collect())
         }
         (SystemTask::ErasureRunner, CellCommand::Key(cmd)) => decide_key(s, cmd),
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation {
+                invitation,
+                account,
+                token_digest,
+            }),
+        ) => issue_first_admin_invitation(s, *invitation, *account, *token_digest, now, inputs),
         (
             SystemTask::Timeline,
             CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }),
@@ -1251,7 +1266,133 @@ fn decide_tenant(
                 policy: policy.clone(),
             })])
         }
+        // Provisioning issues the first one as a system task, and only a
+        // ceremony admission enrols. Neither reaches this point.
+        TenantCommand::IssueFirstAdminInvitation { .. }
+        | TenantCommand::EnrolByInvitation { .. } => Err(wrong_actor()),
     }
+}
+
+/// Whether any record of the cell names `account`: a tenant admin grant,
+/// a binding or an auth record. An invitation creates its account, so it
+/// names an account no record names yet (ADR-008 "Ceremonies and the
+/// first passkey"). Invitations that no enrolment used do not count
+/// (`fstp_cell_core::state::AuthState::names_account`).
+fn account_known(s: &CellState, account: AccountId) -> bool {
+    s.tenant().is_admin(account)
+        || s.auth().names_account(account)
+        || s.engine()
+            .core
+            .roster()
+            .bindings()
+            .any(|(_, b)| b.account == account)
+}
+
+/// `IssueFirstAdminInvitation` of the system task `Provisioning` (design
+/// sections 8.3 and 9.2 step 10, Q35). The rule is
+/// `fstp_auth::ceremony::issue_invitation` with the provisioning issuer:
+/// no first admin enrolled, no first-admin invitation open at `now`, and an
+/// account no record names. The invitation id must be new. The cell's
+/// deployment mode is a task input: a SaaS cell records a split token.
+fn issue_first_admin_invitation(
+    s: &CellState,
+    invitation: [u8; 16],
+    account: AccountId,
+    token_digest: [u8; 32],
+    now: Timestamp,
+    inputs: &RouteInputs,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let Some(mode) = inputs.mode() else {
+        return Err(needs(RouteInput::DeploymentMode));
+    };
+    if s.auth().invitation(invitation).is_some() {
+        return Err(reused());
+    }
+    let issuer = fstp_auth::ceremony::Issuer::Provisioning {
+        first_admin_enrolled: s.auth().any_first_admin(),
+        invitation_open: s.auth().first_admin_invitation_open(now),
+    };
+    let record = fstp_auth::ceremony::issue_invitation(
+        issuer,
+        mode,
+        invitation,
+        account,
+        token_digest,
+        !account_known(s, account),
+    )
+    .map_err(|e| match e {
+        fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
+        _ => refuse(RuleRef::Input, RefusalReason::WrongState),
+    })?;
+    Ok(vec![CellRecord::Auth(record)])
+}
+
+/// `EnrolByInvitation`, the first passkey of an invited account (design
+/// section 8.3, ceremony 1, G10, Q35).
+///
+/// The admission `crate::gate::admit_invitation_enrolment` matched the
+/// proof to the invitation and verified the registration. The batch checks
+/// again what the ledger can tell at the commit instant: the invitation
+/// exists and names the actor, it is unused and at most 72 hours old, the
+/// invitee holds no passkey, and the credential the gate verified is the
+/// one the command names and is new to the cell. A first admin's or a
+/// holder's passkey gives UV (ADR-008 "User verification").
+///
+/// The records are those of `fstp_auth::ceremony::invitation_records`:
+/// `InvitationConsumed`, `CredentialRegistered` and, for the first admin,
+/// `FirstAdminEnrolled`. The first admin's batch also grants the tenant
+/// admin role, which every later tenant admin sees in the admin list.
+fn decide_enrolment(
+    s: &CellState,
+    invitation: [u8; 16],
+    credential: &[u8],
+    actor: AccountId,
+    now: Timestamp,
+    inputs: &RouteInputs,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let auth = s.auth();
+    let Some(inv) = auth.invitation(invitation) else {
+        return Err(unknown());
+    };
+    if inv.account != actor {
+        return Err(wrong_actor());
+    }
+    if inv.consumed {
+        return Err(reused());
+    }
+    let age = now.micros().checked_sub(inv.issued_at.micros());
+    if !age.is_some_and(|a| (0..=fstp_auth::ceremony::INVITATION_US).contains(&a)) {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    if auth.has_any_credential(actor) {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    if credential.is_empty() || credential.len() > MAX_CREDENTIAL {
+        return Err(invalid());
+    }
+    if auth.is_registered(credential) {
+        return Err(reused());
+    }
+    let Some(cred) = inputs.credential() else {
+        return Err(needs(RouteInput::VerifiedCredential));
+    };
+    if cred.id != credential {
+        return Err(invalid());
+    }
+    if (inv.first_admin || holds_management_at(s, actor, now)) && !cred.user_verified {
+        return Err(invalid());
+    }
+    let mut batch: Vec<CellRecord> =
+        fstp_auth::ceremony::invitation_records(&inv.ceremony_view(invitation), cred)
+            .into_iter()
+            .map(CellRecord::Auth)
+            .collect();
+    if inv.first_admin && !s.tenant().is_admin(actor) {
+        batch.push(CellRecord::Tenant(TenantRecord::TenantAdminGranted {
+            account: actor,
+        }));
+    }
+    Ok(batch)
 }
 
 fn decide_text(

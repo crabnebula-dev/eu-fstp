@@ -26,8 +26,11 @@ mod handle;
 /// `fstp-cell` binary never contains a `LocalCell` (design section 14.3).
 #[cfg(feature = "memory")]
 pub mod memory;
+/// The route backend of a serving cell over its engine and its application
+/// database (lane int5).
+pub mod pg;
 
-pub use auth::{CHALLENGE_US, INVITATION_SEAM, MAGIC_LINK_US};
+pub use auth::{CHALLENGE_US, MAGIC_LINK_US};
 pub use backend::{
     AnchorRow, Backend, BackendFault, ChallengePurpose, ChallengeRow, ErasureRow, SessionRow,
     TokenKind, TokenRow,
