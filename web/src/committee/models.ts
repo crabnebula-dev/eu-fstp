@@ -50,8 +50,14 @@ export interface RankedRow {
   readonly criterion_scores: readonly CriterionScore[];
   /** The requested total of the effective plan, in EUR. */
   readonly requested: string;
-  /** The remaining call budget, in EUR. */
+  /**
+   * The remaining call budget, in EUR. An amount carries no sign
+   * (ADR-006), so an over-nominated call shows `0.00` here and the
+   * amount it is over by in `shortfall`.
+   */
   readonly remaining_budget: string;
+  /** Present only when the call is over-nominated: a positive amount, in EUR. */
+  readonly shortfall?: string;
 }
 
 /** A ranking row where the viewer has a conflict: "recused" only (Q16). */
@@ -62,7 +68,8 @@ export interface RecusedRow {
 
 export type RankingRow = RankedRow | RecusedRow;
 
-const isRankedRow: Guard<RankedRow> = record<RankedRow>({
+/** The members every readable row carries. */
+const rankedMembers: { readonly [K in keyof Omit<RankedRow, "shortfall">]-?: Guard<RankedRow[K]> } = {
   proposal: isId,
   recused: (v): v is false => v === false,
   title: nullable(isText),
@@ -72,7 +79,24 @@ const isRankedRow: Guard<RankedRow> = record<RankedRow>({
   criterion_scores: list(record<CriterionScore>({ criterion: isId, weighted: isScoreText })),
   requested: isAmount,
   remaining_budget: isAmount,
+};
+
+/** Whether an ADR-006 amount string is zero. */
+function isZeroAmount(v: string): boolean {
+  return /^0([.]0+)?$/.test(v);
+}
+
+/** A readable row within budget: no `shortfall` member. */
+const isRowWithinBudget: Guard<RankedRow> = record<Omit<RankedRow, "shortfall">>(rankedMembers);
+
+/** A readable row of an over-nominated call: a zero budget and a positive `shortfall`. */
+const isRowOverBudget: Guard<RankedRow> = record<Required<RankedRow>>({
+  ...rankedMembers,
+  remaining_budget: (v): v is string => isAmount(v) && isZeroAmount(v),
+  shortfall: (v): v is string => isAmount(v) && !isZeroAmount(v),
 });
+
+const isRankedRow: Guard<RankedRow> = either(isRowWithinBudget, isRowOverBudget);
 
 const isRecusedRow: Guard<RecusedRow> = record<RecusedRow>({
   proposal: isId,

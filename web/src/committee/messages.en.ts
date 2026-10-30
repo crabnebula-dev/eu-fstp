@@ -19,6 +19,7 @@ export const COMMITTEE_LABELS: Readonly<Record<string, string>> = {
   "com.not_scored": "Not scored",
   "com.budget": "Remaining call budget (EUR): ",
   "com.budget_unknown": "The remaining call budget is not available to you.",
+  "com.shortfall": "The nominations exceed the call budget by (EUR): ",
   "com.recused_notice": "You have a conflict on a ranked proposal of this call, so you are recused from its cut-off vote.",
   "com.open.heading": "Open a cut-off round",
   "com.open.nominated": "Number of proposals nominated, counted from the top",

@@ -959,7 +959,24 @@ fn executed<P: Seams>(call: &Call<'_, P>, cmd: &Command) {
 /// that names it. Interim, pending Daniel: only `CreateDraft` names its
 /// new proposal (`proposal.create`, design section 2.2 J4). Other drawn
 /// ids, such as bindings and decisions, stay with the server.
+///
+/// `OpenCutOffRound` answers `{"round": id}` with the drawn round alone,
+/// since the ballot, the delegation and the round read address it
+/// (change D5, `committee.open_round` in `fstp_access::REPLIES`).
 fn accepted(form: &CmdForm, ids: &[u128]) -> ReadModel {
+    if form.kind == fstp_domain::CommandKind::OpenCutOffRound {
+        let round = form
+            .drawn
+            .iter()
+            .zip(ids.iter())
+            .find(|(member, _)| **member == "round")
+            .map(|(_, id)| *id);
+        if let Some(round) = round {
+            return ReadModel::RoundOpened(crate::model::RoundOpened {
+                round: fstp_domain::id::DecisionId::from_raw(round),
+            });
+        }
+    }
     const NAMED: &[(fstp_domain::CommandKind, &str)] =
         &[(fstp_domain::CommandKind::CreateDraft, "proposal")];
     let Some((_, name)) = NAMED.iter().find(|(k, _)| *k == form.kind) else {
@@ -2283,4 +2300,36 @@ async fn call_summary<P: Seams>(
         .head(v.programme())
         .map(|p| p.live.p05.amount().to_string());
     s
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use fstp_json::ToJson;
+
+    /// R-EV-08, TH-26, change D5: dispatch answers `committee.open_round`
+    /// with the round it drew and nothing else, and that body fits the
+    /// reply shape of `fstp_access::REPLIES`.
+    #[test]
+    fn r_ev_08_open_round_reply_is_the_drawn_round_and_fits_its_shape() {
+        let form = forms::command_form(fstp_domain::CommandKind::OpenCutOffRound).unwrap();
+        let body = accepted(&form, &[9]);
+        crate::model::reply_shape_tests::assert_fits("committee.open_round", &body);
+        assert_eq!(
+            fstp_json::to_canonical(&body.to_json()).unwrap(),
+            r#"{"round":"9"}"#
+        );
+    }
+
+    /// J4, TH-26: creating a draft still answers the drawn proposal, so
+    /// the round reply leaves the other commands' bodies as they were.
+    #[test]
+    fn j4_create_draft_reply_still_names_the_drawn_proposal() {
+        let form = forms::command_form(fstp_domain::CommandKind::CreateDraft).unwrap();
+        let ids: Vec<u128> = (1..=u128::try_from(form.drawn.len()).unwrap()).collect();
+        let body = accepted(&form, &ids);
+        crate::model::reply_shape_tests::assert_fits("proposal.create", &body);
+    }
 }

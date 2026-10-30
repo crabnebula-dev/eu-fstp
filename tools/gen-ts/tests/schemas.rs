@@ -155,15 +155,33 @@ fn squeeze(s: &str) -> String {
 }
 
 /// The reply shapes the API core serves today (`fstp_api_core::ReadModel`
-/// and dispatch), by operation.
-const SERVED_TODAY: [&str; 7] = [
+/// and dispatch), by operation. The reply-shape tests of
+/// `fstp-api-core` sample every `ReadModel` variant against these.
+const SERVED_TODAY: [&str; 24] = [
     "pending.list",
     "calls.list_open",
     "calls.get",
     "proposal.list_own",
+    "proposal.view",
+    "proposal.create",
+    "proposal.get_workspace",
+    "proposal.record_plan",
+    "stage2.view",
+    "me.notices",
+    "negotiation.view",
     "me.assignments",
+    "me.irc_cases",
     "me.sessions",
     "me.begin_verification",
+    "intake.queue",
+    "call.board",
+    "review.declaration_view",
+    "review.read_content",
+    "irc.case",
+    "review.notifiable_conflicts",
+    "review.score_sheet",
+    "review.stage2_thread",
+    "committee.ranking",
 ];
 
 /// The reads lane m4reg adds, whose read models it adds too.
@@ -256,6 +274,36 @@ fn adr006_gen_ts_call_budget_is_an_amount() {
             squeeze(e).contains("budget:{schema:{kind:amount}"),
             "{key}: budget is not an amount in {e}"
         );
+    }
+}
+
+/// ADR-006, design section 3.9: every other money member the pages show
+/// is an `amount` too: P-04 and P-05 of a call, the plan total the cell
+/// summed, and the requested total and remaining budget of a ranking row.
+#[test]
+fn adr006_gen_ts_money_members_are_amounts() {
+    let text = generated();
+    let block = schemas_block(&text);
+    for (key, members) in [
+        (
+            "calls.get",
+            &["grant_min", "grant_max", "recipient_max"][..],
+        ),
+        (
+            "calls.list_open",
+            &["grant_min", "grant_max", "recipient_max"][..],
+        ),
+        ("proposal.record_plan", &["total"][..]),
+        ("committee.ranking", &["requested", "remaining_budget"][..]),
+    ] {
+        let e = entry(block, key).unwrap_or_else(|| panic!("SCHEMAS has no {key}"));
+        let flat = squeeze(e);
+        for m in members {
+            assert!(
+                flat.contains(&format!("{m}:{{schema:{{kind:amount}}")),
+                "{key}: {m} is not an amount in {e}"
+            );
+        }
     }
 }
 

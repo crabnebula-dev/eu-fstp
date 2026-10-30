@@ -315,9 +315,39 @@ pub enum RankingRow {
         criterion_scores: Vec<CriterionScore>,
         /// The requested total of the effective plan (ADR-006).
         requested: String,
-        /// The remaining call budget (ADR-006).
+        /// The remaining call budget as `fstp_money::Amount` displays it.
+        /// It is signed, because a call can be over-nominated. The
+        /// encoding never sends the sign (ADR-006, see [`budget_members`]).
         remaining_budget: String,
     },
+}
+
+/// The members that spell a signed remaining budget, given as
+/// `fstp_money::Amount` displays it (ADR-006, design 3.7). Zero and above
+/// is `remaining_budget` as written, with no shortfall. Below zero is a
+/// zero `remaining_budget` and a positive `shortfall`, as the domain codec
+/// spells a signed amount. So each signed value has one spelling, and no
+/// served amount carries a sign.
+fn budget_members(signed: &str) -> Vec<(&'static str, Value)> {
+    let shortfall = signed
+        .strip_prefix('-')
+        .filter(|s| s.bytes().any(|b| b.is_ascii_digit() && b != b'0'));
+    match shortfall {
+        None => vec![(
+            "remaining_budget",
+            Value::from(signed.strip_prefix('-').unwrap_or(signed)),
+        )],
+        Some(shortfall) => {
+            let zero = match shortfall.split_once('.') {
+                Some((_, fraction)) => format!("0.{}", "0".repeat(fraction.len())),
+                None => "0".to_owned(),
+            };
+            vec![
+                ("remaining_budget", Value::String(zero)),
+                ("shortfall", Value::from(shortfall)),
+            ]
+        }
+    }
 }
 
 impl ToJson for RankingRow {
@@ -336,17 +366,20 @@ impl ToJson for RankingRow {
                 criterion_scores,
                 requested,
                 remaining_budget,
-            } => object(vec![
-                ("proposal", dec(proposal)),
-                ("recused", Value::Bool(false)),
-                ("title", text_or_null(title)),
-                ("neutral_summary", text_or_null(neutral_summary)),
-                ("rationale", text_or_null(rationale)),
-                ("effective", Value::from(effective.as_str())),
-                ("criterion_scores", array(criterion_scores)),
-                ("requested", Value::from(requested.as_str())),
-                ("remaining_budget", Value::from(remaining_budget.as_str())),
-            ]),
+            } => {
+                let mut members = vec![
+                    ("proposal", dec(proposal)),
+                    ("recused", Value::Bool(false)),
+                    ("title", text_or_null(title)),
+                    ("neutral_summary", text_or_null(neutral_summary)),
+                    ("rationale", text_or_null(rationale)),
+                    ("effective", Value::from(effective.as_str())),
+                    ("criterion_scores", array(criterion_scores)),
+                    ("requested", Value::from(requested.as_str())),
+                ];
+                members.extend(budget_members(remaining_budget));
+                object(members)
+            }
         }
     }
 }

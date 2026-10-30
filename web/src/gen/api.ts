@@ -2401,6 +2401,10 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "budget": { schema: { kind: "amount" }, optional: false },
       "currency": { schema: { kind: "enum", values: ["EUR"] }, optional: false },
       "open": { schema: { kind: "bool" }, optional: false },
+      "title": { schema: { kind: "string" }, optional: true },
+      "grant_min": { schema: { kind: "amount" }, optional: true },
+      "grant_max": { schema: { kind: "amount" }, optional: true },
+      "recipient_max": { schema: { kind: "amount" }, optional: true },
     },
   } },
   "calls.get": {
@@ -2415,6 +2419,10 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "budget": { schema: { kind: "amount" }, optional: false },
       "currency": { schema: { kind: "enum", values: ["EUR"] }, optional: false },
       "open": { schema: { kind: "bool" }, optional: false },
+      "title": { schema: { kind: "string" }, optional: true },
+      "grant_min": { schema: { kind: "amount" }, optional: true },
+      "grant_max": { schema: { kind: "amount" }, optional: true },
+      "recipient_max": { schema: { kind: "amount" }, optional: true },
     },
   },
   "proposal.list_own": { kind: "array", items: {
@@ -2424,8 +2432,19 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "call": { schema: { kind: "id" }, optional: false },
       "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
       "role": { schema: { kind: "enum", values: ["lead", "member", "guardian"] }, optional: false },
+      "title": { schema: { kind: "string" }, optional: true },
     },
   } },
+  "proposal.view": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+      "role": { schema: { kind: "enum", values: ["lead", "member", "guardian"] }, optional: false },
+      "title": { schema: { kind: "string" }, optional: true },
+    },
+  },
   "me.assignments": { kind: "array", items: {
     kind: "object",
     fields: {
@@ -2435,6 +2454,186 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       ["kind"]: { schema: { kind: "enum", values: ["reviewer", "irc", "amendment"] }, optional: false },
       "awaiting_declaration": { schema: { kind: "bool" }, optional: false },
       "active": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
+  "me.irc_cases": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "assignment": { schema: { kind: "id" }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["reviewer", "irc", "amendment"] }, optional: false },
+      "awaiting_declaration": { schema: { kind: "bool" }, optional: false },
+      "active": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
+  "proposal.create": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "proposal.get_workspace": {
+    kind: "object",
+    fields: {
+      "title": { schema: { kind: "string" }, optional: false },
+      "summary": { schema: { kind: "string" }, optional: false },
+      "narrative": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "proposal.record_plan": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "total": { schema: { kind: "amount" }, optional: true },
+    },
+  },
+  "stage2.view": {
+    kind: "object",
+    fields: {
+      "questions": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "handle": { schema: { kind: "string" }, optional: false },
+          "asked": { schema: { kind: "string" }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "me.notices": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      ["kind"]: { schema: { kind: "enum", values: ["ProposalOutcome", "IrcConcern"] }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "day": { schema: { kind: "string" }, optional: true },
+    },
+  } },
+  "negotiation.view": {
+    kind: "object",
+    fields: {
+      "acknowledged": { schema: { kind: "bool" }, optional: false },
+    },
+  },
+  "intake.queue": {
+    kind: "object",
+    fields: {
+      "knock_out": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+      "proposals": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "proposal": { schema: { kind: "id" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+          "title": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "call.board": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+      "title": { schema: { kind: "string" }, optional: false },
+    },
+  } },
+  "review.declaration_view": {
+    kind: "object",
+    fields: {
+      "title": { schema: { kind: "string" }, optional: false },
+      "neutral_summary": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "review.read_content": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+      "title": { schema: { kind: "string" }, optional: false },
+      "text": { schema: { kind: "string" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "irc.case": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+      "title": { schema: { kind: "string" }, optional: false },
+      "text": { schema: { kind: "string" }, optional: false },
+      "outcome": { schema: { kind: "enum", values: ["nominated"] }, optional: false },
+    },
+  },
+  "review.notifiable_conflicts": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+    },
+  } },
+  "review.score_sheet": {
+    kind: "object",
+    fields: {
+      "stage": { schema: { kind: "enum", values: ["One", "Two"] }, optional: false },
+      "plan": { schema: { kind: "id" }, optional: false },
+      "criteria": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+          "max": { schema: { kind: "int" }, optional: false },
+        },
+      } }, optional: false },
+      "current": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "score": { schema: { kind: "id" }, optional: false },
+          ["values"]: { schema: { kind: "array", items: { kind: "int" } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "review.stage2_thread": {
+    kind: "object",
+    fields: {
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+      "open": { schema: { kind: "bool" }, optional: false },
+      "own_no_questions": { schema: { kind: "bool" }, optional: false },
+      "entries": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          ["kind"]: { schema: { kind: "enum", values: ["question", "answer"] }, optional: false },
+          "author": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "committee.ranking": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "recused": { schema: { kind: "bool" }, optional: false },
+      "title": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
+      "neutral_summary": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
+      "rationale": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
+      "effective": { schema: { kind: "string" }, optional: true },
+      "criterion_scores": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "criterion": { schema: { kind: "id" }, optional: false },
+          "weighted": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: true },
+      "requested": { schema: { kind: "amount" }, optional: true },
+      "remaining_budget": { schema: { kind: "amount" }, optional: true },
+      "shortfall": { schema: { kind: "amount" }, optional: true },
     },
   } },
   "me.sessions": { kind: "array", items: {

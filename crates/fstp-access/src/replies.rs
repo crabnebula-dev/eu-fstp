@@ -13,14 +13,20 @@
 //!
 //! Interim, pending Daniel: an entry is keyed by the name of the
 //! operation whose reply it describes. Command operations answer
-//! `{"accepted": true}` today and have no entry yet. The one exception is
-//! `committee.open_round`: the server draws the round id, and the
-//! committee page needs it to address the round. Its entry fixes that
-//! reply, `{"round": id}`.
+//! `{"accepted": true}` today and have no entry. Three commands answer
+//! with data a page reads next, and each has an entry:
 //!
-//! Seam for lane m4int-b: dispatch still answers `committee.open_round`
-//! with `{"accepted": true}`. It must serve
-//! `fstp_api_core::model::RoundOpened` with the drawn id instead.
+//! - `proposal.create` names the drawn proposal (J4).
+//! - `proposal.record_plan` carries the total the cell summed (ADR-006).
+//! - `committee.open_round` names the drawn round, which the ballot and
+//!   the delegation address. Its entry fixes that reply, `{"round": id}`.
+//!
+//! Dispatch serves `committee.open_round` as
+//! `fstp_api_core::model::RoundOpened`, with the drawn id.
+//!
+//! Optional members are the ones a read model leaves out when it has no
+//! value, such as a call's title. A member that is present but empty is
+//! `null`, and its shape says `Nullable`.
 
 use fstp_domain::roles::{Group, Role};
 
@@ -85,6 +91,15 @@ const fn m(name: &'static str, shape: Shape) -> Member {
         name,
         shape,
         optional: false,
+    }
+}
+
+/// A member the reply may leave out.
+const fn opt(name: &'static str, shape: Shape) -> Member {
+    Member {
+        name,
+        shape,
+        optional: true,
     }
 }
 
@@ -189,6 +204,43 @@ const CALL: Shape = Shape::Object(&[
     m("budget", Shape::Amount),
     m("currency", Shape::Enum(&["EUR"])),
     m("open", Shape::Bool),
+    // R-PB-01: the published call text, left out when the text store
+    // cannot give it.
+    opt("title", Shape::String),
+    // P-04, once the call's values are frozen. The two travel together.
+    opt("grant_min", Shape::Amount),
+    opt("grant_max", Shape::Amount),
+    // P-05, from the programme's head policy, when it has one.
+    opt("recipient_max", Shape::Amount),
+]);
+
+/// One of the caller's proposals: "Proposal" plus its id, never a name
+/// (I-17). The title is the submitted one, else the team's draft title,
+/// and is left out for a proposal this core holds no text of.
+const OWN_PROPOSAL: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("call", Shape::Id),
+    m("state", Shape::Enum(OWN_STATE_NAMES)),
+    m("role", Shape::Enum(&["lead", "member", "guardian"])),
+    opt("title", Shape::String),
+]);
+
+/// One of the caller's assignments, with no applicant identity (I-17).
+const OWN_ASSIGNMENTS: Shape = Shape::Array(&Shape::Object(&[
+    m("assignment", Shape::Id),
+    m("proposal", Shape::Id),
+    m("call", Shape::Id),
+    m("kind", Shape::Enum(&["reviewer", "irc", "amendment"])),
+    m("awaiting_declaration", Shape::Bool),
+    m("active", Shape::Bool),
+]));
+
+/// One proposal of a call for its staff: "Proposal" plus its id, its
+/// state and its submitted title (`intake.queue`, `call.board`).
+const PROPOSAL_ROW: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("state", Shape::Enum(STATE_NAMES)),
+    m("title", Shape::String),
 ]);
 
 /// The reply shape of each operation whose `data` the API core serves,
@@ -215,25 +267,178 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ("calls.list_open", Shape::Array(&CALL)),
     ("calls.get", CALL),
     // I-17: "Proposal" plus its id, never a name.
+    ("proposal.list_own", Shape::Array(&OWN_PROPOSAL)),
+    ("proposal.view", OWN_PROPOSAL),
+    // I-17: no applicant identity.
+    ("me.assignments", OWN_ASSIGNMENTS),
+    // R-IR-01: the caller's IRC assignments, the same rows.
+    ("me.irc_cases", OWN_ASSIGNMENTS),
+    // J4: the drawn proposal the workspace opens next. No other drawn id
+    // leaves the server.
     (
-        "proposal.list_own",
+        "proposal.create",
+        Shape::Object(&[m("accepted", Shape::Bool), m("proposal", Shape::Id)]),
+    ),
+    // I-21: the team's private draft.
+    (
+        "proposal.get_workspace",
+        Shape::Object(&[
+            m("title", Shape::String),
+            m("summary", Shape::String),
+            m("narrative", Shape::String),
+        ]),
+    ),
+    // ADR-006, design section 3.9: the total the cell summed. A plan with
+    // no milestone has no total, and the reply is `{"accepted": true}`.
+    (
+        "proposal.record_plan",
+        Shape::Object(&[m("accepted", Shape::Bool), opt("total", Shape::Amount)]),
+    ),
+    // TH-08: each question under its P-11 handle, with its day only.
+    (
+        "stage2.view",
+        Shape::Object(&[m(
+            "questions",
+            Shape::Array(&Shape::Object(&[
+                m("handle", Shape::String),
+                m("asked", Shape::String),
+                m("text", Shape::String),
+            ])),
+        )]),
+    ),
+    // R-EV-04, R-IR-02: the kind and the proposal, and the day once known.
+    (
+        "me.notices",
         Shape::Array(&Shape::Object(&[
+            m("kind", Shape::Enum(&["ProposalOutcome", "IrcConcern"])),
             m("proposal", Shape::Id),
-            m("call", Shape::Id),
-            m("state", Shape::Enum(OWN_STATE_NAMES)),
-            m("role", Shape::Enum(&["lead", "member", "guardian"])),
+            opt("day", Shape::String),
         ])),
     ),
-    // I-17: no applicant identity.
+    // R-NG-06.
     (
-        "me.assignments",
-        Shape::Array(&Shape::Object(&[
-            m("assignment", Shape::Id),
+        "negotiation.view",
+        Shape::Object(&[m("acknowledged", Shape::Bool)]),
+    ),
+    // R-EV-01: the P-09 criteria and the proposals of the intake.
+    (
+        "intake.queue",
+        Shape::Object(&[
+            m(
+                "knock_out",
+                Shape::Array(&Shape::Object(&[
+                    m("id", Shape::Id),
+                    m("text", Shape::String),
+                ])),
+            ),
+            m("proposals", Shape::Array(&PROPOSAL_ROW)),
+        ]),
+    ),
+    ("call.board", Shape::Array(&PROPOSAL_ROW)),
+    // Q9, R-CF-02: the title and the neutral summary, and nothing else.
+    (
+        "review.declaration_view",
+        Shape::Object(&[
+            m("title", Shape::String),
+            m("neutral_summary", Shape::String),
+        ]),
+    ),
+    // R-AC-01, I-03: the submitted proposal in its current call.
+    (
+        "review.read_content",
+        Shape::Object(&[
             m("proposal", Shape::Id),
+            m("state", Shape::Enum(OWN_STATE_NAMES)),
+            m("title", Shape::String),
+            m("text", Shape::String),
             m("call", Shape::Id),
-            m("kind", Shape::Enum(&["reviewer", "irc", "amendment"])),
-            m("awaiting_declaration", Shape::Bool),
-            m("active", Shape::Bool),
+        ]),
+    ),
+    // R-IR-03: the proposal and the outcome that brought it to the IRC,
+    // and no call, score, ballot or rationale.
+    (
+        "irc.case",
+        Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("state", Shape::Enum(OWN_STATE_NAMES)),
+            m("title", Shape::String),
+            m("text", Shape::String),
+            m("outcome", Shape::Enum(&["nominated"])),
+        ]),
+    ),
+    // R-CF-04: one draft per notifiable conflict, by proposal.
+    (
+        "review.notifiable_conflicts",
+        Shape::Array(&Shape::Object(&[m("proposal", Shape::Id)])),
+    ),
+    // P-01: the integer scale 0 to N per criterion, and the reviewer's
+    // current score of the plan the stage scores.
+    (
+        "review.score_sheet",
+        Shape::Object(&[
+            m("stage", Shape::Enum(&["One", "Two"])),
+            m("plan", Shape::Id),
+            m(
+                "criteria",
+                Shape::Array(&Shape::Object(&[
+                    m("id", Shape::Id),
+                    m("text", Shape::String),
+                    m("max", Shape::Int),
+                ])),
+            ),
+            m(
+                "current",
+                Shape::Nullable(&Shape::Object(&[
+                    m("score", Shape::Id),
+                    m("values", Shape::Array(&Shape::Int)),
+                ])),
+            ),
+        ]),
+    ),
+    // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
+    (
+        "review.stage2_thread",
+        Shape::Object(&[
+            m("state", Shape::Enum(OWN_STATE_NAMES)),
+            m("open", Shape::Bool),
+            m("own_no_questions", Shape::Bool),
+            m(
+                "entries",
+                Shape::Array(&Shape::Object(&[
+                    m("kind", Shape::Enum(&["question", "answer"])),
+                    m("author", Shape::Nullable(&Shape::String)),
+                    m("text", Shape::String),
+                ])),
+            ),
+        ]),
+    ),
+    // R-EV-08, Q16, D9, D10. A row the viewer is recused from carries
+    // `proposal` and `recused` only. The shape kinds have no union, so
+    // the members of a readable row are optional here, and the read
+    // model's tests fix which row carries which. The remaining budget is
+    // signed, since a call can be over-nominated, and an amount carries
+    // no sign (ADR-006). Below zero, a readable row serves a zero
+    // `remaining_budget` and a positive `shortfall`, as the domain codec
+    // spells a signed amount. At zero and above it has no `shortfall`.
+    (
+        "committee.ranking",
+        Shape::Array(&Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("recused", Shape::Bool),
+            opt("title", Shape::Nullable(&Shape::String)),
+            opt("neutral_summary", Shape::Nullable(&Shape::String)),
+            opt("rationale", Shape::Nullable(&Shape::String)),
+            opt("effective", Shape::String),
+            opt(
+                "criterion_scores",
+                Shape::Array(&Shape::Object(&[
+                    m("criterion", Shape::Id),
+                    m("weighted", Shape::String),
+                ])),
+            ),
+            opt("requested", Shape::Amount),
+            opt("remaining_budget", Shape::Amount),
+            opt("shortfall", Shape::Amount),
         ])),
     ),
     // R-LG-04.

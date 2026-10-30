@@ -320,8 +320,12 @@ async function mountRanking(env: PageEnv, params: Readonly<Record<string, string
       first === undefined
         ? h("p", {}, [t.label("com.budget_unknown")])
         : h("p", {}, [t.label("com.budget"), h("span", { id: "remaining-budget" }, [first.remaining_budget])]),
-      tableSlot,
     ];
+    if (first?.shortfall !== undefined) {
+      // An over-nominated call: the server spells the signed budget as a positive shortfall (ADR-006).
+      parts.push(h("p", {}, [t.label("com.shortfall"), h("span", { id: "budget-shortfall" }, [first.shortfall])]));
+    }
+    parts.push(tableSlot);
     if (readable.length === rows.length) {
       parts.push(
         openRoundForm(env, t, f, call, sorted ?? readable, (order) => {

@@ -75,6 +75,8 @@ pub enum ReadModel {
         /// Whether the caller acknowledged the negotiation notice.
         acknowledged: bool,
     },
+    /// `committee.open_round`: the round the server drew (change D5).
+    RoundOpened(RoundOpened),
 }
 
 /// A decimal string.
@@ -152,6 +154,7 @@ impl ToJson for ReadModel {
                 let _ = o.insert("acknowledged", Value::Bool(*acknowledged));
                 Value::Object(o)
             }
+            ReadModel::RoundOpened(r) => r.to_json(),
         }
     }
 }
@@ -710,11 +713,8 @@ impl ToJson for InvitationLanding {
 
 /// `committee.open_round`: the cut-off round the server drew (R-EV-08,
 /// change D5). The ballot, the delegation and the round read address it.
-/// It names no voter and no proposal.
-///
-/// Seam for lane m4int-b: dispatch answers the command with
-/// [`ReadModel::Accepted`] today. It must serve this reply instead, with
-/// the id the form drew.
+/// It names no voter and no proposal. Dispatch serves it as
+/// [`ReadModel::RoundOpened`], with the id the form drew.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoundOpened {
     /// The round, the decision id of its cut-off.
@@ -912,7 +912,7 @@ impl ToJson for AssignmentView {
 }
 
 #[cfg(test)]
-mod reply_shape_tests {
+pub(crate) mod reply_shape_tests {
     //! Each read model encodes to the reply shape `fstp_access::REPLIES`
     //! names for its operation, so the generated `SCHEMAS` and
     //! `VALIDATORS` of `web/src/gen/api.ts` describe what the server
@@ -961,7 +961,8 @@ mod reply_shape_tests {
         reply(op).unwrap_or_else(|| panic!("REPLIES has no {op}"))
     }
 
-    fn assert_fits(op: &str, v: &impl ToJson) {
+    /// Asserts that `v` encodes to the reply shape of `op`.
+    pub(crate) fn assert_fits(op: &str, v: &impl ToJson) {
         let json = v.to_json();
         let text = fstp_json::to_canonical(&json).unwrap_or_default();
         assert!(fits(shape_of(op), &json), "{op} does not fit: {text}");
@@ -984,11 +985,19 @@ mod reply_shape_tests {
         }
     }
 
-    /// TH-26, ADR-006, ADR-014: every reply the API core serves today fits
-    /// its shape, and a call's budget is an amount string.
-    #[test]
-    fn th26_served_read_models_fit_their_reply_shapes() {
-        let pending = PendingView {
+    /// A call the text store and the policy know nothing more of: no
+    /// title, no frozen P-04 and no P-05.
+    fn bare_call() -> CallSummary {
+        CallSummary {
+            title: None,
+            grant_range: None,
+            recipient_max: None,
+            ..call()
+        }
+    }
+
+    fn pending() -> PendingView {
+        PendingView {
             id: PendingId::from_raw(3),
             agent: AgentClientId::from_raw(4),
             op: "call.publish".to_owned(),
@@ -997,37 +1006,615 @@ mod reply_shape_tests {
             created: Timestamp::from_micros(10),
             expires: Timestamp::from_micros(20),
             status: PendingStatus::Open,
-        };
-        assert_fits("pending.list", &ReadModel::PendingActions(vec![pending]));
-        assert_fits("calls.list_open", &ReadModel::OpenCalls(vec![call()]));
-        assert_fits("calls.get", &ReadModel::Call(call()));
-        let own = ProposalSummary {
+        }
+    }
+
+    fn own(title: Option<&str>) -> ProposalSummary {
+        ProposalSummary {
             proposal: ProposalId::from_raw(11),
             call: CallId::from_raw(7),
             state: "SUBMITTED".to_owned(),
             role: "lead",
-            title: Some("Synthetic proposal".to_owned()),
-        };
-        assert_fits("proposal.list_own", &ReadModel::OwnProposals(vec![own]));
-        let mine = AssignmentSummary {
+            title: title.map(str::to_owned),
+        }
+    }
+
+    fn assignment(kind: &'static str) -> AssignmentSummary {
+        AssignmentSummary {
             assignment: AssignmentId::from_raw(5),
             proposal: ProposalId::from_raw(11),
             call: CallId::from_raw(7),
-            kind: "reviewer",
+            kind,
             awaiting_declaration: true,
             active: false,
-        };
-        assert_fits("me.assignments", &ReadModel::Assignments(vec![mine]));
-        let session = SessionSummary {
-            session: SessionId::from_raw(9),
-            method: LoginMethod::MagicLink,
-            started: Timestamp::from_micros(5),
-        };
-        assert_fits("me.sessions", &ReadModel::Sessions(vec![session]));
+        }
+    }
+
+    fn row(state: &'static str) -> crate::views::ProposalRow {
+        crate::views::ProposalRow {
+            proposal: 1001,
+            state,
+            title: "Synthetic open sensor kit".to_owned(),
+        }
+    }
+
+    fn content(outcome: Option<&'static str>) -> crate::views::ContentView {
+        crate::views::ContentView {
+            proposal: 1001,
+            call: 1,
+            state: "IRC_REVIEW",
+            title: "Synthetic open sensor kit".to_owned(),
+            text: "A synthetic narrative.".to_owned(),
+            outcome,
+        }
+    }
+
+    fn sheet(current: Option<(u128, Vec<u8>)>) -> crate::views::ScoreSheet {
+        crate::views::ScoreSheet {
+            stage: "One",
+            plan: 3,
+            criteria: vec![crate::views::SheetCriterion {
+                id: 1,
+                text: "Criterion 1".to_owned(),
+                max: 5,
+            }],
+            current,
+        }
+    }
+
+    fn ranked() -> crate::views::RankingRow {
+        crate::views::RankingRow::Ranked {
+            proposal: 1001,
+            title: Some("Synthetic open sensor kit".to_owned()),
+            neutral_summary: Some("A synthetic summary.".to_owned()),
+            rationale: Some("A synthetic rationale.".to_owned()),
+            effective: "100.00".to_owned(),
+            criterion_scores: vec![crate::views::CriterionScore {
+                criterion: 1,
+                weighted: "4.50".to_owned(),
+            }],
+            requested: "1500.50".to_owned(),
+            remaining_budget: "398499.50".to_owned(),
+        }
+    }
+
+    /// A ranked row of an over-nominated call, whose remaining budget is
+    /// spelled as dispatch writes it: `Amount`'s display, with a minus.
+    fn over_nominated() -> crate::views::RankingRow {
+        let budget = fstp_money::Amount::from_minor(100_000, fstp_money::Currency::Eur).unwrap();
+        let committed = fstp_money::Amount::from_minor(150_000, fstp_money::Currency::Eur).unwrap();
+        let remaining = budget.checked_sub(committed).unwrap();
+        let mut row = ranked();
+        if let crate::views::RankingRow::Ranked {
+            remaining_budget, ..
+        } = &mut row
+        {
+            *remaining_budget = remaining.to_string();
+        }
+        row
+    }
+
+    fn thread() -> crate::views::Stage2Thread {
+        crate::views::Stage2Thread {
+            state: "STAGE2",
+            open: true,
+            own_no_questions: false,
+            entries: vec![
+                crate::views::ThreadItem {
+                    kind: "question",
+                    author: Some("R-0a1b2c3d".to_owned()),
+                    text: "Why this milestone?".to_owned(),
+                    day: "2026-10-30".to_owned(),
+                },
+                crate::views::ThreadItem {
+                    kind: "answer",
+                    author: None,
+                    text: "Because of the pilot.".to_owned(),
+                    day: "2026-10-30".to_owned(),
+                },
+            ],
+        }
+    }
+
+    /// The operations whose reply `m` is, by name. The match has no
+    /// wildcard, so a new read model fails to compile here until it names
+    /// its operation and so its shape.
+    fn served_as(m: &ReadModel) -> &'static [&'static str] {
+        match m {
+            // A command's `{"accepted": true}`: no data, and no entry.
+            ReadModel::Accepted => &[],
+            ReadModel::Created(_) => &["proposal.create"],
+            ReadModel::PendingActions(_) => &["pending.list"],
+            ReadModel::OpenCalls(_) => &["calls.list_open"],
+            ReadModel::Call(_) => &["calls.get"],
+            ReadModel::OwnProposals(_) => &["proposal.list_own"],
+            ReadModel::Assignments(_) => &["me.assignments", "me.irc_cases"],
+            ReadModel::Sessions(_) => &["me.sessions"],
+            ReadModel::Redirect(_) => &["me.begin_verification"],
+            ReadModel::IntakeQueue(_) => &["intake.queue"],
+            ReadModel::Board(_) => &["call.board"],
+            ReadModel::DeclarationView(_) => &["review.declaration_view"],
+            ReadModel::Content(v) if v.outcome.is_some() => &["irc.case"],
+            ReadModel::Content(_) => &["review.read_content"],
+            ReadModel::ScoreSheet(_) => &["review.score_sheet"],
+            ReadModel::Stage2Thread(_) => &["review.stage2_thread"],
+            ReadModel::Ranking(_) => &["committee.ranking"],
+            ReadModel::Notifiable(_) => &["review.notifiable_conflicts"],
+            ReadModel::Workspace(_) => &["proposal.get_workspace"],
+            ReadModel::PlanSaved(_) => &["proposal.record_plan"],
+            ReadModel::OwnProposal(_) => &["proposal.view"],
+            ReadModel::Stage2Questions(_) => &["stage2.view"],
+            ReadModel::Notices(_) => &["me.notices"],
+            ReadModel::Negotiation { .. } => &["negotiation.view"],
+            ReadModel::RoundOpened(_) => &["committee.open_round"],
+        }
+    }
+
+    /// One read model of each variant, with every optional member set.
+    fn one_of_each() -> Vec<ReadModel> {
+        vec![
+            ReadModel::Accepted,
+            ReadModel::Created(vec![("proposal", 1001)]),
+            ReadModel::PendingActions(vec![pending()]),
+            ReadModel::OpenCalls(vec![call()]),
+            ReadModel::Call(call()),
+            ReadModel::OwnProposals(vec![own(Some("Synthetic proposal"))]),
+            ReadModel::Assignments(vec![assignment("reviewer")]),
+            ReadModel::Sessions(vec![SessionSummary {
+                session: SessionId::from_raw(9),
+                method: LoginMethod::MagicLink,
+                started: Timestamp::from_micros(5),
+            }]),
+            ReadModel::Redirect("/vault/begin".to_owned()),
+            ReadModel::IntakeQueue(crate::views::IntakeQueue {
+                knock_out: vec![crate::views::KnockOutCriterion {
+                    id: 1,
+                    text: "Eligible country".to_owned(),
+                }],
+                proposals: vec![row("SUBMITTED")],
+            }),
+            ReadModel::Board(vec![row("STAGE1")]),
+            ReadModel::DeclarationView(crate::views::DeclarationView {
+                title: "Synthetic open sensor kit".to_owned(),
+                neutral_summary: "A synthetic summary.".to_owned(),
+            }),
+            ReadModel::Content(content(None)),
+            ReadModel::Content(content(Some("nominated"))),
+            ReadModel::ScoreSheet(sheet(Some((3, vec![0, 5])))),
+            ReadModel::Stage2Thread(thread()),
+            ReadModel::Ranking(vec![
+                ranked(),
+                crate::views::RankingRow::Recused { proposal: 1003 },
+            ]),
+            ReadModel::Ranking(vec![over_nominated()]),
+            ReadModel::Notifiable(vec![ProposalId::from_raw(1003)]),
+            ReadModel::Workspace(crate::views::WorkspaceView {
+                title: "Synthetic open sensor kit".to_owned(),
+                summary: "A synthetic summary.".to_owned(),
+                narrative: "A synthetic narrative.".to_owned(),
+            }),
+            ReadModel::PlanSaved("1500.50".to_owned()),
+            ReadModel::OwnProposal(own(Some("Synthetic proposal"))),
+            ReadModel::Stage2Questions(vec![crate::views::Question {
+                handle: "R-0a1b2c3d".to_owned(),
+                asked: "2026-10-30".to_owned(),
+                text: "Why this milestone?".to_owned(),
+            }]),
+            ReadModel::Notices(vec![crate::views::Notice {
+                kind: "IrcConcern",
+                proposal: 1001,
+                day: Some("2026-10-30".to_owned()),
+            }]),
+            ReadModel::Negotiation { acknowledged: true },
+            ReadModel::RoundOpened(RoundOpened {
+                round: DecisionId::from_raw(9),
+            }),
+        ]
+    }
+
+    /// TH-26, ADR-006, ADR-014: every read model the API core serves fits
+    /// the shape of each operation it answers, so no reply escapes the
+    /// check. Every variant of [`ReadModel`] is sampled, and only the
+    /// bare command acknowledgement names no operation.
+    #[test]
+    fn th26_served_read_models_fit_their_reply_shapes() {
+        let samples = one_of_each();
+        let mut named = std::collections::BTreeSet::new();
+        for m in &samples {
+            let ops = served_as(m);
+            assert_eq!(ops.is_empty(), *m == ReadModel::Accepted, "{m:?}");
+            for op in ops {
+                assert_fits(op, m);
+                named.insert(*op);
+            }
+        }
+        // Every entry of REPLIES that a read model of this crate encodes
+        // is reached above, or is one of the m4reg models tested below.
+        let m4reg = [
+            "tenant.list_admins",
+            "me.get_verification",
+            "creator.list_programmes",
+            "creator.list_templates",
+            "people.get_invitation",
+            "review.assignments",
+        ];
+        for (name, _) in fstp_access::REPLIES {
+            assert!(
+                named.contains(name) || m4reg.contains(name),
+                "{name} has a shape but no read model sample"
+            );
+        }
+    }
+
+    /// The number of [`ReadModel`] variants.
+    const VARIANTS: usize = 24;
+
+    /// The position of `m`'s variant in the declaration of [`ReadModel`].
+    /// The match has no wildcard, so a new variant fails to compile here,
+    /// and [`VARIANTS`] grows with it.
+    fn variant(m: &ReadModel) -> usize {
+        match m {
+            ReadModel::Accepted => 0,
+            ReadModel::Created(_) => 1,
+            ReadModel::PendingActions(_) => 2,
+            ReadModel::OpenCalls(_) => 3,
+            ReadModel::Call(_) => 4,
+            ReadModel::OwnProposals(_) => 5,
+            ReadModel::Assignments(_) => 6,
+            ReadModel::Sessions(_) => 7,
+            ReadModel::Redirect(_) => 8,
+            ReadModel::IntakeQueue(_) => 9,
+            ReadModel::Board(_) => 10,
+            ReadModel::DeclarationView(_) => 11,
+            ReadModel::Content(_) => 12,
+            ReadModel::ScoreSheet(_) => 13,
+            ReadModel::Stage2Thread(_) => 14,
+            ReadModel::Ranking(_) => 15,
+            ReadModel::Notifiable(_) => 16,
+            ReadModel::Workspace(_) => 17,
+            ReadModel::PlanSaved(_) => 18,
+            ReadModel::OwnProposal(_) => 19,
+            ReadModel::Stage2Questions(_) => 20,
+            ReadModel::Notices(_) => 21,
+            ReadModel::Negotiation { .. } => 22,
+            ReadModel::RoundOpened(_) => 23,
+        }
+    }
+
+    /// TH-26: the samples of [`one_of_each`] hold every variant of
+    /// [`ReadModel`], so the shape check above reaches each one.
+    #[test]
+    fn th26_samples_cover_every_read_model_variant() {
+        let seen: std::collections::BTreeSet<usize> = one_of_each().iter().map(variant).collect();
+        let all: std::collections::BTreeSet<usize> = (0..VARIANTS).collect();
+        assert_eq!(seen, all);
+    }
+
+    /// TH-26, ADR-006, R-PB-01: the open calls and one call fit their
+    /// shape with the title, P-04 and P-05 present, and with each left
+    /// out. The amounts are ADR-006 strings.
+    #[test]
+    fn th26_calls_fit_with_and_without_title_and_amounts() {
+        for c in [call(), bare_call()] {
+            assert_fits("calls.list_open", &ReadModel::OpenCalls(vec![c.clone()]));
+            assert_fits("calls.get", &ReadModel::Call(c));
+        }
+        assert_fits("calls.list_open", &ReadModel::OpenCalls(Vec::new()));
+        let text = fstp_json::to_canonical(&call().to_json()).unwrap();
+        for member in [
+            r#""grant_min":"1000.00""#,
+            r#""grant_max":"60000.00""#,
+            r#""recipient_max":"60000.00""#,
+        ] {
+            assert!(text.contains(member), "{member} in {text}");
+        }
+    }
+
+    /// I-85, TH-26: the caller's pending actions fit their shape.
+    #[test]
+    fn i85_pending_actions_fit_their_shape() {
+        assert_fits("pending.list", &ReadModel::PendingActions(vec![pending()]));
+    }
+
+    /// I-17, TH-26: the caller's own proposals and one of them fit their
+    /// shape with and without a title, and name no person.
+    #[test]
+    fn i17_own_proposals_fit_with_and_without_a_title() {
+        for title in [Some("Synthetic proposal"), None] {
+            assert_fits(
+                "proposal.list_own",
+                &ReadModel::OwnProposals(vec![own(title)]),
+            );
+            assert_fits("proposal.view", &ReadModel::OwnProposal(own(title)));
+        }
+        let mut unknown = own(None);
+        unknown.state = "UNKNOWN".to_owned();
+        assert_fits("proposal.view", &ReadModel::OwnProposal(unknown));
+    }
+
+    /// I-17, R-IR-01, TH-26: the caller's assignments and IRC cases fit
+    /// the one assignment shape, for every assignment kind.
+    #[test]
+    fn i17_own_assignments_and_irc_cases_fit_their_shape() {
+        for kind in ["reviewer", "irc", "amendment"] {
+            let m = ReadModel::Assignments(vec![assignment(kind)]);
+            assert_fits("me.assignments", &m);
+            assert_fits("me.irc_cases", &m);
+        }
+    }
+
+    /// R-LG-04, TH-26: the caller's sessions fit their shape for every
+    /// login method.
+    #[test]
+    fn r_lg_04_sessions_fit_for_every_method() {
+        for method in [
+            LoginMethod::Passkey,
+            LoginMethod::MagicLink,
+            LoginMethod::Opaque,
+            LoginMethod::EudiWallet,
+        ] {
+            let s = SessionSummary {
+                session: SessionId::from_raw(9),
+                method,
+                started: Timestamp::from_micros(5),
+            };
+            assert_fits("me.sessions", &ReadModel::Sessions(vec![s]));
+        }
+    }
+
+    /// I-86, TH-26: the start of a verification answers its redirect only.
+    #[test]
+    fn i86_begin_verification_fits_its_shape() {
         assert_fits(
             "me.begin_verification",
             &ReadModel::Redirect("/vault/begin".to_owned()),
         );
+    }
+
+    /// J4, TH-26: creating a draft answers the drawn proposal id, and no
+    /// other drawn id.
+    #[test]
+    fn th26_created_draft_fits_and_names_the_proposal_only() {
+        let m = ReadModel::Created(vec![("proposal", 1001)]);
+        assert_fits("proposal.create", &m);
+        assert_eq!(
+            fstp_json::to_canonical(&m.to_json()).unwrap(),
+            r#"{"accepted":true,"proposal":"1001"}"#
+        );
+        let with_binding = ReadModel::Created(vec![("proposal", 1001), ("binding", 9)]);
+        assert!(!fits(shape_of("proposal.create"), &with_binding.to_json()));
+    }
+
+    /// ADR-006, TH-26: a recorded plan answers the total the cell summed as
+    /// an amount string, and a plan with no milestone answers the bare
+    /// acknowledgement. A total as a JSON number is refused.
+    #[test]
+    fn adr006_plan_saved_fits_with_and_without_a_total() {
+        assert_fits(
+            "proposal.record_plan",
+            &ReadModel::PlanSaved("1500.50".to_owned()),
+        );
+        assert_fits("proposal.record_plan", &ReadModel::Accepted);
+        let mut o = Object::new();
+        let _ = o.insert("accepted", Value::Bool(true));
+        let _ = o.insert("total", Value::from(1500u32));
+        assert!(!fits(shape_of("proposal.record_plan"), &Value::Object(o)));
+        let short = ReadModel::PlanSaved("1500.5".to_owned());
+        assert!(!fits(shape_of("proposal.record_plan"), &short.to_json()));
+    }
+
+    /// I-21, TH-26: the team's workspace fits its shape.
+    #[test]
+    fn i21_workspace_fits_its_shape() {
+        let w = ReadModel::Workspace(crate::views::WorkspaceView {
+            title: String::new(),
+            summary: String::new(),
+            narrative: String::new(),
+        });
+        assert_fits("proposal.get_workspace", &w);
+    }
+
+    /// TH-08, R-AN-01: the team's stage 2 questions fit their shape, each
+    /// with a handle and a day, and the empty list fits too.
+    #[test]
+    fn th08_stage2_questions_fit_their_shape() {
+        let q = crate::views::Question {
+            handle: "R".to_owned(),
+            asked: "2026-10-30".to_owned(),
+            text: "Why this milestone?".to_owned(),
+        };
+        assert_fits("stage2.view", &ReadModel::Stage2Questions(vec![q]));
+        assert_fits("stage2.view", &ReadModel::Stage2Questions(Vec::new()));
+    }
+
+    /// R-EV-04, R-IR-02, TH-26: both notice kinds fit, with and without
+    /// their day.
+    #[test]
+    fn r_ev_04_notices_fit_with_and_without_a_day() {
+        let n = |kind, day: Option<&str>| crate::views::Notice {
+            kind,
+            proposal: 1001,
+            day: day.map(str::to_owned),
+        };
+        let m = ReadModel::Notices(vec![
+            n("ProposalOutcome", None),
+            n("IrcConcern", Some("2026-10-30")),
+        ]);
+        assert_fits("me.notices", &m);
+    }
+
+    /// R-NG-06, TH-26: the negotiation landing fits its shape.
+    #[test]
+    fn r_ng_06_negotiation_landing_fits_its_shape() {
+        for acknowledged in [false, true] {
+            assert_fits("negotiation.view", &ReadModel::Negotiation { acknowledged });
+        }
+    }
+
+    /// R-EV-01, TH-26: the intake queue and the call board fit their
+    /// shapes, with SUBMITTED and INELIGIBLE rows.
+    #[test]
+    fn r_ev_01_intake_queue_and_board_fit_their_shapes() {
+        let q = ReadModel::IntakeQueue(crate::views::IntakeQueue {
+            knock_out: vec![crate::views::KnockOutCriterion {
+                id: 2,
+                text: "Open licence".to_owned(),
+            }],
+            proposals: vec![row("SUBMITTED"), row("INELIGIBLE")],
+        });
+        assert_fits("intake.queue", &q);
+        let b = ReadModel::Board(vec![row("STAGE1"), row("NEGOTIATION")]);
+        assert_fits("call.board", &b);
+    }
+
+    /// Q9, R-CF-02, TH-26: the declaration view fits a shape of exactly the
+    /// title and the neutral summary.
+    #[test]
+    fn r_cf_02_declaration_view_fits_its_shape() {
+        let v = ReadModel::DeclarationView(crate::views::DeclarationView {
+            title: "t".to_owned(),
+            neutral_summary: "s".to_owned(),
+        });
+        assert_fits("review.declaration_view", &v);
+        let Some(Shape::Object(members)) = reply("review.declaration_view") else {
+            panic!("review.declaration_view is not an object shape");
+        };
+        let names: Vec<&str> = members.iter().map(|m| m.name).collect();
+        assert_eq!(names, ["title", "neutral_summary"]);
+    }
+
+    /// R-AC-01, R-IR-03, TH-26: the content read fits its shape, and the
+    /// IRC case fits its own, which has no call member. Neither fits the
+    /// other's shape.
+    #[test]
+    fn r_ir_03_content_and_irc_case_fit_their_own_shapes() {
+        let read = ReadModel::Content(content(None));
+        let case = ReadModel::Content(content(Some("nominated")));
+        assert_fits("review.read_content", &read);
+        assert_fits("irc.case", &case);
+        assert!(!fits(shape_of("irc.case"), &read.to_json()));
+        assert!(!fits(shape_of("review.read_content"), &case.to_json()));
+    }
+
+    /// R-CF-04, TH-26: the notifiable conflicts fit their shape.
+    #[test]
+    fn r_cf_04_notifiable_conflicts_fit_their_shape() {
+        let m = ReadModel::Notifiable(vec![ProposalId::from_raw(1003)]);
+        assert_fits("review.notifiable_conflicts", &m);
+        assert_fits(
+            "review.notifiable_conflicts",
+            &ReadModel::Notifiable(Vec::new()),
+        );
+    }
+
+    /// P-01, TH-26: the score sheet fits with and without a current score,
+    /// at both stages, and its scale and values are JSON integers.
+    #[test]
+    fn th26_score_sheet_fits_with_and_without_a_current_score() {
+        for current in [None, Some((3, vec![0, 5]))] {
+            for stage in ["One", "Two"] {
+                let mut s = sheet(current.clone());
+                s.stage = stage;
+                assert_fits("review.score_sheet", &ReadModel::ScoreSheet(s));
+            }
+        }
+        let text = fstp_json::to_canonical(&sheet(Some((3, vec![4]))).to_json()).unwrap();
+        assert!(text.contains(r#""max":5"#), "{text}");
+        assert!(text.contains(r#""values":[4]"#), "{text}");
+    }
+
+    /// R-EV-05, R-AN-01, TH-26: the reviewer's stage 2 thread fits its
+    /// shape, with a question under a handle and an answer with none.
+    #[test]
+    fn r_ev_05_stage2_thread_fits_its_shape() {
+        assert_fits("review.stage2_thread", &ReadModel::Stage2Thread(thread()));
+        let mut empty = thread();
+        empty.entries.clear();
+        empty.state = "UNKNOWN";
+        assert_fits("review.stage2_thread", &ReadModel::Stage2Thread(empty));
+    }
+
+    /// R-EV-08, Q16, TH-26: ranked and recused rows fit the ranking shape.
+    /// A recused row carries the proposal and `recused` only, and a ranked
+    /// row carries every member, the empty texts as `null`.
+    #[test]
+    fn r_ev_08_ranking_rows_fit_and_a_recused_row_shows_nothing_else() {
+        let recused = crate::views::RankingRow::Recused { proposal: 1003 };
+        let mut untitled = ranked();
+        if let crate::views::RankingRow::Ranked {
+            title,
+            neutral_summary,
+            rationale,
+            ..
+        } = &mut untitled
+        {
+            *title = None;
+            *neutral_summary = None;
+            *rationale = None;
+        }
+        let m = ReadModel::Ranking(vec![ranked(), untitled, recused.clone()]);
+        assert_fits("committee.ranking", &m);
+        assert_eq!(
+            fstp_json::to_canonical(&recused.to_json()).unwrap(),
+            r#"{"proposal":"1003","recused":true}"#
+        );
+        let Some(Shape::Array(Shape::Object(members))) = reply("committee.ranking") else {
+            panic!("committee.ranking is not an array of objects");
+        };
+        // A row within budget carries every member but `shortfall`, and
+        // an over-nominated row carries every member.
+        let within = ranked().to_json();
+        let over = over_nominated().to_json();
+        for member in *members {
+            let name = member.name;
+            let expected = name != "shortfall";
+            assert_eq!(
+                within.as_object().unwrap().get(name).is_some(),
+                expected,
+                "{name}"
+            );
+            assert!(
+                over.as_object().unwrap().get(name).is_some(),
+                "over-nominated row lacks {name}"
+            );
+        }
+    }
+
+    /// R-EV-08, ADR-006, TH-26: the remaining budget of an over-nominated
+    /// call is signed, and no served amount carries a sign. The row
+    /// serves a zero `remaining_budget` and a positive `shortfall`, as the
+    /// domain codec spells a signed amount, and fits its shape.
+    #[test]
+    fn adr006_over_nominated_ranking_row_serves_a_positive_shortfall() {
+        let m = ReadModel::Ranking(vec![over_nominated()]);
+        assert_fits("committee.ranking", &m);
+        let json = over_nominated().to_json();
+        let o = json.as_object().unwrap();
+        assert_eq!(o.get("remaining_budget"), Some(&Value::from("0.00")));
+        assert_eq!(o.get("shortfall"), Some(&Value::from("500.00")));
+        let text = fstp_json::to_canonical(&json).unwrap();
+        assert!(!text.contains('-'), "{text}");
+    }
+
+    /// R-EV-08, ADR-006: a budget of exactly zero is one spelling, a zero
+    /// `remaining_budget` with no `shortfall`, so a zero shortfall is
+    /// never served.
+    #[test]
+    fn adr006_exhausted_budget_serves_no_shortfall() {
+        let mut row = ranked();
+        if let crate::views::RankingRow::Ranked {
+            remaining_budget, ..
+        } = &mut row
+        {
+            *remaining_budget = fstp_money::Amount::from_minor(0, fstp_money::Currency::Eur)
+                .unwrap()
+                .to_string();
+        }
+        assert_fits("committee.ranking", &ReadModel::Ranking(vec![row.clone()]));
+        let json = row.to_json();
+        let o = json.as_object().unwrap();
+        assert_eq!(o.get("remaining_budget"), Some(&Value::from("0.00")));
+        assert_eq!(o.get("shortfall"), None);
     }
 
     /// TH-26, ADR-006: the shape check has teeth. An extra member, a
