@@ -42,6 +42,24 @@ fn plan(cell: CellId) -> Result<RolePlan, String> {
     cell_role_plan(cell).map_err(|e| format!("cell_role_plan: {e}"))
 }
 
+/// The placement marker of both cell databases (design section 4.1,
+/// `0000_meta.sql`).
+const PLACEMENT: &str = "fstp_meta.placement";
+
+/// The one grant on [`PLACEMENT`] in `db`: SELECT for the role whose
+/// process reads the marker at start (design section 9.2, "At start":
+/// `fstp-vault` refuses a database whose `fstp_meta.placement.kind` is not
+/// vault, and `fstp-cell` makes the mirror checks). That is the `app` role
+/// of the application database and the `vault` role of the vault
+/// database. No other role reads it, and the migrator owns it.
+fn placement_grant(db: CellDatabase) -> (RoleName, &'static str, Vec<Privilege>) {
+    let role = match db {
+        CellDatabase::App => RoleName::App,
+        CellDatabase::Vault => RoleName::Vault,
+    };
+    (role, PLACEMENT, vec![Privilege::Select])
+}
+
 fn graph(rows: &CatalogueRows) -> PrivilegeGraph {
     privilege_graph(rows).unwrap_or_else(|e| panic!("privilege_graph: {e}"))
 }
@@ -102,7 +120,10 @@ fn accepting(h: &HbaRow) -> bool {
 /// I-82, design section 4.1: the plan of a cell names that cell, holds the
 /// roles of the reference for each database, one `pg_hba` line per role
 /// and database, and the reference grants of the application database.
-/// In the vault database every grant names a table of design section 4.3,
+/// Each database adds exactly one grant on the placement marker, to the
+/// role its start check reads it as ([`placement_grant`], design sections
+/// 4.1 and 9.2). In the vault database every other grant names a table
+/// of design section 4.3,
 /// the `keys` role reaches only the keystore, and no role holds UPDATE or
 /// DELETE on `vault_audit`. Each vault grant matches the reference pin of
 /// `place_model::vault_pin`: exact where design section 4.1 pins it, and a
@@ -142,13 +163,31 @@ fn i82_role_plan_matches_design_section_4_1() {
             .filter(|g| g.database == CellDatabase::App)
             .map(|g| (g.role, g.object, g.privileges.clone()))
             .collect();
-        let want: BTreeSet<(RoleName, &str, Vec<Privilege>)> = app_grants().into_iter().collect();
+        let mut want: BTreeSet<(RoleName, &str, Vec<Privilege>)> =
+            app_grants().into_iter().collect();
+        want.insert(placement_grant(CellDatabase::App));
         prop_assert_eq!(app, want, "application grants");
+        let placement: Vec<(CellDatabase, RoleName, Vec<Privilege>)> = p
+            .grants
+            .iter()
+            .filter(|g| g.object == PLACEMENT)
+            .map(|g| (g.database, g.role, g.privileges.clone()))
+            .collect();
+        let want_placement: Vec<(CellDatabase, RoleName, Vec<Privilege>)> =
+            [CellDatabase::App, CellDatabase::Vault]
+                .into_iter()
+                .map(|db| {
+                    let (role, _, privs) = placement_grant(db);
+                    (db, role, privs)
+                })
+                .collect();
+        prop_assert_eq!(placement, want_placement, "placement grants");
         let mut vault: BTreeMap<(RoleName, &str), BTreeSet<Privilege>> = BTreeMap::new();
+        // The vault placement row is pinned exactly above.
         for gr in p
             .grants
             .iter()
-            .filter(|g| g.database == CellDatabase::Vault)
+            .filter(|g| g.database == CellDatabase::Vault && g.object != PLACEMENT)
         {
             prop_assert!(
                 roles_of(CellDatabase::Vault).contains(&gr.role),
@@ -765,21 +804,64 @@ fn attribute_breaches(rows: &CatalogueRows, hba: &[HbaRow]) -> Vec<String> {
 /// No cell role is a member, directly or through other roles, of a
 /// predefined role that reads or writes across databases or reaches the
 /// server's files.
+///
+/// Each cluster is checked against the login roles it holds by design
+/// section 4.1: an application or vault cluster holds the roles of its
+/// database for every cell of the world, and the witness cluster holds
+/// `witness_service` and `witness_migrator`. Every one of them must exist
+/// and be among the roles the attribute check covers. The check still
+/// covers every other remote-capable role it finds, such as the cell
+/// roles of other worlds on a shared cluster.
 #[test]
 fn i82_no_remote_role_has_createrole_or_createdb() {
     let w = world(3, DbMode::Shared);
     for c in agent_clusters(&w) {
         let rows = db::catalogue_rows(c.server()).unwrap();
         let hba = db::hba_rows(c.server()).unwrap();
-        let cells = rows
-            .roles
-            .iter()
-            .filter(|r| db::cell_of(&r.name).is_some())
-            .count();
-        assert!(cells > 0, "{}: no cell role to check", c.name());
+        let held = cluster_login_roles(&w, c.kind());
+        assert!(!held.is_empty(), "{}: no role to check", c.name());
+        let names: BTreeSet<&str> = rows.roles.iter().map(|r| r.name.as_str()).collect();
+        let remote = remote_capable(&rows, &hba);
+        for role in &held {
+            assert!(
+                names.contains(role.as_str()),
+                "{}: holds no role {role}",
+                c.name()
+            );
+            assert!(
+                remote.contains(role),
+                "{}: the attribute check skips {role}",
+                c.name()
+            );
+        }
         let found = attribute_breaches(&rows, &hba);
         assert!(found.is_empty(), "{}: {found:#?}", c.name());
     }
+}
+
+/// The login roles a self-operated cluster of `kind` holds in world `w`
+/// by design section 4.1: the roles of the cluster's database for each
+/// cell of the world, or the witness service and migrator roles.
+fn cluster_login_roles(w: &World, kind: ClusterKind) -> BTreeSet<String> {
+    let db = match kind {
+        ClusterKind::Application => CellDatabase::App,
+        ClusterKind::Vault => CellDatabase::Vault,
+        ClusterKind::Witness => {
+            return ["witness_service", "witness_migrator"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+        }
+        ClusterKind::Control => return BTreeSet::new(),
+    };
+    let mut out = BTreeSet::new();
+    for i in 0..w.spec().cells {
+        let cell = CellId(w.cell(i).unwrap().id());
+        for role in roles_of(db) {
+            out.insert(role_name(db, cell, *role));
+        }
+    }
+    out
 }
 
 /// I-82 teeth: a cell role with CREATEDB and CREATEROLE behind a loopback
@@ -863,6 +945,86 @@ fn i82_pool_serves_one_cell() {
         }
     }
     assert!(seen > 0, "no cell connection was open after the cycles");
+}
+
+/// The non-owner table and column grants of the cell database `dbname` on
+/// `server`, as `grantee|schema.table|PRIVILEGE` for a table and
+/// `grantee|schema.table.column|PRIVILEGE` for a column. A grant to
+/// PUBLIC names the grantee `PUBLIC`. The system schemas are left out.
+fn live_table_acls(server: &PgServer, dbname: &str) -> BTreeSet<String> {
+    let out = server
+        .psql(
+            dbname,
+            "SELECT coalesce(r.rolname, 'PUBLIC') || '|' || n.nspname || '.' || c.relname \
+               || '|' || a.privilege_type \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             CROSS JOIN LATERAL aclexplode(c.relacl) a \
+             LEFT JOIN pg_roles r ON r.oid = a.grantee \
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') \
+               AND n.nspname NOT LIKE 'pg_toast%' AND a.grantee <> c.relowner \
+             UNION ALL \
+             SELECT coalesce(r.rolname, 'PUBLIC') || '|' || n.nspname || '.' || c.relname \
+               || '.' || t.attname || '|' || a.privilege_type \
+             FROM pg_attribute t JOIN pg_class c ON c.oid = t.attrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             CROSS JOIN LATERAL aclexplode(t.attacl) a \
+             LEFT JOIN pg_roles r ON r.oid = a.grantee \
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') \
+               AND n.nspname NOT LIKE 'pg_toast%' AND a.grantee <> c.relowner",
+        )
+        .unwrap();
+    out.lines().map(str::to_owned).collect()
+}
+
+/// I-82, ADR-011, design section 4.1: in each cell database of a world,
+/// the table and column grants beyond the owner's are exactly the rows of
+/// `cell_role_plan` for that database, plus one named seam. The seam is
+/// SELECT and INSERT on `vault.p17_condition` for the cell's own `vault`
+/// role, in its vault database only
+/// (`fstp_celltest::world::P17_CONDITION_GRANT_SEAM`). No grant goes to
+/// PUBLIC, to a role of another cell or to any column.
+///
+/// The seam rows leave this test once Daniel settles the table's rename
+/// or an ADR-011 amendment of the `apply_grant` object grammar.
+#[test]
+fn i82_cell_database_grants_are_the_plan_and_the_named_seam_only() {
+    let w = world(2, DbMode::Shared);
+    let mut checked = 0usize;
+    for i in 0..2 {
+        let cell = CellId(w.cell(i).unwrap().id());
+        let p = plan(cell).unwrap();
+        for (kind, db) in [
+            (ClusterKind::Application, CellDatabase::App),
+            (ClusterKind::Vault, CellDatabase::Vault),
+        ] {
+            let c = w.cluster(kind).unwrap();
+            let mut want: BTreeSet<String> = BTreeSet::new();
+            for g in p.grants.iter().filter(|g| g.database == db) {
+                for privilege in &g.privileges {
+                    want.insert(format!(
+                        "{}|{}|{}",
+                        role_name(db, cell, g.role),
+                        g.object,
+                        privilege.keyword()
+                    ));
+                }
+            }
+            if db == CellDatabase::Vault {
+                for privilege in ["SELECT", "INSERT"] {
+                    want.insert(format!(
+                        "{}|{}|{privilege}",
+                        role_name(db, cell, RoleName::Vault),
+                        fstp_celltest::world::P17_CONDITION_TABLE
+                    ));
+                }
+            }
+            let dbname = database_name(db, cell);
+            let live = live_table_acls(c.server(), &dbname);
+            assert_eq!(live, want, "{}: {dbname}", c.name());
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 4);
 }
 
 /// I-82: the reference tables cover every application table of design

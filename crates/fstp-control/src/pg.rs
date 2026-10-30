@@ -26,7 +26,20 @@
 //!   SELECT, INSERT and UPDATE, except INSERT and SELECT only on
 //!   `vault.ticket_used` and `vault.query_log`. Those two are logs, and an
 //!   UPDATE of a used ticket would let it be presented again. No vault
-//!   role holds DELETE.
+//!   role holds DELETE;
+//! - the placement marker `fstp_meta.placement` (design section 4.1) is
+//!   read at start by the role the process runs as: the `app` role in the
+//!   application database and the `vault` role in the vault database
+//!   (design section 9.2, "At start"). Each holds SELECT on it and nothing
+//!   more. No other role reads it, and the migrator owns it.
+//!
+//! Seam, reported to the lead: the vault store reads and writes
+//! `vault.p17_condition`, which design section 4.3 does not list. ADR-011
+//! and design section 4.1 fix the object grammar of
+//! `fstp_meta.apply_grant` as `^[a-z_]{1,30}\.[a-z_]{1,30}$`, which
+//! refuses its digits. So the plan holds no row for that table, and the
+//! grammar is not widened here. The test world grants it outside the plan
+//! (`fstp_celltest::world::P17_CONDITION_GRANT_SEAM`).
 
 use std::fmt::Write as _;
 use std::net::IpAddr;
@@ -259,6 +272,15 @@ pub const VAULT_TABLES: [&str; 14] = [
     "vault_audit.anchor",
 ];
 
+/// The placement marker of both databases (design section 4.1,
+/// `0000_meta.sql`). Each migration set defines it in `fstp_meta`.
+pub const PLACEMENT_TABLE: &str = "fstp_meta.placement";
+
+/// The tables of the `fstp_meta` schema that a cell role is granted on,
+/// in either database: the placement marker only. `fstp_meta.apply_grant`
+/// lives there too, and only its owner may call it.
+pub const META_TABLES: [&str; 1] = [PLACEMENT_TABLE];
+
 const S: &[Privilege] = &[Privilege::Select];
 const SI: &[Privilege] = &[Privilege::Select, Privilege::Insert];
 const SIU: &[Privilege] = &[Privilege::Select, Privilege::Insert, Privilege::Update];
@@ -293,6 +315,8 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "ops" if object == "ops.outbox" => S,
             "ops" => FULL,
             "blob" => SI,
+            // The I-83 start check of `fstp-cell` (design section 9.2).
+            "fstp_meta" if object == PLACEMENT_TABLE => S,
             _ => &[],
         },
         RoleName::Keys => match schema {
@@ -319,6 +343,8 @@ fn vault_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "vault.ticket_used" | "vault.query_log" => SI,
             _ => SIU,
         },
+        // The I-83 start check of `fstp-vault` (design section 9.2).
+        (RoleName::Vault, "fstp_meta") if object == PLACEMENT_TABLE => S,
         _ => &[],
     }
 }
@@ -384,9 +410,16 @@ pub fn cell_role_plan(cell: CellId) -> Result<RolePlan, ControlError> {
     }
     let mut grants = Vec::new();
     grant_rows(CellDatabase::App, &APP_TABLES, app_privileges, &mut grants);
+    grant_rows(CellDatabase::App, &META_TABLES, app_privileges, &mut grants);
     grant_rows(
         CellDatabase::Vault,
         &VAULT_TABLES,
+        vault_privileges,
+        &mut grants,
+    );
+    grant_rows(
+        CellDatabase::Vault,
+        &META_TABLES,
         vault_privileges,
         &mut grants,
     );
@@ -570,6 +603,41 @@ mod tests {
             CellSubnet::new(v4(10, 0, 0, 0), 33),
             Err(ControlError::Subnet)
         );
+    }
+
+    /// I-83, I-82, design sections 4.1 and 9.2: the plan grants SELECT on
+    /// the placement marker to the role each start check reads it as, the
+    /// `app` role in the application database and the `vault` role in the
+    /// vault database, and to no other role. No row names a vault table
+    /// outside the catalogue of design section 4.3, so
+    /// `vault.p17_condition` has none.
+    #[test]
+    fn i83_plan_grants_the_placement_marker_to_the_start_check_roles_only() {
+        let plan = cell_role_plan(CellId([7; 16])).unwrap();
+        let placement: Vec<(CellDatabase, RoleName, Vec<Privilege>)> = plan
+            .grants
+            .iter()
+            .filter(|g| g.object == PLACEMENT_TABLE)
+            .map(|g| (g.database, g.role, g.privileges.clone()))
+            .collect();
+        assert_eq!(
+            placement,
+            vec![
+                (CellDatabase::App, RoleName::App, vec![Privilege::Select]),
+                (
+                    CellDatabase::Vault,
+                    RoleName::Vault,
+                    vec![Privilege::Select]
+                ),
+            ]
+        );
+        for g in &plan.grants {
+            let known = match g.database {
+                CellDatabase::App => APP_TABLES.contains(&g.object),
+                CellDatabase::Vault => VAULT_TABLES.contains(&g.object),
+            };
+            assert!(known || META_TABLES.contains(&g.object), "{g:?}");
+        }
     }
 
     /// I-82, ADR-011: a role of the other database's set has no name.

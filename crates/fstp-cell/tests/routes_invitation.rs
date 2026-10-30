@@ -7,10 +7,11 @@
 //! builder below. `fstp-celltest` holds the full software authenticator,
 //! but it depends on this crate, so these tests cannot use it.
 //!
-//! The enrolment itself cannot commit yet
-//! (`fstp_cell::routes::INVITATION_SEAM`), so every verified registration
-//! answers 501 and records nothing. The tests pin each check before that
-//! point.
+//! The in-memory cell holds no invitation until a test seeds one. A
+//! verified registration then reaches the enrolment step, which finds no
+//! invitation for its proof and refuses with 401 under ADR-008, the same
+//! reply as every other cause. Tests that need a live invitation seed its
+//! `InvitationIssued` record ([`seed_invitation`]).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -18,6 +19,7 @@
 use fstp_cell::routes::memory::LocalCell;
 use fstp_cell::routes::{Backend, ChallengePurpose, ChallengeRow};
 use fstp_crypto::sig::Ed25519SigningKey;
+use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
 use fstp_http::{Method, Request, RequestTarget, Response};
 
@@ -88,7 +90,7 @@ fn unbase64url(s: &str) -> Vec<u8> {
 
 /// The split first-admin token path parameter: both halves, first first.
 fn split_token() -> String {
-    format!("{}{}", hex(&[0x01; 32]), hex(&[0x02; 32]))
+    format!("{}{}", hex(&FIRST), hex(&SECOND))
 }
 
 fn options_path(token: &str) -> String {
@@ -203,6 +205,55 @@ fn head(c: &LocalCell) -> impl PartialEq + std::fmt::Debug {
         .head()
 }
 
+fn state(c: &LocalCell) -> std::sync::Arc<fstp_cell_core::CellState> {
+    fstp_rt::future::block_on(c.backend().state()).unwrap()
+}
+
+/// The route template the front logs for the register call.
+const REGISTER_ROUTE: &str = "/auth/invitations/{token}/register";
+
+/// Whether the last log line is a refusal of the register call with
+/// `status` under `rule`.
+fn last_refusal_is(c: &LocalCell, status: u16, rule: &str) -> bool {
+    matches!(
+        c.logs().last(),
+        Some(fstp_obs::LogEvent::Refused { route, rule: r, status: s, .. })
+            if *route == REGISTER_ROUTE && *r == rule && *s == status
+    )
+}
+
+/// The first half, second half and single tokens of these tests.
+const FIRST: [u8; 32] = [0x01; 32];
+const SECOND: [u8; 32] = [0x02; 32];
+
+/// Seeds the `InvitationIssued` record of invitation `id` for `account`,
+/// at the cell's current instant. A split invitation is the first admin's
+/// and is proved by [`FIRST`] and [`SECOND`]. A single one is proved by
+/// `token` and is not the first admin's.
+fn seed_invitation(c: &LocalCell, id: [u8; 16], account: AccountId, split: bool, token: [u8; 32]) {
+    use fstp_auth::ceremony::{split_token_digest, token_digest};
+    use fstp_auth::codec::Token;
+    let digest = if split {
+        split_token_digest(&Token(FIRST), &Token(SECOND))
+    } else {
+        token_digest(&Token(token))
+    };
+    c.backend()
+        .seed(
+            c.backend().now(),
+            vec![fstp_cell_core::CellRecord::Auth(
+                fstp_auth::AuthRecord::InvitationIssued {
+                    invitation: id,
+                    account,
+                    token_digest: digest,
+                    first_admin: split,
+                    split,
+                },
+            )],
+        )
+        .unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // The options call.
 
@@ -265,10 +316,16 @@ fn adr008_invitation_token_and_body_forms_are_checked() {
 // ---------------------------------------------------------------------------
 // The register call.
 
-/// G10, design section 8.3: a verified registration over the invitation's
-/// own challenge reaches the enrolment step, which fails closed with 501
-/// (`INVITATION_SEAM`). The challenge is spent, the ledger is unchanged,
-/// and a second use of it is refused with 401.
+/// G10, design section 8.3, ADR-008 "Challenges": a verified registration
+/// over the challenge of a split proof that no invitation holds reaches
+/// the enrolment step. That step finds no invitation and fails closed
+/// with 401 under ADR-008, the reply of every other cause. The challenge
+/// is spent and the ledger is unchanged. A second use of the challenge is
+/// refused with 401 and records nothing.
+///
+/// The same proof enrols once an invitation holds it, over a fresh
+/// challenge. So the refusal above comes from the invitation lookup, not
+/// from an earlier check of the route.
 #[test]
 fn g10_invitation_register_fails_closed_and_spends_its_challenge() {
     let c = cell();
@@ -278,11 +335,42 @@ fn g10_invitation_register_fails_closed_and_spends_its_challenge() {
     let (att, client) = registration(challenge, &format!("https://{HOST}"));
     let body = register_body(&id, &att, &client);
     let r = c.serve(post(&register_path(&token), &body));
-    assert_eq!(status(&r), 501, "{}", text(&r));
+    assert_eq!(
+        (status(&r), text(&r).as_str()),
+        (401, "{\"error\":\"login\"}")
+    );
+    assert!(last_refusal_is(&c, 401, "ADR-008"), "{:?}", c.logs().last());
     assert_eq!(head(&c), before, "the refused enrolment recorded an entry");
     assert!(challenge_row(&c, &id).is_none(), "the challenge is unspent");
     let again = c.serve(post(&register_path(&token), &body));
     assert_eq!(status(&again), 401, "{}", text(&again));
+    assert!(last_refusal_is(&c, 401, "ADR-008"), "{:?}", c.logs().last());
+    assert_eq!(head(&c), before, "the second use recorded an entry");
+
+    let invitee = AccountId::from_raw(0x1a01);
+    let invitation = [0x1a; 16];
+    seed_invitation(&c, invitation, invitee, true, [0; 32]);
+    let seeded = head(&c);
+    let (id, challenge) = options(&c, &token);
+    let (att, client) = registration(challenge, &format!("https://{HOST}"));
+    let r = c.serve(post(
+        &register_path(&token),
+        &register_body(&id, &att, &client),
+    ));
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    assert!(text(&r).contains("\"duplicate\":false"), "{}", text(&r));
+    assert_ne!(head(&c), seeded, "the enrolment recorded nothing");
+    let s = state(&c);
+    assert!(
+        s.auth().invitation(invitation).is_some_and(|i| i.consumed),
+        "the invitation is not consumed"
+    );
+    assert!(s.auth().has_any_credential(invitee), "no passkey enrolled");
+    assert!(
+        s.auth().first_admin_enrolled(invitee),
+        "no FirstAdminEnrolled"
+    );
+    assert!(challenge_row(&c, &id).is_none(), "the challenge is unspent");
 }
 
 /// ADR-008 "User verification", Q35, review finding of lane int4: a
@@ -305,20 +393,96 @@ fn adr008_split_token_registration_without_uv_is_refused() {
 }
 
 /// ADR-008 "User verification": a single token's registration is checked
-/// without the UV rule at this step, since the rule depends on its
-/// invitation. One without UV reaches the enrolment step, which fails
-/// closed with 501 (`INVITATION_SEAM`).
+/// without the UV rule at the route step, since the rule depends on its
+/// invitation. The enrolment step applies the rule of the invitation. A
+/// registration without UV enrols an invitee who holds no management
+/// role. For an invitee who holds one, here tenant admin, the same kind
+/// of registration is refused with 401 under ADR-008. So is one for a
+/// token that no invitation holds. Each refusal spends its challenge and
+/// records nothing. The same manager's invitation then enrols a
+/// registration with UV, so the refusal came from the UV rule alone.
 #[test]
 fn adr008_single_token_registration_defers_the_uv_rule() {
     let c = cell();
-    let token = hex(&[0x05; 32]);
-    let (id, challenge) = options(&c, &token);
-    let (att, client) = registration_uv(challenge, &format!("https://{HOST}"), false);
-    let r = c.serve(post(
-        &register_path(&token),
-        &register_body(&id, &att, &client),
-    ));
-    assert_eq!(status(&r), 501, "{}", text(&r));
+    let origin = format!("https://{HOST}");
+    let register_uv = |token: &str, uv: bool| {
+        let (id, challenge) = options(&c, token);
+        let (att, client) = registration_uv(challenge, &origin, uv);
+        let r = c.serve(post(
+            &register_path(token),
+            &register_body(&id, &att, &client),
+        ));
+        (r, id)
+    };
+    let register = |token: &str| register_uv(token, false);
+
+    let unknown = hex(&[0x06; 32]);
+    let before = head(&c);
+    let (r, id) = register(&unknown);
+    assert_eq!(status(&r), 401, "{}", text(&r));
+    assert!(last_refusal_is(&c, 401, "ADR-008"), "{:?}", c.logs().last());
+    assert!(challenge_row(&c, &id).is_none(), "the challenge is unspent");
+    assert_eq!(head(&c), before, "an unknown token recorded an entry");
+
+    let manager = AccountId::from_raw(0x1b01);
+    c.backend()
+        .seed(
+            c.backend().now(),
+            vec![fstp_cell_core::CellRecord::Tenant(
+                fstp_cell_core::tenant::TenantRecord::TenantAdminGranted { account: manager },
+            )],
+        )
+        .unwrap();
+    seed_invitation(&c, [0x1b; 16], manager, false, [0x07; 32]);
+    let before = head(&c);
+    let (r, id) = register(&hex(&[0x07; 32]));
+    assert_eq!(status(&r), 401, "{}", text(&r));
+    assert!(last_refusal_is(&c, 401, "ADR-008"), "{:?}", c.logs().last());
+    assert!(challenge_row(&c, &id).is_none(), "the challenge is unspent");
+    assert_eq!(head(&c), before, "a manager's passkey without UV enrolled");
+    assert!(!state(&c).auth().has_any_credential(manager));
+    assert!(
+        state(&c)
+            .auth()
+            .invitation([0x1b; 16])
+            .is_some_and(|i| !i.consumed),
+        "a refused registration consumed the manager's invitation"
+    );
+
+    // The contrast: the same invitation, with UV, enrols the manager.
+    let before = head(&c);
+    let (r, id) = register_uv(&hex(&[0x07; 32]), true);
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    assert!(challenge_row(&c, &id).is_none(), "the challenge is unspent");
+    assert_ne!(head(&c), before, "the manager's enrolment recorded nothing");
+    let s = state(&c);
+    assert!(
+        s.auth().has_any_credential(manager),
+        "the manager's passkey with UV is not enrolled"
+    );
+    assert!(
+        s.auth().invitation([0x1b; 16]).is_some_and(|i| i.consumed),
+        "the manager's invitation is not consumed"
+    );
+    assert!(!s.auth().first_admin_enrolled(manager));
+
+    let applicant = AccountId::from_raw(0x1c01);
+    seed_invitation(&c, [0x1c; 16], applicant, false, [0x05; 32]);
+    let before = head(&c);
+    let (r, id) = register(&hex(&[0x05; 32]));
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    assert!(challenge_row(&c, &id).is_none(), "the challenge is unspent");
+    assert_ne!(head(&c), before, "the enrolment recorded nothing");
+    let s = state(&c);
+    assert!(
+        s.auth().has_any_credential(applicant),
+        "no passkey enrolled"
+    );
+    assert!(
+        s.auth().invitation([0x1c; 16]).is_some_and(|i| i.consumed),
+        "the invitation is not consumed"
+    );
+    assert!(!s.auth().first_admin_enrolled(applicant));
 }
 
 /// I-20, ADR-008: a registration for another origin is refused with 401
@@ -402,7 +566,10 @@ fn adr008_invitation_register_refuses_a_stale_challenge() {
 /// `{attestation_object, challenge_id, client_data_json}` with an optional
 /// `credential_id`, each in lowercase hexadecimal. Another member, a
 /// missing member or a malformed value is refused with 400 before any
-/// challenge is read.
+/// challenge is read. A well-formed body with a `credential_id` passes the
+/// form check: the route takes its challenge and reaches the enrolment
+/// step, which finds no invitation for the token and refuses with 401
+/// under ADR-008. Nothing is recorded.
 #[test]
 fn adr008_invitation_register_body_form_is_checked() {
     let c = cell();
@@ -424,7 +591,14 @@ fn adr008_invitation_register_body_form_is_checked() {
         challenge_row(&c, &id).is_some(),
         "a refused body burnt the challenge"
     );
+    let before = head(&c);
     let with_id = good.replacen('}', ",\"credential_id\":\"00ff\"}", 1);
     let r = c.serve(post(&register_path(&token), with_id.as_bytes()));
-    assert_eq!(status(&r), 501, "{}", text(&r));
+    assert_eq!(status(&r), 401, "{}", text(&r));
+    assert!(last_refusal_is(&c, 401, "ADR-008"), "{:?}", c.logs().last());
+    assert!(
+        challenge_row(&c, &id).is_none(),
+        "the well-formed body did not reach the challenge"
+    );
+    assert_eq!(head(&c), before, "the refused enrolment recorded an entry");
 }

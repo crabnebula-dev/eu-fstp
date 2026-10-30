@@ -60,13 +60,23 @@ pub fn adr011_roles(db: CellDatabase) -> &'static [RoleName] {
 
 /// The schemas of each database that hold tables a cell role may be
 /// granted on: design section 4.2 for the application database, section
-/// 4.3 and the keystore of section 4.2 for the vault database.
+/// 4.3 and the keystore of section 4.2 for the vault database. Both hold
+/// `fstp_meta`, whose `fstp_meta.placement` both migration sets define
+/// (design section 4.1, `0000_meta.sql`) and both start checks read
+/// (design section 9.2, "At start").
 pub fn schemas_of(db: CellDatabase) -> &'static [&'static str] {
     match db {
         CellDatabase::App => &[
-            "ledger", "audit", "blob", "keystore", "auth", "auth_log", "ops",
+            "ledger",
+            "audit",
+            "blob",
+            "keystore",
+            "auth",
+            "auth_log",
+            "ops",
+            "fstp_meta",
         ],
-        CellDatabase::Vault => &["vault", "keystore", "vault_audit"],
+        CellDatabase::Vault => &["vault", "keystore", "vault_audit", "fstp_meta"],
     }
 }
 

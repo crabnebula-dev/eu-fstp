@@ -520,10 +520,11 @@ impl World {
     ///   witness records and SELECT only on the registry of cell CAs and
     ///   anchor keys, which provisioning writes as the migrator. No world
     ///   part runs the control plane, so `cp_service` is not.
-    /// - After the plan's grants, the rows of [`PLAN_GAPS`] are granted:
-    ///   the plan grants no role the placement marker that the I-83 start
-    ///   checks read, and the vault role no right on
-    ///   `vault.p17_condition`.
+    /// - Every grant comes from the plan through `ApplyGrants`, the
+    ///   placement marker that the I-83 start checks read included. One
+    ///   grant follows outside the plan: SELECT and INSERT on
+    ///   `vault.p17_condition` for the vault role, whose name the
+    ///   `apply_grant` grammar refuses ([`P17_CONDITION_GRANT_SEAM`]).
     ///
     /// # Cells
     ///
@@ -1255,7 +1256,7 @@ fn provision_cell(
         for (_, job) in grants.iter().filter(|(c, _)| *c == id) {
             run_job(cluster, job)?;
         }
-        apply_plan_gaps(cluster, &dbname, db, plan.cell, &migrator)?;
+        apply_p17_condition_seam(cluster, &dbname, db, plan.cell, &migrator)?;
     }
     Ok(logins)
 }
@@ -1935,76 +1936,45 @@ impl CellRuntime {
     }
 }
 
-/// The supplementary grants a world applies after the production plan,
-/// as the migrator: the plan of `fstp_control::pg::cell_role_plan` grants
-/// no role SELECT on `fstp_meta.placement`, which the I-83 start checks of
-/// the cell and the vault read, and none on `vault.p17_condition`, which
-/// the vault store reads and writes. Reported to the plan's owner, lane
-/// int5. Each row stays inside its own cell's database.
+/// Seam, reported to the lead (lane m3grants): the one grant a world
+/// applies outside `fstp_control::pg::cell_role_plan`. The vault store
+/// reads and writes `vault.p17_condition`, so the `vault` role needs
+/// SELECT and INSERT on it. Design section 4.3 does not list that table.
+/// ADR-011 and design section 4.1 fix the object grammar of
+/// `fstp_meta.apply_grant` as `^[a-z_]{1,30}\.[a-z_]{1,30}$`, which
+/// refuses its digits, so no plan row can name it. Closing the seam needs
+/// a decision: rename the table into the grammar, or amend ADR-011.
 ///
-/// The placement rows run through `fstp_meta.apply_grant`. The object
-/// grammar of that function (design section 4.1) takes lowercase letters
-/// and underscores only, so it refuses `vault.p17_condition` for its
-/// digits. That row is a plain `GRANT` from the migrator, rendered from
-/// fixed names.
-pub const PLAN_GAPS: [(CellDatabase, &str, &str, &str); 3] = [
-    (CellDatabase::App, "SELECT", "fstp_meta.placement", "app"),
-    (
-        CellDatabase::Vault,
-        "SELECT",
-        "fstp_meta.placement",
-        "vault",
-    ),
-    (
-        CellDatabase::Vault,
-        "SELECT, INSERT",
-        "vault.p17_condition",
-        "vault",
-    ),
-];
+/// Until then the world grants it as the migrator, in the vault database
+/// only, to the cell's own `vault` role, with a name rendered from the
+/// production grammar ([`apply_p17_condition_seam`]). A production
+/// provisioning through `fstp-pgagent` lacks this grant.
+pub const P17_CONDITION_GRANT_SEAM: &str = "fstp_celltest::world: SELECT, INSERT on vault.p17_condition for the vault role, outside fstp_control::pg::cell_role_plan, since the apply_grant object grammar of ADR-011 refuses digits";
 
-/// Whether `object` passes the object grammar of `fstp_meta.apply_grant`:
-/// two parts of 1 to 30 lowercase letters or underscores.
-fn apply_grant_object(object: &str) -> bool {
-    let part = |p: &str| {
-        (1..=30).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-    };
-    object
-        .split_once('.')
-        .is_some_and(|(s, t)| part(s) && part(t))
-}
+/// The object of [`P17_CONDITION_GRANT_SEAM`].
+pub const P17_CONDITION_TABLE: &str = "vault.p17_condition";
 
-/// Applies the [`PLAN_GAPS`] rows of `db` to `dbname` on `cluster`.
-fn apply_plan_gaps(
+/// Applies [`P17_CONDITION_GRANT_SEAM`] to the vault database `dbname` of
+/// `cell` on `cluster`, as its migrator `migrator`. The application
+/// database gets nothing.
+fn apply_p17_condition_seam(
     cluster: &ClusterHandle,
     dbname: &str,
     db: CellDatabase,
     cell: CellId,
     migrator: &str,
 ) -> Result<(), WorldError> {
-    let mut sql = format!(
-        "DO $g$ BEGIN PERFORM pg_catalog.set_config('role', '{migrator}', true); \
-         PERFORM pg_catalog.set_config('fstp.cell', '{}', true);",
-        crate::canary::lower_hex(&cell.0)
-    );
-    for (d, privs, object, suffix) in PLAN_GAPS {
-        if d != db {
-            continue;
-        }
-        if apply_grant_object(object) {
-            sql.push_str(&format!(
-                " PERFORM fstp_meta.apply_grant('{privs}', '{object}', '{suffix}');"
-            ));
-        } else {
-            let role = fstp_control::pg::role_name(db, cell, RoleName::Vault)
-                .map_err(|e| step_failed(cluster, "the plan gap grants", &e))?;
-            sql.push_str(&format!(" GRANT {privs} ON {object} TO \"{role}\";"));
-        }
+    if db != CellDatabase::Vault {
+        return Ok(());
     }
-    sql.push_str(" END $g$");
-    superuser_sql(cluster, dbname, &sql)
-        .map(drop)
-        .map_err(|e| step_failed(cluster, "the plan gap grants", &e))
+    let role = fstp_control::pg::role_name(db, cell, RoleName::Vault)
+        .map_err(|e| step_failed(cluster, P17_CONDITION_GRANT_SEAM, &e))?;
+    sql_as(
+        cluster,
+        dbname,
+        migrator,
+        &format!("GRANT SELECT, INSERT ON {P17_CONDITION_TABLE} TO \"{role}\";"),
+    )
 }
 
 /// Starts world cell `index` of `plan` over its provisioned databases
