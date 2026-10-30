@@ -97,28 +97,26 @@ Opening a cut-off round, casting and delegating ballots are not served yet (see 
 
 ## Results of the Playwright journeys
 
-Run against the cell on 2026-10-30 with Chromium 1248 and the virtual authenticator, `retries: 0`.
+Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4disp) with Chromium 1248 and the virtual authenticator, `retries: 0`.
 
 | Specs | Passed | Not passing, and why |
 | --- | --- | --- |
 | `e2e/review/irc.spec.ts` | 5 of 5 | |
 | `e2e/review/reviewer.spec.ts` | 7 of 7 | |
-| `e2e/review/coordinator.spec.ts` | 3 of 5 | Both need the assignment view `review.assignments`, which the registry lacks |
-| `e2e/review/committee.spec.ts` | 1 of 4 | `committee.open_round`, `committee.cast` and `committee.delegate` are not in the registry |
+| `e2e/review/coordinator.spec.ts` | 5 of 5 | |
+| `e2e/review/committee.spec.ts` | 4 of 4 | |
 | `e2e/review/i17_judging_pages.spec.ts` | 4 of 4 | |
 | `e2e/review/unit/*` | 36 of 36 | |
-| `e2e/applicant/*` journeys | 17 of 28 | The Guide, affiliations, the copy request, the stage 2 revision, guardian consent, and the five withdrawal and one NOT_SELECTED specs that read the proposal after it left the review (see below) |
-| `e2e/creator/*`, `e2e/onboarding*.spec.ts` | 31 of 54 (the page-logic and wire specs) | The 23 journeys stop at the identity page, which reads `me.get_verification` first (see below) |
+| `e2e/applicant/*` journeys | 23 of 28 | The Guide, affiliations, the copy request, the stage 2 revision and guardian consent (see below) |
+| `e2e/creator/*`, `e2e/onboarding*.spec.ts` | 31 of 54 (the page-logic and wire specs), counted before m4disp | The journeys need the tenant and creator dispatch (see below) |
+| `e2e/i17-vault-origin-release.spec.ts` | 0 of 4 | It targets the M3 devstack control routes (`/test/scenario/negotiation`), which the e2e cell does not serve |
 | `e2e/applicant/review_w4b_pages.spec.ts` fuzz check | 0 of 1 | It needs the review decoders' fuzz target (lane W1c) |
 
 ## What does not run, and why
 
 Each item needs a file outside this lane's scope, so it is a request to the lead.
 
-- **Creator and onboarding (J0 after sign-in, J1, J2).** `fstp-engine` has no `Creator`, `Import` or `Tenant` envelope and no creator part of `EngineState` (design section 4.2, lane W2e). So `fstp-api-core` cannot dispatch any `creator.*`, `import.*` or `tenant.*` operation, and answers `not_implemented`. The registry also lacks `me.get_verification`, which the identity page reads first. The activation composition of `fstp-engine::compose` refuses every programme for the same reason.
-- **Committee rounds (J7).** `fstp-access::OPS` routes no `committee.open_round`, `committee.cast` or `committee.delegate` (the W3a gap that `t_authz_matrix_direct` names).
-- **Coordinator assignment (J5).** The page reads `review.assignments`, which `OPS` lacks.
-- **Applicant reads after the review (J4).** The `Team` read rule admits active Receiving bindings only, and the domain ends them when a proposal is WITHDRAWN or NOT_SELECTED. The withdrawal itself is accepted, but the proposal page cannot read the new state afterwards.
+- **Creator and onboarding (J0 after sign-in, J1, J2).** Lane m4eng gave `fstp-engine` the `Creator`, `Import` and `Bridge` envelopes. `fstp-api-core` still answers `not_implemented` for `creator.*`, `import.*` and `tenant.*`. Lanes m4wire and m4tenant wire them, and lanes m4creator and m4guide close the `fstp-creator` and `fstp-guide` seams the journeys reach.
 - **Declared affiliations.** `port::Affiliations` is a W0 placeholder with private fields, so no request can build it.
 - **Guardian consent.** `port::VerificationPurpose` has no guardian consent purpose, and the vault origin is not served.
 - **Copy request.** The outbox port has no write method (R-SB-04 is recorded in M6).
