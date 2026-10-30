@@ -480,9 +480,12 @@ async function mountRound(env: PageEnv, params: Readonly<Record<string, string>>
       ]),
       h("p", {}, [t.label("com.round.cast_count", { count: String(v.ballots_cast) })]),
     ];
-    if (v.recorded) {
+    // Only an open round takes ballots, delegations and the record (D5).
+    if (v.status === "recorded") {
       parts.push(h("p", {}, [t.label("com.round.recorded")]));
-    } else if (v.viewer.recused) {
+    } else if (v.status === "superseded") {
+      parts.push(h("p", { id: "superseded-notice" }, [t.label("com.round.superseded")]));
+    } else if (v.viewer.recused !== false) {
       parts.push(h("p", { id: "recused-notice" }, [t.label("com.round.recused")]));
     } else {
       if (v.viewer.own_vote !== null) {

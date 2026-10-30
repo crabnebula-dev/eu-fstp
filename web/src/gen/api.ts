@@ -2486,6 +2486,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     kind: "object",
     fields: {
       "accepted": { schema: { kind: "bool" }, optional: false },
+      "plan": { schema: { kind: "id" }, optional: true },
       "total": { schema: { kind: "amount" }, optional: true },
     },
   },
@@ -2735,6 +2736,40 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     kind: "object",
     fields: {
       "round": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "committee.round": {
+    kind: "object",
+    fields: {
+      "round": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["open", "recorded", "superseded"] }, optional: false },
+      "order": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "proposal": { schema: { kind: "id" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+        },
+      } }, optional: false },
+      "nominated": { schema: { kind: "int" }, optional: false },
+      "rationale": { schema: { kind: "string" }, optional: false },
+      "tie_break": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+      "ballots_cast": { schema: { kind: "int" }, optional: false },
+      "viewer": { schema: {
+        kind: "object",
+        fields: {
+          "recused": { schema: { kind: "nullable", inner: { kind: "bool" } }, optional: false },
+          "own_vote": { schema: { kind: "nullable", inner: { kind: "enum", values: ["For", "Against", "Abstain"] } }, optional: false },
+          "delegated_to": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+        },
+      }, optional: false },
+      "delegates": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "account": { schema: { kind: "id" }, optional: false },
+          "label": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
     },
   },
 };

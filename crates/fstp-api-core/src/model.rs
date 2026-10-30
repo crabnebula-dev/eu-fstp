@@ -61,9 +61,16 @@ pub enum ReadModel {
     Notifiable(Vec<ProposalId>),
     /// `proposal.get_workspace`: the team's private draft (I-21).
     Workspace(crate::views::WorkspaceView),
-    /// `proposal.record_plan`: the plan was recorded, with its total as
-    /// the cell computed it (ADR-006). The browser never computes money.
-    PlanSaved(String),
+    /// `proposal.record_plan`: the plan was recorded, with the id the
+    /// server drew for it and its total as the cell computed it
+    /// (ADR-006). The browser never computes money. A stage 2 revision
+    /// names this plan when it is submitted (R-EV-05).
+    PlanSaved {
+        /// The recorded plan.
+        plan: u128,
+        /// Its total, an ADR-006 string.
+        total: String,
+    },
     /// `proposal.view`: one of the caller's own proposals.
     OwnProposal(ProposalSummary),
     /// `stage2.view`: the questions under their P-11 handles, by day (TH-08).
@@ -77,6 +84,13 @@ pub enum ReadModel {
     },
     /// `committee.open_round`: the round the server drew (change D5).
     RoundOpened(RoundOpened),
+    /// `review.assignments`: one proposal's assignment view (R-AC-01,
+    /// R-CF-03).
+    AssignmentView(AssignmentView),
+    /// `me.get_verification`: the caller's own verification state (I-86).
+    Verification(VerificationState),
+    /// `committee.round`: one cut-off round (R-EV-08, R-EV-09).
+    Round(RoundView),
 }
 
 /// A decimal string.
@@ -137,9 +151,10 @@ impl ToJson for ReadModel {
             ),
             ReadModel::Workspace(w) => w.to_json(),
             ReadModel::OwnProposal(p) => p.to_json(),
-            ReadModel::PlanSaved(total) => {
+            ReadModel::PlanSaved { plan, total } => {
                 let mut o = Object::new();
                 let _ = o.insert("accepted", Value::Bool(true));
+                let _ = o.insert("plan", dec(plan));
                 let _ = o.insert("total", Value::from(total.as_str()));
                 Value::Object(o)
             }
@@ -155,6 +170,9 @@ impl ToJson for ReadModel {
                 Value::Object(o)
             }
             ReadModel::RoundOpened(r) => r.to_json(),
+            ReadModel::AssignmentView(v) => v.to_json(),
+            ReadModel::Verification(v) => v.to_json(),
+            ReadModel::Round(v) => v.to_json(),
         }
     }
 }
@@ -727,6 +745,137 @@ impl ToJson for RoundOpened {
     }
 }
 
+/// One proposal of a round's order, with its state now (NOTE 6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoundRow {
+    /// The proposal, by id only (I-17).
+    pub proposal: ProposalId,
+    /// Its state.
+    pub state: StateTag,
+}
+
+/// The status of a cut-off round (change D5). Only an open round takes
+/// ballots, delegations and the record of its cut-off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RoundStatus {
+    /// Members cast and delegate, and a member may record the cut-off.
+    Open,
+    /// The cut-off was recorded.
+    Recorded,
+    /// A later round of the call replaced it. Nothing acts in it.
+    Superseded,
+}
+
+impl RoundStatus {
+    /// The status as JSON spells it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RoundStatus::Open => "open",
+            RoundStatus::Recorded => "recorded",
+            RoundStatus::Superseded => "superseded",
+        }
+    }
+}
+
+/// The viewer's own part in a round (R-EV-09, P-16 NOTE 8). It names no
+/// other member's vote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoundViewer {
+    /// Whether a conflict on a RANKED proposal of the call recuses the
+    /// viewer from the vote (Conflict declarations). It is judged while
+    /// the round is open only, and is `None` on any other round, since
+    /// nothing acts there.
+    pub recused: Option<bool>,
+    /// The viewer's own ballot, if cast.
+    pub own_vote: Option<fstp_domain::decision::Vote>,
+    /// The member the viewer delegated to, if any.
+    pub delegated_to: Option<AccountId>,
+}
+
+/// `committee.round`: one cut-off round (R-EV-08, R-EV-09, change D5).
+/// It counts the ballots and names no voter. The delegates are the
+/// members the viewer may delegate to, by label only, none recused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoundView {
+    /// The round.
+    pub round: DecisionId,
+    /// Its call.
+    pub call: CallId,
+    /// Open, recorded or superseded.
+    pub status: RoundStatus,
+    /// The order it was opened with, top first.
+    pub order: Vec<RoundRow>,
+    /// The cut-off rank position.
+    pub nominated: u32,
+    /// The recorded rationale (R-EV-08).
+    pub rationale: String,
+    /// The recorded P-17 tie-break, if any.
+    pub tie_break: Option<String>,
+    /// How many ballots were cast in the round.
+    pub ballots_cast: u32,
+    /// The viewer's own part.
+    pub viewer: RoundViewer,
+    /// The members the viewer may delegate to.
+    pub delegates: Vec<CandidateRow>,
+}
+
+/// A vote as the domain spells it.
+const fn vote_name(v: fstp_domain::decision::Vote) -> &'static str {
+    match v {
+        fstp_domain::decision::Vote::For => "For",
+        fstp_domain::decision::Vote::Against => "Against",
+        fstp_domain::decision::Vote::Abstain => "Abstain",
+    }
+}
+
+impl ToJson for RoundView {
+    fn to_json(&self) -> Value {
+        let order: Vec<Value> = self
+            .order
+            .iter()
+            .map(|r| {
+                object(vec![
+                    ("proposal", dec(r.proposal.raw())),
+                    ("state", Value::from(r.state.spec_name())),
+                ])
+            })
+            .collect();
+        let viewer = object(vec![
+            (
+                "recused",
+                self.viewer.recused.map_or(Value::Null, Value::Bool),
+            ),
+            (
+                "own_vote",
+                self.viewer
+                    .own_vote
+                    .map_or(Value::Null, |v| Value::from(vote_name(v))),
+            ),
+            (
+                "delegated_to",
+                self.viewer
+                    .delegated_to
+                    .map_or(Value::Null, |a| dec(a.raw())),
+            ),
+        ]);
+        object(vec![
+            ("round", dec(self.round.raw())),
+            ("call", dec(self.call.raw())),
+            ("status", Value::from(self.status.as_str())),
+            ("order", Value::Array(order.into_iter().collect())),
+            ("nominated", Value::from(self.nominated)),
+            ("rationale", Value::from(self.rationale.as_str())),
+            (
+                "tie_break",
+                self.tie_break.as_deref().map_or(Value::Null, Value::from),
+            ),
+            ("ballots_cast", Value::from(self.ballots_cast)),
+            ("viewer", viewer),
+            ("delegates", array(&self.delegates)),
+        ])
+    }
+}
+
 /// One active or awaiting reviewer assignment of a proposal, as the
 /// projection holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -747,22 +896,20 @@ pub struct BoardAssignee {
 pub struct AssignmentBoard {
     /// The proposal's state.
     pub state: StateTag,
-    /// Its unreleased reviewer assignments, in assignment order.
+    /// Its unreleased reviewer assignments made in [`board_call`], in
+    /// assignment order. Those of an earlier call stay out, as the
+    /// domain's I-34 count leaves them out (NOTE 8).
     pub assigned: Vec<BoardAssignee>,
     /// The committee members of its programme the coordinator may assign,
     /// in account order. Each holds an active committee member binding at
-    /// the instant. None holds an unreleased reviewer assignment or a
-    /// recorded conflict fact on the proposal. The domain guards run again
+    /// the instant. None holds an unreleased reviewer assignment of
+    /// `assigned` or a recorded conflict fact on the proposal. The domain guards run again
     /// at the assignment.
     pub candidates: Vec<AccountId>,
 }
 
 /// The assignment board of `proposal` at `now` (R-AC-01, J5), or `None`
 /// for a proposal the projection does not hold.
-#[allow(
-    dead_code,
-    reason = "dispatch::read serves it once lane m4int-b adds the branch"
-)]
 pub(crate) fn assignment_board(
     state: &fstp_engine::EngineState,
     proposal: ProposalId,
@@ -770,11 +917,15 @@ pub(crate) fn assignment_board(
 ) -> Option<AssignmentBoard> {
     let core = &state.core;
     let tag = fstp_domain::view::proposal_state(core, proposal)?;
+    let current = board_call(state, proposal);
     let mut assigned: Vec<BoardAssignee> = core
         .review()
         .assignments()
         .filter(|(_, a)| {
-            a.proposal == proposal && a.kind == AssignmentKind::Reviewer && a.unreleased()
+            a.proposal == proposal
+                && Some(a.call) == current
+                && a.kind == AssignmentKind::Reviewer
+                && a.unreleased()
         })
         .map(|(id, a)| BoardAssignee {
             assignment: id,
@@ -809,6 +960,37 @@ pub(crate) fn assignment_board(
         assigned,
         candidates: candidates.into_iter().collect(),
     })
+}
+
+/// The call whose assignments the board of `proposal` counts: the call
+/// the proposal is evaluated in, as far as the public state shows it.
+///
+/// The domain counts I-34 over the assignments of the proposal's current
+/// call only (NOTE 8). That is its creation call, or the call of its
+/// latest re-entry. A re-entry rebinds no team, so the Receiving bindings
+/// still name the creation call. The domain makes each assignment in the
+/// current call of its time, and that call only moves forward. So the
+/// latest call by sequence among the creation call and the calls of the
+/// proposal's assignments is the current call once one assignment of it
+/// exists.
+///
+/// Interim, pending a public domain read of the current call (lane W1b):
+/// after a re-entry and before the first assignment in the new call, this
+/// still names the earlier call. The domain runs I-34 again at every
+/// assignment and admission, so the board check never admits anything.
+pub(crate) fn board_call(state: &fstp_engine::EngineState, proposal: ProposalId) -> Option<CallId> {
+    let calls = state.core.calls();
+    let created = crate::forms::call_of_proposal(state, proposal);
+    let assigned = state
+        .core
+        .review()
+        .assignments()
+        .filter(|(_, a)| a.proposal == proposal)
+        .map(|(_, a)| a.call);
+    created
+        .into_iter()
+        .chain(assigned)
+        .max_by_key(|c| (calls.get(*c).and_then(|v| v.seq()), *c))
 }
 
 /// One assignee of the assignment view, by label only (I-17, R-CF-03).
@@ -1116,6 +1298,73 @@ pub(crate) mod reply_shape_tests {
         }
     }
 
+    fn assignment_view() -> AssignmentView {
+        AssignmentView::new(
+            StateTag::Submitted,
+            vec![AssignedRow {
+                assignment: AssignmentId::from_raw(5),
+                label: "Committee member R1".to_owned(),
+            }],
+            vec![CandidateRow {
+                account: AccountId::from_raw(8),
+                label: "Committee member R2".to_owned(),
+            }],
+            AssignmentChecks {
+                p39: false,
+                proximity: true,
+            },
+        )
+    }
+
+    /// A round with `status`. An open round has the viewer's ballot
+    /// still to cast, one delegate and a recusal answer. A recorded one
+    /// has the viewer's vote and a tie-break. A round that is not open
+    /// has no recusal answer.
+    fn round_view(status: RoundStatus) -> RoundView {
+        let recorded = status == RoundStatus::Recorded;
+        let open = status == RoundStatus::Open;
+        RoundView {
+            round: DecisionId::from_raw(9),
+            call: CallId::from_raw(1),
+            status,
+            order: vec![
+                RoundRow {
+                    proposal: ProposalId::from_raw(1001),
+                    state: if recorded {
+                        StateTag::IrcReview
+                    } else {
+                        StateTag::Ranked
+                    },
+                },
+                RoundRow {
+                    proposal: ProposalId::from_raw(1003),
+                    state: if recorded {
+                        StateTag::NotSelected
+                    } else {
+                        StateTag::Ranked
+                    },
+                },
+            ],
+            nominated: 1,
+            rationale: "Synthetic: within the remaining budget.".to_owned(),
+            tie_break: recorded.then(|| "Synthetic P-17 tie-break.".to_owned()),
+            ballots_cast: if recorded { 4 } else { 0 },
+            viewer: RoundViewer {
+                recused: open.then_some(false),
+                own_vote: recorded.then_some(fstp_domain::decision::Vote::For),
+                delegated_to: None,
+            },
+            delegates: if !open {
+                Vec::new()
+            } else {
+                vec![CandidateRow {
+                    account: AccountId::from_raw(203),
+                    label: "Committee member R2".to_owned(),
+                }]
+            },
+        }
+    }
+
     /// The operations whose reply `m` is, by name. The match has no
     /// wildcard, so a new read model fails to compile here until it names
     /// its operation and so its shape.
@@ -1141,12 +1390,15 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Ranking(_) => &["committee.ranking"],
             ReadModel::Notifiable(_) => &["review.notifiable_conflicts"],
             ReadModel::Workspace(_) => &["proposal.get_workspace"],
-            ReadModel::PlanSaved(_) => &["proposal.record_plan"],
+            ReadModel::PlanSaved { .. } => &["proposal.record_plan"],
             ReadModel::OwnProposal(_) => &["proposal.view"],
             ReadModel::Stage2Questions(_) => &["stage2.view"],
             ReadModel::Notices(_) => &["me.notices"],
             ReadModel::Negotiation { .. } => &["negotiation.view"],
             ReadModel::RoundOpened(_) => &["committee.open_round"],
+            ReadModel::AssignmentView(_) => &["review.assignments"],
+            ReadModel::Verification(_) => &["me.get_verification"],
+            ReadModel::Round(_) => &["committee.round"],
         }
     }
 
@@ -1193,7 +1445,10 @@ pub(crate) mod reply_shape_tests {
                 summary: "A synthetic summary.".to_owned(),
                 narrative: "A synthetic narrative.".to_owned(),
             }),
-            ReadModel::PlanSaved("1500.50".to_owned()),
+            ReadModel::PlanSaved {
+                plan: 31,
+                total: "1500.50".to_owned(),
+            },
             ReadModel::OwnProposal(own(Some("Synthetic proposal"))),
             ReadModel::Stage2Questions(vec![crate::views::Question {
                 handle: "R-0a1b2c3d".to_owned(),
@@ -1209,6 +1464,13 @@ pub(crate) mod reply_shape_tests {
             ReadModel::RoundOpened(RoundOpened {
                 round: DecisionId::from_raw(9),
             }),
+            ReadModel::AssignmentView(assignment_view()),
+            ReadModel::Verification(VerificationState {
+                status: VerificationStatus::Pending,
+            }),
+            ReadModel::Round(round_view(RoundStatus::Open)),
+            ReadModel::Round(round_view(RoundStatus::Recorded)),
+            ReadModel::Round(round_view(RoundStatus::Superseded)),
         ]
     }
 
@@ -1232,11 +1494,9 @@ pub(crate) mod reply_shape_tests {
         // is reached above, or is one of the m4reg models tested below.
         let m4reg = [
             "tenant.list_admins",
-            "me.get_verification",
             "creator.list_programmes",
             "creator.list_templates",
             "people.get_invitation",
-            "review.assignments",
         ];
         for (name, _) in fstp_access::REPLIES {
             assert!(
@@ -1247,7 +1507,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 24;
+    const VARIANTS: usize = 27;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1272,12 +1532,15 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Ranking(_) => 15,
             ReadModel::Notifiable(_) => 16,
             ReadModel::Workspace(_) => 17,
-            ReadModel::PlanSaved(_) => 18,
+            ReadModel::PlanSaved { .. } => 18,
             ReadModel::OwnProposal(_) => 19,
             ReadModel::Stage2Questions(_) => 20,
             ReadModel::Notices(_) => 21,
             ReadModel::Negotiation { .. } => 22,
             ReadModel::RoundOpened(_) => 23,
+            ReadModel::AssignmentView(_) => 24,
+            ReadModel::Verification(_) => 25,
+            ReadModel::Round(_) => 26,
         }
     }
 
@@ -1386,20 +1649,29 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// ADR-006, TH-26: a recorded plan answers the total the cell summed as
-    /// an amount string, and a plan with no milestone answers the bare
-    /// acknowledgement. A total as a JSON number is refused.
+    /// an amount string, with the drawn plan id, and a plan with no
+    /// milestone answers the bare acknowledgement. A total as a JSON
+    /// number is refused.
     #[test]
     fn adr006_plan_saved_fits_with_and_without_a_total() {
-        assert_fits(
-            "proposal.record_plan",
-            &ReadModel::PlanSaved("1500.50".to_owned()),
+        let saved = ReadModel::PlanSaved {
+            plan: 31,
+            total: "1500.50".to_owned(),
+        };
+        assert_fits("proposal.record_plan", &saved);
+        assert_eq!(
+            fstp_json::to_canonical(&saved.to_json()).unwrap(),
+            r#"{"accepted":true,"plan":"31","total":"1500.50"}"#
         );
         assert_fits("proposal.record_plan", &ReadModel::Accepted);
         let mut o = Object::new();
         let _ = o.insert("accepted", Value::Bool(true));
         let _ = o.insert("total", Value::from(1500u32));
         assert!(!fits(shape_of("proposal.record_plan"), &Value::Object(o)));
-        let short = ReadModel::PlanSaved("1500.5".to_owned());
+        let short = ReadModel::PlanSaved {
+            plan: 31,
+            total: "1500.5".to_owned(),
+        };
         assert!(!fits(shape_of("proposal.record_plan"), &short.to_json()));
     }
 
@@ -1822,6 +2094,59 @@ pub(crate) mod reply_shape_tests {
         assert!(text.contains(r#""checks":{"p39":"pass","proximity":"fail"}"#));
         for field in ["\"name\"", "\"email\"", "\"reviewer\""] {
             assert!(!text.contains(field), "{field} in {text}");
+        }
+    }
+
+    /// R-EV-09, P-16 NOTE 8, TH-26: the round view fits its shape, open,
+    /// recorded and superseded. It counts the ballots, names the viewer's own vote
+    /// only, and has no member naming a voter or another member's vote.
+    #[test]
+    fn r_ev_09_round_view_fits_and_names_no_voter() {
+        for status in [
+            RoundStatus::Open,
+            RoundStatus::Recorded,
+            RoundStatus::Superseded,
+        ] {
+            let v = round_view(status);
+            assert_fits("committee.round", &v);
+            let text = fstp_json::to_canonical(&v.to_json()).unwrap();
+            for field in [
+                "\"voter\"",
+                "\"votes\"",
+                "\"ballots\"",
+                "\"email\"",
+                "\"name\"",
+            ] {
+                assert!(!text.contains(field), "{field} in {text}");
+            }
+        }
+        let open = fstp_json::to_canonical(&round_view(RoundStatus::Open).to_json()).unwrap();
+        assert!(
+            open.contains(r#""viewer":{"delegated_to":null,"own_vote":null,"recused":false}"#),
+            "{open}"
+        );
+    }
+
+    /// R-EV-09, change D5: the round view states its status, so a page
+    /// offers the ballot, the delegation and the record only on an open
+    /// round. A superseded round reads as superseded, never as open. A
+    /// round that is not open states no recusal, since none is judged.
+    #[test]
+    fn r_ev_09_round_view_states_superseded_and_no_recusal_off_open() {
+        for (status, name) in [
+            (RoundStatus::Open, "open"),
+            (RoundStatus::Recorded, "recorded"),
+            (RoundStatus::Superseded, "superseded"),
+        ] {
+            let text = fstp_json::to_canonical(&round_view(status).to_json()).unwrap();
+            assert!(text.contains(&format!(r#""status":"{name}""#)), "{text}");
+            assert!(!text.contains(r#""recorded":"#), "{text}");
+            let recusal = if status == RoundStatus::Open {
+                r#""recused":false"#
+            } else {
+                r#""recused":null"#
+            };
+            assert!(text.contains(recusal), "{text}");
         }
     }
 
