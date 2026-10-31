@@ -15,12 +15,20 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let req = decode_request(data);
-    assert_eq!(req, decode_request(data), "request decode is not deterministic");
+    assert_eq!(
+        req,
+        decode_request(data),
+        "request decode is not deterministic"
+    );
     if let Ok(r) = &req {
         let again = encode_request(r).expect("an accepted request encodes");
         assert_eq!(again.as_slice(), data, "request round trip");
         if let Some(short) = data.get(..data.len().saturating_sub(1)) {
-            assert_ne!(decode_request(short).as_ref().ok(), Some(r), "a cut request decodes");
+            assert_ne!(
+                decode_request(short).as_ref().ok(),
+                Some(r),
+                "a cut request decodes"
+            );
         }
     }
     let rep = decode_reply(data);
@@ -29,7 +37,11 @@ fuzz_target!(|data: &[u8]| {
         let again = encode_reply(r).expect("an accepted reply encodes");
         assert_eq!(again.as_slice(), data, "reply round trip");
         if let Some(short) = data.get(..data.len().saturating_sub(1)) {
-            assert_ne!(decode_reply(short).as_ref().ok(), Some(r), "a cut reply decodes");
+            assert_ne!(
+                decode_reply(short).as_ref().ok(),
+                Some(r),
+                "a cut reply decodes"
+            );
         }
     }
 });

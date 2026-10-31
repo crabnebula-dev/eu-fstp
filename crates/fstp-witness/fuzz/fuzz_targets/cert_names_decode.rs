@@ -32,6 +32,9 @@ fuzz_target!(|data: &[u8]| {
         spki: data.iter().rev().take(91).copied().collect(),
     }];
     if parts.is_err() {
-        assert!(sender_of(data, &pins).is_none(), "a sender from an unreadable certificate");
+        assert!(
+            sender_of(data, &pins).is_none(),
+            "a sender from an unreadable certificate"
+        );
     }
 });
