@@ -1834,7 +1834,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | Every question of sections 15.1 and 15.2 | Each recommendation is built as an interim reading | Each is marked "Interim, pending Daniel" where it is built, listed in the exit audit, and reversible. A later answer replaces it |
 | ADR numbering | M3 has since used ADR-008 to ADR-012 | This design's ADR-008 (MCP protocol and OAuth profile) becomes ADR-013, and its ADR-009 (frontend architecture and delivery) becomes ADR-014. Every later reference here means the new number |
 | ADR-014, frontend | Accepted as section 3.9 describes it | No framework, no bundler, tsc only, the DOM rules, CSP with Trusted Types, generated operation types, the asset manifest, the source scan and the in-house test runner. W0 writes the ADR text from section 3.9 |
-| ADR-013, MCP and OAuth | Not yet answered (Q8, Q25) | W1e and W3c wait for it. The pages path does not need it |
+| ADR-013, MCP and OAuth | Answered 2026-10-31: Q8 registration A (open dynamic, rate-limited, no metadata fetch), the design tool set, the newest dated MCP revision with 2025-06-18 as the floor; Q25 the design lifetimes | ADR-013 is accepted for these rows. W1e and W3c can start. The lane records the exact pinned revision after checking its text |
 | Q7 Node.js host | Answered under M3 Q39 A | ADR-003 amendment of 2026-10-28, with Node.js 24.11.1 and npm 11.6.2 recorded on 2026-10-29 |
 | Q23 minor flag | Answered under M3 Q13 A and the answers of 2026-10-29 | `state-machine.md` NOTE 14 |
 | Review depth | One review round per lane for the demo path, no adversarial verify pass | Deferred findings are logged for W7, which runs in full before M4 closes |

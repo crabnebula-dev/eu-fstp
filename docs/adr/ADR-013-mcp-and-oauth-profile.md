@@ -1,6 +1,6 @@
 # ADR-013: MCP protocol and OAuth profile
 
-Status: Draft, pending Daniel (Q8, Q25). Not accepted.
+Status: Accepted 2026-10-31 (Daniel Thompson-Yvetot) for the Q8 and Q25 rows: open dynamic registration, the design tool set, the newest dated MCP revision with 2025-06-18 as the floor, and the design lifetimes. Rows marked Open stay open until the lane that builds them records them.
 
 The M4 design numbered this ADR ADR-008. M3 had already used ADR-008 to ADR-012, so it is ADR-013 (`docs/handoff/m4-design.md` section 15.0). Daniel has not answered Q8 or Q25 yet. Lanes W1e (`fstp-oauth`) and W3c (`fstp-mcp`) wait for this ADR. The pages path of the demo does not need it.
 
@@ -23,7 +23,7 @@ Each row below names its basis:
 
 | Topic | Proposed decision | Basis |
 | --- | --- | --- |
-| Pinned revision | The newest dated MCP revision at the time of acceptance, with 2025-06-18 as the floor | Interim, pending Daniel (Q8) |
+| Pinned revision | The newest dated MCP revision at the time of acceptance, with 2025-06-18 as the floor | Decided by Daniel on 2026-10-31 (Q8) |
 | Revision facts | The design believes that 2025-06-18 removed JSON-RPC batching, requires the `MCP-Protocol-Version` header after initialisation, and requires RFC 9728 metadata and RFC 8707 resource indicators. It also believes a later revision changed client registration guidance. These are unverified. The published text must be checked before this ADR is accepted | Open |
 
 ## Transport
@@ -57,10 +57,10 @@ Each row below names its basis:
 | Authorisation | `/oauth/authorize` with the authorisation code grant and PKCE `S256` only. The `resource` parameter must equal this cell's MCP URL | Design |
 | Redirect URIs | Exact match, except the port of loopback URIs for native clients (RFC 8252). The URL parser accepts a strict subset and rejects userinfo, fragments and non-ASCII hosts | Design |
 | Consent | Lists every scope in fixed plain-language text. Shows the client name as untrusted text with an "unverified" label, and the redirect host. Approving needs a step-up (I-78), so a magic-link session cannot connect an agent | Design |
-| Registration | Open dynamic registration (RFC 7591), rate-limited. A client has no rights until a consent. Client metadata documents fetched from URLs are off, because the cell would fetch arbitrary URLs | Interim, pending Daniel (Q8 A) |
+| Registration | Open dynamic registration (RFC 7591), rate-limited. A client has no rights until a consent. Client metadata documents fetched from URLs are off, because the cell would fetch arbitrary URLs | Decided by Daniel on 2026-10-31 (Q8) |
 | Token endpoint | `/oauth/token` with the authorisation code and refresh grants. Codes are single use and live 60 seconds | Design |
-| Lifetimes | Access tokens live 10 minutes. Refresh tokens rotate, reuse revokes the family, and the family never outlives the P-72 absolute lifetime | Interim, pending Daniel (Q25) |
-| Pending actions | Expire after 24 hours, with no batch confirmation | Interim, pending Daniel (Q25) |
+| Lifetimes | Access tokens live 10 minutes. Refresh tokens rotate, reuse revokes the family, and the family never outlives the P-72 absolute lifetime | Decided by Daniel on 2026-10-31 (Q25) |
+| Pending actions | Expire after 24 hours, with no batch confirmation | Decided by Daniel on 2026-10-31 (Q25) |
 | Revocation | `/oauth/revoke` (RFC 7009) and `POST /api/v1/me/agents/{client}/revocation` take effect at once (R-MC-03) | Design |
 | Token format | 256-bit values from `fstp_crypto::random_bytes`, stored as SHA-256 hashes and compared with `constant_time_eq`. Bound to account, client, scopes, audience and cell | Design |
 | Roles | Re-evaluated on every call, so no token outlives a role | Design |
