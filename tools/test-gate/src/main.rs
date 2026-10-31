@@ -2,6 +2,12 @@
 //! `test-gate --known-red <list> <cargo test output>`. The checks live in
 //! the library; see its documentation for what they are.
 
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: a CI tool that reports to the terminal and never ships"
+)]
+
 use std::process::ExitCode;
 
 use test_gate::{Outcome, check, read_list, read_run};

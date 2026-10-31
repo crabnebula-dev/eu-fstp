@@ -1,3 +1,0 @@
-.rs (target/debug/deps/a-0123abcd)
-test one ... ok
-test lt: FAILED. 1 passed; 1failed
