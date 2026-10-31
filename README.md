@@ -6,13 +6,56 @@ CrabNebula Ltd operates the hosted service. The same codebase also builds a self
 
 ## Status
 
-Built milestone by milestone, as `SPEC/09-milestones.md` sets out.
+Status on 2026-10-31. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. M4 started on 2026-10-29, before M3 closed, so that pages existed for a demo.
 
 | Milestone | Content | State |
 | --- | --- | --- |
 | M0 | Specification freeze for v1 | Done |
-| M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Built; closes when CI passes |
-| M2 | Domain core: state machine, policy engine, separation of duties, scoring | Next |
+| M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done |
+| M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done, merged into `main` |
+| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | In progress. Exit criteria not yet green |
+| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools | In progress. 9 of 24 work-plan steps done |
+| M5 | Contracts, payment requests, payment adapters, MCP client integrations | Not started. Starts after M4 closes |
+| M6 to M12 | Timeline and email, the LLM assessor, messaging, export and white-labelling, hardening, the pilot and calibration | Not started |
+
+### M3: what exists and what is open
+
+Built: the cell runtime with its routes, engine, record store and signing, and the control plane protocol and provisioning. Authentication uses passkeys and magic links, with first-admin enrolment. The identity vault, the witness and the vault run loops work. Every database connection checks the server identity (I-83), all role grants come from one plan (I-82), and a local development stack runs.
+
+Open: the slice cycle steps of the test world, the self-hosted witness, record store gaps, key-volume custody, the control plane run loops, the vault audit chain, and ML-DSA-65 in moduletto. Production anchoring waits on the last one.
+
+### M4: what exists and what is open
+
+Built: tenant onboarding through to two admins, and the programme creator with drafts, validation and activation by a second admin (I-66, I-67). The Guide for Applicants parser and renderer work. Imported funding documents change a draft only through a named programme manager (I-65). The applicant, reviewer, coordinator, committee and IRC pages exist.
+
+In progress: strict activation pairing for every programme (D2e), a home page and navigation after sign-in, the profile page, OAuth, the authorisation matrix harness, and the tenant sign-up review.
+
+Not started: the MCP server, public pages and tools, the admin, auditor and agent pages, the switch from test fakes to the M3 runtime, the full review, and the exit run in CI.
+
+### Branches
+
+| Branch | Content |
+| --- | --- |
+| `main` | M0 to M2 |
+| `m3/cell-runtime` | M3 integration |
+| `m4/int-b` | M4 integration |
+| `m4/int-m3` | M4 integration with M3 merged in, for the switch from fakes to the M3 runtime |
+
+### Decisions
+
+Daniel's answers are recorded in `docs/handoff/m3-design.md` section 21.0 and `docs/handoff/m4-design.md` section 15.0, and in the ADRs in `docs/adr/`. Every reading not yet decided is marked "Interim, pending Daniel" where it is built.
+
+## Running the demo
+
+The demo runs one test cell with synthetic data only. Sign-in uses real passkeys through the browser's own prompt. The cell sends no email: the demo page shows every message instead.
+
+```sh
+FSTP_DEMO_PORT=8640 tools/demo/run.sh start
+```
+
+Then open the demo page at `http://127.0.0.1:8641/demo`. It lists the people of the current scene with their sign-in links, every message the cell sent, and links that switch scenes. `docs/handoff/m4-demo.md` gives the click paths and the journey results.
+
+Known gap: after sign-in a person lands on the account page, and the app has no home page or role navigation yet. Work in progress adds both.
 
 ## Repository layout
 
@@ -24,6 +67,10 @@ Built milestone by milestone, as `SPEC/09-milestones.md` sets out.
 | `crates/` | Platform crates in Rust. Each parser-bearing crate has a cargo-fuzz project in `fuzz/`. |
 | `tools/deps-check/` | CI gate for the dependency policy, the no-Python rule and fuzz-target presence. |
 | `tools/fuzz-all.sh` | Runs every fuzz target for a fixed time. |
+| `web/` | The pages, in TypeScript with no framework (ADR-014). |
+| `e2e/` | Playwright journeys against the demo cell. |
+| `tools/demo/run.sh` | Starts, seeds and stops the demo cell. |
+| `docs/handoff/` | Design documents per milestone, the decisions, and the demo notes. |
 | `deps/` | The dependency allowlist with checksums, the ADR root crates and the list of crates that need fuzz targets. |
 | `.github/workflows/ci.yml` | CI: formatting, lints, tests against PostgreSQL 16, deps-check and a fuzz smoke run. |
 
@@ -32,6 +79,7 @@ Built milestone by milestone, as `SPEC/09-milestones.md` sets out.
 Requirements:
 - rustup. `rust-toolchain.toml` pins the stable toolchain, and rustup installs it on first use.
 - PostgreSQL 16 server binaries. Tests start their own server and never touch an existing one. Point `FSTP_PG_BIN` at the binaries, for example `/usr/lib/postgresql/16/bin` on Debian and Ubuntu.
+- For the pages and the journeys: Node.js 24.11.1 with npm 11.6.2 (ADR-003). Run `npm ci --ignore-scripts` in `web/` and `e2e/`.
 - For fuzzing: cargo-fuzz 0.13.2 and the nightly toolchain that `tools/fuzz-all.sh --print-toolchain` prints.
 
 ```sh
