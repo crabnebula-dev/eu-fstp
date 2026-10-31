@@ -54,6 +54,10 @@ pub enum ErrorKind {
     RolledBack,
     /// The connection is closed or broken and cannot be used.
     Closed,
+    /// A server check of the configuration refused the server's verified
+    /// leaf certificate ([`Config::server_check`](crate::Config::server_check)).
+    /// Nothing after the TLS handshake was sent to that server.
+    ServerRefused,
 }
 
 /// An error from the PostgreSQL client.
@@ -180,6 +184,7 @@ impl fmt::Display for Error {
             ErrorKind::ResultTooLarge => "result too large",
             ErrorKind::RolledBack => "transaction rolled back",
             ErrorKind::Closed => "connection closed",
+            ErrorKind::ServerRefused => "server refused by a server check",
         };
         if self.inner.message.is_empty() {
             f.write_str(kind)?;

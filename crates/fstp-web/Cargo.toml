@@ -1,0 +1,23 @@
+[package]
+name = "fstp-web"
+description = "Routes over fstp_http::Router for the API, the app, public pages, MCP and OAuth, with CSRF, Origin and header rules (M4 design section 1.1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-api-core.workspace = true
+fstp-mcp.workspace = true
+fstp-oauth.workspace = true
+fstp-web-assets.workspace = true
+fstp-http.workspace = true
+fstp-json.workspace = true
+fstp-rt.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

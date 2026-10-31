@@ -92,7 +92,11 @@
 //!   member comes from the interface before it and is not checked. The
 //!   command that completes the three facts takes NEGOTIATION to GRANTED
 //!   in the same batch when every guard of the row holds: identity
-//!   verified, guardian consent if minor (I-18), an open reservation equal
+//!   verified, guardian consent if minor-flagged (I-18), with the flag
+//!   derived again from the vault's answer about the lead's attestation
+//!   at the deadline of the call of IRC review, and a missing answer
+//!   failing the guard (state-machine NOTE 14, decided 2026-10-29),
+//!   an open reservation equal
 //!   to the determined amount within P-04 and the cap, SoD-09 for the lead,
 //!   I-04 and I-06 for every held Receiving account of the proposal, and the
 //!   I-15 record. When a guard fails, the completing command is refused,
@@ -108,7 +112,10 @@
 //!   minimum and no deduction can raise it; no amount can keep I-14,
 //!   because the cap headroom lies below the smallest amount still open;
 //!   the I-15 record is incomplete; or guardian consent is missing for a
-//!   minor. The smallest amount still open is the P-04 minimum at every
+//!   proposal that the guard into GRANTED would find minor-flagged, with
+//!   the flag derived again from the vault (state-machine NOTE 14, decided
+//!   2026-10-29). A missing answer to that question refuses the decline
+//!   (overview NOTE 2). The smallest amount still open is the P-04 minimum at every
 //!   point of NEGOTIATION, after acceptance and approval too, since the
 //!   amount is never locked (NOTE 9, decided 2026-10-26 and 2026-10-28).
 //!   It is one cent when that minimum is zero. A plan total above the
@@ -315,6 +322,8 @@ pub struct MoneyPolicy {
 pub struct MoneyCall {
     /// The programme.
     pub programme: ProgrammeId,
+    /// The deadline, the instant the lead's age counts at (R-ID-04).
+    pub deadline: fstp_domain::time::Timestamp,
     /// The policy version frozen at publication.
     pub frozen: Option<fstp_domain::id::PolicyVersionId>,
 }
@@ -375,7 +384,13 @@ pub struct MoneyProposal {
     pub lead: AccountId,
     /// The creation call.
     pub call: CallId,
-    /// Whether the lead is flagged as a minor.
+    /// The call of its IRC review: the creation call, or the call of its
+    /// latest re-entry (NOTE 8). Its deadline is the instant the lead's age
+    /// counts at (state-machine NOTE 14, decided 2026-10-29).
+    pub irc_call: CallId,
+    /// Whether the proposal is minor-flagged: set at creation, derived from
+    /// the vault at the NEGOTIATION gate, and derived again by the guard
+    /// into GRANTED (R-ID-04, state-machine NOTE 14, decided 2026-10-29).
     pub minor: bool,
     /// The state, from the transitions folded.
     pub state: StateTag,
@@ -768,33 +783,47 @@ impl MoneyView {
                 self.heads.insert(version.programme, version.id);
             }
             Record::CallDrafted {
-                call, programme, ..
+                call,
+                programme,
+                deadline,
+                ..
             } => {
                 self.calls.insert(
                     *call,
                     MoneyCall {
                         programme: *programme,
+                        deadline: *deadline,
                         frozen: None,
                     },
                 );
+            }
+            Record::CallEdited { call, deadline, .. } => {
+                if let Some(c) = self.calls.get_mut(call) {
+                    c.deadline = *deadline;
+                }
             }
             Record::CallPublished { call, policy, .. } => {
                 if let Some(c) = self.calls.get_mut(call) {
                     c.frozen = Some(*policy);
                 }
             }
+            // R-ID-04: no field of the request sets or clears the flag, so the
+            // record's minor field is not read. Every proposal is
+            // minor-flagged until the NEGOTIATION gate derives the flag from
+            // the vault (state-machine NOTE 14).
             Record::ProposalCreated {
                 proposal,
                 call,
                 lead,
-                minor,
+                ..
             } => {
                 self.proposals.insert(
                     *proposal,
                     MoneyProposal {
                         lead: *lead,
                         call: *call,
-                        minor: *minor,
+                        irc_call: *call,
+                        minor: true,
                         state: StateTag::Draft,
                         determined: None,
                         reserved: None,
@@ -912,8 +941,29 @@ impl MoneyView {
             Record::TerminationRecorded { decision, .. } => {
                 self.decisions.insert(*decision);
             }
+            Record::ReEntered {
+                proposal, to_call, ..
+            } => {
+                self.proposal_mut(*proposal)?.irc_call = *to_call;
+            }
             Record::Transitioned(t) => {
-                self.proposal_mut(t.proposal)?.state = t.to;
+                // State-machine NOTE 14, R-ID-04 (decided 2026-10-29): the
+                // flag is derived at the NEGOTIATION gate from the vault
+                // answer about the lead's attestation at the deadline of
+                // the call in which the proposal passes IRC review, and
+                // derived again by the guard into GRANTED. A missing
+                // answer leaves the proposal minor-flagged.
+                let deadline = self
+                    .proposals
+                    .get(&t.proposal)
+                    .and_then(|q| self.calls.get(&q.irc_call))
+                    .map(|c| c.deadline);
+                let q = self.proposal_mut(t.proposal)?;
+                q.state = t.to;
+                if t.row == Row::IrcReviewToNegotiation || t.row == Row::NegotiationToGranted {
+                    q.minor =
+                        !deadline.is_some_and(|d| truth.adult_answer(q.lead, d) == Some(true));
+                }
             }
             Record::DeliverableRecorded(d) => {
                 self.deliverables.insert(
@@ -1424,7 +1474,23 @@ impl MoneyCx<'_> {
         }
     }
 
-    /// The NOTE 9 failures that hold for `p` now.
+    /// The vault's answer about the attestation of `p`'s lead at the
+    /// deadline of its call of IRC review, or `None` when it gives none
+    /// (state-machine NOTE 14, decided 2026-10-29). The guard into GRANTED
+    /// and `DeclineNegotiation` both ask it, and both fail closed on `None`.
+    pub fn adult_answer(&self, p: ProposalId) -> Option<bool> {
+        let q = self.money.proposals.get(&p)?;
+        self.money
+            .calls
+            .get(&q.irc_call)
+            .and_then(|c| self.truth.adult_answer(q.lead, c.deadline))
+    }
+
+    /// The NOTE 9 failures that hold for `p` now. Guardian consent is
+    /// missing when the vault does not show the lead 18 or older and holds
+    /// no verified consent: the flag is derived again, as at GRANTED
+    /// (state-machine NOTE 14, decided 2026-10-29). A missing answer counts
+    /// as not 18 or older here; [`decline`] refuses before it reads this.
     pub fn failures(&self, p: ProposalId) -> BTreeSet<NegotiationFailure> {
         let mut out = BTreeSet::new();
         let Some(q) = self.money.proposals.get(&p) else {
@@ -1462,7 +1528,7 @@ impl MoneyCx<'_> {
         if !self.money.repeat_clear(self.truth, q.lead, p) {
             out.insert(NegotiationFailure::RepeatRecordIncomplete);
         }
-        if q.minor && !self.truth.has_consent(p) {
+        if self.adult_answer(p) != Some(true) && !self.truth.has_consent(p) {
             out.insert(NegotiationFailure::GuardianConsentMissing);
         }
         out
@@ -1482,11 +1548,18 @@ impl MoneyCx<'_> {
         };
         let in_range = f.p04_min <= d.granted && d.granted <= f.p04_max;
         let in_cap = self.headroom(p).is_some_and(|h| d.granted <= h);
+        // State-machine NOTE 14 (decided 2026-10-29): the guard derives the
+        // minor flag again, at the deadline of the call of IRC review. A
+        // missing answer fails the guard (overview NOTE 2). A minor-flagged
+        // proposal needs a verified guardian consent (I-18).
+        let Some(adult) = self.adult_answer(p) else {
+            return false;
+        };
         r == d.granted
             && in_range
             && in_cap
             && self.truth.is_verified(q.lead)
-            && (!q.minor || self.truth.has_consent(p))
+            && (adult || self.truth.has_consent(p))
             && self.receiving_clear(p)
             && self.money.repeat_clear(self.truth, q.lead, p)
     }
@@ -1963,7 +2036,7 @@ fn grant_fact(
         app,
         con,
         cx.sod.epoch.raw(),
-        RulesVersion::M2,
+        RulesVersion::MINOR_FLAG_2026_10_29,
     ) {
         e.synth.push(r);
     }
@@ -1996,6 +2069,15 @@ fn decline(cx: &MoneyCx<'_>, actor: Actor, proposal: ProposalId) -> MoneyVerdict
     if q.state != StateTag::Negotiation {
         return refuse("DeclineNegotiation needs NEGOTIATION");
     }
+    // State-machine NOTE 14 (decided 2026-10-29): the decline asks the
+    // attestation question as the guard into GRANTED does. When the vault
+    // gives no answer, as for an age conflict that waits for its manual
+    // check, the decline is refused (overview NOTE 2).
+    if cx.adult_answer(proposal).is_none() {
+        return refuse(
+            "overview NOTE 2, NOTE 14: the vault gives no answer about the lead's attestation",
+        );
+    }
     let failures = cx.failures(proposal);
     let Some(first) = failures.iter().next().copied() else {
         return refuse("NOTE 9: no listed failure holds");
@@ -2005,7 +2087,7 @@ fn decline(cx: &MoneyCx<'_>, actor: Actor, proposal: ProposalId) -> MoneyVerdict
     e.synth.push(Record::NegotiationDeclined {
         proposal,
         reason: first,
-        rules: RulesVersion::M2,
+        rules: RulesVersion::MINOR_FLAG_2026_10_29,
     });
     if let Some(old) = q.reserved
         && let Ok(amount) = fstp_money::Amount::from_minor(old, fstp_money::Currency::Eur)

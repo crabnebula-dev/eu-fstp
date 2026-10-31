@@ -16,6 +16,8 @@
 //! - [`scripted`]: a transport that replays fixed peer bytes, for fuzz
 //!   targets of protocol endpoints.
 //! - [`future`]: `block_on`, `join`, `race`, `yield_now` and `poll_bounded`.
+//! - [`signal`]: termination signals behind the runtime trait, so SIGTERM
+//!   can trigger [`Shutdown`].
 //! - [`tokio`]: the tokio implementation of [`Runtime`].
 //!
 //! This crate contains no parser. It moves opaque bytes and never interprets
@@ -29,6 +31,7 @@ mod io;
 mod runtime;
 pub mod scripted;
 mod shutdown;
+pub mod signal;
 mod task;
 mod time;
 pub mod tokio;

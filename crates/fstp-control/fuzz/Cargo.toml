@@ -1,0 +1,46 @@
+[package]
+name = "fstp-control-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-control = { path = ".." }
+fstp-cp-proto = { path = "../../fstp-cp-proto" }
+
+[[bin]]
+name = "cp_api_decode"
+path = "fuzz_targets/cp_api_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pgagent_job_decode"
+path = "fuzz_targets/pgagent_job_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ddl_identifier_render"
+path = "fuzz_targets/ddl_identifier_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "install_config_decode"
+path = "fuzz_targets/install_config_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

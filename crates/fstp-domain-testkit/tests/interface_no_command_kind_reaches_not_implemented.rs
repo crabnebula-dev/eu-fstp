@@ -370,14 +370,24 @@ fn walk(backend: Backend) {
     walk.go(&ask(R1, PF, reviewer_of(R1, PF)));
 
     // The cut-off and the IRC reviews.
-    walk.go(&cut_off(
+    walk.all(cut_off(
         R1,
         cut_off_decision(1),
         call(1),
         vec![PA, PB, PC, PD, PE, PG],
         6,
         false,
-        ballots(&[R1, R2, R3], Vote::For),
+        // M4 change D5: R3 delegates its vote to R2, so the walk reaches
+        // `DelegateVote` too.
+        {
+            let mut b = ballots(&[R1, R2], Vote::For);
+            b.push(fstp_domain::decision::Ballot {
+                voter: R2,
+                vote: Vote::For,
+                delegated_by: Some(R3),
+            });
+            b
+        },
     ));
     for p in [PA, PB, PC, PD, PG] {
         irc_assigned(&mut walk, p);

@@ -1,0 +1,20 @@
+[package]
+name = "fstp-signup"
+description = "Control plane onboarding: sign-up and agreement forms, operator review and the Provisioner client (TH-46, M4 design section 3.5)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-html.workspace = true
+fstp-json.workspace = true
+fstp-crypto.workspace = true
+fstp-ledger.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

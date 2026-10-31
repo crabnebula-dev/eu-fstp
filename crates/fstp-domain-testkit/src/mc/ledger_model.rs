@@ -101,6 +101,7 @@ pub fn stored_json(record: &Record) -> Option<Value> {
     match record {
         Record::Core(r) => Some(envelope_to_json(EnvelopeKind::Core, r.to_json())),
         Record::Finding(_) => None,
+        Record::Creator(_) | Record::Import(_) | Record::Tenant(_) => Some(record.to_json()),
     }
 }
 
@@ -156,6 +157,10 @@ fn decode_record(schema: u16, value: &Value) -> Result<Record, String> {
             .map(Record::Core)
             .map_err(|e| format!("the core record does not decode: {e:?}")),
         EnvelopeKind::Finding => Err("the testkit has no finding decoder".to_owned()),
+        EnvelopeKind::Creator | EnvelopeKind::Import | EnvelopeKind::Tenant => {
+            fstp_engine::record_from_json_at(schema, value)
+                .map_err(|e| format!("the engine record does not decode: {e:?}"))
+        }
     }
 }
 
@@ -712,7 +717,7 @@ fn core_of(entries: &[Entry<Record>]) -> Vec<CoreRecord> {
         .iter()
         .filter_map(|e| match &e.record {
             Record::Core(r) => Some(r.clone()),
-            Record::Finding(_) => None,
+            Record::Finding(_) | Record::Creator(_) | Record::Import(_) | Record::Tenant(_) => None,
         })
         .collect()
 }
@@ -1020,7 +1025,7 @@ pub fn witness_run() -> Result<LedgerRun, String> {
     later.push(score(R2, stage2_key(R2, PR1), &[2, 2]));
     later.push(correct(R1, stage2_key(R1, PR1), &[2, 1]));
     later.push(rank(R1, PR1));
-    later.push(cut_off(
+    later.extend(cut_off(
         R1,
         cut_off_decision(1),
         call(1),
@@ -1559,11 +1564,12 @@ pub fn lead_of(proposal: ProposalId) -> AccountId {
     if proposal == PR1 { L1 } else { L2 }
 }
 
-/// The step of `act` on `proposal`, given what the ghost knows, or why it
-/// cannot be built.
-pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<Step, String> {
+/// The steps of `act` on `proposal`, given what the ghost knows, or why
+/// they cannot be built. Every act is one step, except the cut-off, which
+/// since M4 change D5 is the steps of a whole round.
+pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<Vec<Step>, String> {
     let lead = lead_of(proposal);
-    Ok(match act {
+    let one = match act {
         Act::Assign(a, kind) => {
             let id = assignment_of(a, proposal, call(1), kind);
             assign(COORDINATOR, id, proposal, a, kind, Some(handle(id.raw())))
@@ -1589,7 +1595,7 @@ pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<S
             let ranked = ghost.ranked();
             let voters = ghost.voters(&ranked);
             let nominated = u32::try_from(ranked.len()).unwrap_or(0);
-            cut_off(
+            return Ok(cut_off(
                 R1,
                 cut_off_decision(ghost.next_id),
                 call(1),
@@ -1597,7 +1603,7 @@ pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<S
                 nominated,
                 false,
                 ballots(&voters, Vote::For),
-            )
+            ));
         }
         Act::Irc(i) => irc_review(
             i,
@@ -1675,7 +1681,8 @@ pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<S
         Act::Release => money::release_payment(money::REL, payment_request(proposal)),
         Act::Confirm => money::confirm_paid(payment_request(proposal)),
         Act::Terminate => money::terminate(STAFF_PM, proposal),
-    })
+    };
+    Ok(vec![one])
 }
 
 /// The amount of the single milestone of a machine proposal's submitted
@@ -1759,8 +1766,9 @@ pub enum LedgerCmd {
     Core {
         /// The instant.
         now: Timestamp,
-        /// The command.
-        step: Box<Step>,
+        /// The command, or since M4 change D5 the steps of a cut-off
+        /// round. They run in order and stop at the first refusal.
+        step: Box<Vec<Step>>,
         /// The proposal whose script this step comes from.
         scripted: Option<ProposalId>,
     },
@@ -1843,9 +1851,13 @@ impl LedgerMachine {
     }
 
     fn core(now: Timestamp, step: Step, scripted: Option<ProposalId>) -> LedgerCmd {
+        LedgerMachine::core_steps(now, vec![step], scripted)
+    }
+
+    fn core_steps(now: Timestamp, steps: Vec<Step>, scripted: Option<ProposalId>) -> LedgerCmd {
         LedgerCmd::Core {
             now,
-            step: Box::new(step),
+            step: Box::new(steps),
             scripted,
         }
     }
@@ -1871,7 +1883,7 @@ impl LedgerMachine {
             now
         };
         match act_step(model, p, act) {
-            Ok(step) => LedgerMachine::core(at, step, Some(p)),
+            Ok(steps) => LedgerMachine::core_steps(at, steps, Some(p)),
             // Only a revision with a malformed milestone fails to build.
             Err(_) => LedgerMachine::core(now, read(R1, p), None),
         }
@@ -2120,7 +2132,7 @@ impl LedgerMachine {
                     .get(back)
                     .and_then(|act| act_step(model, proposal, *act).ok());
                 match again {
-                    Some(step) => LedgerMachine::core(now, step, None),
+                    Some(steps) => LedgerMachine::core_steps(now, steps, None),
                     None => LedgerMachine::core(now, publish(call(1)), None),
                 }
             }
@@ -2194,7 +2206,11 @@ impl StateMachine for LedgerMachine {
                 ("setup from genesis".to_owned(), applied)
             }
             LedgerCmd::Core { now, step, .. } => {
-                let context = format!("{:?} by {:?}", step.cmd, step.actor);
+                let context = step
+                    .iter()
+                    .map(|s| format!("{:?} by {:?}", s.cmd, s.actor))
+                    .collect::<Vec<_>>()
+                    .join(", then ");
                 match sut.run.as_mut() {
                     Some(run) => {
                         sut.previous = if self.tamper {
@@ -2202,7 +2218,7 @@ impl StateMachine for LedgerMachine {
                         } else {
                             run.ledger.clone()
                         };
-                        (context, run.core(*now, step))
+                        (context, run_steps(run, *now, step))
                     }
                     None => (context, Err("no run".to_owned())),
                 }
@@ -2255,6 +2271,11 @@ impl StateMachine for LedgerMachine {
             .as_ref()
             .map_err(|e| format!("{}: {e}", out.context))?;
         let LedgerCmd::Core { step, .. } = cmd else {
+            return Ok(());
+        };
+        // The I-23 reference judges single correction commands. A cut-off
+        // round is a sequence of steps, and no correction is among them.
+        let [step] = step.as_slice() else {
             return Ok(());
         };
         let Some((expected, why)) = model.reference(step) else {
@@ -2419,6 +2440,27 @@ impl LedgerModel {
     }
 }
 
+/// Runs `steps` on `run` at `now`, in order, stopping at the first
+/// refusal. The result is accepted when every step is, appends every
+/// record the accepted steps appended, and names the first refusal.
+fn run_steps(run: &mut LedgerRun, now: Timestamp, steps: &[Step]) -> Result<Applied, String> {
+    let mut out = Applied {
+        accepted: true,
+        appended: Vec::new(),
+        refusal: None,
+    };
+    for s in steps {
+        let a = run.core(now, s)?;
+        out.appended.extend(a.appended);
+        if !a.accepted {
+            out.accepted = false;
+            out.refusal = a.refusal;
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// Runs `action` of M-LEDGER on `run`.
 fn apply_action(run: &mut LedgerRun, action: LedgerAction) -> Result<Applied, String> {
     match action {
@@ -2523,7 +2565,7 @@ pub fn transition_i23(before: &LedgerState, after: &LedgerState) -> Result<(), S
 fn holds(s: &LedgerState, f: impl Fn(&CoreRecord) -> bool) -> bool {
     s.run.ledger.iter().any(|e| match &e.record {
         Record::Core(r) => f(r),
-        Record::Finding(_) => false,
+        Record::Finding(_) | Record::Creator(_) | Record::Import(_) | Record::Tenant(_) => false,
     })
 }
 

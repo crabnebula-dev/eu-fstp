@@ -12,7 +12,7 @@ use fstp_domain::command::{
     Actor, Command, CommandKind, ContractEvent, Ctx, DeclarationSubject, KnockOutResult,
     SystemCause, Via,
 };
-use fstp_domain::decision::{Ballot, IrcVerdict, Vote};
+use fstp_domain::decision::{IrcVerdict, Vote};
 use fstp_domain::engine::{FoldError, apply, decide, due, queries, replay, stage1_ready};
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
@@ -23,11 +23,12 @@ use fstp_domain::id::{
 };
 use fstp_domain::oracle::{Answer, Answers, Query, QueryKind};
 use fstp_domain::payment::PaymentLine;
+use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::policy::{
-    EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef, InferenceBinding,
-    IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues, McpBindingActions,
-    ModelRef, OpaqueValue, ParamId, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity,
-    SpdxId, TieBreakRule, VotingRules,
+    AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
+    InferenceBinding, IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues,
+    McpBindingActions, ModelRef, OpaqueValue, ParamId, PolicyVersion, ProximityLists, ReadAccess,
+    ReviewerAnonymity, SpdxId, TieBreakRule, VotingRules,
 };
 use fstp_domain::proposal::{EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, Task};
 use fstp_domain::record::Record;
@@ -158,16 +159,24 @@ fn high_risk_kinds(action: &str) -> Option<&'static [CommandKind]> {
         "Approving or releasing a payment" => {
             &[CommandKind::ApprovePayment, CommandKind::ReleasePayment]
         }
-        // M2 has no separate activation step, so creating a programme activates it.
-        "Activating a programme or publishing a call" => {
-            &[CommandKind::CreateProgramme, CommandKind::PublishCall]
-        }
+        // M4 change D2 adds the activation step. Creating a programme stays
+        // high risk too, the strict reading of Q10 (interim, pending Daniel).
+        "Activating a programme or publishing a call" => &[
+            CommandKind::CreateProgramme,
+            CommandKind::ActivateProgramme,
+            CommandKind::PublishCall,
+        ],
         "Tenant export, vault export, and any download containing identity attributes"
         | "Adding a passkey, linking a device, or signing in the desktop client"
         | "Changing the account email address or login methods"
         | "Changing bank details"
         | "Publishing a template to other tenants"
         | "Approving break-glass access" => &[],
+        // Approving a recovery is a cell-level authentication action
+        // (`authentication.md` Account recovery, I-79). The domain has no
+        // command for it, and `fstp_cell_core::gate::HIGH_RISK_TABLE`
+        // carries its step-up (decided 2026-10-28, Q15).
+        "Approving an account recovery" => &[],
         _ => return None,
     };
     Some(kinds)
@@ -532,6 +541,26 @@ fn r_mc_05_mcp_binding_action_reaches_the_governing_policy_lookup() {
             Ok(()),
             "the tenant admin creates programme {programme:?}"
         );
+        // M4 changes D1 and D8: a second tenant admin, who built nothing,
+        // activates the programme, so the call draft below reaches the
+        // programme lane's binding rule rather than the draft gate.
+        let approver = Ctx {
+            actor: Actor::Account(AccountId::from_raw(3)),
+            tenant_admin: true,
+            ..ctx()
+        };
+        let activate = Command::ActivateProgramme {
+            programme,
+            decision: DecisionId::from_raw(77_000u128.saturating_add(programme.raw())),
+            report: ReportDigest::from_bytes([7; 32]),
+            revision: 1,
+            creator_builders: BTreeSet::new(),
+        };
+        assert_eq!(
+            run(&mut state, &activate, &approver),
+            Ok(()),
+            "a second tenant admin activates programme {programme:?}"
+        );
     }
     let mcp = Ctx {
         via: Via::Mcp,
@@ -690,8 +719,8 @@ fn opaque(s: &str) -> OpaqueValue {
 }
 
 /// The frozen parameters without a typed field (as the testkit's
-/// `gen::policy::FROZEN_OPAQUE`).
-const FROZEN_OPAQUE: [ParamId; 18] = [
+/// `gen::policy::FROZEN_OPAQUE`). P-75 is typed since M4 change D6.
+const FROZEN_OPAQUE: [ParamId; 17] = [
     ParamId::P08,
     ParamId::P23,
     ParamId::P25,
@@ -709,7 +738,6 @@ const FROZEN_OPAQUE: [ParamId; 18] = [
     ParamId::P64,
     ParamId::P65,
     ParamId::P66,
-    ParamId::P75,
 ];
 
 /// The live parameters without a typed field (as the testkit's
@@ -797,6 +825,7 @@ fn policy_version(id: u128, programme: ProgrammeId, p77: McpBindingActions) -> P
             ),
             p39: two,
             p53: FunderProfileRef(opaque("synthetic funder profile")),
+            p75: AgentContentAccess::Off,
             p77,
             opaque: FROZEN_OPAQUE
                 .iter()
@@ -876,6 +905,13 @@ fn sample(kind: CommandKind) -> Command {
                 ProgrammeId::from_raw(9),
                 McpBindingActions::DraftOnly,
             )),
+        },
+        K::ActivateProgramme => Command::ActivateProgramme {
+            programme: ProgrammeId::from_raw(9),
+            decision,
+            report: ReportDigest::from_bytes([7; 32]),
+            revision: 1,
+            creator_builders: BTreeSet::new(),
         },
         K::EditPolicy => Command::EditPolicy {
             base: PolicyVersionId::from_raw(9),
@@ -1004,19 +1040,23 @@ fn sample(kind: CommandKind) -> Command {
         K::SubmitRevision => Command::SubmitRevision { proposal, plan },
         K::RankAfterStage2 => Command::RankAfterStage2 { proposal },
         K::ExpireStage2 => Command::ExpireStage2 { proposal },
-        K::RecordCutOff => Command::RecordCutOff {
-            decision,
+        K::OpenCutOffRound => Command::OpenCutOffRound {
+            round: decision,
             call,
             order: vec![proposal],
             nominated: 1,
             rationale: text_ref(15),
             tie_breaks: None,
-            ballots: vec![Ballot {
-                voter: account,
-                vote: Vote::For,
-                delegated_by: None,
-            }],
         },
+        K::CastBallot => Command::CastBallot {
+            round: decision,
+            vote: Vote::For,
+        },
+        K::DelegateVote => Command::DelegateVote {
+            round: decision,
+            to: account,
+        },
+        K::RecordCutOff => Command::RecordCutOff { round: decision },
         K::RecordIrcReview => Command::RecordIrcReview {
             assignment,
             verdict: IrcVerdict::Validate,

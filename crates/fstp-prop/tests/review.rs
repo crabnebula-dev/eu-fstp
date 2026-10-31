@@ -4,6 +4,11 @@
 //! invariant property (`SPEC/07-test-plan/test-plan.md`), so a gap here would let
 //! an invariant test pass without checking anything.
 
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
 // Helpers and fixtures here sit outside #[test] functions, where the workspace
 // test exemptions (clippy.toml) do not reach. Panics, unwraps, indexing and
 // arithmetic in this file report test failures, which is their purpose.

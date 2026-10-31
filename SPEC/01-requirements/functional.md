@@ -64,9 +64,12 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 ## Negotiation and grant
 
-- **R-NG-01** Identity attributes are collected only in NEGOTIATION (I-17), except the applicant's country of residence or establishment for P-17, which is collected at submission and held only in the identity vault.
+- **R-NG-01** Identity attributes are collected only in NEGOTIATION (I-17), except the applicant's country of residence or establishment for P-17, which is collected at submission and held only in the identity vault. Two further exceptions are collected and held only in the identity vault (decided 2026-10-28). An over-18 attestation of the applicant lead may be collected from submission until NEGOTIATION. A guardian's identity and consent are collected at the IRC_REVIEW to NEGOTIATION gate.
   NOTE: Judging roles see only the vault's yes or no answer to the P-17 country condition. The country is verified in NEGOTIATION (decided 2026-10-25, O-48). TODO(legal): confirm this early collection under GDPR.
+  NOTE: Guardian exception (decided 2026-10-28). Collection opens once every reviewing IRC member has validated a minor-flagged proposal (R-ID-04). The guardian verifies and consents on the vault origin (`03-architecture/overview.md`), so only the vault receives the guardian's attributes. The proposal stays in IRC_REVIEW until the consent record is effective. Judging roles never read the guardian's attributes, so I-17 holds. TODO(legal): L-02, the legal basis for collecting a guardian's data before NEGOTIATION.
+  NOTE: Over-18 attestation exception (decided 2026-10-28). The lead provides the attestation on the vault origin, and only the vault receives it. It is optional: without it, the proposal stays minor-flagged (R-ID-04) and needs a verified guardian consent. Judging roles never see the attestation or the vault's answer about it. TODO(legal): L-02, the legal basis for collecting the attestation before NEGOTIATION, and whether Article 8 GDPR applies to it.
 - **R-NG-02** A minor's proposal enters NEGOTIATION only with verified guardian consent (I-18).
+  NOTE: The guardian's identity and consent are collected at the IRC_REVIEW to NEGOTIATION gate, in the identity vault only (R-NG-01, decided 2026-10-28). The gate admits a proposal whose lead has an effective verified over-18 attestation at the deadline, or that has a verified guardian consent record (`02-domain/state-machine.md` NOTE 14, decided 2026-10-28).
 - **R-NG-03** The grant amount is set by the assigned reviewers, adjusted for ineligible costs, within P-04 and P-05.
   AC: a granted amount that differs from the effective plan total minus the recorded deductions is rejected. An amount equal to either P-04 bound is accepted.
   NOTE: The granted amount equals the effective plan total minus recorded deductions, and each deduction carries a reason. P-04 bounds are inclusive at both ends (decided 2026-10-25, `02-domain/contracts.md`).
@@ -103,6 +106,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
   AC: after verification, no backup or replica can reproduce the document.
   NOTE: Encrypting each document under its own key and destroying the key on verification reaches backups without rewriting them.
 - **R-ID-04** Minor status is stored as a derived flag relative to the call deadline.
+  NOTE: Derivation (decided 2026-10-28). A proposal is minor-flagged unless its lead has an effective verified over-18 attestation at the call deadline. No field of an applicant's request sets or clears the flag. Only the vault's answer about a verified attestation clears it. The vault answers through a one-bit query (`03-architecture/overview.md` NOTE 7).
+  NOTE: Interim, pending Daniel. Which call's deadline applies to a deferred proposal, how an attestation verified after the deadline counts, and whether a later verification showing the lead under 18 overrides an attestation are not decided. ADR-008 (Minor flag details) holds the proposed readings.
 
 ## Profile sync
 

@@ -1,0 +1,6 @@
+DELETE /api/v1/me/sessions/s1 HTTP/1.1
+Host: tenant.fstp.test
+Origin: https://tenant.fstp.test
+X-FSTP-Request: 1
+Cookie: a=1; __Host-fstp=5a5a
+

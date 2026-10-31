@@ -46,6 +46,28 @@
 //!   overflow or mixed currencies, does not hold.
 //! - Answer digests are a fixed placeholder. The M3 driver computes them
 //!   with `fstp-crypto` over the canonical query encoding of lane L-CODEC.
+//! - An over-18 attestation is a fact about an account, as the query names
+//!   the lead (`SPEC/03-architecture/overview.md` NOTE 7, R-ID-04). The
+//!   twin holds it as the instant from which the attestation shows the
+//!   account 18 or older. `IsVerifiedAdultAtDeadline` holds exactly when
+//!   an effective attestation shows that at the deadline the query names.
+//!   The vault never releases the instant. So an attestation verified late
+//!   still counts when it shows the age at the deadline (ADR-008, "Late
+//!   verification", interim).
+//! - A verification can show an account under 18 until an instant, its
+//!   18th birthday. When an effective attestation shows the account 18 or
+//!   older at a deadline and such a verification shows it under 18 there,
+//!   neither wins (state-machine NOTE 14, ADR-008 "Override", decided
+//!   2026-10-29). A manual identity check resolves the conflict (G9).
+//!   Until it does, the twin gives no answer to `IsVerifiedAdultAtDeadline`
+//!   at that deadline, neither yes nor no. [`SyntheticVault`] then fails
+//!   the query with `OracleDown`, and [`GroundTruth::try_answer`] gives
+//!   `None`, so every gate that asks fails closed (overview NOTE 2).
+//!   [`GroundTruth::answer`] still gives the attestation's bit, for the
+//!   callers that never meet a conflict.
+//! - An attestation becomes effective under the NOTE 4 commit protocol,
+//!   like a verification. Adding, making effective or withdrawing one
+//!   lists its account in `ChangedSince`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -53,6 +75,7 @@ use fstp_domain::id::{
     AccountId, ClassId, ContentDigest, ProgrammeId, ProposalId, ProximityListId, VaultEpoch,
 };
 use fstp_domain::oracle::{Answer, OracleDown, Query};
+use fstp_domain::time::Timestamp;
 use fstp_engine::IdentityOracle;
 use fstp_money::{Amount, NonNegAmount};
 use fstp_prop::Gen;
@@ -109,6 +132,16 @@ pub enum PendingFact {
     },
 }
 
+/// The outcome of a manual identity check that resolves an age conflict
+/// (G9, state-machine NOTE 14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AgeCheck {
+    /// The check shows the account 18 or older, as the attestation says.
+    Adult,
+    /// The check shows the account under 18, as the verification says.
+    Minor,
+}
+
 /// The facts of a synthetic vault, with its epoch and change log.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroundTruth {
@@ -124,6 +157,14 @@ pub struct GroundTruth {
     provisional_verified: BTreeSet<AccountId>,
     /// Affiliations marked provisional under NOTE 4, not yet effective.
     provisional_affiliations: BTreeSet<(AccountId, ProximityListId)>,
+    /// Effective verified over-18 attestations: the instant from which each
+    /// shows its account 18 or older (overview NOTE 7, R-ID-04).
+    adults: BTreeMap<AccountId, Timestamp>,
+    /// Over-18 attestations marked provisional under NOTE 4, not yet effective.
+    provisional_adults: BTreeMap<AccountId, Timestamp>,
+    /// Effective verifications that show an account under 18: the instant
+    /// from which each shows it 18 or older (state-machine NOTE 14).
+    under_18: BTreeMap<AccountId, Timestamp>,
     epoch: VaultEpoch,
     /// The accounts changed by the mutation that produced each epoch.
     changes: Vec<(VaultEpoch, BTreeSet<AccountId>)>,
@@ -149,6 +190,9 @@ impl GroundTruth {
             country: BTreeSet::new(),
             provisional_verified: BTreeSet::new(),
             provisional_affiliations: BTreeSet::new(),
+            adults: BTreeMap::new(),
+            provisional_adults: BTreeMap::new(),
+            under_18: BTreeMap::new(),
             epoch: VaultEpoch::GENESIS,
             changes: Vec::new(),
         }
@@ -212,8 +256,8 @@ impl GroundTruth {
     }
 
     /// Makes every provisional fact of `account` effective (NOTE 4): its
-    /// provisional verification, with its pending facts, and its
-    /// provisional affiliations. The epoch advances once, and the accounts
+    /// provisional verification, with its pending facts, its provisional
+    /// affiliations and its provisional over-18 attestation. The epoch advances once, and the accounts
     /// the facts touch are logged.
     pub fn make_effective(&mut self, account: AccountId) {
         let mut changed: BTreeSet<AccountId> = BTreeSet::new();
@@ -229,6 +273,10 @@ impl GroundTruth {
         for fact in lists {
             self.provisional_affiliations.remove(&fact);
             self.affiliations.insert(fact);
+            changed.insert(account);
+        }
+        if let Some(from) = self.provisional_adults.remove(&account) {
+            self.adults.insert(account, from);
             changed.insert(account);
         }
         self.commit(changed);
@@ -272,6 +320,51 @@ impl GroundTruth {
         self.commit([account].into_iter().collect());
     }
 
+    /// Records an effective verified over-18 attestation of `account`, which
+    /// shows it 18 or older from `from` on (overview NOTE 7, R-ID-04). It
+    /// replaces an earlier attestation of the account.
+    pub fn attest_adult(&mut self, account: AccountId, from: Timestamp) {
+        self.adults.insert(account, from);
+        self.commit([account].into_iter().collect());
+    }
+
+    /// Marks a new over-18 attestation of `account` as provisional (NOTE 4,
+    /// overview NOTE 7). The epoch advances and `ChangedSince` lists
+    /// `account`, but `IsVerifiedAdultAtDeadline` does not count it until
+    /// [`GroundTruth::make_effective`].
+    pub fn attest_adult_provisional(&mut self, account: AccountId, from: Timestamp) {
+        self.provisional_adults.insert(account, from);
+        self.commit([account].into_iter().collect());
+    }
+
+    /// Records an effective verification whose attributes show `account`
+    /// under 18 until `adult_from`, and 18 or older from then on
+    /// (state-machine NOTE 14). It replaces an earlier such verification.
+    /// At a deadline before `adult_from` it conflicts with an attestation
+    /// that shows the account 18 or older there (ADR-008, "Override").
+    pub fn verify_under_18(&mut self, account: AccountId, adult_from: Timestamp) {
+        self.under_18.insert(account, adult_from);
+        self.commit([account].into_iter().collect());
+    }
+
+    /// Records the outcome of the manual identity check that resolves an
+    /// age conflict of `account` (G9, state-machine NOTE 14). An `Adult`
+    /// outcome sets the under-18 verification aside, so the attestation
+    /// counts. A `Minor` outcome withdraws the attestation, so the account
+    /// is not shown 18 or older. Either way the conflict ends.
+    pub fn resolve_age_conflict(&mut self, account: AccountId, outcome: AgeCheck) {
+        match outcome {
+            AgeCheck::Adult => {
+                self.under_18.remove(&account);
+            }
+            AgeCheck::Minor => {
+                self.adults.remove(&account);
+                self.provisional_adults.remove(&account);
+            }
+        }
+        self.commit([account].into_iter().collect());
+    }
+
     // -- removals -------------------------------------------------------------
 
     /// Ends the relation `relation` between identities `a` and `b`, in
@@ -301,6 +394,15 @@ impl GroundTruth {
     pub fn withdraw_consent(&mut self, proposal: ProposalId) {
         self.consents.remove(&proposal);
         self.commit(BTreeSet::new());
+    }
+
+    /// Withdraws the over-18 attestation of `account`, effective or
+    /// provisional. A test uses it to give a lead no attestation, whatever
+    /// its setup gave it.
+    pub fn withdraw_attestation(&mut self, account: AccountId) {
+        self.adults.remove(&account);
+        self.provisional_adults.remove(&account);
+        self.commit([account].into_iter().collect());
     }
 
     // -- readers for property predicates --------------------------------------
@@ -369,12 +471,71 @@ impl GroundTruth {
             .iter()
             .copied()
             .chain(self.provisional_affiliations.iter().map(|(a, _)| *a))
+            .chain(self.provisional_adults.keys().copied())
             .collect()
     }
 
     /// Whether guardian consent for `proposal` is recorded (I-18).
     pub fn has_consent(&self, proposal: ProposalId) -> bool {
         self.consents.contains(&proposal)
+    }
+
+    /// Whether an effective verified over-18 attestation shows `account` 18
+    /// or older at `deadline` (overview NOTE 7, R-ID-04). A provisional
+    /// attestation does not count.
+    pub fn is_adult_at(&self, account: AccountId, deadline: Timestamp) -> bool {
+        self.adults
+            .get(&account)
+            .is_some_and(|from| *from <= deadline)
+    }
+
+    /// Whether `account` has a provisional over-18 attestation (NOTE 4).
+    /// Queries do not count it.
+    pub fn has_provisional_attestation(&self, account: AccountId) -> bool {
+        self.provisional_adults.contains_key(&account)
+    }
+
+    /// Whether an effective verification shows `account` under 18 at
+    /// `deadline` (state-machine NOTE 14).
+    pub fn is_under_18_at(&self, account: AccountId, deadline: Timestamp) -> bool {
+        self.under_18
+            .get(&account)
+            .is_some_and(|adult_from| deadline < *adult_from)
+    }
+
+    /// Whether the vault holds an unresolved age conflict of `account` at
+    /// `deadline`: an effective attestation shows it 18 or older there,
+    /// and an effective verification shows it under 18 (state-machine
+    /// NOTE 14, ADR-008 "Override", decided 2026-10-29).
+    pub fn age_conflict_at(&self, account: AccountId, deadline: Timestamp) -> bool {
+        self.is_adult_at(account, deadline) && self.is_under_18_at(account, deadline)
+    }
+
+    /// The vault's answer to "is `account` an effective verified adult at
+    /// `deadline`?", or `None` while an age conflict there waits for its
+    /// manual identity check (state-machine NOTE 14).
+    pub fn adult_answer(&self, account: AccountId, deadline: Timestamp) -> Option<bool> {
+        (!self.age_conflict_at(account, deadline)).then(|| self.is_adult_at(account, deadline))
+    }
+
+    /// Whether the vault answers `q` at all. It answers every query except
+    /// `IsVerifiedAdultAtDeadline` at a deadline with an unresolved age
+    /// conflict (state-machine NOTE 14).
+    pub fn answers(&self, q: &Query) -> bool {
+        match q {
+            Query::IsVerifiedAdultAtDeadline { account, deadline } => {
+                !self.age_conflict_at(*account, *deadline)
+            }
+            _ => true,
+        }
+    }
+
+    /// The truthful answer to `q`, or `None` when the vault gives none
+    /// ([`GroundTruth::answers`]). A world that collects answers for a
+    /// command leaves such a query unanswered, so the command fails closed
+    /// (overview NOTE 2).
+    pub fn try_answer(&self, q: &Query) -> Option<Answer> {
+        self.answers(q).then(|| self.answer(q))
     }
 
     /// The accounts changed after `epoch`.
@@ -426,6 +587,9 @@ impl GroundTruth {
                     .is_some_and(|total| at_most(total, *cap))
             }),
             Query::HasGuardianConsent { proposal } => self.consents.contains(proposal),
+            Query::IsVerifiedAdultAtDeadline { account, deadline } => {
+                self.is_adult_at(*account, *deadline)
+            }
             Query::DeclaresAffiliationOnList { team, list } => team
                 .iter()
                 .any(|m| self.affiliations.contains(&(*m, *list))),
@@ -601,7 +765,8 @@ impl SyntheticVault {
 
 impl IdentityOracle for SyntheticVault {
     fn ask(&self, q: &Query) -> Result<Answer, OracleDown> {
-        Ok(self.truth.answer(q))
+        // State-machine NOTE 14: an unresolved age conflict gets no answer.
+        self.truth.try_answer(q).ok_or(OracleDown)
     }
 
     fn epoch(&self) -> Result<VaultEpoch, OracleDown> {

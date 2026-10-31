@@ -387,6 +387,7 @@ pub(crate) fn aggregate(contexts: &[Context<'_>], roots: &BTreeMap<String, Root>
             }
             if let Some(src) = &p.source
                 && !CRATES_IO.contains(&src.as_str())
+                && !crate::git_source::is_git(src)
             {
                 findings.insert(Finding::error(
                     "non-crates-io-source",

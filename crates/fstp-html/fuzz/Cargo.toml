@@ -1,0 +1,38 @@
+[package]
+name = "fstp-html-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-html = { path = ".." }
+
+[[bin]]
+name = "message_format_parse"
+path = "fuzz_targets/message_format_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "accept_language_parse"
+path = "fuzz_targets/accept_language_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_wellformed_check"
+path = "fuzz_targets/html_wellformed_check.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

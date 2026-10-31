@@ -1,0 +1,22 @@
+[package]
+name = "fstp-creator"
+description = "Programme creator: draft records and commands, validation, the I-66 and I-67 witnesses (M4 design section 3.2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-programme.workspace = true
+fstp-guide.workspace = true
+fstp-domain.workspace = true
+fstp-ledger.workspace = true
+fstp-money.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

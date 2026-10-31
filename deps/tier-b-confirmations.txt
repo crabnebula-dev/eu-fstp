@@ -1,0 +1,19 @@
+# Tier B crates and their release confirmations (I-74, R-CR-02, ADR-001
+# "Release gate" and amendment A5, M3 design section 2.6).
+# Checked by tools/deps-check. A development build reports a shipped Tier B
+# version without a confirmation and passes. `deps-check --release` fails.
+#
+# Format, one entry per line:
+#   tier-b <crate>
+#   confirmed <crate> <version> <source hash> <YYYY-MM-DD> <findings reference>
+# The marker lines name exactly the crates of the ADR-001 Tier B table.
+# The confirmation rows mirror the ADR-001 release gate table row for row.
+# The source hash of a crates.io package is the .crate SHA-256 that
+# deps/allowlist.txt pins. For a git package it is the full commit id of
+# its allowlist source string (ADR-001 A3).
+# No confirmation is recorded in M3.
+tier-b moduletto
+tier-b der
+tier-b spki
+tier-b x509-cert
+tier-b cms

@@ -1,0 +1,24 @@
+[package]
+name = "fstp-pki"
+description = "X.509 v3 DER certificate writer, lifetimes and proof of possession. Pure: the caller signs (M3 design section 1.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+# Lane W1i round-trip tests only (ADR-001 Tier A). The tests sign with aws-lc-rs and read
+# every certificate back with rustls-webpki. All three are already in Cargo.lock at these versions.
+# rustls-pki-types supplies `UnixTime` and `CertificateDer`, which rustls-webpki does not re-export.
+# This test-only edge is outside the production rule of design section 2.5 (no PEM use).
+aws-lc-rs.workspace = true
+rustls-pki-types.workspace = true
+rustls-webpki.workspace = true
+
+[lints]
+workspace = true

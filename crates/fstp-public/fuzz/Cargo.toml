@@ -1,0 +1,24 @@
+[package]
+name = "fstp-public-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-public = { path = ".." }
+
+[[bin]]
+name = "public_query_parse"
+path = "fuzz_targets/public_query_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

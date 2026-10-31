@@ -3,26 +3,53 @@
 //! Written by lane L-SOD in step W3b. Lane L-LIFE extends the proposal
 //! lifecycle around it.
 //!
-//! - `CreateDraft` needs a published call that is open now. It records
-//!   `ProposalCreated` with the lead and the supplied minor flag (R-ID-04
-//!   seam). Lane L-SOD's contribution adds the lead's Applicant binding.
+//! - `CreateDraft` needs a published call that is open now, in an active
+//!   programme (M4 change D3). It records
+//!   `ProposalCreated` with the lead and the actor's `minor` field. No
+//!   guard reads that field (R-ID-04). Lane L-SOD's contribution adds the
+//!   lead's Applicant binding.
 //! - `AddTeamMember` and `AddGuardian` need the lead as actor, with an
 //!   active Applicant binding on the proposal (enforcement point 2). An
 //!   account is bound at most once per proposal, voided bindings included.
-//!   A guardian is added only to a proposal flagged as a minor's. These
-//!   commands record nothing themselves. Lane L-SOD's contribution adds the
+//!   A guardian is added only to a minor-flagged proposal, or in
+//!   NEGOTIATION once the vault no longer shows the lead 18 or older.
+//!   These commands record nothing themselves, apart from the vault
+//!   outcome of that NEGOTIATION question. Lane L-SOD's contribution adds the
 //!   Receiving binding, after SoD-01, SoD-03, SoD-05, SoD-06 and I-06.
-//! - [`Drafts`] keeps the created proposals: their call, lead and minor flag.
+//! - [`Drafts`] keeps the created proposals: their call, lead, the
+//!   actor's `minor` field and the minor flag derived at the NEGOTIATION gate.
+//! - The minor flag never comes from the actor (R-ID-04, state-machine
+//!   NOTE 14). Every proposal is minor-flagged until the IRC_REVIEW to
+//!   NEGOTIATION gate derives the flag from the vault. The gate records
+//!   the `IsVerifiedAdultAtDeadline` outcome in its batch, before the
+//!   transition. The fold keeps that bit and gives it to the transition,
+//!   so a replay derives the same flag from the ledger alone. The guard
+//!   into GRANTED derives the flag again in the same way, and that
+//!   derivation holds from then on (ADR-008, "Second derivation", decided
+//!   2026-10-29). In NEGOTIATION the kept flag is the gate's. A
+//!   `GrantDecided` written under `RulesVersion::M2` keeps it at GRANTED.
+//! - Both derivations ask about the deadline of the call in which the
+//!   proposal passes IRC review, which is the later call after a re-entry
+//!   (NOTE 8, ADR-008 "Which deadline", decided 2026-10-29).
+//! - The `AddGuardian` guard reads the derived flag, never the actor's
+//!   field. Before the gate every proposal is minor-flagged, so any lead
+//!   can bind the guardian whose consent the gate may need (R-NG-01, design
+//!   6.6 step 3). After a gate that found the attestation it is refused,
+//!   except in NEGOTIATION. There the command asks
+//!   `IsVerifiedAdultAtDeadline` again and admits the guardian on a no,
+//!   since the guard into GRANTED will need the consent (ADR-008, "Second
+//!   derivation"). A missing answer refuses it (overview NOTE 2).
 
 use std::collections::BTreeMap;
 
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
 use crate::id::{AccountId, CallId, ProposalId};
-use crate::oracle::{Answers, Query};
-use crate::record::Record;
+use crate::oracle::{Answers, Query, QueryKind};
+use crate::record::{Record, RulesVersion, Transitioned};
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::roles::Role;
+use crate::rules::{Row, StateTag};
 use crate::state::{State, UsedId};
 
 /// One created proposal.
@@ -32,14 +59,23 @@ pub(crate) struct Draft {
     pub(crate) call: CallId,
     /// Its lead.
     pub(crate) lead: AccountId,
-    /// Whether the lead is flagged as a minor.
+    /// The `minor` field the actor sent with `CreateDraft`. No guard reads
+    /// it. The minor flag is [`minor_flagged`].
     pub(crate) minor: bool,
+    /// Whether the last flag derivation found an effective verified over-18
+    /// attestation of the lead at the deadline (R-ID-04, state-machine
+    /// NOTE 14). The IRC_REVIEW to NEGOTIATION gate derives it, and the
+    /// guard into GRANTED derives it again. `false` until a gate derives it.
+    pub(crate) adult_at_gate: bool,
 }
 
 /// The created proposals.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Drafts {
     proposals: BTreeMap<ProposalId, Draft>,
+    /// The answer bit of the last `IsVerifiedAdultAtDeadline` outcome
+    /// folded, until the next transition takes it.
+    pending_adult: Option<bool>,
 }
 
 impl Drafts {
@@ -47,6 +83,7 @@ impl Drafts {
     pub(crate) const fn genesis() -> Drafts {
         Drafts {
             proposals: BTreeMap::new(),
+            pending_adult: None,
         }
     }
 
@@ -60,6 +97,74 @@ impl Drafts {
 /// The created proposal `proposal`.
 pub(crate) fn draft(state: &State, proposal: ProposalId) -> Option<&Draft> {
     state.proposals.drafts.proposals.get(&proposal)
+}
+
+/// Whether `proposal` is minor-flagged (R-ID-04, state-machine NOTE 14).
+///
+/// The flag is derived at the IRC_REVIEW to NEGOTIATION gate from the
+/// vault, and never from the actor. Before the gate, and for an unknown
+/// proposal, it is set, so every reader fails closed.
+pub(crate) fn minor_flagged(state: &State, proposal: ProposalId) -> bool {
+    !draft(state, proposal).is_some_and(|d| d.adult_at_gate)
+}
+
+/// The question that derives the minor flag of `proposal` (R-ID-04,
+/// state-machine NOTE 14): does its lead have an effective verified
+/// over-18 attestation at the deadline of the call in which the proposal
+/// passes IRC review? That is its current call, the later call after a
+/// re-entry (NOTE 8, ADR-008 "Which deadline", decided 2026-10-29). Both
+/// the IRC_REVIEW to NEGOTIATION gate and the guard into GRANTED ask it.
+/// `None` for an unknown proposal or call.
+pub(crate) fn adult_query(state: &State, proposal: ProposalId) -> Option<Query> {
+    let d = draft(state, proposal)?;
+    let current = crate::proposal::intake::current_call(state, proposal)?;
+    let call = crate::programme::call(state, current)?;
+    Some(Query::IsVerifiedAdultAtDeadline {
+        account: d.lead,
+        deadline: call.deadline(),
+    })
+}
+
+/// Keeps the bit of an `IsVerifiedAdultAtDeadline` outcome for the
+/// transition that follows it in the batch of a flag derivation. Other
+/// records are ignored.
+pub(crate) fn on_vault_outcome(state: &mut State, record: &Record) {
+    if let Record::VaultOutcome {
+        kind: QueryKind::IsVerifiedAdultAtDeadline,
+        holds,
+        ..
+    } = record
+    {
+        state.proposals.drafts.pending_adult = Some(*holds);
+    }
+}
+
+/// Derives the minor flag from the kept outcome bit at the IRC_REVIEW to
+/// NEGOTIATION transition, and again at the NEGOTIATION to GRANTED
+/// transition (state-machine NOTE 14, decided 2026-10-29). With no kept bit
+/// the flag is set. Every transition drops the kept bit, so it never
+/// reaches a later derivation.
+///
+/// The GRANTED derivation applies only to a grant whose `GrantDecided`,
+/// folded earlier in the same batch, carries
+/// [`RulesVersion::MINOR_FLAG_2026_10_29`] or later. A grant decided under
+/// [`RulesVersion::M2`] recorded no attestation outcome before its
+/// transition and keeps the gate's flag, as it did when it was written
+/// (design 5.1: the fold never re-runs guards, so old decisions stay
+/// valid).
+pub(crate) fn on_transition(state: &mut State, t: &Transitioned) {
+    let adult = state.proposals.drafts.pending_adult.take();
+    let derives = match t.row {
+        Row::IrcReviewToNegotiation => true,
+        Row::NegotiationToGranted => state
+            .money
+            .grant_rules(t.proposal)
+            .is_some_and(|r| r >= RulesVersion::MINOR_FLAG_2026_10_29),
+        _ => false,
+    };
+    if derives && let Some(d) = state.proposals.drafts.proposals.get_mut(&t.proposal) {
+        d.adult_at_gate = adult == Some(true);
+    }
 }
 
 /// The call of the created proposal `proposal`.
@@ -93,9 +198,16 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             {
                 return Err(reused());
             }
-            if crate::programme::call(state, *call).is_none() {
+            let Some(view) = crate::programme::call(state, *call) else {
                 return Err(unknown());
-            }
+            };
+            // M4 change D3: nothing runs on a draft programme. A call of a
+            // draft cannot be published, so this is defence in depth.
+            crate::programme::draft_gate(
+                state,
+                view.programme(),
+                crate::programme::DraftGate::Enforce,
+            )?;
             if !crate::programme::is_open_at(state, *call, ctx.now) {
                 return Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState));
             }
@@ -127,8 +239,8 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             if state.used_ids.contains(UsedId::Binding(*binding)) {
                 return Err(reused());
             }
-            if matches!(cmd, Command::AddGuardian { .. }) && !d.minor {
-                return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+            if matches!(cmd, Command::AddGuardian { .. }) {
+                guardian_question(state, *proposal)?;
             }
             if state.roster.bound_to(*account, *proposal) {
                 return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
@@ -139,11 +251,44 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
     }
 }
 
-/// The vault questions of the three commands. They ask none themselves.
-/// The binding's questions are lane L-SOD's contribution.
+/// The question an `AddGuardian` on `proposal` asks the vault, if any
+/// (R-NG-01, state-machine NOTE 14, ADR-008 "Second derivation").
+///
+/// - A minor-flagged proposal admits a guardian without a question.
+/// - In NEGOTIATION after a gate that found the lead 18 or older, the
+///   guard into GRANTED derives the flag again. A lead the vault no longer
+///   shows 18 or older then needs a verified guardian consent before
+///   GRANTED. So the command asks [`adult_query`], and admits the guardian
+///   only when the vault answers no.
+/// - In every other state a proposal that is not minor-flagged admits no
+///   guardian.
+///
+/// Reading for Daniel to confirm: ADR-008 requires that consent but names
+/// no route to it, so the guardian binding opens in NEGOTIATION.
+fn guardian_question(state: &State, proposal: ProposalId) -> Result<Option<Query>, Refusal> {
+    if minor_flagged(state, proposal) {
+        return Ok(None);
+    }
+    if crate::proposal::intake::proposal_state(state, proposal) != Some(StateTag::Negotiation) {
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    }
+    adult_query(state, proposal).map(Some).ok_or_else(unknown)
+}
+
+/// The attestation question of an `AddGuardian`, once [`check`] passed.
+fn asked(state: &State, cmd: &Command) -> Result<Option<Query>, Refusal> {
+    match cmd {
+        Command::AddGuardian { proposal, .. } => guardian_question(state, *proposal),
+        _ => Ok(None),
+    }
+}
+
+/// The vault questions of the three commands. Only an `AddGuardian` in
+/// NEGOTIATION asks one ([`guardian_question`]). The binding's questions
+/// are lane L-SOD's contribution.
 pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Query>, Refusal> {
     check(state, cmd, ctx)?;
-    Ok(Vec::new())
+    Ok(asked(state, cmd)?.into_iter().collect())
 }
 
 /// The records of the three commands that this module owns.
@@ -153,8 +298,16 @@ pub(crate) fn decide(
     ctx: &Ctx,
     answers: &Answers,
 ) -> Result<Vec<Record>, Refusal> {
-    let _ = answers;
-    check(state, cmd, ctx)
+    let mut out = check(state, cmd, ctx)?;
+    if let Some(q) = asked(state, cmd)? {
+        // ADR-008 "Second derivation": the guardian is admitted only on a
+        // no. A missing answer refuses the command (overview NOTE 2). A
+        // yes leaves the lead shown 18 or older, so no guardian is needed.
+        if crate::grant::record_answer(&mut out, &q, answers)? {
+            return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+        }
+    }
+    Ok(out)
 }
 
 /// Folds `ProposalCreated`.
@@ -181,6 +334,7 @@ pub(crate) fn apply(state: &mut State, record: &Record) -> Result<(), FoldError>
             call: *call,
             lead: *lead,
             minor: *minor,
+            adult_at_gate: false,
         },
     );
     Ok(())

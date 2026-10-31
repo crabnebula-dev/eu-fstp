@@ -1,0 +1,38 @@
+[package]
+name = "fstp-import-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-import = { path = ".." }
+
+[[bin]]
+name = "import_text_decode"
+path = "fuzz_targets/import_text_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proposal_decode"
+path = "fuzz_targets/proposal_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_record_decode"
+path = "fuzz_targets/import_record_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

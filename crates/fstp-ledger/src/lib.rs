@@ -10,6 +10,9 @@
 //! - [`verify_append_only`] checks that a later read of a ledger extends an
 //!   earlier one without changing, dropping, inserting or reordering
 //!   entries.
+//! - [`AsyncRecordStore`] is the same contract with each operation
+//!   returning a future. It names only `core::future`, so it ties no store
+//!   to a runtime. [`MemStore`] implements it with ready futures.
 //! - [`Canonical`] gives the RFC 8785 bytes of a record.
 //!
 //! # Stored form
@@ -35,10 +38,12 @@
     clippy::arithmetic_side_effects
 )]
 
+mod async_store;
 mod entry;
 mod store;
 mod verify;
 
+pub use async_store::AsyncRecordStore;
 pub use entry::{Entry, EntryTextError, MAX_AT, SCHEMA_V1, Seq};
 pub use store::{AppendError, MemStore, RecordStore, StoreError};
 pub use verify::{Canonical, Divergence, verify_append_only};

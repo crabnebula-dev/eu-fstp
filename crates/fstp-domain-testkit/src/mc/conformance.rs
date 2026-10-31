@@ -53,6 +53,9 @@ pub const M_CONFORMANCE_STATES: usize = 21_711;
 
 /// The measured state count of M-CONFORMANCE without withdrawal, on production.
 /// Measured in close-out round 2, up from 14,470, for the reason above.
+/// Re-measured on production in M3 lane dom, fix round 1, after the
+/// NEGOTIATION gate derived the minor flag (state-machine NOTE 14): still
+/// 15,658, by the ignored `lifecycle_deadlock_diagnostic` run.
 pub const M_CONFORMANCE_NO_WITHDRAW_STATES: usize = 15_658;
 
 /// One action of M-CONFORMANCE on PC.
@@ -234,7 +237,7 @@ impl ConformanceModel {
                 out.extend(assign_declared(R2, PC, current, AssignmentKind::Reviewer));
                 out
             }
-            ConfAction::CutOff(nominate) => vec![cut_off(
+            ConfAction::CutOff(nominate) => cut_off(
                 R1,
                 cut_off_decision(current.raw()),
                 current,
@@ -242,7 +245,7 @@ impl ConformanceModel {
                 u32::from(*nominate),
                 false,
                 ballots(&[R1, R2, R3], Vote::For),
-            )],
+            ),
             ConfAction::AssignIrc => {
                 let mut out = assign_declared(IRC, PC, current, AssignmentKind::Irc);
                 out.extend(assign_declared(IRC2, PC, current, AssignmentKind::Irc));

@@ -1,0 +1,19 @@
+[package]
+name = "fstp-programme"
+description = "The programme as data: ProgrammeSpec, the FIELDS table, compile and decompile (M4 design section 3.1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-domain.workspace = true
+fstp-money.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

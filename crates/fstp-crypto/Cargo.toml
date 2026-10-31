@@ -9,9 +9,15 @@ publish.workspace = true
 
 [dependencies]
 aws-lc-rs.workspace = true
+# ADR-001 Tier B (A2): ML-KEM-768 now, ML-DSA-65 once its pull request lands. Release-gated (I-74).
+moduletto.workspace = true
+# ADR-001 A1: secret types zeroize on drop (design section 2.2).
+zeroize.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# The ML-KEM-768 ACVP subset is JSON, read with the in-house parser (ADR-004 test vector plan item 9).
+fstp-json.workspace = true
 
 [lints]
 workspace = true

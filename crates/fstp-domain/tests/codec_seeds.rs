@@ -5,7 +5,8 @@
 //! starts from valid canonical inputs. Seeds that do not decode, such as
 //! `empty_object`, are plain fuzz inputs and are skipped here.
 //!
-//! The four witness payloads have no public constructor. Their seeds are the
+//! The witness payloads, the four of M2 and `ProgrammeActivated` since M4
+//! change D2, have no public constructor. Their seeds are the
 //! only way to test their codec from outside the crate, so the corpus must
 //! hold one for each. The round trip of each lives in `codec_round_trip.rs`.
 
@@ -19,7 +20,8 @@ use fstp_domain::policy::PolicyVersion;
 use fstp_domain::record::Record;
 
 /// TH-26: the `record_decode` corpus holds a canonical seed for each of the
-/// four witness payloads, and every seed that decodes is canonical.
+/// witness payloads, `ProgrammeActivated` included (I-67, D2), and every
+/// seed that decodes is canonical.
 #[test]
 fn th26_codec_seeds_cover_witness_payload_records() {
     let codec = codec_for!(Record);

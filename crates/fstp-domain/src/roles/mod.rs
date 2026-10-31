@@ -109,6 +109,7 @@ use crate::time::Timestamp;
 pub(crate) use commands::{
     apply, contribute, contribute_queries, decide, due, end_overdue, governing_policy, queries,
 };
+pub use commands::{preview_grant, preview_grant_queries};
 
 /// The four role groups of `SPEC/02-domain/roles-and-sod.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

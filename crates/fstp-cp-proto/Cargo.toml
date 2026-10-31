@@ -1,0 +1,22 @@
+[package]
+name = "fstp-cp-proto"
+description = "Closed control-plane protocol between a cell and the control plane (I-19, M3 design section 9.1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+# Test oracles only, both in-house and free of I/O (design section 2.4 rule 1):
+# real P-256 signatures and composite lengths from fstp-crypto, and real
+# certificates from the fstp-pki writer.
+fstp-crypto.workspace = true
+fstp-pki.workspace = true
+
+[lints]
+workspace = true

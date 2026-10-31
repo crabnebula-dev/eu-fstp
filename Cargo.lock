@@ -67,6 +67,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "errno"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -79,11 +89,259 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fstp-access"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-import",
+ "fstp-prop",
+ "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-api-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
+ "fstp-creator",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-guide",
+ "fstp-import",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-prop",
+ "fstp-public",
+ "fstp-rt",
+ "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-api-testkit"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
+ "fstp-api-core",
+ "fstp-creator",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-engine",
+ "fstp-guide",
+ "fstp-html",
+ "fstp-http",
+ "fstp-import",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-mc",
+ "fstp-mcp",
+ "fstp-money",
+ "fstp-oauth",
+ "fstp-programme",
+ "fstp-prop",
+ "fstp-public",
+ "fstp-rt",
+ "fstp-signup",
+ "fstp-tenant",
+ "fstp-web",
+ "fstp-web-assets",
+ "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-audit"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-auth"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-backup"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-http",
+ "fstp-keys",
+ "fstp-obs",
+ "fstp-prop",
+ "fstp-tls",
+]
+
+[[package]]
+name = "fstp-cell"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-auth",
+ "fstp-cell",
+ "fstp-cell-core",
+ "fstp-cp-proto",
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-edge",
+ "fstp-engine",
+ "fstp-http",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-obs",
+ "fstp-pgstore",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-release",
+ "fstp-rt",
+ "fstp-tls",
+ "fstp-vault-proto",
+ "fstp-webauthn",
+ "fstp-witness",
+]
+
+[[package]]
+name = "fstp-cell-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-auth",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-engine",
+ "fstp-findings",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-prop",
+ "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-celltest"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "fstp-audit",
+ "fstp-auth",
+ "fstp-backup",
+ "fstp-cell",
+ "fstp-cell-core",
+ "fstp-control",
+ "fstp-cp-proto",
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-edge",
+ "fstp-engine",
+ "fstp-http",
+ "fstp-keyd",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-mc",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgstore",
+ "fstp-pgtest",
+ "fstp-pgwire",
+ "fstp-pki",
+ "fstp-prop",
+ "fstp-release",
+ "fstp-release-svc",
+ "fstp-rt",
+ "fstp-tls",
+ "fstp-vault",
+ "fstp-vault-core",
+ "fstp-vault-proto",
+ "fstp-webauthn",
+ "fstp-witness",
+]
+
+[[package]]
+name = "fstp-control"
+version = "0.1.0"
+dependencies = [
+ "fstp-cp-proto",
+ "fstp-custody",
+ "fstp-http",
+ "fstp-json",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgtest",
+ "fstp-pgwire",
+ "fstp-pki",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
+ "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-cp-proto"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-pki",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-creator"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-programme",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-crypto"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "fstp-json",
  "fstp-prop",
+ "moduletto",
+ "zeroize",
+]
+
+[[package]]
+name = "fstp-custody"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
+ "zeroize",
 ]
 
 [[package]]
@@ -111,15 +369,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-edge"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-obs",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
+]
+
+[[package]]
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-guide",
+ "fstp-import",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
+ "fstp-programme",
  "fstp-prop",
+ "fstp-tenant",
 ]
 
 [[package]]
@@ -134,6 +408,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-guide"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-html",
+ "fstp-programme",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-html"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-http"
 version = "0.1.0"
 dependencies = [
@@ -144,10 +436,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-import"
+version = "0.1.0"
+dependencies = [
+ "fstp-findings",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-programme",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-json"
 version = "0.1.0"
 dependencies = [
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-keyd"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-obs",
+ "fstp-prop",
+ "fstp-rt",
+ "zeroize",
+]
+
+[[package]]
+name = "fstp-keys"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-prop",
+ "zeroize",
 ]
 
 [[package]]
@@ -162,6 +487,17 @@ dependencies = [
 name = "fstp-mc"
 version = "0.1.0"
 dependencies = [
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-mcp"
+version = "0.1.0"
+dependencies = [
+ "fstp-api-core",
+ "fstp-http",
+ "fstp-json",
+ "fstp-oauth",
  "fstp-prop",
 ]
 
@@ -186,8 +522,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-oauth"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-obs"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-pgstore"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-cp-proto",
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-migrate",
+ "fstp-pgtest",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-rt",
+]
+
+[[package]]
 name = "fstp-pgtest"
 version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-pki",
+]
 
 [[package]]
 name = "fstp-pgwire"
@@ -202,8 +576,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-pki"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "fstp-crypto",
+ "fstp-prop",
+ "rustls-pki-types",
+ "rustls-webpki",
+]
+
+[[package]]
+name = "fstp-programme"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-prop"
 version = "0.1.0"
+
+[[package]]
+name = "fstp-public"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-html",
+ "fstp-json",
+ "fstp-programme",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-release"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-tls",
+]
+
+[[package]]
+name = "fstp-release-svc"
+version = "0.1.0"
+dependencies = [
+ "fstp-http",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-release",
+ "fstp-tls",
+]
 
 [[package]]
 name = "fstp-rt"
@@ -214,6 +645,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-signup"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-html",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-tenant"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-tls"
 version = "0.1.0"
 dependencies = [
@@ -221,6 +673,107 @@ dependencies = [
  "fstp-rt",
  "rustls",
  "rustls-pki-types",
+]
+
+[[package]]
+name = "fstp-vault"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-edge",
+ "fstp-http",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgtest",
+ "fstp-pgwire",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
+ "fstp-vault-core",
+ "fstp-vault-proto",
+ "fstp-witness",
+]
+
+[[package]]
+name = "fstp-vault-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-money",
+ "fstp-prop",
+ "fstp-vault-proto",
+]
+
+[[package]]
+name = "fstp-vault-proto"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-web"
+version = "0.1.0"
+dependencies = [
+ "fstp-api-core",
+ "fstp-http",
+ "fstp-json",
+ "fstp-mcp",
+ "fstp-oauth",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-web-assets",
+]
+
+[[package]]
+name = "fstp-web-assets"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-webauthn"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-witness"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-cp-proto",
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgtest",
+ "fstp-pgwire",
+ "fstp-pki",
+ "fstp-prop",
+ "fstp-rt",
+ "fstp-tls",
+]
+
+[[package]]
+name = "gen-ts"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
 ]
 
 [[package]]
@@ -262,6 +815,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "mio"
 version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,6 +829,16 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "moduletto"
+version = "0.1.0"
+source = "git+https://github.com/crabnebula-dev/moduletto?rev=6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683#6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683"
+dependencies = [
+ "libm",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -352,6 +921,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -368,6 +947,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "test-gate"
+version = "0.1.0"
+
+[[package]]
 name = "tokio"
 version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -376,6 +959,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "windows-sys 0.61.2",
 ]

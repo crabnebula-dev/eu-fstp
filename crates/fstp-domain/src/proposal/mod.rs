@@ -203,7 +203,9 @@ pub(crate) fn apply(
         Record::ProposalCreated { .. } => draft::apply(state, record),
         Record::Transitioned(t) => {
             intake::apply(state, record)?;
-            life::on_transition(state, t, at)
+            life::on_transition(state, t, at)?;
+            draft::on_transition(state, t);
+            Ok(())
         }
         Record::ScoreRecorded(s) => score::apply_score(state, seq, s),
         Record::ScoreVoided(v) => score::apply_void(state, v.key),
@@ -212,6 +214,13 @@ pub(crate) fn apply(
         _ if deferral::is_deferral_record(record) => deferral::apply(state, record),
         _ => Err(crate::engine::FoldError::Inconsistent),
     }
+}
+
+/// Folds a record that no lane owns. Only the `IsVerifiedAdultAtDeadline`
+/// outcome changes the state: its bit waits for the NEGOTIATION gate
+/// transition of the same batch (R-ID-04, state-machine NOTE 14).
+pub(crate) fn on_vault_outcome(state: &mut crate::state::State, record: &crate::record::Record) {
+    draft::on_vault_outcome(state, record);
 }
 
 /// The System commands of this lane that are enabled at `now` (design

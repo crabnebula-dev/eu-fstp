@@ -1,0 +1,31 @@
+[package]
+name = "fstp-cp-proto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-cp-proto = { path = ".." }
+
+[[bin]]
+name = "cell_to_cp_decode"
+path = "fuzz_targets/cell_to_cp_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cp_to_cell_decode"
+path = "fuzz_targets/cp_to_cell_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

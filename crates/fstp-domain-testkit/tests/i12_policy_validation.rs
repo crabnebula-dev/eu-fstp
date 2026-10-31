@@ -5,12 +5,14 @@
 //! `CreateProgramme` needs no vault answer, so these properties run
 //! without any other lane. Each case starts from genesis, draws one defect
 //! from `gen::policy::gen_defect` and compares the engine with the
-//! reference verdict in both directions.
+//! reference verdict in both directions. Since M4 change D1 an accepted
+//! creation leaves the programme a draft, which each case checks too.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain::command::{Actor, Command as CoreCommand};
 use fstp_domain::id::{PolicyVersionId, ProgrammeId};
+use fstp_domain::programme::{ProgrammeStatus, programme_status};
 use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::r#gen::policy::{
     ADMIN, Defect, apply_defect, base_version, core_records, gen_defect,
@@ -49,6 +51,11 @@ fn create_with(defect: Defect) -> Result<(), String> {
             if !records.contains(&expected) {
                 return Err(format!("{context}: missing record {expected:?}"));
             }
+        }
+        // M4 change D1: an accepted creation leaves the programme a draft.
+        let status = programme_status(&s.state().core, ProgrammeId::from_raw(1));
+        if status != Some(ProgrammeStatus::Draft) {
+            return Err(format!("{context}: D1: the new programme is {status:?}"));
         }
     }
     Ok(())

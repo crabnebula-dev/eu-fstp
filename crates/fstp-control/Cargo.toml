@@ -1,0 +1,34 @@
+[package]
+name = "fstp-control"
+description = "Control plane: registry, placement, provisioning, routing and the isolation auditor (M3 design section 9)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-cp-proto.workspace = true
+# The self-hosted install configuration is JSON. In-house.
+fstp-json.workspace = true
+fstp-pki.workspace = true
+fstp-custody.workspace = true
+fstp-webauthn.workspace = true
+fstp-pgwire.workspace = true
+# The isolation auditor reads the catalogue over an fstp-pgwire session,
+# which is generic over the runtime trait. In-house.
+fstp-rt.workspace = true
+fstp-migrate.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+fstp-obs.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+# The G14 revocation tests run a real PostgreSQL 16 server and an
+# fstp-pgwire session over the tokio runtime. Both in-house.
+fstp-pgtest.workspace = true
+fstp-rt.workspace = true
+
+[lints]
+workspace = true

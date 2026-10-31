@@ -1,0 +1,29 @@
+[package]
+name = "fstp-pgstore"
+description = "PostgreSQL record store, chain writer, keystore and text store of a cell (M3 design sections 4 and 5.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-pgwire.workspace = true
+fstp-migrate.workspace = true
+fstp-ledger.workspace = true
+fstp-audit.workspace = true
+fstp-keys.workspace = true
+fstp-rt.workspace = true
+# In-house: AES-256-GCM, HMAC and randomness (fstp-crypto), and the entry
+# envelope the store rebuilds on read (fstp-json).
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-pgtest.workspace = true
+# In-house: the role suffix grammar the apply_grant tests tie to.
+fstp-cp-proto.workspace = true
+
+[lints]
+workspace = true

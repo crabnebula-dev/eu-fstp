@@ -1,0 +1,1 @@
+{"at":0,"command":"00000000000000000000000000000001","record":{"onboarding":{"by":"11","config":"3","fallbacks":["model-b"],"kind":"InferenceConfigRecorded","primary":"model-a"}},"schema":1,"seq":"1"}

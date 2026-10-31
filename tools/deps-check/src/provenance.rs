@@ -246,7 +246,8 @@ pub(crate) fn reconcile(agg: &Aggregate, locks: &[ProjectLock<'_>]) -> Vec<Findi
         let mut in_lock = BTreeSet::new();
         for p in &l.lock.packages {
             let Some(src) = &p.source else { continue };
-            if !CRATES_IO.contains(&src.as_str()) {
+            // git_source.rs checks git sources (ADR-001 A3).
+            if !CRATES_IO.contains(&src.as_str()) && !crate::git_source::is_git(src) {
                 out.push(Finding::error(
                     "non-crates-io-source",
                     format!(
@@ -288,7 +289,13 @@ pub(crate) fn lock_checksums(locks: &[ProjectLock<'_>]) -> BTreeMap<PkgKey, Stri
     let mut out = BTreeMap::new();
     for l in locks {
         for p in &l.lock.packages {
-            if let Some(c) = &p.checksum {
+            let pin = match (&p.checksum, &p.source) {
+                (Some(c), _) => Some(c),
+                // A git package is pinned by its source string (ADR-001 A3).
+                (None, Some(s)) if crate::git_source::is_git(s) => Some(s),
+                _ => None,
+            };
+            if let Some(c) = pin {
                 out.entry((p.name.clone(), p.version.clone()))
                     .or_insert_with(|| c.clone());
             }
@@ -317,6 +324,11 @@ pub(crate) fn check_checksums(
                     .entry((p.name.clone(), p.version.clone()))
                     .or_default()
                     .push((l.path.as_str(), c.as_str())),
+                // A git package is pinned by its source string (ADR-001 A3).
+                None if crate::git_source::is_git(src) => pins
+                    .entry((p.name.clone(), p.version.clone()))
+                    .or_default()
+                    .push((l.path.as_str(), src.as_str())),
                 None if CRATES_IO.contains(&src.as_str()) => out.push(Finding::error(
                     "lockfile-no-checksum",
                     format!(

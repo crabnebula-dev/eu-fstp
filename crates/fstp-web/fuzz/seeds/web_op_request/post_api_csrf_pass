@@ -1,0 +1,8 @@
+POST /api/v1/programmes HTTP/1.1
+Host: tenant.fstp.test
+Origin: https://tenant.fstp.test
+X-FSTP-Request: 1
+Content-Type: application/json
+Content-Length: 2
+
+{}

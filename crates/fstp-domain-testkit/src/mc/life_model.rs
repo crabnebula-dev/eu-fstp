@@ -52,9 +52,12 @@ use crate::clock::ReducedClock;
 use crate::r#gen::policy::text;
 use crate::r#gen::review::{
     COORDINATOR, DraftSpec, IRC, L1, O1, O2, O3, PR1, R1, R2, R3, ReviewSetup, ReviewWorld, assign,
-    declare, handle, judged, milestone, plan_of, review_truth, submit, tag, withdraw,
+    attest_adult_leads, declare, handle, judged, milestone, plan_of, review_truth, submit, tag,
+    withdraw,
 };
-use crate::r#gen::roster::{Backend, Flags, STAFF_PM, SodSetup, SodWorld, Step, call, publish};
+use crate::r#gen::roster::{
+    Backend, Flags, STAFF_PM, SodSetup, SodWorld, Step, Steps, call, publish,
+};
 use crate::mc::findings_model::FindingSide;
 use crate::reference::lifecycle::{
     Effective, Frac, LifeAsk, LifeCx, LifeVerdict, LifeView, check_batch, check_i07, check_i08,
@@ -299,7 +302,58 @@ pub fn ballots(voters: &[AccountId], vote: Vote) -> Vec<Ballot> {
         .collect()
 }
 
-/// A `RecordCutOff` by `recorder`.
+/// The `OpenCutOffRound` of `round` by `opener` (M4 change D5, R-EV-08,
+/// R-EV-09): the order of the call's RANKED proposals, the rank
+/// position, the rationale and a P-17 tie-break when `tie_break` is set.
+pub fn open_round(
+    opener: AccountId,
+    round: DecisionId,
+    in_call: CallId,
+    order: Vec<ProposalId>,
+    nominated: u32,
+    tie_break: bool,
+) -> Step {
+    by(
+        opener,
+        Command::OpenCutOffRound {
+            round,
+            call: in_call,
+            order,
+            nominated,
+            rationale: text(85_000),
+            tie_breaks: tie_break.then(|| text(85_001)),
+        },
+    )
+}
+
+/// The `CastBallot` of `member`'s own `vote` in `round` (D5, R-EV-09).
+/// The command names no voter, so a member casts only their own ballot.
+pub fn cast(member: AccountId, round: DecisionId, vote: Vote) -> Step {
+    by(member, Command::CastBallot { round, vote })
+}
+
+/// The `DelegateVote` of `member`'s vote in `round` to `to` (D5, P-16
+/// NOTE 8). The vote `to` casts then counts for `member` too.
+pub fn delegate(member: AccountId, round: DecisionId, to: AccountId) -> Step {
+    by(member, Command::DelegateVote { round, to })
+}
+
+/// The `RecordCutOff` of `round` by `recorder` (D5). It carries no
+/// ballot: the outcome counts only the ballots that members cast.
+pub fn record_cut_off(recorder: AccountId, round: DecisionId) -> Step {
+    by(recorder, Command::RecordCutOff { round })
+}
+
+/// The steps of one cut-off since M4 change D5: `recorder` opens the
+/// round `decision`, each member of `ballots` acts for themselves, and
+/// `recorder` records the cut-off.
+///
+/// A ballot with `delegated_by` set becomes that member's `DelegateVote`
+/// to the ballot's voter. Every other ballot becomes its voter's own
+/// `CastBallot`. Delegations come before the casts, so each held vote
+/// follows its delegate's own ballot. A held ballot whose vote differs
+/// from the delegate's own ballot cannot be stated any more, since no
+/// member states another member's vote (R-EV-09, Q4).
 pub fn cut_off(
     recorder: AccountId,
     decision: DecisionId,
@@ -308,19 +362,25 @@ pub fn cut_off(
     nominated: u32,
     tie_break: bool,
     ballots: Vec<Ballot>,
-) -> Step {
-    by(
-        recorder,
-        Command::RecordCutOff {
-            decision,
-            call: in_call,
-            order,
-            nominated,
-            rationale: text(85_000),
-            tie_breaks: tie_break.then(|| text(85_001)),
-            ballots,
-        },
-    )
+) -> Vec<Step> {
+    let mut out = vec![open_round(
+        recorder, decision, in_call, order, nominated, tie_break,
+    )];
+    for b in &ballots {
+        if let Some(from) = b.delegated_by {
+            out.push(delegate(from, decision, b.voter));
+        }
+    }
+    let mut cast_by: BTreeSet<AccountId> = BTreeSet::new();
+    let own = ballots.iter().filter(|b| b.delegated_by.is_none());
+    let held = ballots.iter().filter(|b| b.delegated_by.is_some());
+    for b in own.chain(held) {
+        if cast_by.insert(b.voter) {
+            out.push(cast(b.voter, decision, b.vote));
+        }
+    }
+    out.push(record_cut_off(recorder, decision));
+    out
 }
 
 /// An IRC review by `member` through `assignment`: a validation, or a concern.
@@ -409,16 +469,23 @@ impl LifeWorld {
         Ok(w)
     }
 
-    /// The world after `step`, which must be accepted.
-    pub fn must(&self, step: &Step) -> Result<LifeWorld, String> {
-        match self.step(step)? {
-            Some((w, _)) => Ok(w),
-            None => Err(format!(
-                "{:?} by {:?} was refused by production and the references",
-                step.cmd.kind(),
-                step.actor
-            )),
+    /// The world after `steps`, each of which must be accepted. One step
+    /// or a sequence, such as a cut-off since M4 change D5.
+    pub fn must(&self, steps: &impl Steps) -> Result<LifeWorld, String> {
+        let mut w = self.clone();
+        for step in steps.as_steps() {
+            w = match w.step(step)? {
+                Some((next, _)) => next,
+                None => {
+                    return Err(format!(
+                        "{:?} by {:?} was refused by production and the references",
+                        step.cmd.kind(),
+                        step.actor
+                    ));
+                }
+            };
         }
+        Ok(w)
     }
 
     /// What decides the steps.
@@ -708,9 +775,19 @@ impl LifeSetup {
         self.review().accounts()
     }
 
-    /// The vault of the setup: every account verified with its own identity.
+    /// The vault of the setup: every account verified with its own identity,
+    /// and every lead of a proposal not flagged as a minor's attested 18 or
+    /// older from [`crate::r#gen::roster::LEAD_ADULT_FROM`] on.
+    ///
+    /// The minor bit of [`LifeSetup::proposals`] is the vault fact the
+    /// lifecycle derives the flag from (R-ID-04, state-machine NOTE 14). It
+    /// is also sent as the `CreateDraft` field, which no guard may read. A
+    /// test that separates the two changes the truth, for example through
+    /// [`Story::new`].
     pub fn truth(&self) -> GroundTruth {
-        review_truth(self.accounts())
+        let mut truth = review_truth(self.accounts());
+        attest_adult_leads(&mut truth, self.proposals.iter().map(|(l, _, m)| (*l, *m)));
+        truth
     }
 
     /// The production commands from genesis to the proposal in DRAFT, with
@@ -1096,7 +1173,9 @@ impl LifeModel {
                             )
                         })
                         .collect();
-                vec![cut_off(
+                // M4 change D5: the round opens, each voter casts their
+                // own ballot, and R1 records the cut-off.
+                cut_off(
                     R1,
                     cut_off_decision(current.raw()),
                     current,
@@ -1104,7 +1183,7 @@ impl LifeModel {
                     u32::from(*nominate),
                     false,
                     ballots(&voters, Vote::For),
-                )]
+                )
             }
             LifeAction::AssignIrc(i) => {
                 if w.life.assignments.contains_key(&assignment_of(
@@ -1995,26 +2074,41 @@ impl Story {
         })
     }
 
-    /// Runs `step`, which production and the references must both accept.
-    pub fn run(&mut self, step: &Step) -> Result<Vec<Record>, String> {
-        match self.attempt(step)? {
-            Some(records) => Ok(records),
-            None => Err(format!(
-                "{:?} by {:?} was refused by production and the references",
-                step.cmd, step.actor
-            )),
+    /// Runs `steps` in order, which production and the references must
+    /// all accept. Returns every record, in order.
+    pub fn run(&mut self, steps: &impl Steps) -> Result<Vec<Record>, String> {
+        let mut out = Vec::new();
+        for step in steps.as_steps() {
+            match self.attempt(step)? {
+                Some(records) => out.extend(records),
+                None => {
+                    return Err(format!(
+                        "{:?} by {:?} was refused by production and the references",
+                        step.cmd, step.actor
+                    ));
+                }
+            }
         }
+        Ok(out)
     }
 
-    /// Runs `step`. `Ok(None)` when production and the references both refuse it.
-    pub fn attempt(&mut self, step: &Step) -> Result<Option<Vec<Record>>, String> {
-        match self.world.step(step)? {
-            Some((w, records)) => {
-                self.world = w;
-                Ok(Some(records))
+    /// Runs `steps` in order, as one attempt. `Ok(None)` when production
+    /// and the references both refuse one of them, and then nothing
+    /// changes. Otherwise returns every record, in order.
+    pub fn attempt(&mut self, steps: &impl Steps) -> Result<Option<Vec<Record>>, String> {
+        let mut w = self.world.clone();
+        let mut out = Vec::new();
+        for step in steps.as_steps() {
+            match w.step(step)? {
+                Some((next, records)) => {
+                    w = next;
+                    out.extend(records);
+                }
+                None => return Ok(None),
             }
-            None => Ok(None),
         }
+        self.world = w;
+        Ok(Some(out))
     }
 
     /// Processes the vault after `change`, in the same step, and returns the reaction's records.

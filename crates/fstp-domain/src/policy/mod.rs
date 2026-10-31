@@ -24,6 +24,12 @@
 //! - A published call records the P-05 and P-13 snapshot next to the
 //!   frozen values. [`effective_p05`] and [`effective_p13`] give the
 //!   stricter of the snapshot and the live value (NOTE 7).
+//! - Since M4 change D6, P-75 is typed in [`FrozenValues`], so one checked
+//!   guard reads it through the call's frozen policy (TH-62). Since M4
+//!   change D12, the fold of each policy version also updates the
+//!   effective-limits record of the programme's published calls
+//!   (`crate::programme::effective_limits`), and notes its author as a
+//!   builder while the programme is a draft (I-67).
 
 use core::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +51,8 @@ use crate::roles::{CoolingOff, Role};
 use crate::scoring::Criteria;
 use crate::state::{State, UsedId};
 use crate::time::{Days, Timestamp};
+
+pub mod activation;
 
 pub use crate::rules::{CATALOGUE, Freeze, Level, ParamId, ParamSpec};
 
@@ -155,6 +163,19 @@ pub enum McpBindingActions {
     Allowed,
 }
 
+/// The P-75 options: whether reviewers' agents may read full proposal
+/// content through MCP (`SPEC/03-architecture/mcp-server.md`,
+/// Confidentiality). Typed since M4 change D6, so one checked guard reads it
+/// (TH-62). It governs reviewers' agents only. The applicant team reads its
+/// own proposal through MCP as through the web (I-84).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AgentContentAccess {
+    /// Reviewers' agents never read full proposal content through MCP.
+    Off,
+    /// Reviewers' agents read what their principal may read.
+    On,
+}
+
 /// Every frozen programme parameter. Typed where M2 interprets it, opaque
 /// otherwise, so every frozen parameter freezes (I-12).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -193,6 +214,8 @@ pub struct FrozenValues {
     pub p39: NonZeroU8,
     /// P-53: funder profile and version.
     pub p53: FunderProfileRef,
+    /// P-75: reviewers' agents reading full content through MCP (D6).
+    pub p75: AgentContentAccess,
     /// P-77: binding actions through MCP.
     pub p77: McpBindingActions,
     /// Every other frozen parameter, keyed by id.
@@ -310,7 +333,7 @@ impl FrozenPolicy {
 // ---------------------------------------------------------------------------
 
 /// The frozen parameters that have a typed field in [`FrozenValues`].
-pub const TYPED_FROZEN: [ParamId; 18] = [
+pub const TYPED_FROZEN: [ParamId; 19] = [
     ParamId::P01,
     ParamId::P02,
     ParamId::P03,
@@ -328,6 +351,7 @@ pub const TYPED_FROZEN: [ParamId; 18] = [
     ParamId::P26,
     ParamId::P39,
     ParamId::P53,
+    ParamId::P75,
     ParamId::P77,
 ];
 
@@ -922,7 +946,8 @@ pub(crate) fn apply(
                     last_author_p09: *by,
                 },
             );
-            Ok(())
+            // M4 change D1: the programme starts as a draft, built by its creator.
+            crate::programme::fold_programme_created(state, *programme, *by)
         }
         Record::PolicyVersionRecorded { version, author } => fold_version(state, version, *author),
         _ => Err(FoldError::Inconsistent),
@@ -931,6 +956,11 @@ pub(crate) fn apply(
 
 /// Folds one `PolicyVersionRecorded`: the new head, its last authors, and
 /// the end of approvals that a P-01 or P-09 change makes stale (R-PC-03).
+///
+/// Since M4 the fold also notes the author as a builder while the
+/// programme is a draft (I-67, D2). It appends a numbered entry to the
+/// effective-limits record of each published call of the programme whose
+/// effective P-05 or P-13 the new live values change (NOTE 7, D12, I-51).
 fn fold_version(
     state: &mut State,
     version: &PolicyVersion,
@@ -958,6 +988,8 @@ fn fold_version(
     if !state.used_ids.insert(UsedId::PolicyVersion(version.id)) {
         return Err(FoldError::DuplicateId);
     }
+    crate::programme::fold_live_edit(&mut state.calls, version.programme, version)?;
+    crate::programme::note_builder(&mut state.calls, version.programme, author);
     let programme = state
         .policy
         .programmes

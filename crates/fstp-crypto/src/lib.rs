@@ -1,10 +1,12 @@
 //! Facade over the ADR-001 cryptography crates. No primitive is implemented here.
 //!
-//! Every function in this crate forwards to aws-lc-rs (ADR-001 Tier A). The
-//! facade exists so that the rest of the platform names one small, reviewed
-//! surface instead of reaching into aws-lc-rs directly.
+//! Every function in this crate forwards to aws-lc-rs (ADR-001 Tier A) or,
+//! for the post-quantum half, to moduletto (ADR-001 Tier B, A2). The facade
+//! exists so that the rest of the platform names one small, reviewed
+//! surface instead of reaching into either crate directly. moduletto is
+//! reachable only through this crate (M3 design section 2.4, rule 8).
 //!
-//! What it offers:
+//! What it offers at the crate root:
 //!
 //! - SHA-256, one-shot ([`sha256`]) and streaming ([`Sha256`]).
 //! - HMAC-SHA-256, one-shot ([`hmac_sha256`]), streaming ([`HmacSha256`]) and
@@ -13,13 +15,42 @@
 //! - Constant-time comparison of byte strings ([`constant_time_eq`]).
 //! - System randomness ([`random_bytes`]).
 //!
-//! This crate contains no parser. It consumes only byte strings and lengths,
-//! so it has no fuzz target (ADR-003 covers parsers and protocol decoders).
+//! The M3 modules (M3 design section 2.2):
+//!
+//! - [`aead`]: AES-256-GCM with random nonces only, and a seal-count limit.
+//! - [`kdf`]: HKDF-SHA-256. [`sha3`]: SHA3-256.
+//! - [`x25519`]: static and ephemeral X25519 keys.
+//! - [`sig`]: Ed25519, ECDSA P-256 and RSA PKCS#1 SHA-256 verification.
+//! - [`mlkem`]: ML-KEM-768 from moduletto. [`hybrid_kem`]: X25519 plus
+//!   ML-KEM-768 with the ADR-004 combiner.
+//! - [`composite`]: the Ed25519 plus ML-DSA-65 composite of
+//!   draft-ietf-lamps-pq-composite-sigs version 19 (ADR-010), with
+//!   ML-DSA-65 from moduletto. Verification accepts only when both halves
+//!   verify (I-90). The `mldsa` module behind it is hidden from the docs
+//!   and is used by `composite` only, so ML-DSA-65 never stands alone
+//!   (I-75).
+//!
+//! Secret types implement no `Debug`, `Clone` or `Copy`, and wipe their
+//! bytes on drop (ADR-001 A1). Types that wrap an aws-lc-rs key rely on
+//! AWS-LC's cleansing free, and carry the `zeroize::ZeroizeOnDrop` marker.
+//!
+//! The decoders here accept fixed-length byte strings only. Their fuzz
+//! targets live in `crates/fstp-crypto/fuzz` (M3 design section 15).
 
 use std::fmt;
 use std::num::NonZeroU32;
 
 use aws_lc_rs::{constant_time, digest, hmac, pbkdf2, rand};
+
+pub mod aead;
+pub mod composite;
+pub mod hybrid_kem;
+pub mod kdf;
+pub mod mldsa;
+pub mod mlkem;
+pub mod sha3;
+pub mod sig;
+pub mod x25519;
 
 /// Length of a SHA-256 digest in bytes.
 pub const SHA256_LEN: usize = 32;
@@ -33,6 +64,8 @@ pub const HMAC_SHA256_LEN: usize = 32;
 pub const PBKDF2_HMAC_SHA256_MAX_OUTPUT: u64 = (u32::MAX as u64) * (SHA256_LEN as u64);
 
 /// Errors reported by this crate.
+///
+/// No variant carries key material or input bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CryptoError {
@@ -42,6 +75,19 @@ pub enum CryptoError {
     OutputTooLong,
     /// The underlying library reported a failure without further detail.
     Unspecified,
+    /// An input had a length the algorithm does not accept.
+    InvalidLength,
+    /// Key bytes were refused, for example by the FIPS 203 key checks.
+    InvalidKey,
+    /// A signature did not verify.
+    InvalidSignature,
+    /// An AEAD body did not open: wrong key, nonce, AAD or body.
+    OpenFailed,
+    /// An X25519 agreement gave the all-zero result (ADR-004 "Inputs").
+    ZeroSharedSecret,
+    /// The key has sealed [`aead::SEAL_LIMIT`] times (ADR-004 "Seal-count
+    /// limit"). It seals no more.
+    SealLimitReached,
 }
 
 impl fmt::Display for CryptoError {
@@ -50,6 +96,12 @@ impl fmt::Display for CryptoError {
             Self::RandomUnavailable => f.write_str("system randomness unavailable"),
             Self::OutputTooLong => f.write_str("requested output too long"),
             Self::Unspecified => f.write_str("cryptographic operation failed"),
+            Self::InvalidLength => f.write_str("input has the wrong length"),
+            Self::InvalidKey => f.write_str("key refused"),
+            Self::InvalidSignature => f.write_str("signature did not verify"),
+            Self::OpenFailed => f.write_str("sealed body did not open"),
+            Self::ZeroSharedSecret => f.write_str("X25519 agreement gave the all-zero result"),
+            Self::SealLimitReached => f.write_str("key reached its seal-count limit"),
         }
     }
 }

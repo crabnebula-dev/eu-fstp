@@ -201,6 +201,23 @@ pub(crate) fn submission(state: &State, proposal: ProposalId) -> Option<&Submiss
     state.proposals.intake.submissions.get(&proposal)
 }
 
+/// The effective plan of `proposal` (I-09, M4 change D10): the plan that
+/// the effective score after stage 2 names, once set. Before that it is
+/// the plan of the last submitted stage 2 revision, else the submitted
+/// plan. `None` before submission.
+///
+/// Interim reading, pending Daniel: when a revision was submitted and the
+/// original plan carries forward under P-24, the effective score names
+/// the original, so the original is the effective plan.
+pub(crate) fn effective_plan(state: &State, proposal: ProposalId) -> Option<PlanVersionId> {
+    if let Some(e) = crate::decision::effective_score(state, proposal) {
+        return Some(e.plan());
+    }
+    let revision =
+        crate::proposal::life::facts(state, proposal).and_then(|f| f.revisions.last().copied());
+    revision.or_else(|| submission(state, proposal).map(|s| s.plan))
+}
+
 /// Every proposal that left DRAFT, with its state and current call.
 /// Proposals still in DRAFT are not listed.
 pub(crate) fn submitted_proposals(

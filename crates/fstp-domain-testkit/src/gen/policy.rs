@@ -11,10 +11,12 @@
 //! - [`PolicyWorld`] drives that start state step by step for the
 //!   example tests, with a reference [`Ghost`] beside it.
 //! - [`PolicyMachine`] is the fstp-prop machine over `CreateProgramme`,
-//!   `EditPolicy`, `DraftCall`, `EditCall`, `ApproveCallPublication` and
-//!   `PublishCall`. Its postconditions compare accept and refuse with the
-//!   reference in both directions. Its invariant checks I-12 and I-23 after
-//!   every step.
+//!   `EditPolicy`, `DraftCall`, `EditCall`, `ApproveCallPublication`,
+//!   `PublishCall` and, since M4 change D2, the core `ActivateProgramme`.
+//!   Its postconditions compare accept and refuse with the reference in
+//!   both directions. Its invariant checks I-12 and I-23 after every step.
+//!   A programme the machine creates stays a draft until an activation is
+//!   accepted, and the reference refuses call commands on a draft (D3).
 //!
 //! # I-12: `FrozenPolicy` cannot be forged
 //!
@@ -61,10 +63,10 @@ use fstp_domain::id::{
     KnockOutCriterionId, LlmConfigId, PolicyVersionId, ProgrammeId, TextId, TextRef,
 };
 use fstp_domain::policy::{
-    EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef, InferenceBinding,
-    IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues, McpBindingActions,
-    ModelRef, OpaqueValue, ParamId, PolicyVersion, ProximityLists, ReadAccess, ReviewerAnonymity,
-    SpdxId, TieBreakRule, VotingRules,
+    AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
+    InferenceBinding, IrcExemptions, KnockOutCriteria, KnockOutCriterion, LicenceSet, LiveValues,
+    McpBindingActions, ModelRef, OpaqueValue, ParamId, PolicyVersion, ProximityLists, ReadAccess,
+    ReviewerAnonymity, SpdxId, TieBreakRule, VotingRules,
 };
 use fstp_domain::record::Record;
 use fstp_domain::roles::{CoolingOff, Role};
@@ -87,6 +89,11 @@ use crate::vault::{GroundTruth, IdentityTag};
 
 /// The tenant admin. It holds no programme binding.
 pub const ADMIN: AccountId = AccountId::from_raw(1);
+/// The second tenant admin, who approves the activation of every setup
+/// programme and builds nothing (M4 changes D1, D2 and D8, I-67). It is
+/// [`crate::activation::APPROVER`]. It holds no programme binding and is
+/// verified with its own identity.
+pub const APPROVER: AccountId = crate::activation::APPROVER;
 /// Programme manager in programme 1.
 pub const PM_A: AccountId = AccountId::from_raw(11);
 /// Programme manager in programme 1.
@@ -142,8 +149,9 @@ pub const T0: i64 = 1_000_000;
 
 /// The frozen parameters without a typed `FrozenValues` field, as
 /// `base_version` fills them (design 2.4). The pure I-12 test checks this
-/// list against the spec text.
-pub const FROZEN_OPAQUE: [ParamId; 18] = [
+/// list against the spec text. P-75 left the list with M4 change D6,
+/// which types it.
+pub const FROZEN_OPAQUE: [ParamId; 17] = [
     ParamId::P08,
     ParamId::P23,
     ParamId::P25,
@@ -161,7 +169,6 @@ pub const FROZEN_OPAQUE: [ParamId; 18] = [
     ParamId::P64,
     ParamId::P65,
     ParamId::P66,
-    ParamId::P75,
 ];
 
 /// The live programme parameters without a typed `LiveValues` field, as
@@ -295,6 +302,7 @@ pub fn base_version(
             ),
             p39: two,
             p53: FunderProfileRef(opaque("synthetic funder profile")?),
+            p75: AgentContentAccess::Off,
             p77: McpBindingActions::DraftOnly,
             opaque: frozen_opaque,
         },
@@ -406,7 +414,14 @@ pub fn apply_defect(v: &mut PolicyVersion, defect: Defect) {
 pub fn gen_defect(g: &mut Gen) -> Defect {
     match g.weighted(&[12, 2, 1, 1, 2, 1, 2, 2, 1, 1, 1, 2]) {
         1 => Defect::DropFrozenOpaque(*g.pick(&FROZEN_OPAQUE)),
-        2 => Defect::TypedInFrozenOpaque(*g.pick(&[ParamId::P02, ParamId::P21, ParamId::P77])),
+        // P-75 is typed since M4 change D6, so it may no longer sit in
+        // the frozen opaque map either.
+        2 => Defect::TypedInFrozenOpaque(*g.pick(&[
+            ParamId::P02,
+            ParamId::P21,
+            ParamId::P77,
+            ParamId::P75,
+        ])),
         3 => Defect::LiveInFrozenOpaque(*g.pick(&[ParamId::P05, ParamId::P06, ParamId::P13])),
         4 => Defect::FrozenInLiveOpaque(*g.pick(&[ParamId::P08, ParamId::P02, ParamId::P75])),
         5 => Defect::TenantInLiveOpaque(*g.pick(&[ParamId::P20, ParamId::P70, ParamId::P78])),
@@ -536,11 +551,13 @@ pub struct Setup {
     pub via: Via,
 }
 
-/// A vault in which every account of [`ACTORS`] except the admin has its
-/// own identity and is verified (SoD-09).
+/// A vault in which every account of [`ACTORS`] except the admin, and
+/// the approver [`APPROVER`], has its own identity and is verified
+/// (SoD-09). So `SameIdentityAsAny` is false for every activation of the
+/// machines (I-67).
 pub fn verified_truth() -> GroundTruth {
     let mut truth = GroundTruth::new();
-    for a in ACTORS {
+    for a in ACTORS.into_iter().chain([APPROVER]) {
         if a != ADMIN {
             let tag = u64::try_from(a.raw()).unwrap_or(u64::MAX);
             truth.set_identity(a, IdentityTag::new(tag));
@@ -627,7 +644,8 @@ impl Setup {
 }
 
 /// The start state from genesis: programme 1 with version 1, and programme
-/// 2 with version 2 when `two_programmes`, each with the bindings of
+/// 2 with version 2 when `two_programmes`, each activated by [`APPROVER`]
+/// right after its creation (M4 changes D1 and D8), then the bindings of
 /// [`BINDINGS_P1`] and [`BINDINGS_P2`]. Every step must succeed.
 pub fn setup(two_programmes: bool) -> Result<Setup, String> {
     let scenario = Scenario::new(verified_truth()).map_err(|e| format!("scenario: {e}"))?;
@@ -648,6 +666,12 @@ pub fn setup(two_programmes: bool) -> Result<Setup, String> {
             ADMIN,
             true,
             Command::CreateProgramme { policy },
+        )?;
+        s.must(
+            "ActivateProgramme",
+            APPROVER,
+            true,
+            crate::activation::activate_command(*p),
         )?;
     }
     let mut binding: u128 = 0;
@@ -675,6 +699,10 @@ pub fn reference_start(two_programmes: bool) -> Result<Ghost, String> {
     for (p, v) in programmes {
         let policy = Box::new(base_version(v, p, None)?);
         ghost.apply(Actor::Account(ADMIN), &Command::CreateProgramme { policy })?;
+        ghost.apply(
+            Actor::Account(APPROVER),
+            &crate::activation::activate_command(p),
+        )?;
     }
     for (a, role) in BINDINGS_P1 {
         ghost.bind(a, P1, role);
@@ -867,7 +895,10 @@ pub fn core_records(entries: &[Entry<EngineRecord>]) -> Vec<Record> {
         .iter()
         .filter_map(|e| match &e.record {
             EngineRecord::Core(r) => Some(r.clone()),
-            EngineRecord::Finding(_) => None,
+            EngineRecord::Finding(_)
+            | EngineRecord::Creator(_)
+            | EngineRecord::Import(_)
+            | EngineRecord::Tenant(_) => None,
         })
         .collect()
 }
@@ -877,11 +908,11 @@ pub fn core_records(entries: &[Entry<EngineRecord>]) -> Vec<Record> {
 // ---------------------------------------------------------------------------
 
 /// How often the machine draws each command kind, in the order
-/// create, edit, draft, edit call, approve, publish.
+/// create, edit, draft, edit call, approve, publish and activate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Focus {
     /// Draw weights.
-    pub weights: [u32; 6],
+    pub weights: [u32; 7],
     /// Whether the setup creates programme 2 as well (R-PC-01).
     pub two_programmes: bool,
     /// Commands per case.
@@ -891,25 +922,25 @@ pub struct Focus {
 impl Focus {
     /// Frozen edits interleaved with publications (I-12).
     pub const FREEZING: Focus = Focus {
-        weights: [1, 6, 3, 1, 3, 3],
+        weights: [1, 6, 3, 1, 3, 3, 2],
         two_programmes: false,
         max_commands: 32,
     };
     /// Two programmes and edits that try to cross between them (R-PC-01).
     pub const PROGRAMMES: Focus = Focus {
-        weights: [2, 6, 2, 1, 2, 2],
+        weights: [2, 6, 2, 1, 2, 2, 2],
         two_programmes: true,
         max_commands: 32,
     };
     /// Publication, edits after it and wrong models (R-PC-02).
     pub const PUBLICATION: Focus = Focus {
-        weights: [0, 3, 3, 3, 3, 5],
+        weights: [0, 3, 3, 3, 3, 5, 1],
         two_programmes: false,
         max_commands: 32,
     };
     /// Authorship of calls, P-01 and P-09, and approvals (R-PC-03).
     pub const APPROVAL: Focus = Focus {
-        weights: [0, 4, 3, 4, 6, 4],
+        weights: [0, 4, 3, 4, 6, 4, 1],
         two_programmes: false,
         max_commands: 32,
     };
@@ -1210,6 +1241,62 @@ impl PolicyMachine {
             },
         }
     }
+
+    /// A core `ActivateProgramme` (M4 changes D1 to D3, I-67): mostly by
+    /// [`APPROVER`] or [`ADMIN`], sometimes by a programme manager whom
+    /// the shell attests as a tenant admin, on a draft or an active
+    /// programme, with a fresh or a taken decision id, and sometimes
+    /// naming creator builders.
+    fn gen_activate(&self, g: &mut Gen, ghost: &Ghost) -> PolicyStep {
+        let drafts: Vec<ProgrammeId> = ghost
+            .programmes
+            .iter()
+            .filter(|(_, p)| !p.active)
+            .map(|(id, _)| *id)
+            .collect();
+        let programme = if !drafts.is_empty() && g.weighted(&[1, 3]) == 1 {
+            *g.pick(&drafts)
+        } else {
+            *g.pick(self.programmes())
+        };
+        let actor = match g.weighted(&[4, 2, 2, 1]) {
+            0 => APPROVER,
+            1 => ADMIN,
+            2 => gen_holder(g, ghost, programme, &MANAGERS, &BTreeSet::new()),
+            _ => gen_actor(g),
+        };
+        let tenant_admin = match actor {
+            APPROVER | ADMIN => g.weighted(&[1, 8]) == 1,
+            _ => g.weighted(&[1, 1]) == 1,
+        };
+        let decisions: Vec<u128> = ghost.decisions.iter().map(|d| d.raw()).collect();
+        let fresh = ghost.max_decision().saturating_add(1);
+        let decision = if g.weighted(&[9, 1]) == 0 {
+            fresh
+        } else {
+            gen_known_or(g, &decisions, fresh, 4)
+        };
+        let creator_builders: BTreeSet<AccountId> = match g.weighted(&[6, 1, 1]) {
+            0 => BTreeSet::new(),
+            1 => [actor].into_iter().collect(),
+            _ => [gen_actor(g)].into_iter().collect(),
+        };
+        let mut digest = [0u8; 32];
+        if let Some(first) = digest.first_mut() {
+            *first = g.u8_in(0..=255);
+        }
+        PolicyStep {
+            actor,
+            tenant_admin,
+            cmd: Command::ActivateProgramme {
+                programme,
+                decision: DecisionId::from_raw(decision),
+                report: fstp_domain::policy::activation::ReportDigest::from_bytes(digest),
+                revision: u32::from(g.u8_in(0..=3)),
+                creator_builders,
+            },
+        }
+    }
 }
 
 impl StateMachine for PolicyMachine {
@@ -1242,7 +1329,8 @@ impl StateMachine for PolicyMachine {
             2 => self.gen_draft(g, model),
             3 => self.gen_edit_call(g, model),
             4 => self.gen_approve(g, model),
-            _ => self.gen_publish(g, model),
+            5 => self.gen_publish(g, model),
+            _ => self.gen_activate(g, model),
         }
     }
 

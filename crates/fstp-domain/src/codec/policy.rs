@@ -30,6 +30,7 @@ flat_struct!(FrozenValues {
     p26,
     p39,
     p53,
+    p75,
     p77,
     opaque,
 });

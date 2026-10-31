@@ -88,3 +88,12 @@ O-23 is a consortium document change. L-01 to L-17 are legal checks for Daniel.
 | L-15 | Hosting provider due diligence: ownership, sub-processor terms, data centre locations and certifications (ADR-005) | Names the sub-processor in every tenant DPA and supports the Data Act Article 32 assessment. |
 | L-16 | CrabNebula Ltd size category under Recommendation 2003/361/EC, including linked enterprises in the group (DSA Articles 15(2) and 19) | Decides online platform duties and transparency reports. |
 | L-17 | Whether tenants' programme portals are information society services, making tenants DSA providers towards applicants | Decides tenant tooling scope (G-21). |
+
+### Legal checks awaiting an L- number
+
+Raised on 2026-10-28 by the M3 ADR drafts. Daniel assigns each an L- number, and the `TODO(legal)` markers then name it.
+
+| Topic | Raised in | Why it matters |
+| --- | --- | --- |
+| Legal basis for short-lived in-memory rate limiting on client IP addresses at the edge and in the cell | `docs/adr/ADR-009-cell-boundary.md` Edge and tunnel (design Q19) | Decides whether client addresses may be held in memory for rate limits at all. |
+| Legal basis for storing reviewers' relatives, and the minimum attributes that conflict matching needs | `docs/adr/ADR-009-cell-boundary.md` Write kinds, `ReviewerDeclaration` (design Q31) | The platform would hold third parties' data that they did not declare themselves. |

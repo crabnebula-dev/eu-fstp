@@ -58,6 +58,22 @@
 //! assert_eq!(db.client_cert_pem, fstp_pgtest::Role::Superuser.client_cert_pem());
 //! ```
 //!
+//! # Named servers (M3)
+//!
+//! [`PgServer::shared_named`] starts several servers per test binary, one
+//! per name, each with its own cluster CA ([`certs::ClusterCa`]).
+//! [`PgServer::create_login_role`] creates a role of any name in the
+//! harness grammar and mints its client certificate at runtime.
+//! [`PgServer::create_database_for`] writes one `pg_hba` line per database
+//! and role. [`PgServer::create_replication_role`] adds a replication
+//! role and its `hostssl replication` line. [`RoleLogin::conn_params`]
+//! gives a minted role's [`ConnParams`], whose
+//! [`ConnParams::server_ca_pem`] is the cluster CA.
+//! [`PgServer::dump_data`] gives the logical view of a database for at-rest
+//! scans. The CA mints certificates through `fstp-pki` and the
+//! `fstp-crypto` signing module. Until lanes W1i and W1h land them, a named
+//! server refuses to start and names what it waits for.
+//!
 //! # Locating PostgreSQL
 //!
 //! The server binaries come from `FSTP_PG_BIN` if set, then from
@@ -66,7 +82,12 @@
 //! This crate contains no parser of untrusted input, so it has no fuzz
 //! target. It reads only its own child processes' output.
 
+pub mod certs;
+mod named;
 mod server;
 pub mod tls;
 
-pub use crate::server::{ConnParams, Error, PgServer, Role, ServerOptions, ServerTls};
+pub use crate::named::RoleLogin;
+pub use crate::server::{
+    ConnParams, DUMP_LOCK_WAIT, Error, PgServer, Role, ServerOptions, ServerTls,
+};

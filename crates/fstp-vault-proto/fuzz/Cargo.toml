@@ -1,0 +1,38 @@
+[package]
+name = "fstp-vault-proto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-vault-proto = { path = ".." }
+
+[[bin]]
+name = "vault_request_decode"
+path = "fuzz_targets/vault_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_response_decode"
+path = "fuzz_targets/vault_response_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ticket_decode"
+path = "fuzz_targets/ticket_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

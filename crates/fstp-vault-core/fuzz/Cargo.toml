@@ -1,0 +1,25 @@
+[package]
+name = "fstp-vault-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-vault-core = { path = ".." }
+fstp-vault-proto = { path = "../../fstp-vault-proto" }
+
+[[bin]]
+name = "fact_commit_sequence"
+path = "fuzz_targets/fact_commit_sequence.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

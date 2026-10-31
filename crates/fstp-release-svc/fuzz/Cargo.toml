@@ -1,0 +1,32 @@
+[package]
+name = "fstp-release-svc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-release-svc = { path = ".." }
+fstp-release = { path = "../../fstp-release" }
+
+[[bin]]
+name = "refresh_request_decode"
+path = "fuzz_targets/refresh_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "update_query_decode"
+path = "fuzz_targets/update_query_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

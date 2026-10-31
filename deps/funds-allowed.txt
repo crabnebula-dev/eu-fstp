@@ -1,0 +1,9 @@
+# Crates that may name payment instruction elements and payment account
+# types (I-16, M3 design sections 2.4 rule 11 and 14.4).
+# Checked by tools/deps-check (the `funds` rule): every other workspace
+# crate fails when its source names a SEPA credit transfer element or a
+# payment account type.
+#
+# Format: one crate name per line.
+# Empty in M3. The M5 payment adapter crate is the first entry, and it must
+# take its credentials from the tenant's vault.

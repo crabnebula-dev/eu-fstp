@@ -1,0 +1,32 @@
+[package]
+name = "fstp-witness"
+description = "Anchor witness: intake, per-cell anchor chains and receipts (I-24, M3 design section 7.2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-audit.workspace = true
+fstp-cp-proto.workspace = true
+fstp-pgwire.workspace = true
+fstp-migrate.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+fstp-obs.workspace = true
+# In-house edges of lane int5: the runtime the service runs on, the key
+# identifiers of pinned cell CAs, and the PEM of their roots.
+fstp-rt.workspace = true
+fstp-pki.workspace = true
+# In-house edge of lane int5: the ECDSA P-256 check that binds a client
+# certificate to the pinned cell CA that signed it (ADR-010 "Witnesses").
+fstp-crypto.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+# In-house test-only crate of lane int5: the PostgreSQL 16 test servers.
+fstp-pgtest.workspace = true
+
+[lints]
+workspace = true

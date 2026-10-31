@@ -1,37 +1,86 @@
-//! Composition of the domain core and findings.
+//! Composition of the domain core, findings, the creator and the import
+//! store.
 //!
-//! The crate holds `EngineState`, the `Command` and `Record` envelopes over
-//! core and finding values, the synchronous `IdentityOracle` trait and the
-//! synchronous reference driver (`docs/handoff/m2-design.md` section 3.1).
-//! Core commands go to `fstp_domain::decide`, which never sees the finding
-//! store. Finding commands go to `findings::decide_finding`, which returns
-//! only finding records (I-10).
+//! The crate holds `EngineState`, the `Command` and `Record` envelopes,
+//! the synchronous `IdentityOracle` trait and the synchronous reference
+//! driver (`docs/handoff/m2-design.md` section 3.1, M4 design section
+//! 4.2). Core commands go to `fstp_domain::decide`, which never sees the
+//! other parts. Finding commands go to `findings::decide_finding`, which
+//! returns only finding records (I-10). Creator, bridge and import
+//! commands go to [`compose`] and [`bridge`], and tenant commands to
+//! [`tenant`].
 //!
-//! - [`apply`] folds one envelope record into an [`EngineState`]. A core
-//!   record goes to `fstp_domain::apply` on the core part only. A finding
-//!   record goes to the finding store only, after a check against its
-//!   call's published pin. Every entry keeps the ledger time-monotone
-//!   across both sides (design section 2.2).
+//! - [`apply_in`] folds one envelope record of a ledger entry into an
+//!   [`EngineState`]. Records with the same command id form one entry. A
+//!   core record goes to `fstp_domain::apply` on the core part, and the
+//!   creator observes it. A finding record goes to the finding store only,
+//!   after a check against its call's published pin. A creator record goes
+//!   to the creator projection, an import record to the import store, and
+//!   a tenant record to the tenant part. Every entry keeps the ledger
+//!   time-monotone across all parts (design section 2.2). [`finish`]
+//!   closes the last entry. [`apply`] folds a record as an entry of its
+//!   own.
 //! - [`replay`] folds a whole ledger from genesis and checks that sequence
 //!   numbers run from 1 without gaps.
 //! - [`envelope_to_json`] and [`envelope_from_json`] give the stored JSON
 //!   shape of an envelope around the inner record's own JSON value.
 //!   [`Record`] implements `ToJson` and `FromJson` over that shape with the
-//!   domain and finding record codecs.
+//!   domain, finding, creator, import and tenant record codecs.
 //!
 //! [`FindingStore`], [`FindingCommand`] and [`FindingRecord`] are the
 //! `fstp_findings` types, re-exported.
 //!
-//! # Handover seams
+//! # Entry pairings (D2e, I-65, I-66, I-67)
 //!
-//! Lane W2 owns this file and `driver`, and lane L-FIND-B owns `findings`.
-//! One seam is still open:
+//! The fold refuses, with `FoldError::Inconsistent`:
 //!
-//! - L-CODEC: a `fstp_ledger::Canonical` impl for [`Record`] in this file,
-//!   and the switch of the testkit's `harness::prop::append_only` to
+//! - a `ProgrammeActivated` of a programme with a creator draft, unless an
+//!   `ActivationApproved` of the same entry names the same programme,
+//!   decision, revision, report reference and approver
+//!   (`compose::pairs_with`);
+//! - an `ActivationApproved` whose entry holds no such activation;
+//! - a `DraftOpened` of a programme the core already holds, or whose entry
+//!   holds no `ProgrammeCreated` of it by the same account;
+//! - a `FieldsSaved` with import provenance, unless it saves one field and
+//!   a `ProposalResolved` earlier in the entry names the same proposal,
+//!   resolution and account, and the import store holds that proposal
+//!   for the saved programme and field;
+//! - a confirming or editing `ProposalResolved` whose entry saves no such
+//!   field.
+//!
+//! The driver refuses a core `ActivateProgramme` of a programme with a
+//! creator draft with `RuleRef::I66`. Only the creator's approval composes
+//! it (`compose::activate_command`).
+//!
+//! Interim, pending Daniel and the creator lane: a programme created by a
+//! core `CreateProgramme` outside the creator has no draft. Its core
+//! `ActivateProgramme` is still accepted, and its `ProgrammeActivated`
+//! folds alone. Every M2 setup, the D8 testkit helper and the e2e seeds
+//! activate this way. `fstp_creator::decide_creator` refuses `OpenDraft`,
+//! so no setup can yet open a draft through the creator (D8 sequencing).
+//! No route issues a core `CreateProgramme` or `ActivateProgramme`, so
+//! every programme a person creates through the API has a draft and
+//! activates only through its approval.
+//!
+//! # Tenant onboarding
+//!
+//! A tenant record goes to the tenant part only ([`tenant`]). The fold
+//! refuses a tenant record before the provisioning record, and a second
+//! provisioning record. A tenant command goes to
+//! `fstp_tenant::decide`, which sees only the tenant state and the answers
+//! the engine gives it (lane m4tenant).
+//!
+//! # Seams
+//!
+//! - Publication (I-52): `compose::publication` fails closed until the
+//!   Guide renderer of lane W2c yields `GuidePublished`. So `execute`
+//!   still accepts a core `PublishCall`, and the fold its `CallPublished`.
+//! - L-CODEC: a `fstp_ledger::Canonical` impl for [`Record`], and the
+//!   switch of the testkit's `harness::prop::append_only` to
 //!   `fstp_ledger::verify_append_only`.
 //!
-//! Status: harness lane W2, finding routing lane L-FIND-B.
+//! Status: harness lane W2, finding routing lane L-FIND-B, creator and
+//! import composition lane m4eng.
 
 #![deny(
     clippy::float_arithmetic,
@@ -40,24 +89,35 @@
     clippy::arithmetic_side_effects
 )]
 
+pub mod bridge;
+pub mod compose;
 pub mod driver;
 pub mod findings;
+pub mod sweep;
+pub mod tenant;
 
+use fstp_creator::{
+    ActivationApproved, CreatorCommand, CreatorFoldError, CreatorRecord, CreatorState, Provenance,
+};
 use fstp_domain::command::Ctx;
 use fstp_domain::engine::FoldError;
-use fstp_domain::id::VaultEpoch;
+use fstp_domain::id::{AccountId, ProgrammeId, VaultEpoch};
 use fstp_domain::oracle::{Answer, Answers, OracleDown, Query};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::state::State;
 use fstp_domain::time::Timestamp;
+use fstp_import::{ImportCommand, ImportFoldError, ImportRecord, ImportResolution, ImportStore};
 use fstp_json::typed::expect_object;
 use fstp_json::{FromJson, FromJsonError, Object, ToJson, Value};
 use fstp_ledger::{Entry, Seq};
 
+pub use bridge::BridgeCommand;
+pub use compose::{CreatorEnvironment, CreatorFailure, NoEnvironment};
 pub use driver::{
-    CatchUpError, Decider, DomainDecider, Engine, ExecError, MAX_ATTEMPTS, OpenError,
-    RESERVED_COMMAND_PREFIX, is_reserved_command_id,
+    CatchUpError, CreatorDecider, Decider, DomainDecider, Engine, ExecError, MAX_ATTEMPTS,
+    OpenError, RESERVED_COMMAND_PREFIX, is_reserved_command_id,
 };
+pub use tenant::{Provisioning, TenantEntry, TenantFacts, TenantPart, TenantRequest};
 
 // ---------------------------------------------------------------------------
 // Finding seam. The types come from `fstp-findings` (lane L-FIND-A), and
@@ -104,7 +164,7 @@ fn apply_finding(
 }
 
 /// Refuses a command whose time is before the latest recorded time of
-/// either side of the ledger, so the ledger stays time-monotone (design
+/// any part of the ledger, so the ledger stays time-monotone (design
 /// section 2.2). The floor is the time of the latest entry, never a
 /// finding's content. A clock that never runs backwards never meets it.
 pub(crate) fn ledger_clock(state: &EngineState, ctx: &Ctx) -> Result<(), Refusal> {
@@ -118,8 +178,60 @@ pub(crate) fn ledger_clock(state: &EngineState, ctx: &Ctx) -> Result<(), Refusal
 // End of the finding seam.
 // ---------------------------------------------------------------------------
 
-/// The state the engine folds records into: the domain core and the
-/// finding store, kept apart (I-10).
+/// The pairings one open entry still owes (crate documentation).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct OpenEntry {
+    /// The command id of the entry, or `None` for a record folded alone.
+    command: Option<[u8; 16]>,
+    /// The sequence number of the entry's first record. The creator bumps
+    /// a draft's revision once per entry, under this number.
+    first: Seq,
+    /// Approvals still waiting for their `ProgrammeActivated`.
+    approvals: Vec<ActivationApproved>,
+    /// Draft openings still waiting for their `ProgrammeCreated`.
+    openings: Vec<(ProgrammeId, AccountId)>,
+    /// Confirming or editing resolutions still waiting for their
+    /// `FieldsSaved`.
+    resolutions: Vec<OwedSave>,
+}
+
+/// The save a confirming or editing `ProposalResolved` owes its entry:
+/// the proposal, the resolution and the resolver, with the programme and
+/// the field the import store holds for the proposal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct OwedSave {
+    /// The proposal's raw id.
+    proposal: u128,
+    /// How it was resolved.
+    resolution: fstp_creator::ImportResolution,
+    /// The resolver.
+    by: AccountId,
+    /// The programme of the proposal's document.
+    programme: ProgrammeId,
+    /// The proposed field.
+    field: fstp_programme::FieldId,
+}
+
+impl OpenEntry {
+    fn new(command: Option<[u8; 16]>, first: Seq) -> OpenEntry {
+        OpenEntry {
+            command,
+            first,
+            approvals: Vec::new(),
+            openings: Vec::new(),
+            resolutions: Vec::new(),
+        }
+    }
+
+    /// Whether the entry owes nothing.
+    fn settled(&self) -> bool {
+        self.approvals.is_empty() && self.openings.is_empty() && self.resolutions.is_empty()
+    }
+}
+
+/// The state the engine folds records into: the domain core, the finding
+/// store, the creator projection and the import store, kept apart (I-10,
+/// I-65).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EngineState {
     /// The domain projection. Core `decide` reads only this part.
@@ -130,6 +242,21 @@ pub struct EngineState {
     /// the first. Core `decide` never reads it. The engine's clock check
     /// reads it with the core's floor (design section 2.2).
     pub finding_floor: Timestamp,
+    /// The creator projection: every draft and template. The creator reads
+    /// the core read-only beside it.
+    pub creator: CreatorState,
+    /// The import store. Neither the core nor the creator reads it. The
+    /// creator gets only the count of unresolved proposals (I-65).
+    pub import: ImportStore,
+    /// The tenant part: the onboarding state, the tenant settings and the
+    /// tenant admin set (Q31 A). Neither the core, the creator nor the
+    /// import store reads it.
+    pub tenant: TenantPart,
+    /// The time of the latest creator, import or tenant entry, or the Unix
+    /// epoch before the first.
+    pub envelope_floor: Timestamp,
+    /// The entry being folded. Closed by [`finish`] and by the next entry.
+    open: Option<OpenEntry>,
 }
 
 impl EngineState {
@@ -139,13 +266,19 @@ impl EngineState {
     }
 
     /// The state of `core` and `findings`, with no finding entry later
-    /// than the core's latest entry. Models that hold the two parts apart
-    /// and keep a monotone clock build their engine state here.
+    /// than the core's latest entry, and no draft or import. Models that
+    /// hold the two parts apart and keep a monotone clock build their
+    /// engine state here.
     pub fn new(core: State, findings: FindingStore) -> EngineState {
         EngineState {
             core,
             findings,
             finding_floor: Timestamp::from_micros(0),
+            creator: CreatorState::genesis(),
+            import: ImportStore::genesis(),
+            tenant: TenantPart::default(),
+            envelope_floor: Timestamp::from_micros(0),
+            open: None,
         }
     }
 
@@ -154,30 +287,88 @@ impl EngineState {
         self.core.epoch()
     }
 
-    /// The latest recorded time on either side of the ledger: the later
-    /// of the core's floor and the finding floor (design section 2.2).
+    /// The latest recorded time on any part of the ledger: the latest of
+    /// the core's floor, the finding floor and the envelope floor (design
+    /// section 2.2).
     pub fn now_floor(&self) -> Timestamp {
-        self.core.now_floor().max(self.finding_floor)
+        self.core
+            .now_floor()
+            .max(self.finding_floor)
+            .max(self.envelope_floor)
+    }
+
+    /// Whether `programme` has a creator draft. Its activation then comes
+    /// only from the creator's approval (D2e).
+    pub fn drafted(&self, programme: ProgrammeId) -> bool {
+        self.creator.draft(programme).is_some()
     }
 }
 
-/// A command for the engine: a core command or a finding command.
+/// A command for the engine.
 #[allow(
     clippy::large_enum_variant,
-    reason = "the core side is larger than the finding side; boxing would change the envelope API"
+    reason = "the core side is larger than the others; boxing would change the envelope API"
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     /// A core command, decided by `fstp_domain::decide`.
     Core(fstp_domain::Command),
     /// A finding command, decided by `decide_finding` (lane L-FIND-B).
     Finding(FindingCommand),
+    /// A creator command, decided by `compose::decide_creator_command`
+    /// with the facts of the decider's `CreatorEnvironment` (design
+    /// section 3.2).
+    Creator(CreatorCommand),
+    /// An engine bridge command, decided by `bridge::resolve_import`
+    /// (design section 3.3).
+    Bridge(BridgeCommand),
+    /// An import command, decided by `bridge::decide_import_command`
+    /// (design section 3.3).
+    Import(ImportCommand),
+    /// A tenant command with the shell's facts, decided by
+    /// `fstp_tenant::decide` over the tenant part (design section 3.5).
+    Tenant(TenantRequest),
 }
 
-/// A ledger record of the engine: a core record or a finding record.
+/// Hashes the side and the inner command. A creator command hashes its
+/// programme and kind only, since `fstp_creator::CreatorCommand` has no
+/// `Hash`. Equal commands hash equally, so this agrees with `Eq`.
+impl core::hash::Hash for Command {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Command::Core(c) => {
+                0u8.hash(state);
+                c.hash(state);
+            }
+            Command::Finding(f) => {
+                1u8.hash(state);
+                f.hash(state);
+            }
+            Command::Creator(c) => {
+                2u8.hash(state);
+                c.programme().hash(state);
+                compose::creator_kind(c).hash(state);
+            }
+            Command::Bridge(b) => {
+                3u8.hash(state);
+                b.hash(state);
+            }
+            Command::Import(i) => {
+                4u8.hash(state);
+                i.hash(state);
+            }
+            Command::Tenant(t) => {
+                5u8.hash(state);
+                t.command.kind().hash(state);
+            }
+        }
+    }
+}
+
+/// A ledger record of the engine.
 #[allow(
     clippy::large_enum_variant,
-    reason = "the core side is larger than the finding side; boxing would change the envelope API"
+    reason = "the core side is larger than the others; boxing would change the envelope API"
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Record {
@@ -185,6 +376,12 @@ pub enum Record {
     Core(fstp_domain::Record),
     /// A finding record, folded into the finding store.
     Finding(FindingRecord),
+    /// A creator record, folded into the creator projection.
+    Creator(CreatorRecord),
+    /// An import record, folded into the import store.
+    Import(ImportRecord),
+    /// A tenant record, folded into the tenant part.
+    Tenant(TenantEntry),
 }
 
 /// The identity vault as the engine sees it (design section 3.1).
@@ -210,34 +407,258 @@ impl<O: IdentityOracle + ?Sized> IdentityOracle for &O {
     }
 }
 
-/// Folds one ledger record into `state`. `seq` and `at` come from the entry.
+/// The fold error of a creator fold refusal.
+fn creator_fold(e: CreatorFoldError) -> FoldError {
+    match e {
+        CreatorFoldError::UnknownDraft | CreatorFoldError::UnknownInvitation => {
+            FoldError::UnknownEntity
+        }
+        CreatorFoldError::DraftExists
+        | CreatorFoldError::InvitationExists
+        | CreatorFoldError::TemplateExists => FoldError::DuplicateId,
+        CreatorFoldError::AlreadyActive
+        | CreatorFoldError::OutOfOrder
+        | CreatorFoldError::InviteeMismatch => FoldError::Inconsistent,
+    }
+}
+
+/// The fold error of an import fold refusal.
+fn import_fold(e: ImportFoldError) -> FoldError {
+    match e {
+        ImportFoldError::UnknownDocument | ImportFoldError::UnknownProposal => {
+            FoldError::UnknownEntity
+        }
+        ImportFoldError::DuplicateDocument
+        | ImportFoldError::DuplicateProposal
+        | ImportFoldError::DuplicateText => FoldError::DuplicateId,
+        ImportFoldError::ForeignDocument | ImportFoldError::AlreadyResolved => {
+            FoldError::Inconsistent
+        }
+    }
+}
+
+/// Folds one record into `state` as an entry of its own. `seq` and `at`
+/// come from the entry.
 ///
-/// An entry whose time is before the latest recorded time of either side
-/// fails with [`FoldError::TimeBackwards`] (design section 2.2). A core
-/// record goes to `fstp_domain::apply` on the core part. A finding record
-/// is checked against its call's published pin and goes to the finding
-/// store. The fold is structural and never re-runs guards. On a refusal
-/// the state may be partly folded, so callers fold into a copy (as
-/// [`replay`] and the driver do).
+/// It is [`apply_in`] with no command id, followed by [`finish`]. A
+/// record that must share its entry with another, such as a
+/// `ProgrammeActivated` of a drafted programme, is refused here. Callers
+/// that fold whole entries use [`apply_in`] or [`replay`].
 pub fn apply(
     state: &mut EngineState,
     seq: Seq,
     at: Timestamp,
     record: &Record,
 ) -> Result<(), FoldError> {
+    apply_in(state, seq, at, None, record)?;
+    finish(state)
+}
+
+/// Closes the entry being folded. It fails with
+/// [`FoldError::Inconsistent`] when the entry still owes a pairing (crate
+/// documentation). The state may then be partly folded, so callers fold
+/// into a copy.
+pub fn finish(state: &mut EngineState) -> Result<(), FoldError> {
+    match state.open.take() {
+        Some(open) if !open.settled() => Err(FoldError::Inconsistent),
+        _ => Ok(()),
+    }
+}
+
+/// Folds one record of the ledger entry whose command id is `command`
+/// into `state`. `seq` and `at` come from the entry.
+///
+/// Consecutive records with the same command id form one entry. A record
+/// with another id, or with none, closes the entry before it, as
+/// [`finish`] does. A record with no id is an entry of its own.
+///
+/// An entry whose time is before the latest recorded time of any part
+/// fails with [`FoldError::TimeBackwards`] (design section 2.2). The fold
+/// is structural and never re-runs guards. It refuses the records the
+/// crate documentation lists. On a refusal the state may be partly folded,
+/// so callers fold into a copy (as [`replay`] and the driver do).
+pub fn apply_in(
+    state: &mut EngineState,
+    seq: Seq,
+    at: Timestamp,
+    command: Option<[u8; 16]>,
+    record: &Record,
+) -> Result<(), FoldError> {
     if at < state.now_floor() {
         return Err(FoldError::TimeBackwards);
     }
-    match record {
-        Record::Core(r) => fstp_domain::apply(&mut state.core, seq, at, r),
-        Record::Finding(f) => apply_finding(state, seq, at, f),
+    let same = command.is_some() && state.open.as_ref().is_some_and(|o| o.command == command);
+    if !same {
+        finish(state)?;
+        state.open = Some(OpenEntry::new(command, seq));
     }
+    let entry = state.open.as_ref().map_or(seq, |o| o.first);
+    match record {
+        Record::Core(r) => apply_core(state, seq, entry, at, r)?,
+        Record::Finding(f) => apply_finding(state, seq, at, f)?,
+        Record::Creator(c) => {
+            apply_creator(state, entry, c)?;
+            state.envelope_floor = at;
+        }
+        Record::Import(i) => {
+            apply_import(state, entry, i)?;
+            state.envelope_floor = at;
+        }
+        Record::Tenant(t) => {
+            tenant::apply_tenant(&mut state.tenant, t)?;
+            state.envelope_floor = at;
+        }
+    }
+    if command.is_none() {
+        finish(state)?;
+    }
+    Ok(())
+}
+
+/// The entry being folded. [`apply_in`] opens it before any record.
+fn open_entry(state: &mut EngineState) -> Result<&mut OpenEntry, FoldError> {
+    state.open.as_mut().ok_or(FoldError::Inconsistent)
+}
+
+/// Folds a core record, and lets the creator observe it under the entry's
+/// first sequence number.
+fn apply_core(
+    state: &mut EngineState,
+    seq: Seq,
+    entry: Seq,
+    at: Timestamp,
+    r: &fstp_domain::Record,
+) -> Result<(), FoldError> {
+    match r {
+        fstp_domain::Record::ProgrammeActivated(pa) if state.drafted(pa.programme()) => {
+            let open = open_entry(state)?;
+            let i = open
+                .approvals
+                .iter()
+                .position(|a| compose::pairs_with(a, pa))
+                .ok_or(FoldError::Inconsistent)?;
+            open.approvals.remove(i);
+        }
+        fstp_domain::Record::ProgrammeCreated { programme, by, .. } => {
+            let open = open_entry(state)?;
+            if let Some(i) = open
+                .openings
+                .iter()
+                .position(|(p, a)| p == programme && a == by)
+            {
+                open.openings.remove(i);
+            }
+        }
+        _ => {}
+    }
+    fstp_domain::apply(&mut state.core, seq, at, r)?;
+    state.creator.observe_core(entry, r).map_err(creator_fold)
+}
+
+/// Folds a creator record under the entry's first sequence number.
+fn apply_creator(state: &mut EngineState, entry: Seq, r: &CreatorRecord) -> Result<(), FoldError> {
+    match r {
+        CreatorRecord::DraftOpened { programme, by, .. } => {
+            // A draft opens with its programme, in one entry.
+            if state.core.policy().programme(*programme).is_some() {
+                return Err(FoldError::Inconsistent);
+            }
+            open_entry(state)?.openings.push((*programme, *by));
+        }
+        CreatorRecord::ActivationApproved(a) => {
+            open_entry(state)?.approvals.push(a.clone());
+        }
+        CreatorRecord::FieldsSaved {
+            programme,
+            fields,
+            by,
+            ..
+        } => {
+            let imported: Vec<OwedSave> = fields
+                .iter()
+                .filter_map(|(field, _, p)| match p {
+                    Provenance::Import {
+                        proposal,
+                        resolution,
+                    } => Some(OwedSave {
+                        proposal: proposal.raw(),
+                        resolution: *resolution,
+                        by: *by,
+                        programme: *programme,
+                        field: *field,
+                    }),
+                    _ => None,
+                })
+                .collect();
+            if let Some(saved) = imported.first() {
+                // One value per resolution (Q30), from the bridge only, into
+                // the programme and field of the resolved proposal.
+                if fields.len() != 1 {
+                    return Err(FoldError::Inconsistent);
+                }
+                let open = open_entry(state)?;
+                let i = open
+                    .resolutions
+                    .iter()
+                    .position(|owed| owed == saved)
+                    .ok_or(FoldError::Inconsistent)?;
+                open.resolutions.remove(i);
+            }
+        }
+        _ => {}
+    }
+    state.creator.apply(entry, r).map_err(creator_fold)
+}
+
+/// Folds an import record. A resolution of a proposal on a draft is
+/// observed by the creator under the entry's first sequence number.
+fn apply_import(state: &mut EngineState, entry: Seq, r: &ImportRecord) -> Result<(), FoldError> {
+    state.import.apply(r).map_err(import_fold)?;
+    if let ImportRecord::ProposalResolved {
+        proposal,
+        resolution,
+        by,
+    } = r
+    {
+        let by = AccountId::from_raw(by.raw());
+        let programme = state
+            .import
+            .programme_of(*proposal)
+            .map(|p| ProgrammeId::from_raw(p.raw()))
+            .ok_or(FoldError::UnknownEntity)?;
+        state
+            .creator
+            .observe_import_resolution(entry, programme, by)
+            .map_err(creator_fold)?;
+        let owed = match resolution {
+            ImportResolution::Confirmed => Some(fstp_creator::ImportResolution::Confirmed),
+            ImportResolution::Edited => Some(fstp_creator::ImportResolution::Edited),
+            ImportResolution::Dismissed => None,
+        };
+        if let Some(owed) = owed {
+            let field = state
+                .import
+                .proposal(*proposal)
+                .map(|p| p.proposal().field)
+                .ok_or(FoldError::UnknownEntity)?;
+            open_entry(state)?.resolutions.push(OwedSave {
+                proposal: proposal.raw(),
+                resolution: owed,
+                by,
+                programme,
+                field,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The state after folding `entries` from genesis, in order (I-23).
 ///
 /// Each entry's `seq` must be one more than the previous entry's, starting
-/// at 1. Any other sequence fails with [`FoldError::OutOfOrder`].
+/// at 1. Any other sequence fails with [`FoldError::OutOfOrder`]. Records
+/// with the same command id form one ledger entry, and the last one is
+/// closed with [`finish`].
 pub fn replay(entries: &[Entry<Record>]) -> Result<EngineState, FoldError> {
     let mut state = EngineState::genesis();
     let mut previous = Seq::ZERO;
@@ -247,13 +668,15 @@ pub fn replay(entries: &[Entry<Record>]) -> Result<EngineState, FoldError> {
             return Err(FoldError::OutOfOrder);
         }
         previous = entry.seq;
-        apply(
+        apply_in(
             &mut state,
             entry.seq,
             Timestamp::from_micros(entry.at),
+            Some(entry.command),
             &entry.record,
         )?;
     }
+    finish(&mut state)?;
     Ok(state)
 }
 
@@ -264,23 +687,51 @@ pub enum EnvelopeKind {
     Core,
     /// A finding record, stored under the member `finding`.
     Finding,
+    /// A creator record, stored under the member `creator`.
+    Creator,
+    /// An import record, stored under the member `import`.
+    Import,
+    /// A tenant record, stored under the member `onboarding`. M3's cell
+    /// envelope already stores its own tenant records under `tenant`.
+    Tenant,
 }
 
 impl EnvelopeKind {
+    /// Every side, in member order.
+    pub const ALL: [EnvelopeKind; 5] = [
+        EnvelopeKind::Core,
+        EnvelopeKind::Finding,
+        EnvelopeKind::Creator,
+        EnvelopeKind::Import,
+        EnvelopeKind::Tenant,
+    ];
+
     /// The member name of this side in the stored form.
     pub const fn member(self) -> &'static str {
         match self {
             EnvelopeKind::Core => "core",
             EnvelopeKind::Finding => "finding",
+            EnvelopeKind::Creator => "creator",
+            EnvelopeKind::Import => "import",
+            EnvelopeKind::Tenant => "onboarding",
+        }
+    }
+
+    /// The side of `record`.
+    pub fn of(record: &Record) -> EnvelopeKind {
+        match record {
+            Record::Core(_) => EnvelopeKind::Core,
+            Record::Finding(_) => EnvelopeKind::Finding,
+            Record::Creator(_) => EnvelopeKind::Creator,
+            Record::Import(_) => EnvelopeKind::Import,
+            Record::Tenant(_) => EnvelopeKind::Tenant,
         }
     }
 }
 
 /// The stored JSON form of an envelope: an object with exactly one member,
-/// `core` or `finding`, whose value is the inner record's own JSON form.
-///
-/// The inner record codecs land with lanes L-CODEC and L-FIND-A. Until
-/// then the envelope layer works on the inner value as JSON.
+/// `core`, `finding`, `creator`, `import` or `onboarding`, whose value is
+/// the inner record's own JSON form.
 pub fn envelope_to_json(kind: EnvelopeKind, inner: Value) -> Value {
     let mut o = Object::with_capacity(1);
     o.insert(kind.member(), inner);
@@ -289,16 +740,15 @@ pub fn envelope_to_json(kind: EnvelopeKind, inner: Value) -> Value {
 
 /// Splits the stored JSON form of an envelope into its side and the inner
 /// record's JSON value. Anything other than an object with exactly one
-/// member, `core` or `finding`, is refused.
+/// known member is refused.
 pub fn envelope_from_json(value: &Value) -> Result<(EnvelopeKind, &Value), FromJsonError> {
     let o = expect_object(value)?;
     let mut found: Option<(EnvelopeKind, &Value)> = None;
     for (key, v) in o.iter() {
-        let kind = match key {
-            "core" => EnvelopeKind::Core,
-            "finding" => EnvelopeKind::Finding,
-            _ => return Err(FromJsonError::invalid("unknown envelope member")),
-        };
+        let kind = EnvelopeKind::ALL
+            .into_iter()
+            .find(|k| k.member() == key)
+            .ok_or_else(|| FromJsonError::invalid("unknown envelope member"))?;
         if found.is_some() {
             return Err(FromJsonError::invalid("an envelope has exactly one member"));
         }
@@ -307,14 +757,19 @@ pub fn envelope_from_json(value: &Value) -> Result<(EnvelopeKind, &Value), FromJ
     found.ok_or_else(|| FromJsonError::invalid("an envelope has exactly one member"))
 }
 
-/// The stored JSON form of a record: the envelope around the domain or
-/// finding record's own JSON form.
+/// The stored JSON form of a record: the envelope around the inner
+/// record's own JSON form.
 impl ToJson for Record {
     fn to_json(&self) -> Value {
-        match self {
-            Record::Core(r) => envelope_to_json(EnvelopeKind::Core, r.to_json()),
-            Record::Finding(f) => envelope_to_json(EnvelopeKind::Finding, f.to_json()),
-        }
+        let kind = EnvelopeKind::of(self);
+        let inner = match self {
+            Record::Core(r) => r.to_json(),
+            Record::Finding(f) => f.to_json(),
+            Record::Creator(c) => c.to_json(),
+            Record::Import(i) => i.to_json(),
+            Record::Tenant(t) => tenant::entry_to_json(t),
+        };
+        envelope_to_json(kind, inner)
     }
 }
 
@@ -324,20 +779,30 @@ impl ToJson for Record {
 impl FromJson for Record {
     fn from_json(value: &Value) -> Result<Record, FromJsonError> {
         let (kind, inner) = envelope_from_json(value)?;
+        let at = |e: FromJsonError| e.at_field(kind.member());
         match kind {
             EnvelopeKind::Core => fstp_domain::Record::from_json(inner)
                 .map(Record::Core)
-                .map_err(|e| e.at_field(kind.member())),
+                .map_err(at),
             EnvelopeKind::Finding => FindingRecord::from_json(inner)
                 .map(Record::Finding)
-                .map_err(|e| e.at_field(kind.member())),
+                .map_err(at),
+            EnvelopeKind::Creator => CreatorRecord::from_json(inner)
+                .map(Record::Creator)
+                .map_err(at),
+            EnvelopeKind::Import => ImportRecord::from_json(inner)
+                .map(Record::Import)
+                .map_err(at),
+            EnvelopeKind::Tenant => tenant::entry_from_json(inner)
+                .map(Record::Tenant)
+                .map_err(at),
         }
     }
 }
 
 /// Decodes a record stored under schema version `schema`.
 ///
-/// Both sides share the domain's published versions,
+/// Every side shares the domain's published versions,
 /// `fstp_domain::codec::PUBLISHED_SCHEMAS`. A version outside them is
 /// refused before the body is read. Errors hold no input content (R-NF-02).
 pub fn record_from_json_at(schema: u16, value: &Value) -> Result<Record, FromJsonError> {
@@ -405,11 +870,7 @@ mod tests {
                 .unwrap();
             assert_eq!(&back, entry);
             let (kind, _) = envelope_from_json(&raw.record).unwrap();
-            let want = match sent {
-                Record::Core(_) => EnvelopeKind::Core,
-                Record::Finding(_) => EnvelopeKind::Finding,
-            };
-            assert_eq!(kind, want);
+            assert_eq!(kind, EnvelopeKind::of(sent));
         }
     }
 

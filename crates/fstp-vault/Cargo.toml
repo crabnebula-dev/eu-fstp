@@ -1,0 +1,34 @@
+[package]
+name = "fstp-vault"
+description = "Identity vault service: internal API, vault origin and persistence (M3 design section 6)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-vault-core.workspace = true
+fstp-vault-proto.workspace = true
+fstp-json.workspace = true
+fstp-crypto.workspace = true
+fstp-keys.workspace = true
+fstp-custody.workspace = true
+fstp-audit.workspace = true
+fstp-pgwire.workspace = true
+fstp-migrate.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+fstp-obs.workspace = true
+fstp-rt.workspace = true
+# In-house edges of lane int5: the tunnel header of the vault origin, and
+# the async lock the service holds its vault under.
+fstp-edge.workspace = true
+fstp-witness.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-pgtest.workspace = true
+
+[lints]
+workspace = true

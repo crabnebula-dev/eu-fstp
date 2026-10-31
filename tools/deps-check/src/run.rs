@@ -8,15 +8,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::allowlist::{self, Entry};
 use crate::cargo::{self, Query};
+use crate::funds;
 use crate::fuzz;
+use crate::git_source;
 use crate::graph::{self, Context, ProjectKind};
 use crate::layering;
+use crate::layering_m3;
+use crate::layering_m4;
 use crate::lockfile::{self, Lockfile};
 use crate::metadata::{self, Metadata};
+use crate::npm;
 use crate::provenance::{self, ProjectLock};
 use crate::python;
 use crate::repo::{self, ProjectDir};
 use crate::report::{self, ContextSummary, Finding, Report};
+use crate::runtime;
+use crate::tier_b;
+use crate::web_scan;
 
 /// Platforms whose roles the allowlist describes.
 const PLATFORMS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
@@ -57,15 +65,18 @@ struct Options {
     offline: bool,
     json: Option<PathBuf>,
     print_allowlist: bool,
+    release: bool,
 }
 
 const USAGE: &str = "\
-Usage: deps-check [--root <dir>] [--offline] [--json <file>] [--print-allowlist]
+Usage: deps-check [--root <dir>] [--offline] [--json <file>] [--print-allowlist] [--release]
 
   --root <dir>         repository root (default: current directory)
   --offline            pass --offline to cargo metadata
   --json <file>        also write a machine-readable report
   --print-allowlist    print an allowlist generated from the current graph
+  --release            release build: a shipped Tier B version without a
+                       confirmation fails (I-74, ADR-001 A5)
 ";
 
 fn parse_args() -> Result<Options, String> {
@@ -74,6 +85,7 @@ fn parse_args() -> Result<Options, String> {
         offline: false,
         json: None,
         print_allowlist: false,
+        release: false,
     };
     let mut args = std::env::args_os().skip(1);
     while let Some(a) = args.next() {
@@ -86,6 +98,7 @@ fn parse_args() -> Result<Options, String> {
             }
             Some("--offline") => opts.offline = true,
             Some("--print-allowlist") => opts.print_allowlist = true,
+            Some("--release") => opts.release = true,
             Some("-h" | "--help") => return Err(String::new()),
             _ => return Err(format!("unknown argument {}", a.to_string_lossy())),
         }
@@ -452,8 +465,77 @@ pub fn run() -> ExitCode {
     {
         for c in contexts.iter().filter(|c| &c.label == label) {
             findings.extend(layering::check(c.meta));
+            findings.extend(layering_m3::check(c.meta));
+            findings.extend(layering_m4::check(c.meta));
+            findings.extend(runtime::check(c.meta));
         }
     }
+
+    // The M3 source scans read every workspace member's shipped sources once.
+    if let Some(meta) = workspace_meta {
+        let sources = layering_m3::member_sources(meta, &mut findings);
+        findings.extend(layering_m3::scan(&sources));
+        findings.extend(layering_m4::scan(&sources, meta));
+        let allowed = match fs::read_to_string(root.join(funds::FUNDS_ALLOWED)) {
+            Ok(t) => funds::parse_funds_allowed(&t).unwrap_or_else(|e| {
+                line_errors("policy-syntax", funds::FUNDS_ALLOWED, e, &mut findings);
+                BTreeSet::new()
+            }),
+            // A missing list is empty, the strictest reading (I-16).
+            Err(_) => BTreeSet::new(),
+        };
+        let member_names: BTreeSet<String> = meta
+            .members
+            .iter()
+            .filter_map(|&i| meta.packages.get(i))
+            .map(|p| p.name.clone())
+            .collect();
+        findings.extend(funds::check(&sources, &allowed, &member_names));
+    }
+
+    findings.extend(npm::check(&root, &walk));
+    findings.extend(web_scan::check(&root, &walk));
+
+    // The Tier B release gate reads the main workspace's Linux contexts.
+    let tier = match fs::read_to_string(root.join(tier_b::MIRROR)) {
+        Ok(t) => match tier_b::parse(&t) {
+            Ok(tier) => Some(tier),
+            Err(errs) => {
+                line_errors("tier-b-syntax", tier_b::MIRROR, errs, &mut findings);
+                None
+            }
+        },
+        Err(e) => {
+            let message = format!("cannot read {}: {e}", tier_b::MIRROR);
+            findings.push(if opts.release {
+                Finding::error("tier-b-missing", message)
+            } else {
+                Finding::warning("tier-b-missing", message)
+            });
+            None
+        }
+    };
+    let workspace_contexts: Vec<&Context<'_>> = workspace_index
+        .and_then(|i| projects.get(i))
+        .map(|p| contexts.iter().filter(|c| c.label == p.label).collect())
+        .unwrap_or_default();
+    findings.extend(tier_b::check(
+        &workspace_contexts,
+        &entries,
+        tier.as_ref(),
+        opts.release,
+    ));
+    if opts.release && tier.is_none() {
+        findings.push(Finding::error(
+            "tier-b-unreadable",
+            format!(
+                "the release gate cannot run without a well-formed {} (I-74)",
+                tier_b::MIRROR
+            ),
+        ));
+    }
+
+    findings.extend(git_source::check(&project_locks, &entries, &contexts));
 
     findings.extend(allowlist::compare(&agg, &entries));
     findings.extend(allowlist::compare_root_features(&agg, &roots));

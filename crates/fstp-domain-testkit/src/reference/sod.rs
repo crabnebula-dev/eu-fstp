@@ -67,7 +67,22 @@
 //! - Test-author choices where the spec is silent:
 //!   - An account holds at most one Receiving binding per proposal. Adding
 //!     the lead, or an account already added, is refused.
-//!   - A guardian is added only to a proposal flagged as a minor's.
+//!   - A guardian is added only to a minor-flagged proposal. The flag is
+//!     derived, never read from the actor's `CreateDraft` field (R-ID-04
+//!     Derivation note). Every proposal is minor-flagged until its
+//!     IRC_REVIEW to NEGOTIATION gate. It stays flagged unless the vault's
+//!     ground truth answers that the lead has an effective verified over-18
+//!     attestation when the gate passes. The deadline is that of the call
+//!     in which the proposal passes IRC review, the later call after a
+//!     re-entry (state-machine NOTE 14, ADR-008 "Which deadline", decided
+//!     2026-10-29). The guard into GRANTED derives the flag again in the
+//!     same way, and that derivation then holds (decided 2026-10-29). In
+//!     NEGOTIATION a guardian is also added when the vault answers that the
+//!     lead is not shown 18 or older, since the guard into GRANTED then
+//!     needs a consent (ADR-008 "Second derivation"). No answer refuses it
+//!     (overview NOTE 2). Test-author reading, for Daniel to confirm. The
+//!     reference reads the vault facts, never production's `VaultOutcome`
+//!     records, so it judges both backends alike ([`View::fold_with`]).
 //!   - Drafting and Judging grants need accepted confidentiality terms
 //!     (Confidentiality on binding). Operations grants never need them.
 //!   - A committee member grant needs the reviewer's organisation, since
@@ -151,6 +166,7 @@ use fstp_domain::id::{
 use fstp_domain::record::Record;
 use fstp_domain::refusal::RuleRef;
 use fstp_domain::roles::{BindingScope, Role};
+use fstp_domain::rules::StateTag;
 use fstp_domain::time::Timestamp;
 
 use crate::vault::{GroundTruth, IdentityTag};
@@ -324,6 +340,8 @@ pub struct RefCall {
     pub seq: Option<u32>,
     /// The P-13 value of the version it froze, once published.
     pub snapshot_p13: Option<BTreeSet<ClassId>>,
+    /// Its deadline, the instant the lead's age counts at (R-ID-04).
+    pub deadline: Timestamp,
 }
 
 /// A proposal as the reference sees it.
@@ -333,8 +351,28 @@ pub struct RefProposal {
     pub call: CallId,
     /// Its lead.
     pub lead: AccountId,
-    /// Whether the lead is flagged as a minor.
-    pub minor: bool,
+    /// The call of its IRC review: the created call, or the call of its
+    /// latest re-entry (NOTE 8). Its deadline is the instant the lead's age
+    /// counts at (state-machine NOTE 14, decided 2026-10-29).
+    pub irc_call: CallId,
+    /// Whether, when its last flag derivation passed, the vault facts
+    /// answered that the lead has an effective verified over-18
+    /// attestation at the deadline of [`RefProposal::irc_call`] (R-ID-04,
+    /// NOTE 14). The IRC_REVIEW to NEGOTIATION gate derives the flag, and
+    /// the guard into GRANTED derives it again (decided 2026-10-29).
+    /// `false` before the gate, so the proposal is minor-flagged.
+    pub adult_at_gate: bool,
+    /// Whether the proposal is in NEGOTIATION, from the transitions folded.
+    /// There `AddGuardian` asks the vault again (ADR-008 "Second
+    /// derivation", decided 2026-10-29).
+    pub negotiating: bool,
+}
+
+impl RefProposal {
+    /// Whether the proposal is minor-flagged (R-ID-04, NOTE 14).
+    pub fn minor_flagged(&self) -> bool {
+        !self.adult_at_gate
+    }
 }
 
 /// The live values of one policy version that SoD reads.
@@ -481,10 +519,27 @@ impl View {
         self.proposals.keys().next_back().map_or(0, |p| p.raw())
     }
 
-    /// Folds one core record. Records outside roles, calls, policy and
-    /// proposals leave the view unchanged. An error names a record the
-    /// reference cannot follow, which no engine may emit.
+    /// Folds one core record without the vault facts. Records outside
+    /// roles, calls, policy and proposals leave the view unchanged. An
+    /// error names a record the reference cannot follow, which no engine
+    /// may emit. Without the vault facts the IRC_REVIEW to NEGOTIATION
+    /// gate leaves the proposal minor-flagged, which fails closed. Only
+    /// views whose reader never asks for the flag are built this way.
     pub fn fold(&mut self, record: &Record) -> Result<(), String> {
+        self.fold_in(record, None)
+    }
+
+    /// Folds one core record with `truth`, the vault facts when the record
+    /// was written. At the IRC_REVIEW to NEGOTIATION gate and again at the
+    /// NEGOTIATION to GRANTED guard, the proposal is minor-flagged unless
+    /// `truth` answers that its lead has an effective verified over-18
+    /// attestation at the deadline of its call of IRC review (R-ID-04
+    /// Derivation note, state-machine NOTE 14).
+    pub fn fold_with(&mut self, record: &Record, truth: &GroundTruth) -> Result<(), String> {
+        self.fold_in(record, Some(truth))
+    }
+
+    fn fold_in(&mut self, record: &Record, truth: Option<&GroundTruth>) -> Result<(), String> {
         match record {
             Record::ProgrammeCreated { programme, .. } => {
                 self.programmes.insert(*programme);
@@ -501,7 +556,10 @@ impl View {
                 self.heads.insert(version.programme, version.id);
             }
             Record::CallDrafted {
-                call, programme, ..
+                call,
+                programme,
+                deadline,
+                ..
             } => {
                 self.calls.insert(
                     *call,
@@ -509,8 +567,14 @@ impl View {
                         programme: *programme,
                         seq: None,
                         snapshot_p13: None,
+                        deadline: *deadline,
                     },
                 );
+            }
+            Record::CallEdited { call, deadline, .. } => {
+                if let Some(c) = self.calls.get_mut(call) {
+                    c.deadline = *deadline;
+                }
             }
             Record::CallPublished {
                 call, policy, seq, ..
@@ -534,7 +598,7 @@ impl View {
                 proposal,
                 call,
                 lead,
-                minor,
+                ..
             } => {
                 if self.proposals.contains_key(proposal) {
                     return Err(format!("proposal {proposal:?} created twice"));
@@ -544,7 +608,9 @@ impl View {
                     RefProposal {
                         call: *call,
                         lead: *lead,
-                        minor: *minor,
+                        irc_call: *call,
+                        adult_at_gate: false,
+                        negotiating: false,
                     },
                 );
             }
@@ -613,6 +679,33 @@ impl View {
                 b.suspended = b.conflict_of_interest || b.ordinary_suspension;
             }
             Record::VaultEpochProcessed { epoch } => self.epoch = *epoch,
+            Record::ReEntered {
+                proposal, to_call, ..
+            } => {
+                if let Some(p) = self.proposals.get_mut(proposal) {
+                    p.irc_call = *to_call;
+                }
+            }
+            // State-machine NOTE 14 (decided 2026-10-29): the gate into
+            // NEGOTIATION derives the flag, and the guard into GRANTED
+            // derives it again, at the deadline of the call of IRC review.
+            Record::Transitioned(t) => {
+                if let Some(p) = self.proposals.get_mut(&t.proposal) {
+                    p.negotiating = t.to == StateTag::Negotiation;
+                }
+                let derives = (t.from == StateTag::IrcReview && t.to == StateTag::Negotiation)
+                    || (t.from == StateTag::Negotiation && t.to == StateTag::Granted);
+                let deadline = self
+                    .proposals
+                    .get(&t.proposal)
+                    .and_then(|p| self.calls.get(&p.irc_call))
+                    .map(|c| c.deadline);
+                if derives && let Some(p) = self.proposals.get_mut(&t.proposal) {
+                    p.adult_at_gate = truth
+                        .zip(deadline)
+                        .is_some_and(|(truth, d)| truth.adult_answer(p.lead, d) == Some(true));
+                }
+            }
             Record::ConflictDetected(c) => {
                 self.detected.insert((c.account, c.proposal));
             }
@@ -1240,8 +1333,30 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             if view.bindings.contains_key(binding) {
                 return refuse("binding id reused");
             }
-            if guardian && !p.minor {
-                return refuse("guardian for an adult's proposal");
+            if guardian && !p.minor_flagged() {
+                // ADR-008 "Second derivation" (decided 2026-10-29): in
+                // NEGOTIATION the guard into GRANTED derives the flag again,
+                // so a lead the vault no longer shows 18 or older may bind
+                // the guardian whose consent it needs. A missing answer
+                // refuses the command (overview NOTE 2).
+                if !p.negotiating {
+                    return refuse("guardian for a proposal that is not minor-flagged");
+                }
+                let answer = view
+                    .calls
+                    .get(&p.irc_call)
+                    .and_then(|c| truth.adult_answer(p.lead, c.deadline));
+                match answer {
+                    Some(false) => {}
+                    Some(true) => {
+                        return refuse("guardian for a lead the vault shows 18 or older");
+                    }
+                    None => {
+                        return refuse(
+                            "overview NOTE 2, NOTE 14: the vault gives no answer about the lead's attestation",
+                        );
+                    }
+                }
             }
             let already = view
                 .bindings

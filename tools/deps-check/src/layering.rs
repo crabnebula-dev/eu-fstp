@@ -19,7 +19,8 @@
 //!    `fstp-findings` or `fstp-engine`.
 //! 3. The testkit never ships. No crate other than `fstp-domain-testkit`
 //!    takes `fstp-domain-testkit`, `fstp-prop` or `fstp-mc` as a normal or
-//!    build dependency.
+//!    build dependency. The test-only harnesses `fstp-celltest` (M3) and
+//!    `fstp-api-testkit` (M4) are exempt too.
 //!
 //! A dependency path is what cargo builds for the crate and its tests: any
 //! edge out of the crate itself, then normal and build edges only. Dev
@@ -83,16 +84,24 @@ const FINDINGS_SIDE: [&str; 2] = ["fstp-findings", "fstp-engine"];
 
 /// The only crate that may take a test-only crate as a normal dependency (rule 3).
 const TESTKIT: &str = "fstp-domain-testkit";
+/// The M3 isolation harness, test only too (M3 design section 2.4, rule 9).
+/// It may take the test-only crates as normal dependencies, and
+/// `layering_m3` keeps every other crate from taking it.
+const CELLTEST: &str = "fstp-celltest";
+/// The M4 test kit, test only too (M4 design section 1.3, rule A9). It may
+/// take the test-only crates as normal dependencies, and `layering_m4`
+/// keeps every other crate from taking it.
+const API_TESTKIT: &str = "fstp-api-testkit";
 /// Test-only crates that never ship (rule 3).
 const TEST_ONLY: [&str; 3] = ["fstp-domain-testkit", "fstp-prop", "fstp-mc"];
 
 /// Every edge kind, for the first step out of a crate.
-const ANY_KIND: [DepKind; 3] = [DepKind::Normal, DepKind::Build, DepKind::Dev];
+pub(crate) const ANY_KIND: [DepKind; 3] = [DepKind::Normal, DepKind::Build, DepKind::Dev];
 /// The edge kinds that ship with a crate.
-const SHIPPED: [DepKind; 2] = [DepKind::Normal, DepKind::Build];
+pub(crate) const SHIPPED: [DepKind; 2] = [DepKind::Normal, DepKind::Build];
 
 /// The path packages that are workspace members, by name.
-fn members(meta: &Metadata) -> BTreeMap<&str, usize> {
+pub(crate) fn members(meta: &Metadata) -> BTreeMap<&str, usize> {
     meta.members
         .iter()
         .filter_map(|&i| meta.packages.get(i).map(|p| (p.name.as_str(), i)))
@@ -102,7 +111,7 @@ fn members(meta: &Metadata) -> BTreeMap<&str, usize> {
 /// Every package reachable from `start`, with the package it was reached
 /// from. Edges out of `start` count when they carry one of `first`. Every
 /// later edge counts when it carries a normal or build kind.
-fn reach(meta: &Metadata, start: usize, first: &[DepKind]) -> BTreeMap<usize, usize> {
+pub(crate) fn reach(meta: &Metadata, start: usize, first: &[DepKind]) -> BTreeMap<usize, usize> {
     let mut parent: BTreeMap<usize, usize> = BTreeMap::new();
     let mut queue = VecDeque::from([start]);
     while let Some(pkg) = queue.pop_front() {
@@ -124,7 +133,7 @@ fn reach(meta: &Metadata, start: usize, first: &[DepKind]) -> BTreeMap<usize, us
 }
 
 /// The path from `start` to `to` as `a -> b -> c`.
-fn render_path(
+pub(crate) fn render_path(
     meta: &Metadata,
     parent: &BTreeMap<usize, usize>,
     start: usize,
@@ -143,7 +152,7 @@ fn render_path(
 }
 
 /// Each package named in `targets` that `parent` reaches, in `targets` order.
-fn hits<'a>(
+pub(crate) fn hits<'a>(
     meta: &Metadata,
     parent: &BTreeMap<usize, usize>,
     targets: &[&'a str],
@@ -218,7 +227,7 @@ pub(crate) fn check(meta: &Metadata) -> Vec<Finding> {
     }
 
     for (&krate, &start) in &members {
-        if krate == TESTKIT {
+        if krate == TESTKIT || krate == CELLTEST || krate == API_TESTKIT {
             continue;
         }
         let parent = reach(meta, start, &SHIPPED);

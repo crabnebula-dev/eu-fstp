@@ -27,8 +27,8 @@ Daniel allowlisted three build and test tools. None of them ships in runtime art
 | cargo-fuzz | 0.13.2, crate SHA-256 `5acfd01930e49823e58c30dd8012d3338a620377d7c7d4cc140ca4b2169400e2` | `cargo install cargo-fuzz --version 0.13.2 --locked` in CI, which builds it from its published lockfile | 2026-10-24 |
 | libfuzzer-sys | 0.4.13, crate SHA-256 `a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2`. Resolved features: `default`, `link_libfuzzer` | `libfuzzer-sys = "=0.4.13"` in each fuzz project manifest (`crates/*/fuzz/Cargo.toml`, `tools/*/fuzz/Cargo.toml`), plus that project's committed `Cargo.lock` | 2026-10-24 |
 | Nightly toolchain for fuzzing | `nightly-2026-10-24`, rustc 1.101.0-nightly (48f4b0553 2026-10-23) | `FUZZ_TOOLCHAIN` in `tools/fuzz-all.sh`, which CI installs through rustup | 2026-10-24 |
-| TypeScript compiler (tsc) | Recorded at first use |  |  |
-| Playwright | Recorded at first use |  |  |
+| TypeScript compiler (tsc) | `typescript` 6.0.3, integrity `sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==`. No dependencies | `web/package.json` and `e2e/package.json` at the exact version, their lockfiles and `deps/npm-allowlist.txt` | 2026-10-29 |
+| Playwright | `@playwright/test` 1.64.1, with `playwright` 1.64.1 and `playwright-core` 1.64.1. No package has an install script | `e2e/package.json` at the exact version, `e2e/package-lock.json` and `deps/npm-allowlist.txt` | 2026-10-29 |
 
 libFuzzer resolved tree. The test and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu. They are the same in every fuzz project and on both platforms. The platform row, added 2026-10-25, covers every other target.
 
@@ -61,3 +61,54 @@ Fuzzing nightly updates, decided by Daniel on 2026-10-25 (M1 decision D7):
 | Date | Nightly | rustc | Reason |
 | --- | --- | --- | --- |
 | 2026-10-24 | `nightly-2026-10-24` | 1.101.0-nightly (48f4b0553 2026-10-23) | First pin, M1 |
+
+## Amendment of 2026-10-28: Node.js and npm as build and test hosts (Q39 A)
+
+Status: Accepted 2026-10-28 (Daniel Thompson-Yvetot).
+
+### Context
+
+tsc and Playwright run on Node.js, and Playwright installs through npm. The Decision above allowlists tsc, libFuzzer and Playwright only. A record line alone does not cover a new tool (M3 design, `docs/handoff/m3-design.md`, section 2.5). Daniel answered Q39 with A on 2026-10-28 (design section 21.0). That answer also settles M4 Q7. W3c does not start before Daniel accepts this section (design section 18). He accepted it on 2026-10-28.
+
+### Decision
+
+| Tool | Use | Scope |
+| --- | --- | --- |
+| Node.js | Host process for tsc and Playwright | Build and test time only. Never ships |
+| npm, the version bundled with the pinned Node.js | Installs tsc and Playwright from committed lockfiles | Build and test time only. Never ships |
+
+### Rules
+
+- No release artifact, image or self-hosted package contains Node.js, npm, `node_modules`, tsc or Playwright. The frontend that ships is the JavaScript tsc emits from in-house TypeScript, plus in-house assets. The release SBOM lists Node.js and npm as build-time components.
+- Node.js never runs on a cell, vault, control-plane, witness or edge host.
+- One exact Node.js version is pinned, written as a full `major.minor.patch` version. Ranges, `latest` and LTS aliases are refused.
+- CI obtains Node.js as a release archive checked against a SHA-256 recorded here for each CI platform. A CI step fails when `node --version` or `npm --version` differs from the record.
+- npm projects exist only in `web/` and `e2e/`. Each has a committed `package.json` and `package-lock.json`.
+- The direct npm packages are the TypeScript compiler (`typescript`) and Playwright's test runner (`@playwright/test`). No framework and no other direct package is added without an amendment here. Their transitive packages are part of this allowlist and recorded below.
+- Installs use `npm ci --ignore-scripts` only. `npm install`, `npm update` and `npx` fetching an unlisted package are refused in CI.
+- With `--ignore-scripts`, no package lifecycle script runs. That also keeps native add-on builds, and the Python that node-gyp needs, out of the build.
+- Playwright browsers are fetched by the controlled CI step that the Rules above require, never during `npm ci`. Their versions and SHA-256 digests are recorded at first use.
+- `cargo test` never needs Node.js. Playwright runs in its own CI job, `e2e (Playwright)` (design section 14.8).
+
+### Lockfile gate
+
+`tools/deps-check` gains an npm lockfile check (`src/npm.rs`, design section 2.2). It reads `web/package-lock.json` and `e2e/package-lock.json`.
+
+- It accepts only the lockfile format version that the pinned npm writes. Record at first use. Unknown structure fails, as in the `Cargo.lock` reader.
+- Every package has an exact version, a `resolved` URL on the public npm registry and an `integrity` value. Git, file, link and other tarball sources fail.
+- Every package name, version and integrity value must match an allowlist entry tied to ADR-003. The file name and format are set when the gate lands. Any lockfile change fails until the allowlist and this record match.
+- A package marked as having an install script fails unless its allowlist entry accepts it with a note. Its script still never runs.
+- `package.json` must list only the direct packages named above.
+- The gate's parser has the fuzz target `npm_lock_decode` in `tools/deps-check/fuzz` (design section 15).
+
+### Record
+
+| Tool | Approved version | Pinned by | Recorded |
+| --- | --- | --- | --- |
+| Node.js | 24.11.1. Archive SHA-256 from nodejs.org `SHASUMS256.txt`: `node-v24.11.1-linux-x64.tar.xz` `60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8`, `node-v24.11.1-linux-arm64.tar.xz` `6b0863fb9f627bf4a6c5948dce1de4398174a2e05dbe717503d828e211ca01f0`, `node-v24.11.1-darwin-arm64.tar.xz` `064b017da9efd6b5d2bd0fadd56d3b8a50fcb369af3ccf91102c7a07a6cf4deb` (development hosts) | The CI step that fetches the archive and checks its SHA-256 (lane W4) | 2026-10-29 |
+| npm | 11.6.2, bundled with Node.js 24.11.1. Lockfile format version 3 | The pinned Node.js archive | 2026-10-29 |
+| `web/` npm tree | `typescript` 6.0.3 only | `web/package-lock.json` and the npm allowlist | 2026-10-29 |
+| `e2e/` npm tree | `@playwright/test` 1.64.1, `playwright` 1.64.1, `playwright-core` 1.64.1, `typescript` 6.0.3 | `e2e/package-lock.json` and the npm allowlist | 2026-10-29 |
+| Playwright browsers | Record at first use | The controlled CI step | Record at first use |
+
+The tsc and Playwright rows in the record table above are filled at first use as before.

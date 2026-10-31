@@ -1,0 +1,24 @@
+[package]
+name = "fstp-custody"
+description = "The Custody trait and its OKMS and file custody clients (I-80, M3 design section 3.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-keys.workspace = true
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+fstp-http.workspace = true
+fstp-tls.workspace = true
+fstp-rt.workspace = true
+# ADR-001 A1: `SealKey` holds `Zeroizing<[u8; 32]>` (design section 3.3).
+zeroize.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

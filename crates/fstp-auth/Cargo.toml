@@ -1,0 +1,22 @@
+[package]
+name = "fstp-auth"
+description = "Login policy, sessions, step-up, recovery and enrolment ceremonies. Pure (I-77, I-78, I-79)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-webauthn.workspace = true
+fstp-domain.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+# Test only: folds an M2 roster for the holdings re-derivation test (m3-base).
+fstp-domain-testkit.workspace = true
+
+[lints]
+workspace = true

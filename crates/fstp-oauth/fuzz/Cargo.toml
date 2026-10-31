@@ -1,0 +1,66 @@
+[package]
+name = "fstp-oauth-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-oauth = { path = ".." }
+
+[[bin]]
+name = "url_parse"
+path = "fuzz_targets/url_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "form_urlencoded_decode"
+path = "fuzz_targets/form_urlencoded_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "authorize_query_decode"
+path = "fuzz_targets/authorize_query_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "token_request_decode"
+path = "fuzz_targets/token_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_metadata_decode"
+path = "fuzz_targets/client_metadata_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bearer_header_parse"
+path = "fuzz_targets/bearer_header_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "base64url_decode"
+path = "fuzz_targets/base64url_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

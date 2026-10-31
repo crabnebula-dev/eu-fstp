@@ -17,7 +17,48 @@ members = [
     "crates/fstp-findings",
     "crates/fstp-engine",
     "crates/fstp-domain-testkit",
+    # M3, docs/handoff/m3-design.md section 2.1.
+    "crates/fstp-pki",
+    "crates/fstp-keys",
+    "crates/fstp-custody",
+    "crates/fstp-keyd",
+    "crates/fstp-audit",
+    "crates/fstp-obs",
+    "crates/fstp-pgstore",
+    "crates/fstp-vault-proto",
+    "crates/fstp-vault-core",
+    "crates/fstp-vault",
+    "crates/fstp-webauthn",
+    "crates/fstp-auth",
+    "crates/fstp-cell-core",
+    "crates/fstp-cell",
+    "crates/fstp-cp-proto",
+    "crates/fstp-control",
+    "crates/fstp-witness",
+    "crates/fstp-edge",
+    "crates/fstp-release",
+    "crates/fstp-release-svc",
+    "crates/fstp-backup",
+    "crates/fstp-celltest",
+    # M4, docs/handoff/m4-design.md section 1.1.
+    "crates/fstp-programme",
+    "crates/fstp-creator",
+    "crates/fstp-import",
+    "crates/fstp-html",
+    "crates/fstp-guide",
+    "crates/fstp-public",
+    "crates/fstp-tenant",
+    "crates/fstp-access",
+    "crates/fstp-api-core",
+    "crates/fstp-oauth",
+    "crates/fstp-mcp",
+    "crates/fstp-signup",
+    "crates/fstp-web",
+    "crates/fstp-web-assets",
+    "crates/fstp-api-testkit",
     "tools/deps-check",
+    "tools/gen-ts",
+    "tools/test-gate",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
 exclude = ["crates/*/fuzz", "tools/*/fuzz"]
@@ -34,10 +75,19 @@ publish = false
 [workspace.dependencies]
 # ADR-002: async runtime. Minimal features; a new feature needs a review note in ADR-002.
 tokio = { version = "=1.54.1", default-features = false, features = ["rt", "rt-multi-thread", "net", "time"] }
+# ADR-002 review note of 2026-10-28: fstp-rt alone adds the signal feature on its own line.
 # ADR-001 Tier A: TLS 1.3 only (no tls12 feature), aws-lc-rs provider, no logging.
 rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs", "prefer-post-quantum"] }
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
 aws-lc-rs = { version = "=1.18.2", default-features = false, features = ["aws-lc-sys"] }
+# ADR-001 Tier A, through rustls today. fstp-pki takes it as a dev-dependency for the
+# W1i round-trip tests only.
+rustls-webpki = { version = "=0.103.16", default-features = false, features = ["alloc", "aws-lc-rs", "std"] }
+# ADR-001 A1: secret wiping without unsafe. Features alloc and default only; derive is refused.
+zeroize = { version = "=1.9.1" }
+# ADR-001 Tier B, A2 and A3: git dependency pinned to one full commit, default features only.
+# Release-gated (I-74). Only fstp-crypto depends on it (design section 2.4 rule 8).
+moduletto = { git = "https://github.com/crabnebula-dev/moduletto", rev = "6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683" }
 
 # In-house crates.
 fstp-prop = { path = "crates/fstp-prop" }
@@ -56,6 +106,45 @@ fstp-domain = { path = "crates/fstp-domain" }
 fstp-findings = { path = "crates/fstp-findings" }
 fstp-engine = { path = "crates/fstp-engine" }
 fstp-domain-testkit = { path = "crates/fstp-domain-testkit" }
+# M3, docs/handoff/m3-design.md section 2.1.
+fstp-pki = { path = "crates/fstp-pki" }
+fstp-keys = { path = "crates/fstp-keys" }
+fstp-custody = { path = "crates/fstp-custody" }
+fstp-keyd = { path = "crates/fstp-keyd" }
+fstp-audit = { path = "crates/fstp-audit" }
+fstp-obs = { path = "crates/fstp-obs" }
+fstp-pgstore = { path = "crates/fstp-pgstore" }
+fstp-vault-proto = { path = "crates/fstp-vault-proto" }
+fstp-vault-core = { path = "crates/fstp-vault-core" }
+fstp-vault = { path = "crates/fstp-vault" }
+fstp-webauthn = { path = "crates/fstp-webauthn" }
+fstp-auth = { path = "crates/fstp-auth" }
+fstp-cell-core = { path = "crates/fstp-cell-core" }
+fstp-cell = { path = "crates/fstp-cell" }
+fstp-cp-proto = { path = "crates/fstp-cp-proto" }
+fstp-control = { path = "crates/fstp-control" }
+fstp-witness = { path = "crates/fstp-witness" }
+fstp-edge = { path = "crates/fstp-edge" }
+fstp-release = { path = "crates/fstp-release" }
+fstp-release-svc = { path = "crates/fstp-release-svc" }
+fstp-backup = { path = "crates/fstp-backup" }
+# fstp-celltest is test only and never a dependency (layering rule 9).
+# M4, docs/handoff/m4-design.md section 1.1.
+fstp-programme = { path = "crates/fstp-programme" }
+fstp-creator = { path = "crates/fstp-creator" }
+fstp-import = { path = "crates/fstp-import" }
+fstp-html = { path = "crates/fstp-html" }
+fstp-guide = { path = "crates/fstp-guide" }
+fstp-public = { path = "crates/fstp-public" }
+fstp-tenant = { path = "crates/fstp-tenant" }
+fstp-access = { path = "crates/fstp-access" }
+fstp-api-core = { path = "crates/fstp-api-core" }
+fstp-oauth = { path = "crates/fstp-oauth" }
+fstp-mcp = { path = "crates/fstp-mcp" }
+fstp-signup = { path = "crates/fstp-signup" }
+fstp-web = { path = "crates/fstp-web" }
+fstp-web-assets = { path = "crates/fstp-web-assets" }
+# fstp-api-testkit is test only and never a normal dependency (M4 layering rule A9).
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

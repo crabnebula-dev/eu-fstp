@@ -7,8 +7,11 @@
 # Jobs:
 #   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
-#   test         cargo test on the workspace with a real PostgreSQL 16
+#   test         cargo test on the workspace with a real PostgreSQL 16, gated by
+#                the known-red list in ci/known-red.txt (tools/test-gate)
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
+#   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
+#                and the generated API types (ADR-003, ADR-014)
 #
 # Every job that builds or runs code needs deps-check, so no crate outside
 # the allowlist is compiled before the gate has passed. The deps-check job
@@ -149,8 +152,16 @@ jobs:
           fi
           "$pg_bin/postgres" --version
           echo "FSTP_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
-      - name: cargo test
-        run: cargo test --workspace --locked
+      # Some tests are red on purpose: each waits on a seam that a named
+      # lane closes, and ci/known-red.txt lists it with that seam and lane.
+      # The run itself may fail; test-gate decides. It fails on any red
+      # test not on the list, on a listed test that passes or did not run,
+      # on a crashed test binary and on a compile error.
+      - name: cargo test, then the known-red gate
+        run: |
+          set -uo pipefail
+          cargo test --workspace --locked --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
+          cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "$RUNNER_TEMP/cargo-test.log"
       # The SQLSTATE condition-name table must match this PostgreSQL 16.
       - name: SQLSTATE table matches the server
         run: bash crates/fstp-pgwire/tools/gen-sqlstate.sh --check
@@ -202,6 +213,72 @@ jobs:
           fi
       - name: Dependency allowlist, no-Python, fuzz-target and layering gates
         run: cargo run --locked -p deps-check -- --root .
+
+  web:
+    name: web (tsc, web tests, fuzz harness, generated types)
+    needs: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # ADR-003 record: Node.js 24.11.1 with its bundled npm 11.6.2, and the
+      # SHA-256 of node-v24.11.1-linux-x64.tar.xz from nodejs.org SHASUMS256.txt.
+      NODE_VERSION: "24.11.1"
+      NPM_VERSION: "11.6.2"
+      NODE_SHA256: "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8"
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install the pinned Node.js and check its SHA-256 (ADR-003)
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/node.tar.xz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$archive" \
+            "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"
+          echo "$NODE_SHA256  $archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/node"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/node" --strip-components=1
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Node.js and npm are the recorded versions
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(npm --version)" = "$NPM_VERSION"
+      - name: npm ci --ignore-scripts in web/ and e2e/
+        run: |
+          set -euo pipefail
+          (cd web && npm ci --ignore-scripts --no-audit --no-fund)
+          (cd e2e && npm ci --ignore-scripts --no-audit --no-fund)
+      - name: tsc on the pages, the build, the conformance checks and the tests
+        run: |
+          set -euo pipefail
+          web/node_modules/.bin/tsc -p web/tsconfig.json
+          web/node_modules/.bin/tsc -p web/build
+          web/node_modules/.bin/tsc -p web/test/conformance
+          web/node_modules/.bin/tsc -p web/test
+      - name: The in-house web tests (ADR-014)
+        run: node web/dist/test-build/test/runner.js
+      - name: The in-house TypeScript fuzz harness (Q33 interim, TH-26)
+        run: node web/dist/test-build/fuzz/run.js --iterations 20000
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          rustup toolchain install --no-self-update || rustup show
+      - name: web/src/gen/api.ts matches the operation registry
+        run: cargo run --locked -p gen-ts -- --check
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)

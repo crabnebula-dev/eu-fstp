@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Error, ErrorKind};
@@ -219,6 +220,62 @@ impl Limits {
     }
 }
 
+/// A check of the server's leaf certificate that every connection of a
+/// [`Config`] runs ([`Config::server_check`]).
+///
+/// It receives the DER of the leaf certificate that fstp-tls verified in
+/// the TLS handshake, and returns `true` to accept the server. It runs
+/// after the handshake and before the startup message, on every
+/// connection and every cancel connection opened over the configuration.
+/// So a server it refuses never sees the user name, the database name, a
+/// SCRAM message or a cancellation key. A caller pins the server identity
+/// it checked at start this way, for example the cluster kind OU and the
+/// registered SPKI of I-83 (M3 design section 9.2).
+///
+/// The check must not block: it runs inside the connect future.
+/// [`fmt::Debug`] shows no detail of the check.
+#[derive(Clone)]
+pub struct ServerCheck(Arc<AcceptsLeaf>);
+
+/// The predicate a [`ServerCheck`] holds.
+type AcceptsLeaf = dyn Fn(&[u8]) -> bool + Send + Sync;
+
+impl ServerCheck {
+    /// A check that accepts the server whose leaf certificate DER makes
+    /// `accepts` return `true`.
+    pub fn new<F>(accepts: F) -> ServerCheck
+    where
+        F: Fn(&[u8]) -> bool + Send + Sync + 'static,
+    {
+        ServerCheck(Arc::new(accepts))
+    }
+
+    /// Whether the check accepts the server leaf certificate `cert_der`.
+    #[must_use]
+    pub fn accepts(&self, cert_der: &[u8]) -> bool {
+        (self.0)(cert_der)
+    }
+}
+
+impl fmt::Debug for ServerCheck {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ServerCheck(..)")
+    }
+}
+
+/// Whether every check of `checks` accepts the leaf `cert_der`. A refusal
+/// is an [`ErrorKind::ServerRefused`] error.
+pub(crate) fn run_server_checks(checks: &[ServerCheck], cert_der: &[u8]) -> Result<(), Error> {
+    if checks.iter().all(|c| c.accepts(cert_der)) {
+        Ok(())
+    } else {
+        Err(Error::new(
+            ErrorKind::ServerRefused,
+            "the server certificate failed a server check of the configuration",
+        ))
+    }
+}
+
 /// Everything needed to open a connection.
 ///
 /// Mutual TLS with full verification is not optional: [`Config::new`]
@@ -244,6 +301,7 @@ pub struct Config {
     pub(crate) cancel_grace: Duration,
     pub(crate) statement_cache_capacity: usize,
     pub(crate) limits: Limits,
+    pub(crate) server_checks: Vec<ServerCheck>,
 }
 
 impl fmt::Debug for Config {
@@ -263,6 +321,7 @@ impl fmt::Debug for Config {
             .field("cancel_grace", &self.cancel_grace)
             .field("statement_cache_capacity", &self.statement_cache_capacity)
             .field("limits", &self.limits)
+            .field("server_checks", &self.server_checks.len())
             .finish()
     }
 }
@@ -399,6 +458,7 @@ impl Config {
             cancel_grace: Duration::from_secs(5),
             statement_cache_capacity: 256,
             limits: Limits::default(),
+            server_checks: Vec::new(),
         })
     }
 
@@ -470,6 +530,25 @@ impl Config {
     pub fn limits(mut self, limits: Limits) -> Config {
         self.limits = limits;
         self
+    }
+
+    /// Adds `check` to the checks of the server's verified leaf
+    /// certificate ([`ServerCheck`]). Every connection and every cancel
+    /// connection over this configuration, and over its clones, runs
+    /// every check added. A connection whose server any check refuses
+    /// fails with [`ErrorKind::ServerRefused`] before the startup message
+    /// is sent. A later call never removes an earlier check.
+    #[must_use]
+    pub fn server_check(mut self, check: ServerCheck) -> Config {
+        self.server_checks.push(check);
+        self
+    }
+
+    /// The number of server checks this configuration runs on every
+    /// connection ([`Config::server_check`]).
+    #[must_use]
+    pub fn server_check_count(&self) -> usize {
+        self.server_checks.len()
     }
 
     /// The host.

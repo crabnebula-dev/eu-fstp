@@ -103,6 +103,15 @@ pub const CALL_OPENS: Timestamp = Timestamp::from_micros(0);
 /// The deadline of every call: after every command.
 pub const CALL_DEADLINE: Timestamp = Timestamp::from_micros(4_000_000_000_000);
 
+/// The instant from which the over-18 attestation of a lead whose draft is
+/// not flagged as a minor's shows the lead 18 or older: the opening of
+/// every call, so before every deadline (R-ID-04, overview NOTE 7).
+pub const LEAD_ADULT_FROM: Timestamp = CALL_OPENS;
+
+/// The instant from which a lead who turns 18 after the deadline is shown
+/// 18 or older: one microsecond after [`CALL_DEADLINE`] (R-ID-04).
+pub const LEAD_ADULT_AFTER_DEADLINE: Timestamp = Timestamp::from_micros(4_000_000_000_001);
+
 /// The call with synthetic number `n`.
 pub const fn call(n: u128) -> CallId {
     CallId::from_raw(n)
@@ -201,6 +210,42 @@ impl Step {
             second_tenant_admin: self.flags.second_admin,
             binds_tenant_admin: self.flags.binds_tenant_admin,
         }
+    }
+}
+
+/// One step or a sequence of steps that a world runs in order, as one
+/// action of a test or a model.
+///
+/// Since M4 change D5 a cut-off is a sequence: the round opens, members
+/// cast or delegate their own ballots, and a member records the cut-off.
+/// The world helpers that took one [`Step`] take any `Steps`, so a
+/// sequence runs where one step ran before.
+pub trait Steps {
+    /// The steps, in order.
+    fn as_steps(&self) -> &[Step];
+}
+
+impl Steps for Step {
+    fn as_steps(&self) -> &[Step] {
+        core::slice::from_ref(self)
+    }
+}
+
+impl Steps for Vec<Step> {
+    fn as_steps(&self) -> &[Step] {
+        self.as_slice()
+    }
+}
+
+impl Steps for [Step] {
+    fn as_steps(&self) -> &[Step] {
+        self
+    }
+}
+
+impl<T: Steps + ?Sized> Steps for &T {
+    fn as_steps(&self) -> &[Step] {
+        (**self).as_steps()
     }
 }
 
@@ -414,6 +459,11 @@ impl SodSetup {
     }
 
     /// The production commands of the setup, in order.
+    ///
+    /// Each programme is created by [`ADMIN`] and activated at once by the
+    /// second tenant admin [`crate::activation::APPROVER`], before any
+    /// grant (M4 design section 3.4, D1, D3 and D8). So the builder set
+    /// of every setup programme is [`ADMIN`] alone.
     pub fn steps(&self) -> Result<Vec<Step>, String> {
         let mut out = Vec::new();
         for p in &self.programmes {
@@ -424,6 +474,7 @@ impl SodSetup {
                     policy: Box::new(self.version(*p)?),
                 },
             ));
+            out.push(crate::activation::activation_step(*p));
             let [pm, drafter] = staff_bindings(*p);
             out.push(grant(pm, STAFF_PM, *p, Role::ProgrammeManager, T0));
             out.push(grant(drafter, STAFF_DRAFTER, *p, Role::CallDrafter, T0));
@@ -614,6 +665,11 @@ impl SodWorld {
         let ctx = self.ctx(step);
         let mut answers = Answers::new();
         for q in fstp_domain::queries(&self.state, &step.cmd, &ctx)? {
+            // State-machine NOTE 14: the vault gives no answer to an
+            // unresolved age conflict, so the query stays unanswered.
+            if !self.truth.answers(&q) {
+                continue;
+            }
             let a = answer(&self.truth, facts, &q);
             answers.insert(q, a);
         }
@@ -625,7 +681,7 @@ impl SodWorld {
     pub fn commit(&mut self, records: &[Record]) -> Result<(), String> {
         let mut view = self.view.clone();
         for r in records {
-            view.fold(r)
+            view.fold_with(r, &self.truth)
                 .map_err(|e| format!("the reference cannot follow {r:?}: {e}"))?;
         }
         if self.backend == Backend::Production {
@@ -932,6 +988,64 @@ fn synthesize_unjudged(
                 author: actor,
             },
         ],
+        // M4 D2 and D8: the setups activate each programme right after
+        // [`ADMIN`] created it, so the builder set is [`ADMIN`] alone. A
+        // builder's approval is refused, as production refuses it (I-67).
+        Command::ActivateProgramme {
+            programme,
+            creator_builders,
+            ..
+        } => {
+            if !view.programmes.contains(programme) {
+                return Err("reference mode: activation of an unknown programme".to_owned());
+            }
+            let mut builders: BTreeSet<AccountId> = [ADMIN].into_iter().collect();
+            builders.extend(creator_builders.iter().copied());
+            if builders.contains(&actor) {
+                return Err("reference mode: a builder approves the activation (I-67)".to_owned());
+            }
+            if *cmd != crate::activation::activate_with(*programme, creator_builders.clone()) {
+                return Err("reference mode runs only the setup activation".to_owned());
+            }
+            vec![crate::activation::forge_programme_activated(
+                *programme,
+                crate::activation::activation_decision(*programme),
+                crate::activation::SETUP_REPORT,
+                crate::activation::SETUP_REVISION,
+                actor,
+                &builders,
+                fstp_domain::record::RulesVersion::M4.0,
+            )?]
+        }
+        // M4 change D5: the round commands record what their actor did, as
+        // a correct engine does for the cut-offs of the setups and models.
+        // The lifecycle reference judges the cut-off that counts them.
+        Command::OpenCutOffRound {
+            round,
+            call,
+            order,
+            nominated,
+            rationale,
+            tie_breaks,
+        } => vec![Record::CutOffRoundOpened {
+            round: *round,
+            call: *call,
+            order: order.clone(),
+            nominated: *nominated,
+            rationale: *rationale,
+            tie_breaks: *tie_breaks,
+            by: actor,
+        }],
+        Command::CastBallot { round, vote } => vec![Record::BallotCast {
+            round: *round,
+            voter: actor,
+            vote: *vote,
+        }],
+        Command::DelegateVote { round, to } => vec![Record::VoteDelegated {
+            round: *round,
+            from: actor,
+            to: *to,
+        }],
         Command::EditPolicy { version, .. } => {
             let recorded = Record::PolicyVersionRecorded {
                 version: version.clone(),
@@ -1861,7 +1975,7 @@ impl StateMachine for SodMachine {
         for r in &records {
             // A record the reference cannot follow fails the invariant, which
             // re-folds the whole ledger.
-            let _ = model.view.fold(r);
+            let _ = model.view.fold_with(r, &model.truth);
             match r {
                 Record::PolicyVersionRecorded { version, .. } => {
                     model.heads.insert(version.programme, (**version).clone());

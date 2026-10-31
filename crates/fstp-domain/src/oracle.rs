@@ -16,6 +16,7 @@ use fstp_money::NonNegAmount;
 
 use crate::id::{AccountId, ContentDigest, ProgrammeId, ProposalId, ProximityListId, VaultEpoch};
 use crate::policy::ExclusionClasses;
+use crate::time::Timestamp;
 
 /// One vault query. Amounts have no order (ADR-006), so queries have none either.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -71,6 +72,20 @@ pub enum Query {
         /// The proposal.
         proposal: ProposalId,
     },
+    /// Does this proposal's lead have an effective verified over-18 attestation at the call deadline? (I-18, R-ID-04)
+    ///
+    /// The answer is yes only for an effective attestation that shows the
+    /// lead 18 or older at `deadline` (overview NOTE 7). It releases no age
+    /// and no date of birth. While a verification shows the lead under 18
+    /// at `deadline` against such an attestation, the vault gives no answer
+    /// until a manual identity check resolves the conflict, so every guard
+    /// that asks fails closed (state-machine NOTE 14, decided 2026-10-29).
+    IsVerifiedAdultAtDeadline {
+        /// The proposal's lead.
+        account: AccountId,
+        /// The deadline of the call in which the proposal passes IRC review, the later call after a re-entry (ADR-008, "Which deadline", decided 2026-10-29).
+        deadline: Timestamp,
+    },
     /// Does any team member declare an affiliation on this proximity list? (I-35)
     DeclaresAffiliationOnList {
         /// The lead and team accounts.
@@ -109,6 +124,8 @@ pub enum QueryKind {
     AllRecipientsWithinCap,
     /// [`Query::HasGuardianConsent`].
     HasGuardianConsent,
+    /// [`Query::IsVerifiedAdultAtDeadline`].
+    IsVerifiedAdultAtDeadline,
     /// [`Query::DeclaresAffiliationOnList`].
     DeclaresAffiliationOnList,
     /// [`Query::MeetsTieBreakCountry`].
@@ -119,7 +136,7 @@ pub enum QueryKind {
 
 impl QueryKind {
     /// Every kind, in the order of the query table in `SPEC/03-architecture/overview.md`.
-    pub const ALL: [QueryKind; 10] = [
+    pub const ALL: [QueryKind; 11] = [
         QueryKind::IsVerified,
         QueryKind::SameIdentityAsAny,
         QueryKind::HasConflict,
@@ -127,6 +144,7 @@ impl QueryKind {
         QueryKind::WithinRecipientCap,
         QueryKind::AllRecipientsWithinCap,
         QueryKind::HasGuardianConsent,
+        QueryKind::IsVerifiedAdultAtDeadline,
         QueryKind::DeclaresAffiliationOnList,
         QueryKind::MeetsTieBreakCountry,
         QueryKind::ChangedSince,
@@ -152,6 +170,9 @@ impl QueryKind {
             QueryKind::HasGuardianConsent => {
                 "Does this proposal have a verified guardian consent record?"
             }
+            QueryKind::IsVerifiedAdultAtDeadline => {
+                "Does this proposal's lead have an effective verified over-18 attestation at the call deadline?"
+            }
             QueryKind::DeclaresAffiliationOnList => {
                 "Does any team member declare an affiliation on this proximity list?"
             }
@@ -176,6 +197,7 @@ impl Query {
             Query::WithinRecipientCap { .. } => QueryKind::WithinRecipientCap,
             Query::AllRecipientsWithinCap { .. } => QueryKind::AllRecipientsWithinCap,
             Query::HasGuardianConsent { .. } => QueryKind::HasGuardianConsent,
+            Query::IsVerifiedAdultAtDeadline { .. } => QueryKind::IsVerifiedAdultAtDeadline,
             Query::DeclaresAffiliationOnList { .. } => QueryKind::DeclaresAffiliationOnList,
             Query::MeetsTieBreakCountry { .. } => QueryKind::MeetsTieBreakCountry,
             Query::ChangedSince { .. } => QueryKind::ChangedSince,

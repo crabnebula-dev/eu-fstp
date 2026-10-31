@@ -16,6 +16,11 @@
 //! `lifecycle_terminal_set_matches_spec` checks the terminal set itself.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
 
 use std::collections::BTreeSet;
 

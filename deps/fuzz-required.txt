@@ -10,8 +10,50 @@ fstp-tls
 fstp-prop
 fstp-mc
 deps-check
+test-gate
 fstp-money
 fstp-ledger
 fstp-domain
 fstp-findings
 fstp-engine
+# M3, docs/handoff/m3-design.md section 15. fstp-obs has no parser.
+fstp-crypto
+fstp-pki
+fstp-keys
+fstp-custody
+fstp-keyd
+fstp-audit
+fstp-pgstore
+fstp-vault-proto
+# Design section 2.1 gives fstp-vault-core a fuzz project and section 15
+# names no target. W0 takes the stricter reading (fact_commit_sequence),
+# pending Daniel (docs/handoff/m3-base.md).
+fstp-vault-core
+fstp-vault
+fstp-webauthn
+fstp-auth
+fstp-cell-core
+fstp-cell
+fstp-cp-proto
+fstp-control
+fstp-witness
+fstp-edge
+fstp-release
+fstp-release-svc
+fstp-backup
+fstp-celltest
+# M4, docs/handoff/m4-design.md sections 1.4 and 9. fstp-access holds no
+# parser and fstp-api-testkit is test code, so neither is listed.
+fstp-programme
+fstp-creator
+fstp-import
+fstp-html
+fstp-guide
+fstp-public
+fstp-tenant
+fstp-signup
+fstp-api-core
+fstp-oauth
+fstp-mcp
+fstp-web
+fstp-web-assets

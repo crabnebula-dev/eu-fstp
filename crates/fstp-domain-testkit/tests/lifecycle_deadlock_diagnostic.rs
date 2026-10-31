@@ -12,6 +12,11 @@
 //! `cargo test -p fstp-domain-testkit --test lifecycle_deadlock_diagnostic -- --ignored --nocapture`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
 
 use fstp_domain_testkit::mc::conformance::{
     ConformanceModel, M_CONFORMANCE_NO_WITHDRAW_STATES, stalls,

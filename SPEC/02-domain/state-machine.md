@@ -34,11 +34,11 @@
 | STAGE2 | DEFERRED | System (NOTE 13) | Stage 2 window (P-07) elapsed without answers and without a "no questions" record (NOTE 4, NOTE 5) |
 | RANKED | NOT_SELECTED | Committee | Ranked below the cut-off (NOTE 6); decided under P-16 (R-EV-09); remaining budget visible (R-EV-08); rationale recorded |
 | RANKED | IRC_REVIEW | Committee | Ranked within the cut-off (NOTE 6); decided under P-16 (R-EV-09); remaining budget visible (R-EV-08); rationale recorded |
-| IRC_REVIEW | NEGOTIATION | IRC members (P-15) | All reviewing IRC members validate; verified guardian consent if minor (I-18, R-NG-02) |
+| IRC_REVIEW | NEGOTIATION | IRC members (P-15) | All reviewing IRC members validate; verified guardian consent if minor-flagged (I-18, R-NG-02, NOTE 14) |
 | IRC_REVIEW | DEFERRED | IRC member | Concern raised; future call exists (NOTE 7) |
 | IRC_REVIEW | DECLINED | System (NOTE 13) | Concern raised; no future call (NOTE 7) |
 | DEFERRED | STAGE2 or IRC_REVIEW | System (NOTE 13) | Next call opens; re-enters at the stage it left (NOTE 8) |
-| NEGOTIATION | GRANTED | Applicant and programme manager | Identity verified; guardian consent if minor (I-18); amount within P-04 and P-05, with P-05 checked cumulatively (I-14); SoD-09 passes; granting keeps I-04, I-06, I-13 and I-15; contract EFFECTIVE |
+| NEGOTIATION | GRANTED | Applicant and programme manager | Identity verified; guardian consent if minor-flagged (I-18, NOTE 14); amount within P-04 and P-05, with P-05 checked cumulatively (I-14); SoD-09 passes; granting keeps I-04, I-06, I-13 and I-15; contract EFFECTIVE |
 | NEGOTIATION | DECLINED | System (NOTE 13) | Identity verification fails; SoD-09 refuses the applicant; the applicant's Receiving bindings were voided under I-04 or I-06 (`02-domain/roles-and-sod.md` Identity discovery); no grant amount can keep I-13 and I-14; the I-15 deliverable record is incomplete; or guardian consent (I-18) is missing; reason recorded (NOTE 9) |
 | any non-terminal state before GRANTED | WITHDRAWN | Applicant | None (NOTE 10) |
 | GRANTED | IN_EXECUTION | System (NOTE 13) | First milestone start date reached (NOTE 11) |
@@ -71,6 +71,8 @@ NOTE 11: Each milestone carries a start date as well as a due date. GRANTED to I
 NOTE 12: A milestone can close without being fully paid, since P-67 releases unclaimed balances at COMPLETED (decided 2026-10-25). The programme manager closes each milestone with a recorded reason. A payment request is terminal when PAID, REJECTED, WITHDRAWN or CLOSED (`02-domain/payment-requests.md`, decided 2026-10-25, O-51).
 
 NOTE 13: R-LA-03 requires a named human to record every decision. Where a System row records a decision, its outcome stays computed and a named human records it. The FSTP coordinator records the stage 1 rows. The programme manager records IRC_REVIEW to DECLINED and NEGOTIATION to DECLINED, which are decisions with a recorded reason. The rows driven by a timer or a date are not decisions, and the system records them: STAGE2 to DEFERRED, DEFERRED re-entry, GRANTED to IN_EXECUTION and IN_EXECUTION to COMPLETED (decided 2026-10-25, O-49).
+
+NOTE 14: The minor flag at the NEGOTIATION gate (decided 2026-10-28). The flag never comes from the actor. It is derived from the identity vault (R-ID-04). The IRC_REVIEW to NEGOTIATION guard admits a proposal only in two cases. Its lead has an effective verified over-18 attestation at the deadline, or the proposal has a verified guardian consent record. Every other proposal is minor-flagged and stays in IRC_REVIEW until its guardian consent is effective (R-NG-01). The guard asks the vault one-bit queries and fails closed when the vault cannot answer (`03-architecture/overview.md` NOTE 2). Decided 2026-10-29: the guard into GRANTED derives the flag again in the same way, so a proposal that is minor-flagged there needs a verified guardian consent before GRANTED. Guardian consent collection then opens in NEGOTIATION too: a guardian may be added and the guardian's write ticket issued while the proposal is in NEGOTIATION. The deadline is that of the call in which the proposal passes IRC review, which for a re-entered proposal is the later call (NOTE 8). When the vault holds a verified adult attestation and a verification showing the lead under 18 at that deadline, a manual identity check resolves the conflict before either gate admits the proposal. ADR-008 (Minor flag details) holds the details.
 
 ## Call states
 
