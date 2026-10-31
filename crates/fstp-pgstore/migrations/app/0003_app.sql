@@ -122,11 +122,14 @@ CREATE TRIGGER chain_no_truncate BEFORE TRUNCATE ON audit.chain
 -- inserted in the append transaction before COMMIT (design section 7.2).
 -- signature: the composite anchor signature. receipt: the receipt as
 -- fstp_audit::anchor::encode_receipt writes it.
+-- link is a PublicDigest and signature a Signature (design section 4.5):
+-- 32 bytes, and the composite of 3373 bytes, mldsaSig (3309) then
+-- tradSig (64) (ADR-010 "Composite encoding").
 CREATE TABLE audit.anchor (
   n           bigint PRIMARY KEY REFERENCES audit.chain(n),
   link        bytea  NOT NULL CHECK (octet_length(link) = 32),
   at          bigint NOT NULL,
-  signature   bytea  NOT NULL,
+  signature   bytea  NOT NULL CHECK (octet_length(signature) = 3373),
   witness_seq bigint NOT NULL CHECK (witness_seq >= 1),
   receipt     bytea  NOT NULL
 );

@@ -510,6 +510,11 @@ impl DriverCore {
         match self.admitted.principal() {
             crate::gate::Principal::Account(actor) => Ok(Who::Account(actor)),
             crate::gate::Principal::System(task) => Ok(Who::System(task)),
+            // A public or ceremony step acts for the account it names, which
+            // its route admission checked (`gate::admit_recovery_request`).
+            // No admission builds one for a completion yet
+            // (`gate::ROUTE_ADMISSION_SEAM`).
+            crate::gate::Principal::Ceremony(account) => Ok(Who::Account(account)),
             crate::gate::Principal::BreakGlass(_) => Err(ExecError::NotACommand),
         }
     }
@@ -684,6 +689,7 @@ impl DriverCore {
             self.admitted.at().micros(),
             Some(self.command),
             stepup.map(|u| u.asserted_at),
+            self.admitted.inputs(),
             answers,
         )
         .map_err(ExecError::Refused)?;

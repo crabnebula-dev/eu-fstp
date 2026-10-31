@@ -15,9 +15,8 @@
 //! chain's data key from `fstp-keys`, which lane W2f writes. A query is
 //! stored only as a keyed digest.
 //!
-//! Reading, reported to Daniel: design section 4.3 has no table for the
-//! P-17 conditions. `vault.p17_condition` holds them, insert-only, so a
-//! condition stays fixed across restarts.
+//! `vault.country_condition` holds the P-17 country conditions (design
+//! section 4.3), insert-only, so a condition stays fixed across restarts.
 //!
 //! [`load`] fails closed on a gap between epochs, an epoch with no fact,
 //! a fact whose kind column is not its body's kind, or a write that does
@@ -308,7 +307,7 @@ pub async fn persist<R: Runtime>(
                 countries,
             } => {
                 tx.execute(
-                    "INSERT INTO vault.p17_condition (programme_id, countries) VALUES ($1, $2)",
+                    "INSERT INTO vault.country_condition (programme_id, countries) VALUES ($1, $2)",
                     &[&uuid(programme.0), &countries_bytes(countries)?],
                 )
                 .await
@@ -365,7 +364,7 @@ pub async fn load<R: Runtime>(
     // its programme, so it replays before the facts.
     let conditions = client
         .query(
-            "SELECT programme_id, countries FROM vault.p17_condition ORDER BY programme_id",
+            "SELECT programme_id, countries FROM vault.country_condition ORDER BY programme_id",
             &[],
         )
         .await

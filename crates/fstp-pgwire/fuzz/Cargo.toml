@@ -43,6 +43,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "pg_cert_subject_ou"
+path = "fuzz_targets/pg_cert_subject_ou.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

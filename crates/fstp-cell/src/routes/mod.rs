@@ -21,7 +21,14 @@ mod api;
 mod auth;
 pub mod backend;
 mod handle;
+/// Test only: the in-memory backend and the local cell. Built only with
+/// the `memory` feature, which no shipped build enables, so the
+/// `fstp-cell` binary never contains a `LocalCell` (design section 14.3).
+#[cfg(feature = "memory")]
 pub mod memory;
+/// The route backend of a serving cell over its engine and its application
+/// database (lane int5).
+pub mod pg;
 
 pub use auth::{CHALLENGE_US, MAGIC_LINK_US};
 pub use backend::{
@@ -133,6 +140,15 @@ pub enum Endpoint {
     Erasures,
     /// `GET /healthz`.
     Health,
+    /// A page path of the compiled auth pages: the shell
+    /// ([`page_table`]).
+    PageShell,
+    /// `GET /assets/auth/{file}`: a compiled module or a stylesheet
+    /// ([`page_table`]).
+    PageAsset,
+    /// `GET /assets/auth/pages/{file}`: a compiled page module
+    /// ([`page_table`]).
+    PageModule,
     /// No handler: a route built with `Route::new` alone.
     Unserved,
 }
@@ -425,6 +441,48 @@ pub fn table() -> &'static [Route] {
     &TABLE
 }
 
+/// The routes of the compiled auth pages of design section 11.2
+/// (`crate::http::pages`). Each is a `GET` with no body, no session and
+/// no state change, so its risk class is `Normal` and its access class
+/// `Public`. Like every route, each row names its risk class (I-78).
+static PAGE_TABLE: [Route; 7] = [
+    Route::served("GET", "/auth/login", Normal, A::Public, E::PageShell, 0),
+    Route::served("GET", "/auth/signup", Normal, A::Public, E::PageShell, 0),
+    Route::served("GET", "/auth/invite", Normal, A::Public, E::PageShell, 0),
+    Route::served("GET", "/auth/recovery", Normal, A::Public, E::PageShell, 0),
+    Route::served("GET", "/auth/account", Normal, A::Public, E::PageShell, 0),
+    Route::served(
+        "GET",
+        "/assets/auth/{file}",
+        Normal,
+        A::Public,
+        E::PageAsset,
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/assets/auth/pages/{file}",
+        Normal,
+        A::Public,
+        E::PageModule,
+        0,
+    ),
+];
+
+/// The page routes, with their classes (design section 11.2).
+///
+/// They are not rows of [`table`]. Design section 8.7 lists
+/// `GET /auth/magic` as the only page of the cell, while section 11.2
+/// puts the auth pages on the cell origin. Until Daniel adds the page
+/// rows to section 8.7, the strict reading holds: the production front
+/// serves exactly [`table`], and only `crate::http::Front::with_pages`,
+/// built with the test and dev-stack feature `dev-pages`, serves these
+/// rows. It serves them through the same shared checks as every other
+/// route.
+pub fn page_table() -> &'static [Route] {
+    &PAGE_TABLE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +509,45 @@ mod tests {
             }
             assert!(r.body_limit() <= 1 << 20, "{}", r.path);
         }
+    }
+
+    /// I-78, H-01, design section 11.2: the page routes are exactly the
+    /// page paths and asset routes of `crate::http::pages`, each a public
+    /// `GET` of risk class `Normal` with no body, and none is a row of
+    /// [`table`]. A page endpoint appears in no other row.
+    #[test]
+    fn i78_page_routes_are_public_gets_outside_the_section_8_7_table() {
+        use crate::http::pages::{ASSET_ROUTES, PAGE_PATHS};
+        let want: Vec<&str> = PAGE_PATHS
+            .iter()
+            .chain(ASSET_ROUTES.iter())
+            .copied()
+            .collect();
+        let got: Vec<&str> = page_table().iter().map(|r| r.path).collect();
+        assert_eq!(got, want);
+        for r in page_table() {
+            assert_eq!(r.parts(), ("GET", r.path, RiskClass::Normal), "{}", r.path);
+            assert_eq!(r.access(), Access::Public, "{}", r.path);
+            assert_eq!(r.body_limit(), 0, "{}", r.path);
+            assert!(
+                matches!(
+                    r.endpoint(),
+                    Endpoint::PageShell | Endpoint::PageAsset | Endpoint::PageModule
+                ),
+                "{}",
+                r.path
+            );
+            assert!(
+                table()
+                    .iter()
+                    .all(|t| t.parts().1 != r.path || t.method != "GET"),
+                "{} is also a row of the section 8.7 table",
+                r.path
+            );
+        }
+        assert!(table().iter().all(|t| !matches!(
+            t.endpoint(),
+            Endpoint::PageShell | Endpoint::PageAsset | Endpoint::PageModule
+        )));
     }
 }

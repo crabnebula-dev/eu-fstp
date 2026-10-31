@@ -6,9 +6,27 @@
 //! crate that defines tenant records, account types or vault data
 //! (layering rule 4).
 //!
-//! Status: W0 stub. Lane W2h fills the crate. [`CATALOGUE`] holds the `cp`
-//! column map of design section 4.4, reviewed in W0. Every operation
-//! refuses with [`ControlError::NotImplemented`].
+//! What this crate holds:
+//!
+//! - [`pg::cell_role_plan`], the one owner of a cell's roles, CONNECT
+//!   grants, `pg_hba` lines, revocations and grant rows (I-82), and
+//!   [`pg::render_hba`], the `pg_hba.conf` generator;
+//! - [`placement::Placement`], which never mixes cluster kinds (I-83);
+//! - [`pgagent`], the typed provisioning jobs, their decoder and the DDL
+//!   they render from the closed identifier grammar (ADR-011);
+//! - [`provision`], the ordered jobs of design section 9.2 and the mode
+//!   rule;
+//! - [`isolation_audit`], the privilege graph and its catalogue reader
+//!   (design section 9.3);
+//! - [`install`], the self-hosted install configuration (design section
+//!   9.5);
+//! - [`api`], the closed operator API request;
+//! - [`CATALOGUE`], the `cp` column map of design section 4.4, whose
+//!   tables the `migrations/cp` set creates.
+//!
+//! The three service loops ([`placement::run`], [`pgagent::run`] and
+//! [`install::run`]) are not built yet and refuse with
+//! [`ControlError::NotImplemented`]. See each one for what it waits on.
 
 pub mod api;
 pub mod catalogue;
@@ -17,31 +35,69 @@ pub mod isolation_audit;
 pub mod pg;
 pub mod pgagent;
 pub mod placement;
+pub mod provision;
 
 pub use catalogue::CATALOGUE;
 
 /// The configuration of the control plane service.
 ///
-/// W0 stub. Lane W2h adds the fields it needs. No field may hold a
-/// payment account type or a debtor account (I-16, design section 14.4
-/// `i16_config_types_hold_no_debtor_account`).
+/// No field may hold a payment account type or a debtor account (I-16,
+/// design section 14.4 `i16_config_types_hold_no_debtor_account`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ControlConfig {
     /// The registered database clusters.
     pub clusters: Vec<placement::Cluster>,
 }
 
-/// Why a control plane operation failed.
+/// Why a control plane operation failed. No variant carries input bytes
+/// (R-NF-02).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlError {
-    /// The operation is a W0 stub. It names the operation.
+    /// The operation is not built yet. It names the operation.
     NotImplemented(&'static str),
+    /// A name is outside the DDL identifier grammar of ADR-011.
+    Identifier,
+    /// A role does not belong to the database it is named for (ADR-011
+    /// role sets).
+    RoleOutsideDatabase,
+    /// A `fstp-pgagent` job did not decode. It names the rule broken.
+    Job(&'static str),
+    /// A destructive job needs two operators' approvals (ADR-011
+    /// "Two-operator approval"), which this build cannot check yet.
+    ApprovalRequired,
+    /// An operator API request did not decode. It names the rule broken.
+    Request(&'static str),
+    /// An install configuration did not decode. It names the rule broken.
+    Config(&'static str),
+    /// A placement was refused (I-83).
+    Placement(placement::PlacementError),
+    /// The provisioning mode rule refused the clusters (design section
+    /// 9.2).
+    Mode(provision::ModeError),
+    /// A `pg_hba` subnet is malformed.
+    Subnet,
+    /// A catalogue read failed. It names the query.
+    Catalogue(&'static str),
 }
 
 impl std::fmt::Display for ControlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ControlError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
+            ControlError::Identifier => f.write_str("identifier outside the DDL grammar"),
+            ControlError::RoleOutsideDatabase => {
+                f.write_str("role does not belong to the named database")
+            }
+            ControlError::Job(rule) => write!(f, "pgagent job refused: {rule}"),
+            ControlError::ApprovalRequired => {
+                f.write_str("destructive job needs two operators' approvals")
+            }
+            ControlError::Request(rule) => write!(f, "API request refused: {rule}"),
+            ControlError::Config(rule) => write!(f, "install configuration refused: {rule}"),
+            ControlError::Placement(e) => write!(f, "placement refused: {e:?}"),
+            ControlError::Mode(e) => write!(f, "provisioning mode refused: {e:?}"),
+            ControlError::Subnet => f.write_str("malformed pg_hba subnet"),
+            ControlError::Catalogue(query) => write!(f, "catalogue read failed: {query}"),
         }
     }
 }

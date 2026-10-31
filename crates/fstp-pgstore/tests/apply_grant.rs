@@ -469,10 +469,11 @@ fn i16_table_class_has_no_fund_class() {
     assert_eq!(names.len(), 7, "I-16: the table classes");
 }
 
-/// R-NF-08, ADR-007 "Clear column classes": the column classes are
-/// `Sealed` and the seven clear classes of ADR-007, no more. Adding one
-/// needs an ADR-007 amendment, and this exhaustive match fails to compile
-/// until it is reviewed.
+/// R-NF-08, ADR-007 "Clear column classes", design section 4.5: the column
+/// classes are `Sealed`, the seven clear classes of ADR-007 and the three
+/// public classes Daniel added on 2026-10-30 (design section 21.0), no
+/// more. Adding one needs a decision, and this exhaustive match fails to
+/// compile until it is reviewed.
 #[test]
 fn r_nf_08_column_classes_are_the_adr007_set() {
     let all = [
@@ -484,6 +485,9 @@ fn r_nf_08_column_classes_are_the_adr007_set() {
         ColumnClass::SecretDigest,
         ColumnClass::KeyedDigest,
         ColumnClass::Count,
+        ColumnClass::PublicDigest,
+        ColumnClass::Signature,
+        ColumnClass::PublicKeyMaterial,
     ];
     let clear = all
         .iter()
@@ -495,10 +499,16 @@ fn r_nf_08_column_classes_are_the_adr007_set() {
             | ColumnClass::Enum
             | ColumnClass::SecretDigest
             | ColumnClass::KeyedDigest
-            | ColumnClass::Count => true,
+            | ColumnClass::Count
+            | ColumnClass::PublicDigest
+            | ColumnClass::Signature
+            | ColumnClass::PublicKeyMaterial => true,
         })
         .count();
-    assert_eq!(clear, 7, "R-NF-08: the clear classes of ADR-007");
+    assert_eq!(
+        clear, 10,
+        "R-NF-08: the clear classes of ADR-007 and design section 4.5"
+    );
 }
 
 /// Harness self-test: the Rust grammars accept the design examples and
