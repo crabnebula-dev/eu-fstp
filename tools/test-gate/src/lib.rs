@@ -148,7 +148,8 @@ pub struct ListError {
 
 /// Reads the known-red list: `<binary>::<test> | <seam> | <lane>` per
 /// line, with `#` comments and blank lines. Each field is non-empty, the
-/// key holds `::` and no space, and no key appears twice.
+/// key holds `::`, and no key appears twice. A key may hold spaces, since
+/// doc-test names do; no field holds `|`.
 pub fn read_list(text: &str) -> Result<Vec<Entry>, Vec<ListError>> {
     let mut entries = Vec::new();
     let mut errors = Vec::new();
@@ -176,7 +177,7 @@ pub fn read_list(text: &str) -> Result<Vec<Entry>, Vec<ListError>> {
             });
             continue;
         }
-        if !key.contains("::") || key.contains(char::is_whitespace) {
+        if !key.contains("::") {
             errors.push(ListError {
                 line: n,
                 reason: "the key is <binary>::<test>",
@@ -381,7 +382,7 @@ test result: ok. 1 passed
     /// The list refuses malformed, empty, spaced and repeated entries.
     #[test]
     fn known_red_list_is_strict() {
-        let bad = "# c\n\nnocolons | s | l\na::b | s\na::b | | l\na b::c | s | l\na::b | s | l\na::b | s | l | x\na::b | s | l\n";
+        let bad = "# c\n\nnocolons | s | l\na::b | s\na::b | | l\na|b::c | s | l\na::b | s | l\na::b | s | l | x\na::b | s | l\n";
         let errs = read_list(bad).unwrap_err();
         let lines: Vec<usize> = errs.iter().map(|e| e.line).collect();
         assert_eq!(lines, vec![3, 4, 5, 6, 8, 9]);
