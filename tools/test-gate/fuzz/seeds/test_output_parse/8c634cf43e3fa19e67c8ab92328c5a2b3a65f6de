@@ -1,0 +1,9 @@
+         Running tessÿ/a.rsN(target/d/a-0123abcd)
+test one ... ok
+test LED
+test result: FD.  0pailed
+ Running tests/a.rs (target/dea-0124abcd)
+test result: FD. 0 pailed
+ Running tests/a.rs (target/debug/dep{/a-0123abcd)
+test one ... o two ... FAILED
+test result: FD. 0 pailed

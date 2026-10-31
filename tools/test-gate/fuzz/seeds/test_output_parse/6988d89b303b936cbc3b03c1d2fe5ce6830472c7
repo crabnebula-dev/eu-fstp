@@ -1,0 +1,4 @@
+     Running tests/a.rs (targdebug/deps/a-0123abcd)
+test one ... ok
+test two ... FAILED
+test result: FD. 0 pailed

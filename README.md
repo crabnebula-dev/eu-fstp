@@ -34,12 +34,7 @@ Not started: the MCP server, public pages and tools, the admin, auditor and agen
 
 ### Branches
 
-| Branch | Content |
-| --- | --- |
-| `main` | M0 to M2 |
-| `m3/cell-runtime` | M3 integration |
-| `m4/int-b` | M4 integration |
-| `m4/int-m3` | M4 integration with M3 merged in, for the switch from fakes to the M3 runtime |
+`main` holds all of M0 to M4 so far, and it is the only integration branch. Work runs in short-lived lane branches that merge into `main` once every gate passes. Some tests are red on purpose: each waits on a seam that a named lane closes. `ci/known-red.txt` lists each one with its seam and lane, and CI fails on any other red test (`tools/test-gate`).
 
 ### Decisions
 

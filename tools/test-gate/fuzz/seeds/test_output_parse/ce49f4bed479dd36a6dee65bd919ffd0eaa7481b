@@ -1,0 +1,4 @@
+t# .n re ok
+test t+o ... |r# .n re ok
+test t+o ... |ree.  | laok
+test two ... | seaFAILEDn
