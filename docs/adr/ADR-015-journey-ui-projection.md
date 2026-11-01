@@ -1,6 +1,6 @@
 # ADR-015: Journey UI projection
 
-Status: Draft, pending Daniel. Not accepted. No journey code is written before Daniel accepts it (`SPEC/12-journey-ui.md` section 17.2).
+Status: Accepted 2026-11-01 (Daniel Thompson-Yvetot).
 
 `SPEC/12-journey-ui.md` proposed this ADR as ADR-008. ADR-008 to ADR-014 were already used, so it is ADR-015.
 
@@ -51,6 +51,11 @@ Status: Draft, pending Daniel. Not accepted. No journey code is written before D
 - Every node is keyboard operable and names the formal state. A text-only ordered list of the route is always available as the accessible alternative (R-JV-05).
 - Public call pages show the route as static SVG with no script (R-JV-06).
 
+### Rendering home and zones (decided 2026-11-01)
+
+- The route SVG renderer is a module of `fstp-html`, which already holds the escaping writer and the well-formedness checker. Its fuzz targets cover the renderer.
+- The deadline zone table ships the IANA zones of every EU and EEA country plus UTC. A new zone is added by a forward-only migration that only appends, so a stored index never changes meaning.
+
 ### Decisions recorded (2026-11-01)
 
 | ID | Decision |
@@ -71,6 +76,4 @@ Status: Draft, pending Daniel. Not accepted. No journey code is written before D
 
 ## Open points
 
-- The renderer's home: a module of `fstp-html` or a new in-house crate. To be fixed with the first renderer commit.
-- The deadline zone table: which IANA zones ship, and how a zone added later is upcast.
 - TODO(legal): whether the pseudonymous skeleton after P-41 counts as anonymised data (`SPEC/12-journey-ui.md` section 7.3).

@@ -1,6 +1,6 @@
 # Journey UI layer: handoff for the implementing agent
 
-Status: accepted direction, 2026-11-01 (Daniel Thompson-Yvetot). ADR-015 must be accepted before any journey code.
+Status: accepted 2026-11-01 (Daniel Thompson-Yvetot), with ADR-015 accepted the same day.
 Location: `SPEC/12-journey-ui.md`. Reading position: after `09-milestones.md`, before `10-open-questions.md`.
 IDs confirmed on 2026-11-01: R-JV-01 to R-JV-12, I-92 to I-97, O-54 to O-60 and B-02. The spec ended at I-91, P-78 and O-53. This layer adds no policy parameter. I-92 to I-97 are also listed in `02-domain/invariants.md`, which ranks first.
 
