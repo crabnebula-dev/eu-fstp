@@ -25,7 +25,7 @@ Give every actor a consistent, engaging way to see where they are in the process
 
 - The layer is **presentation and projection only**. It adds no state to the proposal state machine, no new decision, and no new authority.
 - It never changes the legal wording of contracts, notices, the Guide for Applicants, funder documents or emails (I-72).
-- It does not make the metaphor mandatory. The metaphor is a default vocabulary pack a tenant can replace.
+- It does not make the metaphor mandatory. Plain grant language is the platform default. Voyage is an optional vocabulary pack a tenant can switch on (O-55).
 
 ## 2. Corrections to the earlier design discussion
 
@@ -103,9 +103,13 @@ Rust and database constraints from the spec apply:
 - The layer adds no database role. ADR-011 fixes the role set (migrator, writer, app, keys, auditor), and the I-82 role-plan tests pin it. The projector runs in the cell process under the existing `app` role. `cell_role_plan` grants that role SELECT on the ledger and INSERT and SELECT on the journey tables, through `apply_grant`. The ledger writer role keeps INSERT and SELECT only.
 - The layer holds no identity attributes. It shows only the vault's yes or no outcome and the query digest (R-CF-03).
 
-## 4. Vocabulary pack ("Voyage pack")
+## 4. Vocabulary packs (plain by default, Voyage optional)
 
-Delivered as a terminology override set (`white-labelling.md`, I-72). Tenants can edit labels or choose a plain pack. Formal names always remain visible (I-96).
+Both packs are terminology override sets (`white-labelling.md`, I-72). The plain pack is the platform default and leads in headings, buttons, status labels, navigation, empty states, errors and notifications. Voyage is optional: a tenant switches it on, and its labels then appear as a secondary line beside the plain label. Tenants can edit labels in either pack. Formal names always remain visible (I-96). The full catalogues are in `docs/design/07-vocabulary-pack.md`.
+
+The plain names of the layer's own surfaces (decided 2026-11-01): Activity log (the Passage Diary), Progress map (the voyager route), Programme set-up (the Planning Studio), Approval and publication (the seal ceremony) and Pre-submission check (the packing check). The metaphor names elsewhere in this document are the Voyage pack's labels.
+
+The Voyage pack:
 
 | Domain concept | Voyage label | Notes |
 | --- | --- | --- |
@@ -495,7 +499,7 @@ Decided by Daniel on 2026-11-01.
 | ID | Topic | Decision |
 | --- | --- | --- |
 | O-54 | Applicant score and comment visibility | Yes to both scores and reviewer comments, but only after a final decision: NOT_SELECTED, DECLINED or GRANTED. GRANTED is a decision, not a terminal state. An INELIGIBLE proposal has no scores and shows the recorded knock-out reason. A WITHDRAWN proposal had no final decision and shows no scores or comments. Anonymous reviewer rules under P-11 still apply |
-| O-55 | Voyage vocabulary pack status | Voyage is the platform default vocabulary pack. Tenants can switch to a plain pack or edit labels via terminology overrides |
+| O-55 | Vocabulary pack default | Plain grant language is the platform default vocabulary pack. Voyage is an optional pack a tenant can switch on. Tenants can also edit labels via terminology overrides. Amended by Daniel on 2026-11-01: "I want plain-first / voyage optional" |
 | O-56 | Submission receipt contents | Receipts carry the audit-log anchor (I-24, I-90) in addition to ledger sequence and timestamp |
 | O-57 | Coordinator counts before conflict declaration | Permitted. Coordinators may see aggregate per-state counts before conflict declaration, with no titles or applicant data |
 | O-58 | IRC route strip | No. IRC members do not get a route strip. They see the nominated proposal and outcome only (R-IR-03) |
@@ -532,7 +536,7 @@ Rules from `CLAUDE.md` and the ADRs that bind this work.
 
 Write `docs/adr/ADR-015-journey-ui-projection.md`. It records:
 - The read-model status of the journey layer (I-92).
-- The vocabulary pack format (Voyage as platform default, O-55).
+- The vocabulary pack format (plain pack as platform default, Voyage optional, O-55).
 - Server-rendered SVG as the flowchart method.
 - The drift test approach.
 - Recorded decisions on O-54 to O-60 (decided 2026-11-01).

@@ -94,7 +94,7 @@ Reconciled on 2026-11-01 against `SPEC/12-journey-ui.md` (repository version) an
 
 ### 11. Default vocabulary pack
 
-**Status.** Resolved (design decision, spec amendment pending). Daniel's decision, 2026-11-01.
+**Status.** Resolved. Daniel's decision, 2026-11-01. O-55 is amended in `SPEC/12-journey-ui.md`, `SPEC/10-open-questions.md` and ADR-015.
 
 **Reference.** `SPEC/12-journey-ui.md` §15 O-55 and §17.2: Voyage is the platform default pack, and tenants can switch to a plain pack.
 
@@ -102,7 +102,7 @@ Reconciled on 2026-11-01 against `SPEC/12-journey-ui.md` (repository version) an
 
 **Recommendation.** Amend O-55 so the plain pack is the platform default and Voyage is opt-in per tenant.
 
-**Resolution.** Plain grant language is the platform default and Voyage is opt-in per tenant. Until O-55 is formally amended, the build treats this as a design decision pending a spec update. See `07-vocabulary-pack.md`.
+**Resolution.** Plain grant language is the platform default and Voyage is opt-in per tenant. O-55 was amended to match on 2026-11-01. See `07-vocabulary-pack.md`.
 
 ### 12. Spec metaphor names paired with plain labels
 

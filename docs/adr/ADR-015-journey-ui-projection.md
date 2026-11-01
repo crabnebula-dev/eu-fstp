@@ -41,7 +41,7 @@ Status: Accepted 2026-11-01 (Daniel Thompson-Yvetot).
 
 ### Vocabulary pack (I-94, I-96, O-55)
 
-- Voyage is the platform default vocabulary pack. It is a terminology override set (`white-labelling.md`, I-72). Tenants can switch to a plain pack or edit labels.
+- Plain grant language is the platform default vocabulary pack. Voyage is an optional pack a tenant switches on, shown as a secondary line beside the plain label. Both are terminology override sets (`white-labelling.md`, I-72), and tenants can edit labels in either. Amended by Daniel on 2026-11-01 (O-55).
 - Pack labels appear in interface labels only, never in contracts, notices, the Guide, funder documents or emails. A template scan enforces this (R-JV-09).
 - Every metaphor label is shown with the formal state name beside it in text.
 
@@ -61,7 +61,7 @@ Status: Accepted 2026-11-01 (Daniel Thompson-Yvetot).
 | ID | Decision |
 | --- | --- |
 | O-54 | Applicants see scores and reviewer comments only after a final decision (NOT_SELECTED, DECLINED or GRANTED), anonymous under P-11. INELIGIBLE shows the knock-out reason. WITHDRAWN shows no scores or comments |
-| O-55 | Voyage is the platform default vocabulary pack |
+| O-55 | Plain grant language is the platform default pack; Voyage is optional per tenant (amended 2026-11-01) |
 | O-56 | Submission receipts carry the audit-log anchor beside the ledger sequence and time. Until the anchor is witnessed, the receipt says "anchor pending" |
 | O-57 | Coordinators may see aggregate per-state counts before conflict declaration, with no titles or applicant data |
 | O-58 | IRC members get no route strip |
