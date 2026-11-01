@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Members and roles - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.upload-slot { border: 2px dashed var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; color: var(--color-text-2); background: var(--color-surface-1); }
+    .sw { display: inline-block; width: 1.5rem; height: 1rem; border: 1px solid #64748B; border-radius: var(--radius-sm); vertical-align: middle; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .section-head h2 { margin: 0; }
+    dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .row-self td { background: var(--color-state-warning-bg); }
+    .check-list { list-style: none; padding: 0; }
+    .check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
+    .check-list li > span:first-child { flex: 1; min-width: 12rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html" aria-current="page">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Tenant admin</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Member list for Horizon Bridges. Signed in as a.chen@horizon-bridges.example. Invite and grant actions need script.</p>
+
+    <div class="section-head">
+      <h1>Members and roles</h1>
+      <div><!-- TODO(js): Invite member needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="invite-why">Invite member</button>
+        <p id="invite-why" class="text-sm muted">Static prototype: this action needs script.</p></div>
+    </div>
+    <p class="callout callout--warning"><strong>Your own account:</strong> Granting a role to your own account requires approval by a second tenant admin (SoD-07).</p>
+    <p class="muted">Tenant admin is tenant-wide. Other roles bind an account to one programme with a start date and an optional end date (O-47). The tenant always keeps at least two tenant admins.</p>
+    <p id="grant-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    <table>
+      <caption>3 tenant accounts</caption>
+      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Tenant admin</th><th scope="col">Programmes and roles</th><th scope="col">Actions</th></tr></thead>
+      <tbody>
+        <tr class="row-self"><td>A. Chen <span class="badge badge--info">You</span></td><td class="pid">a.chen@horizon-bridges.example</td><td>Yes</td>
+          <td><ul><li>Programme manager, SuperSAFE, from 1 Sep 2026, no end date</li></ul></td>
+          <td><!-- TODO(js): open the grant role form; a self-grant goes to a second tenant admin. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why self-note">Grant role<span class="sr-only"> to A. Chen</span></button>
+            <p id="self-note" class="text-sm"><strong>Needs a second admin:</strong> this is your account (SoD-07).</p></td></tr>
+        <tr><td>M. Diop</td><td class="pid">m.diop@horizon-bridges.example</td><td>Yes</td>
+          <td>No programme role</td>
+          <td><!-- TODO(js): open the grant role form. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to M. Diop</span></button></td></tr>
+        <tr><td>P. Novak</td><td class="pid">p.novak@horizon-bridges.example</td><td>No</td>
+          <td><ul><li>Assigned reviewer, SuperSAFE, from 15 Sep 2026 to 31 Mar 2027. Identity verified at binding.</li></ul></td>
+          <td><!-- TODO(js): open the grant role form. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to P. Novak</span></button></td></tr>
+      </tbody>
+    </table>
+    <section aria-labelledby="pend-h">
+      <h2 id="pend-h">Pending invitations</h2>
+      <table>
+        <caption>1 pending invitation</caption>
+        <thead><tr><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Programme</th><th scope="col">Sent</th></tr></thead>
+        <tbody><tr><td class="pid">r.gomez@example.org</td><td>Call drafter</td><td>OpenTech Fund</td><td><time datetime="2026-10-29">29 Oct 2026</time> (3 days ago)</td></tr></tbody>
+      </table>
+      <p class="text-sm muted">The Call drafter binding is confirmed only after the invitee verifies their identity.</p>
+    </section>
+    <p class="callout callout--info"><strong>Identity check:</strong> Drafting and Judging bindings require verified identity at binding time (SoD-09). The platform checks identity status before confirming each binding.</p>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>
