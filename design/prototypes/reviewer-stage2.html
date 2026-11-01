@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stage 2 evaluation - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-reviewer.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-reviewer.html">Home</a></li><li><a href="reviewer-assignments.html" aria-current="page">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Assigned reviewer</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">R7</span><span class="sr-only">Account: reviewer-7f3a</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Reviewer stage 2 page for CSW-2024-0042 (m4-demo J6 step 5). Stage 1 score read-only. Submit needs script.</p>
+
+    <section aria-labelledby="strip-h"><h2 id="strip-h" class="text-sm" style="font-size:var(--text-sm);margin:0 0 var(--space-2)">Proposal status</h2><ol class="strip"><li class="is-done">Draft <span class="state-name">(DRAFT)</span><span class="sr-only">, done</span></li><li class="is-done">Submitted <span class="state-name">(SUBMITTED)</span><span class="sr-only">, done</span></li><li class="is-done">Stage 1 evaluation <span class="state-name">(STAGE1)</span><span class="sr-only">, done</span></li><li class="is-current" aria-current="step">Stage 2 questions <span class="state-name">(STAGE2)</span><span class="sr-only">, current</span></li><li class="is-next">Ranked, awaiting committee decision <span class="state-name">(RANKED)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Independent review <span class="state-name">(IRC_REVIEW)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Negotiation <span class="state-name">(NEGOTIATION)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Granted <span class="state-name">(GRANTED)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Project in progress <span class="state-name">(IN_EXECUTION)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Completed <span class="state-name">(COMPLETED)</span><span class="sr-only">, upcoming</span></li></ol></section>
+    <h1>Stage 2 evaluation</h1>
+    <p><span class="pid">CSW-2024-0042</span>, Community Wellbeing Navigator.</p>
+    <table>
+      <caption>Your stage 1 scores, read-only</caption>
+      <thead><tr><th scope="col">Criterion</th><th scope="col">Weight</th><th scope="col">Your score (0 to 5)</th></tr></thead>
+      <tbody>
+        <tr><td>Excellence</td><td>30%</td><td>4</td></tr>
+        <tr><td>Impact</td><td>40%</td><td>4</td></tr>
+        <tr><td>Implementation</td><td>30%</td><td>3</td></tr>
+        <tr><td>Weighted score</td><td></td><td>3.70</td></tr>
+      </tbody>
+    </table>
+    <form method="post" action="#" class="card">
+      <fieldset><legend>Do you have a question for the applicant?</legend>
+        <div class="choice"><input type="radio" id="q-yes" name="questions" value="ask" checked><label for="q-yes">Yes, I have a question</label></div>
+        <div class="choice"><input type="radio" id="q-none" name="questions" value="none"><label for="q-none">No questions</label></div>
+      </fieldset>
+      <div class="field"><label for="question">Your question for the applicant</label>
+        <span class="hint" id="question-hint">The applicant sees it without your name (P-11).</span>
+        <textarea id="question" name="question" aria-describedby="question-hint"></textarea></div>
+      <!-- TODO(js): passkey confirmation before the submission is posted. -->
+      <div class="btn-row"><button class="btn btn--primary" type="submit" disabled aria-describedby="s2-why">Submit</button></div>
+      <p id="s2-why" class="text-sm muted">This step needs the passkey prompt of your device, which a static prototype cannot run.</p>
+      <p class="text-sm muted">When every assigned reviewer records "No questions", the window closes and the proposal becomes Ranked, awaiting committee decision (RANKED).</p>
+    </form>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

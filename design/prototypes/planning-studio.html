@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Programme set-up - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.studio { display: grid; gap: var(--space-6); grid-template-columns: 17rem minmax(0, 1fr); }
+    @media (max-width: 52rem) { .studio { grid-template-columns: 1fr; } }
+    .studio-nav ol { list-style: none; padding: 0; }
+    .studio-nav > ol > li { margin-bottom: var(--space-4); }
+    .studio-nav h2 { font-size: var(--text-base); margin: 0 0 var(--space-1); }
+    .studio-nav .voyage-label { margin: 0 0 var(--space-1); }
+    .studio-nav li li a { display: flex; gap: var(--space-2); align-items: center; min-height: var(--target-min); padding: 0 var(--space-2); border-radius: var(--radius-sm); text-decoration: none; color: var(--color-text-1); }
+    .studio-nav li li a[aria-current="step"] { background: var(--color-state-info-bg); font-weight: var(--weight-bold); outline: 2px solid var(--color-brand); }
+    .mark { font-weight: var(--weight-bold); width: 1.25rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="#">Home</a></li><li><a href="#">Programmes</a></li><li><a href="#">Calls</a></li><li><a href="planning-studio.html" aria-current="page">Programme set-up</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Programme manager</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AK</span><span class="sr-only">Account: pm-a1k4</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Programme set-up (spec name: Planning Studio) for the SuperSAFE programme draft, step 6 (Money), save refused by I-50</p>
+
+    <h1>Programme set-up</h1>
+    <p class="voyage-label">Spec name: Planning Studio</p>
+    <p>Programme SuperSAFE, programme status <span class="badge badge--neutral">Draft</span>. Started from the SuperSAFE template.</p>
+    <div class="studio">
+      <nav class="studio-nav" aria-label="Set-up steps">
+        <ol>
+          <li><h2>Funder and identity</h2><p class="voyage-label">Studio: Surveying the territory</p><ol><li><a href="#"><span class="mark" aria-hidden="true">✓</span>1. Funder and instrument<span class="sr-only">, complete</span></a></li><li><a href="#"><span class="mark" aria-hidden="true">✓</span>2. Programme identity<span class="sr-only">, complete</span></a></li></ol></li>
+          <li><h2>Eligibility and scope</h2><p class="voyage-label">Studio: Border rules</p><ol><li><a href="#"><span class="mark" aria-hidden="true">✓</span>3. Eligibility<span class="sr-only">, complete</span></a></li><li><a href="#"><span class="mark" aria-hidden="true">✓</span>4. What we fund<span class="sr-only">, complete</span></a></li></ol></li>
+          <li><h2>Evaluation, money and contract</h2><p class="voyage-label">Studio: Instruments</p><ol><li><a href="#"><span class="mark" aria-hidden="true">✓</span>5. Evaluation<span class="sr-only">, complete</span></a></li><li><a href="#" aria-current="step"><span class="mark" aria-hidden="true">●</span>6. Money<span class="sr-only">, current step</span></a></li><li><a href="#"><span class="mark" aria-hidden="true">○</span>7. Contract<span class="sr-only">, not started</span></a></li></ol></li>
+          <li><h2>Support, people and communications</h2><p class="voyage-label">Studio: Support and crew</p><ol><li><a href="#"><span class="mark" aria-hidden="true">○</span>8. Support and complaints<span class="sr-only">, not started</span></a></li><li><a href="#"><span class="mark" aria-hidden="true">○</span>9. People (live SoD checks)<span class="sr-only">, not started</span></a></li><li><a href="#"><span class="mark" aria-hidden="true">○</span>10. Communications<span class="sr-only">, not started</span></a></li></ol></li>
+          <li><h2>Review and approval</h2><p class="voyage-label">Studio: Charter seal</p><ol><li><a href="#"><span class="mark" aria-hidden="true">○</span>11. Review<span class="sr-only">, not started</span></a></li></ol></li>
+        </ol>
+      </nav>
+      <section aria-labelledby="step-h">
+        <p class="card-kicker">Evaluation, money and contract, step 6 of 11</p>
+        <h2 id="step-h" style="margin-top:0">Money</h2>
+        <div class="callout callout--error" role="alert" aria-labelledby="err-h"><strong id="err-h">Not saved. 1 problem to fix:</strong> <a href="#cap">The cap per recipient (P-05) of 400 000.00 EUR is above the funder ceiling (P-58) of 300 000.00 EUR (I-50).</a></div>
+        <form method="post" action="#">
+          <div class="field"><label for="min-grant">Minimum grant per proposal, P-04 (EUR)</label><input id="min-grant" name="min" type="text" inputmode="decimal" value="5000.00"></div>
+          <div class="field"><label for="max-grant">Maximum grant per proposal, P-04 (EUR)</label><input id="max-grant" name="max" type="text" inputmode="decimal" value="100000.00"></div>
+          <div class="field"><label for="cap">Cap per recipient, P-05 (EUR)</label><span class="hint" id="cap-src">Imported from the funding document, page 4. Confirmed by pm-a1k4 on 28 Oct 2026 (I-65).</span><input id="cap" name="cap" type="text" inputmode="decimal" value="400000.00" aria-invalid="true" aria-describedby="cap-src cap-err"><span class="field-error" id="cap-err">Enter a cap at or below the funder ceiling of 300 000.00 EUR (P-58, step 1).</span></div>
+          <div class="btn-row"><a class="btn btn--ghost" href="#">Previous step</a><button class="btn btn--secondary" type="submit" name="a" value="save">Save</button><button class="btn btn--primary" type="submit" name="a" value="next">Next step</button></div>
+          <p class="text-sm muted">The next step opens when this step validates. A programme with validation failures cannot be activated (I-66). Warnings need an acknowledgement.</p>
+        </form>
+        <section class="card" aria-labelledby="prev-h">
+          <h3 id="prev-h" style="margin-top:0">Previews</h3>
+          <p class="text-sm">See what applicants will see: <a href="route-map.html">progress map preview</a> (R-JV-08), Guide for Applicants preview (R-GA-01) and public page preview.</p>
+        </section>
+      </section>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approval and publication - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="#">Home</a></li><li><a href="#">Programmes</a></li><li><a href="#">Calls</a></li><li><a href="planning-studio.html" aria-current="page">Programme set-up</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Programme manager</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AK</span><span class="sr-only">Account: pm-a1k4</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Approval and publication (spec name: seal ceremony). Programme activation first (J1), then call publication (J3).</p>
+
+    <h1>Approval and publication</h1>
+    <p class="voyage-label">Spec name: seal ceremony</p>
+    <p>Two different people must agree before a programme starts or a call goes public.</p>
+    <ol class="steps">
+      <li class="is-done"><h2 style="margin:0">Step 1: Activate programme, requires a second approver (I-67)</h2>
+        <p>Programme: SuperSAFE. Built by you, <span class="pid">pm-a1k4</span>. Validation report: 0 failures, 2 warnings acknowledged (I-66).</p>
+        <p class="text-sm muted">The request goes to the approval inbox of every tenant admin outside the builder set. You cannot choose the approver.</p>
+        <p><span class="badge badge--success">Activated</span> Approved by tenant admin <span class="pid">admin-0f5c</span> with a passkey confirmation on <time datetime="2026-10-29T10:14Z">29 Oct 2026, 11:14</time>.</p></li>
+      <li><h2 style="margin:0">Step 2: Approve and publish the call</h2>
+        <p>Call: SuperSAFE Open Call 3. Drafted by <span class="pid">drafter-d1e8</span>.</p>
+        <p class="text-sm muted">Before approval, this step showed: <button class="btn btn--secondary btn--small" type="button" disabled>Request approval</button> and the status "Awaiting approval from a non-drafter (R-PC-03)."</p>
+        <p><span class="badge badge--success">Approved</span> by <span class="pid">pm-m2c7</span>, who is not a drafter of this call, on <time datetime="2026-10-30T10:14Z">30 Oct 2026, 11:14</time>. Call state: APPROVED.</p>
+        <p class="text-sm"> Publishing then recomputes the validation report, which must be clean. The Guide for Applicants is generated in the same step (I-52).</p>
+        <form method="post" action="#"><button class="btn btn--primary" type="submit">Publish call</button>
+        <p class="stepup-note">Publishing freezes the policy version (I-12) and requires a passkey confirmation.</p></form></li>
+    </ol>
+    <p class="callout callout--info"><strong>Changes after approval:</strong> an edit to the call text, P-01 or P-09 returns the call to Draft (DRAFT). Approval must then be requested again. The page says so before you save.</p>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

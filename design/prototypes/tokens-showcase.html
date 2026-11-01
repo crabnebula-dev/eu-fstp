@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Design tokens showcase - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.sw { display: inline-block; width: 2.5rem; height: 1.5rem; border: 1px solid #64748B; border-radius: var(--radius-sm); vertical-align: middle; }
+    .space-bar { display: block; height: 0.75rem; background: var(--color-brand); border-radius: var(--radius-sm); }
+    .pair { padding: var(--space-3); border-radius: var(--radius-md); margin-bottom: var(--space-2); }
+    .focus-demo { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
+    .dark-sample { background: #0F172A; color: #F1F5F9; padding: var(--space-4); border-radius: var(--radius-lg); }
+    .dark-sample a { color: #93C5FD; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="#">Home</a></li><li><a href="#">People</a></li><li><a href="#">Programmes</a></li><li><a href="#" aria-current="page">Tenant settings</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Tenant admin</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">TA</span><span class="sr-only">Account: admin-0f5c</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Design review reference. Follows the device theme. No script.</p>
+
+    <h1>Design tokens</h1>
+    <p class="muted">Every token is a CSS custom property in <code>tokens.css</code>. Tenants override values, not names.</p>
+    <h2>Colour</h2>
+    <table><caption>Colour tokens, light and dark values</caption><thead><tr><th scope="col">Token</th><th scope="col">Light</th><th scope="col">Dark</th></tr></thead>
+    <tbody><tr><th scope="row"><code>--color-brand</code></th>
+  <td><span class="sw" style="background:#2563EB" aria-hidden="true"></span> <code>#2563EB</code></td>
+  <td><span class="sw" style="background:#3B82F6" aria-hidden="true"></span> <code>#3B82F6</code></td></tr><tr><th scope="row"><code>--color-brand-hover</code></th>
+  <td><span class="sw" style="background:#1D4ED8" aria-hidden="true"></span> <code>#1D4ED8</code></td>
+  <td><span class="sw" style="background:#60A5FA" aria-hidden="true"></span> <code>#60A5FA</code></td></tr><tr><th scope="row"><code>--color-brand-text</code></th>
+  <td><span class="sw" style="background:#1E40AF" aria-hidden="true"></span> <code>#1E40AF</code></td>
+  <td><span class="sw" style="background:#93C5FD" aria-hidden="true"></span> <code>#93C5FD</code></td></tr><tr><th scope="row"><code>--color-on-brand</code></th>
+  <td><span class="sw" style="background:#FFFFFF" aria-hidden="true"></span> <code>#FFFFFF</code></td>
+  <td><span class="sw" style="background:#0F172A" aria-hidden="true"></span> <code>#0F172A</code></td></tr><tr><th scope="row"><code>--color-surface-0</code></th>
+  <td><span class="sw" style="background:#FFFFFF" aria-hidden="true"></span> <code>#FFFFFF</code></td>
+  <td><span class="sw" style="background:#0F172A" aria-hidden="true"></span> <code>#0F172A</code></td></tr><tr><th scope="row"><code>--color-surface-1</code></th>
+  <td><span class="sw" style="background:#F8FAFC" aria-hidden="true"></span> <code>#F8FAFC</code></td>
+  <td><span class="sw" style="background:#1E293B" aria-hidden="true"></span> <code>#1E293B</code></td></tr><tr><th scope="row"><code>--color-surface-2</code></th>
+  <td><span class="sw" style="background:#F1F5F9" aria-hidden="true"></span> <code>#F1F5F9</code></td>
+  <td><span class="sw" style="background:#293548" aria-hidden="true"></span> <code>#293548</code></td></tr><tr><th scope="row"><code>--color-surface-3</code></th>
+  <td><span class="sw" style="background:#E2E8F0" aria-hidden="true"></span> <code>#E2E8F0</code></td>
+  <td><span class="sw" style="background:#334155" aria-hidden="true"></span> <code>#334155</code></td></tr><tr><th scope="row"><code>--color-text-1</code></th>
+  <td><span class="sw" style="background:#0F172A" aria-hidden="true"></span> <code>#0F172A</code></td>
+  <td><span class="sw" style="background:#F1F5F9" aria-hidden="true"></span> <code>#F1F5F9</code></td></tr><tr><th scope="row"><code>--color-text-2</code></th>
+  <td><span class="sw" style="background:#334155" aria-hidden="true"></span> <code>#334155</code></td>
+  <td><span class="sw" style="background:#CBD5E1" aria-hidden="true"></span> <code>#CBD5E1</code></td></tr><tr><th scope="row"><code>--color-text-3</code></th>
+  <td><span class="sw" style="background:#64748B" aria-hidden="true"></span> <code>#64748B</code></td>
+  <td><span class="sw" style="background:#94A3B8" aria-hidden="true"></span> <code>#94A3B8</code></td></tr><tr><th scope="row"><code>--color-border-strong</code></th>
+  <td><span class="sw" style="background:#64748B" aria-hidden="true"></span> <code>#64748B</code></td>
+  <td><span class="sw" style="background:#94A3B8" aria-hidden="true"></span> <code>#94A3B8</code></td></tr><tr><th scope="row"><code>--color-state-success-text</code></th>
+  <td><span class="sw" style="background:#15803D" aria-hidden="true"></span> <code>#15803D</code></td>
+  <td><span class="sw" style="background:#4ADE80" aria-hidden="true"></span> <code>#4ADE80</code></td></tr><tr><th scope="row"><code>--color-state-warning-text</code></th>
+  <td><span class="sw" style="background:#B45309" aria-hidden="true"></span> <code>#B45309</code></td>
+  <td><span class="sw" style="background:#FCD34D" aria-hidden="true"></span> <code>#FCD34D</code></td></tr><tr><th scope="row"><code>--color-state-error-text</code></th>
+  <td><span class="sw" style="background:#B91C1C" aria-hidden="true"></span> <code>#B91C1C</code></td>
+  <td><span class="sw" style="background:#F87171" aria-hidden="true"></span> <code>#F87171</code></td></tr><tr><th scope="row"><code>--color-state-info-text</code></th>
+  <td><span class="sw" style="background:#1D4ED8" aria-hidden="true"></span> <code>#1D4ED8</code></td>
+  <td><span class="sw" style="background:#93C5FD" aria-hidden="true"></span> <code>#93C5FD</code></td></tr><tr><th scope="row"><code>--color-journey-complete</code></th>
+  <td><span class="sw" style="background:#15803D" aria-hidden="true"></span> <code>#15803D</code></td>
+  <td><span class="sw" style="background:#4ADE80" aria-hidden="true"></span> <code>#4ADE80</code></td></tr><tr><th scope="row"><code>--color-journey-current</code></th>
+  <td><span class="sw" style="background:#2563EB" aria-hidden="true"></span> <code>#2563EB</code></td>
+  <td><span class="sw" style="background:#60A5FA" aria-hidden="true"></span> <code>#60A5FA</code></td></tr><tr><th scope="row"><code>--color-journey-upcoming</code></th>
+  <td><span class="sw" style="background:#64748B" aria-hidden="true"></span> <code>#64748B</code></td>
+  <td><span class="sw" style="background:#94A3B8" aria-hidden="true"></span> <code>#94A3B8</code></td></tr><tr><th scope="row"><code>--color-journey-terminal-negative</code></th>
+  <td><span class="sw" style="background:#B91C1C" aria-hidden="true"></span> <code>#B91C1C</code></td>
+  <td><span class="sw" style="background:#F87171" aria-hidden="true"></span> <code>#F87171</code></td></tr><tr><th scope="row"><code>--color-focus</code></th>
+  <td><span class="sw" style="background:#2563EB" aria-hidden="true"></span> <code>#2563EB</code></td>
+  <td><span class="sw" style="background:#60A5FA" aria-hidden="true"></span> <code>#60A5FA</code></td></tr><tr><th scope="row"><code>--color-danger</code></th>
+  <td><span class="sw" style="background:#B91C1C" aria-hidden="true"></span> <code>#B91C1C</code></td>
+  <td><span class="sw" style="background:#F87171" aria-hidden="true"></span> <code>#F87171</code></td></tr></tbody></table>
+    <h2>State pairs</h2>
+    <div class="pair callout callout--success" style="color:var(--color-state-success-text)"><strong>Success:</strong> text on its background, with a glyph badge <span class="badge badge--success">success</span></div><div class="pair callout callout--warning" style="color:var(--color-state-warning-text)"><strong>Warning:</strong> text on its background, with a glyph badge <span class="badge badge--warning">warning</span></div><div class="pair callout callout--error" style="color:var(--color-state-error-text)"><strong>Error:</strong> text on its background, with a glyph badge <span class="badge badge--error">error</span></div><div class="pair callout callout--info" style="color:var(--color-state-info-text)"><strong>Info:</strong> text on its background, with a glyph badge <span class="badge badge--info">info</span></div><div class="pair callout callout--" style="color:var(--color-state-neutral-text)"><strong>Neutral:</strong> text on its background, with a glyph badge <span class="badge badge--neutral">neutral</span></div>
+    <h2>Type scale</h2>
+    <p style="font-size:var(--text-xs);line-height:var(--leading-xs)"><code>--text-xs</code> 0.75rem / 1rem: Community Wellbeing Navigator</p><p style="font-size:var(--text-sm);line-height:var(--leading-sm)"><code>--text-sm</code> 0.875rem / 1.25rem: Community Wellbeing Navigator</p><p style="font-size:var(--text-base);line-height:var(--leading-base)"><code>--text-base</code> 1rem / 1.5rem: Community Wellbeing Navigator</p><p style="font-size:var(--text-lg);line-height:var(--leading-lg)"><code>--text-lg</code> 1.125rem / 1.75rem: Community Wellbeing Navigator</p><p style="font-size:var(--text-xl);line-height:var(--leading-xl)"><code>--text-xl</code> 1.25rem / 1.75rem: Community Wellbeing Navigator</p><p style="font-size:var(--text-2xl);line-height:var(--leading-2xl)"><code>--text-2xl</code> 1.5rem / 2rem: Community Wellbeing Navigator</p><p style="font-size:var(--text-3xl);line-height:var(--leading-3xl)"><code>--text-3xl</code> 1.875rem / 2.25rem: Community Wellbeing Navigator</p>
+    <p class="mono"><code>--font-mono</code>: CSW-2024-0042 00000000-0001-4f8c</p>
+    <h2>Spacing</h2>
+    <table><caption>Spacing scale, 4 pixel steps</caption><thead><tr><th scope="col">Token</th><th scope="col">Size</th><th scope="col">Sample</th></tr></thead><tbody>
+    <tr><td><code>--space-1</code></td><td>4px</td><td><span class="space-bar" style="width:var(--space-1)" aria-hidden="true"></span></td></tr><tr><td><code>--space-2</code></td><td>8px</td><td><span class="space-bar" style="width:var(--space-2)" aria-hidden="true"></span></td></tr><tr><td><code>--space-3</code></td><td>12px</td><td><span class="space-bar" style="width:var(--space-3)" aria-hidden="true"></span></td></tr><tr><td><code>--space-4</code></td><td>16px</td><td><span class="space-bar" style="width:var(--space-4)" aria-hidden="true"></span></td></tr><tr><td><code>--space-5</code></td><td>20px</td><td><span class="space-bar" style="width:var(--space-5)" aria-hidden="true"></span></td></tr><tr><td><code>--space-6</code></td><td>24px</td><td><span class="space-bar" style="width:var(--space-6)" aria-hidden="true"></span></td></tr><tr><td><code>--space-7</code></td><td>28px</td><td><span class="space-bar" style="width:var(--space-7)" aria-hidden="true"></span></td></tr><tr><td><code>--space-8</code></td><td>32px</td><td><span class="space-bar" style="width:var(--space-8)" aria-hidden="true"></span></td></tr><tr><td><code>--space-9</code></td><td>36px</td><td><span class="space-bar" style="width:var(--space-9)" aria-hidden="true"></span></td></tr><tr><td><code>--space-10</code></td><td>40px</td><td><span class="space-bar" style="width:var(--space-10)" aria-hidden="true"></span></td></tr><tr><td><code>--space-11</code></td><td>44px</td><td><span class="space-bar" style="width:var(--space-11)" aria-hidden="true"></span></td></tr><tr><td><code>--space-12</code></td><td>48px</td><td><span class="space-bar" style="width:var(--space-12)" aria-hidden="true"></span></td></tr><tr><td><code>--space-13</code></td><td>52px</td><td><span class="space-bar" style="width:var(--space-13)" aria-hidden="true"></span></td></tr><tr><td><code>--space-14</code></td><td>56px</td><td><span class="space-bar" style="width:var(--space-14)" aria-hidden="true"></span></td></tr><tr><td><code>--space-15</code></td><td>60px</td><td><span class="space-bar" style="width:var(--space-15)" aria-hidden="true"></span></td></tr><tr><td><code>--space-16</code></td><td>64px</td><td><span class="space-bar" style="width:var(--space-16)" aria-hidden="true"></span></td></tr>
+    </tbody></table>
+    <h2>Buttons</h2>
+    <div class="btn-row"><button class="btn btn--primary" type="button">Primary</button><button class="btn btn--secondary" type="button">Secondary</button><button class="btn btn--ghost" type="button">Ghost</button><button class="btn btn--danger" type="button">Danger</button><button class="btn" type="button">Default</button><button class="btn btn--primary" type="button" disabled>Disabled</button></div>
+    <h2>Badges</h2>
+    <p><span class="badge badge--success">Success</span> <span class="badge badge--warning">Warning</span> <span class="badge badge--error">Error</span> <span class="badge badge--info">Info</span> <span class="badge badge--neutral">Neutral</span> <span class="badge badge--warning" data-glyph="…">Anchor pending</span></p>
+    <h2>Form controls</h2>
+    <form method="post" action="#">
+      <div class="field"><label for="f1">Text input</label><input id="f1" type="text" placeholder="Placeholder uses text-3"></div>
+      <div class="field"><label for="f2">Invalid input</label><input id="f2" type="text" value="4000.00" aria-invalid="true" aria-describedby="f2e"><span class="field-error" id="f2e">Example error message.</span></div>
+      <div class="field"><label for="f3">Disabled input</label><input id="f3" type="text" value="Locked" disabled></div>
+      <div class="field"><label for="f4">Select</label><select id="f4"><option>Option one</option></select></div>
+      <div class="field"><label for="f5">Textarea</label><textarea id="f5"></textarea></div>
+      <fieldset><legend>Checkbox and radio</legend>
+        <div class="choice"><input type="checkbox" id="f6" checked><label for="f6">Checkbox</label></div>
+        <div class="choice"><input type="radio" id="f7" name="r" checked><label for="f7">Radio one</label></div>
+        <div class="choice"><input type="radio" id="f8" name="r"><label for="f8">Radio two</label></div>
+      </fieldset>
+    </form>
+    <h2>Focus indicator</h2>
+    <p><span class="btn btn--secondary focus-demo">Focused control (3px outline, 2px offset)</span></p>
+    <h2>Progress map nodes</h2>
+    <ol class="journey-list">
+      <li class="journey-node journey-node--complete">Stage 1 evaluation <span class="state-name">(STAGE1)</span>: Completed</li>
+      <li class="journey-node journey-node--current">Stage 2 questions <span class="state-name">(STAGE2)</span>: Current stage</li>
+      <li class="journey-node journey-node--upcoming">Ranked, awaiting committee decision <span class="state-name">(RANKED)</span>: Upcoming</li>
+      <li class="journey-node journey-node--terminal-positive">Completed <span class="state-name">(COMPLETED)</span>: Final outcome</li>
+      <li class="journey-node journey-node--terminal-negative">Not selected <span class="state-name">(NOT_SELECTED)</span>: Final outcome</li>
+    </ol>
+    <h2>Dark sample (fixed values)</h2>
+    <div class="dark-sample"><p>Primary text #F1F5F9 on #0F172A. <a href="#">Link #93C5FD</a>.</p></div>
+    <h2>All 16 states: plain pack (default) and Voyage pack (alternative)</h2>
+    <table><thead><tr><th scope="col">Formal state</th><th scope="col">Plain label</th><th scope="col">Voyage label (12-journey-ui §5.2)</th></tr></thead><tbody><tr><td class="state-name">DRAFT</td><td>Draft</td><td>At the departure hall</td></tr><tr><td class="state-name">SUBMITTED</td><td>Submitted</td><td>Departed, awaiting border check</td></tr><tr><td class="state-name">STAGE1</td><td>Stage 1 evaluation</td><td>Crossing</td></tr><tr><td class="state-name">STAGE2</td><td>Stage 2 questions</td><td>Ascent: questions from the scouts</td></tr><tr><td class="state-name">RANKED</td><td>Ranked, awaiting committee decision</td><td>Awaiting the council</td></tr><tr><td class="state-name">IRC_REVIEW</td><td>Independent review</td><td>Independent watch</td></tr><tr><td class="state-name">NEGOTIATION</td><td>Negotiation</td><td>Treaty</td></tr><tr><td class="state-name">GRANTED</td><td>Granted</td><td>Charter in force</td></tr><tr><td class="state-name">IN_EXECUTION</td><td>Project in progress</td><td>On the road</td></tr><tr><td class="state-name">COMPLETED</td><td>Completed</td><td>Safe harbour</td></tr><tr><td class="state-name">DEFERRED</td><td>Deferred to the next call</td><td>Wintering for the next voyage</td></tr><tr><td class="state-name">INELIGIBLE</td><td>Not eligible</td><td>Route closed at the border</td></tr><tr><td class="state-name">NOT_SELECTED</td><td>Not selected</td><td>Route ended</td></tr><tr><td class="state-name">DECLINED</td><td>Declined</td><td>Route ended</td></tr><tr><td class="state-name">TERMINATED</td><td>Grant terminated</td><td>Route ended</td></tr><tr><td class="state-name">WITHDRAWN</td><td>Withdrawn</td><td>Route ended</td></tr></tbody></table>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

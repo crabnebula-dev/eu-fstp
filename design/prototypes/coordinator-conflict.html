@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conflict, read, knock-out - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-coordinator.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-coordinator.html">Home</a></li><li><a href="coordinator-conflict.html" aria-current="page">Proposals</a></li><li><a href="stage1-close.html">Calls</a></li><li><a href="#">Programmes</a></li><li><a href="#">People</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as FSTP coordinator</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">5</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">JR</span><span class="sr-only">Account: coord-j8r2</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Coordinator order enforced: step 1 partly done (2 of 3 answered), steps 2 and 3 locked</p>
+
+    <h1>Eligibility check (knock-out) for SSF-2024-OC2</h1>
+    <p class="muted">The order is fixed: declare conflicts, then read, then record the knock-out result (R-CF-02).</p>
+    <ol class="steps">
+      <li><h2 style="margin:0">Declare conflicts</h2>
+        <p class="text-sm">Answer for each proposal in SUBMITTED. The declaration view shows the title and a neutral summary only.</p>
+        <table><caption class="sr-only">Conflict answers</caption>
+          <thead><tr><th scope="col">Proposal</th><th scope="col">Title and neutral summary</th><th scope="col">Your answer</th></tr></thead>
+          <tbody>
+            <tr><td class="pid">P-7Q2K</td><td>Coastal Air Monitors. Low-cost sensors for school air quality.</td><td><span class="badge badge--success">No conflict</span></td></tr>
+            <tr><td class="pid">P-3MZ8</td><td>Shared Kitchens. A booking tool for community kitchens.</td><td><span class="badge badge--warning" data-glyph="⇄">Conflict declared: reassigning (SoD enforced)</span></td></tr>
+            <tr><td class="pid">P-K4N1</td><td>Library Code Club. Weekly coding clubs in two libraries.</td><td><form method="post" action="#" class="btn-row" style="margin:0"><button class="btn btn--secondary btn--small" type="submit" name="conflict" value="no">No conflict</button><button class="btn btn--ghost btn--small" type="submit" name="conflict" value="yes">Declare conflict</button></form></td></tr>
+          </tbody>
+        </table>
+        <p class="text-sm muted">2 of 3 answered.</p></li>
+      <li class="is-locked"><h2 style="margin:0">Read applications</h2>
+        <p><a class="btn btn--secondary" aria-disabled="true" role="link" aria-describedby="lock2">Read application</a></p>
+        <p id="lock2" class="text-sm muted">Locked until you answer the conflict question for every proposal.</p></li>
+      <li class="is-locked"><h2 style="margin:0">Record knock-out result</h2>
+        <p id="lock3" class="text-sm muted">The "Record knock-out result" button appears after you read the application.</p></li>
+    </ol>
+    <h2>Later state, for reference</h2>
+    <ol class="steps">
+      <li class="is-done"><h3 style="margin:0">Declare conflicts</h3><p class="text-sm">All answered.</p></li>
+      <li class="is-done"><h3 style="margin:0">Read applications</h3><p><a class="btn btn--secondary btn--small" href="#">Read application P-7Q2K</a></p></li>
+      <li><h3 style="margin:0">Record knock-out result</h3>
+        <form method="post" action="#">
+          <fieldset><legend>Result for P-7Q2K</legend>
+            <div class="choice"><input type="radio" id="ko-pass" name="ko" value="pass"><label for="ko-pass">All criteria passed. Admit to Stage 1 evaluation (STAGE1).</label></div>
+            <div class="choice"><input type="radio" id="ko-fail" name="ko" value="fail"><label for="ko-fail">A criterion failed. Mark as Not eligible (INELIGIBLE).</label></div>
+          </fieldset>
+          <div class="field"><label for="ko-reason">Reason (required if a criterion failed)</label><textarea id="ko-reason" name="reason"></textarea></div>
+          <button class="btn btn--primary" type="submit">Record knock-out result</button>
+        </form></li>
+    </ol>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

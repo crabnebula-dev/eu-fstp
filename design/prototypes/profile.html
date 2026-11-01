@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your account - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="#">Support</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Applicant</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account" aria-current="page"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: /app/me, Profile and Security sections, 2 passkeys, 2 sessions</p>
+
+    <h1>Your account</h1>
+    <nav aria-label="On this page"><ul><li><a href="#profile-h">Profile</a></li><li><a href="#security-h">Security</a></li></ul></nav>
+    <section aria-labelledby="profile-h">
+      <h2 id="profile-h">Profile</h2>
+      <form method="post" action="#" class="card">
+        <dl class="facts"><dt>Display handle</dt><dd class="pid">meridian-social-lab</dd>
+          <dt>Verification</dt><dd><span class="badge badge--success">Identity verified</span></dd>
+          <dt>Roles held</dt><dd><ul style="margin:0"><li>Applicant (lead) in SuperSAFE</li><li>Team member in SuperSAFE Youth</li></ul></dd></dl>
+        <div class="field"><label for="display">Display name preference</label><select id="display" name="display"><option>Show my handle</option><option>Show my organisation name from the vault</option></select></div>
+        <div class="field"><label for="locale">Language</label><select id="locale" name="locale"><option selected>English</option><option lang="fr">Fran&ccedil;ais</option><option lang="de">Deutsch</option><option disabled>More languages available from your tenant</option></select></div>
+        <fieldset><legend>Theme</legend>
+          <div class="choice"><input type="radio" id="th-l" name="theme" value="light"><label for="th-l">Light</label></div>
+          <div class="choice"><input type="radio" id="th-d" name="theme" value="dark"><label for="th-d">Dark</label></div>
+          <div class="choice"><input type="radio" id="th-s" name="theme" value="system" checked><label for="th-s">Same as my device</label></div>
+        </fieldset>
+        <div class="field"><label for="tz">Time zone</label><select id="tz" name="tz"><option>Europe/Malta</option><option>Europe/Brussels</option><option>Europe/Lisbon</option><option>UTC</option></select></div>
+        <button class="btn btn--primary" type="submit">Save preferences</button>
+        <p class="text-sm">Your name, organisation and affiliations are kept in the identity vault, not here. <a href="#">Manage them in the vault</a> (opens the vault site).</p>
+      </form>
+    </section>
+    <section aria-labelledby="security-h">
+      <h2 id="security-h">Security</h2>
+      <h3>Passkeys</h3>
+      <table><caption class="sr-only">Your passkeys</caption>
+        <thead><tr><th scope="col">Name</th><th scope="col">Registered</th><th scope="col">Last used</th><th scope="col">Action</th></tr></thead>
+        <tbody>
+          <tr><td>Office laptop</td><td>2024-09-02</td><td>2024-11-06</td><td><form method="post" action="#"><button class="btn btn--danger btn--small" type="submit" aria-label="Remove passkey Office laptop">Remove</button></form></td></tr>
+          <tr><td>Phone</td><td>2024-09-10</td><td>2024-10-28</td><td><form method="post" action="#"><button class="btn btn--danger btn--small" type="submit" aria-label="Remove passkey Phone">Remove</button></form></td></tr>
+        </tbody>
+      </table>
+      <p class="stepup-note">Removing a passkey requires a confirmation with another passkey.</p>
+      <form method="post" action="#"><button class="btn btn--secondary" type="submit">Add a passkey</button></form>
+      <h3>Sessions</h3>
+      <table><caption class="sr-only">Signed-in sessions</caption>
+        <thead><tr><th scope="col">Device and browser</th><th scope="col">Last seen</th><th scope="col">Action</th></tr></thead>
+        <tbody>
+          <tr><td>Laptop, Firefox <span class="badge badge--info">This session</span></td><td>Now</td><td><form method="post" action="#"><button class="btn btn--secondary btn--small" type="submit" aria-label="Sign out this session">Sign out</button></form></td></tr>
+          <tr><td>Phone, Safari</td><td>2024-10-28 18:04</td><td><form method="post" action="#"><button class="btn btn--secondary btn--small" type="submit" aria-label="Sign out Phone, Safari">Sign out</button></form></td></tr>
+        </tbody>
+      </table>
+      <form method="post" action="#"><button class="btn btn--danger" type="submit">Sign out all sessions</button></form>
+      <h3>Recovery</h3>
+      <p>Lost all your passkeys? Recovery runs through the identity vault. <a href="#">Start recovery in the vault</a>.</p>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

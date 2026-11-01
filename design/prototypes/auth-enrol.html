@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create a passkey - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="calls-public.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="calls-public.html">Open calls</a></li><li><a href="#">How it works</a></li><li><a href="auth-signin.html" aria-current="page">Sign in</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools"><li><a class="tool-link" href="#">Language: English</a></li></ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Passkey enrolment after the email link (m4-demo J0 step 2, J4 step 3). One device already enrolled. Create action needs script.</p>
+
+    <h1>Create a passkey</h1>
+    <p>A passkey lets you sign in with your device lock, such as a fingerprint or a PIN. Nobody else can use it.</p>
+    <form method="post" action="#" class="card">
+      <div class="field"><label for="device">Device name</label>
+        <span class="hint" id="device-hint">A name you will recognise later, for example "Office laptop".</span>
+        <input id="device" name="device" type="text" maxlength="60" aria-describedby="device-hint"></div>
+      <!-- TODO(legal): consent text for storing the passkey public key and device name. -->
+      <p class="text-sm muted">Consent text pending legal review.</p>
+      <!-- TODO(js): call the WebAuthn create step, then post the result. -->
+      <div class="btn-row"><button class="btn btn--primary" type="button" disabled aria-describedby="create-why">Create passkey</button></div>
+      <p id="create-why" class="text-sm muted">This step needs the passkey prompt of your device, which a static prototype cannot run.</p>
+    </form>
+    <h2>Your devices</h2>
+    <table>
+      <caption>1 enrolled device</caption>
+      <thead><tr><th scope="col">Device</th><th scope="col">Enrolled</th><th scope="col">Last used</th></tr></thead>
+      <tbody><tr><td>Office laptop</td><td>1 Nov 2026, 10:05 Europe/Malta</td><td>1 Nov 2026, 10:05 Europe/Malta</td></tr></tbody>
+    </table>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

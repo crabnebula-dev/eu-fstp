@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your work - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-finance.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-finance.html" aria-current="page">Home</a></li><li><a href="#">Payments</a></li><li><a href="#">Contracts</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Finance approver and payment releaser</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">3</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">FN</span><span class="sr-only">Account: finance-6e2a</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Finance home for a person with approver and releaser roles. SoD-04 and I-05 apply per payment.</p>
+
+    <h1>Your work</h1>
+    <div class="callout callout--info"><strong>Separation of duties:</strong> you can approve or release a payment request, never both for the same request (SoD-04, I-05). Requests you approved do not appear in your release queue.</div>
+    <div class="grid grid--2">
+      <section class="card card--primary" aria-labelledby="ap-h">
+        <p class="card-kicker">As finance approver</p>
+        <h2 id="ap-h">3 payment requests awaiting approval</h2>
+        <ul>
+          <li><span class="pid">PR-2025-0007</span>, Milestone 1 "Platform launch", 12 000.00 EUR</li>
+          <li><span class="pid">PR-2025-0009</span>, Milestone 1, 9 500.00 EUR</li>
+          <li><span class="pid">PR-2025-0011</span>, hardship, 1 250.00 EUR</li>
+        </ul>
+        <a class="btn btn--primary" href="#">Review approvals</a>
+      </section>
+      <section class="card" aria-labelledby="rl-h">
+        <p class="card-kicker">As payment releaser</p>
+        <h2 id="rl-h">2 requests approved, awaiting release</h2>
+        <p class="text-sm">Approved by someone else. Release needs a passkey confirmation.</p>
+        <a class="btn btn--secondary" href="#">Review releases</a>
+      </section>
+    </div>
+    <div class="grid grid--3">
+      <div class="card"><span class="stat">4</span> contracts awaiting countersignature</div>
+      <div class="card"><span class="stat">11</span> payments released this quarter</div>
+      <div class="card"><span class="stat">0</span> requests overdue</div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>
