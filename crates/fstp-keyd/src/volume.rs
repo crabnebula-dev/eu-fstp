@@ -28,9 +28,11 @@
 //! maps the `mountinfo` type name to the `statfs` magic that the kernel
 //! reports for it ([`type_magic`]) and asks the same decision. So the
 //! check that guards a start is the check the W1 test constrains. ext2
-//! and ext3 report the ext4 magic, so they are accepted as `statfs` would
-//! accept them. They overwrite in place as ext4 does, and `data=journal`
-//! is refused on each.
+//! and ext3 report the ext4 magic, so `statfs` alone cannot tell them
+//! from ext4. The `mountinfo` name can, and design section 3.3 (Q32 A)
+//! allows ext4 and XFS only, so [`check_mount`] also requires the name to
+//! be one of [`ACCEPTED_VOLUMES`]. Found by the fuzz target
+//! `mountinfo_decode` in CI on 2026-10-31.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -210,15 +212,18 @@ pub fn mount_of<'a>(mounts: &'a [MountEntry], path: &Path) -> Option<&'a MountEn
     best.map(|(m, _)| m)
 }
 
-/// Whether the mount `m` may hold a key volume: its type passes
-/// [`key_volume_accepted`] through [`type_magic`], and it does not
-/// journal data blocks.
+/// Whether the mount `m` may hold a key volume: its type name is one of
+/// [`ACCEPTED_VOLUMES`], its `statfs` magic passes [`key_volume_accepted`]
+/// through [`type_magic`], and it does not journal data blocks. So the
+/// check never accepts a type the magic decision refuses, and it refuses
+/// ext2 and ext3, which share the ext4 magic.
 ///
 /// # Errors
 ///
 /// Returns [`KeydError::Volume`] with the rule it breaks.
 pub fn check_mount(m: &MountEntry) -> Result<(), KeydError> {
-    if !type_magic(&m.fstype).is_some_and(key_volume_accepted) {
+    let named = ACCEPTED_VOLUMES.iter().any(|(n, _)| *n == m.fstype);
+    if !named || !type_magic(&m.fstype).is_some_and(key_volume_accepted) {
         return Err(KeydError::Volume("the key volume is not on ext4 or XFS"));
     }
     if m.options
