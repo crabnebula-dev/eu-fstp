@@ -314,3 +314,30 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
   AC: an integration declared without bank fields cannot send bank details, and a write tool cannot run without a named approval.
 - **R-CR-03** Release metadata, update bundles, audit chain anchors and export manifests carry composite Ed25519 plus ML-DSA-65 signatures (ADR-001, I-90).
 - **R-CR-04** Contractual notices carry a composite companion signature next to the eIDAS seal.
+
+## Journey UI (`12-journey-ui.md`)
+
+- **R-JV-01** Every proposal and grant shows its current position on the route and the formal state name.
+  AC: the route response for each of the 16 states contains the state name and a label.
+- **R-JV-02** The journey graph equals the state machine.
+  AC: the drift test fails if an edge or node is added, removed or renamed on one side only (I-95).
+- **R-JV-03** Diary entries respect the role visibility matrix.
+  AC: for each role in 7.2 and each kind, the visible set equals the matrix (I-93).
+- **R-JV-04** Submission produces a receipt with ledger sequence, time, audit-log anchor, and can email a copy.
+  AC: receipt matches ledger sequence, time, and audit anchor (I-24, O-56). Before the anchor is witnessed, the receipt says "anchor pending" and shows no anchor value. Email carries no extra content (R-SB-04).
+- **R-JV-05** Route map has a full text alternative and keyboard operation.
+  AC: automated WCAG 2.2 AA checks pass in light and dark themes.
+- **R-JV-06** Public route graphic works without script.
+  AC: the public page loads with scripts disabled and the SVG is present.
+- **R-JV-07** Overlay is computed from policy and original-call policy for deferred proposals.
+  AC: a deferred proposal shows the original call's P-07 after a later edit.
+- **R-JV-08** Planner can preview the voyager route for a draft programme.
+  AC: changing P-07 in the creator changes the previewed window text.
+- **R-JV-09** Journey vocabulary never reaches contracts, notices, Guide, funder documents or emails.
+  AC: a search of those templates for every Voyage-pack label finds none (I-94).
+- **R-JV-10** Stage 1 close shows the computed outcome only.
+  AC: UI offers no alternative outcome, and the server rejects one (R-LA-03).
+- **R-JV-11** Journey rows and responses hold no free text from ledger records.
+  AC: property test over random ledgers finds only `TextRef` values in rows. An erased text yields the placeholder (I-97).
+- **R-JV-12** Amounts in journey output are canonical ADR-006 strings.
+  AC: every amount field matches the canonical form. The frontend has no `Number` conversion of an amount.

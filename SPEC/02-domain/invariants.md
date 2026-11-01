@@ -158,3 +158,12 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-89** Calls to external MCP servers send only the fields declared for that integration. Identity attributes and bank details go only to an approved finance hand-over.
 - **I-90** A composite signature verifies only when both the Ed25519 and the ML-DSA-65 halves verify.
 - **I-91** Self-hosted cells and desktop clients install only updates whose release metadata carries a valid composite signature by a release signing key that the release root currently certifies.
+
+## Journey UI layer (`12-journey-ui.md`, decided 2026-11-01)
+
+- **I-92** The journey layer holds no authority. Every state change still goes through the domain core. Deleting all journey tables and replaying the ledger rebuilds identical output.
+- **I-93** Every diary entry shown to a viewer passes the visibility function for that viewer's role and programme (section 7). No entry is stored once and filtered in the browser.
+- **I-94** Journey vocabulary appears in interface labels only. Contracts, contractual notices, the Guide, funder documents, emails and messaging keep approved wording (extends I-72).
+- **I-95** The journey graph must equal the state machine. A build fails when a node or edge differs from the domain core's transition table (drift test, section 13).
+- **I-96** Every metaphor label is shown with the formal status name beside it, in text, so the legal state is never ambiguous.
+- **I-97** A journey row or API response never holds free text from a ledger record. It holds a `TextRef`, resolved at read time under the viewer's rights. After erasure, a `TextRef` resolves to the erasure-log placeholder, never to text (ADR-007, I-81).

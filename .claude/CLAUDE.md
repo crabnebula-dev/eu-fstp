@@ -25,7 +25,9 @@ When documents conflict, this order applies: `SPEC/02-domain/invariants.md`, the
 
 ## Git
 
-Daniel Thompson-Yvetot is the sole author and committer of every commit. Never set author or committer to Claude. Never add Co-authored-by trailers. Never add a Signed-off-by line; Daniel adds his own sign-off where the DCO applies. Stage changes and propose commit messages. Daniel creates, signs and pushes every commit himself.
+Daniel Thompson-Yvetot is the sole author and committer of every commit. Never set author or committer to Claude. Never add Co-authored-by trailers. Never add a Signed-off-by line; Daniel adds his own sign-off where the DCO applies.
+
+For M2 to M4, Daniel authorised Claude to commit and push as him with the repository's git identity, and to merge each lane into `main` once every gate passes and the test run shows no new failure. `main` is the only integration branch. Outside that scope, stage changes and propose commit messages, and Daniel creates, signs and pushes every commit himself. Work after M4 needs his authorisation again.
 
 Never move code from the EUPL-1.2 export and import executable into the platform, or the reverse.
 

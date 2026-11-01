@@ -23,3 +23,7 @@ Reserved identifiers:
 | O-39 | aws-lc-rs feature for TURN over TLS in qrtc |
 
 When this returns to scope, qrtc rejoins Tier B in ADR-001 and falls under the release gate (I-74).
+
+## B-02: Captain's notes
+
+Deferred by Daniel on 2026-11-01 (`12-journey-ui.md` section 15). Private voyager notes attached to diary entries. Before it returns to scope it needs a retention rule and a check against I-27.
