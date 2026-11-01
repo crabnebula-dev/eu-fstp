@@ -2,7 +2,7 @@
 
 Design work for the FSTP platform proposal and grant UI, started 2026-11-01. Everything here is a design artefact. The build never reads these files and nothing here ships.
 
-Inputs: `design-brief.md`, ADR-014, ADR-015, `SPEC/12-journey-ui.md` (repository version), `docs/handoff/m4-design.md`, `SPEC/02-domain/state-machine.md`, `SPEC/02-domain/roles-and-sod.md`, `SPEC/01-requirements/non-functional.md` and `docs/handoff/m4-demo.md`.
+Inputs: `design-brief.md`, ADR-014, ADR-015, `SPEC/12-journey-ui.md` (repository version), `docs/handoff/m4-design.md`, `SPEC/02-domain/state-machine.md`, `SPEC/02-domain/roles-and-sod.md`, `programme-creator.md`, `white-labelling.md`, `SPEC/01-requirements/non-functional.md` and `docs/handoff/m4-demo.md`.
 
 ## Index
 
@@ -16,6 +16,7 @@ Inputs: `design-brief.md`, ADR-014, ADR-015, `SPEC/12-journey-ui.md` (repository
 | 6. Profile page (`/app/me`) | `06-profile-page.md`; `design/prototypes/profile.html` | draft |
 | 7. Vocabulary packs (plain platform default, Voyage opt-in per tenant) | `07-vocabulary-pack.md` | draft |
 | 8. Design tokens | `08-design-tokens.md`; `design/tokens.css`, `design/prototypes/tokens-showcase.html` | draft |
+| 9. Tenant admin screens (new) | `09-tenant-admin.md`; `design/prototypes/home-admin.html`, `admin-org.html`, `admin-members.html`, `admin-branding.html`, `admin-domains.html` | draft |
 | Demo walkthrough | `demo-walkthrough.md` | draft |
 | Spec questions | `spec-questions.md` | draft |
 | Prototype tests (Playwright) | `design/tests/prototypes.spec.ts`, `design/tests/playwright.config.ts`, `design/tests/README.md` | draft |
@@ -28,12 +29,13 @@ Open any file in `design/prototypes/` directly in a browser. They use no script 
 
 ## Rules every file follows
 
-- Synthetic data only: Nova Research Foundation, SuperSAFE, Meridian Social Lab, CSW-2024-0042, `demo@e2e.invalid`.
+- Synthetic data only: Nova Research Foundation, SuperSAFE, Meridian Social Lab, CSW-2024-0042, `demo@e2e.invalid`. The admin screens use Horizon Bridges, OpenTech Fund and `horizon-bridges.example` accounts.
+- Admin screens carry no Voyage labels, because tenant admin is an operations role.
 - Plain grant language leads in headings, buttons, status labels, nav items, empty states, errors and notifications.
 - The Voyage pack label appears only as a secondary line (`.voyage-label`) and in the progress map subtitle.
 - Every displayed label sits beside its formal state name (I-96).
 - State is never shown by colour alone. Each state carries a glyph and a word.
-- No em dashes. Sentences under 40 words. Legal text is marked TODO(legal). In the 8 prototypes added on 2026-11-01, TODO(legal) and TODO(js) are HTML comments beside a neutral visible placeholder.
+- No em dashes. Sentences under 40 words. Legal text is marked TODO(legal). In the 13 prototypes added on 2026-11-01, TODO(legal) and TODO(js) are HTML comments beside a neutral visible placeholder.
 
 ## Reconciliation log
 
@@ -68,3 +70,9 @@ Changes made on 2026-11-01 after `SPEC/12-journey-ui.md` and `m4-design.md` were
 | Updated prototypes: `plan-editor.html` (Plan, Eligibility, Submit and late refusal panels), `reviewer-scoring.html` (three summary fields, correction panel), `committee-ranking.html` (criterion columns, requested amount, remaining budget row, "Not served in M4 demo" labels). Also `irc-view.html` (validation count, I-18 hold), `end-states.html` (deferred and on-hold panels). `calls-public.html` now links to the call page | Closes gaps 17, 20, 21, 22 and 23 | `m4-demo.md` J4 to J8, "The seeds"; `spec-questions.md` items 17, 20 to 23 |
 | All 23 spec questions are now Resolved | Daniel's decisions of 2026-11-01 close the remaining items | `spec-questions.md` |
 | Playwright suite grew from 250 to 366 tests. The 250 earlier tests are unchanged, except the file count, which moved from 27 to 35 | Guards the new and updated prototypes | `design/tests/README.md` |
+| New doc `09-tenant-admin.md`: tenant admin role, the five admin screens, key rules and open question Q24 | Tenant admin had no screens | `roles-and-sod.md`, `programme-creator.md`, `white-labelling.md` |
+| 5 new admin prototypes: `home-admin.html`, `admin-org.html`, `admin-members.html`, `admin-branding.html`, `admin-domains.html`. The package now has 40 | Covers O-47, SoD-07, SoD-09 and I-68 to I-72 | `09-tenant-admin.md` |
+| Admin navigation and brand: Home, Organisation, Members and roles, Branding, Domains and email, under the Horizon Bridges brand. `tokens-showcase.html` picks up the new admin navigation | The old admin items linked nowhere | `09-tenant-admin.md` Shell |
+| Mandatory elements checklist shows five items, adding the accessibility statement to the four in the screen brief | I-69 lists five elements | `white-labelling.md` I-69 |
+| Q24 opened: separate onboarding wizard, or onboarding folded into the admin screens | Identity, Inference, Payments and Channels steps have no screen | `spec-questions.md` item 24 |
+| Playwright suite grew from 366 to 431 tests. The earlier tests are unchanged, except the file count, which moved from 35 to 40 | Guards the admin screens | `design/tests/README.md` |

@@ -6,7 +6,7 @@ Written to the patterns in the Playwright guide "Writing tests" (https://playwri
 
 ## What the tests cover
 
-Shared rules, run on all 35 prototypes:
+Shared rules, run on all 40 prototypes:
 
 - `lang="en"`, a title ending in " - FSTP", header, main and footer landmarks, and the prototype state label.
 - No `<script>`, no inline event handlers, no banned DOM calls, no em dashes, and only `../tokens.css` as a stylesheet.
@@ -42,7 +42,19 @@ Checks for the 8 new and 5 updated prototypes of 2026-11-01 (Daniel's decisions,
 - Proposal editor: four panels, the current step, the eligibility warning, the two ticks and the late refusal with no button.
 - Final outcomes: the frozen rules link and an on-hold panel with no links or controls.
 
-Last run on 2026-11-01: 366 passed, 0 failed.
+Checks for the 5 tenant admin prototypes (`09-tenant-admin.md`):
+
+- Each file loads with HTTP status 200 through a local route and has one main landmark.
+- No metaphor word in headings or buttons, no `.voyage-label` and no Voyage pack label anywhere on the page.
+- The shell shows "Signed in as Tenant admin", the Horizon Bridges brand and links to all five admin screens.
+- TODO markers sit in HTML comments. Every disabled button has a TODO(js) comment and an `aria-describedby` reason.
+- Home: the two cards, the members and domains links, two programmes linking to Programme set-up, and the attribution note in the footer.
+- Organisation: three definition lists, three disabled Edit buttons, two signed agreements, the sub-processor link, three TODO(legal) comments and the SoD-07 note.
+- Members: three accounts, two admins, the highlighted self row with SoD-07, the pending Call drafter invitation and the SoD-09 note.
+- Branding: three upload slots, one "Fails WCAG 2.2 AA" pair, five mandatory elements present, and Save disabled with its reason. Also the I-68, I-70 and I-72 notes.
+- Domains: two verified domains, the pending domain linking to its DNS instructions, three passing email checks, disabled Add domain and Re-check, and the ACME note.
+
+Last run on 2026-11-01: 431 passed, 0 failed.
 
 ## Running
 

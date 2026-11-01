@@ -1,6 +1,6 @@
 # Spec questions
 
-Status: draft. Points where the spec is unclear or seems wrong, found during design. Each has a recommendation. The spec wins until Daniel decides. On 2026-11-01 Daniel decided every open item, so all 23 are now Resolved.
+Status: draft. Points where the spec is unclear or seems wrong, found during design. Each has a recommendation. The spec wins until Daniel decides. On 2026-11-01 Daniel decided every open item, so all 23 are now Resolved. Item 24, about tenant onboarding, was opened later on 2026-11-01 and is Open.
 
 Reconciled on 2026-11-01 against `SPEC/12-journey-ui.md` (repository version) and `docs/handoff/m4-design.md`. Reconciled again on 2026-11-01 against `docs/handoff/m4-demo.md`. Items those documents settle are marked **Resolved** with a citation. The others stay **Open**.
 
@@ -237,3 +237,15 @@ Each item names a screen or state the demo script reaches that the first 27 prot
 **Recommendation.** Add both applicant states. The deferred view states the original call's policy (NOTE 8). The minor hold says what is missing, and the guardian steps stay visible to the guardian only (O-60).
 
 **Resolution.** `end-states.html` adds the deferred panel with the frozen rules link and the on-hold panel, which says nothing about the guardian (O-60).
+
+### 24. Tenant onboarding: separate wizard or folded into the admin screens
+
+**Status.** Open.
+
+**Reference.** `programme-creator.md` onboarding steps: Organisation, Agreements, Branding, Domains and email, Identity (P-45, P-18), Inference (P-21), Payments (P-20), Channels and Administrators (SoD-07).
+
+**Question.** Are the onboarding steps (Organisation through Channels) a separate onboarding wizard prototype, or are they folded into `admin-org.html` and `admin-branding.html`?
+
+**Gap.** The admin screens cover Organisation, Agreements, Branding, Domains and email, and Administrators. Identity, Inference, Payments and Channels have no screen.
+
+**Recommendation.** A separate step-based wizard for first-time onboarding, reusing the step pattern of `planning-studio.html`. The five admin screens then handle later changes. See `09-tenant-admin.md`.

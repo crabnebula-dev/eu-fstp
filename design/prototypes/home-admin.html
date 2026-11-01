@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administration - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.upload-slot { border: 2px dashed var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; color: var(--color-text-2); background: var(--color-surface-1); }
+    .sw { display: inline-block; width: 1.5rem; height: 1rem; border: 1px solid #64748B; border-radius: var(--radius-sm); vertical-align: middle; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .section-head h2 { margin: 0; }
+    dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .row-self td { background: var(--color-state-warning-bg); }
+    .check-list { list-style: none; padding: 0; }
+    .check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
+    .check-list li > span:first-child { flex: 1; min-width: 12rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-admin.html" aria-current="page">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Tenant admin</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Tenant admin home for Horizon Bridges. Signed in as a.chen@horizon-bridges.example. Tenant-wide role, not bound to a programme.</p>
+
+    <h1>Administration</h1>
+    <p class="muted">You manage the Horizon Bridges tenant. This role covers every programme of the tenant. It is not bound to one programme.</p>
+    <div class="grid grid--2">
+      <section class="card card--primary" aria-labelledby="org-h">
+        <p class="card-kicker">Legal entity and agreements</p>
+        <h2 id="org-h">Organisation settings</h2>
+        <p>Legal entity, address, signatories, data protection contact and signed agreements.</p>
+        <a class="btn btn--primary" href="admin-org.html">Open organisation settings</a>
+      </section>
+      <section class="card" aria-labelledby="brand-h">
+        <p class="card-kicker">White-label package</p>
+        <h2 id="brand-h">Branding and infrastructure</h2>
+        <p>Logo, colour tokens, fonts, mandatory elements and label overrides.</p>
+        <a class="btn btn--secondary" href="admin-branding.html">Open branding</a>
+      </section>
+    </div>
+    <section aria-labelledby="mem-h">
+      <h2 id="mem-h">Members and roles</h2>
+      <p>3 accounts, 2 of them tenant admins. 1 invitation is pending.</p>
+      <p><a href="admin-members.html">Manage members and roles</a></p>
+    </section>
+    <section aria-labelledby="dom-h">
+      <h2 id="dom-h">Domains and email</h2>
+      <p>2 custom domains active, 1 awaiting ownership check. Sending domain checks pass.</p>
+      <p><a href="admin-domains.html">Manage domains and email</a></p>
+    </section>
+    <section aria-labelledby="prog-h">
+      <h2 id="prog-h">Programmes</h2>
+      <table>
+        <caption>2 programmes in this tenant</caption>
+        <thead><tr><th scope="col">Programme</th><th scope="col">Members with a role</th><th scope="col">Set-up</th></tr></thead>
+        <tbody>
+          <tr><td>SuperSAFE</td><td>2 members</td><td><a href="planning-studio.html">Programme set-up<span class="sr-only"> for SuperSAFE</span></a></td></tr>
+          <tr><td>OpenTech Fund</td><td>0 members, 1 pending invitation</td><td><a href="planning-studio.html">Programme set-up<span class="sr-only"> for OpenTech Fund</span></a></td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>Platform attribution: FSTP platform (TODO(legal)).</p>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

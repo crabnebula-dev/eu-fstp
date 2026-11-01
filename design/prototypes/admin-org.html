@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Organisation settings - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.upload-slot { border: 2px dashed var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; color: var(--color-text-2); background: var(--color-surface-1); }
+    .sw { display: inline-block; width: 1.5rem; height: 1rem; border: 1px solid #64748B; border-radius: var(--radius-sm); vertical-align: middle; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .section-head h2 { margin: 0; }
+    dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .row-self td { background: var(--color-state-warning-bg); }
+    .check-list { list-style: none; padding: 0; }
+    .check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
+    .check-list li > span:first-child { flex: 1; min-width: 12rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html" aria-current="page">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        <span class="role-chip">Signed in as Tenant admin</span>
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Organisation settings, read-only view. Edit actions need script. Data from the onboarding steps Organisation and Agreements (programme-creator).</p>
+
+    <h1>Organisation settings</h1>
+    <p class="callout callout--info"><strong>Second approval:</strong> Changes to legal entity details require approval by a second tenant admin (SoD-07).</p>
+    <p id="edit-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    <section aria-labelledby="entity-h">
+      <div class="section-head"><h2 id="entity-h">Legal entity</h2><!-- TODO(js): open the legal entity edit form. -->
+        <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="edit-why">Edit<span class="sr-only"> legal entity</span></button></div>
+      <dl class="facts">
+        <dt>Legal entity name</dt><dd>Horizon Bridges</dd>
+        <dt>Registered address</dt><dd>12 Example Street, 1000 Synthetic City, Malta</dd>
+      </dl>
+    </section>
+    <section aria-labelledby="dpc-h">
+      <div class="section-head"><h2 id="dpc-h">Data protection contact</h2><!-- TODO(js): open the data protection contact edit form. -->
+        <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="edit-why">Edit<span class="sr-only"> data protection contact</span></button></div>
+      <dl class="facts">
+        <dt>Name</dt><dd>L. Farrugia</dd>
+        <dt>Email</dt><dd class="pid">privacy@horizon-bridges.example</dd>
+      </dl>
+    </section>
+    <section aria-labelledby="sig-h">
+      <div class="section-head"><h2 id="sig-h">Signatories</h2><!-- TODO(js): open the signatories edit form. -->
+        <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="edit-why">Edit<span class="sr-only"> signatories</span></button></div>
+      <dl class="facts">
+        <dt>A. Chen</dt><dd>Managing director</dd>
+        <dt>M. Diop</dt><dd>Head of programmes</dd>
+      </dl>
+    </section>
+    <section aria-labelledby="agr-h">
+      <h2 id="agr-h">Agreements</h2>
+      <table>
+        <caption>Agreements between Horizon Bridges and the platform operator</caption>
+        <thead><tr><th scope="col">Agreement</th><th scope="col">Status</th><th scope="col">Description</th></tr></thead>
+        <tbody>
+          <tr><td>SaaS terms</td><td><span class="badge badge--success">Signed</span> <time datetime="2026-09-14">14 Sep 2026</time></td>
+            <td><!-- TODO(legal): SaaS terms description. -->Description pending legal review.</td></tr>
+          <tr><td>Data processing agreement</td><td><span class="badge badge--success">Signed</span> <time datetime="2026-09-14">14 Sep 2026</time></td>
+            <td><!-- TODO(legal): data processing agreement description. -->Description pending legal review.</td></tr>
+          <tr><td>Sub-processor list</td><td><a href="#">View current list</a></td>
+            <td><!-- TODO(legal): sub-processor list description and change notice wording. -->Description pending legal review.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

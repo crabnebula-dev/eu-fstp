@@ -55,7 +55,7 @@ async function lowContrast(page: Page, selector: string, min = 4.5) {
 }
 
 test('every expected prototype exists', () => {
-  expect(FILES).toHaveLength(35);
+  expect(FILES).toHaveLength(40);
   for (const f of ['route-map.html', 'diary.html', 'irc-view.html', 'profile.html', 'tokens-showcase.html']) {
     expect(FILES).toContain(f);
   }
@@ -609,5 +609,144 @@ test.describe('2026-11-01 surfaces', () => {
     await expect(hold).toContainText('We need a guardian consent record before your application can continue.');
     await expect(hold.locator('a, button, input')).toHaveCount(0);
     expect(readFileSync(join(DIR, 'end-states.html'), 'utf8')).toMatch(/<!-- TODO\(legal\): notification wording/);
+  });
+});
+
+
+// Tenant admin screens (roles-and-sod, programme-creator onboarding, white-labelling I-68 to I-72).
+const ADMIN_FILES = ['home-admin.html', 'admin-org.html', 'admin-members.html', 'admin-branding.html', 'admin-domains.html'];
+// Voyage pack labels from 12-journey-ui §5.2 must not appear on admin screens at all, not even as a secondary line.
+const VOYAGE_PACK = /At the departure hall|Departed|Crossing|Ascent|Awaiting the council|Independent watch|Treaty|Charter in force|On the road|Safe harbour|Wintering|Route closed|Route ended/;
+
+for (const file of ADMIN_FILES) {
+  test.describe(`${file}: tenant admin checks`, () => {
+    test('loads with status 200 over HTTP and has one main landmark', async ({ page }) => {
+      const body = readFileSync(join(DIR, file), 'utf8');
+      const css = readFileSync(join(DIR, '..', 'tokens.css'), 'utf8');
+      await page.route('http://proto.test/**', route => route.request().url().endsWith('/tokens.css')
+        ? route.fulfill({ status: 200, contentType: 'text/css', body: css })
+        : route.fulfill({ status: 200, contentType: 'text/html', body }));
+      const res = await page.goto(`http://proto.test/prototypes/${file}`);
+      expect(res?.status()).toBe(200);
+      await expect(page.getByRole('main')).toHaveCount(1);
+    });
+
+    test('no metaphor word in primary headings or button labels, no Voyage labels', async ({ page }) => {
+      await open(page, file);
+      const texts = await page.locator('h1, h2, h3, button, .btn').evaluateAll(els => els.map(el => el.textContent || ''));
+      expect(texts.filter(t => METAPHOR.test(t)).map(t => t.trim())).toEqual([]);
+      await expect(page.locator('.voyage-label')).toHaveCount(0);
+      expect(await page.locator('body').innerText()).not.toMatch(VOYAGE_PACK);
+    });
+
+    test('tenant admin shell: role label, Horizon Bridges brand, admin nav', async ({ page }) => {
+      await open(page, file);
+      await expect(page.locator('.role-chip')).toHaveText('Signed in as Tenant admin');
+      await expect(page.locator('header .brand')).toContainText('Horizon Bridges');
+      const nav = page.getByRole('navigation', { name: 'Main navigation' });
+      for (const href of ADMIN_FILES) await expect(nav.locator(`a[href="${href}"]`)).toHaveCount(1);
+    });
+
+    test('TODO markers are HTML comments, disabled buttons carry TODO(js) and a reason', async ({ page }) => {
+      const html = readFileSync(join(DIR, file), 'utf8');
+      const main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+      expect(main.replace(/<!--[\s\S]*?-->/g, '')).not.toMatch(/TODO/);
+      const disabled = (main.match(/<button[^>]*disabled/g) || []).length;
+      expect((main.match(/<!-- TODO\(js\)/g) || []).length).toBeGreaterThanOrEqual(disabled);
+      await open(page, file);
+      const buttons = page.locator('main button[disabled]');
+      for (let i = 0; i < await buttons.count(); i++) {
+        await expect(buttons.nth(i)).toHaveAttribute('aria-describedby', /\S/);
+      }
+    });
+  });
+}
+
+test.describe('tenant admin surfaces', () => {
+  test('home: heading, two cards, members, domains, programmes with set-up links, attribution note', async ({ page }) => {
+    await open(page, 'home-admin.html');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Administration');
+    await expect(page.locator('main a[href="admin-org.html"]')).toBeVisible();
+    await expect(page.locator('main a[href="admin-branding.html"]')).toBeVisible();
+    await expect(page.locator('main a[href="admin-members.html"]')).toBeVisible();
+    await expect(page.locator('main a[href="admin-domains.html"]')).toBeVisible();
+    const rows = page.locator('main table tbody tr');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText('SuperSAFE');
+    await expect(rows.nth(1)).toContainText('OpenTech Fund');
+    await expect(page.locator('main table a[href="planning-studio.html"]')).toHaveCount(2);
+    await expect(page.locator('footer')).toContainText('Platform attribution: FSTP platform (TODO(legal)).');
+  });
+
+  test('organisation: definition lists, disabled edit buttons, agreements, SoD-07 note', async ({ page }) => {
+    await open(page, 'admin-org.html');
+    await expect(page.locator('main dl')).toHaveCount(3);
+    await expect(page.locator('main dt', { hasText: 'Legal entity name' })).toBeVisible();
+    await expect(page.locator('main dt', { hasText: 'Registered address' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Edit/ })).toHaveCount(3);
+    for (const b of await page.getByRole('button', { name: /^Edit/ }).all()) await expect(b).toBeDisabled();
+    const agreements = page.locator('main table tbody tr');
+    await expect(agreements).toHaveCount(3);
+    await expect(agreements.nth(0)).toContainText('Signed');
+    await expect(agreements.nth(1)).toContainText('Signed');
+    await expect(page.getByRole('link', { name: 'View current list' })).toBeVisible();
+    await expect(page.locator('main')).toContainText('Changes to legal entity details require approval by a second tenant admin (SoD-07).');
+    expect((readFileSync(join(DIR, 'admin-org.html'), 'utf8').match(/<!-- TODO\(legal\)/g) || []).length).toBe(3);
+  });
+
+  test('members: table, two admins, self row highlighted with SoD-07, pending invite, SoD-09 note', async ({ page }) => {
+    await open(page, 'admin-members.html');
+    await expect(page.getByRole('button', { name: 'Invite member' })).toBeDisabled();
+    const rows = page.locator('main table').first().locator('tbody tr');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.filter({ hasText: 'Yes' })).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText('Programme manager, SuperSAFE');
+    await expect(rows.nth(2)).toContainText('Assigned reviewer, SuperSAFE');
+    await expect(page.getByRole('button', { name: /^Grant role/ })).toHaveCount(3);
+    const self = page.locator('tr.row-self');
+    await expect(self).toHaveCount(1);
+    await expect(self).toContainText('a.chen@horizon-bridges.example');
+    await expect(self).toContainText('SoD-07');
+    await expect(page.locator('main')).toContainText('Granting a role to your own account requires approval by a second tenant admin (SoD-07).');
+    const invite = page.locator('main table').nth(1).locator('tbody tr');
+    await expect(invite).toHaveCount(1);
+    await expect(invite).toContainText('r.gomez@example.org');
+    await expect(invite).toContainText('Call drafter');
+    await expect(invite).toContainText('OpenTech Fund');
+    await expect(invite).toContainText('3 days ago');
+    await expect(page.locator('main')).toContainText('Drafting and Judging bindings require verified identity at binding time (SoD-09).');
+  });
+
+  test('branding: one failing pair blocks save, mandatory elements present, overrides limited to labels', async ({ page }) => {
+    await open(page, 'admin-branding.html');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Branding');
+    await expect(page.locator('.upload-slot')).toHaveCount(3);
+    await expect(page.locator('main')).toContainText('SVG is sanitised on upload per I-68');
+    const tokens = page.locator('main table').first().locator('tbody tr');
+    await expect(tokens).toHaveCount(3);
+    await expect(tokens.nth(2).locator('.badge--error')).toHaveText('Fails WCAG 2.2 AA');
+    await expect(page.locator('main')).toContainText('Packages with failing pairs are rejected (I-70).');
+    await expect(page.locator('main')).toContainText('No third-party font hosts are loaded (I-68).');
+    await expect(page.locator('.check-list li')).toHaveCount(5);
+    await expect(page.locator('.check-list .badge--success')).toHaveCount(5);
+    await expect(page.locator('main')).toContainText('These elements cannot be removed by branding (I-69).');
+    await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription('Saving is blocked while contrast failures exist.');
+    await expect(page.locator('main')).toContainText('Contracts and notices keep their approved wording (I-72).');
+  });
+
+  test('domains: pending domain links to instructions, email checks pass, ACME note', async ({ page }) => {
+    await open(page, 'admin-domains.html');
+    const rows = page.locator('main table tbody tr');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.filter({ hasText: 'Verified' })).toHaveCount(2);
+    await expect(rows.nth(2)).toContainText('Awaiting DNS TXT record');
+    await rows.nth(2).getByRole('link', { name: 'see instructions' }).click();
+    await expect(page).toHaveURL(/#dns-steps$/);
+    await expect(page.locator('main')).toContainText('A domain serves traffic only after verified ownership (I-71).');
+    await expect(page.getByRole('button', { name: 'Add domain' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Re-check' })).toBeDisabled();
+    await expect(page.locator('main dl .badge--success')).toHaveCount(3);
+    await expect(page.locator('main')).toContainText('Certificates are issued automatically through ACME after the ownership check.');
   });
 });
