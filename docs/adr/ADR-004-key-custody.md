@@ -341,6 +341,8 @@ Operator guide wording, as Q32 C phrases the limit:
 
 > File custody protects root keys from export (I-80). It makes erased data unrecoverable (I-81) only while the key volume is never backed up, snapshotted or copied. If your install cannot guarantee that, use an external KMS or HSM instead of file custody.
 
+Decided by Daniel on 2026-11-01: "i want this to be able to run on anyone's hardware, not just linux. so, if they are running on windows or mac, we just tell them that the ultimate degree of security isn't met, but we should let them continue. in all cases, do not fail on development mode". So `fstp-keyd` no longer refuses a key volume it cannot vouch for. It starts on any host and filesystem, reports full I-81 assurance only on a Linux ext4 or XFS volume, and otherwise reports reduced assurance with the reason. In development mode no host or platform check stops a start (design 21.0).
+
 Access to `fstp-keyd`, as proposed:
 
 - `fstp-keyd` listens on one Unix socket per client OS user. Directory and socket permissions let only that user connect, so std alone suffices and no crate is added.

@@ -144,6 +144,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-79** An account holding any role outside the Receiving group is never recovered by email alone.
 - **I-80** No root key exists in plaintext outside its custody backend.
 - **I-81** Destroying a root or data key makes the protected data unrecoverable, including from backups.
+  NOTE: Assurance levels. Decided by Daniel on 2026-11-01: "i want this to be able to run on anyone's hardware, not just linux. so, if they are running on windows or mac, we just tell them that the ultimate degree of security isn't met, but we should let them continue. in all cases, do not fail on development mode". File custody meets I-81 in full only on a Linux key volume of ext4 or XFS that is never backed up, snapshotted or copied. On any other host or filesystem, such as APFS, HFS+, NTFS or an unknown type, the platform still starts, and reports that it runs at reduced assurance for I-81 with the reason. It never reports full assurance there. In development mode, host and platform checks warn and never stop a start. Authorisation, step-up and the domain invariants are enforced in every mode.
 - **I-82** No database role can read across databases of different cells.
 - **I-83** Identity vault databases never share a cluster with application databases.
 
