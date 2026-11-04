@@ -447,6 +447,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-journey"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-json",
+]
+
+[[package]]
 name = "fstp-json"
 version = "0.1.0"
 dependencies = [
