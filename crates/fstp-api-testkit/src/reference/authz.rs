@@ -119,7 +119,10 @@ pub enum Who {
     AssignedReviewerConflicted,
     /// A committee member whose assignment on X was released.
     ReleasedReviewer,
-    /// An assigned reviewer whose committee binding is suspended.
+    /// An assigned reviewer whose committee binding the vault's identity
+    /// discovery suspended as a conflict of interest (`roles-and-sod.md`
+    /// Identity discovery): the account shares the identity of the call
+    /// drafter.
     SuspendedReviewer,
     /// A committee member recused from C's cut-off vote by a conflict on
     /// another ranked proposal of C.
@@ -239,14 +242,17 @@ impl Who {
     }
 
     /// Whether I-77 covers the account: it holds a Drafting, Judging or
-    /// Operations role or is a tenant admin. A suspended binding is still
-    /// held (`roles-and-sod.md` Enforcement points NOTE).
+    /// Operations role or is a tenant admin. The suspended reviewer holds
+    /// none: its conflict-of-interest suspension "never counts as held"
+    /// (`roles-and-sod.md` Identity discovery), and a suspended binding
+    /// "is inactive for every action" (Enforcement points NOTE).
     pub const fn management(self) -> bool {
         !matches!(
             self,
             Who::Anonymous
                 | Who::Unbound
                 | Who::EndedProgrammeManager
+                | Who::SuspendedReviewer
                 | Who::Lead
                 | Who::TeamMember
                 | Who::Guardian

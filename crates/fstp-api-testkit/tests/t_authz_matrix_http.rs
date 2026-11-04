@@ -9,10 +9,10 @@
 //! every cell, so a CSRF refusal never agrees with any expectation.
 //!
 //! This file holds the HTTP channel's part: reading an HTTP reply as an
-//! outcome ([`observe`]) and the two-way agreement ([`agrees`]). Their
-//! self-tests run now. The matrix, the reference and the harness belong to
-//! lanes W3a and W3b and are W0 stubs here, so `t_authz_matrix_http` is
-//! red because those stubs refuse.
+//! outcome ([`observe`]) and the two-way agreement ([`agrees`]), with their
+//! self-tests. The matrix, its reference and the harness (lanes W3a and
+//! W3b) run the cells, and the harness reads each reply as [`observe`]
+//! does.
 //!
 //! # Readings of the HTTP replies
 //!
@@ -33,7 +33,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use fstp_api_testkit::{harness, matrix, reference::authz};
+use fstp_api_testkit::{harness, matrix};
 
 /// What one HTTP reply says about its operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,23 +145,60 @@ fn agrees<C: PartialEq + std::fmt::Debug>(
     }
 }
 
-/// What `t_authz_matrix_http` waits for besides the three stubs.
-const MATRIX_SEAM: &str = "seam (lanes W3a and W3b, NotImplemented): the HTTP matrix needs \
-     `Matrix::cells`, `fstp_api_testkit::reference::authz::expected(op, principal, state, \
-     policy) -> Expected` with its rule-to-class map, and `Harness::http(cell)` giving the \
-     status and body of the reply over `fstp_rt::duplex` (design section 8.3)";
-
 /// T-AUTHZ-MATRIX, H-01, I-84: every matrix cell through the HTTP routes
-/// equals the reference, both ways.
+/// equals the reference, both ways. The harness's HTTP channel sends
+/// each web cell through the routes of `fstp-web` over `fstp_rt::duplex`,
+/// and reads the reply with `harness::observed_of_http`. MCP cells run
+/// through dispatch, since `/mcp` waits for ADR-013 (lane W3c). The
+/// comparison is the one of `t_authz_matrix_direct`, so the two channels
+/// are judged alike.
 #[test]
 fn t_authz_matrix_http() {
-    let cells = matrix::matrix().unwrap_or_else(|e| panic!("{e}"));
-    let reference = authz::authz_reference().unwrap_or_else(|e| panic!("{e}"));
-    let channel = harness::harness().unwrap_or_else(|e| panic!("{e}"));
-    // Each cell runs as: let (status, body) = channel.http(&cell);
-    // agrees(&reference.expected(&cell), &observe(status, &body), |k| reference.class_of(k)).
-    let _ = (cells, reference, channel);
-    panic!("{MATRIX_SEAM}");
+    let m = matrix::matrix().unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        m.missing_from_ops().is_empty(),
+        "reference operations OPS lacks: {:?}",
+        m.missing_from_ops()
+    );
+    assert!(
+        m.unknown_to_reference().is_empty(),
+        "OPS entries the reference does not judge: {:?}",
+        m.unknown_to_reference()
+    );
+    let shard = matrix::Shard::from_env().unwrap_or_else(|e| panic!("{e}"));
+    let c = matrix::compare_grouped(&m, &matrix::http_channel, matrix::threads_from_env(), shard)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(c.clean(), "HTTP channel: {}", c.report());
+}
+
+/// T-AUTHZ-MATRIX: the harness reads every HTTP reply shape of design
+/// sections 3.7 and 3.9 as this file's [`observe`] does, so the HTTP
+/// channel's reading is the one its self-tests pin.
+#[test]
+fn t_authz_matrix_http_harness_reads_replies_as_observe() {
+    use matrix::Observed;
+    let cases: [(u16, &[u8]); 5] = [
+        (200, b"{\"items\":[]}"),
+        (
+            202,
+            b"{\"confirm_path\":\"/app/pending/1\",\"expires\":\"2026-10-30T12:00:00Z\",\"status\":\"awaiting_confirmation\"}",
+        ),
+        (403, b"{\"code\":\"refused\",\"rule\":\"I-03\"}"),
+        (401, b"{\"challenge\":\"00\",\"code\":\"step_up_required\"}"),
+        (403, b"{\"code\":\"strong_method_required\"}"),
+    ];
+    for (status, body) in cases {
+        let got = harness::observed_of_http(status, body);
+        let want = match observe(status, body) {
+            HttpOutcome::Done => Observed::Completed,
+            HttpOutcome::Pending => Observed::Pending,
+            HttpOutcome::StepUp => Observed::StepUpRequired,
+            HttpOutcome::StrongMethod => Observed::StrongMethodRequired,
+            HttpOutcome::Refused(r) => Observed::Refused(Some(r)),
+            other => panic!("{other:?} has no harness reading"),
+        };
+        assert_eq!(got, Ok(want), "{}", String::from_utf8_lossy(body));
+    }
 }
 
 /// T-AUTHZ-MATRIX: [`observe`] reads every reply shape of design sections

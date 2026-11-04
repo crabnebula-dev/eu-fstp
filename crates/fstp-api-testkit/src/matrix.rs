@@ -227,6 +227,13 @@ pub enum Observed {
     /// A refusal with its rule text as `ApiError` carries it, such as
     /// `"I-03"`. `None` when the refusal names no rule.
     Refused(Option<String>),
+    /// The target does not exist for the caller (`ErrorCode::NotFound`),
+    /// with the rule text the refusal carries. It is classed by that rule,
+    /// as [`Observed::Refused`] is. `"Input"` is a guard on the target.
+    /// `"route"`, `"tool"`, `"I-85"`, `"R-MC-03"` and an empty rule map to
+    /// no class, so an operation the system never reached cannot agree
+    /// with `Allow` or `Pending` (T-AUTHZ-MATRIX, H-01).
+    NotFound(String),
 }
 
 /// Why a channel could not run a cell.
@@ -236,6 +243,9 @@ pub enum ChannelFault {
     Setup(String),
     /// The operation is not reachable through this channel's adapter.
     UnknownOp(&'static str),
+    /// The system answered with a seam that is not built yet
+    /// (`ApiError::NotImplemented` or a `not_available` reply).
+    NotImplemented(String),
 }
 
 /// One way to run a cell through the system: dispatch directly, the HTTP
@@ -308,7 +318,7 @@ const AUTH_RULES: [(&str, AuthClass); 30] = [
 /// guards, money, scoring, policy validation, the ledger and input
 /// checks. SoD-10 and SoD-11 refuse an assignment for the reviewer's
 /// organisation, which is the assignment's input, not the actor.
-const GUARD_RULES: [&str; 47] = [
+const GUARD_RULES: [&str; 49] = [
     "I-07",
     "I-08",
     "I-09",
@@ -352,10 +362,14 @@ const GUARD_RULES: [&str; 47] = [
     "R-LA-03",
     "R-LA-05",
     "R-EX-04",
-    "Row",
+    "R-TN-01",
+    // The non-spec rules as `ApiError` carries them
+    // (`fstp_api_core` `rule_text`).
+    "row",
     "Input",
-    "FactsIncomplete",
-    "StaleFacts",
+    "facts_incomplete",
+    "stale_facts",
+    "ledger",
 ];
 
 /// The class of a refusal rule. Rules outside both tables, such as I-84,
@@ -392,6 +406,7 @@ pub fn class_of(observed: &Observed) -> ObservedClass {
         Observed::ChannelDenied(Denial::P74) => ObservedClass::Auth(AuthClass::P74),
         Observed::Refused(Some(rule)) => class_of_rule(rule),
         Observed::Refused(None) => ObservedClass::Unmapped,
+        Observed::NotFound(rule) => class_of_rule(rule),
     }
 }
 
@@ -535,18 +550,197 @@ pub fn compare(
     out
 }
 
-/// The direct channel: every cell through `ApiCore::dispatch` on the fake
-/// cell of the three-channel harness.
-///
-/// Gap: lane W3b owns the harness, whose W0 stub refuses and offers no
-/// direct channel yet. Once `crate::harness::Harness` implements
-/// [`Channel`] for dispatch, this function returns it. Until then it
-/// refuses, first with the harness's own refusal.
+/// The direct channel: every cell through `ApiCore::dispatch` on the
+/// fake cells of the harness (`crate::harness`).
 pub fn direct_channel() -> Result<Box<dyn Channel>, NotImplemented> {
-    let _harness = crate::harness::harness()?;
-    Err(NotImplemented::new(
-        "fstp_api_testkit::matrix::direct_channel: the harness has no direct Channel yet",
-    ))
+    Ok(Box::new(crate::harness::harness()?.direct()))
+}
+
+/// The HTTP channel: every web cell through the routes of `fstp-web`
+/// over `fstp_rt::duplex` (`crate::harness`).
+pub fn http_channel() -> Result<Box<dyn Channel>, NotImplemented> {
+    Ok(Box::new(crate::harness::harness()?.http()))
+}
+
+impl Matrix {
+    /// The groups of cells one world serves: one per state and policy
+    /// row, in a fixed order. Together they hold every cell of
+    /// [`Matrix::cells`] once.
+    pub fn groups(&self) -> Vec<(StateProfile, Policy)> {
+        let mut rows = BTreeSet::new();
+        for op in self.ops.iter().filter_map(|n| self.reference.op(n)) {
+            rows.extend(policy_rows(op));
+        }
+        let mut out = Vec::new();
+        for state in StateProfile::all() {
+            for p in &rows {
+                out.push((state, *p));
+            }
+        }
+        out
+    }
+
+    /// The cells of one group, in a fixed order.
+    pub fn group_cells(&self, state: StateProfile, policy: Policy) -> Vec<Cell> {
+        let mut out = Vec::new();
+        for op in self.ops.iter().filter_map(|n| self.reference.op(n)) {
+            if !target_exists(op.target, state) || !policy_rows(op).contains(&policy) {
+                continue;
+            }
+            for who in Who::ALL.into_iter().filter(|w| feasible(*w, state)) {
+                for session in sessions(op, who) {
+                    out.push(CellKey {
+                        op: op.name,
+                        who,
+                        state,
+                        policy,
+                        session,
+                    });
+                }
+            }
+        }
+        out
+    }
+}
+
+impl Comparison {
+    /// A report of the comparison: the failures per operation and the
+    /// first mismatches.
+    pub fn report(&self) -> String {
+        let mut s = format!(
+            "{} of {} cells failed; by op {:?}\n",
+            self.failures, self.cells, self.by_op
+        );
+        for m in &self.first {
+            s.push_str(&format!(
+                "  {} {:?} {:?} {:?} {:?}: expected {:?}, observed {:?}\n",
+                m.cell.op,
+                m.cell.who,
+                m.cell.state,
+                m.cell.session,
+                m.cell.policy,
+                m.expected,
+                m.observed
+            ));
+        }
+        s
+    }
+
+    /// Adds the cells and failures of `other` to `self`.
+    pub fn merge(&mut self, other: Comparison) {
+        self.cells = self.cells.saturating_add(other.cells);
+        self.failures = self.failures.saturating_add(other.failures);
+        for (op, n) in other.by_op {
+            let e = self.by_op.entry(op).or_insert(0);
+            *e = e.saturating_add(n);
+        }
+        for m in other.first {
+            if self.first.len() < Comparison::KEPT {
+                self.first.push(m);
+            }
+        }
+    }
+}
+
+/// The threads a grouped comparison runs on: `FSTP_MATRIX_THREADS`, or
+/// the available parallelism up to 8.
+pub fn threads_from_env() -> usize {
+    if let Some(n) = std::env::var("FSTP_MATRIX_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    {
+        return n;
+    }
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(8)
+}
+
+/// Runs every cell of the groups of `shard` through channels from
+/// `make`, one per thread, and compares each with the reference of `m`.
+/// Group `i` belongs to `shard` when `i % count == index`, and each
+/// thread runs whole groups, so a world serves all of its cells.
+pub fn compare_grouped(
+    m: &Matrix,
+    make: &(dyn Fn() -> Result<Box<dyn Channel>, NotImplemented> + Sync),
+    threads: usize,
+    shard: Shard,
+) -> Result<Comparison, NotImplemented> {
+    let groups: Vec<(StateProfile, Policy)> = m
+        .groups()
+        .into_iter()
+        .zip(0u64..)
+        .filter(|(_, i)| shard.holds(*i))
+        .map(|(g, _)| g)
+        .collect();
+    let threads = threads.max(1);
+    let results: Vec<Result<Comparison, NotImplemented>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let groups = &groups;
+                scope.spawn(move || -> Result<Comparison, NotImplemented> {
+                    let mut channel = make()?;
+                    let mut out = Comparison::default();
+                    for (i, (state, policy)) in groups.iter().enumerate() {
+                        if i.checked_rem(threads) != Some(t) {
+                            continue;
+                        }
+                        for cell in m.group_cells(*state, *policy) {
+                            out.cells = out.cells.saturating_add(1);
+                            let expected = m.reference.expected(&cell);
+                            let observed = channel.observe(&cell);
+                            let ok = match (&expected, &observed) {
+                                (Some(e), Ok(o)) => agrees(*e, class_of(o)),
+                                _ => false,
+                            };
+                            if !ok {
+                                out.fail(Mismatch {
+                                    cell,
+                                    expected,
+                                    observed,
+                                });
+                            }
+                        }
+                    }
+                    Ok(out)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    Err(NotImplemented::new(
+                        "fstp_api_testkit::matrix::compare_grouped: a thread panicked",
+                    ))
+                })
+            })
+            .collect()
+    });
+    let mut out = Comparison::default();
+    for r in results {
+        out.merge(r?);
+    }
+    for name in &m.unknown_to_reference {
+        out.fail(Mismatch {
+            cell: CellKey {
+                op: name,
+                who: Who::Anonymous,
+                state: StateProfile::ProgrammeActive,
+                policy: Policy::SUPERSAFE,
+                session: Session {
+                    login: None,
+                    step_up: StepUp::Absent,
+                    channel: Via::Web,
+                },
+            },
+            expected: None,
+            observed: Err(ChannelFault::UnknownOp(name)),
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -564,23 +758,7 @@ mod tests {
     }
 
     fn report(c: &Comparison) -> String {
-        let mut s = format!(
-            "{} of {} cells failed; by op {:?}\n",
-            c.failures, c.cells, c.by_op
-        );
-        for m in &c.first {
-            s.push_str(&format!(
-                "  {} {:?} {:?} {:?} {:?}: expected {:?}, observed {:?}\n",
-                m.cell.op,
-                m.cell.who,
-                m.cell.state,
-                m.cell.session,
-                m.cell.policy,
-                m.expected,
-                m.observed
-            ));
-        }
-        s
+        c.report()
     }
 
     /// An oracle channel that answers each cell as the reference expects,
@@ -667,9 +845,27 @@ mod tests {
             m.unknown_to_reference()
         );
         let shard = Shard::from_env().unwrap_or_else(|e| panic!("{e}"));
-        let mut channel = direct_channel().unwrap_or_else(|e| panic!("{e}"));
-        let c = compare(&m, None, channel.as_mut(), shard);
+        let c = compare_grouped(&m, &direct_channel, threads_from_env(), shard)
+            .unwrap_or_else(|e| panic!("{e}"));
         assert!(c.clean(), "direct channel: {}", report(&c));
+    }
+
+    /// Design section 8.3: the groups a world serves hold every cell of
+    /// the matrix once, so the grouped comparison judges the full product.
+    #[test]
+    fn t_authz_matrix_groups_partition_the_cells() {
+        let m = small_matrix();
+        let all: BTreeSet<Cell> = m.cells().collect();
+        let mut grouped = BTreeSet::new();
+        let mut n = 0usize;
+        for (state, policy) in m.groups() {
+            for c in m.group_cells(state, policy) {
+                n += 1;
+                grouped.insert(c);
+            }
+        }
+        assert_eq!(n, all.len(), "a cell in two groups");
+        assert_eq!(grouped, all);
     }
 
     /// Design section 8.3 `t_authz_matrix_covers_every_rule`: every `OPS`
@@ -792,6 +988,41 @@ mod tests {
         };
         let c = compare(&m, None, &mut oracle, Shard::ALL);
         assert_eq!(c.failures, 1, "{}", report(&c));
+    }
+
+    /// T-AUTHZ-MATRIX, H-01: a `not_found` reply is classed by its rule.
+    /// A missing target named as input is a guard. A missing route, tool,
+    /// pending action (I-85) or agent client (R-MC-03) is no class, so it
+    /// agrees with no expectation at all.
+    #[test]
+    fn t_authz_matrix_not_found_is_classed_by_its_rule() {
+        let input = Observed::NotFound("Input".to_owned());
+        assert_eq!(class_of(&input), ObservedClass::Guard);
+        assert!(agrees(Expected::Allow, class_of(&input)));
+        for rule in ["route", "tool", "I-85", "R-MC-03", ""] {
+            let o = Observed::NotFound(rule.to_owned());
+            assert_eq!(class_of(&o), ObservedClass::Unmapped, "{o:?}");
+            assert!(!agrees(Expected::Allow, class_of(&o)), "{o:?}");
+            assert!(!agrees(Expected::Pending, class_of(&o)), "{o:?}");
+            for c in [
+                AuthClass::Actor,
+                AuthClass::Visibility,
+                AuthClass::Conflict,
+                AuthClass::Scope,
+                AuthClass::P74,
+                AuthClass::LoginStrength,
+                AuthClass::StepUp,
+                AuthClass::NotExposed,
+                AuthClass::Draft,
+            ] {
+                assert!(!agrees(Expected::Deny(c), class_of(&o)), "{o:?} {c:?}");
+            }
+        }
+        let hidden = Observed::NotFound("R-AC-01".to_owned());
+        assert_eq!(
+            class_of(&hidden),
+            ObservedClass::Auth(AuthClass::Visibility)
+        );
     }
 
     /// Design section 8.3: an operation on one side only is reported, and

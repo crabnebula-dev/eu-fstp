@@ -1737,7 +1737,10 @@ async fn m3_port<P: Seams>(
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
     if admin_only(call.spec) && !call.caller.p.tenant_admin() {
-        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")));
+        // An actor refusal: these approvals are the tenant admin's role
+        // (`roles-and-sod.md` roles table). R-AC-01 governs proposal
+        // reads under P-10 only.
+        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
     }
     let id = |name: &str| {
         forms::id_param(&op.request, name)
