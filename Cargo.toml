@@ -58,6 +58,7 @@ members = [
     "crates/fstp-api-testkit",
     "tools/deps-check",
     "tools/gen-ts",
+    "tools/test-gate",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
 exclude = ["crates/*/fuzz", "tools/*/fuzz"]

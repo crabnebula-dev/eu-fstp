@@ -31,6 +31,11 @@ fstp-audit.workspace = true
 fstp-keys.workspace = true
 fstp-json.workspace = true
 fstp-crypto.workspace = true
+# In-house edges of lane int5: the database client of the route backend
+# and of the pools, and the witness connection protocol and its async
+# lock (design sections 4.2 and 7.2).
+fstp-pgwire.workspace = true
+fstp-witness.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
@@ -40,6 +45,20 @@ fstp-prop.workspace = true
 fstp-witness.workspace = true
 fstp-auth.workspace = true
 fstp-domain-testkit.workspace = true
+# The crate itself with the test-only `memory` and `dev-pages` features,
+# so its own tests reach the in-memory route backend and the page front.
+# No shipped build enables either.
+fstp-cell = { workspace = true, features = ["memory", "dev-pages"] }
+
+[features]
+# Test only: `routes::memory`, the in-memory backend and the local cell
+# (design section 14.3). The `fstp-cell` binary never builds them.
+memory = []
+# Test and dev stack only: `http::Front::with_pages`, which serves the
+# compiled auth pages of design section 11.2 (`routes::page_table`).
+# Section 8.7 does not list those routes yet, so no shipped build enables
+# it.
+dev-pages = []
 
 [lints]
 workspace = true

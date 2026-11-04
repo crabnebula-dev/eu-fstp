@@ -9,20 +9,28 @@
 //! A column whose class ADR-007 does not settle carries `None`, as lanes
 //! W0 and W2d did. Each is reported to Daniel:
 //!
-//! - chain links, stored-row hashes, anchor signatures and receipts, and
-//!   the keystore's custody handles, destroy receipts and public keys;
+//! - chain links and stored-row hashes in `audit.chain`, anchor receipts,
+//!   and the keystore's custody handles, destroy receipts and public
+//!   keys;
 //! - `auth.challenge.action_digest`, a SHA-256 over a command, which is
 //!   neither a digest of a random secret nor keyed;
 //! - `ops.outbox.idem`, whose form the M6 dispatcher fixes;
 //! - the migration ledger's `name` and `checksum`, which describe the
 //!   binary's own migrations.
 //!
+//! The `audit.anchor` link is a `PublicDigest` and its signature a
+//! `Signature`, the classes Daniel added to design section 4.5 on
+//! 2026-10-30 for the witness columns of the same kind. The receipt
+//! column holds a whole encoded receipt, fields and signature together,
+//! so no single class covers it.
+//!
 //! Readings, interim, pending Daniel: `schema` is an `Enum` (a published
 //! schema version), and `key_ix` and `generation` are `Sequence` (a
 //! generation number).
 
 use fstp_migrate::catalogue::ColumnClass::{
-    Count, Enum, KeyedDigest, RandomId, Sealed, SecretDigest, Sequence, Time,
+    Count, Enum, KeyedDigest, PublicDigest, RandomId, Sealed, SecretDigest, Sequence, Signature,
+    Time,
 };
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
@@ -119,9 +127,9 @@ pub const CATALOGUE: &[TableSpec] = &[
         TableClass::AuditEvent,
         &[
             col("n", Sequence),
-            open("link"),
+            col("link", PublicDigest),
             col("at", Time),
-            open("signature"),
+            col("signature", Signature),
             col("witness_seq", Sequence),
             open("receipt"),
         ],

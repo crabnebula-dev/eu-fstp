@@ -14,6 +14,7 @@ import type { Failure } from "./client.js";
 import { APPLICANT_APPROVED, APPLICANT_LABELS, FOOTER_APPROVED } from "./messages.en.js";
 import type { ProposalState } from "./rules.js";
 import type { Day, Instant } from "./wire.js";
+import { appShell } from "../home/nav.js";
 
 // ---------------------------------------------------------------------------
 // Catalogue
@@ -157,17 +158,12 @@ export function frame(title: Label): Frame {
   document.title = t("app.document_title", { page: title });
   const root = rootElement();
   root.replaceChildren();
-  const nav = h("nav", { "aria-label": t("nav.label") }, [
-    h("ul", { class: "fstp-nav" }, [
-      h("li", {}, [h("a", { href: APP.calls }, [t("nav.calls")])]),
-      h("li", {}, [h("a", { href: APP.proposals }, [t("nav.proposals")])]),
-      h("li", {}, [h("a", { href: APP.notices }, [t("nav.notices")])]),
-    ]),
-  ]);
   const heading = h("h1", {}, [title]);
   const alert = h("p", { id: "page-alert", role: "alert", class: "fstp-alert", hidden: true });
   const main = h("main", { id: "main" }, [heading, alert]);
-  root.append(h("header", { class: "fstp-header" }, [nav]), main, footer(mandatoryElements()));
+  // The page shell: skip link, top bar, and the sidebar with the site
+  // navigation (`docs/design/01-navigation-home.md`, 2026-11-01).
+  root.append(...appShell(main), footer(mandatoryElements()));
   return { root, main, heading, alert };
 }
 

@@ -325,13 +325,15 @@ fn run_anchored(script: Script, commands: usize) -> Result<Anchored, &'static st
         let keys = StoreKeys {
             anchor: composite::generate().map_err(|_| "no anchor key")?,
             ledger: DataKey::generate().map_err(|_| "no ledger key")?,
+            witness: vec![peer.0.key.public_key().to_bytes().to_vec()],
         };
         let db = ScriptedDb {
             inner: MemDatabase::new(),
             script,
             commits: 0,
         };
-        let mut store: Store = AnchoredStore::new(db, client(&peer), CELL, keys);
+        let mut store: Store = AnchoredStore::new(db, client(&peer), CELL, keys)
+            .map_err(|_| "the store refused its keys")?;
         // Without a witness the start-up check cannot finish; the cell
         // still starts and serves reads (risk R8).
         let _ = store.start().await;
@@ -353,7 +355,8 @@ fn run_anchored(script: Script, commands: usize) -> Result<Anchored, &'static st
                 drop(engine);
                 let store = task.await.map_err(|_| "the engine task failed")?;
                 let (db, _, keys) = store.into_parts();
-                let mut store: Store = AnchoredStore::new(db, client(&peer), CELL, keys);
+                let mut store: Store = AnchoredStore::new(db, client(&peer), CELL, keys)
+                    .map_err(|_| "the store refused its keys")?;
                 store
                     .start()
                     .await

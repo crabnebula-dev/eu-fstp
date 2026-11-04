@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review payment request - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-finance.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">FN</span><span class="sr-only">Account: finance-6e2a</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Finance approver and payment releaser.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Finance approver and payment releaser</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-finance.html">Home</a></li><li><a href="payment-request-review.html" aria-current="page">Payment approvals</a></li><li><a href="payment-release.html">Payment releases</a></li><li><a href="#">Contracts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Finance approver reviews PR-2026-0012 in UNDER_REVIEW. Automated checks passed. Line 1 approved in full, line 2 partial, line 3 rejected.</p>
+
+    <h1>Review payment request</h1>
+    <p class="callout callout--warning"><strong>Prerequisite:</strong> Payment request roles (Finance approver and Payment releaser) must be assigned before this workflow is available. Assign roles in Administration &gt; Members and roles. <a href="admin-members.html">Open Members and roles</a></p>
+    <dl class="facts">
+      <dt>Request reference</dt><dd class="pid">PR-2026-0012</dd>
+      <dt>Grantee</dt><dd>P. Novak</dd>
+      <dt>Call</dt><dd>SuperSAFE Call 1</dd>
+      <dt>Submitted</dt><dd><time datetime="2026-10-20">20 Oct 2026</time></dd>
+      <dt>Status</dt><dd><span class="badge badge--info">Under review</span> <span class="state-name">UNDER_REVIEW</span></dd>
+    </dl>
+    <section aria-labelledby="chk-h">
+      <h2 id="chk-h">Automated checks</h2>
+      <table>
+        <caption>3 of 3 checks passed before human review</caption>
+        <thead><tr><th scope="col">Check</th><th scope="col">Result</th></tr></thead>
+        <tbody>
+          <tr><td>Deliverable publicly reachable</td><td><span class="badge badge--success">Pass</span></td></tr>
+          <tr><td>Licence in the approved list (P-26)</td><td><span class="badge badge--success">Pass</span></td></tr>
+          <tr><td>Amount within available (I-58)</td><td><span class="badge badge--success">Pass</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section aria-labelledby="lines-h">
+      <h2 id="lines-h">Lines</h2>
+      <table>
+        <caption>3 milestone lines</caption>
+        <thead><tr><th scope="col">Milestone</th><th scope="col" class="num">Requested</th><th scope="col">Deliverable</th><th scope="col">Licence</th><th scope="col">Progress notes</th></tr></thead>
+        <tbody>
+          <tr><td>1.2 Ten community workshops held</td><td class="num">5 000.00 EUR</td><td><a href="#">example.org/supersafe/workshops-report</a></td><td>MIT</td><td>Five workshops held, report attached.</td></tr>
+          <tr><td>2.1 Release 1.0 published</td><td class="num">14 000.00 EUR</td><td><a href="#">example.org/supersafe/releases/v1.0.0</a></td><td>MIT</td><td>Release 1.0.0 at commit 4f2a9c1.</td></tr>
+          <tr><td>2.2 Security audit fixes</td><td class="num">2 000.00 EUR</td><td><a href="#">example.org/supersafe/audit-fixes</a></td><td>MIT</td><td>Fixes started, audit report pending.</td></tr>
+        </tbody>
+      </table>
+      <form method="post" action="#">
+        <fieldset class="line-card"><legend>Decision for line 1, milestone 1.2</legend>
+          <div class="choice"><input type="radio" id="l1-full" name="l1" checked><label for="l1-full">Approve in full</label></div>
+          <div class="choice"><input type="radio" id="l1-part" name="l1"><label for="l1-part">Approve partial amount</label></div>
+          <div class="choice"><input type="radio" id="l1-rej" name="l1"><label for="l1-rej">Reject</label></div>
+        </fieldset>
+        <fieldset class="line-card"><legend>Decision for line 2, milestone 2.1</legend>
+          <div class="choice"><input type="radio" id="l2-full" name="l2"><label for="l2-full">Approve in full</label></div>
+          <div class="choice"><input type="radio" id="l2-part" name="l2" checked><label for="l2-part">Approve partial amount</label></div>
+          <div class="choice"><input type="radio" id="l2-rej" name="l2"><label for="l2-rej">Reject</label></div>
+          <div class="field"><label for="l2-amt">Approved amount (EUR), line 2</label><span class="hint" id="l2-hint">Lower than the requested 14 000.00.</span><input id="l2-amt" type="text" inputmode="decimal" value="10000.00" aria-describedby="l2-hint"></div>
+          <div class="field"><label for="l2-why">Reason for the lower amount, line 2</label><textarea id="l2-why">The release notes cover 3 of the 4 agreed features. The fourth feature is not in the tagged release.</textarea></div>
+        </fieldset>
+        <fieldset class="line-card"><legend>Decision for line 3, milestone 2.2</legend>
+          <div class="choice"><input type="radio" id="l3-full" name="l3"><label for="l3-full">Approve in full</label></div>
+          <div class="choice"><input type="radio" id="l3-part" name="l3"><label for="l3-part">Approve partial amount</label></div>
+          <div class="choice"><input type="radio" id="l3-rej" name="l3" checked><label for="l3-rej">Reject</label></div>
+          <div class="field"><label for="l3-why">Reason for rejection, line 3</label><textarea id="l3-why">The evidence rules (P-34) need the audit report. The linked page does not include it yet.</textarea></div>
+        </fieldset>
+        <section class="card" aria-labelledby="steps-h">
+          <h2 id="steps-h">Two approval steps</h2>
+          <ol>
+            <li>Saving every line decision closes the line review. The request becomes Accepted <span class="state-name">(ACCEPTED)</span>.</li>
+            <li>You then confirm the request total. The request becomes Payment approved <span class="state-name">(PAYMENT_APPROVED)</span>. Only then can the payment releaser act.</li>
+          </ol>
+          <div class="btn-row"><!-- TODO(js): Confirm request total needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="total-why">Confirm request total</button></div>
+          <p id="total-why" class="text-sm muted">Available after the line review is saved. Static prototype: this action needs script.</p>
+        </section>
+        <p class="callout callout--info"><strong>Separation of duties:</strong> The person releasing this payment must be different from the approver (SoD-04).</p>
+        <div class="btn-row"><!-- TODO(js): Save decision needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="save-why">Save decision</button></div>
+        <p id="save-why" class="text-sm muted">Static prototype: this action needs script.</p>
+      </form>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

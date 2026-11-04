@@ -74,20 +74,80 @@ fn harness_world_self_hosted_runs_application_and_vault_clusters() {
     assert_eq!(kinds, vec![ClusterKind::Application, ClusterKind::Vault]);
 }
 
-/// Design section 19: a world with cells needs the cell runtime of lane
-/// W3a, so it refuses with `NotImplemented` rather than start a world
-/// without them. No cluster is needed for the refusal.
+/// Design sections 9.2 and 14.3, step W3a of section 19: a world with a
+/// cell runs the real cell runtime. Cell 0 exists and no cell 1. Its
+/// loopback health route answers 200 with the fixed body. A public route
+/// answers through the edge with the cell host as SNI. The ledger holds
+/// the first admin's invitation of step 10, split in two halves for a
+/// SaaS cell (Q35), and the world holds both halves.
 #[test]
-fn harness_world_with_cells_refuses_until_the_cell_runtime_exists() {
-    let err = World::start(WorldSpec {
+fn harness_world_with_cells_starts_the_cell_runtime() {
+    use fstp_celltest::world::HttpRequest;
+    let world = World::start(WorldSpec {
         cells: 1,
         mode: DbMode::Shared,
         vault_layout: VaultLayout::SeparateCluster,
         self_hosted: false,
         process_mode: false,
     })
-    .unwrap_err();
-    assert!(format!("{err:?}").contains("NotImplemented"), "{err:?}");
+    .unwrap_or_else(|e| panic!("the world did not start: {e}"));
+    let cell = world.cell(0).expect("the world holds no cell 0");
+    assert!(world.cell(1).is_none(), "the world holds a second cell");
+    let urls = cell
+        .urls()
+        .unwrap_or_else(|e| panic!("the cell runs no listener: {e}"));
+    let health_host = urls
+        .health
+        .strip_prefix("http://")
+        .and_then(|rest| rest.strip_suffix("/healthz"))
+        .unwrap_or_else(|| panic!("health URL {}", urls.health))
+        .to_owned();
+    let health = cell
+        .health(&HttpRequest::new("GET", "/healthz").header("host", health_host))
+        .unwrap_or_else(|e| panic!("the health listener: {e}"));
+    assert_eq!(
+        (health.status, health.body.as_slice()),
+        (200, fstp_cell::http::front::HEALTH_BODY)
+    );
+    let options = cell
+        .request(
+            &HttpRequest::new("POST", "/auth/passkey/login/options")
+                .header("host", cell.host())
+                .header("origin", format!("https://{}", cell.host()))
+                .header("content-type", "application/json")
+                .body(b"{}".to_vec()),
+        )
+        .unwrap_or_else(|e| panic!("the edge did not reach the cell: {e}"));
+    assert_eq!(
+        options.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&options.body)
+    );
+    assert!(
+        String::from_utf8_lossy(&options.body).contains("\"challenge_id\":\""),
+        "{}",
+        String::from_utf8_lossy(&options.body)
+    );
+    let ledger = cell
+        .ledger()
+        .unwrap_or_else(|e| panic!("the cell ledger: {e}"));
+    let invitations: Vec<(bool, bool)> = ledger
+        .iter()
+        .filter_map(|e| match &e.record {
+            fstp_cell_core::CellRecord::Auth(fstp_auth::AuthRecord::InvitationIssued {
+                first_admin,
+                split,
+                ..
+            }) => Some((*first_admin, *split)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(invitations, vec![(true, true)], "the invitation records");
+    let halves = cell
+        .first_admin_invitation()
+        .unwrap_or_else(|e| panic!("the first admin's invitation: {e}"));
+    assert_ne!(halves.first, halves.second, "the two halves are equal");
 }
 
 fn spec(cells: u8, mode: DbMode, self_hosted: bool) -> WorldSpec {

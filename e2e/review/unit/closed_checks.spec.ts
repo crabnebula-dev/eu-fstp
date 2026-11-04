@@ -70,7 +70,7 @@ async function samples(): Promise<Sample[]> {
     {
       name: 'AssignmentSummary',
       check: checkOf(kit, 'reviewer/kit', 'isAssignmentSummary'),
-      value: { assignment: '21', proposal: '11', call: '5', kind: 'reviewer', awaiting_declaration: false, active: true },
+      value: { assignment: '21', proposal: '11', call: '5', kind: 'reviewer', awaiting_declaration: false, active: true, stage2: false },
     },
     {
       name: 'DeclarationView',

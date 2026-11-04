@@ -3,9 +3,11 @@
 //! `CertDer`, `ScramVerifier`, `PopSig` and `CompositeSig` are closed
 //! grammars, checked on decode. Their bytes are private, so code cannot
 //! build one from arbitrary input without passing the grammar check. The
-//! checks are W0 stubs and refuse until lane W2h fills them.
+//! grammars live in [`crate::grammar`]. Each `empty()` placeholder fails
+//! its own check, so no decoded message and no encoded frame holds one.
 
 use crate::ProtoError;
+use crate::grammar;
 
 /// A cell identifier, 16 random bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -100,10 +102,15 @@ impl PopSig {
         PopSig(Vec::new())
     }
 
-    /// Checks the grammar.
+    /// Checks the grammar: an ASN.1 DER `ECDSA-Sig-Value` for P-256, with
+    /// `r` and `s` in 1 to n - 1, as the fstp-pki `pop` module signs.
+    ///
+    /// # Errors
+    ///
+    /// [`ProtoError::Grammar`] for any other bytes.
     pub fn parse(bytes: &[u8]) -> Result<PopSig, ProtoError> {
-        let _ = bytes;
-        Err(ProtoError::NotImplemented("fstp_cp_proto::PopSig::parse"))
+        grammar::pop_signature(bytes)?;
+        Ok(PopSig(bytes.to_vec()))
     }
 
     /// The signature bytes.
@@ -122,12 +129,24 @@ impl ScramVerifier {
         ScramVerifier(Vec::new())
     }
 
-    /// Checks the grammar.
+    /// Checks the grammar of ADR-011: `SCRAM-SHA-256$<iterations>:<salt>$
+    /// <StoredKey>:<ServerKey>`. The iterations are decimal without a
+    /// leading zero, from [`crate::grammar::MIN_SCRAM_ITERATIONS`]. The
+    /// other fields are canonical padded base64: a salt of 16 to 64 bytes
+    /// and two 32-byte keys. No quote or backslash can occur, so the
+    /// verifier renders safely as a literal in `ALTER ROLE ... PASSWORD`.
+    ///
+    /// # Errors
+    ///
+    /// [`ProtoError::Grammar`] for any other bytes.
     pub fn parse(bytes: &[u8]) -> Result<ScramVerifier, ProtoError> {
-        let _ = bytes;
-        Err(ProtoError::NotImplemented(
-            "fstp_cp_proto::ScramVerifier::parse",
-        ))
+        grammar::scram_verifier(bytes)?;
+        Ok(ScramVerifier(bytes.to_vec()))
+    }
+
+    /// The verifier as text. The grammar admits ASCII only.
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.0).unwrap_or_default()
     }
 
     /// The verifier bytes.
@@ -168,10 +187,17 @@ impl CertDer {
         CertDer(Vec::new())
     }
 
-    /// Checks the grammar.
+    /// Checks the grammar: a DER `Certificate` of at most
+    /// [`crate::grammar::MAX_CERT_LEN`] bytes, a SEQUENCE of exactly a
+    /// SEQUENCE, a SEQUENCE and a BIT STRING, every value well formed and
+    /// every length in its shortest form, nothing after it.
+    ///
+    /// # Errors
+    ///
+    /// [`ProtoError::Grammar`] for any other bytes.
     pub fn parse(bytes: &[u8]) -> Result<CertDer, ProtoError> {
-        let _ = bytes;
-        Err(ProtoError::NotImplemented("fstp_cp_proto::CertDer::parse"))
+        grammar::certificate(bytes)?;
+        Ok(CertDer(bytes.to_vec()))
     }
 
     /// The DER bytes.
@@ -203,12 +229,16 @@ impl CompositeSig {
         CompositeSig(Vec::new())
     }
 
-    /// Checks the grammar.
+    /// Checks the layout of ADR-010: `mldsaSig || tradSig`, exactly
+    /// [`crate::grammar::COMPOSITE_SIG_LEN`] bytes. Whether the signature
+    /// verifies is the verifier's question, not the grammar's.
+    ///
+    /// # Errors
+    ///
+    /// [`ProtoError::Grammar`] for any other length.
     pub fn parse(bytes: &[u8]) -> Result<CompositeSig, ProtoError> {
-        let _ = bytes;
-        Err(ProtoError::NotImplemented(
-            "fstp_cp_proto::CompositeSig::parse",
-        ))
+        grammar::composite_signature(bytes)?;
+        Ok(CompositeSig(bytes.to_vec()))
     }
 
     /// The signature bytes.

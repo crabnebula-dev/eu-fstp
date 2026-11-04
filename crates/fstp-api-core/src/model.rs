@@ -102,6 +102,9 @@ pub enum ReadModel {
     /// A read model of the creator pages, or the reply of a creator
     /// command that names what it drew (lane m4wire).
     Creator(crate::creator::CreatorModel),
+    /// `me.roles`: the caller's own active roles, for the interim home
+    /// page of design section 15.0 (2026-10-31; I-86).
+    MyRoles(crate::dispatch::me_roles::MyRoles),
 }
 
 /// A decimal string.
@@ -186,6 +189,7 @@ impl ToJson for ReadModel {
             ReadModel::Round(v) => v.to_json(),
             ReadModel::Tenant(v) => v.to_json(),
             ReadModel::Creator(m) => m.to_json(),
+            ReadModel::MyRoles(r) => r.to_json(),
         }
     }
 }
@@ -347,6 +351,11 @@ pub struct AssignmentSummary {
     pub awaiting_declaration: bool,
     /// Whether it is active.
     pub active: bool,
+    /// Whether its stage 2 thread opens: an active reviewer assignment
+    /// whose proposal is in STAGE2. The list links the stage 2 page only
+    /// then (review finding U5). An IRC row is always false, so it says
+    /// nothing of the proposal's state (O-58).
+    pub stage2: bool,
 }
 
 impl ToJson for AssignmentSummary {
@@ -361,6 +370,7 @@ impl ToJson for AssignmentSummary {
             Value::Bool(self.awaiting_declaration),
         );
         let _ = o.insert("active", Value::Bool(self.active));
+        let _ = o.insert("stage2", Value::Bool(self.stage2));
         Value::Object(o)
     }
 }
@@ -1238,6 +1248,7 @@ pub(crate) mod reply_shape_tests {
             kind,
             awaiting_declaration: true,
             active: false,
+            stage2: false,
         }
     }
 
@@ -1511,6 +1522,54 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Tenant(crate::tenant::TenantView::Settings(_)) => &["tenant.settings"],
             ReadModel::Tenant(crate::tenant::TenantView::Admins(_)) => &["tenant.list_admins"],
             ReadModel::Creator(c) => creator_served_as(c),
+            ReadModel::MyRoles(_) => &["me.roles"],
+        }
+    }
+
+    /// A `me.roles` reply (design section 15.0, I-86): with every
+    /// optional member set when `full`, else a caller with no role.
+    fn my_roles(full: bool) -> crate::dispatch::me_roles::MyRoles {
+        use crate::dispatch::me_roles::{CallItem, MyRoles, RoleItem, RoundItem};
+        if !full {
+            return MyRoles {
+                tenant_admin: false,
+                roles: Vec::new(),
+                calls: Vec::new(),
+                rounds: Vec::new(),
+                drafts: Vec::new(),
+            };
+        }
+        MyRoles {
+            tenant_admin: true,
+            roles: vec![
+                RoleItem {
+                    role: Role::CommitteeMember,
+                    programme: ProgrammeId::from_raw(1),
+                    proposal: None,
+                    calls: vec![CallId::from_raw(1), CallId::from_raw(2)],
+                },
+                RoleItem {
+                    role: Role::Guardian,
+                    programme: ProgrammeId::from_raw(1),
+                    proposal: Some(ProposalId::from_raw(1004)),
+                    calls: vec![CallId::from_raw(1)],
+                },
+            ],
+            calls: vec![
+                CallItem {
+                    call: CallId::from_raw(1),
+                    title: Some("Synthetic open call".to_owned()),
+                },
+                CallItem {
+                    call: CallId::from_raw(2),
+                    title: None,
+                },
+            ],
+            rounds: vec![RoundItem {
+                round: DecisionId::from_raw(7),
+                call: CallId::from_raw(1),
+            }],
+            drafts: vec![ProgrammeId::from_raw(1)],
         }
     }
 
@@ -1626,6 +1685,8 @@ pub(crate) mod reply_shape_tests {
                 requested: false,
             }),
             ReadModel::Creator(crate::creator::CreatorModel::Proposals(Vec::new())),
+            ReadModel::MyRoles(my_roles(true)),
+            ReadModel::MyRoles(my_roles(false)),
         ]
         .into_iter()
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
@@ -1698,7 +1759,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 29;
+    const VARIANTS: usize = 30;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1734,6 +1795,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Round(_) => 26,
             ReadModel::Tenant(_) => 27,
             ReadModel::Creator(_) => 28,
+            ReadModel::MyRoles(_) => 29,
         }
     }
 

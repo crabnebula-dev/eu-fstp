@@ -1,0 +1,1 @@
+response_type=code&client_id=c&redirect_uri=https%3A%2F%2Fagent.example%2Fcb&code_challenge=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc&code_challenge_method=S256&scope=calls%3Aread&resource=https%3A%2F%2Fcell-a.example%2Fmcp&state=s

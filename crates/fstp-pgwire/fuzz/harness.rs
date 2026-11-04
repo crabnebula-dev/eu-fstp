@@ -21,6 +21,10 @@
 //!   the bytes the client writes are checked too. A cleartext password
 //!   never leaves the client without TLS and a server certificate, and
 //!   before TLS only the SSLRequest is sent.
+//! - [`cert_subject_ou`]: the subject OU reader of the I-83 start checks
+//!   returns values that lie inside the input, in input order and without
+//!   overlap, each one costing at least the bytes of its encoding, and it
+//!   reads the same input the same way twice.
 
 #![allow(dead_code)]
 
@@ -33,7 +37,9 @@ use std::task::{Context, Poll};
 use fstp_json::Value;
 use fstp_pgwire::proto::backend::{BackendDecoder, BackendMessage, DecodeLimits, decode_frame};
 use fstp_pgwire::scram::{ChannelBinding, ScramClient};
-use fstp_pgwire::x509::{EndPointHash, end_point_hash, tls_server_end_point};
+use fstp_pgwire::x509::{
+    EndPointHash, end_point_hash, subject_organizational_units, tls_server_end_point,
+};
 use fstp_pgwire::{
     AuthMethod, ClientTls, Config, Date, ErrorKind, FromSql, Limits, Numeric, Password,
     RequireAuth, Session, Timestamptz, ToSql, Type, Uuid, base64,
@@ -937,4 +943,42 @@ pub fn hostile_server_tls(data: &[u8]) -> Option<usize> {
         panic!("TLS client did not terminate within {budget} polls");
     };
     ops
+}
+
+/// The smallest encoding of one more subject OU in a SET: an attribute
+/// SEQUENCE, the three-byte OID and an empty value, each with its tag and
+/// length.
+const MIN_OU_BYTES: usize = 9;
+
+/// I-83, TH-26: `subject_organizational_units` on arbitrary bytes. Every
+/// value it returns lies inside the input, after the one before it, and
+/// takes at least [`MIN_OU_BYTES`] of the input. A second read gives the
+/// same values.
+pub fn cert_subject_ou(data: &[u8]) {
+    let Ok(ous) = subject_organizational_units(data) else {
+        return;
+    };
+    let base = data.as_ptr().addr();
+    let mut floor = 0usize;
+    for v in &ous {
+        let start = v
+            .as_ptr()
+            .addr()
+            .checked_sub(base)
+            .expect("an OU value starts before the input");
+        let end = start.checked_add(v.len()).expect("an OU value overflows");
+        assert!(start >= floor, "OU values overlap or are out of order");
+        assert!(end <= data.len(), "an OU value ends after the input");
+        floor = end;
+    }
+    let cost = ous
+        .len()
+        .checked_mul(MIN_OU_BYTES)
+        .expect("OU count overflows");
+    assert!(cost <= data.len(), "more OUs than the input can encode");
+    assert_eq!(
+        subject_organizational_units(data).expect("a second read failed"),
+        ous,
+        "a second read differs"
+    );
 }

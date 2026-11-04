@@ -193,6 +193,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-audit",
  "fstp-auth",
+ "fstp-cell",
  "fstp-cell-core",
  "fstp-cp-proto",
  "fstp-crypto",
@@ -207,6 +208,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-obs",
  "fstp-pgstore",
+ "fstp-pgwire",
  "fstp-prop",
  "fstp-release",
  "fstp-rt",
@@ -231,6 +233,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-prop",
+ "fstp-webauthn",
 ]
 
 [[package]]
@@ -251,6 +254,7 @@ dependencies = [
  "fstp-domain-testkit",
  "fstp-edge",
  "fstp-engine",
+ "fstp-http",
  "fstp-keyd",
  "fstp-keys",
  "fstp-ledger",
@@ -259,11 +263,13 @@ dependencies = [
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgtest",
+ "fstp-pgwire",
  "fstp-pki",
  "fstp-prop",
  "fstp-release",
  "fstp-release-svc",
  "fstp-rt",
+ "fstp-tls",
  "fstp-vault",
  "fstp-vault-core",
  "fstp-vault-proto",
@@ -278,11 +284,14 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-custody",
  "fstp-http",
+ "fstp-json",
  "fstp-migrate",
  "fstp-obs",
+ "fstp-pgtest",
  "fstp-pgwire",
  "fstp-pki",
  "fstp-prop",
+ "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
 ]
@@ -291,7 +300,9 @@ dependencies = [
 name = "fstp-cp-proto"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-json",
+ "fstp-pki",
  "fstp-prop",
 ]
 
@@ -672,6 +683,7 @@ dependencies = [
  "fstp-audit",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-edge",
  "fstp-http",
  "fstp-json",
  "fstp-keys",
@@ -684,6 +696,7 @@ dependencies = [
  "fstp-tls",
  "fstp-vault-core",
  "fstp-vault-proto",
+ "fstp-witness",
 ]
 
 [[package]]
@@ -745,11 +758,15 @@ version = "0.1.0"
 dependencies = [
  "fstp-audit",
  "fstp-cp-proto",
+ "fstp-crypto",
  "fstp-http",
  "fstp-migrate",
  "fstp-obs",
+ "fstp-pgtest",
  "fstp-pgwire",
+ "fstp-pki",
  "fstp-prop",
+ "fstp-rt",
  "fstp-tls",
 ]
 
@@ -929,6 +946,10 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "test-gate"
+version = "0.1.0"
 
 [[package]]
 name = "tokio"

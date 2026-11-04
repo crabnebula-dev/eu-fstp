@@ -14,11 +14,17 @@
 //!
 //! The auth member is encoded and decoded by `fstp_auth::codec`, so each
 //! auth record and command has one spelling. The gate's session checks
-//! call `fstp_auth` (lanes W2b and W2c, integrated). An auth command whose
-//! batch needs an input that only a route holds is refused with the
-//! domain refusal [`ROUTE_INPUT_MISSING`]. [`route_inputs`] names the
-//! input, and [`RouteInput::OWNER`] names lane W3a. The gate admits no
-//! route-only auth command yet ([`gate::ROUTE_ADMISSION_SEAM`]).
+//! call `fstp_auth` (lanes W2b and W2c, integrated).
+//!
+//! A command whose batch needs an input that only its route or task holds
+//! takes it as [`RouteInputs`] ([`inputs`]): the live session rows, the
+//! deployment mode, a new passkey the gate verified, or a verified
+//! operator ticket. Without the input it is refused with the domain
+//! refusal [`ROUTE_INPUT_MISSING`], and [`route_inputs`] names what an
+//! auth command needs. A route-only auth command is admitted only through
+//! a gate route admission that verifies its own proof. Those without one
+//! yet fail closed (`gate::ROUTE_ADMISSION_SEAM`). With session rows, a
+//! batch also records the `SessionEnded` reactions of design section 5.1.
 
 #![deny(
     clippy::float_arithmetic,
@@ -27,10 +33,13 @@
     clippy::arithmetic_side_effects
 )]
 
+#[cfg(test)]
+mod ceremony_tests;
 pub mod codec;
 mod decide;
 pub mod driver;
 pub mod gate;
+pub mod inputs;
 pub mod ops;
 pub mod release;
 pub mod state;
@@ -49,8 +58,10 @@ pub use codec::{
 pub use decide::{
     ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, ROUTE_INPUT_MISSING, RouteInput,
     WRITE_KIND_GUARDIAN_CONSENT, action_digest, attest_at, decide_reaction, reaction_queries,
-    route_inputs, self_grant_digest, try_action_digest, vault_changed, without_vault_outcomes,
+    route_inputs, self_grant_digest, stepup_id, try_action_digest, vault_changed,
+    without_vault_outcomes,
 };
+pub use inputs::{RouteInputs, SessionRows};
 pub use state::CellState;
 pub use state::{
     SYSTEM_PREFIX, is_system_command_id, reaction_command_id, reaction_epoch, system_command_id,
@@ -161,6 +172,9 @@ pub enum SystemTask {
     /// System commands due at an instant, with the actor
     /// `System(Timeline)`, and `EndSessionsAtBindingEnd`.
     Timeline,
+    /// Provisioning (design section 9.2 step 10): the first tenant admin's
+    /// `IssueFirstAdminInvitation`, with the cell's deployment mode.
+    Provisioning,
 }
 
 /// The context a system task's command runs in.
@@ -222,7 +236,16 @@ pub fn decide(
     x: &CellCtx,
     a: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
-    decide::decide_with(s, c, decide::Who::Account(x.actor), x.at, None, None, a)
+    decide::decide_with(
+        s,
+        c,
+        decide::Who::Account(x.actor),
+        x.at,
+        None,
+        None,
+        &RouteInputs::none(),
+        a,
+    )
 }
 
 /// [`decide`] under the caller's command id, which the SoD-07 grant
@@ -241,6 +264,53 @@ pub fn decide_with_id(
         x.at,
         Some(command),
         None,
+        &RouteInputs::none(),
+        a,
+    )
+}
+
+/// [`decide_with_id`] with the route or task inputs `inputs`
+/// ([`RouteInputs`]). A harness that writes the ledger itself passes the
+/// session rows and the deployment mode here. A verified new passkey is
+/// set only by the gate, so this path never registers one.
+pub fn decide_with_inputs(
+    s: &CellState,
+    c: &CellCommand,
+    x: &CellCtx,
+    command: [u8; 16],
+    inputs: &RouteInputs,
+    a: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    decide::decide_with(
+        s,
+        c,
+        decide::Who::Account(x.actor),
+        x.at,
+        Some(command),
+        None,
+        inputs,
+        a,
+    )
+}
+
+/// [`decide_system`] with the task inputs `inputs`, such as the session
+/// rows that `EndSessionsAtBindingEnd` ends ([`RouteInputs`]).
+pub fn decide_system_with_inputs(
+    s: &CellState,
+    c: &CellCommand,
+    x: &SystemCtx,
+    command: [u8; 16],
+    inputs: &RouteInputs,
+    a: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    decide::decide_with(
+        s,
+        c,
+        decide::Who::System(x.task),
+        x.at,
+        Some(command),
+        None,
+        inputs,
         a,
     )
 }
@@ -282,6 +352,7 @@ pub fn decide_system(
         x.at,
         Some(command),
         None,
+        &RouteInputs::none(),
         a,
     )
 }

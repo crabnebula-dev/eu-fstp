@@ -13,6 +13,7 @@
 
 import { h } from "../core/dom.js";
 import type { ApprovedText, Label } from "../core/i18n.js";
+import { appShell } from "../home/nav.js";
 import { t } from "./i18n.js";
 
 /**
@@ -80,12 +81,12 @@ export function frame(opts: { readonly title: Label; readonly alertId: string; r
   document.documentElement.lang = t.locale;
   document.title = opts.title;
   const alert = h("p", { id: opts.alertId, role: "alert", class: "fstp-alert" });
-  const main = h("main", { id: "main" }, [h("h1", {}, [opts.title]), alert]);
-  const parts: HTMLElement[] = [];
-  if (opts.nav !== undefined) {
-    parts.push(opts.nav);
-  }
-  parts.push(main, footer(defaultMandatoryElements()));
+  // The page's own navigation, such as the creator steps, opens `main`.
+  const own: HTMLElement[] = opts.nav === undefined ? [] : [opts.nav];
+  const main = h("main", { id: "main" }, [...own, h("h1", {}, [opts.title]), alert]);
+  // The page shell: skip link, top bar, and the sidebar with the site
+  // navigation (`docs/design/01-navigation-home.md`, 2026-11-01).
+  const parts: HTMLElement[] = [...appShell(main), footer(defaultMandatoryElements())];
   // An open step-up dialog closes first, so its ceremony settles as
   // cancelled instead of waiting on a dialog the new page removed.
   const open = document.getElementById("stepup");

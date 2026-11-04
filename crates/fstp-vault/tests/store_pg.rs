@@ -129,8 +129,10 @@ fn internal(v: &mut Vault, req: &VaultRequest) -> VaultResponse {
     fstp_vault_proto::decode_response(&v.internal_bytes(&bytes, NOW)).unwrap()
 }
 
-/// R-NF-08, design sections 4.3 and 4.6: the vault migrations create
+/// R-NF-08, design sections 4.3, 4.5 and 4.6: the vault migrations create
 /// exactly the catalogued tables, with the catalogued columns in order.
+/// Every schema but `pg_catalog` and `information_schema` is checked, so
+/// the runner's ledger and any new schema are covered too.
 #[test]
 fn r_nf_08_vault_migrations_create_exactly_the_catalogued_columns() {
     let mut db = fresh();
@@ -146,7 +148,7 @@ fn r_nf_08_vault_migrations_create_exactly_the_catalogued_columns() {
         assert_eq!(got, want, "{}.{}", t.schema, t.name);
     }
     let rows = block_on(db.query(
-        "SELECT table_schema::text, table_name::text FROM information_schema.tables WHERE table_schema IN ('vault', 'vault_audit', 'keystore') ORDER BY 1, 2",
+        "SELECT table_schema::text, table_name::text FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2",
         &[],
     ))
     .unwrap();
@@ -159,6 +161,35 @@ fn r_nf_08_vault_migrations_create_exactly_the_catalogued_columns() {
         .map(|t| (t.schema.to_owned(), t.name.to_owned()))
         .collect();
     assert_eq!(tables, catalogued, "no table outside the catalogue");
+}
+
+/// R-NF-08, design section 4.5: the `vault_audit.anchor` link is a
+/// `PublicDigest` and its signature a `Signature`, and the database checks
+/// both by exact length. A link of 31 or 33 bytes and a signature one byte
+/// short or long of the composite length are refused. The exact lengths
+/// are accepted.
+#[test]
+fn r_nf_08_vault_anchor_checks_the_public_class_lengths() {
+    let mut db = fresh();
+    block_on(store::migrate(&mut db)).unwrap();
+    block_on(db.execute(
+        "INSERT INTO vault_audit.chain (n, at, kind, epoch, stored_hash, body, link) \
+         VALUES (1, 0, 2, NULL, decode(repeat('ab', 32), 'hex'), '\\x00', decode(repeat('cd', 32), 'hex'))",
+        &[],
+    ))
+    .unwrap();
+    const INSERT: &str = "INSERT INTO vault_audit.anchor (n, link, at, signature, witness_seq, receipt) \
+                          VALUES (1, $1, 0, $2, 1, '\\x00')";
+    let sig = fstp_crypto::composite::SIGNATURE_LEN;
+    for (link, signature) in [(31, sig), (33, sig), (32, sig - 1), (32, sig + 1)] {
+        let (l, s) = (vec![0xcd_u8; link], vec![0xef_u8; signature]);
+        assert!(
+            block_on(db.execute(INSERT, &[&l, &s])).is_err(),
+            "a {link}-byte link with a {signature}-byte signature was allowed"
+        );
+    }
+    let (l, s) = (vec![0xcd_u8; 32], vec![0xef_u8; sig]);
+    assert_eq!(block_on(db.execute(INSERT, &[&l, &s])).unwrap(), 1);
 }
 
 /// I-06, NOTE 4, design section 4.3: a vault rebuilt from its database
@@ -370,8 +401,8 @@ fn note6_p17_condition_survives_a_restart() {
         "a repeat journals nothing"
     );
     for sql in [
-        "UPDATE vault.p17_condition SET countries = '\\x5b5d'",
-        "DELETE FROM vault.p17_condition",
+        "UPDATE vault.country_condition SET countries = '\\x5b5d'",
+        "DELETE FROM vault.country_condition",
     ] {
         assert!(block_on(db.execute(sql, &[])).is_err(), "{sql} was allowed");
     }

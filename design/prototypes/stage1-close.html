@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Close Stage 1 - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-coordinator.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">JR</span><span class="sr-only">Account: coord-j8r2</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as FSTP coordinator.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as FSTP coordinator</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-coordinator.html">Home</a></li><li><a href="coordinator-conflict.html">Proposals</a></li><li><a href="stage1-close.html" aria-current="page">Calls</a></li><li><a href="#">Programmes</a></li><li><a href="#">People</a></li><li><a href="complaint-coordinator-review.html">Complaints</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Stage 1 close, all valid scores present (I-07), outcome computed</p>
+
+    <h1>Close Stage 1 for SSF-2024-OC2</h1>
+    <p class="callout callout--info"><strong>Computed outcome:</strong> This outcome is computed from reviewer scores. You cannot change it. (R-LA-03)</p>
+    <section class="card card--primary" aria-labelledby="out-h">
+      <h2 id="out-h" style="margin-top:0">Proposals selected for Stage 2: 4. Proposals not selected: 3.</h2>
+      <p class="text-sm">Pass threshold P-02: weighted score strictly above 75.00%.</p>
+      <table><caption>Breakdown</caption>
+        <thead><tr><th scope="col">Proposal</th><th scope="col">Weighted score</th><th scope="col">Outcome</th></tr></thead>
+        <tbody>
+          <tr><td class="pid">P-2HX4</td><td>91.00%</td><td><span class="badge badge--success">To Stage 2 (STAGE2)</span></td></tr>
+          <tr><td class="pid">P-0GY2</td><td>86.50%</td><td><span class="badge badge--success">To Stage 2 (STAGE2)</span></td></tr>
+          <tr><td class="pid">CSW-2024-0042</td><td>82.00%</td><td><span class="badge badge--success">To Stage 2 (STAGE2)</span></td></tr>
+          <tr><td class="pid">P-5RW0</td><td>77.25%</td><td><span class="badge badge--success">To Stage 2 (STAGE2)</span></td></tr>
+          <tr><td class="pid">P-8CV3</td><td>75.00%</td><td><span class="badge badge--error">Not selected (NOT_SELECTED)</span></td></tr>
+          <tr><td class="pid">P-1JD7</td><td>68.40%</td><td><span class="badge badge--error">Not selected (NOT_SELECTED)</span></td></tr>
+          <tr><td class="pid">P-6LP9</td><td>61.10%</td><td><span class="badge badge--error">Not selected (NOT_SELECTED)</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <p class="callout callout--warning"><strong>Before you confirm:</strong> Confirming will send non-selection notices to 3 applicants.</p>
+    <form method="post" action="#"><div class="btn-row"><button class="btn btn--primary" type="submit">Confirm this outcome</button><a class="btn btn--ghost" href="home-coordinator.html">Not now</a></div>
+    <p class="stepup-note">Confirming requires a passkey confirmation. Your name is recorded on the decision.</p></form>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

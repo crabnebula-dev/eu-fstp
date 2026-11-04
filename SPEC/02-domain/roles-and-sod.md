@@ -20,6 +20,8 @@ Roles bind a tenant account to a programme with a start date and an optional end
 | Finance approver | Operations | Accepts milestones for payment. |
 | Payment releaser | Operations | Releases approved payments. |
 | Contract signatory | Operations | Signs contracts for the funder side, with signing authority (`02-domain/contracts.md`). |
+| Financial signatory | Operations | Approves payment instructions and financial commitments for the organisation. Tenant-wide, not bound to a programme (decided by Daniel 2026-11-01). |
+| Legal signatory | Operations | Approves contracts, terms and legal commitments for the organisation. Tenant-wide, not bound to a programme (decided by Daniel 2026-11-01). |
 | Auditor | Operations | Read-only access to audit log and aggregates. |
 
 NOTE: The Contract signatory is the tenant operator signatory that `02-domain/contracts.md` lists as a party, and it holds signing authority (decided 2026-10-25). SoD-03 keeps it apart from Receiving roles.
@@ -53,7 +55,14 @@ A later Operations role, "identity verifier", replaces the tenant admin as recor
 - **SoD-06** Persons in excluded affiliation classes (P-13) cannot hold Receiving roles.
 - **SoD-07** A tenant admin granting a role to their own account requires approval by a second tenant admin.
 - **SoD-08** Platform operator staff hold no roles in SaaS cells. Content access requires break-glass approval by the tenant and is logged.
+- **SoD-14** An organisation is activated only while at least one account holds Financial signatory (decided by Daniel 2026-11-01).
+- **SoD-15** An organisation is activated only while at least one account holds Legal signatory (decided by Daniel 2026-11-01).
+- **SoD-16** One account may hold both Financial signatory and Legal signatory (decided by Daniel 2026-11-01).
+- **SoD-17** Removing the last holder of Financial signatory or Legal signatory is refused while the organisation is active (decided by Daniel 2026-11-01).
+- **SoD-18** Organisation activation needs approval by a tenant admin other than the one who requested it, by analogy with I-67 (decided by Daniel 2026-11-01).
 - **SoD-09** Drafting and Judging bindings require a verified identity at binding time. At negotiation, the vault checks the applicant's verified identity against those bindings.
+
+NOTE 5: Financial signatory and Legal signatory act for the whole organisation. They differ from the programme-bound Contract signatory, who signs each grant contract. Granting either to one's own account falls under SoD-07. They need no verified identity at binding time, since SoD-09 covers Drafting and Judging only (decided by Daniel 2026-11-01).
 
 NOTE 1: SoD-09 closes the gap where one person opens a second tenant account to sit on both sides. Applicants stay pseudonymous until negotiation, so the check runs at that point.
 

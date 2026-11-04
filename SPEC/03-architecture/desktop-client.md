@@ -1,5 +1,7 @@
 # Desktop client
 
+Status: Deferred by Daniel on 2026-11-04 (B-04). The design is kept for its return.
+
 A native desktop client, built with Tauri, gives reviewers, grantees and programme staff the platform in a dedicated app. Calls are backlogged (B-01).
 
 ## Scope

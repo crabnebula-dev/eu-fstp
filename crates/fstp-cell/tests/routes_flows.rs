@@ -370,3 +370,151 @@ fn i78_stepup_challenge_is_not_consumed_by_a_refused_request() {
     assert_eq!(status(&from_owner), 403);
     assert!(still_there(), "a refused assertion consumed the challenge");
 }
+
+/// I-78, ADR-007, design section 8.4: a step-up assertion that verifies is
+/// issued as `GrantStepUp` under its challenge id. It answers 200 and
+/// records one `StepUpGranted` for the session and the action digest of
+/// the challenge. A replay of the assertion over the same challenge runs
+/// under the same command id, so the store answers it as a duplicate: 200
+/// with `duplicate` true, no new entry and the same grant. The route never
+/// deletes the challenge. The grant then admits the high-risk command it
+/// names.
+#[test]
+fn i78_verified_stepup_grants_once_under_its_challenge_id() {
+    use fstp_cell::routes::Backend;
+    let c = cell();
+    let owner = c.admin_session().unwrap();
+    let session = fstp_rt::future::block_on(
+        c.backend()
+            .sessions_of(fstp_cell::routes::memory::LOCAL_ADMIN),
+    )
+    .unwrap()
+    .first()
+    .unwrap()
+    .id;
+    let high = CellCommand::Tenant(TenantCommand::SetLoginPolicy {
+        policy: TenantLoginPolicy::default().encode(),
+    });
+    let command_id = [7; 16];
+    let options = c.serve(request(
+        "POST",
+        "/auth/stepup/options",
+        Some(&owner),
+        Some(&command_body(&high, command_id)),
+    ));
+    assert_eq!(status(&options), 200);
+    let id = challenge_id_of(&options);
+    let state = || fstp_rt::future::block_on(c.backend().state()).unwrap();
+    let before = state().head();
+    assert!(state().auth().stepup_grant(id).is_none());
+
+    let first = c.serve(c.admin_stepup_request(&owner, id).unwrap());
+    let text = String::from_utf8_lossy(&first.body).into_owned();
+    assert_eq!(status(&first), 200, "{text}");
+    assert!(text.contains("\"duplicate\":false"), "{text}");
+    let granted = state().head();
+    assert_eq!(
+        granted.raw(),
+        before.raw() + 1,
+        "the grant recorded {before:?} to {granted:?}"
+    );
+    let grant = state()
+        .auth()
+        .stepup_grant(id)
+        .expect("no StepUpGranted under the challenge id");
+    assert_eq!(grant.session, session);
+    assert_eq!(
+        grant.action_digest,
+        fstp_cell_core::action_digest(&high, command_id)
+    );
+    assert!(
+        c.backend().peek_challenge(id).is_some(),
+        "the challenge went"
+    );
+
+    let replay = c.serve(c.admin_stepup_request(&owner, id).unwrap());
+    let text = String::from_utf8_lossy(&replay.body).into_owned();
+    assert_eq!(status(&replay), 200, "{text}");
+    assert!(text.contains("\"duplicate\":true"), "{text}");
+    assert_eq!(state().head(), granted, "the replay recorded an entry");
+    assert_eq!(state().auth().stepup_grant(id), Some(grant));
+
+    let mut body = String::from_utf8(command_body(&high, command_id)).unwrap();
+    body.pop();
+    body.push_str(&format!(",\"stepup\":\"{}\"}}", hex(&id)));
+    let resp = c.serve(request(
+        "POST",
+        "/api/v1/commands",
+        Some(&owner),
+        Some(body.as_bytes()),
+    ));
+    assert_eq!(
+        status(&resp),
+        200,
+        "{}",
+        String::from_utf8_lossy(&resp.body)
+    );
+    assert!(
+        state().head() > granted,
+        "the admitted command recorded nothing"
+    );
+}
+
+/// I-78, design section 8.4: a high-risk command that names a step-up
+/// the ledger granted is admitted over the in-memory backend. The backend
+/// reports the grant's entry instant as its assertion time, as the
+/// `Backend` contract states, so the route never answers 503 for it.
+/// The grant is seeded, because the route cannot record one yet
+/// (`fstp_cell_core::gate::ROUTE_ADMISSION_SEAM`).
+#[test]
+fn i78_local_cell_admits_a_high_risk_command_with_a_ledger_step_up() {
+    use fstp_cell::routes::Backend;
+    let c = cell();
+    let cookie = c.admin_session().unwrap();
+    let session = fstp_rt::future::block_on(
+        c.backend()
+            .sessions_of(fstp_cell::routes::memory::LOCAL_ADMIN),
+    )
+    .unwrap()
+    .first()
+    .unwrap()
+    .id;
+    let command = CellCommand::Tenant(TenantCommand::SetLoginPolicy {
+        policy: TenantLoginPolicy::default().encode(),
+    });
+    let command_id = [0x4C; 16];
+    let stepup = [0x5A; 16];
+    let now = c.backend().now();
+    c.backend()
+        .seed(
+            now,
+            vec![fstp_cell_core::CellRecord::Auth(
+                fstp_auth::AuthRecord::StepUpGranted {
+                    id: stepup,
+                    action_digest: fstp_cell_core::action_digest(&command, command_id),
+                    session,
+                },
+            )],
+        )
+        .unwrap();
+    let before = fstp_rt::future::block_on(c.backend().state())
+        .unwrap()
+        .head();
+    let mut body = String::from_utf8(command_body(&command, command_id)).unwrap();
+    body.pop();
+    body.push_str(&format!(",\"stepup\":\"{}\"}}", hex(&stepup)));
+    let resp = c.serve(request(
+        "POST",
+        "/api/v1/commands",
+        Some(&cookie),
+        Some(body.as_bytes()),
+    ));
+    let after = fstp_rt::future::block_on(c.backend().state())
+        .unwrap()
+        .head();
+    assert!(
+        status(&resp) == 200 && after > before,
+        "status {}, head {before:?} then {after:?}",
+        status(&resp)
+    );
+}

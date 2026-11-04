@@ -28,6 +28,7 @@ import { createI18n, type I18n, type Label } from "../core/i18n.js";
 import { parseAmount } from "../core/money.js";
 import type { RouteDef } from "../core/router.js";
 import { OPERATIONS } from "../gen/api.js";
+import { appShell } from "../home/nav.js";
 import { readDeclaration, type Declaration } from "./declaration.js";
 import { KIT_LABELS } from "./kit.en.js";
 
@@ -225,6 +226,8 @@ export interface AssignmentSummary {
   /** Whether the caller still has to declare (R-CF-02). */
   readonly awaiting_declaration: boolean;
   readonly active: boolean;
+  /** Whether the stage 2 thread opens: an active reviewer assignment in STAGE2 (review finding U5). */
+  readonly stage2: boolean;
 }
 
 export const isAssignmentSummary: Guard<AssignmentSummary> = record<AssignmentSummary>({
@@ -234,6 +237,7 @@ export const isAssignmentSummary: Guard<AssignmentSummary> = record<AssignmentSu
   kind: oneOf("reviewer", "irc", "amendment"),
   awaiting_declaration: isBool,
   active: isBool,
+  stage2: isBool,
 });
 
 /**
@@ -521,7 +525,9 @@ export function frame(env: PageEnv, t: I18n, title: Label): Frame {
     body.replaceChildren(h("p", { "aria-busy": "true" }, [t.label("kit.loading")]));
   };
   busy();
-  env.root.replaceChildren(main);
+  // The page shell: skip link, top bar, and the sidebar with the site
+  // navigation (`docs/design/01-navigation-home.md`, 2026-11-01).
+  env.root.replaceChildren(...appShell(main));
   const showAlert = (message: Label): void => {
     alertSlot.replaceChildren(h("div", { role: "alert", class: "fstp-alert" }, [message]));
   };

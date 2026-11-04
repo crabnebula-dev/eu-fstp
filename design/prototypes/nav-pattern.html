@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Navigation pattern - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.variant { border: 1px solid var(--color-surface-3); border-radius: var(--radius-lg); margin-bottom: var(--space-8); overflow: hidden; }
+    .variant > p { padding: var(--space-3) var(--space-4); margin: 0; background: var(--color-surface-2); font-size: var(--text-sm); }
+    .anatomy li { margin-bottom: var(--space-2); }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html" aria-current="page">Home</a></li><li><a href="route-map.html">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Sidebar pattern in three role variants. Tab once to see the skip link.</p>
+
+    <h1>Sidebar navigation</h1>
+    <p class="muted">Signed-in pages share one layout: a full-width top bar, a left sidebar and the main content. Public pages use a simpler layout with links in the top bar and no sidebar.</p>
+    <h2>Layouts</h2>
+    <ul>
+      <li><strong>App layout.</strong> Every signed-in page. Top bar with tenant mark, notifications, help and avatar. Sidebar with navigation. Main content up to 960 pixels wide.</li>
+      <li><strong>Public layout.</strong> Sign-up, sign-in, public calls and open data pages. Top bar with public links and language. No sidebar.</li>
+    </ul>
+    <p>Pages supply only their main content. The layout comes from the role, so a router can map each layout to one layout route.</p>
+    <h2>Sidebar anatomy</h2>
+    <ol class="anatomy">
+      <li><strong>Masquerade banner slot.</strong> Hidden by default. A yellow strip appears when a Tenant admin views the platform as another role.</li>
+      <li><strong>Role chip.</strong> Shows the active role in words, so people with several roles know which view they are in.</li>
+      <li><strong>Navigation label and links.</strong> One vertical list. The current page has <code>aria-current="page"</code>, a bold weight, a left bar and a light blue background.</li>
+      <li><strong>Account and Sign out.</strong> At the bottom on desktop. Account goes to <code>/app/me</code>.</li>
+    </ol>
+    <h2>Top bar anatomy</h2>
+    <ol class="anatomy">
+      <li><strong>Tenant mark and name.</strong> Goes to Home. Tenant logo is a self-hosted token.</li>
+      <li><strong>Notifications.</strong> A number badge, plus hidden text "unread". The number is the cue, not the colour.</li>
+      <li><strong>Help.</strong> Opens help for the current page.</li>
+      <li><strong>Avatar.</strong> Shown on narrow screens only. On desktop the sidebar Account link replaces it.</li>
+    </ol>
+
+    <h2>(a) Applicant role, Home active</h2>
+    <div class="variant">
+      <p>Applicant, team member or grantee. Items: Home, My applications, Open calls, Support.</p>
+      <div class="sidebar sidebar--example">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation (example a)" data-slot="nav"><ul><li><a href="home-voyager.html" aria-current="page">Home</a></li><li><a href="route-map.html">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>(b) Coordinator role, Proposals active</h2>
+    <div class="variant">
+      <p>FSTP coordinator. Items: Home, Proposals, Calls, Programmes, People, Complaints.</p>
+      <div class="sidebar sidebar--example">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as FSTP coordinator.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as FSTP coordinator</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation (example b)" data-slot="nav"><ul><li><a href="home-coordinator.html">Home</a></li><li><a href="coordinator-conflict.html" aria-current="page">Proposals</a></li><li><a href="stage1-close.html">Calls</a></li><li><a href="#">Programmes</a></li><li><a href="#">People</a></li><li><a href="complaint-coordinator-review.html">Complaints</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>(c) Reviewer role in masquerade mode</h2>
+    <div class="variant">
+      <p>A Tenant admin views the reviewer pages read-only. The banner sits above the reviewer links.</p>
+      <div class="sidebar sidebar--example">
+        <div class="masquerade-banner" data-slot="masquerade">
+          <p><strong>Masquerading as Assigned reviewer.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Viewing as Assigned reviewer</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation (example c)" data-slot="nav"><ul><li><a href="home-reviewer.html">Home</a></li><li><a href="reviewer-assignments.html" aria-current="page">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Behaviour notes</h2>
+    <ul>
+      <li>Real pages have exactly one <code>&lt;nav aria-label="Main navigation"&gt;</code>. The examples above carry a suffix only because three appear on one page.</li>
+      <li>From 900 pixels wide the sidebar is 220 pixels, sticky, and fills the height below the top bar.</li>
+      <li>Below 900 pixels the links show as a vertical list under the top bar. Links keep a 44 pixel target. No hidden menu needs a script.</li>
+      <li>The skip link is the first focusable element. It appears on focus and moves focus to <code>main</code>.</li>
+      <li>There is no keyboard trap. Tab order follows reading order: top bar, sidebar, then main.</li>
+    </ul>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

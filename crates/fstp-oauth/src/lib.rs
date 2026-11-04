@@ -1,135 +1,116 @@
-//! A sans-IO OAuth 2.1 authorisation server (M4 design section 3.8).
+//! A sans-IO OAuth 2.1 authorisation server (M4 design section 3.8,
+//! ADR-013).
 //!
-//! The crate covers RFC 8414 and RFC 9728 metadata, RFC 7591 registration,
-//! authorisation with PKCE `S256`, token issue and refresh rotation, RFC
-//! 7009 revocation, RFC 8707 resource binding, a strict URL parser and a
-//! form decoder. Its profile is recorded in ADR-013, a draft pending Q8 and
-//! Q25.
+//! The crate covers RFC 8414 and RFC 9728 metadata, open RFC 7591
+//! registration with a rate limit, authorisation with PKCE `S256` only,
+//! token issue and refresh rotation with reuse detection, RFC 7009
+//! revocation, RFC 8707 resource binding, the RFC 9207 `iss` response
+//! parameter, a strict URL parser and the request decoders. Its profile,
+//! and the MCP revision it was checked against, are recorded in ADR-013.
 //!
-//! Status: W0 stub. Lane W1e (L-OAUTH) owns this crate, and waits for
-//! ADR-013. Every operation refuses with [`OauthError::NotImplemented`].
+//! - [`AuthorizationServer`] holds the clients, consents, codes, refresh
+//!   families and access tokens of one cell, in memory. Each endpoint takes
+//!   request bytes and the time and returns reply bytes.
+//! - The decoders ([`parse_url`], [`decode_form_urlencoded`],
+//!   [`decode_authorize_query`], [`decode_token_request`],
+//!   [`decode_revocation_request`], [`decode_client_metadata`],
+//!   [`parse_bearer_header`] and [`decode_base64url`]) check structure only.
+//!   Each has a fuzz target.
+//!
+//! The server never learns an identity attribute. It knows an account by
+//! its raw id and never writes that id into a reply (I-86). Consent needs
+//! a fresh phishing-resistant step-up bound to the consent (I-78).
 
-/// Why an operation of this crate failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+mod b64;
+mod form;
+mod metadata;
+mod request;
+mod scope;
+mod server;
+mod url;
+
+pub use b64::{Base64Url, MAX_BASE64URL_LEN, decode_base64url, encode_base64url};
+pub use form::{
+    Form, MAX_FORM_BYTES, MAX_FORM_PAIRS, decode_form_urlencoded, encode_form_urlencoded,
+};
+pub use metadata::{
+    ClientMetadata, MAX_CLIENT_NAME_CHARS, MAX_METADATA_BYTES, MAX_REDIRECT_URIS,
+    decode_client_metadata,
+};
+pub use request::{
+    AuthorizeRequest, BearerToken, MAX_BEARER_HEADER, RevocationRequest, TokenRequest,
+    decode_authorize_query, decode_revocation_request, decode_token_request, parse_bearer_header,
+};
+pub use scope::{Scope, ScopeSet};
+pub use server::{
+    ACCESS_LIFETIME_MICROS, AUTHORIZE_PATH, Account, AgentGrant, AuthorizationServer,
+    AuthorizeOutcome, CODE_LIFETIME_MICROS, CONSENT_LIFETIME_MICROS, ClientNumber, Config,
+    ConsentAuth, ConsentRequest, Grant, LoginMethod, MAX_STATE_BYTES, Micros, REGISTER_PATH,
+    RESOURCE_METADATA_PATH, REVOKE_PATH, RateKey, Reply, SERVER_METADATA_PATH, StepUpProof,
+    Strength, TOKEN_PATH,
+};
+pub use url::{MAX_URL_LEN, Scheme, Url, UrlError, parse_url, redirect_matches};
+
+/// Why a decoder or the server refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OauthError {
-    /// The W0 stub of the named operation refuses.
-    NotImplemented(&'static str),
+    /// The input is longer than its limit.
+    TooLong,
+    /// A form or query is malformed: a raw byte outside visible ASCII, an
+    /// empty segment, a segment without `=` or an empty name.
+    MalformedForm,
+    /// A `%` not followed by two hexadecimal digits.
+    BadPercentEncoding,
+    /// A decoded name or value is not UTF-8.
+    NotUtf8,
+    /// A parameter appears more than once (RFC 6749 section 3.1).
+    DuplicateParameter,
+    /// More parameters than [`MAX_FORM_PAIRS`].
+    TooManyParameters,
+    /// A required parameter is absent.
+    MissingParameter(&'static str),
+    /// A grant type other than `authorization_code` and `refresh_token`.
+    UnsupportedGrantType,
+    /// A URL outside the strict subset.
+    Url(UrlError),
+    /// Text that is not canonical unpadded base64url.
+    InvalidBase64,
+    /// An `Authorization` value that is not one `Bearer` credential.
+    InvalidBearer,
+    /// A registration body that is not JSON within the limits.
+    InvalidJson,
+    /// Registration metadata outside the profile.
+    InvalidClientMetadata(&'static str),
+    /// A missing, empty, duplicated or unsafe redirect URI list.
+    InvalidRedirectUri,
+    /// The system random generator failed.
+    Randomness,
+    /// A server configuration outside the profile.
+    InvalidConfig(&'static str),
 }
 
 impl std::fmt::Display for OauthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OauthError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
+            OauthError::TooLong => f.write_str("the input is too long"),
+            OauthError::MalformedForm => f.write_str("the form is malformed"),
+            OauthError::BadPercentEncoding => f.write_str("bad percent-encoding"),
+            OauthError::NotUtf8 => f.write_str("a decoded value is not UTF-8"),
+            OauthError::DuplicateParameter => f.write_str("a parameter appears more than once"),
+            OauthError::TooManyParameters => f.write_str("too many parameters"),
+            OauthError::MissingParameter(p) => write!(f, "the parameter {p} is missing"),
+            OauthError::UnsupportedGrantType => f.write_str("the grant type is not supported"),
+            OauthError::Url(e) => write!(f, "{e}"),
+            OauthError::InvalidBase64 => f.write_str("not canonical unpadded base64url"),
+            OauthError::InvalidBearer => f.write_str("not one Bearer credential"),
+            OauthError::InvalidJson => f.write_str("the body is not JSON within the limits"),
+            OauthError::InvalidClientMetadata(why) => write!(f, "invalid client metadata: {why}"),
+            OauthError::InvalidRedirectUri => f.write_str("the redirect URIs are invalid"),
+            OauthError::Randomness => f.write_str("the random generator failed"),
+            OauthError::InvalidConfig(why) => write!(f, "invalid configuration: {why}"),
         }
     }
 }
 
 impl std::error::Error for OauthError {}
-
-/// A parsed URL of the strict subset.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Url {
-    _w0: (),
-}
-
-/// Parses a URL in the strict RFC 3986 subset. Fuzzed (`url_parse`).
-pub fn parse_url(bytes: &[u8]) -> Result<Url, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented("fstp_oauth::parse_url"))
-}
-
-/// A decoded form body.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Form {
-    _w0: (),
-}
-
-/// Decodes an `application/x-www-form-urlencoded` body. Duplicate parameters are refused. Fuzzed (`form_urlencoded_decode`).
-pub fn decode_form_urlencoded(bytes: &[u8]) -> Result<Form, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented(
-        "fstp_oauth::decode_form_urlencoded",
-    ))
-}
-
-/// A decoded authorisation request.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthorizeRequest {
-    _w0: (),
-}
-
-/// Decodes the query of an authorisation request. Fuzzed (`authorize_query_decode`).
-pub fn decode_authorize_query(bytes: &[u8]) -> Result<AuthorizeRequest, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented(
-        "fstp_oauth::decode_authorize_query",
-    ))
-}
-
-/// A decoded token request.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TokenRequest {
-    _w0: (),
-}
-
-/// Decodes a token request body. Fuzzed (`token_request_decode`).
-pub fn decode_token_request(bytes: &[u8]) -> Result<TokenRequest, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented(
-        "fstp_oauth::decode_token_request",
-    ))
-}
-
-/// Decoded client registration metadata.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClientMetadata {
-    _w0: (),
-}
-
-/// Decodes RFC 7591 client metadata. Fuzzed (`client_metadata_decode`).
-pub fn decode_client_metadata(bytes: &[u8]) -> Result<ClientMetadata, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented(
-        "fstp_oauth::decode_client_metadata",
-    ))
-}
-
-/// A parsed bearer token.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BearerToken {
-    _w0: (),
-}
-
-/// Parses an `Authorization: Bearer` header value. Fuzzed (`bearer_header_parse`).
-pub fn parse_bearer_header(bytes: &[u8]) -> Result<BearerToken, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented(
-        "fstp_oauth::parse_bearer_header",
-    ))
-}
-
-/// Decoded base64url bytes.
-///
-/// W0 placeholder with no fields. The owning lane writes the designed type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Base64Url {
-    _w0: (),
-}
-
-/// Decodes unpadded base64url text. Fuzzed (`base64url_decode`).
-pub fn decode_base64url(bytes: &[u8]) -> Result<Base64Url, OauthError> {
-    let _ = bytes;
-    Err(OauthError::NotImplemented("fstp_oauth::decode_base64url"))
-}

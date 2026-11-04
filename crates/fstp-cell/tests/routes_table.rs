@@ -145,3 +145,42 @@ fn r_nf_02_every_route_path_is_a_loggable_template() {
         );
     }
 }
+
+/// The page paths of `web/src/auth/layout.ts` `PATHS` but `/auth/magic`,
+/// which is a row of section 8.7, and the asset routes the shell loads
+/// from (design section 11.2). Transcribed again from those sources.
+const SECTION_11_2_PAGES: [&str; 7] = [
+    "/auth/login",
+    "/auth/signup",
+    "/auth/invite",
+    "/auth/recovery",
+    "/auth/account",
+    "/assets/auth/{file}",
+    "/assets/auth/pages/{file}",
+];
+
+/// I-78, H-01, design sections 8.7 and 11.2: every route the page front
+/// serves is a `Route` of `fstp_cell::routes::page_table` with a risk
+/// class: a `GET` of class `Normal`, one per page path and asset route,
+/// and no other. None is a row of the production table, which stays
+/// exactly section 8.7 until Daniel adds the page rows there.
+#[test]
+fn i78_h_01_page_routes_are_exactly_the_section_11_2_pages() {
+    let pages: Vec<(&str, &str, RiskClass)> = fstp_cell::routes::page_table()
+        .iter()
+        .map(Route::parts)
+        .collect();
+    let want: Vec<(&str, &str, RiskClass)> = SECTION_11_2_PAGES
+        .iter()
+        .map(|p| ("GET", *p, RiskClass::Normal))
+        .collect();
+    let production = keys(&routes());
+    let shared: Vec<_> = pages
+        .iter()
+        .filter(|(m, p, _)| production.contains(&(*m, *p)))
+        .collect();
+    assert!(
+        pages == want && shared.is_empty(),
+        "page routes {pages:?}, want {want:?}; also production rows: {shared:?}"
+    );
+}

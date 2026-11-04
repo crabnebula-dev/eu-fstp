@@ -310,6 +310,16 @@ impl Journal {
         self.rounds.get(&round)
     }
 
+    /// The open cut-off round of `call`, if this core folded its opening
+    /// and nothing closed it since (change D5). `me.roles` lists it for
+    /// the committee of the call (design section 15.0, 2026-10-31).
+    pub(crate) fn open_round(&self, call: CallId) -> Option<DecisionId> {
+        if self.saturated {
+            return None;
+        }
+        self.open_rounds.get(&call).copied()
+    }
+
     /// Folds `c` of proposal `p`. `false` when a bound would be passed.
     fn apply(&mut self, c: &Core, p: ProposalId, now: Timestamp) -> bool {
         match c {

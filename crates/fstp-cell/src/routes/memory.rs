@@ -65,7 +65,6 @@ struct Mem {
     emails: BTreeMap<String, AccountId>,
     tokens: BTreeMap<[u8; 32], TokenRow>,
     outbox: Vec<(AccountId, [u8; 32])>,
-    stepups: BTreeMap<[u8; 16], Timestamp>,
 }
 
 impl Mem {
@@ -358,7 +357,10 @@ impl Backend for MemoryBackend {
         &self,
         id: [u8; 16],
     ) -> impl Future<Output = Result<Option<Timestamp>, BackendFault>> + Send {
-        ready(self.with(|m| m.stepups.get(&id).copied()))
+        // The entry instant of the `StepUpGranted` record, as the fold
+        // holds it. Seeded and committed grants both reach the fold, so
+        // every step-up the ledger knows has its instant here.
+        ready(self.with(|m| m.state().auth().stepup_grant(id).map(|g| g.granted_at)))
     }
 
     fn anchors(&self) -> impl Future<Output = Result<Vec<AnchorRow>, BackendFault>> + Send {
@@ -586,6 +588,38 @@ impl LocalCell {
             .peek_challenge(id)
             .ok_or(LocalError::Login("challenge"))?
             .nonce;
+        let body = self.admin_assertion(id, &challenge)?;
+        self.post_request("/auth/passkey/login", &body)
+    }
+
+    /// A signed `POST /auth/stepup` of the seeded tenant admin in the
+    /// session whose `Cookie` field value is `cookie`, over the step-up
+    /// challenge `id` that `POST /auth/stepup/options` issued (design
+    /// section 8.4). It is not sent. Each call signs with the next sign
+    /// count.
+    ///
+    /// # Errors
+    ///
+    /// [`LocalError::Login`] naming the step that failed.
+    pub fn admin_stepup_request(&self, cookie: &[u8], id: [u8; 16]) -> Result<Request, LocalError> {
+        let row = self
+            .backend
+            .peek_challenge(id)
+            .ok_or(LocalError::Login("challenge"))?;
+        let (Some(session), Some(digest)) = (row.session, row.action_digest) else {
+            return Err(LocalError::Login("challenge"));
+        };
+        let challenge = fstp_auth::stepup::challenge(self.cell, session, digest, row.nonce);
+        let body = self.admin_assertion(id, &challenge)?;
+        self.post_request("/auth/stepup", &body)?
+            .try_with_header("cookie", cookie.to_vec())
+            .map_err(|_| LocalError::Login("header"))
+    }
+
+    /// The assertion body of the seeded tenant admin's passkey over
+    /// `challenge`, naming the challenge row `id`, with UP, UV and the
+    /// next sign count.
+    fn admin_assertion(&self, id: [u8; 16], challenge: &[u8]) -> Result<Value, LocalError> {
         let count = {
             let mut c = self.sign_count.lock().map_err(|_| LocalError::Crypto)?;
             *c = c.saturating_add(1);
@@ -593,7 +627,7 @@ impl LocalCell {
         };
         let client_data = format!(
             "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"https://{}\",\"crossOrigin\":false}}",
-            base64url(&challenge),
+            base64url(challenge),
             self.host
         );
         let mut auth_data = fstp_crypto::sha256(self.host.as_bytes()).to_vec();
@@ -614,7 +648,7 @@ impl LocalCell {
         );
         o.insert("credential_id", Value::String(hex(&self.admin_credential)));
         o.insert("signature", Value::String(hex(&signature)));
-        self.post_request("/auth/passkey/login", &Value::Object(o))
+        Ok(Value::Object(o))
     }
 
     /// The `Cookie` field value of a fresh magic-link session of the

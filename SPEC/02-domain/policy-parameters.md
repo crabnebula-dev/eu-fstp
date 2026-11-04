@@ -23,7 +23,7 @@ Parameters are set per programme. "Frozen" parameters lock when a call publishes
 | P-17 | Tie-break priority | EU and associated countries, with exception for exceptional quality and unique expertise | Yes |
 | P-18 | Identity verification methods | EUDI Wallet; document upload with manual check | No |
 | P-19 | Uploaded document retention after verification | None: deleted on verification | No |
-| P-20 | Payment mode | Record-only or execution | No (tenant-level) |
+| P-20 | Payment mode | Record-only. Execution is deferred by Daniel on 2026-11-04 (B-11) | No (tenant-level) |
 | P-21 | Inference provider and pinned model, with an ordered fallback list (NOTE 10) | Tenant choice | Yes |
 | P-22 | Trace retention | Until the funder audit period ends (P-41) | No |
 | P-23 | Pre-check enabled and rate limits | Enabled; 1 per day and 5 per call per proposal; account-level cap across drafts in the same call | Yes |
@@ -89,7 +89,7 @@ NOTE 10: The frozen P-21 value is a primary model plus an ordered fallback list,
 | P-29 | Contract instrument and template version | MoU | Yes |
 | P-30 | Signature level and cascade | Wallet QES, then QTSP remote QES, then approved advanced | Yes |
 | P-31 | Reminder offsets | Minus 14 days, minus 3 days, due date | No |
-| P-32 | Enabled channels and group types | Email, Matrix and WhatsApp (tenant-owned account); all four group types | No |
+| P-32 | Enabled channels and group types | Email only. Matrix and its group types are deferred by Daniel on 2026-11-04 (B-05), WhatsApp deferred by Daniel on 2026-11-04 (B-03) | No |
 | P-33 | Overdue escalation | Plus 7 days to programme manager | No |
 | P-34 | Payment request evidence requirements | Public location, release identifier, SPDX licence, report | Yes |
 | P-35 | Group membership removal delay | Immediate | No |

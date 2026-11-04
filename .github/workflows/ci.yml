@@ -7,7 +7,8 @@
 # Jobs:
 #   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
-#   test         cargo test on the workspace with a real PostgreSQL 16
+#   test         cargo test on the workspace with a real PostgreSQL 16, gated by
+#                the known-red list in ci/known-red.txt (tools/test-gate)
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
@@ -151,8 +152,16 @@ jobs:
           fi
           "$pg_bin/postgres" --version
           echo "FSTP_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
-      - name: cargo test
-        run: cargo test --workspace --locked
+      # Some tests are red on purpose: each waits on a seam that a named
+      # lane closes, and ci/known-red.txt lists it with that seam and lane.
+      # The run itself may fail; test-gate decides. It fails on any red
+      # test not on the list, on a listed test that passes or did not run,
+      # on a crashed test binary and on a compile error.
+      - name: cargo test, then the known-red gate
+        run: |
+          set -uo pipefail
+          cargo test --workspace --locked --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
+          cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "$RUNNER_TEMP/cargo-test.log"
       # The SQLSTATE condition-name table must match this PostgreSQL 16.
       - name: SQLSTATE table matches the server
         run: bash crates/fstp-pgwire/tools/gen-sqlstate.sh --check

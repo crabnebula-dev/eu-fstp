@@ -131,7 +131,7 @@ Components are written in-house per the dependency policy in `../.claude/CLAUDE.
 | Export and import executable | Separate program under EUPL-1.2, invoked by the cell (`schemas/README.md`) |
 | Qualified signature validation | In-house procedure on allowlisted parsers (ADR-001) |
 | Matrix client-server adapter | E2EE through ADR-001 crates |
-| WhatsApp Business Platform adapter | Subject to O-21 |
+| WhatsApp Business Platform adapter | Deferred by Daniel on 2026-11-04 (B-03) |
 
 NOTE: In-house code reduces supply chain exposure and increases the attack surface you own. Hardening activity H-05 covers every in-house parser.
 

@@ -14,6 +14,7 @@ export const COORDINATOR_LABELS: Readonly<Record<string, string>> = {
   "coord.intake.declare": "Declare for proposal {id}",
   "coord.intake.knock_out": "Knock-out check of proposal {id}",
   "coord.intake.assignments": "Reviewer assignments of proposal {id}",
+  "coord.intake.no_action": "No action is open for proposal {id}.",
   "coord.decl.title": "Declaration for proposal {id}",
   "coord.decl.next": "Go to the knock-out check of proposal {id}",
   "coord.ko.title": "Knock-out check of proposal {id}",

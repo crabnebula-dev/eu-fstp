@@ -17,6 +17,7 @@ import { ok, post } from '../api.js';
 import { h } from '../dom.js';
 import { isHex } from '../encoding.js';
 import { PATHS, busy, frame, go, hush, showFailure, t, takeFragment } from '../layout.js';
+import { HOME_PATH } from '../next.js';
 import { Failure, failureOf, optionsOf, registration } from '../webauthn.js';
 
 /** The longest invitation token, in bytes. */
@@ -30,7 +31,7 @@ async function enrol(token: string): Promise<void> {
   const c = await registration(publicKey);
   const r = await post(base, { ...c, challenge_id: challengeId });
   if (!ok(r)) throw failureOf(r.status === 401 ? 403 : r.status);
-  go(PATHS.account);
+  go(HOME_PATH);
 }
 
 /** Mounts the invitation page. */

@@ -95,6 +95,8 @@ pub(crate) struct CellCfg {
     pub(crate) rp: RelyingParty,
     /// The login methods the tenant enables (P-70).
     pub(crate) enabled: EnabledMethods,
+    /// The compiled auth pages, when the front serves them.
+    pub(crate) pages: Option<Arc<crate::http::pages::Pages>>,
 }
 
 /// What a handler runs against.
@@ -356,15 +358,18 @@ async fn dispatch<B: Backend>(
 ) -> Reply {
     use crate::routes::{api, auth};
     match (route.endpoint(), caller) {
+        (Endpoint::InvitationOptions, _) => auth::invitation_options(ctx, req).await,
+        (Endpoint::InvitationRegister, _) => auth::invitation_register(ctx, req).await,
         (Endpoint::PasskeyLoginOptions, _) => auth::login_options(ctx, req).await,
         (Endpoint::PasskeyLogin, _) => auth::login(ctx, req).await,
         (Endpoint::MagicRequest, _) => auth::magic_request(ctx, req).await,
-        (Endpoint::MagicConfirm, _) => auth::magic_confirm(),
+        (Endpoint::MagicConfirm, _) => auth::magic_confirm(ctx),
+        (Endpoint::PageShell, _) => auth::page_shell(ctx),
+        (Endpoint::PageAsset, _) => auth::page_asset(ctx, req, ""),
+        (Endpoint::PageModule, _) => auth::page_asset(ctx, req, "pages/"),
         (Endpoint::MagicConsume, _) => auth::magic_consume(ctx, req).await,
         (
-            Endpoint::InvitationOptions
-            | Endpoint::InvitationRegister
-            | Endpoint::SignupOptions
+            Endpoint::SignupOptions
             | Endpoint::Signup
             | Endpoint::RecoveryRequest
             | Endpoint::RecoveryEmail

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Funded projects: SuperSAFE - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header">
+      <div class="topbar">
+        <a class="brand" href="calls-public.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="calls-public.html">Open calls</a></li><li><a href="public-grants.html" aria-current="page">Funded projects</a></li><li><a href="public-calls-feed.html">Open data</a></li><li><a href="auth-signin.html">Sign in</a></li></ul></nav>
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools"><li><a class="tool-link" href="#">Language: English</a></li></ul>
+      </div>
+  </header>
+  <div class="page-body page-body--public">
+  
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Public listing of funded projects at three visibility levels. Script-free GET filter.</p>
+
+    <h1>Funded projects: SuperSAFE</h1>
+    <!-- I-42: no public page names a minor. I-41: only proposals that reached GRANTED appear. -->
+    <form method="get" action="public-grants.html" class="filters" role="search" aria-label="Filter funded projects">
+      <div class="field"><label for="f-status">Status</label><select id="f-status" name="status"><option selected>Funded</option><option>Finished</option></select></div>
+      <div class="field"><label for="f-call">Call</label><select id="f-call" name="call"><option selected>All calls</option><option>SuperSAFE Call 1</option></select></div>
+      <button class="btn btn--secondary" type="submit">Apply filters</button>
+    </form>
+    <p>Showing 14 funded projects across all calls.</p>
+    <p class="text-sm muted">Each project appears at the level its grantee chose, never above the programme limit (I-43). The 3 projects below are examples.</p>
+    <div class="grid grid--3">
+      <article class="card" aria-labelledby="g1">
+        <h2 id="g1" style="font-size:var(--text-xl)">Open digital infrastructure tools</h2>
+        <p>Shared tools that help small public bodies run open source services.</p>
+        <p class="text-sm">SuperSAFE Call 1. <span class="badge badge--info">Funded</span></p>
+      </article>
+      <article class="card" aria-labelledby="g2">
+        <h2 id="g2" style="font-size:var(--text-xl)">Community mesh networking</h2>
+        <p>Low-cost mesh networks for rural community centres.</p>
+        <p class="text-sm">Grantee: L. Varga. SuperSAFE Call 1. <span class="badge badge--info">Funded</span></p>
+      </article>
+      <article class="card" aria-labelledby="g3">
+        <h2 id="g3" style="font-size:var(--text-xl)">Secure configuration library</h2>
+        <p>A library of hardened default configurations for common servers.</p>
+        <p class="text-sm">Grantee: P. Novak. SuperSAFE Call 1. <span class="badge badge--info">Funded</span></p>
+        <dl class="facts"><dt>Granted amount</dt><dd>48 500.00 EUR</dd><dt>Milestones</dt><dd>1 of 4 completed</dd></dl>
+      </article>
+    </div>
+    <p><a href="public-calls-feed.html">Download data (JSON)</a> <span class="text-sm muted">with the same visibility filter.</span></p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>No tracking scripts and no cookies on public pages.</p>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

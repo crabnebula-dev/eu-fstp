@@ -28,6 +28,7 @@ import {
   t,
   takeFragment,
 } from '../layout.js';
+import { HOME_PATH } from '../next.js';
 import { Failure, failureOf, optionsOf, registration } from '../webauthn.js';
 
 /** The longest proof token, in bytes. */
@@ -40,7 +41,7 @@ async function register(token: string): Promise<void> {
   const c = await registration(publicKey);
   const r = await post('/auth/signup', { ...c, challenge_id: challengeId, token });
   if (!ok(r)) throw failureOf(r.status === 401 ? 403 : r.status);
-  go(PATHS.account);
+  go(HOME_PATH);
 }
 
 function mountRegister(token: string | null): void {

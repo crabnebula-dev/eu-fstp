@@ -5,7 +5,9 @@
 //   the cell's request options. The cell sets the RP id and the user
 //   verification level, and requires UV of every management holder. The
 //   assertion goes to `POST /auth/passkey/login`. A session cookie means
-//   success, and the page opens the account page.
+//   success. The page then opens the home page `/app/`, or the `/app/`
+//   page a safe `?next=` names (`next.ts`; interim, pending Daniel,
+//   design section 15.0, 2026-10-31).
 // - Magic link: `POST /auth/magic/request {email}`. The cell answers the
 //   same whether or not the address may get a link, so the page shows
 //   one fixed message for every accepted request.
@@ -13,6 +15,7 @@
 import { ok, post } from '../api.js';
 import { h } from '../dom.js';
 import { PATHS, busy, emailField, frame, go, hush, showFailure, statusRegion, t } from '../layout.js';
+import { landingAfterSignIn } from '../next.js';
 import { assertion, failureOf, optionsOf } from '../webauthn.js';
 
 async function passkeyLogin(): Promise<void> {
@@ -24,7 +27,9 @@ async function passkeyLogin(): Promise<void> {
   // A refused login is 401 here, not a lost session.
   if (r.status === 401) throw failureOf(403);
   if (!ok(r)) throw failureOf(r.status);
-  go(PATHS.account);
+  // Interim, design section 15.0 (2026-10-31): the home page, or the
+  // same-origin /app/ page the person asked for before signing in.
+  go(landingAfterSignIn(location.search));
 }
 
 /** Mounts the login page. */

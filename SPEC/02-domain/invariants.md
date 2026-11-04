@@ -35,6 +35,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-20** The platform stores no link between tenant accounts in different tenants.
 - **I-21** Pre-submission check runs and drafts are not readable by operator or Judging roles.
 - **I-22** Exporting a tenant and importing it into an empty cell yields an equivalent tenant state.
+  NOTE: Export and import are deferred by Daniel on 2026-11-04 (B-07). I-22 binds again when they return.
 
 ## Audit
 
@@ -47,7 +48,9 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-26** Each combination of event, recipient and channel is delivered at most once.
 - **I-27** No message on any channel contains proposal content, scores, deliberation or another person's identity attributes.
 - **I-28** No shared group contains an applicant before NEGOTIATION. No shared group mixes Receiving and Judging roles unless P-11 is named and the proposal is GRANTED or later.
+  NOTE: Group messaging is deferred by Daniel on 2026-11-04 (B-05). No shared group exists until it returns.
 - **I-29** Group membership matches current role bindings and opt-ins. Ending a binding enqueues the membership removal in the same transaction, and removal executes within P-35 subject to channel availability.
+  NOTE: Group messaging is deferred by Daniel on 2026-11-04 (B-05).
 
 ## Contracts and payment requests
 
@@ -129,6 +132,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-69** Branding cannot remove mandatory elements required by the funder profile, the AI disclosure, the privacy notice, the accessibility statement, the Data Act tenant information or the platform attribution.
 - **I-70** Every colour pair used for text meets WCAG 2.2 level AA contrast in light and dark themes.
 - **I-71** A custom domain serves traffic only after verified ownership, and only for its own tenant cell.
+  NOTE: Custom domains are deferred by Daniel on 2026-11-04 (B-09). Until they return, every cell serves only its platform domain.
 - **I-72** Terminology overrides apply to interface labels only. Contracts, notices, the Guide for Applicants, funder documents and emails keep their approved wording.
 - **I-73** A template reaches other tenants only when published by a tenant admin and a programme manager together, after a personal data scan, under a licence the publisher chose.
 
@@ -144,6 +148,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-79** An account holding any role outside the Receiving group is never recovered by email alone.
 - **I-80** No root key exists in plaintext outside its custody backend.
 - **I-81** Destroying a root or data key makes the protected data unrecoverable, including from backups.
+  NOTE: Assurance levels. Decided by Daniel on 2026-11-01: "i want this to be able to run on anyone's hardware, not just linux. so, if they are running on windows or mac, we just tell them that the ultimate degree of security isn't met, but we should let them continue. in all cases, do not fail on development mode". File custody meets I-81 in full only on a Linux key volume of ext4 or XFS that is never backed up, snapshotted or copied. On any other host or filesystem, such as APFS, HFS+, NTFS or an unknown type, the platform still starts, and reports that it runs at reduced assurance for I-81 with the reason. It never reports full assurance there. In development mode, host and platform checks warn and never stop a start. Authorisation, step-up and the domain invariants are enforced in every mode.
 - **I-82** No database role can read across databases of different cells.
 - **I-83** Identity vault databases never share a cluster with application databases.
 
@@ -154,6 +159,18 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-86** Identity attributes, bank details and vault contents are never returned through MCP.
 - **I-87** Public MCP tools return exactly the data of the public pages and feed, under the same filters.
 - **I-88** Calls to external MCP servers initiated by platform components use read-only tools only, unless a named human approved the specific action.
+  NOTE: External MCP integrations are deferred by Daniel on 2026-11-04 (B-10). No platform component calls an external MCP server until they return.
 - **I-89** Calls to external MCP servers send only the fields declared for that integration. Identity attributes and bank details go only to an approved finance hand-over.
+  NOTE: External MCP integrations are deferred by Daniel on 2026-11-04 (B-10).
 - **I-90** A composite signature verifies only when both the Ed25519 and the ML-DSA-65 halves verify.
 - **I-91** Self-hosted cells and desktop clients install only updates whose release metadata carries a valid composite signature by a release signing key that the release root currently certifies.
+  NOTE: The desktop client is deferred by Daniel on 2026-11-04 (B-04). Until it returns, I-91 binds self-hosted cells.
+
+## Journey UI layer (`12-journey-ui.md`, decided 2026-11-01)
+
+- **I-92** The journey layer holds no authority. Every state change still goes through the domain core. Deleting all journey tables and replaying the ledger rebuilds identical output.
+- **I-93** Every diary entry shown to a viewer passes the visibility function for that viewer's role and programme (section 7). No entry is stored once and filtered in the browser.
+- **I-94** Journey vocabulary appears in interface labels only. Contracts, contractual notices, the Guide, funder documents, emails and messaging keep approved wording (extends I-72).
+- **I-95** The journey graph must equal the state machine. A build fails when a node or edge differs from the domain core's transition table (drift test, section 13).
+- **I-96** Every metaphor label is shown with the formal status name beside it, in text, so the legal state is never ambiguous.
+- **I-97** A journey row or API response never holds free text from a ledger record. It holds a `TextRef`, resolved at read time under the viewer's rights. After erasure, a `TextRef` resolves to the erasure-log placeholder, never to text (ADR-007, I-81).

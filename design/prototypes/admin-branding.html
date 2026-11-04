@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Branding - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.upload-slot { border: 2px dashed var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; color: var(--color-text-2); background: var(--color-surface-1); }
+    .sw { display: inline-block; width: 1.5rem; height: 1rem; border: 1px solid #64748B; border-radius: var(--radius-sm); vertical-align: middle; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .section-head h2 { margin: 0; }
+    dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .row-self td { background: var(--color-state-warning-bg); }
+    .check-list { list-style: none; padding: 0; }
+    .check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
+    .check-list li > span:first-child { flex: 1; min-width: 12rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html" aria-current="page">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li><li><a href="onboarding.html">Set-up</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: White-label package editor with one failing contrast pair. Save is blocked. Uploads and save need script.</p>
+
+    <h1>Branding</h1>
+    <p class="muted">Branding is data only. No tenant-supplied script, style or markup runs on the platform (I-68).</p>
+    <section aria-labelledby="id-h">
+      <h2 id="id-h">Brand identity</h2>
+      <dl class="facts"><dt>Organisation name</dt><dd>Horizon Bridges</dd></dl>
+      <div class="grid grid--3">
+        <div><h3>Logo, light theme</h3><div class="upload-slot"><p>Upload SVG or PNG</p></div></div>
+        <div><h3>Logo, dark theme</h3><div class="upload-slot"><p>Upload SVG or PNG</p></div></div>
+        <div><h3>Favicon</h3><div class="upload-slot"><p>Upload SVG or PNG</p></div></div>
+      </div>
+      <!-- TODO(js): file pickers and upload progress. -->
+      <p class="text-sm muted">SVG is sanitised on upload per I-68. PNG images are re-encoded on upload.</p>
+    </section>
+    <section aria-labelledby="col-h">
+      <h2 id="col-h">Colour tokens</h2>
+      <table>
+        <caption>Text colour pairs, checked against WCAG 2.2 AA in light and dark themes</caption>
+        <thead><tr><th scope="col">Token</th><th scope="col">Light value</th><th scope="col">Dark value</th><th scope="col">Contrast check</th></tr></thead>
+        <tbody>
+          <tr><td><code>--color-primary</code></td><td><span class="sw" style="background:#2563EB" aria-hidden="true"></span> <code>#2563EB</code></td><td><span class="sw" style="background:#60A5FA" aria-hidden="true"></span> <code>#60A5FA</code></td><td><span class="badge badge--success">Pass</span></td></tr>
+          <tr><td><code>--color-surface</code></td><td><span class="sw" style="background:#FFFFFF" aria-hidden="true"></span> <code>#FFFFFF</code></td><td><span class="sw" style="background:#1E293B" aria-hidden="true"></span> <code>#1E293B</code></td><td><span class="badge badge--success">Pass</span></td></tr>
+          <tr><td><code>--color-muted-text</code></td><td><span class="sw" style="background:#9CA3AF" aria-hidden="true"></span> <code>#9CA3AF</code></td><td><span class="sw" style="background:#6B7280" aria-hidden="true"></span> <code>#6B7280</code></td><td><span class="badge badge--error">Fails WCAG 2.2 AA</span></td></tr>
+        </tbody>
+      </table>
+      <p class="callout callout--error"><strong>1 failing pair:</strong> Packages with failing pairs are rejected (I-70). Fix the failing pair before saving.</p>
+    </section>
+    <section aria-labelledby="type-h">
+      <h2 id="type-h">Typography</h2>
+      <dl class="facts">
+        <dt>Body font</dt><dd>Inter, self-hosted</dd>
+        <dt>Heading font</dt><dd>Inter, self-hosted</dd>
+      </dl>
+      <p class="text-sm muted">No third-party font hosts are loaded (I-68).</p>
+    </section>
+    <section aria-labelledby="mand-h">
+      <h2 id="mand-h">Mandatory elements</h2>
+      <ul class="check-list">
+        <li><span>Funder visibility</span><span class="badge badge--neutral">Required</span><span class="badge badge--success">Present</span></li>
+        <li><span>AI disclosure</span><span class="badge badge--neutral">Required</span><span class="badge badge--success">Present</span></li>
+        <li><span>Privacy notice</span><span class="badge badge--neutral">Required</span><span class="badge badge--success">Present</span></li>
+        <li><span>Accessibility statement</span><span class="badge badge--neutral">Required</span><span class="badge badge--success">Present</span></li>
+        <li><span>Platform attribution</span><span class="badge badge--neutral">Required</span><span class="badge badge--success">Present</span></li>
+      </ul>
+      <p class="text-sm muted">These elements cannot be removed by branding (I-69).</p>
+    </section>
+    <section aria-labelledby="term-h">
+      <h2 id="term-h">Terminology overrides</h2>
+      <table>
+        <caption>2 label overrides</caption>
+        <thead><tr><th scope="col">Label</th><th scope="col">Override</th></tr></thead>
+        <tbody><tr><td>Call</td><td>Open call</td></tr><tr><td>Milestone</td><td>Deliverable</td></tr></tbody>
+      </table>
+      <p class="text-sm muted">Overrides apply to interface labels only. Contracts and notices keep their approved wording (I-72).</p>
+    </section>
+    <div class="btn-row"><!-- TODO(js): Save needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="save-why">Save</button>
+        <p id="save-why" class="text-sm muted">Saving is blocked while contrast failures exist.</p></div>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>
