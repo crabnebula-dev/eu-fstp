@@ -10,13 +10,13 @@ New tenants are set up through a guided onboarding flow. Programmes are then bui
 | Agreements | SaaS terms, data processing agreement, sub-processor list (skipped for self-hosted) |
 | Branding | White-label package (`03-architecture/white-labelling.md`) |
 | Domains and email | Custom domains, sending domain with SPF, DKIM and DMARC checks |
-| Identity | EUDI Wallet relying party mode (P-45), verification methods (P-18) |
+| Identity | EUDI Wallet relying party mode (P-45), verification methods (P-18). P-18 covers identity verification only. Advanced signature is a signing fallback of P-30, not a verification method (decided by Daniel 2026-11-01) |
 | Inference | Inference provider and model (P-21) |
 | Payments | Payment mode (P-20), bank interface where execution mode is used |
 | Channels | Matrix homeserver, WhatsApp Business account (tenant-owned) |
-| Administrators | At least two tenant admins (SoD-07) |
+| Administrators | At least two tenant admins (SoD-07), and at least one Financial signatory and one Legal signatory (SoD-14, SoD-15) |
 
-Each step validates before the next opens. The tenant can save and return at any point.
+Each step validates before the next opens. The tenant can save and return at any point. Activation is requested by one tenant admin and approved by another (SoD-18).
 
 ## Programme creator
 

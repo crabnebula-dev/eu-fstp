@@ -13,6 +13,8 @@ Accounts are per tenant (I-20). Each cell authenticates its own users. No login 
 
 Tenants choose which methods are enabled (P-70). Passkeys are always available.
 
+NOTE: Identity verification (P-18) and signing (P-30) are separate. P-18 lists only identity verification routes. Advanced signature is a fallback signing route of P-30, never a verification method (decided by Daniel 2026-11-01).
+
 ## Strong methods
 
 Passkeys and the EUDI Wallet count as phishing-resistant. OPAQUE and magic links do not.

@@ -369,6 +369,15 @@ Reviewer, committee and IRC views reuse the route map as a **"where is this prop
 
 Open calls, funded and finished subgrants as static pages, no tracking (R-PB-04). Aggregates only above P-54. The voyage metaphor may appear in headings through the vocabulary pack but never in funder-required or legal text.
 
+### 8.6 Role preview for tenant admins
+
+Decided by Daniel on 2026-11-01. A tenant admin can preview what each role sees, to help a member who reports a problem. The design calls it masquerade mode.
+
+- The preview shows each role's screens filled with synthetic sample data only. It never reads a real proposal, score, contract, payment or identity record.
+- It grants no access and changes no rule: P-10, R-CF-02 and SoD-08 apply unchanged. Real content still needs SoD-08 break-glass approval.
+- A banner names the previewed role and the admin's own account, and every action is disabled.
+- Entering and leaving the preview is recorded in the audit log.
+
 ## 9. Side tracks (drawn as branches off the main route)
 
 | Track | States | Notes |

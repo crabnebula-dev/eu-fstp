@@ -7,7 +7,7 @@ This record is not normative. It is input for Daniel's engineering work. The spe
 ## SA-01: Financial signatory and Legal signatory roles
 
 **Source.** Daniel's decision, 2026-11-01. Q31.
-**Status.** Spec amendment pending. Backend work pending.
+**Status.** Spec amendment applied on 2026-11-04. Backend work pending.
 
 ### Spec amendment required
 
@@ -50,7 +50,7 @@ Note: SoD-07 applies when a tenant admin grants either role to their own account
 ## SA-02: Onboarding activation second-admin rule
 
 **Source.** Daniel's decision, 2026-11-01. Q29.
-**Status.** Spec amendment pending. Backend work pending.
+**Status.** Spec amendment applied on 2026-11-04. Backend work pending.
 
 ### Spec amendment required
 
@@ -73,7 +73,7 @@ Add the following rule to `SPEC/02-domain/programme-creator.md`, under Validatio
 ## SA-03: Terminated-before-signature contract record
 
 **Source.** Daniel's decision, 2026-11-01. Q28.
-**Status.** Spec amendment pending. Backend work pending.
+**Status.** Spec amendment applied on 2026-11-04. Backend work pending.
 
 ### Spec amendment required
 
@@ -96,7 +96,7 @@ Add the following to `SPEC/02-domain/contracts.md`, under Rules:
 ## SA-04: Advanced signature removed from verification methods
 
 **Source.** Daniel's decision, 2026-11-01. Q30.
-**Status.** Spec amendment pending.
+**Status.** Spec amendment applied on 2026-11-04.
 
 ### Spec amendment required
 
@@ -105,3 +105,15 @@ Clarify in `SPEC/02-domain/programme-creator.md` step 5 (Identity) and in `SPEC/
 ### Backend work required
 
 None. The backend already separates verification (P-18, identity vault) from signing (P-30, contract flow). This is a spec clarification only.
+
+---
+
+## Applied IDs
+
+Applied by the implementing agent on 2026-11-04, after Daniel confirmed all four. SA-01a to SA-01d became SoD-14 to SoD-17, and SA-01e became NOTE 5 of `roles-and-sod.md`. SA-02a became SoD-18. SA-03a is a rule in `contracts.md`. SA-04 is a note in `authentication.md` and the Identity row of `programme-creator.md`.
+
+## SA-05: Masquerade is a synthetic role preview
+
+**Source.** Daniel's decision, 2026-11-01. **Status.** Spec amendment applied on 2026-11-04 as `SPEC/12-journey-ui.md` section 8.6.
+
+The preview shows synthetic sample data only, never real records, and changes no access rule. Real content still needs SoD-08 break-glass approval.

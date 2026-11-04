@@ -50,7 +50,7 @@ Rules for the implementation:
 
 ## Masquerade mode
 
-Added 2026-11-01. A Tenant admin can view the platform as another role sees it, to help a member who reports a problem. The view is read-only.
+Added 2026-11-01. A Tenant admin can view the platform as another role sees it, to help a member who reports a problem. The view is read-only. Daniel decided on 2026-11-01 that it shows synthetic sample data only, never real records, and changes no access rule (`SPEC/12-journey-ui.md` section 8.6).
 
 - Entry point: Administration home, section "Support tools", then `admin-masquerade.html`. It is also in the admin sidebar as "Support tools".
 - `admin-masquerade.html` lists 10 roles. Each row has a "View as [role]" link to that role's home page. In the prototype the links are static. TODO(js): real masquerade needs a session flag.
