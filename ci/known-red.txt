@@ -31,14 +31,11 @@ fstp_api_testkit::fake::creator_wire_tests::i66_request_activation_with_a_failur
 fstp_api_testkit::fake::creator_wire_tests::i67_approval_inbox_never_offers_approval_to_a_builder | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::i67_builder_approval_is_refused_before_any_step_up | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::i78_approve_activation_needs_a_fresh_digest_bound_step_up | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i78_r_pg_01_open_draft_needs_step_up_then_builds_open_draft | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::i84_save_fields_through_mcp_runs_with_via_mcp | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::i85_approve_activation_through_mcp_is_not_exposed_and_never_runs | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_01_get_draft_reads_spec_revision_and_status | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_01_invite_builds_invite_with_a_drawn_id_and_a_stored_contact | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_01_previews_read_as_text | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_01_save_fields_builds_field_edits_with_the_shell_sha256 | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_01_withdraw_invitation_builds_withdraw_invitation | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_02_apply_start_refuses_a_stale_base_and_a_non_manager | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_02_apply_start_template_builds_apply_start | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_04_impact_reads_for_the_manager_only | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
@@ -97,10 +94,7 @@ i65_teeth_auto_applied_proposal_is_caught::i65_teeth_auto_applied_proposal_is_ca
 i65_teeth_auto_applied_proposal_is_caught::i65_teeth_auto_applied_proposal_is_caught_by_the_twins | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_edit_after_report_voids_clearance::i66_edit_after_report_voids_clearance | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_edit_after_report_voids_clearance::i66_edit_after_report_voids_clearance_for_every_edit_kind | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_execute_refuses_core_activate_programme::i66_execute_refuses_core_activate_programme | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_fold_refuses_unpaired_programme_activated::i66_fold_refuses_unpaired_programme_activated | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_m_activate::i66_m_activate | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_no_route_or_tool_reaches_activate_programme::i66_no_route_or_tool_reaches_activate_programme | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_pending_legal_wording_is_a_failure::i66_pending_legal_wording_is_a_failure | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_probes_run_at_approval::i66_probes_run_at_approval | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_r_pg_01_cap_above_ceiling_names_both_values::i66_r_pg_01_cap_above_ceiling_names_both_values | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
@@ -114,9 +108,7 @@ i67_approver_is_never_a_builder::i67_approver_is_never_a_builder | reference mod
 i67_core_guard_refuses_builder_even_if_creator_does_not::i67_core_guard_refuses_builder_even_if_creator_does_not | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_m_activate::i67_m_activate | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_m_activate::i67_m_activate_with_a_sybil_pair | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_preview_vault_answers_are_recorded::i67_preview_vault_answers_are_recorded | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_sybil_builder_and_approver_refused::i67_sybil_builder_and_approver_refused | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_sybil_builder_and_approver_refused::i67_sybil_builder_and_approver_refused_for_every_builder | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_teeth_builder_approval_is_caught::i67_teeth_builder_approval_is_caught | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_unverified_builder_or_approver_refused::i67_unverified_builder_or_approver_refused | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i75_hybrids::i75_mldsa_never_used_without_ed25519 | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
