@@ -13,19 +13,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-committee.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-committee.html">Home</a></li><li><a href="committee-ranking.html" aria-current="page">Rankings</a></li><li><a href="#">My assignments</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Committee member</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">CM</span><span class="sr-only">Account: committee-4d1e</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">CM</span><span class="sr-only">Account: committee-4d1e</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Committee member.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Committee member</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-committee.html">Home</a></li><li><a href="committee-ranking.html" aria-current="page">Rankings</a></li><li><a href="#">My assignments</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: Committee cut-off round, 7 proposals RANKED, tie at rank 3 broken under P-17, viewer recused from one</p>
 
@@ -70,6 +83,7 @@
     </form>
     <p class="text-sm muted">The chair records the cut-off when the round is decided under P-16. Outcomes are computed: proposals within the cut-off go to Independent review (IRC_REVIEW), the rest become Not selected (NOT_SELECTED).</p>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

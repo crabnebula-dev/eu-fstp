@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operations - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-operations.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">OP</span><span class="sr-only">Account: ops-5d2c</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Operations.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Operations</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-operations.html" aria-current="page">Home</a></li><li><a href="payment-request-review.html">Payment approvals</a></li><li><a href="payment-release.html">Payment releases</a></li><li><a href="contract-signatory.html">Countersignature</a></li><li><a href="report-approval.html">Report approvals</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Operations home for Horizon Bridges. Shows the queues for the finance approver, payment releaser, contract signatory and operations approver roles.</p>
+
+    <h1>Operations</h1>
+    <p class="muted">You see a queue for each role you hold in SuperSAFE.</p>
+    <div class="grid grid--2">
+      <section class="card card--primary" aria-labelledby="q1-h">
+        <p class="card-kicker">Finance approver</p>
+        <h2 id="q1-h">Payment requests to approve</h2>
+        <p><span class="stat">3</span> pending</p>
+        <a class="btn btn--primary" href="payment-request-review.html">Review payment requests</a>
+      </section>
+      <section class="card" aria-labelledby="q2-h">
+        <p class="card-kicker">Payment releaser</p>
+        <h2 id="q2-h">Payments to release</h2>
+        <p><span class="stat">1</span> approved</p>
+        <a href="payment-release.html">Open payment releases</a>
+      </section>
+      <section class="card" aria-labelledby="q3-h">
+        <p class="card-kicker">Contract signatory</p>
+        <h2 id="q3-h">Contracts to countersign</h2>
+        <p><span class="stat">2</span> pending</p>
+        <a href="contract-signatory.html">Open contracts</a>
+      </section>
+      <section class="card" aria-labelledby="q4-h">
+        <p class="card-kicker">Operations approver</p>
+        <h2 id="q4-h">Reports to approve</h2>
+        <p><span class="stat">1</span> draft</p>
+        <a href="report-approval.html">Open report approvals</a>
+      </section>
+    </div>
+    <p class="callout callout--info"><strong>SoD-04:</strong> The person approving a payment request must not be the same person who releases it.</p>
+    <p class="callout callout--info"><strong>SoD-03:</strong> The contract signatory must not hold any Receiving role in the same programme.</p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

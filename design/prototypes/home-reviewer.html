@@ -11,19 +11,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-reviewer.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-reviewer.html" aria-current="page">Home</a></li><li><a href="reviewer-assignments.html">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Assigned reviewer</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">1</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">R7</span><span class="sr-only">Account: reviewer-7f3a</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">R7</span><span class="sr-only">Account: reviewer-7f3a</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Assigned reviewer.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Assigned reviewer</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-reviewer.html" aria-current="page">Home</a></li><li><a href="reviewer-assignments.html">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: Reviewer home, 2 assignments in STAGE2, 1 scored</p>
 
@@ -49,6 +62,7 @@
       </ol>
     </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

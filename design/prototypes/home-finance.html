@@ -11,19 +11,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-finance.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-finance.html" aria-current="page">Home</a></li><li><a href="#">Payments</a></li><li><a href="#">Contracts</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Finance approver and payment releaser</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">3</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">FN</span><span class="sr-only">Account: finance-6e2a</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">FN</span><span class="sr-only">Account: finance-6e2a</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Finance approver and payment releaser.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Finance approver and payment releaser</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-finance.html" aria-current="page">Home</a></li><li><a href="payment-request-review.html">Payment approvals</a></li><li><a href="payment-release.html">Payment releases</a></li><li><a href="#">Contracts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: Finance home for a person with approver and releaser roles. SoD-04 and I-05 apply per payment.</p>
 
@@ -38,13 +51,13 @@
           <li><span class="pid">PR-2025-0009</span>, Milestone 1, 9 500.00 EUR</li>
           <li><span class="pid">PR-2025-0011</span>, hardship, 1 250.00 EUR</li>
         </ul>
-        <a class="btn btn--primary" href="#">Review approvals</a>
+        <a class="btn btn--primary" href="payment-request-review.html">Review approvals</a>
       </section>
       <section class="card" aria-labelledby="rl-h">
         <p class="card-kicker">As payment releaser</p>
         <h2 id="rl-h">2 requests approved, awaiting release</h2>
         <p class="text-sm">Approved by someone else. Release needs a passkey confirmation.</p>
-        <a class="btn btn--secondary" href="#">Review releases</a>
+        <a class="btn btn--secondary" href="payment-release.html">Review releases</a>
       </section>
     </div>
     <div class="grid grid--3">
@@ -53,6 +66,7 @@
       <div class="card"><span class="stat">0</span> requests overdue</div>
     </div>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

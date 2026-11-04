@@ -54,9 +54,11 @@ Every disabled button has a `TODO(js)` comment and an `aria-describedby` reason.
 - Pass and fail carry a glyph and a word, never colour alone.
 - The highlighted self row also carries a "You" badge and a text note.
 
-## Open question
+## Open question (resolved)
 
-**Q24.** Are the onboarding steps (Organisation through Channels, `programme-creator.md`) a separate onboarding wizard prototype, or are they folded into `admin-org.html` and `admin-branding.html`?
+**Q24.** Resolved on 2026-11-01: built as `onboarding.html`, a 9-step wizard (Daniel's decision). See `10-post-grant-screens.md`. The original question follows.
+
+ Are the onboarding steps (Organisation through Channels, `programme-creator.md`) a separate onboarding wizard prototype, or are they folded into `admin-org.html` and `admin-branding.html`?
 
 Today the screens cover Organisation, Agreements, Branding, Domains and email, and Administrators. Identity (P-45, P-18), Inference (P-21), Payments (P-20) and Channels have no screen yet. Recommendation: a separate step-based wizard for first-time onboarding, then the five admin screens for later changes. See `spec-questions.md` item 24.
 

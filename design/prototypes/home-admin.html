@@ -21,19 +21,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-admin.html" aria-current="page">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Tenant admin</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html" aria-current="page">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li><li><a href="onboarding.html">Set-up</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: Tenant admin home for Horizon Bridges. Signed in as a.chen@horizon-bridges.example. Tenant-wide role, not bound to a programme.</p>
 
@@ -45,12 +58,19 @@
         <h2 id="org-h">Organisation settings</h2>
         <p>Legal entity, address, signatories, data protection contact and signed agreements.</p>
         <a class="btn btn--primary" href="admin-org.html">Open organisation settings</a>
+        <p class="text-sm">New tenant? <a href="onboarding.html">Set up your organisation</a> step by step.</p>
       </section>
       <section class="card" aria-labelledby="brand-h">
         <p class="card-kicker">White-label package</p>
         <h2 id="brand-h">Branding and infrastructure</h2>
         <p>Logo, colour tokens, fonts, mandatory elements and label overrides.</p>
         <a class="btn btn--secondary" href="admin-branding.html">Open branding</a>
+      </section>
+      <section class="card" aria-labelledby="setup-h">
+        <p class="card-kicker">Onboarding</p>
+        <h2 id="setup-h">First-time setup</h2>
+        <p>Nine steps from organisation details to administrators. The organisation is activated at the end.</p>
+        <a class="btn btn--secondary" href="onboarding.html">Open first-time setup</a>
       </section>
     </div>
     <section aria-labelledby="mem-h">
@@ -74,7 +94,13 @@
         </tbody>
       </table>
     </section>
+    <section aria-labelledby="support-h">
+      <h2 id="support-h">Support tools</h2>
+      <p>See the platform as another role sees it, to help members who report a problem. The view is read-only.</p>
+      <p><a href="admin-masquerade.html">Masquerade as another role</a></p>
+    </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

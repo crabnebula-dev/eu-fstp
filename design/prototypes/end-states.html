@@ -11,24 +11,37 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="#">Support</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Applicant</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
-    <p class="proto-state">Prototype state: Design reference: INELIGIBLE, NOT_SELECTED, COMPLETED, DEFERRED after an IRC concern, and IRC_REVIEW held for guardian consent, on one page</p>
+    <p class="proto-state">Prototype state: Design reference: INELIGIBLE, NOT_SELECTED, GRANTED, COMPLETED, DEFERRED after an IRC concern, and IRC_REVIEW held for guardian consent, on one page</p>
 
     <h1>Final outcomes</h1>
-    <p class="muted">Five panels for design review. In the product each appears alone on the proposal page.</p>
+    <p class="muted">Six panels for design review. In the product each appears alone on the proposal page.</p>
 
     <section class="card end" style="border-left-color:var(--color-journey-terminal-negative)" aria-labelledby="e1">
       <p class="card-kicker"><span aria-hidden="true">■</span> Final outcome</p>
@@ -57,6 +70,19 @@
         <tbody><tr><td class="pid">reviewer-7f3a</td><td>3.8 / 5</td><td>Clear need. The pilot plan lacks a fallback if a town drops out.</td></tr>
         <tr><td class="pid">reviewer-2b9c</td><td>3.5 / 5</td><td>Good open licence plan. Data retention is vague.</td></tr></tbody></table>
       <p><a href="#">Make a complaint</a>. Window: 14 days, until 5 Dec 2024.</p>
+    </section>
+
+    <section class="card end" style="border-left-color:var(--color-journey-complete)" aria-labelledby="e6">
+      <p class="card-kicker"><span aria-hidden="true">✓</span> Grant in force</p>
+      <h2 id="e6">Granted</h2>
+      <p class="state-name">Formal state: GRANTED</p>
+      <p class="voyage-label">Voyage pack label: Charter in force</p>
+      <p>Your grant agreement is in force. These pages cover the work after the grant.</p>
+      <ul>
+        <li><a href="payment-status.html">Payment requests</a></li>
+        <li><a href="grantee-support.html">Support</a></li>
+        <li><a href="grantee-visibility.html">Public visibility settings</a></li>
+      </ul>
     </section>
 
     <section class="card end" style="border-left-color:var(--color-journey-terminal-positive)" aria-labelledby="e3">
@@ -94,6 +120,7 @@
       <p>We need a guardian consent record before your application can continue. Please check the information we sent to your registered guardian.</p>
     </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

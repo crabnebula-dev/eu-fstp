@@ -102,9 +102,45 @@ Fonts: `--font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` a
 
 ## Components in tokens.css
 
-Skip link, `.sr-only` and `.visually-hidden`, top row and footer. `.badge` with five variants (each with a default glyph), `.callout`, `.btn` with primary, secondary, ghost and danger variants plus a dashed disabled style, `.card`, form controls with invalid and disabled states, `.journey-node--*`, SVG node classes, the strip, activity log entries, pagination and steppers.
+Skip link, `.sr-only` and `.visually-hidden`, top row and footer, the sidebar shell (`.page-body`, `.sidebar`, `.sidebar-foot`, `.masquerade-banner`). `.badge` with five variants (each with a default glyph), `.callout`, `.btn` with primary, secondary, ghost and danger variants plus a dashed disabled style, `.card`, form controls with invalid and disabled states, `.journey-node--*`, SVG node classes, the strip, activity log entries, pagination and steppers.
 
 `.voyage-label` (added 2026-11-01) styles the secondary Voyage pack line: `--text-sm`, `--color-text-2`, italic. It reuses existing tokens, so the palette and the contrast fixes above are unchanged. The `--color-journey-*` token names stay as code names. They are not shown to users.
+
+## Layout tokens
+
+Added 2026-11-01 for the sidebar shell (`01-navigation-home.md`, "Sidebar layout"). The colour tokens alias existing theme tokens. Dark values follow the theme without a second definition.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--sidebar-width` | 220px | Sidebar width from 900px up |
+| `--topbar-height` | 3.75rem | Sticky offset and height of the sidebar |
+| `--main-max` | 960px | Maximum width of main beside the sidebar |
+| `--color-sidebar-bg` | `--color-surface-1` | Sidebar background |
+| `--color-nav-active-bg` | `--color-state-info-bg` | Active link background |
+| `--color-nav-active-text` | `--color-brand-text` | Active link text |
+| `--color-nav-active-accent` | `--color-brand` | 4px left bar on the active link |
+| `--color-masquerade-bg` | `--color-state-warning-bg` | Masquerade banner background |
+| `--color-masquerade-accent` | `--color-state-warning-text` | 4px left bar on the banner |
+
+The brief named `--color-primary` for the active accent. This palette has no such token, so `--color-brand` is used. No alias was added.
+
+New contrast pairs, computed with the WCAG 2.2 formula:
+
+| Pair | Light | Dark | Minimum | Result |
+| --- | --- | --- | --- | --- |
+| Link text (`--color-text-1`) on sidebar | 17.06:1 | 13.35:1 | 4.5:1 | Pass |
+| "Navigation" label and role chip (`--color-text-2`) on sidebar | 9.90:1 | 9.85:1 | 4.5:1 | Pass |
+| Active link text on active background | 8.01:1 | 8.15:1 | 4.5:1 | Pass |
+| Active left bar on active background | 4.75:1 | 4.00:1 | 3:1 non-text | Pass |
+| Active left bar on sidebar | 4.94:1 | 3.98:1 | 3:1 non-text | Pass |
+| Banner text (`--color-text-1`) on banner | 17.22:1 | 13.30:1 | 4.5:1 | Pass |
+| "Exit masquerade" link (`--color-brand-text`) on banner | 8.41:1 | 8.08:1 | 4.5:1 | Pass |
+| Banner border (`--color-state-warning-border`) on sidebar | 1.38:1 | 2.91:1 | 3:1 non-text | Fail, fixed |
+| Banner left bar (`--color-masquerade-accent`) on sidebar | 4.80:1 | 10.15:1 | 3:1 non-text | Pass |
+
+Fix for the failing pair: the warning border alone could not mark the banner edge. The banner now has a 4px left bar in `--color-masquerade-accent`, which passes in both themes. The thin warning border stays as decoration. The text "Masquerading as" also identifies the banner without colour.
+
+The sidebar divider uses `--color-surface-3`, like the existing header and footer dividers. It is decorative, because the background and position already separate the sidebar from main.
 
 ## Accessibility notes
 

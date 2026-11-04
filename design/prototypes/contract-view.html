@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grant agreement - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html">Payments</a></li><li><a href="contract-view.html" aria-current="page">Agreement</a></li><li><a href="complaint-status.html">Complaints</a></li><li><a href="grantee-visibility.html">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Grant agreement CTR-2026-0042 in SENT, waiting for the grantee signature. Signing happens in the wallet or QTSP, never on the platform.</p>
+
+    <h1>Grant agreement</h1>
+    <dl class="facts">
+      <dt>Contract reference</dt><dd class="pid">CTR-2026-0042</dd>
+      <dt>Grantee</dt><dd>P. Novak</dd>
+      <dt>Signatory for the funder</dt><dd>Horizon Bridges</dd>
+      <dt>Amount</dt><dd>48 500.00 EUR</dd>
+      <dt>Call</dt><dd>SuperSAFE Call 1</dd>
+      <dt>Instrument</dt><dd>MoU per Annexe 6</dd>
+      <dt>Status</dt><dd><span class="badge badge--info">Sent for signature</span> <span class="state-name">SENT</span></dd>
+    </dl>
+    <p><a href="#">Download PDF</a> <span class="text-sm muted">(version 1, generated from the agreed plan)</span></p>
+    <p><a href="contract-terminal.html">Contract history</a></p>
+    <!-- TODO(legal): agreement summary text and the grantee obligations summary. -->
+    <p class="text-sm muted">Agreement summary pending legal review.</p>
+    <section aria-labelledby="tm-h">
+      <h2 id="tm-h">Tasks and milestones</h2>
+      <table>
+        <caption>2 tasks, 48 500.00 EUR in total</caption>
+        <thead><tr><th scope="col">Task</th><th scope="col">Milestones</th><th scope="col" class="num">Amount</th></tr></thead>
+        <tbody>
+          <tr><td>1. Community outreach</td><td>1.1 Outreach plan published; 1.2 Ten community workshops held</td><td class="num">20 000.00 EUR</td></tr>
+          <tr><td>2. Software delivery</td><td>2.1 Release 1.0 published; 2.2 Security audit fixes</td><td class="num">28 500.00 EUR</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section aria-labelledby="sig-h">
+      <h2 id="sig-h">Sign the agreement</h2>
+      <p>The programme sets the order of signature methods (P-30). Your signature is created in your wallet or with the trust service provider, never by this platform.</p>
+      <ol class="cascade">
+        <li><h3>EUDI Wallet, qualified signature</h3>
+          <div class="btn-row"><!-- TODO(js): Sign with your EUDI Wallet needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="eudi-why">Sign with your EUDI Wallet</button></div>
+          <p id="eudi-why" class="text-sm muted">Opens your wallet to sign. Static prototype: this action needs script.</p></li>
+        <li><h3>Remote qualified signature</h3>
+          <div class="btn-row"><!-- TODO(js): Sign via TrustSign EU needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="qtsp-why">Sign via TrustSign EU</button></div>
+          <p id="qtsp-why" class="text-sm muted">TrustSign EU is the synthetic name of the qualified trust service provider set by Horizon Bridges. Static prototype: this action needs script.</p></li>
+        <li><h3>Advanced signature</h3>
+          <p><span class="badge badge--neutral">Not available</span> Advanced signature requires programme manager approval.</p>
+          <p><a href="contract-advanced-approval.html">Request advanced signature approval</a></p></li>
+      </ol>
+    </section>
+    <section aria-labelledby="dec-h">
+      <h2 id="dec-h">Decline the agreement</h2>
+      <p id="decline-note">You can decline before signing (R-NG-04).</p>
+      <!-- TODO(js): Decline needs script in production. -->
+      <div class="btn-row"><button class="btn btn--danger" type="button" disabled aria-describedby="decline-note decline-why">Decline</button></div>
+      <p id="decline-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

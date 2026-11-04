@@ -11,19 +11,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-auditor.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-auditor.html" aria-current="page">Home</a></li><li><a href="#">Audit trail</a></li><li><a href="#">History export</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Auditor</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AU</span><span class="sr-only">Account: audit-3b7f</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AU</span><span class="sr-only">Account: audit-3b7f</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Auditor.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Auditor</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-auditor.html" aria-current="page">Home</a></li><li><a href="audit-log.html">Audit trail</a></li><li><a href="funder-report.html">Funder reports</a></li><li><a href="#">History export</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: Auditor home, read-only</p>
 
@@ -38,7 +51,7 @@
       <section class="card" aria-labelledby="led-h">
         <h2 id="led-h">Audit trail</h2>
         <p><span class="stat">248</span> entries in the last 7 days</p>
-        <a href="#">Open audit log</a>
+        <a href="audit-log.html">Open audit log</a>
       </section>
       <section class="card" aria-labelledby="er-h">
         <h2 id="er-h">Erasure log</h2>
@@ -47,7 +60,12 @@
         <a href="#">Open erasure log</a>
       </section>
     </div>
+    <section aria-labelledby="fr-h">
+      <h2 id="fr-h">Funder reports</h2>
+      <p>Read the generated and approved funder reports, with their snapshot hashes. <a href="funder-report.html">Open funder reports</a></p>
+    </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

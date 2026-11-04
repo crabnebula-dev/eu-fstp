@@ -6,13 +6,13 @@ Written to the patterns in the Playwright guide "Writing tests" (https://playwri
 
 ## What the tests cover
 
-Shared rules, run on all 40 prototypes:
+Shared rules, run on all 69 prototypes:
 
 - `lang="en"`, a title ending in " - FSTP", header, main and footer landmarks, and the prototype state label.
 - No `<script>`, no inline event handlers, no banned DOM calls, no em dashes, and only `../tokens.css` as a stylesheet.
 - No request leaves `file://`, so no external fonts, scripts or images load.
 - The skip link is the first tab stop, becomes visible and moves to `#main-content`.
-- The current page carries `aria-current="page"` in the top row.
+- The current page carries `aria-current="page"` in the top row or the sidebar.
 - Every form control has an accessible name.
 - Badges, primary and danger buttons, paragraphs and table cells meet 4.5:1 contrast in light and dark themes (I-70).
 - Primary chrome uses plain grant language. Headings, buttons, nav items, badges, labels and legends contain no journey metaphor words. Text inside `.voyage-label` is excluded, because it is the secondary Voyage layer.
@@ -49,12 +49,36 @@ Checks for the 5 tenant admin prototypes (`09-tenant-admin.md`):
 - The shell shows "Signed in as Tenant admin", the Horizon Bridges brand and links to all five admin screens.
 - TODO markers sit in HTML comments. Every disabled button has a TODO(js) comment and an `aria-describedby` reason.
 - Home: the two cards, the members and domains links, two programmes linking to Programme set-up, and the attribution note in the footer.
-- Organisation: three definition lists, three disabled Edit buttons, two signed agreements, the sub-processor link, three TODO(legal) comments and the SoD-07 note.
-- Members: three accounts, two admins, the highlighted self row with SoD-07, the pending Call drafter invitation and the SoD-09 note.
+- Organisation: four definition lists, three disabled Edit buttons, two signed agreements, the sub-processor link, three TODO(legal) comments and the SoD-07 note.
+- Members: four accounts, two admins, the Tenant-wide roles column, the highlighted self row with SoD-07, the pending Call drafter invitation and the SoD-09 note.
 - Branding: three upload slots, one "Fails WCAG 2.2 AA" pair, five mandatory elements present, and Save disabled with its reason. Also the I-68, I-70 and I-72 notes.
 - Domains: two verified domains, the pending domain linking to its DNS instructions, three passing email checks, disabled Add domain and Re-check, and the ACME note.
 
-Last run on 2026-11-01: 431 passed, 0 failed.
+Checks for the 28 post-grant prototypes (`10-post-grant-screens.md`):
+
+- Each file loads with HTTP status 200 through a local route and has one main landmark.
+- No metaphor word in headings, buttons, table headers, labels or legends. No `.voyage-label` and no Voyage pack label. The Horizon Bridges brand is shown.
+- TODO markers sit in HTML comments. Every disabled button has a TODO(js) comment and an `aria-describedby` reason.
+- Payments: plan order, the disabled paid-in-full row, the pending amount, the running total, three passing checks, the full, partial and reject lines, and the SoD-04 release block. Also the six request states, including CHECKS_FAILED.
+- Contracts: SENT, the three-step cascade, Decline, three Countersign buttons, the EFFECTIVE row and the amendment diff.
+- Complaints: three decision options, I-57, SoD-13, three remedies and five complaint states.
+- Transparency: three cards at three levels, the no-tracking footer, the I-42 comment, two default Hidden choices, four options disabled for a minor on the team and the JSON example.
+- Reporting, support and onboarding: six audit events, four report rows, the separate approver note, four support cards, three private session-notes links and nine wizard steps with eight locked.
+- Decisions Q25 to Q27: role prerequisite callouts on review and release, the scope decision and out of scope view, and the TODO(legal) T&C comments on three complaint screens.
+- Remaining screens: nine onboarding panels with "Step N of 9", back links, locked notes and step content. The checks failed detail, the contract draft, advanced approval and history, the mentor and operations homes and the report failure view.
+- Signatory roles: Tenant-wide roles badges for 4 accounts, K. Wu holding both signatory roles, the two signatory subsections on Organisation and the step 9 activation conditions. Four disabled Change roles buttons and the notes that roles can be changed later.
+- Decisions Q28 to Q30: the sealed draft note and link on contract history, the step 9 activation approval panel and note, and step 5 with two verification methods.
+- Navigation: the updated home, negotiation, contract, funder report, payment status and final outcome pages link to the new screens.
+
+Layout shell and masquerade rules:
+- The 61 signed-in prototypes have one `aside.sidebar` labelled "Main navigation" in the app layout. It holds the nav, a role chip, Account and Sign out. The top bar has no nav.
+- On those pages the masquerade banner is the first element in the page body. It is hidden on every page except `home-voyager.html` and `reviewer-scoring.html`, where it is visible above the nav and Exit masquerade goes to Administration.
+- The 8 public prototypes use the public layout, with the nav in the top bar and no sidebar or banner.
+- Desktop at 1280px: the sidebar is 220px, sticky and left of main, main is at most 960px and the avatar is hidden. Mobile at 375px with scripts off: the nav stacks under the top bar and the avatar leads to the profile page.
+- Sidebar links, role chip, label and the visible banner meet 4.5:1 in light and dark themes.
+- `admin-masquerade.html`: heading, explanation, ten "View as" links, the read-only note and the TODO(js) comment. `home-admin.html` links to it under Support tools.
+
+Last run on 2026-11-01: 847 passed, 0 failed.
 
 ## Running
 
