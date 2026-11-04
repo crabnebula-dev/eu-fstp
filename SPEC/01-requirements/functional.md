@@ -183,7 +183,7 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 
 ## Group messaging
 
-- **R-MG-01** Tenants can enable Matrix and WhatsApp adapters per P-32.
+- **R-MG-01** Tenants can enable the Matrix adapter per P-32. The WhatsApp adapter is deferred by Daniel on 2026-11-04 (B-03).
 - **R-MG-02** Group types and membership follow `03-architecture/messaging.md` (I-28, I-29).
 - **R-MG-03** Announcements reach recipients without exposing other recipients.
 
@@ -201,6 +201,8 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
   AC: after erasure, no backup or replica can restore the cell.
 
 ## WhatsApp
+
+NOTE: R-WA-01 and R-WA-02 are deferred by Daniel on 2026-11-04 (B-03). Their identifiers stay reserved.
 
 - **R-WA-01** WhatsApp is enabled in v1 for individual notifications, after the assessment in `05-compliance/messaging.md` is complete for the tenant.
 - **R-WA-02** Recipients opt in explicitly per programme. Opt-out takes effect immediately.
@@ -280,6 +282,8 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 - **R-WL-05** Terminology overrides change interface labels only (I-72).
 
 ## Desktop client
+
+NOTE: R-DC-01 is deferred by Daniel on 2026-11-04 (B-04). Its identifier stays reserved.
 
 - **R-DC-01** A white-labelled desktop client gives access to the tenant's interfaces (`03-architecture/desktop-client.md`).
 

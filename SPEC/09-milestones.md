@@ -10,8 +10,8 @@
 | M5 | Contracts, payment requests, payment adapters, MCP client integrations | I-30 to I-33, I-88, I-89 green; call cycle through to PAID |
 | M6 | Timeline engine, dispatcher, email | I-25 to I-27 green under crash injection |
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | LLM evaluation thresholds met; I-10 and I-11 green through the assessment pipeline; I-21 green |
-| M8 | Messaging adapters: Matrix and WhatsApp | I-28, I-29 green |
-| M9 | moduletto ML-DSA-65 integration with ACVP and differential tests, composite signatures, desktop client, white-labelling and custom domains, export and import, profile bundles, public transparency pages, funder profiles with the Horizon Europe profile, self-hosted packaging, SBOM | I-22, I-41 to I-44, I-68 to I-71, I-90, I-91 green; self-hosted cell passes full suite |
+| M8 | Messaging adapter: Matrix (WhatsApp deferred by Daniel on 2026-11-04 (B-03)) | I-28, I-29 green |
+| M9 | moduletto ML-DSA-65 integration with ACVP and differential tests, composite signatures, white-labelling and custom domains, export and import, profile bundles, public transparency pages, funder profiles with the Horizon Europe profile, self-hosted packaging, SBOM | I-22, I-41 to I-44, I-68 to I-71, I-90, I-91 green; self-hosted cell passes full suite |
 | M10 | Hardening on a Mythos-tier model | Exit criteria in `08-hardening/hardening-plan.md` |
 | M11 | Pilot: SuperSAFE as first tenant, a second programme to validate configurability | First live call completed with no invariant violations |
 | M12 | Calibration with consented real proposals | Metrics reported per corpus; I-37 green |
@@ -35,3 +35,5 @@ NOTE 2: M3 scope, decided 2026-10-28. These items are claimed in part. Where a l
 - R-HS-01 is claimed only after the L-15 hosting due diligence (`10-open-questions.md`). This item awaits Daniel's confirmation: the summary he answered listed only I-39, I-16, I-18 and R-KY-01.
 
 The M3 exit report also states each scoped claim that rests on an interim reading or an open verify item, with its basis. These include R-NF-09 for internal links only (ADR-009, interim) and I-80 for OKMS-held root epochs (ADR-004 verify item K7).
+
+NOTE: On 2026-11-04 Daniel deferred the desktop client (B-04) and WhatsApp (B-03) for now. M8 builds the Matrix adapter only, and M9 builds no desktop client. Both keep their design and reserved identifiers in `11-backlog.md`.

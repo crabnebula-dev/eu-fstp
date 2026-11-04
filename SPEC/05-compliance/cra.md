@@ -21,5 +21,7 @@
 
 ## Desktop client and own libraries
 
+NOTE: The desktop client is deferred by Daniel on 2026-11-04 (B-04). The rules below on own libraries still apply.
+
 - The desktop client is a second product with digital elements, alongside the self-hosted cell.
 - moduletto is a component of both. Its own CRA status as stewarded open source is documented in its repository, and its release-gated confirmations sit in ADR-001. qrtc joins when realtime sessions return (backlog B-01).

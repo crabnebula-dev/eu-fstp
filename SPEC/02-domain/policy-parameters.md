@@ -89,7 +89,7 @@ NOTE 10: The frozen P-21 value is a primary model plus an ordered fallback list,
 | P-29 | Contract instrument and template version | MoU | Yes |
 | P-30 | Signature level and cascade | Wallet QES, then QTSP remote QES, then approved advanced | Yes |
 | P-31 | Reminder offsets | Minus 14 days, minus 3 days, due date | No |
-| P-32 | Enabled channels and group types | Email, Matrix and WhatsApp (tenant-owned account); all four group types | No |
+| P-32 | Enabled channels and group types | Email and Matrix; all four group types. WhatsApp is deferred by Daniel on 2026-11-04 (B-03) | No |
 | P-33 | Overdue escalation | Plus 7 days to programme manager | No |
 | P-34 | Payment request evidence requirements | Public location, release identifier, SPDX licence, report | Yes |
 | P-35 | Group membership removal delay | Immediate | No |

@@ -33,7 +33,7 @@ Record which Mythos-tier model is used before scoping. Claude Fable 5.1 carries 
 | H-17 | White-label packages, custom domains, document import and the template library | TH-45 to TH-49 |
 | H-18 | Review and confirmation of every Tier B crate version: moduletto and the RustCrypto formats crates | TH-50, I-74 |
 | H-19 | Hybrid constructions: TLS group, key encapsulation combiner, envelope format, composite signatures | TH-50, TH-51, TH-67, TH-68 |
-| H-20 | Desktop client | TH-54 |
+| H-20 | Desktop client (deferred, B-04) | TH-54 |
 | H-21 | Authentication, step-up, recovery and session handling | TH-55 to TH-57 |
 | H-22 | Key custody, rotation, shredding and database isolation | TH-58, TH-59 |
 | H-23 | MCP server and client: authorisation, scopes, injection, policy parity, public tools and outbound data | TH-60 to TH-66 |

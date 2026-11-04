@@ -493,7 +493,7 @@ CREATE TABLE journey.projection_cursor (
 | M5 | Execution-phase view: waypoints, balances, payment-request track, chronicle PDF |
 | M6 | Weather and deadlines bar from the timeline engine |
 | M8 | Diary events for messaging and notifications (no content, I-27) |
-| M9 | Public route graphic, white-label integration of the pack, desktop client reuse |
+| M9 | Public route graphic and white-label integration of the pack. Desktop client reuse is deferred with the client (B-04) |
 
 ## 15. Backlog and open questions
 

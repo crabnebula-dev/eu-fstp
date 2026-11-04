@@ -41,7 +41,7 @@ High-risk actions need a fresh step-up with a phishing-resistant method within P
 | --- | --- |
 | Granting or changing a role in the Drafting, Judging or Operations groups, or tenant admin | Adding management personnel |
 | Tenant export, vault export, and any download containing identity attributes | Exporting data |
-| Adding a passkey, linking a device, or signing in the desktop client | Linking a new device |
+| Adding a passkey, linking a device, or signing in the desktop client (deferred, B-04) | Linking a new device |
 | Changing the account email address or login methods | Account takeover path |
 | Changing bank details | Payment diversion, already held under I-33 |
 | Approving or releasing a payment | Money movement |

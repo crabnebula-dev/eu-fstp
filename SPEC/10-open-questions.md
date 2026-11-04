@@ -27,8 +27,8 @@
 | O-07 | CrabNebula Ltd operates the SaaS; NIS2 scope re-checked annually. |
 | O-08 | Both relying party modes supported (P-45); self-hosted uses tenant registration. |
 | O-13 | No notice period; 30-day retrieval; erasure with confirmation. |
-| O-21 | WhatsApp enabled in v1 for individual notifications after per-tenant assessment. |
-| O-29 | Each tenant uses its own WhatsApp Business account. |
+| O-21 | WhatsApp enabled in v1 for individual notifications after per-tenant assessment. Superseded: WhatsApp is deferred by Daniel on 2026-11-04 (B-03). |
+| O-29 | Each tenant uses its own WhatsApp Business account. Kept for when WhatsApp returns (B-03). |
 | O-20 | Sealed PDF notice in the platform plus email (I-40). |
 | O-26 | Signature cascade: wallet QES, then QTSP remote QES, then approved advanced. |
 | O-11 | v1 thresholds adopted; revised after the first M7 run. |

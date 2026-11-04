@@ -158,6 +158,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-89** Calls to external MCP servers send only the fields declared for that integration. Identity attributes and bank details go only to an approved finance hand-over.
 - **I-90** A composite signature verifies only when both the Ed25519 and the ML-DSA-65 halves verify.
 - **I-91** Self-hosted cells and desktop clients install only updates whose release metadata carries a valid composite signature by a release signing key that the release root currently certifies.
+  NOTE: The desktop client is deferred by Daniel on 2026-11-04 (B-04). Until it returns, I-91 binds self-hosted cells.
 
 ## Journey UI layer (`12-journey-ui.md`, decided 2026-11-01)
 

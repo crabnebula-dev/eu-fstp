@@ -10,7 +10,7 @@ Scope when resumed:
 
 - Audio and video for mentoring, consortium presentations, stage 2 clarification, and group calls from Matrix rooms.
 - qrtc as the WebRTC engine, with DTLS 1.3 and X25519MLKEM768 through moduletto.
-- Calls in the desktop client.
+- Calls in the desktop client, once the desktop client returns (B-04).
 
 Reserved identifiers:
 
@@ -27,3 +27,29 @@ When this returns to scope, qrtc rejoins Tier B in ADR-001 and falls under the r
 ## B-02: Captain's notes
 
 Deferred by Daniel on 2026-11-01 (`12-journey-ui.md` section 15). Private voyager notes attached to diary entries. Before it returns to scope it needs a retention rule and a check against I-27.
+
+## B-03: WhatsApp notifications
+
+Deferred by Daniel on 2026-11-04, for now. The design is kept in `03-architecture/messaging.md` (sections "WhatsApp" and "WhatsApp account ownership") and `05-compliance/messaging.md`.
+
+Scope when resumed: individual notifications through the WhatsApp Business Platform, each tenant on its own account, after the per-tenant assessment. Groups stay on Matrix. The adapter's payload parser gets a fuzz target in its first commit.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-WA-01, R-WA-02 | WhatsApp enablement after assessment; explicit opt-in per programme |
+| O-21, O-29 | WhatsApp in v1 after assessment; tenant-owned Business account |
+
+## B-04: Desktop client
+
+Deferred by Daniel on 2026-11-04, for now. The design is kept in `03-architecture/desktop-client.md` and `05-compliance/cra.md`.
+
+Scope when resumed: a white-labelled desktop client built with Tauri, with its own SBOM and vulnerability handling, signed updates (I-91) and no offline proposal content.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-DC-01 | White-labelled desktop client |
+| TH-54, H-20 | Lost devices caching confidential content; its hardening item |

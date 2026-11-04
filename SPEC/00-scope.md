@@ -14,8 +14,8 @@ The platform lets an operator run one or more FSTP programmes. Each programme is
 - LLM assessment of every submission, and an applicant pre-submission check.
 - Tenant data export and import for switching.
 - Contracts, payment requests, timeline-driven email notifications.
-- Group messaging over Matrix, and notifications over WhatsApp.
-- A white-labelled desktop client built with Tauri.
+- Group messaging over Matrix. Notifications over WhatsApp are deferred by Daniel on 2026-11-04 (B-03).
+- A white-labelled desktop client built with Tauri is deferred by Daniel on 2026-11-04 (B-04).
 - Public pages for open, funded and finished subgrants.
 - Funder documents, starting with a Horizon Europe profile.
 - Guided tenant onboarding, a programme creator and full white-labelling.
