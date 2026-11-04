@@ -168,6 +168,25 @@ const PERSONAS: [Persona; 8] = [
     },
 ];
 
+/// The programme manager M1 of every seed (design section 2.1): its key,
+/// account and label. Interim, pending Daniel (design section 15.0,
+/// 2026-10-31): the demo lists M1 beside the Judging personas, so a
+/// person can sign in as the programme manager and reach the creator.
+/// The seed grants the role with the staff bindings (`programme`), so M1
+/// is not in [`PERSONAS`], whose grants that loop makes.
+const PROGRAMME_MANAGER: (&str, AccountId, &str) = ("m1", STAFF_PM, "Programme manager M1");
+
+/// The label of the persona with `key`, such as `Committee member R1`.
+fn label_of_key(key: &str) -> &'static str {
+    if key == PROGRAMME_MANAGER.0 {
+        return PROGRAMME_MANAGER.2;
+    }
+    PERSONAS
+        .iter()
+        .find(|p| p.key == key)
+        .map_or("", |p| p.label)
+}
+
 /// One seeded proposal: its key, id, lead, minor flag and texts.
 #[derive(Clone, Copy)]
 struct Seeded {
@@ -356,7 +375,7 @@ impl Seeder<'_> {
         self.inner
             .ports
             .engine
-            .environment(fstp_engine::Command::Core(step.cmd.clone()), ctx)
+            .setup_step(&step.cmd, ctx)
             .map(|_| ())
             .map_err(|e| format!("seed step {:?} by {:?}: {e}", step.cmd.kind(), step.actor))
     }
@@ -1003,6 +1022,11 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
         let url = auth.invite(p.account)?;
         people.push((p.key, url, mail));
     }
+    let (pm_key, pm, _) = PROGRAMME_MANAGER;
+    let mail = email(pm_key)?;
+    auth.person(&mail, pm);
+    let url = auth.invite(pm)?;
+    people.push((pm_key, url, mail));
     let mut canaries = Vec::new();
     let mut leads = Vec::new();
     for s in &PROPOSALS {
@@ -1015,6 +1039,10 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
     for p in &PERSONAS {
         inner.ports.accounts.name(p.account, p.label);
     }
+    inner
+        .ports
+        .accounts
+        .name(PROGRAMME_MANAGER.1, PROGRAMME_MANAGER.2);
     for (s, lead) in PROPOSALS.iter().zip(leads) {
         let name = format!("Synthetic applicant {} Lead-Person", s.key.to_uppercase());
         inner.ports.accounts.name(lead, &name);
@@ -1023,8 +1051,12 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
     Ok((inner, people, canaries))
 }
 
-/// The label of a review persona, such as `Committee member R1`.
+/// The label of a review persona or of the programme manager, such as
+/// `Committee member R1`.
 pub(crate) fn persona_label(account: AccountId) -> Option<&'static str> {
+    if account == PROGRAMME_MANAGER.1 {
+        return Some(PROGRAMME_MANAGER.2);
+    }
     PERSONAS
         .iter()
         .find(|p| p.account == account)
@@ -1079,10 +1111,7 @@ async fn build_review(info: &SiteInfo, stage: ReviewAt) -> Result<(Inner, Value)
         .set(Timestamp::from_micros(T_NOW.max(seed.now)));
     let mut people_o = Object::new();
     for (key, url, _) in &people {
-        let label = PERSONAS
-            .iter()
-            .find(|p| p.key == *key)
-            .map_or("", |p| p.label);
+        let label = label_of_key(key);
         let _ = people_o.insert(
             *key,
             obj(vec![
@@ -1584,6 +1613,84 @@ mod tests {
                 assert_eq!(state_of(&v, key), *tag, "{stage:?}: {key}");
             }
         }
+    }
+
+    /// R-EV-02 (design sections 2.2 J1 and J6, 15.0 of 2026-10-31): every
+    /// review seed invites the programme manager M1 under its label, and
+    /// the demo page's line for each person says what they can do in the
+    /// scene. In stage1, R1 has two review assignments to declare first.
+    #[test]
+    fn r_ev_02_review_seed_lists_m1_and_says_what_each_person_can_do() {
+        let (inner, v) = block_on(build_review(&info(), ReviewAt::Stage1)).unwrap();
+        let m1 = v.get("people").and_then(|p| p.get("m1")).unwrap();
+        assert_eq!(
+            m1.get("label").and_then(Value::as_str),
+            Some("Programme manager M1")
+        );
+        let invited: Vec<AccountId> = lock_auth(&inner)
+            .open_invites()
+            .into_iter()
+            .map(|(a, _)| a)
+            .collect();
+        assert!(invited.contains(&STAFF_PM), "M1 has a sign-in link");
+        assert_eq!(persona_label(STAFF_PM), Some("Programme manager M1"));
+        // Under strict D2e the seeded programme is activated through the
+        // creator, so it holds a draft and both creator pages read it.
+        let pm = crate::demo::what_they_can_do(&inner, STAFF_PM);
+        assert_eq!(
+            pm,
+            "Programme manager: the programme set-up and people pages of the programme, and its call boards."
+        );
+        let r1 = crate::demo::what_they_can_do(&inner, R1);
+        assert!(
+            r1.contains("2 review assignments to work on, 2 to declare first"),
+            "{r1}"
+        );
+        let i1 = crate::demo::what_they_can_do(&inner, IRC);
+        assert_eq!(i1, "IRC member: no IRC case in this scene.");
+    }
+
+    /// R-EV-02, R-IR-02 (design section 15.0 of 2026-10-31; review
+    /// findings U1 to U4): the demo line of each person promises only
+    /// pages that open. Finished review assignments and decided IRC
+    /// cases are counted as finished, the chair line names no cut-off
+    /// round, and the programme manager is sent to the creator pages only
+    /// when the programme holds a draft. Under strict D2e every seeded
+    /// programme holds one.
+    #[test]
+    fn r_ev_02_demo_lines_promise_only_pages_that_open() {
+        let (ranked, _) = block_on(build_review(&info(), ReviewAt::Ranked)).unwrap();
+        let r1 = crate::demo::what_they_can_do(&ranked, R1);
+        assert!(
+            r1.starts_with("Committee member: no review assignment open in this scene ("),
+            "{r1}"
+        );
+        assert!(!r1.contains("to work on"), "{r1}");
+        let h1 = crate::demo::what_they_can_do(&ranked, CHAIR);
+        assert!(!h1.contains("cut-off"), "{h1}");
+        let pm = crate::demo::what_they_can_do(&ranked, STAFF_PM);
+        assert!(
+            ranked
+                .ports
+                .engine
+                .state()
+                .creator
+                .draft(PROGRAMME)
+                .is_some()
+                && pm.contains("set-up"),
+            "{pm}"
+        );
+        let (irc, _) = block_on(build_review(&info(), ReviewAt::IrcReview)).unwrap();
+        let i1 = crate::demo::what_they_can_do(&irc, IRC);
+        assert!(i1.contains(" to work on, "), "{i1}");
+        let (neg, _) = block_on(build_applicant(&info(), At::Negotiation)).unwrap();
+        let i1 = crate::demo::what_they_can_do(&neg, IRC);
+        assert!(
+            i1.starts_with("IRC member: no IRC case open in this scene ("),
+            "{i1}"
+        );
+        let r1 = crate::demo::what_they_can_do(&neg, R1);
+        assert!(!r1.contains("to work on"), "{r1}");
     }
 
     /// R-SB-02, R-EV-04, R-IR-02, R-NG-06 and I-18 (design section 2.2 J4):

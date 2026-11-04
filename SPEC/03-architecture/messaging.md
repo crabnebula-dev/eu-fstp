@@ -5,7 +5,7 @@
 | Channel | Status | Default use |
 | --- | --- | --- |
 | Matrix | In scope | All group types and individual notifications |
-| WhatsApp | In scope for v1 | Individual notifications. Groups stay on Matrix |
+| WhatsApp | Deferred by Daniel on 2026-11-04 (B-03) | Individual notifications when it returns. Groups stay on Matrix |
 | Signal | Dropped | Not offered |
 
 NOTE: Signal was dropped because it offers no official business interface and its reference library is AGPL-3.0, which conflicts with PolyForm Noncommercial distribution.
@@ -40,6 +40,8 @@ NOTE 2: The committee group carries coordination only. Proposal discussion happe
 The client-server specification is open and implemented in-house over HTTP and JSON. The platform acts as a bot account on a homeserver chosen or run by the tenant. Group rooms are encrypted using ADR-001 crates for Olm and Megolm.
 
 ## WhatsApp
+
+NOTE: WhatsApp is deferred by Daniel on 2026-11-04 (B-03). This section and the next are kept for its return.
 
 The sanctioned route is the WhatsApp Business Platform operated by Meta. Business-initiated messages outside the customer service window need pre-approved templates, and recipients must opt in. Meta's processing terms and third-country transfer need assessment (O-21).
 

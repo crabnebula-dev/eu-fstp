@@ -14,11 +14,15 @@
 //! - [`METADATA_REGISTER`], the six entries of the ADR-009 metadata register
 //!   (Q36 A), each cell verbatim.
 //!
-//! Status: W0 stub for the codec. Lane W2h fills it. Every decoder refuses
-//! with [`ProtoError::NotImplemented`].
+//! The codec ([`codec`]) is a bijection between messages and frames, so
+//! every value has one spelling and no byte of a frame is free to carry
+//! data. The byte-carrying field types are closed grammars ([`grammar`]).
 
+pub mod codec;
+pub mod grammar;
 pub mod types;
 
+pub use codec::{decode_cell_to_cp, decode_cp_to_cell, encode_cell_to_cp, encode_cp_to_cell};
 pub use types::{
     BreakGlassScope, CaseRef, CellId, CertDer, Component, CompositeSig, CounterKind,
     DegradedReason, PopSig, ProductVersion, ROLE_SUFFIX_GRAMMAR, RoleName, ScramVerifier,
@@ -250,28 +254,52 @@ pub const METADATA_REGISTER: &[RegisterEntry] = &[
     },
 ];
 
-/// Why a message did not decode.
+/// Why a message or a field was refused. No variant carries input bytes
+/// (R-NF-02).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtoError {
-    /// The codec is a W0 stub. It names the operation.
+    /// An operation that is not built. It names the operation. No codec or
+    /// grammar of this crate returns it. The W0 test helpers match on it.
     NotImplemented(&'static str),
+    /// The frame is empty.
+    Empty,
+    /// The frame is longer than [`codec::MAX_FRAME_LEN`].
+    TooLong,
+    /// The first octet is not [`codec::VERSION`].
+    UnknownVersion,
+    /// The tag names no variant of this direction.
+    UnknownTag,
+    /// A closed enum octet names no variant.
+    UnknownValue,
+    /// The frame ends inside a field.
+    Truncated,
+    /// Bytes follow the last field.
+    TrailingBytes,
+    /// A field fails its grammar. It names the field type.
+    Grammar(&'static str),
+    /// The frame is not the one spelling of its message, such as counters
+    /// out of kind order.
+    NonCanonical,
 }
 
-/// Decodes a message from a cell. Fuzzed (`cell_to_cp_decode`).
-pub fn decode_cell_to_cp(bytes: &[u8]) -> Result<CellToCp, ProtoError> {
-    let _ = bytes;
-    Err(ProtoError::NotImplemented(
-        "fstp_cp_proto::decode_cell_to_cp",
-    ))
+impl std::fmt::Display for ProtoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtoError::NotImplemented(op) => write!(f, "{op} is not implemented"),
+            ProtoError::Empty => f.write_str("empty frame"),
+            ProtoError::TooLong => f.write_str("frame too long"),
+            ProtoError::UnknownVersion => f.write_str("unknown protocol version"),
+            ProtoError::UnknownTag => f.write_str("unknown message tag"),
+            ProtoError::UnknownValue => f.write_str("unknown enum value"),
+            ProtoError::Truncated => f.write_str("frame truncated"),
+            ProtoError::TrailingBytes => f.write_str("trailing bytes after the message"),
+            ProtoError::Grammar(what) => write!(f, "{what} fails its grammar"),
+            ProtoError::NonCanonical => f.write_str("frame is not in canonical form"),
+        }
+    }
 }
 
-/// Decodes a message from the control plane. Fuzzed (`cp_to_cell_decode`).
-pub fn decode_cp_to_cell(bytes: &[u8]) -> Result<CpToCell, ProtoError> {
-    let _ = bytes;
-    Err(ProtoError::NotImplemented(
-        "fstp_cp_proto::decode_cp_to_cell",
-    ))
-}
+impl std::error::Error for ProtoError {}
 
 #[cfg(test)]
 mod tests {

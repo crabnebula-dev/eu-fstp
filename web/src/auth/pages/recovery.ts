@@ -33,6 +33,7 @@ import {
   t,
   takeFragment,
 } from '../layout.js';
+import { HOME_PATH } from '../next.js';
 import { approveRecovery, askStepUp } from '../stepup.js';
 import { Failure, failureOf, optionsOf, registration } from '../webauthn.js';
 
@@ -60,7 +61,7 @@ async function complete(recoveryCase: string, token: string): Promise<void> {
   const c = await registration(publicKey);
   const r = await post(route, { ...c, challenge_id: challengeId, token });
   if (!ok(r)) throw refused(r.status);
-  go(PATHS.account);
+  go(HOME_PATH);
 }
 
 /** Mounts the new passkey step. Returns its button. */

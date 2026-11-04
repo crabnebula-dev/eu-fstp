@@ -7,10 +7,10 @@
 
 use std::future::Future;
 
-use fstp_audit::Link;
 use fstp_audit::anchor::{Receipt, ReceiptFields};
 use fstp_audit::anchorer::{PrepareWitness, WitnessFault};
 use fstp_audit::witness::Prepare;
+use fstp_audit::{CompositeSigningKey, Link};
 use fstp_cell::engine::{AppendRequest, CellStore};
 use fstp_cell::tasks::{system_now, timeline};
 use fstp_cell::witness::store::{AnchoredStore, MemDatabase, OpenPrepare, StoreKeys};
@@ -45,7 +45,8 @@ fn run(scn: &mut Scenario, now: Timestamp, step: &Step, id: Option<[u8; 16]>) {
     let drawn = scn.ctx(now, step.actor).command;
     let command = id.map(CommandId::from_bytes).unwrap_or(drawn);
     let ctx = step.ctx(now, command);
-    if let Err(e) = scn.execute(fstp_engine::Command::Core(step.cmd.clone()), ctx) {
+    // run_core activates through the creator path (strict D2e).
+    if let Err(e) = scn.run_core(&step.cmd, ctx) {
         panic!("{:?} refused: {e:?}", step.cmd.kind());
     }
 }
@@ -171,24 +172,24 @@ fn system_step(cmd: Command) -> Step {
 // admission instant, not the commit instant.
 // ---------------------------------------------------------------------------
 
-/// A witness that receipts every prepare for its own head.
-struct Echo;
+/// A witness that receipts every prepare for its own head, signed with
+/// its receipt key, which the store pins (ADR-010 "Keys").
+struct Echo(CompositeSigningKey);
 
 impl PrepareWitness for Echo {
     fn prepare(&self, p: &Prepare) -> impl Future<Output = Result<Receipt, WitnessFault>> + Send {
         let a = &p.anchor;
-        std::future::ready(Ok(Receipt {
-            cell: a.cell,
-            chain: a.chain,
-            fields: ReceiptFields {
-                n: a.n,
-                link: a.link,
-                witness_seq: a.n,
-                witness_link: a.link,
-                received_at: a.at,
-            },
-            signature: Vec::new(),
-        }))
+        let fields = ReceiptFields {
+            n: a.n,
+            link: a.link,
+            witness_seq: a.n,
+            witness_link: a.link,
+            received_at: a.at,
+        };
+        std::future::ready(
+            fstp_witness::sign_receipt(&self.0, a.cell, a.chain, &fields)
+                .map_err(|_| WitnessFault::Refused),
+        )
     }
 
     fn abort(&self, _head: (u64, Link)) -> impl Future<Output = Result<(), WitnessFault>> + Send {
@@ -240,11 +241,13 @@ fn stepup_append(expected: u64, at: i64, id: u8, fresh_until: i64) -> AppendRequ
 /// minutes ago and is stale at commit, so it must be refused.
 #[test]
 fn review_anchored_store_rechecks_stepup_freshness_at_commit() {
+    let receipt_key = composite::generate().unwrap();
     let keys = StoreKeys {
         anchor: composite::generate().unwrap(),
         ledger: DataKey::generate().unwrap(),
+        witness: vec![receipt_key.public_key().to_bytes().to_vec()],
     };
-    let mut store = AnchoredStore::new(MemDatabase::new(), Echo, CELL, keys);
+    let mut store = AnchoredStore::new(MemDatabase::new(), Echo(receipt_key), CELL, keys).unwrap();
     let now = system_now();
     fstp_rt::future::block_on(async {
         store.start().await.unwrap();

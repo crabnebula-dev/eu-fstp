@@ -21,8 +21,12 @@ import { del, get, ok, post, record, type Reply } from '../api.js';
 import { clear, h } from '../dom.js';
 import { isHex } from '../encoding.js';
 import { PATHS, frame, go, hush, i18n, showFailure, statusRegion, t } from '../layout.js';
+import { type NavRoles, navRolesOf, siteLinks } from '../sitenav.js';
 import { ADD_PASSKEY, askStepUp, revokeCredential, type StepUp } from '../stepup.js';
 import { Failure, failureOf, optionsOf, registration } from '../webauthn.js';
+
+/** The caller's own roles (`me.roles`, I-86), for the role links of the navigation. */
+const ME_ROLES = '/api/v1/me/roles';
 
 /** One live session, as `GET /auth/sessions` lists it. */
 interface SessionItem {
@@ -106,9 +110,43 @@ function methodLabel(method: string): string {
   return t('account.session.other');
 }
 
+/**
+ * The navigation of the account page, before `main`: Home, every page
+ * the caller may open without an id, and Account as the current page
+ * (Daniel, 2026-10-31: "please add all links to routes in the top row";
+ * `docs/design/01-navigation-home.md` "Top row"). It holds the links of
+ * `sitenav.ts`, which restates the sidebar of the `/app/` pages.
+ * The role links follow once `me.roles` answers. A failed read leaves
+ * the links every signed-in person has. A second mount keeps the one
+ * navigation.
+ */
+function siteNav(main: HTMLElement): void {
+  if (document.getElementById('site-nav') !== null) return;
+  const list = h('ul', { class: 'links' });
+  const fill = (roles: NavRoles | null): void => {
+    clear(list);
+    for (const l of siteLinks(roles)) {
+      const attrs: Record<string, string> = { href: l.href, 'data-nav': l.kind };
+      if (l.kind === 'account') attrs['aria-current'] = 'page';
+      const text = t(`account.nav.${l.kind}`);
+      list.append(h('li', {}, [h('a', attrs, [text])]));
+    }
+  };
+  fill(null);
+  main.before(h('nav', { id: 'site-nav', 'aria-label': t('account.nav') }, [list]));
+  void get(ME_ROLES).then(
+    (r) => {
+      const roles = ok(r) ? navRolesOf(r.body) : null;
+      if (roles !== null) fill(roles);
+    },
+    () => undefined,
+  );
+}
+
 /** Mounts the account page. */
 export function mount(): void {
   const { main, alert } = frame('account.title', 'account-error');
+  siteNav(main);
   const status = statusRegion('account-status');
   const sessions = h('ul', { id: 'sessions-list', class: 'items', 'aria-labelledby': 'sessions-heading' });
   const devices = h('ul', { id: 'devices-list', class: 'items', 'aria-labelledby': 'devices-heading' });

@@ -254,6 +254,17 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
         "onboarding" => fstp_engine::Record::from_json(value)
             .map(CellRecord::Engine)
             .map_err(body("onboarding")),
+        // The engine's creator and import sides (M4 design sections 3.2
+        // to 3.4). The encoder writes them through `fstp_engine::Record`,
+        // so the decoder reads them back the same way. Without them no
+        // creator batch is storable, and since D2e no programme activates
+        // on the cell (M4 design section 15.0).
+        "creator" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("creator")),
+        "import" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("import")),
         "auth" => auth_record(inner).map(CellRecord::Auth),
         "tenant" => tenant_record(inner)
             .map(CellRecord::Tenant)
@@ -728,6 +739,28 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
         TenantCommand::SetLoginPolicy { policy } => {
             tagged("SetLoginPolicy", vec![("policy", opaque_json(policy))])
         }
+        TenantCommand::IssueFirstAdminInvitation {
+            invitation,
+            account,
+            token_digest,
+        } => tagged(
+            "IssueFirstAdminInvitation",
+            vec![
+                ("account", account_json(*account)),
+                ("invitation", hex(invitation)),
+                ("token_digest", hex(token_digest)),
+            ],
+        ),
+        TenantCommand::EnrolByInvitation {
+            invitation,
+            credential,
+        } => tagged(
+            "EnrolByInvitation",
+            vec![
+                ("credential", hex(credential)),
+                ("invitation", hex(invitation)),
+            ],
+        ),
     }
 }
 
@@ -756,6 +789,21 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
             fields(o, &["policy"])?;
             Ok(TenantCommand::SetLoginPolicy {
                 policy: opaque_from(o, "policy")?,
+            })
+        }
+        "IssueFirstAdminInvitation" => {
+            fields(o, &["account", "invitation", "token_digest"])?;
+            Ok(TenantCommand::IssueFirstAdminInvitation {
+                invitation: array_from(o, "invitation")?,
+                account: account_from(o, "account")?,
+                token_digest: array_from(o, "token_digest")?,
+            })
+        }
+        "EnrolByInvitation" => {
+            fields(o, &["credential", "invitation"])?;
+            Ok(TenantCommand::EnrolByInvitation {
+                invitation: array_from(o, "invitation")?,
+                credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
             })
         }
         _ => Err(unknown_variant()),

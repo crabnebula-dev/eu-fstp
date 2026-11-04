@@ -1,0 +1,4 @@
+     Running tests/a.rs (target/debug/deps/a-0123abcd)
+test one ... ok
+test two ... FAILED
+test result: FAILED. 1 passed; 1 failed

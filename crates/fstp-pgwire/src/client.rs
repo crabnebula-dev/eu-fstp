@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use fstp_rt::{Connection, IoExt, Runtime, timeout};
 
-use crate::config::{AuthMethod, Config};
+use crate::config::{AuthMethod, Config, ServerCheck, run_server_checks};
 use crate::error::{Error, ErrorKind};
 use crate::proto::backend::TransactionStatus;
 use crate::proto::frontend;
@@ -58,7 +58,11 @@ async fn connect_tcp<R: Runtime>(rt: &R, host: &str, port: u16) -> Result<R::Tcp
 /// - Mutual TLS with full certificate verification is always used: the
 ///   server certificate is verified, and the role's client certificate from
 ///   the [`ClientTls`](crate::ClientTls) is presented (D2, R-NF-09). A
-///   server that declines TLS is refused.
+///   server that declines TLS is refused. The server's verified leaf
+///   certificate stays readable through
+///   [`Client::server_certificate_der`]. Each server check of the
+///   configuration ([`Config::server_check`]) runs on it before the
+///   startup message.
 /// - Authentication is SCRAM-SHA-256-PLUS when the server offers it, else
 ///   SCRAM-SHA-256, as limited by `require_auth`.
 /// - Statements use the extended query protocol only. SQL text is
@@ -75,6 +79,8 @@ pub struct Client<R: Runtime> {
     cancel: CancelToken,
     statement_timeout: Option<Duration>,
     cancel_grace: Duration,
+    /// The DER of the server's leaf certificate from the TLS handshake.
+    server_cert: Vec<u8>,
 }
 
 impl<R: Runtime> fmt::Debug for Client<R> {
@@ -98,7 +104,9 @@ impl<R: Runtime> Client<R> {
     /// # Errors
     ///
     /// Returns [`ErrorKind::Timeout`], [`ErrorKind::TlsRequired`],
-    /// [`ErrorKind::Tls`], [`ErrorKind::Auth`], the server's error (such as
+    /// [`ErrorKind::Tls`], [`ErrorKind::ServerRefused`] when a server check
+    /// of the configuration refuses the server ([`Config::server_check`]),
+    /// [`ErrorKind::Auth`], the server's error (such as
     /// SQLSTATE `28P01` for a wrong password), or a transport error.
     /// PostgreSQL also reports `28P01` when the client certificate's CN
     /// does not match the role, and `28000` when no certificate arrived.
@@ -142,6 +150,9 @@ impl<R: Runtime> Client<R> {
             .peer_end_entity_der()
             .map(<[u8]>::to_vec)
             .ok_or_else(|| Error::new(ErrorKind::Tls, "server presented no certificate"))?;
+        // The configured server checks run before the startup message, so a
+        // refused server never sees the user, the database or SCRAM.
+        run_server_checks(&config.server_checks, &cert)?;
         let session = Session::startup(Box::new(tls), config, Some(&cert)).await?;
         let cancel = CancelToken {
             host: config.host.clone(),
@@ -150,6 +161,7 @@ impl<R: Runtime> Client<R> {
             tls: config.tls.fstp_tls_config().clone(),
             key: session.backend_key(),
             timeout: config.connect_timeout,
+            server_checks: config.server_checks.clone(),
         };
         Ok(Client {
             rt: rt.clone(),
@@ -157,6 +169,7 @@ impl<R: Runtime> Client<R> {
             cancel,
             statement_timeout: config.statement_timeout,
             cancel_grace: config.cancel_grace,
+            server_cert: cert,
         })
     }
 
@@ -324,6 +337,23 @@ impl<R: Runtime> Client<R> {
     async fn end_transaction(&mut self, sql: &'static str) -> Result<String, Error> {
         timed!(self, self.session.ensure_ready())?;
         timed!(self, self.session.run_control(sql))
+    }
+
+    /// The DER encoding of the leaf certificate the server presented in
+    /// this connection's TLS handshake.
+    ///
+    /// fstp-tls verified it before the startup message was sent. It chains
+    /// to a root of the configuration's [`ClientTls`](crate::ClientTls) and
+    /// is valid for the server name (verify-full). SCRAM-SHA-256-PLUS
+    /// channel binding hashes the same certificate. On a resumed TLS
+    /// session it is the leaf of the full handshake that authenticated
+    /// that session.
+    ///
+    /// A caller reads the server's subject and public key from it, as the
+    /// cell and vault start checks of I-83 do (design section 9.2).
+    #[must_use]
+    pub fn server_certificate_der(&self) -> &[u8] {
+        &self.server_cert
     }
 
     /// A token that cancels the statement running on this connection from
@@ -637,7 +667,8 @@ impl<R: Runtime> Drop for Transaction<'_, R> {
 /// Cancels the statement running on one connection, from any task.
 ///
 /// The CancelRequest goes over a new TLS connection with the same
-/// verification and client certificate as the original connection. A
+/// verification, client certificate and server checks
+/// ([`Config::server_check`]) as the original connection. A
 /// cancel can arrive after the statement already finished; the server then
 /// ignores it. [`fmt::Debug`] hides the secret key.
 #[derive(Clone)]
@@ -648,6 +679,7 @@ pub struct CancelToken {
     tls: fstp_tls::ClientConfig,
     key: Option<BackendKey>,
     timeout: Option<Duration>,
+    server_checks: Vec<ServerCheck>,
 }
 
 impl fmt::Debug for CancelToken {
@@ -668,7 +700,9 @@ impl CancelToken {
     /// # Errors
     ///
     /// Returns [`ErrorKind::Closed`] when the server sent no cancellation
-    /// key, or a connect, TLS or timeout error.
+    /// key, [`ErrorKind::ServerRefused`] when a server check of the original
+    /// configuration refuses the server before the key is sent, or a
+    /// connect, TLS or timeout error.
     pub async fn cancel<R: Runtime>(&self, rt: &R) -> Result<(), Error> {
         let Some(key) = self.key else {
             return Err(Error::closed("server sent no cancellation key"));
@@ -676,6 +710,10 @@ impl CancelToken {
         let fut = async {
             let tcp = connect_tcp(rt, &self.host, self.port).await?;
             let mut tls = tls_handshake(tcp, &self.tls, &self.server_name).await?;
+            let leaf = tls
+                .peer_end_entity_der()
+                .ok_or_else(|| Error::new(ErrorKind::Tls, "server presented no certificate"))?;
+            run_server_checks(&self.server_checks, leaf)?;
             tls.write_all(&frontend::cancel_request(key.process_id, key.secret_key))
                 .await
                 .map_err(|e| Error::io("cannot send the CancelRequest", e))?;

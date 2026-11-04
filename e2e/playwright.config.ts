@@ -269,7 +269,11 @@ export const SESSION_COOKIE = '__Host-fstp';
  * confirm page. `GET /auth/sessions` is the JSON route of R-LG-04, so the
  * sessions and devices page is `/auth/account`.
  *
- * - Every sign-in and enrolment ends on the account page.
+ * - Every sign-in and enrolment ends on the home page `/app/` (interim,
+ *   pending Daniel: design section 15.0 row of 2026-10-31, after Daniel
+ *   reported that the account page led nowhere). A login page opened
+ *   with a safe `?next=/app/...` ends on that page instead. The home
+ *   page links to the account page through `nav a[data-nav="account"]`.
  * - The account page sends a browser without a session to the login page.
  * - Tokens in links travel in the fragment, never in the query.
  * - Each high-risk action on a page opens the modal `dialog#stepup`. Its
@@ -927,19 +931,55 @@ export function isAccountPage(u: URL, origin: string): boolean {
   return u.origin === origin && u.pathname === PAGES.account;
 }
 
-/** Waits until the page shows the account page of `origin`, signed in. */
+/** The home page on the cell origin, where every sign-in lands (interim, design section 15.0). */
+export const HOME_PAGE = '/app/';
+
+/** Whether `u` is the home page of `origin`. */
+export function isHomePage(u: URL, origin: string): boolean {
+  return u.origin === origin && u.pathname === HOME_PAGE;
+}
+
+/** The most Tab presses `expectSignedIn` makes to reach the Account link. */
+const MAX_TABS_TO_ACCOUNT = 40;
+
+/**
+ * Waits until the page shows the home page of `origin` after a sign-in,
+ * then opens the account page through the site navigation and waits
+ * until it shows the account, signed in. So a caller goes on from the
+ * account page, as before the home page landing (interim, design
+ * section 15.0 of 2026-10-31).
+ *
+ * R-NF-03 (review finding F1): the Account link is reached by Tab and
+ * opened with Enter, never with a pointer. So the keyboard flow of
+ * `r_nf_03_flows_complete_by_keyboard_alone` stays keyboard only: home,
+ * then Account, by keyboard. It also checks that a keyboard user can
+ * reach the account page from the home landing.
+ */
 export async function expectSignedIn(page: Page, origin: string): Promise<void> {
+  await expect(page).toHaveURL((u) => isHomePage(u, origin));
+  await expect(page.locator('main #home')).toBeVisible();
+  // The home page has loaded, so the shell has filled the navigation.
+  await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
+  const account = page.locator('nav a[data-nav="account"]').first();
+  await expect(account).toBeVisible();
+  let focused = false;
+  for (let i = 0; i < MAX_TABS_TO_ACCOUNT && !focused; i += 1) {
+    await page.keyboard.press('Tab');
+    focused = await page.evaluate(() => document.activeElement?.matches('nav a[data-nav="account"]') === true);
+  }
+  expect(focused, `R-NF-03: the Account link is reachable by Tab within ${MAX_TABS_TO_ACCOUNT} presses`).toBe(true);
+  await page.keyboard.press('Enter');
   await expect(page).toHaveURL((u) => isAccountPage(u, origin));
   await expect(page.locator(UI.account.sessions)).toBeVisible();
   expect(await sessionStatus(page, origin)).toBe(200);
 }
 
 /**
- * Waits for the outcome of a sign-in step: the account page (true) or a
+ * Waits for the outcome of a sign-in step: the home page (true) or a
  * visible alert (false). Neither within the timeout fails the test.
  */
 export async function signInOutcome(page: Page, origin: string): Promise<boolean> {
-  const ok = page.waitForURL((u) => isAccountPage(u, origin)).then(
+  const ok = page.waitForURL((u) => isHomePage(u, origin)).then(
     () => true,
     () => null,
   );
@@ -953,7 +993,7 @@ export async function signInOutcome(page: Page, origin: string): Promise<boolean
     );
   const r = await Promise.race([ok, refused]);
   if (r === null) {
-    throw new Error('the page showed neither the account page nor an alert');
+    throw new Error('the page showed neither the home page nor an alert');
   }
   if (r) {
     await expectSignedIn(page, origin);

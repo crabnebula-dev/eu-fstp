@@ -50,6 +50,11 @@
 //!   token, never a guessable id (SoD-09).
 //! - `ListProposalAssignments` is the FSTP coordinator's, from SUBMITTED
 //!   on and outside INELIGIBLE (see `ASSIGNABLE` for the open seam).
+//!
+//! Interim reading of the home page, pending Daniel (design section 15.0,
+//! 2026-10-31): `ListMyRoles` (`me.roles`) is the caller's own object. It
+//! lists the caller's own active bindings and nothing about any other
+//! account (I-86).
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
@@ -114,11 +119,14 @@ pub enum ReadKind {
     ListTemplates,
     GetInvitation,
     ListProposalAssignments,
+    // The interim home page of design section 15.0 (2026-10-31): the
+    // caller's own active roles (module documentation).
+    ListMyRoles,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 44] = [
+    pub const ALL: [ReadKind; 45] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -163,6 +171,7 @@ impl ReadKind {
         ReadKind::ListTemplates,
         ReadKind::GetInvitation,
         ReadKind::ListProposalAssignments,
+        ReadKind::ListMyRoles,
     ];
 }
 
@@ -367,6 +376,8 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::Holder(Role::FstpCoordinator),
         ASSIGNABLE,
     ),
+    // I-86: the caller's own roles only.
+    (ReadKind::ListMyRoles, ReadRule::Own, OPEN_ALWAYS),
 ];
 
 /// The row of `READ_RULES` for `kind`.

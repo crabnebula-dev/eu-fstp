@@ -49,7 +49,7 @@ const REVIEWER_OPS: readonly FakeOp[] = [
 function reviewerAnswers(awaiting: boolean): Record<string, unknown> {
   return {
     'GET /api/v1/me/assignments': [
-      { assignment: '21', proposal: '11', call: '5', kind: 'reviewer', awaiting_declaration: awaiting, active: !awaiting },
+      { assignment: '21', proposal: '11', call: '5', kind: 'reviewer', awaiting_declaration: awaiting, active: !awaiting, stage2: false },
     ],
     'GET /api/v1/proposals/11/content': {
       proposal: '11',
@@ -170,7 +170,7 @@ test.describe('W4c Judging page behaviour', () => {
       ],
       {
         'GET /api/v1/me/irc-cases': [
-          { assignment: '31', proposal: '11', call: '5', kind: 'irc', awaiting_declaration: false, active: true },
+          { assignment: '31', proposal: '11', call: '5', kind: 'irc', awaiting_declaration: false, active: true, stage2: false },
         ],
         'GET /api/v1/irc-assignments/31/case': {
           proposal: '11',

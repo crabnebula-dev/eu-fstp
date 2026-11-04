@@ -45,10 +45,10 @@
 //!
 //! # Seams, each failing closed
 //!
-//! - `creator.get_draft` needs the draft's spec and its pending template
-//!   narratives. Neither is in `CreatorState` yet (lane m4creator), and
-//!   this crate has no edge to `fstp-programme` (the lead). It refuses
-//!   with `NotImplemented` once it has found the draft.
+//! - `creator.get_draft` reads the draft spec and its pending template
+//!   narratives through `fstp_creator::draft_view`, so this crate needs
+//!   no edge to `fstp-programme`. A saved value the engine does not hold
+//!   reads as a gap there, never as a made-up value.
 //! - `creator.preview` needs the Guide renderer (lane m4guide), the
 //!   public page renderer of `fstp-public` and the contract placeholder.
 //! - `creator.impact` answers the empty list for a programme with no
@@ -457,9 +457,17 @@ async fn programme_read<P: Seams>(
         .draft(p)
         .ok_or_else(|| call.refuse(no_draft()))?;
     match kind {
-        ReadKind::GetDraft => Err(call.refuse(ApiError::NotImplemented(
-            "the draft's spec and pending template narratives: a CreatorState read of the draft spec (lane m4creator) or an fstp-programme edge of fstp-api-core (the lead)",
-        ))),
+        ReadKind::GetDraft => {
+            let view = fstp_creator::draft_view(&state.core, &state.creator, p)
+                .ok_or_else(|| call.refuse(no_draft()))?;
+            Ok(CreatorModel::Draft {
+                spec: view.spec,
+                revision: d.head(),
+                active: d.active().is_some(),
+                pending_narratives: view.pending_narratives,
+                requested: d.request_live(),
+            })
+        }
         ReadKind::GetPreview => Err(call.refuse(ApiError::NotImplemented(
             "the draft previews: the Guide renderer (lane m4guide), the fstp-public page renderer and the contract placeholder",
         ))),

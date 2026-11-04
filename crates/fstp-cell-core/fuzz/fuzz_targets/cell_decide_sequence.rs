@@ -9,8 +9,11 @@
 //! The input is a sequence of length-prefixed frames, each a control
 //! byte, an actor and one canonical command ([`decide_frames`]). The
 //! commands are decided under a command id, so the SoD-07 path runs too.
-//! The seeds hold the M2 setup commands of the corpus, so the M2
-//! programme, call and grant paths are decided.
+//! Leading ledger entry frames give the run a replayed ledger to start
+//! from. The seed `m2_setup` holds the M2 setup commands a draft admits.
+//! Since D2e no command activates a programme on the cell (M4 design
+//! section 15.0), so the seed `m2_active` starts from the test kit's
+//! paired activation entry and decides the call and proposal paths.
 
 #![no_main]
 

@@ -155,7 +155,7 @@ test.describe('W4c review reproducers', () => {
       ],
       {
         'GET /api/v1/me/assignments': [
-          { assignment: '21', proposal: '11', call: '5', kind: 'reviewer', awaiting_declaration: false, active: true },
+          { assignment: '21', proposal: '11', call: '5', kind: 'reviewer', awaiting_declaration: false, active: true, stage2: false },
         ],
         'GET /api/v1/proposals/11/content': {
           proposal: '11',
@@ -197,7 +197,7 @@ test.describe('W4c review reproducers', () => {
       ],
       {
         'GET /api/v1/me/irc-cases': [
-          { assignment: '31', proposal: '11', call: '5', kind: 'irc', awaiting_declaration: false, active: true },
+          { assignment: '31', proposal: '11', call: '5', kind: 'irc', awaiting_declaration: false, active: true, stage2: false },
         ],
         'GET /api/v1/irc-assignments/31/case': {
           proposal: '11',

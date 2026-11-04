@@ -176,6 +176,25 @@ pub const fn role_wire_name(role: Role) -> &'static str {
     }
 }
 
+/// Every role as the wire spells it, in the order of [`Role::ALL`]
+/// ([`role_wire_name`]).
+const ROLE_NAMES: &[&str] = &[
+    "programme_manager",
+    "call_drafter",
+    "fstp_coordinator",
+    "committee_member",
+    "committee_chair",
+    "irc_member",
+    "applicant",
+    "applicant_team_member",
+    "guardian",
+    "tenant_admin",
+    "finance_approver",
+    "payment_releaser",
+    "contract_signatory",
+    "auditor",
+];
+
 /// The roles an invitation of creator step 9 names, as the wire spells
 /// them: the [`invitable`] roles in the order of [`Role::ALL`]. These are
 /// the Drafting and Judging roles and every Operations role but tenant
@@ -236,6 +255,9 @@ const OWN_ASSIGNMENTS: Shape = Shape::Array(&Shape::Object(&[
     m("kind", Shape::Enum(&["reviewer", "irc", "amendment"])),
     m("awaiting_declaration", Shape::Bool),
     m("active", Shape::Bool),
+    // Review finding U5: whether the stage 2 thread opens, so the list
+    // links it only then. Always false for an IRC row (O-58).
+    m("stage2", Shape::Bool),
 ]));
 
 /// One proposal of a call for its staff: "Proposal" plus its id, its
@@ -569,6 +591,43 @@ pub const REPLIES: &[(&str, Shape)] = &[
         "me.begin_verification",
         Shape::Object(&[m("redirect", Shape::String)]),
     ),
+    // I-86, design section 15.0 (2026-10-31): the caller's own active
+    // bindings by role, programme, proposal and published call, the
+    // title of each call they name, and the open cut-off rounds of the
+    // caller's committee calls, and the caller's programme manager
+    // programmes that hold a creator draft. No name, no email and no
+    // other account.
+    // A call title is the published call text, which anyone may read.
+    (
+        "me.roles",
+        Shape::Object(&[
+            m("tenant_admin", Shape::Bool),
+            m(
+                "roles",
+                Shape::Array(&Shape::Object(&[
+                    m("role", Shape::Enum(ROLE_NAMES)),
+                    m("programme", Shape::Id),
+                    opt("proposal", Shape::Id),
+                    m("calls", Shape::Array(&Shape::Id)),
+                ])),
+            ),
+            m(
+                "calls",
+                Shape::Array(&Shape::Object(&[
+                    m("call", Shape::Id),
+                    opt("title", Shape::String),
+                ])),
+            ),
+            m(
+                "rounds",
+                Shape::Array(&Shape::Object(&[
+                    m("round", Shape::Id),
+                    m("call", Shape::Id),
+                ])),
+            ),
+            m("drafts", Shape::Array(&Shape::Id)),
+        ]),
+    ),
     // Lane m4reg. SoD-07: each admin by account and pseudonymous handle,
     // never an email.
     (
@@ -877,6 +936,15 @@ mod tests {
         ] {
             assert!(!invitable(r), "{r:?}");
         }
+    }
+
+    /// I-86: the roles of `me.roles` are every role by its wire name, in
+    /// the order of the roles table, so the home page names each binding
+    /// as the other replies do (design section 15.0, 2026-10-31).
+    #[test]
+    fn i86_me_roles_role_names_are_the_wire_names() {
+        let want: Vec<&str> = Role::ALL.iter().map(|r| role_wire_name(*r)).collect();
+        assert_eq!(ROLE_NAMES, want.as_slice());
     }
 
     /// SoD-09: each role has its own wire name, in snake case.

@@ -110,7 +110,7 @@ pub use crate::client::{
 };
 pub use crate::config::{
     AuthMethod, ClientTls, Config, DEFAULT_MIN_SCRAM_ITERATIONS, Limits, MAX_NAME_LEN,
-    MAX_PASSWORD_LEN, Password, RequireAuth,
+    MAX_PASSWORD_LEN, Password, RequireAuth, ServerCheck,
 };
 pub use crate::error::{DbError, Error, ErrorKind};
 pub use crate::proto::backend::TransactionStatus;

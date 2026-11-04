@@ -1,8 +1,12 @@
 //! Refusals: closed rule references and reasons, with no account ids or free text (design section 3.1).
 //!
-//! A refusal names the rule that refused and a closed reason. It never names
-//! an account and never carries text, so a refusal shown to a Judging role
-//! discloses no identity (R-CF-03, `SPEC/03-architecture/overview.md` NOTE 5).
+//! A refusal names the rule that refused and a closed reason. Where its rule
+//! asks for it, it also names a closed detail of programme values, such as
+//! the two values of an I-50 refusal. It never names an account and never
+//! carries free text, so a refusal shown to a Judging role discloses no
+//! identity (R-CF-03, `SPEC/03-architecture/overview.md` NOTE 5).
+
+use fstp_money::NonNegAmount;
 
 use crate::rules::ParamId;
 
@@ -374,6 +378,34 @@ pub enum RefusalReason {
     NotThroughMcp,
 }
 
+/// What a refusal names beside its rule and reason, where the rule asks
+/// for it. Each variant is closed: it holds programme values only, never
+/// an account and never free text (R-CF-03).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RefusalDetail {
+    /// I-50, R-PG-01 AC: a creator save or an import resolution would put
+    /// P-05 above P-58. The refusal names both values (Daniel's answer of
+    /// 2026-10-31 on the I-50 timing, M4 design section 15.0).
+    CapAboveCeiling {
+        /// P-05 as the save would leave it.
+        p05: NonNegAmount,
+        /// P-58 as the save would leave it.
+        p58: NonNegAmount,
+    },
+}
+
+impl core::fmt::Display for RefusalDetail {
+    /// Writes the values as ADR-006 strings, such as `P-05 60000.01 is
+    /// above P-58 60000.00`.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            RefusalDetail::CapAboveCeiling { p05, p58 } => {
+                write!(f, "P-05 {} is above P-58 {}", p05.amount(), p58.amount())
+            }
+        }
+    }
+}
+
 /// A refusal of a command by `queries` or `decide`. Nothing is recorded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Refusal {
@@ -381,12 +413,26 @@ pub struct Refusal {
     pub rule: RuleRef,
     /// Why it refused.
     pub reason: RefusalReason,
+    /// What the refusal names beside its rule, where the rule asks for it.
+    pub detail: Option<RefusalDetail>,
 }
 
 impl Refusal {
     /// A refusal by `rule` for `reason`.
     pub const fn new(rule: RuleRef, reason: RefusalReason) -> Refusal {
-        Refusal { rule, reason }
+        Refusal {
+            rule,
+            reason,
+            detail: None,
+        }
+    }
+
+    /// This refusal, naming `detail` as well.
+    pub const fn naming(self, detail: RefusalDetail) -> Refusal {
+        Refusal {
+            detail: Some(detail),
+            ..self
+        }
     }
 
     /// The refusal of a stub whose lane has not landed. No engine path
@@ -400,8 +446,12 @@ impl Refusal {
 impl core::fmt::Display for Refusal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.rule.spec_id() {
-            Some(id) => write!(f, "refused by {id}: {:?}", self.reason),
-            None => write!(f, "refused ({:?}): {:?}", self.rule, self.reason),
+            Some(id) => write!(f, "refused by {id}: {:?}", self.reason)?,
+            None => write!(f, "refused ({:?}): {:?}", self.rule, self.reason)?,
+        }
+        match &self.detail {
+            Some(d) => write!(f, ": {d}"),
+            None => Ok(()),
         }
     }
 }

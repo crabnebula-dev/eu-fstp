@@ -10,6 +10,7 @@ fstp-tls
 fstp-prop
 fstp-mc
 deps-check
+test-gate
 fstp-money
 fstp-ledger
 fstp-domain
@@ -56,3 +57,4 @@ fstp-oauth
 fstp-mcp
 fstp-web
 fstp-web-assets
+fstp-journey

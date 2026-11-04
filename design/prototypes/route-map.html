@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Application progress: Community Wellbeing Navigator - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.route-wrap { overflow-x: auto; border: 1px solid var(--color-surface-3); border-radius: var(--radius-lg); background: var(--color-surface-0); padding: var(--space-3); }
+    .route-svg { min-width: 56rem; display: block; color: var(--color-journey-upcoming); }
+    .help-panel { display: none; }
+    .help-panel:target { display: block; }
+    .help-panels:not(:has(.help-panel:target)) #node-STAGE2 { display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: var(--space-4); list-style: none; padding: 0; font-size: var(--text-sm); }
+    .legend .journey-node { margin: 0; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Progress map, proposal CSW-2024-0042 in STAGE2 (Stage 2 questions)</p>
+
+    <h1>Application progress</h1>
+    <p class="voyage-label">Your route through the call</p>
+    <p><strong>Community Wellbeing Navigator</strong> <span class="pid">CSW-2024-0042</span> in SuperSAFE Open Call 2.</p>
+    <p class="clock">Stage 2 questions <span class="state-name">(STAGE2)</span>: answer window closes in 8 days</p>
+    <ul class="legend" aria-label="Legend">
+      <li class="journey-node journey-node--complete">Completed</li>
+      <li class="journey-node journey-node--current">Current stage</li>
+      <li class="journey-node journey-node--upcoming">Upcoming</li>
+      <li class="journey-node journey-node--terminal-positive">Successful outcome</li>
+      <li class="journey-node journey-node--terminal-negative">Other final outcome</li>
+    </ul>
+    <figure class="route-wrap">
+    <svg class="route-svg" viewBox="0 0 1110 430" role="group" aria-labelledby="route-title route-desc" xmlns="http://www.w3.org/2000/svg">
+      <title id="route-title">Progress map for CSW-2024-0042</title>
+      <desc id="route-desc">Sixteen states. The current stage is Stage 2 questions, formal state STAGE2. The text list below the map gives the same content.</desc>
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="arrow-head"/></marker>
+        <marker id="arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="arrow-head"/></marker>
+      </defs>
+      <line class="edge edge--done" x1="112" y1="170" x2="118" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge edge--done" x1="222" y1="170" x2="228" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge edge--done" x1="332" y1="170" x2="338" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge" x1="442" y1="170" x2="448" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge" x1="552" y1="170" x2="558" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge" x1="662" y1="170" x2="668" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge" x1="772" y1="170" x2="778" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge" x1="882" y1="170" x2="888" y2="170" marker-end="url(#arrow)"/>
+      <line class="edge" x1="992" y1="170" x2="998" y2="170" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M170 201 L170 359" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M280 201 L390 359" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M500 201 L390 359" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M610 201 L720 359" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M720 201 L720 359" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M830 201 L940 359" marker-end="url(#arrow)"/>
+      <path class="edge edge--negative" d="M940 201 L940 359" marker-end="url(#arrow)"/>
+      <path class="edge" d="M410 201 Q 430 280 503 274" marker-end="url(#arrow)"/>
+      <path class="edge" d="M590 201 Q 580 250 607 274" marker-end="url(#arrow)"/>
+      <path class="edge edge--loop" d="M503 288 Q 380 300 370 201" marker-end="url(#arrow-loop)"/>
+      <path class="edge edge--loop" d="M607 288 Q 620 300 630 201" marker-end="url(#arrow-loop)"/>
+      <text class="node-formal" x="555" y="328" text-anchor="middle">re-enters at the stage it left</text>
+      <path class="edge edge--leave" d="M8 130 L8 118 L772 118 L772 130"/>
+      <path class="edge edge--leave" d="M390 118 L390 76" marker-end="url(#arrow)"/>
+      <text class="node-formal" x="12" y="112">Withdraw: possible in any state before GRANTED, including DEFERRED</text>
+      <a href="#node-DRAFT" aria-label="Draft (DRAFT), completed" class="svg-complete">
+        <title>Draft (DRAFT), completed</title>
+        <rect class="node-shape" x="8" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="17" y="152" aria-hidden="true">✓</text>
+        <text class="node-label" text-anchor="middle"><tspan x="60" y="170">Draft</tspan></text>
+        <text class="node-formal" x="60" y="195" text-anchor="middle">DRAFT</text>
+      </a>
+      <a href="#node-SUBMITTED" aria-label="Submitted (SUBMITTED), completed" class="svg-complete">
+        <title>Submitted (SUBMITTED), completed</title>
+        <rect class="node-shape" x="118" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="127" y="152" aria-hidden="true">✓</text>
+        <text class="node-label" text-anchor="middle"><tspan x="170" y="170">Submitted</tspan></text>
+        <text class="node-formal" x="170" y="195" text-anchor="middle">SUBMITTED</text>
+      </a>
+      <a href="#node-STAGE1" aria-label="Stage 1 evaluation (STAGE1), completed" class="svg-complete">
+        <title>Stage 1 evaluation (STAGE1), completed</title>
+        <rect class="node-shape" x="228" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="237" y="152" aria-hidden="true">✓</text>
+        <text class="node-label" text-anchor="middle"><tspan x="280" y="162">Stage 1</tspan><tspan x="280" y="174">evaluation</tspan></text>
+        <text class="node-formal" x="280" y="195" text-anchor="middle">STAGE1</text>
+      </a>
+      <a href="#node-STAGE2" aria-label="Stage 2 questions (STAGE2), current stage" class="svg-current">
+        <title>Stage 2 questions (STAGE2), current stage</title><rect class="current-ring" x="332" y="133" width="116" height="74" rx="14"/>
+        <rect class="node-shape" x="338" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="347" y="152" aria-hidden="true">●</text>
+        <text class="node-label" text-anchor="middle"><tspan x="390" y="162">Stage 2</tspan><tspan x="390" y="174">questions</tspan></text>
+        <text class="node-formal" x="390" y="195" text-anchor="middle">STAGE2</text>
+      </a>
+      <a href="#node-RANKED" aria-label="Ranked, awaiting committee decision (RANKED), upcoming" class="svg-upcoming">
+        <title>Ranked, awaiting committee decision (RANKED), upcoming</title>
+        <rect class="node-shape" x="448" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="457" y="152" aria-hidden="true">○</text>
+        <text class="node-label" text-anchor="middle"><tspan x="500" y="162">Ranked, awaiting</tspan><tspan x="500" y="174">committee</tspan></text>
+        <text class="node-formal" x="500" y="195" text-anchor="middle">RANKED</text>
+      </a>
+      <a href="#node-IRC_REVIEW" aria-label="Independent review (IRC_REVIEW), upcoming" class="svg-upcoming">
+        <title>Independent review (IRC_REVIEW), upcoming</title>
+        <rect class="node-shape" x="558" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="567" y="152" aria-hidden="true">○</text>
+        <text class="node-label" text-anchor="middle"><tspan x="610" y="162">Independent</tspan><tspan x="610" y="174">review</tspan></text>
+        <text class="node-formal" x="610" y="195" text-anchor="middle">IRC_REVIEW</text>
+      </a>
+      <a href="#node-NEGOTIATION" aria-label="Negotiation (NEGOTIATION), upcoming" class="svg-upcoming">
+        <title>Negotiation (NEGOTIATION), upcoming</title>
+        <rect class="node-shape" x="668" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="677" y="152" aria-hidden="true">○</text>
+        <text class="node-label" text-anchor="middle"><tspan x="720" y="170">Negotiation</tspan></text>
+        <text class="node-formal" x="720" y="195" text-anchor="middle">NEGOTIATION</text>
+      </a>
+      <a href="#node-GRANTED" aria-label="Granted (GRANTED), upcoming" class="svg-upcoming">
+        <title>Granted (GRANTED), upcoming</title>
+        <rect class="node-shape" x="778" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="787" y="152" aria-hidden="true">○</text>
+        <text class="node-label" text-anchor="middle"><tspan x="830" y="170">Granted</tspan></text>
+        <text class="node-formal" x="830" y="195" text-anchor="middle">GRANTED</text>
+      </a>
+      <a href="#node-IN_EXECUTION" aria-label="Project in progress (IN_EXECUTION), upcoming" class="svg-upcoming">
+        <title>Project in progress (IN_EXECUTION), upcoming</title>
+        <rect class="node-shape" x="888" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="897" y="152" aria-hidden="true">○</text>
+        <text class="node-label" text-anchor="middle"><tspan x="940" y="162">Project in</tspan><tspan x="940" y="174">progress</tspan></text>
+        <text class="node-formal" x="940" y="195" text-anchor="middle">IN_EXECUTION</text>
+      </a>
+      <a href="#node-COMPLETED" aria-label="Completed (COMPLETED), upcoming, final outcome" class="svg-positive">
+        <title>Completed (COMPLETED), upcoming, final outcome</title>
+        <rect class="node-shape" x="998" y="139" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="1007" y="152" aria-hidden="true">★</text>
+        <text class="node-label" text-anchor="middle"><tspan x="1050" y="170">Completed</tspan></text>
+        <text class="node-formal" x="1050" y="195" text-anchor="middle">COMPLETED</text>
+      </a>
+      <a href="#node-DEFERRED" aria-label="Deferred to the next call (DEFERRED), possible pause, returns at the stage it left" class="svg-upcoming">
+        <title>Deferred to the next call (DEFERRED), possible pause, returns at the stage it left</title>
+        <rect class="node-shape" x="503" y="249" width="104" height="62" rx="10"/>
+        <text class="node-glyph" x="512" y="262" aria-hidden="true">↺</text>
+        <text class="node-label" text-anchor="middle"><tspan x="555" y="272">Deferred to</tspan><tspan x="555" y="284">next call</tspan></text>
+        <text class="node-formal" x="555" y="305" text-anchor="middle">DEFERRED</text>
+      </a>
+      <a href="#node-INELIGIBLE" aria-label="Not eligible (INELIGIBLE), possible final outcome" class="svg-negative">
+        <title>Not eligible (INELIGIBLE), possible final outcome</title>
+        <rect class="node-shape" x="118" y="359" width="104" height="62" rx="2"/>
+        <text class="node-glyph" x="127" y="372" aria-hidden="true">■</text>
+        <text class="node-label" text-anchor="middle"><tspan x="170" y="390">Not eligible</tspan></text>
+        <text class="node-formal" x="170" y="415" text-anchor="middle">INELIGIBLE</text>
+      </a>
+      <a href="#node-NOT_SELECTED" aria-label="Not selected (NOT_SELECTED), possible final outcome" class="svg-negative">
+        <title>Not selected (NOT_SELECTED), possible final outcome</title>
+        <rect class="node-shape" x="338" y="359" width="104" height="62" rx="2"/>
+        <text class="node-glyph" x="347" y="372" aria-hidden="true">■</text>
+        <text class="node-label" text-anchor="middle"><tspan x="390" y="390">Not selected</tspan></text>
+        <text class="node-formal" x="390" y="415" text-anchor="middle">NOT_SELECTED</text>
+      </a>
+      <a href="#node-DECLINED" aria-label="Declined (DECLINED), possible final outcome" class="svg-negative">
+        <title>Declined (DECLINED), possible final outcome</title>
+        <rect class="node-shape" x="668" y="359" width="104" height="62" rx="2"/>
+        <text class="node-glyph" x="677" y="372" aria-hidden="true">■</text>
+        <text class="node-label" text-anchor="middle"><tspan x="720" y="390">Declined</tspan></text>
+        <text class="node-formal" x="720" y="415" text-anchor="middle">DECLINED</text>
+      </a>
+      <a href="#node-TERMINATED" aria-label="Grant terminated (TERMINATED), possible final outcome" class="svg-negative">
+        <title>Grant terminated (TERMINATED), possible final outcome</title>
+        <rect class="node-shape" x="888" y="359" width="104" height="62" rx="2"/>
+        <text class="node-glyph" x="897" y="372" aria-hidden="true">■</text>
+        <text class="node-label" text-anchor="middle"><tspan x="940" y="382">Grant</tspan><tspan x="940" y="394">terminated</tspan></text>
+        <text class="node-formal" x="940" y="415" text-anchor="middle">TERMINATED</text>
+      </a>
+      <a href="#node-WITHDRAWN" aria-label="Withdrawn (WITHDRAWN), possible final outcome" class="svg-negative">
+        <title>Withdrawn (WITHDRAWN), possible final outcome</title>
+        <rect class="node-shape" x="338" y="14" width="104" height="62" rx="2"/>
+        <text class="node-glyph" x="347" y="27" aria-hidden="true">■</text>
+        <text class="node-label" text-anchor="middle"><tspan x="390" y="45">Withdrawn</tspan></text>
+        <text class="node-formal" x="390" y="70" text-anchor="middle">WITHDRAWN</text>
+      </a>
+    </svg>
+    <figcaption class="text-sm muted">Select a state for its help panel. Dashed loop: Deferred to the next call (DEFERRED) re-enters at the stage it left. The bracket marks where you may withdraw.</figcaption>
+    </figure>
+
+    <div class="layout-side">
+      <section aria-labelledby="alt-h">
+        <h2 id="alt-h">Progress as a list</h2>
+        <p class="text-sm muted">Same content as the map. Main stages first, then the pause and the final outcomes.</p>
+        <ol class="journey-list">
+          <li class="journey-node journey-node--complete"><a href="#node-DRAFT">Draft <span class="state-name">(DRAFT)</span></a><span>: Completed</span></li>
+          <li class="journey-node journey-node--complete"><a href="#node-SUBMITTED">Submitted <span class="state-name">(SUBMITTED)</span></a><span>: Completed</span></li>
+          <li class="journey-node journey-node--complete"><a href="#node-STAGE1">Stage 1 evaluation <span class="state-name">(STAGE1)</span></a><span>: Completed</span></li>
+          <li class="journey-node journey-node--current" aria-current="step"><a href="#node-STAGE2">Stage 2 questions <span class="state-name">(STAGE2)</span></a><span>: Current stage</span></li>
+          <li class="journey-node journey-node--upcoming"><a href="#node-RANKED">Ranked, awaiting committee decision <span class="state-name">(RANKED)</span></a><span>: Upcoming</span></li>
+          <li class="journey-node journey-node--upcoming"><a href="#node-IRC_REVIEW">Independent review <span class="state-name">(IRC_REVIEW)</span></a><span>: Upcoming</span></li>
+          <li class="journey-node journey-node--upcoming"><a href="#node-NEGOTIATION">Negotiation <span class="state-name">(NEGOTIATION)</span></a><span>: Upcoming</span></li>
+          <li class="journey-node journey-node--upcoming"><a href="#node-GRANTED">Granted <span class="state-name">(GRANTED)</span></a><span>: Upcoming</span></li>
+          <li class="journey-node journey-node--upcoming"><a href="#node-IN_EXECUTION">Project in progress <span class="state-name">(IN_EXECUTION)</span></a><span>: Upcoming</span></li>
+          <li class="journey-node journey-node--terminal-positive"><a href="#node-COMPLETED">Completed <span class="state-name">(COMPLETED)</span></a><span>: Upcoming, final outcome</span></li>
+          <li class="journey-node journey-node--upcoming"><a href="#node-DEFERRED">Deferred to the next call <span class="state-name">(DEFERRED)</span></a><span>: Possible pause, re-enters at STAGE2 or IRC_REVIEW</span></li>
+          <li class="journey-node journey-node--terminal-negative"><a href="#node-INELIGIBLE">Not eligible <span class="state-name">(INELIGIBLE)</span></a><span>: Possible final outcome</span></li>
+          <li class="journey-node journey-node--terminal-negative"><a href="#node-NOT_SELECTED">Not selected <span class="state-name">(NOT_SELECTED)</span></a><span>: Possible final outcome</span></li>
+          <li class="journey-node journey-node--terminal-negative"><a href="#node-DECLINED">Declined <span class="state-name">(DECLINED)</span></a><span>: Possible final outcome</span></li>
+          <li class="journey-node journey-node--terminal-negative"><a href="#node-WITHDRAWN">Withdrawn <span class="state-name">(WITHDRAWN)</span></a><span>: Possible final outcome</span></li>
+          <li class="journey-node journey-node--terminal-negative"><a href="#node-TERMINATED">Grant terminated <span class="state-name">(TERMINATED)</span></a><span>: Possible final outcome</span></li>
+        </ol>
+      </section>
+      <section class="help-panels" aria-labelledby="help-h">
+        <h2 id="help-h">Help for this stage</h2>
+        <article class="card help-panel" id="node-DRAFT" tabindex="-1" aria-labelledby="hp-DRAFT">
+          <h3 id="hp-DRAFT">Draft <span class="state-name">(DRAFT)</span></h3>
+          <p class="voyage-label">Voyage pack label: At the departure hall</p>
+          <h4>What is happening now</h4><p>You write your proposal. Only your team sees it.</p>
+          <h4>Who acts</h4><p>You and your team.</p>
+          <h4>Deadline</h4><p>The call deadline.</p>
+          <h4>What you can do</h4><p>Edit, run the pre-submission check, submit or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-SUBMITTED" tabindex="-1" aria-labelledby="hp-SUBMITTED">
+          <h3 id="hp-SUBMITTED">Submitted <span class="state-name">(SUBMITTED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Departed, awaiting border check</p>
+          <h4>What is happening now</h4><p>The FSTP coordinator checks the knock-out (eligibility) criteria.</p>
+          <h4>Who acts</h4><p>The FSTP coordinator.</p>
+          <h4>Deadline</h4><p>No fixed deadline. You get an activity entry when it is done.</p>
+          <h4>What you can do</h4><p>Wait, or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-STAGE1" tabindex="-1" aria-labelledby="hp-STAGE1">
+          <h3 id="hp-STAGE1">Stage 1 evaluation <span class="state-name">(STAGE1)</span></h3>
+          <p class="voyage-label">Voyage pack label: Crossing</p>
+          <h4>What is happening now</h4><p>Assigned reviewers score your proposal.</p>
+          <h4>Who acts</h4><p>Assigned reviewers.</p>
+          <h4>Deadline</h4><p>Stage 1 closes when the scores are complete.</p>
+          <h4>What you can do</h4><p>Wait, or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel card--primary" id="node-STAGE2" tabindex="-1" aria-labelledby="hp-STAGE2">
+          <h3 id="hp-STAGE2">Stage 2 questions <span class="state-name">(STAGE2)</span></h3>
+          <p class="voyage-label">Voyage pack label: Ascent: questions from the scouts</p>
+          <h4>What is happening now</h4><p>Reviewers asked clarification questions. They rescore your proposal after you answer.</p>
+          <h4>Who acts</h4><p>You answer. Assigned reviewers then score.</p>
+          <h4><span class="clock">Your window closes in 8 days</span></h4><p>12 Nov 2024, 17:00 Europe/Brussels (17:00 Europe/Malta, your zone).</p>
+          <h4>What you can do</h4><p>Answer the questions, upload a revised plan, or withdraw.</p>
+          <div class="btn-row"><a class="btn btn--primary" href="stage2-questions.html">Answer reviewer questions</a></div>
+        </article>
+        <article class="card help-panel" id="node-RANKED" tabindex="-1" aria-labelledby="hp-RANKED">
+          <h3 id="hp-RANKED">Ranked, awaiting committee decision <span class="state-name">(RANKED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Awaiting the council</p>
+          <h4>What is happening now</h4><p>The committee ranks all proposals of the call within the remaining budget.</p>
+          <h4>Who acts</h4><p>The selection committee.</p>
+          <h4>Deadline</h4><p>The cut-off round date.</p>
+          <h4>What you can do</h4><p>Wait, or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-IRC_REVIEW" tabindex="-1" aria-labelledby="hp-IRC_REVIEW">
+          <h3 id="hp-IRC_REVIEW">Independent review <span class="state-name">(IRC_REVIEW)</span></h3>
+          <p class="voyage-label">Voyage pack label: Independent watch</p>
+          <h4>What is happening now</h4><p>The Independent Review Committee checks the nominated proposal and its outcome.</p>
+          <h4>Who acts</h4><p>IRC members.</p>
+          <h4>Deadline</h4><p>No fixed deadline.</p>
+          <h4>What you can do</h4><p>Wait, or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-NEGOTIATION" tabindex="-1" aria-labelledby="hp-NEGOTIATION">
+          <h3 id="hp-NEGOTIATION">Negotiation <span class="state-name">(NEGOTIATION)</span></h3>
+          <p class="voyage-label">Voyage pack label: Treaty</p>
+          <h4>What is happening now</h4><p>Identity check in the vault, grant amount and grant agreement.</p>
+          <h4>Who acts</h4><p>You and the programme manager.</p>
+          <h4>Deadline</h4><p>Shown on the negotiation page.</p>
+          <h4>What you can do</h4><p>Verify identity, read the data protection notice, review the amount, or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-GRANTED" tabindex="-1" aria-labelledby="hp-GRANTED">
+          <h3 id="hp-GRANTED">Granted <span class="state-name">(GRANTED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Charter in force</p>
+          <h4>What is happening now</h4><p>The grant agreement is in force.</p>
+          <h4>Who acts</h4><p>You and the programme manager.</p>
+          <h4>Deadline</h4><p>The first milestone start date.</p>
+          <h4>What you can do</h4><p>Prepare your first milestone.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-IN_EXECUTION" tabindex="-1" aria-labelledby="hp-IN_EXECUTION">
+          <h3 id="hp-IN_EXECUTION">Project in progress <span class="state-name">(IN_EXECUTION)</span></h3>
+          <p class="voyage-label">Voyage pack label: On the road</p>
+          <h4>What is happening now</h4><p>You deliver milestones and request payments.</p>
+          <h4>Who acts</h4><p>You, the programme manager and finance.</p>
+          <h4>Deadline</h4><p>Each milestone due date.</p>
+          <h4>What you can do</h4><p>Submit evidence and payment requests.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-COMPLETED" tabindex="-1" aria-labelledby="hp-COMPLETED">
+          <h3 id="hp-COMPLETED">Completed <span class="state-name">(COMPLETED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Safe harbour</p>
+          <h4>What is happening now</h4><p>All milestones closed and all payment requests settled.</p>
+          <h4>Who acts</h4><p>Nobody. The process has ended.</p>
+          <h4>Deadline</h4><p>None.</p>
+          <h4>What you can do</h4><p>Download your proposal history (PDF).</p>
+          
+        </article>
+        <article class="card help-panel" id="node-DEFERRED" tabindex="-1" aria-labelledby="hp-DEFERRED">
+          <h3 id="hp-DEFERRED">Deferred to the next call <span class="state-name">(DEFERRED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Wintering for the next voyage</p>
+          <h4>What is happening now</h4><p>The proposal waits for the next call of the programme. It re-enters at the stage it left, STAGE2 or IRC_REVIEW. The original call's policy still applies.</p>
+          <h4>Who acts</h4><p>Nobody. The system moves it when the next call opens.</p>
+          <h4>Deadline</h4><p>The next call opening date.</p>
+          <h4>What you can do</h4><p>Wait, or withdraw.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-INELIGIBLE" tabindex="-1" aria-labelledby="hp-INELIGIBLE">
+          <h3 id="hp-INELIGIBLE">Not eligible <span class="state-name">(INELIGIBLE)</span></h3>
+          <p class="voyage-label">Voyage pack label: Route closed at the border</p>
+          <h4>What is happening now</h4><p>The proposal did not pass a knock-out criterion. It cannot continue in this call.</p>
+          <h4>Who acts</h4><p>Recorded by the FSTP coordinator with a reason.</p>
+          <h4>Deadline</h4><p>Complaint window per the call policy.</p>
+          <h4>What you can do</h4><p>Read the reason. Make a complaint if you think it is wrong.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-NOT_SELECTED" tabindex="-1" aria-labelledby="hp-NOT_SELECTED">
+          <h3 id="hp-NOT_SELECTED">Not selected <span class="state-name">(NOT_SELECTED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Route ended</p>
+          <h4>What is happening now</h4><p>The proposal was not selected in this call.</p>
+          <h4>Who acts</h4><p>Computed from scores, recorded by a named person.</p>
+          <h4>Deadline</h4><p>Complaint window per the call policy.</p>
+          <h4>What you can do</h4><p>Read scores and comments. Make a complaint if you think it is wrong.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-DECLINED" tabindex="-1" aria-labelledby="hp-DECLINED">
+          <h3 id="hp-DECLINED">Declined <span class="state-name">(DECLINED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Route ended</p>
+          <h4>What is happening now</h4><p>The proposal was declined with a recorded reason.</p>
+          <h4>Who acts</h4><p>Recorded by the programme manager.</p>
+          <h4>Deadline</h4><p>Complaint window per the call policy.</p>
+          <h4>What you can do</h4><p>Read the reason. Make a complaint.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-WITHDRAWN" tabindex="-1" aria-labelledby="hp-WITHDRAWN">
+          <h3 id="hp-WITHDRAWN">Withdrawn <span class="state-name">(WITHDRAWN)</span></h3>
+          <p class="voyage-label">Voyage pack label: Route ended</p>
+          <h4>What is happening now</h4><p>You withdrew the proposal. This cannot be undone.</p>
+          <h4>Who acts</h4><p>You.</p>
+          <h4>Deadline</h4><p>None.</p>
+          <h4>What you can do</h4><p>Start a new proposal for another call.</p>
+          
+        </article>
+        <article class="card help-panel" id="node-TERMINATED" tabindex="-1" aria-labelledby="hp-TERMINATED">
+          <h3 id="hp-TERMINATED">Grant terminated <span class="state-name">(TERMINATED)</span></h3>
+          <p class="voyage-label">Voyage pack label: Route ended</p>
+          <h4>What is happening now</h4><p>The grant ended early with a recorded reason.</p>
+          <h4>Who acts</h4><p>The programme manager.</p>
+          <h4>Deadline</h4><p>Complaint window per the grant agreement. TODO(legal)</p>
+          <h4>What you can do</h4><p>Read the reason. Download your proposal history (PDF).</p>
+          
+        </article>
+        <section class="card" aria-labelledby="leave-h">
+          <h3 id="leave-h">Withdraw</h3>
+          <p>You can withdraw in any state before Granted (GRANTED), including Deferred to the next call (DEFERRED). The proposal then becomes Withdrawn (WITHDRAWN). This cannot be undone.</p>
+          <a class="btn btn--danger" href="#">Withdraw this proposal</a>
+        </section>
+      </section>
+    </div>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

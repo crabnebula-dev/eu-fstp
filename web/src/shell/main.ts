@@ -4,15 +4,26 @@
 // The shell of `fstp-web` loads exactly one module. This one joins the
 // route tables of every feature and mounts the page of the current path:
 //
-// 1. the creator, onboarding and people pages (lane W4a);
-// 2. the call and applicant pages (lane W4b);
-// 3. the Judging pages of the coordinator, reviewers, committee and IRC
+// 1. the home page `/app/`, "Your work" (interim, see below);
+// 2. the creator, onboarding and people pages (lane W4a);
+// 3. the call and applicant pages (lane W4b);
+// 4. the Judging pages of the coordinator, reviewers, committee and IRC
 //    (lane W4c).
 //
 // The tables hold disjoint patterns, so the order only fixes which table
 // is asked first. A path that no table holds shows the not-found page.
 // Each feature module has no side effect on import, so importing every
 // table renders nothing until one page mounts.
+//
+// Interim, pending Daniel (design section 15.0, 2026-10-31): design
+// section 2.2 names no home page. Daniel reported that a person who
+// signs in finds no way to their work. So every sign-in lands on the
+// home page, which lists the caller's work by role. The shell also reads
+// the caller's own roles once per page load (`home/session.ts`). They
+// fill the role chip and the role links of the sidebar that every page
+// frame puts around its `main` (`home/nav.ts` `appShell`). A person
+// without a session on a page that needs one goes to the login page,
+// which returns them to that page.
 //
 // Interim, pending Daniel: the feature folders keep their stand-alone
 // entries (`creator/main.ts`, `applicant/main.ts`) for their own tests.
@@ -22,6 +33,8 @@ import { mountApplicantPage, mountNotFound } from "../applicant/app.js";
 import { installTrustedTypesPolicy } from "../core/dom.js";
 import { createRouter } from "../core/router.js";
 import { CREATOR_ROUTES, type PageRoute } from "../creator/routes.js";
+import { mountHome } from "../home/page.js";
+import { startSession } from "../home/session.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
 import { browserEnv } from "../reviewer/kit.js";
@@ -50,9 +63,18 @@ function root(): HTMLElement {
   return app instanceof HTMLElement ? app : document.body;
 }
 
+/** Whether `path` is the home page. */
+function isHome(path: string): boolean {
+  return path === "/app/" || path === "/app";
+}
+
 /** Mounts the page of the current path. */
 async function run(): Promise<void> {
   const path = location.pathname;
+  if (isHome(path)) {
+    mountHome();
+    return;
+  }
   if (mountStaff(path) || mountApplicantPage(path)) {
     return;
   }
@@ -63,6 +85,7 @@ async function run(): Promise<void> {
 }
 
 installTrustedTypesPolicy();
+void startSession(location.pathname);
 void run();
 // A link to the same page with another fragment does not reload it, so
 // the invitation landing mounts again for the new fragment.

@@ -56,8 +56,11 @@ members = [
     "crates/fstp-web",
     "crates/fstp-web-assets",
     "crates/fstp-api-testkit",
+    # M4 journey layer, SPEC/12-journey-ui.md section 14 and ADR-015.
+    "crates/fstp-journey",
     "tools/deps-check",
     "tools/gen-ts",
+    "tools/test-gate",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
 exclude = ["crates/*/fuzz", "tools/*/fuzz"]

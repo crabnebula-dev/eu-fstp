@@ -4,6 +4,7 @@
 //! cannot decide with a pass. A check whose source is missing reports a
 //! failure with [`CheckDetail::Unavailable`] or [`CheckDetail::NotChecked`].
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::id::{AccountId, ProgrammeId, TextRef};
@@ -268,6 +269,48 @@ pub(crate) fn draft_facts(
     DraftFacts {
         profile: profile_facts(profile),
         content: content_facts(core, creator, programme, profile),
+    }
+}
+
+/// Where a decision reads its draft facts: facts a caller gives, or the
+/// draft's own facts, computed when the decision first reads them.
+pub(crate) trait ReadFacts {
+    /// The facts of the draft of `programme`.
+    fn read(
+        &self,
+        core: &State,
+        creator: &CreatorState,
+        programme: ProgrammeId,
+        profile: Option<&FunderProfile>,
+    ) -> Cow<'_, DraftFacts>;
+}
+
+impl ReadFacts for DraftFacts {
+    fn read(
+        &self,
+        _: &State,
+        _: &CreatorState,
+        _: ProgrammeId,
+        _: Option<&FunderProfile>,
+    ) -> Cow<'_, DraftFacts> {
+        Cow::Borrowed(self)
+    }
+}
+
+/// The draft's own facts ([`draft_facts`]), computed on each read. A
+/// decision reads them only after its cheaper guards, so a refused command
+/// renders no Guide preview.
+pub(crate) struct OwnFacts;
+
+impl ReadFacts for OwnFacts {
+    fn read(
+        &self,
+        core: &State,
+        creator: &CreatorState,
+        programme: ProgrammeId,
+        profile: Option<&FunderProfile>,
+    ) -> Cow<'_, DraftFacts> {
+        Cow::Owned(draft_facts(core, creator, programme, profile))
     }
 }
 

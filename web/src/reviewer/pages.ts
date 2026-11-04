@@ -104,11 +104,17 @@ async function mountMyAssignments(env: PageEnv): Promise<void> {
                       t.label("rev.list.summary", { id: s.proposal }),
                     ]),
                   ]),
-                  h("li", {}, [
-                    h("a", { href: `/app/assignments/${s.assignment}/stage2` }, [
-                      t.label("rev.list.stage2", { id: s.proposal }),
-                    ]),
-                  ]),
+                  // The stage 2 thread opens only while the proposal is in
+                  // STAGE2 (review finding U5).
+                  ...(s.stage2
+                    ? [
+                        h("li", {}, [
+                          h("a", { href: `/app/assignments/${s.assignment}/stage2` }, [
+                            t.label("rev.list.stage2", { id: s.proposal }),
+                          ]),
+                        ]),
+                      ]
+                    : []),
                 ]),
               ]),
             ]),

@@ -1334,10 +1334,7 @@ impl Twin {
         ctx.tenant_admin = step.flags.tenant_admin;
         ctx.second_tenant_admin = step.flags.second_admin;
         ctx.binds_tenant_admin = step.flags.binds_tenant_admin;
-        let out = match self
-            .scenario
-            .execute(fstp_engine::Command::Core(step.cmd.clone()), ctx)
-        {
+        let out = match self.scenario.run_core(&step.cmd, ctx) {
             Ok(_) => Ok(records_of(&self.scenario)?
                 .get(before..)
                 .unwrap_or_default()

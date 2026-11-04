@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your proposal - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.panel { border-top: 3px solid var(--color-border-strong); padding-top: var(--space-4); margin-top: var(--space-8); }
+    .panel:first-of-type { margin-top: var(--space-4); }
+    .step-nav ol { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; padding: 0; margin: 0 0 var(--space-4); }
+    .step-nav a { display: inline-flex; align-items: center; min-height: var(--target-min); padding: 0 var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-text-1); }
+    .step-nav a[aria-current="step"] { font-weight: var(--weight-bold); border-width: 3px; }
+    td.num { font-variant-numeric: tabular-nums; }
+    td input { min-width: 6rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Proposal editor, proposal in DRAFT (Draft). Four panels: Plan (current step, 1 required field missing), Eligibility, Submit, and the late-submission refused state for reference (m4-demo J4 steps 5 to 9).</p>
+
+    <h1>Your proposal <span class="state-name">(DRAFT)</span></h1>
+    <p>For SuperSAFE Open Call 2. <span class="clock">Call closes in 14 days</span></p>
+    <p class="text-sm muted" id="last-saved">Last saved 14:32</p>
+    <nav class="step-nav" aria-label="Proposal steps">
+      <ol>
+        <li><a href="#panel-plan" aria-current="step">1. Plan <span class="sr-only">, current step</span></a></li>
+        <li><a href="#panel-elig">2. Eligibility</a></li>
+        <li><a href="#panel-submit">3. Submit</a></li>
+      </ol>
+    </nav>
+    <div class="layout-side">
+      <form method="post" action="#" novalidate aria-describedby="req-note">
+        <p id="req-note" class="text-sm muted">Fields marked <span class="req">(required)</span> must be complete before you submit.</p>
+
+        <section class="panel" id="panel-plan" aria-labelledby="plan-h">
+          <p><span class="badge badge--info" data-glyph="●">Current step</span></p>
+          <h2 id="plan-h">1. Plan</h2>
+          <div class="field"><label for="title">Project title <span class="req">(required)</span></label>
+            <input id="title" name="title" type="text" value="Community Wellbeing Navigator" required></div>
+          <div class="field"><label for="abstract">Neutral summary, visible to reviewers before conflict declaration <span class="req">(required)</span></label>
+            <span class="hint" id="abs-hint">Up to 500 characters. Reviewers read only the title and this summary before they declare a conflict. Leave out names of people and organisations.</span>
+            <textarea id="abstract" name="summary" maxlength="500" aria-describedby="abs-hint abs-count" required>A digital navigator that helps community workers in three towns find local wellbeing services and refer people safely. We co-design it with service users, test it in a pilot with 120 people, and publish the code and the referral playbook under an open licence so other towns can reuse them.</textarea>
+            <span class="char-count" id="abs-count">482 / 500 characters</span></div>
+          <div class="field"><label for="narrative">Narrative <span class="req">(required)</span></label>
+            <span class="hint" id="nar-hint">The full description. Reviewers read it only after they declare no conflict.</span>
+            <textarea id="narrative" name="narrative" aria-describedby="nar-hint" required>Community workers in the three pilot towns refer people to wellbeing services by phone and paper lists. The navigator replaces the lists with one shared, checked directory.</textarea></div>
+          <div class="field"><label for="obj">Objectives <span class="req">(required)</span></label>
+            <textarea id="obj" name="objectives" aria-invalid="true" aria-describedby="obj-err" required></textarea>
+            <span class="field-error" id="obj-err">Enter at least one objective.</span></div>
+          <table>
+            <caption>Milestones, 2 rows</caption>
+            <thead><tr><th scope="col">Milestone</th><th scope="col">Start</th><th scope="col">Due</th><th scope="col">Amount (EUR)</th><th scope="col">Remove</th></tr></thead>
+            <tbody>
+              <tr><td><input type="text" name="m1-name" value="Co-design workshops" aria-label="Milestone 1 name"></td><td><input type="date" name="m1-start" value="2025-02-01" aria-label="Milestone 1 start"></td><td><input type="date" name="m1-due" value="2025-04-30" aria-label="Milestone 1 due"></td><td><input type="text" inputmode="decimal" name="m1-amount" value="1500.50" aria-label="Milestone 1 amount in EUR" aria-describedby="amt-hint"></td><td><button class="btn btn--ghost btn--small" type="submit" name="remove" value="m1">Remove milestone 1</button></td></tr>
+              <tr><td><input type="text" name="m2-name" value="Pilot with 120 people" aria-label="Milestone 2 name"></td><td><input type="date" name="m2-start" value="2025-05-01" aria-label="Milestone 2 start"></td><td><input type="date" name="m2-due" value="2025-12-31" aria-label="Milestone 2 due"></td><td><input type="text" inputmode="decimal" name="m2-amount" value="22499.50" aria-label="Milestone 2 amount in EUR" aria-describedby="amt-hint"></td><td><button class="btn btn--ghost btn--small" type="submit" name="remove" value="m2">Remove milestone 2</button></td></tr>
+            </tbody>
+          </table>
+          <p id="amt-hint" class="text-sm muted">Use two decimals, for example 1500.50. The page refuses 1500.5.</p>
+          <div class="btn-row"><button class="btn btn--secondary btn--small" type="submit" name="action" value="add-milestone">Add milestone</button></div>
+          <table>
+            <caption>Amounts requested</caption>
+            <thead><tr><th scope="col">Cost category</th><th scope="col">Amount (EUR)</th></tr></thead>
+            <tbody>
+              <tr><td>Staff</td><td class="num">18 000.00</td></tr>
+              <tr><td>Travel</td><td class="num">2 400.00</td></tr>
+              <tr><td>Equipment and services</td><td class="num">3 600.00</td></tr>
+              <tr><td><strong>Total requested</strong></td><td class="num"><strong>24 000.00</strong></td></tr>
+            </tbody>
+          </table>
+          <p class="text-sm muted">The total matches the sum of your milestones, 24 000.00 EUR.</p>
+          <div class="btn-row"><button class="btn btn--secondary" type="submit" name="action" value="save">Save as draft</button></div>
+        </section>
+
+        <section class="panel" id="panel-elig" aria-labelledby="elig-h">
+          <p><span class="badge badge--neutral" data-glyph="○">Next step</span></p>
+          <h2 id="elig-h">2. Eligibility</h2>
+          <p class="text-sm muted">Your answers go to the identity vault only. Reviewers never see them (R-NG-01).</p>
+          <fieldset><legend>Is the lead organisation registered in an EU member state or an associated country?</legend>
+            <div class="choice"><input type="radio" id="e1-yes" name="e1" value="yes" checked><label for="e1-yes">Yes</label></div>
+            <div class="choice"><input type="radio" id="e1-no" name="e1" value="no"><label for="e1-no">No</label></div>
+          </fieldset>
+          <fieldset><legend>Is the lead organisation a non-profit organisation or a small company?</legend>
+            <div class="choice"><input type="radio" id="e2-yes" name="e2" value="yes" checked><label for="e2-yes">Yes</label></div>
+            <div class="choice"><input type="radio" id="e2-no" name="e2" value="no"><label for="e2-no">No</label></div>
+          </fieldset>
+          <fieldset aria-describedby="e3-warn"><legend>Does the project run for 12 months or less?</legend>
+            <div class="choice"><input type="radio" id="e3-yes" name="e3" value="yes"><label for="e3-yes">Yes</label></div>
+            <div class="choice"><input type="radio" id="e3-no" name="e3" value="no" checked><label for="e3-no">No</label></div>
+          </fieldset>
+          <p class="callout callout--warning" id="e3-warn"><strong>Check this answer:</strong> This answer may make your proposal ineligible.</p>
+        </section>
+
+        <section class="panel" id="panel-submit" aria-labelledby="sub-h">
+          <p><span class="badge badge--neutral" data-glyph="○">Next step</span></p>
+          <h2 id="sub-h">3. Submit</h2>
+          <div class="choice"><input type="checkbox" id="confirm" name="confirm" required><label for="confirm">I confirm the information above is accurate</label></div>
+          <div class="choice"><input type="checkbox" id="ethics" name="ethics"><label for="ethics">No ethics issue</label></div>
+          <!-- TODO(legal): confirmation wording and the data protection notice link (m4-demo J4 step 8). -->
+          <p class="text-sm muted">Confirmation wording pending legal review.</p>
+          <div class="btn-row">
+            <button class="btn btn--primary" type="submit" name="action" value="submit" disabled aria-describedby="submit-why">Submit</button>
+          </div>
+          <p id="submit-why" class="text-sm muted">Submit is available when every required field is complete. 1 field is missing.</p>
+        </section>
+      </form>
+      <aside aria-labelledby="pk-h">
+        <section class="card">
+          <h2 id="pk-h" style="font-size:var(--text-xl);margin-top:0">Pre-submission check</h2>
+          <p class="text-sm muted">Findings only, not scores (R-LA-06). Reviewers never see them as a grade.</p>
+          <ul class="diary" aria-label="3 findings">
+            <li class="diary-entry"><span class="diary-icon" aria-hidden="true">!</span><div><p><span class="badge badge--warning">Warning</span></p><p>The budget table lists travel but the proposal does not say why travel is needed.</p></div></li>
+            <li class="diary-entry"><span class="diary-icon" aria-hidden="true">i</span><div><p><span class="badge badge--info">Info</span></p><p>The summary is close to the 500 character limit.</p></div></li>
+            <li class="diary-entry"><span class="diary-icon" aria-hidden="true">i</span><div><p><span class="badge badge--info">Info</span></p><p>You named 3 pilot towns. The call asks for at least 2.</p></div></li>
+          </ul>
+          <p class="text-sm"><strong>0 errors.</strong> <a href="packing-check.html">See full results</a></p>
+        </section>
+      </aside>
+    </div>
+
+    <section class="panel" id="panel-late" aria-labelledby="late-h">
+      <p><span class="badge badge--error" data-glyph="■">State after the deadline</span></p>
+      <h2 id="late-h">Submit, after the deadline</h2>
+      <p class="callout callout--error"><strong>Submission closed.</strong> This call no longer accepts proposals.</p>
+      <dl class="facts"><dt>Deadline</dt><dd>15 Dec 2024, 17:00 Europe/Brussels (17:00 Europe/Malta, your zone)</dd></dl>
+      <p>The deadline for this call has passed.</p>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -743,6 +743,10 @@ pub enum RefRefusal {
     Failed(RefCheck),
     /// I-66: this warning has no live acknowledgement.
     Unacknowledged(RefCheck),
+    /// I-50 at save (Daniel's answer of 2026-10-31, M4 design section
+    /// 15.0): the save would put P-05 above P-58, so it is refused and no
+    /// draft holds such a cap.
+    CapAboveCeiling,
 }
 
 /// The verdict on one command.
@@ -999,6 +1003,12 @@ impl RefSystem {
     /// Opens the draft of `plan`, grants its managers and seeds its
     /// content checks. Fails with the first refusal, which means the plan
     /// is not realisable.
+    ///
+    /// The first manager's setup save, which carries the plan's P-05 and
+    /// P-58, runs after the grants and before the seeds. It is no record of
+    /// this vocabulary. A cap above the ceiling refuses it with
+    /// [`RefRefusal::CapAboveCeiling`] (I-50 at save, Daniel's answer of
+    /// 2026-10-31, M4 design section 15.0), named as [`cap_save`].
     pub fn open(plan: &DraftPlan) -> Result<RefSystem, (RefCommand, RefRefusal)> {
         let mut s = RefSystem::empty(plan.stat.clone(), plan.env.clone());
         let mut script = vec![RefCommand::Open { by: plan.opener }];
@@ -1008,19 +1018,25 @@ impl RefSystem {
                 to: *m,
             });
         }
+        for cmd in script {
+            if let StepVerdict::Refused(r) = s.apply(&cmd) {
+                return Err((cmd, r));
+            }
+        }
+        if plan.stat.cap.above_ceiling() {
+            return Err((cap_save(plan), RefRefusal::CapAboveCeiling));
+        }
         if let Some(first) = plan.managers.first() {
             for c in &plan.seeds {
-                script.push(RefCommand::Edit {
+                let cmd = RefCommand::Edit {
                     by: *first,
                     kind: EditKind::Policy,
                     effect: RefEdit::Seed(*c),
                     base: Base::Head,
-                });
-            }
-        }
-        for cmd in script {
-            if let StepVerdict::Refused(r) = s.apply(&cmd) {
-                return Err((cmd, r));
+                };
+                if let StepVerdict::Refused(r) = s.apply(&cmd) {
+                    return Err((cmd, r));
+                }
             }
         }
         Ok(s)
@@ -1296,6 +1312,19 @@ pub fn seeded_plan(check: RefCheck) -> DraftPlan {
         }
     }
     p
+}
+
+/// The setup save of `plan`'s P-05 and P-58 by its first manager, or by
+/// its opener without one, in this vocabulary: a policy edit at the head
+/// that changes no content check. [`RefSystem::open`] names it when I-50
+/// refuses it at save.
+pub fn cap_save(plan: &DraftPlan) -> RefCommand {
+    RefCommand::Edit {
+        by: plan.managers.first().copied().unwrap_or(plan.opener),
+        kind: EditKind::Policy,
+        effect: RefEdit::Neutral,
+        base: Base::Head,
+    }
 }
 
 /// One activation attempt: the plan, whether the first manager

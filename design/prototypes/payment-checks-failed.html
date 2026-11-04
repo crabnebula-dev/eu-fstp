@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment request: checks failed - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html" aria-current="page">Payments</a></li><li><a href="contract-view.html">Agreement</a></li><li><a href="complaint-status.html">Complaints</a></li><li><a href="grantee-visibility.html">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Payment request PR-2026-0014 in CHECKS_FAILED. Two automated checks failed, one passed. Resubmit needs script.</p>
+
+    <h1>Payment request: checks failed</h1>
+    <dl class="facts">
+      <dt>Request reference</dt><dd class="pid">PR-2026-0014</dd>
+      <dt>Grant</dt><dd class="pid">SSF-C1-0042</dd>
+      <dt>Submitted</dt><dd><time datetime="2026-10-31">31 Oct 2026</time></dd>
+      <dt>Total amount</dt><dd>18 000.00 EUR</dd>
+      <dt>Status</dt><dd><span class="badge badge--error">Checks failed</span> <span class="state-name">CHECKS_FAILED</span></dd>
+    </dl>
+    <table>
+      <caption>Failed checks</caption>
+      <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Deliverable reachable</td><td><span class="badge badge--error">Fail</span></td><td>The URL returned a 404. Make the deliverable publicly available without authentication.</td></tr>
+        <tr><td>Licence detected</td><td><span class="badge badge--error">Fail</span></td><td>No SPDX licence identifier found at the URL. Add a LICENSE file or SPDX header.</td></tr>
+        <tr><td>Amount within available</td><td><span class="badge badge--success">Pass</span></td><td>The requested amount is within the available amount (I-58).</td></tr>
+      </tbody>
+    </table>
+    <p class="callout callout--error"><strong>Next step:</strong> Correct the issues and resubmit. Resubmitting creates a new request reference.</p>
+    <div class="btn-row"><!-- TODO(js): Edit and resubmit needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="resub-why">Edit and resubmit</button></div>
+    <p id="resub-why" class="text-sm muted">Opens a new request prefilled from PR-2026-0014. Static prototype: this action needs script.</p>
+    <p><a href="payment-status.html">Return to payment requests</a></p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -3,8 +3,9 @@
 //! the demo by hand:
 //!
 //! - `GET /demo`: the scene, every unused one-time sign-in link with the
-//!   person it is for, and every message the cell has sent, so a sign-up
-//!   proof can be opened without an email server.
+//!   person it is for and one line on what that person can do in the
+//!   scene, and every message the cell has sent, so a sign-up proof can
+//!   be opened without an email server.
 //! - `GET /demo/review?stage=<stage>` and `GET /demo/applicant?at=<at>`: a
 //!   fresh cell seeded as `POST /test/scenario/*` seeds it.
 //! - `GET /demo/reset`: the cell at first start, with its first tenant
@@ -20,7 +21,14 @@
 
 use fstp_http::{Method, Request, Response, StatusCode};
 
-use crate::{Site, control, lock, scenario, wire};
+use std::collections::BTreeSet;
+
+use fstp_domain::StateTag;
+use fstp_domain::assignment::{AssignmentKind, AssignmentStatus};
+use fstp_domain::id::{AccountId, ProgrammeId, ProposalId};
+use fstp_domain::roles::{BindingScope, Role};
+
+use crate::{Inner, Site, control, lock, scenario, wire};
 
 /// The review stages of [`scenario::ReviewAt`], in the order a call runs.
 const REVIEW_STAGES: [&str; 7] = [
@@ -118,6 +126,176 @@ fn esc(s: &str) -> String {
     out
 }
 
+/// `n` and the noun `one` or `many` after it, such as `2 review
+/// assignments`.
+fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// The unreleased assignments of one kind that a person holds: those
+/// whose page still opens, those of them awaiting the declaration, and
+/// the finished ones.
+#[derive(Default)]
+struct Tally {
+    open: usize,
+    waiting: usize,
+    finished: usize,
+}
+
+impl Tally {
+    /// The words for the tally, such as `2 review assignments to work
+    /// on, 2 to declare first`. `then` follows the count waiting.
+    fn say(&self, one: &str, many: &str, then: &str) -> String {
+        if self.open == 0 {
+            return if self.finished == 0 {
+                format!("no {one} in this scene")
+            } else {
+                format!("no {one} open in this scene ({} finished)", self.finished)
+            };
+        }
+        let mut s = format!(
+            "{} to work on, {} {then}",
+            count(self.open, one, many),
+            self.waiting
+        );
+        if self.finished > 0 {
+            s.push_str(&format!(", and {} finished", self.finished));
+        }
+        s
+    }
+}
+
+/// One short line on what the person with `account` can do in the
+/// scene the cell holds now, read from its state: the tenant admin set,
+/// the person's bindings and their assignments.
+///
+/// Interim, pending Daniel (design section 15.0, 2026-10-31): Daniel
+/// reported that the demo gives a person nothing to do after the
+/// passkey. Each line says where the home page leads that person.
+pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
+    let state = inner.ports.engine.state();
+    let core = &state.core;
+    let now = inner.ports.clock.read();
+    let mut parts: Vec<String> = Vec::new();
+    if inner.ports.tenant.holds_admin(account) {
+        parts.push(
+            "Tenant admin: the onboarding steps, a new programme draft and the approval inbox."
+                .to_owned(),
+        );
+    }
+    let roster = core.roster();
+    let mut staff: BTreeSet<Role> = BTreeSet::new();
+    let mut managed: BTreeSet<ProgrammeId> = BTreeSet::new();
+    let mut receiving: BTreeSet<(ProposalId, Role)> = BTreeSet::new();
+    let mine = roster
+        .bindings()
+        .map(|(_, b)| (*b, b.active_at(now)))
+        .chain(roster.ended().map(|(_, e)| (e.binding, false)));
+    for (b, active) in mine.filter(|(b, _)| b.account == account) {
+        match b.scope {
+            BindingScope::Programme if active => {
+                staff.insert(b.role);
+                if b.role == Role::ProgrammeManager {
+                    managed.insert(b.programme);
+                }
+            }
+            BindingScope::Proposal { proposal, .. } => {
+                receiving.insert((proposal, b.role));
+            }
+            BindingScope::Programme => {}
+        }
+    }
+    // Each assignment the person holds, unreleased, by whether its page
+    // still opens: a reviewer's while its proposal is in a review stage
+    // (or, before the declaration, in the states the declaration view
+    // opens in), an IRC member's while its proposal is in IRC_REVIEW.
+    // A finished assignment is counted apart, so the line never promises
+    // work whose page refuses (review findings U2 and U3).
+    let tally = |irc: bool| {
+        let mut t = Tally::default();
+        for (_, a) in core.review().assignments() {
+            if a.reviewer != account
+                || !a.unreleased()
+                || matches!(a.kind, AssignmentKind::Irc) != irc
+            {
+                continue;
+            }
+            let tag = fstp_domain::view::proposal_state(core, a.proposal);
+            let waiting = matches!(a.status, AssignmentStatus::AwaitingDeclaration);
+            let open = match tag {
+                Some(StateTag::IrcReview) => irc,
+                Some(StateTag::Stage1 | StateTag::Stage2) => !irc,
+                Some(StateTag::Submitted | StateTag::Negotiation) => !irc && waiting,
+                _ => false,
+            };
+            if !open {
+                t.finished = t.finished.saturating_add(1);
+            } else if waiting {
+                t.open = t.open.saturating_add(1);
+                t.waiting = t.waiting.saturating_add(1);
+            } else {
+                t.open = t.open.saturating_add(1);
+            }
+        }
+        t
+    };
+    for role in staff {
+        parts.push(match role {
+            Role::ProgrammeManager => {
+                if managed.iter().any(|p| state.creator.draft(*p).is_some()) {
+                    "Programme manager: the programme set-up and people pages of the programme, and its call boards."
+                        .to_owned()
+                } else {
+                    // A programme without a creator draft would refuse
+                    // both pages that read one (review finding U1).
+                    "Programme manager: the board of each published call of the programme.".to_owned()
+                }
+            }
+            Role::CallDrafter => "Call drafter: the call boards of the programme.".to_owned(),
+            Role::FstpCoordinator => {
+                "FSTP coordinator: the intake queue and the board of each published call.".to_owned()
+            }
+            Role::CommitteeMember => format!(
+                "Committee member: {}, and the ranking of each published call.",
+                tally(false).say("review assignment", "review assignments", "to declare first")
+            ),
+            // No read of this crate gives the open cut-off rounds, which
+            // only the API core's journal folds, so the line promises
+            // none. The home page links one when it is open (review
+            // finding U4).
+            Role::CommitteeChair => {
+                "Committee chair: the ranking of each published call.".to_owned()
+            }
+            Role::IrcMember => format!(
+                "IRC member: {}.",
+                tally(true).say("IRC case", "IRC cases", "to declare first, then validate or raise a concern")
+            ),
+            other => format!(
+                "{}: this release has no page for this role yet.",
+                fstp_access::role_wire_name(other)
+            ),
+        });
+    }
+    for (proposal, role) in receiving {
+        let tag =
+            fstp_domain::view::proposal_state(core, proposal).map_or("UNKNOWN", |t| t.spec_name());
+        let p = proposal.raw();
+        parts.push(match role {
+            Role::Applicant => {
+                format!("Lead applicant of proposal {p}, now {tag}: open it from the home page.")
+            }
+            Role::Guardian => {
+                format!("Guardian of proposal {p}, now {tag}: give consent on its guardian page.")
+            }
+            _ => format!("Team member of proposal {p}, now {tag}."),
+        });
+    }
+    if parts.is_empty() {
+        parts.push("No role in this scene: the home page offers the open calls.".to_owned());
+    }
+    parts.join(" ")
+}
+
 /// The demo page.
 fn page(site: &Site) -> Response {
     let inner = site.inner();
@@ -127,10 +305,12 @@ fn page(site: &Site) -> Response {
         let email = auth.email_of(account).unwrap_or("");
         let who = scenario::persona_label(account).unwrap_or(email);
         people.push_str(&format!(
-            "<li><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small></li>\n",
+            "<li><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small><br>\
+<span>{n}</span></li>\n",
             u = esc(&url),
             w = esc(who),
             e = esc(email),
+            n = esc(&what_they_can_do(&inner, account)),
         ));
     }
     if people.is_empty() {
@@ -168,7 +348,7 @@ fn page(site: &Site) -> Response {
 <h1>FSTP demo, cell {name}</h1>\n\
 <p>Test cell with synthetic data only. Cell: <a href=\"{origin}/auth/login\" target=\"_blank\" rel=\"noopener\">{origin}</a>. \
 Cell clock: {now} µs. This page reloads every 10 seconds.</p>\n\
-<p>Open each link in its own incognito window, choose \"Create a passkey\", and the person is signed in. A link works once.</p>\n\
+<p>Open each link in its own incognito window and choose \"Create a passkey\". The person is signed in and lands on the home page, which links to their work. A link works once. Under each person, one line says what they can do in this scene.</p>\n\
 <h2>People of this scene</h2>\n<ul>\n{people}</ul>\n\
 <h2>Messages the cell sent</h2>\n<p>Newest first. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\

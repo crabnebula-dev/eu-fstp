@@ -66,6 +66,60 @@ function headRow(t: I18n, ids: readonly string[]): HTMLElement {
 // Intake
 // ---------------------------------------------------------------------------
 
+/**
+ * The action links of one intake row, by its state (review finding U7):
+ * the declaration and the knock-out check while the proposal is
+ * SUBMITTED, and its reviewer assignments in every state where the
+ * coordinator may read them (`fstp-access` `ASSIGNABLE`). An INELIGIBLE
+ * proposal gets no link, since R-EV-01 gives it no further review.
+ */
+export function intakeActions(state: string): readonly ("declare" | "knock_out" | "assignments")[] {
+  const out: ("declare" | "knock_out" | "assignments")[] = [];
+  if (state === "SUBMITTED") {
+    out.push("declare", "knock_out");
+  }
+  if (INTAKE_ASSIGNABLE.has(state)) {
+    out.push("assignments");
+  }
+  return out;
+}
+
+/** The states in which the coordinator reads a proposal's assignments (`fstp-access` `ASSIGNABLE`). */
+const INTAKE_ASSIGNABLE: ReadonlySet<string> = new Set([
+  "SUBMITTED",
+  "STAGE1",
+  "NOT_SELECTED",
+  "STAGE2",
+  "RANKED",
+  "IRC_REVIEW",
+  "DEFERRED",
+  "DECLINED",
+  "NEGOTIATION",
+  "WITHDRAWN",
+  "GRANTED",
+  "IN_EXECUTION",
+  "COMPLETED",
+  "TERMINATED",
+]);
+
+/** The action links of one intake row, or a note that the row has none. */
+function intakeLinks(t: I18n, proposal: string, state: string): HTMLElement {
+  const paths = {
+    declare: `/app/proposals/${proposal}/declaration`,
+    knock_out: `/app/proposals/${proposal}/knock-out`,
+    assignments: `/app/proposals/${proposal}/assignments`,
+  } as const;
+  const actions = intakeActions(state);
+  if (actions.length === 0) {
+    return h("p", {}, [t.label("coord.intake.no_action", { id: proposal })]);
+  }
+  return h(
+    "ul",
+    {},
+    actions.map((a) => h("li", {}, [h("a", { href: paths[a] }, [t.label(`coord.intake.${a}`, { id: proposal })])])),
+  );
+}
+
 async function mountIntake(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
   const t = pageI18n(env, COORDINATOR_LABELS);
   const call = param(params, "call");
@@ -94,25 +148,7 @@ async function mountIntake(env: PageEnv, params: Readonly<Record<string, string>
               h("th", { scope: "row" }, [proposalName(t, r.proposal)]),
               h("td", {}, [r.title]),
               h("td", {}, [t.label(`kit.state.${r.state}`)]),
-              h("td", {}, [
-                h("ul", {}, [
-                  h("li", {}, [
-                    h("a", { href: `/app/proposals/${r.proposal}/declaration` }, [
-                      t.label("coord.intake.declare", { id: r.proposal }),
-                    ]),
-                  ]),
-                  h("li", {}, [
-                    h("a", { href: `/app/proposals/${r.proposal}/knock-out` }, [
-                      t.label("coord.intake.knock_out", { id: r.proposal }),
-                    ]),
-                  ]),
-                  h("li", {}, [
-                    h("a", { href: `/app/proposals/${r.proposal}/assignments` }, [
-                      t.label("coord.intake.assignments", { id: r.proposal }),
-                    ]),
-                  ]),
-                ]),
-              ]),
+              h("td", {}, [intakeLinks(t, r.proposal, r.state)]),
             ]),
           ),
         ),

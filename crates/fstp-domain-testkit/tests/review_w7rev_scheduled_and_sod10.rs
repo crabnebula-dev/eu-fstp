@@ -115,10 +115,13 @@ fn review_scheduled_end_bar_counts_only_calls_published_by_the_instant() {
 /// programme. c's committee binding B1 records O-103, and a holds call
 /// drafter in P1. The vault gives c the identity of a, so the reaction
 /// suspends B1 as a conflict of interest. The vault then gives c its own
-/// identity back. A second committee binding B2 of c now records O-999,
-/// which the grant check allows because B1 is not held. Reinstating B1
-/// would leave c holding two committee bindings with different
-/// organisations in P1, so it must be refused. Production reinstates it.
+/// identity back. A second committee binding B2 of c recording O-999 would
+/// stand beside B1 once B1 is reinstated, with two organisations in P1.
+/// Daniel's answer of 2026-10-31 (M4 design section 15.0) refuses a grant
+/// of the same role while B1 has not ended, so B2 is refused with `Input`.
+/// B1 is then reinstated, and c's committee bindings in P1 record one
+/// organisation. The SoD-10 check of the reinstatement stays as a second
+/// line of defence, which no command sequence reaches since that guard.
 #[test]
 fn review_sod10_reinstatement_keeps_one_organisation_per_programme() {
     let b1 = BindingId::from_raw(311);
@@ -143,9 +146,14 @@ fn review_sod10_reinstatement_keeps_one_organisation_per_programme() {
     if let Command::GrantRole { organisation, .. } = &mut g.cmd {
         *organisation = Some(OrganisationId::from_raw(999));
     }
-    run(&mut w, T0, &g).unwrap_or_else(|r| panic!("setup: B2 is refused under {r:?}"));
-    let out = run(&mut w, T0, &reinstate(b1));
-    let both: Vec<Option<OrganisationId>> = w
+    assert_eq!(
+        run(&mut w, T0, &g).err(),
+        Some(RuleRef::Input),
+        "M4 design 15.0: B2 beside B1, which has not ended, is refused"
+    );
+    run(&mut w, T0, &reinstate(b1))
+        .unwrap_or_else(|r| panic!("the reinstatement of B1 is refused under {r:?}"));
+    let organisations: Vec<Option<OrganisationId>> = w
         .state
         .roster()
         .bindings()
@@ -153,9 +161,9 @@ fn review_sod10_reinstatement_keeps_one_organisation_per_programme() {
         .map(|(_, b)| b.organisation)
         .collect();
     assert_eq!(
-        out.err(),
-        Some(RuleRef::Sod10),
-        "SoD-10: c would hold committee bindings of {both:?} in P1"
+        organisations.len(),
+        1,
+        "SoD-10: c holds committee bindings of {organisations:?} in P1"
     );
 }
 

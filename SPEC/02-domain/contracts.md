@@ -76,6 +76,7 @@ Signature validation covers the certificate chain against the EU trusted lists a
 - An amended total counts against P-05, as set out in "Amount and recipient cap".
 - Contract terms are the source for timeline events (`03-architecture/notifications.md`). An amendment recomputes the affected events.
 - The grantee can decline at any point before signature (R-NG-04).
+- A contract terminated before any party signs keeps its generated draft PDF. At termination it is sealed with the tenant's seal (P-47), the reason is recorded, and its hash enters the audit log (I-30). It is labelled a sealed draft, never a signed contract, and is kept as long as a signed one (P-41) (decided by Daniel 2026-11-01).
 
 ## Horizon Europe flow-down clauses (I-49)
 

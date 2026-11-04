@@ -121,6 +121,8 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
+/// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
+pub(crate) mod me_roles;
 /// The tenant operations (lane m4tenant).
 mod tenant;
 
@@ -317,7 +319,12 @@ fn refusal(r: Refusal) -> ApiError {
         ),
         RuleRef::OracleDown => ApiError::refused(ErrorCode::Unavailable, "oracle"),
         RuleRef::Actor => ApiError::refused(ErrorCode::Unauthenticated, "actor"),
-        rule => ApiError::refused(ErrorCode::Refused, rule_text(rule)),
+        rule => match r.detail {
+            // I-50 at save names both values (Daniel's answer of
+            // 2026-10-31, M4 design section 15.0).
+            Some(d) => ApiError::refused_naming(ErrorCode::Refused, rule_text(rule), d),
+            None => ApiError::refused(ErrorCode::Refused, rule_text(rule)),
+        },
     }
 }
 
@@ -1559,6 +1566,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         | ReadKind::ListProgrammes
         | ReadKind::ListTemplates
         | ReadKind::ListApprovals => ReadModel::Creator(creator_ops::read(call, op, kind).await?),
+        // The interim home page of design section 15.0 (2026-10-31), I-86.
+        ReadKind::ListMyRoles => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::MyRoles(me_roles::read(call, a).await)
+        }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1672,6 +1686,10 @@ fn own_assignments(state: &EngineState, account: AccountId) -> Vec<AssignmentSum
             },
             awaiting_declaration: matches!(a.status, AssignmentStatus::AwaitingDeclaration),
             active: a.active(),
+            stage2: matches!(a.kind, AssignmentKind::Reviewer)
+                && a.active()
+                && fstp_domain::view::proposal_state(&state.core, a.proposal)
+                    == Some(fstp_domain::StateTag::Stage2),
         })
         .collect()
 }
@@ -2884,6 +2902,44 @@ mod tests {
 
     use super::*;
     use fstp_json::ToJson;
+
+    /// I-50, R-PG-01 AC, M4 design section 15.0 (I-50 timing, Daniel,
+    /// 2026-10-31): an engine refusal of a save with P-05 above P-58 reaches
+    /// the API error with both values, in its text and in its JSON body.
+    #[test]
+    fn i50_api_refusal_names_both_values() {
+        use fstp_money::{Amount, Currency, NonNegAmount};
+        let eur = |minor: i64| {
+            NonNegAmount::new(Amount::from_minor(minor, Currency::Eur).unwrap()).unwrap()
+        };
+        let detail = fstp_domain::RefusalDetail::CapAboveCeiling {
+            p05: eur(6_000_001),
+            p58: eur(6_000_000),
+        };
+        let r = Refusal::new(RuleRef::I50, fstp_domain::RefusalReason::InvalidValue).naming(detail);
+        let e = refusal(r);
+        assert_eq!(
+            e,
+            ApiError::Refused {
+                code: ErrorCode::Refused,
+                rule: "I-50",
+                detail: Some(detail),
+            }
+        );
+        let text = e.to_string();
+        assert!(
+            text.contains("60000.01") && text.contains("60000.00"),
+            "{text}"
+        );
+        let mut values = fstp_json::Object::new();
+        let _ = values.insert("P-05", fstp_json::Value::from("60000.01"));
+        let _ = values.insert("P-58", fstp_json::Value::from("60000.00"));
+        let mut want = fstp_json::Object::new();
+        let _ = want.insert("code", fstp_json::Value::from("refused"));
+        let _ = want.insert("rule", fstp_json::Value::from("I-50"));
+        let _ = want.insert("values", fstp_json::Value::Object(values));
+        assert_eq!(e.to_json(), fstp_json::Value::Object(want));
+    }
 
     /// R-EV-08, TH-26, change D5: dispatch answers `committee.open_round`
     /// with the round it drew and nothing else, and that body fits the

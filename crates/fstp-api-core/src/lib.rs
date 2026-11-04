@@ -55,28 +55,50 @@ use fstp_ledger::Seq;
 pub use model::ReadModel;
 pub use pending::{PendingReceipt, PendingStatus, PendingView};
 
-/// Why a call failed. It maps a domain refusal to a stable code and the
-/// rule text only, and never names an account (R-CF-03).
+/// Why a call failed. It maps a domain refusal to a stable code, the rule
+/// text and, where the rule asks for it, the refusal's closed detail of
+/// programme values. It never names an account (R-CF-03).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApiError {
     /// The operation waits for a seam of another lane or of the lead. It
     /// names the seam. Nothing was recorded or executed.
     NotImplemented(&'static str),
     /// The call was refused. `code` is the stable class and `rule` the
-    /// rule text only, such as `{"code":"refused","rule":"I-03"}` (design
-    /// section 3.7).
+    /// rule text, such as `{"code":"refused","rule":"I-03"}` (design
+    /// section 3.7). `detail` holds the values the rule names, if any.
     Refused {
         /// The stable class of the refusal.
         code: ErrorCode,
         /// The rule text, such as `"I-85"` or `"P-77"`.
         rule: &'static str,
+        /// The values the refusal names, where its rule asks for them,
+        /// such as both values of an I-50 refusal at save (Daniel's answer
+        /// of 2026-10-31, M4 design section 15.0).
+        detail: Option<fstp_domain::RefusalDetail>,
     },
 }
 
 impl ApiError {
     /// A refusal of class `code` naming `rule`.
     pub(crate) const fn refused(code: ErrorCode, rule: &'static str) -> ApiError {
-        ApiError::Refused { code, rule }
+        ApiError::Refused {
+            code,
+            rule,
+            detail: None,
+        }
+    }
+
+    /// A refusal of class `code` naming `rule` and the values of `detail`.
+    pub(crate) const fn refused_naming(
+        code: ErrorCode,
+        rule: &'static str,
+        detail: fstp_domain::RefusalDetail,
+    ) -> ApiError {
+        ApiError::Refused {
+            code,
+            rule,
+            detail: Some(detail),
+        }
     }
 
     /// A request that did not decode. `rule` names the rule it broke.
@@ -84,6 +106,7 @@ impl ApiError {
         ApiError::Refused {
             code: ErrorCode::BadRequest,
             rule,
+            detail: None,
         }
     }
 
@@ -173,15 +196,40 @@ impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ApiError::NotImplemented(op) => write!(f, "{op} is not implemented yet"),
-            ApiError::Refused { code, rule } => write!(f, "refused ({code:?}, rule {rule})"),
+            ApiError::Refused {
+                code,
+                rule,
+                detail: None,
+            } => write!(f, "refused ({code:?}, rule {rule})"),
+            ApiError::Refused {
+                code,
+                rule,
+                detail: Some(d),
+            } => write!(f, "refused ({code:?}, rule {rule}): {d}"),
         }
     }
 }
 
 impl std::error::Error for ApiError {}
 
+/// The `"values"` member of a refusal that names `detail`: each parameter
+/// id with its value as an ADR-006 string.
+fn detail_json(detail: &fstp_domain::RefusalDetail) -> Value {
+    let mut o = Object::new();
+    match detail {
+        fstp_domain::RefusalDetail::CapAboveCeiling { p05, p58 } => {
+            let _ = o.insert("P-05", Value::String(p05.amount().to_string()));
+            let _ = o.insert("P-58", Value::String(p58.amount().to_string()));
+        }
+    }
+    Value::Object(o)
+}
+
 /// `{"code": "...", "rule": "..."}`. It holds the stable code and the rule
-/// text only, never an account or request content (R-CF-03).
+/// text, never an account (R-CF-03). A refusal whose rule asks for values
+/// also has `"values"`, an object from each parameter id to its ADR-006
+/// string, such as `{"P-05": "60000.01", "P-58": "60000.00"}` for I-50 at
+/// save (Daniel's answer of 2026-10-31, M4 design section 15.0).
 impl ToJson for ApiError {
     fn to_json(&self) -> Value {
         let mut o = Object::new();
@@ -189,9 +237,12 @@ impl ToJson for ApiError {
             ApiError::NotImplemented(_) => {
                 let _ = o.insert("code", Value::from("not_implemented"));
             }
-            ApiError::Refused { code, rule } => {
+            ApiError::Refused { code, rule, detail } => {
                 let _ = o.insert("code", Value::from(code.as_str()));
                 let _ = o.insert("rule", Value::from(*rule));
+                if let Some(d) = detail {
+                    let _ = o.insert("values", detail_json(d));
+                }
             }
         }
         Value::Object(o)

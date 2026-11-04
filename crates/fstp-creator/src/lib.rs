@@ -97,6 +97,7 @@ pub use codec::{
     encode_record, validate_draft,
 };
 pub use decide::{CreatorDecision, CreatorRefusal, decide_creator, decide_import_save};
+pub use draft::{DraftView, draft_view};
 pub use guide::{GuideScan, guide_scan};
 pub use ids::{ImportDocumentId, ImportProposalId, InvitationId, TemplateId};
 pub use inputs::{

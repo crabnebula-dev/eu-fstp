@@ -25,22 +25,33 @@
 //! - A commit the store refused because its step-up went stale after
 //!   admission is [`engine::stepup_refusal`], a refusal naming I-78.
 //!
+//! # The serving cell (lane int5)
+//!
+//! - [`process::start`] starts a cell over its PostgreSQL database: the
+//!   writer and app pools, [`engine::pg::PgCellStore`] with the witness
+//!   link [`witness::link::TlsWitnessLink`], the first start's key chain,
+//!   [`engine::startup::start_pg`], and the tunnel, health and internal
+//!   listeners. A world starts its cells this way.
+//! - [`routes::pg::PgBackend`] is the route backend over the engine and
+//!   the operational rows of the application database.
+//! - [`vault::HttpVaultClient`] is the vault client over the vault's
+//!   internal mutual TLS listener.
+//!
 //! # What is not built here yet
 //!
-//! - The PostgreSQL store is lane W2e's. Until it lands the engine runs
-//!   over the anchoring in-memory store of [`witness`], which runs the
-//!   append protocol of design section 5.3, or over
-//!   [`engine::Unanchored`] in tests.
-//! - The witness wire format and service are lane W2g's
-//!   (`fstp_witness::run` is not written). [`witness::WitnessLink`] is the
-//!   seam a transport fills.
+//! - [`run`], the binary's entry, does not start a cell yet: the
+//!   configuration names no database logins, custody backend, keys,
+//!   certificates or witness endpoint (design section 9.5 fixes no
+//!   grammar). [`process::start`] takes them as parts.
 
 pub mod config;
 pub mod egress;
 pub mod engine;
 pub mod http;
+pub mod process;
 pub mod routes;
 pub mod tasks;
+pub mod vault;
 pub mod witness;
 
 pub use config::CellConfig;
@@ -72,6 +83,9 @@ pub enum CellError {
     Signal,
     /// A listener or runtime failed.
     Io(std::io::ErrorKind),
+    /// A request body was refused. It names the rule the body broke and
+    /// never quotes the body (TH-26, R-NF-02).
+    Request(http::BodyRefusal),
 }
 
 impl std::fmt::Display for CellError {
@@ -88,6 +102,7 @@ impl std::fmt::Display for CellError {
             CellError::Keys(step) => write!(f, "key operation failed: {step}"),
             CellError::Signal => f.write_str("termination signals could not be set up"),
             CellError::Io(kind) => write!(f, "i/o failed: {kind:?}"),
+            CellError::Request(r) => write!(f, "request body refused: {r}"),
         }
     }
 }
@@ -125,9 +140,9 @@ pub fn read_config(path: &std::path::Path) -> Result<Vec<u8>, CellError> {
 /// # Errors
 ///
 /// [`CellError::Config`] for a missing or refused configuration. Then
-/// [`CellError::NotImplemented`] naming the production store: a serving
-/// cell needs `fstp_pgstore::PgRecordStore` (lane W2e) and the witness
-/// transport (lane W2g), and it never serves over an in-memory ledger.
+/// [`CellError::NotImplemented`]: the configuration names none of the
+/// parts of [`process::start`] yet. It never serves over an in-memory
+/// ledger.
 pub fn run() -> Result<(), CellError> {
     let path = std::env::var_os("FSTP_CELL_CONFIG")
         .ok_or(CellError::Config(config::ConfigError::Missing))?;
@@ -135,6 +150,6 @@ pub fn run() -> Result<(), CellError> {
     let cfg = config::decode(&bytes).map_err(CellError::Config)?;
     let _ = cfg;
     Err(CellError::NotImplemented(
-        "fstp_cell::run over fstp_pgstore::PgRecordStore (lane W2e) and the witness transport (lane W2g)",
+        "fstp_cell::run: the configuration names no database logins, custody, keys, certificates or witness endpoint for fstp_cell::process::start (design section 9.5)",
     ))
 }

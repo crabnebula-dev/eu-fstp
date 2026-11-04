@@ -269,7 +269,11 @@ pub(crate) fn readings() -> Vec<SuperSafeReading> {
             "None: deleted on verification",
             Opaque(r#""delete_on_verification""#),
         ),
-        r(P20, "Record-only or execution", NotProgramme),
+        r(
+            P20,
+            "Record-only. Execution is deferred by Daniel on 2026-11-04 (B-11)",
+            NotProgramme,
+        ),
         r(P21, "Tenant choice", Synthetic("tenant choice, NOTE 10")),
         r(
             P22,

@@ -9,18 +9,29 @@
 //! reference names the seeded check the production refusal names it too.
 //! The `for_every_failure` tests walk the whole catalogue in order.
 //!
-//! The production tests are red until lane W2a lands the creator.
+//! `CapAboveCeiling` is refused at save (I-50 timing, Daniel's answer of
+//! 2026-10-31, M4 design section 15.0), so no draft can hold it. For that
+//! check the case asserts the stronger outcome: the setup save of the cap
+//! is refused, so the draft never exists to be activated.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use fstp_api_testkit::mc::activate_model::{Backend, attempt};
+use fstp_api_testkit::mc::activate_model::{Backend, CapOutcome, attempt, cap_attempt};
 use fstp_api_testkit::reference::creator::{
-    Attempt, M2, RefCheck, RefRefusal, StepVerdict, run_attempt, seeded_plan,
+    Attempt, CheckFeed, M2, RefCheck, RefRefusal, StepVerdict, run_attempt, seeded_plan,
 };
 use fstp_prop::{Gen, check, prop_assert, prop_assert_eq};
 
 fn one(backend: Backend, failure: RefCheck, roster: bool, second: bool) -> Result<(), String> {
     let mut plan = seeded_plan(failure);
+    if failure.feed() == CheckFeed::Cap {
+        let got = cap_attempt(backend, plan.stat.cap.p05_minor, plan.stat.cap.p58_minor)?;
+        prop_assert!(
+            matches!(got, CapOutcome::RefusedAtSave { .. }),
+            "I-50 at save, I-66: the save of P-05 above P-58 must be refused, so no draft holds it: {got:?}"
+        );
+        return Ok(());
+    }
     if roster {
         plan.seeds.insert(RefCheck::RosterShort);
     }

@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-witness = { path = ".." }
+fstp-audit = { path = "../../fstp-audit" }
 
 [[bin]]
 name = "witness_message_decode"
@@ -21,6 +22,20 @@ bench = false
 [[bin]]
 name = "file_store_decode"
 path = "fuzz_targets/file_store_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "witness_wire_decode"
+path = "fuzz_targets/witness_wire_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cert_names_decode"
+path = "fuzz_targets/cert_names_decode.rs"
 test = false
 doc = false
 bench = false

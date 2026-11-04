@@ -95,6 +95,8 @@ pub(crate) struct CellCfg {
     pub(crate) rp: RelyingParty,
     /// The login methods the tenant enables (P-70).
     pub(crate) enabled: EnabledMethods,
+    /// The compiled auth pages, when the front serves them.
+    pub(crate) pages: Option<Arc<crate::http::pages::Pages>>,
 }
 
 /// What a handler runs against.
@@ -241,6 +243,14 @@ pub(crate) fn exec_failed(e: &ExecError) -> Reply {
             if let Some(id) = r.rule.spec_id() {
                 o.insert("rule", Value::String(id.to_owned()));
             }
+            if let Some(fstp_domain::RefusalDetail::CapAboveCeiling { p05, p58 }) = r.detail {
+                // I-50 at save names both values as ADR-006 strings
+                // (Daniel's answer of 2026-10-31, M4 design section 15.0).
+                let mut v = Object::with_capacity(2);
+                v.insert("P-05", Value::String(p05.amount().to_string()));
+                v.insert("P-58", Value::String(p58.amount().to_string()));
+                o.insert("values", Value::Object(v));
+            }
             Reply {
                 rule: r.rule.spec_id().map(Rule::Spec),
                 ..Reply::json(status, &Value::Object(o))
@@ -348,15 +358,18 @@ async fn dispatch<B: Backend>(
 ) -> Reply {
     use crate::routes::{api, auth};
     match (route.endpoint(), caller) {
+        (Endpoint::InvitationOptions, _) => auth::invitation_options(ctx, req).await,
+        (Endpoint::InvitationRegister, _) => auth::invitation_register(ctx, req).await,
         (Endpoint::PasskeyLoginOptions, _) => auth::login_options(ctx, req).await,
         (Endpoint::PasskeyLogin, _) => auth::login(ctx, req).await,
         (Endpoint::MagicRequest, _) => auth::magic_request(ctx, req).await,
-        (Endpoint::MagicConfirm, _) => auth::magic_confirm(),
+        (Endpoint::MagicConfirm, _) => auth::magic_confirm(ctx),
+        (Endpoint::PageShell, _) => auth::page_shell(ctx),
+        (Endpoint::PageAsset, _) => auth::page_asset(ctx, req, ""),
+        (Endpoint::PageModule, _) => auth::page_asset(ctx, req, "pages/"),
         (Endpoint::MagicConsume, _) => auth::magic_consume(ctx, req).await,
         (
-            Endpoint::InvitationOptions
-            | Endpoint::InvitationRegister
-            | Endpoint::SignupOptions
+            Endpoint::SignupOptions
             | Endpoint::Signup
             | Endpoint::RecoveryRequest
             | Endpoint::RecoveryEmail

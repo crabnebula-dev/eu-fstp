@@ -15,6 +15,13 @@
 //!    (`crate::routes`): `Origin`, `Content-Type`, the body limit, the
 //!    session, the body, the gate.
 //!
+//! A front built with `Front::with_pages` (feature `dev-pages`, test and
+//! dev stack only) also routes the compiled auth pages
+//! (`crate::http::pages`): the rows of `crate::routes::page_table`. Each
+//! row names its risk class and runs the shared checks, like every other
+//! route. `GET` of each page path serves the shell, and `GET` under the
+//! asset routes serves a loaded module or stylesheet by name.
+//!
 //! Every response then carries the cell CSP of design section 11.2,
 //! `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
 //! `Cache-Control: no-store`. No response carries an
@@ -43,7 +50,10 @@ use fstp_http::{
 use fstp_obs::{LogEvent, UNROUTED};
 use fstp_webauthn::RelyingParty;
 
-use crate::routes::{Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, serve_route, table};
+use crate::http::pages::Pages;
+use crate::routes::{
+    Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, page_table, serve_route, table,
+};
 
 /// The CSP of the cell origin, verbatim from design section 11.2.
 pub const CELL_CSP: &str = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -230,7 +240,42 @@ impl<B: Backend, L: LogSink> Front<B, L> {
     /// [`FrontError::Host`] for a host that is not a relying party host,
     /// and [`FrontError::Route`] if the router refuses a table route.
     pub fn new(cfg: FrontConfig, backend: Arc<B>, log: Arc<L>) -> Result<Front<B, L>, FrontError> {
+        Front::build(cfg, None, backend, log)
+    }
+
+    /// [`Front::new`] that also serves the compiled auth pages `pages` on
+    /// the cell origin (design section 11.2, `crate::http::pages`): the
+    /// rows of `crate::routes::page_table`, each with its risk class and
+    /// through the shared checks of every route. `GET /auth/magic` then
+    /// serves the shell too. Every reply carries the cell CSP.
+    ///
+    /// Test and dev stack only: it is built with the `dev-pages` feature,
+    /// which no shipped build enables. Design section 8.7 does not list the
+    /// page routes yet, so the production front serves exactly
+    /// `crate::routes::table` (a question for Daniel, lane int4).
+    ///
+    /// # Errors
+    ///
+    /// As [`Front::new`], and [`FrontError::Route`] if the router refuses
+    /// a page route.
+    #[cfg(feature = "dev-pages")]
+    pub fn with_pages(
+        cfg: FrontConfig,
+        pages: Pages,
+        backend: Arc<B>,
+        log: Arc<L>,
+    ) -> Result<Front<B, L>, FrontError> {
+        Front::build(cfg, Some(Arc::new(pages)), backend, log)
+    }
+
+    fn build(
+        cfg: FrontConfig,
+        pages: Option<Arc<Pages>>,
+        backend: Arc<B>,
+        log: Arc<L>,
+    ) -> Result<Front<B, L>, FrontError> {
         let rp = RelyingParty::new(&cfg.host).map_err(|_| FrontError::Host)?;
+        let serve_pages = pages.is_some();
         let ctx = Arc::new(Ctx {
             backend,
             cfg: CellCfg {
@@ -238,10 +283,14 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 origin: format!("https://{}", cfg.host),
                 rp,
                 enabled: cfg.enabled,
+                pages,
             },
         });
+        // The page rows are served only when pages are loaded, so a front
+        // without them serves exactly the section 8.7 table.
+        let pages_rows: &'static [Route] = if serve_pages { page_table() } else { &[] };
         let mut router = Router::new();
-        for route in table() {
+        for route in table().iter().chain(pages_rows) {
             if route.access() == Access::Loopback || route.access() == Access::Unserved {
                 continue;
             }

@@ -20,7 +20,7 @@ use fstp_api_core::port::{
     Affiliations, AsyncIdentityOracle, CountryCode, ExclusionClasses, Receipt, Vault, VaultBound,
     VerificationPurpose, VerificationRedirect,
 };
-use fstp_domain::id::{AccountId, ContentDigest, OrganisationId, ProgrammeId, ProposalId};
+use fstp_domain::id::{AccountId, ClassId, ContentDigest, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
 use fstp_domain_testkit::vault::GroundTruth;
 use fstp_engine::IdentityOracle;
@@ -127,6 +127,20 @@ pub struct FakeVault {
     /// The Q35 answers: whether every P-13 class is known, and whether
     /// every partner organisation declared its P-38 list.
     q35: Arc<Mutex<(bool, bool)>>,
+    /// The P-13 classes the vault knows and the organisations that declared
+    /// their P-38 lists, when the Q35 answers follow the asked content
+    /// rather than the fixed bits of [`FakeVault::set_q35`].
+    q35_known: Arc<Mutex<Option<Q35Known>>>,
+}
+
+/// What the synthetic vault knows for the Q35 answers (see
+/// [`FakeVault::set_q35_known`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Q35Known {
+    /// The P-13 class ids the vault knows.
+    pub classes: BTreeSet<ClassId>,
+    /// The partner organisations that declared their P-38 lists.
+    pub declared: BTreeSet<OrganisationId>,
 }
 
 impl FakeVault {
@@ -137,6 +151,7 @@ impl FakeVault {
             down: Arc::new(Mutex::new(false)),
             log: Arc::new(Mutex::new(Log::default())),
             q35: Arc::new(Mutex::new((true, true))),
+            q35_known: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -147,6 +162,14 @@ impl FakeVault {
         *lock(&self.q35) = (classes_known, lists_declared);
     }
 
+    /// Makes the Q35 answers follow the asked content: the classes are
+    /// known when `known` holds each of them, and the lists are declared
+    /// when `known` lists each organisation. `None` restores the fixed
+    /// bits of [`FakeVault::set_q35`].
+    pub fn set_q35_known(&self, known: Option<Q35Known>) {
+        *lock(&self.q35_known) = known;
+    }
+
     /// The answer of `classes_defined` now, as the port gives it. The
     /// creator environment, which is synchronous, asks here.
     pub fn classes_defined_now(
@@ -154,7 +177,10 @@ impl FakeVault {
         programme: ProgrammeId,
         classes: &ExclusionClasses,
     ) -> Result<Answer, OracleDown> {
-        let holds = lock(&self.q35).0;
+        let holds = match &*lock(&self.q35_known) {
+            Some(k) => classes.0.is_subset(&k.classes),
+            None => lock(&self.q35).0,
+        };
         self.one_bit(
             holds,
             fake_digest(&("classes_defined", programme, &classes.0)),
@@ -168,7 +194,10 @@ impl FakeVault {
         programme: ProgrammeId,
         orgs: &BTreeSet<OrganisationId>,
     ) -> Result<Answer, OracleDown> {
-        let holds = lock(&self.q35).1;
+        let holds = match &*lock(&self.q35_known) {
+            Some(k) => orgs.is_subset(&k.declared),
+            None => lock(&self.q35).1,
+        };
         self.one_bit(
             holds,
             fake_digest(&("proximity_lists_declared", programme, orgs)),
