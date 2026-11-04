@@ -766,9 +766,7 @@ impl LedgerRun {
         ctx.second_tenant_admin = step.flags.second_admin;
         ctx.binds_tenant_admin = step.flags.binds_tenant_admin;
         let command = ctx.command.bytes();
-        let result = self
-            .scenario
-            .execute(fstp_engine::Command::Core(step.cmd.clone()), ctx);
+        let result = self.scenario.run_core(&step.cmd, ctx);
         let tail = self.advance(before)?;
         let kind = step.cmd.kind();
         match result {

@@ -96,6 +96,9 @@ pub struct CellEnvironment {
     /// The theme the cell shows: the M4 default unless a test seeds a
     /// theme fault (I-66, design 8.4).
     theme: Theme,
+    /// The ports the cell has: a pre-check provider and no score tools
+    /// unless a test sets otherwise (I-66, design 3.2).
+    ports: PortPresence,
     /// Whether the decisions are dry runs, which peek at the probes and
     /// never run them (design 3.2 "Fresh probes").
     dry: bool,
@@ -119,6 +122,10 @@ impl CellEnvironment {
             profiles: SyntheticProfiles::default(),
             shipped: false,
             theme: Theme::m4_default(),
+            ports: PortPresence {
+                precheck: true,
+                score_tools: false,
+            },
             dry: false,
         }
     }
@@ -137,6 +144,10 @@ impl CellEnvironment {
             profiles: SyntheticProfiles::default(),
             shipped: false,
             theme: Theme::m4_default(),
+            ports: PortPresence {
+                precheck: true,
+                score_tools: false,
+            },
             dry: false,
         }
     }
@@ -152,6 +163,14 @@ impl CellEnvironment {
     /// as a test seeds a theme fault (I-66, design 8.4).
     pub fn with_theme(mut self, theme: Theme) -> CellEnvironment {
         self.theme = theme;
+        self
+    }
+
+    /// The same environment with the ports `ports`, as a test seeds a
+    /// check that reads a port: `PrecheckUnavailable` without a pre-check
+    /// provider, `AiActReassessment` with score tools (I-66, design 3.2).
+    pub fn with_ports(mut self, ports: PortPresence) -> CellEnvironment {
+        self.ports = ports;
         self
     }
 
@@ -341,10 +360,7 @@ impl CreatorEnvironment for CellEnvironment {
                 proximity_lists_declared,
             },
             tenant_admins: lock(&self.admins).clone(),
-            ports: PortPresence {
-                precheck: true,
-                score_tools: false,
-            },
+            ports: self.ports,
             theme: self.theme.clone(),
             profile: self.profile(state, cmd),
         }

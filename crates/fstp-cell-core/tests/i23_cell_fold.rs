@@ -248,25 +248,121 @@ struct Twin {
     cell_head: u64,
     engine: fstp_engine::EngineState,
     engine_head: u64,
+    /// The number of batches folded, which gives each its own command id,
+    /// so the engine records of one batch form one engine entry.
+    batches: u8,
 }
 
 impl Twin {
     /// Folds `batch` at `at`: the whole batch into the cell, and its M2
     /// records into the reference.
     fn fold(&mut self, at: Timestamp, batch: &[CellRecord]) -> Result<(), String> {
-        let entries = ledger(&[(at, cid(0x40), batch.to_vec())])?;
+        let m2: Vec<fstp_engine::Record> = batch
+            .iter()
+            .filter_map(|r| match r {
+                CellRecord::Engine(e) => Some(e.clone()),
+                _ => None,
+            })
+            .collect();
+        self.fold_apart(at, batch, &m2)
+    }
+
+    /// Folds `batch` into the cell and `m2` into the reference, each as
+    /// one entry under the batch's command id.
+    fn fold_apart(
+        &mut self,
+        at: Timestamp,
+        batch: &[CellRecord],
+        m2: &[fstp_engine::Record],
+    ) -> Result<(), String> {
+        self.batches += 1;
+        let command = cid(0x40u8.wrapping_add(self.batches));
+        let entries = ledger(&[(at, command, batch.to_vec())])?;
         for mut e in entries {
             self.cell_head += 1;
             e.seq = Seq::from_raw(self.cell_head);
             apply(&mut self.cell, &e).map_err(|x| format!("cell apply: {x:?}"))?;
-            if let CellRecord::Engine(r) = &e.record {
-                self.engine_head += 1;
-                fstp_engine::apply(&mut self.engine, Seq::from_raw(self.engine_head), at, r)
-                    .map_err(|x| format!("M2 apply: {x:?}"))?;
-            }
         }
-        Ok(())
+        for r in m2 {
+            self.engine_head += 1;
+            fstp_engine::apply_in(
+                &mut self.engine,
+                Seq::from_raw(self.engine_head),
+                at,
+                Some(command),
+                r,
+            )
+            .map_err(|x| format!("M2 apply: {x:?}"))?;
+        }
+        fstp_engine::finish(&mut self.engine).map_err(|x| format!("M2 finish: {x:?}"))
     }
+
+    /// Folds the entry the creator path appends for the setup step `cmd`
+    /// (M4 design section 3.4, D2e): a creator `OpenDraft` for a
+    /// `CreateProgramme`, a creator `ApproveActivation` for an
+    /// `ActivateProgramme`, as the test kit composes them. Each side's
+    /// entry is composed on its own state, so the draft revisions it names
+    /// are its own.
+    fn fold_composed(
+        &mut self,
+        at: Timestamp,
+        cmd: &fstp_domain::Command,
+        ctx: &Ctx,
+    ) -> Result<(), String> {
+        use fstp_domain_testkit::activation::{activation_records, open_records};
+        let truth = fstp_domain_testkit::r#gen::roster::sod_truth();
+        let compose = |state: &fstp_engine::EngineState| {
+            // The twin processes no vault change, so the answers carry the
+            // state's epoch and the corpus vault's facts, as in the steps
+            // of `seam_decide_engine_commands_match_m2_decide`.
+            let vault = AtEpoch {
+                truth: &truth,
+                epoch: state.epoch(),
+            };
+            match cmd {
+                fstp_domain::Command::CreateProgramme { policy } => {
+                    open_records(state, &vault, policy, ctx)
+                }
+                _ => activation_records(state, &vault, cmd, ctx),
+            }
+        };
+        let on_cell = compose(self.cell.engine()).map_err(|e| format!("cell entry: {e}"))?;
+        let on_m2 = compose(&self.engine).map_err(|e| format!("M2 entry: {e}"))?;
+        let batch: Vec<CellRecord> = on_cell.into_iter().map(CellRecord::Engine).collect();
+        self.fold_apart(at, &batch, &on_m2)
+    }
+}
+
+/// The corpus vault's facts, answered at a fixed epoch.
+struct AtEpoch<'a> {
+    truth: &'a fstp_domain_testkit::vault::GroundTruth,
+    epoch: fstp_domain::id::VaultEpoch,
+}
+
+impl fstp_engine::IdentityOracle for AtEpoch<'_> {
+    fn ask(
+        &self,
+        q: &fstp_domain::oracle::Query,
+    ) -> Result<fstp_domain::oracle::Answer, fstp_domain::oracle::OracleDown> {
+        let mut a = self.truth.answer(q);
+        a.epoch = self.epoch;
+        Ok(a)
+    }
+
+    fn epoch(&self) -> Result<fstp_domain::id::VaultEpoch, fstp_domain::oracle::OracleDown> {
+        Ok(self.epoch)
+    }
+}
+
+/// Whether `cmd` reaches the engine only through a creator composition
+/// since D2e: the creator's `OpenDraft` composes a `CreateProgramme` and
+/// its `ApproveActivation` an `ActivateProgramme` (M4 design section 3.4).
+fn composed(cmd: &fstp_domain::Command) -> bool {
+    matches!(
+        cmd,
+        fstp_domain::Command::CreateProgramme { .. }
+            | fstp_domain::Command::ActivateProgramme { .. }
+    )
 }
 
 /// Design sections 5.1 and 14.6: on a cell where ADMIN is tenant admin,
@@ -286,6 +382,7 @@ fn seam_decide_engine_commands_match_m2_decide() {
         cell_head: 1,
         engine: fstp_engine::EngineState::genesis(),
         engine_head: 0,
+        batches: 0,
     };
     // The corpus runs its setup at T0: M2 refuses a grant that starts
     // before the command's instant.
@@ -308,6 +405,13 @@ fn seam_decide_engine_commands_match_m2_decide() {
             want_q.clone().map_err(fstp_cell_core::CellRefusal::Domain),
             "step {i}"
         );
+        // D2e: the engine refuses a core activation from outside the
+        // creator, on the cell as in M2. The setup folds the entry of the
+        // creator's approval instead.
+        if composed(&step.cmd) && want_q.is_err() {
+            t.fold_composed(at, &step.cmd, &ctx).unwrap();
+            continue;
+        }
         let mut answers = Answers::new();
         for q in want_q.unwrap() {
             // The twin processes no vault change, so the answer carries the
@@ -333,7 +437,13 @@ fn seam_decide_engine_commands_match_m2_decide() {
             rest.iter().all(|r| !matches!(r, CellRecord::Engine(_))),
             "step {i}: extra M2 records {rest:?}"
         );
-        t.fold(at, &got).unwrap();
+        // D2e: a programme the setup activates opens with a creator draft,
+        // so the setup folds the entry of the creator's `OpenDraft`.
+        if composed(&step.cmd) {
+            t.fold_composed(at, &step.cmd, &ctx).unwrap();
+        } else {
+            t.fold(at, &got).unwrap();
+        }
     }
 }
 

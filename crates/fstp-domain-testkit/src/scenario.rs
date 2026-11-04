@@ -52,6 +52,19 @@ impl Scenario {
         self.engine.execute(cmd, ctx)
     }
 
+    /// Runs the core command `cmd` of a setup or a model step. A
+    /// `CreateProgramme` and an `ActivateProgramme` append the entries of
+    /// the creator path that `crate::activation::run_core` composes, since
+    /// only the creator's approval activates a programme (D2e). Every
+    /// other command runs through [`Scenario::execute`].
+    pub fn run_core(
+        &mut self,
+        cmd: &fstp_domain::command::Command,
+        ctx: Ctx,
+    ) -> Result<Seq, ExecError> {
+        crate::activation::run_core(&mut self.engine, cmd, ctx)
+    }
+
     /// Changes the vault facts with `change`, then processes the change in
     /// the same step (design section 6.1). Returns the new head, or `None`
     /// when the change left the epoch where the state already is. On a

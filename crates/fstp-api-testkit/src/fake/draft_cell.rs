@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{ProbeKind, ProbeOutcome};
-use fstp_creator::{CreatorInputs, CreatorRecord, Theme};
+use fstp_creator::{CreatorInputs, CreatorRecord, PortPresence, Theme};
 use fstp_domain::command::{Actor, Ctx, Via};
 use fstp_domain::id::{AccountId, CommandId, PolicyVersionId, ProgrammeId};
 use fstp_domain::oracle::{Answers, Query};
@@ -26,6 +26,7 @@ use fstp_engine::{Command, CreatorDecider, CreatorEnvironment, Engine, EngineSta
 use fstp_ledger::{Entry, MemStore, RecordStore, Seq};
 
 use super::shell::CellEnvironment;
+use super::vault::Q35Known;
 use super::{FakeProber, FakeVault, FakeVaultAudit};
 
 /// The driver of a draft cell.
@@ -55,6 +56,38 @@ pub fn truth_of(accounts: &[VaultAccount]) -> GroundTruth {
         }
     }
     t
+}
+
+/// The shell facts of a draft cell that a test sets (I-66, design 3.2
+/// and 8.4).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DraftShell {
+    /// Whether the shipped profiles stand in for the synthetic ones, so
+    /// the legal wording is pending (Q6).
+    pub shipped: bool,
+    /// The theme the cell shows.
+    pub theme: Theme,
+    /// The ports the cell has.
+    pub ports: PortPresence,
+    /// What the vault knows for the Q35 answers, or `None` for the fixed
+    /// answers of the fake vault.
+    pub q35: Option<Q35Known>,
+}
+
+impl Default for DraftShell {
+    /// The fake cell's shell: the synthetic wording, the M4 default theme,
+    /// a pre-check provider, no score tools and fixed Q35 answers.
+    fn default() -> DraftShell {
+        DraftShell {
+            shipped: false,
+            theme: Theme::m4_default(),
+            ports: PortPresence {
+                precheck: true,
+                score_tools: false,
+            },
+            q35: None,
+        }
+    }
 }
 
 /// The production engine of one draft and the fakes beside it.
@@ -95,7 +128,24 @@ impl DraftCell {
         shipped: bool,
         theme: Theme,
     ) -> Result<DraftCell, String> {
+        let shell = DraftShell {
+            shipped,
+            theme,
+            ..DraftShell::default()
+        };
+        DraftCell::open_with_shell(store, truth, admins, probes, &shell)
+    }
+
+    /// The cell of [`DraftCell::open`] with the shell facts of `shell`.
+    pub fn open_with_shell(
+        store: MemStore<Record>,
+        truth: GroundTruth,
+        admins: BTreeSet<AccountId>,
+        probes: &BTreeMap<ProbeKind, Option<ProbeOutcome>>,
+        shell: &DraftShell,
+    ) -> Result<DraftCell, String> {
         let vault = FakeVault::new(truth);
+        vault.set_q35_known(shell.q35.clone());
         let prober = FakeProber::default();
         for (k, o) in probes {
             match o {
@@ -110,8 +160,9 @@ impl DraftCell {
             Arc::new(Mutex::new(admins)),
             audit.clone(),
         )
-        .with_shipped_profiles(shipped)
-        .with_theme(theme);
+        .with_shipped_profiles(shell.shipped)
+        .with_theme(shell.theme.clone())
+        .with_ports(shell.ports);
         let engine = Engine::open_with(store, vault.oracle(), CreatorDecider(env))
             .map_err(|e| format!("open the draft cell: {e:?}"))?;
         Ok(DraftCell {
@@ -243,4 +294,68 @@ pub fn forged_open(
         .append(head, at.micros(), c.command.bytes(), records)
         .map_err(|e| format!("append the opening: {e:?}"))?;
     Ok(())
+}
+
+/// The SuperSAFE fixture spec with its P-09 wording stored as synthetic
+/// `TextRef`s, as a ledger body must hold it (ADR-007). A save refuses
+/// P-09 wording that is still inline, so every adapter that saves the
+/// whole fixture saves this spec.
+pub fn synthetic_spec() -> Result<fstp_programme::ProgrammeSpec, String> {
+    let item = |id: u8| {
+        let hex: String = std::iter::repeat_n(format!("{id:02x}"), 32).collect();
+        format!("{{\"id\":\"{id}\",\"text\":{{\"digest\":\"{hex}\",\"text\":\"10{id}\"}}}}")
+    };
+    let p09 = format!("[{},{},{}]", item(1), item(2), item(3));
+    let mut spec = fstp_programme::supersafe_fixture()
+        .map_err(|e| format!("fixture: {e}"))?
+        .spec;
+    let value = fstp_programme::decode_field_value(fstp_programme::FieldId::P09, p09.as_bytes())
+        .map_err(|e| format!("P-09: {e:?}"))?;
+    spec.set(value);
+    Ok(spec)
+}
+
+/// The manual field edit of `value`, with the SHA-256 of its canonical
+/// text as its digest.
+pub fn manual_edit(value: fstp_programme::FieldValue) -> fstp_creator::FieldEdit {
+    let canonical = fstp_programme::encode_field_value(&value);
+    fstp_creator::FieldEdit {
+        field: value.field(),
+        value,
+        digest: fstp_creator::ValueDigest::new(fstp_domain::id::ContentDigest::from_bytes(
+            fstp_crypto::sha256(canonical.as_bytes()),
+        )),
+        provenance: fstp_creator::Provenance::Manual,
+    }
+}
+
+/// Holds again, on `cell`, the value of every field the draft of
+/// `programme` saved, from `values` by field and digest, as the shell resolves its
+/// value store after a replay (`fstp_engine` driver, "Held values"). A
+/// rebuilt cell holds no saved value until then, so the checks that read
+/// one fail closed.
+pub fn hold_saved(
+    cell: &mut DraftCell,
+    programme: ProgrammeId,
+    values: &BTreeMap<
+        (fstp_programme::FieldId, fstp_creator::ValueDigest),
+        fstp_programme::FieldValue,
+    >,
+) {
+    let saved: Vec<(fstp_programme::FieldId, fstp_creator::ValueDigest)> = cell
+        .state()
+        .creator
+        .draft(programme)
+        .map(|d| {
+            d.fields()
+                .iter()
+                .map(|(f, (digest, _))| (*f, *digest))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (field, digest) in saved {
+        if let Some(v) = values.get(&(field, digest)) {
+            let _ = cell.engine.hold_value(programme, field, digest, v.clone());
+        }
+    }
 }

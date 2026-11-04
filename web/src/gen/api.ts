@@ -2318,21 +2318,30 @@ function onlyMembers(v: Readonly<Record<string, unknown>>, allowed: readonly str
   return true;
 }
 
-/** A refusal: a stable code and the rule text only, never an account. */
+/**
+ * A refusal: a stable code and the rule text, never an account. `values`
+ * holds the values the rule names, by parameter id, such as P-05 and P-58
+ * of I-50 at save (M4 design section 15.0).
+ */
 export interface ApiErrorBody {
   readonly code: string;
   readonly rule?: string;
+  readonly values?: Readonly<Record<string, string>>;
 }
 
 /** Whether `v` is an `ApiErrorBody`, with no other member. */
 export function isApiErrorBody(v: unknown): v is ApiErrorBody {
-  if (!isRecord(v) || !onlyMembers(v, ["code", "rule"])) {
+  if (!isRecord(v) || !onlyMembers(v, ["code", "rule", "values"])) {
     return false;
   }
   if (typeof v["code"] !== "string") {
     return false;
   }
-  return !("rule" in v) || typeof v["rule"] === "string";
+  if ("rule" in v && typeof v["rule"] !== "string") {
+    return false;
+  }
+  const values = v["values"];
+  return !("values" in v) || (isRecord(values) && Object.values(values).every((x) => typeof x === "string"));
 }
 
 /** A call that became a pending action for a confirmation in the platform (I-85). */

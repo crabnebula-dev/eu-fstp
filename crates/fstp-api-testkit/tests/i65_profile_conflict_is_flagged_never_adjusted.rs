@@ -9,10 +9,11 @@
 //! Generated values fall on both sides of the bound. The recorded value
 //! equals the proposal byte for byte and carries I-50 exactly when it
 //! conflicts. A flagged value is refused without
-//! `conflict_acknowledged`. With it, the draft takes the proposed value
-//! unchanged, never the bound.
-//!
-//! The production test is red until lanes W2a, W2b and W2e land.
+//! `conflict_acknowledged`. With it, the confirmation is refused at save
+//! with `CapAboveCeiling`, and the draft keeps the value it held, never
+//! the bound and never an adjusted value (I-50 at save, Daniel's answer of
+//! 2026-10-31, M4 design section 15.0). An unflagged value is confirmed,
+//! and the draft takes it unchanged.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

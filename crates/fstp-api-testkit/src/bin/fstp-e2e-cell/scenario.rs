@@ -356,7 +356,7 @@ impl Seeder<'_> {
         self.inner
             .ports
             .engine
-            .environment(fstp_engine::Command::Core(step.cmd.clone()), ctx)
+            .setup_step(&step.cmd, ctx)
             .map(|_| ())
             .map_err(|e| format!("seed step {:?} by {:?}: {e}", step.cmd.kind(), step.actor))
     }

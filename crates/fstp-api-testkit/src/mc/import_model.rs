@@ -35,7 +35,8 @@
 //!    that is not importable. The bridge checks the field again.
 //! 4. A proposal is flagged with I-50 when, applied alone at recording, it
 //!    would put the draft's P-05 above its P-58. The flag never changes
-//!    the value (L-10 shape).
+//!    the value (L-10 shape). A confirmation or edit that would still put
+//!    P-05 above P-58 is refused at save, as every save is (reading 8).
 //! 5. Confirming or editing a flagged proposal needs
 //!    `conflict_acknowledged: true`. Dismissing it does not.
 //! 6. Every resolution carries `base` and is refused when it is stale.
@@ -45,7 +46,11 @@
 //! 8. Activation follows design 3.2 (Q1 A): a tenant admin outside the
 //!    builder set, with no unresolved proposal (Q30), every universe
 //!    field set and P-05 at most P-58 (I-50). Every other check is clean
-//!    by the production setup.
+//!    by the production setup. I-50 is refused at save (Daniel's answer
+//!    of 2026-10-31, M4 design section 15.0): a manual save or a
+//!    resolution that would put P-05 above P-58 is refused with
+//!    `CapAboveCeiling`, so no draft holds such a cap. The activation
+//!    check stays as a second line of defence.
 //! 9. The normaliser accepts every valid UTF-8 document within the size
 //!    limit, format controls included, and keeps printable ASCII text
 //!    visible. So the ASCII evidence of every corpus annex occurs in the
@@ -969,6 +974,10 @@ impl RefSystem {
                 if !field.accepts(value) {
                     return Err(RefRefusal::ValueRejected);
                 }
+                if !conflicts(d, *field, value).is_empty() {
+                    // I-50 at save (reading 8).
+                    return Err(RefRefusal::CapAboveCeiling);
+                }
                 Ok(vec![RefEvent::Saved {
                     by: *by,
                     fields: vec![(*field, value.clone(), RefProv::Manual)],
@@ -1109,6 +1118,11 @@ impl RefSystem {
             Some((v, a)) => {
                 if !p.field.accepts(v) {
                     return Err(RefRefusal::ValueRejected);
+                }
+                if !conflicts(&self.draft, p.field, v).is_empty() {
+                    // I-50 at save (reading 8): the draft as it is now,
+                    // not as it was when the proposal was recorded.
+                    return Err(RefRefusal::CapAboveCeiling);
                 }
                 Ok(vec![
                     RefEvent::Resolved {
@@ -1432,24 +1446,31 @@ pub fn check_i65_step(
 
 /// The one place where the I-65 suites call production code.
 ///
-/// Wiring status (lane m4wire): [`ProductionSystem`] runs the production
-/// engine, `fstp_engine::Engine` with `CreatorDecider` over the cell's
-/// creator environment (`fake/shell.rs`), on a draft cell rebuilt from
-/// the draft's ledger at each step (`fake/draft_cell.rs`). The normaliser
-/// and the fake proposer are wired to `fstp-import`.
+/// Wiring status (lanes m4wire and m4glue): [`ProductionSystem`] runs the
+/// production engine, `fstp_engine::Engine` with `CreatorDecider` over
+/// the cell's creator environment (`fake/shell.rs`), on a draft cell
+/// rebuilt from the draft's ledger at each step (`fake/draft_cell.rs`).
+/// The normaliser and the fake proposer are wired to `fstp-import`.
 ///
 /// Wiring contract for the implementer, as built:
 ///
 /// - `open` starts from genesis. TA issues `OpenDraft` (core
 ///   `CreateProgramme`), grants M1 and M2 the programme manager role
 ///   through `GrantRole` with the fake vault's verification, and M1 saves
-///   every field outside the universe to its SuperSAFE fixture value. M1
-///   then saves the setup fields. Every check of the validation report
+///   every field outside `RefField::REQUIRED` to its synthetic SuperSAFE
+///   value, the public slug included, with the P-09 wording stored as
+///   text references (ADR-007). That save is setup, so `entries` leaves
+///   it out. M1 then saves the setup fields. Every check of the validation report
 ///   other than `FieldUnset`, `CapAboveCeiling`, `ImportUnresolved` and
 ///   acknowledgeable warnings is then clean under the recording-fake
-///   probes and the synthetic wording profile. While
-///   `fstp_creator::decide_creator` refuses the opening at its compile
-///   seam, `open` refuses with [`GAP_OPEN`] (lane m4creator).
+///   probes and the synthetic wording profile.
+/// - A save or resolution that puts P-05 above P-58 is refused with
+///   I-50 by the creator save and the core `EditPolicy` (design 3.2). It
+///   maps to `RefRefusal::CapAboveCeiling`, as the reference refuses it
+///   at save (reading 8).
+/// - An import command runs at the instant of the latest command, with a
+///   command id from a range of its own, so twin B's other entries keep
+///   twin A's instants and ids.
 /// - `Base::Stale` is the `DraftRevision` right after `OpenDraft`.
 /// - `RefShown::Of(v)` for proposal `p` is sent as a salted digest, which
 ///   is per stored text (ADR-007). It is the `text` digest of `p` when `v`
@@ -1465,10 +1486,11 @@ pub fn check_i65_step(
 ///
 /// Readings of the adapter: the salted digest of a stored value is
 /// SHA-256 over the proposal id and the value's normal text, so equal
-/// states hash equally. The held values are held again on every rebuild,
-/// as the shell does after a replay (design 3.3). A refusal maps to the
-/// reference refusal the failed check names, and a refusal no reference
-/// refusal names fails the step with [`GAP_STEP`].
+/// states hash equally. The held values, imported and saved, are held
+/// again on every rebuild, as the shell does after a replay (design
+/// 3.3). A refusal maps to the reference refusal the failed check names,
+/// and a refusal no reference refusal names fails the step with
+/// [`GAP_STEP`].
 pub mod production {
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -1502,16 +1524,19 @@ pub mod production {
     use crate::NotImplemented;
     use crate::fake::draft_cell::{self, DraftCell, VaultAccount};
 
-    /// The opening refused: `fstp_creator::decide_creator` refuses
-    /// `OpenDraft` at its compile seam until lane m4creator merges.
+    /// The opening refused with `RuleRef::NotImplemented`: the engine maps
+    /// `CreatorRefusal::Unavailable` there (`fstp_engine::compose`), so a
+    /// shell fact the creator needs is missing. No run of the suites
+    /// reaches it with the creator of lane m4creator.
     pub const GAP_OPEN: NotImplemented = NotImplemented::new(
-        "CreatorCommand::OpenDraft through Engine::execute: fstp_creator::decide_creator refuses at its compile seam (lane m4creator)",
+        "CreatorCommand::OpenDraft through Engine::execute refused as Unavailable (RuleRef::NotImplemented): a shell fact the creator needs is missing",
     );
 
-    /// The setup's saves refused: `fstp_creator::decide_creator` refuses
-    /// `SaveFields` at its compile seam until lane m4creator merges.
+    /// The setup's saves refused. A refusal with `RuleRef::NotImplemented`
+    /// is `CreatorRefusal::Unavailable`; any other refusal of a setup save
+    /// means the fixture setup no longer fits the creator.
     pub const GAP_SAVES: NotImplemented = NotImplemented::new(
-        "CreatorCommand::SaveFields of the setup through Engine::execute: fstp_creator::decide_creator refuses at its compile seam (lane m4creator)",
+        "CreatorCommand::SaveFields of the setup through Engine::execute refused: the fixture setup does not fit the creator, or a shell fact is missing (Unavailable)",
     );
 
     /// A production step that failed for a reason outside the model.
@@ -1602,6 +1627,14 @@ pub mod production {
         })
     }
 
+    /// The values of `fields` by field and digest, for the rebuilds.
+    fn held_of(fields: &[FieldEdit]) -> Vec<((FieldId, ValueDigest), fstp_programme::FieldValue)> {
+        fields
+            .iter()
+            .map(|e| ((e.field, e.digest), e.value.clone()))
+            .collect()
+    }
+
     /// One draft on production: its ledger and vault facts, with what the
     /// adapter issued: the actor of each command, the value of each save,
     /// and each recorded proposal's value. Each step rebuilds the engine
@@ -1618,10 +1651,18 @@ pub mod production {
         saves: BTreeMap<[u8; 16], Vec<(RefField, RefValue)>>,
         /// Each recorded proposal's value.
         values: BTreeMap<PropId, RefValue>,
+        /// Every manually saved value, by field and digest, held again on
+        /// each rebuild as the shell does after a replay.
+        held: BTreeMap<(FieldId, ValueDigest), fstp_programme::FieldValue>,
         /// The revision right after `OpenDraft`.
         stale: Option<DraftRevision>,
+        /// The command id of the fixture save of the setup, which is no
+        /// record of the reference vocabulary ([`ProductionSystem::entries`]).
+        fixture: Option<[u8; 16]>,
         /// The number of the next command, which also sets its instant.
         n: u32,
+        /// The number of the next import command (module documentation).
+        m: u32,
     }
 
     /// What one engine run gave.
@@ -1653,8 +1694,11 @@ pub mod production {
                 actors: BTreeMap::new(),
                 saves: BTreeMap::new(),
                 values: BTreeMap::new(),
+                held: BTreeMap::new(),
                 stale: None,
+                fixture: None,
                 n: 1,
+                m: 1,
             };
             let open = CreatorCommand::OpenDraft {
                 programme: PLAN_P,
@@ -1687,33 +1731,45 @@ pub mod production {
             Ok(s)
         }
 
-        /// M1 saves every field outside the universe to its SuperSAFE
-        /// fixture value, in one save.
+        /// M1 saves every field outside the activation's required universe
+        /// fields to its SuperSAFE fixture value, in one save.
+        ///
+        /// The public slug is a universe field that the reference does not
+        /// require for activation (`RefField::REQUIRED`), while the
+        /// production report fails `FieldUnset` on every field with no
+        /// value. So the setup saves the fixture's slug too, and
+        /// [`ProductionSystem::entries`] leaves this setup save out of the
+        /// reference vocabulary, as it leaves out the other fixture fields.
         fn save_fixture(&mut self) -> Result<(), NotImplemented> {
-            let fixture = fstp_programme::supersafe_fixture().map_err(|_| GAP_STEP)?;
-            let universe: BTreeSet<FieldId> = RefField::ALL
+            let fixture = draft_cell::synthetic_spec().map_err(|_| GAP_STEP)?;
+            let universe: BTreeSet<FieldId> = RefField::REQUIRED
                 .into_iter()
                 .filter_map(|f| field_id(f).ok())
                 .collect();
             let mut fields = Vec::new();
             for spec in FIELDS {
-                if universe.contains(&spec.id) {
+                if universe.contains(&spec.id) || spec.id == FieldId::P53 {
                     continue;
                 }
-                if let fstp_programme::Field::Set(v) = fixture.spec.get(spec.id) {
+                if let fstp_programme::Field::Set(v) = fixture.get(spec.id) {
                     let text = fstp_programme::encode_field_value(&v);
                     let json = fstp_json::parse(text.as_bytes()).map_err(|_| GAP_STEP)?;
                     fields.push(field_edit(spec.id, &json, Provenance::Manual).ok_or(GAP_STEP)?);
                 }
             }
             let base = self.state.creator.head(PLAN_P).ok_or(GAP_STEP)?;
+            let kept = held_of(&fields);
             let save = CreatorCommand::SaveFields {
                 programme: PLAN_P,
                 base,
                 fields,
             };
             match self.run(Command::Creator(save), M1, None)? {
-                Run::Appended => Ok(()),
+                Run::Appended => {
+                    self.held.extend(kept);
+                    self.fixture = self.ledger.last().map(|e| e.command);
+                    Ok(())
+                }
                 Run::Refused(..) => Err(GAP_SAVES),
             }
         }
@@ -1755,6 +1811,7 @@ pub mod production {
                     cell.engine.hold_import(text, value).map_err(|_| GAP_STEP)?;
                 }
             }
+            draft_cell::hold_saved(&mut cell, PLAN_P, &self.held);
             Ok(cell)
         }
 
@@ -1765,6 +1822,20 @@ pub mod production {
             let at = T0.saturating_add(i64::from(n).saturating_mul(1_000_000));
             let admins: BTreeSet<AccountId> = [TA, TB].into_iter().collect();
             draft_cell::ctx(actor, Timestamp::from_micros(at), n, &admins)
+        }
+
+        /// The context of the next import command by `actor`. It runs at the
+        /// instant of the latest command and takes its id from a range of
+        /// its own, so an import command shifts neither the instants nor
+        /// the ids of the commands after it. Twin B then shares every
+        /// non-import entry with twin A (design 8.4).
+        fn import_ctx(&mut self, actor: AccountId) -> Ctx {
+            let m = self.m;
+            self.m = m.saturating_add(1);
+            let last = i64::from(self.n.saturating_sub(1));
+            let at = T0.saturating_add(last.saturating_mul(1_000_000));
+            let admins: BTreeSet<AccountId> = [TA, TB].into_iter().collect();
+            draft_cell::ctx(actor, Timestamp::from_micros(at), 0x8000_0000 | m, &admins)
         }
 
         /// Runs `cmd` by `actor` through the engine, and keeps the ledger.
@@ -1899,6 +1970,7 @@ pub mod production {
                     RefRefusal::NotManager
                 }
                 (RuleRef::Input, Why::WrongState) => RefRefusal::StaleRevision,
+                (RuleRef::I50, _) => RefRefusal::CapAboveCeiling,
                 _ => return Err(GAP_STEP),
             })
         }
@@ -1981,6 +2053,7 @@ pub mod production {
             let Some(edit) = field_edit(id, &json, Provenance::Manual) else {
                 return Ok(StepVerdict::Refused(RefRefusal::ValueRejected));
             };
+            let kept = held_of(std::slice::from_ref(&edit));
             let save = CreatorCommand::SaveFields {
                 programme: PLAN_P,
                 base: base_rev,
@@ -1988,7 +2061,10 @@ pub mod production {
             };
             let saved = Some(vec![(field, value.clone())]);
             match self.run(Command::Creator(save), by, saved)? {
-                Run::Appended => Ok(StepVerdict::Accepted),
+                Run::Appended => {
+                    self.held.extend(kept);
+                    Ok(StepVerdict::Accepted)
+                }
                 Run::Refused(RuleRef::NotImplemented, _) => Err(GAP_SAVES),
                 Run::Refused(rule, reason) => {
                     self.save_refusal(rule, reason).map(StepVerdict::Refused)
@@ -2013,7 +2089,9 @@ pub mod production {
                 uploaded_by: fstp_import::AccountRef::from_raw(by.raw()),
             };
             let cmd = Command::Import(ImportCommand::RegisterDocument(document));
-            Ok(match self.run(cmd, by, None)? {
+            let ctx = self.import_ctx(by);
+            let run = self.run_ctx(cmd, ctx, by, None)?;
+            Ok(match run {
                 Run::Appended => StepVerdict::Accepted,
                 Run::Refused(rule, reason) => StepVerdict::Refused(match (rule, reason) {
                     _ if self.active() => RefRefusal::Active,
@@ -2057,7 +2135,7 @@ pub mod production {
                     conflicts_with_profile: Vec::new(),
                 });
             }
-            let mut ctx = self.ctx(M1);
+            let mut ctx = self.import_ctx(M1);
             ctx.actor = Actor::System(SystemCause::Timeline);
             ctx.tenant_admin = false;
             let cmd = Command::Import(ImportCommand::RecordProposals {
@@ -2171,13 +2249,46 @@ pub mod production {
                 (Some((v, _)), Some(f)) => Some(vec![(f, v.clone())]),
                 _ => None,
             };
+            let edited = match (resolution, field) {
+                (RefResolution::Edit(v), Some(f)) => Some((field_id(f).map_err(|_| GAP_STEP)?, v)),
+                _ => None,
+            };
             match self.run(cmd, by, saved)? {
-                Run::Appended => Ok(StepVerdict::Accepted),
+                Run::Appended => {
+                    // The ledger keeps only the digest of an edited value,
+                    // so the shell holds it again after each replay from
+                    // its own store (`fstp_engine` bridge, "Held values").
+                    // A confirmed value is held again from the proposal.
+                    if let Some((fid, v)) = edited {
+                        self.hold_edited(fid, v)?;
+                    }
+                    Ok(StepVerdict::Accepted)
+                }
                 Run::Refused(RuleRef::NotImplemented, _) => Err(GAP_SAVES),
                 Run::Refused(rule, reason) => self
                     .resolve_refusal(rule, reason, proposal, shown, resolution)
                     .map(StepVerdict::Refused),
             }
+        }
+
+        /// Keeps the edited value `v` of `field` for the rebuilds, under
+        /// the digest the appended `FieldsSaved` names.
+        fn hold_edited(&mut self, field: FieldId, v: &RefValue) -> Result<(), NotImplemented> {
+            let digest = self
+                .state
+                .creator
+                .draft(PLAN_P)
+                .and_then(|d| d.fields().get(&field).map(|(d, _)| *d))
+                .ok_or(GAP_STEP)?;
+            let currency = fstp_domain::policy::head(&self.state.core, PLAN_P)
+                .ok_or(GAP_STEP)?
+                .currency;
+            let data = untrusted(v).map_err(|_| GAP_STEP)?;
+            let value =
+                fstp_programme::decode_field_value_in(field, currency, data.as_data().as_bytes())
+                    .map_err(|_| GAP_STEP)?;
+            let _ = self.held.insert((field, digest), value);
+            Ok(())
         }
 
         /// The reference refusal of a refused resolution: the check that
@@ -2211,6 +2322,7 @@ pub mod production {
                         _ => RefRefusal::ValueRejected,
                     }
                 }
+                (RuleRef::I50, _) => RefRefusal::CapAboveCeiling,
                 _ => return Err(GAP_STEP),
             })
         }
@@ -2347,7 +2459,7 @@ pub mod production {
                     fields,
                     by,
                     ..
-                }) if *programme == PLAN_P => {
+                }) if *programme == PLAN_P && self.fixture != Some(*command) => {
                     let values = self.saves.get(command);
                     let mut saved = Vec::new();
                     for (f, _, prov) in fields {
@@ -2468,27 +2580,52 @@ pub mod production {
             })
         }
 
-        /// The twin view: the state with `import` reset to
-        /// `ImportStore::default()`, and every `Record::Import` removed,
-        /// entries left empty dropped.
+        /// The twin view (design 8.4, "equal creator and core
+        /// projections, and equal ledgers after removing import records").
+        ///
+        /// Twin B's import entries take ledger positions, so each
+        /// `DraftRevision` of twin B names a later entry than twin A's for
+        /// the same edit. The view keeps each revision's number, which the
+        /// edit guards compare, and drops the entry position it points at.
+        /// It holds the core projection, the draft as its accessors read
+        /// it, and every non-import entry with its instant, command id and
+        /// records, entries left empty dropped. The import clock keeps the
+        /// instants and ids of twin B's other entries equal to twin A's.
         pub fn twin_view(&self) -> Result<ProductionTwinView, NotImplemented> {
-            let mut state = self.state.clone();
-            state.import = fstp_import::ImportStore::default();
-            let mut ledger: Vec<Vec<fstp_engine::Record>> = Vec::new();
-            let mut last: Option<[u8; 16]> = None;
+            let draft = self.state.creator.draft(PLAN_P).map(|d| TwinDraft {
+                head: d.head().seq(),
+                last_edit: d.last_edit(),
+                builders: d.builders().clone(),
+                fields: d.fields().clone(),
+                start: d.start().cloned(),
+                set_fields: d.set_fields(),
+                invitations: d.invitations().clone(),
+                live_acks: d.live_acks(),
+                request: d.request().map(|r| (r.revision.seq(), r.by)),
+                active: d.active().map(|r| r.seq()),
+            });
+            let mut ledger: Vec<TwinEntry> = Vec::new();
             for e in &self.ledger {
                 if matches!(e.record, Record::Import(_)) {
                     continue;
                 }
-                if last != Some(e.command) {
-                    ledger.push(Vec::new());
-                    last = Some(e.command);
-                }
-                if let Some(entry) = ledger.last_mut() {
-                    entry.push(e.record.clone());
+                let record = without_entry_positions(fstp_json::ToJson::to_json(&e.record))
+                    .to_canonical()
+                    .map_err(|_| GAP_STEP)?;
+                match ledger.last_mut() {
+                    Some(last) if last.command == e.command => last.records.push(record),
+                    _ => ledger.push(TwinEntry {
+                        at: e.at,
+                        command: e.command,
+                        records: vec![record],
+                    }),
                 }
             }
-            Ok(ProductionTwinView { state, ledger })
+            Ok(ProductionTwinView {
+                core: self.state.core.clone(),
+                draft,
+                ledger,
+            })
         }
 
         /// Whether `fstp_engine::replay` of the ledger gives the state.
@@ -2563,16 +2700,78 @@ pub mod production {
         }
     }
 
-    /// The parts of a production draft that twin A and twin B must share:
-    /// the engine state with the import store emptied, and the records of
-    /// each entry with every import record removed and empty entries
-    /// dropped.
+    /// The parts of a production draft that twin A and twin B must share
+    /// (see [`ProductionSystem::twin_view`]).
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct ProductionTwinView {
-        /// The engine state without the import store.
-        pub state: EngineState,
+        /// The core projection.
+        pub core: fstp_domain::state::State,
+        /// The draft as its accessors read it.
+        pub draft: Option<TwinDraft>,
         /// The ledger without import records.
-        pub ledger: Vec<Vec<fstp_engine::Record>>,
+        pub ledger: Vec<TwinEntry>,
+    }
+
+    /// The draft of a twin view: what the edit guards and the report read,
+    /// with each revision by its number.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct TwinDraft {
+        /// The head revision's number.
+        pub head: u32,
+        /// The revision number of the latest edit.
+        pub last_edit: u32,
+        /// The builder set.
+        pub builders: BTreeSet<AccountId>,
+        /// The saved fields, with digest and provenance.
+        pub fields: BTreeMap<FieldId, (ValueDigest, Provenance)>,
+        /// The latest start.
+        pub start: Option<fstp_creator::StartingPoint>,
+        /// The fields that hold a value.
+        pub set_fields: BTreeSet<FieldId>,
+        /// Every invitation.
+        pub invitations: BTreeMap<fstp_creator::InvitationId, fstp_creator::Invitation>,
+        /// The live acknowledgements.
+        pub live_acks: BTreeSet<fstp_creator::WarningKey>,
+        /// The revision number and author of the latest request.
+        pub request: Option<(u32, AccountId)>,
+        /// The revision number the activation approved.
+        pub active: Option<u32>,
+    }
+
+    /// One non-import ledger entry of a twin view: its instant, command id
+    /// and records, each in canonical JSON without entry positions.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct TwinEntry {
+        /// The instant.
+        pub at: i64,
+        /// The command id.
+        pub command: [u8; 16],
+        /// The records.
+        pub records: Vec<String>,
+    }
+
+    /// `v` with the `entry` member of every revision object removed: a
+    /// `DraftRevision` is `{"seq": .., "entry": ..}` in its codec form.
+    fn without_entry_positions(v: Value) -> Value {
+        match v {
+            Value::Object(mut o) => {
+                if o.get("seq").is_some() && o.get("entry").is_some() {
+                    let _ = o.remove("entry");
+                }
+                let members: Vec<(String, Value)> = o
+                    .into_iter()
+                    .map(|(k, x)| (k, without_entry_positions(x)))
+                    .collect();
+                Value::Object(members.into_iter().collect())
+            }
+            Value::Array(a) => Value::Array(
+                a.into_vec()
+                    .into_iter()
+                    .map(without_entry_positions)
+                    .collect(),
+            ),
+            other => other,
+        }
     }
 
     /// Normalises an uploaded document with the standard limits and
@@ -3941,13 +4140,17 @@ fn expect_accepted(s: &mut System, cmd: &RefCommand, why: &str) -> Result<(), St
     }
 }
 
-/// One case of `i65_resolution_shown_digest_must_match`: on the standard
-/// draft, M1 uploads a document and records 2 or 3 proposals. A
+/// One case of `i65_resolution_shown_digest_must_match`: on a draft with
+/// no P-58, M1 uploads a document and records 2 or 3 proposals. A
 /// resolution of one of them with a stale or forged `shown` digest is
 /// refused and leaves the records unchanged. The same resolution with
 /// the digest of the stored value is then accepted.
+///
+/// The draft holds no P-58, so no generated P-05 meets I-50, which is
+/// refused at save (Daniel's answer of 2026-10-31, M4 design section
+/// 15.0). `conflict_case` covers I-50 on resolutions.
 pub fn shown_case(backend: Backend, g: &mut Gen) -> Result<(), String> {
-    let mut s = System::open(backend, &RefSetup::standard())?;
+    let mut s = System::open(backend, &RefSetup::with(Vec::new()))?;
     expect_accepted(
         &mut s,
         &RefCommand::Register {
@@ -4038,7 +4241,10 @@ pub fn shown_case(backend: Backend, g: &mut Gen) -> Result<(), String> {
 /// values fall on both sides of the bound. The recorded value equals the
 /// proposal byte for byte, and it carries I-50 exactly when it conflicts.
 /// A flagged value is refused without acknowledgement. With it, the
-/// draft takes the proposed value unchanged, never the bound.
+/// confirmation is refused at save with `CapAboveCeiling` (I-50 at save,
+/// Daniel's answer of 2026-10-31, M4 design section 15.0), and the draft
+/// keeps the value it held, never the bound and never an adjusted value.
+/// An unflagged value is confirmed, and the draft takes it unchanged.
 pub fn conflict_case(backend: Backend, g: &mut Gen) -> Result<(), String> {
     let bound = g.u64_in(1..=SUPERSAFE_CAP_MINOR.saturating_sub(1));
     let cap_side = g.bool();
@@ -4120,14 +4326,35 @@ pub fn conflict_case(backend: Backend, g: &mut Gen) -> Result<(), String> {
         conflict_acknowledged: ack,
         base: Base::Head,
     };
+    let held = draft_values(&s.entries()?).remove(&field);
     if flagged {
         expect_refused_without_effect(
             &mut s,
             &confirm(false),
             "a flagged conflict needs conflict_acknowledged",
         )?;
+        let before = s.entries()?;
+        match s.apply(&confirm(true))? {
+            StepVerdict::Refused(RefRefusal::CapAboveCeiling) => {}
+            other => {
+                return Err(format!(
+                    "I-50 at save: the acknowledged confirmation of {value:?} for {field:?} must be refused with CapAboveCeiling, got {other:?}"
+                ));
+            }
+        }
+        let entries = s.entries()?;
+        if entries != before {
+            return Err("I-50 at save: the refused confirmation appended records".to_owned());
+        }
+        let got = draft_values(&entries).remove(&field);
+        if got != held {
+            return Err(format!(
+                "I-65: the draft holds {got:?} for {field:?} after a refused confirmation, not the {held:?} it held; a conflict is flagged, never adjusted"
+            ));
+        }
+        return check_i65(&entries);
     }
-    expect_accepted(&mut s, &confirm(flagged), "I-65: the confirmation")?;
+    expect_accepted(&mut s, &confirm(false), "I-65: the confirmation")?;
     let entries = s.entries()?;
     let got = draft_values(&entries).remove(&field);
     if got.as_ref() != Some(&value) {
@@ -4337,9 +4564,11 @@ pub fn annex_proposals(annex: &Annex, text: &str) -> Result<Vec<RawProposal>, St
 ///    and the non-import ledger are unchanged, and every proposal is
 ///    unresolved.
 /// 2. Activation by TB is refused while any proposal is unresolved.
-/// 3. M1 confirms the first proposal alone. Only its field changes, to
-///    the proposed value byte for byte, and every other proposal stays
-///    unresolved.
+/// 3. An acknowledged confirmation of each flagged proposal is refused
+///    with `CapAboveCeiling` and changes nothing (I-50 at save, Daniel's
+///    answer of 2026-10-31). M1 then confirms the first proposal not
+///    flagged, alone. Only its field changes, to the proposed value byte
+///    for byte, and every other proposal stays unresolved.
 pub fn injected_annex_case(backend: Backend, annex: &Annex) -> Result<(), String> {
     let proposals = match backend {
         Backend::Reference => annex_proposals(annex, annex.text)?,
@@ -4408,15 +4637,39 @@ pub fn injected_annex_case(backend: Backend, annex: &Annex) -> Result<(), String
         &RefCommand::Activate { by: TB },
         "activation with unresolved proposals (Q30)",
     )?;
-    let Some(first) = proposals.first() else {
-        return Err("the annex has no proposal".to_owned());
-    };
     let entries = s.entries()?;
+    let recorded = recorded_proposals(&entries);
+    let is_flagged = |id: &PropId| recorded.get(id).is_some_and(|p| !p.conflicts.is_empty());
+    // I-50 is refused at save (Daniel's answer of 2026-10-31, M4 design
+    // section 15.0). So an acknowledged confirmation of a flagged
+    // proposal is refused with `CapAboveCeiling` and changes nothing. The
+    // one confirmation below is of the first proposal not flagged.
+    for p in proposals.iter().filter(|p| is_flagged(&p.id)) {
+        let cmd = RefCommand::Resolve {
+            by: M1,
+            proposal: p.id,
+            shown: RefShown::Of(p.value.clone()),
+            resolution: RefResolution::Confirm(p.value.clone()),
+            conflict_acknowledged: true,
+            base: Base::Head,
+        };
+        match s.apply(&cmd)? {
+            StepVerdict::Refused(RefRefusal::CapAboveCeiling) => {}
+            other => {
+                return Err(format!(
+                    "I-50 at save: the acknowledged confirmation {cmd:?} gave {other:?}"
+                ));
+            }
+        }
+        if s.entries()? != entries {
+            return Err("I-50 at save: a refused confirmation appended records".to_owned());
+        }
+    }
+    let Some(first) = proposals.iter().find(|p| !is_flagged(&p.id)) else {
+        return check_i65(&entries);
+    };
     let values_before = draft_values(&entries);
-    // The client acknowledges exactly the conflicts the store flagged.
-    let flagged = recorded_proposals(&entries)
-        .get(&first.id)
-        .is_some_and(|p| !p.conflicts.is_empty());
+    let flagged = false;
     expect_accepted(
         &mut s,
         &RefCommand::Resolve {

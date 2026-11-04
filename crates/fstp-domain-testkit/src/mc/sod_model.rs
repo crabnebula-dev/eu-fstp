@@ -570,8 +570,10 @@ pub const M_SOD_I01_P12_1_STATES: usize = 1_225;
 pub const M_SOD_I01_P12_2_STATES: usize = 1_174;
 /// See [`M_SOD_I01_P12_0_STATES`].
 pub const M_SOD_TWO_PROGRAMMES_STATES: usize = 713;
-/// See [`M_SOD_I01_P12_0_STATES`].
-pub const M_SOD_I02_STATES: usize = 252;
+/// See [`M_SOD_I01_P12_0_STATES`]. Re-measured on 2026-11-04 after the
+/// re-grant guard (Daniel's answer of 2026-10-31, M4 design section 15.0),
+/// which refuses a second binding of a role the account holds.
+pub const M_SOD_I02_STATES: usize = 174;
 /// See [`M_SOD_I01_P12_0_STATES`]. The reference backend stores 98_387
 /// states.
 pub const M_SOD_I06_STATES: usize = 149_961;
@@ -585,7 +587,7 @@ pub const M_SOD_I01_P12_1_REFERENCE_STATES: usize = 1_155;
 /// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
 pub const M_SOD_I01_P12_2_REFERENCE_STATES: usize = 1_104;
 /// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
-pub const M_SOD_I02_REFERENCE_STATES: usize = 227;
+pub const M_SOD_I02_REFERENCE_STATES: usize = 164;
 /// See [`M_SOD_I01_P12_0_REFERENCE_STATES`].
 pub const M_SOD_I06_REFERENCE_STATES: usize = 98_387;
 

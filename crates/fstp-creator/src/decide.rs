@@ -12,7 +12,8 @@ use fstp_domain::id::{AccountId, ProgrammeId};
 use fstp_domain::roles::{Group, Role};
 use fstp_domain::state::State;
 use fstp_domain::time::Timestamp;
-use fstp_programme::{CompileIds, Field, FieldId, FieldKind, FieldValue, FunderProfile, compile};
+use fstp_money::NonNegAmount;
+use fstp_programme::{CompileIds, FieldId, FieldKind, FieldValue, FunderProfile, compile};
 
 use crate::check::{CheckId, Severity};
 use crate::draft;
@@ -23,7 +24,7 @@ use crate::model::{
 };
 use crate::probe::ProbeKind;
 use crate::state::{CreatorState, Draft};
-use crate::validate::{DraftFacts, draft_facts, validate_at};
+use crate::validate::{OwnFacts, ReadFacts, validate_at};
 use crate::witness::{AckSet, ActivationApproved, Uncleared, clean, clear_activation};
 
 /// What one creator command decides.
@@ -70,6 +71,16 @@ pub enum CreatorRefusal {
     /// acceptance of a field that holds no template narrative waiting for
     /// it. Interim, pending Daniel: one refusal for every invalid save.
     NothingToSave,
+    /// I-50, R-PG-01 AC: the save would put P-05 above P-58. A cap above
+    /// the ceiling is refused when the draft is saved, so no draft holds
+    /// one (Daniel's answer of 2026-10-31, M4 design section 15.0). The
+    /// refusal names both values.
+    CapAboveCeiling {
+        /// P-05 as the save would leave it.
+        p05: NonNegAmount,
+        /// P-58 as the save would leave it.
+        p58: NonNegAmount,
+    },
     /// A save from a client claims a provenance other than `Manual`.
     /// Import provenance arrives only through the engine bridge (I-65).
     ProvenanceNotManual,
@@ -119,6 +130,12 @@ impl std::fmt::Display for CreatorRefusal {
             CreatorRefusal::Uncleared(Uncleared::Unacknowledged(c)) => {
                 write!(f, "I-66: the warning {} is not acknowledged", c.name())
             }
+            CreatorRefusal::CapAboveCeiling { p05, p58 } => write!(
+                f,
+                "I-50: P-05 {} is above P-58 {}",
+                p05.amount(),
+                p58.amount()
+            ),
             CreatorRefusal::Unavailable(what) => write!(f, "{what} is not implemented yet"),
             other => write!(f, "{other:?}"),
         }
@@ -127,7 +144,9 @@ impl std::fmt::Display for CreatorRefusal {
 
 impl std::error::Error for CreatorRefusal {}
 
-/// Decides one creator command (design section 3.2).
+/// Decides one creator command (design section 3.2). The draft facts,
+/// which hold the Guide preview, are computed only by the commands that
+/// read a report, after their cheaper guards.
 pub fn decide_creator(
     core: &State,
     creator: &CreatorState,
@@ -135,19 +154,18 @@ pub fn decide_creator(
     ctx: &Ctx,
     ext: &CreatorInputs,
 ) -> Result<CreatorDecision, CreatorRefusal> {
-    let facts = draft_facts(core, creator, cmd.programme(), ext.profile.as_ref());
-    decide_with(core, creator, cmd, ctx, ext, &facts)
+    decide_with(core, creator, cmd, ctx, ext, &OwnFacts)
 }
 
 /// The decision over explicit draft facts. Crate-private, so no caller
 /// outside the crate can feed made-up facts into an approval.
-pub(crate) fn decide_with(
+pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
     core: &State,
     creator: &CreatorState,
     cmd: &CreatorCommand,
     ctx: &Ctx,
     ext: &CreatorInputs,
-    facts: &DraftFacts,
+    facts: &F,
 ) -> Result<CreatorDecision, CreatorRefusal> {
     let actor = account(ctx)?;
     let records = |records: Vec<CreatorRecord>| {
@@ -311,7 +329,8 @@ pub(crate) fn decide_with(
             let d = open_draft(creator, *programme)?;
             let head = at_head(d, *revision)?;
             manager_or_admin(core, *programme, actor, ctx, ext)?;
-            let report = validate_at(core, creator, *programme, facts, ext);
+            let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
+            let report = validate_at(core, creator, *programme, &facts, ext);
             if warning.check.severity() != Severity::Warning || !report.shows_warning(warning) {
                 return Err(CreatorRefusal::NotAWarning);
             }
@@ -329,7 +348,8 @@ pub(crate) fn decide_with(
             let d = open_draft(creator, *programme)?;
             let head = at_head(d, *revision)?;
             manager_or_admin(core, *programme, actor, ctx, ext)?;
-            let report = validate_at(core, creator, *programme, facts, ext);
+            let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
+            let report = validate_at(core, creator, *programme, &facts, ext);
             records(vec![CreatorRecord::ActivationRequested {
                 programme: *programme,
                 revision: head,
@@ -345,7 +365,8 @@ pub(crate) fn decide_with(
             approver_checks(creator, *programme, *revision, ctx, ext)?;
             // Fresh probes: the report reads the probe results of this
             // request, which the entry records (design 3.2).
-            let report = validate_at(core, creator, *programme, facts, ext);
+            let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
+            let report = validate_at(core, creator, *programme, &facts, ext);
             let acks = AckSet::live(creator, *programme);
             let cleaned = clean(&report, &acks).map_err(CreatorRefusal::Uncleared)?;
             let clearance =
@@ -475,6 +496,7 @@ fn save(
         let profile = draft::profile_of(d)?;
         let version = draft::fresh_version(core, ctx)?;
         let policy = draft::edited_policy(head, &profile, &policy_values, version)?;
+        cap_within_ceiling(&policy)?;
         composed.push(Command::EditPolicy {
             base: head.id,
             version: Box::new(policy),
@@ -494,6 +516,25 @@ fn save(
     })
 }
 
+/// I-50 at save (Daniel's answer of 2026-10-31, M4 design section 15.0):
+/// refuses a policy whose P-05 is above its P-58, naming both values
+/// (R-PG-01 AC). Amounts of different currencies are refused too, as
+/// `fstp_domain::policy::validate` refuses them. The core `EditPolicy`
+/// checks I-50 again, and the report's `CapAboveCeiling` row stays a
+/// second line of defence.
+fn cap_within_ceiling(policy: &fstp_domain::policy::PolicyVersion) -> Result<(), CreatorRefusal> {
+    let Some(p58) = policy.live.p58 else {
+        return Ok(());
+    };
+    let p05 = policy.live.p05;
+    match p05.amount().cmp_same(p58.amount()) {
+        Ok(std::cmp::Ordering::Greater) | Err(_) => {
+            Err(CreatorRefusal::CapAboveCeiling { p05, p58 })
+        }
+        Ok(_) => Ok(()),
+    }
+}
+
 /// Checks that `field` holds template narrative the programme manager can
 /// accept: the latest start is a shipped template whose value of `field`
 /// waits for acceptance, and no save or acceptance of the field followed.
@@ -503,22 +544,10 @@ fn save(
 /// programme manager saves it as stored text instead. Interim, pending
 /// Daniel.
 fn accept_narrative(d: &Draft, field: FieldId) -> Result<(), CreatorRefusal> {
-    let Some(StartingPoint::Template { template, version }) = d.start() else {
-        return Err(CreatorRefusal::NothingToSave);
-    };
-    let t = draft::shipped_template(*template, *version).ok_or(CreatorRefusal::NothingToSave)?;
-    let waiting = match t.spec.get(field) {
-        Field::Set(v) => draft::needs_acceptance(&v),
-        Field::Unset => false,
-    };
-    if !waiting
-        || draft::kind(field) != Some(FieldKind::Artefact)
-        || d.fields().contains_key(&field)
-        || d.narratives().contains(&field)
-    {
-        return Err(CreatorRefusal::NothingToSave);
+    match draft::pending_narrative(d, field) {
+        Some(_) => Ok(()),
+        None => Err(CreatorRefusal::NothingToSave),
     }
-    Ok(())
 }
 
 /// The checks an approval of `programme` at `revision` needs before its

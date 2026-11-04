@@ -587,9 +587,7 @@ impl Setup {
     ) -> Result<Seq, ExecError> {
         let mut ctx = self.ctx(actor, tenant_admin);
         ctx.via = self.via;
-        let r = self
-            .scenario
-            .execute(fstp_engine::Command::Core(cmd.clone()), ctx);
+        let r = self.scenario.run_core(&cmd, ctx);
         if r.is_ok() {
             // The ghost refuses only commands it does not know.
             let _ = self.ghost.apply(Actor::Account(actor), &cmd);
@@ -975,6 +973,11 @@ pub struct StepOutput {
     pub result: Result<Seq, ExecError>,
     /// The core records the step appended, or why they could not be read.
     pub appended: Result<Vec<Record>, String>,
+    /// For a core `ActivateProgramme`, the head revision of the
+    /// programme's creator draft before the step. The paired entry names
+    /// it and its report, not the step's own (D2e,
+    /// `crate::activation::as_composed`).
+    pub draft_head: Option<fstp_creator::DraftRevision>,
 }
 
 /// The fstp-prop machine over the policy and call commands (I-12, R-PC-01
@@ -1342,12 +1345,17 @@ impl StateMachine for PolicyMachine {
                     fstp_domain::refusal::Refusal::not_implemented(),
                 )),
                 appended: Err("the setup failed".to_owned()),
+                draft_head: None,
             };
         };
+        let draft_head = match &step.cmd {
+            Command::ActivateProgramme { programme, .. } => {
+                setup.scenario.state().creator.head(*programme)
+            }
+            _ => None,
+        };
         let ctx = setup.ctx(step.actor, step.tenant_admin);
-        let result = setup
-            .scenario
-            .execute(fstp_engine::Command::Core(step.cmd.clone()), ctx);
+        let result = setup.scenario.run_core(&step.cmd, ctx);
         self.last_accepted.set(Some(result.is_ok()));
         sut.previous = core::mem::take(&mut sut.current);
         let appended = match setup.scenario.entries() {
@@ -1359,7 +1367,11 @@ impl StateMachine for PolicyMachine {
             }
             Err(e) => Err(format!("entries: {e:?}")),
         };
-        StepOutput { result, appended }
+        StepOutput {
+            result,
+            appended,
+            draft_head,
+        }
     }
 
     fn postcondition(
@@ -1384,7 +1396,11 @@ impl StateMachine for PolicyMachine {
         }
         if out.result.is_ok() && verdict != Verdict::Refuse {
             let appended = out.appended.as_ref().map_err(Clone::clone)?;
-            for expected in model.expected_records(actor, &step.cmd)? {
+            let cmd = match out.draft_head {
+                Some(head) => crate::activation::as_composed(&step.cmd, head)?,
+                None => step.cmd.clone(),
+            };
+            for expected in model.expected_records(actor, &cmd)? {
                 if !appended.contains(&expected) {
                     return Err(format!(
                         "{context}: the batch lacks the record the reference expects\n  expected: {expected:?}\n  batch: {appended:?}"

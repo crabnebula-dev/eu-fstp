@@ -1298,7 +1298,7 @@ impl Driver {
                 ctx.tenant_admin = step.flags.tenant_admin;
                 ctx.second_tenant_admin = step.flags.second_admin;
                 ctx.binds_tenant_admin = step.flags.binds_tenant_admin;
-                s.execute(fstp_engine::Command::Core(step.cmd.clone()), ctx)
+                s.run_core(&step.cmd, ctx)
             }
             Driver::Reference(w, records) => {
                 w.now = now;
