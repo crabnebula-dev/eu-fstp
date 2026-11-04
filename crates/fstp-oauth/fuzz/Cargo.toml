@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-oauth = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+fstp-crypto = { path = "../../fstp-crypto" }
 
 [[bin]]
 name = "url_parse"
@@ -56,6 +58,20 @@ bench = false
 [[bin]]
 name = "base64url_decode"
 path = "fuzz_targets/base64url_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "revocation_request_decode"
+path = "fuzz_targets/revocation_request_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_requests"
+path = "fuzz_targets/server_requests.rs"
 test = false
 doc = false
 bench = false
