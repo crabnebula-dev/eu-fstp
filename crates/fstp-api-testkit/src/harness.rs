@@ -2980,7 +2980,7 @@ pub fn observed_of_result(r: &Result<OpResult, ApiError>) -> Result<Observed, Ch
         Ok(OpResult::Pending(_)) => Ok(Observed::Pending),
         Ok(OpResult::StepUpRequired(_)) => Ok(Observed::StepUpRequired),
         Ok(OpResult::StrongMethodRequired) => Ok(Observed::StrongMethodRequired),
-        Err(ApiError::Refused { code, rule }) => observed_of(code.as_str(), Some(rule)),
+        Err(ApiError::Refused { code, rule, .. }) => observed_of(code.as_str(), Some(rule)),
         Err(ApiError::NotImplemented(seam)) => {
             Err(ChannelFault::NotImplemented((*seam).to_owned()))
         }
