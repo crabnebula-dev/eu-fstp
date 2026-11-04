@@ -8,7 +8,8 @@ const LABELS: Readonly<Record<string, string>> = {
   // Navigation and statuses.
   "onboarding.nav": "Onboarding steps",
   "onboarding.nav.item": "{name}: {status}",
-  "onboarding.step.title": "Onboarding: {name}",
+  "onboarding.step.title": "Set up your organisation",
+  "onboarding.step.heading": "Step {n}: {name}",
   "onboarding.step.unnamed": "Step",
   "onboarding.step.organisation": "Organisation",
   "onboarding.step.agreements": "Agreements",
@@ -36,7 +37,7 @@ const LABELS: Readonly<Record<string, string>> = {
     "The default identity verification methods (P-18) and EUDI Wallet relying party mode (P-45) for new programmes.",
   "onboarding.intro.inference": "The default inference provider and model (P-21) for new programmes.",
   "onboarding.intro.payments": "The payment mode (P-20) and the bank interface for execution mode.",
-  "onboarding.intro.channels": "The Matrix homeserver and the WhatsApp Business account the tenant owns.",
+  "onboarding.intro.channels": "The channels the platform uses to reach people.",
   "onboarding.intro.administrators":
     "At least two tenant admins, each with a verified identity (SoD-07). Invite the second admin here.",
   "onboarding.locked": "This step opens once every earlier step is validated.",
@@ -96,8 +97,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.payments.p20_none": "Choose a payment mode first.",
   "onboarding.p20.record_only": "Record only",
   "onboarding.p20.execution": "Execution",
-  "onboarding.channels.matrix": "Matrix homeserver, if Matrix is used",
-  "onboarding.channels.whatsapp": "The tenant uses its own WhatsApp Business account",
+  "onboarding.channels.email": "Email is the channel of this release. The platform sends every message by email, so this step needs no setting.",
+  "onboarding.channels.later": "Other channels come in a later release.",
   "onboarding.administrators.review": "Saving this step records the tenant admins listed below.",
 
   // Administrators.

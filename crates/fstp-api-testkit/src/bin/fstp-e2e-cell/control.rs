@@ -274,6 +274,7 @@ mod tests {
             assets: fstp_web_assets::AssetSet::from_files("main.js", &[("main.js", b"export {};")])
                 .unwrap(),
             auth_assets: std::sync::Arc::new(crate::assets::AuthAssets::empty()),
+            demo_signin: false,
         }
     }
 

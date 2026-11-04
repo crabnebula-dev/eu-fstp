@@ -74,6 +74,9 @@ function settle(d: HTMLDialogElement, done: boolean): void {
   p.settle(done);
 }
 
+/** The event that closes the open dialog as completed (see `dialog`). */
+const PROVED = "fstp-stepup-proved";
+
 function dialog(): Dialog {
   if (shared !== null && shared.dialog.isConnected) {
     return shared;
@@ -102,6 +105,18 @@ function dialog(): Dialog {
     h("div", { class: "fstp-actions" }, [confirm, cancel]),
   );
   cancel.addEventListener("click", () => d.close());
+  // A proof recorded for this challenge by other means, such as the
+  // confirmation of the test cell's demo sign-in (lane m4/site), closes
+  // the dialog as completed. The page then retries the command, and the
+  // server decides: without a recorded proof the retry is refused again,
+  // so the event grants nothing by itself.
+  d.addEventListener(PROVED, () => {
+    const p = pending;
+    if (p !== null && p.dialog === d) {
+      settle(d, true);
+      d.close();
+    }
+  });
   d.addEventListener("close", () => {
     hush(alert);
     settle(d, false);
@@ -156,6 +171,7 @@ export function ceremony(challenge: StepUpChallenge): Promise<boolean> {
   }
   return new Promise<boolean>((resolve) => {
     pending = { challenge, settle: resolve, dialog: d.dialog };
+    d.dialog.setAttribute("data-challenge", challenge.challengeId);
     hush(d.alert);
     d.dialog.showModal();
     d.confirm.focus();

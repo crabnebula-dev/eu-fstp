@@ -1,23 +1,35 @@
 // The home page `/app/`, "Your work" (R-NF-03, R-NF-04, I-86; M4 design
 // sections 2.2 J0 to J8 and 3.9; `docs/design/01-navigation-home.md`
-// "Your work home per role", approved by Daniel on 2026-11-01).
+// "Your work home per role", approved by Daniel on 2026-11-01; the
+// prototypes `home-voyager`, `home-reviewer`, `home-committee`,
+// `home-coordinator`, `home-irc` and `home-admin`).
 //
 // Every sign-in lands here. The page reads the caller's own roles
 // (`me.roles`) and own proposals (`proposal.list_own`), and lists one
 // link per piece of work (`model.ts` `workOf`). It has one `h1`, "Your
-// work", then one card per role group, each with its `h2`:
+// work", or "Administration" for a person who holds the tenant admin
+// role only, then one card per role group, each with its `h2`:
 //
-// - a primary card, "Start here", with the caller's first piece of work
-//   as its one primary action;
-// - a card per role group the caller holds (applications, guardian
-//   consent, tenant administration, programme management, coordination,
-//   committee review, independent review) with the rest of its links;
-// - the open calls, which anyone may read, last.
+// - an applicant's card per own proposal, headed by its title, with its
+//   state as a chip beside the formal state name (I-96);
+// - a reviewer's "N proposals need your score" (`me.assignments`);
+// - a committee member's "N proposals to rank" (`committee.ranking`);
+// - a coordinator's "N proposals need a knock-out decision"
+//   (`intake.queue`) and "Queue health", the counts per state of each
+//   call board, with no title and no applicant data (O-57);
+// - an IRC member's "N nominated proposals for independent review"
+//   (`me.irc_cases`), with no status strip (O-58);
+// - a tenant admin's "Organisation settings", "First-time setup" and
+//   "Members and roles" (`tenant.list_admins`), each linking the pages
+//   this release has: the onboarding steps, the programme set-up and the
+//   approvals;
+// - the open calls, which anyone may read, in an "Other places" aside.
 //
-// Interim, pending the lead: the count summaries and the recent activity
-// of the design need reads this release does not have (counts by state,
-// and the activity log filtered by the visibility function, I-93). They
-// are left out rather than shown empty.
+// The first card is the primary card. Interim, pending the lead: the
+// recent activity of the design needs the activity log filtered by the
+// visibility function (I-93), which this release does not have, so it
+// is left out rather than shown empty. A count whose read fails is
+// left out too, and the card keeps its links.
 //
 // The page contract of the e2e specs (`e2e/navigation/support.ts`):
 //
@@ -30,13 +42,35 @@
 //
 // Every element is built with `h`, and every text goes in as a text node.
 
-import { h } from "../core/dom.js";
 import { call } from "../applicant/client.js";
-import { frame } from "../applicant/ui.js";
-import { decodeOwnProposals } from "../applicant/wire.js";
-import { type OwnProposal, type Work, type WorkGroup, type WorkItem, workOf } from "./model.js";
+import { frame, stateLabel } from "../applicant/ui.js";
+import { type ProposalInfo, decodeOwnProposals } from "../applicant/wire.js";
+import { type Child, h } from "../core/dom.js";
+import type { Label } from "../core/i18n.js";
+import { isIntakeQueue, isBoard } from "../coordinator/models.js";
+import { isRankingView } from "../committee/models.js";
+import { isIrcCase } from "../irc/models.js";
+import { isScoreSheet } from "../reviewer/models.js";
+import {
+  type AssignmentSummary,
+  type Guard,
+  browserEnv,
+  isAssignmentSummary,
+  isBool,
+  isId,
+  isText,
+  list,
+  readOp,
+  record,
+} from "../reviewer/kit.js";
+import { type MyRoles, type OwnProposal, type Work, type WorkItem, workOf } from "./model.js";
 import { homeLabel } from "./nav.js";
 import { myRoles } from "./session.js";
+
+/** The path of one onboarding step (`onboarding/routes.ts`). */
+function ONBOARDING_STEP(step: "organisation" | "administrators"): string {
+  return `/app/admin/onboarding/${step}`;
+}
 
 /** One link of the home page, as its list item. */
 function workLink(i: WorkItem, primary: boolean): HTMLElement {
@@ -47,50 +81,336 @@ function workLink(i: WorkItem, primary: boolean): HTMLElement {
   return h("li", { "data-work-item": i.kind }, [h("a", attrs, [homeLabel(i.text.id, i.text.args)])]);
 }
 
-/** A card with heading `title` and the links `items`. */
-function card(id: string, title: string, items: readonly WorkItem[], kicker: string | null): HTMLElement {
-  const heading = `${id}-heading`;
+/** One card of the home page: its heading, what it says and its links. */
+interface Card {
+  readonly id: string;
+  readonly title: Label | string;
+  readonly body: readonly Child[];
+  readonly items: readonly WorkItem[];
+}
+
+/** A card element. The primary card carries the kicker and a primary button. */
+function cardElement(c: Card, kicker: Label | null): HTMLElement {
+  const heading = `${c.id}-heading`;
   const primary = kicker !== null;
-  return h("section", { id, class: primary ? "card card--primary" : "card", "aria-labelledby": heading }, [
+  return h("section", { id: c.id, class: primary ? "card card--primary" : "card", "aria-labelledby": heading }, [
     ...(kicker === null ? [] : [h("p", { class: "card-kicker" }, [kicker])]),
-    h("h2", { id: heading }, [title]),
-    h(
-      "ul",
-      { class: primary ? "fstp-list btn-row" : "fstp-list" },
-      items.map((i) => workLink(i, primary)),
-    ),
+    h("h2", { id: heading }, [c.title]),
+    ...c.body,
+    ...(c.items.length === 0
+      ? []
+      : [h("ul", { class: "fstp-list" }, c.items.map((i, n) => workLink(i, primary && n === 0)))]),
   ]);
 }
 
+/** A count heading: the `one` form for 1, else the `other` form. */
+function counted(key: string, n: number): Label {
+  return homeLabel(n === 1 ? `${key}_one` : `${key}_other`, { count: String(n) });
+}
+
+/** The chip of a proposal state with its formal name beside it (I-96, R-NF-03). */
+function stateChip(p: ProposalInfo): HTMLElement {
+  return h("p", { class: "primary-meta", "data-state": p.state }, [
+    h("span", { class: "badge badge--info" }, [stateLabel(p.state)]),
+    h("span", { class: "state-name" }, [homeLabel("home.formal_state", { state: p.state })]),
+    h("span", { class: "pid" }, [homeLabel("home.proposal", { id: p.proposal })]),
+  ]);
+}
+
+/** What the summaries of the home page read. A count is null when its read failed. */
+interface Counts {
+  readonly toScore: number | null;
+  readonly toRank: number | null;
+  readonly knockOut: number | null;
+  readonly queue: ReadonlyMap<string, number> | null;
+  readonly irc: number | null;
+  readonly admins: number | null;
+}
+
+const isAdmins: Guard<{ readonly admins: readonly { readonly account: string; readonly handle: string; readonly verified: boolean }[] }> =
+  record({ admins: list(record({ account: isId, handle: isText, verified: isBool })) });
+
+/** The calls of the work items of `kind`, from their paths. */
+function callsOf(items: readonly WorkItem[], kind: string): string[] {
+  return items.filter((i) => i.kind === kind).map((i) => i.href.split("/")[3] ?? "").filter((c) => c !== "");
+}
+
+/** The sum of `n` over `xs`, or null when any read failed. */
+async function sum<T>(xs: readonly T[], n: (x: T) => Promise<number | null>): Promise<number | null> {
+  const all = await Promise.all(xs.map(n));
+  let total = 0;
+  for (const x of all) {
+    if (x === null) {
+      return null;
+    }
+    total += x;
+  }
+  return total;
+}
+
 /**
- * The cards of the home page: the primary card with the first piece of
- * work that is not the open calls, then one card per role group in the
- * order `workOf` lists them.
+ * The reviewer assignments of `rows` that still need the caller's score,
+ * or null when that cannot be read (R-CF-02, R-EV-02). A ranked proposal
+ * takes no score, and the reviewer page reads it through the ranking of
+ * its call, never its sheet (`reviewer/pages.ts`). So the ranking of each
+ * call is read once, and a ranked proposal counts as scored.
  */
-function workCards(w: Work): HTMLElement {
-  const first = w.items.find((i) => i.group !== "everyone");
-  const rest = w.items.filter((i) => i !== first);
-  const groups: WorkGroup[] = [];
-  for (const i of rest) {
-    if (!groups.includes(i.group)) {
-      groups.push(i.group);
+async function toScoreOf(env: ReturnType<typeof browserEnv>, rows: readonly AssignmentSummary[]): Promise<number | null> {
+  const calls = [...new Set(rows.filter((x) => x.active && !x.stage2).map((x) => x.call))];
+  const ranked = new Set<string>();
+  for (const c of calls) {
+    const v = await readOp(env, "committee.ranking", { call: c }, isRankingView);
+    if (v.ok) {
+      for (const row of v.data) {
+        ranked.add(row.proposal);
+      }
+    } else if (v.problem.kind !== "refused") {
+      return null;
     }
   }
-  const cards: HTMLElement[] = [];
-  if (first !== undefined) {
-    cards.push(card("home-primary", homeLabel("home.primary.title"), [first], homeLabel("home.primary.kicker")));
+  return sum(rows, (x) => needsScore(env, x, ranked));
+}
+
+/**
+ * 1 when the reviewer assignment `x` still needs the caller's score, 0
+ * when it does not, or null when that cannot be read. The list holds
+ * unreleased assignments only. One awaiting the declaration needs the
+ * declaration and then the score. An active one needs a score while its
+ * sheet holds no current one. A ranked proposal, or a sheet the route
+ * refuses, is closed to scoring: the sheet opens in STAGE1 and STAGE2 only.
+ */
+async function needsScore(
+  env: ReturnType<typeof browserEnv>,
+  x: AssignmentSummary,
+  ranked: ReadonlySet<string>,
+): Promise<number | null> {
+  if (x.awaiting_declaration) {
+    return 1;
   }
-  for (const g of groups) {
-    cards.push(
-      card(
-        `home-group-${g.replace(/_/g, "-")}`,
-        homeLabel(`home.group.${g}`),
-        rest.filter((i) => i.group === g),
-        null,
-      ),
-    );
+  if (!x.active || (!x.stage2 && ranked.has(x.proposal))) {
+    return 0;
   }
-  return h("div", { id: "home-work" }, cards);
+  const sheet = await readOp(env, "review.score_sheet", { assignment: x.assignment }, isScoreSheet);
+  if (sheet.ok) {
+    return sheet.data.current === null ? 1 : 0;
+  }
+  return sheet.problem.kind === "refused" ? 0 : null;
+}
+
+/**
+ * 1 when the IRC case `x` is a nomination in independent review, 0 when
+ * it is not, or null when that cannot be read (O-58). One awaiting the
+ * declaration counts. An active one counts while its case reads, which it
+ * does in IRC_REVIEW only. The count names no proposal state.
+ */
+async function inIrcReview(env: ReturnType<typeof browserEnv>, x: AssignmentSummary): Promise<number | null> {
+  if (x.awaiting_declaration) {
+    return 1;
+  }
+  if (!x.active) {
+    return 0;
+  }
+  const c = await readOp(env, "irc.case", { irc_assignment: x.assignment }, isIrcCase);
+  if (c.ok) {
+    return 1;
+  }
+  return c.problem.kind === "refused" ? 0 : null;
+}
+
+/** Reads the counts the caller's cards show. Each read is made only for a card the caller has. */
+async function readCounts(w: Work, r: MyRoles): Promise<Counts> {
+  const env = browserEnv(document.body);
+  const has = (kind: string): boolean => w.items.some((i) => i.kind === kind);
+  const toScore = has("assignments")
+    ? readOp(env, "me.assignments", {}, list(isAssignmentSummary)).then((a) =>
+        a.ok ? toScoreOf(env, a.data.filter((x) => x.kind === "reviewer")) : null,
+      )
+    : Promise.resolve(null);
+  const toRank = sum(callsOf(w.items, "ranking"), async (c) => {
+    const v = await readOp(env, "committee.ranking", { call: c }, isRankingView);
+    return v.ok ? v.data.length : null;
+  });
+  const knockOut = sum(callsOf(w.items, "intake"), async (c) => {
+    const q = await readOp(env, "intake.queue", { call: c }, isIntakeQueue);
+    return q.ok ? q.data.proposals.filter((p) => p.state === "SUBMITTED").length : null;
+  });
+  const queue = has("intake")
+    ? Promise.all(
+        callsOf(w.items, "intake").map((c) => readOp(env, "call.board", { call: c }, isBoard)),
+      ).then((boards) => {
+        const out = new Map<string, number>();
+        for (const b of boards) {
+          if (!b.ok) {
+            return null;
+          }
+          for (const row of b.data) {
+            out.set(row.state, (out.get(row.state) ?? 0) + 1);
+          }
+        }
+        return out;
+      })
+    : Promise.resolve(null);
+  const irc = has("irc-cases")
+    ? readOp(env, "me.irc_cases", {}, list(isAssignmentSummary)).then((a) =>
+        a.ok ? sum(a.data.filter((x) => x.kind === "irc"), (x) => inIrcReview(env, x)) : null,
+      )
+    : Promise.resolve(null);
+  const admins = r.tenantAdmin
+    ? readOp(env, "tenant.list_admins", {}, isAdmins).then((a) => (a.ok ? a.data.admins.length : null))
+    : Promise.resolve(null);
+  return {
+    toScore: await toScore,
+    toRank: has("ranking") ? await toRank : null,
+    knockOut: has("intake") ? await knockOut : null,
+    queue: await queue,
+    irc: await irc,
+    admins: await admins,
+  };
+}
+
+/** The queue health table: the count of proposals per state, with no title or applicant data (O-57). */
+function queueHealth(queue: ReadonlyMap<string, number>): HTMLElement {
+  const rows = [...queue.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return h("section", { id: "home-queue", "aria-labelledby": "home-queue-heading" }, [
+    h("h2", { id: "home-queue-heading" }, [homeLabel("home.queue.title")]),
+    h("p", { class: "fstp-hint" }, [homeLabel("home.queue.intro")]),
+    rows.length === 0
+      ? h("p", {}, [homeLabel("home.queue.empty")])
+      : h("table", {}, [
+          h("caption", {}, [homeLabel("home.queue.caption")]),
+          h("thead", {}, [
+            h("tr", {}, [
+              h("th", { scope: "col" }, [homeLabel("home.queue.state")]),
+              h("th", { scope: "col" }, [homeLabel("home.queue.count")]),
+            ]),
+          ]),
+          h(
+            "tbody",
+            {},
+            rows.map(([state, n]) =>
+              h("tr", {}, [h("td", { class: "state-name" }, [state]), h("td", {}, [String(n)])]),
+            ),
+          ),
+        ]),
+  ]);
+}
+
+/** The cards of the caller's work, in the order of the design: own proposals first. */
+function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly main: Card[]; readonly after: HTMLElement[] } {
+  const out: Card[] = [];
+  const after: HTMLElement[] = [];
+  const of = (pred: (i: WorkItem) => boolean): WorkItem[] => w.items.filter(pred);
+
+  // J4: one card per own proposal, headed by its title.
+  for (const i of of((x) => x.kind === "proposal")) {
+    const id = i.href.split("/")[3] ?? "";
+    const p = own.find((x) => x.proposal === id);
+    out.push({
+      id: `home-proposal-${id}`,
+      title: p !== undefined && p.title.trim() !== "" ? p.title : homeLabel("home.proposal", { id }),
+      body: p === undefined ? [] : [stateChip(p)],
+      items: [i],
+    });
+  }
+  const proposals = of((x) => x.kind === "proposals");
+  if (proposals.length > 0) {
+    out.push({ id: "home-applications", title: homeLabel("home.group.applicant"), body: [], items: proposals });
+  }
+  const guardian = of((x) => x.group === "guardian");
+  if (guardian.length > 0) {
+    out.push({ id: "home-guardian", title: homeLabel("home.group.guardian"), body: [], items: guardian });
+  }
+
+  // J5: the coordinator.
+  const coordinator = of((x) => x.group === "coordinator");
+  if (coordinator.length > 0) {
+    out.push({
+      id: "home-coordinator",
+      title: c.knockOut === null ? homeLabel("home.group.coordinator") : counted("home.knock_out", c.knockOut),
+      body: [h("p", {}, [homeLabel("home.knock_out.intro")])],
+      items: coordinator,
+    });
+    if (c.queue !== null) {
+      after.push(queueHealth(c.queue));
+    }
+  }
+
+  // J6: the reviewer's assignments.
+  const assignments = of((x) => x.kind === "assignments");
+  if (assignments.length > 0) {
+    out.push({
+      id: "home-reviewer",
+      title: c.toScore === null ? homeLabel("home.group.reviewer") : counted("home.to_score", c.toScore),
+      body: [h("p", {}, [homeLabel("home.to_score.intro")])],
+      items: assignments,
+    });
+  }
+
+  // J7: the committee's rankings and open rounds.
+  const committee = of((x) => x.kind === "ranking" || x.kind === "cut-off-round");
+  if (committee.length > 0) {
+    out.push({
+      id: "home-committee",
+      title: c.toRank === null ? homeLabel("home.group.committee") : counted("home.to_rank", c.toRank),
+      body: [h("p", {}, [homeLabel("home.to_rank.intro")])],
+      items: committee,
+    });
+  }
+
+  // J8: the IRC, with no status strip (O-58).
+  const irc = of((x) => x.group === "irc");
+  if (irc.length > 0) {
+    out.push({
+      id: "home-irc",
+      title: c.irc === null ? homeLabel("home.group.irc") : counted("home.irc", c.irc),
+      body: [h("p", {}, [homeLabel("home.irc.intro")])],
+      items: irc,
+    });
+  }
+
+  // J0, J1, J2: the tenant admin.
+  const onboarding = of((x) => x.kind === "onboarding");
+  if (onboarding.length > 0) {
+    out.push({
+      id: "home-org",
+      title: homeLabel("home.admin.org"),
+      body: [
+        h("p", {}, [homeLabel("home.admin.org.intro")]),
+        h("p", {}, [h("a", { href: ONBOARDING_STEP("organisation") }, [homeLabel("home.work.org")])]),
+      ],
+      items: [],
+    });
+    out.push({
+      id: "home-setup",
+      title: homeLabel("home.admin.setup"),
+      body: [h("p", {}, [homeLabel("home.admin.setup.intro")])],
+      items: onboarding,
+    });
+    out.push({
+      id: "home-members",
+      title: homeLabel("home.admin.members"),
+      body: [
+        h("p", {}, [
+          c.admins === null
+            ? homeLabel("home.admin.members.intro")
+            : counted("home.admin.members.count", c.admins),
+        ]),
+        h("p", {}, [h("a", { href: ONBOARDING_STEP("administrators") }, [homeLabel("home.work.admins")])]),
+      ],
+      items: [],
+    });
+  }
+  const setup = of((x) => x.group === "tenant_admin" && x.kind !== "onboarding");
+  if (setup.length > 0) {
+    out.push({ id: "home-programmes", title: homeLabel("home.admin.programmes"), body: [], items: setup });
+  }
+
+  // J1, J3: the programme staff.
+  const programme = of((x) => x.group === "programme");
+  if (programme.length > 0) {
+    out.push({ id: "home-programme", title: homeLabel("home.group.programme"), body: [], items: programme });
+  }
+  return { main: out, after };
 }
 
 /** The roles this release has no page for, named without a link. */
@@ -114,11 +434,17 @@ function otherRoles(w: Work): HTMLElement[] {
   ];
 }
 
+/** Whether the caller holds the tenant admin role and nothing else. */
+function adminOnly(r: MyRoles): boolean {
+  return r.tenantAdmin && r.roles.length === 0;
+}
+
 /** Mounts the home page. */
 export function mountHome(): void {
   const f = frame(homeLabel("home.title"));
   const loading = h("p", { "aria-busy": "true" }, [homeLabel("home.loading")]);
-  const home = h("section", { id: "home", "aria-label": homeLabel("home.title") }, [loading]);
+  const home = h("section", { id: "home", "aria-labelledby": "home-title" }, [loading]);
+  f.heading.id = "home-title";
   f.main.append(home);
   const failed = (): void => {
     f.alert.textContent = homeLabel("home.failed");
@@ -136,7 +462,13 @@ export function mountHome(): void {
       failed();
       return;
     }
+    if (adminOnly(a.roles)) {
+      const title = homeLabel("home.admin.title");
+      f.heading.replaceChildren(title);
+      document.title = homeLabel("home.document_title", { page: title });
+    }
     const listed = await call("proposal.list_own", {}, undefined, decodeOwnProposals);
+    const infos: readonly ProposalInfo[] = listed.ok ? listed.value : [];
     const own: readonly OwnProposal[] | null = listed.ok
       ? listed.value.map((p) => ({ proposal: p.proposal, role: p.role, title: p.title }))
       : null;
@@ -146,13 +478,25 @@ export function mountHome(): void {
       (c) => homeLabel("home.call", { id: c }),
       (p) => homeLabel("home.proposal", { id: p }),
     );
+    const counts = await readCounts(w, a.roles);
+    const { main, after } = cards(w, infos, counts);
+    const everyone = w.items.filter((i) => i.group === "everyone");
     const parts: HTMLElement[] = [];
     if (w.noRole) {
       parts.push(h("p", { id: "home-no-role" }, [homeLabel("home.no_role")]));
     } else {
-      parts.push(h("p", { class: "muted" }, [homeLabel("home.intro")]));
+      parts.push(h("p", { class: "muted" }, [homeLabel(adminOnly(a.roles) ? "home.admin.intro" : "home.intro")]));
     }
-    parts.push(workCards(w), ...otherRoles(w));
+    const work = h("div", { id: "home-work", class: "layout-side" }, [
+      h("div", { class: "home-cards" }, [
+        ...main.map((c, n) => cardElement(c, n === 0 ? homeLabel("home.primary.kicker") : null)),
+        ...after,
+      ]),
+      h("aside", { "aria-label": homeLabel("home.other_places") }, [
+        cardElement({ id: "home-calls", title: homeLabel("home.group.everyone"), body: [h("p", { class: "text-sm" }, [homeLabel("home.calls.intro")])], items: everyone }, null),
+      ]),
+    ]);
+    parts.push(work, ...otherRoles(w));
     home.replaceChildren(...parts);
   })().catch(failed);
 }

@@ -25,6 +25,8 @@ import {
   statusRegion,
   t,
   textArea,
+  proposalHeading,
+  proposalSteps,
 } from "./ui.js";
 import { decodeAccepted } from "./wire.js";
 
@@ -116,8 +118,11 @@ export function mountEligibility(id: string): void {
       f.main.append(h("p", {}, [t("lead.only")]));
       return;
     }
+    proposalHeading(f, p.state);
     const status = statusRegion("elig-status");
     f.main.append(
+      proposalSteps(id, "eligibility"),
+      h("h2", { id: "elig-heading" }, [t("steps.eligibility")]),
       h("p", { id: "elig-intro" }, [t("elig.intro")]),
       countryForm(f, id, status),
       affiliationsForm(f, id, status),

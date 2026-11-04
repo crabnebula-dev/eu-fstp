@@ -12,6 +12,7 @@
 // creator, until the lead gives it a home in `web/src/core`.
 
 import { h } from "../core/dom.js";
+import { navigate } from "../core/router.js";
 import type { ApprovedText, Label } from "../core/i18n.js";
 import { appShell } from "../home/nav.js";
 import { t } from "./i18n.js";
@@ -64,6 +65,12 @@ export function footer(m: MandatoryElements): HTMLElement {
   ]);
 }
 
+/** The element pages render into: the shell's `#app`, else the body. */
+function rootElement(): HTMLElement {
+  const app = document.getElementById("app");
+  return app instanceof HTMLElement ? app : document.body;
+}
+
 /** The regions of a built page. */
 export interface Frame {
   /** The `main` landmark. Content goes after its heading and alert. */
@@ -74,7 +81,7 @@ export interface Frame {
 
 /**
  * Builds the page: language, title, `main` with the heading and the
- * alert region, and the footer. Everything already in the body is
+ * alert region, and the footer. Everything already in the shell root is
  * replaced, so a second call starts the page again.
  */
 export function frame(opts: { readonly title: Label; readonly alertId: string; readonly nav?: HTMLElement }): Frame {
@@ -93,7 +100,7 @@ export function frame(opts: { readonly title: Label; readonly alertId: string; r
   if (open instanceof HTMLDialogElement && open.open) {
     open.close();
   }
-  document.body.replaceChildren(...parts);
+  rootElement().replaceChildren(...parts);
   return { main, alert };
 }
 
@@ -154,5 +161,5 @@ export function busy(button: HTMLElement, run: () => Promise<void>): () => void 
 
 /** Opens `path` of this origin. */
 export function go(path: string): void {
-  location.assign(path);
+  navigate(path);
 }

@@ -11,6 +11,18 @@
 //! - `GET /demo/reset`: the cell at first start, with its first tenant
 //!   admin's link.
 //! - `GET /demo/advance?minutes=<n>`: moves the cell clock forward.
+//! - `GET /demo/tokens.css` and `GET /demo/front-door.css`: the token
+//!   sheet of lane m4/site (`web/src/auth/tokens.css`, a copy of
+//!   `design/tokens.css`) and the page rules, so the page sits on the
+//!   same tokens as the cell's pages (I-70).
+//!
+//! The page is the front door of the demo (lane m4/site scope item 7): it
+//! names the scene the cell holds (`#demo-scene`), then each synthetic
+//! person with their role (`[data-demo-role]`), one line on what they can
+//! do (`[data-demo-does]`) and their one-time enrolment link, which stays
+//! the first link of the person (`e2e/navigation/support.ts` `DemoPage`).
+//! On a cell started with `--demo-signin`, each person also gets a "Sign
+//! in as <name>" link (`crate::demo_signin`).
 //!
 //! The scene and clock links change the cell on a GET, so a person can
 //! follow them from this page. A request from this page carries
@@ -28,7 +40,10 @@ use fstp_domain::assignment::{AssignmentKind, AssignmentStatus};
 use fstp_domain::id::{AccountId, ProgrammeId, ProposalId};
 use fstp_domain::roles::{BindingScope, Role};
 
-use crate::{Inner, Site, control, lock, scenario, wire};
+use crate::{Inner, Site, control, demo_signin, lock, scenario, wire};
+
+/// The page rules of the front door, on the token sheet.
+const FRONT_DOOR_CSS: &str = include_str!("front-door.css");
 
 /// The review stages of [`scenario::ReviewAt`], in the order a call runs.
 const REVIEW_STAGES: [&str; 7] = [
@@ -75,6 +90,18 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
     let path = req.target.path().to_owned();
     let done = match path.as_str() {
         "/demo" | "/demo/" => return page(site),
+        "/demo/tokens.css" => {
+            return match site.info.auth_assets.file("auth/tokens.css") {
+                Some((kind, bytes)) => style(kind, bytes.to_vec()),
+                None => wire::not_found(),
+            };
+        }
+        "/demo/front-door.css" => {
+            return style(
+                "text/css; charset=utf-8",
+                FRONT_DOOR_CSS.as_bytes().to_vec(),
+            );
+        }
         "/demo/reset" => control::fresh(&site.info).map(|f| site.replace(f.inner)),
         "/demo/review" => match wire::query_param(&req, "stage") {
             Some(s) if REVIEW_STAGES.contains(&s.as_str()) => scenario::demo_review(site, &s).await,
@@ -108,6 +135,14 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
         }
         Err(e) => wire::refuse(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
+}
+
+/// A stylesheet of the front door.
+fn style(kind: &str, bytes: Vec<u8>) -> Response {
+    let mut r = Response::with_body(StatusCode::OK, kind, bytes);
+    let _ = r.headers.try_insert("cache-control", "no-store");
+    let _ = r.headers.try_insert("x-content-type-options", "nosniff");
+    r
 }
 
 /// `s` escaped for HTML text and double-quoted attribute values.
@@ -297,23 +332,161 @@ pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
     parts.join(" ")
 }
 
+/// The roles of `account` in the scene, in words, such as `FSTP
+/// coordinator` or `Applicant (lead)`, for the front door.
+pub(crate) fn roles_of(inner: &Inner, account: AccountId) -> String {
+    let state = inner.ports.engine.state();
+    let now = inner.ports.clock.read();
+    let mut words: Vec<&str> = Vec::new();
+    if inner.ports.tenant.holds_admin(account) {
+        words.push("Tenant admin");
+    }
+    let roster = state.core.roster();
+    let mut roles: BTreeSet<Role> = BTreeSet::new();
+    let mut receiving: BTreeSet<Role> = BTreeSet::new();
+    for (_, b) in roster.bindings() {
+        if b.account != account {
+            continue;
+        }
+        match b.scope {
+            BindingScope::Programme if b.active_at(now) => {
+                roles.insert(b.role);
+            }
+            BindingScope::Proposal { .. } => {
+                receiving.insert(b.role);
+            }
+            BindingScope::Programme => {}
+        }
+    }
+    for role in roles {
+        words.push(match role {
+            Role::ProgrammeManager => "Programme manager",
+            Role::CallDrafter => "Call drafter",
+            Role::FstpCoordinator => "FSTP coordinator",
+            Role::CommitteeMember => "Committee member",
+            Role::CommitteeChair => "Committee chair",
+            Role::IrcMember => "IRC member",
+            _ => "Staff role without a page yet",
+        });
+    }
+    for role in receiving {
+        words.push(match role {
+            Role::Applicant => "Applicant (lead)",
+            Role::Guardian => "Guardian",
+            _ => "Applicant team member",
+        });
+    }
+    if words.is_empty() {
+        return "No role".to_owned();
+    }
+    words.join(", ")
+}
+
+/// Where `account` sits on the front door: the tenant admin, the FSTP
+/// coordinator, the programme manager, the call drafter, the committee
+/// chair, the committee members, the IRC members, other staff, then the
+/// applicants and their teams, then anyone with no role. A person who
+/// holds several roles sits with the first of them.
+fn role_rank(inner: &Inner, account: AccountId) -> u8 {
+    let state = inner.ports.engine.state();
+    let now = inner.ports.clock.read();
+    let mut rank: u8 = 10;
+    if inner.ports.tenant.holds_admin(account) {
+        rank = 0;
+    }
+    for (_, b) in state.core.roster().bindings() {
+        if b.account != account {
+            continue;
+        }
+        let r = match b.scope {
+            BindingScope::Programme if b.active_at(now) => match b.role {
+                Role::FstpCoordinator => 1,
+                Role::ProgrammeManager => 2,
+                Role::CallDrafter => 3,
+                Role::CommitteeChair => 4,
+                Role::CommitteeMember => 5,
+                Role::IrcMember => 6,
+                _ => 7,
+            },
+            BindingScope::Proposal { .. } => match b.role {
+                Role::Applicant => 8,
+                _ => 9,
+            },
+            BindingScope::Programme => 10,
+        };
+        rank = rank.min(r);
+    }
+    rank
+}
+
+/// The line on what `account` can do, kept under 40 words: the whole
+/// line of [`what_they_can_do`], or its first sentences that fit.
+pub(crate) fn short_line(inner: &Inner, account: AccountId) -> String {
+    let line = what_they_can_do(inner, account);
+    if line.split_whitespace().count() < 40 {
+        return line;
+    }
+    let mut out = String::new();
+    for sentence in line.split_inclusive(". ") {
+        let next = format!("{out}{sentence}");
+        if next.split_whitespace().count() >= 40 {
+            break;
+        }
+        out = next;
+    }
+    if out.is_empty() {
+        line.split_whitespace()
+            .take(39)
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        out.trim_end().to_owned()
+    }
+}
+
 /// The demo page.
 fn page(site: &Site) -> Response {
     let inner = site.inner();
-    let auth = lock(&inner.auth);
+    let invites = lock(&inner.auth).open_invites();
+    // Grouped by role, then by name, so the page reads the same way in
+    // every scene (lane m4/site scope item 7).
+    let mut sorted: Vec<(u8, String, AccountId, String, String)> = invites
+        .into_iter()
+        .map(|(account, url)| {
+            let email = lock(&inner.auth).email_of(account).unwrap_or("").to_owned();
+            let who = scenario::persona_label(account)
+                .unwrap_or(&email)
+                .to_owned();
+            (role_rank(&inner, account), who, account, url, email)
+        })
+        .collect();
+    sorted.sort();
     let mut people = String::new();
-    for (account, url) in auth.open_invites() {
-        let email = auth.email_of(account).unwrap_or("");
-        let who = scenario::persona_label(account).unwrap_or(email);
+    for (_, who, account, url, email) in sorted {
+        let signin = if site.info.demo_signin {
+            match demo_signin::link(&site.info, &inner, account) {
+                Ok(link) => format!(
+                    "<p class=\"btn-row\"><a class=\"btn btn--primary\" data-demo-signin href=\"{l}\" target=\"_blank\" rel=\"noopener\">Sign in as {w}</a></p>\n",
+                    l = esc(&link),
+                    w = esc(&who),
+                ),
+                Err(_) => String::new(),
+            }
+        } else {
+            String::new()
+        };
         people.push_str(&format!(
-            "<li><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small><br>\
-<span>{n}</span></li>\n",
+            "<li class=\"card person\"><p class=\"person-name\"><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small></p>\n\
+<p><span data-demo-does>{n}</span></p>\n\
+<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}</li>\n",
             u = esc(&url),
-            w = esc(who),
-            e = esc(email),
-            n = esc(&what_they_can_do(&inner, account)),
+            w = esc(&who),
+            e = esc(&email),
+            r = esc(&roles_of(&inner, account)),
+            n = esc(&short_line(&inner, account)),
         ));
     }
+    let auth = lock(&inner.auth);
     if people.is_empty() {
         people.push_str("<li>Every sign-in link of this scene is used. Signed-in people sign in again at <a href=\"");
         people.push_str(&esc(&format!("{}/auth/login", site.info.origin)));
@@ -342,21 +515,32 @@ fn page(site: &Site) -> Response {
         .map(|a| format!("<a href=\"/demo/applicant?at={a}\">{a}</a> "))
         .collect();
     let origin = esc(&site.info.origin);
+    let scene = esc(&inner.scene());
+    let how = if site.info.demo_signin {
+        "Choose \"Sign in as\" to open the person's home page in one click, with no passkey. Use one browser profile per person, such as a new incognito window each. Pages signed in this way say \"Demo sign-in\" in the top bar. The name link enrols a passkey instead, and works once."
+    } else {
+        "Open each name link in its own incognito window and choose \"Create a passkey\". The person is signed in and lands on the home page, which links to their work. A link works once."
+    };
     let body = format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
-<meta http-equiv=\"refresh\" content=\"10\">\
-<title>FSTP demo, cell {name}</title></head><body>\n\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+<title>FSTP demo, cell {name}</title>\
+<link rel=\"stylesheet\" href=\"/demo/tokens.css\"><link rel=\"stylesheet\" href=\"/demo/front-door.css\"></head><body>\n\
+<header class=\"site-header\"><div class=\"topbar\"><span class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">F</span><span>FSTP demo</span></span>\
+<span class=\"topbar-spacer\"></span><a class=\"tool-link\" href=\"{origin}/app/calls\" target=\"_blank\" rel=\"noopener\">Open calls on the cell</a></div></header>\n\
+<main id=\"main\">\n\
 <h1>FSTP demo, cell {name}</h1>\n\
-<p>Test cell with synthetic data only. Cell: <a href=\"{origin}/auth/login\" target=\"_blank\" rel=\"noopener\">{origin}</a>. \
-Cell clock: {now} µs. This page reloads every 10 seconds.</p>\n\
-<p>Open each link in its own incognito window and choose \"Create a passkey\". The person is signed in and lands on the home page, which links to their work. A link works once. Under each person, one line says what they can do in this scene.</p>\n\
-<h2>People of this scene</h2>\n<ul>\n{people}</ul>\n\
-<h2>Messages the cell sent</h2>\n<p>Newest first. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
+<p id=\"demo-scene\" class=\"scene\">Scene: <strong>{scene}</strong></p>\n\
+<p class=\"muted\">Test cell with synthetic data only. Cell: <a href=\"{origin}/auth/login\" target=\"_blank\" rel=\"noopener\">{origin}</a>. \
+Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refresh it</a> to see new messages and links.</p>\n\
+<p>{how}</p>\n\
+<h2>People of this scene</h2>\n<ul class=\"people\">\n{people}</ul>\n\
+<h2>Messages the cell sent</h2>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\
 <p>Review: {review}</p>\n<p>Applicant: {applicant}</p>\n\
 <p><a href=\"/demo/reset\">Reset</a> (an empty cell and its first tenant admin)</p>\n\
 <p>Clock: <a href=\"/demo/advance?minutes=60\">+60 minutes</a> <a href=\"/demo/advance?minutes=1440\">+1 day</a></p>\n\
-</body></html>\n",
+</main>\n</body></html>\n",
         name = esc(site.info.name),
     );
     let mut r = Response::with_body(
@@ -367,7 +551,7 @@ Cell clock: {now} µs. This page reloads every 10 seconds.</p>\n\
     let _ = r.headers.try_insert("cache-control", "no-store");
     let _ = r.headers.try_insert(
         "content-security-policy",
-        "default-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
+        "default-src 'none'; style-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
     );
     let _ = r.headers.try_insert("x-content-type-options", "nosniff");
     let _ = r.headers.try_insert("referrer-policy", "no-referrer");

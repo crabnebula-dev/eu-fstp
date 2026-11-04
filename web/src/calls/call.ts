@@ -23,6 +23,7 @@ import {
 } from "../applicant/ui.js";
 import { CALL_AMOUNT_KINDS, type CallDetail, decodeCall, decodeCreated } from "../applicant/wire.js";
 import { h } from "../core/dom.js";
+import { navigate } from "../core/router.js";
 
 function glance(c: CallDetail): HTMLElement {
   const deadline = h("p", { id: "call-deadline" }, [
@@ -68,7 +69,7 @@ async function start(f: Frame, c: CallDetail, b: HTMLButtonElement): Promise<voi
     showFailure(f, r.failure);
     return;
   }
-  location.assign(APP.workspace(r.value));
+  navigate(APP.workspace(r.value));
 }
 
 /** Mounts the page of call `id`. */

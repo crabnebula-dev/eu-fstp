@@ -23,6 +23,7 @@ import {
   stage2Readable,
   teamEditable,
   teamReadsOffered,
+  type ProposalState,
   withdrawOffered,
 } from "./rules.js";
 import {
@@ -207,6 +208,39 @@ function copyForm(f: Frame, p: ProposalInfo): HTMLElement {
 }
 
 /**
+ * The outcome panel of a proposal in a final or paused state
+ * (`end-states` prototype). It names the outcome in words beside its
+ * formal state (I-96) and carries no score or comment (O-54: none is
+ * read here). A state with no panel gives none.
+ *
+ * Interim, pending the lead: the "on hold" panel of a minor's proposal
+ * held in IRC_REVIEW (I-18) needs a hold member that `proposal.view`
+ * does not carry, so this page shows none for it.
+ */
+function outcomePanel(state: ProposalState): HTMLElement[] {
+  const key =
+    state === "INELIGIBLE"
+      ? "ineligible"
+      : state === "NOT_SELECTED"
+        ? "not_selected"
+        : state === "DEFERRED"
+          ? "deferred"
+          : null;
+  if (key === null) {
+    return [];
+  }
+  return [
+    h("section", { id: "proposal-outcome", class: "card", "aria-labelledby": "proposal-outcome-heading" }, [
+      h("p", { class: "card-kicker" }, [t(`outcome.${key}.kicker`)]),
+      h("h2", { id: "proposal-outcome-heading" }, [t(`outcome.${key}.title`)]),
+      h("p", { class: "state-name" }, [t("outcome.formal", { state })]),
+      h("p", {}, [t(`outcome.${key}.text`)]),
+      ...(key === "deferred" ? [] : [h("p", {}, [h("a", { href: APP.calls }, [t("outcome.other_calls")])])]),
+    ]),
+  ];
+}
+
+/**
  * Mounts the page of proposal `id`. `done`, when given, is the outcome of
  * the action that led here, shown in a status region.
  */
@@ -228,9 +262,11 @@ export function mountProposal(id: string, done?: string): void {
     const state = h("p", {}, [
       t("proposal.state"),
       " ",
-      h("strong", { id: "proposal-state", "data-state": p.state }, [stateLabel(p.state)]),
+      h("strong", { id: "proposal-state", class: "badge badge--info", "data-state": p.state }, [stateLabel(p.state)]),
+      " ",
+      h("span", { class: "state-name" }, [p.state]),
     ]);
-    f.main.append(title, state);
+    f.main.append(title, state, ...outcomePanel(p.state));
     if (p.call !== undefined) {
       f.main.append(h("p", {}, [h("a", { href: APP.call(p.call) }, [t("proposal.call_link")])]));
     }

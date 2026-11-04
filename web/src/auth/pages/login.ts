@@ -79,11 +79,12 @@ export function mount(): void {
   });
 
   main.append(
-    h('section', { 'aria-labelledby': 'passkey-heading' }, [
+    h('section', { class: 'card', 'aria-labelledby': 'passkey-heading' }, [
       h('h2', { id: 'passkey-heading' }, [t('login.passkey.heading')]),
+      h('p', {}, [t('login.passkey.intro')]),
       passkey,
     ]),
-    h('section', { 'aria-labelledby': 'magic-heading' }, [
+    h('section', { class: 'card', 'aria-labelledby': 'magic-heading' }, [
       h('h2', { id: 'magic-heading' }, [t('login.magic.heading')]),
       h('p', {}, [t('login.magic.intro')]),
       form,

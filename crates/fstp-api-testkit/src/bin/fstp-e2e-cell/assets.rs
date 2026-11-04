@@ -42,19 +42,41 @@ impl AuthAssets {
         AuthAssets::default()
     }
 
-    /// The shell and assets below the repository's `web` directory.
-    pub(crate) fn load(web: &Path) -> Result<AuthAssets, String> {
+    /// The shell and assets below the repository's `web` directory. The
+    /// demo modules are loaded only when `demo_signin` is on
+    /// (`--demo-signin`); without it the cell serves none of them.
+    pub(crate) fn load(web: &Path, demo_signin: bool) -> Result<AuthAssets, String> {
         let shell = read(&web.join("src").join("auth").join("shell.html"))?;
         let mut files = BTreeMap::new();
-        files.insert(
-            "auth/auth.css".to_owned(),
-            (
-                "text/css; charset=utf-8",
-                read(&web.join("src").join("auth").join("auth.css"))?,
-            ),
-        );
-        let dist = web.join("dist").join("auth");
-        let mut stack = vec![(dist, String::from("auth"))];
+        // Every stylesheet of `web/src/auth`: the token sheet of lane
+        // m4/site (`tokens.css`) and the page rules (`auth.css`).
+        let styles = web.join("src").join("auth");
+        let mut sheets: Vec<String> = std::fs::read_dir(&styles)
+            .map_err(|e| format!("{}: {e}", styles.display()))?
+            .filter_map(|e| e.ok().and_then(|e| e.file_name().into_string().ok()))
+            .filter(|n| {
+                n.ends_with(".css")
+                    && !n.starts_with('.')
+                    && n.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+            })
+            .collect();
+        sheets.sort();
+        for name in sheets {
+            files.insert(
+                format!("auth/{name}"),
+                ("text/css; charset=utf-8", read(&styles.join(&name))?),
+            );
+        }
+        // The auth pages, and the demo modules of lane m4/site
+        // (`web/src/demo`), which only this cell serves, and only with
+        // `--demo-signin`: the demo sign-in page and the notice of a demo
+        // session (`crate::demo_signin`).
+        let mut stack = vec![(web.join("dist").join("auth"), String::from("auth"))];
+        let demo = web.join("dist").join("demo");
+        if demo_signin && demo.is_dir() {
+            stack.push((demo, String::from("demo")));
+        }
         while let Some((dir, rel)) = stack.pop() {
             let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             for entry in entries {
@@ -93,7 +115,18 @@ impl AuthAssets {
         let Some(shell) = &self.shell else {
             return Response::new(StatusCode::NOT_FOUND);
         };
-        let mut r = Response::with_body(StatusCode::OK, "text/html; charset=utf-8", shell.clone());
+        self.page_with(shell)
+    }
+
+    /// One loaded file by its path below `/assets/`, such as
+    /// `auth/tokens.css`, with its media type.
+    pub(crate) fn file(&self, rel: &str) -> Option<(&'static str, &[u8])> {
+        self.files.get(rel).map(|(k, b)| (*k, b.as_slice()))
+    }
+
+    /// The page `html` with the M3 CSP and headers of every M3 page.
+    pub(crate) fn page_with(&self, html: &[u8]) -> Response {
+        let mut r = Response::with_body(StatusCode::OK, "text/html; charset=utf-8", html.to_vec());
         let _ = r.headers.try_insert("content-security-policy", AUTH_CSP);
         let _ = r.headers.try_insert("cache-control", "no-store");
         let _ = r.headers.try_insert("x-content-type-options", "nosniff");

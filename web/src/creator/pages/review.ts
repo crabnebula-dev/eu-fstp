@@ -28,7 +28,9 @@ const PREVIEWS = [
 export function mount(p: string): void {
   const s = CREATOR_STEPS.find((x) => x.id === "review");
   if (s === undefined) return;
-  const { main, alert } = frame({ title: stepTitle(s), alertId: "creator-error", nav: stepNav(p, "review") });
+  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error", nav: stepNav(p, "review") });
+  document.title = stepTitle(s);
+  main.append(h("h2", { id: "creator-step-heading" }, [stepTitle(s)]));
   const list = h("ul", { id: "report", "aria-labelledby": "report-title" });
   const summary = h("p", { id: "report-summary", role: "status" });
   const status = h("p", { id: "activation-status", role: "status" });

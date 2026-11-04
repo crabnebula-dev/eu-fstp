@@ -18,6 +18,7 @@ import { type ApiClient, type ApiOutcome, createApi } from "../core/api.js";
 import { OPERATIONS, VALIDATORS } from "../gen/api.js";
 import { type MyRoles, isPublicPage, readMyRoles } from "./model.js";
 import { showRoles } from "./nav.js";
+import { setCallTitles } from "./titles.js";
 
 /** What the read of the caller's roles gave. */
 export type RolesAnswer =
@@ -73,6 +74,7 @@ export async function startSession(path: string): Promise<void> {
   const a = await myRoles();
   if (a.kind === "roles") {
     showRoles(a.roles);
+    setCallTitles(a.roles.titles);
   } else if (a.kind === "signed_out" && !isPublicPage(path)) {
     location.replace(loginPathFor(path));
   }

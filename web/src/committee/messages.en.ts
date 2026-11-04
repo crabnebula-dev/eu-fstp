@@ -2,7 +2,7 @@
 // Every id starts with `com.`.
 
 export const COMMITTEE_LABELS: Readonly<Record<string, string>> = {
-  "com.ranking.title": "Ranking of the call",
+  "com.ranking.title": "Ranking for {call}",
   "com.ranking.caption": "Ranked proposals, top first",
   "com.ranking.none": "No proposal of this call is ranked.",
   "com.col_position": "Position",
@@ -21,7 +21,7 @@ export const COMMITTEE_LABELS: Readonly<Record<string, string>> = {
   "com.budget_unknown": "The remaining call budget is not available to you.",
   "com.shortfall": "The nominations exceed the call budget by (EUR): ",
   "com.recused_notice": "You have a conflict on a ranked proposal of this call, so you are recused from its cut-off vote.",
-  "com.open.heading": "Open a cut-off round",
+  "com.open.heading": "Open the cut-off round",
   "com.open.nominated": "Number of proposals nominated, counted from the top",
   "com.open.rationale": "Rationale",
   "com.open.tie_break": "Tie-break under P-17, needed when the cut-off falls inside a tie",

@@ -26,6 +26,7 @@ import { busy, frame, hush, warn } from "../../creator/frame.js";
 import { anyObject, call, report } from "../../creator/ops.js";
 import { labelOr, t } from "../i18n.js";
 import {
+  ONBOARDING_STEPS,
   PAYMENT_MODES,
   accountSet,
   isOutcome,
@@ -200,13 +201,14 @@ function controls(step: OnboardingStep, view: StepView, admins: readonly AdminRo
           new Set(typeof v["bank_interface"] === "string" ? [v["bank_interface"]] : []),
         ),
       ];
-    case "channels": {
-      const whatsapp = h("input", { id: "ob.whatsapp", type: "checkbox", name: "whatsapp", checked: v["whatsapp"] === true });
+    case "channels":
+      // P-32: email is the one channel of this release. The other
+      // channels wait on B-03 and B-05, so the step offers no control for
+      // them, and the save sends their stored values back unchanged.
       return [
-        textControl("matrix_homeserver", t.label("onboarding.channels.matrix"), v["matrix_homeserver"], { spellcheck: "false" }),
-        h("div", { class: "fstp-check" }, [whatsapp, h("label", { for: "ob.whatsapp" }, [t.label("onboarding.channels.whatsapp")])]),
+        h("p", { id: "ob-channels-email" }, [t.label("onboarding.channels.email")]),
+        h("p", { class: "fstp-hint" }, [t.label("onboarding.channels.later")]),
       ];
-    }
     case "administrators":
       return [h("p", {}, [t.label("onboarding.administrators.review")])];
   }
@@ -258,8 +260,10 @@ function values(step: OnboardingStep, form: HTMLElement, view: StepView, admins:
     case "payments":
       return { ok: { bank_interface: checked(form, "bank_interface")[0] ?? "" } };
     case "channels": {
-      const homeserver = valueOf(form, "matrix_homeserver").trim();
-      return { ok: { matrix_homeserver: homeserver === "" ? null : homeserver, whatsapp: checked(form, "whatsapp").length > 0 } };
+      // The stored members stay as the server holds them (P-32, scope item 6).
+      const v = view.values ?? {};
+      const homeserver = typeof v["matrix_homeserver"] === "string" ? v["matrix_homeserver"] : null;
+      return { ok: { matrix_homeserver: homeserver, whatsapp: v["whatsapp"] === true } };
     }
     case "administrators": {
       const set = accountSet(admins.map((a) => a.account));
@@ -372,11 +376,19 @@ async function loadAdmins(alert: HTMLElement): Promise<AdminRow[] | null> {
 /** Mounts the page of onboarding step `step`. */
 export function mount(step: OnboardingStep): void {
   let nav = stepNav(step, null);
+  // The `onboarding` prototype: "Set up your organisation" heads every
+  // step, and the step names itself in its `h2` and the document title.
+  const heading = t.label("onboarding.step.heading", {
+    n: String(ONBOARDING_STEPS.indexOf(step) + 1),
+    name: stepName(step),
+  });
   const { main, alert } = frame({
-    title: t.label("onboarding.step.title", { name: stepName(step) }),
+    title: t.label("onboarding.step.title"),
     alertId: "onboarding-error",
     nav,
   });
+  document.title = heading;
+  main.append(h("h2", { id: "onboarding-step-heading" }, [heading]));
   const body = h("div", { id: "onboarding-body" });
   main.append(h("p", {}, [labelOr(`onboarding.intro.${step}`, () => t.label("onboarding.intro"))]), body);
 

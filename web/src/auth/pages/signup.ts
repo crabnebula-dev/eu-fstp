@@ -67,6 +67,25 @@ function mountRegister(token: string | null): void {
   main.append(h('p', {}, [t('signup.register.intro')]), button);
 }
 
+/**
+ * The "Check your email" state after a sent request (`auth-check-email`
+ * prototype). The reply is the same for every address, so the page says
+ * the same for every address.
+ */
+function sent(address: string): void {
+  const { main } = frame('signup.sent.title', 'signup-error');
+  const status = statusRegion('signup-status');
+  main.append(
+    h('section', { class: 'card', 'aria-labelledby': 'signup-sent-heading' }, [
+      h('h2', { id: 'signup-sent-heading' }, [t('signup.sent.heading')]),
+      h('p', { class: 'pid' }, [address]),
+      status,
+    ]),
+    h('p', {}, [h('a', { href: PATHS.signup }, [t('signup.sent.again')])]),
+  );
+  status.textContent = t('signup.sent');
+}
+
 function mountRequest(): void {
   const { main, alert } = frame('signup.title', 'signup-error');
   const email = emailField('signup-email');
@@ -86,7 +105,7 @@ function mountRequest(): void {
     busy(submit, async () => {
       const r = await post('/auth/signup/options', { email: address });
       if (ok(r)) {
-        status.textContent = t('signup.sent');
+        sent(address);
       } else {
         showFailure(alert, failureOf(r.status));
       }

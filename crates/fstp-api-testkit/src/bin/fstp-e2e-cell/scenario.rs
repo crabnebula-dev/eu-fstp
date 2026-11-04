@@ -1064,17 +1064,19 @@ pub(crate) fn persona_label(account: AccountId) -> Option<&'static str> {
 }
 
 /// A fresh cell seeded at review `stage`, for the demo page.
-pub(crate) async fn demo_review(site: &Site, stage: &str) -> Result<(), String> {
-    let stage = ReviewAt::parse(stage).ok_or_else(|| "stage".to_owned())?;
+pub(crate) async fn demo_review(site: &Site, name: &str) -> Result<(), String> {
+    let stage = ReviewAt::parse(name).ok_or_else(|| "stage".to_owned())?;
     let (inner, _) = build_review(&site.info, stage).await?;
+    inner.set_scene(name);
     site.replace(inner);
     Ok(())
 }
 
 /// A fresh cell seeded at applicant state `at`, for the demo page.
-pub(crate) async fn demo_applicant(site: &Site, at: &str) -> Result<(), String> {
-    let at = At::parse(at).ok_or_else(|| "at".to_owned())?;
+pub(crate) async fn demo_applicant(site: &Site, name: &str) -> Result<(), String> {
+    let at = At::parse(name).ok_or_else(|| "at".to_owned())?;
     let (inner, _) = build_applicant(&site.info, at).await?;
+    inner.set_scene(name);
     site.replace(inner);
     Ok(())
 }
@@ -1084,11 +1086,15 @@ pub(crate) async fn review(site: &Site, req: &Request) -> Response {
     let Some(body) = wire::body(req) else {
         return wire::bad("body");
     };
-    let Some(stage) = wire::str_member(&body, "stage").and_then(ReviewAt::parse) else {
+    let name = wire::str_member(&body, "stage")
+        .unwrap_or_default()
+        .to_owned();
+    let Some(stage) = ReviewAt::parse(&name) else {
         return wire::bad("stage");
     };
     match build_review(&site.info, stage).await {
         Ok((inner, v)) => {
+            inner.set_scene(&name);
             site.replace(inner);
             wire::json(StatusCode::OK, &v)
         }
@@ -1434,11 +1440,13 @@ pub(crate) async fn applicant(site: &Site, req: &Request) -> Response {
     let Some(body) = wire::body(req) else {
         return wire::bad("body");
     };
-    let Some(at) = wire::str_member(&body, "at").and_then(At::parse) else {
+    let name = wire::str_member(&body, "at").unwrap_or_default().to_owned();
+    let Some(at) = At::parse(&name) else {
         return wire::bad("at");
     };
     match build_applicant(&site.info, at).await {
         Ok((inner, v)) => {
+            inner.set_scene(&name);
             site.replace(inner);
             wire::json(StatusCode::OK, &v)
         }
@@ -1567,6 +1575,7 @@ mod tests {
             assets: fstp_web_assets::AssetSet::from_files("main.js", &[("main.js", b"export {};")])
                 .unwrap(),
             auth_assets: std::sync::Arc::new(crate::assets::AuthAssets::empty()),
+            demo_signin: false,
         }
     }
 

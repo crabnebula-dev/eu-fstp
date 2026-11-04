@@ -39,6 +39,9 @@ import {
   type JudgingPage,
   type PageEnv,
   type ShownError,
+  stateChip,
+  callName,
+  titleWithCall,
 } from "../reviewer/kit.js";
 import { canMoveInTie, moveInTie, readBallot, readCutOffRound, sortByScore, type CutOffRow } from "./forms.js";
 import { COMMITTEE_LABELS } from "./messages.en.js";
@@ -294,7 +297,8 @@ function openRoundForm(
 async function mountRanking(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
   const t = pageI18n(env, COMMITTEE_LABELS);
   const call = param(params, "call");
-  const f = frame(env, t, t.label("com.ranking.title"));
+  const f = frame(env, t, t.label("com.ranking.title", { call: callName(t, call) }));
+  titleWithCall(f, t, call, (name) => t.label("com.ranking.title", { call: name }));
   await guarded(f, async () => {
     const view = await readOp(env, "committee.ranking", { call }, isRankingView);
     if (!view.ok) {
@@ -374,7 +378,7 @@ function roundTable(t: I18n, v: RoundView): HTMLElement {
           h("th", { scope: "row" }, [String(i + 1)]),
           h("td", {}, [proposalName(t, r.proposal)]),
           h("td", {}, [i < v.nominated ? t.label("com.round.nominated") : t.label("com.round.below")]),
-          h("td", {}, [t.label(`kit.state.${r.state}`)]),
+          h("td", {}, [stateChip(t, r.state)]),
         ]),
       ),
     ),

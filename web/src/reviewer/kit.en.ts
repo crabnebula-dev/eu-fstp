@@ -5,6 +5,7 @@
 export const KIT_LABELS: Readonly<Record<string, string>> = {
   "kit.loading": "Loading",
   "kit.proposal": "Proposal {id}",
+  "kit.call": "call {id}",
   "kit.state": "Proposal state: {state}",
   "kit.state.DRAFT": "Draft",
   "kit.state.SUBMITTED": "Submitted",

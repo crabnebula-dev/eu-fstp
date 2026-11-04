@@ -7,11 +7,26 @@
 // on the page for the next attempt.
 
 import { h } from "../core/dom.js";
+import { holdLeave, whenLeft } from "../core/router.js";
 import { type AutosaveStatus, createAutosave } from "./autosave.js";
 import { call } from "./client.js";
 import { loadProposal } from "./load.js";
 import { draftEditable, teamReadsOffered } from "./rules.js";
-import { APP, button, frame, run, setStatus, showFailure, statusRegion, t, textArea, textInput } from "./ui.js";
+import {
+  APP,
+  button,
+  clearAlert,
+  frame,
+  proposalSteps,
+  run,
+  setStatus,
+  showAlert,
+  showFailure,
+  statusRegion,
+  t,
+  textArea,
+  textInput,
+} from "./ui.js";
 import { decodeAccepted, decodeWorkspace } from "./wire.js";
 
 /**
@@ -42,6 +57,9 @@ export function mountWorkspace(id: string): void {
       showFailure(f, w.failure);
       return;
     }
+    if (draftEditable(p.state)) {
+      f.main.append(proposalSteps(id, "workspace"));
+    }
     if (!draftEditable(p.state)) {
       f.main.append(
         h("p", {}, [t("workspace.readonly")]),
@@ -67,6 +85,8 @@ export function mountWorkspace(id: string): void {
     const retry = button("ws-retry", t("ws.retry"));
     retry.hidden = true;
 
+    // Whether the page held a navigation because a save failed.
+    let warned = false;
     const saver = createAutosave<{ readonly title: string; readonly summary: string; readonly narrative: string }>(
       {
         save: async (v) => {
@@ -85,6 +105,10 @@ export function mountWorkspace(id: string): void {
         onStatus: (s: AutosaveStatus) => {
           setStatus(status, s, t(`ws.status.${s}`));
           retry.hidden = s !== "failed";
+          if (s === "saved" && warned) {
+            warned = false;
+            clearAlert(f);
+          }
         },
       },
       AUTOSAVE_DELAY_MS,
@@ -101,11 +125,31 @@ export function mountWorkspace(id: string): void {
     // A browser usually aborts a request sent while the page unloads, so
     // leaving with an unsaved edit asks the user first. The prompt also
     // starts the save, so staying on the page stores the edit.
-    window.addEventListener("beforeunload", (e) => {
+    const unloading = (e: BeforeUnloadEvent): void => {
       if (saver.unsaved()) {
         void saver.flush();
         e.preventDefault();
       }
+    };
+    window.addEventListener("beforeunload", unloading);
+    // An in-app navigation keeps the document, so an unsaved edit is
+    // saved before the page goes (I-21). When that save fails, the page
+    // stays and its alert says so. A second attempt to leave while the
+    // save still fails lets the person go, as they were told.
+    holdLeave(async () => {
+      if (!saver.unsaved()) {
+        return true;
+      }
+      const stored = await saver.flush();
+      if (stored || warned) {
+        return true;
+      }
+      warned = true;
+      showAlert(f, t("ws.leave_failed"));
+      return false;
+    });
+    whenLeft(() => {
+      window.removeEventListener("beforeunload", unloading);
     });
     const form = h("form", { novalidate: true, "aria-label": t("workspace.title") }, [
       title.root,

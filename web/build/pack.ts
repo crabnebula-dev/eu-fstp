@@ -28,7 +28,9 @@
 //
 // - Only modules reachable from the entry are packed, so the stand-alone
 //   entries of the auth and vault pages never reach `/app/`.
-// - The shell links the stylesheets of `STYLE_FOLDERS` only. The auth
+// - The shell links the stylesheets of `STYLE_FOLDERS` only, in name
+//   order: `site/tokens.css`, the token sheet copied from the design
+//   (lane m4/site), then `site/ui.css`, the page rules. The auth
 //   stylesheet styles the M3 pages and stays with them.
 // - The packer reads tsc's own output, which writes one import or export
 //   declaration per statement and starts each at the first column. It
@@ -46,7 +48,7 @@ const MANIFEST_FILE = "asset-manifest.json";
 const SCHEMA = "fstp.web-assets/1";
 
 /** The feature folders whose stylesheets the `/app/` shell links. */
-const STYLE_FOLDERS: readonly string[] = ["applicant"];
+const STYLE_FOLDERS: readonly string[] = ["site"];
 
 /** A failure that stops the build, with a message that names the module. */
 class PackError extends Error {

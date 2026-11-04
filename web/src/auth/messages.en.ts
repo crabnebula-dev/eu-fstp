@@ -15,11 +15,22 @@ const MESSAGES = {
   'error.link': 'This link is incomplete. Open the whole link from your email.',
 
   'field.email': 'Email address',
+  // The PublicLayout top bar and footer (lane m4/site). TODO(legal): the
+  // privacy notice and accessibility statement wait for approved wording.
+  'top.brand': 'FSTP',
+  'top.nav': 'Main navigation',
+  'top.calls': 'Open calls',
+  'top.signin': 'Sign in',
+  'top.signup': 'Create an account',
+  'footer.privacy': 'Privacy notice: wording pending legal review.',
+  'footer.accessibility': 'Accessibility statement: wording pending legal review.',
+  'footer.attribution': 'This service runs on the FSTP platform.',
   'field.email.missing': 'Enter your email address.',
   'field.email.invalid': 'Enter an email address in the form name@example.org.',
 
   'login.title': 'Sign in',
-  'login.passkey.heading': 'Sign in with a passkey',
+  'login.passkey.heading': 'Sign in with your passkey',
+  'login.passkey.intro': 'Your device asks for its lock, such as a fingerprint or a PIN.',
   'login.passkey': 'Sign in with a passkey',
   'login.magic.heading': 'Sign in with an email link',
   'login.magic.intro':
@@ -28,18 +39,21 @@ const MESSAGES = {
   'login.magic.sent':
     'If this address may sign in with a link, a link is on its way. It works once and expires soon.',
   'login.more': 'Other options',
-  'login.signup': 'Create an applicant account',
+  'login.signup': 'Create an account',
   'login.recovery': 'Recover your account',
 
-  'signup.title': 'Create an applicant account',
+  'signup.title': 'Create an account',
+  'signup.sent.title': 'Check your email',
+  'signup.sent.heading': 'Confirmation link sent',
+  'signup.sent.again': 'Wrong address? Start again.',
   'signup.intro': 'Enter your email address. We send you a link to confirm it. Then you create a passkey.',
   'signup.submit': 'Continue',
   'signup.sent': 'Check your email. If this address can be used, a link to continue is on its way.',
-  'signup.register.title': 'Create your passkey',
+  'signup.register.title': 'Create a passkey',
   'signup.register.intro': 'Your email address is confirmed. Create a passkey on this device to finish.',
   'signup.register': 'Create a passkey',
 
-  'invite.title': 'Accept your invitation',
+  'invite.title': 'Create a passkey',
   'invite.intro': 'Create a passkey on this device to accept the invitation and sign in.',
   'invite.register': 'Create a passkey',
 

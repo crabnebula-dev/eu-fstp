@@ -26,6 +26,62 @@ export const PATHS = {
   account: '/auth/account',
 } as const;
 
+/** The public links of the top bar, with the path each opens. */
+const PUBLIC_LINKS: readonly (readonly [AuthMessageId, string])[] = [
+  ['top.calls', '/app/calls'],
+  ['top.signin', PATHS.login],
+  ['top.signup', PATHS.signup],
+];
+
+/**
+ * The PublicLayout around `main`, once per document (lane m4/site
+ * scope item 3; `docs/design/01-navigation-home.md` "Layout and
+ * routing contract"): the top bar before it, the
+ * footer after it, and no sidebar. The account page of a signed-in
+ * person puts its own navigation after the top bar, so its top bar
+ * holds the brand only.
+ */
+function chrome(main: HTMLElement): void {
+  if (document.querySelector('header.site-header') !== null) return;
+  const here = location.pathname;
+  const links =
+    here === PATHS.account
+      ? []
+      : [
+          h('nav', { class: 'main-nav', 'aria-label': t('top.nav') }, [
+            h(
+              'ul',
+              {},
+              PUBLIC_LINKS.map(([id, href]) =>
+                h('li', {}, [h('a', href === here ? { href, 'aria-current': 'page' } : { href }, [t(id)])]),
+              ),
+            ),
+          ]),
+        ];
+  const header = h('header', { class: 'site-header' }, [
+    h('div', { class: 'topbar' }, [
+      h('a', { class: 'brand', href: '/app/' }, [
+        h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, ['F']),
+        h('span', {}, [t('top.brand')]),
+      ]),
+      ...links,
+    ]),
+  ]);
+  // No skip link: a fragment link would mount the page again for its
+  // fragment (`main.ts`), and the top bar holds three links and a
+  // landmark before `main` (WCAG 2.2 SC 2.4.1 by landmarks).
+  main.before(header);
+  main.after(
+    h('footer', { class: 'site-footer' }, [
+      h('div', { class: 'inner' }, [
+        h('p', {}, [t('footer.privacy')]),
+        h('p', {}, [t('footer.accessibility')]),
+        h('p', {}, [t('footer.attribution')]),
+      ]),
+    ]),
+  );
+}
+
 /** The live regions of a page. */
 export interface Frame {
   /** The `main` landmark, after its heading. */
@@ -47,6 +103,7 @@ export function frame(title: AuthMessageId, alertId: string): Frame {
     main = h('main', { id: 'main' });
     document.body.append(main);
   }
+  chrome(main);
   clear(main);
   const alert = h('p', { id: alertId, role: 'alert', class: 'alert' });
   main.append(h('h1', {}, [t(title)]), alert);

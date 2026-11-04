@@ -10,6 +10,7 @@
 // travels in the fragment.
 
 import { h } from "../core/dom.js";
+import { navigate } from "../core/router.js";
 import { call } from "./client.js";
 import { loadProposal } from "./load.js";
 import { NOTICE_VERSIONS } from "./messages.en.js";
@@ -62,6 +63,7 @@ export function mountNegotiation(id: string): void {
       showFailure(f, n.failure);
       return;
     }
+    f.heading.replaceChildren(t("negotiation.title"), " ", h("span", { class: "state-name" }, [`(${p.state})`]));
     const slot = h("div", {});
     if (n.value.acknowledged) {
       slot.append(acknowledged());
@@ -161,7 +163,7 @@ function consent(f: Frame, id: string): void {
         showAlert(f, t("guardian.bad_redirect"));
         return;
       }
-      location.assign(r.value);
+      navigate(r.value);
     });
   });
   f.main.append(h("p", {}, [t("guardian.intro")]), h("p", {}, [start]));

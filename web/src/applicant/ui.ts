@@ -167,6 +167,48 @@ export function frame(title: Label): Frame {
   return { root, main, heading, alert };
 }
 
+/** The steps of a draft proposal, in the order of the `plan-editor` prototype. */
+export type ProposalStep = "workspace" | "plan" | "eligibility" | "submit";
+
+const STEPS: readonly (readonly [ProposalStep, (p: string) => string])[] = [
+  ["workspace", APP.workspace],
+  ["plan", APP.plan],
+  ["eligibility", APP.eligibility],
+  ["submit", APP.submit],
+];
+
+/**
+ * The step navigation of a draft proposal, "Proposal steps": its text,
+ * the plan, the eligibility statements and the submission, with the
+ * current step marked by `aria-current="step"` and its text, never by
+ * colour alone (`plan-editor` prototype; R-NF-03).
+ */
+export function proposalSteps(id: string, current: ProposalStep): HTMLElement {
+  return h("nav", { class: "steps-nav", "aria-label": t("steps.label") }, [
+    h(
+      "ol",
+      {},
+      STEPS.map(([step, path]) =>
+        h("li", {}, [
+          h("a", step === current ? { href: path(id), "aria-current": "step" } : { href: path(id) }, [
+            t(`steps.${step}`),
+            ...(step === current ? [h("span", { class: "sr-only" }, [t("steps.current")])] : []),
+          ]),
+        ]),
+      ),
+    ),
+  ]);
+}
+
+/**
+ * Heads a proposal step page "Your proposal" with its formal state beside
+ * it (`plan-editor` prototype; I-96). The document title keeps the
+ * step's own name.
+ */
+export function proposalHeading(f: Frame, state: ProposalState): void {
+  f.heading.replaceChildren(t("steps.title"), " ", h("span", { class: "state-name" }, [`(${state})`]));
+}
+
 /**
  * Moves focus to the page's `h1`, for a page that replaced the one
  * holding the focus (WCAG 2.2 SC 2.4.3). The heading takes focus from
@@ -283,9 +325,18 @@ export function showFailure(f: Frame, x: Failure): void {
  * the alert region says the answer could not be read.
  */
 export function run(f: Frame, body: () => Promise<void>): void {
-  body().catch(() => {
-    showAlert(f, t("error.invalid"));
-  });
+  // The page is marked busy until its reads answered (R-NF-03, lane
+  // m4/site scope item 2), so the loading state is spoken and a person
+  // never reads a half-built page as the whole one.
+  const loading = h("p", { class: "fstp-loading", "aria-busy": "true" }, [t("app.loading")]);
+  f.main.append(loading);
+  body()
+    .catch(() => {
+      showAlert(f, t("error.invalid"));
+    })
+    .finally(() => {
+      loading.remove();
+    });
 }
 
 // ---------------------------------------------------------------------------

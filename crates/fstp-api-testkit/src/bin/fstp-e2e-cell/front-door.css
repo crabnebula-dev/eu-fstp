@@ -1,0 +1,16 @@
+/*
+ * The page rules of the demo front door on the control base (lane
+ * m4/site scope item 7). The page links /demo/tokens.css first, the token
+ * sheet of web/src/auth/tokens.css, so no rule here sets a colour of its
+ * own (I-70). Test only: the control base never exists in a shipped cell.
+ */
+
+html { background: var(--color-surface-0); }
+main { max-width: 60rem; }
+main :where(p, ul) { margin-bottom: var(--space-4); }
+.scene { font-size: var(--text-lg); }
+.people { list-style: none; padding: 0; display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
+.person { margin: 0; }
+.person-name { font-weight: var(--weight-bold); }
+.person-name small { display: block; font-weight: var(--weight-regular); color: var(--color-text-2); overflow-wrap: anywhere; }
+.person .btn-row { margin: var(--space-2) 0 0; }

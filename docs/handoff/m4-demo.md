@@ -7,7 +7,8 @@ Every person, proposal and text in the demo is synthetic. The cell is test only 
 ## Run it
 
 ```sh
-tools/demo/run.sh            # build the pages and the cell, start it, seed "review stage1"
+tools/demo/run.sh            # build the pages and the cell, start it with --demo-signin, seed "review stage1"
+FSTP_DEMO_SIGNIN=off tools/demo/run.sh   # the same, with passkeys only, as the e2e suite runs the cell
 tools/demo/run.sh seed review irc_review
 tools/demo/run.sh seed applicant OPEN_CALL
 tools/demo/run.sh mail <email>      # the links the cell mailed, such as a sign-up proof
@@ -22,6 +23,25 @@ tools/demo/run.sh stop
 - The build needs `web/node_modules` (ADR-003) and the cargo cache. Set `CARGO_NET_OFFLINE=true` on a machine without network.
 - Each seed replaces the whole cell state and prints one-time enrolment links. The demo page lists the same links. Open a link, choose "Create a passkey", and the person is signed in and lands on the home page `/app/`. A second sign-in uses the passkey on `/auth/login`.
 - Use one browser profile per person, such as a new incognito window each. A persona's link works once.
+
+## The site and the demo sign-in (2026-11-04, lane m4/site)
+
+Daniel asked for the pages to become a proper website to share, built with the TypeScript of `web/`, and ruled out a framework or bundler. He also said: "for the demo it makes NO SENSE to have to use and generate passkeys."
+
+- **One document.** Every `/app/` page renders in one document (`web/src/core/router.ts`). A link or a form that leads to another `/app/` page changes the URL with the History API, with no reload. Back, Forward, a reload and a pasted deep link show the same page. Focus moves to the page's `h1`, and a polite live region speaks its title.
+- **Reactive pages.** After an action, the page shows the outcome in place, from the reply or a re-read: the stage 1 close on the call board, the declaration and the score sheet of an assignment, the plan total.
+- **Tokens and layout.** `web/src/site/tokens.css` and `web/src/auth/tokens.css` are copies of `design/tokens.css`. Every page sits on them in light and dark, with the top bar, the sidebar and the footer of `nav-pattern.html`. A proposal state shows as a chip with its text.
+- **The front door.** `/demo` names the scene in `#demo-scene`, then each person with their role and one line on what they can do.
+- **Demo sign-in.** `tools/demo/run.sh` starts the cell with `--demo-signin` (`FSTP_DEMO_SIGNIN=off` turns it off). The front door then gives each person a "Sign in as <name>" link. One click opens a session on the cell origin and lands on `/app/`, with no passkey. The link carries a single-use token of at most five minutes of cell clock, which the control base issues and `/auth/demo-signin` redeems once. A reused, expired or forged token is refused with an alert and sets no cookie. The session is a passkey session in the fake port, so every guard holds. Its step-up dialog shows a plain "Confirm" button, and the command still records a step-up. Every `/app/` page of such a session, and the M3 page `/auth/account`, says "Demo sign-in" in the top bar. Both pages name the session's method as a passkey, since the fake port records it so. On `/auth/account`, removing a passkey or ending a session still asks for a passkey, which a demo account does not have, so that page is not part of the demo. The demo modules are served only with the flag. The route, the flag and the bypass live in `fstp-e2e-cell` only (rule A9). Without the flag the route answers 404, which `e2e/site/demo.spec.ts` and `crates/fstp-web/tests/demo_signin_absent.rs` check.
+- **Account.** The sidebar's Account opens the profile page `/app/me`, with the verification status, the roles held and the sessions. The top bar's "Passkeys and sessions" opens the M3 page `/auth/account`, which adds and removes passkeys.
+
+Screens not built, each because its operation is missing:
+
+- `home-operations`: no seeded persona and no queue read.
+- `calls-public`, `call-detail-public` and `public-calls-feed`: the `public.*` operations answer `not_implemented`, and `/p` is a 501 stub.
+- `packing-check`: no pre-submission check operation.
+- The "on hold" panel of `end-states`: `proposal.view` carries no I-18 hold member.
+- `admin-members` and `admin-org`: no read of the tenant's members with their roles, or of the organisation record.
 
 ## The seeds
 
@@ -59,7 +79,7 @@ The identity page and the onboarding steps load, but their operations are not se
 
 1. Choose the applicant scene `OPEN_CALL`.
 2. The demo page names the sign-up address. Open `/auth/signup`, enter a synthetic address such as `demo@e2e.invalid` and send it.
-3. The demo page reloads every 10 seconds. Under "Messages the cell sent", open the sign-up link and create a passkey.
+3. The demo page never reloads by itself, so focus stays where it is. Choose "Refresh this page", then, under "Messages the cell sent", open the sign-up link and create a passkey.
 4. The home page says that the person holds no role yet and offers "Open calls". Choose it, then the call. The page shows the amounts as server text, the deadline with its zone and the AI disclosure.
 5. Choose "Start a proposal". The workspace autosaves the title, the neutral summary and the narrative as you type (I-21).
 6. Open "Plan", enter one milestone of 1500.50 with a start and a due day, and save. The cell shows the total. A non-canonical amount such as 1500.5 is refused in the page.

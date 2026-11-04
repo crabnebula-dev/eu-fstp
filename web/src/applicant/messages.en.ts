@@ -10,6 +10,14 @@
 export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "app.document_title": "{page} | FSTP",
   "app.not_found": "Page not found",
+  "app.loading": "Loading.",
+  "steps.label": "Proposal steps",
+  "steps.title": "Your proposal",
+  "steps.current": ", current step",
+  "steps.workspace": "Proposal text",
+  "steps.plan": "1. Plan",
+  "steps.eligibility": "2. Eligibility",
+  "steps.submit": "3. Submit",
   "app.not_found_text": "This address names no page.",
 
   "nav.label": "Applicant pages",
@@ -90,6 +98,8 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "ws.status.saved": "All changes are saved.",
   "ws.status.failed": "Your last changes are not saved. They stay on this page.",
   "ws.retry": "Save now",
+  "ws.leave_failed":
+    "Your last changes could not be saved, so this page stays open. Use Save now to try again. To leave without them, open the other page again.",
 
   "plan.title": "Plan and requested amount",
   "plan.intro":
@@ -132,6 +142,30 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "elig.readonly": "This proposal is no longer a draft, so these statements cannot be changed here.",
 
   "submit.title": "Submit the proposal",
+  "outcome.formal": "Formal state: {state}",
+  "outcome.other_calls": "See other open calls",
+  "outcome.ineligible.kicker": "Final outcome",
+  "outcome.ineligible.title": "Not eligible",
+  "outcome.ineligible.text": "Your proposal did not meet one of the call's eligibility rules. It cannot continue in this call.",
+  "outcome.not_selected.kicker": "Final outcome",
+  "outcome.not_selected.title": "Not selected",
+  "outcome.not_selected.text": "Your proposal was not selected in this call. Thank you for the work you put into it. You may apply to a later call.",
+  "outcome.deferred.kicker": "Paused, not final",
+  "outcome.deferred.title": "Your proposal has been deferred",
+  "outcome.deferred.text":
+    "Your proposal waits for the next call of the programme instead of ending here. It keeps the rules of the call it was submitted to.",
+  "receipt.title": "Submission receipt",
+  "receipt.proposal": "Proposal",
+  "receipt.state": "State",
+  "receipt.notice": "Data protection notice",
+  "receipt.notice_version": "Version {version} shown and acknowledged.",
+  "receipt.ethics": "Ethics self-declaration",
+  "receipt.ethics_none": "Recorded: no ethics issue.",
+  "receipt.ethics_declared": "Recorded, with the issue you described.",
+  "receipt.next": "What happens next",
+  "receipt.next_check": "Your application is now with the FSTP coordinator for an eligibility check.",
+  "receipt.next_withdraw": "You can still withdraw it before a grant is awarded.",
+  "receipt.open": "Open your proposal",
   "submit.notice.heading": "Data protection notice",
   "submit.notice_read": "I have read the data protection notice",
   "submit.notice_required": "Confirm that you have read the data protection notice.",
@@ -172,7 +206,7 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "notice.day": "Recorded on",
 
   "negotiation.title": "Negotiation",
-  "negotiation.notice.heading": "Data protection notice at negotiation",
+  "negotiation.notice.heading": "Data protection notice",
   "negotiation.acknowledge": "I acknowledge the data protection notice",
   "negotiation.acknowledged": "You acknowledged this notice.",
   "negotiation.next.heading": "Next steps",

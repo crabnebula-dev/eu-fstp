@@ -30,8 +30,9 @@
 // The shell loads this module only.
 
 import { mountApplicantPage, mountNotFound } from "../applicant/app.js";
-import { installTrustedTypesPolicy } from "../core/dom.js";
-import { createRouter } from "../core/router.js";
+import { h, installTrustedTypesPolicy } from "../core/dom.js";
+import { VISUALLY_HIDDEN_CLASS } from "../core/a11y.js";
+import { createRouter, rerender, startNavigation } from "../core/router.js";
 import { CREATOR_ROUTES, type PageRoute } from "../creator/routes.js";
 import { mountHome } from "../home/page.js";
 import { startSession } from "../home/session.js";
@@ -39,6 +40,7 @@ import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
 import { browserEnv } from "../reviewer/kit.js";
 import { mountJudging } from "../reviewer/judging.js";
+import { mountSite } from "../site/pages.js";
 
 /** The creator, onboarding and people routes, checked once when first used. */
 const STAFF_ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES];
@@ -68,14 +70,13 @@ function isHome(path: string): boolean {
   return path === "/app/" || path === "/app";
 }
 
-/** Mounts the page of the current path. */
-async function run(): Promise<void> {
-  const path = location.pathname;
+/** Mounts the page of `path`. */
+async function run(path: string): Promise<void> {
   if (isHome(path)) {
     mountHome();
     return;
   }
-  if (mountStaff(path) || mountApplicantPage(path)) {
+  if (mountSite(path) || mountStaff(path) || mountApplicantPage(path)) {
     return;
   }
   if (await mountJudging(browserEnv(root()), path)) {
@@ -86,9 +87,28 @@ async function run(): Promise<void> {
 
 installTrustedTypesPolicy();
 void startSession(location.pathname);
-void run();
-// A link to the same page with another fragment does not reload it, so
-// the invitation landing mounts again for the new fragment.
+// Every `/app/` page renders in this one document (lane m4/site scope
+// item 1): `core/router.ts` handles in-app links, Back and Forward. The
+// title of each page it opens is spoken in a polite live region of its
+// own, outside the page root, so it survives every render and is never
+// mistaken for a page's status or alert region (WCAG 2.2 SC 4.1.3).
+const announcer = h("p", {
+  id: "page-announcer",
+  "aria-live": "polite",
+  "aria-atomic": "true",
+  class: VISUALLY_HIDDEN_CLASS,
+});
+document.body.append(announcer);
+void startNavigation({
+  render: run,
+  announce: (title) => {
+    announcer.textContent = "";
+    announcer.append(document.createTextNode(title));
+  },
+});
+// A link from elsewhere to this path with another fragment does not load
+// the document again, so the invitation landing mounts again for the new
+// fragment.
 window.addEventListener("hashchange", () => {
-  void run();
+  void rerender();
 });

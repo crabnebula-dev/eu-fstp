@@ -9,8 +9,10 @@
 // pass their `main` to `appShell` and put the footer after it. A page
 // renders only its main content and never builds the shell itself.
 //
-// - Top bar: the tenant mark, which links to the home page, a spacer and
-//   Notifications. Help has no page in this release, so it is left out.
+// - Top bar: the tenant mark, which links to the home page, a spacer,
+//   Notifications, and a `nav` "Account tools" with the M3 page of
+//   passkeys and sessions (`/auth/account`), `navOf`'s Account link.
+//   Help has no page in this release, so it is left out.
 // - Sidebar, top to bottom: the role chip ("Signed in as ..."), the
 //   "Navigation" label, then `nav` with every page the caller may open
 //   without an id (`model.ts` `navOf`), and Account pinned at the
@@ -20,9 +22,13 @@
 //   shell has no slot for it yet.
 // - Sign out has no route of its own: the account page ends the current
 //   session. So the sidebar foot holds Account only.
-// - Account stays in the sidebar at every width, and the top bar has no
-//   avatar. So `nav a[data-nav="account"]` is visible on every page
-//   (the e2e contract of `e2e/navigation/support.ts`).
+// - Account, the profile page `/app/me` (lane m4/site), stays in the
+//   sidebar foot at every width, outside the sidebar `nav`, and the top
+//   bar has no avatar. The top bar `nav a[data-nav="account"]` opens
+//   `/auth/account` and comes first in Tab order (the e2e contracts of
+//   `e2e/playwright.config.ts` `expectSignedIn` and
+//   `e2e/navigation/support.ts`), and `aside a[data-nav="account"]`
+//   opens `/app/me` (`e2e/site/screens.spec.ts`).
 //
 // Each link has `data-nav` naming it, and the current page's link has
 // `aria-current="page"`. The shell builds the navigation at once with
@@ -82,14 +88,40 @@ function item(l: NavLink, current: string): HTMLElement {
   return h("li", l.kind === "account" ? { class: "sidebar-account" } : {}, [h("a", attrs, [homeLabel(l.label)])]);
 }
 
-/** The links of the navigation for `roles`, Account apart. */
-function links(roles: MyRoles | null): { readonly main: HTMLElement[]; readonly foot: HTMLElement[] } {
+/** The profile page `/app/me` (`docs/design/06-profile-page.md`). */
+const PROFILE = "/app/me";
+
+/**
+ * The links of the navigation for `roles`: the sidebar list, Account
+ * apart, and the top bar link to the M3 page of passkeys and sessions,
+ * which is `navOf`'s Account link.
+ */
+function links(roles: MyRoles | null): { readonly main: HTMLElement[]; readonly tools: HTMLElement[] } {
   const current = here();
   const all = navOf(roles);
   return {
     main: all.filter((l) => l.kind !== "account").map((l) => item(l, current)),
-    foot: all.filter((l) => l.kind === "account").map((l) => item(l, current)),
+    tools: all
+      .filter((l) => l.kind === "account")
+      .map((l) => {
+        const attrs: Record<string, string> = { class: "tool-link", href: l.href, "data-nav": l.kind };
+        if (l.href === current) {
+          attrs["aria-current"] = "page";
+        }
+        return h("li", {}, [h("a", attrs, [homeLabel("nav.security")])]);
+      }),
   };
+}
+
+/** The Account link of the sidebar foot: the profile page. */
+function profileLink(): HTMLElement {
+  const attrs: Record<string, string> = { href: PROFILE, "data-nav": "account" };
+  if (here() === PROFILE) {
+    attrs["aria-current"] = "page";
+  }
+  return h("ul", { class: "sidebar-foot", "data-slot": "account" }, [
+    h("li", { class: "sidebar-account" }, [h("a", attrs, [homeLabel("nav.account")])]),
+  ]);
 }
 
 /** The text of the role chip for `roles`. */
@@ -108,7 +140,6 @@ export function siteNav(): HTMLElement {
   const l = links(known);
   return h("nav", { class: "main-nav", "aria-label": homeLabel("nav.label"), "data-slot": "nav" }, [
     h("ul", { class: "fstp-nav", [LIST]: "main" }, l.main),
-    h("ul", { class: "sidebar-foot", [LIST]: "foot", "data-slot": "account" }, l.foot),
   ]);
 }
 
@@ -118,6 +149,7 @@ function sidebar(): HTMLElement {
     h("p", { class: "role-chip", "data-slot": "role", [CHIP]: true }, [chipText(known)]),
     h("p", { class: "sidebar-label", "aria-hidden": "true" }, [homeLabel("nav.section_label")]),
     siteNav(),
+    profileLink(),
   ]);
 }
 
@@ -136,6 +168,9 @@ function topBar(): HTMLElement {
             homeLabel("nav.notifications"),
           ]),
         ]),
+      ]),
+      h("nav", { class: "topbar-nav", "aria-label": homeLabel("nav.tools_label") }, [
+        h("ul", { class: "topbar-tools", [LIST]: "tools" }, links(known).tools),
       ]),
     ]),
   ]);
@@ -163,7 +198,7 @@ export function showRoles(roles: MyRoles): void {
   known = roles;
   for (const list of Array.from(document.querySelectorAll(`ul[${LIST}]`))) {
     const l = links(roles);
-    list.replaceChildren(...(list.getAttribute(LIST) === "foot" ? l.foot : l.main));
+    list.replaceChildren(...(list.getAttribute(LIST) === "tools" ? l.tools : l.main));
   }
   for (const chip of Array.from(document.querySelectorAll(`[${CHIP}]`))) {
     chip.replaceChildren(chipText(roles));

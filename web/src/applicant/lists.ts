@@ -29,7 +29,7 @@ export function mountProposals(): void {
           h("li", { "data-state": p.state }, [
             h("a", { href: APP.proposal(p.proposal) }, [p.title === "" ? t("proposal.untitled") : p.title]),
             " ",
-            h("span", { class: "fstp-meta" }, [stateLabel(p.state)]),
+            h("span", { class: "badge badge--info" }, [stateLabel(p.state)]),
           ]),
         ),
       ),

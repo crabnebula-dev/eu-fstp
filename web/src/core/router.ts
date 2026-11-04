@@ -320,3 +320,366 @@ export function createRouter(defs: readonly RouteDef[]): Router {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// In-app navigation (lane m4/site scope item 1, ADR-014, R-NF-03)
+// ---------------------------------------------------------------------------
+//
+// One document serves every `/app/` page. A link or a call of `navigate`
+// that leads to another `/app/` path changes the URL with the History API
+// and renders that page into the shell, with no new document. Back and
+// Forward render the page of the restored URL. A path outside `/app/`
+// (the auth pages, the vault origin, public pages) or under
+// `/app/assets/` is a normal navigation.
+//
+// After every in-app navigation, focus moves to the page's `main h1`
+// (WCAG 2.2 SC 2.4.3), the page's title is spoken in the polite live
+// region (SC 4.1.3), and the frames set `document.title`. The spoken
+// text is the heading, with the document title beside it when that names
+// more, such as a set-up step (`spokenTitle`). A page that
+// replaces its heading while it loads is followed: the new heading text
+// is spoken, and focus lost to the body goes back to the heading until
+// the person presses a key or a pointer.
+//
+// The browser's own URL parser resolves each link, so this section adds
+// no parser of its own. A path reaches a page only through a route table
+// of `createRouter`, as before.
+
+/** Renders the page of `path` into the shell. */
+export type PageRender = (path: string) => void | Promise<void>;
+
+/** What the navigation needs from the shell. */
+export interface NavigationHooks {
+  /** Renders the page of a path. */
+  readonly render: PageRender;
+  /** Speaks a page title in the polite live region. */
+  readonly announce: (title: string) => void;
+}
+
+interface NavState {
+  hooks: NavigationHooks | null;
+  /** The number of the latest render. A render that a newer one replaced does nothing more. */
+  seq: number;
+  /** Functions a page registered to run when it is left. */
+  leave: (() => void)[];
+  /** Checks a page registered to run before it is left; one that answers false keeps the page. */
+  holds: (() => boolean | Promise<boolean>)[];
+  /** The number of the latest navigation asked for. One that a newer one replaced does nothing. */
+  asked: number;
+  /** The path, query and fragment of the page on show. */
+  current: string;
+  /** The text last spoken for the current page. */
+  spoken: string;
+  /** Whether the person pressed a key or a pointer since the last navigation. */
+  touched: boolean;
+  watch: MutationObserver | null;
+}
+
+const nav: NavState = {
+  hooks: null,
+  seq: 0,
+  leave: [],
+  holds: [],
+  asked: 0,
+  current: "",
+  spoken: "",
+  touched: false,
+  watch: null,
+};
+
+/** The path below `/app/` that `href` names on this origin, with its query and fragment, or null. */
+export function appPathOf(href: string, base: string): string | null {
+  let u: URL;
+  let b: URL;
+  try {
+    b = new URL(base);
+    u = new URL(href, b);
+  } catch {
+    return null;
+  }
+  if (u.origin !== b.origin) {
+    return null;
+  }
+  const p = u.pathname;
+  if (!(p === "/app" || p.startsWith("/app/")) || p === "/app/assets" || p.startsWith("/app/assets/")) {
+    return null;
+  }
+  return `${p}${u.search}${u.hash}`;
+}
+
+/** Registers `f` to run once when the current page is left by an in-app navigation. */
+export function whenLeft(f: () => void): void {
+  nav.leave.push(f);
+}
+
+/**
+ * Registers `check` to run before the current page is left by an in-app
+ * navigation. While it runs the page stays. When it answers false, the
+ * navigation is dropped and the page stays, so a page can keep work that
+ * is not stored yet, such as an edit whose save failed (I-21). A check
+ * that throws lets the page go. The check is dropped once the page is left.
+ */
+export function holdLeave(check: () => boolean | Promise<boolean>): void {
+  nav.holds.push(check);
+}
+
+/** Whether every check of the current page lets it go. */
+async function mayLeave(): Promise<boolean> {
+  for (const check of nav.holds) {
+    let ok = true;
+    try {
+      ok = await check();
+    } catch {
+      ok = true;
+    }
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The path, query and fragment of the current URL. */
+function here(): string {
+  return `${location.pathname}${location.search}${location.hash}`;
+}
+
+/** The current page's `h1`, or null. */
+function pageHeading(): HTMLElement | null {
+  const el = document.querySelector("main h1");
+  return el instanceof HTMLElement ? el : null;
+}
+
+/** Moves focus to the page heading. */
+function focusHeading(h1: HTMLElement): void {
+  if (!h1.hasAttribute("tabindex")) {
+    h1.setAttribute("tabindex", "-1");
+  }
+  h1.focus();
+}
+
+/**
+ * What a navigation speaks: the heading, and the document title beside it
+ * when the title names more than the heading does, such as the step of a
+ * set-up whose every step shares one heading.
+ */
+export function spokenTitle(heading: string, title: string): string {
+  const head = heading.trim();
+  const full = title.trim();
+  if (head === "" || full === "" || full.includes(head)) {
+    return head;
+  }
+  return `${head}, ${full}`;
+}
+
+/** Speaks the page title when it changed since it was last spoken. */
+function speak(h1: HTMLElement | null): void {
+  const text = spokenTitle(h1?.textContent ?? "", document.title);
+  if (text === "" || text === nav.spoken || nav.hooks === null) {
+    return;
+  }
+  nav.spoken = text;
+  nav.hooks.announce(text);
+}
+
+/** Follows the page after a navigation: its heading text, and focus lost to the body. */
+function follow(seq: number): void {
+  nav.watch?.disconnect();
+  nav.touched = false;
+  nav.spoken = "";
+  const h1 = pageHeading();
+  if (h1 !== null) {
+    focusHeading(h1);
+  }
+  speak(h1);
+  if (typeof MutationObserver !== "function") {
+    return;
+  }
+  const watch = new MutationObserver(() => {
+    if (seq !== nav.seq) {
+      watch.disconnect();
+      return;
+    }
+    const now = pageHeading();
+    speak(now);
+    const active = document.activeElement;
+    if (now !== null && !nav.touched && (active === null || active === document.body)) {
+      focusHeading(now);
+    }
+  });
+  watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+  nav.watch = watch;
+}
+
+/** Leaves the current page and renders the one of the current URL. */
+async function show(moved: boolean): Promise<void> {
+  const hooks = nav.hooks;
+  if (hooks === null) {
+    return;
+  }
+  nav.seq += 1;
+  const seq = nav.seq;
+  const leaving = nav.leave;
+  nav.leave = [];
+  nav.holds = [];
+  nav.current = here();
+  for (const f of leaving) {
+    try {
+      f();
+    } catch {
+      // A page's leave hook never stops the next page.
+    }
+  }
+  // An open dialog belongs to the page that is left.
+  for (const d of Array.from(document.querySelectorAll("dialog[open]"))) {
+    if (d instanceof HTMLDialogElement) {
+      d.close();
+    }
+  }
+  const rendered = hooks.render(location.pathname);
+  if (moved) {
+    follow(seq);
+  }
+  await rendered;
+  if (moved && seq === nav.seq) {
+    const h1 = pageHeading();
+    speak(h1);
+    const active = document.activeElement;
+    if (h1 !== null && !nav.touched && (active === null || active === document.body)) {
+      focusHeading(h1);
+    }
+  }
+}
+
+/**
+ * Opens `href`. An `/app/` path of this origin renders in place and is
+ * added to the history, or replaces the current entry with `replace`.
+ * Anything else is a normal navigation.
+ */
+export function navigate(href: string, opts: { readonly replace?: boolean } = {}): void {
+  const path = nav.hooks === null ? null : appPathOf(href, location.href);
+  if (path === null) {
+    location.assign(href);
+    return;
+  }
+  void go(path, opts.replace === true);
+}
+
+/** Opens the in-app `path` once the current page lets it go. */
+async function go(path: string, replace: boolean): Promise<void> {
+  nav.asked += 1;
+  const asked = nav.asked;
+  if (nav.holds.length > 0 && !(await mayLeave())) {
+    return;
+  }
+  if (asked !== nav.asked) {
+    return;
+  }
+  if (replace) {
+    history.replaceState(null, "", path);
+  } else {
+    history.pushState(null, "", path);
+    window.scrollTo(0, 0);
+  }
+  await show(true);
+}
+
+/**
+ * Back or Forward moved to another entry. When the current page holds
+ * the navigation, the URL of the page on show comes back.
+ */
+async function moved(): Promise<void> {
+  nav.asked += 1;
+  const asked = nav.asked;
+  if (nav.holds.length > 0) {
+    const ok = await mayLeave();
+    if (asked !== nav.asked) {
+      return;
+    }
+    if (!ok) {
+      history.pushState(null, "", nav.current);
+      return;
+    }
+  }
+  await show(true);
+}
+
+/** The element of this document that a same-page fragment link names, or null. */
+function fragmentTarget(u: URL): HTMLElement | null {
+  if (u.hash.length < 2) {
+    return null;
+  }
+  let id: string;
+  try {
+    id = decodeURIComponent(u.hash.slice(1));
+  } catch {
+    return null;
+  }
+  const el = document.getElementById(id);
+  return el instanceof HTMLElement ? el : null;
+}
+
+/** A click on an in-app link, handled in place. */
+function clicked(e: MouseEvent): void {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+    return;
+  }
+  const t = e.target;
+  const a = t instanceof Element ? t.closest("a[href]") : null;
+  if (!(a instanceof HTMLAnchorElement) || (a.target !== "" && a.target !== "_self") || a.hasAttribute("download")) {
+    return;
+  }
+  let u: URL;
+  try {
+    u = new URL(a.href);
+  } catch {
+    return;
+  }
+  const here = new URL(location.href);
+  if (u.origin === here.origin && u.pathname === here.pathname && u.search === here.search && u.hash !== "") {
+    // A link to a part of this page, such as the skip link or an error
+    // summary entry: focus that part without a history entry.
+    const target = fragmentTarget(u);
+    if (target !== null) {
+      e.preventDefault();
+      if (!target.hasAttribute("tabindex") && target.tabIndex < 0) {
+        target.setAttribute("tabindex", "-1");
+      }
+      target.focus();
+      target.scrollIntoView({ block: "start" });
+    }
+    return;
+  }
+  const path = appPathOf(a.href, here.href);
+  if (path === null) {
+    return;
+  }
+  e.preventDefault();
+  navigate(path);
+}
+
+/**
+ * Starts in-app navigation for the shell: renders the page of the
+ * current URL, then handles in-app links, Back and Forward. Called once.
+ */
+export function startNavigation(hooks: NavigationHooks): Promise<void> {
+  if (nav.hooks !== null) {
+    return Promise.resolve();
+  }
+  nav.hooks = hooks;
+  document.addEventListener("click", clicked);
+  window.addEventListener("popstate", () => {
+    void moved();
+  });
+  const touch = (): void => {
+    nav.touched = true;
+  };
+  document.addEventListener("keydown", touch, true);
+  document.addEventListener("pointerdown", touch, true);
+  return show(false);
+}
+
+/** Renders the current URL again, in place, for a page whose fragment changed. */
+export function rerender(): Promise<void> {
+  return show(false);
+}

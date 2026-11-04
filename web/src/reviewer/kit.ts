@@ -26,9 +26,10 @@ import { clearError, linkError } from "../core/a11y.js";
 import { h, type AttrValue, type Child } from "../core/dom.js";
 import { createI18n, type I18n, type Label } from "../core/i18n.js";
 import { parseAmount } from "../core/money.js";
-import type { RouteDef } from "../core/router.js";
+import { navigate, whenLeft, type RouteDef } from "../core/router.js";
 import { OPERATIONS } from "../gen/api.js";
 import { appShell } from "../home/nav.js";
+import { callTitle, followTitles } from "../home/titles.js";
 import { readDeclaration, type Declaration } from "./declaration.js";
 import { KIT_LABELS } from "./kit.en.js";
 
@@ -54,12 +55,33 @@ export interface JudgingPage {
   mount(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void>;
 }
 
-/** The environment of a page in the browser: same-origin fetch and full navigation. */
+/**
+ * The name of `call` for a page title: its published title from the
+ * caller's own `me.roles` reply (I-86), else "call" and its id.
+ */
+export function callName(t: I18n, call: string): string {
+  return callTitle(call) ?? t.label("kit.call", { id: call });
+}
+
+/**
+ * Heads the page with `title(name)`, where `name` names `call`, and
+ * heads it again in place when the shell learns the call's title, until
+ * the person leaves the page (lane m4/site scope item 2).
+ */
+export function titleWithCall(f: Frame, t: I18n, call: string, title: (name: string) => Label): void {
+  f.retitle(title(callName(t, call)));
+  const stop = followTitles(() => {
+    f.retitle(title(callName(t, call)));
+  });
+  whenLeft(stop);
+}
+
+/** The environment of a page in the browser: same-origin fetch and in-app navigation. */
 export function browserEnv(root: HTMLElement): PageEnv {
   return {
     api: createApi({ fetch: (input, init) => fetch(input, init) }),
     root,
-    navigate: (path) => location.assign(path),
+    navigate: (path) => navigate(path),
   };
 }
 
@@ -521,7 +543,13 @@ export function frame(env: PageEnv, t: I18n, title: Label): Frame {
   const status = h("div", { id: "page-status", role: "status", "aria-live": "polite" });
   const body = h("div", { id: "page-body" });
   const main = h("main", { id: "main", "aria-labelledby": "page-title" }, [heading, stateSlot, alertSlot, status, body]);
+  // Whether a busy marker replaced the control that held focus.
+  let lost = false;
   const busy = (): void => {
+    const active = document.activeElement;
+    if (active !== null && body.contains(active)) {
+      lost = true;
+    }
     body.replaceChildren(h("p", { "aria-busy": "true" }, [t.label("kit.loading")]));
   };
   busy();
@@ -531,9 +559,35 @@ export function frame(env: PageEnv, t: I18n, title: Label): Frame {
   const showAlert = (message: Label): void => {
     alertSlot.replaceChildren(h("div", { role: "alert", class: "fstp-alert" }, [message]));
   };
+  // An in-place update that removes the focused control, such as the
+  // sheet of a recorded score, moves focus to what the page says about
+  // it: the alert, else the status message, else the heading (WCAG 2.2
+  // SC 2.4.3). A body that did not hold focus leaves focus where it is.
+  const refocus = (): void => {
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) {
+      return;
+    }
+    const target =
+      alertSlot.firstElementChild instanceof HTMLElement
+        ? alertSlot.firstElementChild
+        : (status.textContent ?? "").trim() !== ""
+          ? status
+          : heading;
+    if (!target.hasAttribute("tabindex")) {
+      target.setAttribute("tabindex", "-1");
+    }
+    target.focus();
+  };
   return {
     show(children) {
+      const active = document.activeElement;
+      const held = lost || (active !== null && body.contains(active));
+      lost = false;
       body.replaceChildren(...children);
+      if (held) {
+        refocus();
+      }
     },
     busy,
     status(message) {
@@ -549,7 +603,9 @@ export function frame(env: PageEnv, t: I18n, title: Label): Frame {
     state(tag) {
       stateSlot.replaceChildren(
         h("p", { id: "proposal-state", "data-state": tag }, [
-          t.label("kit.state", { state: t.label(`kit.state.${tag}`) }),
+          h("span", { class: "badge badge--info" }, [t.label("kit.state", { state: t.label(`kit.state.${tag}`) })]),
+          " ",
+          h("span", { class: "state-name" }, [tag]),
         ]),
       );
     },
@@ -558,6 +614,18 @@ export function frame(env: PageEnv, t: I18n, title: Label): Frame {
       document.title = next;
     },
   };
+}
+
+/**
+ * The chip of a proposal state: its label as text in a `.badge`, beside
+ * its formal name (R-NF-03: state is never shown by colour alone; I-96).
+ */
+export function stateChip(t: I18n, tag: StateTag): HTMLElement {
+  return h("span", { class: "state-chip" }, [
+    h("span", { class: "badge badge--info" }, [t.label(`kit.state.${tag}`)]),
+    " ",
+    h("span", { class: "state-name" }, [tag]),
+  ]);
 }
 
 /**

@@ -1,0 +1,192 @@
+/*
+ * The page rules of the /app/ site (lane m4/site scope item 3; I-70,
+ * R-NF-03; docs/design/08-design-tokens.md). The shell links
+ * site/tokens.css first, then this sheet, so every rule here reads the
+ * tokens and none sets a colour of its own. Focus is always visible.
+ * State is never shown by colour alone: every state, error and status
+ * also has its text, and a badge has a glyph.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Base controls the token sheet leaves to the pages                   */
+/* ------------------------------------------------------------------ */
+
+html { background: var(--color-surface-0); }
+
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+
+main :where(p, ul, ol, dl, table, fieldset, form) { margin-bottom: var(--space-4); }
+main li { margin-bottom: var(--space-1); }
+
+button {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: var(--target-min);
+  padding: 0 var(--space-4);
+  border: 2px solid var(--color-brand);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-0);
+  color: var(--color-brand-text);
+  font: inherit; font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+button:hover { background: var(--color-state-info-bg); }
+button[type="submit"], .fstp-primary, button.btn--primary {
+  background: var(--color-brand); border-color: var(--color-brand); color: var(--color-on-brand);
+}
+button[type="submit"]:hover, .fstp-primary:hover, button.btn--primary:hover {
+  background: var(--color-brand-hover); border-color: var(--color-brand-hover);
+}
+button:disabled, button[aria-disabled="true"] { cursor: not-allowed; opacity: 0.7; }
+button[aria-busy="true"] { cursor: progress; }
+
+input[type="text"], input[type="email"], input[type="search"], input[type="number"],
+input[type="date"], input[type="url"], input[type="time"], input:not([type]), select, textarea {
+  display: block; width: 100%; max-width: 40rem;
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  font: inherit; color: var(--color-text-1);
+  background: var(--color-surface-0);
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+input[type="checkbox"], input[type="radio"] { width: 1.25rem; height: 1.25rem; accent-color: var(--color-brand); }
+[aria-invalid="true"] { border-color: var(--color-state-error-text); border-width: 3px; }
+fieldset { margin-bottom: var(--space-4); }
+legend { padding: 0 var(--space-1); }
+
+details > summary { cursor: pointer; font-weight: var(--weight-bold); min-height: var(--target-min); display: flex; align-items: center; }
+
+/* ------------------------------------------------------------------ */
+/* The fields, hints, errors and lists of the feature pages            */
+/* ------------------------------------------------------------------ */
+
+.fstp-field, .fstp-control, .fstp-group { margin-bottom: var(--space-5); }
+.fstp-field > label, .fstp-control > label { display: block; margin-bottom: var(--space-1); }
+.fstp-group .fstp-group { margin-top: var(--space-4); }
+.fstp-choice, .fstp-check {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  min-height: var(--target-min); padding: var(--space-2) 0;
+}
+.fstp-choice label, .fstp-check label { font-weight: var(--weight-regular); margin: 0; }
+.fstp-hint, .fstp-meta, .fstp-note { display: block; color: var(--color-text-2); font-size: var(--text-sm); }
+.fstp-text { white-space: pre-wrap; }
+.fstp-list { padding-left: var(--space-6); }
+.fstp-list > li { margin-bottom: var(--space-3); }
+.fstp-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin: var(--space-4) 0; }
+.fstp-items { padding-left: var(--space-6); }
+
+.fstp-field-error, .fstp-error {
+  display: block; color: var(--color-state-error-text);
+  font-weight: var(--weight-bold); font-size: var(--text-sm); margin-top: var(--space-1);
+}
+.fstp-field-error:empty, .fstp-error:empty { display: none; }
+
+/* The alert region of a page: an error callout with its text. */
+.fstp-alert {
+  border: 1px solid var(--color-state-error-border); border-left-width: 6px;
+  border-radius: var(--radius-md);
+  background: var(--color-state-error-bg); color: var(--color-text-1);
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
+  font-weight: var(--weight-bold);
+}
+.fstp-alert::before { content: "\2715\00A0"; color: var(--color-state-error-text); }
+.fstp-alert:empty, .fstp-alert[hidden] { display: none; }
+
+/* A status line: the outcome of a save, spoken politely. */
+.fstp-status:not(:empty) {
+  border: 1px solid var(--color-state-info-border); border-left-width: 6px;
+  border-radius: var(--radius-md);
+  background: var(--color-state-info-bg); color: var(--color-text-1);
+  padding: var(--space-2) var(--space-4); margin-bottom: var(--space-4);
+}
+#page-status:empty { display: none; }
+
+/* An error summary that links to each field in error. */
+.fstp-summary, .fstp-error-summary {
+  border: 3px solid var(--color-state-error-text);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-0);
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
+}
+.fstp-summary[hidden], .fstp-error-summary[hidden] { display: none; }
+
+/* ------------------------------------------------------------------ */
+/* Dialogs: the step-up and its confirmation                           */
+/* ------------------------------------------------------------------ */
+
+dialog, .fstp-dialog {
+  color: var(--color-text-1);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-5) var(--space-6);
+  max-width: 32rem;
+  margin: auto;
+}
+dialog h2 { margin-top: 0; }
+dialog::backdrop { background: rgb(15 23 42 / 60%); }
+.fstp-backdrop {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgb(15 23 42 / 60%); padding: var(--space-4);
+}
+
+/* ------------------------------------------------------------------ */
+/* The page frame: footer, state chip, cards and tables                */
+/* ------------------------------------------------------------------ */
+
+.fstp-footer, .site-footer {
+  border-top: 1px solid var(--color-surface-3);
+  background: var(--color-surface-1);
+  color: var(--color-text-2);
+  font-size: var(--text-sm);
+  padding: var(--space-6) var(--space-4);
+}
+.fstp-footer p, .fstp-footer li { margin-bottom: var(--space-2); }
+
+#proposal-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
+
+main table { display: block; overflow-x: auto; }
+@media (min-width: 52rem) { main table { display: table; } }
+
+.card :where(h2, h3) { margin-top: 0; }
+.card-list { list-style: none; padding: 0; }
+.card-list > li { margin-bottom: var(--space-4); }
+
+.stat-row { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); list-style: none; padding: 0; }
+.stat-row > li { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-lg); padding: var(--space-4); }
+
+.on-this-page ul { display: flex; flex-wrap: wrap; gap: var(--space-4); list-style: none; padding: 0; }
+.on-this-page a { display: inline-flex; align-items: center; min-height: var(--target-min); }
+
+.steps-nav ol { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.steps-nav a, .steps-nav span {
+  display: inline-flex; align-items: center; min-height: var(--target-min); padding: 0 var(--space-3);
+  border: 1px solid var(--color-surface-3); border-radius: var(--radius-md);
+}
+.steps-nav a[aria-current="page"], .steps-nav a[aria-current="step"] { font-weight: var(--weight-bold); border: 2px solid var(--color-brand); }
+
+/* The sidebar navigation lists of the shell keep the token layout. */
+.fstp-nav { list-style: none; padding: 0; margin: 0; }
+
+/* The notice of a demo sign-in session in the top bar (test cell only). */
+.demo-notice { margin-left: var(--space-2); }
+
+/* The live regions of core/a11y.ts are spoken, not shown. */
+.fstp-visually-hidden {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Focus never hides behind the sticky top bar. */
+main h1:focus { outline: none; }
+main h1:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
+:target, main h1 { scroll-margin-top: calc(var(--topbar-height) + var(--space-4)); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* The profile link of the sidebar foot shows at every width. */
+.sidebar .sidebar-account { display: list-item; list-style: none; }
+.topbar-nav .topbar-tools { margin: 0; }

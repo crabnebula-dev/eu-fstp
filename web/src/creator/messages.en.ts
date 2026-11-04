@@ -33,7 +33,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "stepup.error.malformed": "The confirmation request could not be used. Try again.",
 
   // Steps.
-  "creator.steps.nav": "Creator steps",
+  "creator.steps.nav": "Set-up steps",
+  "creator.studio.title": "Programme set-up",
   "creator.step.title": "Step {n}: {name}",
   "creator.step.unnamed": "Step",
   "creator.step.funder": "Funder and instrument",
@@ -379,7 +380,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.review.active": "This programme is active.",
 
   // The approval inbox.
-  "creator.approvals.title": "Approvals",
+  "creator.approvals.title": "Approval and publication",
   "creator.approvals.intro":
     "Activation requests wait here for a tenant admin who did not build the draft. Approving one needs your passkey.",
   "creator.approvals.pending": "Activation requests",

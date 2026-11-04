@@ -28,12 +28,16 @@
 #   FSTP_DEMO_STATE  directory for the pid, the log and the stack manifest
 #                    (default: target/demo)
 #   FSTP_DEMO_SEED   the default seed of `start` (default: "review stage1")
+#   FSTP_DEMO_SIGNIN `on` (default) starts the cell with --demo-signin: the
+#                    demo page signs each person in with one click, no
+#                    passkey. `off` starts it as the e2e suite runs it.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PORT=${FSTP_DEMO_PORT:-8640}
 STATE=${FSTP_DEMO_STATE:-$ROOT/target/demo}
 SEED=${FSTP_DEMO_SEED:-review stage1}
+SIGNIN=${FSTP_DEMO_SIGNIN:-on}
 CONTROL="http://127.0.0.1:$((PORT + 1))"
 ORIGIN="http://a.fstp.localhost:$PORT"
 CELL_BIN="$ROOT/target/debug/fstp-e2e-cell"
@@ -113,7 +117,13 @@ start() {
   stop
   mkdir -p "$STATE"
   rm -f "$STATE/stack.json"
-  "$CELL_BIN" --port "$PORT" --web "$ROOT/web" --manifest-out "$STATE/stack.json" \
+  local flags=()
+  case $SIGNIN in
+    on) flags=(--demo-signin) ;;
+    off) ;;
+    *) die "FSTP_DEMO_SIGNIN is on or off, not $SIGNIN" ;;
+  esac
+  "$CELL_BIN" --port "$PORT" --web "$ROOT/web" --manifest-out "$STATE/stack.json" ${flags[@]+"${flags[@]}"} \
     >"$STATE/cell.log" 2>&1 &
   echo $! >"$STATE/pid"
   for _ in $(seq 1 100); do
@@ -126,7 +136,10 @@ start() {
   echo "fstp-e2e-cell runs (pid $(cat "$STATE/pid")), synthetic data only."
   echo "  cell origin   $ORIGIN   (sign in: $ORIGIN/auth/login)"
   echo "  control base  $CONTROL"
-  echo "  demo page     $CONTROL/demo   (people, mailbox, scenes; open this first)"
+  echo "  demo page     $CONTROL/demo   (the front door: people, scenes, mailbox; open this first)"
+  if [[ $SIGNIN == on ]]; then
+    echo "  demo sign-in  on: choose \"Sign in as\" on the demo page, no passkey needed"
+  fi
   echo "  manifest      $STATE/stack.json"
   echo
   # shellcheck disable=SC2086

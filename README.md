@@ -52,6 +52,37 @@ Then open the demo page at `http://127.0.0.1:8641/demo`. It lists the people of 
 
 Known gap: after sign-in a person lands on the account page, and the app has no home page or role navigation yet. Work in progress adds both.
 
+## Running it locally
+
+The site runs on your machine only, on loopback, with synthetic data. It needs Node.js 24.11.1 with `npm ci` run once in `web/` and `e2e/`, and the Rust toolchain of `rust-toolchain.toml`.
+
+1. Build and start it. The command compiles the pages with tsc, packs the assets, builds the test cell and seeds the scene "review stage1":
+
+   ```sh
+   tools/demo/run.sh
+   ```
+
+2. Open the front door at `http://127.0.0.1:8641/demo` in Chromium or Chrome. It names the scene, then lists each synthetic person with their role and one line on what they can do.
+3. Choose "Sign in as" beside a person. Their home page opens at `http://a.fstp.localhost:8640/app/`, with no passkey. The top bar says "Demo sign-in". Use one browser profile per person, such as a new incognito window each.
+4. Switch scenes from the front door, or from a terminal:
+
+   ```sh
+   tools/demo/run.sh seed review ranked
+   tools/demo/run.sh seed applicant STAGE2
+   tools/demo/run.sh reset
+   tools/demo/run.sh advance 60
+   ```
+
+5. Stop it:
+
+   ```sh
+   tools/demo/run.sh stop
+   ```
+
+`FSTP_DEMO_PORT=<n>` moves the four listeners: the cell on `<n>`, the front door on `<n + 1>`. `FSTP_DEMO_SIGNIN=off` starts the cell as the e2e suite runs it, with passkeys only. Then the name link of each person enrols a passkey, and the person signs in with it. A name under `.localhost` is a secure context in Chromium, so passkeys work over plain HTTP.
+
+The public call pages are not served yet: `/p` is a stub until `fstp-public` exists. `docs/handoff/m4-demo.md` gives the click paths of each role.
+
 ## Repository layout
 
 | Path | Content |

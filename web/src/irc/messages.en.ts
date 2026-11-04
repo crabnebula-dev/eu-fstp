@@ -3,7 +3,7 @@
 // verdict and the concern only (R-IR-03).
 
 export const IRC_LABELS: Readonly<Record<string, string>> = {
-  "irc.list.title": "My IRC cases",
+  "irc.list.title": "My cases",
   "irc.list.caption": "Nominated proposals assigned to you for IRC review",
   "irc.list.col_proposal": "Proposal",
   "irc.list.col_status": "Status",
@@ -14,7 +14,7 @@ export const IRC_LABELS: Readonly<Record<string, string>> = {
   "irc.list.open": "Open the IRC case of proposal {id}",
   "irc.list.none": "You have no IRC cases.",
   "irc.case.loading": "IRC case",
-  "irc.case.title": "IRC case of proposal {id}",
+  "irc.case.title": "Independent review of proposal {id}",
   "irc.case.heading": "Nominated proposal",
   "irc.case.outcome.nominated": "Outcome: nominated for funding by the committee.",
   "irc.verdict.legend": "Your IRC verdict",

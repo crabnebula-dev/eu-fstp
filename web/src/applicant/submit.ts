@@ -30,6 +30,8 @@ import {
   statusRegion,
   t,
   textArea,
+  proposalHeading,
+  proposalSteps,
 } from "./ui.js";
 import { type Body, decodeAccepted, decodeCall } from "./wire.js";
 
@@ -55,7 +57,7 @@ function radio(id: string, value: string, label: string): { readonly root: HTMLE
   return { root: h("div", { class: "fstp-choice" }, [input, " ", h("label", { for: id }, [label])]), input };
 }
 
-function form(f: Frame, id: string, done: () => void): HTMLElement {
+function form(f: Frame, id: string, done: (ethics: "none" | "declared") => void): HTMLElement {
   const summaryList = h("ul", {});
   const summary = h(
     "div",
@@ -162,24 +164,65 @@ function form(f: Frame, id: string, done: () => void): HTMLElement {
         showFailure(f, r.failure);
         return;
       }
-      done();
+      done(declared.input.checked ? "declared" : "none");
     });
   });
   return el;
+}
+
+/** What the receipt shows of a submission the cell accepted. */
+interface Receipt {
+  readonly title: string;
+  readonly ethics: "none" | "declared";
+}
+
+/**
+ * The submission receipt (`submission-receipt` prototype; R-SB-05,
+ * R-NG-06): the status, the proposal, the notice version shown and
+ * acknowledged, the ethics self-declaration, and what happens next. The
+ * reply of `proposal.submit` carries no time or ledger sequence, so the
+ * receipt names neither.
+ */
+function mountReceipt(id: string, r: Receipt): void {
+  const f = frame(t("receipt.title"));
+  const status = statusRegion("submit-status");
+  f.main.prepend(status);
+  setStatus(status, "saved", t("submit.done"));
+  f.main.append(
+    h("section", { class: "card", "aria-labelledby": "receipt-heading" }, [
+      h("h2", { id: "receipt-heading" }, [r.title === "" ? t("proposal.untitled") : r.title]),
+      h("dl", { class: "facts" }, [
+        h("dt", {}, [t("receipt.proposal")]),
+        h("dd", { class: "pid" }, [id]),
+        h("dt", {}, [t("receipt.state")]),
+        h("dd", {}, [h("span", { class: "badge badge--success" }, [stateLabel("SUBMITTED")]), " ", h("span", { class: "state-name" }, ["SUBMITTED"])]),
+        h("dt", {}, [t("receipt.notice")]),
+        h("dd", {}, [t("receipt.notice_version", { version: NOTICE_VERSIONS.submission })]),
+        h("dt", {}, [t("receipt.ethics")]),
+        h("dd", {}, [t(r.ethics === "declared" ? "receipt.ethics_declared" : "receipt.ethics_none")]),
+      ]),
+    ]),
+    h("section", { class: "card", "aria-labelledby": "receipt-next-heading" }, [
+      h("h2", { id: "receipt-next-heading" }, [t("receipt.next")]),
+      h("p", {}, [t("receipt.next_check")]),
+      h("p", {}, [t("receipt.next_withdraw")]),
+      h("p", {}, [h("a", { href: APP.proposal(id) }, [t("receipt.open")])]),
+    ]),
+  );
 }
 
 /**
  * Mounts the submit page of proposal `id`. `done`, when given, is the
  * outcome of the submission that led here.
  */
-export function mountSubmit(id: string, done?: string): void {
+export function mountSubmit(id: string, done?: Receipt): void {
+  if (done !== undefined) {
+    mountReceipt(id, done);
+    return;
+  }
   const f = frame(t("submit.title"));
   const status = statusRegion("submit-status");
   f.main.append(h("p", {}, [h("a", { href: APP.proposal(id) }, [t("proposal.back")])]), status);
-  if (done !== undefined) {
-    setStatus(status, "saved", done);
-    return;
-  }
   run(f, async () => {
     const p = await loadProposal(f, id);
     if (p === null) {
@@ -196,6 +239,8 @@ export function mountSubmit(id: string, done?: string): void {
       f.main.append(h("p", {}, [t("lead.only")]));
       return;
     }
+    proposalHeading(f, p.state);
+    f.main.append(proposalSteps(id, "submit"), h("h2", { id: "submit-heading" }, [t("steps.submit")]));
     if (p.call !== undefined) {
       const c = await call("calls.get", { call: p.call }, undefined, decodeCall);
       if (c.ok && !c.value.open) {
@@ -205,8 +250,8 @@ export function mountSubmit(id: string, done?: string): void {
     }
     f.main.append(
       notice(),
-      form(f, id, () => {
-        mountSubmit(id, t("submit.done"));
+      form(f, id, (ethics) => {
+        mountSubmit(id, { title: p.title, ethics });
       }),
     );
   });

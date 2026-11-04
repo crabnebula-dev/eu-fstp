@@ -33,7 +33,7 @@
 //! links, recovery and adding a second passkey are not emulated: their
 //! routes answer 404, so the page shows that the action is unavailable.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_api_core::port::{LoginMethod, SessionId, Sessions, SessionsAdmin, StepUp};
 use fstp_api_core::{Credential, RequestHead};
@@ -131,6 +131,12 @@ pub(crate) struct AuthState {
     /// The open tenant admin invitation of each invited account, until
     /// the account enrols (lane m4tenant, `crate::onboarding`).
     admin_invitations: BTreeMap<AccountId, fstp_tenant::InvitationId>,
+    /// The unused demo sign-in tokens, each with its account and the cell
+    /// time it was issued at (`crate::demo_signin`). Empty unless the
+    /// cell runs with `--demo-signin`.
+    demo_tokens: BTreeMap<String, (AccountId, i64)>,
+    /// The sessions a demo sign-in opened.
+    demo_sessions: BTreeSet<u128>,
 }
 
 impl AuthState {
@@ -150,7 +156,44 @@ impl AuthState {
             session_passkey: BTreeMap::new(),
             mailbox: Vec::new(),
             admin_invitations: BTreeMap::new(),
+            demo_tokens: BTreeMap::new(),
+            demo_sessions: BTreeSet::new(),
         }
+    }
+
+    /// Issues a single-use demo sign-in token for `account` at cell time
+    /// `now`, and drops every token older than `lifetime` microseconds.
+    pub(crate) fn demo_token(
+        &mut self,
+        account: AccountId,
+        now: i64,
+        lifetime: i64,
+    ) -> Result<String, String> {
+        self.demo_tokens
+            .retain(|_, (_, issued)| now.saturating_sub(*issued) <= lifetime);
+        let token = hex(&wire::random::<16>()?);
+        self.demo_tokens.insert(token.clone(), (account, now));
+        Ok(token)
+    }
+
+    /// Takes the demo sign-in token `token`: its account when it was
+    /// issued at most `lifetime` microseconds before `now`. A token is
+    /// removed on its first use, so a reused one is refused, and an
+    /// expired one is removed too.
+    pub(crate) fn take_demo_token(
+        &mut self,
+        token: &str,
+        now: i64,
+        lifetime: i64,
+    ) -> Option<AccountId> {
+        let (account, issued) = self.demo_tokens.remove(token)?;
+        let age = now.saturating_sub(issued);
+        (0..=lifetime).contains(&age).then_some(account)
+    }
+
+    /// Whether `session` was opened by a demo sign-in.
+    pub(crate) fn is_demo_session(&self, session: SessionId) -> bool {
+        self.demo_sessions.contains(&session.raw())
     }
 
     /// Records that `email` is the login email of `account`.
@@ -477,7 +520,7 @@ fn cookie(req: &Request) -> Option<Vec<u8>> {
 }
 
 /// Whether a state-changing request passes the CSRF rule of the cell.
-fn csrf(info: &SiteInfo, req: &Request) -> bool {
+pub(crate) fn csrf(info: &SiteInfo, req: &Request) -> bool {
     let origin_ok = req
         .headers
         .get("origin")
@@ -504,8 +547,25 @@ fn open_session(inner: &Inner, account: AccountId, passkey: Vec<u8>) -> Response
     r
 }
 
+/// A reply that opens a demo sign-in session for `account` and sets its
+/// cookie (`crate::demo_signin`). The fake sessions port records it as a
+/// passkey session, so every guard of a passkey session applies to it;
+/// the cell marks it as a demo session, and its step-up confirms with a
+/// button.
+pub(crate) fn open_demo_session(inner: &Inner, account: AccountId) -> Response {
+    let login = inner.ports.sessions.login(account, LoginMethod::Passkey);
+    lock(&inner.auth).demo_sessions.insert(login.session.raw());
+    let mut r = wire::ok_empty();
+    let value = format!(
+        "{COOKIE}={}; Path=/; Secure; HttpOnly; SameSite=Strict",
+        String::from_utf8_lossy(&login.cookie)
+    );
+    let _ = r.headers.try_insert("set-cookie", value.as_str());
+    r
+}
+
 /// The session of a request: its id and account.
-async fn session(inner: &Inner, req: &Request) -> Option<(SessionId, AccountId)> {
+pub(crate) async fn session(inner: &Inner, req: &Request) -> Option<(SessionId, AccountId)> {
     let c = cookie(req)?;
     let now = inner.ports.clock.read();
     let p = inner
@@ -826,11 +886,22 @@ async fn step_up(inner: &Inner, req: &Request) -> Response {
     if owner != session {
         return refuse(StatusCode::FORBIDDEN, "challenge");
     }
-    let asserted = lock(&inner.auth).assert(&body, &challenge);
-    match asserted {
-        Ok((who, _)) if who == account => {}
-        Ok(_) => return refuse(StatusCode::FORBIDDEN, "credential_id"),
-        Err(why) => return refuse(StatusCode::FORBIDDEN, why),
+    // A demo sign-in session confirms with a button (`crate::demo_signin`):
+    // its step-up carries `"demo": true` and no assertion. Only a session
+    // that a demo sign-in opened may, and only a cell started with
+    // `--demo-signin` opens one. The proof is recorded as for a passkey.
+    let demo = matches!(body.get("demo"), Some(Value::Bool(true)));
+    if demo {
+        if !lock(&inner.auth).is_demo_session(session) {
+            return refuse(StatusCode::FORBIDDEN, "demo");
+        }
+    } else {
+        let asserted = lock(&inner.auth).assert(&body, &challenge);
+        match asserted {
+            Ok((who, _)) if who == account => {}
+            Ok(_) => return refuse(StatusCode::FORBIDDEN, "credential_id"),
+            Err(why) => return refuse(StatusCode::FORBIDDEN, why),
+        }
     }
     match inner.ports.step_up.finish(session, &challenge).await {
         Ok(r) => wire::json(
@@ -865,6 +936,7 @@ mod tests {
             assets: fstp_web_assets::AssetSet::from_files("main.js", &[("main.js", b"export {};")])
                 .unwrap(),
             auth_assets: std::sync::Arc::new(crate::assets::AuthAssets::empty()),
+            demo_signin: false,
         }
     }
 

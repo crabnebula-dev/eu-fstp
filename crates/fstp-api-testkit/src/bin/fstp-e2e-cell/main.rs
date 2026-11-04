@@ -20,6 +20,14 @@
 //! once every listener accepts connections, so a test runner reads the
 //! origins from it.
 //!
+//! With `--demo-signin` (lane m4/site, Daniel 2026-11-04: "for the demo
+//! it makes NO SENSE to have to use and generate passkeys"), the demo
+//! page gives each person a one-click sign-in, and a step-up of such a
+//! session confirms with a plain button ([`demo_signin`]). Without the
+//! flag, which is how the e2e suite runs the cell, nothing of it exists:
+//! the route answers 404 and passkeys work as before. The flag, its route
+//! and its bypass live in this test-only binary only (layering rule A9).
+//!
 //! Interim readings, pending Daniel:
 //!
 //! - The cells are plain HTTP on loopback. A host under `.localhost` is a
@@ -40,6 +48,7 @@ mod assets;
 mod auth;
 mod control;
 mod demo;
+mod demo_signin;
 mod onboarding;
 mod scenario;
 mod wire;
@@ -82,6 +91,8 @@ struct Config {
     web: Option<PathBuf>,
     /// Where to write the stack manifest, if anywhere.
     manifest_out: Option<PathBuf>,
+    /// Whether the demo sign-in of [`demo_signin`] is on (`--demo-signin`).
+    demo_signin: bool,
 }
 
 impl Config {
@@ -91,12 +102,13 @@ impl Config {
             port: 0,
             web: None,
             manifest_out: None,
+            demo_signin: false,
         }
     }
 
-    /// The configuration from the arguments: `--port <n>`, `--web <dir>`
-    /// and `--manifest-out <file>`, each optional. Any other argument is
-    /// refused, and so is a port range that does not fit.
+    /// The configuration from the arguments: `--port <n>`, `--web <dir>`,
+    /// `--manifest-out <file>` and `--demo-signin`, each optional. Any
+    /// other argument is refused, and so is a port range that does not fit.
     fn from_args(args: impl IntoIterator<Item = String>) -> Result<Config, String> {
         let mut cfg = Config::loopback();
         let mut args = args.into_iter();
@@ -118,6 +130,7 @@ impl Config {
                         args.next().ok_or("--manifest-out needs a file")?,
                     ));
                 }
+                "--demo-signin" => cfg.demo_signin = true,
                 other => return Err(format!("unknown argument {other}")),
             }
         }
@@ -151,6 +164,8 @@ pub(crate) struct Inner {
     pub(crate) auth: Mutex<AuthState>,
     /// The API core the routes call, for the scenario seeds.
     pub(crate) core: Arc<fstp_api_core::ApiCore>,
+    /// The name of the scene this state holds, for the demo page.
+    scene: Mutex<String>,
 }
 
 impl Inner {
@@ -182,7 +197,18 @@ impl Inner {
             web,
             auth: Mutex::new(auth),
             core,
+            scene: Mutex::new("Reset".to_owned()),
         })
+    }
+
+    /// Names the scene this state holds, such as `stage1` or `STAGE2`.
+    pub(crate) fn set_scene(&self, name: &str) {
+        name.clone_into(&mut lock(&self.scene));
+    }
+
+    /// The name of the scene this state holds.
+    pub(crate) fn scene(&self) -> String {
+        lock(&self.scene).clone()
     }
 }
 
@@ -200,6 +226,8 @@ pub(crate) struct SiteInfo {
     pub(crate) assets: AssetSet,
     /// The M3 pages.
     pub(crate) auth_assets: Arc<AuthAssets>,
+    /// Whether the demo sign-in is on (`--demo-signin`).
+    pub(crate) demo_signin: bool,
 }
 
 /// One cell: what it is and its current state.
@@ -237,13 +265,35 @@ impl Handler for CellOrigin {
                 return site.info.auth_assets.asset(&req);
             }
             let inner = site.inner();
+            if site.info.demo_signin && path == demo_signin::ROUTE {
+                return demo_signin::handle(&site.info, &inner, req).await;
+            }
+            // The `/app/` shell and the M3 account page of a demo sign-in
+            // session carry the demo notice; no other reply changes
+            // (`demo_signin`).
+            let demo = if site.info.demo_signin && req.method == Method::GET {
+                match demo_signin::module_for(&path) {
+                    Some(m) if demo_signin::is_demo_session(&inner, &req).await => Some(m),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if path == "/auth" || path.starts_with("/auth/") {
-                return auth::handle(&site.info, &inner, req).await;
+                let r = auth::handle(&site.info, &inner, req).await;
+                return match demo {
+                    Some(m) => demo_signin::mark_shell(r, m),
+                    None => r,
+                };
             }
             if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
                 return onboarding::invite_admin(&inner, req).await;
             }
-            inner.web.serve(req).await
+            let r = inner.web.serve(req).await;
+            match demo {
+                Some(m) => demo_signin::mark_shell(r, m),
+                None => r,
+            }
         }
     }
 }
@@ -291,7 +341,7 @@ fn app_assets(cfg: &Config) -> Result<AssetSet, String> {
 fn start(cfg: &Config) -> Result<Running, String> {
     let assets = app_assets(cfg)?;
     let auth_assets = Arc::new(match &cfg.web {
-        Some(dir) => AuthAssets::load(dir)?,
+        Some(dir) => AuthAssets::load(dir, cfg.demo_signin)?,
         None => AuthAssets::empty(),
     });
     let rt = TokioRuntime::new_multi_thread(2).map_err(|e| e.to_string())?;
@@ -318,6 +368,7 @@ fn start(cfg: &Config) -> Result<Running, String> {
             host,
             assets: assets.clone(),
             auth_assets: Arc::clone(&auth_assets),
+            demo_signin: cfg.demo_signin,
         };
         let first = control::fresh(&info)?;
         let site = Arc::new(Site {
@@ -477,6 +528,12 @@ mod tests {
         assert!(ok.addr(3).ip().is_loopback());
         assert!(Config::from_args(["--port".to_owned(), "65534".to_owned()]).is_err());
         assert!(Config::from_args(["--other".to_owned()]).is_err());
+        assert!(
+            Config::from_args(["--demo-signin".to_owned()])
+                .unwrap()
+                .demo_signin
+        );
+        assert!(!Config::from_args(Vec::new()).unwrap().demo_signin);
         assert_eq!(Config::from_args(Vec::new()).unwrap(), Config::loopback());
     }
 }

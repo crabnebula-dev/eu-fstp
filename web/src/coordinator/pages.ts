@@ -13,6 +13,7 @@
 //   no control that states its outcome.
 // - R-CF-04: notifiable conflicts reach the coordinator as drafts.
 
+import { declaredHere, markDeclared } from "./declared.js";
 import { h, type Child } from "../core/dom.js";
 import type { I18n } from "../core/i18n.js";
 import {
@@ -42,6 +43,9 @@ import {
   type PageEnv,
   type ShownError,
   type StateTag,
+  stateChip,
+  callName,
+  titleWithCall,
 } from "../reviewer/kit.js";
 import { readKnockOut, type KnockOutChoice } from "./forms.js";
 import { COORDINATOR_LABELS } from "./messages.en.js";
@@ -113,10 +117,32 @@ function intakeLinks(t: I18n, proposal: string, state: string): HTMLElement {
   if (actions.length === 0) {
     return h("p", {}, [t.label("coord.intake.no_action", { id: proposal })]);
   }
+  // The content route refuses until the declaration is recorded, so the
+  // knock-out check sits behind a disclosure button, "After your
+  // declaration". It shows at once when this document recorded the
+  // declaration (`declared.ts`).
   return h(
     "ul",
     {},
-    actions.map((a) => h("li", {}, [h("a", { href: paths[a] }, [t.label(`coord.intake.${a}`, { id: proposal })])])),
+    actions.map((a) => {
+      const link = h("a", { href: paths[a] }, [t.label(`coord.intake.${a}`, { id: proposal })]);
+      if (a !== "knock_out" || declaredHere(proposal)) {
+        return h("li", {}, [link]);
+      }
+      const id = `knock-out-${proposal}`;
+      const shown = h("span", { id, hidden: true }, [link]);
+      const toggle = h(
+        "button",
+        { type: "button", class: "btn--small", "aria-expanded": "false", "aria-controls": id },
+        [t.label("coord.intake.after_declaration", { id: proposal })],
+      );
+      toggle.addEventListener("click", () => {
+        const open = shown.hidden;
+        shown.hidden = !open;
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      return h("li", {}, [toggle, " ", shown]);
+    }),
   );
 }
 
@@ -147,7 +173,7 @@ async function mountIntake(env: PageEnv, params: Readonly<Record<string, string>
             h("tr", { "data-proposal": r.proposal, "data-state": r.state }, [
               h("th", { scope: "row" }, [proposalName(t, r.proposal)]),
               h("td", {}, [r.title]),
-              h("td", {}, [t.label(`kit.state.${r.state}`)]),
+              h("td", {}, [stateChip(t, r.state)]),
               h("td", {}, [intakeLinks(t, r.proposal, r.state)]),
             ]),
           ),
@@ -172,25 +198,52 @@ async function mountDeclaration(env: PageEnv, params: Readonly<Record<string, st
       f.show([]);
       return;
     }
+    // The three steps of the eligibility check (`coordinator-conflict`
+    // prototype). Reading and recording open on the knock-out page once
+    // the declaration of no conflict is recorded (R-CF-02); the steps
+    // change in place when it is.
     const section = declarationViewSection(t, view.data);
-    f.show([
+    const read = h("div", {}, [h("p", {}, [t.label("coord.decl.locked")])]);
+    const record = h("div", {}, [h("p", {}, [t.label("coord.decl.locked")])]);
+    const step = (id: string, label: string, body: Child[]): HTMLElement =>
+      h("section", { id, "aria-labelledby": `${id}-heading` }, [h("h2", { id: `${id}-heading` }, [label]), ...body]);
+    const declare = h("div", {}, [
       section,
       declarationForm(
         t,
         f,
-        (d) => writeOp(env, "review.declare_proposal", { proposal }, declarationBody(d)),
         async (d) => {
-          const next: Child[] = [section];
-          if (!d.conflicted) {
-            next.push(
-              h("p", {}, [
-                h("a", { href: `/app/proposals/${proposal}/knock-out` }, [t.label("coord.decl.next", { id: proposal })]),
-              ]),
+          const answer = await writeOp(env, "review.declare_proposal", { proposal }, declarationBody(d));
+          if (!answer.ok && !d.conflicted) {
+            // A second declaration of no conflict is refused. The link
+            // then says when it applies, and the page claims nothing.
+            const ko = `/app/proposals/${proposal}/knock-out`;
+            record.replaceChildren(
+              h("p", {}, [h("a", { href: ko }, [t.label("coord.decl.declared_before", { id: proposal })])]),
             );
           }
-          f.show(next);
+          return answer;
+        },
+        async (d) => {
+          declare.replaceChildren(section);
+          if (!d.conflicted) {
+            markDeclared(proposal);
+          }
+          if (d.conflicted) {
+            read.replaceChildren(h("p", {}, [t.label("coord.decl.conflicted")]));
+            record.replaceChildren(h("p", {}, [t.label("coord.decl.conflicted")]));
+            return;
+          }
+          const ko = `/app/proposals/${proposal}/knock-out`;
+          read.replaceChildren(h("p", {}, [h("a", { href: ko }, [t.label("coord.decl.read", { id: proposal })])]));
+          record.replaceChildren(h("p", {}, [h("a", { href: ko }, [t.label("coord.decl.next", { id: proposal })])]));
         },
       ),
+    ]);
+    f.show([
+      step("step-declare", t.label("coord.decl.step_declare"), [declare]),
+      step("step-read", t.label("coord.decl.step_read"), [read]),
+      step("step-record", t.label("coord.decl.step_record"), [record]),
     ]);
   });
 }
@@ -442,10 +495,30 @@ async function mountAssignments(env: PageEnv, params: Readonly<Record<string, st
 // Board and the stage 1 close (I-07, I-08, NOTE 3)
 // ---------------------------------------------------------------------------
 
+/**
+ * The states a proposal reaches only after its selection for stage 2
+ * (`02-domain/state-machine.md`): STAGE2 and every state after it.
+ * NOT_SELECTED and WITHDRAWN are left out, since either may come before
+ * or after the selection.
+ */
+const AFTER_SELECTION: ReadonlySet<StateTag> = new Set<StateTag>([
+  "STAGE2",
+  "RANKED",
+  "IRC_REVIEW",
+  "DEFERRED",
+  "DECLINED",
+  "NEGOTIATION",
+  "GRANTED",
+  "IN_EXECUTION",
+  "COMPLETED",
+  "TERMINATED",
+]);
+
 async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
   const t = pageI18n(env, COORDINATOR_LABELS);
   const call = param(params, "call");
-  const f = frame(env, t, t.label("coord.board.title"));
+  const f = frame(env, t, t.label("coord.board.title", { call: callName(t, call) }));
+  titleWithCall(f, t, call, (name) => t.label("coord.board.title", { call: name }));
   const render = async (): Promise<void> => {
     const board = await readOp(env, "call.board", { call }, isBoard);
     if (!board.ok) {
@@ -481,11 +554,30 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
       return h("tr", { "data-proposal": r.proposal, "data-state": r.state }, [
         h("th", { scope: "row" }, [proposalName(t, r.proposal)]),
         h("td", {}, [r.title]),
-        h("td", {}, [t.label(`kit.state.${r.state}`)]),
+        h("td", {}, [stateChip(t, r.state)]),
         h("td", {}, action),
       ]);
     });
+    // NOTE 3, R-EV-01: a selected proposal keeps counting as selected once
+    // it moves past STAGE2. Each close is recorded on its own, so while a
+    // proposal still waits for its close the page says the counts cover
+    // the closes recorded so far, and are no final result yet.
+    const selected = board.data.filter((r) => AFTER_SELECTION.has(r.state)).length;
+    const notSelected = board.data.filter((r) => r.state === "NOT_SELECTED").length;
+    const waiting = board.data.filter((r) => r.state === "STAGE1").length;
+    const ranked = board.data.some((r) => AFTER_SELECTION.has(r.state) && r.state !== "STAGE2");
     f.show([
+      h("h2", { id: "board-summary" }, [
+        t.label("coord.board.summary", { selected: String(selected), not_selected: String(notSelected) }),
+      ]),
+      ...(waiting > 0
+        ? [
+            h("p", { id: "board-pending", class: "fstp-hint" }, [
+              t.label(waiting === 1 ? "coord.board.pending_one" : "coord.board.pending_other", { count: String(waiting) }),
+            ]),
+          ]
+        : []),
+      ...(ranked ? [h("p", { class: "fstp-hint" }, [t.label("coord.board.summary_note")])] : []),
       h("p", {}, [t.label("coord.board.note")]),
       h("table", { id: "board-table" }, [
         h("caption", {}, [t.label("coord.board.caption")]),
@@ -504,7 +596,8 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
 async function mountNotifiable(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
   const t = pageI18n(env, COORDINATOR_LABELS);
   const call = param(params, "call");
-  const f = frame(env, t, t.label("coord.notif.title"));
+  const f = frame(env, t, t.label("coord.notif.title", { call: callName(t, call) }));
+  titleWithCall(f, t, call, (name) => t.label("coord.notif.title", { call: name }));
   await guarded(f, async () => {
     const drafts = await readOp(env, "review.notifiable_conflicts", { call }, isNotifiableList);
     if (!drafts.ok) {

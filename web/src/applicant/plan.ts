@@ -27,6 +27,8 @@ import {
   setStatus,
   showFailure,
   statusRegion,
+  proposalHeading,
+  proposalSteps,
   t,
   textArea,
 } from "./ui.js";
@@ -49,6 +51,8 @@ export function mountPlan(id: string): void {
       f.main.append(h("p", {}, [t("lead.only")]));
       return;
     }
+    proposalHeading(f, p.state);
+    f.main.append(proposalSteps(id, "plan"), h("h2", { id: "plan-heading" }, [t("steps.plan")]));
     const summary = errorSummary("plan-errors");
     const plan = planForm("plan");
     const description = textArea("plan-description", t("plan.description"), { rows: 10 });

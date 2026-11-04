@@ -42,7 +42,11 @@ interface Shown {
 export function mount(p: string, step: string): void {
   const s = CREATOR_STEPS.find((x) => x.id === step);
   if (s === undefined) return;
-  const { main, alert } = frame({ title: stepTitle(s), alertId: "creator-error", nav: stepNav(p, step) });
+  // The `planning-studio` prototype: "Programme set-up" heads every step,
+  // and the step names itself in its `h2` and the document title.
+  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error", nav: stepNav(p, step) });
+  document.title = stepTitle(s);
+  main.append(h("h2", { id: "creator-step-heading" }, [stepTitle(s)]));
   const fieldsBox = h("div", { id: "creator-fields" });
   const status = statusRegion("creator-step-status");
   const checks = h("ul", { id: "creator-step-checks", "aria-label": t.label("creator.step.checks") });

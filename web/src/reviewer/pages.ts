@@ -14,6 +14,7 @@
 // - I-23: a correction carries its reason.
 // - R-EV-05 and NOTE 4: questions or "no questions" in stage 2.
 
+import { isRankingView } from "../committee/models.js";
 import { h, type Child } from "../core/dom.js";
 import type { I18n, Label } from "../core/i18n.js";
 import { readRankingSummary, readScoreCorrection, readScoreSheet, type FieldError } from "./forms.js";
@@ -175,7 +176,7 @@ function scoreForm(
     return { criterion: c, ...field };
   });
   const children: Child[] = [
-    h("h2", { id: "score-heading" }, [t.label("rev.sheet.heading")]),
+    h("h2", { id: "score-heading" }, [t.label(mode === "new" ? "rev.sheet.heading" : "rev.sheet.correct_heading")]),
     h("p", {}, [t.label(`rev.sheet.stage.${sheet.stage}`)]),
     h("p", {}, [t.label("rev.sheet.intro")]),
     ...fields.map((x) => x.root),
@@ -294,6 +295,21 @@ function declareLater(env: PageEnv, t: I18n, f: Frame, s: AssignmentSummary): HT
  * with them.
  */
 async function showWork(env: PageEnv, t: I18n, f: Frame, s: AssignmentSummary): Promise<void> {
+  // A ranked proposal is read through the committee's ranking view, never
+  // its content (`visibility.rs`, D11). The ranking of the call names it
+  // then, so the page says so and makes no read the route refuses.
+  const ranking = await readOp(env, "committee.ranking", { call: s.call }, isRankingView);
+  if (ranking.ok && ranking.data.some((r) => r.proposal === s.proposal)) {
+    f.state("RANKED");
+    f.show([
+      h("p", { id: "content-closed" }, [
+        t.label("rev.ranked_closed"),
+        " ",
+        h("a", { href: `/app/calls/${s.call}/ranking` }, [t.label("rev.ranked_link")]),
+      ]),
+    ]);
+    return;
+  }
   const later = declareLater(env, t, f, s);
   const content = await readOp(env, "review.read_content", { proposal: s.proposal }, isContentView);
   if (!content.ok) {
@@ -312,7 +328,27 @@ async function showWork(env: PageEnv, t: I18n, f: Frame, s: AssignmentSummary): 
     }
     // A correction needs a recorded score; without one the sheet is new.
     const mode: SheetMode = sheet.data.current === null ? "new" : (wanted ?? "scored");
-    f.show([contentSection(t, view), scoreForm(env, t, f, s.assignment, sheet.data, mode, (m) => render(m)), later]);
+    // A recorded score opens the ranking summary (R-EV-08), on its own page.
+    const summary =
+      sheet.data.current === null
+        ? []
+        : [
+            h("section", { id: "summary-link", "aria-labelledby": "summary-link-heading" }, [
+              h("h2", { id: "summary-link-heading" }, [t.label("rev.summary.heading")]),
+              h("p", {}, [t.label("rev.summary.lead")]),
+              h("p", {}, [
+                h("a", { href: `/app/assignments/${s.assignment}/summary` }, [
+                  t.label("rev.summary.link", { id: s.proposal }),
+                ]),
+              ]),
+            ]),
+          ];
+    f.show([
+      contentSection(t, view),
+      scoreForm(env, t, f, s.assignment, sheet.data, mode, (m) => render(m)),
+      ...summary,
+      later,
+    ]);
   };
   await render(null);
 }
@@ -476,7 +512,7 @@ async function mountStage2(env: PageEnv, params: Readonly<Record<string, string>
     if (s === null) {
       return;
     }
-    f.retitle(t.label("rev.stage2.title", { id: s.proposal }));
+    f.retitle(t.label("rev.stage2.title"));
     if (!declaredActive(t, f, s)) {
       return;
     }

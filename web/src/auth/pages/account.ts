@@ -127,7 +127,7 @@ function siteNav(main: HTMLElement): void {
     clear(list);
     for (const l of siteLinks(roles)) {
       const attrs: Record<string, string> = { href: l.href, 'data-nav': l.kind };
-      if (l.kind === 'account') attrs['aria-current'] = 'page';
+      if (l.href === location.pathname) attrs['aria-current'] = 'page';
       const text = t(`account.nav.${l.kind}`);
       list.append(h('li', {}, [h('a', attrs, [text])]));
     }
