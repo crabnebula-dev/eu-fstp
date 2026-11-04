@@ -481,3 +481,54 @@ fn r_pg_05_save_as_tenant_template_records_one_template() {
         Some(Fail::Creator(fstp_creator::CreatorRefusal::TemplateExists))
     );
 }
+
+/// R-PG-01, TH-49: `draft_view` reads the draft spec and the template
+/// narratives that wait for `AcceptNarrative`. After a SuperSAFE template
+/// start, the programme narrative is a gap in the spec and appears among
+/// the pending narratives with the template text. Once accepted, it leaves
+/// the pending narratives and the spec holds the text.
+#[test]
+fn r_pg_01_th49_draft_view_reads_the_spec_and_the_pending_narratives() {
+    let mut cell = forged();
+    let start = CreatorCommand::ApplyStart {
+        programme: P,
+        base: cell.head(),
+        start: StartingPoint::Template {
+            template: TemplateId::from_raw(SUPERSAFE_TEMPLATE.raw()),
+            version: 1,
+        },
+    };
+    cell.run(&start, M1)
+        .unwrap_or_else(|f| panic!("the template start is refused: {f:?}"));
+    let template = shipped_templates().unwrap().remove(0);
+    let want = match template.spec.get(FieldId::ProgrammeNarrative).as_set() {
+        Some(fstp_programme::FieldValue::ProgrammeNarrative(
+            fstp_programme::Narrative::Inline(t),
+        )) => t.clone(),
+        other => panic!("the template narrative is {other:?}"),
+    };
+    let key = FieldId::ProgrammeNarrative.key();
+    let spec_of = |cell: &Cell| {
+        let view = fstp_creator::draft_view(&cell.core, &cell.creator, P)
+            .unwrap_or_else(|| panic!("no view of the draft"));
+        let text = view.spec.to_canonical().unwrap();
+        (view, fstp_programme::decode_spec(text.as_bytes()).unwrap())
+    };
+    let (view, spec) = spec_of(&cell);
+    assert_eq!(view.pending_narratives.get(&key), Some(&want));
+    assert!(spec.get(FieldId::ProgrammeNarrative).as_set().is_none());
+    let accept = CreatorCommand::AcceptNarrative {
+        programme: P,
+        base: cell.head(),
+        field: FieldId::ProgrammeNarrative,
+    };
+    cell.run(&accept, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let (view, spec) = spec_of(&cell);
+    assert!(!view.pending_narratives.contains_key(&key));
+    assert!(spec.get(FieldId::ProgrammeNarrative).as_set().is_some());
+    let other = fstp_domain::id::ProgrammeId::from_raw(P.raw().wrapping_add(1));
+    assert_eq!(
+        fstp_creator::draft_view(&cell.core, &cell.creator, other),
+        None
+    );
+}

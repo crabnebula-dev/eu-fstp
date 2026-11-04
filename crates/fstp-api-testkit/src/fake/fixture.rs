@@ -26,7 +26,7 @@ use fstp_domain_testkit::r#gen::review::{
 };
 use fstp_domain_testkit::r#gen::roster::{self, K1, SodSetup, Step, T0, call};
 use fstp_domain_testkit::vault::GroundTruth;
-use fstp_engine::{Command, Engine, Record};
+use fstp_engine::{Engine, Record};
 use fstp_ledger::MemStore;
 
 use super::FakeVault;
@@ -146,8 +146,7 @@ pub fn pending_world() -> Result<World, String> {
         .map_err(|e| format!("open the fixture engine: {e:?}"))?;
     for (i, step) in steps()?.into_iter().enumerate() {
         let ctx = step.ctx(T0, fixture_command(i));
-        engine
-            .execute(Command::Core(step.cmd.clone()), ctx)
+        fstp_domain_testkit::activation::run_core(&mut engine, &step.cmd, ctx)
             .map_err(|e| format!("fixture step {i} {:?}: {e}", step.cmd.kind()))?;
     }
     let (store, _, _) = engine.into_parts();
@@ -250,6 +249,7 @@ mod tests {
     use fstp_domain::programme::CallStatus;
     use fstp_domain::refusal::RuleRef;
     use fstp_domain::rules::ParamId;
+    use fstp_engine::Command;
     use fstp_rt::future::block_on;
 
     fn engine() -> FakeEngine {

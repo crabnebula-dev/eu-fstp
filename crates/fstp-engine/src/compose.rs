@@ -26,8 +26,8 @@
 //!    The entry then holds the probe results, the approval, the vault
 //!    outcomes of the approval, and the core activation records.
 //!
-//! The engine fold refuses an entry with a `ProgrammeActivated` of a
-//! drafted programme without its `ActivationApproved`, and the reverse
+//! The engine fold refuses an entry with a `ProgrammeActivated` of
+//! any programme without its `ActivationApproved`, and the reverse
 //! (crate root, `apply_in`).
 //!
 //! # Readings, interim, pending Daniel
@@ -76,7 +76,7 @@ use fstp_domain::id::{AccountId, CallId, ProgrammeId};
 use fstp_domain::oracle::{Answers, Query};
 use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::programme::CallStatus;
-use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
+use fstp_domain::refusal::{Refusal, RefusalDetail, RefusalReason, RuleRef};
 use fstp_domain::state::State;
 use fstp_domain::{Record as CoreRecord, Via};
 use fstp_ledger::Seq;
@@ -186,6 +186,7 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
         C::NotAnAccount | C::NotTenantAdmin => (RuleRef::Actor, Why::WrongActor),
         C::NotProgrammeManager => (RuleRef::Actor, Why::BindingInactive),
         C::NothingToSave | C::RoleNotInvitable => (RuleRef::Input, Why::InvalidValue),
+        C::CapAboveCeiling { .. } => (RuleRef::I50, Why::InvalidValue),
         C::ProvenanceNotManual => (RuleRef::I65, Why::InvalidValue),
         C::NotAWarning => (RuleRef::I66, Why::InvalidValue),
         C::Uncleared(_) => (RuleRef::I66, Why::GuardFailed),
@@ -196,7 +197,16 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
         C::VaultAnswerMissing => (RuleRef::FactsIncomplete, Why::AnswerMissing),
         C::Unavailable(_) => (RuleRef::NotImplemented, Why::NotImplemented),
     };
-    Refusal::new(rule, why)
+    let refusal = Refusal::new(rule, why);
+    match c {
+        // I-50 at save names both values (Daniel's answer of 2026-10-31,
+        // M4 design section 15.0), so every caller of the engine, the API
+        // included, can show them.
+        C::CapAboveCeiling { p05, p58 } => {
+            refusal.naming(RefusalDetail::CapAboveCeiling { p05, p58 })
+        }
+        _ => refusal,
+    }
 }
 
 /// Whether the creator command reads the validation report, and so the
@@ -300,7 +310,12 @@ pub fn creator_queries(
     for c in predicted_core(state, cmd, ctx, env) {
         // A core refusal here is left to the decision, which gives the
         // creator's reason first.
-        if let Ok(qs) = fstp_domain::queries(&state.core, &c, ctx) {
+        let asked = if cmd_is_approval(cmd) {
+            fstp_domain::queries(&state.core, &c, ctx)
+        } else {
+            fstp_domain::queries_creator_save(&state.core, &c, ctx)
+        };
+        if let Ok(qs) = asked {
             for q in qs {
                 if !out.contains(&q) {
                     out.push(q);
@@ -396,6 +411,13 @@ pub fn pairs_with(
         && approved.builders().is_subset(pa.builders())
 }
 
+/// Whether the creator command is the approval, whose composed core
+/// command is the activation. Every other creator command composes the
+/// core commands of a save on the draft.
+fn cmd_is_approval(cmd: &CreatorCommand) -> bool {
+    matches!(cmd, CreatorCommand::ApproveActivation { .. })
+}
+
 /// Decides `cmd` on `core` and folds its records into `core`, as one
 /// composed command of the entry. Its questions must be among `answers`.
 pub(crate) fn decide_core(
@@ -404,14 +426,37 @@ pub(crate) fn decide_core(
     ctx: &Ctx,
     answers: &Answers,
 ) -> Result<Vec<CoreRecord>, Refusal> {
-    let asked = fstp_domain::queries(core, cmd, ctx)?;
+    decide_composed(core, cmd, ctx, answers, false)
+}
+
+/// [`decide_core`] of a core command composed from a creator save on a
+/// draft when `save` holds. The domain then counts an `EditPolicy` of a
+/// draft programme as drafting under P-77 (Daniel's answer of
+/// 2026-10-31, M4 design section 15.0), so an agent may save draft
+/// fields through MCP under "draft only".
+fn decide_composed(
+    core: &mut State,
+    cmd: &fstp_domain::Command,
+    ctx: &Ctx,
+    answers: &Answers,
+    save: bool,
+) -> Result<Vec<CoreRecord>, Refusal> {
+    let asked = if save {
+        fstp_domain::queries_creator_save(core, cmd, ctx)?
+    } else {
+        fstp_domain::queries(core, cmd, ctx)?
+    };
     if asked.iter().any(|q| answers.get(q).is_none()) {
         return Err(Refusal::new(
             RuleRef::FactsIncomplete,
             RefusalReason::AnswerMissing,
         ));
     }
-    let records = fstp_domain::decide(core, cmd, ctx, answers)?;
+    let records = if save {
+        fstp_domain::decide_creator_save(core, cmd, ctx, answers)?
+    } else {
+        fstp_domain::decide(core, cmd, ctx, answers)?
+    };
     for r in &records {
         fstp_domain::apply(core, Seq::from_raw(1), ctx.now, r)
             .map_err(|_| Refusal::new(RuleRef::Ledger, RefusalReason::WrongState))?;
@@ -460,7 +505,8 @@ pub fn decide_creator_command(
                 RefusalReason::WrongActor,
             )));
         }
-        let records = decide_core(&mut scratch, c, ctx, answers).map_err(CreatorFailure::Core)?;
+        let records = decide_composed(&mut scratch, c, ctx, answers, !cmd_is_approval(cmd))
+            .map_err(CreatorFailure::Core)?;
         out.extend(records.into_iter().map(Record::Core));
     }
     out.extend(tail);

@@ -375,7 +375,7 @@ impl Seeder<'_> {
         self.inner
             .ports
             .engine
-            .environment(fstp_engine::Command::Core(step.cmd.clone()), ctx)
+            .setup_step(&step.cmd, ctx)
             .map(|_| ())
             .map_err(|e| format!("seed step {:?} by {:?}: {e}", step.cmd.kind(), step.actor))
     }
@@ -1634,10 +1634,12 @@ mod tests {
             .collect();
         assert!(invited.contains(&STAFF_PM), "M1 has a sign-in link");
         assert_eq!(persona_label(STAFF_PM), Some("Programme manager M1"));
+        // Under strict D2e the seeded programme is activated through the
+        // creator, so it holds a draft and both creator pages read it.
         let pm = crate::demo::what_they_can_do(&inner, STAFF_PM);
         assert_eq!(
             pm,
-            "Programme manager: the board of each published call of the programme."
+            "Programme manager: the programme set-up and people pages of the programme, and its call boards."
         );
         let r1 = crate::demo::what_they_can_do(&inner, R1);
         assert!(
@@ -1652,8 +1654,9 @@ mod tests {
     /// findings U1 to U4): the demo line of each person promises only
     /// pages that open. Finished review assignments and decided IRC
     /// cases are counted as finished, the chair line names no cut-off
-    /// round, and the programme manager of a programme with no creator
-    /// draft is sent to the call boards only.
+    /// round, and the programme manager is sent to the creator pages only
+    /// when the programme holds a draft. Under strict D2e every seeded
+    /// programme holds one.
     #[test]
     fn r_ev_02_demo_lines_promise_only_pages_that_open() {
         let (ranked, _) = block_on(build_review(&info(), ReviewAt::Ranked)).unwrap();
@@ -1666,7 +1669,17 @@ mod tests {
         let h1 = crate::demo::what_they_can_do(&ranked, CHAIR);
         assert!(!h1.contains("cut-off"), "{h1}");
         let pm = crate::demo::what_they_can_do(&ranked, STAFF_PM);
-        assert!(!pm.contains("set-up") && !pm.contains("people"), "{pm}");
+        assert!(
+            ranked
+                .ports
+                .engine
+                .state()
+                .creator
+                .draft(PROGRAMME)
+                .is_some()
+                && pm.contains("set-up"),
+            "{pm}"
+        );
         let (irc, _) = block_on(build_review(&info(), ReviewAt::IrcReview)).unwrap();
         let i1 = crate::demo::what_they_can_do(&irc, IRC);
         assert!(i1.contains(" to work on, "), "{i1}");

@@ -318,8 +318,33 @@ fn admits_actor_kind(rule: ActorRule, ctx: &Ctx) -> bool {
     }
 }
 
+/// Where a command comes from, for the P-77 check of the shared checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Origin {
+    /// A command a person or the System issued.
+    Direct,
+    /// A core command the engine composed from a creator save on a draft
+    /// (M4 design section 3.2).
+    CreatorSave,
+}
+
+/// Whether `cmd` counts as drafting under P-77: an `EditPolicy` of a
+/// programme in Draft status that the engine composed from a creator save
+/// (Daniel's answer of 2026-10-31, M4 design section 15.0). Under P-77
+/// "draft only" an agent may save creator draft fields through MCP.
+/// Activation still needs a human approver with a step-up (I-66, I-67,
+/// I-85).
+fn drafting(state: &State, cmd: &Command, origin: Origin) -> bool {
+    let Command::EditPolicy { version, .. } = cmd else {
+        return false;
+    };
+    origin == Origin::CreatorSave
+        && crate::programme::programme_status(state, version.programme)
+            == Some(crate::programme::ProgrammeStatus::Draft)
+}
+
 /// The checks every command shares, before any lane runs (steps 1 to 4 above).
-fn shared_checks(state: &State, cmd: &Command, ctx: &Ctx) -> Result<(), Refusal> {
+fn shared_checks(state: &State, cmd: &Command, ctx: &Ctx, origin: Origin) -> Result<(), Refusal> {
     if ctx.now < state.now_floor {
         return Err(Refusal::new(RuleRef::Ledger, RefusalReason::ClockBackwards));
     }
@@ -342,7 +367,7 @@ fn shared_checks(state: &State, cmd: &Command, ctx: &Ctx) -> Result<(), Refusal>
     if !admitted {
         return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
     }
-    if ctx.via == Via::Mcp && cmd.binding_action() {
+    if ctx.via == Via::Mcp && cmd.binding_action() && !drafting(state, cmd, origin) {
         let scope = lane_governing_policy(command_lane(cmd.kind()), state, cmd)?;
         if !policy::mcp_binding_allowed(state, scope)? {
             return Err(Refusal::new(
@@ -484,7 +509,18 @@ pub(crate) fn queries_gated(
     ctx: &Ctx,
     gate: DraftGate,
 ) -> Result<Vec<Query>, Refusal> {
-    shared_checks(state, cmd, ctx)?;
+    queries_from(state, cmd, ctx, gate, Origin::Direct)
+}
+
+/// [`queries_gated`] for a command of `origin`.
+fn queries_from(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    gate: DraftGate,
+    origin: Origin,
+) -> Result<Vec<Query>, Refusal> {
+    shared_checks(state, cmd, ctx, origin)?;
     let owner = command_lane(cmd.kind());
     let mut out = lane_queries(owner, state, cmd, ctx, gate)?;
     for lane in LANES {
@@ -509,6 +545,37 @@ pub fn decide(
     decide_gated(state, cmd, ctx, answers, DraftGate::Enforce)
 }
 
+/// [`queries`] of a core command the engine composed from a creator save
+/// on a draft (M4 design section 3.2). It differs from [`queries`] in one
+/// rule: an `EditPolicy` of a programme in Draft status counts as
+/// drafting, not as a binding action, so P-77 "draft only" admits it
+/// through MCP (Daniel's answer of 2026-10-31, M4 design section 15.0).
+pub fn queries_creator_save(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+) -> Result<Vec<Query>, Refusal> {
+    queries_from(state, cmd, ctx, DraftGate::Enforce, Origin::CreatorSave)
+}
+
+/// [`decide`] of a core command the engine composed from a creator save
+/// on a draft, with the P-77 rule of [`queries_creator_save`].
+pub fn decide_creator_save(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<Vec<Record>, Refusal> {
+    decide_from(
+        state,
+        cmd,
+        ctx,
+        answers,
+        DraftGate::Enforce,
+        Origin::CreatorSave,
+    )
+}
+
 /// [`decide`] with `gate` for the draft gate of `GrantRole` (M4 change
 /// D3). `crate::roles::preview_grant` passes `DraftGate::Skip` and keeps
 /// no record.
@@ -519,7 +586,19 @@ pub(crate) fn decide_gated(
     answers: &Answers,
     gate: DraftGate,
 ) -> Result<Vec<Record>, Refusal> {
-    let needed = queries_gated(state, cmd, ctx, gate)?;
+    decide_from(state, cmd, ctx, answers, gate, Origin::Direct)
+}
+
+/// [`decide_gated`] for a command of `origin`.
+fn decide_from(
+    state: &State,
+    cmd: &Command,
+    ctx: &Ctx,
+    answers: &Answers,
+    gate: DraftGate,
+    origin: Origin,
+) -> Result<Vec<Record>, Refusal> {
+    let needed = queries_from(state, cmd, ctx, gate, origin)?;
     let epoch = expected_epoch(state, cmd);
     for query in &needed {
         match answers.get(query) {

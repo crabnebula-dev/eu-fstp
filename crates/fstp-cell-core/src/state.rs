@@ -1,8 +1,11 @@
 //! The cell state and its fold (I-23, design sections 2.2 and 5.1).
 //!
 //! - The M2 part is `fstp_engine::EngineState`, folded by
-//!   `fstp_engine::apply` record for record. A ledger of M2 records alone
-//!   folds to the M2 state and is refused exactly where M2 refuses it.
+//!   `fstp_engine::apply_entry_record` record for record. The engine
+//!   records of one command id form one engine entry, so the pairings the
+//!   engine fold checks hold across them (M4 design section 3.4, D2e). A
+//!   ledger of M2 records alone folds to the M2 state and is refused
+//!   exactly where `fstp_engine::replay` refuses it.
 //! - The cell parts fold the auth, tenant, text, key, release and ops
 //!   records. Each fold is structural: it checks ids and references, never
 //!   a guard.
@@ -495,6 +498,9 @@ pub struct CellState {
     proposals: BTreeMap<ProposalId, (CallId, AccountId)>,
     reactions: BTreeMap<u64, Seq>,
     commands: BTreeMap<[u8; 16], Seq>,
+    /// The command id of the engine entry being folded and the sequence
+    /// number of its first engine record (`fstp_engine::apply_entry_record`).
+    engine_entry: Option<([u8; 16], Seq)>,
 }
 
 impl CellState {
@@ -516,6 +522,7 @@ impl CellState {
             proposals: BTreeMap::new(),
             reactions: BTreeMap::new(),
             commands: BTreeMap::new(),
+            engine_entry: None,
         }
     }
 
@@ -637,6 +644,22 @@ impl CellState {
     }
 }
 
+/// Closes the engine entry being folded. It fails when the entry still
+/// owes a pairing, as `fstp_engine::finish` fails (D2e).
+pub(crate) fn close_engine_entry(s: &mut CellState) -> Result<(), FoldError> {
+    fstp_engine::finish(&mut s.engine).map_err(FoldError::Engine)?;
+    s.engine_entry = None;
+    Ok(())
+}
+
+/// Checks that the engine entry being folded owes no pairing, as
+/// `fstp_engine::finish` checks it (D2e), and keeps the entry's command
+/// id. So the state after [`crate::replay`] equals the state the same
+/// entries give through [`crate::apply`] one by one (I-23).
+pub(crate) fn check_engine_entry(s: &mut CellState) -> Result<(), FoldError> {
+    fstp_engine::finish(&mut s.engine).map_err(FoldError::Engine)
+}
+
 /// Folds one record at `seq` and `at`, appended under `command`.
 pub(crate) fn fold(
     s: &mut CellState,
@@ -656,9 +679,23 @@ pub(crate) fn fold(
     if at < s.floor {
         return Err(FoldError::Engine(DomainFold::TimeBackwards));
     }
+    if s.engine_entry.is_some_and(|(c, _)| c != command) {
+        close_engine_entry(s)?;
+    }
     match record {
         CellRecord::Engine(r) => {
-            fstp_engine::apply(&mut s.engine, seq, at, r).map_err(FoldError::Engine)?;
+            // The engine records of one command id form one engine entry,
+            // so an entry the engine composed folds here as in
+            // `fstp_engine::replay`: a `ProgrammeActivated` with its
+            // `ActivationApproved`, a `ProgrammeCreated` with its
+            // `DraftOpened` (M4 design sections 3.4 and 4.2, D2e).
+            let first = match s.engine_entry {
+                Some((c, f)) if c == command => f,
+                _ => seq,
+            };
+            fstp_engine::apply_entry_record(&mut s.engine, seq, at, command, first, r)
+                .map_err(FoldError::Engine)?;
+            s.engine_entry = Some((command, first));
             index_engine(s, at, r);
         }
         CellRecord::Auth(r) => fold_auth(&mut s.auth, &s.tenant, at, r)?,

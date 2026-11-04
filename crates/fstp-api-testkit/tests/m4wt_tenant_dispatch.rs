@@ -845,7 +845,7 @@ fn sod07_approval_of_an_unknown_self_grant_is_not_found() {
     let l = login(&c, A1);
     let r = c.web(&l, approve_self_grant(7));
     match &r {
-        Err(ApiError::Refused { code, rule }) => {
+        Err(ApiError::Refused { code, rule, .. }) => {
             assert_eq!(*code, ErrorCode::NotFound, "{r:?}");
             assert_eq!(*rule, "Input", "{r:?}");
         }

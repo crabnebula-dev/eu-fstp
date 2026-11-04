@@ -1228,6 +1228,15 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             {
                 return refuse("SoD-10: one organisation per reviewer per programme");
             }
+            if view.bindings.values().any(|b| {
+                b.account == *account && b.programme == *programme && b.role == *role && b.open()
+            }) {
+                // Daniel's answer of 2026-10-31 (M4 design section 15.0):
+                // a role is granted again only after its binding ends. A
+                // conflict-of-interest suspension has not ended, since
+                // `ReinstateBinding` can make it active again.
+                return refuse("re-grant while the same binding has not ended");
+            }
             if *start < ask.now {
                 return refuse("backdated start");
             }

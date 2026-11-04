@@ -34,7 +34,7 @@
 //!
 //! The fold refuses, with `FoldError::Inconsistent`:
 //!
-//! - a `ProgrammeActivated` of a programme with a creator draft, unless an
+//! - a `ProgrammeActivated` of any programme, unless an
 //!   `ActivationApproved` of the same entry names the same programme,
 //!   decision, revision, report reference and approver
 //!   (`compose::pairs_with`);
@@ -48,19 +48,15 @@
 //! - a confirming or editing `ProposalResolved` whose entry saves no such
 //!   field.
 //!
-//! The driver refuses a core `ActivateProgramme` of a programme with a
-//! creator draft with `RuleRef::I66`. Only the creator's approval composes
-//! it (`compose::activate_command`).
-//!
-//! Interim, pending Daniel and the creator lane: a programme created by a
-//! core `CreateProgramme` outside the creator has no draft. Its core
-//! `ActivateProgramme` is still accepted, and its `ProgrammeActivated`
-//! folds alone. Every M2 setup, the D8 testkit helper and the e2e seeds
-//! activate this way. `fstp_creator::decide_creator` refuses `OpenDraft`,
-//! so no setup can yet open a draft through the creator (D8 sequencing).
-//! No route issues a core `CreateProgramme` or `ActivateProgramme`, so
-//! every programme a person creates through the API has a draft and
-//! activates only through its approval.
+//! The driver refuses every core `ActivateProgramme` that arrives through
+//! `execute` with `RuleRef::I66`, drafted or not. Only the creator's
+//! approval composes it (`compose::activate_command`). Daniel's answer of
+//! 2026-10-30 (M4 design section 15.0) makes this strict for every
+//! programme. A programme created by a core `CreateProgramme` outside the
+//! creator has no draft, so no `ActivationApproved` can fold for it, and
+//! it never becomes active. Test setups reach an active programme through
+//! the creator path, or through the paired entries the test kit builds as
+//! the composition would (`fstp_domain_testkit::activation`).
 //!
 //! # Tenant onboarding
 //!
@@ -442,7 +438,7 @@ fn import_fold(e: ImportFoldError) -> FoldError {
 ///
 /// It is [`apply_in`] with no command id, followed by [`finish`]. A
 /// record that must share its entry with another, such as a
-/// `ProgrammeActivated` of a drafted programme, is refused here. Callers
+/// `ProgrammeActivated`, is refused here. Callers
 /// that fold whole entries use [`apply_in`] or [`replay`].
 pub fn apply(
     state: &mut EngineState,
@@ -484,13 +480,60 @@ pub fn apply_in(
     command: Option<[u8; 16]>,
     record: &Record,
 ) -> Result<(), FoldError> {
+    fold_in(state, seq, seq, at, command, record)?;
+    if command.is_none() {
+        finish(state)?;
+    }
+    Ok(())
+}
+
+/// Folds one record of the entry whose command id is `command` and whose
+/// first record is at `first`, then closes the entry if it owes no
+/// pairing (crate documentation).
+///
+/// It is for a fold that sees one record at a time and cannot tell where
+/// an entry ends, such as the cell's fold, whose ledger interleaves the
+/// engine's records with records of other members. That fold remembers
+/// the command id and first sequence number of the entry it is in, and
+/// passes them with each record. So an entry closed after a settled
+/// record continues under the same first sequence number, as in
+/// [`apply_in`], and the state after each settled record equals the state
+/// [`replay`] gives for the same records. An entry that still owes a
+/// pairing stays open: the next record of another command id, [`finish`]
+/// or [`replay`] refuses it.
+pub fn apply_entry_record(
+    state: &mut EngineState,
+    seq: Seq,
+    at: Timestamp,
+    command: [u8; 16],
+    first: Seq,
+    record: &Record,
+) -> Result<(), FoldError> {
+    fold_in(state, seq, first, at, Some(command), record)?;
+    if state.open.as_ref().is_some_and(OpenEntry::settled) {
+        state.open = None;
+    }
+    Ok(())
+}
+
+/// Folds `record` at `seq` into the entry of `command`. A record of
+/// another command id, or of none, closes the entry before it, as
+/// [`finish`] does, and opens one whose first record is at `first`.
+fn fold_in(
+    state: &mut EngineState,
+    seq: Seq,
+    first: Seq,
+    at: Timestamp,
+    command: Option<[u8; 16]>,
+    record: &Record,
+) -> Result<(), FoldError> {
     if at < state.now_floor() {
         return Err(FoldError::TimeBackwards);
     }
     let same = command.is_some() && state.open.as_ref().is_some_and(|o| o.command == command);
     if !same {
         finish(state)?;
-        state.open = Some(OpenEntry::new(command, seq));
+        state.open = Some(OpenEntry::new(command, first));
     }
     let entry = state.open.as_ref().map_or(seq, |o| o.first);
     match record {
@@ -508,9 +551,6 @@ pub fn apply_in(
             tenant::apply_tenant(&mut state.tenant, t)?;
             state.envelope_floor = at;
         }
-    }
-    if command.is_none() {
-        finish(state)?;
     }
     Ok(())
 }
@@ -530,7 +570,7 @@ fn apply_core(
     r: &fstp_domain::Record,
 ) -> Result<(), FoldError> {
     match r {
-        fstp_domain::Record::ProgrammeActivated(pa) if state.drafted(pa.programme()) => {
+        fstp_domain::Record::ProgrammeActivated(pa) => {
             let open = open_entry(state)?;
             let i = open
                 .approvals

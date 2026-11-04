@@ -18,7 +18,9 @@
 //   options `{challenge_id, public_key}` of a challenge bound to the
 //   action digest `digest` (`StepUp::begin`).
 // - `StrongMethodRequired`: a 4xx `{"code":"strong_method_required"}`.
-// - A refusal: a 4xx `ApiErrorBody` of `gen/api.ts`, `{"code","rule"?}`.
+// - A refusal: a 4xx `ApiErrorBody` of `gen/api.ts`,
+//   `{"code","rule"?,"values"?}`. `values` maps each parameter id the
+//   rule names to its ADR-006 string, such as both values of I-50.
 //
 // This module reads those shapes itself and imports nothing from
 // `gen/api.ts`. So a page test that serves its own operation table still
@@ -59,7 +61,13 @@ export type ApiOutcome =
   | { readonly kind: "pending"; readonly confirmPath: string; readonly expires: string }
   | { readonly kind: "step_up_required"; readonly challenge: StepUpChallenge }
   | { readonly kind: "strong_method_required" }
-  | { readonly kind: "refused"; readonly code: string; readonly rule: string | null }
+  | {
+      readonly kind: "refused";
+      readonly code: string;
+      readonly rule: string | null;
+      /** The values the rule names, by parameter id, such as P-05 and P-58 of I-50. */
+      readonly values?: Readonly<Record<string, string>>;
+    }
   | { readonly kind: "failed"; readonly reason: "network" | "invalid_response" | "request" };
 
 /** The API client. */
@@ -306,7 +314,9 @@ function pendingAnswer(v: unknown): ApiOutcome | null {
 /**
  * A refusal body, `{"code": "...", "rule": "..." | null}` and nothing
  * else, as design section 3.7 shows `ApiError`. Interim, pending Daniel
- * and the wire format of lanes W3b and W4e.
+ * and the wire format of lanes W3b and W4e. A refusal whose rule names
+ * values also has `"values"`, an object of strings by parameter id (I-50
+ * at save, Daniel's answer of 2026-10-31, M4 design section 15.0).
  */
 function refusal(v: unknown): ApiOutcome | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) {
@@ -314,7 +324,7 @@ function refusal(v: unknown): ApiOutcome | null {
   }
   const r = v as Record<string, unknown>;
   const keys = Object.keys(r);
-  if (!keys.every((k) => k === "code" || k === "rule")) {
+  if (!keys.every((k) => k === "code" || k === "rule" || k === "values")) {
     return null;
   }
   const code = r["code"];
@@ -322,7 +332,27 @@ function refusal(v: unknown): ApiOutcome | null {
   if (typeof code !== "string" || code === "" || (rule !== null && typeof rule !== "string")) {
     return null;
   }
-  return Object.freeze({ kind: "refused", code, rule });
+  if (!Object.hasOwn(r, "values")) {
+    return Object.freeze({ kind: "refused", code, rule });
+  }
+  const values = stringValues(r["values"]);
+  if (values === null) {
+    return null;
+  }
+  return Object.freeze({ kind: "refused", code, rule, values });
+}
+
+/** `v` as a frozen object of strings, or null if it is anything else. */
+function stringValues(v: unknown): Readonly<Record<string, string>> | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return null;
+  }
+  const entries = Object.entries(v);
+  if (!entries.every(([, x]) => typeof x === "string")) {
+    return null;
+  }
+  // `fromEntries` defines own members, so a `__proto__` key stays data.
+  return Object.freeze(Object.fromEntries(entries) as Record<string, string>);
 }
 
 /**

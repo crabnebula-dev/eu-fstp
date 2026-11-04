@@ -14,6 +14,8 @@ fstp-ledger.workspace = true
 fstp-domain.workspace = true
 fstp-findings.workspace = true
 fstp-engine.workspace = true
+# The paired creator entries of the setups (D2e, `src/activation.rs`).
+fstp-creator.workspace = true
 fstp-json.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true

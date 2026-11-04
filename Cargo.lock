@@ -358,6 +358,7 @@ dependencies = [
 name = "fstp-domain-testkit"
 version = "0.1.0"
 dependencies = [
+ "fstp-creator",
  "fstp-domain",
  "fstp-engine",
  "fstp-findings",

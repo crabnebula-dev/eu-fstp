@@ -240,11 +240,17 @@ fn grant_manager(
 
 /// A draft opened by A1 with M1 as its programme manager.
 fn opened(c: &FakeCell) -> Result<Draft, String> {
-    let (p, admin) = open(c)?;
-    grant_manager(c, p, OWNER, 1)?;
+    let (p, _opening) = open(c)?;
+    // The k-th draft of the cell takes the k-th grant, so a second draft
+    // in one cell draws a fresh binding and command id.
+    let n = u32::try_from(c.ports.engine.state().creator.drafts().count()).unwrap_or(1);
+    grant_manager(c, p, OWNER, n)?;
     Ok(Draft {
         p,
-        admin,
+        // A1 signs in again after the opening, so the step-up of
+        // `creator.open_draft` stays in the opening session and a test
+        // reads only what A1 does next.
+        admin: login(c, ADMIN),
         admin2: login(c, ADMIN_2),
         owner: login(c, OWNER),
     })
@@ -327,11 +333,54 @@ fn results(report: &Value) -> Result<Vec<(String, String, bool, String)>, String
     Ok(out)
 }
 
-/// A built draft with every warning acknowledged by M1 and activation
-/// requested by M1. It fails, naming the checks, when the report holds a
-/// failure.
+/// M1 saves, through dispatch, the value of every field the report names
+/// as unset, from the synthetic SuperSAFE spec (`draft_cell::synthetic_spec`).
+/// The shipped template leaves each value the spec does not give as a gap,
+/// marked `synthetic` in the fixture (design 3.1, "Synthetic
+/// placeholders"), and leaves the inline P-09 wording to a save as stored
+/// text (ADR-007). So a template start alone is never clean, and the
+/// programme manager fills the gaps as in journey J1.
+fn fill_gaps(c: &FakeCell, d: &Draft) -> Result<(), String> {
+    let report = report_of(c, &d.owner, d.p)?;
+    let spec = super::draft_cell::synthetic_spec()?;
+    let mut fields: Vec<(String, Value)> = Vec::new();
+    for r in list_of(&report, "results")? {
+        if r.get("check").and_then(Value::as_str) != Some("FieldUnset") {
+            continue;
+        }
+        let key = str_of(r, "field")?;
+        let id = fstp_programme::FieldId::from_key(&key)
+            .ok_or_else(|| format!("no field of key {key:?}"))?;
+        let value = spec
+            .get(id)
+            .as_set()
+            .cloned()
+            .ok_or_else(|| format!("the synthetic spec leaves {key:?} unset"))?;
+        let json = fstp_json::parse(fstp_programme::encode_field_value(&value).as_bytes())
+            .map_err(|e| format!("{key:?}: {e:?}"))?;
+        fields.push((key, json));
+    }
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let base = revision(c, &d.owner, d.p)?;
+    let edits: Vec<(&str, Value)> = fields
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.clone()))
+        .collect();
+    done(
+        c.web(&d.owner, rq::save_fields(d.p, &base, &edits)),
+        "creator.save_fields of the synthetic gaps",
+    )
+    .map(|_| ())
+}
+
+/// A built draft with its synthetic gaps saved ([`fill_gaps`]), every
+/// warning acknowledged by M1 and activation requested by M1. It fails,
+/// naming the checks, when the report holds a failure.
 fn requested(c: &FakeCell) -> Result<Draft, String> {
     let d = built(c)?;
+    fill_gaps(c, &d)?;
     let report = report_of(c, &d.owner, d.p)?;
     let rows = results(&report)?;
     let failures: Vec<&str> = rows

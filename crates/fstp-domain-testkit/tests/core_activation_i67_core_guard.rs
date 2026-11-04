@@ -37,6 +37,7 @@ use fstp_domain::roles::Role;
 use fstp_domain_testkit::activation::{
     ADMIN_3, APPROVER, SYBIL_OF_ADMIN, activate_with, activation_decision, activation_truth,
     draft_scenario, forge_programme_activated, reference_builders, setup_activation_record,
+    setup_report,
 };
 use fstp_domain_testkit::r#gen::policy::{Edit, apply_edit, next_version};
 use fstp_domain_testkit::r#gen::review::{records_of, run_records};
@@ -231,12 +232,14 @@ fn i85_core_activation_never_completes_through_mcp() {
 
 /// I-67, D2, D7, overview NOTE 5: an accepted activation records
 /// `ProgrammeActivated` with its approver, its decision, the report and
-/// revision it names, the builder set it was checked against, the
+/// revision of the creator's approval that composed it (D2e: the draft's
+/// head before the approval), the builder set it was checked against, the
 /// reference builders plus the creator's, and the M4 rules version. The
 /// `SameIdentityAsAny` answer is recorded as a vault outcome.
 #[test]
 fn i67_core_activation_records_approver_and_builders() {
     let mut s = built();
+    let head = s.state().creator.head(P1).unwrap();
     let records = run(&mut s, &activation(APPROVER, &[STAFF_DRAFTER])).unwrap();
     let a = records
         .iter()
@@ -248,14 +251,8 @@ fn i67_core_activation_records_approver_and_builders() {
     assert_eq!(a.programme(), P1);
     assert_eq!(a.approver(), APPROVER);
     assert_eq!(a.decision(), activation_decision(P1));
-    assert_eq!(
-        a.report(),
-        ReportDigest::from_bytes(fstp_domain_testkit::activation::SETUP_REPORT)
-    );
-    assert_eq!(
-        a.revision(),
-        fstp_domain_testkit::activation::SETUP_REVISION
-    );
+    assert_eq!(a.report(), setup_report(P1, head).unwrap());
+    assert_eq!(a.revision(), head.seq());
     let mut want = builders(&built());
     want.insert(STAFF_DRAFTER);
     assert_eq!(a.builders(), &want);
@@ -282,6 +279,7 @@ fn i67_core_activation_records_approver_and_builders() {
 #[test]
 fn d2_forged_programme_activated_equals_decided() {
     let mut s = draft_scenario(activation_truth(), P1).unwrap();
+    let head = s.state().creator.head(P1).unwrap();
     let records = run(
         &mut s,
         &fstp_domain_testkit::activation::activation_step(P1),
@@ -292,8 +290,9 @@ fn d2_forged_programme_activated_equals_decided() {
         .find(|r| matches!(r, Record::ProgrammeActivated(_)))
         .cloned()
         .unwrap_or_else(|| panic!("no ProgrammeActivated in {records:?}"));
-    let forged = setup_activation_record(P1, &[ADMIN].into_iter().collect(), RulesVersion::M4.0)
-        .unwrap_or_else(|e| panic!("{e}"));
+    let forged =
+        setup_activation_record(P1, head, &[ADMIN].into_iter().collect(), RulesVersion::M4.0)
+            .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(forged, decided);
     let other = forge_programme_activated(
         ProgrammeId::from_raw(9),

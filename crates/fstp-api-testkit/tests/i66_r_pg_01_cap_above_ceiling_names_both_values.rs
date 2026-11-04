@@ -2,19 +2,24 @@
 //! cannot be activated, and the report names both values" (M4 design
 //! section 8.4).
 //!
-//! Each case draws P-58 and P-05, with equality and off-by-one cases
-//! favoured. Above the ceiling, activation is refused with
-//! `CapAboveCeiling`, and the row names both values as ADR-006 strings
-//! written by the reference's own formatter. At or below the ceiling,
-//! no `CapAboveCeiling` row exists and the otherwise clean draft
-//! activates.
+//! Daniel's answer of 2026-10-31 (M4 design section 15.0) sets the I-50
+//! timing: a cap above the ceiling is refused when the draft is saved,
+//! so no draft holds one and none can be activated. This test takes
+//! that reading. It changes where the refusal happens, not what it
+//! guarantees: the draft never activates with such a cap, and the
+//! refusal still names both values.
 //!
-//! The production test is red until lane W2a lands the creator.
+//! Each case draws P-58 and P-05, with equality and off-by-one cases
+//! favoured. Above the ceiling, the setup save of the cap is refused
+//! with `CapAboveCeiling`, appends nothing, and names both values as
+//! ADR-006 strings written by the reference's own formatter. At or below
+//! the ceiling, the save is accepted, no `CapAboveCeiling` row exists and
+//! the otherwise clean draft activates.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use fstp_api_testkit::mc::activate_model::{Backend, attempt, cap_plan, cap_strings};
-use fstp_api_testkit::reference::creator::{Attempt, RefCheck, RefDetail, RefRefusal, StepVerdict};
+use fstp_api_testkit::mc::activate_model::{Backend, CapOutcome, cap_attempt, cap_strings};
+use fstp_api_testkit::reference::creator::{RefCheck, StepVerdict};
 use fstp_prop::{Gen, check, prop_assert, prop_assert_eq};
 
 fn property(backend: Backend) -> impl Fn(&mut Gen) -> Result<(), String> {
@@ -28,21 +33,21 @@ fn property(backend: Backend) -> impl Fn(&mut Gen) -> Result<(), String> {
         };
         g.note("P-05 minor", &p05);
         g.note("P-58 minor", &p58);
-        let got = attempt(backend, &Attempt::by_second_admin(cap_plan(p05, p58)))?;
-        let row = got.report_at_approval.get(&RefCheck::CapAboveCeiling);
+        let got = cap_attempt(backend, p05, p58)?;
         if p05 > p58 {
             let (s05, s58) = cap_strings(p05, p58);
             prop_assert_eq!(
-                got.verdict,
-                StepVerdict::Refused(RefRefusal::Failed(RefCheck::CapAboveCeiling)),
-                "I-66, I-50: P-05 above P-58 must block activation and name the check"
-            );
-            prop_assert_eq!(
-                row,
-                Some(&RefDetail::Cap { p05: s05, p58: s58 }),
-                "R-PG-01 AC: the report must name both values as ADR-006 strings"
+                got,
+                CapOutcome::RefusedAtSave { p05: s05, p58: s58 },
+                "I-50 at save, R-PG-01 AC: the save of P-05 above P-58 must be refused and name both values as ADR-006 strings"
             );
         } else {
+            let CapOutcome::Ran(got) = got else {
+                return Err(format!(
+                    "a cap at or below the ceiling must be saved: {got:?}"
+                ));
+            };
+            let row = got.report_at_approval.get(&RefCheck::CapAboveCeiling);
             prop_assert!(
                 row.is_none(),
                 "a cap at or below the ceiling is not a failure: {row:?}"

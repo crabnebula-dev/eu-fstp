@@ -265,6 +265,24 @@ pub(crate) fn draft_compiled(
 ) -> Result<Compiled, &'static str> {
     let profile = crate::draft::profile_of(draft).map_err(|_| NOT_COMPILED)?;
     let ids = CompileIds::new(programme, head.id, head.parent);
+    let spec = draft_spec(creator, programme, draft, head, set, Some(&profile));
+    compile(&spec, &profile, ids).map_err(|_| NOT_COMPILED)
+}
+
+/// The draft spec of `programme` as the Guide and the draft read see it,
+/// under `profile` with the head's ids (module documentation): the head
+/// policy, with the value of each set artefact field the creator holds,
+/// and a gap for each field outside `set`. Without a profile, a policy
+/// field reads from the head alone.
+pub(crate) fn draft_spec(
+    creator: &CreatorState,
+    programme: ProgrammeId,
+    draft: &Draft,
+    head: &PolicyVersion,
+    set: &BTreeSet<FieldId>,
+    profile: Option<&FunderProfile>,
+) -> ProgrammeSpec {
+    let ids = CompileIds::new(programme, head.id, head.parent);
     let head_spec = fstp_programme::policy_spec(head);
     let mut spec = head_spec.clone();
     for f in FIELDS {
@@ -280,13 +298,15 @@ pub(crate) fn draft_compiled(
             (FieldKind::Artefact, None) => spec.unset(f.id),
             // A policy field reads from the head. A held or template
             // value adds only the free texts the head does not hold.
-            (FieldKind::Policy, Some(v)) if agrees_with_head(&head_spec, &profile, ids, &v) => {
+            (FieldKind::Policy, Some(v))
+                if profile.is_some_and(|p| agrees_with_head(&head_spec, p, ids, &v)) =>
+            {
                 spec.set(v)
             }
             (FieldKind::Policy, _) => {}
         }
     }
-    compile(&spec, &profile, ids).map_err(|_| NOT_COMPILED)
+    spec
 }
 
 /// The Guide facts of the draft of `programme` (module documentation), or

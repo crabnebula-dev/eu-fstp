@@ -243,6 +243,14 @@ pub(crate) fn exec_failed(e: &ExecError) -> Reply {
             if let Some(id) = r.rule.spec_id() {
                 o.insert("rule", Value::String(id.to_owned()));
             }
+            if let Some(fstp_domain::RefusalDetail::CapAboveCeiling { p05, p58 }) = r.detail {
+                // I-50 at save names both values as ADR-006 strings
+                // (Daniel's answer of 2026-10-31, M4 design section 15.0).
+                let mut v = Object::with_capacity(2);
+                v.insert("P-05", Value::String(p05.amount().to_string()));
+                v.insert("P-58", Value::String(p58.amount().to_string()));
+                o.insert("values", Value::Object(v));
+            }
             Reply {
                 rule: r.rule.spec_id().map(Rule::Spec),
                 ..Reply::json(status, &Value::Object(o))

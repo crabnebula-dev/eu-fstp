@@ -349,7 +349,82 @@ fn sod07_bootstrap_grant_holds_only_in_a_cell_that_never_had_an_admin() {
 /// Design section 15, `cell_decide_sequence`: the seed `m2_setup` holds
 /// the tenant admin bootstrap and the M2 corpus setup (`SodSetup::one`),
 /// and every one of its frames is decided, so the target reaches the M2
-/// programme, role and call paths.
+/// programme and role paths of a draft. The seed `m2_active` reaches the
+/// call and proposal paths ([`m2_active_seed_frames`]).
+///
+/// Since D2e holds for every programme (M4 design section 15.0, Daniel's
+/// answer of 2026-10-30), a core `ActivateProgramme` never decides, so the
+/// seed holds the setup steps the cell decides on a draft programme: the
+/// bootstrap, the core `CreateProgramme` and the grants the draft gate
+/// admits. [`m2_seed_frames`] builds it. Set `FSTP_WRITE_SEEDS=1` to
+/// write it after a change to the command codec.
+#[test]
+fn i23_decide_sequence_m2_seed_is_the_corpus_setup() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fuzz/seeds/cell_decide_sequence/m2_setup"
+    );
+    let want = m2_seed_frames();
+    if std::env::var_os("FSTP_WRITE_SEEDS").is_some() {
+        std::fs::write(path, &want).unwrap();
+    }
+    assert_eq!(
+        std::fs::read(path).unwrap(),
+        want,
+        "the seed m2_setup is out of date: run this test with FSTP_WRITE_SEEDS=1"
+    );
+}
+
+/// One frame of `decide_frames`: the control byte, the actor and the
+/// command bytes.
+fn frame(control: u8, actor: u16, body: &[u8]) -> Vec<u8> {
+    let mut out = vec![control];
+    out.extend_from_slice(&actor.to_be_bytes());
+    out.extend_from_slice(&u16::try_from(body.len()).unwrap().to_be_bytes());
+    out.extend_from_slice(body);
+    out
+}
+
+/// The frames of the seed `m2_setup`: the tenant admin bootstrap of
+/// `ADMIN`, then each step of the M2 corpus setup (`SodSetup::one`) the
+/// cell decides, with the first control byte under which it decides. A
+/// step no control byte decides, such as the core `ActivateProgramme`
+/// (D2e) and the steps that need an active programme, is left out.
+fn m2_seed_frames() -> Vec<u8> {
+    use fstp_domain::command::Actor;
+    use fstp_domain_testkit::r#gen::roster::{SodSetup, call};
+    let mut setup = SodSetup::one(2, &[1]);
+    setup.published = vec![call(1)];
+    let actor = |a: fstp_domain::id::AccountId| u16::try_from(a.raw()).unwrap();
+    let bootstrap = CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN });
+    let mut data = frame(
+        0,
+        actor(ADMIN),
+        &fstp_cell_core::encode_cell_command(&bootstrap),
+    );
+    assert_eq!(decide_frames::run(&data), 1, "the bootstrap must decide");
+    for step in setup.steps().unwrap() {
+        let Actor::Account(a) = step.actor else {
+            continue;
+        };
+        let body = fstp_cell_core::encode_cell_command(&CellCommand::Engine(
+            fstp_engine::Command::Core(step.cmd.clone()),
+        ));
+        let before = decide_frames::run(&data);
+        for control in 0..16u8 {
+            let mut next = data.clone();
+            next.extend(frame(control, actor(a), &body));
+            if decide_frames::run(&next) > before {
+                data = next;
+                break;
+            }
+        }
+    }
+    data
+}
+
+/// Design section 15, `cell_decide_sequence`: every frame of the seed
+/// `m2_setup` is decided.
 #[test]
 fn i23_decide_sequence_m2_seed_decides_the_corpus_setup() {
     let path = concat!(
@@ -360,6 +435,157 @@ fn i23_decide_sequence_m2_seed_decides_the_corpus_setup() {
     let frames = decide_frames::frames(&data).len();
     assert!(frames > 2, "{frames} frames");
     assert_eq!(decide_frames::run(&data), frames);
+}
+
+/// The body of a `decide_frames` ledger entry frame that holds `records`.
+fn entry_frame(control: u8, records: &[CellRecord]) -> Vec<u8> {
+    let mut body = vec![decide_frames::ENTRY];
+    for r in records {
+        let bytes = encode_cell_record(r);
+        body.extend_from_slice(&u16::try_from(bytes.len()).unwrap().to_be_bytes());
+        body.extend_from_slice(&bytes);
+    }
+    frame(control, 0, &body)
+}
+
+/// The proposal the seed `m2_active` drafts in call 1.
+const ACTIVE_SEED_PROPOSAL: fstp_domain::id::ProposalId = fstp_domain::id::ProposalId::from_raw(1);
+
+/// The frames of the seed `m2_active` (M4 design section 15.0, D2e: every
+/// M2 setup reaches an active programme through a paired entry the test
+/// kit owns). Its ledger prefix holds the tenant admin bootstrap of
+/// `ADMIN`, then the entries the test kit composes for the corpus
+/// `CreateProgramme` and `ActivateProgramme` of P1 (`run_core`). The
+/// commands after it are the rest of the M2 corpus setup, then a draft
+/// in call 1 and a team member, each with the first control byte under
+/// which it decides. Every one of them must decide.
+fn m2_active_seed_frames() -> Vec<u8> {
+    use fstp_domain::command::{Actor, Command};
+    use fstp_domain_testkit::r#gen::roster::{B, SodSetup, add_member, call, draft, sod_truth};
+    let mut setup = SodSetup::one(2, &[1]);
+    setup.published = vec![call(1)];
+    let steps = setup.steps().unwrap();
+    let activation = steps
+        .iter()
+        .position(|s| matches!(s.cmd, Command::ActivateProgramme { .. }))
+        .unwrap();
+    let mut sc = fstp_domain_testkit::scenario::Scenario::new(sod_truth()).unwrap();
+    for step in &steps[..=activation] {
+        m2_run(&mut sc, step, T0).unwrap();
+    }
+    let mut data = entry_frame(0, &[common::admin_granted(ADMIN)]);
+    let mut batch: Vec<CellRecord> = Vec::new();
+    let mut command = None;
+    for e in as_cell(&m2_entries(&sc).unwrap()) {
+        assert_eq!(e.at, T0.micros(), "the setup entries are at T0");
+        if command.is_some_and(|c| c != e.command) {
+            data.extend(entry_frame(0, &batch));
+            batch.clear();
+        }
+        command = Some(e.command);
+        batch.push(e.record);
+    }
+    data.extend(entry_frame(0, &batch));
+    if let Err(e) = decide_frames::start(&data) {
+        panic!("the prefix does not replay: {e}");
+    }
+    let actor = |a: fstp_domain::id::AccountId| u16::try_from(a.raw()).unwrap();
+    let mut later: Vec<_> = steps[activation + 1..].to_vec();
+    later.push(draft(
+        A,
+        ACTIVE_SEED_PROPOSAL,
+        call(1),
+        BindingId::from_raw(601),
+        false,
+    ));
+    later.push(add_member(
+        A,
+        ACTIVE_SEED_PROPOSAL,
+        B,
+        BindingId::from_raw(602),
+        false,
+    ));
+    for step in later {
+        let Actor::Account(a) = step.actor else {
+            panic!("a setup step by the System: {:?}", step.cmd.kind());
+        };
+        let body = fstp_cell_core::encode_cell_command(&CellCommand::Engine(
+            fstp_engine::Command::Core(step.cmd.clone()),
+        ));
+        let before = decide_frames::run(&data);
+        let decided = (0..16u8).find_map(|control| {
+            let mut next = data.clone();
+            next.extend(frame(control, actor(a), &body));
+            (decide_frames::run(&next) > before).then_some(next)
+        });
+        data =
+            decided.unwrap_or_else(|| panic!("{:?} decides on no control byte", step.cmd.kind()));
+    }
+    data
+}
+
+/// Design section 15, `cell_decide_sequence`, with D2e (M4 design section
+/// 15.0): the seed `m2_active` is the one [`m2_active_seed_frames`]
+/// builds. Set `FSTP_WRITE_SEEDS=1` to write it after a change to a codec.
+#[test]
+fn i23_decide_sequence_m2_active_seed_is_the_corpus_setup() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fuzz/seeds/cell_decide_sequence/m2_active"
+    );
+    let want = m2_active_seed_frames();
+    if std::env::var_os("FSTP_WRITE_SEEDS").is_some() {
+        std::fs::write(path, &want).unwrap();
+    }
+    assert_eq!(
+        std::fs::read(path).unwrap(),
+        want,
+        "the seed m2_active is out of date: run this test with FSTP_WRITE_SEEDS=1"
+    );
+}
+
+/// Design section 15, `cell_decide_sequence`, with D2e (M4 design section
+/// 15.0): the ledger prefix of the seed `m2_active` replays to an active
+/// P1, every command frame after it is decided, and they include the call
+/// publication and a proposal draft. So the target reaches the call and
+/// proposal paths, which no command reaches on a draft.
+#[test]
+fn i23_decide_sequence_m2_active_seed_reaches_the_call_paths() {
+    use fstp_domain::command::CommandKind;
+    use fstp_domain::programme::{ProgrammeStatus, programme_status};
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fuzz/seeds/cell_decide_sequence/m2_active"
+    );
+    let data = std::fs::read(path).unwrap();
+    let all = decide_frames::frames(&data);
+    let lead = decide_frames::prefix_len(&data);
+    assert!(lead >= 3, "{lead} ledger entry frames");
+    let s = decide_frames::start(&data)
+        .unwrap_or_else(|e| panic!("the prefix does not replay: {e}"))
+        .state;
+    assert_eq!(
+        programme_status(&s.engine().core, P1),
+        Some(ProgrammeStatus::Active),
+        "the prefix activates P1"
+    );
+    let kinds: Vec<_> = all[lead..]
+        .iter()
+        .map(
+            |f| match fstp_cell_core::decode_cell_command(f.body).unwrap() {
+                CellCommand::Engine(fstp_engine::Command::Core(c)) => c.kind(),
+                other => panic!("not a core command: {other:?}"),
+            },
+        )
+        .collect();
+    for want in [
+        CommandKind::PublishCall,
+        CommandKind::CreateDraft,
+        CommandKind::AddTeamMember,
+    ] {
+        assert!(kinds.contains(&want), "{want:?} is not in {kinds:?}");
+    }
+    assert_eq!(decide_frames::run(&data), all.len() - lead);
 }
 
 // ---------------------------------------------------------------------------
@@ -540,4 +766,33 @@ fn sod05_overdue_end_leaves_the_commands_that_end_access_open() {
         refused(&r, RuleRef::Sod05, RefusalReason::WrongState),
         "{r:?}"
     );
+}
+
+/// ADR-007, I-23, M4 design section 3.4: the creator records of the
+/// corpus activation, `DraftOpened` and `ActivationApproved`, read back
+/// from their stored bytes. Before this, the cell codec refused the
+/// `creator` member, so no creator batch was storable and, under D2e, no
+/// programme could activate on the cell.
+#[test]
+fn adr007_cell_codec_reads_back_creator_records() {
+    use fstp_domain::command::Command;
+    use fstp_domain_testkit::r#gen::roster::{SodSetup, sod_truth};
+    let steps = SodSetup::one(2, &[1]).steps().unwrap();
+    let activation = steps
+        .iter()
+        .position(|s| matches!(s.cmd, Command::ActivateProgramme { .. }))
+        .unwrap();
+    let mut sc = fstp_domain_testkit::scenario::Scenario::new(sod_truth()).unwrap();
+    for step in &steps[..=activation] {
+        m2_run(&mut sc, step, T0).unwrap();
+    }
+    let creator: Vec<CellRecord> = as_cell(&m2_entries(&sc).unwrap())
+        .into_iter()
+        .map(|e| e.record)
+        .filter(|r| matches!(r, CellRecord::Engine(fstp_engine::Record::Creator(_))))
+        .collect();
+    assert!(creator.len() >= 2, "{creator:?}");
+    for r in &creator {
+        assert_eq!(decode_cell_record(&encode_cell_record(r)).as_ref(), Ok(r));
+    }
 }
