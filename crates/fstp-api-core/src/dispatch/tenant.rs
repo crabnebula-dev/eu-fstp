@@ -151,7 +151,10 @@ pub(super) fn inference<P: Seams>(
 fn tenant_error(r: TenantRefusal) -> ApiError {
     let rule = match r {
         TenantRefusal::HighRiskViaMcp | TenantRefusal::WebOnlyViaMcp => "I-85",
-        TenantRefusal::NotTenantAdmin => "R-AC-01",
+        // Tenant configuration is the tenant admin's role (the
+        // `roles-and-sod.md` roles table), so another caller is refused as
+        // an actor. R-AC-01 governs proposal reads under P-10 only.
+        TenantRefusal::NotTenantAdmin => "actor",
         TenantRefusal::StaleRevision
         | TenantRefusal::StepLocked
         | TenantRefusal::StepSkipped
@@ -204,7 +207,8 @@ fn admin<'a, P: Seams>(call: &'a Call<'_, P>) -> Result<(AccountId, &'a TenantSt
         return Err(call.refuse(unprovisioned()));
     };
     if !ts.is_admin(account) {
-        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")));
+        // An actor refusal, as in `tenant_error`.
+        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
     }
     Ok((account, ts))
 }
