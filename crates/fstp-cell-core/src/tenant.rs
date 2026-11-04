@@ -26,6 +26,32 @@ pub enum TenantCommand {
         /// The policy, canonical.
         policy: Vec<u8>,
     },
+    /// Provisioning issues the first tenant admin's invitation (design
+    /// sections 8.3 and 9.2 step 10). Only the system task
+    /// `SystemTask::Provisioning` issues it, with the cell's deployment
+    /// mode as its input. The cell draws the token and the account id, and
+    /// only the token digest is recorded.
+    IssueFirstAdminInvitation {
+        /// The invitation id.
+        invitation: [u8; 16],
+        /// The invited account, new to the cell.
+        account: AccountId,
+        /// The stored token digest: `fstp_auth::ceremony::split_token_digest`
+        /// of the two halves on a SaaS cell, `token_digest` of the one token
+        /// on a self-hosted cell.
+        token_digest: [u8; 32],
+    },
+    /// Enrol the first passkey of an invited account (design section 8.3,
+    /// ceremony 1). Only the ceremony route admission
+    /// `gate::admit_invitation_enrolment` admits it, after it verified the
+    /// invitation proof and the registration. The batch records the key
+    /// that admission verified.
+    EnrolByInvitation {
+        /// The invitation the proof matched.
+        invitation: [u8; 16],
+        /// The new credential id.
+        credential: Vec<u8>,
+    },
 }
 
 /// A tenant record.

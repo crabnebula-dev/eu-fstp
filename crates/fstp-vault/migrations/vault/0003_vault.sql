@@ -1,4 +1,5 @@
--- The vault database v_<cell> (M3 design section 4.3).
+-- The vault database v_<cell> (M3 design section 4.3). Migration 3 of the
+-- vault set, after fstp_meta (1) and fstp_meta.apply_grant (2).
 -- fstp_vault::CATALOGUE lists every table and column below.
 
 CREATE SCHEMA vault;
@@ -104,16 +105,18 @@ CREATE TRIGGER query_log_insert_only BEFORE UPDATE OR DELETE ON vault.query_log
 CREATE TRIGGER query_log_no_truncate BEFORE TRUNCATE ON vault.query_log
   FOR EACH STATEMENT EXECUTE FUNCTION vault.refuse_mutation();
 
--- The P-17 condition of each programme (NOTE 6): its countries as a
--- canonical JSON array of ascending codes. Not in design section 4.3
--- (reported to Daniel). Insert-only, so a condition is fixed once set.
-CREATE TABLE vault.p17_condition (
+-- The P-17 country condition of each programme (NOTE 6, NOTE 9): its
+-- countries as a canonical JSON array of ascending codes. Design section
+-- 4.3 lists it (Daniel, 2026-10-30). Its name has no digit, so the
+-- apply_grant object grammar of ADR-011 takes it. Insert-only, so a
+-- condition is fixed once set.
+CREATE TABLE vault.country_condition (
   programme_id uuid  PRIMARY KEY,
   countries    bytea NOT NULL
 );
-CREATE TRIGGER p17_condition_insert_only BEFORE UPDATE OR DELETE ON vault.p17_condition
+CREATE TRIGGER country_condition_insert_only BEFORE UPDATE OR DELETE ON vault.country_condition
   FOR EACH ROW EXECUTE FUNCTION vault.refuse_mutation();
-CREATE TRIGGER p17_condition_no_truncate BEFORE TRUNCATE ON vault.p17_condition
+CREATE TRIGGER country_condition_no_truncate BEFORE TRUNCATE ON vault.country_condition
   FOR EACH STATEMENT EXECUTE FUNCTION vault.refuse_mutation();
 
 -- The vault's own chain and anchors (I-24), with the shapes of section 4.2.
@@ -134,11 +137,15 @@ CREATE TRIGGER chain_insert_only BEFORE UPDATE OR DELETE ON vault_audit.chain
   FOR EACH ROW EXECUTE FUNCTION vault.refuse_mutation();
 CREATE TRIGGER chain_no_truncate BEFORE TRUNCATE ON vault_audit.chain
   FOR EACH STATEMENT EXECUTE FUNCTION vault.refuse_mutation();
+-- The link is a PublicDigest and the signature a Signature (design
+-- section 4.5): a SHA-256 link of 32 bytes, and a composite signature of
+-- 3373 bytes, mldsaSig (3309) then tradSig (64) (ADR-010 "Composite
+-- encoding").
 CREATE TABLE vault_audit.anchor (
   n           bigint PRIMARY KEY REFERENCES vault_audit.chain(n),
-  link        bytea  NOT NULL,
+  link        bytea  NOT NULL CHECK (octet_length(link) = 32),
   at          bigint NOT NULL,
-  signature   bytea  NOT NULL,
+  signature   bytea  NOT NULL CHECK (octet_length(signature) = 3373),
   witness_seq bigint NOT NULL,
   receipt     bytea  NOT NULL
 );

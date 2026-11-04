@@ -12,6 +12,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+mod stepup_common;
+
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -37,7 +39,7 @@ use fstp_domain::id::{AccountId, VaultEpoch};
 use fstp_domain::oracle::{Answers, Query};
 use fstp_domain::time::Timestamp;
 use fstp_keys::envelope::DataKey;
-use fstp_ledger::{AsyncRecordStore, MemStore, Seq};
+use fstp_ledger::{AsyncRecordStore, MemStore, RecordStore, Seq};
 use fstp_rt::Shutdown;
 use fstp_rt::tokio::TokioRuntime;
 
@@ -78,23 +80,33 @@ impl VaultClient for GenesisVault {
     }
 }
 
-/// `GrantTenantAdmin` of the first admin, admitted at `now` with a
-/// fresh strong step-up asserted at `now` and P-71 of five minutes.
-fn grant_first_admin(engine: &CellEngine, now: Timestamp) -> Admitted {
-    let cmd = CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN });
+/// The session of the first admin.
+const SESSION: [u8; 16] = [0x5E; 16];
+/// The command id of the first admin grant.
+const GRANT_ID: [u8; 16] = [0xA0; 16];
+
+fn first_admin_grant() -> CellCommand {
+    CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN })
+}
+
+/// `GrantTenantAdmin` of the first admin, admitted at `now` with the
+/// fresh strong step-up `stepup` that the ledger granted at `now`, and
+/// P-71 of five minutes.
+fn grant_first_admin(engine: &CellEngine, now: Timestamp, stepup: [u8; 16]) -> Admitted {
+    let cmd = first_admin_grant();
     let session = SessionView {
-        id: [0x5E; 16],
+        id: SESSION,
         account: ADMIN,
         method: Method::Passkey,
         started: now,
         last_used: now,
     };
-    let command_id = [0xA0; 16];
+    let command_id = GRANT_ID;
     let action = Action::Command(cmd.clone());
     let high = HighRiskAction::of(&action).unwrap();
     assert!(high.is_some(), "GrantTenantAdmin is high risk");
     let stepup = StepUpView {
-        id: [0x5F; 16],
+        id: stepup,
         session: session.id,
         action_digest: action_digest(&cmd, command_id),
         asserted_at: now,
@@ -118,12 +130,25 @@ fn grant_first_admin(engine: &CellEngine, now: Timestamp) -> Admitted {
 
 /// Runs the first admin grant over an unanchored store whose commit
 /// clock reads `commit_at - admitted_at` after the admission instant.
+/// The ledger grants the step-up first (`stepup_common`). Returns the
+/// grant's result and the number of entries the grant appended.
 fn grant_over_unanchored(commit_after: i64) -> (Result<(), EngineError>, u64) {
     let rt = TokioRuntime::new_multi_thread(2).unwrap();
     let rt2 = rt.clone();
     rt.block_on(async move {
         let now = system_now();
-        let store = Unanchored::open(MemStore::new(), CELL)
+        let mut mem = MemStore::new();
+        let stepup = stepup_common::grant_stepup(
+            &mut mem,
+            SESSION,
+            ADMIN,
+            &first_admin_grant(),
+            GRANT_ID,
+            now,
+        )
+        .unwrap();
+        let seeded = RecordStore::head(&mem).raw();
+        let store = Unanchored::open(mem, CELL)
             .await
             .unwrap()
             .with_commit_clock(Arc::new(move || now + commit_after));
@@ -131,12 +156,12 @@ fn grant_over_unanchored(commit_after: i64) -> (Result<(), EngineError>, u64) {
         let (engine, task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
             .await
             .unwrap();
-        let admitted = grant_first_admin(&engine, Timestamp::from_micros(now));
+        let admitted = grant_first_admin(&engine, Timestamp::from_micros(now), stepup);
         let r = engine.execute(admitted).await.map(|_| ());
         drop(engine);
         let store = task.await.unwrap();
         let head = AsyncRecordStore::head(&store).await.unwrap().raw();
-        (r, head)
+        (r, head - seeded)
     })
 }
 
@@ -146,12 +171,12 @@ fn grant_over_unanchored(commit_after: i64) -> (Result<(), EngineError>, u64) {
 /// committed. The same command committed within P-71 commits.
 #[test]
 fn i78_cell_unanchored_store_refuses_a_step_up_stale_at_commit() {
-    let (stale, head) = grant_over_unanchored(6 * MINUTE_US);
+    let (stale, appended) = grant_over_unanchored(6 * MINUTE_US);
     assert_eq!(stale, Err(EngineError::Exec(stepup_refusal())));
-    assert_eq!(head, 0, "a stale step-up committed nothing");
-    let (fresh, head) = grant_over_unanchored(4 * MINUTE_US);
+    assert_eq!(appended, 0, "a stale step-up committed nothing");
+    let (fresh, appended) = grant_over_unanchored(4 * MINUTE_US);
     assert_eq!(fresh, Ok(()));
-    assert!(head > 0, "a step-up fresh at commit commits");
+    assert!(appended > 0, "a step-up fresh at commit commits");
 }
 
 /// A witness that answers nothing: the anchored store refuses a stale
@@ -194,6 +219,15 @@ fn i78_anchored_store_refuses_a_step_up_stale_at_its_commit_instant() {
     let keys = StoreKeys {
         anchor: composite::generate().unwrap(),
         ledger: DataKey::generate().unwrap(),
+        // No prepare reaches the witness. The pin only satisfies the
+        // store, which refuses an empty pin set (ADR-010 "Keys").
+        witness: vec![
+            composite::generate()
+                .unwrap()
+                .public_key()
+                .to_bytes()
+                .to_vec(),
+        ],
     };
     let now = system_now();
     let mut store = AnchoredStore::new(
@@ -202,6 +236,7 @@ fn i78_anchored_store_refuses_a_step_up_stale_at_its_commit_instant() {
         CELL,
         keys,
     )
+    .unwrap()
     .with_commit_clock(Arc::new(move || now));
     let req = AppendRequest {
         expected: Seq::ZERO,

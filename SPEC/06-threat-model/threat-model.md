@@ -66,7 +66,7 @@ NOTE: TH-18 matters because CrabNebula operates the SaaS and also runs programme
 | TH-49 | Published template leaking personal data or carrying phishing links | I-73 dual publication and scan, editable display in the creator, withdrawal | T-PG-TEMPLATE |
 | TH-50 | Implementation flaw in an unaudited post-quantum crate | Hybrid rule (I-75), ACVP and differential tests, release gate (I-74) | T-CR-HYBRID |
 | TH-51 | Harvest now, decrypt later against backups and exports | Hybrid key encapsulation for data at rest that leaves the system | T-CR-ATREST |
-| TH-54 | Desktop client caching confidential content on lost devices | No offline proposal content, signed updates | T-DC-CACHE |
+| TH-54 | Desktop client caching confidential content on lost devices (deferred with the client, B-04) | No offline proposal content, signed updates | T-DC-CACHE |
 | TH-55 | Phishing of reviewers or admins | Phishing-resistant login for management roles (I-77) | T-AU-ROLES |
 | TH-56 | Session hijack used for exports, role grants or new devices | Step-up for high-risk actions (I-78) | T-AU-STEPUP |
 | TH-57 | Account recovery abused to take over a management account | I-79 second-admin recovery | T-AU-RECOVERY |

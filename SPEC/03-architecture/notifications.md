@@ -35,7 +35,7 @@ All times are stored in UTC. Each deadline records the time zone it was set in. 
 
 ## Channels
 
-Email is the primary channel and the durable record for contractual notices. Matrix and WhatsApp are opt-in per user (`messaging.md`).
+Email is the primary channel and the durable record for contractual notices. Matrix is opt-in per user, and WhatsApp is deferred by Daniel on 2026-11-04 (B-03) (`messaging.md`).
 
 ## Content rules
 

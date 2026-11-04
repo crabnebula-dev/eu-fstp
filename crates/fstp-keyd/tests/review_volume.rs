@@ -13,8 +13,10 @@ use fstp_keyd::{EXT4_SUPER_MAGIC, XFS_SUPER_MAGIC, key_volume_accepted};
 /// decides through `check_mount` over the mountinfo type name. So the W1
 /// test does not constrain the check that guards a start. The two
 /// decisions already differ: ext2 and ext3 carry the ext4 `statfs` magic.
-/// The test asks that the decision the W1 test exercises is the one
-/// `serve` makes.
+/// The test asks that `serve` never accepts a type the magic decision
+/// refuses. Since 2026-10-31 `serve` is stricter by name: design 3.3
+/// (Q32 A) allows ext4 and XFS only, so ext2 and ext3 are refused although
+/// they carry the ext4 magic (found by the `mountinfo_decode` fuzz target).
 #[test]
 fn review_volume_check_tested_by_w1_is_not_the_one_serve_makes() {
     let cases: [(&str, u64); 4] = [
@@ -29,10 +31,17 @@ fn review_volume_check_tested_by_w1_is_not_the_one_serve_makes() {
             fstype: name.to_owned(),
             options: vec!["rw".to_owned()],
         };
+        let accepted = check_mount(&mount).is_ok();
+        if accepted {
+            assert!(
+                key_volume_accepted(magic),
+                "serve accepts {name}, which the tested magic decision refuses"
+            );
+        }
         assert_eq!(
-            check_mount(&mount).is_ok(),
-            key_volume_accepted(magic),
-            "serve and the tested magic decision disagree on {name}"
+            accepted,
+            name == "ext4" || name == "xfs",
+            "serve must accept exactly ext4 and XFS by name, not {name}"
         );
     }
 }

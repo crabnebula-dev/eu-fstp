@@ -155,8 +155,27 @@ pub struct Invitation {
     pub first_admin: bool,
     /// Whether the token is drawn as two halves (Q35).
     pub split: bool,
+    /// The entry instant of its `InvitationIssued` record. The 72-hour
+    /// lifetime runs from it (ADR-008, Q37).
+    pub issued_at: Timestamp,
     /// Whether an enrolment used it.
     pub consumed: bool,
+}
+
+impl Invitation {
+    /// The invitation as the `fstp-auth` ceremony rules read it, under its
+    /// id `id` (`fstp_auth::ceremony::admit_invitation`).
+    pub fn ceremony_view(&self, id: [u8; 16]) -> fstp_auth::ceremony::Invitation {
+        fstp_auth::ceremony::Invitation {
+            id,
+            account: self.account,
+            token_digest: self.token_digest,
+            first_admin: self.first_admin,
+            split: self.split,
+            issued_at: self.issued_at,
+            consumed: self.consumed,
+        }
+    }
 }
 
 /// The auth part: credentials, step-ups, ended sessions, recovery cases
@@ -170,6 +189,7 @@ pub struct AuthState {
     recoveries: BTreeMap<[u8; 16], RecoveryCase>,
     invitations: BTreeMap<[u8; 16], Invitation>,
     first_admins: BTreeSet<AccountId>,
+    recovered: BTreeMap<AccountId, Timestamp>,
 }
 
 impl AuthState {
@@ -269,9 +289,79 @@ impl AuthState {
     pub fn first_admin_enrolled(&self, account: AccountId) -> bool {
         self.first_admins.contains(&account)
     }
+
+    /// Whether any account enrolled as the first tenant admin. Provisioning
+    /// then issues no further first-admin invitation (ADR-008 "Ceremonies
+    /// and the first passkey").
+    pub fn any_first_admin(&self) -> bool {
+        !self.first_admins.is_empty()
+    }
+
+    /// The invitation whose stored token digest is `digest`, with its id
+    /// (design section 8.3). The comparison runs in constant time over
+    /// every invitation. Two invitations under one digest find neither, so
+    /// a proof never picks between them (fail closed).
+    pub fn invitation_by_digest(&self, digest: &[u8; 32]) -> Option<([u8; 16], Invitation)> {
+        let mut found = None;
+        let mut matches = 0usize;
+        for (id, inv) in &self.invitations {
+            if fstp_crypto::constant_time_eq(&inv.token_digest, digest) {
+                matches = matches.saturating_add(1);
+                found = Some((*id, *inv));
+            }
+        }
+        if matches == 1 { found } else { None }
+    }
+
+    /// Whether a first-admin invitation is unused and within its 72 hours
+    /// at `now`. An expired one does not block a new one
+    /// (`fstp_auth::ceremony::Issuer::Provisioning`).
+    pub fn first_admin_invitation_open(&self, now: Timestamp) -> bool {
+        self.invitations.values().any(|i| {
+            i.first_admin
+                && !i.consumed
+                && now
+                    .micros()
+                    .checked_sub(i.issued_at.micros())
+                    .is_some_and(|age| (0..=fstp_auth::ceremony::INVITATION_US).contains(&age))
+        })
+    }
+
+    /// Whether any auth record names `account`: a credential, an
+    /// invitation that an enrolment used, a recovery case or a first-admin
+    /// enrolment. An invitation that no enrolment used does not count
+    /// (`invitee_new` of `fstp_auth::ceremony::issue_invitation`), so the
+    /// account of an expired invitation may be invited again.
+    pub fn names_account(&self, account: AccountId) -> bool {
+        self.credentials.values().any(|c| c.account == account)
+            || self
+                .invitations
+                .values()
+                .any(|i| i.account == account && i.consumed)
+            || self.recoveries.values().any(|r| r.account == account)
+            || self.first_admins.contains(&account)
+    }
+
+    /// Whether a session of `account` that started at `started` began at or
+    /// before the entry instant of the account's latest completed
+    /// recovery (I-79, design section 8.5).
+    ///
+    /// A completion "ends every session of the account". Its batch names
+    /// the sessions its route read, and the gate refuses the others from
+    /// this check on, as it does for a binding end (design section 5.4
+    /// step 1). The entry instant is the batch time, which the driver
+    /// takes at admission. A login with an old credential between that
+    /// instant and the commit starts after it, so this check does not
+    /// refuse it. Only the login route can close that window.
+    pub fn ended_by_recovery(&self, account: AccountId, started: Timestamp) -> bool {
+        self.recovered
+            .get(&account)
+            .is_some_and(|completed| started <= *completed)
+    }
 }
 
-/// A SoD-07 approval of one self-grant digest.
+/// A SoD-07 approval of one self-grant digest. A digest may hold several
+/// approvals, each from its own `SelfGrantApproved` record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Approval {
     /// The approving tenant admin.
@@ -288,7 +378,7 @@ pub struct TenantState {
     admins: BTreeMap<AccountId, Timestamp>,
     ever_admin: bool,
     admin_ends: Vec<(AccountId, Timestamp)>,
-    approvals: BTreeMap<[u8; 32], Approval>,
+    approvals: BTreeMap<[u8; 32], Vec<Approval>>,
     policy: TenantLoginPolicy,
 }
 
@@ -308,9 +398,23 @@ impl TenantState {
         self.admins.keys().copied().collect()
     }
 
-    /// The approval of `digest`, if any.
-    pub fn approval(&self, digest: &[u8; 32]) -> Option<Approval> {
-        self.approvals.get(digest).copied()
+    /// The approvals of `digest`, in ledger order. Empty when no admin
+    /// approved it.
+    ///
+    /// SoD-07, Q40: a digest may hold several approvals. An approval that
+    /// can never admit the grant, such as the grantor's own, must not
+    /// block a later approval by a second tenant admin. So each
+    /// `SelfGrantApproved` record adds one approval, and the grant uses
+    /// the first that admits it (`fstp_celltest::reference::auth::admit_self_grant`).
+    pub fn approvals(&self, digest: &[u8; 32]) -> &[Approval] {
+        self.approvals.get(digest).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a grant used an approval of `digest`. The digest names one
+    /// command id, so one grant at most can match it, and a used digest
+    /// takes no further approval (TH-05).
+    pub fn digest_used(&self, digest: &[u8; 32]) -> bool {
+        self.approvals(digest).iter().any(|a| a.used)
     }
 
     /// The tenant login policy, the defaults until one is set.
@@ -514,9 +618,22 @@ impl CellState {
     /// that a record has not ended yet: a scheduled end that is due
     /// (design section 5.1, `EndSessionsAtBindingEnd`).
     pub fn binding_end_due(&self, a: AccountId, now: Timestamp) -> bool {
-        self.bindings.values().any(|b| {
-            b.account == a && b.recorded_end.is_none() && b.scheduled_end.is_some_and(|e| e <= now)
-        })
+        !self.due_binding_ends(a, now).is_empty()
+    }
+
+    /// The scheduled end instants of `a`'s bindings that are due at `now`
+    /// and that no record has ended yet, in instant order (design section
+    /// 5.1, `EndSessionsAtBindingEnd`).
+    pub fn due_binding_ends(&self, a: AccountId, now: Timestamp) -> Vec<Timestamp> {
+        let mut out: Vec<Timestamp> = self
+            .bindings
+            .values()
+            .filter(|b| b.account == a && b.recorded_end.is_none())
+            .filter_map(|b| b.scheduled_end.filter(|e| *e <= now))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 }
 
@@ -786,6 +903,9 @@ fn fold_auth(
                 return Err(inconsistent());
             }
             c.completed = Some(*path);
+            // The latest completion of the account, for the gate (I-79).
+            let latest = a.recovered.entry(*account).or_insert(at);
+            *latest = (*latest).max(at);
         }
         R::InvitationIssued {
             invitation,
@@ -804,6 +924,7 @@ fn fold_auth(
                     token_digest: *token_digest,
                     first_admin: *first_admin,
                     split: *split,
+                    issued_at: at,
                     consumed: false,
                 },
             );
@@ -890,24 +1011,30 @@ fn fold_tenant(t: &mut TenantState, at: Timestamp, r: &TenantRecord) -> Result<(
             grant_digest,
             expires_at,
         } => {
-            if t.approvals.get(grant_digest).is_some_and(|a| a.used) {
+            // A used digest named one command, which committed, so no
+            // later approval of it can admit anything (TH-05).
+            if t.digest_used(grant_digest) {
                 return Err(duplicate());
             }
-            t.approvals.insert(
-                *grant_digest,
-                Approval {
+            t.approvals
+                .entry(*grant_digest)
+                .or_default()
+                .push(Approval {
                     approver: *approver,
                     expires_at: *expires_at,
                     used: false,
-                },
-            );
+                });
         }
         TenantRecord::SelfGrantApprovalUsed { grant_digest } => {
-            let a = t.approvals.get_mut(grant_digest).ok_or_else(unknown)?;
-            if a.used {
+            if t.digest_used(grant_digest) {
                 return Err(duplicate());
             }
-            a.used = true;
+            let all = t.approvals.get_mut(grant_digest).ok_or_else(unknown)?;
+            // Every approval of the digest is spent with it: the digest
+            // holds the command id, so it names one grant only.
+            for a in all.iter_mut() {
+                a.used = true;
+            }
         }
         TenantRecord::LoginPolicySet { policy } => {
             // Structure only: "may only shorten" applies where a value is

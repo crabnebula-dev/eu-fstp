@@ -12,19 +12,23 @@
 //!   5.3 over a [`store::Database`], with the `fstp_audit` anchorer core:
 //!   prepare, receipt, commit, abort and in-doubt resolution.
 //!
-//! # Seams
+//! # Transport
 //!
-//! - The witness wire format and the witness service are lane W2g's.
-//!   `fstp_witness::run` is not written and no reply format is fixed, so
-//!   no TLS link is built here. A transport implements [`WitnessLink`].
-//! - Receipt signatures are checked by `fstp_audit::verify` at start-up.
-//!   The per-prepare check needs the receipt verifier of lane w2gs
-//!   (`fstp_audit::anchor::receipt_signature_verifies`), which is not on
-//!   this branch. Until it lands, a receipt is checked for its cell,
-//!   chain, row and link only. Once it lands, [`store::AnchoredStore`]
-//!   takes each receipt through `Anchorer::signed_receipt` with the
-//!   pinned witness keys, in place of `Anchorer::receipt`.
+//! [`link::TlsWitnessLink`] carries the messages over mutual TLS with the
+//! framing of `fstp_witness::wire` (lane int5). Any other transport
+//! implements [`WitnessLink`].
+//!
+//! # Receipts
+//!
+//! [`store::AnchoredStore`] takes each receipt through
+//! `Anchorer::signed_receipt` with the pinned witness keys of
+//! [`store::StoreKeys::witness`], never through `Anchorer::receipt` alone
+//! (ADR-010 "Keys", I-24, I-90). A receipt for another cell or chain, one
+//! that no pinned key verifies, or one for another head is never
+//! committed on, and its prepare is aborted. The start-up verification
+//! (`fstp_audit::verify`) checks every stored receipt under the same pins.
 
+pub mod link;
 pub mod store;
 
 use std::future::Future;

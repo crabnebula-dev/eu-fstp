@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Release payment - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-finance.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">FN</span><span class="sr-only">Account: finance-6e2a</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Finance approver and payment releaser.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Finance approver and payment releaser</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-finance.html">Home</a></li><li><a href="payment-request-review.html">Payment approvals</a></li><li><a href="payment-release.html" aria-current="page">Payment releases</a></li><li><a href="#">Contracts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Payment releaser queue with 2 requests in PAYMENT_APPROVED. The signed-in person approved one of them, so SoD-04 blocks that release.</p>
+
+    <h1>Release payment</h1>
+    <p class="callout callout--warning"><strong>Prerequisite:</strong> Payment request roles (Finance approver and Payment releaser) must be assigned before this workflow is available. Assign roles in Administration &gt; Members and roles. <a href="admin-members.html">Open Members and roles</a></p>
+    <p>Only requests in Payment approved <span class="state-name">(PAYMENT_APPROVED)</span> appear here. The finance approver has confirmed each request total.</p>
+    <p class="callout callout--warning"><strong>SoD-04:</strong> You cannot release a request you approved.</p>
+    <p><strong>Payment mode:</strong> Record-only: approved payments are exported to your finance system.</p>
+    <table>
+      <caption>2 approved requests awaiting release</caption>
+      <thead><tr><th scope="col">Request</th><th scope="col">Grantee</th><th scope="col" class="num">Approved amount</th><th scope="col">Call</th><th scope="col">Approved by</th><th scope="col">Action</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">PR-2026-0009</td><td>P. Novak</td><td class="num">12 000.00 EUR</td><td>SuperSAFE Call 1</td><td class="pid">finance-2c7b</td>
+          <td><!-- TODO(js): Release needs script in production. -->
+        <button class="btn btn--small btn--primary" type="button" disabled aria-describedby="rel-why">Release<span class="sr-only"> PR-2026-0009</span></button></td></tr>
+        <tr><td class="pid">PR-2026-0011</td><td>L. Varga</td><td class="num">9 500.00 EUR</td><td>SuperSAFE Call 1</td><td class="pid">finance-6e2a (you)</td>
+          <td><!-- TODO(js): Release needs script in production. -->
+        <button class="btn btn--small btn--primary" type="button" disabled aria-describedby="sod-why">Release<span class="sr-only"> PR-2026-0011</span></button>
+            <p id="sod-why" class="text-sm">You approved this request, so another person must release it (SoD-04).</p></td></tr>
+      </tbody>
+    </table>
+    <p id="rel-why" class="text-sm muted">Release needs a passkey confirmation. Static prototype: this action needs script.</p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

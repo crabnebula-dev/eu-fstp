@@ -92,7 +92,13 @@ pub enum TableClass {
     Placement,
 }
 
-/// What a clear column may hold (R-NF-08).
+/// What a clear column may hold (R-NF-08, design section 4.5).
+///
+/// The last three classes hold public values only: link hashes,
+/// composite signatures and public key material. None holds personal data
+/// or content (Daniel, 2026-10-30, design section 21.0). Each such column
+/// is checked by type and exact length, or by a bounded length where its
+/// encoding allows no exact one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ColumnClass {
     /// Ciphertext under a cell key.
@@ -111,6 +117,18 @@ pub enum ColumnClass {
     KeyedDigest,
     /// A count.
     Count,
+    /// A public digest: a SHA-256 link hash over a chain head, which
+    /// commits to stored rows but discloses none. A `bytea` of exactly 32
+    /// bytes.
+    PublicDigest,
+    /// A composite signature (ADR-010 "Composite encoding"). A `bytea` of
+    /// exactly the composite signature length.
+    Signature,
+    /// Public key material: a pinned DER certificate or a composite public
+    /// key. A `bytea` of exactly the composite public key length for a
+    /// key, and of a bounded length for a certificate, whose DER encoding
+    /// has no fixed length.
+    PublicKeyMaterial,
 }
 
 /// One column of a catalogued table.

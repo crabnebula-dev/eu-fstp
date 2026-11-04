@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment requests - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html" aria-current="page">Payments</a></li><li><a href="contract-view.html">Agreement</a></li><li><a href="complaint-status.html">Complaints</a></li><li><a href="grantee-visibility.html">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Grantee list of 6 payment requests in CHECKS_FAILED, UNDER_REVIEW, CHANGES_REQUESTED, ACCEPTED, PAID and WITHDRAWN.</p>
+
+    <div class="section-head"><h1>Payment requests</h1><div><!-- TODO(js): New request needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="new-why">New request</button></div></div>
+    <p id="new-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    <p class="callout callout--error"><strong>PR-2026-0014:</strong> Review the failed checks and resubmit.</p>
+    <p class="callout callout--warning"><strong>PR-2026-0013:</strong> Changes were requested. Review the notes and resubmit.</p>
+    <table>
+      <caption>6 payment requests for grant SSF-C1-0042</caption>
+      <thead><tr><th scope="col">Reference</th><th scope="col">Submitted</th><th scope="col" class="num">Amount</th><th scope="col">Status</th><th scope="col">Details</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">PR-2026-0014</td><td>31 Oct 2026</td><td class="num">18 000.00 EUR</td><td><span class="badge badge--error">Checks failed</span> <span class="state-name">CHECKS_FAILED</span>
+          <p class="text-sm">Failed check: deliverable not publicly reachable (milestone 1.2).</p></td><td><a href="payment-checks-failed.html">View details<span class="sr-only"> PR-2026-0014</span></a></td></tr>
+        <tr><td class="pid">PR-2026-0013</td><td>28 Oct 2026</td><td class="num">3 000.00 EUR</td><td><span class="badge badge--warning">Changes requested</span> <span class="state-name">CHANGES_REQUESTED</span></td><td><a href="payment-request-form.html">View<span class="sr-only"> PR-2026-0013</span></a></td></tr>
+        <tr><td class="pid">PR-2026-0012</td><td>20 Oct 2026</td><td class="num">21 000.00 EUR</td><td><span class="badge badge--info">Under review</span> <span class="state-name">UNDER_REVIEW</span></td><td><a href="payment-request-form.html">View<span class="sr-only"> PR-2026-0012</span></a></td></tr>
+        <tr><td class="pid">PR-2026-0009</td><td>2 Oct 2026</td><td class="num">12 000.00 EUR</td><td><span class="badge badge--success">Accepted</span> <span class="state-name">ACCEPTED</span></td><td><a href="payment-request-form.html">View<span class="sr-only"> PR-2026-0009</span></a></td></tr>
+        <tr><td class="pid">PR-2026-0007</td><td>10 Sep 2026</td><td class="num">8 000.00 EUR</td><td><span class="badge badge--success">Paid</span> <span class="state-name">PAID</span></td><td><a href="payment-request-form.html">View<span class="sr-only"> PR-2026-0007</span></a></td></tr>
+        <tr><td class="pid">PR-2026-0005</td><td>1 Sep 2026</td><td class="num">2 500.00 EUR</td><td><span class="badge badge--neutral">Withdrawn</span> <span class="state-name">WITHDRAWN</span></td><td><a href="payment-request-form.html">View<span class="sr-only"> PR-2026-0005</span></a></td></tr>
+      </tbody>
+    </table>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Domains and email - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.upload-slot { border: 2px dashed var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; color: var(--color-text-2); background: var(--color-surface-1); }
+    .sw { display: inline-block; width: 1.5rem; height: 1rem; border: 1px solid #64748B; border-radius: var(--radius-sm); vertical-align: middle; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .section-head h2 { margin: 0; }
+    dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .row-self td { background: var(--color-state-warning-bg); }
+    .check-list { list-style: none; padding: 0; }
+    .check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
+    .check-list li > span:first-child { flex: 1; min-width: 12rem; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html" aria-current="page">Domains and email</a></li><li><a href="onboarding.html">Set-up</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Two verified domains and one awaiting its DNS TXT record. Sending domain checks pass. Add and re-check need script.</p>
+
+    <h1>Domains and email</h1>
+    <section aria-labelledby="cd-h">
+      <h2 id="cd-h">Custom domains</h2>
+      <table>
+        <caption>3 custom domains</caption>
+        <thead><tr><th scope="col">Domain</th><th scope="col">Interface</th><th scope="col">Status</th><th scope="col">Verified</th></tr></thead>
+        <tbody>
+          <tr><td class="pid">grants.horizon-bridges.example</td><td>Applicant interface</td><td><span class="badge badge--success">Active</span></td><td><span class="badge badge--success">Verified</span></td></tr>
+          <tr><td class="pid">review.horizon-bridges.example</td><td>Reviewer interface</td><td><span class="badge badge--success">Active</span></td><td><span class="badge badge--success">Verified</span></td></tr>
+          <tr><td class="pid">public.horizon-bridges.example</td><td>Public pages</td><td><span class="badge badge--warning">Pending</span></td><td>Awaiting DNS TXT record: <a href="#dns-steps">see instructions</a></td></tr>
+        </tbody>
+      </table>
+      <p class="callout callout--info"><strong>Ownership first:</strong> A domain serves traffic only after verified ownership (I-71).</p>
+      <div class="btn-row"><!-- TODO(js): Add domain needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="add-why">Add domain</button>
+        <p id="add-why" class="text-sm muted">Static prototype: this action needs script.</p></div>
+      <section id="dns-steps" aria-labelledby="dns-h" class="card">
+        <h3 id="dns-h">Ownership check for public.horizon-bridges.example</h3>
+        <ol>
+          <li>At your DNS provider, add a TXT record named <code>_fstp-verify.public.horizon-bridges.example</code>.</li>
+          <li>Set its value to <code>fstp-verify=7d1e4a90c2</code>.</li>
+          <li>The platform checks the record every 15 minutes. The status changes to Verified when it is found.</li>
+        </ol>
+      </section>
+    </section>
+    <section aria-labelledby="em-h">
+      <h2 id="em-h">Email sending domain</h2>
+      <dl class="facts">
+        <dt>Sending domain</dt><dd class="pid">horizon-bridges.example</dd>
+        <dt>SPF</dt><dd><span class="badge badge--success">Pass</span></dd>
+        <dt>DKIM</dt><dd><span class="badge badge--success">Pass</span></dd>
+        <dt>DMARC</dt><dd><span class="badge badge--success">Pass</span></dd>
+        <dt>Sender address</dt><dd class="pid">noreply@horizon-bridges.example</dd>
+      </dl>
+      <div class="btn-row"><!-- TODO(js): Re-check needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="recheck-why">Re-check</button>
+        <p id="recheck-why" class="text-sm muted">Static prototype: this action needs script.</p></div>
+      <p class="text-sm muted">Certificates are issued automatically through ACME after the ownership check.</p>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

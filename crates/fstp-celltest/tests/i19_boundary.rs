@@ -28,19 +28,47 @@ use fstp_edge::{
     SniOutcome, TunnelHeader, decode_tunnel_header, encode_tunnel_header, parse_client_hello_sni,
 };
 use fstp_prop::{Gen, prop_assert_eq};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 // ---------------------------------------------------------------------------
 // Helpers.
 
-fn world(cells: u8, process_mode: bool) -> World {
-    World::start(WorldSpec {
+/// One world of this test binary at a time. The clusters of a world are
+/// shared by every world of the binary by name (`ClusterHandle`), so two
+/// worlds that run at once see each other's cells. A world that ends
+/// marks its cells, and the next world start drops them, so a world
+/// started under this lock is alone on its clusters.
+///
+/// Reading of lane m3grants: clusters named per world wait for a lead
+/// decision on `fstp_celltest::world`. Until then this binary serialises
+/// its worlds.
+static WORLDS: Mutex<()> = Mutex::new(());
+
+/// A world that holds the [`WORLDS`] turn of this binary until it ends.
+/// The world drops first, then the turn.
+struct Alone {
+    world: World,
+    _turn: MutexGuard<'static, ()>,
+}
+
+impl std::ops::Deref for Alone {
+    type Target = World;
+    fn deref(&self) -> &World {
+        &self.world
+    }
+}
+
+fn world(cells: u8, process_mode: bool) -> Alone {
+    let turn = WORLDS.lock().unwrap_or_else(PoisonError::into_inner);
+    let world = World::start(WorldSpec {
         cells,
         mode: DbMode::Shared,
         vault_layout: VaultLayout::SeparateCluster,
         self_hosted: false,
         process_mode,
     })
-    .unwrap_or_else(|e| panic!("the world did not start: {e}"))
+    .unwrap_or_else(|e| panic!("the world did not start: {e}"));
+    Alone { world, _turn: turn }
 }
 
 fn set(name: &str) -> MigrationSet {
@@ -213,6 +241,12 @@ fn i19_edge_refuses_hellos_without_a_server_name() {
 // ---------------------------------------------------------------------------
 // Certificates, sessions and processes.
 
+/// The 32 lowercase hex digits of a cell id, as its database and role
+/// names carry them (design section 4.1).
+fn hex(id: &[u8; 16]) -> String {
+    id.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn ca_pem(c: &ClusterHandle) -> Vec<u8> {
     c.server().cluster_ca().unwrap().cert_pem().to_vec()
 }
@@ -233,12 +267,16 @@ fn i19_foreign_cell_certificates_are_refused() {
         .iter()
         .filter(|c| matches!(c.kind(), ClusterKind::Application | ClusterKind::Vault))
     {
+        // The world is alone on its clusters ([`WORLDS`]), so each holds
+        // the roles of exactly the world's two cells.
         let roles = db::cell_login_roles(c.server()).unwrap();
         let cells: std::collections::BTreeSet<&str> =
             roles.iter().filter_map(|r| db::cell_of(r)).collect();
         assert_eq!(cells.len(), 2, "{}: {cells:?}", c.name());
-        let mut it = cells.iter();
-        let (a, b) = (*it.next().unwrap(), *it.next().unwrap());
+        let own: Vec<String> = (0..2).map(|i| hex(&w.cell(i).unwrap().id())).collect();
+        let own_set: std::collections::BTreeSet<&str> = own.iter().map(String::as_str).collect();
+        assert_eq!(cells, own_set, "{}: not the world's own cells", c.name());
+        let (a, b) = (own[0].as_str(), own[1].as_str());
         let prefix = if c.kind() == ClusterKind::Vault {
             "v"
         } else {

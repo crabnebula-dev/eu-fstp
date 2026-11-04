@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your work - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.queue td:nth-child(3) { font-variant-numeric: tabular-nums; font-weight: var(--weight-bold); }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-coordinator.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">5</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">JR</span><span class="sr-only">Account: coord-j8r2</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as FSTP coordinator.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as FSTP coordinator</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-coordinator.html" aria-current="page">Home</a></li><li><a href="coordinator-conflict.html">Proposals</a></li><li><a href="stage1-close.html">Calls</a></li><li><a href="#">Programmes</a></li><li><a href="#">People</a></li><li><a href="complaint-coordinator-review.html">Complaints</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Coordinator home, SuperSAFE Open Call 2 (SSF-2024-OC2), before any conflict declaration (O-57)</p>
+
+    <h1>Your work</h1>
+    <p class="muted">SuperSAFE programme. Call SSF-2024-OC2.</p>
+    <section class="card card--primary" aria-labelledby="pc-h">
+      <p class="card-kicker">Needs you now</p>
+      <h2 id="pc-h">2 proposals need a knock-out decision</h2>
+      <p>Declare any conflict first. Then read each application and record the knock-out result.</p>
+      <div class="btn-row"><a class="btn btn--primary" href="coordinator-conflict.html">Start conflict check</a></div>
+    </section>
+    <div class="callout callout--warning" role="status"><strong>Overdue:</strong> 1 proposal in SUBMITTED for 12 days (pseudonymous id P-7Q2K).</div>
+
+    <section aria-labelledby="q-h">
+      <h2 id="q-h">Queue health</h2>
+      <p class="text-sm muted">Counts and pseudonymous ids only. Titles and applicant data appear after your conflict declaration (O-57).</p>
+      <table class="queue">
+        <caption>Proposals by state in SSF-2024-OC2</caption>
+        <thead><tr><th scope="col">Stage</th><th scope="col">Formal state</th><th scope="col">Count</th><th scope="col">Pseudonymous ids</th></tr></thead>
+        <tbody>
+          <tr><td>Submitted, awaiting eligibility check</td><td class="state-name">SUBMITTED</td><td>3</td><td class="pid">P-7Q2K, P-3MZ8, P-K4N1</td></tr>
+          <tr><td>Stage 1 evaluation</td><td class="state-name">STAGE1</td><td>1</td><td class="pid">P-9TB6</td></tr>
+          <tr><td>Stage 2 questions</td><td class="state-name">STAGE2</td><td>5</td><td class="pid">P-2HX4, P-5RW0, P-8CV3, P-1JD7, P-6LP9</td></tr>
+          <tr><td>Ranked, awaiting committee decision</td><td class="state-name">RANKED</td><td>2</td><td class="pid">P-4FS5, P-0GY2</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="diary-h">
+      <h2 id="diary-h">Recent activity</h2>
+      <ol class="diary">
+        <li class="diary-entry"><span class="diary-icon" aria-hidden="true">→</span><div><p class="diary-meta"><span class="badge badge--neutral" data-glyph="→">State change</span><time datetime="2024-11-03T14:02Z">3 Nov 2024, 15:02</time></p><p>P-9TB6 moved from Submitted (SUBMITTED) to Stage 1 evaluation (STAGE1). Recorded by you.</p></div></li>
+        <li class="diary-entry"><span class="diary-icon" aria-hidden="true">⏱</span><div><p class="diary-meta"><span class="badge badge--neutral" data-glyph="⏱">Overdue clock</span><time datetime="2024-11-04T07:00Z">4 Nov 2024, 08:00</time></p><p>P-7Q2K has waited 12 days in SUBMITTED.</p></div></li>
+      </ol>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

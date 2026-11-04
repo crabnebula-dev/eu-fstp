@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment request - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html" aria-current="page">Payments</a></li><li><a href="contract-view.html">Agreement</a></li><li><a href="complaint-status.html">Complaints</a></li><li><a href="grantee-visibility.html">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Draft payment request PR-2026-0014 for SuperSAFE Call 1. One milestone paid in full, one with a pending line. Submit needs script.</p>
+
+    <h1>Payment request</h1>
+    <p class="muted">Draft <span class="pid">PR-2026-0014</span>, grant <span class="pid">SSF-C1-0042</span>, SuperSAFE Call 1. Tasks follow the order of your agreed plan.</p>
+    <p class="callout callout--info"><strong>Evidence rules:</strong> Deliverable URLs must be publicly reachable without authentication. Licence must be in the programme's approved list.</p>
+    <p id="fill-why" class="text-sm muted">Fill available copies the available amount into the row. Static prototype: this action needs script.</p>
+    <form method="post" action="#">
+      <section aria-labelledby="t1-h">
+        <div class="section-head"><h2 id="t1-h">Task 1: Community outreach</h2><p>Available <strong>7 000.00 EUR</strong> of 20 000.00 EUR</p></div>
+        <div class="line-card">
+          <h3>Milestone 1.1: Outreach plan published</h3>
+          <dl class="facts"><dt>Due date</dt><dd>15 Jan 2027</dd><dt>Total amount</dt><dd>8 000.00 EUR</dd><dt>Available amount</dt><dd>0.00 EUR</dd></dl>
+          <p><span class="badge badge--success">Paid in full</span> Nothing left to claim on this milestone.</p>
+          <div class="field"><label for="m11-amt">Requested amount (EUR), milestone 1.1</label><input id="m11-amt" type="text" inputmode="decimal" value="0.00" disabled></div>
+        </div>
+        <div class="line-card">
+          <h3>Milestone 1.2: Ten community workshops held</h3>
+          <dl class="facts"><dt>Due date</dt><dd>30 Apr 2027</dd><dt>Total amount</dt><dd>12 000.00 EUR</dd><dt>Pending in other requests</dt><dd>5 000.00 EUR in <span class="pid">PR-2026-0012</span></dd><dt>Available amount</dt><dd>7 000.00 EUR</dd></dl>
+          <div class="field"><label for="m12-amt">Requested amount (EUR), milestone 1.2</label><span class="hint" id="m12-hint">More than 0.00 and at most 7 000.00 (I-58).</span><input id="m12-amt" type="text" inputmode="decimal" value="4000.00" aria-describedby="m12-hint"></div>
+          <div class="btn-row"><!-- TODO(js): Fill available needs script in production. -->
+        <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="fill-why">Fill available<span class="sr-only"> for milestone 1.2</span></button></div>
+          <div class="field"><label for="m12-url">Deliverable evidence URL, milestone 1.2</label><input id="m12-url" type="url" value="https://example.org/supersafe/workshops-report"></div>
+          <div class="field"><label for="m12-lic">SPDX licence, milestone 1.2</label><input id="m12-lic" type="text" value="CC-BY-4.0"></div>
+          <div class="field"><label for="m12-notes">Progress notes, milestone 1.2</label><textarea id="m12-notes">Six of ten workshops held. Attendance lists are in the report.</textarea></div>
+        </div>
+      </section>
+      <section aria-labelledby="t2-h">
+        <div class="section-head"><h2 id="t2-h">Task 2: Software delivery</h2><p>Available <strong>28 500.00 EUR</strong> of 28 500.00 EUR</p></div>
+        <div class="line-card">
+          <h3>Milestone 2.1: Release 1.0 published</h3>
+          <dl class="facts"><dt>Due date</dt><dd>31 Mar 2027</dd><dt>Total amount</dt><dd>14 000.00 EUR</dd><dt>Available amount</dt><dd>14 000.00 EUR</dd></dl>
+          <div class="field"><label for="m21-amt">Requested amount (EUR), milestone 2.1</label><input id="m21-amt" type="text" inputmode="decimal" value="14000.00"></div>
+          <div class="btn-row"><!-- TODO(js): Fill available needs script in production. -->
+        <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="fill-why">Fill available<span class="sr-only"> for milestone 2.1</span></button></div>
+          <div class="field"><label for="m21-url">Deliverable evidence URL, milestone 2.1</label><span class="hint" id="m21-hint">A public URL plus a commit or release id.</span><input id="m21-url" type="url" value="https://example.org/supersafe/releases/v1.0.0" aria-describedby="m21-hint"></div>
+          <div class="field"><label for="m21-lic">SPDX licence, milestone 2.1</label><input id="m21-lic" type="text" value="MIT"></div>
+          <div class="field"><label for="m21-notes">Progress notes, milestone 2.1</label><textarea id="m21-notes">Release 1.0.0 tagged at commit 4f2a9c1. Release notes are linked.</textarea></div>
+        </div>
+        <div class="line-card">
+          <h3>Milestone 2.2: Security audit fixes</h3>
+          <dl class="facts"><dt>Due date</dt><dd>30 Jun 2027</dd><dt>Total amount</dt><dd>14 500.00 EUR</dd><dt>Available amount</dt><dd>14 500.00 EUR</dd></dl>
+          <div class="field"><label for="m22-amt">Requested amount (EUR), milestone 2.2</label><input id="m22-amt" type="text" inputmode="decimal" value="0.00"></div>
+          <div class="btn-row"><!-- TODO(js): Fill available needs script in production. -->
+        <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="fill-why">Fill available<span class="sr-only"> for milestone 2.2</span></button></div>
+        </div>
+      </section>
+      <section class="card" aria-labelledby="tot-h">
+        <h2 id="tot-h">Request total</h2>
+        <p><strong class="stat">18 000.00 EUR</strong> across 2 milestone lines.</p>
+        <p class="text-sm muted">Totals are calculated by the server, never in the browser (ADR-006).</p>
+        <div class="btn-row"><!-- TODO(js): Submit request needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="submit-why">Submit request</button></div>
+        <p id="submit-why" class="text-sm muted">Automated checks run after submission: public reachability, licence list (P-26), amount within available (I-58) and evidence rules (P-34). Static prototype: this action needs script.</p>
+      </section>
+    </form>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>
