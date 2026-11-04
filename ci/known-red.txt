@@ -11,47 +11,10 @@
 adr007_store_and_erasure::adr007_erased_textref_resolves_to_its_log_entry | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 adr007_store_and_erasure::adr007_erasure_log_visible_to_auditor_and_tenant_admin_only | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 adr007_store_and_erasure::adr007_pg_store_matches_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-commit_checks::i78_cell_unanchored_store_refuses_a_step_up_stale_at_commit | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-doctest:fstp_celltest::crates/fstp-celltest/src/world.rs - world::World::start (line 150) | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 engine_mem::seam_cell_engine_matches_reference_engine_over_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_erasure_completion_is_recorded_only_after_the_destroy_receipt | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_erasure_request_during_a_batch_joins_the_next_batch | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_erasure_runner_resumes_after_a_crash_at_every_step | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_erasure_runner_runs_the_design_steps_in_order | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_erasure_runner_survives_a_custody_failure_at_every_step | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_erasure_task_completes_a_requested_batch_on_its_own | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-erasure_runner::i81_cell_text_cannot_be_opened_once_its_erasure_is_requested | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-fstp_api_testkit::fake::creator_wire_tests::adr006_save_fields_decoder_is_strict | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i65_import_resolve_builds_resolve_import_with_the_shell_sha256 | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i65_import_upload_builds_register_document | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i66_acknowledge_builds_acknowledge_warning_and_refuses_a_failure | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i66_r_pg_01_report_names_catalogue_checks_at_the_draft_revision | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i66_request_activation_with_a_failure_is_refused_naming_i66 | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i67_approval_inbox_never_offers_approval_to_a_builder | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i67_builder_approval_is_refused_before_any_step_up | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i78_approve_activation_needs_a_fresh_digest_bound_step_up | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i84_save_fields_through_mcp_runs_with_via_mcp | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::i85_approve_activation_through_mcp_is_not_exposed_and_never_runs | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_01_get_draft_reads_spec_revision_and_status | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_01_previews_read_as_text | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_01_save_fields_builds_field_edits_with_the_shell_sha256 | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_02_apply_start_refuses_a_stale_base_and_a_non_manager | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_02_apply_start_template_builds_apply_start | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_04_impact_reads_for_the_manager_only | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_05_save_as_template_builds_save_as_tenant_template | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-fstp_api_testkit::fake::creator_wire_tests::th49_accept_narrative_builds_accept_narrative | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::matrix::tests::t_authz_matrix_direct | authorisation matrix harness | m4access (W3a)
-http_command_request::i18_command_request_refuses_a_minor_member | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::i18_command_request_refuses_an_escaped_minor_member | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::r_nf_02_command_request_refusals_never_quote_the_body | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_an_oversize_body | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_bodies_that_are_not_one_object | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_case_variants_of_member_names | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_deep_nesting | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_duplicate_members | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_other_id_spellings | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-http_command_request::th_26_command_request_refuses_unknown_members | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i16_funds::i16_schemas_have_no_fund_class | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i17_identity_release::i17_app_database_holds_no_identity_attribute | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i17_identity_release::i17_canary_attributes_never_reach_judging_responses | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -60,57 +23,31 @@ i17_identity_release::i17_release_ticket_only_for_operations_in_negotiation | se
 i18_guardian_consent::i18_cell_asks_adult_attestation_before_guardian_ticket | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i18_guardian_consent::i18_no_minor_flagged_proposal_reaches_granted_without_consent | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i18_guardian_consent::i18_r_ng_01_irc_actor_is_never_shown_the_vault_outcomes | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i18_guardian_consent::i18_route_never_takes_minor_flag_from_the_request | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i19_boundary::i19_cell_process_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i19_boundary::i19_control_plane_columns_are_declared | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i19_boundary::i19_foreign_cell_certificates_are_refused | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i19_boundary::i19_only_registered_metadata_crosses | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i19_boundary::i19_session_of_one_cell_is_refused_by_another | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i19_boundary::i19_teeth_canary_in_heartbeat_is_caught | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_control_plane_and_witness_hold_no_account_id | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_vault_match_keys_differ_across_cells | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i23_cell_fold::seam_decide_engine_commands_match_m2_decide | cell high-risk table and core activation path | m4d2e-cont
 i24_audit_chain::i24_custody_ops_reconcile_with_key_records | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_database_refuses_bad_link_and_mutation | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_erasure_entries_are_chained | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_ledger_and_chain_commit_together | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_pg_chain_equals_reference_chain | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_system_tasks::i23_decide_sequence_m2_seed_decides_the_corpus_setup | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i38_egress::i38_self_hosted_accepts_tenant_registration_mode | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_captures_match_the_templates | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_cell_sends_no_canary_to_crabnebula_hosts | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i38_egress::i38_self_hosted_refuses_intermediary_mode | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_witness_never_targets_crabnebula | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i39_licence::i39_cycle_completes_with_services_down | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i52_fold_refuses_call_published_without_guide_published::i52_fold_refuses_call_published_without_guide_published | strict D2e and GuidePublished pairing | m4d2e-cont
 i52_fold_refuses_call_published_without_guide_published::i52_open_refuses_store_with_call_published_without_guide_published | strict D2e and GuidePublished pairing | m4d2e-cont
-i65_every_imported_value_has_named_pm_resolution::i65_every_imported_value_has_named_pm_resolution | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_import_proposals_never_alter_draft::i65_import_proposals_never_alter_draft | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_injected_annex_changes_no_value_without_confirmation::i65_injected_annex_changes_no_value_without_confirmation | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_m_import::i65_m_import | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_profile_conflict_is_flagged_never_adjusted::i65_profile_conflict_is_flagged_never_adjusted | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_resolution_shown_digest_must_match::i65_resolution_shown_digest_must_match | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_teeth_auto_applied_proposal_is_caught::i65_teeth_auto_applied_proposal_is_caught | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i65_teeth_auto_applied_proposal_is_caught::i65_teeth_auto_applied_proposal_is_caught_by_the_twins | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_edit_after_report_voids_clearance::i66_edit_after_report_voids_clearance | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_edit_after_report_voids_clearance::i66_edit_after_report_voids_clearance_for_every_edit_kind | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_m_activate::i66_m_activate | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_pending_legal_wording_is_a_failure::i66_pending_legal_wording_is_a_failure | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_probes_run_at_approval::i66_probes_run_at_approval | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_r_pg_01_cap_above_ceiling_names_both_values::i66_r_pg_01_cap_above_ceiling_names_both_values | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_seeded_failure_never_activates::i66_seeded_failure_never_activates | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_seeded_failure_never_activates::i66_seeded_failure_never_activates_for_every_failure | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_teeth_stale_report_accepted_is_caught::i66_teeth_stale_report_accepted_is_caught | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_unacknowledged_warning_blocks_activation::i66_unacknowledged_warning_blocks_activation | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i66_unacknowledged_warning_blocks_activation::i66_unacknowledged_warning_blocks_activation_for_every_warning | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i66_unresolved_import_is_a_failure::i66_unresolved_import_is_a_failure | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_approver_is_never_a_builder::i67_approver_is_never_a_builder | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_core_guard_refuses_builder_even_if_creator_does_not::i67_core_guard_refuses_builder_even_if_creator_does_not | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_m_activate::i67_m_activate | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_m_activate::i67_m_activate_with_a_sybil_pair | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i67_sybil_builder_and_approver_refused::i67_sybil_builder_and_approver_refused | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_teeth_builder_approval_is_caught::i67_teeth_builder_approval_is_caught | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
-i67_unverified_builder_or_approver_refused::i67_unverified_builder_or_approver_refused | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 i75_hybrids::i75_mldsa_never_used_without_ed25519 | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i77_login::i77_m_auth | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i77_login::i77_management_login_requires_phishing_resistant_method_over_http | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -146,33 +83,8 @@ i81_backups::i81_teeth_live_email_digest_is_recomputed | M3 test world run_cycle
 i81_backups::i81_teeth_live_identity_match_digest_is_recomputed | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_teeth_restored_epoch_file_opens_without_destroy | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_text_salt_never_stored_in_clear | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i82_role_plan::i82_ddl_identifier_grammar_matches_reference | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_ddl_identifier_refuses_names_outside_the_grammar | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_generated_hba_has_no_remote_superuser_and_no_all_line | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_names_reveal_nothing | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_no_remote_role_has_createrole_or_createdb | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i82_role_plan::i82_pool_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i82_role_plan::i82_privilege_graph_has_no_cross_cell_path | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_replication_role_has_loopback_line_only_and_no_connect | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_role_plan_matches_design_section_4_1 | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_teeth_indirect_predefined_membership_is_a_path_in_the_production_graph | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_teeth_public_connect_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i82_role_plan::i82_teeth_seeded_connect_grant_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i82_teeth_m_place_plan_for_another_cell_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i82_teeth_m_place_plan_for_another_cell_is_caught_on_the_reference | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_cluster_kind_is_immutable | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_cp_cell_refuses_one_cluster_for_both_databases | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_m_place | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_m_place_on_the_reference | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_m_place_tripwire_records_the_measured_count | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_placement_never_mixes_kinds | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_placement_refusals_name_their_reason | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i83_placement::i83_self_hosted_layout_runs_two_instances | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i83_placement::i83_teeth_first_free_cluster_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_teeth_first_free_cluster_is_caught_on_the_reference | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_teeth_refusing_every_placement_loses_the_witness | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::i83_vault_refuses_an_application_cluster | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i83_placement::t_db_iso_i83_cell_databases_sit_on_clusters_of_their_kind | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 m3_records::w0_new_crate_stubs_refuse_without_panicking_macros | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 main_startup::i24_cell_start_raises_possible_deletion_for_a_missing_in_doubt_row | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_cr_01_at_rest::r_cr_01_backup_container_decoder_matches_reference | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -188,20 +100,16 @@ r_nf_m3::r_nf_05_self_hosted_install_has_no_default_credentials | M3 test world 
 r_nf_m3::r_nf_08_aborted_append_never_reuses_a_nonce | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_nf_m3::r_nf_08_catalogue_has_no_clear_content_column | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_nf_m3::r_nf_09_every_internal_link_is_mutually_authenticated | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-r_nf_m3::r_nf_09_every_internal_link_requires_a_client_certificate | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_pg_01_spec_reference::r_pg_01_supersafe_readings_match_the_spec_column | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 r_pg_01_supersafe_fixture::r_pg_01_supersafe_fixture_matches_policy_defaults | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 r_sw_02_cell_erasure::r_sw_02_cell_erasure_kills_every_backup | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_d2e_publication::review_i52_execute_core_publish_call_appends_no_unpaired_call_published | strict D2e and GuidePublished pairing | m4d2e-cont
-review_d2e_undrafted::review_d2e_execute_refuses_core_activate_of_undrafted_programme | strict D2e and GuidePublished pairing | m4d2e-cont
-review_d2e_undrafted::review_d2e_fold_refuses_unpaired_activation_of_undrafted_programme | strict D2e and GuidePublished pairing | m4d2e-cont
 review_m4w1b_activate_programme_gate::review_i78_activate_programme_is_classified_by_the_gate | cell high-risk table and core activation path | m4d2e-cont
 review_seams1_fidelity::review_i78_m_stepup_production_commits_release_payment | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_seams1_fidelity::review_i78_register_passkey_refuses_a_second_passkey | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_w1d_fidelity::review_file_custody_remnant_epoch_file_does_not_open_after_destroy | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_w1d_keyd_inplace::review_keyd_destroy_overwrites_the_key_table_in_place | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_w1d_strength::review_keyd_pre_destroy_epoch_file_copy_never_opens | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-review_w3ar::review_th_26_command_request_fuzz_target_has_an_accepted_seed | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 schema::r_nf_08_app_catalogue_classes_every_column | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 seam_driver_core::seam_driver_core_matches_reference_engine | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 seam_driver_core::seam_note2_every_vault_fault_fails_closed_and_appends_nothing | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -233,11 +141,8 @@ sod_08_break_glass::sod_08_break_glass_needs_tenant_approval_and_logs_every_read
 system_tasks::i23_cell_timeline_commits_each_scheduled_end_once_across_restarts | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 system_tasks::i77_cell_timeline_ends_sessions_at_a_scheduled_binding_end | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 t_authz_matrix_http::t_authz_matrix_http | authorisation matrix harness | m4access (W3a)
-t_db_iso_i82::t_db_iso_i82_every_role_refused_on_foreign_cell_database | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-t_db_iso_i82::t_db_iso_i82_every_role_refused_on_foreign_cell_database_dedicated | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 t_iso_i19::t_iso_i19_no_canary_crosses_a_cell_boundary | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 t_iso_i19::t_iso_i19_no_canary_crosses_a_cell_boundary_dedicated | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 t_iso_i20::t_iso_i20_no_shared_identifier_across_tenants | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 w0_high_risk_table::i78_domain_high_risk_kinds_match_the_m2_base | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 w0_high_risk_table::i78_high_risk_table_holds_every_domain_high_risk_kind | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-w0_stubs_refuse::w0_cell_egress_connect_refuses | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run

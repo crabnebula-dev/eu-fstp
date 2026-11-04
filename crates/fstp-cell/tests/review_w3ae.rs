@@ -45,7 +45,8 @@ fn run(scn: &mut Scenario, now: Timestamp, step: &Step, id: Option<[u8; 16]>) {
     let drawn = scn.ctx(now, step.actor).command;
     let command = id.map(CommandId::from_bytes).unwrap_or(drawn);
     let ctx = step.ctx(now, command);
-    if let Err(e) = scn.execute(fstp_engine::Command::Core(step.cmd.clone()), ctx) {
+    // run_core activates through the creator path (strict D2e).
+    if let Err(e) = scn.run_core(&step.cmd, ctx) {
         panic!("{:?} refused: {e:?}", step.cmd.kind());
     }
 }
