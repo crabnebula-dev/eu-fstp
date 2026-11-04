@@ -281,9 +281,8 @@ pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
                     "Programme manager: the programme set-up and people pages of the programme, and its call boards."
                         .to_owned()
                 } else {
-                    // The seeded programme was activated without the
-                    // creator, so it holds no draft, and both pages that
-                    // read one would refuse (review finding U1).
+                    // A programme without a creator draft would refuse
+                    // both pages that read one (review finding U1).
                     "Programme manager: the board of each published call of the programme.".to_owned()
                 }
             }

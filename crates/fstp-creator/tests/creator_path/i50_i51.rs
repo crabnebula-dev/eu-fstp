@@ -2,20 +2,19 @@
 //! sections 3.1 and 3.2).
 //!
 //! - I-50: P-05 never exceeds P-58. A save that would break it is refused
-//!   by the core `EditPolicy` guard, or the report names both values and
-//!   activation stays refused (R-PG-01 AC). Either way the core policy
-//!   keeps P-05 at or below P-58.
+//!   at save, naming both values (R-PG-01 AC; I-50 timing, Daniel's answer
+//!   of 2026-10-31, M4 design section 15.0). So the core policy keeps P-05
+//!   at or below P-58, and no draft holds a cap above the ceiling.
 //! - I-51: a Guide binds its parameter values from the draft policy. The
 //!   creator's part is that the core head policy is exactly the compiled
 //!   draft spec, so every parameter a Guide reads equals the saved value.
 
-use fstp_creator::{CheckDetail, CheckId, CreatorRefusal, Uncleared};
-use fstp_domain::refusal::RuleRef;
+use fstp_creator::CreatorRefusal;
 use fstp_programme::{CompileIds, FIELDS, FieldId, FieldKind, ProgrammeSpec, compile};
 use fstp_prop::{check, prop_assert, prop_assert_eq};
 
 use crate::harness::{
-    Fail, M1, P, TB, adr006, decode, edit, forged, full_save, he, opened, synthetic_spec, value_of,
+    Fail, M1, P, adr006, decode, edit, forged, full_save, he, opened, synthetic_spec, value_of,
 };
 
 /// I-51: after the save of every field of the synthetic spec, the core
@@ -94,9 +93,10 @@ fn i51_saved_policy_field_reaches_the_core_policy_exactly() {
 
 /// I-50, R-PG-01 AC: a save of P-05 and P-58 in one edit never leaves the
 /// core policy with P-05 above P-58. When P-05 is above P-58 the save is
-/// refused with I-50 and appends nothing, or it is recorded and the
-/// report names both values as ADR-006 strings and activation is refused.
-/// When P-05 is at or below P-58 the save is recorded with both values.
+/// refused at save with `CapAboveCeiling`, which names both values as
+/// ADR-006 strings, and appends nothing (Daniel's answer of 2026-10-31,
+/// M4 design section 15.0). When P-05 is at or below P-58 the save is
+/// recorded with both values.
 #[test]
 fn i50_p05_above_p58_never_reaches_the_core_policy_or_activation() {
     check(
@@ -136,36 +136,22 @@ fn i50_p05_above_p58_never_reaches_the_core_policy_or_activation() {
                     return Err(format!("a save within the ceiling is refused: {f:?}"));
                 }
                 (true, Err(f)) => {
+                    let named = match &f {
+                        Fail::Creator(CreatorRefusal::CapAboveCeiling { p05: a, p58: b }) => {
+                            a.amount().to_string() == adr006(p05)
+                                && b.amount().to_string() == adr006(p58)
+                        }
+                        _ => false,
+                    };
                     prop_assert!(
-                        matches!(f, Fail::Core(r) if r.rule == RuleRef::I50),
-                        "the refusal does not name I-50: {:?}",
+                        named,
+                        "the refusal does not name I-50 with both values as ADR-006 strings: {:?}",
                         f
                     );
                     prop_assert_eq!(cell.entries.len(), entries);
                 }
                 (true, Ok(_)) => {
-                    let report = cell.report(Some(TB));
-                    let named = report.failures().any(|r| {
-                        r.check == CheckId::CapAboveCeiling
-                            && r.detail
-                                == CheckDetail::Cap {
-                                    p05: adr006(p05),
-                                    p58: adr006(p58),
-                                }
-                    });
-                    prop_assert!(named, "the report does not name both values");
-                    cell.request(M1).map_err(|f| format!("{f:?}"))?;
-                    let approval = cell.approve(TB, 901);
-                    prop_assert!(
-                        matches!(
-                            approval,
-                            Err(Fail::Creator(CreatorRefusal::Uncleared(
-                                Uncleared::Failure(_)
-                            )))
-                        ),
-                        "an approval of a draft above the ceiling is not refused: {:?}",
-                        approval
-                    );
+                    return Err("I-50 at save: a save of P-05 above P-58 was recorded".to_owned());
                 }
             }
             Ok(())

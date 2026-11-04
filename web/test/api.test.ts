@@ -297,3 +297,20 @@ test("adr014_api_refusal_is_read_after_step_up_codes", async () => {
   const out = await createApi({ fetch }).call(WRITE, { programme: "p", field: "f" }, {}, always);
   eq(out, { kind: "refused", code: "refused", rule: "I-67" }, "outcome");
 });
+
+/**
+ * I-50, R-PG-01 AC, M4 design section 15.0 (Daniel, 2026-10-31): a refusal
+ * at save names both values in `values`, and a `values` member that is not
+ * an object of strings makes the reply unusable.
+ */
+test("i50_api_refusal_names_both_values", async () => {
+  const values = { "P-05": "60000.01", "P-58": "60000.00" };
+  const { fetch } = replying(403, { code: "refused", rule: "I-50", values });
+  const out = await createApi({ fetch }).call(WRITE, { programme: "p", field: "f" }, {}, always);
+  eq(out, { kind: "refused", code: "refused", rule: "I-50", values }, "outcome");
+  for (const bad of [[], "60000.01", { "P-05": 6000001 }, null]) {
+    const { fetch: f } = replying(403, { code: "refused", rule: "I-50", values: bad });
+    const got = await createApi({ fetch: f }).call(WRITE, { programme: "p", field: "f" }, {}, always);
+    eq(got, { kind: "failed", reason: "invalid_response" }, `values ${show(bad)}`);
+  }
+});

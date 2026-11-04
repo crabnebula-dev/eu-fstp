@@ -364,12 +364,16 @@ pub fn apply(s: &mut CellState, e: &Entry<CellRecord>) -> Result<(), FoldError> 
 }
 
 /// Folds a ledger from genesis (I-23). Sequence numbers must run from 1
-/// without gaps.
+/// without gaps. A ledger whose last engine entry still owes a pairing,
+/// such as an `ActivationApproved` without its `ProgrammeActivated`, is
+/// refused as `fstp_engine::replay` refuses it (M4 design section 3.4,
+/// D2e).
 pub fn replay(entries: &[Entry<CellRecord>]) -> Result<CellState, FoldError> {
     let mut s = CellState::genesis();
     for e in entries {
         apply(&mut s, e)?;
     }
+    state::check_engine_entry(&mut s)?;
     Ok(s)
 }
 

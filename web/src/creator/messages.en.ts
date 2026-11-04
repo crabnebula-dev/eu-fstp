@@ -13,6 +13,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "outcome.unavailable": "This action is not available in this cell yet.",
   "outcome.refused": "This was refused.",
   "outcome.refused_rule": "This was refused under rule {rule}.",
+  "outcome.refused_values": "This was refused under rule {rule}. The values are {values}.",
   "outcome.network": "The cell could not be reached. Check your connection and try again.",
   "outcome.request": "This request could not be sent. Reload the page and try again.",
   "outcome.invalid_response": "The reply could not be used. Reload the page and try again.",

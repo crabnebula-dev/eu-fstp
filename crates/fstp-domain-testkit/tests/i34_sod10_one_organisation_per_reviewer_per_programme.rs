@@ -84,14 +84,33 @@ fn sod10_second_committee_binding_with_another_organisation_is_refused() {
 }
 
 /// SoD-10: a second committee binding recording the same organisation
-/// keeps one organisation per reviewer, so the spec does not refuse it.
+/// keeps one organisation per reviewer, so SoD-10 does not refuse it.
+/// Daniel's answer of 2026-10-31 (M4 design section 15.0) refuses a
+/// re-grant of a role while the account holds that binding, and allows it
+/// once the binding ends. So the second O1 grant is refused with `Input`
+/// while the first is held, and accepted after its end.
 #[test]
-fn sod10_second_committee_binding_with_the_same_organisation_is_accepted() {
+fn sod10_second_committee_binding_with_the_same_organisation_is_accepted_after_the_end() {
     let mut w = world(&SodSetup::one(1, &[1]));
-    for (id, what) in [(301, "the first O1 grant"), (302, "the second O1 grant")] {
-        judged(&mut w, &committee(id, P1, O1), what)
-            .unwrap_or_else(|r| panic!("{what} is refused with {r:?}"));
-    }
+    judged(&mut w, &committee(301, P1, O1), "the first O1 grant")
+        .unwrap_or_else(|r| panic!("the first O1 grant is refused with {r:?}"));
+    assert_eq!(
+        judged(
+            &mut w,
+            &committee(302, P1, O1),
+            "the O1 re-grant while held"
+        ),
+        Err(RuleRef::Input),
+        "a re-grant of the committee role is refused while c holds it"
+    );
+    judged(&mut w, &end(BindingId::from_raw(301), T0), "the end")
+        .unwrap_or_else(|r| panic!("the end is refused with {r:?}"));
+    judged(
+        &mut w,
+        &committee(303, P1, O1),
+        "the O1 grant after the end",
+    )
+    .unwrap_or_else(|r| panic!("the O1 grant after the end is refused with {r:?}"));
 }
 
 /// SoD-10: the rule reads the active committee binding. Once c's O1
@@ -171,11 +190,15 @@ fn sod10_another_organisation_after_a_scheduled_end_is_accepted() {
     });
 }
 
-/// SoD-10 (decided 2026-10-28): the reinstatement of a suspended committee
-/// binding is refused while another committee binding of c, active beside
-/// it, records another organisation (W7 fix round 1). Here c's O1 binding
-/// is suspended as a conflict of interest, and an O2 binding is granted
-/// meanwhile, so the reinstatement of the O1 binding is refused.
+/// SoD-10 (decided 2026-10-28): a reinstated committee binding never stands
+/// beside a committee binding of c that records another organisation (W7
+/// fix round 1). Here c's O1 binding is suspended as a conflict of
+/// interest. Daniel's answer of 2026-10-31 (M4 design section 15.0)
+/// refuses a grant of the same role while that binding has not ended, so
+/// the O2 grant meanwhile is refused with `Input`. The reinstatement is
+/// then accepted, and c's committee bindings on P1 record O1 alone.
+/// `plan_reinstate` keeps its SoD-10 check as a second line of defence,
+/// which no command sequence reaches since the 15.0 guard.
 #[test]
 fn sod10_reinstatement_beside_another_organisation_is_refused() {
     use fstp_domain_testkit::r#gen::roster::{A, ID_AB, ID_C, reinstate};
@@ -196,17 +219,28 @@ fn sod10_reinstatement_beside_another_organisation_is_refused() {
     w.sync(Facts::Effective)
         .unwrap_or_else(|e| panic!("harness: {e}"))
         .unwrap_or_else(|r| panic!("the split reaction is refused: {r}"));
-    judged(&mut w, &committee(302, P1, O2), "the O2 grant")
-        .unwrap_or_else(|r| panic!("the O2 grant beside a suspension is refused with {r:?}"));
-    let out = judged(
+    assert_eq!(
+        judged(&mut w, &committee(302, P1, O2), "the O2 grant"),
+        Err(RuleRef::Input),
+        "M4 design 15.0: the O2 grant beside a binding that has not ended is refused"
+    );
+    judged(
         &mut w,
         &reinstate(BindingId::from_raw(301)),
         "the reinstatement",
-    );
+    )
+    .unwrap_or_else(|r| panic!("the reinstatement is refused with {r:?}"));
+    let organisations: BTreeSet<Option<OrganisationId>> = w
+        .state
+        .roster()
+        .bindings()
+        .filter(|(_, b)| b.account == C && b.programme == P1 && b.role == Role::CommitteeMember)
+        .map(|(_, b)| b.organisation)
+        .collect();
     assert_eq!(
-        out,
-        Err(RuleRef::Sod10),
-        "SoD-10: reinstated, the O1 binding would stand beside the O2 binding"
+        organisations,
+        BTreeSet::from([Some(O1)]),
+        "SoD-10: after the reinstatement c reviews for one organisation on P1"
     );
 }
 

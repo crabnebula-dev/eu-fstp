@@ -358,6 +358,7 @@ dependencies = [
 name = "fstp-domain-testkit"
 version = "0.1.0"
 dependencies = [
+ "fstp-creator",
  "fstp-domain",
  "fstp-engine",
  "fstp-findings",
@@ -444,6 +445,16 @@ dependencies = [
  "fstp-ledger",
  "fstp-programme",
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-journey"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-json",
 ]
 
 [[package]]

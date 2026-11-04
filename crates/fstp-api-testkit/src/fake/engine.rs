@@ -191,6 +191,20 @@ impl FakeEngine {
         lock(&self.inner).engine.execute(cmd, ctx)
     }
 
+    /// Runs the core setup command `cmd` with `ctx` straight on the driver,
+    /// outside the port and unrecorded, as [`FakeEngine::environment`]
+    /// does. A `CreateProgramme` and an `ActivateProgramme` append the
+    /// entries of the creator path that
+    /// `fstp_domain_testkit::activation::run_core` composes, since only the
+    /// creator's approval activates a programme (D2e).
+    pub fn setup_step(
+        &self,
+        cmd: &fstp_domain::Command,
+        ctx: Ctx,
+    ) -> Result<Seq, fstp_engine::ExecError> {
+        fstp_domain_testkit::activation::run_core(&mut lock(&self.inner).engine, cmd, ctx)
+    }
+
     /// Appends `records` as one entry at `at` straight to the ledger, past
     /// every guard, and folds it: a forged change of the world around the
     /// cell under test, such as an entry a parallel lane's command would

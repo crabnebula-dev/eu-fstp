@@ -5,10 +5,9 @@
 //! - [`production`] is the one place where the I-66 and I-67 suites call
 //!   production code. Each function names the designed call it makes. The
 //!   implementer wires it, and the test author reviews each call, as the
-//!   M2 read adapters were handled. The creator has landed (lane W2a).
-//!   A production draft still needs parallel lanes, so the first call of
-//!   a production run reaches a W0 stub that refuses, and the run is red
-//!   for that reason.
+//!   M2 read adapters were handled. Every call runs the production engine
+//!   (lane m4glue). A step the production API cannot take refuses with a
+//!   named gap, and the run is red for that reason.
 //! - [`System`] runs one draft on the reference or on production, behind
 //!   the same reference vocabulary.
 //! - [`check_i66`] and [`check_i67`] are the invariant predicates over the
@@ -49,72 +48,66 @@ use crate::reference::creator::{
 
 /// The one place where the I-66 and I-67 suites call production code.
 ///
-/// Wiring status (lane m4wire): every function runs the production
+/// Wiring status (lane m4glue): every function runs the production
 /// engine, `fstp_engine::Engine` with `CreatorDecider` over the cell's
 /// creator environment (`fake/shell.rs`), on a draft cell rebuilt from
-/// the draft's ledger (`fake/draft_cell.rs`).
+/// the draft's ledger (`fake/draft_cell.rs`). Each rebuild holds the
+/// saved and imported values again, as the shell does after a replay.
 ///
 /// - [`ProductionSystem`] opens the plan's draft with
-///   `CreatorCommand::OpenDraft` through the engine, grants its managers
-///   with core `GrantRole` and sets the plan's environment. It refuses
-///   with [`GAP_OPEN`] while `fstp_creator::decide_creator` refuses the
-///   opening at its compile seam (lane m4creator). Seeding a content check
-///   and every content edit refuse with [`GAP_SEEDS`] and [`GAP_EDITS`]:
-///   which field edit seeds or fixes each check is the creator lane's
-///   (lanes m4creator and m4guide).
+///   `CreatorCommand::OpenDraft` through the engine and grants its
+///   managers with core `GrantRole`. The first manager then completes the
+///   draft in setup entries: one `SaveFields` of the synthetic SuperSAFE
+///   spec under the plan's cap, and `Invite`s of a roster that meets
+///   P-03, P-39 and P-15, with spare invitations. The setup entries are
+///   no records of the reference vocabulary, so [`ProductionSystem::events`]
+///   leaves them out and numbers the revisions after them from the
+///   reference's count. The first manager then seeds each content check
+///   of the plan with the one edit that triggers it ([`Seed`]).
+/// - A content edit of the reference vocabulary runs the production
+///   command of its kind with the edit's effect on `FieldUnset`: a policy
+///   or artefact save, a blank start, an invitation or withdrawal of a
+///   spare, or an import resolution confirmed as the draft holds it. A
+///   step the production API cannot take refuses with the gap that names
+///   why. The kind and effect of every edit the adapter issued are kept by
+///   command id, since no record says what an edit does to the checks.
 /// - [`execute_core_activate`], [`fold_unpaired_activation`] and
 ///   [`preview_vault_trace`] check a guard, the fold or the recording of
 ///   vault answers after the opening. They open the draft with the entry
 ///   a correct `OpenDraft` appends (`draft_cell::forged_open`), as the
-///   engine's own M4 envelope tests do, so they run before the creator
-///   lane merges.
+///   engine's own M4 envelope tests do.
 pub mod production {
     use std::collections::{BTreeMap, BTreeSet};
 
     use fstp_api_core::port::{ProbeKind as PortProbe, ProbeOutcome as PortOutcome};
     use fstp_creator::{
-        CheckDetail, CreatorCommand, CreatorRecord, MandatoryElement, ProbeKind, ProbeOutcome,
-        TextRole, Theme, ThemeMode,
+        CheckDetail, CheckId, CreatorCommand, CreatorRecord, InvitationId, Invitee,
+        MandatoryElement, PortPresence, ProbeKind, ProbeOutcome, StartingPoint, TextRole, Theme,
+        ThemeMode, ValueDigest,
     };
     use fstp_domain::command::{Actor, Ctx};
     use fstp_domain::id::{
-        AccountId, BindingId, ContentDigest, DecisionId, PolicyVersionId, ProgrammeId, TextId,
-        TextRef,
+        AccountId, BindingId, ClassId, ContentDigest, DecisionId, OrganisationId, PolicyVersionId,
+        ProgrammeId, TextId, TextRef,
     };
     use fstp_domain::oracle::{Answer, Answers, Query};
-    use fstp_domain::refusal::{RefusalReason, RuleRef};
+    use fstp_domain::refusal::{RefusalDetail, RefusalReason, RuleRef};
     use fstp_domain::roles::{BindingStatus, Role};
     use fstp_domain::time::Timestamp;
     use fstp_domain_testkit::vault::GroundTruth;
     use fstp_engine::{Command, EngineState, Record};
     use fstp_json::{FromJson, ToJson, Value};
     use fstp_ledger::{Entry, MemStore, RecordStore};
+    use fstp_programme::{FIELDS, FieldId, FieldKind, FieldValue, ProgrammeSpec};
 
     use crate::NotImplemented;
-    use crate::fake::draft_cell::{self, DraftCell, VaultAccount};
+    use crate::fake::draft_cell::{self, DraftCell, DraftShell, VaultAccount};
+    use crate::fake::vault::Q35Known;
     use crate::reference::creator::{
-        Base, DraftPlan, EditKind, M1, M2, RefCheck, RefCommand, RefDetail, RefEdit, RefEvent,
-        RefInputs, RefProbe, RefProbeOutcome, RefRefusal, RefReport, RefSeverity, SYBIL,
+        Base, CheckFeed, DraftPlan, EditKind, M1, M2, RefCheck, RefCommand, RefDetail, RefEdit,
+        RefEvent, RefInputs, RefProbe, RefProbeOutcome, RefRefusal, RefReport, RefSeverity, SYBIL,
         StepVerdict, TA, TB,
     };
-
-    /// The opening refused: `fstp_creator::decide_creator` refuses
-    /// `OpenDraft` at its compile seam until lane m4creator merges.
-    pub const GAP_OPEN: NotImplemented = NotImplemented::new(
-        "CreatorCommand::OpenDraft through Engine::execute: fstp_creator::decide_creator refuses at its compile seam (lane m4creator)",
-    );
-
-    /// Seeding a content check of the plan needs the field edit that
-    /// seeds it, which the creator lane fixes.
-    pub const GAP_SEEDS: NotImplemented = NotImplemented::new(
-        "seeding a content check of the plan: the field edit that seeds each check through SaveFields, ApplyStart or AcceptNarrative (lanes m4creator and m4guide)",
-    );
-
-    /// A content edit in the reference vocabulary needs the field edit that
-    /// has the edit's effect on the checks.
-    pub const GAP_EDITS: NotImplemented = NotImplemented::new(
-        "a content edit of the reference vocabulary: the SaveFields, ApplyStart or AcceptNarrative with its effect on each check (lanes m4creator and m4guide)",
-    );
 
     /// Retired: no step returns it. A theme fault is seeded through the
     /// cell's environment, which supplies the theme as it supplies the
@@ -122,6 +115,69 @@ pub mod production {
     /// constant stays so a test can check that no theme seed is refused.
     pub const GAP_THEME: NotImplemented = NotImplemented::new(
         "a theme fault: retired, theme faults are seeded through the cell environment (design 3.2 and 8.4)",
+    );
+
+    /// Seeding `PolicyInvalid`: every policy save composes a core
+    /// `EditPolicy`, which `fstp_domain::policy::validate` decides, so the
+    /// head policy of a draft is never invalid.
+    pub const GAP_POLICY_INVALID: NotImplemented = NotImplemented::new(
+        "seeding PolicyInvalid: the core EditPolicy of every policy save refuses what fstp_domain::policy::validate refuses (design 3.2), so no draft policy is invalid",
+    );
+
+    /// Seeding `GuideSectionMissing`: the check reads the profile's Guide
+    /// template (`fstp_guide::missing_sections`), which no draft edit
+    /// changes.
+    pub const GAP_GUIDE_SECTION: NotImplemented = NotImplemented::new(
+        "seeding GuideSectionMissing: fstp_guide::missing_sections reads the funder profile's Guide template, which no draft edit changes",
+    );
+
+    /// Seeding `PrecheckUnavailable` together with `GuideBindingUnresolved`.
+    /// A plan that seeds `PrecheckUnavailable` runs in a cell with no
+    /// pre-check port, where the setup saves P-23 disabled and the seed
+    /// enables it (Q38). The `GuideBindingUnresolved` seed disables P-23,
+    /// which clears `PrecheckUnavailable`, so no draft shows both.
+    pub const GAP_PRECHECK: NotImplemented = NotImplemented::new(
+        "seeding PrecheckUnavailable together with GuideBindingUnresolved: the check needs P-23 enabled without a pre-check port, and the GuideBindingUnresolved seed disables P-23, so no production draft shows both",
+    );
+
+    /// P-23 disabled, the value the `GuideBindingUnresolved` seed saves,
+    /// and the setup's P-23 when the plan seeds `PrecheckUnavailable`.
+    const P23_DISABLED: &str = r#"{"account_cap_across_drafts_in_call":true,"enabled":false,"per_call_per_proposal":5,"per_day_per_proposal":1}"#;
+
+    /// An edit that seeds `FieldUnset` without a start.
+    pub const GAP_UNSET: NotImplemented = NotImplemented::new(
+        "an edit of kind Policy, Artefact, Narrative, Invitation, InvitationWithdrawal or ImportResolution that seeds FieldUnset: no SaveFields, AcceptNarrative, Invite, WithdrawInvitation or ResolveImport removes a value; only ApplyStart does",
+    );
+
+    /// A start that leaves every field set.
+    pub const GAP_START: NotImplemented = NotImplemented::new(
+        "a start that leaves no field unset: every ApplyStart replaces the draft content (StartApplied clears the saved fields and narratives), so no start is neutral on a complete draft or fixes FieldUnset",
+    );
+
+    /// A narrative acceptance.
+    pub const GAP_NARRATIVE: NotImplemented = NotImplemented::new(
+        "an AcceptNarrative edit: only a template start leaves a narrative to accept, and the narrative is an unset field until it is accepted (TH-49), so no acceptance applies to a draft that a save completed",
+    );
+
+    /// A fix of `FieldUnset` that the edit's kind cannot make.
+    pub const GAP_FIX: NotImplemented = NotImplemented::new(
+        "a fix of FieldUnset by an edit that cannot set every unset field: an artefact-only save sets no policy field, an invitation or a withdrawal sets none, and one import resolution sets one importable field",
+    );
+
+    /// An effect on a content check other than `FieldUnset`.
+    pub const GAP_EFFECT: NotImplemented = NotImplemented::new(
+        "an edit that seeds or fixes a content check other than FieldUnset after the opening: the adapter realises those checks as opening seeds only",
+    );
+
+    /// Fewer unresolved imports needs a dismissal, which is a record on the
+    /// draft. The reference changes the count as the environment only.
+    pub const GAP_FEWER_IMPORTS: NotImplemented = NotImplemented::new(
+        "fewer unresolved imports than recorded: a dismissal is a record on the draft, not an environment change (design 3.3)",
+    );
+
+    /// A production step that failed for a reason outside the model.
+    pub const GAP_STEP: NotImplemented = NotImplemented::new(
+        "a production step failed outside the model's refusals (see the adapter's mapping)",
     );
 
     /// The theme of `plan` (design 3.2 `CreatorInputs::theme`, 8.4): the
@@ -150,17 +206,6 @@ pub mod production {
         theme
     }
 
-    /// Fewer unresolved imports needs a dismissal, which is a record on the
-    /// draft. The reference changes the count as the environment only.
-    pub const GAP_FEWER_IMPORTS: NotImplemented = NotImplemented::new(
-        "fewer unresolved imports than recorded: a dismissal is a record on the draft, not an environment change (design 3.3)",
-    );
-
-    /// A production step that failed for a reason outside the model.
-    pub const GAP_STEP: NotImplemented = NotImplemented::new(
-        "a production step failed outside the model's refusals (see the adapter's mapping)",
-    );
-
     /// The draft programme of every production run.
     pub const PLAN_P: ProgrammeId = ProgrammeId::from_raw(0x4d41_0001);
 
@@ -168,16 +213,104 @@ pub mod production {
     /// later than the one before.
     const T0: i64 = 1_000_000;
 
-    /// The accounts of the cast, each with its person and verification.
+    /// The first account of the synthetic roster: committee members, IRC
+    /// members, the chair, the coordinator and the spares. None of them
+    /// acts. Each is a verified person of its own.
+    const ROSTER: u128 = 0x4d41_e000;
+
+    /// The number of roster accounts the vault knows.
+    const ROSTER_ACCOUNTS: u128 = 128;
+
+    /// The first invitation id of a production run.
+    const INVITATIONS: u128 = 0x4d41_1100;
+
+    /// The spare invitations of the setup, which a neutral withdrawal
+    /// withdraws.
+    const SPARES: u128 = 4;
+
+    /// The first import document id of an import resolution edit.
+    const DOCUMENTS: u128 = 0x4d41_d100;
+
+    /// The P-04 range of the SuperSAFE fixture, in EUR minor units.
+    const FIXTURE_P04_MAX: u64 = 10_000_000;
+    const FIXTURE_P04_MIN: u64 = 500_000;
+
+    /// A roster account.
+    fn roster(i: u128) -> AccountId {
+        AccountId::from_raw(ROSTER.saturating_add(i))
+    }
+
+    /// The accounts of the cast and the roster, each with its person and
+    /// verification.
     fn vault_accounts(plan: &DraftPlan) -> Vec<VaultAccount> {
-        [TA, TB, M1, M2, SYBIL]
+        let mut out: Vec<VaultAccount> = [TA, TB, M1, M2, SYBIL]
             .into_iter()
             .map(|a| VaultAccount {
                 account: a,
                 person: plan.stat.vault.person(a).map(u64::from),
                 verified: plan.stat.vault.is_verified(a),
             })
-            .collect()
+            .collect();
+        for i in 0..ROSTER_ACCOUNTS {
+            let person = u64::try_from(i).unwrap_or(0).saturating_add(10_000);
+            out.push(VaultAccount {
+                account: roster(i),
+                person: Some(person),
+                verified: true,
+            });
+        }
+        out
+    }
+
+    /// The shell facts of the plan's cell: the plan's wording status and
+    /// theme, score tools, so that P-77 can seed its check, and a vault
+    /// that knows the fixture's P-13 classes and no P-38 declaration. The
+    /// cell has a pre-check provider unless the plan seeds
+    /// `PrecheckUnavailable`, which the M4 cells without a `Precheck` port
+    /// show once P-23 is enabled (design 3.10, Q38).
+    fn shell_of(plan: &DraftPlan) -> DraftShell {
+        DraftShell {
+            shipped: plan.stat.wording_pending,
+            theme: theme_of(plan),
+            ports: PortPresence {
+                precheck: !plan.seeds.contains(&RefCheck::PrecheckUnavailable),
+                score_tools: true,
+            },
+            q35: Some(Q35Known {
+                classes: [ClassId::from_raw(1), ClassId::from_raw(2)]
+                    .into_iter()
+                    .collect(),
+                declared: BTreeSet::new(),
+            }),
+        }
+    }
+
+    /// An EUR amount in minor units as its JSON string, such as
+    /// `"400000.00"`.
+    fn eur(minor: u64) -> String {
+        let units = minor.checked_div(100).unwrap_or(0);
+        let cents = minor.checked_rem(100).unwrap_or(0);
+        format!("\"{units}.{cents:02}\"")
+    }
+
+    /// The value of `field` decoded from `json` by its strict decoder.
+    fn value(field: FieldId, json: &str) -> Result<FieldValue, NotImplemented> {
+        fstp_programme::decode_field_value(field, json.as_bytes()).map_err(|_| GAP_STEP)
+    }
+
+    /// The clean spec of `plan`: the synthetic SuperSAFE spec with the
+    /// plan's P-05 and P-58, and the P-04 range within P-05, so it shows
+    /// no P-04 warning.
+    fn clean_target(plan: &DraftPlan) -> Result<ProgrammeSpec, NotImplemented> {
+        let mut spec = draft_cell::synthetic_spec().map_err(|_| GAP_STEP)?;
+        let p05 = plan.stat.cap.p05_minor;
+        spec.set(value(FieldId::P05, &eur(p05))?);
+        spec.set(value(FieldId::P58, &eur(plan.stat.cap.p58_minor))?);
+        let max = p05.min(FIXTURE_P04_MAX);
+        let min = max.min(FIXTURE_P04_MIN);
+        let p04 = format!("{{\"max\":{},\"min\":{}}}", eur(max), eur(min));
+        spec.set(value(FieldId::P04, &p04)?);
+        Ok(spec)
     }
 
     /// The port probe of a reference probe.
@@ -217,7 +350,7 @@ pub mod production {
     }
 
     /// The reference check of a creator check, by its catalogue name.
-    fn ref_check(c: fstp_creator::CheckId) -> Option<RefCheck> {
+    fn ref_check(c: CheckId) -> Option<RefCheck> {
         RefCheck::ALL.into_iter().find(|r| r.name() == c.name())
     }
 
@@ -230,66 +363,367 @@ pub mod production {
             .map_err(|_| GAP_STEP)
     }
 
-    /// One draft on production: its ledger, its vault facts and its
-    /// environment. Each step rebuilds the engine from the ledger, so the
-    /// state compares and hashes.
-    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    /// What an entry the adapter appended is, for [`ProductionSystem::events`].
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    enum Tag {
+        /// A setup entry, which is no record of the reference vocabulary.
+        Setup,
+        /// An edit of the reference vocabulary, with its kind and effect.
+        Edit(EditKind, RefEdit),
+        /// Any other command, mapped from its records.
+        Plain,
+    }
+
+    /// The production command of one content edit.
+    enum Step {
+        /// `SaveFields` of these values.
+        Save(Vec<FieldValue>),
+        /// `ApplyStart` of a blank start.
+        Blank,
+        /// `Invite` of a roster account, or of a contact when `None`.
+        Invite {
+            role: Role,
+            account: Option<AccountId>,
+            organisation: Option<OrganisationId>,
+        },
+        /// `WithdrawInvitation`.
+        Withdraw(InvitationId),
+        /// An import resolution that confirms this value.
+        Import(FieldValue),
+    }
+
+    /// One draft on production: its ledger, its vault facts, its
+    /// environment and what the adapter issued. Each step rebuilds the
+    /// engine from the ledger, so the state compares and hashes. Equality
+    /// and the hash leave out the store and the engine state, which are
+    /// the ledger and its replay (`replay_matches` checks the replay).
+    #[derive(Clone, Debug)]
     pub struct ProductionSystem {
         plan: DraftPlan,
         truth: GroundTruth,
+        shell: DraftShell,
         store: MemStore<Record>,
         state: EngineState,
         ledger: Vec<Entry<Record>>,
         probes: BTreeMap<RefProbe, RefProbeOutcome>,
         /// The number of the next command, which also sets its instant.
         n: u32,
+        /// The spec the draft holds when complete: the clean spec with
+        /// every seed's value. A fix saves the unset fields from it.
+        target: ProgrammeSpec,
+        /// Every saved value, by field and digest, held again on each
+        /// rebuild.
+        values: BTreeMap<(FieldId, ValueDigest), FieldValue>,
+        /// The value text and canonical JSON of each proposal the adapter
+        /// recorded for an import resolution, held again on each rebuild.
+        imports: BTreeMap<fstp_import::ValueTextRef, String>,
+        /// The command ids of the setup entries.
+        setup: BTreeSet<[u8; 16]>,
+        /// The kind and effect of each edit the adapter issued.
+        edits: BTreeMap<[u8; 16], (EditKind, RefEdit)>,
+        /// The live spare invitations, latest last.
+        spares: Vec<InvitationId>,
+        /// The chair's invitation, which the `RosterShort` seed withdraws.
+        chair: Option<InvitationId>,
+        /// The number of the next invitation, roster account and document.
+        next: u128,
+    }
+
+    impl ProductionSystem {
+        /// What equality and the hash read (see [`ProductionSystem`]).
+        #[allow(clippy::type_complexity)]
+        fn key(
+            &self,
+        ) -> (
+            &DraftPlan,
+            &[Entry<Record>],
+            &BTreeMap<RefProbe, RefProbeOutcome>,
+            u32,
+            &ProgrammeSpec,
+            &BTreeMap<(FieldId, ValueDigest), FieldValue>,
+            &BTreeMap<fstp_import::ValueTextRef, String>,
+            &BTreeSet<[u8; 16]>,
+            &BTreeMap<[u8; 16], (EditKind, RefEdit)>,
+            &[InvitationId],
+            (Option<InvitationId>, u128),
+        ) {
+            (
+                &self.plan,
+                &self.ledger,
+                &self.probes,
+                self.n,
+                &self.target,
+                &self.values,
+                &self.imports,
+                &self.setup,
+                &self.edits,
+                &self.spares,
+                (self.chair, self.next),
+            )
+        }
+    }
+
+    impl PartialEq for ProductionSystem {
+        fn eq(&self, other: &ProductionSystem) -> bool {
+            self.key() == other.key()
+        }
+    }
+
+    impl Eq for ProductionSystem {}
+
+    impl std::hash::Hash for ProductionSystem {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.key().hash(state);
+        }
     }
 
     /// What one engine run gave, in the reference vocabulary's terms.
     enum Run {
         /// The command appended.
         Appended,
-        /// The engine refused it with this rule and reason.
-        Refused(RuleRef, RefusalReason),
+        /// The engine refused it with this rule and reason, and the values
+        /// the refusal names, if any.
+        Refused(RuleRef, RefusalReason, Option<RefusalDetail>),
     }
 
     impl ProductionSystem {
         /// Opens the draft of `plan` on production (module documentation):
         /// `OpenDraft` by the opener, `GrantRole` of each manager by the
-        /// opener, then the plan's environment.
+        /// opener, the first manager's setup, the plan's seeds and the
+        /// plan's environment.
         pub fn open(plan: &DraftPlan) -> Result<ProductionSystem, NotImplemented> {
-            let truth = draft_cell::truth_of(&vault_accounts(plan));
-            let store = MemStore::new();
-            let state = EngineState::genesis();
+            let (mut s, builder) = ProductionSystem::begin(plan)?;
+            s.complete(builder)?;
+            for c in &plan.seeds {
+                s.seed(builder, *c)?;
+            }
+            s.set_unresolved(plan.env.unresolved_imports)?;
+            Ok(s)
+        }
+
+        /// The setup save of `plan`'s P-05 and P-58 (I-50 at save,
+        /// Daniel's answer of 2026-10-31, M4 design section 15.0): `None`
+        /// when the engine accepts it, or the two values the creator's
+        /// `CapAboveCeiling` refusal names, as ADR-006 strings, when the
+        /// engine refuses it with I-50 and appends nothing. The values are
+        /// read from the engine's own refusal, which every caller of the
+        /// engine, the API included, receives.
+        pub fn cap_setup(plan: &DraftPlan) -> Result<Option<(String, String)>, NotImplemented> {
+            let (mut s, builder) = ProductionSystem::begin(plan)?;
+            let base = s.head().ok_or(GAP_STEP)?;
+            let fields: Vec<fstp_creator::FieldEdit> = s
+                .setup_values()?
+                .into_iter()
+                .map(draft_cell::manual_edit)
+                .collect();
+            let cmd = CreatorCommand::SaveFields {
+                programme: PLAN_P,
+                base,
+                fields,
+            };
+            let ctx = s.ctx(builder);
+            let before = s.ledger.len();
+            match s.run_ctx(Command::Creator(cmd), ctx, Tag::Setup)? {
+                Run::Appended => Ok(None),
+                Run::Refused(
+                    RuleRef::I50,
+                    _,
+                    Some(RefusalDetail::CapAboveCeiling { p05, p58 }),
+                ) if s.ledger.len() == before => {
+                    Ok(Some((p05.amount().to_string(), p58.amount().to_string())))
+                }
+                _ => Err(GAP_STEP),
+            }
+        }
+
+        /// Opens the draft of `plan` and grants its managers: the part of
+        /// [`ProductionSystem::open`] before the first manager's setup,
+        /// with that manager.
+        fn begin(plan: &DraftPlan) -> Result<(ProductionSystem, AccountId), NotImplemented> {
+            let target = clean_target(plan)?;
             let mut s = ProductionSystem {
                 plan: plan.clone(),
-                truth,
-                store,
-                state,
+                truth: draft_cell::truth_of(&vault_accounts(plan)),
+                shell: shell_of(plan),
+                store: MemStore::new(),
+                state: EngineState::genesis(),
                 ledger: Vec::new(),
                 probes: plan.env.probes.clone(),
                 n: 1,
+                target,
+                values: BTreeMap::new(),
+                imports: BTreeMap::new(),
+                setup: BTreeSet::new(),
+                edits: BTreeMap::new(),
+                spares: Vec::new(),
+                chair: None,
+                next: 0,
             };
             let open = CreatorCommand::OpenDraft {
                 programme: PLAN_P,
                 version: PolicyVersionId::from_raw(PLAN_P.raw()),
                 profile: default_profile()?,
             };
-            match s.run(Command::Creator(open), plan.opener)? {
-                Run::Appended => {}
-                Run::Refused(RuleRef::NotImplemented, _) => return Err(GAP_OPEN),
-                Run::Refused(..) => return Err(GAP_STEP),
+            if !matches!(
+                s.run(Command::Creator(open), plan.opener, Tag::Plain)?,
+                Run::Appended
+            ) {
+                return Err(GAP_STEP);
             }
             for m in &plan.managers {
                 if !matches!(s.grant(plan.opener, *m)?, StepVerdict::Accepted) {
                     return Err(GAP_STEP);
                 }
             }
-            if !plan.seeds.is_empty() {
-                return Err(GAP_SEEDS);
+            let builder = plan.managers.first().copied().ok_or(GAP_STEP)?;
+            Ok((s, builder))
+        }
+
+        /// The setup of `builder` (module documentation): one save of the
+        /// clean spec, then the roster and the spare invitations.
+        fn complete(&mut self, builder: AccountId) -> Result<(), NotImplemented> {
+            let all = self.setup_values()?;
+            let base = self.head().ok_or(GAP_STEP)?;
+            if !matches!(self.save(builder, base, all, Tag::Setup)?, Run::Appended) {
+                return Err(GAP_STEP);
             }
-            s.set_unresolved(plan.env.unresolved_imports)?;
-            Ok(s)
+            // P-03 and P-39 are 2 and P-15 is 2 in the fixture. Three
+            // committee members of three organisations leave room for the
+            // P39AboveP03 seed.
+            let mut roster: Vec<(Role, Option<OrganisationId>)> = (1..=3u128)
+                .map(|o| {
+                    (
+                        Role::CommitteeMember,
+                        Some(OrganisationId::from_raw(0x4d41_0f00u128.saturating_add(o))),
+                    )
+                })
+                .collect();
+            roster.extend([
+                (Role::IrcMember, None),
+                (Role::IrcMember, None),
+                (Role::CommitteeChair, None),
+                (Role::FstpCoordinator, None),
+            ]);
+            for (role, organisation) in roster {
+                let account = self.fresh_account();
+                let step = Step::Invite {
+                    role,
+                    account: Some(account),
+                    organisation,
+                };
+                let id = self.peek_invitation();
+                if !matches!(
+                    self.step(builder, Base::Head, step, Tag::Setup)?,
+                    Run::Appended
+                ) {
+                    return Err(GAP_STEP);
+                }
+                if role == Role::CommitteeChair {
+                    self.chair = Some(id);
+                }
+            }
+            for _ in 0..SPARES {
+                self.invite_spare(builder, Tag::Setup)?;
+            }
+            Ok(())
+        }
+
+        /// The values of the first manager's setup save: every field of
+        /// the clean target but P-53, with P-23 disabled when the plan
+        /// seeds `PrecheckUnavailable`.
+        fn setup_values(&self) -> Result<Vec<FieldValue>, NotImplemented> {
+            let mut all: Vec<FieldValue> = FIELDS
+                .iter()
+                .filter(|f| f.id != FieldId::P53)
+                .filter_map(|f| self.target.get(f.id).as_set().cloned())
+                .collect();
+            // Without a pre-check port the setup saves P-23 disabled, so
+            // the `PrecheckUnavailable` seed is the edit that enables it.
+            if self.plan.seeds.contains(&RefCheck::PrecheckUnavailable) {
+                let disabled = value(FieldId::P23, P23_DISABLED)?;
+                for v in &mut all {
+                    if v.field() == FieldId::P23 {
+                        *v = disabled.clone();
+                    }
+                }
+            }
+            Ok(all)
+        }
+
+        /// Seeds `check` by `builder` with the one edit that triggers it,
+        /// recorded as the reference's seeding edit, and checks that the
+        /// report then shows it.
+        fn seed(&mut self, builder: AccountId, check: RefCheck) -> Result<(), NotImplemented> {
+            let save = |field: FieldId, json: &str| value(field, json).map(|v| Step::Save(vec![v]));
+            let step = match check {
+                RefCheck::PolicyInvalid => return Err(GAP_POLICY_INVALID),
+                RefCheck::GuideSectionMissing => return Err(GAP_GUIDE_SECTION),
+                // Q38: P-23 enabled in a cell without a pre-check port.
+                RefCheck::PrecheckUnavailable => {
+                    if self.plan.seeds.contains(&RefCheck::GuideBindingUnresolved) {
+                        return Err(GAP_PRECHECK);
+                    }
+                    let enabled = clean_target(&self.plan)?
+                        .get(FieldId::P23)
+                        .as_set()
+                        .cloned()
+                        .ok_or(GAP_STEP)?;
+                    Step::Save(vec![enabled])
+                }
+                RefCheck::FieldUnset => Step::Blank,
+                RefCheck::P04MaxAboveP05 => {
+                    let max = self.plan.stat.cap.p05_minor.saturating_add(1);
+                    let p04 = format!("{{\"max\":{},\"min\":{}}}", eur(max), eur(0));
+                    save(FieldId::P04, &p04)?
+                }
+                RefCheck::P39AboveP03 => save(FieldId::P39, "3")?,
+                RefCheck::ActionDatesInconsistent => {
+                    save(FieldId::P57, r#"{"end":"2025-12-31","start":"2026-01-01"}"#)?
+                }
+                RefCheck::CallPackageIncomplete => save(FieldId::P55, "[]")?,
+                RefCheck::GuideBindingUnresolved => {
+                    if self.plan.seeds.contains(&RefCheck::PrecheckUnavailable) {
+                        return Err(GAP_PRECHECK);
+                    }
+                    save(FieldId::P23, P23_DISABLED)?
+                }
+                RefCheck::FlowDownMissing => {
+                    save(FieldId::FlowDown, r#"["conflict_of_interests"]"#)?
+                }
+                // SoD-01: a programme manager on the draft never sits on its
+                // committee.
+                RefCheck::InviteeRefused => Step::Invite {
+                    role: Role::CommitteeMember,
+                    account: Some(builder),
+                    organisation: Some(OrganisationId::from_raw(0x4d41_0f09)),
+                },
+                RefCheck::InviteeWithoutAccount => Step::Invite {
+                    role: Role::IrcMember,
+                    account: None,
+                    organisation: None,
+                },
+                RefCheck::RosterShort => Step::Withdraw(self.chair.ok_or(GAP_STEP)?),
+                RefCheck::ExclusionClassUnknown => save(
+                    FieldId::P13,
+                    r#"[{"description":"Synthetic class the vault does not know","id":"9"}]"#,
+                )?,
+                RefCheck::ProximityListMissing => {
+                    save(FieldId::P38, r#"[{"list":"1","organisation":"5"}]"#)?
+                }
+                RefCheck::AiActReassessment => save(FieldId::P77, r#""allowed""#)?,
+                _ => return Err(GAP_STEP),
+            };
+            if matches!(check, RefCheck::RosterShort) {
+                self.chair = None;
+            }
+            let tag = Tag::Edit(EditKind::Policy, RefEdit::Seed(check));
+            if !matches!(self.step(builder, Base::Head, step, tag)?, Run::Appended) {
+                return Err(GAP_STEP);
+            }
+            if !self.report()?.contains_key(&check) {
+                return Err(GAP_STEP);
+            }
+            Ok(())
         }
 
         /// The engine state.
@@ -302,7 +736,8 @@ pub mod production {
             &self.ledger
         }
 
-        /// The draft cell over the ledger now.
+        /// The draft cell over the ledger now, with every saved and
+        /// imported value held again.
         fn cell(&self) -> Result<DraftCell, NotImplemented> {
             let probes = RefProbe::ALL
                 .into_iter()
@@ -315,39 +750,65 @@ pub mod production {
                     (port_probe(p), port_outcome(o))
                 })
                 .collect();
-            DraftCell::open_with_theme(
+            let mut cell = DraftCell::open_with_shell(
                 self.store.clone(),
                 self.truth.clone(),
                 self.plan.stat.admins.clone(),
                 &probes,
-                self.plan.stat.wording_pending,
-                theme_of(&self.plan),
+                &self.shell,
             )
-            .map_err(|_| GAP_STEP)
+            .map_err(|_| GAP_STEP)?;
+            for (text, json) in &self.imports {
+                let v = fstp_json::parse(json.as_bytes()).map_err(|_| GAP_STEP)?;
+                let value = fstp_import::UntrustedValue::new(&v).map_err(|_| GAP_STEP)?;
+                cell.engine
+                    .hold_import(*text, value)
+                    .map_err(|_| GAP_STEP)?;
+            }
+            draft_cell::hold_saved(&mut cell, PLAN_P, &self.values);
+            Ok(cell)
+        }
+
+        /// The instant of the next command.
+        fn now(&self) -> Timestamp {
+            Timestamp::from_micros(T0.saturating_add(i64::from(self.n).saturating_mul(1_000_000)))
         }
 
         /// The context of the next command by `actor`.
         fn ctx(&mut self, actor: AccountId) -> Ctx {
             let n = self.n;
+            let now = self.now();
             self.n = n.saturating_add(1);
-            let at = T0.saturating_add(i64::from(n).saturating_mul(1_000_000));
-            draft_cell::ctx(actor, Timestamp::from_micros(at), n, &self.plan.stat.admins)
+            draft_cell::ctx(actor, now, n, &self.plan.stat.admins)
         }
 
         /// Runs `cmd` by `actor` through the engine, and keeps the ledger.
-        fn run(&mut self, cmd: Command, actor: AccountId) -> Result<Run, NotImplemented> {
+        fn run(&mut self, cmd: Command, actor: AccountId, tag: Tag) -> Result<Run, NotImplemented> {
             let ctx = self.ctx(actor);
-            self.run_ctx(cmd, ctx)
+            self.run_ctx(cmd, ctx, tag)
         }
 
-        /// Runs `cmd` with `ctx` through the engine, and keeps the ledger.
-        fn run_ctx(&mut self, cmd: Command, ctx: Ctx) -> Result<Run, NotImplemented> {
+        /// Runs `cmd` with `ctx` through the engine, and keeps the ledger
+        /// and what the entry is.
+        fn run_ctx(&mut self, cmd: Command, ctx: Ctx, tag: Tag) -> Result<Run, NotImplemented> {
             let mut cell = self.cell()?;
+            let id = ctx.command.bytes();
             let out = match cell.execute(cmd, ctx) {
                 Ok(_) => Run::Appended,
-                Err(fstp_engine::ExecError::Refused(r)) => Run::Refused(r.rule, r.reason),
+                Err(fstp_engine::ExecError::Refused(r)) => Run::Refused(r.rule, r.reason, r.detail),
                 Err(_) => return Err(GAP_STEP),
             };
+            if matches!(out, Run::Appended) {
+                match tag {
+                    Tag::Setup => {
+                        let _ = self.setup.insert(id);
+                    }
+                    Tag::Edit(kind, effect) => {
+                        let _ = self.edits.insert(id, (kind, effect));
+                    }
+                    Tag::Plain => {}
+                }
+            }
             self.keep(cell)?;
             Ok(out)
         }
@@ -360,9 +821,229 @@ pub mod production {
             Ok(())
         }
 
+        /// `SaveFields` of `values` at `base` by `by`. The values of an
+        /// appended save are kept for the rebuilds.
+        fn save(
+            &mut self,
+            by: AccountId,
+            base: fstp_creator::DraftRevision,
+            values: Vec<FieldValue>,
+            tag: Tag,
+        ) -> Result<Run, NotImplemented> {
+            let fields: Vec<fstp_creator::FieldEdit> =
+                values.into_iter().map(draft_cell::manual_edit).collect();
+            let kept: Vec<((FieldId, ValueDigest), FieldValue)> = fields
+                .iter()
+                .map(|e| ((e.field, e.digest), e.value.clone()))
+                .collect();
+            let cmd = CreatorCommand::SaveFields {
+                programme: PLAN_P,
+                base,
+                fields,
+            };
+            let out = self.run(Command::Creator(cmd), by, tag)?;
+            if matches!(out, Run::Appended) {
+                for (k, v) in kept {
+                    self.target.set(v.clone());
+                    let _ = self.values.insert(k, v);
+                }
+            }
+            Ok(out)
+        }
+
+        /// A roster account no invitation names yet.
+        fn fresh_account(&mut self) -> AccountId {
+            let a = roster(self.next.checked_rem(ROSTER_ACCOUNTS).unwrap_or(0));
+            self.next = self.next.saturating_add(1);
+            a
+        }
+
+        /// The id the next invitation takes.
+        fn peek_invitation(&self) -> InvitationId {
+            InvitationId::from_raw(INVITATIONS.saturating_add(u128::from(self.n)))
+        }
+
+        /// Invites a spare IRC member by `by`, and keeps it as a spare.
+        fn invite_spare(&mut self, by: AccountId, tag: Tag) -> Result<Run, NotImplemented> {
+            let account = self.fresh_account();
+            let id = self.peek_invitation();
+            let step = Step::Invite {
+                role: Role::IrcMember,
+                account: Some(account),
+                organisation: None,
+            };
+            let out = self.step(by, Base::Head, step, tag)?;
+            if matches!(out, Run::Appended) {
+                self.spares.push(id);
+            }
+            Ok(out)
+        }
+
+        /// Runs the production command of `step` by `by` at `base`.
+        fn step(
+            &mut self,
+            by: AccountId,
+            base: Base,
+            step: Step,
+            tag: Tag,
+        ) -> Result<Run, NotImplemented> {
+            let Some(revision) = self.named(base) else {
+                return Err(GAP_STEP);
+            };
+            match step {
+                Step::Save(values) => self.save(by, revision, values, tag),
+                Step::Blank => {
+                    let profile = self
+                        .state
+                        .creator
+                        .draft(PLAN_P)
+                        .map(|d| d.profile().clone())
+                        .ok_or(GAP_STEP)?;
+                    let start = CreatorCommand::ApplyStart {
+                        programme: PLAN_P,
+                        base: revision,
+                        start: StartingPoint::Blank { profile },
+                    };
+                    self.run(Command::Creator(start), by, tag)
+                }
+                Step::Invite {
+                    role,
+                    account,
+                    organisation,
+                } => {
+                    let invitation = self.peek_invitation();
+                    let invitee = match account {
+                        Some(a) => Invitee::Account(a),
+                        None => Invitee::Pending {
+                            contact: TextRef::new(
+                                TextId::from_raw(invitation.raw()),
+                                ContentDigest::from_bytes([0x4c; 32]),
+                            ),
+                        },
+                    };
+                    let invite = CreatorCommand::Invite {
+                        programme: PLAN_P,
+                        invitation,
+                        role,
+                        invitee,
+                        organisation,
+                    };
+                    self.run(Command::Creator(invite), by, tag)
+                }
+                Step::Withdraw(invitation) => {
+                    let withdraw = CreatorCommand::WithdrawInvitation {
+                        programme: PLAN_P,
+                        invitation,
+                    };
+                    self.run(Command::Creator(withdraw), by, tag)
+                }
+                Step::Import(v) => self.resolve(by, revision, v, tag),
+            }
+        }
+
+        /// An import resolution by `by` at `revision` that confirms `v`:
+        /// `RegisterDocument` by `by`, `RecordProposals` of one proposal of
+        /// `v` as the system, and `ResolveImport` with its shown digest.
+        /// The steps run on a copy, which replaces the system only when
+        /// the resolution is appended, so a refused resolution leaves no
+        /// unresolved proposal behind.
+        fn resolve(
+            &mut self,
+            by: AccountId,
+            revision: fstp_creator::DraftRevision,
+            v: FieldValue,
+            tag: Tag,
+        ) -> Result<Run, NotImplemented> {
+            let mut s = self.clone();
+            let field = v.field();
+            let json = fstp_programme::encode_field_value(&v);
+            let data = fstp_json::parse(json.as_bytes()).map_err(|_| GAP_STEP)?;
+            let untrusted = fstp_import::UntrustedValue::new(&data).map_err(|_| GAP_STEP)?;
+            let k = DOCUMENTS.saturating_add(s.next);
+            s.next = s.next.saturating_add(1);
+            let document = fstp_import::ImportDocumentId::from_raw(k);
+            let text = "SYNTHETIC IMPORT DOCUMENT.\n";
+            let doc = fstp_import::ImportDocument {
+                id: document,
+                programme: fstp_import::ProgrammeRef::from_raw(PLAN_P.raw()),
+                blob: fstp_import::BlobAddress::from_bytes([0x4d; 32]),
+                media: fstp_import::ImportMedia::TextPlain,
+                digest: fstp_import::TextDigest::from_bytes([0x4e; 32]),
+                text_bytes: u32::try_from(text.len()).map_err(|_| GAP_STEP)?,
+                uploaded_by: fstp_import::AccountRef::from_raw(by.raw()),
+            };
+            let reg = Command::Import(fstp_import::ImportCommand::RegisterDocument(doc));
+            if let Run::Refused(rule, reason, detail) = s.run(reg, by, Tag::Plain)? {
+                return Ok(Run::Refused(rule, reason, detail));
+            }
+            let proposal = fstp_import::ImportProposalId::from_raw(k);
+            let mut salt = [0x52u8; 32];
+            for (slot, x) in salt.iter_mut().zip(k.to_be_bytes()) {
+                *slot = x;
+            }
+            let shown = fstp_import::SaltedDigest::from_bytes(salt);
+            let value_text =
+                fstp_import::ValueTextRef::new(fstp_import::ValueTextId::from_raw(k), shown);
+            let record = fstp_import::ImportCommand::RecordProposals {
+                document,
+                proposals: vec![fstp_import::ImportProposal {
+                    id: proposal,
+                    document,
+                    field,
+                    value: untrusted.clone(),
+                    text: value_text,
+                    evidence: vec![fstp_import::Span { start: 0, end: 9 }],
+                    config: fstp_import::ImportConfigId::from_raw(1),
+                    conflicts_with_profile: Vec::new(),
+                }],
+            };
+            let mut ctx = s.ctx(by);
+            ctx.actor = Actor::System(fstp_domain::command::SystemCause::Timeline);
+            ctx.tenant_admin = false;
+            if !matches!(
+                s.run_ctx(Command::Import(record), ctx, Tag::Plain)?,
+                Run::Appended
+            ) {
+                return Err(GAP_STEP);
+            }
+            let _ = s.imports.insert(value_text, json);
+            let digest = fstp_import::ValueDigest::from_bytes(fstp_crypto::sha256(
+                untrusted.as_data().as_bytes(),
+            ));
+            let resolve = Command::Bridge(fstp_engine::BridgeCommand::ResolveImport {
+                programme: PLAN_P,
+                proposal,
+                shown,
+                resolution: fstp_import::ClientResolution::Confirm {
+                    value: untrusted,
+                    digest,
+                },
+                conflict_acknowledged: false,
+                base: revision,
+            });
+            let out = s.run(resolve, by, tag)?;
+            if matches!(out, Run::Appended) {
+                s.target.set(v);
+                *self = s;
+            }
+            Ok(out)
+        }
+
         /// The draft's head revision now.
         fn head(&self) -> Option<fstp_creator::DraftRevision> {
             self.state.creator.head(PLAN_P)
+        }
+
+        /// The number of setup entries, which the reference revisions do
+        /// not count.
+        fn offset(&self) -> u32 {
+            let mut seen = BTreeSet::new();
+            for e in &self.ledger {
+                if self.setup.contains(&e.command) {
+                    let _ = seen.insert(e.command);
+                }
+            }
+            u32::try_from(seen.len()).unwrap_or(u32::MAX)
         }
 
         /// The revision a command names under `base`.
@@ -374,6 +1055,21 @@ pub mod production {
                     fstp_creator::DraftRevision::new(h.seq().saturating_sub(1), h.entry())
                 }
             })
+        }
+
+        /// The fields the draft does not set (`FieldUnset`).
+        fn unset(&self) -> BTreeSet<FieldId> {
+            let set = self
+                .state
+                .creator
+                .draft(PLAN_P)
+                .map(|d| d.set_fields())
+                .unwrap_or_default();
+            FIELDS
+                .iter()
+                .map(|f| f.id)
+                .filter(|f| !set.contains(f))
+                .collect()
         }
 
         /// `GrantRole` of programme manager on the draft to `to` by `by`.
@@ -396,9 +1092,9 @@ pub mod production {
                 organisation: None,
                 end: None,
             };
-            Ok(match self.run_ctx(Command::Core(cmd), ctx)? {
+            Ok(match self.run_ctx(Command::Core(cmd), ctx, Tag::Plain)? {
                 Run::Appended => StepVerdict::Accepted,
-                Run::Refused(rule, reason) => {
+                Run::Refused(rule, reason, _) => {
                     StepVerdict::Refused(self.grant_refusal(rule, reason))
                 }
             })
@@ -436,6 +1132,7 @@ pub mod production {
                 (RuleRef::Ledger, Why::IdReused) => RefRefusal::Opening,
                 (RuleRef::Input, Why::WrongState) => RefRefusal::StaleRevision,
                 (RuleRef::Actor, Why::BindingInactive) => RefRefusal::NotProgrammeManager,
+                (RuleRef::I65, Why::BindingInactive) => RefRefusal::NotProgrammeManager,
                 (RuleRef::Actor, _) => RefRefusal::NotTenantAdmin,
                 (RuleRef::I66, Why::WrongState) if self.active() => RefRefusal::AlreadyActive,
                 (RuleRef::I66, Why::WrongState) => RefRefusal::NoLiveRequest,
@@ -492,11 +1189,24 @@ pub mod production {
         }
 
         /// The warning key of the report row of `warning`, or a key on the
-        /// whole draft when the report shows no such row.
+        /// whole draft when the report shows no such row. A warning on the
+        /// whole draft or on a probe names its subject without the report,
+        /// so only an invitation's key reads it.
         fn warning_key(
             &self,
             warning: RefCheck,
         ) -> Result<fstp_creator::WarningKey, NotImplemented> {
+            let check = CheckId::from_name(warning.name()).ok_or(GAP_STEP)?;
+            let subject = match warning {
+                RefCheck::InviteeWithoutAccount => None,
+                RefCheck::InferenceUnreachable => {
+                    Some(fstp_creator::CheckSubject::Probe(ProbeKind::Inference))
+                }
+                _ => Some(fstp_creator::CheckSubject::Draft),
+            };
+            if let Some(subject) = subject {
+                return Ok(fstp_creator::WarningKey { check, subject });
+            }
             let report = self.production_report(None)?;
             let row = report
                 .results()
@@ -505,7 +1215,7 @@ pub mod production {
             Ok(match row {
                 Some(r) => r.key(),
                 None => fstp_creator::WarningKey {
-                    check: fstp_creator::CheckId::from_name(warning.name()).ok_or(GAP_STEP)?,
+                    check,
                     subject: fstp_creator::CheckSubject::Draft,
                 },
             })
@@ -543,7 +1253,7 @@ pub mod production {
                 uploaded_by: fstp_import::AccountRef::from_raw(manager.raw()),
             };
             let reg = Command::Import(fstp_import::ImportCommand::RegisterDocument(doc));
-            if !matches!(self.run(reg, manager)?, Run::Appended) {
+            if !matches!(self.run(reg, manager, Tag::Plain)?, Run::Appended) {
                 return Err(GAP_STEP);
             }
             let mut proposals = Vec::new();
@@ -555,7 +1265,7 @@ pub mod production {
                 proposals.push(fstp_import::ImportProposal {
                     id: fstp_import::ImportProposalId::from_raw(id),
                     document,
-                    field: fstp_programme::FieldId::ActionAcronym,
+                    field: FieldId::ActionAcronym,
                     value,
                     text: fstp_import::ValueTextRef::new(
                         fstp_import::ValueTextId::from_raw(id),
@@ -573,21 +1283,165 @@ pub mod production {
                 document,
                 proposals,
             });
-            match self.run_ctx(rec, ctx)? {
+            match self.run_ctx(rec, ctx, Tag::Plain)? {
                 Run::Appended => Ok(()),
                 Run::Refused(..) => Err(GAP_STEP),
             }
         }
 
+        /// The verdict of a run of a creator command.
+        fn verdict(
+            &self,
+            r: Run,
+            approver: Option<AccountId>,
+        ) -> Result<StepVerdict, NotImplemented> {
+            match r {
+                Run::Appended => Ok(StepVerdict::Accepted),
+                Run::Refused(rule, reason, _) => self
+                    .creator_refusal(rule, reason, approver)
+                    .map(StepVerdict::Refused),
+            }
+        }
+
+        /// The refusal production gives a content edit by `by` at `base`
+        /// that it cannot take, or `gap` when production would admit the
+        /// edit's actor and revision. A save of the head's P-02 value, or
+        /// for an invitation an invitation of a spare, runs on a copy and
+        /// is dropped, so the refusal names the actor or the revision as
+        /// the edit's own command would.
+        fn refused_or(
+            &self,
+            by: AccountId,
+            kind: EditKind,
+            base: Base,
+            gap: NotImplemented,
+        ) -> Result<StepVerdict, NotImplemented> {
+            let mut probe = self.clone();
+            let run = match kind {
+                EditKind::Invitation | EditKind::InvitationWithdrawal => {
+                    probe.invite_spare(by, Tag::Plain)?
+                }
+                _ => {
+                    let p02 = probe
+                        .target
+                        .get(FieldId::P02)
+                        .as_set()
+                        .cloned()
+                        .ok_or(GAP_STEP)?;
+                    probe.step(by, base, Step::Save(vec![p02]), Tag::Plain)?
+                }
+            };
+            match run {
+                Run::Appended => Err(gap),
+                refused => self.verdict(refused, None),
+            }
+        }
+
+        /// A content edit of `kind` with `effect` by `by` at `base`
+        /// (module documentation). The effect is read against the draft's
+        /// `FieldUnset` now: a seed of a check the draft shows, or a fix of
+        /// one it does not, leaves it as it is.
+        fn edit(
+            &mut self,
+            by: AccountId,
+            kind: EditKind,
+            effect: RefEdit,
+            base: Base,
+        ) -> Result<StepVerdict, NotImplemented> {
+            if let RefEdit::Seed(c) | RefEdit::Fix(c) = effect {
+                if c.feed() != CheckFeed::Content {
+                    return Ok(StepVerdict::Refused(RefRefusal::NotContent));
+                }
+                if c != RefCheck::FieldUnset {
+                    return self.refused_or(by, kind, base, GAP_EFFECT);
+                }
+            }
+            let unset = self.unset();
+            let present = !unset.is_empty();
+            let seed = matches!(effect, RefEdit::Seed(_)) && !present;
+            let fix = matches!(effect, RefEdit::Fix(_)) && present;
+            let field = |s: &ProductionSystem, f: FieldId| {
+                s.target.get(f).as_set().cloned().ok_or(GAP_STEP)
+            };
+            let step = match kind {
+                EditKind::Policy | EditKind::Artefact if seed => {
+                    return self.refused_or(by, kind, base, GAP_UNSET);
+                }
+                EditKind::Policy if fix => {
+                    let mut values: Vec<FieldValue> = unset
+                        .iter()
+                        .filter(|f| **f != FieldId::P53)
+                        .map(|f| field(self, *f))
+                        .collect::<Result<_, _>>()?;
+                    let policy = unset
+                        .iter()
+                        .any(|f| f.spec().is_some_and(|s| s.kind == FieldKind::Policy));
+                    if !policy {
+                        values.push(field(self, FieldId::P02)?);
+                    }
+                    Step::Save(values)
+                }
+                EditKind::Policy => Step::Save(vec![field(self, FieldId::P02)?]),
+                EditKind::Artefact if fix => {
+                    let artefact_only = unset
+                        .iter()
+                        .all(|f| f.spec().is_some_and(|s| s.kind == FieldKind::Artefact));
+                    if !artefact_only {
+                        return self.refused_or(by, kind, base, GAP_FIX);
+                    }
+                    Step::Save(
+                        unset
+                            .iter()
+                            .map(|f| field(self, *f))
+                            .collect::<Result<_, _>>()?,
+                    )
+                }
+                EditKind::Artefact => Step::Save(vec![field(self, FieldId::ProgrammeName)?]),
+                EditKind::Start if seed || (present && !fix) => Step::Blank,
+                EditKind::Start => return self.refused_or(by, kind, base, GAP_START),
+                EditKind::Narrative => return self.refused_or(by, kind, base, GAP_NARRATIVE),
+                EditKind::Invitation | EditKind::InvitationWithdrawal if seed => {
+                    return self.refused_or(by, kind, base, GAP_UNSET);
+                }
+                EditKind::Invitation | EditKind::InvitationWithdrawal if fix => {
+                    return self.refused_or(by, kind, base, GAP_FIX);
+                }
+                EditKind::Invitation => {
+                    let out = self.invite_spare(by, Tag::Edit(kind, effect))?;
+                    return self.verdict(out, None);
+                }
+                EditKind::InvitationWithdrawal => {
+                    let Some(spare) = self.spares.last().copied() else {
+                        return Err(GAP_STEP);
+                    };
+                    let out =
+                        self.step(by, base, Step::Withdraw(spare), Tag::Edit(kind, effect))?;
+                    if matches!(out, Run::Appended) {
+                        let _ = self.spares.pop();
+                    }
+                    return self.verdict(out, None);
+                }
+                EditKind::ImportResolution if seed => {
+                    return self.refused_or(by, kind, base, GAP_UNSET);
+                }
+                EditKind::ImportResolution if fix => {
+                    let only: Vec<FieldId> = unset.iter().copied().collect();
+                    match only.as_slice() {
+                        [f] if f.spec().is_some_and(|s| s.importable) => {
+                            Step::Import(field(self, *f)?)
+                        }
+                        _ => return self.refused_or(by, kind, base, GAP_FIX),
+                    }
+                }
+                EditKind::ImportResolution => Step::Import(field(self, FieldId::ProgrammeName)?),
+            };
+            let out = self.step(by, base, step, Tag::Edit(kind, effect))?;
+            self.verdict(out, None)
+        }
+
         /// Runs `cmd` through the engine and maps the outcome. Environment
         /// commands set the recording-fake prober or the import store.
         pub fn apply(&mut self, cmd: &RefCommand) -> Result<StepVerdict, NotImplemented> {
-            let verdict = |r: Run, s: &ProductionSystem, approver: Option<AccountId>| match r {
-                Run::Appended => Ok(StepVerdict::Accepted),
-                Run::Refused(rule, reason) => s
-                    .creator_refusal(rule, reason, approver)
-                    .map(StepVerdict::Refused),
-            };
             match *cmd {
                 RefCommand::Open { by } => {
                     let open = CreatorCommand::OpenDraft {
@@ -595,8 +1449,8 @@ pub mod production {
                         version: PolicyVersionId::from_raw(PLAN_P.raw()),
                         profile: default_profile()?,
                     };
-                    let r = self.run(Command::Creator(open), by)?;
-                    verdict(r, self, None)
+                    let r = self.run(Command::Creator(open), by, Tag::Plain)?;
+                    self.verdict(r, None)
                 }
                 RefCommand::Grant { by, to } => self.grant(by, to),
                 RefCommand::EndBinding { by, of } => {
@@ -615,15 +1469,20 @@ pub mod production {
                         binding,
                         at: ctx.now,
                     };
-                    Ok(match self.run_ctx(Command::Core(end), ctx)? {
+                    Ok(match self.run_ctx(Command::Core(end), ctx, Tag::Plain)? {
                         Run::Appended => StepVerdict::Accepted,
-                        Run::Refused(RuleRef::Actor, _) => {
+                        Run::Refused(RuleRef::Actor, _, _) => {
                             StepVerdict::Refused(RefRefusal::NotTenantAdmin)
                         }
                         Run::Refused(..) => StepVerdict::Refused(RefRefusal::NoSuchBinding),
                     })
                 }
-                RefCommand::Edit { .. } => Err(GAP_EDITS),
+                RefCommand::Edit {
+                    by,
+                    kind,
+                    effect,
+                    base,
+                } => self.edit(by, kind, effect, base),
                 RefCommand::Acknowledge { by, warning, base } => {
                     let Some(revision) = self.named(base) else {
                         return Ok(StepVerdict::Refused(RefRefusal::Opening));
@@ -634,8 +1493,8 @@ pub mod production {
                         revision,
                         warning: key,
                     };
-                    let r = self.run(Command::Creator(ack), by)?;
-                    verdict(r, self, None)
+                    let r = self.run(Command::Creator(ack), by, Tag::Plain)?;
+                    self.verdict(r, None)
                 }
                 RefCommand::Request { by, base } => {
                     let Some(revision) = self.named(base) else {
@@ -645,8 +1504,8 @@ pub mod production {
                         programme: PLAN_P,
                         revision,
                     };
-                    let r = self.run(Command::Creator(req), by)?;
-                    verdict(r, self, None)
+                    let r = self.run(Command::Creator(req), by, Tag::Plain)?;
+                    self.verdict(r, None)
                 }
                 RefCommand::Approve { by, base } => {
                     let Some(revision) = self.named(base) else {
@@ -659,8 +1518,8 @@ pub mod production {
                         revision,
                         decision,
                     };
-                    let r = self.run(Command::Creator(approve), by)?;
-                    verdict(r, self, Some(by))
+                    let r = self.run(Command::Creator(approve), by, Tag::Plain)?;
+                    self.verdict(r, Some(by))
                 }
                 RefCommand::SetProbe { probe, outcome } => {
                     let _ = self.probes.insert(probe, outcome);
@@ -675,18 +1534,22 @@ pub mod production {
 
         /// The records on the draft, mapped from the raw ledger entries.
         ///
-        /// An entry holding `DraftOpened` is `Opened`. A core
-        /// `BindingGranted` of the programme manager role on the draft is
-        /// `Granted`, and a `BindingEnded` of such a binding is
-        /// `BindingEnded`. Each creator record is its reference record. An
-        /// approval entry, with its `ProbeRecorded` records, `ActivationApproved`
-        /// and `ProgrammeActivated`, is one `Activated`. A content edit maps
-        /// to `Edited` with a neutral effect: the records do not say what an
-        /// edit does to the checks. Import records are no draft records.
+        /// The setup entries are left out, and each revision a record
+        /// names is counted without them. An entry holding `DraftOpened`
+        /// is `Opened`. A core `BindingGranted` of the programme manager
+        /// role on the draft is `Granted`, and a `BindingEnded` of such a
+        /// binding is `BindingEnded`. Each creator record is its reference
+        /// record. An approval entry, with its `ProbeRecorded` records,
+        /// `ActivationApproved` and `ProgrammeActivated`, is one
+        /// `Activated`. A content edit maps to `Edited` with the kind its
+        /// record names and the kind and effect the adapter issued it
+        /// with, which no record holds. Import records are no draft
+        /// records.
         pub fn events(&self) -> Result<Vec<RefEvent>, NotImplemented> {
             let mut out = Vec::new();
             let mut i = 0usize;
             let ledger = &self.ledger;
+            let offset = self.offset();
             let mut managers: BTreeMap<BindingId, AccountId> = BTreeMap::new();
             while let Some(first) = ledger.get(i) {
                 let mut entry = Vec::new();
@@ -698,8 +1561,11 @@ pub mod production {
                     entry.push(&e.record);
                     j = j.saturating_add(1);
                 }
-                let prefix = ledger.get(..i).unwrap_or_default();
-                out.extend(self.entry_events(&entry, prefix, &mut managers)?);
+                if !self.setup.contains(&first.command) {
+                    let prefix = ledger.get(..i).unwrap_or_default();
+                    let edit = self.edits.get(&first.command).copied();
+                    out.extend(self.entry_events(&entry, prefix, edit, offset, &mut managers)?);
+                }
                 i = j;
             }
             Ok(out)
@@ -710,6 +1576,8 @@ pub mod production {
             &self,
             entry: &[&Record],
             prefix: &[Entry<Record>],
+            edit: Option<(EditKind, RefEdit)>,
+            offset: u32,
             managers: &mut BTreeMap<BindingId, AccountId>,
         ) -> Result<Vec<RefEvent>, NotImplemented> {
             let mut out = Vec::new();
@@ -737,7 +1605,7 @@ pub mod production {
                     .unresolved(fstp_import::ProgrammeRef::from_raw(PLAN_P.raw()));
                 out.push(RefEvent::Activated {
                     by: a.approver(),
-                    revision: a.revision().seq(),
+                    revision: a.revision().seq().saturating_sub(offset),
                     inputs: RefInputs {
                         probes,
                         unresolved_imports: unresolved,
@@ -748,7 +1616,7 @@ pub mod production {
             for r in entry {
                 match r {
                     Record::Creator(c) if c.programme() == PLAN_P => {
-                        if let Some(e) = creator_event(c) {
+                        if let Some(e) = creator_event(c, edit, offset) {
                             out.push(e);
                         }
                     }
@@ -793,7 +1661,7 @@ pub mod production {
         }
 
         /// The production report of the draft now, as an approval by
-        /// `approver` would read it.
+        /// `approver` would read it at the instant of the next command.
         fn production_report(
             &self,
             approver: Option<AccountId>,
@@ -806,7 +1674,7 @@ pub mod production {
             };
             let ctx = draft_cell::ctx(
                 approver.unwrap_or(self.plan.opener),
-                Timestamp::from_micros(T0),
+                self.now(),
                 0,
                 &self.plan.stat.admins,
             );
@@ -842,11 +1710,18 @@ pub mod production {
         ) -> Result<(), NotImplemented> {
             let d = self.state.creator.draft(PLAN_P).ok_or(GAP_STEP)?;
             let head = d.head();
-            let rev = fstp_creator::DraftRevision::new(revision, head.entry());
+            // The reference counts no setup entry.
+            let rev = fstp_creator::DraftRevision::new(
+                revision.saturating_add(self.offset()),
+                head.entry(),
+            );
             let builders = d.builders().clone();
             let report = self.production_report(None)?;
             let digest = report.digest();
             let decision = DecisionId::from_raw(0x4d41_7ee7);
+            // The records take the instant of the injected entry, so the
+            // fold sees no clock going backwards.
+            let now = self.now();
             let mut records: Vec<Record> = ProbeKind::ALL
                 .into_iter()
                 .map(|p| {
@@ -859,7 +1734,7 @@ pub mod production {
                         programme: PLAN_P,
                         probe: p,
                         outcome: o,
-                        at: Timestamp::from_micros(T0),
+                        at: now,
                     })
                 })
                 .collect();
@@ -936,12 +1811,7 @@ pub mod production {
                 },
                 other => other,
             };
-            let ctx = draft_cell::ctx(
-                stand_in,
-                Timestamp::from_micros(T0),
-                0,
-                &[stand_in].into_iter().collect(),
-            );
+            let ctx = draft_cell::ctx(stand_in, self.now(), 0, &[stand_in].into_iter().collect());
             let mut answers = Answers::new();
             for q in fstp_domain::queries(&self.state.core, &cmd, &ctx).map_err(|_| GAP_STEP)? {
                 let holds = matches!(q, Query::IsVerified { .. });
@@ -974,8 +1844,19 @@ pub mod production {
         }
     }
 
-    /// The reference record of one creator record on the draft.
-    fn creator_event(c: &CreatorRecord) -> Option<RefEvent> {
+    /// The reference record of one creator record on the draft, with the
+    /// kind and effect the adapter issued an edit with, and each revision
+    /// counted without the `offset` setup entries.
+    fn creator_event(
+        c: &CreatorRecord,
+        edit: Option<(EditKind, RefEdit)>,
+        offset: u32,
+    ) -> Option<RefEvent> {
+        let edited = |by: AccountId, kind: EditKind| {
+            let (kind, effect) = edit.unwrap_or((kind, RefEdit::Neutral));
+            RefEvent::Edited { by, kind, effect }
+        };
+        let revision = |r: &fstp_creator::DraftRevision| r.seq().saturating_sub(offset);
         Some(match c {
             CreatorRecord::DraftOpened { by, .. } => RefEvent::Opened { by: *by },
             CreatorRecord::StartApplied { by, .. } => edited(*by, EditKind::Start),
@@ -983,12 +1864,17 @@ pub mod production {
                 let import = fields
                     .iter()
                     .any(|(_, _, p)| matches!(p, fstp_creator::Provenance::Import { .. }));
+                let policy = fields
+                    .iter()
+                    .any(|(f, _, _)| f.spec().is_some_and(|s| s.kind == FieldKind::Policy));
                 edited(
                     *by,
                     if import {
                         EditKind::ImportResolution
-                    } else {
+                    } else if policy {
                         EditKind::Policy
+                    } else {
+                        EditKind::Artefact
                     },
                 )
             }
@@ -1000,16 +1886,18 @@ pub mod production {
             CreatorRecord::WarningAcknowledged {
                 by,
                 warning,
-                revision,
+                revision: r,
                 ..
             } => RefEvent::Acknowledged {
                 by: *by,
                 warning: ref_check(warning.check)?,
-                revision: revision.seq(),
+                revision: revision(r),
             },
-            CreatorRecord::ActivationRequested { by, revision, .. } => RefEvent::Requested {
+            CreatorRecord::ActivationRequested {
+                by, revision: r, ..
+            } => RefEvent::Requested {
                 by: *by,
-                revision: revision.seq(),
+                revision: revision(r),
             },
             CreatorRecord::ProbeRecorded { probe, outcome, .. } => RefEvent::ProbeRecorded {
                 probe: ref_probe(*probe),
@@ -1018,16 +1906,6 @@ pub mod production {
             CreatorRecord::TemplateSaved { by, .. } => RefEvent::TemplateSaved { by: *by },
             CreatorRecord::ActivationApproved(_) => return None,
         })
-    }
-
-    /// An edit of `kind` by `by`, with the neutral effect (see
-    /// [`ProductionSystem::events`]).
-    fn edited(by: AccountId, kind: EditKind) -> RefEvent {
-        RefEvent::Edited {
-            by,
-            kind,
-            effect: RefEdit::Neutral,
-        }
     }
 
     /// The production check catalogue: each check's name and severity,
@@ -1691,9 +2569,20 @@ pub const REFERENCE_STATES: usize = 29_182;
 /// The measured state count of the reference run with the Sybil pair.
 pub const REFERENCE_SYBIL_STATES: usize = 45_482;
 
-/// The state count the production run's first exhaustive run records.
-/// Zero stops every run, so no production run passes on a placeholder.
-pub const TRIPWIRE: usize = 0;
+/// The measured state count of the production run of M-ACTIVATE without
+/// the Sybil pair (lane m4glue, 2026-10-30). Production states hold the
+/// ledger, so two orders of the same steps are two states.
+pub const PRODUCTION_STATES: usize = 77_375;
+
+/// The measured state count of the production run with the Sybil pair
+/// (lane m4glue, 2026-10-30).
+pub const PRODUCTION_SYBIL_STATES: usize = 137_036;
+
+/// The state count the production runs record: the larger of
+/// [`PRODUCTION_STATES`] and [`PRODUCTION_SYBIL_STATES`], since the
+/// production runs share one tripwire. It was zero until the first
+/// exhaustive production runs, so no run passed on a placeholder.
+pub const TRIPWIRE: usize = PRODUCTION_SYBIL_STATES;
 
 /// The configuration of M-ACTIVATE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -2556,4 +3445,46 @@ pub fn cast() -> [AccountId; 4] {
 /// Whether `stub` is a W0 refusal message, so a test can say why it is red.
 pub fn is_stub_refusal(message: &str) -> bool {
     message.contains("is not implemented yet")
+}
+
+/// What [`cap_attempt`] showed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CapOutcome {
+    /// The setup save of the cap was refused with I-50, naming P-05 and
+    /// P-58 as these strings, and nothing was appended.
+    RefusedAtSave {
+        /// P-05 as the refusal names it.
+        p05: String,
+        /// P-58 as the refusal names it.
+        p58: String,
+    },
+    /// The setup save was accepted, and A2's attempt ran.
+    Ran(AttemptOutcome),
+}
+
+/// Runs [`cap_plan`] of `p05_minor` and `p58_minor` on `backend` (I-50
+/// at save, Daniel's answer of 2026-10-31, M4 design section 15.0). A cap
+/// above the ceiling refuses the first manager's setup save, so no draft
+/// holds it. Otherwise A2 attempts the activation as
+/// [`Attempt::by_second_admin`] does.
+pub fn cap_attempt(backend: Backend, p05_minor: u64, p58_minor: u64) -> Result<CapOutcome, String> {
+    let plan = cap_plan(p05_minor, p58_minor);
+    let refused = match backend {
+        Backend::Reference => match RefSystem::open(&plan) {
+            Ok(_) => None,
+            Err((_, RefRefusal::CapAboveCeiling)) => Some(cap_strings(p05_minor, p58_minor)),
+            Err((cmd, r)) => {
+                return Err(format!(
+                    "the plan is not realisable: {cmd:?} refused with {r:?}"
+                ));
+            }
+        },
+        Backend::Production => {
+            ProductionSystem::cap_setup(&plan).map_err(|e| format!("production: {e}"))?
+        }
+    };
+    match refused {
+        Some((p05, p58)) => Ok(CapOutcome::RefusedAtSave { p05, p58 }),
+        None => attempt(backend, &Attempt::by_second_admin(plan)).map(CapOutcome::Ran),
+    }
 }

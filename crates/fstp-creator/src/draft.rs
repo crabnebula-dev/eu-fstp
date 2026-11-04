@@ -21,7 +21,7 @@
 //! clone copies the source's policy fields only, and an import start
 //! begins from the profile defaults while its values arrive as proposals.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::command::Ctx;
 use fstp_domain::id::{ContentDigest, PolicyVersionId, ProgrammeId};
@@ -294,4 +294,88 @@ pub(crate) fn spec_ref(programme: ProgrammeId, revision: DraftRevision) -> Conte
         *slot = *byte;
     }
     ContentDigest::from_bytes(b)
+}
+
+/// The template value of `field` that waits for `AcceptNarrative` on
+/// `draft` (TH-49): an artefact field whose shipped template value needs
+/// acceptance, which no save has replaced and no one has accepted yet.
+pub(crate) fn pending_narrative(draft: &Draft, field: FieldId) -> Option<FieldValue> {
+    let Some(StartingPoint::Template { template, version }) = draft.start() else {
+        return None;
+    };
+    if kind(field) != Some(FieldKind::Artefact)
+        || draft.fields().contains_key(&field)
+        || draft.narratives().contains(&field)
+    {
+        return None;
+    }
+    shipped_template(*template, *version)?
+        .spec
+        .get(field)
+        .as_set()
+        .filter(|v| needs_acceptance(v))
+        .cloned()
+}
+
+/// What the creator pages read of one draft (R-PG-01, TH-49).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraftView {
+    /// The draft spec in its `fstp.programme/1` JSON form, with `null` for
+    /// a gap.
+    pub spec: fstp_json::Value,
+    /// The template narrative that waits for `AcceptNarrative`, by field
+    /// key ([`FieldId::key`]).
+    pub pending_narratives: BTreeMap<String, String>,
+}
+
+/// The draft of `programme` as the creator pages read it, or `None` when
+/// the creator holds no draft of it or the core no policy version.
+///
+/// The spec is the draft spec the Guide preview reads: the head policy,
+/// with the held value of each set artefact field and the free texts of
+/// a held policy value that agrees with the head. Every field the draft
+/// does not set is a gap, and so is a saved artefact value the shell has
+/// not held yet, which fails closed rather than showing a made-up value.
+/// A pending narrative is a gap in the spec and appears only in
+/// `pending_narratives`, so template text is never applied silently.
+///
+/// Interim, pending Daniel: a pending narrative whose JSON form is a
+/// string reads as that string, and any other as its canonical JSON text.
+pub fn draft_view(
+    core: &State,
+    creator: &CreatorState,
+    programme: ProgrammeId,
+) -> Option<DraftView> {
+    let draft = creator.draft(programme)?;
+    let head = fstp_domain::policy::head(core, programme)?;
+    let profile = profile_of(draft).ok();
+    let spec = crate::guide::draft_spec(
+        creator,
+        programme,
+        draft,
+        head,
+        &draft.set_fields(),
+        profile.as_ref(),
+    );
+    let spec = fstp_json::parse(fstp_programme::encode_spec(&spec).as_bytes()).ok()?;
+    let pending_narratives = FIELDS
+        .iter()
+        .filter_map(|f| {
+            let v = pending_narrative(draft, f.id)?;
+            Some((f.id.key(), narrative_text(&v)))
+        })
+        .collect();
+    Some(DraftView {
+        spec,
+        pending_narratives,
+    })
+}
+
+/// The text a pending narrative reads as (see [`draft_view`]).
+fn narrative_text(value: &FieldValue) -> String {
+    let canonical = fstp_programme::encode_field_value(value);
+    match fstp_json::parse(canonical.as_bytes()) {
+        Ok(fstp_json::Value::String(s)) => s,
+        _ => canonical,
+    }
 }

@@ -152,9 +152,9 @@ pub trait Decider {
 ///
 /// - A core command goes to `fstp_domain::queries` and `decide`, which see
 ///   only the core part of the state, never the finding store, the creator
-///   or the import store (I-10, I-65). A core `ActivateProgramme` of a
-///   programme with a creator draft is refused with `RuleRef::I66`: only
-///   the creator's approval composes it (D2e).
+///   or the import store (I-10, I-65). Every core `ActivateProgramme` is
+///   refused with `RuleRef::I66`, drafted or not: only the creator's
+///   approval composes it (D2e, strict since 2026-10-30).
 /// - A finding command goes through the finding seam in the crate root,
 ///   which lane L-FIND-B routes to `decide_finding`.
 /// - A creator command goes to `compose::creator_queries` and
@@ -183,9 +183,14 @@ pub struct CreatorDecider<E>(pub E);
 
 /// The refusal of a core `ActivateProgramme` that did not come from the
 /// creator's approval (D2e, I-66).
-fn outside_activation(state: &EngineState, c: &fstp_domain::Command) -> Result<(), Refusal> {
+fn outside_activation(c: &fstp_domain::Command, ctx: &Ctx) -> Result<(), Refusal> {
     match c {
-        fstp_domain::Command::ActivateProgramme { programme, .. } if state.drafted(*programme) => {
+        // The channel guard first, as `compose::mcp_guard` runs it first
+        // for the creator's approval (I-85).
+        fstp_domain::Command::ActivateProgramme { .. } if ctx.via == Via::Mcp => {
+            Err(Refusal::new(RuleRef::I85, RefusalReason::NotThroughMcp))
+        }
+        fstp_domain::Command::ActivateProgramme { .. } => {
             Err(Refusal::new(RuleRef::I66, RefusalReason::GuardFailed))
         }
         _ => Ok(()),
@@ -202,7 +207,7 @@ fn route_queries(
     match cmd {
         Command::Core(c) => {
             crate::ledger_clock(state, ctx)?;
-            outside_activation(state, c)?;
+            outside_activation(c, ctx)?;
             fstp_domain::queries(&state.core, c, ctx)
         }
         Command::Finding(f) => crate::finding_queries(state, f, ctx),
@@ -236,7 +241,7 @@ fn route_decide(
     match cmd {
         Command::Core(c) => {
             crate::ledger_clock(state, ctx)?;
-            outside_activation(state, c)?;
+            outside_activation(c, ctx)?;
             fstp_domain::decide(&state.core, c, ctx, answers)
                 .map(|records| records.into_iter().map(Record::Core).collect())
         }

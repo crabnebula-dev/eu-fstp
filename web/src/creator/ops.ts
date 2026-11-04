@@ -120,6 +120,24 @@ export function anyObject(v: unknown): boolean {
 }
 
 /**
+ * The alert text of a refusal under `rule`. A refusal that names values,
+ * such as P-05 and P-58 of I-50 at save (Daniel's answer of 2026-10-31,
+ * M4 design section 15.0), lists each as `P-05 60000.01`.
+ */
+function refusedText(rule: string | null, values: Readonly<Record<string, string>> | undefined): string {
+  if (rule === null) {
+    return t.label("outcome.refused");
+  }
+  if (values === undefined) {
+    return t.label("outcome.refused_rule", { rule });
+  }
+  const named = Object.entries(values)
+    .map(([id, v]) => `${id} ${v}`)
+    .join(", ");
+  return t.label("outcome.refused_values", { rule, values: named });
+}
+
+/**
  * Shows the outcome of a call that did not complete in the page alert,
  * and returns true. A done call shows nothing and returns false. A
  * step-up the person cancelled says that nothing was sent.
@@ -141,7 +159,7 @@ export function report(alert: HTMLElement, o: Outcome): boolean {
       warn(alert, t.label("outcome.unavailable"));
       return true;
     case "refused":
-      warn(alert, o.rule === null ? t.label("outcome.refused") : t.label("outcome.refused_rule", { rule: o.rule }), o.rule);
+      warn(alert, refusedText(o.rule, o.values), o.rule);
       return true;
     case "failed":
       warn(

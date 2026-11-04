@@ -11,6 +11,9 @@
 //!   needs the reviewer's organisation, since SoD-10 and I-34 count
 //!   organisations from it (decided 2026-10-25). For other roles the
 //!   field is data only.
+//!   A grant to an account that already holds a binding of the same role
+//!   on the programme is refused until that binding ends (Daniel's answer
+//!   of 2026-10-31, M4 design section 15.0).
 //!   A committee member grant whose organisation differs from a held
 //!   committee binding of the account in the programme, whatever its
 //!   period, is refused, since a reviewer has one organisation per
@@ -242,6 +245,13 @@ fn plan_grant(
         // which of its committee bindings is read.
         return Err(Refusal::new(RuleRef::Sod10, RefusalReason::GuardFailed));
     }
+    if held_binding_of(state, *account, *programme, *role) {
+        // Daniel's answer of 2026-10-31 (M4 design section 15.0): a role
+        // is granted again only after the account's binding of that role
+        // on the programme ends. It runs after SoD-10, so a grant of
+        // another organisation is refused under SoD-10 first.
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::GuardFailed));
+    }
     if *start < ctx.now {
         // No backdating (design 2.6).
         return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
@@ -327,6 +337,20 @@ fn decide_grant(plan: GrantPlan, answers: &Answers) -> Result<Vec<Record>, Refus
         out.push(Record::BindingEndScheduled { binding, at });
     }
     Ok(out)
+}
+
+/// Whether `account` holds a binding of `role` in `programme` that has not
+/// ended (re-granting a role, Daniel's answer of 2026-10-31, M4 design
+/// section 15.0). Ended bindings leave the roster, so every roster binding
+/// counts except a voided one, which can never return. An ordinary
+/// suspension, a conflict-of-interest suspension, a scheduled end not yet
+/// recorded and a later start all count. A conflict-of-interest suspension
+/// counts because `ReinstateBinding` can make it active again, and a grant
+/// beside it would then leave two active bindings of one role.
+fn held_binding_of(state: &State, account: AccountId, programme: ProgrammeId, role: Role) -> bool {
+    state.roster.bindings().any(|(_, b)| {
+        b.account == account && b.programme == programme && b.role == role && !b.voided()
+    })
 }
 
 /// Whether `account` holds a committee member binding in `programme`, other

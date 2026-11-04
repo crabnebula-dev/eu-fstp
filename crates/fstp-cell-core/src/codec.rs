@@ -254,6 +254,17 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
         "onboarding" => fstp_engine::Record::from_json(value)
             .map(CellRecord::Engine)
             .map_err(body("onboarding")),
+        // The engine's creator and import sides (M4 design sections 3.2
+        // to 3.4). The encoder writes them through `fstp_engine::Record`,
+        // so the decoder reads them back the same way. Without them no
+        // creator batch is storable, and since D2e no programme activates
+        // on the cell (M4 design section 15.0).
+        "creator" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("creator")),
+        "import" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("import")),
         "auth" => auth_record(inner).map(CellRecord::Auth),
         "tenant" => tenant_record(inner)
             .map(CellRecord::Tenant)

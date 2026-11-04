@@ -10,7 +10,7 @@ New tenants are set up through a guided onboarding flow. Programmes are then bui
 | Agreements | SaaS terms, data processing agreement, sub-processor list (skipped for self-hosted) |
 | Branding | White-label package (`03-architecture/white-labelling.md`) |
 | Domains and email | Custom domains, sending domain with SPF, DKIM and DMARC checks |
-| Identity | EUDI Wallet relying party mode (P-45), verification methods (P-18). P-18 covers identity verification only. Advanced signature is a signing fallback of P-30, not a verification method (decided by Daniel 2026-11-01) |
+| Identity | EUDI Wallet relying party mode (P-45), verification methods (P-18). P-18 covers identity verification only. Advanced signature is a signing fallback in the contract signature cascade (step 7), not a verification method (decided by Daniel 2026-11-01) |
 | Inference | Inference provider and model (P-21) |
 | Payments | Payment mode (P-20), bank interface where execution mode is used |
 | Channels | Email only. The Matrix homeserver is deferred by Daniel on 2026-11-04 (B-05) and the WhatsApp Business account deferred by Daniel on 2026-11-04 (B-03) |

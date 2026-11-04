@@ -459,10 +459,7 @@ impl PolicyModel {
             }
         };
         let ctx = next.world.ctx(actor, false);
-        let result = next
-            .world
-            .scenario
-            .execute(fstp_engine::Command::Core(cmd.clone()), ctx);
+        let result = next.world.scenario.run_core(&cmd, ctx);
         match (verdict, result) {
             (Verdict::Accept, Err(e)) => {
                 next.divergence = Some(format!(

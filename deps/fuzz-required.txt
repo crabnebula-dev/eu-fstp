@@ -57,3 +57,4 @@ fstp-oauth
 fstp-mcp
 fstp-web
 fstp-web-assets
+fstp-journey

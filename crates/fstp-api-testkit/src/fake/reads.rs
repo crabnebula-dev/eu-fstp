@@ -24,7 +24,7 @@ use fstp_domain_testkit::r#gen::review::{
     review_truth,
 };
 use fstp_domain_testkit::r#gen::roster::{self, K1, SodSetup, T0};
-use fstp_engine::{Command, Engine};
+use fstp_engine::Engine;
 use fstp_json::{ToJson, Value};
 use fstp_ledger::MemStore;
 
@@ -71,8 +71,7 @@ fn review_world(p38: BTreeMap<OrganisationId, fstp_domain::id::ProximityListId>)
         let mut id = *b"fixture:m4disp\0\0";
         id[15] = u8::try_from(i).unwrap();
         let ctx = step.ctx(T0, CommandId::from_bytes(id));
-        engine
-            .execute(Command::Core(step.cmd.clone()), ctx)
+        fstp_domain_testkit::activation::run_core(&mut engine, &step.cmd, ctx)
             .unwrap_or_else(|e| panic!("review world step {i} {:?}: {e}", step.cmd.kind()));
     }
     let (store, _, _) = engine.into_parts();

@@ -68,9 +68,12 @@ pub mod payment;
 pub mod view;
 
 pub use command::{Actor, Command, CommandKind, Ctx, SystemCause, Via};
-pub use engine::{FoldError, apply, decide, due, queries, replay, stage1_ready};
+pub use engine::{
+    FoldError, apply, decide, decide_creator_save, due, queries, queries_creator_save, replay,
+    stage1_ready,
+};
 pub use oracle::{Answer, Answers, OracleDown, Query, QueryKind};
 pub use record::{Record, RulesVersion};
-pub use refusal::{Refusal, RefusalReason, RuleRef};
+pub use refusal::{Refusal, RefusalDetail, RefusalReason, RuleRef};
 pub use rules::{ACTOR_RULES, CATALOGUE, Row, StateTag, TRANSITIONS};
 pub use state::State;
