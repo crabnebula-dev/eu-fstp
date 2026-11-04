@@ -101,6 +101,8 @@ dependencies = [
 name = "fstp-oauth-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-crypto",
+ "fstp-json",
  "fstp-oauth",
  "libfuzzer-sys",
 ]
