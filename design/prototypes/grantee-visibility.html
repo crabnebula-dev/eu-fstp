@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Public visibility settings - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html">Payments</a></li><li><a href="contract-view.html">Agreement</a></li><li><a href="complaint-status.html">Complaints</a></li><li><a href="grantee-visibility.html" aria-current="page">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Visibility choices for grant SSF-C1-0042 with a minor on the team. Programme limits: Project and grantee while funded (P-50), Project when finished (P-51). Hidden selected. Choices above Project are disabled (I-42).</p>
+
+    <h1>Public visibility settings</h1>
+    <p class="callout callout--info"><strong>Team with a minor:</strong> One or more members of this proposal's team are minors.</p>
+    <p class="muted">Projects that did not reach the grant stage are never shown publicly (I-41).</p>
+    <form method="post" action="#">
+      <fieldset><legend>While funded</legend>
+        <p class="text-sm muted">Programme limit: Project and grantee (P-50).</p>
+        <div class="choice"><input type="radio" id="fu-h" name="funded" checked><label for="fu-h">Hidden</label></div>
+        <div class="choice"><input type="radio" id="fu-p" name="funded"><label for="fu-p">Project: title, public summary, call and status</label></div>
+        <div class="choice"><input type="radio" id="fu-pg" name="funded" disabled aria-describedby="fu-pg-why"><label for="fu-pg">Project and grantee: adds your name</label> <span id="fu-pg-why" class="badge badge--neutral">Not available: a team member is a minor (I-42).</span></div>
+        <div class="choice"><input type="radio" id="fu-f" name="funded" disabled aria-describedby="fu-f-why"><label for="fu-f">Full: adds granted amount and milestone status</label> <span id="fu-f-why" class="badge badge--neutral">Not available: a team member is a minor (I-42).</span></div>
+      </fieldset>
+      <fieldset><legend>When finished</legend>
+        <p class="text-sm muted">Programme limit: Project (P-51).</p>
+        <div class="choice"><input type="radio" id="fi-h" name="finished" checked><label for="fi-h">Hidden</label></div>
+        <div class="choice"><input type="radio" id="fi-p" name="finished"><label for="fi-p">Project: title, public summary, call and status</label></div>
+        <div class="choice"><input type="radio" id="fi-pg" name="finished" disabled aria-describedby="fi-pg-why"><label for="fi-pg">Project and grantee: adds your name</label> <span id="fi-pg-why" class="badge badge--neutral">Not available: a team member is a minor (I-42).</span></div>
+        <div class="choice"><input type="radio" id="fi-f" name="finished" disabled aria-describedby="fi-f-why"><label for="fi-f">Full: adds granted amount and milestone status</label> <span id="fi-f-why" class="badge badge--neutral">Not available: a team member is a minor (I-42).</span></div>
+      </fieldset>
+      <div class="field"><label for="summary">Public summary, written or approved by you</label><span class="hint" id="sum-hint">This is never your proposal text.</span><textarea id="summary" name="summary" aria-describedby="sum-hint">A library of hardened default configurations for common servers.</textarea></div>
+      <p>Changes take effect immediately on the public listing.</p>
+      <div class="btn-row"><!-- TODO(js): Save needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="save-why">Save</button></div>
+      <p id="save-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    </form>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -22,7 +22,8 @@
 use std::path::{Path, PathBuf};
 
 /// Workspace members that never ship. They match the test-only crates of
-/// tools/deps-check, plus the PostgreSQL test harness and deps-check itself.
+/// tools/deps-check, plus the PostgreSQL test harness, deps-check itself and
+/// test-gate, the CI gate over test output.
 const TEST_ONLY: &[&str] = &[
     "crates/fstp-prop",
     "crates/fstp-mc",
@@ -30,6 +31,7 @@ const TEST_ONLY: &[&str] = &[
     "crates/fstp-celltest",
     "crates/fstp-pgtest",
     "tools/deps-check",
+    "tools/test-gate",
 ];
 
 /// The file that holds the two allowed writers.

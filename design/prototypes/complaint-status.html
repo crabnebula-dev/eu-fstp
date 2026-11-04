@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My complaints - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html">Payments</a></li><li><a href="contract-view.html">Agreement</a></li><li><a href="complaint-status.html" aria-current="page">Complaints</a></li><li><a href="grantee-visibility.html">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Grantee list of 5 complaints in FILED, COORDINATOR_REVIEW, RESOLVED, ESCALATED and UPHELD.</p>
+
+    <div class="section-head"><h1>My complaints</h1><a class="btn btn--primary" href="complaint-file.html">New complaint</a></div>
+    <p class="text-sm muted">Only you, the complaint reviewers and auditors can see these records.</p>
+    <table>
+      <caption>5 complaints</caption>
+      <thead><tr><th scope="col">Reference</th><th scope="col">Type</th><th scope="col">Filed</th><th scope="col">Status</th><th scope="col">Details</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">CMP-2026-0005</td><td>Conflict of interest handling</td><td>30 Oct 2026</td><td><span class="badge badge--neutral">Filed</span> <span class="state-name">FILED</span></td><td><a href="#">View<span class="sr-only"> CMP-2026-0005</span></a></td></tr>
+        <tr><td class="pid">CMP-2026-0004</td><td>Payment request rejection</td><td>22 Oct 2026</td><td><span class="badge badge--info">Coordinator review</span> <span class="state-name">COORDINATOR_REVIEW</span></td><td><a href="#">View<span class="sr-only"> CMP-2026-0004</span></a></td></tr>
+        <tr><td class="pid">CMP-2026-0003</td><td>Missed notice</td><td>1 Oct 2026</td><td><span class="badge badge--success">Resolved</span> <span class="state-name">RESOLVED</span></td><td><a href="#">View<span class="sr-only"> CMP-2026-0003</span></a></td></tr>
+        <tr><td class="pid">CMP-2026-0002</td><td>Stage 1 knock-out decision</td><td>15 Sep 2026</td><td><span class="badge badge--warning">Escalated</span> <span class="state-name">ESCALATED</span></td><td><a href="#">View<span class="sr-only"> CMP-2026-0002</span></a></td></tr>
+        <tr><td class="pid">CMP-2026-0001</td><td>Conflict of interest handling</td><td>2 Sep 2026</td><td><span class="badge badge--success">Upheld</span> <span class="state-name">UPHELD</span> <span class="badge badge--info">Remedy</span>
+          <p class="text-sm">A procedural error was found. The remedy is recorded.</p></td><td><a href="#">View<span class="sr-only"> CMP-2026-0001</span></a></td></tr>
+      </tbody>
+    </table>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

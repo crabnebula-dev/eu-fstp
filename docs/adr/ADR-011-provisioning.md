@@ -65,7 +65,7 @@ Labels such as Q4, Q15, G4 and W2h exist only in `docs/handoff/m3-design.md`. Th
 - The renderer takes only these typed values and renders each as a double-quoted identifier. The grammar admits no quote character, so quoting is a second line of defence, not the first.
 - In `m3-design.md`, only `CREATE DATABASE` and `DROP DATABASE` are rendered this way, and grants go through `apply_grant`. Interim, pending Daniel: the same renderer also writes `CREATE ROLE ... NOLOGIN`, `ALTER ROLE ... LOGIN`, `ALTER ROLE ... NOLOGIN`, `DROP ROLE`, `GRANT CONNECT` and `REVOKE CONNECT`. Each template has typed slots only.
 - A SCRAM verifier is rendered as a single-quoted literal in `ALTER ROLE ... PASSWORD`. It must match the closed `ScramVerifier` grammar on decode: `SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>`, with base64 fields. The grammar admits no quote and no backslash. A cleartext password never reaches the agent.
-- The minimum iteration count accepted in a verifier: Record at first use.
+- The minimum iteration count accepted in a verifier is 4096, the RFC 7677 floor. Recorded at first use on 2026-10-30. `fstp_cp_proto::grammar::MIN_SCRAM_ITERATIONS` refuses a verifier below it, and `fstp_pgwire::DEFAULT_MIN_SCRAM_ITERATIONS` refuses a server that asks for fewer. The maximum is 2147483647, PostgreSQL's integer bound.
 - Property, checked by the fuzz target `ddl_identifier_render`: rendered DDL never contains an input byte outside the grammar, and any identifier outside the grammar is refused.
 
 ### `fstp_meta.apply_grant`
@@ -164,4 +164,4 @@ A self-hosted cell has no control plane. The steps that `fstp-control` performs 
 - The job enum, the extra DDL templates, the `apply_grant` revoke and the pinned staff key set in `fstp-pgagent` are proposals of this draft. Daniel accepts or changes each.
 - Whether a self-hosted install needs a second person for destructive local jobs.
 - Self-hosted issuers, raised in ADR-009. `m3-design.md` names no issuer for the local edge's tunnel certificate or the local witness's server certificate. ADR-009 offers an install-time CA in local custody, kept apart from the cell CA and the cluster CAs. This was open when Daniel accepted this ADR on 2026-10-28. He decides before W2h builds the install, and steps 6 and 7 of the install then name the issuer.
-- The minimum SCRAM iteration count: Record at first use.
+- The minimum SCRAM iteration count: recorded as 4096 on 2026-10-30, under "DDL identifier grammar". Daniel may raise it. A raise changes both constants and the grammar tests together.

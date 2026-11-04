@@ -96,6 +96,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-cp-proto"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+]
+
+[[package]]
 name = "fstp-crypto"
 version = "0.1.0"
 dependencies = [
@@ -115,6 +122,16 @@ dependencies = [
  "fstp-rt",
  "fstp-tls",
  "zeroize",
+]
+
+[[package]]
+name = "fstp-edge"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-obs",
+ "fstp-rt",
+ "fstp-tls",
 ]
 
 [[package]]
@@ -179,6 +196,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-pki"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+]
+
+[[package]]
 name = "fstp-rt"
 version = "0.1.0"
 dependencies = [
@@ -201,6 +225,7 @@ dependencies = [
  "fstp-audit",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-edge",
  "fstp-http",
  "fstp-json",
  "fstp-keys",
@@ -211,6 +236,7 @@ dependencies = [
  "fstp-tls",
  "fstp-vault-core",
  "fstp-vault-proto",
+ "fstp-witness",
 ]
 
 [[package]]
@@ -237,6 +263,22 @@ version = "0.1.0"
 dependencies = [
  "fstp-json",
  "fstp-money",
+]
+
+[[package]]
+name = "fstp-witness"
+version = "0.1.0"
+dependencies = [
+ "fstp-audit",
+ "fstp-cp-proto",
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-migrate",
+ "fstp-obs",
+ "fstp-pgwire",
+ "fstp-pki",
+ "fstp-rt",
+ "fstp-tls",
 ]
 
 [[package]]

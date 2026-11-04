@@ -25,7 +25,10 @@ fstp-vault.workspace = true
 fstp-webauthn.workspace = true
 fstp-auth.workspace = true
 fstp-cell-core.workspace = true
-fstp-cell.workspace = true
+# The world cell front serves the compiled auth pages (the world front,
+# lane int5). Cargo unifies features over one build, so a release build of
+# fstp-cell must not build this test-only crate with it.
+fstp-cell = { workspace = true, features = ["dev-pages"] }
 fstp-cp-proto.workspace = true
 fstp-control.workspace = true
 fstp-witness.workspace = true
@@ -41,6 +44,12 @@ fstp-pgtest.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true
 fstp-domain-testkit.workspace = true
+# In-house edges of lane int5: the world logs its cell, vault and witness
+# roles in over fstp-pgwire, and reaches the cells through fstp-tls and
+# fstp-http.
+fstp-pgwire.workspace = true
+fstp-tls.workspace = true
+fstp-http.workspace = true
 # ADR-001 A6: aws-lc-rs ML-KEM-768, ML-DSA-65 and X25519 as test oracles only, with no feature change.
 # A normal dependency, so the library oracles under src/reference can name it.
 # This crate never ships, and layering rule 9 keeps the post-quantum oracles inside it.

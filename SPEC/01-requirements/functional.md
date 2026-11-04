@@ -85,7 +85,7 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 - **R-EX-01** Payment follows an accepted payment request for a milestone, in full or in part.
 - **R-EX-02** A hardship contribution proportional to delivered work can be granted on verified evidence.
-- **R-EX-03** Each tenant selects record-only or execution payment mode (P-20).
+- **R-EX-03** Each tenant selects record-only or execution payment mode (P-20). Execution mode is deferred by Daniel on 2026-11-04 (B-11), so every tenant runs record-only for now.
 - **R-EX-04** Milestone acceptance and payment release are done by different persons (I-05).
 
 ## Conflicts and separation of duties
@@ -111,6 +111,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 ## Profile sync
 
+NOTE: R-PS-01 to R-PS-03 are deferred by Daniel on 2026-11-04 (B-08). Their identifiers stay reserved.
+
 - **R-PS-01** A user can export a profile bundle from one tenant and import it into another.
 - **R-PS-02** The user selects which profile fields the bundle contains. Proposals, reviews, scores and role bindings are never included.
 - **R-PS-03** The receiving tenant treats imported fields as self-declared, unless carried as verifiable attestations.
@@ -118,6 +120,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type in.
 
 ## Tenant data and switching
+
+NOTE: R-TD-01 to R-TD-04 are deferred by Daniel on 2026-11-04 (B-07). Their identifiers stay reserved.
 
 - **R-TD-01** A tenant can export all its exportable data and digital assets in the documented schema (`schemas/`).
 - **R-TD-02** Importing an export restores the tenant on SaaS or self-hosted without loss (I-22).
@@ -183,7 +187,9 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 
 ## Group messaging
 
-- **R-MG-01** Tenants can enable Matrix and WhatsApp adapters per P-32.
+NOTE: R-MG-01 to R-MG-03 are deferred by Daniel on 2026-11-04 (B-05). Their identifiers stay reserved.
+
+- **R-MG-01** Tenants can enable the Matrix adapter per P-32. The WhatsApp adapter is deferred by Daniel on 2026-11-04 (B-03).
 - **R-MG-02** Group types and membership follow `03-architecture/messaging.md` (I-28, I-29).
 - **R-MG-03** Announcements reach recipients without exposing other recipients.
 
@@ -196,11 +202,15 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 
 ## Switching
 
+NOTE: R-SW-01 and R-SW-02 are deferred by Daniel on 2026-11-04 (B-07). Their identifiers stay reserved.
+
 - **R-SW-01** A tenant can start switching at any time without notice.
 - **R-SW-02** After the retrieval period (P-46), the tenant cell is fully erased and the tenant receives an erasure confirmation.
   AC: after erasure, no backup or replica can restore the cell.
 
 ## WhatsApp
+
+NOTE: R-WA-01 and R-WA-02 are deferred by Daniel on 2026-11-04 (B-03). Their identifiers stay reserved.
 
 - **R-WA-01** WhatsApp is enabled in v1 for individual notifications, after the assessment in `05-compliance/messaging.md` is complete for the tenant.
 - **R-WA-02** Recipients opt in explicitly per programme. Opt-out takes effect immediately.
@@ -271,8 +281,8 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 
 ## White-labelling
 
-- **R-WL-01** Each tenant can apply a white-label package covering every interface, public page, document, email and messaging identity (`03-architecture/white-labelling.md`).
-- **R-WL-02** Custom domains get automatic certificates after verified ownership (I-71).
+- **R-WL-01** (deferred by Daniel on 2026-11-04 (B-09)) Each tenant can apply a white-label package covering every interface, public page, document, email and messaging identity (`03-architecture/white-labelling.md`).
+- **R-WL-02** (deferred by Daniel on 2026-11-04 (B-09)) Custom domains get automatic certificates after verified ownership (I-71).
 - **R-WL-03** Branding cannot execute code, break contrast or remove mandatory elements (I-68 to I-70).
 - **R-PG-05** Tenants can save templates for their own use and publish them to other tenants (I-73).
   AC: publishing a template that contains a personal name or email address is blocked with the matches listed.
@@ -280,6 +290,8 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 - **R-WL-05** Terminology overrides change interface labels only (I-72).
 
 ## Desktop client
+
+NOTE: R-DC-01 is deferred by Daniel on 2026-11-04 (B-04). Its identifier stays reserved.
 
 - **R-DC-01** A white-labelled desktop client gives access to the tenant's interfaces (`03-architecture/desktop-client.md`).
 
@@ -310,7 +322,34 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 - **R-MC-03** Users can list and revoke connected agents.
 - **R-MC-04** Agents without an account can research open calls and published subgrants through public MCP tools (I-87), and programmes can opt in to a platform-wide directory (P-76).
 - **R-MC-05** Each programme chooses whether agents complete binding actions or only draft them (P-77).
-- **R-MC-06** Tenants can connect external MCP servers for checks and hand-offs (`03-architecture/mcp-client.md`, I-88, I-89).
+- **R-MC-06** (deferred by Daniel on 2026-11-04 (B-10)) Tenants can connect external MCP servers for checks and hand-offs (`03-architecture/mcp-client.md`, I-88, I-89).
   AC: an integration declared without bank fields cannot send bank details, and a write tool cannot run without a named approval.
 - **R-CR-03** Release metadata, update bundles, audit chain anchors and export manifests carry composite Ed25519 plus ML-DSA-65 signatures (ADR-001, I-90).
 - **R-CR-04** Contractual notices carry a composite companion signature next to the eIDAS seal.
+
+## Journey UI (`12-journey-ui.md`)
+
+- **R-JV-01** Every proposal and grant shows its current position on the route and the formal state name.
+  AC: the route response for each of the 16 states contains the state name and a label.
+- **R-JV-02** The journey graph equals the state machine.
+  AC: the drift test fails if an edge or node is added, removed or renamed on one side only (I-95).
+- **R-JV-03** Diary entries respect the role visibility matrix.
+  AC: for each role in 7.2 and each kind, the visible set equals the matrix (I-93).
+- **R-JV-04** Submission produces a receipt with ledger sequence, time, audit-log anchor, and can email a copy.
+  AC: receipt matches ledger sequence, time, and audit anchor (I-24, O-56). Before the anchor is witnessed, the receipt says "anchor pending" and shows no anchor value. Email carries no extra content (R-SB-04).
+- **R-JV-05** Route map has a full text alternative and keyboard operation.
+  AC: automated WCAG 2.2 AA checks pass in light and dark themes.
+- **R-JV-06** Public route graphic works without script.
+  AC: the public page loads with scripts disabled and the SVG is present.
+- **R-JV-07** Overlay is computed from policy and original-call policy for deferred proposals.
+  AC: a deferred proposal shows the original call's P-07 after a later edit.
+- **R-JV-08** Planner can preview the voyager route for a draft programme.
+  AC: changing P-07 in the creator changes the previewed window text.
+- **R-JV-09** Journey vocabulary never reaches contracts, notices, Guide, funder documents or emails.
+  AC: a search of those templates for every Voyage-pack label finds none (I-94).
+- **R-JV-10** Stage 1 close shows the computed outcome only.
+  AC: UI offers no alternative outcome, and the server rejects one (R-LA-03).
+- **R-JV-11** Journey rows and responses hold no free text from ledger records.
+  AC: property test over random ledgers finds only `TextRef` values in rows. An erased text yields the placeholder (I-97).
+- **R-JV-12** Amounts in journey output are canonical ADR-006 strings.
+  AC: every amount field matches the canonical form. The frontend has no `Number` conversion of an amount.

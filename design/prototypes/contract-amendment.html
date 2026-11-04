@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contract amendment - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AK</span><span class="sr-only">Account: pm-a1k4</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Programme manager.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Programme manager</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="#">Home</a></li><li><a href="#">Programmes</a></li><li><a href="#">Calls</a></li><li><a href="planning-studio.html">Programme set-up</a></li><li><a href="contract-amendment.html" aria-current="page">Contracts</a></li><li><a href="funder-report.html">Funder reports</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Amendment version 2 of CTR-2026-0031 in AMENDMENT_PENDING. The grantee has signed. The funder signatory has not.</p>
+
+    <h1>Contract amendment</h1>
+    <dl class="facts">
+      <dt>Original contract</dt><dd class="pid">CTR-2026-0031, version 1</dd>
+      <dt>Amendment</dt><dd>Version 2</dd>
+      <dt>Status</dt><dd><span class="badge badge--warning">Amendment pending</span> <span class="state-name">AMENDMENT_PENDING</span></dd>
+    </dl>
+    <p><a href="#">Download current draft</a></p>
+    <section aria-labelledby="diff-h" class="diff">
+      <h2 id="diff-h">Changes from the previous version</h2>
+      <div class="line-card">
+        <h3>Clause 4.2: Milestone 2.1 due date</h3>
+        <p>Was: <del>Release 1.0 is due on 31 March 2027.</del></p>
+        <p>Now: <ins>Release 1.0 is due on 30 April 2027.</ins></p>
+        <p class="text-sm muted">Proposed by Grantee on <time datetime="2026-10-12">12 Oct 2026</time>.</p>
+      </div>
+      <div class="line-card">
+        <h3>Clause 5.1: Milestone amounts</h3>
+        <p>Was: <del>Milestone 2.1 is 14 000.00 EUR and milestone 2.2 is 14 500.00 EUR.</del></p>
+        <p>Now: <ins>Milestone 2.1 is 12 000.00 EUR and milestone 2.2 is 16 500.00 EUR.</ins></p>
+        <p class="text-sm muted">Proposed by Programme manager on <time datetime="2026-10-14">14 Oct 2026</time>. The total stays 40 000.00 EUR.</p>
+      </div>
+      <!-- TODO(legal): clause wording. The texts above are synthetic placeholders. -->
+    </section>
+    <section aria-labelledby="sign-h">
+      <h2 id="sign-h">Signatures for version 2</h2>
+      <table>
+        <caption>All parties sign again</caption>
+        <thead><tr><th scope="col">Party</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><td>Grantee</td><td><span class="badge badge--success">Signed</span> <time datetime="2026-10-20">20 Oct 2026</time></td></tr>
+          <tr><td>Contract signatory (Horizon Bridges)</td><td><span class="badge badge--warning">Pending</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <p class="callout callout--info"><strong>Proposal state:</strong> The proposal state does not change while an amendment is pending.</p>
+    <!-- TODO(legal): IRC review note wording for amendments and the P-14 threshold. -->
+    <p>IRC review applies if the amendment total exceeds P-14. The programme manager has confirmed no P-14 exemption applies.</p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

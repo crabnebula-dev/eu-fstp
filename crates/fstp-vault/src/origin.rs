@@ -278,7 +278,7 @@ pub enum JournalEntry {
         /// The epoch of the answer.
         epoch: u64,
     },
-    /// A programme's P-17 condition was set (`vault.p17_condition`).
+    /// A programme's P-17 condition was set (`vault.country_condition`).
     P17Set {
         /// The programme.
         programme: WireProgramme,
@@ -497,7 +497,7 @@ impl Vault {
     }
 
     /// Sets the P-17 countries of `programme` (NOTE 6), and journals a new
-    /// condition (`vault.p17_condition`), so it is fixed across restarts.
+    /// condition (`vault.country_condition`), so it is fixed across restarts.
     ///
     /// Open with Daniel: which message carries the condition to the vault.
     /// No internal request or provisioning input names it yet (design

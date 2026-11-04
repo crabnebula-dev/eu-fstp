@@ -6,19 +6,19 @@ The platform lets an operator run one or more FSTP programmes. Each programme is
 
 ## In scope
 
-- Multi-tenant SaaS and a self-hosted single-tenant deployment from the same codebase, in Rust on PostgreSQL.
+- Multi-tenant SaaS and a self-hosted single-tenant deployment from the same codebase, in Rust on PostgreSQL. Self-hosted packaging and installation are deferred by Daniel on 2026-11-04 (B-06); the pilot runs on SaaS.
 - Programme and call configuration within bounded policy parameters.
 - Submission, staged evaluation, independent review, negotiation, MoU, milestones and payments.
 - Separation of duties and conflict-of-interest enforcement per programme.
 - Identity verification at negotiation, including guardian consent for minors.
 - LLM assessment of every submission, and an applicant pre-submission check.
-- Tenant data export and import for switching.
+- Tenant data export and import for switching, deferred by Daniel on 2026-11-04 (B-07).
 - Contracts, payment requests, timeline-driven email notifications.
-- Group messaging over Matrix, and notifications over WhatsApp.
-- A white-labelled desktop client built with Tauri.
+- Group messaging over Matrix is deferred by Daniel on 2026-11-04 (B-05). Notifications over WhatsApp are deferred by Daniel on 2026-11-04 (B-03).
+- A white-labelled desktop client built with Tauri is deferred by Daniel on 2026-11-04 (B-04).
 - Public pages for open, funded and finished subgrants.
 - Funder documents, starting with a Horizon Europe profile.
-- Guided tenant onboarding, a programme creator and full white-labelling.
+- Guided tenant onboarding and a programme creator. Branding tokens and terminology overrides stay; full white-label packages and custom domains are deferred by Daniel on 2026-11-04 (B-09).
 - An MCP server so users and public agents can work with the platform, and an MCP client for external tools.
 
 ## Out of scope

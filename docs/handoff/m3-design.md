@@ -740,8 +740,13 @@ CREATE TABLE vault.negotiation (proposal_id uuid PRIMARY KEY, sealed_accounts by
 CREATE TABLE vault.ticket_used (ticket_id bytea PRIMARY KEY, used_at bigint NOT NULL);
 CREATE TABLE vault.query_log (n bigint PRIMARY KEY, at bigint NOT NULL, query_digest bytea NOT NULL,
   holds boolean NOT NULL, epoch bigint NOT NULL);
+CREATE TABLE vault.country_condition (programme_id uuid PRIMARY KEY,
+  countries bytea NOT NULL);   -- P-17 country condition, canonical JSON array of ascending codes; insert-only
 -- plus keystore.* and vault_audit.chain, vault_audit.anchor with the shapes and triggers of section 4.2
 ```
+
+- `vault.country_condition` holds each programme's P-17 country condition (NOTE 6, NOTE 9). Triggers refuse UPDATE, DELETE and TRUNCATE for every role, so a condition is fixed once set. The `vault` role holds SELECT and INSERT on it, through `cell_role_plan` like every other grant (section 4.1).
+- Daniel named the table on 2026-10-30 (section 21.0). The name has no digit, so the `apply_grant` object grammar of ADR-011 takes it. The earlier name `vault.p17_condition` was changed in place in `0003_vault.sql`, with no renaming migration. No production release comes before M10 (`m4-design.md` Q5), so no released database holds the old name.
 
 - Fact bodies hold verification records (outcome, method, document type, checks, time, verifier: R-ID-02, no document numbers or images), affiliations, relationships (I-54), guardian consents, the P-17 country (NOTE 6), and the programme-side and reviewer-side facts of section 6.8.
 - Bank details (M5), messaging handles (M8) and hardship evidence (M5) get their fact kinds in those milestones.
@@ -772,18 +777,45 @@ CREATE TABLE cp.job (id uuid PRIMARY KEY, cluster_id bytea NOT NULL, kind smalli
 
 CREATE SCHEMA witness;
 CREATE TABLE witness.anchor (cell_id bytea, chain smallint, n bigint, link bytea NOT NULL, at bigint NOT NULL,
-  signature bytea NOT NULL, received_at bigint NOT NULL, witness_seq bigint UNIQUE NOT NULL,
-  witness_link bytea NOT NULL, PRIMARY KEY (cell_id, chain, n));
+  signature bytea NOT NULL, received_at bigint NOT NULL, witness_seq bigint NOT NULL,
+  witness_link bytea NOT NULL, PRIMARY KEY (cell_id, chain, witness_seq), UNIQUE (cell_id, chain, n, link));
+CREATE TABLE witness.receipt (cell_id bytea, chain smallint, witness_seq bigint, signature bytea NOT NULL,
+  PRIMARY KEY (cell_id, chain, witness_seq), FOREIGN KEY (cell_id, chain, witness_seq) REFERENCES witness.anchor);
+CREATE TABLE witness.withdrawal (cell_id bytea, chain smallint, witness_seq bigint,
+  kind smallint NOT NULL CHECK (kind IN (2, 3)), n bigint NOT NULL, link bytea NOT NULL,
+  received_at bigint NOT NULL, witness_link bytea NOT NULL,
+  PRIMARY KEY (cell_id, chain, witness_seq), UNIQUE (cell_id, chain, n, link));   -- 2 abort, 3 in doubt
+CREATE TABLE witness.cell_ca (cell_id bytea PRIMARY KEY, ca_cert bytea NOT NULL, registered_at bigint NOT NULL);
+CREATE TABLE witness.anchor_key (cell_id bytea REFERENCES witness.cell_ca, chain smallint, public_key bytea,
+  registered_at bigint NOT NULL, PRIMARY KEY (cell_id, chain, public_key));
+-- every witness table refuses UPDATE, DELETE and TRUNCATE for every role
 ```
 
 - `org_ref` is an opaque reference into CrabNebula's accounting system. No legal name or contact is stored here (Q20).
 - `operator_ticket.case_ref` is the cell's opaque recovery or break-glass case reference, never an account id (I-20).
 - A database CHECK and the `Placement` type both forbid one cluster for both roles (I-83).
+- The witness tables are lane int5's shape, accepted by Daniel on 2026-10-30 (section 21.0, ADR-010 open point 4). The code is `crates/fstp-witness/migrations/witness/0003_witness.sql`.
+- Prepares in `witness.anchor` and withdrawals in `witness.withdrawal` share one `witness_seq` per cell and chain. It counts from 1 with no gap, under an advisory lock per cell and chain.
+- Both tables are keyed on (cell_id, chain, witness_seq), with (cell_id, chain, n, link) unique. A cell may prepare n again with another link after its abort is recorded, and a withdrawn head is never receipted again.
+- `witness.receipt` holds the composite receipt signature of each prepare. `witness.cell_ca` holds each pinned cell CA, registered at provisioning. `witness.anchor_key` holds the anchor key history of each chain.
+- `witness_service` holds INSERT and SELECT on anchor, receipt and withdrawal, and SELECT only on cell_ca and anchor_key. Only `witness_migrator` registers a cell.
 - `i19_control_plane_columns_are_declared` pins this exact column set to declared field classes.
 
 ### 4.5 Schema catalogue
 
-The types live in `fstp_migrate::catalogue`: `TableSpec { schema, name, class: TableClass, columns: &[ColumnSpec] }`. Each migration set's owner exports its own list next to its migrations: `fstp_pgstore::CATALOGUE` (app), `fstp_vault::CATALOGUE`, `fstp_control::CATALOGUE` (cp), `fstp_witness::CATALOGUE` and `fstp_release_svc::CATALOGUE` (licence). A test in `fstp-celltest` takes their union, so no lane edits another lane's list. `TableClass` is closed: `LedgerRecord`, `AuditEvent`, `SealedContent`, `KeyMaterial`, `Operational`, `Migration`, `Placement`. It has no class for a balance or a held amount (I-16). `ColumnSpec` marks each column as `Sealed`, `RandomId`, `Sequence`, `Time`, `Enum`, `SecretDigest` (a hash of a random secret), `KeyedDigest` (an HMAC under a key that erasure rotates) or `Count`. A test fails on any table or column missing from it, and on any clear column outside those classes (R-NF-08).
+The types live in `fstp_migrate::catalogue`: `TableSpec { schema, name, class: TableClass, columns: &[ColumnSpec] }`. Each migration set's owner exports its own list next to its migrations: `fstp_pgstore::CATALOGUE` (app), `fstp_vault::CATALOGUE`, `fstp_control::CATALOGUE` (cp), `fstp_witness::CATALOGUE` and `fstp_release_svc::CATALOGUE` (licence). A test in `fstp-celltest` takes their union, so no lane edits another lane's list. `TableClass` is closed: `LedgerRecord`, `AuditEvent`, `SealedContent`, `KeyMaterial`, `Operational`, `Migration`, `Placement`. It has no class for a balance or a held amount (I-16). `ColumnSpec` marks each column as `Sealed`, `RandomId`, `Sequence`, `Time`, `Enum`, `SecretDigest` (a hash of a random secret), `KeyedDigest` (an HMAC under a key that erasure rotates), `Count`, or one of the three public classes below. A test fails on any table or column missing from it, and on any clear column outside those classes (R-NF-08).
+
+Daniel added three closed public classes on 2026-10-30 (section 21.0). None holds personal data or content. Each is checked by type and exact length, or by a bounded length where the encoding allows no exact one.
+
+| Class | Holds | Check |
+| --- | --- | --- |
+| `PublicDigest` | A link hash: SHA-256 over a chain head | `bytea`, exactly 32 bytes |
+| `Signature` | A composite signature (ADR-010 "Composite encoding") | `bytea`, exactly `fstp_crypto::composite::SIGNATURE_LEN` bytes |
+| `PublicKeyMaterial` | A pinned certificate or a composite public key | `bytea`. A key is exactly `fstp_crypto::composite::PUBLIC_KEY_LEN` bytes. A DER certificate has no fixed length, so it is bounded |
+
+The witness catalogue classes its columns with them: `link` and `witness_link` are `PublicDigest`, `signature` is `Signature`, and `ca_cert` and `public_key` are `PublicKeyMaterial`. The `link` and `signature` columns of `audit.anchor` and `vault_audit.anchor` take the same classes.
+
+The migrations check every such column. Each `link` and `witness_link` has a CHECK of exactly 32 bytes. Each `signature` in `witness.anchor`, `witness.receipt`, `audit.anchor` and `vault_audit.anchor` has a CHECK of exactly 3373 bytes, mldsaSig (3309) then tradSig (64). `witness.anchor_key.public_key` has a CHECK of exactly 1984 bytes, the ML-DSA-65 key (1952) then the Ed25519 key (32). `witness.cell_ca.ca_cert` is bounded to 1 to 16384 bytes, `fstp_witness::peer::MAX_CERT_LEN`, the longest certificate the witness reads. A catalogue test in `fstp-celltest` fails when any column of a public class is not a `bytea` with a length CHECK.
 
 ### 4.6 Migrations
 
@@ -2071,6 +2103,10 @@ Daniel gave further answers on 2026-10-29:
 | Decline during an age conflict | Allowed when another decline ground holds | The decline treats the adult query as optional: an unanswered query removes only the ground that needs it. An engine change for that command |
 | G14 functions | Revoke the `pg_stat_get_*` functions too | Section 4.1. W2h revokes them and W1f checks it |
 | Rules version at GRANTED | A new rules version | Decisions under the new guard set carry it |
+| Witness column classes (2026-10-30) | Add three public classes | Section 4.5 gains three closed classes: a public digest (link hashes), a signature (composite signatures) and public key material (pinned certificates and public keys). None holds personal data or content, and each is checked by type and length. The witness catalogue classes its columns with them, so the i19 and R-NF-08 catalogue tests can pass |
+| Witness anchor key (2026-10-30) | Accept lane int5's key | Section 4.4 is amended: `witness.anchor` and `witness.withdrawal` are keyed on (cell_id, chain, witness_seq), with (cell_id, chain, n, link) unique. A cell may prepare n again with another link after its abort is recorded, and a withdrawn head is never receipted again. The three extra tables of ADR-010 open point 4 are accepted |
+| vault.p17_condition grant (2026-10-30) | Rename the table | The table gets a letters-only name in the vault migrations and code, recorded in section 4.3. The `apply_grant` grammar of ADR-011 stays as accepted, and the vault role's SELECT and INSERT move into `cell_role_plan`. `P17_CONDITION_GRANT_SEAM` is then deleted |
+| Hardware and development mode (2026-11-01) | Run on any hardware; warn, do not refuse; never fail in development mode | fstp-keyd starts on Linux, macOS and Windows. It reports full I-81 assurance only on a Linux ext4 or XFS key volume. Anywhere else it reports reduced assurance with the reason, for example "APFS is copy-on-write", and continues. The deployment has a mode, production or development. In development mode every host and platform check warns and never stops a start; in production the same checks warn and continue where this row says so. The I-81 note in invariants.md records this. `i81_keyd_refuses_copy_on_write_key_volume` becomes a test that such a volume never reports full assurance |
 
 ### 21.1 These block the milestone
 

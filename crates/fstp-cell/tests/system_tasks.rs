@@ -17,6 +17,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+mod stepup_common;
+
 use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -130,12 +132,21 @@ const SETUP_AT: i64 = END_AT - HOUR_US;
 /// The binding of account A.
 const BINDING_A: BindingId = BindingId::from_raw(500);
 
-/// Runs `cmd` as the tenant admin through the gate at `SETUP_AT`, with a
-/// fresh strong step-up when it is high risk.
-async fn as_admin(engine: &CellEngine, cmd: CellCommand, id: u8) -> Result<(), String> {
+/// The tenant admin's session.
+const SESSION: [u8; 16] = [0x5E; 16];
+
+/// Runs `cmd` as the tenant admin through the gate at `SETUP_AT`, with
+/// the fresh strong step-up `stepup` that the ledger granted, when it is
+/// high risk.
+async fn as_admin(
+    engine: &CellEngine,
+    cmd: CellCommand,
+    id: u8,
+    stepup: Option<[u8; 16]>,
+) -> Result<(), String> {
     let now = Timestamp::from_micros(SETUP_AT);
     let session = SessionView {
-        id: [0x5E; 16],
+        id: SESSION,
         account: ADMIN,
         method: Method::Passkey,
         started: now,
@@ -144,8 +155,8 @@ async fn as_admin(engine: &CellEngine, cmd: CellCommand, id: u8) -> Result<(), S
     let command_id = [id; 16];
     let action = Action::Command(cmd.clone());
     let high = HighRiskAction::of(&action).map_err(|d| format!("{d:?}"))?;
-    let stepup = high.map(|_| StepUpView {
-        id: [id ^ 0xFF; 16],
+    let stepup = high.zip(stepup).map(|(_, stepup)| StepUpView {
+        id: stepup,
         session: session.id,
         action_digest: action_digest(&cmd, command_id),
         asserted_at: now,
@@ -172,26 +183,15 @@ async fn as_admin(engine: &CellEngine, cmd: CellCommand, id: u8) -> Result<(), S
         .map_err(|e| format!("the setup command failed: {e:?}"))
 }
 
-/// The ledger of the timeline scenario: the tenant admin, a programme,
-/// and A's Drafting binding with its end scheduled for [`END_AT`].
-async fn timeline_setup(engine: &CellEngine) -> Result<(), String> {
-    as_admin(
-        engine,
-        CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
-        0xA0,
-    )
-    .await?;
+/// The commands of the timeline scenario, each with its command id
+/// byte: the tenant admin, a programme, and A's Drafting binding with its
+/// end scheduled for [`END_AT`].
+fn setup_commands() -> Result<Vec<(CellCommand, u8)>, String> {
     let create = SodSetup::one(1, &[])
         .steps()?
         .into_iter()
         .next()
         .ok_or("no programme step")?;
-    as_admin(
-        engine,
-        CellCommand::Engine(fstp_engine::Command::Core(create.cmd)),
-        0xA1,
-    )
-    .await?;
     let mut g = grant(
         BINDING_A,
         A,
@@ -203,12 +203,49 @@ async fn timeline_setup(engine: &CellEngine) -> Result<(), String> {
     if let fstp_domain::Command::GrantRole { end, .. } = &mut g {
         *end = Some(Timestamp::from_micros(END_AT));
     }
-    as_admin(
-        engine,
-        CellCommand::Engine(fstp_engine::Command::Core(g)),
-        0xA2,
-    )
-    .await
+    Ok(vec![
+        (
+            CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
+            0xA0,
+        ),
+        (
+            CellCommand::Engine(fstp_engine::Command::Core(create.cmd)),
+            0xA1,
+        ),
+        (CellCommand::Engine(fstp_engine::Command::Core(g)), 0xA2),
+    ])
+}
+
+/// The setup commands, each with its command id byte and the step-up the
+/// ledger granted for it.
+type Setup = Vec<(CellCommand, u8, Option<[u8; 16]>)>;
+
+/// An empty store that holds, granted at `SETUP_AT`, the step-up of each
+/// high-risk setup command (`stepup_common`), and the setup commands with
+/// their step-ups.
+fn setup_store() -> Result<(MemStore<fstp_cell_core::CellRecord>, Setup), String> {
+    let mut mem = MemStore::new();
+    let mut setup = Vec::new();
+    for (cmd, id) in setup_commands()? {
+        let high =
+            HighRiskAction::of(&Action::Command(cmd.clone())).map_err(|d| format!("{d:?}"))?;
+        let stepup = match high {
+            None => None,
+            Some(_) => Some(stepup_common::grant_stepup(
+                &mut mem, SESSION, ADMIN, &cmd, [id; 16], SETUP_AT,
+            )?),
+        };
+        setup.push((cmd, id, stepup));
+    }
+    Ok((mem, setup))
+}
+
+/// Runs the setup commands through the gate.
+async fn timeline_setup(engine: &CellEngine, setup: Setup) -> Result<(), String> {
+    for (cmd, id, stepup) in setup {
+        as_admin(engine, cmd, id, stepup).await?;
+    }
+    Ok(())
 }
 
 /// Seam: starts a cell over in-memory parts where account A holds a
@@ -228,7 +265,9 @@ fn run_timeline(ticks: &[i64], restart_after: Option<usize>) -> Result<Vec<Issue
     let rt2 = rt.clone();
     let ticks = ticks.to_vec();
     rt.block_on(async move {
-        let store = Unanchored::open(MemStore::new(), CELL)
+        let (mem, setup) =
+            setup_store().map_err(|e| Box::leak(e.into_boxed_str()) as &'static str)?;
+        let store = Unanchored::open(mem, CELL)
             .await
             .map_err(|_| "the store did not open")?;
         let mut shutdown = Shutdown::new();
@@ -236,7 +275,7 @@ fn run_timeline(ticks: &[i64], restart_after: Option<usize>) -> Result<Vec<Issue
             CellEngine::start(&rt2, store, TruthVault(sod_truth()), &shutdown, 8)
                 .await
                 .map_err(|_| "the engine did not start")?;
-        timeline_setup(&engine)
+        timeline_setup(&engine, setup)
             .await
             .map_err(|e| Box::leak(e.into_boxed_str()) as &'static str)?;
         let mut out = Vec::new();

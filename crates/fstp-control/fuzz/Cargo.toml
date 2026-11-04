@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-control = { path = ".." }
+fstp-cp-proto = { path = "../../fstp-cp-proto" }
 
 [[bin]]
 name = "cp_api_decode"

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up your organisation - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li><li><a href="onboarding.html" aria-current="page">Set-up</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Onboarding wizard with all 9 steps as panels and synthetic values. Step 1 (Organisation) is current. Steps 2 to 9 are locked until the previous step validates.</p>
+
+    <h1>Set up your organisation</h1>
+    <p class="callout callout--warning"><strong>SoD-07:</strong> At least two tenant admins must be set up before the organisation can be activated (SoD-07).</p>
+    <nav aria-label="Onboarding steps">
+      <ol class="steps-bar">
+        <li aria-current="step">1. Organisation <span class="sr-only">(current step)</span></li>
+        <li>2. Agreements <span class="badge badge--neutral">Locked</span></li>
+        <li>3. Branding <span class="badge badge--neutral">Locked</span></li>
+        <li>4. Domains and email <span class="badge badge--neutral">Locked</span></li>
+        <li>5. Identity <span class="badge badge--neutral">Locked</span></li>
+        <li>6. Inference <span class="badge badge--neutral">Locked</span></li>
+        <li>7. Payments <span class="badge badge--neutral">Locked</span></li>
+        <li>8. Channels <span class="badge badge--neutral">Locked</span></li>
+        <li>9. Administrators <span class="badge badge--neutral">Locked</span></li>
+      </ol>
+    </nav>
+    <p>Each step must be completed and validated before the next opens. You can save and return at any time.</p>
+    <section id="step-1" aria-labelledby="step-1-h">
+    <p class="step-count text-sm">Step 1 of 9</p>
+    <form method="post" action="#">
+      <h2 id="step-1-h">Step 1: Organisation</h2>
+      <div class="field"><label for="le">Legal entity name</label><input id="le" type="text" value="Horizon Bridges"></div>
+      <div class="field"><label for="addr">Registered address</label><textarea id="addr">12 Example Street, 1000 Synthetic City, Malta</textarea></div>
+      <fieldset><legend>Data protection contact</legend>
+        <div class="field"><label for="dpc-n">Name</label><input id="dpc-n" type="text" value="L. Farrugia"></div>
+        <div class="field"><label for="dpc-e">Email</label><input id="dpc-e" type="email" value="privacy@horizon-bridges.example"></div>
+      </fieldset>
+      <fieldset><legend>Signatory 1</legend>
+        <div class="field"><label for="s1-n">Name, signatory 1</label><input id="s1-n" type="text" value="A. Chen"></div>
+        <div class="field"><label for="s1-r">Role, signatory 1</label><input id="s1-r" type="text" value="Managing director"></div>
+        <div class="field"><label for="s1-e">Email, signatory 1</label><input id="s1-e" type="email" value="a.chen@horizon-bridges.example"></div>
+      </fieldset>
+      <fieldset><legend>Signatory 2</legend>
+        <div class="field"><label for="s2-n">Name, signatory 2</label><input id="s2-n" type="text" value="M. Diop"></div>
+        <div class="field"><label for="s2-r">Role, signatory 2</label><input id="s2-r" type="text" value="Head of programmes"></div>
+        <div class="field"><label for="s2-e">Email, signatory 2</label><input id="s2-e" type="email" value="m.diop@horizon-bridges.example"></div>
+      </fieldset>
+      <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why">Save and continue<span class="sr-only"> step 1</span></button></div>
+      <p id="cont-why" class="text-sm muted">Saving validates step 1 and opens step 2. Static prototype: this action needs script.</p>
+    </form>
+    </section>
+
+    <hr>
+    <section id="step-2" aria-labelledby="step-2-h">
+      <p class="step-count text-sm">Step 2 of 9</p>
+      <h2 id="step-2-h">Step 2: Agreements</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-1">Back to step 1: Organisation</a></p>
+      <form method="post" action="#">
+        <div class="line-card">
+          <h3>SaaS terms</h3>
+          <!-- TODO(legal): SaaS terms description text. -->
+          <p class="text-sm muted">Description pending legal review.</p>
+          <p><span class="badge badge--success">Signed 2026-10-15</span> <a href="#">Download<span class="sr-only"> SaaS terms</span></a></p>
+          <div class="btn-row"><!-- TODO(js): Re-sign needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="saas-why">Re-sign<span class="sr-only"> SaaS terms</span></button></div>
+          <p id="saas-why" class="text-sm muted">Re-signing opens the signature flow for a new version. Static prototype: this action needs script.</p>
+        </div>
+        <div class="line-card">
+          <h3>Data processing agreement</h3>
+          <!-- TODO(legal): Data processing agreement description text. -->
+          <p class="text-sm muted">Description pending legal review.</p>
+          <p><span class="badge badge--success">Signed 2026-10-15</span> <a href="#">Download<span class="sr-only"> Data processing agreement</span></a></p>
+          <div class="btn-row"><!-- TODO(js): Re-sign needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="dpa-why">Re-sign<span class="sr-only"> Data processing agreement</span></button></div>
+          <p id="dpa-why" class="text-sm muted">Re-signing opens the signature flow for a new version. Static prototype: this action needs script.</p>
+        </div>
+        <div class="line-card">
+          <h3>Sub-processor list</h3>
+          <p><a href="#">View current list</a></p>
+          <!-- TODO(legal): sub-processor notice wording and the change notification period. -->
+          <p>The sub-processor list is updated by the platform operator. You are notified of changes.</p>
+        </div>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-2">Save and continue<span class="sr-only"> step 2</span></button></div>
+        <p id="cont-why-2" class="text-sm muted">Saving validates step 2 and opens step 3. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-3" aria-labelledby="step-3-h">
+      <p class="step-count text-sm">Step 3 of 9</p>
+      <h2 id="step-3-h">Step 3: Branding</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-2">Back to step 2: Agreements</a></p>
+      <form method="post" action="#">
+        <p>Full branding settings are available in Administration &gt; Branding after activation. <a href="admin-branding.html">Open branding</a></p>
+        <div class="field"><label for="ob-name">Organisation name</label><input id="ob-name" type="text" value="Horizon Bridges" readonly aria-describedby="ob-name-hint"><span class="hint" id="ob-name-hint">Taken from step 1. Read only.</span></div>
+        <!-- TODO(js): logo upload and preview need script in production. -->
+        <div class="field"><label for="ob-logo-l">Logo, light variant (SVG or PNG)</label><input id="ob-logo-l" type="file" accept="image/svg+xml,image/png" disabled aria-describedby="logo-why"></div>
+        <div class="field"><label for="ob-logo-d">Logo, dark variant (SVG or PNG)</label><input id="ob-logo-d" type="file" accept="image/svg+xml,image/png" disabled aria-describedby="logo-why"></div>
+        <p id="logo-why" class="text-sm muted">Placeholder upload slots. Static prototype: this action needs script.</p>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-3">Save and continue<span class="sr-only"> step 3</span></button></div>
+        <p id="cont-why-3" class="text-sm muted">Saving validates step 3 and opens step 4. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-4" aria-labelledby="step-4-h">
+      <p class="step-count text-sm">Step 4 of 9</p>
+      <h2 id="step-4-h">Step 4: Domains and email</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-3">Back to step 3: Branding</a></p>
+      <form method="post" action="#">
+        <p>Detailed domain and email settings are in Administration &gt; Domains after activation. <a href="admin-domains.html">Open domains and email</a></p>
+        <div class="field"><label for="ob-dom">Primary domain</label><input id="ob-dom" type="text" value="horizon-bridges.example"></div>
+        <div class="field"><label for="ob-from">Sending email address</label><input id="ob-from" type="email" value="noreply@horizon-bridges.example"></div>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-4">Save and continue<span class="sr-only"> step 4</span></button></div>
+        <p id="cont-why-4" class="text-sm muted">Saving validates step 4 and opens step 5. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-5" aria-labelledby="step-5-h">
+      <p class="step-count text-sm">Step 5 of 9</p>
+      <h2 id="step-5-h">Step 5: Identity</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-4">Back to step 4: Domains and email</a></p>
+      <form method="post" action="#">
+        <fieldset><legend>EUDI Wallet relying party mode</legend>
+          <div class="choice"><input type="checkbox" role="switch" id="ob-eudi" checked><label for="ob-eudi">Accept EUDI Wallet credentials (P-45).</label> <span class="badge badge--success">On</span></div>
+        </fieldset>
+        <fieldset><legend>Verification methods (P-18)</legend>
+          <div class="choice"><input type="checkbox" id="ob-vm-eudi" checked><label for="ob-vm-eudi">EUDI Wallet (qualified)</label></div>
+          <div class="choice"><input type="checkbox" id="ob-vm-qtsp" checked><label for="ob-vm-qtsp">Remote qualified (QTSP)</label></div>
+        </fieldset>
+        <p class="callout callout--info"><strong>Not a verification method:</strong> Advanced signature is a fallback signing route (P-30), not a verification method. It is configured in the contract signing flow, not here.</p>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-5">Save and continue<span class="sr-only"> step 5</span></button></div>
+        <p id="cont-why-5" class="text-sm muted">Saving validates step 5 and opens step 6. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-6" aria-labelledby="step-6-h">
+      <p class="step-count text-sm">Step 6 of 9</p>
+      <h2 id="step-6-h">Step 6: Inference</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-5">Back to step 5: Identity</a></p>
+      <form method="post" action="#">
+        <div class="field"><label for="ob-inf">Inference provider</label><select id="ob-inf"><option selected>Hosted endpoint (platform default)</option><option>Custom endpoint</option></select></div>
+        <div class="field"><label for="ob-model">Model (P-21)</label><input id="ob-model" type="text" value="fstp-default-v2"></div>
+        <p>Self-hosted cells can point at a local endpoint serving open-weight models.</p>
+        <p class="callout callout--info"><strong>Data handling:</strong> PII is stripped from input before inference. The assessor has no write access to domain state.</p>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-6">Save and continue<span class="sr-only"> step 6</span></button></div>
+        <p id="cont-why-6" class="text-sm muted">Saving validates step 6 and opens step 7. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-7" aria-labelledby="step-7-h">
+      <p class="step-count text-sm">Step 7 of 9</p>
+      <h2 id="step-7-h">Step 7: Payments</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-6">Back to step 6: Inference</a></p>
+      <form method="post" action="#">
+        <fieldset><legend>Payment mode (P-20)</legend>
+          <div class="choice"><input type="radio" id="ob-pm-rec" name="ob-pm" checked><label for="ob-pm-rec">Record-only: export approved payments to your finance system</label></div>
+          <div class="choice"><input type="radio" id="ob-pm-exe" name="ob-pm"><label for="ob-pm-exe">Execution: generate SEPA payment instructions against your bank account</label></div>
+        </fieldset>
+        <div class="field"><label for="ob-bank">Bank interface</label><input id="ob-bank" type="text" value="Not configured" disabled aria-describedby="ob-bank-note"><span class="hint" id="ob-bank-note">Available in Execution mode only.</span></div>
+        <p class="callout callout--info"><strong>I-16:</strong> The platform never holds or controls funds (I-16).</p>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-7">Save and continue<span class="sr-only"> step 7</span></button></div>
+        <p id="cont-why-7" class="text-sm muted">Saving validates step 7 and opens step 8. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-8" aria-labelledby="step-8-h">
+      <p class="step-count text-sm">Step 8 of 9</p>
+      <h2 id="step-8-h">Step 8: Channels</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-7">Back to step 7: Payments</a></p>
+      <form method="post" action="#">
+        <div class="field"><label for="ob-mx">Matrix homeserver</label><input id="ob-mx" type="text" value="matrix.horizon-bridges.example" aria-describedby="ob-mx-st"></div>
+        <p id="ob-mx-st"><span class="badge badge--success">Reachable</span></p>
+        <div class="field"><label for="ob-wa">WhatsApp Business account</label><input id="ob-wa" type="tel" value="+32 2 000 0000" aria-describedby="ob-wa-note"><span class="hint" id="ob-wa-note">This must be a tenant-owned account (O-21).</span></div>
+        <p>Email is the primary channel and the durable record for contractual notices. Matrix and WhatsApp are opt-in per user.</p>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-8">Save and continue<span class="sr-only"> step 8</span></button></div>
+        <p id="cont-why-8" class="text-sm muted">Saving validates step 8 and opens step 9. Static prototype: this action needs script.</p>
+      </form>
+    </section>
+
+    <hr>
+    <section id="step-9" aria-labelledby="step-9-h">
+      <p class="step-count text-sm">Step 9 of 9</p>
+      <h2 id="step-9-h">Step 9: Administrators</h2>
+      <p class="callout callout--info"><strong>Locked:</strong> This step opens after the previous step is completed and validated.</p>
+      <p><a href="#step-8">Back to step 8: Channels</a></p>
+      <form method="post" action="#">
+        <table>
+          <caption>2 tenant admin accounts</caption>
+          <thead><tr><th scope="col">Account</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+            <tr><td>a.chen@horizon-bridges.example</td><td><span class="badge badge--success">Confirmed</span></td></tr>
+            <tr><td>m.diop@horizon-bridges.example</td><td><span class="badge badge--success">Confirmed</span></td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row"><!-- TODO(js): Invite another admin needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="inv-why">Invite another admin</button></div>
+        <p id="inv-why" class="text-sm muted">Sends an invitation by email. Static prototype: this action needs script.</p>
+        <p>Financial signatory and Legal signatory are tenant-wide roles. One person may hold both signatory roles.</p>
+        <p>You can add or change any role later in Administration &gt; Members and roles (<a href="admin-members.html">Members and roles</a>).</p>
+        <h3 id="fin-sig-h">Financial signatory</h3>
+        <table aria-labelledby="fin-sig-h">
+          <caption>Financial signatory: 2 holders</caption>
+          <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+            <tr><td>M. Diop</td><td>m.diop@horizon-bridges.example</td><td><span class="badge badge--success">Assigned</span></td></tr>
+            <tr><td>K. Wu</td><td>k.wu@horizon-bridges.example</td><td><span class="badge badge--success">Assigned</span></td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row"><!-- TODO(js): Assign needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="fin-sig-why">Assign<span class="sr-only"> Financial signatory</span></button></div>
+        <p id="fin-sig-why" class="text-sm muted">Opens the member picker for Financial signatory. At least one holder is required. Static prototype: this action needs script.</p>
+        <h3 id="leg-sig-h">Legal signatory</h3>
+        <table aria-labelledby="leg-sig-h">
+          <caption>Legal signatory: 2 holders</caption>
+          <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+            <tr><td>A. Chen</td><td>a.chen@horizon-bridges.example</td><td><span class="badge badge--success">Assigned</span></td></tr>
+            <tr><td>K. Wu</td><td>k.wu@horizon-bridges.example</td><td><span class="badge badge--success">Assigned</span></td></tr>
+          </tbody>
+        </table>
+        <div class="btn-row"><!-- TODO(js): Assign needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="leg-sig-why">Assign<span class="sr-only"> Legal signatory</span></button></div>
+        <p id="leg-sig-why" class="text-sm muted">Opens the member picker for Legal signatory. At least one holder is required. Static prototype: this action needs script.</p>
+        <div class="btn-row"><!-- TODO(js): Save and continue needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="cont-why-9">Save and continue<span class="sr-only"> step 9</span></button></div>
+        <p id="cont-why-9" class="text-sm muted">Saving validates step 9. Static prototype: this action needs script.</p>
+        <p class="callout callout--warning"><strong>Activation requires:</strong> at least two tenant admins confirmed (SoD-07), a Financial signatory assigned, and a Legal signatory assigned. One person may hold both signatory roles.</p>
+        <section class="line-card" aria-labelledby="act-st-h">
+          <h3 id="act-st-h">Activation approval</h3>
+          <dl class="facts">
+            <dt>Setup completed by</dt><dd class="pid">a.chen@horizon-bridges.example</dd>
+            <dt>Awaiting approval by</dt><dd><span class="pid">m.diop@horizon-bridges.example</span> (second admin, did not complete setup)</dd>
+            <dt>Status</dt><dd><span class="badge badge--warning">Awaiting second admin</span></dd>
+          </dl>
+          <div class="btn-row"><!-- TODO(js): Approve activation needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="appr-act-why">Approve activation</button></div>
+          <p id="appr-act-why" class="text-sm muted">Only m.diop@horizon-bridges.example can approve. The account that completed the setup cannot approve it. Static prototype: this action needs script.</p>
+        </section>
+        <div class="btn-row"><!-- TODO(js): Activate organisation needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="act-why">Activate organisation</button></div>
+        <p id="act-why" class="text-sm muted">Available when two tenant admins are confirmed (SoD-07), a Financial signatory is assigned and a Legal signatory is assigned. Activation must be approved by a second tenant admin who did not complete this setup. This is by analogy with I-67 (programme activation). A new rule is pending spec amendment (Q29). Static prototype: this action needs script.</p>
+      </form>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

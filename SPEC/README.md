@@ -18,6 +18,7 @@ Status: design draft for handoff to Claude Code. Design work runs on Claude Opus
 10. `07-test-plan/`
 11. `08-hardening/`
 12. `09-milestones.md`
+    12a. `12-journey-ui.md`: the journey UI layer, its vocabulary pack, route map and Passage Diary
 13. `10-open-questions.md`
     13a. `11-backlog.md`: deferred features and reserved identifiers
 14. `schemas/`: tenant export schema (separately open-licensed)

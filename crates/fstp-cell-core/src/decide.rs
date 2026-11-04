@@ -52,11 +52,25 @@
 //! - A release ticket goes to a tenant admin or an Operations holder of
 //!   the programme, for a proposal in NEGOTIATION, GRANTED,
 //!   IN_EXECUTION, COMPLETED or TERMINATED (I-17, design section 6.5).
+//! - Interim: the `SessionEnded` reactions of design section 5.1 are
+//!   recorded when the route or task gives the live session rows
+//!   ([`RouteInputs`]). Without rows a grant or an end commits without
+//!   them. The gate refuses those sessions either way (design section 5.4
+//!   step 2), so the rows carry visibility, not the guarantee. The
+//!   commands whose batch is a session end (`EndSession`,
+//!   `RevokeCredential`, `CompleteRecovery`, `EndSessionsAtBindingEnd`)
+//!   are refused without rows. After `CompleteRecovery` the gate also
+//!   refuses every session of the account that started by its entry
+//!   instant (I-79). `RevokeCredential` has no such backstop: the gate's
+//!   `SessionView` does not name the credential a session logged in with.
+//! - A digest holds every approval its admins recorded, and a grant uses
+//!   the first that admits it. Only a used digest refuses a new approval
+//!   (SoD-07, Q40, as the W1b reference rule reads it).
 
 use std::collections::BTreeSet;
 
 use fstp_domain::command::{Actor, Ctx, SystemCause, Via};
-use fstp_domain::id::{AccountId, CommandId, ProposalId, VaultEpoch};
+use fstp_domain::id::{AccountId, BindingId, CommandId, ProposalId, VaultEpoch};
 use fstp_domain::oracle::{Answers, Query};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::{Group, Role};
@@ -68,6 +82,7 @@ use crate::codec::{
     MAX_CREDENTIAL, MAX_OPAQUE, MAX_TEXT_IDS, decode_cell_record, encode_cell_command,
     encode_cell_record, grant_without_second_admin,
 };
+use crate::inputs::{RouteInputs, SessionRows};
 use crate::ops::OpsCommand;
 use crate::release::{ReleaseCommand, ReleaseRecord};
 use crate::state::TextStatus;
@@ -281,12 +296,16 @@ pub(crate) fn attestation(
     ) = (cmd, id_at)
         && *account == actor
         && let Some(digest) = self_grant_digest(cmd, id)
-        && let Some(approval) = tenant.approval(&digest)
-        && !approval.used
-        && approval.approver == *named
-        && approval.approver != actor
-        && tenant.is_admin(approval.approver)
-        && now.micros() <= approval.expires_at
+        && let Some(approval) = tenant.approvals(&digest).iter().find(|a| {
+            // The first approval that admits the grant, as the W1b
+            // reference rule takes it. An approval that cannot admit it,
+            // such as the grantor's own, never hides a later one.
+            !a.used
+                && a.approver == *named
+                && a.approver != actor
+                && tenant.is_admin(a.approver)
+                && now.micros() <= a.expires_at
+        })
     {
         a.second = Some(approval.approver);
         a.approval = Some(digest);
@@ -357,6 +376,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
+            | CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. })
     )
 }
 
@@ -379,7 +399,9 @@ fn overdue(s: &CellState, c: &CellCommand, now: Timestamp) -> Result<(), CellRef
         CellCommand::Engine(_)
             | CellCommand::Auth(_)
             | CellCommand::Ops(OpsCommand::EndBreakGlass { .. })
-            | CellCommand::Tenant(TenantCommand::EndTenantAdmin { .. })
+            | CellCommand::Tenant(
+                TenantCommand::EndTenantAdmin { .. } | TenantCommand::EnrolByInvitation { .. }
+            )
     ) {
         return Ok(());
     }
@@ -459,7 +481,7 @@ pub(crate) fn queries_with(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the command, who issues it, its instant and id, its step-up instant and its answers"
+    reason = "the command, who issues it, its instant and id, its step-up instant, its route inputs and its answers"
 )]
 pub(crate) fn decide_with(
     s: &CellState,
@@ -468,11 +490,93 @@ pub(crate) fn decide_with(
     at: i64,
     command: Option<[u8; 16]>,
     stepup_at: Option<Timestamp>,
+    inputs: &RouteInputs,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
-    let batch = decide_unchecked(s, c, who, at, command, stepup_at, answers)?;
+    let mut batch = decide_unchecked(s, c, who, at, command, stepup_at, inputs, answers)?;
+    if let Some(rows) = inputs.sessions() {
+        let reactions = session_reactions(s, &batch, rows, Timestamp::from_micros(at));
+        batch.extend(reactions);
+    }
     storable(&batch)?;
     Ok(batch)
+}
+
+/// The `SessionEnded` reactions of `batch` over the live session rows
+/// `rows` (design section 5.1 "Reactions", Q16 A, interim, pending
+/// Daniel):
+///
+/// - A grant of a Drafting, Judging, Operations or tenant admin role ends
+///   that account's weak sessions (`fstp_auth::session::ended_by_grant`).
+/// - An ended, suspended or voided binding of those groups, and an ended
+///   tenant admin grant, end every session of the account that started at
+///   or before the instant (`fstp_auth::session::ended_by_binding_end`).
+///   A recorded end takes the instant it names, and a suspension or a
+///   voiding the batch instant.
+///
+/// A session the batch ends already, or the ledger ended, is never named
+/// again. The gate refuses these sessions whether or not the reaction is
+/// recorded (design section 5.4 step 2), so the guarantee never rests on
+/// the rows. The record makes the end visible and writes its
+/// `auth_log.session_end` row.
+fn session_reactions(
+    s: &CellState,
+    batch: &[CellRecord],
+    rows: &SessionRows,
+    now: Timestamp,
+) -> Vec<CellRecord> {
+    use fstp_auth::session::{ended_by_binding_end, ended_by_grant};
+    use fstp_domain::Record as R;
+    let management = |b: BindingId| {
+        s.engine()
+            .core
+            .roster()
+            .binding(b)
+            .filter(|b| b.group() != Group::Receiving)
+            .map(|b| b.account)
+    };
+    let mut ended: Vec<[u8; 16]> = Vec::new();
+    for r in batch {
+        match r {
+            CellRecord::Engine(fstp_engine::Record::Core(R::BindingGranted(g)))
+                if g.role.group() != Group::Receiving =>
+            {
+                ended.extend(ended_by_grant(&rows.of(s, g.account), g.account));
+            }
+            CellRecord::Engine(fstp_engine::Record::Core(R::BindingEnded(e))) => {
+                if let Some(a) = management(e.binding) {
+                    ended.extend(ended_by_binding_end(&rows.of(s, a), a, e.at));
+                }
+            }
+            CellRecord::Engine(fstp_engine::Record::Core(
+                R::BindingSuspended(fstp_domain::record::BindingSuspended { binding, .. })
+                | R::BindingVoided(fstp_domain::record::BindingVoided { binding, .. }),
+            )) => {
+                if let Some(a) = management(*binding) {
+                    ended.extend(ended_by_binding_end(&rows.of(s, a), a, now));
+                }
+            }
+            CellRecord::Tenant(TenantRecord::TenantAdminGranted { account }) => {
+                ended.extend(ended_by_grant(&rows.of(s, *account), *account));
+            }
+            CellRecord::Tenant(TenantRecord::TenantAdminEnded { account }) => {
+                ended.extend(ended_by_binding_end(&rows.of(s, *account), *account, now));
+            }
+            _ => {}
+        }
+    }
+    let mut seen: BTreeSet<[u8; 16]> = batch
+        .iter()
+        .filter_map(|r| match r {
+            CellRecord::Auth(fstp_auth::AuthRecord::SessionEnded { session }) => Some(*session),
+            _ => None,
+        })
+        .collect();
+    ended
+        .into_iter()
+        .filter(|id| seen.insert(*id))
+        .map(|session| CellRecord::Auth(fstp_auth::AuthRecord::SessionEnded { session }))
+        .collect()
 }
 
 /// Refuses a batch that holds a record the store cannot read back: one
@@ -492,7 +596,7 @@ fn storable(batch: &[CellRecord]) -> Result<(), CellRefusal> {
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the command, who issues it, its instant and id, its step-up instant and its answers"
+    reason = "the command, who issues it, its instant and id, its step-up instant, its route inputs and its answers"
 )]
 fn decide_unchecked(
     s: &CellState,
@@ -501,13 +605,14 @@ fn decide_unchecked(
     at: i64,
     command: Option<[u8; 16]>,
     stepup_at: Option<Timestamp>,
+    inputs: &RouteInputs,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     let now = Timestamp::from_micros(at);
     clock(s, now)?;
     let actor = match who {
         Who::Account(actor) => actor,
-        Who::System(task) => return decide_system(s, c, task, now, command, answers),
+        Who::System(task) => return decide_system(s, c, task, now, command, inputs, answers),
     };
     if system_only(c) {
         return Err(wrong_actor());
@@ -515,7 +620,20 @@ fn decide_unchecked(
     overdue(s, c, now)?;
     match c {
         CellCommand::Engine(cmd) => decide_engine(s, cmd, actor, now, command, answers),
-        CellCommand::Auth(cmd) => decide_auth(s, cmd, actor, now, command, stepup_at, answers),
+        CellCommand::Auth(cmd) => {
+            let call = AuthCall {
+                actor,
+                now,
+                command,
+                stepup_at,
+                inputs,
+            };
+            decide_auth(s, cmd, &call, answers)
+        }
+        CellCommand::Tenant(TenantCommand::EnrolByInvitation {
+            invitation,
+            credential,
+        }) => decide_enrolment(s, *invitation, credential, actor, now, inputs),
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
@@ -533,6 +651,7 @@ fn decide_system(
     task: SystemTask,
     now: Timestamp,
     command: Option<[u8; 16]>,
+    inputs: &RouteInputs,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     match (task, c) {
@@ -545,9 +664,17 @@ fn decide_system(
         }
         (SystemTask::ErasureRunner, CellCommand::Key(cmd)) => decide_key(s, cmd),
         (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation {
+                invitation,
+                account,
+                token_digest,
+            }),
+        ) => issue_first_admin_invitation(s, *invitation, *account, *token_digest, now, inputs),
+        (
             SystemTask::Timeline,
             CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }),
-        ) => end_sessions_at_binding_end(s, *account, now),
+        ) => end_sessions_at_binding_end(s, *account, now, inputs),
         // No relationship form and no operator ticket form is defined yet,
         // so both are refused (fail closed).
         (
@@ -582,19 +709,21 @@ fn decide_engine(
     Ok(out)
 }
 
-/// An input that only an auth route holds, and that `decide` does not
-/// see. Lane W3a owns those routes ([`RouteInput::OWNER`]).
+/// An input that a command's batch needs beyond the ledger and the vault
+/// answers, which only its route or task holds. [`RouteInputs`] carries
+/// them into `decide`, and the gate's route admissions set them
+/// (`crate::gate::admit_add_passkey` and the functions beside it).
 ///
-/// An auth command whose batch needs one is refused with the closed
-/// domain refusal [`ROUTE_INPUT_MISSING`]: rule `Input`, reason
-/// `AnswerMissing`. No other path pairs those two, so a caller tells it
-/// apart from a vault that did not answer (`FactsIncomplete`). It is not
-/// the stub refusal `NotImplemented`, which I-23 forbids from `decide`.
-/// [`route_inputs`] lists what each auth command needs.
+/// An auth command whose batch needs one that it was not given is refused
+/// with the closed domain refusal [`ROUTE_INPUT_MISSING`]: rule `Input`,
+/// reason `AnswerMissing`. No other path pairs those two, so a caller
+/// tells it apart from a vault that did not answer (`FactsIncomplete`).
+/// It is not the stub refusal `NotImplemented`, which I-23 forbids from
+/// `decide`. [`route_inputs`] lists what each auth command needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RouteInput {
-    /// The new passkey that `fstp_auth::ceremony::verify_new_passkey`
-    /// verified (design section 8.3).
+    /// The new passkey that the gate verified through
+    /// `fstp_auth::ceremony::verify_new_passkey` (design section 8.3).
     VerifiedCredential,
     /// The live session rows of the account, an operational table
     /// (design section 4.2). A batch that ends sessions names them.
@@ -626,8 +755,8 @@ pub fn route_inputs(c: &fstp_auth::AuthCommand) -> &'static [RouteInput] {
     }
 }
 
-/// The refusal of an auth command whose batch needs a [`RouteInput`]:
-/// the command input that only a route of lane W3a holds is missing.
+/// The refusal of an auth command whose batch needs a [`RouteInput`] it
+/// was not given.
 ///
 /// `fstp_domain::refusal` is closed and holds no reason for a route
 /// input. So this pairs rule `Input` with reason `AnswerMissing`, which
@@ -643,36 +772,72 @@ fn needs(input: RouteInput) -> CellRefusal {
     CellRefusal::Domain(ROUTE_INPUT_MISSING)
 }
 
-/// Decides an auth command (design section 8).
-///
-/// Each command first passes the checks `decide` can make from the
-/// ledger. A command whose batch needs an input that only a route holds
-/// is then refused ([`RouteInput`], [`route_inputs`]):
-/// - `RegisterCredential` needs the credential that
-///   `fstp_auth::ceremony::verify_new_passkey` verified (design 8.3).
-/// - `RevokeCredential` and `EndSession` need the live session rows, an
-///   operational table that `decide` does not see (design 4.2). Revoking
-///   a device ends the sessions it logged in, and only a session's own
-///   account ends it (`fstp_auth::session`).
-/// - `RequestRecovery` needs the cell's deployment mode for the path
-///   (`fstp_auth::recovery::request`).
-/// - `CompleteRecovery` needs the verified new passkey, the session rows
-///   it ends and the deployment mode (`fstp_auth::recovery::complete`).
-///
-/// `GrantStepUp`, `ProveRecoveryEmail` and `ApproveRecovery` are decided
-/// here. The gate admits neither of the first two through a session,
-/// since only their routes verify the assertion or the email proof.
-fn decide_auth(
-    s: &CellState,
-    cmd: &fstp_auth::AuthCommand,
+/// What an auth command is decided under.
+struct AuthCall<'a> {
     actor: AccountId,
     now: Timestamp,
     command: Option<[u8; 16]>,
     stepup_at: Option<Timestamp>,
+    inputs: &'a RouteInputs,
+}
+
+/// The step-up id of a `GrantStepUp` under `command` (design section 8.4).
+///
+/// The route issues `GrantStepUp` under the step-up challenge id as its
+/// command id (`POST /auth/stepup`). So the step-up id is that challenge
+/// id, and it keys `StepUpGranted`, `StepUpConsumed` and the
+/// `auth_log.stepup_consumed.challenge_id` row alike, end to end. It is
+/// also the id `fstp_auth::stepup::verify_step_up` names. A decision
+/// without a command id appends nothing (the driver refuses it with
+/// `NoCommandId`), so its id is derived from the payload instead.
+pub fn stepup_id(
+    command: Option<[u8; 16]>,
+    actor: AccountId,
+    at: i64,
+    session: [u8; 16],
+    action_digest: [u8; 32],
+) -> [u8; 16] {
+    match command {
+        Some(id) => id,
+        None => {
+            let mut payload = Vec::with_capacity(48);
+            payload.extend_from_slice(&session);
+            payload.extend_from_slice(&action_digest);
+            derive_id(b"stepup", None, actor, at, &payload)
+        }
+    }
+}
+
+/// Decides an auth command (design section 8).
+///
+/// Each command first passes the checks `decide` can make from the
+/// ledger. A command whose batch needs a route input it was not given is
+/// then refused ([`RouteInput`], [`route_inputs`]):
+/// - `RegisterCredential` needs the credential that the gate verified
+///   ([`crate::gate::admit_add_passkey`]). It adds a further passkey to an
+///   account that holds one (`AddPasskey`, design section 8.3).
+/// - `RevokeCredential` and `EndSession` need the live session rows.
+///   Revoking a device ends the sessions it logged in, and only a
+///   session's own account ends it (`fstp_auth::session`, R-LG-04).
+/// - `RequestRecovery` needs the cell's deployment mode for the path
+///   (`fstp_auth::recovery::request`).
+/// - `CompleteRecovery` needs the verified new passkey, the session rows
+///   it ends and the deployment mode (`fstp_auth::recovery::complete`).
+///   No gate admission sets them yet (`crate::gate::ROUTE_ADMISSION_SEAM`).
+///
+/// `GrantStepUp`, `ProveRecoveryEmail` and `ApproveRecovery` need no
+/// route input. No gate admission admits the first two yet
+/// (`crate::gate::ROUTE_ADMISSION_SEAM`), so they run only from tests.
+fn decide_auth(
+    s: &CellState,
+    cmd: &fstp_auth::AuthCommand,
+    call: &AuthCall<'_>,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     use fstp_auth::{AuthCommand as C, AuthRecord as R};
     let auth = s.auth();
+    let actor = call.actor;
+    let now = call.now;
     match cmd {
         C::RegisterCredential {
             account,
@@ -687,7 +852,24 @@ fn decide_auth(
             if auth.is_registered(credential) {
                 return Err(reused());
             }
-            Err(needs(RouteInput::VerifiedCredential))
+            let Some(cred) = call.inputs.credential() else {
+                return Err(needs(RouteInput::VerifiedCredential));
+            };
+            if cred.id != *credential {
+                return Err(invalid());
+            }
+            // A first passkey comes only from a ceremony (design section
+            // 8.3), which has no command form yet. So this is `AddPasskey`:
+            // the account holds a live passkey already.
+            if !auth.has_any_credential(*account) {
+                return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+            }
+            // ADR-008 "User verification": a holder's passkey gives UV. The
+            // gate verified it so, and the batch checks it again.
+            if holds_management_at(s, *account, now) && !cred.user_verified {
+                return Err(invalid());
+            }
+            Ok(vec![CellRecord::Auth(R::registration(*account, cred))])
         }
         C::RevokeCredential {
             account,
@@ -709,16 +891,27 @@ fn decide_auth(
             if !fstp_auth::session::may_revoke_credential(&live, actor, *account, credential) {
                 return Err(unknown());
             }
-            Err(needs(RouteInput::SessionRows))
+            let Some(rows) = call.inputs.sessions() else {
+                return Err(needs(RouteInput::SessionRows));
+            };
+            let ended = fstp_auth::session::ended_by_credential_revocation(
+                &rows.of(s, *account),
+                rows.logins(),
+                *account,
+                credential,
+            );
+            let mut out = vec![CellRecord::Auth(R::CredentialRevoked {
+                account: *account,
+                credential: credential.clone(),
+            })];
+            out.extend(session_ends(&ended));
+            Ok(out)
         }
         C::GrantStepUp {
             session,
             action_digest,
         } => {
-            let mut payload = Vec::with_capacity(48);
-            payload.extend_from_slice(session);
-            payload.extend_from_slice(action_digest);
-            let id = derive_id(b"stepup", command, actor, now.micros(), &payload);
+            let id = stepup_id(call.command, actor, now.micros(), *session, *action_digest);
             if auth.stepup(id).is_some() {
                 return Err(reused());
             }
@@ -732,13 +925,32 @@ fn decide_auth(
             if auth.session_ended(*session) {
                 return Err(unknown());
             }
-            Err(needs(RouteInput::SessionRows))
+            let Some(rows) = call.inputs.sessions() else {
+                return Err(needs(RouteInput::SessionRows));
+            };
+            // Only the session's own account ends it, and only a live one.
+            // Another account's session reads as unknown, so the refusal
+            // tells nothing of it (R-LG-04).
+            if !fstp_auth::session::may_end_session(&rows.of(s, actor), actor, *session) {
+                return Err(unknown());
+            }
+            Ok(session_ends(&[*session]))
         }
-        C::RequestRecovery { case, .. } => {
+        C::RequestRecovery { case, account } => {
             if auth.recovery(*case).is_some() {
                 return Err(reused());
             }
-            Err(needs(RouteInput::DeploymentMode))
+            let Some(mode) = call.inputs.mode() else {
+                return Err(needs(RouteInput::DeploymentMode));
+            };
+            let roster = fstp_auth::RosterView::from_roster(s.engine().core.roster(), now);
+            Ok(vec![CellRecord::Auth(fstp_auth::recovery::request(
+                *case,
+                *account,
+                &roster,
+                &tenant_view(s),
+                mode,
+            ))])
         }
         C::ProveRecoveryEmail { case } => {
             let c = open_case(s, *case)?;
@@ -772,7 +984,7 @@ fn decide_auth(
             // The approval is the high-risk action `ApproveRecovery`. The
             // gate checked its step-up, and the driver passes the step-up's
             // assertion instant. Without one the approval is refused.
-            let stepup = match stepup_at {
+            let stepup = match call.stepup_at {
                 Some(_) => Ok(()),
                 None => Err(fstp_auth::stepup::StepUpDeny::Required),
             };
@@ -784,10 +996,106 @@ fn decide_auth(
                 approver: actor,
             })])
         }
-        C::CompleteRecovery { case, .. } => {
-            open_case(s, *case)?;
-            Err(needs(RouteInput::VerifiedCredential))
+        C::CompleteRecovery { case, credential } => {
+            let c = open_case(s, *case)?;
+            // The ceremony completes the holder's own case.
+            if c.account != actor {
+                return Err(wrong_actor());
+            }
+            if auth.is_registered(credential) {
+                return Err(reused());
+            }
+            let Some(cred) = call.inputs.credential() else {
+                return Err(needs(RouteInput::VerifiedCredential));
+            };
+            if cred.id != *credential {
+                return Err(invalid());
+            }
+            let Some(rows) = call.inputs.sessions() else {
+                return Err(needs(RouteInput::SessionRows));
+            };
+            let Some(mode) = call.inputs.mode() else {
+                return Err(needs(RouteInput::DeploymentMode));
+            };
+            let case_view = recovery_case(s, *case, call.inputs.ticket().copied())?;
+            let roster = fstp_auth::RosterView::from_roster(s.engine().core.roster(), now);
+            let tenant = tenant_view(s);
+            let credentials = auth.live_credentials(c.account);
+            let sessions: Vec<[u8; 16]> = rows.of(s, c.account).iter().map(|r| r.id).collect();
+            let revocation = fstp_auth::recovery::Revocation {
+                credentials: &credentials,
+                sessions: &sessions,
+                new_credential: cred,
+            };
+            let records =
+                fstp_auth::recovery::complete(&case_view, &roster, &tenant, mode, &revocation)
+                    .map_err(recovery_refusal)?;
+            Ok(records.into_iter().map(CellRecord::Auth).collect())
         }
+    }
+}
+
+/// One `SessionEnded` record per session id, in order.
+fn session_ends(sessions: &[[u8; 16]]) -> Vec<CellRecord> {
+    fstp_auth::session::session_end_records(sessions)
+        .into_iter()
+        .map(CellRecord::Auth)
+        .collect()
+}
+
+/// Whether `a` holds a management role at `now`: a Drafting, Judging or
+/// Operations binding by the gate's holdings rule, or tenant admin
+/// (design section 8.2).
+fn holds_management_at(s: &CellState, a: AccountId, now: Timestamp) -> bool {
+    s.tenant().is_admin(a) || crate::gate::management_holders(s, now).contains(&a)
+}
+
+/// Case `case` as `fstp_auth::recovery` reads it, with the evidence its
+/// records state and the operator ticket `ticket` (I-79, design section
+/// 8.5).
+///
+/// Reading, for Daniel's review: a recorded `RecoveryApproved` passed the
+/// step-up and the identity check when it was decided, so the evidence
+/// carries it as a passed approval. The completion checks again that its
+/// approver is still a tenant admin. No record holds a host console
+/// command, so the `HostConsole` path never completes here (fail closed).
+pub(crate) fn recovery_case(
+    s: &CellState,
+    case: [u8; 16],
+    ticket: Option<fstp_auth::recovery::VerifiedTicket>,
+) -> Result<fstp_auth::recovery::Case, CellRefusal> {
+    let c = open_case(s, case)?;
+    let tenant = tenant_view(s);
+    let approval = c.approver.map(|a| {
+        fstp_auth::recovery::Approval::new(
+            a,
+            &tenant,
+            Ok(()),
+            Ok(fstp_auth::recovery::IdentityFacts {
+                both_verified: false,
+                same_identity: false,
+            }),
+        )
+    });
+    Ok(fstp_auth::recovery::Case {
+        case,
+        holder: c.account,
+        requested: c.requested,
+        evidence: fstp_auth::recovery::Evidence {
+            email: c.email_proven,
+            approval,
+            ticket,
+            host_console: false,
+        },
+    })
+}
+
+/// The cell refusal of a refused recovery completion.
+fn recovery_refusal(d: fstp_auth::recovery::RecoveryDeny) -> CellRefusal {
+    use fstp_auth::recovery::RecoveryDeny as D;
+    match d {
+        D::PathNotSatisfied(_) => refuse(RuleRef::Input, RefusalReason::WrongState),
+        D::NoUserVerification(_) | D::Passkey(_) => invalid(),
     }
 }
 
@@ -927,7 +1235,11 @@ fn decide_tenant(
             if !tenant.is_admin(actor) {
                 return Err(wrong_actor());
             }
-            if tenant.approval(grant_digest).is_some() {
+            // SoD-07, Q40: only a used digest refuses a new approval. An
+            // earlier approval of the same digest, by the grantor or by an
+            // admin whose approval expired, must not stop a second admin
+            // from approving it (sod_07_self_grant_matches_the_reference_rule).
+            if tenant.digest_used(grant_digest) {
                 return Err(reused());
             }
             // Interim: P-71 from the approval's step-up (Q40, ADR-008). The
@@ -954,7 +1266,133 @@ fn decide_tenant(
                 policy: policy.clone(),
             })])
         }
+        // Provisioning issues the first one as a system task, and only a
+        // ceremony admission enrols. Neither reaches this point.
+        TenantCommand::IssueFirstAdminInvitation { .. }
+        | TenantCommand::EnrolByInvitation { .. } => Err(wrong_actor()),
     }
+}
+
+/// Whether any record of the cell names `account`: a tenant admin grant,
+/// a binding or an auth record. An invitation creates its account, so it
+/// names an account no record names yet (ADR-008 "Ceremonies and the
+/// first passkey"). Invitations that no enrolment used do not count
+/// (`fstp_cell_core::state::AuthState::names_account`).
+fn account_known(s: &CellState, account: AccountId) -> bool {
+    s.tenant().is_admin(account)
+        || s.auth().names_account(account)
+        || s.engine()
+            .core
+            .roster()
+            .bindings()
+            .any(|(_, b)| b.account == account)
+}
+
+/// `IssueFirstAdminInvitation` of the system task `Provisioning` (design
+/// sections 8.3 and 9.2 step 10, Q35). The rule is
+/// `fstp_auth::ceremony::issue_invitation` with the provisioning issuer:
+/// no first admin enrolled, no first-admin invitation open at `now`, and an
+/// account no record names. The invitation id must be new. The cell's
+/// deployment mode is a task input: a SaaS cell records a split token.
+fn issue_first_admin_invitation(
+    s: &CellState,
+    invitation: [u8; 16],
+    account: AccountId,
+    token_digest: [u8; 32],
+    now: Timestamp,
+    inputs: &RouteInputs,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let Some(mode) = inputs.mode() else {
+        return Err(needs(RouteInput::DeploymentMode));
+    };
+    if s.auth().invitation(invitation).is_some() {
+        return Err(reused());
+    }
+    let issuer = fstp_auth::ceremony::Issuer::Provisioning {
+        first_admin_enrolled: s.auth().any_first_admin(),
+        invitation_open: s.auth().first_admin_invitation_open(now),
+    };
+    let record = fstp_auth::ceremony::issue_invitation(
+        issuer,
+        mode,
+        invitation,
+        account,
+        token_digest,
+        !account_known(s, account),
+    )
+    .map_err(|e| match e {
+        fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
+        _ => refuse(RuleRef::Input, RefusalReason::WrongState),
+    })?;
+    Ok(vec![CellRecord::Auth(record)])
+}
+
+/// `EnrolByInvitation`, the first passkey of an invited account (design
+/// section 8.3, ceremony 1, G10, Q35).
+///
+/// The admission `crate::gate::admit_invitation_enrolment` matched the
+/// proof to the invitation and verified the registration. The batch checks
+/// again what the ledger can tell at the commit instant: the invitation
+/// exists and names the actor, it is unused and at most 72 hours old, the
+/// invitee holds no passkey, and the credential the gate verified is the
+/// one the command names and is new to the cell. A first admin's or a
+/// holder's passkey gives UV (ADR-008 "User verification").
+///
+/// The records are those of `fstp_auth::ceremony::invitation_records`:
+/// `InvitationConsumed`, `CredentialRegistered` and, for the first admin,
+/// `FirstAdminEnrolled`. The first admin's batch also grants the tenant
+/// admin role, which every later tenant admin sees in the admin list.
+fn decide_enrolment(
+    s: &CellState,
+    invitation: [u8; 16],
+    credential: &[u8],
+    actor: AccountId,
+    now: Timestamp,
+    inputs: &RouteInputs,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let auth = s.auth();
+    let Some(inv) = auth.invitation(invitation) else {
+        return Err(unknown());
+    };
+    if inv.account != actor {
+        return Err(wrong_actor());
+    }
+    if inv.consumed {
+        return Err(reused());
+    }
+    let age = now.micros().checked_sub(inv.issued_at.micros());
+    if !age.is_some_and(|a| (0..=fstp_auth::ceremony::INVITATION_US).contains(&a)) {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    if auth.has_any_credential(actor) {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    if credential.is_empty() || credential.len() > MAX_CREDENTIAL {
+        return Err(invalid());
+    }
+    if auth.is_registered(credential) {
+        return Err(reused());
+    }
+    let Some(cred) = inputs.credential() else {
+        return Err(needs(RouteInput::VerifiedCredential));
+    };
+    if cred.id != credential {
+        return Err(invalid());
+    }
+    if (inv.first_admin || holds_management_at(s, actor, now)) && !cred.user_verified {
+        return Err(invalid());
+    }
+    let mut batch: Vec<CellRecord> =
+        fstp_auth::ceremony::invitation_records(&inv.ceremony_view(invitation), cred)
+            .into_iter()
+            .map(CellRecord::Auth)
+            .collect();
+    if inv.first_admin && !s.tenant().is_admin(actor) {
+        batch.push(CellRecord::Tenant(TenantRecord::TenantAdminGranted {
+            account: actor,
+        }));
+    }
+    Ok(batch)
 }
 
 fn decide_text(
@@ -1220,18 +1658,37 @@ fn decide_ops(
 }
 
 /// `EndSessionsAtBindingEnd` from the timeline, for an account whose
-/// scheduled binding end is due.
+/// scheduled binding end is due (design sections 5.1 and 8.2, Q16 A).
+///
+/// The timeline gives the live session rows as its task input. The batch
+/// ends every live session of the account that started before a due end
+/// instant, which is the set the gate refuses from that instant on
+/// (`CellState::binding_ended_between`). Without rows it is refused with
+/// [`ROUTE_INPUT_MISSING`]. With no such session there is nothing to
+/// record, so it is refused as unknown and appends nothing.
 fn end_sessions_at_binding_end(
     s: &CellState,
     account: AccountId,
     now: Timestamp,
+    inputs: &RouteInputs,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
-    if !s.binding_end_due(account, now) {
+    let ends = s.due_binding_ends(account, now);
+    if ends.is_empty() {
         return Err(unknown());
     }
-    Err(CellRefusal::NotImplemented(
-        "EndSessionsAtBindingEnd: decide sees no session rows, so the batch cannot name the sessions it ends (design sections 4.2 and 5.1)",
-    ))
+    let Some(rows) = inputs.sessions() else {
+        return Err(needs(RouteInput::SessionRows));
+    };
+    let ended: Vec<[u8; 16]> = rows
+        .of(s, account)
+        .iter()
+        .filter(|r| ends.iter().any(|e| r.started < *e))
+        .map(|r| r.id)
+        .collect();
+    if ended.is_empty() {
+        return Err(unknown());
+    }
+    Ok(session_ends(&ended))
 }
 
 // ---------------------------------------------------------------------------
@@ -1296,5 +1753,241 @@ fn reaction_epoch_of(cmd: &fstp_engine::Command) -> Result<VaultEpoch, CellRefus
     match cmd {
         fstp_engine::Command::Core(fstp_domain::Command::VaultChanged { epoch, .. }) => Ok(*epoch),
         _ => Err(invalid()),
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects
+)]
+mod route_input_tests {
+    //! The batches that only a gate-verified passkey unlocks (lane int3).
+    //! `RouteInputs::with_credential` is crate-private, so these run here.
+
+    use super::*;
+    use fstp_auth::{
+        AuthCommand as C, AuthRecord as R, CoseKey, Method, NewCredential, RecoveryPath,
+    };
+    use fstp_ledger::{MemStore, RecordStore, Seq};
+
+    const NOW: i64 = 1_000_000 + 3_600_000_000;
+    const HOLDER: AccountId = AccountId::from_raw(101);
+    const ADMIN: AccountId = AccountId::from_raw(1);
+    const CASE: [u8; 16] = [0xCA; 16];
+
+    fn key() -> CoseKey {
+        CoseKey::Ed25519 { x: [0x0D; 32] }
+    }
+
+    fn state(records: &[CellRecord]) -> CellState {
+        let mut store: MemStore<CellRecord> = MemStore::new();
+        for (i, r) in records.iter().enumerate() {
+            let id = [u8::try_from(i + 1).unwrap(); 16];
+            store
+                .append(store.head(), 1_000_000, id, vec![r.clone()])
+                .unwrap();
+        }
+        let mut out = Vec::new();
+        store.read(Seq::ZERO, usize::MAX, &mut out).unwrap();
+        crate::replay(&out).unwrap()
+    }
+
+    fn registered(account: AccountId, credential: &[u8]) -> CellRecord {
+        CellRecord::Auth(R::CredentialRegistered {
+            account,
+            credential: credential.to_vec(),
+            key: key(),
+            user_verified: true,
+        })
+    }
+
+    fn new_passkey(id: &[u8], uv: bool) -> NewCredential {
+        NewCredential {
+            id: id.to_vec(),
+            key: key(),
+            sign_count: 0,
+            user_verified: uv,
+        }
+    }
+
+    fn view(id: u8, account: AccountId) -> fstp_auth::SessionView {
+        fstp_auth::SessionView {
+            id: [id; 16],
+            account,
+            method: Method::Passkey,
+            started: Timestamp::from_micros(NOW - 60_000_000),
+            last_used: Timestamp::from_micros(NOW),
+        }
+    }
+
+    fn decide_as(
+        s: &CellState,
+        actor: AccountId,
+        cmd: C,
+        inputs: &RouteInputs,
+    ) -> Result<Vec<CellRecord>, CellRefusal> {
+        decide_with(
+            s,
+            &CellCommand::Auth(cmd),
+            Who::Account(actor),
+            NOW,
+            Some([0x99; 16]),
+            None,
+            inputs,
+            &Answers::new(),
+        )
+    }
+
+    /// I-78, design section 8.3 (`AddPasskey`): `decide` alone, with the
+    /// passkey its inputs carry. `RegisterCredential` records that key for
+    /// an account that holds a passkey already. A first passkey, an id
+    /// other than the command's, and a holder's passkey without UV are
+    /// refused. The gate's own checks are tested in
+    /// `fstp-celltest/tests/int3_route_admissions.rs`.
+    #[test]
+    fn i78_add_passkey_batch_records_the_key_its_inputs_carry() {
+        let s = state(&[registered(HOLDER, &[0x5E, 0])]);
+        let cmd = || C::RegisterCredential {
+            account: HOLDER,
+            credential: vec![0x5E, 1],
+        };
+        let with = |c: NewCredential| RouteInputs::none().with_credential(c);
+        let batch = decide_as(&s, HOLDER, cmd(), &with(new_passkey(&[0x5E, 1], false))).unwrap();
+        assert_eq!(
+            batch,
+            vec![CellRecord::Auth(R::CredentialRegistered {
+                account: HOLDER,
+                credential: vec![0x5E, 1],
+                key: key(),
+                user_verified: false,
+            })]
+        );
+        assert_eq!(
+            decide_as(&s, HOLDER, cmd(), &with(new_passkey(&[0x5E, 2], true))),
+            Err(invalid())
+        );
+        assert_eq!(
+            decide_as(&s, HOLDER, cmd(), &RouteInputs::none()),
+            Err(CellRefusal::Domain(ROUTE_INPUT_MISSING))
+        );
+        let first = state(&[]);
+        assert_eq!(
+            decide_as(&first, HOLDER, cmd(), &with(new_passkey(&[0x5E, 1], true))),
+            Err(refuse(RuleRef::Input, RefusalReason::WrongState))
+        );
+        let admin = state(&[
+            CellRecord::Tenant(TenantRecord::TenantAdminGranted { account: HOLDER }),
+            registered(HOLDER, &[0x5E, 0]),
+        ]);
+        assert_eq!(
+            decide_as(&admin, HOLDER, cmd(), &with(new_passkey(&[0x5E, 1], false))),
+            Err(invalid())
+        );
+    }
+
+    /// I-79, design section 8.5 (Q15): a completion with the gate-verified
+    /// passkey, the session rows and the mode revokes every live credential
+    /// of the holder, ends every live session of the holder, registers the
+    /// new passkey and records the path recomputed at completion. The
+    /// batch folds. Without each input it is refused as missing.
+    #[test]
+    fn i79_completion_revokes_every_credential_and_ends_every_session() {
+        let s = state(&[
+            CellRecord::Tenant(TenantRecord::TenantAdminGranted { account: ADMIN }),
+            registered(HOLDER, &[0x5E, 0]),
+            CellRecord::Auth(R::RecoveryRequested {
+                case: CASE,
+                account: HOLDER,
+                path: RecoveryPath::EmailThenPasskey,
+            }),
+            CellRecord::Auth(R::RecoveryEmailProven { case: CASE }),
+        ]);
+        let cmd = || C::CompleteRecovery {
+            case: CASE,
+            credential: vec![0x5E, 7],
+        };
+        let rows = SessionRows::new(vec![view(0x51, HOLDER), view(0x52, ADMIN)], Vec::new());
+        let inputs = RouteInputs::none()
+            .with_credential(new_passkey(&[0x5E, 7], false))
+            .with_sessions(rows.clone())
+            .with_mode(fstp_auth::recovery::Deployment::Saas);
+        let batch = decide_as(&s, HOLDER, cmd(), &inputs).unwrap();
+        assert_eq!(
+            batch,
+            vec![
+                CellRecord::Auth(R::CredentialRevoked {
+                    account: HOLDER,
+                    credential: vec![0x5E, 0],
+                }),
+                CellRecord::Auth(R::SessionEnded {
+                    session: [0x51; 16],
+                }),
+                CellRecord::Auth(R::CredentialRegistered {
+                    account: HOLDER,
+                    credential: vec![0x5E, 7],
+                    key: key(),
+                    user_verified: false,
+                }),
+                CellRecord::Auth(R::RecoveryCompleted {
+                    case: CASE,
+                    account: HOLDER,
+                    path: RecoveryPath::EmailThenPasskey,
+                    shown_to_tenant: false,
+                }),
+            ]
+        );
+        let mut next = s.clone();
+        for (i, r) in batch.iter().enumerate() {
+            let seq = Seq::from_raw(s.head().raw() + u64::try_from(i).unwrap() + 1);
+            crate::state::fold(&mut next, seq, Timestamp::from_micros(NOW), [0x99; 16], r).unwrap();
+        }
+        assert_eq!(
+            decide_as(&s, ADMIN, cmd(), &inputs),
+            Err(wrong_actor()),
+            "another account completed the holder's case"
+        );
+        let missing = RouteInputs::none()
+            .with_credential(new_passkey(&[0x5E, 7], false))
+            .with_sessions(rows);
+        assert_eq!(
+            decide_as(&s, HOLDER, cmd(), &missing),
+            Err(CellRefusal::Domain(ROUTE_INPUT_MISSING))
+        );
+    }
+
+    /// I-79, design section 8.5: the path is recomputed at completion. A
+    /// management role held at completion makes an email-only case fail,
+    /// so no completion records it.
+    #[test]
+    fn i79_non_receiving_never_completes_by_email_alone() {
+        let s = state(&[
+            CellRecord::Tenant(TenantRecord::TenantAdminGranted { account: ADMIN }),
+            CellRecord::Tenant(TenantRecord::TenantAdminGranted { account: HOLDER }),
+            CellRecord::Auth(R::RecoveryRequested {
+                case: CASE,
+                account: HOLDER,
+                path: RecoveryPath::EmailThenPasskey,
+            }),
+            CellRecord::Auth(R::RecoveryEmailProven { case: CASE }),
+        ]);
+        let inputs = RouteInputs::none()
+            .with_credential(new_passkey(&[0x5E, 7], true))
+            .with_sessions(SessionRows::default())
+            .with_mode(fstp_auth::recovery::Deployment::Saas);
+        assert_eq!(
+            decide_as(
+                &s,
+                HOLDER,
+                C::CompleteRecovery {
+                    case: CASE,
+                    credential: vec![0x5E, 7],
+                },
+                &inputs
+            ),
+            Err(refuse(RuleRef::Input, RefusalReason::WrongState))
+        );
     }
 }

@@ -21,11 +21,13 @@ When documents conflict, this order applies: `SPEC/02-domain/invariants.md`, the
 - tokio and smol are allowlisted (`docs/adr/ADR-002-async-runtime.md`). Each binary uses exactly one runtime, behind an internal trait. Record version, features and resolved tree in ADR-002 at first use.
 - Transitive dependencies of an allowlisted crate are part of the allowlist. Each ADR lists the full resolved tree, and any change to that tree needs review.
 - tsc, libFuzzer through cargo-fuzz, and Playwright are allowlisted (`docs/adr/ADR-003-build-and-test-tools.md`). They never ship in runtime artifacts.
-- Every in-house parser gets a fuzz target from its first commit. This covers HTTP, JSON, MIME, SMTP responses, the PostgreSQL wire protocol, PDF, Matrix events and WhatsApp payloads.
+- Every in-house parser gets a fuzz target from its first commit. This covers HTTP, JSON, MIME, SMTP responses, the PostgreSQL wire protocol, PDF, Matrix events and WhatsApp payloads when those adapters return to scope (B-05, B-03).
 
 ## Git
 
-Daniel Thompson-Yvetot is the sole author and committer of every commit. Never set author or committer to Claude. Never add Co-authored-by trailers. Never add a Signed-off-by line; Daniel adds his own sign-off where the DCO applies. Stage changes and propose commit messages. Daniel creates, signs and pushes every commit himself.
+Daniel Thompson-Yvetot is the sole author and committer of every commit. Never set author or committer to Claude. Never add Co-authored-by trailers. Never add a Signed-off-by line; Daniel adds his own sign-off where the DCO applies.
+
+For M2 to M4, Daniel authorised Claude to commit and push as him with the repository's git identity, and to merge each lane into `main` once every gate passes and the test run shows no new failure. `main` is the only integration branch. Outside that scope, stage changes and propose commit messages, and Daniel creates, signs and pushes every commit himself. Work after M4 needs his authorisation again.
 
 Never move code from the EUPL-1.2 export and import executable into the platform, or the reverse.
 

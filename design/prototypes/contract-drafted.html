@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grant agreement: draft - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">PN</span><span class="sr-only">Account: p-novak</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Grantee.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Grantee</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="payment-status.html">Payments</a></li><li><a href="contract-view.html" aria-current="page">Agreement</a></li><li><a href="complaint-status.html">Complaints</a></li><li><a href="grantee-visibility.html">Visibility</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Grant agreement CTR-2026-0051 in DRAFTED during negotiation. One change pending, one accepted.</p>
+
+    <h1>Grant agreement: draft</h1>
+    <dl class="facts">
+      <dt>Contract reference</dt><dd class="pid">CTR-2026-0051</dd>
+      <dt>Proposal</dt><dd class="pid">SSF-C1-0051</dd>
+      <dt>Call</dt><dd>SuperSAFE Call 1</dd>
+      <dt>Status</dt><dd><span class="badge badge--info">Draft under review</span> <span class="state-name">DRAFTED</span></dd>
+    </dl>
+    <p><a href="#">Download current draft</a></p>
+    <!-- TODO(legal): agreement template text and clause wording. Change summaries below are synthetic. -->
+    <section aria-labelledby="neg-h">
+      <h2 id="neg-h">Negotiation</h2>
+      <table>
+        <caption>2 clause changes against the template</caption>
+        <thead><tr><th scope="col">Clause</th><th scope="col">Summary of change</th><th scope="col">Proposed by</th><th scope="col">Date</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><td>4.2</td><td>Milestone 2.1 due date moves from 31 Mar 2027 to 30 Apr 2027.</td><td>Grantee</td><td><time datetime="2026-10-28">28 Oct 2026</time></td><td><span class="badge badge--warning">Pending programme manager review</span></td></tr>
+          <tr><td>3.1</td><td>Reporting language set to English for all deliverables.</td><td>Programme manager</td><td><time datetime="2026-10-25">25 Oct 2026</time></td><td><span class="badge badge--success">Accepted</span></td></tr>
+        </tbody>
+      </table>
+      <p>Changes are recorded as a diff against the template. Each change names the proposer's role.</p>
+      <div class="btn-row"><!-- TODO(js): Propose a change needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="prop-why">Propose a change</button></div>
+      <p id="prop-why" class="text-sm muted">Opens the clause change form. Static prototype: this action needs script.</p>
+    </section>
+    <section aria-labelledby="dec-h">
+      <h2 id="dec-h">Decline the contract</h2>
+      <p id="decline-note">You can decline before signing (R-NG-04).</p>
+      <!-- TODO(js): Decline the contract needs script in production. -->
+      <div class="btn-row"><button class="btn btn--danger" type="button" disabled aria-describedby="decline-note decline-why">Decline the contract</button></div>
+      <p id="decline-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    </section>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

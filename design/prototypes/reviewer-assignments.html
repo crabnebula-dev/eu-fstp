@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My assignments - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-reviewer.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">1</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">R7</span><span class="sr-only">Account: reviewer-7f3a</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Assigned reviewer.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Assigned reviewer</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-reviewer.html">Home</a></li><li><a href="reviewer-assignments.html" aria-current="page">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Reviewer assignment list, 2 proposals in STAGE2</p>
+
+    <h1>My assignments</h1>
+    <p class="callout callout--info"><strong>Conflicts:</strong> Declare before you read. Before declaring you see the title and a neutral summary only. Your answer is yes or no. Nobody sees why.</p>
+    <table>
+      <caption>2 assigned proposals in SuperSAFE Open Call 2</caption>
+      <thead><tr><th scope="col">Proposal</th><th scope="col">Your status</th><th scope="col">Stage</th><th scope="col">Window</th><th scope="col">Action</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">CSW-2024-0042</td><td><span class="badge badge--warning" data-glyph="○">Assigned</span></td><td>Stage 2 questions <span class="state-name">(STAGE2)</span></td><td><span class="badge badge--info" data-glyph="⏱">Open, 8 days left</span></td><td><a class="btn btn--primary btn--small" href="reviewer-scoring.html">Score this proposal</a></td></tr>
+        <tr><td class="pid">CSW-2024-0039</td><td><span class="badge badge--success">Scored</span></td><td>Stage 2 questions <span class="state-name">(STAGE2)</span></td><td><span class="badge badge--neutral" data-glyph="■">Closed</span></td><td><a href="#">View your score</a></td></tr>
+      </tbody>
+    </table>
+    <h2>Conflict declaration</h2>
+    <form method="post" action="#" class="card">
+      <dl class="facts"><dt>Title</dt><dd>Community Wellbeing Navigator</dd><dt>Neutral summary</dt><dd>A digital referral tool for community workers in three towns.</dd></dl>
+      <fieldset><legend>Do you have a conflict of interest with CSW-2024-0042?</legend>
+        <div class="choice"><input type="radio" id="cf-no" name="conflict" value="no" checked><label for="cf-no">No</label></div>
+        <div class="choice"><input type="radio" id="cf-yes" name="conflict" value="yes"><label for="cf-yes">Yes. Release me from this proposal.</label></div>
+      </fieldset>
+      <button class="btn btn--secondary" type="submit">Record answer</button>
+    </form>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

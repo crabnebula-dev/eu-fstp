@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Activity log - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+.diary-filter { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: end; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Activity log (spec name: Passage Diary) for CSW-2024-0042, page 1 of 3, viewer is the lead applicant</p>
+
+    <h1>Activity log</h1>
+    <p class="voyage-label">Spec name: Passage Diary</p>
+    <p><strong>Community Wellbeing Navigator</strong> <span class="pid">CSW-2024-0042</span>. Newest first. Times in Europe/Malta.</p>
+    <form class="diary-filter" method="get" action="diary.html">
+      <div class="field"><label for="kind">Show</label>
+        <select id="kind" name="kind"><option value="">All entries</option><option>State changes</option><option>Deadlines</option><option>Questions and answers</option><option>Receipts and notices</option></select></div>
+      <div class="field"><button class="btn btn--secondary" type="submit">Apply</button></div>
+    </form>
+    <ol class="diary">
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">→</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--info" data-glyph="→">State change</span><time datetime="2024-11-04T09:12Z">4 Nov 2024, 10:12</time></p>
+          <div class="diary-body"><p>Your proposal moved from Submitted <span class="state-name">(SUBMITTED)</span> to Stage 1 evaluation <span class="state-name">(STAGE1)</span>. The eligibility check passed.</p></div><p class="text-sm muted">Recorded by the FSTP coordinator.</p>
+        </div>
+      </li>
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">⏱</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--warning" data-glyph="⏱">Deadline reminder</span><time datetime="2024-11-05T08:00Z">5 Nov 2024, 09:00</time></p>
+          <div class="diary-body"><p>The stage 2 answer window closes on 12 Nov 2024 at 17:00 Europe/Brussels (17:00 Europe/Malta).</p></div><p><a href="stage2-questions.html">Answer the questions</a></p>
+        </div>
+      </li>
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">?</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--neutral" data-glyph="?">Question received</span><time datetime="2024-11-04T09:15Z">4 Nov 2024, 10:15</time></p>
+          <div class="diary-body"><p>reviewer-7f3a asked a clarification question about your pilot sites.</p></div><p><a href="stage2-questions.html">Read and answer</a></p>
+        </div>
+      </li>
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">✓</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--success" data-glyph="✓">Vault verification</span><time datetime="2024-10-28T11:05Z">28 Oct 2024, 12:05</time></p>
+          <div class="diary-body"><p>Identity verification passed. Your details stay in the vault and are not shown here.</p></div>
+        </div>
+      </li>
+      
+      <li class="diary-entry diary-entry--erased">
+        <span class="diary-icon" aria-hidden="true">∅</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--neutral" data-glyph="∅">Text erased</span><time datetime="2024-11-15T00:00Z">15 Nov 2024</time></p>
+          <div class="diary-body"><p>Entry text erased on 2024-11-15, reason: retention period ended.</p></div><p class="text-sm muted">The entry stays so the order of events is kept. The text cannot be recovered.</p>
+        </div>
+      </li>
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">R</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--info" data-glyph="R">Receipt</span><time datetime="2024-10-15T14:32Z">15 Oct 2024, 16:32</time></p>
+          <div class="diary-body"><p>Submission receipt. Ledger sequence <span class="mono">00000000-0001-4f8c</span>.</p></div><p><span class="badge badge--warning" data-glyph="…">Anchor pending</span> <a href="submission-receipt.html">View receipt</a></p>
+        </div>
+      </li>
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">★</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--success" data-glyph="★">Milestone accepted</span><time datetime="2025-04-02T10:00Z">2 Apr 2025, 12:00</time></p>
+          <div class="diary-body"><p>Milestone 1 "Platform launch" was accepted. Amount 12 000.00 EUR moves to payment.</p></div><p class="text-sm muted">Example from a later stage, shown for layout.</p>
+        </div>
+      </li>
+      
+      <li class="diary-entry">
+        <span class="diary-icon" aria-hidden="true">✉</span>
+        <div>
+          <p class="diary-meta"><span class="badge badge--neutral" data-glyph="✉">Contractual notice</span><time datetime="2025-02-10T09:00Z">10 Feb 2025, 10:00</time></p>
+          <div class="diary-body"><p>A contractual notice was sent to you: "Notice of grant agreement effectiveness".</p></div><p><a href="#">Open the notice (PDF, 84 KB)</a></p>
+        </div>
+      </li>
+    </ol>
+    <section class="card" aria-labelledby="guard-h">
+      <h2 id="guard-h" style="font-size:var(--text-lg)">Layout note: guardian steps (O-60)</h2>
+      <p class="text-sm">Guardian consent entries appear only in the guardian's own activity log. The applicant and staff never see them here. Example for the guardian: "Your consent for applicant handle youth-2a8e was recorded."</p>
+    </section>
+    <nav class="pagination" aria-label="Activity log pages">
+      <ul>
+        <li><span aria-disabled="true">Previous</span></li>
+        <li><a href="diary.html?page=1" aria-current="page">1</a></li>
+        <li><a href="diary.html?page=2">2</a></li>
+        <li><a href="diary.html?page=3">3</a></li>
+        <li><a href="diary.html?page=2">Next</a></li>
+      </ul>
+    </nav>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Nova Research Foundation. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -10,6 +10,7 @@ fstp-tls
 fstp-prop
 fstp-mc
 deps-check
+test-gate
 fstp-money
 fstp-ledger
 fstp-domain

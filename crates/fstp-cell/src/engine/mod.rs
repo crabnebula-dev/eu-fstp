@@ -12,8 +12,9 @@
 //! [`fstp_ledger::AsyncRecordStore`] of `CellRecord` that also reports the
 //! chain link and witness receipt of each committed append. The anchoring
 //! in-memory store of [`crate::witness`] runs the append protocol of
-//! design section 5.3. `fstp_pgstore::PgRecordStore` takes its place once
-//! lane W2e lands. [`Unanchored`] wraps a plain store, such as
+//! design section 5.3 in memory, for tests and the demo path.
+//! [`pg::PgCellStore`] runs it over `fstp_pgstore::PgRecordStore`, the
+//! store of a serving cell. [`Unanchored`] wraps a plain store, such as
 //! `fstp_ledger::MemStore`, for tests and models: it records no receipts.
 //!
 //! # Start and restart
@@ -54,6 +55,7 @@
 //! more than one call.
 
 pub mod chan;
+pub mod pg;
 pub mod serve;
 pub mod startup;
 
@@ -259,8 +261,9 @@ pub async fn read_after<S: AsyncRecordStore<CellRecord> + Sync>(
 /// the driver's fold refuses a second one.
 ///
 /// It is for tests and models over `fstp_ledger::MemStore`. A cell that
-/// serves requests runs an anchoring store (I-24): the start-up path,
-/// [`startup::start`], is typed over [`crate::witness::store::AnchoredStore`].
+/// serves requests runs an anchoring store (I-24): the start-up paths
+/// [`startup::start`] and [`startup::start_pg`] are typed over
+/// [`startup::StartStore`], which only the anchoring stores implement.
 pub struct Unanchored<S> {
     inner: S,
     cell: fstp_audit::CellId,
