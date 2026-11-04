@@ -53,3 +53,96 @@ Reserved identifiers:
 | --- | --- |
 | R-DC-01 | White-labelled desktop client |
 | TH-54, H-20 | Lost devices caching confidential content; its hardening item |
+
+## B-05: Matrix group messaging
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `03-architecture/messaging.md` and `05-compliance/messaging.md`.
+
+Scope when resumed: the Matrix adapter, the four group types and membership that follows role bindings. Email carries every notice meanwhile.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-MG-01 to R-MG-03 | Matrix adapter, group types and membership, private announcements |
+| I-28, I-29 | Group composition and membership |
+
+## B-06: Self-hosted packaging and installation
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `03-architecture/` (self-hosted sections), ADR-004 file custody and ADR-011 local mode.
+
+Scope when resumed: packaging, the installer and the full suite on a self-hosted cell. The self-hosted code already built in M3 stays in the tree.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| I-91 (self-hosted part) | Signed updates on self-hosted cells |
+| M9 exit | Self-hosted cell passes the full suite |
+
+## B-07: Tenant export, import and switching
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `03-architecture/` export sections and `SPEC/schemas/`.
+
+Scope when resumed: the EUPL-1.2 export and import executable, the documented schema, switching and post-switch erasure.
+
+TODO(legal): the spec ties switching to the EU Data Act (I-69 lists the Data Act tenant information). Daniel to confirm whether a SaaS pilot may run before export and switching exist.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-TD-01 to R-TD-04 | Export, import, tooling licence |
+| R-SW-01, R-SW-02 | Switching and erasure after the retrieval period |
+| I-22 | Export and import give an equivalent tenant |
+
+## B-08: Profile bundles
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `03-architecture/overview.md` (Profile bundle).
+
+Scope when resumed: user-held profile bundles across tenants. The profile fields stay bundle-ready (`12-journey-ui.md`, profile page).
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-PS-01 to R-PS-03 | Bundle export, field choice, self-declared import |
+| TH-11 | Forged bundle |
+
+## B-09: Custom domains and full white-label packages
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `03-architecture/white-labelling.md`.
+
+Scope when resumed: white-label packages for every interface, document and email, and custom domains with certificates. Branding tokens, terminology overrides (R-WL-05), the contrast rule (I-70) and the platform attribution (R-WL-04) stay in scope.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-WL-01, R-WL-02 | White-label package; custom domains |
+| I-71 | Custom domains serve only their own cell |
+
+## B-10: External MCP integrations
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `03-architecture/mcp-client.md`.
+
+Scope when resumed: connections from the platform to external MCP servers. The platform's own MCP server stays in M4.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| R-MC-06 | Tenants connect external MCP servers |
+| I-88, I-89 | Read-only external calls; declared fields only |
+
+## B-11: Bank payment execution
+
+Deferred by Daniel on 2026-11-04, for now, to reach M4 exit and the journey UI sooner. The design is kept in `02-domain/payment-requests.md` and the payment adapter design.
+
+Scope when resumed: execution payment mode with bank interfaces. Meanwhile every tenant runs record-only (P-20): the funder pays outside the platform, which records requests, approvals and releases.
+
+Reserved identifiers:
+
+| ID | Content |
+| --- | --- |
+| P-20 execution mode | Payment execution through a bank interface |

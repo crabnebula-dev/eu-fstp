@@ -21,7 +21,7 @@ When documents conflict, this order applies: `SPEC/02-domain/invariants.md`, the
 - tokio and smol are allowlisted (`docs/adr/ADR-002-async-runtime.md`). Each binary uses exactly one runtime, behind an internal trait. Record version, features and resolved tree in ADR-002 at first use.
 - Transitive dependencies of an allowlisted crate are part of the allowlist. Each ADR lists the full resolved tree, and any change to that tree needs review.
 - tsc, libFuzzer through cargo-fuzz, and Playwright are allowlisted (`docs/adr/ADR-003-build-and-test-tools.md`). They never ship in runtime artifacts.
-- Every in-house parser gets a fuzz target from its first commit. This covers HTTP, JSON, MIME, SMTP responses, the PostgreSQL wire protocol, PDF, Matrix events, and WhatsApp payloads if WhatsApp returns to scope (B-03).
+- Every in-house parser gets a fuzz target from its first commit. This covers HTTP, JSON, MIME, SMTP responses, the PostgreSQL wire protocol, PDF, Matrix events and WhatsApp payloads when those adapters return to scope (B-05, B-03).
 
 ## Git
 

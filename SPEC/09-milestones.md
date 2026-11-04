@@ -7,11 +7,11 @@
 | M2 | Domain core: state machine, policy engine, SoD, scoring | I-01 to I-15, I-23 and I-34 to I-36 green at domain level (NOTE 1) |
 | M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | I-16 to I-20, I-24, I-38, I-39 and I-77 to I-83 green; isolation tests green; hosting provider named in ADR-005 (NOTE 2) |
 | M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server and public research tools | SuperSAFE programme built in the creator; end-to-end call cycle to NEGOTIATION; authorisation matrix green; I-65 to I-67, I-84 to I-87 green |
-| M5 | Contracts, payment requests, payment adapters, MCP client integrations | I-30 to I-33, I-88, I-89 green; call cycle through to PAID |
+| M5 | Contracts and payment requests in record-only payment mode (bank execution and external MCP integrations deferred by Daniel on 2026-11-04 (B-10, B-11)) | I-30 to I-33 green; call cycle through to PAID |
 | M6 | Timeline engine, dispatcher, email | I-25 to I-27 green under crash injection |
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | LLM evaluation thresholds met; I-10 and I-11 green through the assessment pipeline; I-21 green |
-| M8 | Messaging adapter: Matrix (WhatsApp deferred by Daniel on 2026-11-04 (B-03)) | I-28, I-29 green |
-| M9 | moduletto ML-DSA-65 integration with ACVP and differential tests, composite signatures, white-labelling and custom domains, export and import, profile bundles, public transparency pages, funder profiles with the Horizon Europe profile, self-hosted packaging, SBOM | I-22, I-41 to I-44, I-68 to I-71, I-90, I-91 green; self-hosted cell passes full suite |
+| M8 | Deferred: Matrix deferred by Daniel on 2026-11-04 (B-05), WhatsApp deferred by Daniel on 2026-11-04 (B-03) | None while deferred |
+| M9 | moduletto ML-DSA-65 integration with ACVP and differential tests, composite signatures, branding tokens and terminology overrides, public transparency pages, funder profiles with the Horizon Europe profile, SBOM. Deferred: custom domains and full white-label packages (B-09), export and import (B-07), profile bundles (B-08), self-hosted packaging (B-06) | I-41 to I-44, I-68 to I-70, I-90 green |
 | M10 | Hardening on a Mythos-tier model | Exit criteria in `08-hardening/hardening-plan.md` |
 | M11 | Pilot: SuperSAFE as first tenant, a second programme to validate configurability | First live call completed with no invariant violations |
 | M12 | Calibration with consented real proposals | Metrics reported per corpus; I-37 green |
@@ -37,3 +37,5 @@ NOTE 2: M3 scope, decided 2026-10-28. These items are claimed in part. Where a l
 The M3 exit report also states each scoped claim that rests on an interim reading or an open verify item, with its basis. These include R-NF-09 for internal links only (ADR-009, interim) and I-80 for OKMS-held root epochs (ADR-004 verify item K7).
 
 NOTE: On 2026-11-04 Daniel deferred the desktop client (B-04) and WhatsApp (B-03) for now. M8 builds the Matrix adapter only, and M9 builds no desktop client. Both keep their design and reserved identifiers in `11-backlog.md`.
+
+NOTE: On 2026-11-04 Daniel also deferred, for now, Matrix messaging (B-05), self-hosted packaging (B-06), tenant export, import and switching (B-07), profile bundles (B-08), custom domains and full white-label packages (B-09), external MCP integrations (B-10) and bank payment execution (B-11). Their invariants (I-22, I-28, I-29, I-71, I-88, I-89, and I-91 for self-hosted cells) leave the milestone exits until their item returns.

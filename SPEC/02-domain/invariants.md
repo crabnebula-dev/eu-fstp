@@ -35,6 +35,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-20** The platform stores no link between tenant accounts in different tenants.
 - **I-21** Pre-submission check runs and drafts are not readable by operator or Judging roles.
 - **I-22** Exporting a tenant and importing it into an empty cell yields an equivalent tenant state.
+  NOTE: Export and import are deferred by Daniel on 2026-11-04 (B-07). I-22 binds again when they return.
 
 ## Audit
 
@@ -47,7 +48,9 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-26** Each combination of event, recipient and channel is delivered at most once.
 - **I-27** No message on any channel contains proposal content, scores, deliberation or another person's identity attributes.
 - **I-28** No shared group contains an applicant before NEGOTIATION. No shared group mixes Receiving and Judging roles unless P-11 is named and the proposal is GRANTED or later.
+  NOTE: Group messaging is deferred by Daniel on 2026-11-04 (B-05). No shared group exists until it returns.
 - **I-29** Group membership matches current role bindings and opt-ins. Ending a binding enqueues the membership removal in the same transaction, and removal executes within P-35 subject to channel availability.
+  NOTE: Group messaging is deferred by Daniel on 2026-11-04 (B-05).
 
 ## Contracts and payment requests
 
@@ -129,6 +132,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-69** Branding cannot remove mandatory elements required by the funder profile, the AI disclosure, the privacy notice, the accessibility statement, the Data Act tenant information or the platform attribution.
 - **I-70** Every colour pair used for text meets WCAG 2.2 level AA contrast in light and dark themes.
 - **I-71** A custom domain serves traffic only after verified ownership, and only for its own tenant cell.
+  NOTE: Custom domains are deferred by Daniel on 2026-11-04 (B-09). Until they return, every cell serves only its platform domain.
 - **I-72** Terminology overrides apply to interface labels only. Contracts, notices, the Guide for Applicants, funder documents and emails keep their approved wording.
 - **I-73** A template reaches other tenants only when published by a tenant admin and a programme manager together, after a personal data scan, under a licence the publisher chose.
 
@@ -155,7 +159,9 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-86** Identity attributes, bank details and vault contents are never returned through MCP.
 - **I-87** Public MCP tools return exactly the data of the public pages and feed, under the same filters.
 - **I-88** Calls to external MCP servers initiated by platform components use read-only tools only, unless a named human approved the specific action.
+  NOTE: External MCP integrations are deferred by Daniel on 2026-11-04 (B-10). No platform component calls an external MCP server until they return.
 - **I-89** Calls to external MCP servers send only the fields declared for that integration. Identity attributes and bank details go only to an approved finance hand-over.
+  NOTE: External MCP integrations are deferred by Daniel on 2026-11-04 (B-10).
 - **I-90** A composite signature verifies only when both the Ed25519 and the ML-DSA-65 halves verify.
 - **I-91** Self-hosted cells and desktop clients install only updates whose release metadata carries a valid composite signature by a release signing key that the release root currently certifies.
   NOTE: The desktop client is deferred by Daniel on 2026-11-04 (B-04). Until it returns, I-91 binds self-hosted cells.

@@ -85,7 +85,7 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 - **R-EX-01** Payment follows an accepted payment request for a milestone, in full or in part.
 - **R-EX-02** A hardship contribution proportional to delivered work can be granted on verified evidence.
-- **R-EX-03** Each tenant selects record-only or execution payment mode (P-20).
+- **R-EX-03** Each tenant selects record-only or execution payment mode (P-20). Execution mode is deferred by Daniel on 2026-11-04 (B-11), so every tenant runs record-only for now.
 - **R-EX-04** Milestone acceptance and payment release are done by different persons (I-05).
 
 ## Conflicts and separation of duties
@@ -111,6 +111,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 
 ## Profile sync
 
+NOTE: R-PS-01 to R-PS-03 are deferred by Daniel on 2026-11-04 (B-08). Their identifiers stay reserved.
+
 - **R-PS-01** A user can export a profile bundle from one tenant and import it into another.
 - **R-PS-02** The user selects which profile fields the bundle contains. Proposals, reviews, scores and role bindings are never included.
 - **R-PS-03** The receiving tenant treats imported fields as self-declared, unless carried as verifiable attestations.
@@ -118,6 +120,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
 NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type in.
 
 ## Tenant data and switching
+
+NOTE: R-TD-01 to R-TD-04 are deferred by Daniel on 2026-11-04 (B-07). Their identifiers stay reserved.
 
 - **R-TD-01** A tenant can export all its exportable data and digital assets in the documented schema (`schemas/`).
 - **R-TD-02** Importing an export restores the tenant on SaaS or self-hosted without loss (I-22).
@@ -183,6 +187,8 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 
 ## Group messaging
 
+NOTE: R-MG-01 to R-MG-03 are deferred by Daniel on 2026-11-04 (B-05). Their identifiers stay reserved.
+
 - **R-MG-01** Tenants can enable the Matrix adapter per P-32. The WhatsApp adapter is deferred by Daniel on 2026-11-04 (B-03).
 - **R-MG-02** Group types and membership follow `03-architecture/messaging.md` (I-28, I-29).
 - **R-MG-03** Announcements reach recipients without exposing other recipients.
@@ -195,6 +201,8 @@ NOTE: R-PS-03 means bundle forgery gains nothing beyond what a user could type i
 - **R-LA-11** Use beyond the tenant, including research, needs both tenant agreement and a separate applicant consent.
 
 ## Switching
+
+NOTE: R-SW-01 and R-SW-02 are deferred by Daniel on 2026-11-04 (B-07). Their identifiers stay reserved.
 
 - **R-SW-01** A tenant can start switching at any time without notice.
 - **R-SW-02** After the retrieval period (P-46), the tenant cell is fully erased and the tenant receives an erasure confirmation.
@@ -273,8 +281,8 @@ NOTE: R-WA-01 and R-WA-02 are deferred by Daniel on 2026-11-04 (B-03). Their ide
 
 ## White-labelling
 
-- **R-WL-01** Each tenant can apply a white-label package covering every interface, public page, document, email and messaging identity (`03-architecture/white-labelling.md`).
-- **R-WL-02** Custom domains get automatic certificates after verified ownership (I-71).
+- **R-WL-01** (deferred by Daniel on 2026-11-04 (B-09)) Each tenant can apply a white-label package covering every interface, public page, document, email and messaging identity (`03-architecture/white-labelling.md`).
+- **R-WL-02** (deferred by Daniel on 2026-11-04 (B-09)) Custom domains get automatic certificates after verified ownership (I-71).
 - **R-WL-03** Branding cannot execute code, break contrast or remove mandatory elements (I-68 to I-70).
 - **R-PG-05** Tenants can save templates for their own use and publish them to other tenants (I-73).
   AC: publishing a template that contains a personal name or email address is blocked with the matches listed.
@@ -314,7 +322,7 @@ NOTE: R-DC-01 is deferred by Daniel on 2026-11-04 (B-04). Its identifier stays r
 - **R-MC-03** Users can list and revoke connected agents.
 - **R-MC-04** Agents without an account can research open calls and published subgrants through public MCP tools (I-87), and programmes can opt in to a platform-wide directory (P-76).
 - **R-MC-05** Each programme chooses whether agents complete binding actions or only draft them (P-77).
-- **R-MC-06** Tenants can connect external MCP servers for checks and hand-offs (`03-architecture/mcp-client.md`, I-88, I-89).
+- **R-MC-06** (deferred by Daniel on 2026-11-04 (B-10)) Tenants can connect external MCP servers for checks and hand-offs (`03-architecture/mcp-client.md`, I-88, I-89).
   AC: an integration declared without bank fields cannot send bank details, and a write tool cannot run without a named approval.
 - **R-CR-03** Release metadata, update bundles, audit chain anchors and export manifests carry composite Ed25519 plus ML-DSA-65 signatures (ADR-001, I-90).
 - **R-CR-04** Contractual notices carry a composite companion signature next to the eIDAS seal.
