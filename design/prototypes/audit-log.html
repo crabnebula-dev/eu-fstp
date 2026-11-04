@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audit log - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-auditor.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AU</span><span class="sr-only">Account: audit-3b7f</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Auditor.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Auditor</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-auditor.html">Home</a></li><li><a href="audit-log.html" aria-current="page">Audit trail</a></li><li><a href="funder-report.html">Funder reports</a></li><li><a href="#">History export</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Auditor view of 6 audit events for SuperSAFE. No proposal content and no identity attributes. Export needs script and step-up.</p>
+
+    <h1>Audit log</h1>
+    <form method="get" action="audit-log.html" class="filters" aria-label="Filter audit events">
+      <div class="field"><label for="from">From</label><input id="from" name="from" type="date" value="2026-10-01"></div>
+      <div class="field"><label for="to">To</label><input id="to" name="to" type="date" value="2026-11-01"></div>
+      <div class="field"><label for="type">Event type</label><select id="type" name="type"><option selected>All</option><option>Role binding</option><option>State change</option><option>Score recorded</option><option>Contract signed</option><option>Payment released</option><option>Conflict declared</option></select></div>
+      <div class="field"><label for="prog">Programme</label><select id="prog" name="prog"><option selected>SuperSAFE</option></select></div>
+      <button class="btn btn--secondary" type="submit">Apply filters</button>
+    </form>
+    <table>
+      <caption>6 events, newest first</caption>
+      <thead><tr><th scope="col">Time (Europe/Malta)</th><th scope="col">Event type</th><th scope="col">Actor role</th><th scope="col">Object</th><th scope="col">Hash</th></tr></thead>
+      <tbody>
+        <tr><td>1 Nov 2026, 09:12</td><td>Payment released</td><td>Payment releaser</td><td class="pid">PR-2026-0007</td><td class="hash">9f2c41e0…</td></tr>
+        <tr><td>31 Oct 2026, 16:40</td><td>Contract signed</td><td>Contract signatory</td><td class="pid">CTR-2026-0031</td><td class="hash">a71d08b3…</td></tr>
+        <tr><td>30 Oct 2026, 11:05</td><td>State change</td><td>System</td><td class="pid">P-7Q2K</td><td class="hash">3be9c2f7…</td></tr>
+        <tr><td>29 Oct 2026, 14:22</td><td>Score recorded</td><td>Assigned reviewer</td><td class="pid">P-3MZ8</td><td class="hash">c04a7e19…</td></tr>
+        <tr><td>28 Oct 2026, 10:01</td><td>Conflict declared</td><td>Assigned reviewer</td><td class="pid">P-K4N1</td><td class="hash">5d18f6aa…</td></tr>
+        <tr><td>27 Oct 2026, 08:47</td><td>Role binding</td><td>Tenant admin</td><td class="pid">binding-0193</td><td class="hash">e6b2093c…</td></tr>
+      </tbody>
+    </table>
+    <div class="btn-row"><!-- TODO(js): Download needs script in production. -->
+        <button class="btn btn--secondary" type="button" disabled aria-describedby="dl-why">Download</button></div>
+    <p id="dl-why" class="text-sm muted">Step-up authentication required for full export. Static prototype: this action needs script.</p>
+    <p class="callout callout--info"><strong>R-CF-03:</strong> Positive identity matches are visible only to the Auditor role (R-CF-03).</p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

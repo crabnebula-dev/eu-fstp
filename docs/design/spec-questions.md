@@ -1,6 +1,6 @@
 # Spec questions
 
-Status: draft. Points where the spec is unclear or seems wrong, found during design. Each has a recommendation. The spec wins until Daniel decides. On 2026-11-01 Daniel decided every open item, so all 23 are now Resolved. Item 24, about tenant onboarding, was opened later on 2026-11-01 and is Open.
+Status: draft. Points where the spec is unclear or seems wrong, found during design. Each has a recommendation. The spec wins until Daniel decides. On 2026-11-01 Daniel decided every open item, so all 23 are now Resolved. Item 24, about tenant onboarding, was opened later on 2026-11-01 and is now Resolved. Items 25 to 27 came from the post-grant build. Daniel decided them on 2026-11-01, so they are now Resolved. Items 28 to 30 came from the build of the remaining screens. Item 31 came from Daniel's signatory roles decision. Daniel decided items 28 to 31 on 2026-11-01, so all 31 items are now Resolved. Items needing spec or backend changes are tracked in `spec-amendments.md`.
 
 Reconciled on 2026-11-01 against `SPEC/12-journey-ui.md` (repository version) and `docs/handoff/m4-design.md`. Reconciled again on 2026-11-01 against `docs/handoff/m4-demo.md`. Items those documents settle are marked **Resolved** with a citation. The others stay **Open**.
 
@@ -240,7 +240,7 @@ Each item names a screen or state the demo script reaches that the first 27 prot
 
 ### 24. Tenant onboarding: separate wizard or folded into the admin screens
 
-**Status.** Open.
+**Status.** Resolved (Daniel's decision, 2026-11-01).
 
 **Reference.** `programme-creator.md` onboarding steps: Organisation, Agreements, Branding, Domains and email, Identity (P-45, P-18), Inference (P-21), Payments (P-20), Channels and Administrators (SoD-07).
 
@@ -249,3 +249,111 @@ Each item names a screen or state the demo script reaches that the first 27 prot
 **Gap.** The admin screens cover Organisation, Agreements, Branding, Domains and email, and Administrators. Identity, Inference, Payments and Channels have no screen.
 
 **Recommendation.** A separate step-based wizard for first-time onboarding, reusing the step pattern of `planning-studio.html`. The five admin screens then handle later changes. See `09-tenant-admin.md`.
+
+**Resolution.** Built as `onboarding.html`, 9-step wizard, Daniel's decision 2026-11-01. See `10-post-grant-screens.md`.
+
+### 25. Who moves a payment request from ACCEPTED to PAYMENT_APPROVED
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** `payment-requests.md` states: DRAFT, SUBMITTED, CHECKS_FAILED, UNDER_REVIEW, CHANGES_REQUESTED, ACCEPTED, PAYMENT_APPROVED, RELEASED, PAID. Line review is by the finance approver. Release is by the payment releaser (SoD-04).
+
+**Question.** The list has two approval-like states, ACCEPTED and PAYMENT_APPROVED. The extracted rules do not say which role or event moves a request from one to the other. CHECKS_FAILED also reads as a branch, not a step between SUBMITTED and UNDER_REVIEW.
+
+**Recommendation.** ACCEPTED closes the line review. PAYMENT_APPROVED is a separate finance approval of the request total, held by the finance approver. CHECKS_FAILED returns the request to the grantee. `payment-request-review.html` and `payment-release.html` assume this.
+
+**Resolution.** Daniel's decision, 2026-11-01. Recommendation accepted. ACCEPTED closes the line review. The finance approver then confirms the request total (PAYMENT_APPROVED) before the payment releaser can act. CHECKS_FAILED returns the request to the grantee to correct and resubmit.
+
+Design note: onboarding and role assignment are prerequisites. Callouts added to payment-request-review.html and payment-release.html.
+
+Changed: `payment-request-review.html`, `payment-release.html` and `payment-status.html` (new CHECKS_FAILED row).
+
+### 26. Visibility levels for a grantee who is a minor
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** `public-transparency.md` I-42 (no public page names a minor) and the grantee choice of level up to P-50 and P-51.
+
+**Question.** Should the levels "Project and grantee" and "Full" be unavailable when the grantee or a team member is a minor? Or does the platform publish the project but suppress only the name?
+
+**Recommendation.** Cap the choice at "Project" for any grant with a minor on the team, and show the reason beside the disabled options. `grantee-visibility.html` shows an adult grantee today.
+
+**Resolution.** Daniel's decision, 2026-11-01. Recommendation accepted. Hidden and Project stay selectable when a team member is a minor (I-42).
+
+Design note: 'Project and grantee' and 'Full' are disabled with reason when a minor is on the team.
+
+Changed: `grantee-visibility.html` now shows a team with a minor.
+
+### 27. Who decides OUT_OF_SCOPE for a complaint, and can it be escalated
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** `complaints.md` states FILED, OUT_OF_SCOPE, COORDINATOR_REVIEW. SoD-13 and I-56 apply to every complaint.
+
+**Question.** The rules do not name the role that marks a complaint OUT_OF_SCOPE. They also do not say whether that decision can itself be escalated to the IRC.
+
+**Recommendation.** A coordinator who took no part in the contested decision decides scope, with a reasoned response (I-56). The complainant can escalate within P-63. `complaint-coordinator-review.html` does not show the scope decision yet.
+
+**Resolution.** Daniel's decision, 2026-11-01. Recommendation accepted. A coordinator who took no part in the contested decision decides scope (SoD-13), with a reasoned response. The complainant can escalate within P-63.
+
+Design note: complaint procedure must appear in participation T&Cs and application submission T&Cs. TODO(legal) markers added.
+
+Changed: `complaint-coordinator-review.html` (scope decision panel and out of scope view), `complaint-file.html` and `complaint-irc-escalation.html`.
+
+### 28. What document a contract terminated before signature keeps
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** I-30 (signed versions are immutable, hashes in the audit log). `contract-terminal.html` shows CTR-2026-0039, TERMINATED with the reason "Project abandoned before signature."
+
+**Question.** A contract terminated before signature has no signed version. Which PDF is kept and called immutable: the last unsigned draft, or a termination record only?
+
+**Recommendation.** Keep the last sent draft as an immutable PDF, labelled unsigned, and record its hash with the termination reason. `contract-terminal.html` shows a "Download PDF" link on this assumption.
+
+**Resolution.** Daniel's decision, 2026-11-01. See docs/design/spec-amendments.md SA-03.
+
+Decision: the generated draft PDF is sealed with the tenant's electronic seal and stored at termination, with the termination reason recorded. Changed: `contract-terminal.html` now shows the sealed draft note and a "Download sealed draft" link.
+
+### 29. Which rule governs the second-admin approval at onboarding activation
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** SoD-07 (at least two tenant admins). The brief for `onboarding.html` step 9 cites "I-67 equivalent for onboarding".
+
+**Question.** I-67 covers programme publication. No extracted rule names the two-person check for organisation activation. Is it SoD-07 alone, or a new invariant?
+
+**Recommendation.** Treat activation as a two-person action under SoD-07: the approver must not be the admin who built the setup. Add an explicit invariant to the spec. The step 9 note keeps the brief's wording until then.
+
+**Resolution.** Daniel's decision, 2026-11-01. See docs/design/spec-amendments.md SA-02.
+
+Decision: activation needs approval by a second tenant admin who did not complete the setup, by analogy with I-67. Changed: `onboarding.html` step 9 now has an activation approval panel and the explicit note.
+
+### 30. Advanced signature listed as a verification method
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** P-18 (verification methods) and P-30 (signature cascade). `onboarding.html` step 5 lists "Advanced signature" under Verification methods (P-18).
+
+**Question.** P-18 covers identity verification. Advanced signature is a signing method under P-30. Should the onboarding step list signing methods separately from verification methods?
+
+**Recommendation.** Split step 5 into "Identity verification (P-18)" and "Signature methods (P-30)". `onboarding.html` follows the brief for now.
+
+**Resolution.** Daniel's decision, 2026-11-01. See docs/design/spec-amendments.md SA-04.
+
+Decision: advanced signature is removed from step 5. It is a signing route under P-30, not a verification method under P-18. Changed: `onboarding.html` step 5 lists two methods and explains where advanced signature is configured.
+
+### 31. Financial signatory and Legal signatory roles are not in the spec
+
+**Status.** Resolved (Daniel's decision, 2026-11-01).
+
+**Reference.** `roles-and-sod.md`. Daniel's decision, 2026-11-01: two tenant-wide roles, Financial signatory and Legal signatory. Each needs at least one named holder before activation. One person may hold both.
+
+**Question.** The Financial signatory and Legal signatory roles are not in roles-and-sod.md. They were introduced by Daniel's decision on 2026-11-01. Should they be added to the spec as tenant-wide Operations roles? What authority do they have (signing, approving, countersigning)?
+
+**Recommendation.** Add to roles-and-sod.md as tenant-wide Operations roles. Financial signatory: approves payment instructions and financial commitments at the organisation level. Legal signatory: approves contracts, terms and legal commitments at the organisation level. Separate from the programme-bound Contract signatory. Spec amendment pending.
+
+**Design note.** Shown in `admin-members.html` (Tenant-wide roles column), `admin-org.html` (Signatories section) and `onboarding.html` step 9 (activation conditions). Tenant admins can add, change or remove these roles later in `admin-members.html` (Daniel, 2026-11-01). Removing the last holder of either role is blocked.
+
+**Resolution.** Daniel's decision, 2026-11-01. See docs/design/spec-amendments.md SA-01.
+
+Decision: recommendation accepted. The spec needs an amendment and the backend needs work. Both are listed in SA-01.

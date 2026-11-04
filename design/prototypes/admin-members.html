@@ -17,25 +17,39 @@
     .check-list { list-style: none; padding: 0; }
     .check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
     .check-list li > span:first-child { flex: 1; min-width: 12rem; }
+    .role-badges { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-1); }
   </style>
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html" aria-current="page">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Tenant admin</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html" aria-current="page">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li><li><a href="onboarding.html">Set-up</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
-    <p class="proto-state">Prototype state: Member list for Horizon Bridges. Signed in as a.chen@horizon-bridges.example. Invite and grant actions need script.</p>
+    <p class="proto-state">Prototype state: Member list for Horizon Bridges with 4 accounts. Tenant-wide roles: Tenant admin, Financial signatory and Legal signatory. K. Wu holds both signatory roles. Invite and grant actions need script.</p>
 
     <div class="section-head">
       <h1>Members and roles</h1>
@@ -44,25 +58,40 @@
         <p id="invite-why" class="text-sm muted">Static prototype: this action needs script.</p></div>
     </div>
     <p class="callout callout--warning"><strong>Your own account:</strong> Granting a role to your own account requires approval by a second tenant admin (SoD-07).</p>
-    <p class="muted">Tenant admin is tenant-wide. Other roles bind an account to one programme with a start date and an optional end date (O-47). The tenant always keeps at least two tenant admins.</p>
-    <p id="grant-why" class="text-sm muted">Static prototype: this action needs script.</p>
+    <p class="muted">Tenant admin, Financial signatory and Legal signatory are tenant-wide. Other roles bind an account to one programme with a start date and an optional end date (O-47). The tenant always keeps at least two tenant admins.</p>
+    <p class="callout callout--info"><strong>Signatory roles:</strong> Financial signatory and Legal signatory are tenant-wide roles. Both must be assigned to at least one person before the organisation can be activated.</p>
+    <p class="callout callout--info"><strong>Changing roles later:</strong> Tenant admins can add, change or remove tenant-wide and programme roles at any time after activation. Removing the last Financial signatory or Legal signatory is blocked.</p>
+    <p id="change-why" class="text-sm muted">Change roles adds or removes Tenant admin, Financial signatory, Legal signatory and programme roles. Every change is recorded in the audit log. Static prototype: this action needs script.</p>
+    <p id="grant-why" class="text-sm muted">Grant role covers programme roles and tenant-wide roles. Tenant-wide roles include Financial signatory and Legal signatory. Static prototype: this action needs script.</p>
     <table>
-      <caption>3 tenant accounts</caption>
-      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Tenant admin</th><th scope="col">Programmes and roles</th><th scope="col">Actions</th></tr></thead>
+      <caption>4 tenant accounts</caption>
+      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Tenant-wide roles</th><th scope="col">Programmes and roles</th><th scope="col">Actions</th></tr></thead>
       <tbody>
-        <tr class="row-self"><td>A. Chen <span class="badge badge--info">You</span></td><td class="pid">a.chen@horizon-bridges.example</td><td>Yes</td>
+        <tr class="row-self"><td>A. Chen <span class="badge badge--info">You</span></td><td class="pid">a.chen@horizon-bridges.example</td><td><ul class="role-badges"><li><span class="badge badge--info">Tenant admin</span></li><li><span class="badge badge--neutral">Legal signatory</span></li></ul></td>
           <td><ul><li>Programme manager, SuperSAFE, from 1 Sep 2026, no end date</li></ul></td>
           <td><!-- TODO(js): open the grant role form; a self-grant goes to a second tenant admin. -->
             <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why self-note">Grant role<span class="sr-only"> to A. Chen</span></button>
-            <p id="self-note" class="text-sm"><strong>Needs a second admin:</strong> this is your account (SoD-07).</p></td></tr>
-        <tr><td>M. Diop</td><td class="pid">m.diop@horizon-bridges.example</td><td>Yes</td>
+            <p id="self-note" class="text-sm"><strong>Needs a second admin:</strong> this is your account (SoD-07).</p>
+            <!-- TODO(js): open the change roles form for A. Chen. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="change-why">Change roles<span class="sr-only"> for A. Chen</span></button></td></tr>
+        <tr><td>M. Diop</td><td class="pid">m.diop@horizon-bridges.example</td><td><ul class="role-badges"><li><span class="badge badge--info">Tenant admin</span></li><li><span class="badge badge--neutral">Financial signatory</span></li></ul></td>
           <td>No programme role</td>
           <td><!-- TODO(js): open the grant role form. -->
-            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to M. Diop</span></button></td></tr>
-        <tr><td>P. Novak</td><td class="pid">p.novak@horizon-bridges.example</td><td>No</td>
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to M. Diop</span></button>
+            <!-- TODO(js): open the change roles form for M. Diop. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="change-why">Change roles<span class="sr-only"> for M. Diop</span></button></td></tr>
+        <tr><td>P. Novak</td><td class="pid">p.novak@horizon-bridges.example</td><td>None</td>
           <td><ul><li>Assigned reviewer, SuperSAFE, from 15 Sep 2026 to 31 Mar 2027. Identity verified at binding.</li></ul></td>
           <td><!-- TODO(js): open the grant role form. -->
-            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to P. Novak</span></button></td></tr>
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to P. Novak</span></button>
+            <!-- TODO(js): open the change roles form for P. Novak. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="change-why">Change roles<span class="sr-only"> for P. Novak</span></button></td></tr>
+        <tr><td>K. Wu</td><td class="pid">k.wu@horizon-bridges.example</td><td><ul class="role-badges"><li><span class="badge badge--neutral">Financial signatory</span></li><li><span class="badge badge--neutral">Legal signatory</span></li></ul></td>
+          <td>No programme role</td>
+          <td><!-- TODO(js): open the grant role form. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="grant-why">Grant role<span class="sr-only"> to K. Wu</span></button>
+            <!-- TODO(js): open the change roles form for K. Wu. -->
+            <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="change-why">Change roles<span class="sr-only"> for K. Wu</span></button></td></tr>
       </tbody>
     </table>
     <section aria-labelledby="pend-h">
@@ -76,6 +105,7 @@
     </section>
     <p class="callout callout--info"><strong>Identity check:</strong> Drafting and Judging bindings require verified identity at binding time (SoD-09). The platform checks identity status before confirming each binding.</p>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

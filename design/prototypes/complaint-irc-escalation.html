@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Escalated complaint: IRC review - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-irc.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">IR</span><span class="sr-only">Account: irc-9c0b</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as IRC member.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as IRC member</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-irc.html">Home</a></li><li><a href="irc-cases.html">My cases</a></li><li><a href="irc-view.html">Reviews</a></li><li><a href="complaint-irc-escalation.html" aria-current="page">Complaints</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: IRC review of escalated complaint CMP-2026-0002 in ESCALATED. Uphold with re-evaluation selected.</p>
+
+    <h1>Escalated complaint: IRC review</h1>
+    <dl class="facts">
+      <dt>Complaint reference</dt><dd class="pid">CMP-2026-0002</dd>
+      <dt>Escalated</dt><dd><time datetime="2026-10-25">25 Oct 2026</time></dd>
+      <dt>Type</dt><dd>Stage 1 knock-out decision</dd>
+      <dt>Status</dt><dd><span class="badge badge--warning">Escalated</span> <span class="state-name">ESCALATED</span></dd>
+    </dl>
+    <section aria-labelledby="coord-h">
+      <h2 id="coord-h">Coordinator response</h2>
+      <blockquote><p>The knock-out followed the published eligibility rule. The complaint is not resolved at this level.</p></blockquote>
+    </section>
+    <section aria-labelledby="esc-h">
+      <h2 id="esc-h">Complainant escalation note</h2>
+      <blockquote><p>The eligibility answer was read against version 1 of the rules. Version 2 was in force on the submission date.</p></blockquote>
+    </section>
+    <!-- TODO(legal): Reference to this complaint procedure must appear in the terms and conditions of participation and in the grant application submission terms. -->
+    <p class="callout callout--info"><strong>Final decision:</strong> At least two IRC members must review. This decision is final within the programme (complaints.md O-32). SoD-13 applies.</p>
+    <!-- TODO(legal): exact label for the IRC review window P-64. -->
+    <p>Response due within the IRC review window (P-64).</p>
+    <form method="post" action="#">
+      <fieldset><legend>Outcome</legend>
+        <div class="choice"><input type="radio" id="up" name="out" checked><label for="up">Uphold the complaint</label></div>
+        <div class="field"><label for="remedy">Remedy</label>
+          <select id="remedy" name="remedy"><option selected>Re-evaluation by different reviewers</option><option>Re-entry into the next call</option><option>Correction of the payment decision</option></select>
+          <span class="hint">A remedy never reduces another grantee's award.</span></div>
+        <div class="choice"><input type="radio" id="dis" name="out"><label for="dis">Dismiss the complaint</label></div>
+        <div class="field"><label for="dis-why">Reason for dismissal</label><textarea id="dis-why" name="dis-why"></textarea></div>
+      </fieldset>
+      <div class="btn-row"><!-- TODO(js): Record outcome needs script in production. -->
+        <button class="btn btn--primary" type="button" disabled aria-describedby="rec-why">Record outcome</button></div>
+      <p id="rec-why" class="text-sm muted">Recording needs a second IRC member and a passkey confirmation. Static prototype: this action needs script.</p>
+    </form>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

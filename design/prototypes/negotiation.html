@@ -11,19 +11,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="#">Support</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Applicant</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html">Home</a></li><li><a href="route-map.html" aria-current="page">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: NEGOTIATION, identity verified, adult applicant, grant agreement not yet signed. Read only in M4 (m4-design §2.2 J4).</p>
 
@@ -47,13 +60,16 @@
           <p>TODO(legal): grant agreement summary text. Designers do not write legal text.</p>
           <p><ins>Added:</ins> milestone 3 amount 18 750.00 EUR. <del>Removed:</del> milestone 3 amount 20 000.00 EUR.</p>
           <p><a href="#">Download the full grant agreement draft (PDF)</a></p>
+          <p><a href="contract-view.html">Open the grant agreement signing page</a></p>
         </details>
+        <p><a href="contract-drafted.html">View the draft agreement and proposed changes</a></p>
         <div class="field choice"><input type="checkbox" id="read" name="read"><label for="read">I have read the grant agreement draft.</label></div>
         <div class="btn-row"><button class="btn btn--primary" type="button" disabled aria-describedby="sign-why">Accept and sign</button></div>
         <p id="sign-why" class="text-sm muted">Available when every check passes and you confirm you read the draft. Signing arrives after M4.</p>
         <p class="stepup-note">Signing requires a passkey confirmation.</p></li>
     </ol>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

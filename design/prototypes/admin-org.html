@@ -21,19 +21,32 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html" aria-current="page">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Tenant admin</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html" aria-current="page">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li><li><a href="onboarding.html">Set-up</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
     <p class="proto-state">Prototype state: Organisation settings, read-only view. Edit actions need script. Data from the onboarding steps Organisation and Agreements (programme-creator).</p>
 
@@ -59,10 +72,20 @@
     <section aria-labelledby="sig-h">
       <div class="section-head"><h2 id="sig-h">Signatories</h2><!-- TODO(js): open the signatories edit form. -->
         <button class="btn btn--small btn--secondary" type="button" disabled aria-describedby="edit-why">Edit<span class="sr-only"> signatories</span></button></div>
-      <dl class="facts">
-        <dt>A. Chen</dt><dd>Managing director</dd>
-        <dt>M. Diop</dt><dd>Head of programmes</dd>
+      <p class="muted">Financial signatory and Legal signatory are tenant-wide roles. They are set in Members and roles. One person may hold both Financial signatory and Legal signatory.</p>
+      <h3 id="fin-sig-h">Financial signatory</h3>
+      <dl class="facts" aria-labelledby="fin-sig-h">
+        <dt>M. Diop</dt><dd class="pid">m.diop@horizon-bridges.example</dd>
+        <dt>K. Wu</dt><dd class="pid">k.wu@horizon-bridges.example</dd>
       </dl>
+      <p class="text-sm">At least one person must hold this role before the organisation can be activated.</p>
+      <h3 id="leg-sig-h">Legal signatory</h3>
+      <dl class="facts" aria-labelledby="leg-sig-h">
+        <dt>A. Chen</dt><dd class="pid">a.chen@horizon-bridges.example</dd>
+        <dt>K. Wu</dt><dd class="pid">k.wu@horizon-bridges.example</dd>
+      </dl>
+      <p class="text-sm">At least one person must hold this role before the organisation can be activated.</p>
+      <p>Tenant admins can add or change signatory holders at any time in Members and roles. <a href="admin-members.html">Manage signatory roles in Members and roles</a></p>
     </section>
     <section aria-labelledby="agr-h">
       <h2 id="agr-h">Agreements</h2>
@@ -80,6 +103,7 @@
       </table>
     </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

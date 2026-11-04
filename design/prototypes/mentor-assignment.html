@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mentoring assignments - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+dl.facts { display: grid; grid-template-columns: minmax(10rem, 16rem) 1fr; gap: var(--space-2) var(--space-4); }
+    dl.facts dt { font-weight: var(--weight-semibold); }
+    dl.facts dd { margin: 0; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .filters .field { margin-bottom: 0; }
+    .line-card { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4); }
+    .hash { font-family: var(--font-mono); font-size: var(--text-sm); }
+    .diff del { color: var(--color-text-2); }
+    .diff ins { text-decoration: underline; font-weight: var(--weight-semibold); }
+    .cascade > li { margin-bottom: var(--space-4); }
+    .steps-bar { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .steps-bar li { border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+    .steps-bar li[aria-current="step"] { border: 2px solid var(--color-brand); font-weight: var(--weight-semibold); }
+    pre.json { background: var(--color-surface-1); border: 1px solid var(--color-surface-3); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-mentor.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+        
+        <span class="topbar-spacer"></span>
+        
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">RO</span><span class="sr-only">Account: mentor-c4e1</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Consortium expert (mentor).</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Consortium expert (mentor)</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-mentor.html">Home</a></li><li><a href="mentor-assignment.html" aria-current="page">Mentoring</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Mentor view with 2 active assignments and 1 ended. Each assignment is recorded in the vault (I-54).</p>
+
+    <h1>Mentoring assignments</h1>
+    <p class="callout callout--warning"><strong>SoD-12:</strong> You cannot be an assigned reviewer for later proposals from the same grantee team (SoD-12).</p>
+    <p class="callout callout--warning"><strong>SoD-12:</strong> You cannot accept payment requests for any grant you mentor (SoD-12).</p>
+    <table>
+      <caption>3 mentoring assignments</caption>
+      <thead><tr><th scope="col">Grantee</th><th scope="col">Call</th><th scope="col">Assignment start</th><th scope="col">Status</th><th scope="col">Links</th></tr></thead>
+      <tbody>
+        <tr><td>Petra (SuperSAFE)</td><td>SuperSAFE Call 1</td><td>1 Oct 2026</td><td><span class="badge badge--success">Active</span></td>
+          <td><a href="#">View project group<span class="sr-only"> for Petra</span></a><br><a href="#">Session notes<span class="sr-only"> for Petra</span></a> <span class="text-sm muted">(private, visible only to you and the grantee)</span></td></tr>
+        <tr><td>Laszlo (SuperSAFE)</td><td>SuperSAFE Call 1</td><td>8 Oct 2026</td><td><span class="badge badge--success">Active</span></td>
+          <td><a href="#">View project group<span class="sr-only"> for Laszlo</span></a><br><a href="#">Session notes<span class="sr-only"> for Laszlo</span></a> <span class="text-sm muted">(private, visible only to you and the grantee)</span></td></tr>
+        <tr><td>Amara (SuperSAFE)</td><td>SuperSAFE Call 1</td><td>1 Jul 2026</td><td><span class="badge badge--neutral">Ended</span></td>
+          <td><a href="#">View project group<span class="sr-only"> for Amara</span></a><br><a href="#">Session notes<span class="sr-only"> for Amara</span></a> <span class="text-sm muted">(private, visible only to you and the grantee)</span></td></tr>
+      </tbody>
+    </table>
+    <p class="text-sm muted">Every assignment is recorded and used in conflict detection in all later calls (I-54).</p>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

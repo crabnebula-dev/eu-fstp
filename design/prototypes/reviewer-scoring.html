@@ -11,21 +11,34 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-reviewer.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-reviewer.html">Home</a></li><li><a href="reviewer-assignments.html" aria-current="page">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Assigned reviewer</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">R7</span><span class="sr-only">Account: reviewer-7f3a</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">R7</span><span class="sr-only">Account: reviewer-7f3a</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner" data-slot="masquerade">
+          <p><strong>Masquerading as Assigned reviewer.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Viewing as Assigned reviewer</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-reviewer.html">Home</a></li><li><a href="reviewer-assignments.html" aria-current="page">My assignments</a></li><li><a href="#">Conflicts</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
-    <p class="proto-state">Prototype state: Reviewer scoring form, STAGE2 revised plan, conflict answered "no". SuperSAFE P-01: 0 to 5 scale, weights 30, 40 and 30 (m4-design §2.1).</p>
+    <p class="proto-state">Prototype state: Shown in masquerade mode: a Tenant admin views it read-only. Reviewer scoring form, STAGE2 revised plan, conflict answered "no". SuperSAFE P-01: 0 to 5 scale, weights 30, 40 and 30 (m4-design §2.1).</p>
 
     <section aria-labelledby="strip-h"><h2 id="strip-h" class="text-sm" style="font-size:var(--text-sm);margin:0 0 var(--space-2)">Proposal status</h2><ol class="strip"><li class="is-done">Draft <span class="state-name">(DRAFT)</span><span class="sr-only">, done</span></li><li class="is-done">Submitted <span class="state-name">(SUBMITTED)</span><span class="sr-only">, done</span></li><li class="is-done">Stage 1 evaluation <span class="state-name">(STAGE1)</span><span class="sr-only">, done</span></li><li class="is-current" aria-current="step">Stage 2 questions <span class="state-name">(STAGE2)</span><span class="sr-only">, current</span></li><li class="is-next">Ranked, awaiting committee decision <span class="state-name">(RANKED)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Independent review <span class="state-name">(IRC_REVIEW)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Negotiation <span class="state-name">(NEGOTIATION)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Granted <span class="state-name">(GRANTED)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Project in progress <span class="state-name">(IN_EXECUTION)</span><span class="sr-only">, upcoming</span></li><li class="is-next">Completed <span class="state-name">(COMPLETED)</span><span class="sr-only">, upcoming</span></li></ol></section>
     <h1>Score <span class="pid">CSW-2024-0042</span></h1>
@@ -76,6 +89,7 @@
       </form>
     </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>

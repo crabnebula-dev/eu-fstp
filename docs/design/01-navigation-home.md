@@ -8,7 +8,60 @@ Every signed-in person lands on a home page that shows their own work. Today the
 
 Audience: all nine role groups. The first screen says what to do next in plain grant-process words.
 
+## Sidebar layout
+
+Added 2026-11-01. Signed-in pages use a left sidebar for navigation. Public pages keep their links in the top row.
+
+Page structure, in source order: skip link, top bar (`<header>`), then `<div class="page-body">` with `<aside class="sidebar" aria-label="Main navigation">` and `<main id="main-content">`, then the footer.
+
+| Area | Desktop, 900px and wider | Below 900px |
+| --- | --- | --- |
+| Top bar | Full width and sticky. Tenant mark, spacer, Notifications, Help. The avatar is hidden. | Same, plus the avatar link to `/app/me`. |
+| Sidebar | 220px (`--sidebar-width`), sticky below the top bar, full height minus the top bar, scrolls on its own. | A vertical list under the top bar. Always visible, no menu button, no script. |
+| Main | Fills the rest. At most 960px (`--main-max`), centred in the space left of the sidebar. | Full width. |
+
+Sidebar slots, top to bottom:
+
+1. Masquerade banner. Hidden unless a Tenant admin is in masquerade mode. See "Masquerade mode".
+2. Role chip. "Signed in as Applicant", or "Viewing as Applicant" in masquerade mode.
+3. "Navigation" label, shown visually and hidden from screen readers. The `<nav>` carries the accessible name "Main navigation".
+4. Role links as one vertical list. The active link has `aria-current="page"`, bold weight, a 4px left bar in `--color-brand` and a light blue background.
+5. Account (`/app/me`) and Sign out, pinned to the bottom. On desktop they replace the top bar avatar. Below 900px only Sign out shows, because the avatar is back in the top bar.
+
+All layout rules live in `design/tokens.css`, section "5b. Layout: sidebar shell". No prototype sets layout in its own `<style>` block.
+
+## Layout and routing contract
+
+The prototypes are static, but the shell follows the shape a router expects. Engineering can map it to layout routes in the in-house router or in a framework router, if one is chosen later. This document does not choose a framework.
+
+| Layout | Route group | Pages | Slots |
+| --- | --- | --- | --- |
+| `PublicLayout` | Public paths, no session needed | auth-signup, auth-check-email, auth-enrol, auth-signin, calls-public, call-detail-public, public-grants, public-calls-feed | Top bar with brand, public links and language. Main outlet. Footer. |
+| `AppLayout` | `/app/...`, session required | All 61 other prototypes | Top bar with brand and tools. Sidebar with the five slots above. Main outlet. Footer. |
+
+Rules for the implementation:
+
+- A page renders only its main content. It never builds the top bar or the sidebar.
+- The layout follows from the route group, not from a per-page choice. In the generator this is `layoutFor(role)`.
+- The sidebar links come from one role navigation table (`NAV` in the generator). The shell picks the list from the session role.
+- The active link is the item whose route matches the current route. The shell sets `aria-current="page"` on it.
+- Masquerade state is a session flag read by the shell. Pages do not know about it. While it is set, the shell shows the banner, switches the nav to the viewed role and disables every action.
+- Public pages never render the sidebar or the masquerade slot.
+
+## Masquerade mode
+
+Added 2026-11-01. A Tenant admin can view the platform as another role sees it, to help a member who reports a problem. The view is read-only.
+
+- Entry point: Administration home, section "Support tools", then `admin-masquerade.html`. It is also in the admin sidebar as "Support tools".
+- `admin-masquerade.html` lists 10 roles. Each row has a "View as [role]" link to that role's home page. In the prototype the links are static. TODO(js): real masquerade needs a session flag.
+- Banner text: "Masquerading as [role]. This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. Exit masquerade." Exit masquerade goes back to Administration.
+- The banner is the first element inside the page body, at the top of the sidebar, above the viewed role's links. It uses the warning background with a 4px amber left bar.
+- Every signed-in page has the banner in its markup with `class="masquerade-banner masquerade-banner--hidden"`. Two pages show it as a demonstration: `home-voyager.html` (Applicant) and `reviewer-scoring.html` (Assigned reviewer).
+- No action taken during masquerade is recorded against any real account. In production all actions are disabled. The two demonstration pages show the layout only, so their buttons keep their normal state.
+
 ## Top row
+
+The top row below describes the public layout. On signed-in pages the role links and the role chip move to the sidebar. Account moves to the sidebar on desktop.
 
 Order, left to right: tenant mark | role links | spacer | role chip | Notifications | Help | Account avatar.
 
@@ -91,12 +144,14 @@ Each role reaches its primary task in at most three clicks from sign-in. Sign-in
 
 ## Accessibility notes
 
-- One `<nav aria-label="Main navigation">` per page. The prototype `nav-pattern.html` has three, labelled "(example a)" to "(example c)" for review only.
+- One `<nav aria-label="Main navigation">` per page. The prototype `nav-pattern.html` has three more inside its examples, labelled "(example a)" to "(example c)" for review only.
+- Sidebar: source order is top bar, sidebar, then main, so Tab order matches reading order. The skip link jumps past the sidebar.
+- The active sidebar link is marked by `aria-current`, bold weight and a left bar, never colour alone. Its text passes 8:1 on its background in both themes.
 - `aria-current="page"` marks the active item. It is also shown by weight and an underline bar, never colour alone.
 - The skip link is the first focusable element and moves focus to `<main id="main-content">`.
 - No keyboard trap. There are no menus that capture focus. Tab order follows reading order.
 - The notification count has hidden text "unread" so screen readers announce "2 unread".
-- Mobile: the row wraps to two lines. Primary action buttons span the card width below 52rem. Touch targets are at least 44px.
+- Mobile: the top row wraps to two lines and the sidebar list sits below it. Primary action buttons span the card width below 52rem. Touch targets are at least 44px.
 - Headings: one `h1` "Your work", then `h2` per card.
 
 ## Spec IDs

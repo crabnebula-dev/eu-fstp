@@ -11,21 +11,34 @@
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
-  <header class="site-header">
+  <header class="site-header site-header--app">
       <div class="topbar">
         <a class="brand" href="home-voyager.html"><span class="brand-mark" aria-hidden="true">NR</span><span>Nova Research Foundation<span class="sr-only">, FSTP home</span></span></a>
-        <nav class="main-nav" aria-label="Main navigation"><ul><li><a href="home-voyager.html" aria-current="page">Home</a></li><li><a href="route-map.html">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="#">Support</a></li></ul></nav>
+        
         <span class="topbar-spacer"></span>
-        <span class="role-chip">Signed in as Applicant</span>
+        
         <ul class="topbar-tools">
           <li><a class="tool-link" href="#">Notifications <span class="count-badge">3</span><span class="sr-only"> unread</span></a></li>
           <li><a class="tool-link" href="#">Help</a></li>
-          <li><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">MS</span><span class="sr-only">Account: meridian-social-lab</span></a></li>
         </ul>
       </div>
   </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner" data-slot="masquerade">
+          <p><strong>Masquerading as Applicant.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Viewing as Applicant</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-voyager.html" aria-current="page">Home</a></li><li><a href="route-map.html">My applications</a></li><li><a href="calls-public.html">Open calls</a></li><li><a href="grantee-support.html">Support</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
   <main id="main-content" tabindex="-1">
-    <p class="proto-state">Prototype state: Applicant home, one proposal in STAGE2 (Stage 2 questions)</p>
+    <p class="proto-state">Prototype state: Applicant home, one proposal in STAGE2 (Stage 2 questions). Shown in masquerade mode: a Tenant admin views it read-only.</p>
 
     <h1>Your work</h1>
     <p class="muted">Welcome back, meridian-social-lab.</p>
@@ -70,7 +83,16 @@
           <h2 id="sup-h" class="text-xl" style="font-size:var(--text-xl)">Support</h2>
           <p><span class="badge badge--info">Mentor assigned</span></p>
           <p class="text-sm">Your mentor is mentor-c4e1 from the support programme.</p>
-          <a href="#">Ask your mentor</a>
+          <a href="grantee-support.html">Open support</a>
+        </section>
+        <section class="card" aria-labelledby="after-h">
+          <h2 id="after-h" class="text-xl" style="font-size:var(--text-xl)">After the grant</h2>
+          <ul>
+            <li><a href="payment-status.html">Payment requests</a></li>
+            <li><a href="complaint-status.html">My complaints</a></li>
+            <li><a href="grantee-visibility.html">Public visibility settings</a></li>
+            <li><a href="grantee-support.html">Support</a></li>
+          </ul>
         </section>
       </aside>
     </div>
@@ -84,6 +106,7 @@
       <p class="text-sm muted">The activity list shows "No activity yet." in this state.</p>
     </section>
   </main>
+  </div>
   <footer class="site-footer">
     <div class="inner">
       <ul>
