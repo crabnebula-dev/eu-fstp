@@ -71,6 +71,17 @@ const MESSAGES = {
   'recovery.approved': 'The recovery is approved. The account holder can now finish it.',
 
   'account.title': 'Your account',
+  // Interim, design section 15.0 (2026-10-31): the way back to the home page.
+  'account.nav': 'Main navigation',
+  'account.nav.home': 'Home: your work',
+  'account.nav.assignments': 'My assignments',
+  'account.nav.irc-cases': 'My cases',
+  'account.nav.onboarding': 'Onboarding',
+  'account.nav.creator': 'Programme set-up',
+  'account.nav.approvals': 'Approvals',
+  'account.nav.proposals': 'My applications',
+  'account.nav.calls': 'Open calls',
+  'account.nav.account': 'Account',
   'account.sessions': 'Sessions',
   'account.session.passkey': 'Signed in with a passkey',
   'account.session.magic_link': 'Signed in with an email link',

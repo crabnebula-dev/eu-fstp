@@ -20,7 +20,7 @@ tools/demo/run.sh stop
 - The cell origin is `http://a.fstp.localhost:8640`. Chromium and Chrome resolve every name under `localhost` to loopback and treat it as a secure context, so passkeys work over plain HTTP.
 - `FSTP_DEMO_PORT` moves the four listeners. `FSTP_DEMO_STATE` moves the pid, the log and the stack manifest (default `target/demo`).
 - The build needs `web/node_modules` (ADR-003) and the cargo cache. Set `CARGO_NET_OFFLINE=true` on a machine without network.
-- Each seed replaces the whole cell state and prints one-time enrolment links. Open a link, choose "Create a passkey", and the person is signed in. A second sign-in uses the passkey on `/auth/login`.
+- Each seed replaces the whole cell state and prints one-time enrolment links. The demo page lists the same links. Open a link, choose "Create a passkey", and the person is signed in and lands on the home page `/app/`. A second sign-in uses the passkey on `/auth/login`.
 - Use one browser profile per person, such as a new incognito window each. A persona's link works once.
 
 ## The seeds
@@ -41,59 +41,70 @@ Every seed runs from genesis through production commands. Operations that a page
 
 ## Click paths
 
-### Tenant admin passkey sign-in (J0, first step)
+Interim, pending Daniel (design section 15.0, row of 2026-10-31). Every path starts on the demo page of the control base, `http://127.0.0.1:<port + 1>/demo`. Choose a scene there. Then open the person's link under "People of this scene" in its own incognito window and choose "Create a passkey". The line under each person says what they can do in that scene.
 
-1. `tools/demo/run.sh reset`, then open the printed enrolment link.
-2. Choose "Create a passkey". The account page lists the session and the device.
-3. Sign out on the account page, open `/auth/login` and choose the passkey sign-in.
+After the passkey, the person lands on the home page `/app/`, "Your work". It lists one link per piece of work for each role the person holds. Every step below starts there and follows links only. Each page header links to Home, the person's role pages, the applicant pages and Account, and the account page links back to Home.
+
+A person whose link is used signs in again with the passkey: choose the cell link at the top of the demo page, which opens `/auth/login`. A deep `/app/` page opened without a session goes to the login page and returns to that page after sign-in.
+
+### Tenant admin (J0, first step)
+
+1. Choose "Reset", then open the link of the first tenant admin (`synthetic-a1-...`).
+2. The home page lists "Onboarding of your organisation", "Open a new programme draft" and "Approvals waiting for a tenant admin". Choose the onboarding link to see the steps and their status.
+3. Choose "Account" in the header. The account page lists the session and the device. Sign out there, sign in again with the passkey, and the home page shows again.
 
 The identity page and the onboarding steps load, but their operations are not served yet (see "What does not run").
 
 ### An applicant drafts and submits (J4)
 
-1. `tools/demo/run.sh seed applicant OPEN_CALL`.
-2. Open `/auth/signup`, enter a synthetic address such as `demo@e2e.invalid` and send it.
-3. `tools/demo/run.sh mail demo@e2e.invalid` prints the proof link. Open it and create a passkey.
-4. Open `/app/calls`, then the call. The page shows the amounts as server text, the deadline with its zone and the AI disclosure.
+1. Choose the applicant scene `OPEN_CALL`.
+2. The demo page names the sign-up address. Open `/auth/signup`, enter a synthetic address such as `demo@e2e.invalid` and send it.
+3. The demo page reloads every 10 seconds. Under "Messages the cell sent", open the sign-up link and create a passkey.
+4. The home page says that the person holds no role yet and offers "Open calls". Choose it, then the call. The page shows the amounts as server text, the deadline with its zone and the AI disclosure.
 5. Choose "Start a proposal". The workspace autosaves the title, the neutral summary and the narrative as you type (I-21).
 6. Open "Plan", enter one milestone of 1500.50 with a start and a due day, and save. The cell shows the total. A non-canonical amount such as 1500.5 is refused in the page.
 7. Open "Eligibility" and state a country. It goes to the vault route only (R-NG-01).
 8. Open "Submit", tick the data protection notice, choose "No ethics issue" and submit. The proposal page reads SUBMITTED.
-9. `tools/demo/run.sh advance 60` passes the deadline. A draft submitted after it is refused, and the submit page says so.
+9. Choose "+60 minutes" on the demo page to pass the deadline. A draft submitted after it is refused, and the submit page says so.
+
+### The programme manager (J1, J3)
+
+1. Choose any review or applicant scene, then open the `Programme manager M1` link.
+2. The home page lists "Programme creator of programme 1", "People and invitations of programme 1" and the call board of each published call. Choose the creator link to open the creator review of programme 1, or the people link to invite.
 
 ### The FSTP coordinator (J5)
 
-1. `seed review submitted`, then open the `c1` link.
-2. `/app/calls/1/intake` lists the submitted proposals as "Proposal" and an id.
+1. Choose `review submitted`, then open the `c1` link.
+2. The home page lists "Intake queue of SuperSAFE open call 2026". Choose it. The intake lists the submitted proposals as "Proposal" and an id.
 3. Open a declaration. Only the title and the neutral summary show, and the content route refuses (R-CF-02). Declare no conflict.
 4. The knock-out page shows the content and the three SuperSAFE P-09 criteria. Fail one without a reason: the page asks for one. With a reason, the proposal becomes INELIGIBLE.
-5. `seed review stage1_scored`, sign in as `c1` again, and open `/app/calls/1/board`. Record the stage 1 close of x and of w. x moves to STAGE2 and w to NOT_SELECTED. No control states an outcome (I-07, I-08).
-6. `seed review stage1`: when R1 declares a notifiable conflict on w, `/app/calls/1/notifiable-conflicts` lists its draft (R-CF-04).
+5. Choose `review stage1_scored`, open the new `c1` link, and choose "Call board of SuperSAFE open call 2026" on the home page. Record the stage 1 close of x and of w. x moves to STAGE2 and w to NOT_SELECTED. No control states an outcome (I-07, I-08).
+6. Choose `review stage1`. When R1 declares a notifiable conflict on w, the coordinator's home page link "Notifiable conflicts of SuperSAFE open call 2026" lists its draft (R-CF-04).
 
 ### Assigned reviewers (J6)
 
-1. `seed review stage1`, then open the `r1` link and `/app/me/assignments`.
-2. Open the assignment of x. Before the declaration only the title and summary show. Declare no conflict, and the content and the score sheet appear.
+1. Choose `review stage1`, then open the `r1` link.
+2. The home page lists "Your review assignments". Choose it, then the assignment of x. Before the declaration only the title and summary show. Declare no conflict, and the content and the score sheet appear.
 3. Enter integers on the 0 to 5 scale of P-01. 3.5 or 6 is refused in the page. Save, reload, and the score is kept.
-4. `seed review stage1_scored`: "Correct the score" needs a reason (I-23). The ranking summary needs a title, a neutral summary and a rationale.
-5. `seed review stage2`, sign in as `r1`, and open the stage 2 page. Ask a question, or record "no questions". Once R1 and R2 record "no questions", the window closes and x is RANKED.
+4. Choose `review stage1_scored` and open the new `r1` link. From "Your review assignments", "Correct the score" needs a reason (I-23). The ranking summary needs a title, a neutral summary and a rationale.
+5. Choose `review stage2`, open the new `r1` link, choose "Your review assignments" and then the stage 2 page of x. Ask a question, or record "no questions". Once R1 and R2 record "no questions", the window closes and x is RANKED.
 
 ### The committee (J7)
 
-1. `seed review ranked`, then open the `r1` link and `/app/calls/1/ranking`.
-2. The table lists x, v and w in order, with a weighted score per P-01 criterion, the requested amount and the remaining budget. It has no findings column.
-3. Sign in as `r4`: the row of w shows "recused" only, without title, summary or scores (Q16).
-
-Opening a cut-off round, casting and delegating ballots are not served yet (see below). The irc_review seed records a round through the engine instead.
+1. Choose `review ranked`, then open the `r1` link.
+2. The home page lists "Ranking of SuperSAFE open call 2026". Choose it. The table lists x, v and w in order, with a weighted score per P-01 criterion, the requested amount and the remaining budget. It has no findings column.
+3. Open the `r4` link: the row of w shows "recused" only, without title, summary or scores (Q16).
+4. A round opened from the ranking page shows on the home page of each committee member as "Open cut-off round of SuperSAFE open call 2026".
 
 ### The IRC up to NEGOTIATION (J8)
 
-1. `seed review irc_review`, then open the `i1` link and `/app/me/irc-cases`.
-2. Open the case of x. Before the declaration the case read refuses. Declare no conflict, and the case shows the proposal and "nominated", with no score, ballot or rationale (R-IR-03).
-3. Validate. Then sign in as `i2`, declare and validate x. x enters NEGOTIATION.
-4. Sign in as `c1` and open `/app/calls/1/board`: x reads NEGOTIATION.
+1. Choose `review irc_review`, then open the `i1` link.
+2. The home page lists "Your IRC cases". Choose it, then the case of x. Before the declaration the case read refuses. Declare no conflict, and the case shows the proposal and "nominated", with no score, ballot or rationale (R-IR-03).
+3. Validate. Then open the `i2` link, declare and validate x. x enters NEGOTIATION.
+4. Open the `c1` link and choose "Call board of SuperSAFE open call 2026": x reads NEGOTIATION.
 5. v is minor-flagged without a consent record. Two validations leave it in IRC_REVIEW (I-18). A concern on u needs its text and defers u, since call 2 is published (NOTE 7).
-6. `seed applicant NEGOTIATION`, open the `lead` link and `/app/proposals/1001/negotiation`: the lead reads the data protection notice and acknowledges it (R-NG-06).
+6. Choose the applicant scene `NEGOTIATION` and open the lead's link. The home page lists "Your proposal: Synthetic open sensor kit". Choose it, then the negotiation link: the lead reads the data protection notice and acknowledges it (R-NG-06).
+7. In the applicant scene `IRC_REVIEW_MINOR`, the guardian's home page lists "Guardian consent for Synthetic school data vault", which opens the guardian page.
 
 ## Results of the Playwright journeys
 
@@ -111,6 +122,18 @@ Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4
 | `e2e/creator/*`, `e2e/onboarding*.spec.ts` | 31 of 54 (the page-logic and wire specs), counted before m4disp | The journeys need the tenant and creator dispatch (see below) |
 | `e2e/i17-vault-origin-release.spec.ts` | 0 of 4 | It targets the M3 devstack control routes (`/test/scenario/negotiation`), which the e2e cell does not serve |
 | `e2e/applicant/review_w4b_pages.spec.ts` fuzz check | 0 of 1 | It needs the review decoders' fuzz target (lane W1c) |
+
+### Run of 2026-10-31: the home page and the click-through journeys
+
+Run against the cell on 2026-10-31 at m4/int-b 9c32f1a plus lane m4/home (the home page, `me.roles` and the site navigation), with the same browser and `retries: 0`. The new spec `e2e/navigation/click_through.spec.ts` signs each person in from the demo page and reaches their work by clicking only.
+
+| Specs | Passed | Not passing, and why |
+| --- | --- | --- |
+| `e2e/navigation/click_through.spec.ts` | 152 of 153 | `nav_committee_member_r4_review_ranked_reaches_assignment_and_ranking`: the spec expects R4 to hold an assignment in `review ranked`. R4 declared a conflict on w, which released that assignment, so R4 has none to open |
+| `e2e/review/*` and `e2e/review/unit/*` | 63 of 63 | |
+| `e2e/applicant/*` | 48 of 54 | The six known failures: the Guide, affiliations, the stage 2 revision, guardian consent, the copy request and the review decoders' fuzz check |
+| `e2e/onboarding.spec.ts`, `e2e/onboarding_logic.spec.ts` | 17 of 17 | |
+| `e2e/creator/*` | 23 of 37 | The import, second-person and SuperSAFE journeys (14) wait for the programme invitation mail: the e2e cell sends admin invitations only |
 
 ## What does not run, and why
 

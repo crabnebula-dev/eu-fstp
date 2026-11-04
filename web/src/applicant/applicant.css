@@ -20,6 +20,7 @@
   --border: #74777f;
   --error: #b3261e;
   --focus: #0b57d0;
+  --nav-active-bg: #e8f0fe;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,6 +34,7 @@
     --border: #8f9099;
     --error: #ffb4ab;
     --focus: #a8c7fa;
+    --nav-active-bg: #2a3550;
   }
 }
 
@@ -47,20 +49,6 @@ body {
   font-family: system-ui, sans-serif;
   font-size: 1rem;
   line-height: 1.5;
-}
-
-.fstp-header {
-  border-bottom: 1px solid var(--border);
-  padding: 0.5rem 1rem;
-}
-
-.fstp-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  list-style: none;
-  margin: 0;
-  padding: 0;
 }
 
 main {
@@ -208,4 +196,254 @@ button:disabled {
   color: var(--muted);
   margin-top: 2rem;
   padding: 0.5rem 1rem;
+}
+/*
+ * The page shell of every /app/ page (docs/design/01-navigation-home.md
+ * "Sidebar layout", approved 2026-11-01; design/tokens.css section 5b).
+ * Mobile first: below 900px the sidebar is a vertical list under the top
+ * bar, always visible, with no menu button and no script. From 900px the
+ * sidebar is a 220px column, sticky below the top bar. The active link
+ * is marked by aria-current, bold weight and a 4px left bar, never by
+ * colour alone. Every link keeps a 44px target (WCAG 2.5.8).
+ */
+
+.skip-link {
+  position: absolute;
+  left: -100vw;
+  top: 0;
+  padding: 0.5rem 1rem;
+  color: var(--on-accent);
+  background: var(--accent);
+  z-index: 10;
+}
+
+.skip-link:focus {
+  left: 0.5rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.site-header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 1rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  color: var(--fg);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 4px;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-tools {
+  display: flex;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tool-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 0.5rem;
+}
+
+.page-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.page-body > main {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.sidebar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+}
+
+.role-chip {
+  display: inline-block;
+  margin: 0 0 0.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.sidebar-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.main-nav ul {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.main-nav a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  color: var(--fg);
+  text-decoration: none;
+  border-left: 4px solid transparent;
+}
+
+.main-nav a:hover {
+  text-decoration: underline;
+}
+
+.main-nav a[aria-current='page'] {
+  font-weight: 700;
+  background: var(--nav-active-bg);
+  border-left-color: var(--accent);
+}
+
+.main-nav .sidebar-foot {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+}
+
+.card--primary {
+  border-width: 2px;
+  border-color: var(--accent);
+}
+
+.card-kicker {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.card h2 {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 1.25rem;
+}
+
+.btn-row {
+  list-style: none;
+  padding: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 1rem;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+.btn--primary {
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+@media (min-width: 900px) {
+  .page-body {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .page-body > .sidebar {
+    position: sticky;
+    top: 0;
+    box-sizing: border-box;
+    flex: 0 0 220px;
+    width: 220px;
+    min-height: 100vh;
+    max-height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+  }
+
+  .page-body > .sidebar .main-nav {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .page-body > .sidebar .sidebar-foot {
+    margin-top: auto;
+  }
+
+  .page-body > main {
+    max-width: 60rem;
+    margin: 0 auto;
+  }
+}
+
+@media print {
+  .site-header,
+  .sidebar,
+  .skip-link {
+    display: none !important;
+  }
 }

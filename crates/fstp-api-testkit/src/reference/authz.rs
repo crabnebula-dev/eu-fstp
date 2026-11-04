@@ -1215,6 +1215,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("agents.activity", T::None, R::AnyAccount),
     RefOp::act("agents.revoke", T::None, R::AnyAccount),
     RefOp::read("me.sessions", T::None, R::AnyAccount),
+    // The interim home page of design section 15.0 (2026-10-31): the
+    // caller's own roles. Reading: any account reads its own, web only,
+    // with no tool (I-86).
+    RefOp::read("me.roles", T::None, R::AnyAccount),
     RefOp::act("me.end_session", T::None, R::AnyAccount),
     RefOp::act("me.add_passkey", T::None, R::AnyAccount).hr(),
     RefOp::read("pending.list", T::None, R::AnyAccount),

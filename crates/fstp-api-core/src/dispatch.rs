@@ -121,6 +121,8 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
+/// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
+pub(crate) mod me_roles;
 /// The tenant operations (lane m4tenant).
 mod tenant;
 
@@ -1559,6 +1561,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         | ReadKind::ListProgrammes
         | ReadKind::ListTemplates
         | ReadKind::ListApprovals => ReadModel::Creator(creator_ops::read(call, op, kind).await?),
+        // The interim home page of design section 15.0 (2026-10-31), I-86.
+        ReadKind::ListMyRoles => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::MyRoles(me_roles::read(call, a).await)
+        }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1672,6 +1681,10 @@ fn own_assignments(state: &EngineState, account: AccountId) -> Vec<AssignmentSum
             },
             awaiting_declaration: matches!(a.status, AssignmentStatus::AwaitingDeclaration),
             active: a.active(),
+            stage2: matches!(a.kind, AssignmentKind::Reviewer)
+                && a.active()
+                && fstp_domain::view::proposal_state(&state.core, a.proposal)
+                    == Some(fstp_domain::StateTag::Stage2),
         })
         .collect()
 }

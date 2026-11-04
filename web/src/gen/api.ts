@@ -176,6 +176,7 @@ export type OpName =
   | "agents.activity"
   | "agents.revoke"
   | "me.sessions"
+  | "me.roles"
   | "me.end_session"
   | "me.add_passkey"
   | "pending.list"
@@ -336,6 +337,7 @@ export interface OpParams {
   readonly "agents.activity": { readonly "client": string };
   readonly "agents.revoke": { readonly "client": string };
   readonly "me.sessions": Readonly<Record<never, string>>;
+  readonly "me.roles": Readonly<Record<never, string>>;
   readonly "me.end_session": { readonly "session": string };
   readonly "me.add_passkey": Readonly<Record<never, string>>;
   readonly "pending.list": Readonly<Record<never, string>>;
@@ -469,6 +471,7 @@ export const OP_NAMES: readonly OpName[] = [
   "agents.activity",
   "agents.revoke",
   "me.sessions",
+  "me.roles",
   "me.end_session",
   "me.add_passkey",
   "pending.list",
@@ -2189,6 +2192,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "me.roles",
+    method: "GET",
+    path: "/me/roles",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "roles" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "me.end_session",
     method: "POST",
     path: "/me/sessions/{session}/end",
@@ -2454,6 +2471,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       ["kind"]: { schema: { kind: "enum", values: ["reviewer", "irc", "amendment"] }, optional: false },
       "awaiting_declaration": { schema: { kind: "bool" }, optional: false },
       "active": { schema: { kind: "bool" }, optional: false },
+      "stage2": { schema: { kind: "bool" }, optional: false },
     },
   } },
   "me.irc_cases": { kind: "array", items: {
@@ -2465,6 +2483,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       ["kind"]: { schema: { kind: "enum", values: ["reviewer", "irc", "amendment"] }, optional: false },
       "awaiting_declaration": { schema: { kind: "bool" }, optional: false },
       "active": { schema: { kind: "bool" }, optional: false },
+      "stage2": { schema: { kind: "bool" }, optional: false },
     },
   } },
   "proposal.create": {
@@ -2649,6 +2668,36 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     kind: "object",
     fields: {
       "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "me.roles": {
+    kind: "object",
+    fields: {
+      "tenant_admin": { schema: { kind: "bool" }, optional: false },
+      "roles": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "applicant", "applicant_team_member", "guardian", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
+          "programme": { schema: { kind: "id" }, optional: false },
+          "proposal": { schema: { kind: "id" }, optional: true },
+          "calls": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
+        },
+      } }, optional: false },
+      "calls": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "call": { schema: { kind: "id" }, optional: false },
+          "title": { schema: { kind: "string" }, optional: true },
+        },
+      } }, optional: false },
+      "rounds": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "round": { schema: { kind: "id" }, optional: false },
+          "call": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+      "drafts": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
     },
   },
   "tenant.list_admins": {

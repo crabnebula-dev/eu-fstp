@@ -27,6 +27,9 @@
 //! Each takes the name its page calls, and its route sits beside the
 //! write of the same screen.
 //!
+//! The interim home page of design section 15.0 (2026-10-31) added the
+//! read `me.roles`: the caller's own active roles, web only (I-86).
+//!
 //! SoD-09: the invitation landing, its acceptance and its verification
 //! address the invitation by the token of its link, `{invitation_token}`,
 //! never by its decimal id. The landing admits a caller with no account,
@@ -1573,6 +1576,9 @@ pub const OPS: &[OpSpec] = &[
     )
     .class(Personal),
     OpSpec::read("me.sessions", RK::ListMySessions, "/me/sessions").class(Personal),
+    // I-86: the caller's own active roles, for the interim home page of
+    // design section 15.0 (2026-10-31). Web only: no tool.
+    OpSpec::read("me.roles", RK::ListMyRoles, "/me/roles").class(Personal),
     OpSpec::new(
         "me.end_session",
         OpKind::M3Port(PortKind::EndSession),

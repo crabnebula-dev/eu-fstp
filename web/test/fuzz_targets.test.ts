@@ -6,6 +6,7 @@
 import { type Checker, type FuzzTarget, readExpectations, runTarget } from "../fuzz/harness.js";
 import * as message from "../fuzz/message_format.fuzz.js";
 import * as money from "../fuzz/money_parse.fuzz.js";
+import * as returnPath from "../fuzz/return_path.fuzz.js";
 import * as router from "../fuzz/router_match.fuzz.js";
 import { TARGETS } from "../fuzz/targets.js";
 import * as safe from "../fuzz/safe_url.fuzz.js";
@@ -56,7 +57,7 @@ async function caught(t: FuzzTarget): Promise<void> {
 test("th26_every_typescript_parser_has_a_fuzz_target", () => {
   eq(
     TARGETS.map((t) => t.name).sort(),
-    ["message_format", "money_parse", "router_match", "safe_url", "validators"],
+    ["message_format", "money_parse", "return_path", "router_match", "safe_url", "validators"],
     "target names",
   );
   for (const t of TARGETS) {
@@ -211,4 +212,64 @@ test("th26_validators_teeth_number_amount_and_open_object_are_caught", async () 
     },
   };
   await caught(over(validators.target, () => validators.checkerFor(openObject), [...seeds, '{"id":"p1","title":"t","cap":"1.00","state":"DRAFT","extra":1}']));
+});
+
+/** TH-26, ADR-014 (review finding F2): `return_path` holds on a seeded run over web/src/auth/next.ts. */
+test("th26_return_path_target_holds", async () => {
+  await holds(returnPath.target);
+});
+
+/** TH-26, ADR-014: the module and its reference give every `return_path` corpus line its verdict. */
+test("th26_return_path_corpus_verdicts", () => {
+  for (const e of readExpectations("return_path")) {
+    const want = e.verdict === "accept";
+    assert(e.verdict === "accept" || e.verdict === "refuse", `line ${e.line}: verdict ${e.verdict}`);
+    eq(returnPath.PRODUCTION.isReturnPath(e.input), want, `line ${e.line}: next.ts on ${show(e.input)}`);
+    eq(returnPath.refIsReturnPath(e.input), want, `line ${e.line}: the reference on ${show(e.input)}`);
+  }
+});
+
+/** TH-26, ADR-014 teeth: `return_path` passes the reference and catches a guard that lets `//` through. */
+test("th26_return_path_teeth_double_slash_is_caught", async () => {
+  await passes(
+    over(returnPath.target, () =>
+      returnPath.checkerFor({
+        isReturnPath: returnPath.refIsReturnPath,
+        landingAfterSignIn: (s) => {
+          const n = new URLSearchParams(s).get("next");
+          return returnPath.refIsReturnPath(n) && n !== null ? n : "/app/";
+        },
+      }),
+    ),
+  );
+  const lenient = (p: unknown): boolean =>
+    typeof p === "string" && p.startsWith("/app/") && p.includes("//") ? true : returnPath.refIsReturnPath(p);
+  await caught(
+    over(returnPath.target, () =>
+      returnPath.checkerFor({
+        isReturnPath: lenient,
+        landingAfterSignIn: (s) => {
+          const n = new URLSearchParams(s).get("next");
+          return lenient(n) && n !== null ? n : "/app/";
+        },
+      }),
+    ),
+  );
+});
+
+/** TH-26, ADR-014 teeth: `return_path` catches a guard that misses an encoded dot segment. */
+test("th26_return_path_teeth_encoded_dot_is_caught", async () => {
+  const lenient = (p: unknown): boolean =>
+    typeof p === "string" && /^\/app\/%2e%2e\//i.test(p) ? true : returnPath.refIsReturnPath(p);
+  await caught(
+    over(returnPath.target, () =>
+      returnPath.checkerFor({
+        isReturnPath: lenient,
+        landingAfterSignIn: (s) => {
+          const n = new URLSearchParams(s).get("next");
+          return lenient(n) && n !== null ? n : "/app/";
+        },
+      }),
+    ),
+  );
 });
