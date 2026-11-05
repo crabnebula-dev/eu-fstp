@@ -4,8 +4,10 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use fstp_api_core::ApiCore;
+use fstp_api_core::decode::decode_public_page;
+use fstp_api_core::{ApiCore, Credential, OpResult, RequestHead};
 use fstp_http::{Handler, Limits, Method, Request, Response, Router, StatusCode, handler_fn};
+use fstp_json::ToJson;
 use fstp_web_assets::AssetSet;
 
 use crate::api::{self, Backend};
@@ -67,7 +69,8 @@ struct Shared {
 ///   shell, so the client router handles deep links.
 /// - `/api/v1/**` passes the body limit, the CSRF rule and the media type
 ///   check, then reaches `ApiCore::dispatch` and nothing else.
-/// - `/p/**` is a stub: `fstp-public` is not on the demo path.
+/// - `/p/**` serves the public pages and the feed through the API core,
+///   with no credential (design section 3.10).
 /// - `/mcp`, `/mcp/public`, `/oauth/**` and the OAuth `/.well-known`
 ///   documents answer the typed ADR-013 refusal.
 /// - Every response carries the headers of design section 3.9.
@@ -159,10 +162,49 @@ fn app_fallback(s: &Shared, req: &Request) -> Response {
     Response::with_body(StatusCode::OK, "text/html; charset=utf-8", s.shell.clone())
 }
 
-/// The stub of the public pages. Interim, pending Daniel: `fstp-public`
-/// is not on the demo path, so `GET` answers 501 with a constant JSON
-/// body. It reads no cookie, so a session cookie changes nothing
-/// (R-PB-04, TH-37).
+/// The public pages (design section 3.10, R-PB-04, TH-37). Only `GET` and
+/// `HEAD` are served. The path goes through the public route decoder of
+/// `fstp-api-core`, then `ApiCore::dispatch` with no credential, so the
+/// session cookie is never read and changes nothing. A page answers as
+/// HTML and the feed as JSON. A refusal answers its status with the
+/// stable JSON body of every API refusal. The headers of the public
+/// surface are set by [`WebRouter::serve`], so no answer sets a cookie.
+async fn public(backend: &Backend, req: &Request) -> Response {
+    if req.method != Method::GET && req.method != Method::HEAD {
+        return reply::get_only();
+    }
+    let core = match backend {
+        Backend::Core(core) => core,
+        Backend::Refusing => return public_stub(req),
+    };
+    let op = match decode_public_page(req.target.path()) {
+        Ok(op) => op,
+        Err(e) => return api::api_error(e),
+    };
+    match core
+        .dispatch(Credential::None, &RequestHead::new(), op)
+        .await
+    {
+        Ok(OpResult::Done { body, .. }) => match body.public_page() {
+            Some(html) => Response::with_body(
+                StatusCode::OK,
+                "text/html; charset=utf-8",
+                html.as_bytes().to_vec(),
+            ),
+            None => Response::with_body(
+                StatusCode::OK,
+                "application/json",
+                body.to_json().to_compact().into_bytes(),
+            ),
+        },
+        Ok(_) => reply::not_found(),
+        Err(e) => api::api_error(e),
+    }
+}
+
+/// The public pages of the stub dispatch of `handle_op_request`: `GET`
+/// answers 501 with a constant JSON body. It reads no cookie, so a
+/// session cookie changes nothing (R-PB-04, TH-37).
 fn public_stub(req: &Request) -> Response {
     if req.method != Method::GET && req.method != Method::HEAD {
         return reply::get_only();
@@ -197,7 +239,7 @@ impl WebRouter {
                 }
                 self.api.handle(req).await
             }
-            Surface::Public => public_stub(&req),
+            Surface::Public => public(&self.shared.backend, &req).await,
             Surface::Adr013 => reply::adr013(),
             Surface::Other => reply::not_found(),
         }

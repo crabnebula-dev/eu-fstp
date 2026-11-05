@@ -111,6 +111,29 @@ pub enum ReadModel {
     /// `proposal.diary`: the diary entries the caller may see (lane j2,
     /// I-93, I-97).
     Diary(crate::dispatch::journey::DiaryView),
+    /// A public page, the feed or a public tool answer, from
+    /// `fstp-public` only (I-87, design section 3.10).
+    Public(PublicReply),
+}
+
+/// The answer to a public operation (design section 3.10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PublicReply {
+    /// A public tool answer or the feed, as `fstp_public` encodes it.
+    Json(Value),
+    /// A server-rendered public page: the bytes of the `fstp-html`
+    /// writer, with no script (R-PB-04).
+    Page(String),
+}
+
+impl ReadModel {
+    /// The HTML of a public page, for the `/p` routes of the web adapter.
+    pub fn public_page(&self) -> Option<&str> {
+        match self {
+            ReadModel::Public(PublicReply::Page(html)) => Some(html),
+            _ => None,
+        }
+    }
 }
 
 /// A decimal string.
@@ -198,6 +221,12 @@ impl ToJson for ReadModel {
             ReadModel::MyRoles(r) => r.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
+            ReadModel::Public(PublicReply::Json(v)) => v.clone(),
+            ReadModel::Public(PublicReply::Page(html)) => {
+                let mut o = Object::new();
+                let _ = o.insert("html", Value::from(html.as_str()));
+                Value::Object(o)
+            }
         }
     }
 }
@@ -1471,7 +1500,7 @@ pub(crate) mod reply_shape_tests {
             C::Approvals(_) => &["admin.approvals"],
             C::Impact(_) => &["creator.impact"],
             // Unshaped, see [`unshaped`].
-            C::Draft { .. } | C::Proposals(_) => &[],
+            C::Draft { .. } | C::Proposals(_) | C::Preview { .. } => &[],
         }
     }
 
@@ -1486,7 +1515,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Creator(
                 crate::creator::CreatorModel::Draft { .. }
                     | crate::creator::CreatorModel::Proposals(_)
-            )
+                    | crate::creator::CreatorModel::Preview { .. }
+            ) | ReadModel::Public(_)
         )
     }
 
@@ -1539,6 +1569,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => &["me.roles"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
+            // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
+            ReadModel::Public(_) => &[],
         }
     }
 
@@ -1805,6 +1837,15 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(journey_view(false)),
             ReadModel::Diary(diary_view(true)),
             ReadModel::Diary(diary_view(false)),
+            ReadModel::Creator(crate::creator::CreatorModel::Preview {
+                kind: "public",
+                blocks: vec![fstp_guide::PreviewBlock {
+                    kind: fstp_guide::PreviewKind::Heading,
+                    text: "SuperSAFE".to_owned(),
+                }],
+            }),
+            ReadModel::Public(PublicReply::Json(Value::Object(Object::new()))),
+            ReadModel::Public(PublicReply::Page("<!DOCTYPE html>".to_owned())),
         ]
         .into_iter()
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
@@ -1877,7 +1918,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 32;
+    const VARIANTS: usize = 33;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1916,6 +1957,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => 29,
             ReadModel::Journey(_) => 30,
             ReadModel::Diary(_) => 31,
+            ReadModel::Public(_) => 32,
         }
     }
 

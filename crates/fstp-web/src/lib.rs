@@ -44,7 +44,9 @@
 //!   `fstp-api-core` has no route decoder, no `RequestHead` constructor
 //!   and no `OpResult` variants, so every call answers 501
 //!   `{"code":"not_implemented"}`. The seam is one private function.
-//! - `/p` is a stub, since `fstp-public` is not on the demo path.
+//! - `/p` serves the public pages through the public route decoder of
+//!   `fstp-api-core` and `ApiCore::dispatch`, with no credential. The
+//!   stub dispatch of [`handle_op_request`] answers them 501.
 
 mod api;
 mod headers;

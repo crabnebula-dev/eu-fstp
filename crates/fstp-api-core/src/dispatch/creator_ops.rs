@@ -49,8 +49,9 @@
 //!   narratives through `fstp_creator::draft_view`, so this crate needs
 //!   no edge to `fstp-programme`. A saved value the engine does not hold
 //!   reads as a gap there, never as a made-up value.
-//! - `creator.preview` needs the Guide renderer (lane m4guide), the
-//!   public page renderer of `fstp-public` and the contract placeholder.
+//! - `creator.preview` answers the Guide and the public page previews
+//!   from `fstp-guide` and `fstp-public`. The contract placeholder
+//!   preview stays a seam until a contract renderer exists (M8).
 //! - `creator.impact` answers the empty list for a programme with no
 //!   call, which is every draft (change D3). A programme with calls needs
 //!   `fstp_programme::impact` (an `fstp-programme` edge, the lead).
@@ -468,17 +469,15 @@ async fn programme_read<P: Seams>(
                 requested: d.request_live(),
             })
         }
-        ReadKind::GetPreview => Err(call.refuse(ApiError::NotImplemented(
-            "the draft previews: the Guide renderer (lane m4guide), the fstp-public page renderer and the contract placeholder",
-        ))),
+        ReadKind::GetPreview => preview(call, op, p, d, viewer).await,
         ReadKind::GetReport => {
             let Some(report) = report_now(call, p, viewer).await? else {
                 return Err(call.refuse(ApiError::NotImplemented(
                     "the cell's funder profile source for the draft's profile",
                 )));
             };
-            let results = crate::creator::report_rows(&report, &d.live_acks())
-                .map_err(|e| call.refuse(e))?;
+            let results =
+                crate::creator::report_rows(&report, &d.live_acks()).map_err(|e| call.refuse(e))?;
             Ok(CreatorModel::Report {
                 revision: report.revision(),
                 results,
@@ -491,6 +490,89 @@ async fn programme_read<P: Seams>(
             Err(call.refuse(ApiError::NotImplemented("this creator read")))
         }
     }
+}
+
+/// The stored texts a draft preview could read: the public texts of the
+/// head policy's P-09 wording (ADR-007). Any other stored text has no
+/// value, so the preview shows its marker.
+struct PreviewTexts(BTreeMap<u128, String>);
+
+impl fstp_guide::StoredTexts for PreviewTexts {
+    fn text(&self, text: fstp_domain::id::TextRef) -> Option<&str> {
+        self.0.get(&text.id().raw()).map(String::as_str)
+    }
+}
+
+/// `creator.preview` (R-PG-01, I-51; design sections 2.2 J1 and 3.2):
+/// the Guide preview from `fstp-guide` and the public page preview from
+/// `fstp-public`, as text blocks over the draft's values. The contract
+/// placeholder preview is a seam: no contract renderer exists before M8.
+async fn preview<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    p: ProgrammeId,
+    d: &fstp_creator::Draft,
+    viewer: AccountId,
+) -> Result<CreatorModel, ApiError> {
+    let state = &call.state;
+    let kind = match op.request.get("preview").and_then(Value::as_str) {
+        Some("guide") => "guide",
+        Some("public") => "public",
+        Some("contract") => {
+            return Err(call.refuse(ApiError::NotImplemented(
+                "the contract placeholder preview: no contract renderer exists before M8",
+            )));
+        }
+        _ => return Err(call.refuse(ApiError::bad_request(forms::REQUEST_RULE))),
+    };
+    let view = fstp_creator::draft_view(&state.core, &state.creator, p)
+        .ok_or_else(|| call.refuse(no_draft()))?;
+    if kind == "public" {
+        return Ok(CreatorModel::Preview {
+            kind,
+            blocks: fstp_public::draft_public_preview(&view.spec),
+        });
+    }
+    // H-07 before the first question, as the report does.
+    if asks_about_people(state, p) {
+        vault_read_admitted(call, viewer)?;
+    }
+    let inputs = shell_inputs(call, p, d.head(), viewer);
+    let Some(profile) = inputs.profile else {
+        return Err(call.refuse(ApiError::NotImplemented(
+            "the cell's funder profile source for the draft's profile",
+        )));
+    };
+    let template = fstp_guide::parse_template(profile.guide_template().as_bytes())
+        .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-51")))?;
+    let mut texts = BTreeMap::new();
+    if let Some(head) = fstp_domain::policy::head(&state.core, p) {
+        for k in &head.frozen.p09.0 {
+            let id = k.text.id().raw();
+            if texts.contains_key(&id) {
+                continue;
+            }
+            if let Ok(bytes) = call
+                .ports
+                .texts()
+                .get_public(crate::port::PublicTextRef(id))
+                .await
+                && let Ok(t) = String::from_utf8(bytes)
+            {
+                let _ = texts.insert(id, t);
+            }
+        }
+    }
+    let blocks = fstp_public::draft_guide_preview(
+        &state.core,
+        p,
+        &view.spec,
+        d.profile(),
+        &template,
+        &PreviewTexts(texts),
+    )
+    .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-51")))?;
+    Ok(CreatorModel::Preview { kind, blocks })
 }
 
 /// Every programme of the state, in id order: those with a call, a

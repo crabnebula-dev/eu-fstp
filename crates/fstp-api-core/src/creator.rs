@@ -866,6 +866,14 @@ pub enum CreatorModel {
     Approvals(Vec<ApprovalRow>),
     /// `creator.impact`.
     Impact(Vec<ImpactRow>),
+    /// `creator.preview`: one preview of a draft as text blocks, never
+    /// markup, from `fstp-guide` and `fstp-public` (R-PG-01, I-51).
+    Preview {
+        /// The preview kind: `guide` or `public`.
+        kind: &'static str,
+        /// The blocks, in order.
+        blocks: Vec<fstp_guide::PreviewBlock>,
+    },
 }
 
 /// The kinds of approval `admin.approvals` cannot list, which its reply
@@ -1039,6 +1047,18 @@ impl ToJson for CreatorModel {
                 "calls",
                 list(rows, |r| obj(vec![("call", dec(r.call.raw()))])),
             )]),
+            CreatorModel::Preview { kind, blocks } => obj(vec![
+                ("kind", Value::from(*kind)),
+                (
+                    "blocks",
+                    list(blocks, |b| {
+                        obj(vec![
+                            ("kind", Value::from(b.kind.token())),
+                            ("text", Value::from(b.text.as_str())),
+                        ])
+                    }),
+                ),
+            ]),
         }
     }
 }
