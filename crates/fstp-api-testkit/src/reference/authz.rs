@@ -797,6 +797,16 @@ pub enum Rule {
     IrcCase,
     /// An auditor of P (roles table: read-only audit access).
     Auditor,
+    /// The route position and diary of X (`SPEC/12-journey-ui.md`
+    /// sections 7.2 and 10, lane j2). Reading: the team in every state,
+    /// and a holder of a role of the section 7.2 matrix in P once X has
+    /// left DRAFT (I-21). Call drafters and tenant admins read no diary.
+    /// Nor do financial and legal signatories: section 7.2 names neither,
+    /// and both bind tenant-wide with no programme (roles-and-sod.md NOTE
+    /// 5). Interim, fail closed, design section 15.0 (lane j2).
+    /// Which entries show is the visibility function's per request
+    /// (I-93), not an authorisation rule, so it is not judged here.
+    Journey,
 }
 
 impl Rule {
@@ -877,6 +887,21 @@ impl Rule {
             }
             Rule::IrcAssignee | Rule::IrcAct | Rule::IrcCase => &[Some(Role::IrcMember)],
             Rule::Auditor => &[Some(Role::Auditor)],
+            // No signatory: the section 7.2 matrix names neither (NOTE 5).
+            Rule::Journey => &[
+                Some(Role::Applicant),
+                Some(Role::ApplicantTeamMember),
+                Some(Role::Guardian),
+                Some(Role::FstpCoordinator),
+                Some(Role::ProgrammeManager),
+                Some(Role::CommitteeMember),
+                Some(Role::CommitteeChair),
+                Some(Role::IrcMember),
+                Some(Role::FinanceApprover),
+                Some(Role::PaymentReleaser),
+                Some(Role::ContractSignatory),
+                Some(Role::Auditor),
+            ],
         }
     }
 }
@@ -1169,6 +1194,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .binding()
         .tool("fstp_submit_revision"),
     RefOp::act("proposal.withdraw", T::Proposal, R::Lead).binding(),
+    // Lane j2, `SPEC/12-journey-ui.md` section 10: web only.
+    RefOp::read("proposal.journey", T::Proposal, R::Journey),
+    RefOp::read("proposal.diary", T::Proposal, R::Journey),
     RefOp::act("guardian.begin_consent", T::Proposal, R::Guardian),
     RefOp::read("negotiation.view", T::Proposal, R::NegotiationTeam),
     RefOp::act("negotiation.acknowledge_notice", T::Proposal, R::Lead),
@@ -1366,6 +1394,23 @@ fn admit(
             open(x == Some(StateTag::IrcReview))
         }
         Rule::Auditor => open(who == Who::Auditor),
+        Rule::Journey => {
+            let staff = who.manager()
+                || who.coordinator()
+                || who.committee()
+                || matches!(
+                    who,
+                    Who::IrcMember
+                        | Who::IrcAssignee
+                        | Who::IrcAssigneeUndeclared
+                        | Who::IrcAssigneeConflicted
+                        | Who::FinanceApprover
+                        | Who::PaymentReleaser
+                        | Who::ContractSignatory
+                        | Who::Auditor
+                );
+            open(who.team() || (staff && x.is_some_and(|s| s != StateTag::Draft)))
+        }
     }
 }
 

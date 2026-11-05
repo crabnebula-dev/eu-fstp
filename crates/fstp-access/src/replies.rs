@@ -922,7 +922,111 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ),
         ]),
     ),
+    // Lane j2, `SPEC/12-journey-ui.md` section 10, R-JV-01, R-JV-07: the
+    // current node with its formal state name, the completed legs, whether
+    // the caller's role gets the route strip (O-58), and the overlay of the
+    // proposal's original call, null before that call is published.
+    // I-97: ids, states, times and codes only, never text.
+    ("proposal.journey", JOURNEY_REPLY),
+    // Lane j2, section 10, I-93, I-97: the diary entries the visibility
+    // function lets the caller see, in ledger order. A sentence is its
+    // catalogue key and typed parameters, and a text is its reference or
+    // the erasure placeholder of section 7.3.
+    ("proposal.diary", DIARY_REPLY),
 ];
+
+/// The entry kinds of `SPEC/12-journey-ui.md` section 7.2, and the
+/// guardian step of O-60, as the wire spells them.
+pub const ENTRY_KIND_NAMES: &[&str] = &[
+    "state_transition",
+    "deadline_set",
+    "notice_sent",
+    "clarification",
+    "reviewer_score",
+    "conflict",
+    "vault_outcome",
+    "contract",
+    "milestone_payment",
+    "complaint",
+    "agent_action",
+    "guardian_step",
+];
+
+/// The parameters of section 5.5 that show as a wording choice, by id.
+const WORDING_PARAM_NAMES: &[&str] = &["P-08", "P-20", "P-50", "P-51", "P-60", "P-65", "P-66"];
+
+/// One completed leg of a route.
+const LEG: Shape = Shape::Object(&[
+    m("from", Shape::Enum(STATE_NAMES)),
+    m("to", Shape::Enum(STATE_NAMES)),
+    m("at", Shape::String),
+    m("seq", Shape::Id),
+]);
+
+/// The programme overlay of section 5.5 (R-JV-07). Opaque parameters
+/// appear by id only (I-97).
+const OVERLAY: Shape = Shape::Object(&[
+    m("policy", Shape::Id),
+    m("stage2_window_days", Shape::Int),
+    m("anonymity", Shape::Enum(&["anonymous", "named"])),
+    m("irc_concern", Shape::Enum(&["deferred", "declined"])),
+    m("agent_actions", Shape::Enum(&["draft_only", "allowed"])),
+    m("wording", Shape::Array(&Shape::Enum(WORDING_PARAM_NAMES))),
+]);
+
+/// The `proposal.journey` reply.
+const JOURNEY_REPLY: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("state", Shape::Enum(STATE_NAMES)),
+    m("since", Shape::String),
+    m("seq", Shape::Id),
+    m("legs", Shape::Array(&LEG)),
+    m("strip", Shape::Bool),
+    m("overlay", Shape::Nullable(&OVERLAY)),
+]);
+
+/// One sentence parameter of a diary entry: exactly one member is set.
+const DIARY_PARAM: Shape = Shape::Object(&[
+    opt("state", Shape::Enum(STATE_NAMES)),
+    opt("amount", Shape::Amount),
+    opt("seq", Shape::Id),
+    opt("score", Shape::Array(&Shape::Int)),
+    opt("outcome", Shape::Bool),
+    opt("time", Shape::String),
+]);
+
+/// One text slot of a diary entry: a live reference (`text` and
+/// `digest`), or the erasure placeholder (`erased_on` and `cause`).
+const DIARY_TEXT: Shape = Shape::Object(&[
+    opt("text", Shape::Id),
+    opt("digest", Shape::String),
+    opt("erased_on", Shape::String),
+    opt("cause", Shape::Int),
+]);
+
+/// One diary entry. `entry` and `supersedes` are 32 lowercase hex digits.
+const DIARY_ENTRY: Shape = Shape::Object(&[
+    m("entry", Shape::String),
+    m("seq", Shape::Id),
+    m("kind", Shape::Enum(ENTRY_KIND_NAMES)),
+    m(
+        "subject",
+        Shape::Enum(&["proposal", "call", "payment_request"]),
+    ),
+    m("subject_id", Shape::Id),
+    m("key", Shape::String),
+    m("at", Shape::String),
+    opt("zone", Shape::String),
+    opt("supersedes", Shape::String),
+    m("params", Shape::Array(&DIARY_PARAM)),
+    m("texts", Shape::Array(&DIARY_TEXT)),
+]);
+
+/// The `proposal.diary` reply.
+const DIARY_REPLY: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("entries", Shape::Array(&DIARY_ENTRY)),
+]);
 
 /// The reply shape of the operation named `name`.
 pub fn reply(name: &str) -> Option<&'static Shape> {

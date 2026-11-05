@@ -923,10 +923,12 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// (`tenant.list_admins`, `me.get_verification`, `creator.list_programmes`,
 /// `creator.list_templates`, `people.get_invitation` and
 /// `review.assignments`). The last is `me.roles` of the interim home page
-/// (design section 15.0, 2026-10-31). The list replaces an exhaustive
-/// match, which could not name the m4reg kinds before they exist. A read missing here
-/// fails `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 47] = [
+/// (design section 15.0, 2026-10-31). Lane m4/roles adds the signatory list
+/// and the activation, and lane j2 the journey and the diary. The list
+/// replaces an exhaustive match, which could not name the m4reg kinds
+/// before they exist. A read missing here fails
+/// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
+const READ_NAMES: [&str; 49] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -974,6 +976,9 @@ const READ_NAMES: [&str; 47] = [
     "GetInvitation",
     "ListProposalAssignments",
     "ListMyRoles",
+    // Lane j2, `SPEC/12-journey-ui.md` section 10.
+    "GetJourney",
+    "GetDiary",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

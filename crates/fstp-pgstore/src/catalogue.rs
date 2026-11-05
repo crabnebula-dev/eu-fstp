@@ -299,4 +299,75 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("last_refresh_attempt", Time),
         ],
     ),
+    // ADR-015, `SPEC/12-journey-ui.md` section 11: the journey read model.
+    // Every column is an id, a code, a sequence number, a count, a time or
+    // a salted digest, so no table holds clear content (I-97).
+    table(
+        "journey",
+        "entry",
+        TableClass::Operational,
+        &[
+            col("entry_id", RandomId),
+            col("source_seq", Sequence),
+            col("subject_kind", Enum),
+            col("subject_id", RandomId),
+            col("kind", Enum),
+            col("occurred_at", Time),
+            col("deadline_zone", Enum),
+            col("scope_mask", Enum),
+            col("summary_key", Enum),
+            col("supersedes", RandomId),
+        ],
+    ),
+    table(
+        "journey",
+        "entry_text",
+        TableClass::Operational,
+        &[
+            col("entry_id", RandomId),
+            col("ord", Count),
+            col("text_id", RandomId),
+            col("digest", KeyedDigest),
+        ],
+    ),
+    table(
+        "journey",
+        "projection_cursor",
+        TableClass::Operational,
+        &[col("projector", Enum), col("last_ledger_seq", Sequence)],
+    ),
+    table(
+        "journey",
+        "leg",
+        TableClass::Operational,
+        &[
+            col("proposal_id", RandomId),
+            col("ord", Count),
+            col("from_state", Enum),
+            col("to_state", Enum),
+            col("at", Time),
+            col("source_seq", Sequence),
+        ],
+    ),
+    table(
+        "journey",
+        "route_start",
+        TableClass::Operational,
+        &[
+            col("proposal_id", RandomId),
+            col("call_id", RandomId),
+            col("at", Time),
+            col("source_seq", Sequence),
+        ],
+    ),
+    table(
+        "journey",
+        "assignment",
+        TableClass::Operational,
+        &[
+            col("assignment_id", RandomId),
+            col("proposal_id", RandomId),
+            col("source_seq", Sequence),
+        ],
+    ),
 ];

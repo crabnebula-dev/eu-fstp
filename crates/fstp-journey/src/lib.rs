@@ -14,6 +14,15 @@
 //!   edge or "any non-terminal state before GRANTED" rule that differs on
 //!   either side. It also reports a side track of section 9 that the
 //!   definition leaves out.
+//! - [`overlay`] computes the programme overlay of section 5.5 from a
+//!   frozen policy version (R-JV-07).
+//! - [`projector`] folds the ledger into journey rows (I-92, I-97).
+//! - [`visibility`] decides per request whether a diary entry reaches a
+//!   viewer (I-93, O-54, O-57, O-58, O-60).
+//! - [`diary`] builds diary items at read time from rows and the ledger
+//!   (I-97, I-27).
+//! - [`summary`] holds the catalogue keys of diary sentences, and
+//!   [`zones`] the shipped deadline zone table (ADR-015).
 //!
 //! The crate holds no authority, does no I/O and never reads a clock. The
 //! definition parser has a fuzz target in `fuzz/` (ADR-003).
@@ -26,7 +35,13 @@
 )]
 
 pub mod definition;
+pub mod diary;
 pub mod drift;
+pub mod overlay;
+pub mod projector;
+pub mod summary;
+pub mod visibility;
+pub mod zones;
 
 use definition::{Definition, DefinitionError};
 use drift::Drift;

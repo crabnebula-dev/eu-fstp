@@ -56,6 +56,15 @@
 //! 2026-10-31): `ListMyRoles` (`me.roles`) is the caller's own object. It
 //! lists the caller's own active bindings and nothing about any other
 //! account (I-86).
+//!
+//! Lane j2 (`SPEC/12-journey-ui.md` section 10, ADR-015): `GetJourney`
+//! and `GetDiary` admit the proposal's team and every holder of a role of
+//! the section 7.2 matrix in its programme. The rule only opens the read.
+//! The dispatch then applies the visibility function to each entry, and a
+//! staff reader of a draft is refused, since drafts are the team's alone
+//! (I-21). Interim, pending Daniel: call drafters, tenant admins and the
+//! financial and legal signatories read no diary. Section 7.2 names no
+//! signatory, and both bind tenant-wide (roles-and-sod.md NOTE 5).
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
@@ -127,11 +136,15 @@ pub enum ReadKind {
     // The interim home page of design section 15.0 (2026-10-31): the
     // caller's own active roles (module documentation).
     ListMyRoles,
+    // Lane j2: a proposal's route position and its diary
+    // (`SPEC/12-journey-ui.md` section 10, module documentation).
+    GetJourney,
+    GetDiary,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 47] = [
+    pub const ALL: [ReadKind; 49] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -179,6 +192,8 @@ impl ReadKind {
         ReadKind::GetInvitation,
         ReadKind::ListProposalAssignments,
         ReadKind::ListMyRoles,
+        ReadKind::GetJourney,
+        ReadKind::GetDiary,
     ];
 }
 
@@ -244,6 +259,23 @@ const DRAFT_READER: ReadRule = ReadRule::AnyOf(&[ReadRule::DraftManager, ReadRul
 const CREATOR_START: ReadRule = ReadRule::AnyOf(&[
     ReadRule::HolderAnywhere(Role::ProgrammeManager),
     ReadRule::TenantAdmin,
+]);
+/// The readers of a proposal's route position and diary
+/// (`SPEC/12-journey-ui.md` section 10): its team, or a holder of a role
+/// of section 7.2 in the proposal's programme. Call drafters, tenant
+/// admins and the financial and legal signatories read no diary (module
+/// documentation).
+const JOURNEY_READER: ReadRule = ReadRule::AnyOf(&[
+    ReadRule::Team,
+    ReadRule::Holder(Role::FstpCoordinator),
+    ReadRule::Holder(Role::ProgrammeManager),
+    ReadRule::Holder(Role::CommitteeMember),
+    ReadRule::Holder(Role::CommitteeChair),
+    ReadRule::Holder(Role::IrcMember),
+    ReadRule::Holder(Role::FinanceApprover),
+    ReadRule::Holder(Role::PaymentReleaser),
+    ReadRule::Holder(Role::ContractSignatory),
+    ReadRule::Auditor,
 ]);
 /// The states where the coordinator reads one proposal's assignments:
 /// every state from SUBMITTED on, except INELIGIBLE. A draft is the
@@ -391,6 +423,10 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     ),
     // I-86: the caller's own roles only.
     (ReadKind::ListMyRoles, ReadRule::Own, OPEN_ALWAYS),
+    // Lane j2, section 10: the Receiving binding or permitted staff. The
+    // dispatch applies the visibility function per entry (I-93).
+    (ReadKind::GetJourney, JOURNEY_READER, OPEN_ALWAYS),
+    (ReadKind::GetDiary, JOURNEY_READER, OPEN_ALWAYS),
 ];
 
 /// The row of `READ_RULES` for `kind`.

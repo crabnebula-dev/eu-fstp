@@ -121,6 +121,8 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
+/// `proposal.journey` and `proposal.diary` (lane j2, ADR-015).
+pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
 /// The tenant operations (lane m4tenant).
@@ -1337,9 +1339,10 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         _ => read_target(op),
     };
     let rop = ReadOp { kind, target };
-    if let Err(d) = fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
-        return Err(call.refuse(read_denied(d.rule())));
-    }
+    let clearance = match fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
+        Ok(c) => c,
+        Err(d) => return Err(call.refuse(read_denied(d.rule()))),
+    };
     let account = call.account();
     let body = match kind {
         ReadKind::ListOpenCalls => {
@@ -1575,6 +1578,15 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             ReadModel::MyRoles(me_roles::read(call, a).await)
+        }
+        // Lane j2, `SPEC/12-journey-ui.md` section 10 (I-92, I-93, I-97).
+        ReadKind::GetJourney => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Journey(journey::journey(call, p, clearance.rule())?)
+        }
+        ReadKind::GetDiary => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Diary(journey::diary(call, p, clearance.rule())?)
         }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(

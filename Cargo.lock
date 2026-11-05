@@ -111,6 +111,7 @@ dependencies = [
  "fstp-engine",
  "fstp-guide",
  "fstp-import",
+ "fstp-journey",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
@@ -454,7 +455,10 @@ dependencies = [
  "fstp-crypto",
  "fstp-domain",
  "fstp-domain-testkit",
+ "fstp-engine",
  "fstp-json",
+ "fstp-ledger",
+ "fstp-prop",
 ]
 
 [[package]]

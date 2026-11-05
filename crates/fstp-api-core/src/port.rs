@@ -531,6 +531,17 @@ pub trait AsyncEngine: Send + Sync {
     ) -> impl Future<Output = (Result<(), Refusal>, Vec<Answer>)> + Send;
     /// The current engine state.
     fn snapshot(&self) -> Arc<EngineState>;
+    /// The cell's ledger from genesis, in sequence order, which the
+    /// journey reads fold into journey rows (ADR-015 "Read model only",
+    /// I-92). The API core reads it and writes nothing.
+    ///
+    /// Interim (lane j2 seam proposal for the lead): the cell's projector
+    /// writes the rows into the `journey` schema, and this port will serve
+    /// those rows with the entries the diary sentences read. The default
+    /// answers `None`, so the journey reads fail closed as unavailable.
+    fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
+        None
+    }
     /// The shell's creator facts for `cmd` by `ctx` (design section 3.2,
     /// `CreatorInputs`): the facts the engine port's
     /// `fstp_engine::CreatorEnvironment` answers for the same command. The

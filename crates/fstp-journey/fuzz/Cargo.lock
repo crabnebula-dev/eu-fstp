@@ -77,6 +77,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fstp-creator"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-programme",
+]
+
+[[package]]
 name = "fstp-crypto"
 version = "0.1.0"
 dependencies = [
@@ -95,12 +107,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-engine"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-import",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-programme",
+ "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-findings"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+]
+
+[[package]]
+name = "fstp-guide"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-html",
+ "fstp-programme",
+]
+
+[[package]]
+name = "fstp-html"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+]
+
+[[package]]
+name = "fstp-import"
+version = "0.1.0"
+dependencies = [
+ "fstp-findings",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-programme",
+]
+
+[[package]]
 name = "fstp-journey"
 version = "0.1.0"
 dependencies = [
  "fstp-crypto",
  "fstp-domain",
+ "fstp-engine",
  "fstp-json",
+ "fstp-ledger",
 ]
 
 [[package]]
@@ -129,6 +194,24 @@ name = "fstp-money"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+]
+
+[[package]]
+name = "fstp-programme"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-money",
+]
+
+[[package]]
+name = "fstp-tenant"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+ "fstp-ledger",
 ]
 
 [[package]]
