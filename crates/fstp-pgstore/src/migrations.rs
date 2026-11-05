@@ -14,6 +14,8 @@ use fstp_migrate::Migration;
 ///    function after the migration commits. The file exists so the set
 ///    is complete on disk; a test ties it to the two constants.
 /// 3. `app`: the schemas, tables and triggers of design section 4.2.
+/// 4. `journey`: the journey read model of ADR-015 and
+///    `SPEC/12-journey-ui.md` section 11, in its own schema (I-83).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -22,6 +24,11 @@ pub const MIGRATIONS: &[Migration] = &[
         include_str!("../migrations/app/0002_apply_grant.sql"),
     ),
     Migration::new(3, "app", include_str!("../migrations/app/0003_app.sql")),
+    Migration::new(
+        4,
+        "journey",
+        include_str!("../migrations/app/0004_journey.sql"),
+    ),
 ];
 
 #[cfg(test)]

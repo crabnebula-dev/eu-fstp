@@ -135,6 +135,12 @@ const FINANCE: AccountId = AccountId::from_raw(401);
 const RELEASER: AccountId = AccountId::from_raw(402);
 const SIGNATORY: AccountId = AccountId::from_raw(403);
 const AUDITOR: AccountId = AccountId::from_raw(404);
+/// The holder of both signatory roles in every built world, granted before
+/// the first onboarding step (SoD-14, SoD-15, NOTE 5). It holds no
+/// programme binding.
+const ORG_SIGNATORY: AccountId = AccountId::from_raw(405);
+/// An account a signatory grant names, which holds no role.
+const SIGNATORY_GRANTEE: AccountId = AccountId::from_raw(406);
 /// An account with no binding.
 const UNBOUND: AccountId = AccountId::from_raw(499);
 
@@ -448,6 +454,9 @@ fn param(name: &str, who: Who, t: &Targets, session: Option<u128>) -> Result<Str
         "binding" => id(t.binding_end.map(|b| b.raw()))?,
         "approval" => "1".to_owned(),
         "recovery" => "1".to_owned(),
+        // `tenant.end_signatory` ends a binding the world holds.
+        "role" => "financial_signatory".to_owned(),
+        "account" => ORG_SIGNATORY.raw().to_string(),
         "break_glass" => "1".to_owned(),
         "invitation" => t.invitation.clone().unwrap_or_else(|| "1".to_owned()),
         "invitation_token" => UNKNOWN_LINK.to_owned(),
@@ -595,6 +604,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ])
         }
         "tenant.invite_admin" => obj(vec![("email", s("new-admin@matrix.invalid"))]),
+        "tenant.grant_signatory" => obj(vec![
+            ("account", dec(SIGNATORY_GRANTEE.raw())),
+            ("role", s("legal_signatory")),
+        ]),
+        "tenant.approve_activation" => obj(vec![("request", s("1"))]),
         "tenant.set_login_methods" => obj(vec![(
             "value",
             Value::Array(Array::from(vec![s("eudi_wallet"), s("passkey")])),
@@ -987,6 +1001,20 @@ impl fstp_api_core::port::AsyncEngine for WorldEngine {
         Arc::new(self.state())
     }
 
+    /// The world's ledger from genesis, for the journey reads (lane j2).
+    /// A read failure answers `None`, so the reads fail closed.
+    fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<Record>>> {
+        use fstp_ledger::RecordStore;
+        let inner = lock_engine(&self.inner);
+        let mut out = Vec::new();
+        inner
+            .engine
+            .store()
+            .read(fstp_ledger::Seq::ZERO, usize::MAX, &mut out)
+            .ok()?;
+        Some(out)
+    }
+
     fn creator_inputs(
         &self,
         state: &fstp_engine::EngineState,
@@ -1349,6 +1377,20 @@ fn onboard(
     admins: &[AccountId],
 ) -> Result<(), String> {
     let admin = admins.first().copied().ok_or("no admin")?;
+    // SoD-14, SoD-15: the Administrators step validates only with a holder
+    // of each signatory role. The grants come first, so every built state
+    // holds the binding that `tenant.end_signatory` names.
+    for role in ["financial_signatory", "legal_signatory"] {
+        seed.api(
+            admin,
+            ApiMethod::Post,
+            "/admin/signatories",
+            &obj(vec![
+                ("account", dec(ORG_SIGNATORY.raw())),
+                ("role", s(role)),
+            ]),
+        )?;
+    }
     for step in OnboardStep::ALL {
         if Some(step) == stop {
             return Ok(());

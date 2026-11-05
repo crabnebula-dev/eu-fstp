@@ -325,6 +325,20 @@ impl AsyncEngine for FakeEngine {
         Arc::new(self.state())
     }
 
+    /// The fake ledger from genesis, for the journey reads (lane j2). A
+    /// read failure answers `None`, so the reads fail closed.
+    fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<Record>>> {
+        use fstp_ledger::RecordStore;
+        let inner = lock(&self.inner);
+        let mut out = Vec::new();
+        inner
+            .engine
+            .store()
+            .read(Seq::ZERO, usize::MAX, &mut out)
+            .ok()?;
+        Some(out)
+    }
+
     fn creator_inputs(
         &self,
         state: &EngineState,

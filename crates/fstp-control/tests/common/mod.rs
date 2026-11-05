@@ -63,7 +63,8 @@ pub fn adr011_roles(db: CellDatabase) -> &'static [RoleName] {
 /// 4.3 and the keystore of section 4.2 for the vault database. Both hold
 /// `fstp_meta`, whose `fstp_meta.placement` both migration sets define
 /// (design section 4.1, `0000_meta.sql`) and both start checks read
-/// (design section 9.2, "At start").
+/// (design section 9.2, "At start"). The `journey` schema
+/// holds the journey read model (ADR-015 "Storage and roles").
 pub fn schemas_of(db: CellDatabase) -> &'static [&'static str] {
     match db {
         CellDatabase::App => &[
@@ -75,6 +76,8 @@ pub fn schemas_of(db: CellDatabase) -> &'static [&'static str] {
             "auth_log",
             "ops",
             "fstp_meta",
+            // ADR-015 "Storage and roles": the journey read model.
+            "journey",
         ],
         CellDatabase::Vault => &["vault", "keystore", "vault_audit", "fstp_meta"],
     }

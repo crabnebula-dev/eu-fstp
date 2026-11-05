@@ -1,6 +1,6 @@
 [package]
 name = "fstp-journey"
-description = "Journey definition parser and drift check against the domain transition table (ADR-015, I-95)."
+description = "Journey definition, drift check, overlay, projector, visibility and diary read model (ADR-015, I-92 to I-97)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,9 +12,14 @@ fstp-domain.workspace = true
 fstp-json.workspace = true
 # The definition checksum is the SHA-256 of its bytes, as for migrations (ADR-015).
 fstp-crypto.workspace = true
+# The projector folds the cell ledger: its entry and engine record types
+# (ADR-015 "Read model only", I-92).
+fstp-ledger.workspace = true
+fstp-engine.workspace = true
 
 [dev-dependencies]
 fstp-domain-testkit.workspace = true
+fstp-prop.workspace = true
 
 [lints]
 workspace = true

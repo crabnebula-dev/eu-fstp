@@ -21,6 +21,9 @@ fstp-json.workspace = true
 fstp-money.workspace = true
 fstp-crypto.workspace = true
 fstp-rt.workspace = true
+# The journey projector, visibility function and diary read (ADR-015,
+# lane j2): pure, with no I/O.
+fstp-journey.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

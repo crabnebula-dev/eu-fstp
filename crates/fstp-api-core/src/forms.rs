@@ -74,7 +74,8 @@ pub(crate) enum ParamKind {
 /// The spelling of the path parameter `name`.
 pub(crate) fn param_kind(name: &str) -> ParamKind {
     match name {
-        "slug" | "step" => ParamKind::Token,
+        // Lane m4/roles: a signatory role by its wire name.
+        "slug" | "step" | "role" => ParamKind::Token,
         // Lane m4wire: the narrative acceptance names its field by key,
         // and a preview by its kind.
         "field" => ParamKind::FieldKey,

@@ -14,9 +14,14 @@ use fstp_prop::Gen;
 use super::reference::Reference;
 use super::vocab::{
     Env, Grant, INVALID_SPDX, InferenceDefault, LoginMethod, McpSetting, Op, P71_DEFAULT_US,
-    P72_ABSOLUTE_DEFAULT_US, P72_IDLE_DEFAULT_US, PaymentMode, Probes, RpMode, Setting, Step,
-    StepInput, VALID_SPDX, VerifyMethod, acct,
+    P72_ABSOLUTE_DEFAULT_US, P72_IDLE_DEFAULT_US, PaymentMode, Probes, RpMode, Setting, Signatory,
+    Step, StepInput, VALID_SPDX, VerifyMethod, acct,
 };
+
+/// The account the walks grant both signatory roles to: no tenant admin,
+/// not verified (NOTE 5: none is needed) and holding no Receiving
+/// binding.
+pub const SIGNATORY: AccountId = acct(4);
 
 /// The account pool.
 pub const ACCOUNTS: [AccountId; 5] = [acct(1), acct(2), acct(3), acct(4), acct(5)];
@@ -195,13 +200,13 @@ pub enum Focus {
 
 impl Focus {
     /// Weights of save, invite, accept, approve, use approval, set,
-    /// inference, complete.
-    fn weights(self) -> [u32; 8] {
+    /// inference, complete, signatory grant and signatory end.
+    fn weights(self) -> [u32; 10] {
         match self {
-            Focus::Steps => [12, 2, 2, 1, 1, 1, 1, 2],
-            Focus::Admins => [2, 5, 5, 6, 4, 1, 1, 1],
-            Focus::Settings => [2, 1, 1, 1, 1, 10, 1, 1],
-            Focus::Inference => [10, 1, 1, 1, 1, 1, 6, 1],
+            Focus::Steps => [12, 2, 2, 1, 1, 1, 1, 2, 3, 1],
+            Focus::Admins => [2, 5, 5, 6, 4, 1, 1, 1, 3, 2],
+            Focus::Settings => [2, 1, 1, 1, 1, 10, 1, 1, 1, 1],
+            Focus::Inference => [10, 1, 1, 1, 1, 1, 6, 1, 1, 1],
         }
     }
 }
@@ -323,7 +328,19 @@ pub fn op(g: &mut Gen, model: &Reference, focus: Focus) -> Op {
                 fallbacks,
             }
         }
-        _ => Op::Complete { actor },
+        7 => Op::Complete { actor },
+        8 => Op::GrantSignatory {
+            actor,
+            via: via(g),
+            account: account(g),
+            role: *g.pick(&Signatory::ALL),
+        },
+        _ => Op::EndSignatory {
+            actor,
+            via: via(g),
+            account: account(g),
+            role: *g.pick(&Signatory::ALL),
+        },
     }
 }
 
@@ -337,10 +354,20 @@ fn model_name_weighted(g: &mut Gen) -> String {
 
 /// The operations that walk every step in order with valid values, as
 /// `actor`. Before the Payments step, `actor` chooses record-only P-20,
-/// which the step needs.
+/// which the step needs. Before the Administrators step, `actor` grants
+/// both signatory roles to [`SIGNATORY`], which it needs (SoD-14,
+/// SoD-15).
 pub fn walk(actor: AccountId, steps: &[Step]) -> Vec<Op> {
     let mut out = Vec::new();
     for s in steps {
+        if *s == Step::Administrators {
+            out.extend(Signatory::ALL.map(|role| Op::GrantSignatory {
+                actor,
+                via: Via::Web,
+                account: SIGNATORY,
+                role,
+            }));
+        }
         if *s == Step::Payments {
             out.push(Op::SetSetting {
                 actor,

@@ -74,6 +74,8 @@ pub const fn role_group(role: Role) -> RefGroup {
         | Role::FinanceApprover
         | Role::PaymentReleaser
         | Role::ContractSignatory
+        | Role::FinancialSignatory
+        | Role::LegalSignatory
         | Role::Auditor => RefGroup::Operations,
     }
 }

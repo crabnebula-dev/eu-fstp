@@ -797,13 +797,23 @@ pub enum Rule {
     IrcCase,
     /// An auditor of P (roles table: read-only audit access).
     Auditor,
+    /// The route position and diary of X (`SPEC/12-journey-ui.md`
+    /// sections 7.2 and 10, lane j2). Reading: the team in every state,
+    /// and a holder of a role of the section 7.2 matrix in P once X has
+    /// left DRAFT (I-21). Call drafters and tenant admins read no diary.
+    /// Nor do financial and legal signatories: section 7.2 names neither,
+    /// and both bind tenant-wide with no programme (roles-and-sod.md NOTE
+    /// 5). Interim, fail closed, design section 15.0 (lane j2).
+    /// Which entries show is the visibility function's per request
+    /// (I-93), not an authorisation rule, so it is not judged here.
+    Journey,
 }
 
 impl Rule {
     /// The roles through which the rule can admit a call (P-74, Q42).
     /// `None` is an account acting with no binding yet.
     pub fn acting(self) -> &'static [Option<Role>] {
-        const EVERY: [Option<Role>; 15] = [
+        const EVERY: [Option<Role>; 17] = [
             None,
             Some(Role::ProgrammeManager),
             Some(Role::CallDrafter),
@@ -818,6 +828,8 @@ impl Rule {
             Some(Role::FinanceApprover),
             Some(Role::PaymentReleaser),
             Some(Role::ContractSignatory),
+            Some(Role::FinancialSignatory),
+            Some(Role::LegalSignatory),
             Some(Role::Auditor),
         ];
         const TEAM: [Option<Role>; 3] = [
@@ -875,6 +887,21 @@ impl Rule {
             }
             Rule::IrcAssignee | Rule::IrcAct | Rule::IrcCase => &[Some(Role::IrcMember)],
             Rule::Auditor => &[Some(Role::Auditor)],
+            // No signatory: the section 7.2 matrix names neither (NOTE 5).
+            Rule::Journey => &[
+                Some(Role::Applicant),
+                Some(Role::ApplicantTeamMember),
+                Some(Role::Guardian),
+                Some(Role::FstpCoordinator),
+                Some(Role::ProgrammeManager),
+                Some(Role::CommitteeMember),
+                Some(Role::CommitteeChair),
+                Some(Role::IrcMember),
+                Some(Role::FinanceApprover),
+                Some(Role::PaymentReleaser),
+                Some(Role::ContractSignatory),
+                Some(Role::Auditor),
+            ],
         }
     }
 }
@@ -1009,6 +1036,22 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // each verified identity, since onboarding finishes only with two
     // verified admins (J0, SoD-07).
     RefOp::read("tenant.list_admins", T::None, R::TenantAdmin),
+    // Lane m4/roles (SA-01, NOTE 5): the tenant-wide signatory roles. Only a
+    // tenant admin lists, grants or ends them (Q31), and a grant or an end
+    // changes an Operations role, so it is high-risk (I-78). SoD-07 and the
+    // re-grant rule judge the grantee, which the shell refuses as a guard
+    // of the request, never the caller.
+    RefOp::read("tenant.list_signatories", T::None, R::TenantAdmin),
+    RefOp::act("tenant.grant_signatory", T::None, R::TenantAdmin).hr(),
+    RefOp::act("tenant.end_signatory", T::None, R::TenantAdmin).hr(),
+    // SoD-18: any tenant admin reads, requests and approves activation.
+    // Whether the approver is the requester, and whether both signatory
+    // roles are held (SoD-14, SoD-15), are judged on the request. Neither
+    // is high-risk: the table of `authentication.md` names programme
+    // activation only (interim, pending Daniel).
+    RefOp::read("tenant.get_activation", T::None, R::TenantAdmin),
+    RefOp::act("tenant.request_activation", T::None, R::TenantAdmin),
+    RefOp::act("tenant.approve_activation", T::None, R::TenantAdmin),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.
@@ -1151,6 +1194,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .binding()
         .tool("fstp_submit_revision"),
     RefOp::act("proposal.withdraw", T::Proposal, R::Lead).binding(),
+    // Lane j2, `SPEC/12-journey-ui.md` section 10: web only.
+    RefOp::read("proposal.journey", T::Proposal, R::Journey),
+    RefOp::read("proposal.diary", T::Proposal, R::Journey),
     RefOp::act("guardian.begin_consent", T::Proposal, R::Guardian),
     RefOp::read("negotiation.view", T::Proposal, R::NegotiationTeam),
     RefOp::act("negotiation.acknowledge_notice", T::Proposal, R::Lead),
@@ -1348,6 +1394,23 @@ fn admit(
             open(x == Some(StateTag::IrcReview))
         }
         Rule::Auditor => open(who == Who::Auditor),
+        Rule::Journey => {
+            let staff = who.manager()
+                || who.coordinator()
+                || who.committee()
+                || matches!(
+                    who,
+                    Who::IrcMember
+                        | Who::IrcAssignee
+                        | Who::IrcAssigneeUndeclared
+                        | Who::IrcAssigneeConflicted
+                        | Who::FinanceApprover
+                        | Who::PaymentReleaser
+                        | Who::ContractSignatory
+                        | Who::Auditor
+                );
+            open(who.team() || (staff && x.is_some_and(|s| s != StateTag::Draft)))
+        }
     }
 }
 

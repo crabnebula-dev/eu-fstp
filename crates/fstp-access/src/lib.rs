@@ -49,7 +49,8 @@ pub use registry::{
     SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
 };
 pub use replies::{
-    INVITED_ROLES, Member, REPLIES, STATE_NAMES, Shape, invitable, reply, role_wire_name,
+    ENTRY_KIND_NAMES, INVITED_ROLES, Member, REPLIES, STATE_NAMES, Shape, invitable, reply,
+    role_wire_name,
 };
 
 #[cfg(test)]

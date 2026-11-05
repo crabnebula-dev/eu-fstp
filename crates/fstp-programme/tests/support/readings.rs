@@ -326,10 +326,8 @@ pub(crate) fn readings() -> Vec<SuperSafeReading> {
         ),
         r(
             P32,
-            "Email, Matrix and WhatsApp (tenant-owned account); all four group types",
-            Opaque(
-                r#"{"channels":["email","matrix","whatsapp"],"group_types":["programme_announcements","committee_group","grantee_cohort","project_group"],"whatsapp_account":"tenant_owned"}"#,
-            ),
+            "Email only. Matrix and its group types are deferred by Daniel on 2026-11-04 (B-05), WhatsApp deferred by Daniel on 2026-11-04 (B-03)",
+            Opaque(r#"{"channels":["email"]}"#),
         ),
         r(
             P33,

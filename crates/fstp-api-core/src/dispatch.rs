@@ -121,6 +121,8 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
+/// `proposal.journey` and `proposal.diary` (lane j2, ADR-015).
+pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
 /// The public pages, the feed and the public tools (lane W2c).
@@ -547,9 +549,10 @@ fn refuse_early<P: Seams>(
     e
 }
 
-/// Whether the account `cmd` binds is a tenant admin (design section
-/// 3.7: from the attested admin set only, which the ledger owns under
-/// Q31 A).
+/// Whether the account `cmd` binds holds a tenant-wide Operations role:
+/// tenant admin (design section 3.7: from the attested admin set, which
+/// the ledger owns under Q31 A), or Financial or Legal signatory from the
+/// ledger's signatory bindings (NOTE 5). The core reads it for SoD-03.
 fn binds_admin<P: CellPorts>(
     ports: &P,
     state: &EngineState,
@@ -566,7 +569,7 @@ fn binds_admin<P: CellPorts>(
         Command::Core(Core::CreateDraft { .. }) => actor,
         _ => return false,
     };
-    tenant::is_admin(ports, state, bound)
+    tenant::holds_tenant_operations(ports, state, bound)
 }
 
 /// Runs one call through every step of design section 3.7.
@@ -1336,9 +1339,10 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         _ => read_target(op),
     };
     let rop = ReadOp { kind, target };
-    if let Err(d) = fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
-        return Err(call.refuse(read_denied(d.rule())));
-    }
+    let clearance = match fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
+        Ok(c) => c,
+        Err(d) => return Err(call.refuse(read_denied(d.rule()))),
+    };
     let account = call.account();
     let body = match kind {
         ReadKind::ListOpenCalls => {
@@ -1553,9 +1557,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             };
             ReadModel::Verification(own_verification(call, a).await?)
         }
-        ReadKind::GetOnboarding | ReadKind::GetTenantSettings | ReadKind::ListTenantAdmins => {
-            tenant::read(call, op, kind).await?
-        }
+        ReadKind::GetOnboarding
+        | ReadKind::GetTenantSettings
+        | ReadKind::ListTenantAdmins
+        | ReadKind::ListSignatories
+        | ReadKind::GetActivation => tenant::read(call, op, kind).await?,
         // Lane m4wire: the creator pages and the approval inbox.
         ReadKind::GetDraft
         | ReadKind::GetReport
@@ -1572,6 +1578,15 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             ReadModel::MyRoles(me_roles::read(call, a).await)
+        }
+        // Lane j2, `SPEC/12-journey-ui.md` section 10 (I-92, I-93, I-97).
+        ReadKind::GetJourney => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Journey(journey::journey(call, p, clearance.rule())?)
+        }
+        ReadKind::GetDiary => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Diary(journey::diary(call, p, clearance.rule())?)
         }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(

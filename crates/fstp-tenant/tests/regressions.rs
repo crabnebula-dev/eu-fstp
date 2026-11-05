@@ -16,11 +16,11 @@ use fstp_domain::id::{AccountId, ContentDigest, ProgrammeId, TextId, TextRef};
 use fstp_domain::roles::Role;
 use fstp_domain::time::Timestamp;
 use fstp_tenant::{
-    AgreementVersions, ApprovalId, BankInterface, BrandingPackage, CellKind, DomainName, GrantRef,
-    InferenceDefault, InvitationId, Milestone, OnboardingStep, PaymentMode, ProbeOutcome, RpMode,
-    SettingValue, StepFailure, StepOutcome, StepStatus, StepValues, TenantAnswers, TenantCommand,
-    TenantCtx, TenantQuery, TenantRecord, TenantRefusal, TenantState, Token, TokenDigest,
-    VerifyMethod, decide, queries,
+    ActivationRequestId, AgreementVersions, ApprovalId, BankInterface, BrandingPackage, CellKind,
+    DomainName, GrantRef, InferenceDefault, InvitationId, Milestone, OnboardingStep, PaymentMode,
+    ProbeOutcome, RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus,
+    StepValues, TenantAnswers, TenantCommand, TenantCtx, TenantQuery, TenantRecord, TenantRefusal,
+    TenantState, Token, TokenDigest, VerifyMethod, decide, queries,
 };
 
 const T0: Timestamp = Timestamp::from_micros(1_767_225_600_000_000);
@@ -228,12 +228,22 @@ fn walk_values(cell: CellKind, t: &TenantState) -> Vec<StepValues> {
     v
 }
 
-/// A tenant with a second admin, P-20 record-only and every step it goes
-/// through validated.
+/// A tenant with a second admin, a holder of each signatory role (SoD-14,
+/// SoD-15), P-20 record-only and every step it goes through validated.
 fn onboarded(cell: CellKind) -> Tenant {
     let mut t = Tenant::new(cell);
     t.invite(1, acct(2), D1);
     t.accept(acct(2), 1, D1).unwrap();
+    for role in SignatoryRole::ALL {
+        t.run(
+            acct(1),
+            &TenantCommand::GrantSignatory {
+                role,
+                account: acct(4),
+            },
+        )
+        .unwrap();
+    }
     t.set(SettingValue::P20(PaymentMode::RecordOnly));
     for values in walk_values(cell, &t.state.clone()) {
         let step = values.step();
@@ -656,4 +666,74 @@ fn r_tn_01_completed_is_history_and_onboarded_is_current() {
     };
     assert!(validated(&t.save(good).unwrap()));
     assert!(t.state.onboarded());
+}
+
+/// SoD-07, SoD-14, SoD-15, SoD-17, SoD-18: the fold checks again each
+/// signatory and activation rule that a record alone can show, so a
+/// ledger that breaks one does not replay. A validated Administrators
+/// save needs a holder of each role. A self-grant, an approval by the
+/// requester or of another request, and an end of the last holder while
+/// the organisation is active are each refused.
+#[test]
+fn sod14_sod18_fold_refuses_records_that_break_the_signatory_rules() {
+    let replays = |ledger: &[TenantRecord]| TenantState::replay(acct(1), CellKind::Saas, ledger);
+    let mut t = onboarded(CellKind::Saas);
+    let unheld: Vec<TenantRecord> = t
+        .ledger
+        .iter()
+        .filter(|r| !matches!(r, TenantRecord::SignatoryGranted { .. }))
+        .cloned()
+        .collect();
+    assert!(replays(&unheld).is_err(), "SoD-14, SoD-15: no holder");
+    let mut self_grant = t.ledger.clone();
+    self_grant.push(TenantRecord::SignatoryGranted {
+        role: SignatoryRole::Legal,
+        account: acct(1),
+        by: acct(1),
+        at: T0,
+    });
+    assert!(replays(&self_grant).is_err(), "SoD-07: a self-grant");
+
+    let request = ActivationRequestId::from_raw(7);
+    t.run(acct(1), &TenantCommand::RequestActivation { request })
+        .unwrap();
+    for (by, named) in [
+        (acct(1), request),
+        (acct(2), ActivationRequestId::from_raw(8)),
+    ] {
+        let mut ledger = t.ledger.clone();
+        ledger.push(TenantRecord::ActivationApproved {
+            request: named,
+            by,
+            at: T0,
+        });
+        assert!(
+            replays(&ledger).is_err(),
+            "SoD-18: {by:?} approves {named:?}"
+        );
+    }
+    t.run(acct(2), &TenantCommand::ApproveActivation { request })
+        .unwrap();
+    assert!(t.state.is_active(), "SoD-18: a second admin approved");
+    for role in SignatoryRole::ALL {
+        let mut ledger = t.ledger.clone();
+        ledger.push(TenantRecord::SignatoryEnded {
+            role,
+            account: acct(4),
+            by: acct(1),
+            at: T0,
+        });
+        assert!(replays(&ledger).is_err(), "SoD-17: the last {role:?}");
+        assert_eq!(
+            t.run(
+                acct(1),
+                &TenantCommand::EndSignatory {
+                    role,
+                    account: acct(4),
+                },
+            ),
+            Err(TenantRefusal::LastSignatory),
+            "SoD-17: {role:?}"
+        );
+    }
 }

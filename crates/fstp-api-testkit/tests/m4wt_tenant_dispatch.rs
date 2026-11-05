@@ -55,6 +55,9 @@ const A1: AccountId = AccountId::from_raw(0x0a01);
 const A2: AccountId = AccountId::from_raw(0x0a02);
 /// An account outside the tenant admin set.
 const OUTSIDER: AccountId = AccountId::from_raw(0x0a99);
+/// An account outside the admin set that holds both signatory roles once
+/// [`grant_signatories`] ran (SoD-14, SoD-15, NOTE 5).
+const SIGNATORY: AccountId = AccountId::from_raw(0x0b01);
 /// The invitation A2 joined through.
 const INVITATION: InvitationId = InvitationId::from_raw(0x1a2);
 /// The data protection contact the Organisation step saves.
@@ -473,6 +476,21 @@ fn admins_value() -> String {
     format!(r#"{{"admins":["{}","{}"]}}"#, A1.raw(), A2.raw())
 }
 
+/// Grants Financial signatory and Legal signatory to [`SIGNATORY`] as `l`,
+/// each with its step-up (I-78). The Administrators step validates only
+/// with a holder of each (SoD-14, SoD-15).
+fn grant_signatories(c: &FakeCell, l: &WebLogin) {
+    for role in ["financial_signatory", "legal_signatory"] {
+        let body = format!(r#"{{"account":"{}","role":"{role}"}}"#, SIGNATORY.raw());
+        let _ = done(
+            stepped(c, l, &|| {
+                decode_route(Method::Post, "/admin/signatories", body.as_bytes())
+            }),
+            &format!("SoD-14, SoD-15: the grant of {role}"),
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // tenant.get_step and tenant.save_step (R-TN-01)
 // ---------------------------------------------------------------------------
@@ -641,6 +659,7 @@ fn r_tn_01_walk_completes_with_two_verified_admins() {
     let c = fresh("self_hosted", Second::Added { verified: true });
     let l = login(&c, A1);
     walk_to_administrators(&c, &l);
+    grant_signatories(&c, &l);
     save_validated(&c, &l, "administrators", &admins_value());
     let before = appended(&c);
     let _ = done(c.web(&l, complete()), "R-TN-01: completion");
@@ -685,6 +704,7 @@ fn sod07_completion_needs_every_admin_verified() {
     let c = fresh("self_hosted", Second::Added { verified: false });
     let l = login(&c, A1);
     walk_to_administrators(&c, &l);
+    grant_signatories(&c, &l);
     save_validated(&c, &l, "administrators", &admins_value());
     let before = appended(&c);
     assert_refused(
@@ -933,6 +953,44 @@ fn every_tenant_op() -> Vec<(String, OpFn)> {
         (
             "admin.approve_self_grant".to_owned(),
             Box::new(|| approve_self_grant(7)),
+        ),
+        // Lane m4/roles: the signatory roles and the activation (SA-01,
+        // SA-02).
+        (
+            "tenant.list_signatories".to_owned(),
+            Box::new(|| decode_route(Method::Get, "/admin/signatories", b"")),
+        ),
+        (
+            "tenant.grant_signatory".to_owned(),
+            Box::new(|| {
+                let body = format!(r#"{{"account":"{}","role":"legal_signatory"}}"#, A2.raw());
+                decode_route(Method::Post, "/admin/signatories", body.as_bytes())
+            }),
+        ),
+        (
+            "tenant.end_signatory".to_owned(),
+            Box::new(|| {
+                let path = format!("/admin/signatories/legal_signatory/{}", A2.raw());
+                decode_route(Method::Delete, &path, b"")
+            }),
+        ),
+        (
+            "tenant.get_activation".to_owned(),
+            Box::new(|| decode_route(Method::Get, "/admin/activation", b"")),
+        ),
+        (
+            "tenant.request_activation".to_owned(),
+            Box::new(|| decode_route(Method::Post, "/admin/activation", b"{}")),
+        ),
+        (
+            "tenant.approve_activation".to_owned(),
+            Box::new(|| {
+                decode_route(
+                    Method::Post,
+                    "/admin/activation/approval",
+                    br#"{"request":"7"}"#,
+                )
+            }),
         ),
     ];
     for s in every_setting() {

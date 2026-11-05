@@ -6,7 +6,11 @@
  * step validates before the next opens, and the tenant can save and
  * return at any point (`programme-creator.md`). SoD-07: at least two
  * tenant admins. R-LG-03: inviting a tenant admin and changing a tenant
- * setting are high-risk, so each needs a fresh step-up.
+ * setting are high-risk, so each needs a fresh step-up. SoD-14 and SoD-15:
+ * the Administrators step validates only with a holder of Financial
+ * signatory and of Legal signatory, which another tenant admin grants
+ * (SoD-07). SoD-18: one tenant admin requests activation of the
+ * organisation and a different one approves it.
  *
  * The page contract is in `creator/contract.ts`. Red until the pages of
  * lane W4a and `fstp-e2e-cell` of lane W5 exist.
@@ -14,7 +18,16 @@
 
 import { expect, type Page } from '@playwright/test';
 import { call, enrolByInvite, okJson, syntheticEmail, test } from './playwright.config';
-import { API, APP, ONBOARDING_STEPS, ONBOARDING_UI, SETTING_UI, STEPUP } from './creator/contract';
+import {
+  API,
+  APP,
+  ONBOARDING_STEPS,
+  ONBOARDING_UI,
+  SETTING_UI,
+  SIGNATORY_ROLES,
+  STEPUP,
+  signatoryRoleChoice,
+} from './creator/contract';
 import {
   cancelStepUp,
   cellA,
@@ -23,6 +36,8 @@ import {
   fillOnboardingStep,
   firstAdmin,
   footerProblems,
+  grantSignatories,
+  grantSignatory,
   inviteSecondAdmin,
   navStatuses,
   newPerson,
@@ -51,7 +66,7 @@ test.describe('R-TN-01 onboarding', () => {
   test('r_tn_01_onboarding_walks_every_step_in_order_and_completes', async ({ person, request }) => {
     const control = cellA(request);
     const origin = control.cell.origin;
-    const { a1 } = await firstAdmin(person, control);
+    const { a1, a1Account } = await firstAdmin(person, control);
     const page = a1.page;
     await page.goto(`${origin}${APP.onboarding('organisation')}`);
     expect(Object.keys(await navStatuses(page)), 'the steps in the order of the spec table').toEqual([...ONBOARDING_STEPS]);
@@ -70,7 +85,9 @@ test.describe('R-TN-01 onboarding', () => {
       await expect(page.locator(ONBOARDING_UI.next)).toHaveCount(1);
     }
 
-    await inviteSecondAdmin(person, control, a1);
+    const { a2 } = await inviteSecondAdmin(person, control, a1);
+    // SoD-07, SoD-14, SoD-15: A2 grants both signatory roles to A1.
+    await grantSignatories(a2, origin, a1Account);
     await completeOnboarding(page, origin);
     for (const step of ONBOARDING_STEPS) {
       expect(await apiStatus(page, origin, step), `${step} after completion`).toBe('validated');
@@ -112,7 +129,7 @@ test.describe('R-TN-01 onboarding', () => {
   test('sod07_onboarding_completes_only_with_two_verified_admins', async ({ person, request }) => {
     const control = cellA(request);
     const origin = control.cell.origin;
-    const { a1 } = await firstAdmin(person, control);
+    const { a1, a1Account } = await firstAdmin(person, control);
     const page = a1.page;
     await walkStepsBeforeAdministrators(page, origin);
 
@@ -136,7 +153,106 @@ test.describe('R-TN-01 onboarding', () => {
     await expect(page.locator(`${ONBOARDING_UI.completeOutcome}[data-outcome="completed"]`)).toHaveCount(0);
 
     await verifyOnIdentityPage(a2, control, origin);
+    // SoD-14, SoD-15: A2 grants both signatory roles to A1 (SoD-07).
+    await grantSignatories(a2, origin, a1Account);
     await completeOnboarding(page, origin);
+  });
+
+  /**
+   * SoD-14, SoD-15, SoD-07 and SoD-18 through the pages. With two verified
+   * admins and no signatory, the Administrators step names each role
+   * still missing and does not validate, and an activation request is
+   * refused. A1 cannot grant a role to A1, so A2 grants both. Completing
+   * onboarding does not activate the organisation. A1 requests
+   * activation, A1's own approval is refused, and A2's approval
+   * activates it.
+   */
+  test('sod14_sod18_signatories_block_the_administrators_step_and_activation_needs_a_second_admin', async ({
+    person,
+    request,
+  }) => {
+    const control = cellA(request);
+    const origin = control.cell.origin;
+    const { a1, a1Account } = await firstAdmin(person, control);
+    const page = a1.page;
+    await walkStepsBeforeAdministrators(page, origin);
+    const { a2, a2Account } = await inviteSecondAdmin(person, control, a1);
+    const alert = page.locator(ONBOARDING_UI.alert).first();
+    const activation = async (p: Page): Promise<Record<string, unknown>> => {
+      return okJson(await call(p, origin, 'GET', API.activation), 'GET activation');
+    };
+    const holders = async (p: Page): Promise<unknown> => {
+      return okJson(await call(p, origin, 'GET', API.signatories), 'GET signatories')['signatories'];
+    };
+
+    // SoD-14, SoD-15: two verified admins but no signatory, so the step is blocked.
+    await page.goto(`${origin}${APP.onboarding('administrators')}`);
+    await expect(page.locator(`${ONBOARDING_UI.admins} li[data-account]`)).toHaveCount(2);
+    for (const role of SIGNATORY_ROLES) {
+      await expect(
+        page.locator(`${ONBOARDING_UI.signatories} section[data-signatory-role="${role}"] [data-empty="true"]`),
+        `SoD-14, SoD-15: ${role} has no holder`,
+      ).toHaveCount(1);
+    }
+    await expect(page.locator(ONBOARDING_UI.signatoryMissing)).toBeVisible();
+    await saveOnboardingStep(page, 'no_financial_signatory');
+    await expect(page.locator(ONBOARDING_UI.next)).toHaveCount(0);
+    expect(await apiStatus(page, origin, 'administrators')).not.toBe('validated');
+
+    // SoD-14: an activation request without a Financial signatory is refused.
+    await page.goto(`${origin}${APP.onboardingSummary}`);
+    await expect(page.locator(ONBOARDING_UI.activationState)).toHaveAttribute('data-state', 'not_requested');
+    await expect(page.locator(ONBOARDING_UI.activationMissing)).toBeVisible();
+    await page.locator(ONBOARDING_UI.activationRequest).click();
+    await expect(alert).toHaveAttribute('data-rule', 'SoD-14');
+    expect((await activation(page))['state']).toBe('not_requested');
+
+    // SoD-07: A1 cannot grant a signatory role to A1, and no step-up begins.
+    await page.goto(`${origin}${APP.onboarding('administrators')}`);
+    await page.locator(ONBOARDING_UI.signatoryAccount).selectOption(a1Account);
+    await page.locator(signatoryRoleChoice('financial_signatory')).check();
+    await page.locator(ONBOARDING_UI.signatoryGrant).click();
+    await expect(alert).toHaveAttribute('data-rule', 'SoD-07');
+    await expect(page.locator(STEPUP.dialog)).toBeHidden();
+    expect(await holders(page), 'SoD-07: the self-grant bound nothing').toEqual([]);
+
+    // SoD-15: with only a Financial signatory, the step names the Legal role.
+    await grantSignatory(a2, origin, a1Account, 'financial_signatory');
+    await page.goto(`${origin}${APP.onboarding('administrators')}`);
+    await saveOnboardingStep(page, 'no_legal_signatory');
+    await expect(page.locator(ONBOARDING_UI.next)).toHaveCount(0);
+    await grantSignatory(a2, origin, a1Account, 'legal_signatory');
+    await completeOnboarding(page, origin);
+    expect(await apiStatus(page, origin, 'administrators')).toBe('validated');
+
+    // SoD-18: completing onboarding does not activate the organisation.
+    await page.goto(`${origin}${APP.onboardingSummary}`);
+    const state = page.locator(ONBOARDING_UI.activationState);
+    await expect(state).toHaveAttribute('data-state', 'not_requested');
+    expect((await activation(page))['state']).toBe('not_requested');
+    await page.locator(ONBOARDING_UI.activationRequest).click();
+    await expect(state).toHaveAttribute('data-state', 'requested');
+
+    // SoD-18: A1 requested activation, so A1's approval is refused.
+    await page.locator(ONBOARDING_UI.activationApprove).click();
+    await expect(alert).toHaveAttribute('data-rule', 'SoD-18');
+    await page.reload();
+    await expect(state).toHaveAttribute('data-state', 'requested');
+    const requested = await activation(page);
+    expect(requested['state']).toBe('requested');
+    expect(requested['requested_by']).toBe(a1Account);
+    expect(requested['approved_by']).toBeNull();
+
+    // SoD-18: A2, a second tenant admin, approves, and the organisation is active.
+    await a2.page.goto(`${origin}${APP.onboardingSummary}`);
+    const a2State = a2.page.locator(ONBOARDING_UI.activationState);
+    await expect(a2State).toHaveAttribute('data-state', 'requested');
+    await a2.page.locator(ONBOARDING_UI.activationApprove).click();
+    await expect(a2State).toHaveAttribute('data-state', 'active');
+    const active = await activation(a2.page);
+    expect(active['state']).toBe('active');
+    expect(active['requested_by']).toBe(a1Account);
+    expect(active['approved_by']).toBe(a2Account);
   });
 
   /**

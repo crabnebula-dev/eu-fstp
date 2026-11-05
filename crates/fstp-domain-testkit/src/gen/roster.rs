@@ -1143,7 +1143,7 @@ pub struct SodFocus {
 }
 
 /// Every role, for grants that try Receiving and Operations roles too.
-pub const EVERY_ROLE: [Role; 14] = Role::ALL;
+pub const EVERY_ROLE: [Role; 16] = Role::ALL;
 
 /// The Judging roles.
 pub const JUDGING_ROLES: [Role; 4] = [

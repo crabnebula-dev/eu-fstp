@@ -14,6 +14,8 @@
 //!   A grant to an account that already holds a binding of the same role
 //!   on the programme is refused until that binding ends (Daniel's answer
 //!   of 2026-10-31, M4 design section 15.0).
+//!   A grant of Financial signatory or Legal signatory is refused, since
+//!   those bindings are tenant-wide and name no programme (NOTE 5).
 //!   A committee member grant whose organisation differs from a held
 //!   committee binding of the account in the programme, whatever its
 //!   period, is refused, since a reviewer has one organisation per
@@ -229,6 +231,12 @@ fn plan_grant(
     let group = role.group();
     if group == Group::Receiving {
         // Receiving bindings arise from proposals, never from a grant.
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    }
+    if role.tenant_wide_signatory() {
+        // NOTE 5 (decided by Daniel 2026-11-01): a signatory binding is
+        // tenant-wide and names no programme. The tenant crate records it,
+        // as it records the tenant admin set, so no programme binds it.
         return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
     }
     if *role == Role::CommitteeMember && organisation.is_none() {
@@ -856,8 +864,9 @@ impl ReceivingPlan {
 /// Checks the Receiving binding that `cmd` creates, if it creates one.
 ///
 /// The account is the actor for `CreateDraft` and the added account
-/// otherwise. A tenant admin at tenant scope counts as holding an
-/// Operations role (SoD-03, `Ctx::binds_tenant_admin`).
+/// otherwise. A tenant admin at tenant scope, or a holder of Financial or
+/// Legal signatory (NOTE 5), counts as holding an Operations role (SoD-03,
+/// `Ctx::binds_tenant_admin`).
 fn plan_receiving(
     state: &State,
     cmd: &Command,

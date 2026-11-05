@@ -159,6 +159,99 @@ export function readAdmins(body: unknown): AdminRow[] | null {
   return out;
 }
 
+/**
+ * The tenant-wide signatory roles (NOTE 5 of `roles-and-sod.md`), spelled
+ * as `fstp_access::role_wire_name` spells them, Financial first.
+ */
+export const SIGNATORY_ROLES = ["financial_signatory", "legal_signatory"] as const;
+
+/** One signatory role. */
+export type SignatoryRole = (typeof SIGNATORY_ROLES)[number];
+
+/** Whether `s` names a signatory role. */
+export function isSignatoryRole(s: unknown): s is SignatoryRole {
+  return typeof s === "string" && (SIGNATORY_ROLES as readonly string[]).includes(s);
+}
+
+/** One signatory binding as `GET /api/v1/admin/signatories` lists it. It names no programme. */
+export interface SignatoryRow {
+  readonly account: string;
+  readonly role: SignatoryRole;
+  /** The pseudonymous display handle, never an email. */
+  readonly handle: string;
+}
+
+/** Reads `{signatories: [{account, role, handle}]}`. Null otherwise. */
+export function readSignatories(body: unknown): SignatoryRow[] | null {
+  const list = record(body)?.["signatories"];
+  if (!Array.isArray(list)) return null;
+  const out: SignatoryRow[] = [];
+  for (const x of list as unknown[]) {
+    const r = record(x);
+    const account = r?.["account"];
+    const role = r?.["role"];
+    const handle = r?.["handle"];
+    if (typeof account !== "string" || !/^[0-9]{1,39}$/.test(account)) return null;
+    if (!isSignatoryRole(role) || typeof handle !== "string") return null;
+    out.push({ account, role, handle });
+  }
+  return out;
+}
+
+/** The signatory roles with no holder in `rows`, Financial first (SoD-14, SoD-15). */
+export function missingSignatories(rows: readonly SignatoryRow[]): SignatoryRole[] {
+  return SIGNATORY_ROLES.filter((r) => !rows.some((x) => x.role === r));
+}
+
+/** The activation state of the organisation (SoD-18). */
+export type ActivationState = "not_requested" | "requested" | "active";
+
+/** The organisation's activation as `GET /api/v1/admin/activation` answers it. */
+export interface ActivationView {
+  readonly state: ActivationState;
+  /** The open or approved request, or null before any request. */
+  readonly request: string | null;
+  readonly requestedBy: string | null;
+  readonly approvedBy: string | null;
+}
+
+/** An account id or null, as the activation read gives it; undefined for any other value. */
+function idOrNull(v: unknown): string | null | undefined {
+  if (v === null) return null;
+  return typeof v === "string" && /^[0-9]{1,39}$/.test(v) ? v : undefined;
+}
+
+/**
+ * Reads `{state, request, requested_by, approved_by}`. Null for any other
+ * shape, or for members that do not fit the state: a request and its
+ * requester exist from `requested` on, and an approver only once `active`.
+ */
+export function readActivation(body: unknown): ActivationView | null {
+  const r = record(body);
+  if (r === null) return null;
+  const state = r["state"];
+  const request = idOrNull(r["request"]);
+  const requestedBy = idOrNull(r["requested_by"]);
+  const approvedBy = idOrNull(r["approved_by"]);
+  if (request === undefined || requestedBy === undefined || approvedBy === undefined) return null;
+  switch (state) {
+    case "not_requested":
+      return request === null && requestedBy === null && approvedBy === null
+        ? { state, request, requestedBy, approvedBy }
+        : null;
+    case "requested":
+      return request !== null && requestedBy !== null && approvedBy === null
+        ? { state, request, requestedBy, approvedBy }
+        : null;
+    case "active":
+      return request !== null && requestedBy !== null && approvedBy !== null
+        ? { state, request, requestedBy, approvedBy }
+        : null;
+    default:
+      return null;
+  }
+}
+
 /** The identity verification state of the signed-in person. */
 export type VerificationStatus = "unverified" | "pending" | "verified";
 
@@ -279,6 +372,8 @@ export const MCP_ROLES = [
   "finance_approver",
   "payment_releaser",
   "contract_signatory",
+  "financial_signatory",
+  "legal_signatory",
   "auditor",
 ] as const;
 

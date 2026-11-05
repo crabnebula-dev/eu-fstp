@@ -149,11 +149,14 @@ const OWN_STATE_NAMES: &[&str] = &[
 ];
 
 /// Whether creator step 9 can invite to `role`: every role outside the
-/// Receiving group, except tenant admin (`programme-creator.md` step 9,
+/// Receiving group, except tenant admin and the two tenant-wide
+/// signatory roles (NOTE 5) (`programme-creator.md` step 9,
 /// SoD-09). This is the rule `fstp_creator::decide_creator` applies to
 /// `Invite`, so the landing exists for every invitation it records.
 pub const fn invitable(role: Role) -> bool {
-    !matches!(role.group(), Group::Receiving) && !matches!(role, Role::TenantAdmin)
+    !matches!(role.group(), Group::Receiving)
+        && !matches!(role, Role::TenantAdmin)
+        && !role.tenant_wide_signatory()
 }
 
 /// The role as the wire spells it: the role in snake case.
@@ -172,6 +175,8 @@ pub const fn role_wire_name(role: Role) -> &'static str {
         Role::FinanceApprover => "finance_approver",
         Role::PaymentReleaser => "payment_releaser",
         Role::ContractSignatory => "contract_signatory",
+        Role::FinancialSignatory => "financial_signatory",
+        Role::LegalSignatory => "legal_signatory",
         Role::Auditor => "auditor",
     }
 }
@@ -192,6 +197,8 @@ const ROLE_NAMES: &[&str] = &[
     "finance_approver",
     "payment_releaser",
     "contract_signatory",
+    "financial_signatory",
+    "legal_signatory",
     "auditor",
 ];
 
@@ -334,6 +341,8 @@ const ONBOARDING_STEP: Shape = Shape::Object(&[
             "probe_failed",
             "prober_absent",
             "too_few_admins",
+            "no_financial_signatory",
+            "no_legal_signatory",
             "agreements_not_recorded",
             "payment_mode_unset",
             "unavailable_m5",
@@ -641,6 +650,37 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ])),
         )]),
     ),
+    // Lane m4/roles. NOTE 5: each signatory binding by account, role and
+    // pseudonymous handle. A binding is tenant-wide, so no row names a
+    // programme.
+    (
+        "tenant.list_signatories",
+        Shape::Object(&[m(
+            "signatories",
+            Shape::Array(&Shape::Object(&[
+                m("account", Shape::Id),
+                m(
+                    "role",
+                    Shape::Enum(&["financial_signatory", "legal_signatory"]),
+                ),
+                m("handle", Shape::String),
+            ])),
+        )]),
+    ),
+    // SoD-18: the activation state, its open or approved request, and the
+    // requesting and approving admins by account.
+    (
+        "tenant.get_activation",
+        Shape::Object(&[
+            m(
+                "state",
+                Shape::Enum(&["not_requested", "requested", "active"]),
+            ),
+            m("request", Shape::Nullable(&Shape::Id)),
+            m("requested_by", Shape::Nullable(&Shape::Id)),
+            m("approved_by", Shape::Nullable(&Shape::Id)),
+        ]),
+    ),
     // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its
     // save. The values are those of `fstp-tenant`'s codec, with the data
     // protection contact as its text.
@@ -882,7 +922,111 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ),
         ]),
     ),
+    // Lane j2, `SPEC/12-journey-ui.md` section 10, R-JV-01, R-JV-07: the
+    // current node with its formal state name, the completed legs, whether
+    // the caller's role gets the route strip (O-58), and the overlay of the
+    // proposal's original call, null before that call is published.
+    // I-97: ids, states, times and codes only, never text.
+    ("proposal.journey", JOURNEY_REPLY),
+    // Lane j2, section 10, I-93, I-97: the diary entries the visibility
+    // function lets the caller see, in ledger order. A sentence is its
+    // catalogue key and typed parameters, and a text is its reference or
+    // the erasure placeholder of section 7.3.
+    ("proposal.diary", DIARY_REPLY),
 ];
+
+/// The entry kinds of `SPEC/12-journey-ui.md` section 7.2, and the
+/// guardian step of O-60, as the wire spells them.
+pub const ENTRY_KIND_NAMES: &[&str] = &[
+    "state_transition",
+    "deadline_set",
+    "notice_sent",
+    "clarification",
+    "reviewer_score",
+    "conflict",
+    "vault_outcome",
+    "contract",
+    "milestone_payment",
+    "complaint",
+    "agent_action",
+    "guardian_step",
+];
+
+/// The parameters of section 5.5 that show as a wording choice, by id.
+const WORDING_PARAM_NAMES: &[&str] = &["P-08", "P-20", "P-50", "P-51", "P-60", "P-65", "P-66"];
+
+/// One completed leg of a route.
+const LEG: Shape = Shape::Object(&[
+    m("from", Shape::Enum(STATE_NAMES)),
+    m("to", Shape::Enum(STATE_NAMES)),
+    m("at", Shape::String),
+    m("seq", Shape::Id),
+]);
+
+/// The programme overlay of section 5.5 (R-JV-07). Opaque parameters
+/// appear by id only (I-97).
+const OVERLAY: Shape = Shape::Object(&[
+    m("policy", Shape::Id),
+    m("stage2_window_days", Shape::Int),
+    m("anonymity", Shape::Enum(&["anonymous", "named"])),
+    m("irc_concern", Shape::Enum(&["deferred", "declined"])),
+    m("agent_actions", Shape::Enum(&["draft_only", "allowed"])),
+    m("wording", Shape::Array(&Shape::Enum(WORDING_PARAM_NAMES))),
+]);
+
+/// The `proposal.journey` reply.
+const JOURNEY_REPLY: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("state", Shape::Enum(STATE_NAMES)),
+    m("since", Shape::String),
+    m("seq", Shape::Id),
+    m("legs", Shape::Array(&LEG)),
+    m("strip", Shape::Bool),
+    m("overlay", Shape::Nullable(&OVERLAY)),
+]);
+
+/// One sentence parameter of a diary entry: exactly one member is set.
+const DIARY_PARAM: Shape = Shape::Object(&[
+    opt("state", Shape::Enum(STATE_NAMES)),
+    opt("amount", Shape::Amount),
+    opt("seq", Shape::Id),
+    opt("score", Shape::Array(&Shape::Int)),
+    opt("outcome", Shape::Bool),
+    opt("time", Shape::String),
+]);
+
+/// One text slot of a diary entry: a live reference (`text` and
+/// `digest`), or the erasure placeholder (`erased_on` and `cause`).
+const DIARY_TEXT: Shape = Shape::Object(&[
+    opt("text", Shape::Id),
+    opt("digest", Shape::String),
+    opt("erased_on", Shape::String),
+    opt("cause", Shape::Int),
+]);
+
+/// One diary entry. `entry` and `supersedes` are 32 lowercase hex digits.
+const DIARY_ENTRY: Shape = Shape::Object(&[
+    m("entry", Shape::String),
+    m("seq", Shape::Id),
+    m("kind", Shape::Enum(ENTRY_KIND_NAMES)),
+    m(
+        "subject",
+        Shape::Enum(&["proposal", "call", "payment_request"]),
+    ),
+    m("subject_id", Shape::Id),
+    m("key", Shape::String),
+    m("at", Shape::String),
+    opt("zone", Shape::String),
+    opt("supersedes", Shape::String),
+    m("params", Shape::Array(&DIARY_PARAM)),
+    m("texts", Shape::Array(&DIARY_TEXT)),
+]);
+
+/// The `proposal.diary` reply.
+const DIARY_REPLY: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("entries", Shape::Array(&DIARY_ENTRY)),
+]);
 
 /// The reply shape of the operation named `name`.
 pub fn reply(name: &str) -> Option<&'static Shape> {

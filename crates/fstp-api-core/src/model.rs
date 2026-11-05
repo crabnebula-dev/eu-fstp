@@ -105,6 +105,12 @@ pub enum ReadModel {
     /// `me.roles`: the caller's own active roles, for the interim home
     /// page of design section 15.0 (2026-10-31; I-86).
     MyRoles(crate::dispatch::me_roles::MyRoles),
+    /// `proposal.journey`: a proposal's route position, its legs and the
+    /// overlay (lane j2, `SPEC/12-journey-ui.md` section 10).
+    Journey(crate::dispatch::journey::JourneyView),
+    /// `proposal.diary`: the diary entries the caller may see (lane j2,
+    /// I-93, I-97).
+    Diary(crate::dispatch::journey::DiaryView),
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
@@ -213,6 +219,8 @@ impl ToJson for ReadModel {
             ReadModel::Tenant(v) => v.to_json(),
             ReadModel::Creator(m) => m.to_json(),
             ReadModel::MyRoles(r) => r.to_json(),
+            ReadModel::Journey(v) => v.to_json(),
+            ReadModel::Diary(v) => v.to_json(),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -1551,10 +1559,116 @@ pub(crate) mod reply_shape_tests {
             }
             ReadModel::Tenant(crate::tenant::TenantView::Settings(_)) => &["tenant.settings"],
             ReadModel::Tenant(crate::tenant::TenantView::Admins(_)) => &["tenant.list_admins"],
+            ReadModel::Tenant(crate::tenant::TenantView::Signatories(_)) => {
+                &["tenant.list_signatories"]
+            }
+            ReadModel::Tenant(crate::tenant::TenantView::Activation(_)) => {
+                &["tenant.get_activation"]
+            }
             ReadModel::Creator(c) => creator_served_as(c),
             ReadModel::MyRoles(_) => &["me.roles"],
+            ReadModel::Journey(_) => &["proposal.journey"],
+            ReadModel::Diary(_) => &["proposal.diary"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Public(_) => &[],
+        }
+    }
+
+    /// A `proposal.journey` reply (lane j2): with two legs and the overlay
+    /// when `full`, else a draft with no leg and no overlay.
+    fn journey_view(full: bool) -> crate::dispatch::journey::JourneyView {
+        use fstp_domain::StateTag;
+        use fstp_journey::overlay::{IrcConcern, Overlay};
+        use fstp_journey::projector::{LegRow, Position};
+        let p = ProposalId::from_raw(1001);
+        let leg = |ord: u32, from, to| LegRow {
+            proposal: p,
+            ord,
+            from,
+            to,
+            at: 5,
+            source_seq: 9,
+        };
+        crate::dispatch::journey::JourneyView {
+            proposal: p,
+            position: Position {
+                node: if full {
+                    StateTag::Stage1
+                } else {
+                    StateTag::Draft
+                },
+                since: 5,
+                source_seq: 9,
+            },
+            legs: if full {
+                vec![
+                    leg(0, StateTag::Draft, StateTag::Submitted),
+                    leg(1, StateTag::Submitted, StateTag::Stage1),
+                ]
+            } else {
+                Vec::new()
+            },
+            strip: full,
+            overlay: full.then(|| Overlay {
+                policy: fstp_domain::id::PolicyVersionId::from_raw(3),
+                stage2_window: fstp_domain::time::Days::new(14),
+                anonymity: fstp_domain::policy::ReviewerAnonymity::Anonymous,
+                irc_concern: IrcConcern::Deferred,
+                agent_actions: fstp_domain::policy::McpBindingActions::DraftOnly,
+                wording: [
+                    fstp_domain::rules::ParamId::P08,
+                    fstp_domain::rules::ParamId::P20,
+                ]
+                .into_iter()
+                .collect(),
+            }),
+        }
+    }
+
+    /// A `proposal.diary` reply (lane j2): one entry with every optional
+    /// member, every parameter kind and both text slots when `full`, else
+    /// no entry.
+    fn diary_view(full: bool) -> crate::dispatch::journey::DiaryView {
+        use fstp_domain::StateTag;
+        use fstp_domain::id::{ContentDigest, TextId, TextRef};
+        use fstp_journey::diary::{DiaryItem, Erasure, Param, TextSlot};
+        use fstp_journey::projector::Subject;
+        use fstp_journey::visibility::EntryKind;
+        let p = ProposalId::from_raw(1001);
+        let item = DiaryItem {
+            entry_id: [7; 16],
+            source_seq: 12,
+            subject: Subject::Proposal(p),
+            kind: EntryKind::ReviewerScore,
+            summary_key: 7,
+            occurred_at: 5,
+            deadline_zone: Some(2),
+            params: vec![
+                Param::State(StateTag::Granted),
+                Param::Amount("1500.50".to_owned()),
+                Param::Sequence(12),
+                Param::Score(fstp_domain::scoring::ScoreVector(vec![3, 5])),
+                Param::Outcome(true),
+                Param::Time(5),
+            ],
+            texts: vec![
+                TextSlot::Live(TextRef::new(
+                    TextId::from_raw(4),
+                    ContentDigest::from_bytes([1; 32]),
+                )),
+                TextSlot::Erased(Erasure { on: 6, cause: 2 }),
+            ],
+        };
+        crate::dispatch::journey::DiaryView {
+            proposal: p,
+            entries: if full {
+                vec![crate::dispatch::journey::DiaryEntry {
+                    item,
+                    supersedes: Some([8; 16]),
+                }]
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -1719,6 +1833,10 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Creator(crate::creator::CreatorModel::Proposals(Vec::new())),
             ReadModel::MyRoles(my_roles(true)),
             ReadModel::MyRoles(my_roles(false)),
+            ReadModel::Journey(journey_view(true)),
+            ReadModel::Journey(journey_view(false)),
+            ReadModel::Diary(diary_view(true)),
+            ReadModel::Diary(diary_view(false)),
             ReadModel::Creator(crate::creator::CreatorModel::Preview {
                 kind: "public",
                 blocks: vec![fstp_guide::PreviewBlock {
@@ -1800,7 +1918,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 31;
+    const VARIANTS: usize = 33;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1837,7 +1955,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Tenant(_) => 27,
             ReadModel::Creator(_) => 28,
             ReadModel::MyRoles(_) => 29,
-            ReadModel::Public(_) => 30,
+            ReadModel::Journey(_) => 30,
+            ReadModel::Diary(_) => 31,
+            ReadModel::Public(_) => 32,
         }
     }
 

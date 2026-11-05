@@ -141,6 +141,7 @@ fstp-public = { path = "crates/fstp-public" }
 fstp-tenant = { path = "crates/fstp-tenant" }
 fstp-access = { path = "crates/fstp-access" }
 fstp-api-core = { path = "crates/fstp-api-core" }
+fstp-journey = { path = "crates/fstp-journey" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }
