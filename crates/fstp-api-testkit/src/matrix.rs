@@ -281,7 +281,7 @@ pub enum ObservedClass {
 /// the actor. A refusal of a draft programme names I-66 (change D3), since
 /// only activation lifts it. The non-spec `RuleRef::Actor` travels as
 /// `"actor"`.
-const AUTH_RULES: [(&str, AuthClass); 30] = [
+const AUTH_RULES: [(&str, AuthClass); 31] = [
     ("actor", AuthClass::Actor),
     ("I-01", AuthClass::Actor),
     ("I-02", AuthClass::Actor),
@@ -300,6 +300,8 @@ const AUTH_RULES: [(&str, AuthClass); 30] = [
     ("SoD-07", AuthClass::Actor),
     ("SoD-09", AuthClass::Actor),
     ("SoD-12", AuthClass::Actor),
+    // SoD-18: the requester of activation is not its approver.
+    ("SoD-18", AuthClass::Actor),
     ("R-PC-03", AuthClass::Actor),
     ("R-AC-01", AuthClass::Visibility),
     ("I-17", AuthClass::Visibility),
@@ -318,7 +320,7 @@ const AUTH_RULES: [(&str, AuthClass); 30] = [
 /// guards, money, scoring, policy validation, the ledger and input
 /// checks. SoD-10 and SoD-11 refuse an assignment for the reviewer's
 /// organisation, which is the assignment's input, not the actor.
-const GUARD_RULES: [&str; 49] = [
+const GUARD_RULES: [&str; 52] = [
     "I-07",
     "I-08",
     "I-09",
@@ -336,6 +338,11 @@ const GUARD_RULES: [&str; 49] = [
     "I-64",
     "SoD-10",
     "SoD-11",
+    // SoD-14, SoD-15 and SoD-17 judge the holders of the signatory roles,
+    // which is the state of the organisation, not the actor.
+    "SoD-14",
+    "SoD-15",
+    "SoD-17",
     "R-PC-01",
     "R-PC-02",
     "R-SB-01",

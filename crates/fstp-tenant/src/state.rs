@@ -4,6 +4,12 @@
 //! first tenant admin and the kind of cell. The admin set and the SoD-07
 //! approvals live here, so they have the ledger's replay and append-only
 //! guarantees (Q31 A, interim pending Daniel).
+//!
+//! The tenant-wide signatory bindings (NOTE 5) and the activation of the
+//! organisation live here too. Activation is a request by one tenant
+//! admin and an approval by another (SoD-18), each while both signatory
+//! roles have a holder (SoD-14, SoD-15). Once the organisation is active,
+//! the last holder of either role stays (SoD-17).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,9 +23,10 @@ use crate::rules::{
     p74_default, prober_milestone, setting_valid, values_check,
 };
 use crate::types::{
-    ApprovalId, CellKind, GrantRef, InferenceDefault, InvitationId, LoginMethod, McpSettings,
-    ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, StepFailure, StepOutcome,
-    StepStatus, StepValues, TenantRevision, TokenDigest, VerifyMethod,
+    Activation, ActivationRequestId, ApprovalId, CellKind, GrantRef, InferenceDefault,
+    InvitationId, LoginMethod, McpSettings, ModelRef, OnboardingStep, PaymentMode, RpMode,
+    SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues, TenantRevision,
+    TokenDigest, VerifyMethod,
 };
 
 /// The tenant settings, as the projection shows them.
@@ -141,6 +148,10 @@ pub struct TenantState {
     configs: BTreeSet<LlmConfigId>,
     inference: Option<InferenceConfig>,
     completed: bool,
+    /// The signatory bindings held now, by role and account (NOTE 5).
+    signatories: BTreeSet<(SignatoryRole, AccountId)>,
+    /// The activation of the organisation (SoD-18).
+    activation: Activation,
 }
 
 /// The instant `t`, or [`TenantRefusal::InvalidInstant`] when it lies
@@ -171,6 +182,8 @@ impl TenantState {
             configs: BTreeSet::new(),
             inference: None,
             completed: false,
+            signatories: BTreeSet::new(),
+            activation: Activation::NotRequested,
         }
     }
 
@@ -219,7 +232,8 @@ impl TenantState {
                 self.check_saveable(step).map_err(FoldError)?;
                 if *outcome == StepOutcome::Validated
                     && (values_check(values, self).is_err()
-                        || (step == OnboardingStep::Administrators && self.admins.len() < 2))
+                        || (step == OnboardingStep::Administrators
+                            && (self.admins.len() < 2 || self.missing_signatory().is_some())))
                 {
                     return refuse(TenantRefusal::Inconsistent);
                 }
@@ -335,6 +349,49 @@ impl TenantState {
                 self.need_admin(*by)?;
                 self.check_completion().map_err(FoldError)?;
                 self.completed = true;
+            }
+            TenantRecord::SignatoryGranted {
+                role,
+                account,
+                by,
+                at,
+            } => {
+                self.need_admin(*by)?;
+                instant(*at).map_err(FoldError)?;
+                self.check_grant_signatory(*by, *role, *account)
+                    .map_err(FoldError)?;
+                self.signatories.insert((*role, *account));
+            }
+            TenantRecord::SignatoryEnded {
+                role,
+                account,
+                by,
+                at,
+            } => {
+                self.need_admin(*by)?;
+                instant(*at).map_err(FoldError)?;
+                self.check_end_signatory(*role, *account)
+                    .map_err(FoldError)?;
+                self.signatories.remove(&(*role, *account));
+            }
+            TenantRecord::ActivationRequested { request, by, at } => {
+                self.need_admin(*by)?;
+                instant(*at).map_err(FoldError)?;
+                self.check_request().map_err(FoldError)?;
+                self.activation = Activation::Requested {
+                    request: *request,
+                    by: *by,
+                };
+            }
+            TenantRecord::ActivationApproved { request, by, at } => {
+                self.need_admin(*by)?;
+                instant(*at).map_err(FoldError)?;
+                let requested_by = self.check_approve(*request, *by).map_err(FoldError)?;
+                self.activation = Activation::Active {
+                    request: *request,
+                    requested_by,
+                    approved_by: *by,
+                };
             }
         }
         self.revision = self.revision.next();
@@ -510,6 +567,145 @@ impl TenantState {
         } else {
             Ok(())
         }
+    }
+
+    /// The rule of a grant of `role` to `account` by the admin `by`: no
+    /// grant to one's own account (SoD-07, NOTE 5), and no second binding
+    /// of a role the account holds (M4 design section 15.0). NOTE 5: no
+    /// verified identity is needed, since SoD-09 covers Drafting and
+    /// Judging only.
+    pub(crate) fn check_grant_signatory(
+        &self,
+        by: AccountId,
+        role: SignatoryRole,
+        account: AccountId,
+    ) -> Result<(), TenantRefusal> {
+        if account == by {
+            Err(TenantRefusal::SignatorySelfGrant)
+        } else if self.signatories.contains(&(role, account)) {
+            Err(TenantRefusal::SignatoryHeld)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The rule of ending `account`'s binding of `role`: the binding is
+    /// held, and while the organisation is active it is not the role's
+    /// last holder (SoD-17).
+    pub(crate) fn check_end_signatory(
+        &self,
+        role: SignatoryRole,
+        account: AccountId,
+    ) -> Result<(), TenantRefusal> {
+        if !self.signatories.contains(&(role, account)) {
+            Err(TenantRefusal::SignatoryNotHeld)
+        } else if self.is_active() && self.holders(role).count() <= 1 {
+            Err(TenantRefusal::LastSignatory)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The refusal of a missing holder of `role` (SoD-14, SoD-15).
+    const fn no_holder(role: SignatoryRole) -> TenantRefusal {
+        match role {
+            SignatoryRole::Financial => TenantRefusal::NoFinancialSignatory,
+            SignatoryRole::Legal => TenantRefusal::NoLegalSignatory,
+        }
+    }
+
+    /// The rules of an activation request: the organisation is not active
+    /// and no request is open (SoD-18), each signatory role has a holder
+    /// (SoD-14, SoD-15), every required step is validated (R-TN-01), and
+    /// at least two tenant admins exist (SoD-07). The signatory rules come
+    /// first, so a refusal names the missing role even where the
+    /// Administrators step is not validated for that reason.
+    pub(crate) fn check_request(&self) -> Result<(), TenantRefusal> {
+        match self.activation {
+            Activation::Active { .. } => return Err(TenantRefusal::AlreadyActive),
+            Activation::Requested { .. } => return Err(TenantRefusal::ActivationPending),
+            Activation::NotRequested => {}
+        }
+        if let Some(role) = self.missing_signatory() {
+            return Err(TenantState::no_holder(role));
+        }
+        if !self.all_steps_done() {
+            Err(TenantRefusal::StepsNotValidated)
+        } else if self.admins.len() < 2 {
+            Err(TenantRefusal::TooFewAdmins)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The rules of an approval of `request` by the admin `by`: it names
+    /// the open request, `by` did not request it (SoD-18), and each
+    /// signatory role has a holder at this instant (SoD-14, SoD-15). The
+    /// steps are checked again, since a P-20 change can leave Payments not
+    /// validated after the request. Returns the requester.
+    pub(crate) fn check_approve(
+        &self,
+        request: ActivationRequestId,
+        by: AccountId,
+    ) -> Result<AccountId, TenantRefusal> {
+        let (open, requester) = match self.activation {
+            Activation::Requested { request, by } => (request, by),
+            Activation::Active { .. } => return Err(TenantRefusal::AlreadyActive),
+            Activation::NotRequested => return Err(TenantRefusal::ActivationNotOpen),
+        };
+        if open != request {
+            return Err(TenantRefusal::ActivationNotOpen);
+        }
+        if requester == by {
+            return Err(TenantRefusal::SelfActivationApproval);
+        }
+        if let Some(role) = self.missing_signatory() {
+            return Err(TenantState::no_holder(role));
+        }
+        if !self.all_steps_done() {
+            Err(TenantRefusal::StepsNotValidated)
+        } else if self.admins.len() < 2 {
+            Err(TenantRefusal::TooFewAdmins)
+        } else {
+            Ok(requester)
+        }
+    }
+
+    /// The accounts that hold `role` now, in account order.
+    pub fn holders(&self, role: SignatoryRole) -> impl Iterator<Item = AccountId> + '_ {
+        self.signatories
+            .iter()
+            .filter(move |(r, _)| *r == role)
+            .map(|(_, a)| *a)
+    }
+
+    /// The signatory bindings held now, by role then account (NOTE 5).
+    pub fn signatories(&self) -> &BTreeSet<(SignatoryRole, AccountId)> {
+        &self.signatories
+    }
+
+    /// Whether `account` holds `role` now.
+    pub fn holds_signatory(&self, role: SignatoryRole, account: AccountId) -> bool {
+        self.signatories.contains(&(role, account))
+    }
+
+    /// The first signatory role with no holder, Financial first (SoD-14,
+    /// SoD-15), if any.
+    pub fn missing_signatory(&self) -> Option<SignatoryRole> {
+        SignatoryRole::ALL
+            .into_iter()
+            .find(|r| self.holders(*r).next().is_none())
+    }
+
+    /// The activation of the organisation (SoD-18).
+    pub fn activation(&self) -> Activation {
+        self.activation
+    }
+
+    /// Whether a second tenant admin approved the activation, so the
+    /// organisation is active (SoD-17, SoD-18).
+    pub fn is_active(&self) -> bool {
+        matches!(self.activation, Activation::Active { .. })
     }
 
     fn done(&self, step: OnboardingStep) -> bool {

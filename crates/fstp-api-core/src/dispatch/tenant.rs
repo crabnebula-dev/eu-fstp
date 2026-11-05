@@ -75,8 +75,8 @@ use fstp_domain::roles::Role;
 use fstp_engine::tenant::{PrecheckError, precheck_tenant};
 use fstp_engine::{Command, EngineState, TenantRequest};
 use fstp_tenant::{
-    ApprovalId, InvitationId, OnboardingStep, ProbeOutcome, StepValues, TenantCommand, TenantQuery,
-    TenantRefusal, TenantState, TokenDigest,
+    ActivationRequestId, ApprovalId, InvitationId, OnboardingStep, ProbeOutcome, StepValues,
+    TenantCommand, TenantQuery, TenantRefusal, TenantState, TokenDigest,
 };
 
 use super::{
@@ -88,7 +88,9 @@ use crate::port::{
     AsyncEngine, CellPorts, DisplayHandle, ExecMeta, OpName, Outcome, ProbeKind as PortProbe,
     ProbeOutcome as PortOutcome, Prober, TenantConfig, TextClass, TextOwner, TextStore,
 };
-use crate::tenant::{SaveRequest, SettingsView, StepView, TenantView};
+use crate::tenant::{
+    ActivationView, SaveRequest, SettingsView, SignatoryList, SignatoryRow, StepView, TenantView,
+};
 use crate::{ApiError, ErrorCode, Op, OpResult, ReadModel};
 
 // ---------------------------------------------------------------------------
@@ -101,6 +103,22 @@ use crate::{ApiError, ErrorCode, Op, OpResult, ReadModel};
 pub(super) fn is_admin<P: CellPorts>(ports: &P, state: &EngineState, account: AccountId) -> bool {
     match state.tenant.state() {
         Some(ts) => ts.is_admin(account),
+        None => ports.tenant().is_tenant_admin(account),
+    }
+}
+
+/// Whether `account` holds a tenant-wide Operations role: tenant admin,
+/// or Financial or Legal signatory (NOTE 5). Each acts in every programme
+/// of the tenant, so each counts for SoD-03 against a Receiving binding.
+/// Signatory bindings live only in the ledger's tenant part, so before
+/// that part exists only the admin set answers.
+pub(super) fn holds_tenant_operations<P: CellPorts>(
+    ports: &P,
+    state: &EngineState,
+    account: AccountId,
+) -> bool {
+    match state.tenant.state() {
+        Some(ts) => ts.is_admin(account) || ts.signatories().iter().any(|(_, a)| *a == account),
         None => ports.tenant().is_tenant_admin(account),
     }
 }
@@ -178,6 +196,21 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         | TenantRefusal::ConfigTaken => "P-21",
         TenantRefusal::AnswerMissing => "facts_incomplete",
         TenantRefusal::InvalidInstant | TenantRefusal::Inconsistent => "ledger",
+        // NOTE 5: a grant to one's own account falls under SoD-07.
+        TenantRefusal::SignatorySelfGrant => "SoD-07",
+        // M4 design section 15.0: a role is granted again only after it
+        // ends, and only a held binding ends.
+        TenantRefusal::SignatoryHeld | TenantRefusal::SignatoryNotHeld => "Input",
+        TenantRefusal::NoFinancialSignatory => "SoD-14",
+        TenantRefusal::NoLegalSignatory => "SoD-15",
+        TenantRefusal::LastSignatory => "SoD-17",
+        // SoD-18 names the approver who requested the activation. A
+        // request while one is open or the organisation is active is an
+        // onboarding state, as a second completion is, and an approval of
+        // no open request names an unknown request.
+        TenantRefusal::SelfActivationApproval => "SoD-18",
+        TenantRefusal::ActivationPending | TenantRefusal::AlreadyActive => "R-TN-01",
+        TenantRefusal::ActivationNotOpen => "Input",
     };
     ApiError::refused(ErrorCode::Refused, rule)
 }
@@ -229,6 +262,26 @@ fn build<P: Seams>(
             Ok((cmd, Some(s)))
         }
         TenantKind::Complete => Ok((TenantCommand::Complete, None)),
+        TenantKind::GrantSignatory => {
+            let (role, account) = crate::tenant::signatory_request(&op.request)?;
+            Ok((TenantCommand::GrantSignatory { role, account }, None))
+        }
+        TenantKind::EndSignatory => {
+            let (role, account) = crate::tenant::signatory_request(&op.request)?;
+            Ok((TenantCommand::EndSignatory { role, account }, None))
+        }
+        TenantKind::RequestActivation => Ok((
+            TenantCommand::RequestActivation {
+                request: ActivationRequestId::from_raw(call.draw()?),
+            },
+            None,
+        )),
+        TenantKind::ApproveActivation => Ok((
+            TenantCommand::ApproveActivation {
+                request: crate::tenant::activation_request(&op.request)?,
+            },
+            None,
+        )),
         TenantKind::InviteAdmin => {
             // The email is checked and goes to M3 with the token, once a
             // port takes them (module documentation).
@@ -487,8 +540,9 @@ fn step_view<P: Seams>(
     ))
 }
 
-/// A tenant read: `tenant.get_step`, `tenant.settings` or
-/// `tenant.list_admins`. `authorize_read` admitted the caller as a tenant
+/// A tenant read: `tenant.get_step`, `tenant.settings`,
+/// `tenant.list_admins`, `tenant.list_signatories` or
+/// `tenant.get_activation`. `authorize_read` admitted the caller as a tenant
 /// admin through [`is_admin`]. The tenant part must exist, and its admin
 /// set holds the caller (Q31 A). Refusals are audited.
 pub(super) async fn read<P: Seams>(
@@ -528,6 +582,21 @@ pub(super) async fn read<P: Seams>(
             }
             TenantView::Admins(TenantAdmins::new(rows))
         }
+        ReadKind::ListSignatories => {
+            // NOTE 5: each row names its account, role and handle, and no
+            // programme. No vault answer is shown, since a signatory needs
+            // no verified identity (SoD-09 covers Drafting and Judging).
+            let mut rows = Vec::new();
+            for (role, a) in ts.signatories() {
+                rows.push(SignatoryRow {
+                    account: *a,
+                    role: *role,
+                    handle: DisplayHandle(label_of(call, *a).await?),
+                });
+            }
+            TenantView::Signatories(SignatoryList::new(rows))
+        }
+        ReadKind::GetActivation => TenantView::Activation(ActivationView(ts.activation())),
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this tenant read: no tenant read model of this kind",

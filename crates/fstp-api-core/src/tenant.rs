@@ -16,6 +16,13 @@
 //!   its parameter.
 //! - `tenant.invite_admin` takes `{email}`.
 //! - `tenant.complete` and `admin.approve_self_grant` take no member.
+//! - `tenant.grant_signatory` takes `{account, role}`. A body that names
+//!   a programme is refused, since a signatory binding is tenant-wide
+//!   (NOTE 5). `tenant.end_signatory` names the role and the account in
+//!   its path and takes no member.
+//! - `tenant.request_activation` takes no member. Dispatch draws the
+//!   request id. `tenant.approve_activation` takes `{request}`, the id the
+//!   activation read shows (SoD-18).
 //!
 //! Each body is checked by building the `fstp-tenant` codec text of its
 //! command and decoding it with `fstp_tenant::decode_command`. So the
@@ -33,8 +40,9 @@ use fstp_access::{OpKind, OpSpec, TenantKind};
 use fstp_domain::id::{AccountId, TextRef};
 use fstp_json::{Object, Value};
 use fstp_tenant::{
-    AgreementVersions, OnboardingStep, SettingValue, StepOutcome, StepStatus, StepValues,
-    TenantCommand, TenantParam, TenantRecord, TenantRevision,
+    Activation, ActivationRequestId, AgreementVersions, OnboardingStep, SettingValue,
+    SignatoryRole, StepOutcome, StepStatus, StepValues, TenantCommand, TenantParam, TenantRecord,
+    TenantRevision,
 };
 
 use crate::ApiError;
@@ -105,7 +113,30 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
-            TenantKind::Complete | TenantKind::ApproveSelfGrant => ok(exactly(spec, request, &[])),
+            TenantKind::Complete | TenantKind::ApproveSelfGrant | TenantKind::RequestActivation => {
+                ok(exactly(spec, request, &[]))
+            }
+            TenantKind::GrantSignatory => {
+                if exactly(spec, request, &["account", "role"]) {
+                    signatory_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
+            TenantKind::EndSignatory => {
+                if exactly(spec, request, &[]) {
+                    signatory_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
+            TenantKind::ApproveActivation => {
+                if exactly(spec, request, &["request"]) {
+                    activation_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
             TenantKind::InviteAdmin => {
                 if exactly(spec, request, &["email"]) {
                     invite_email(request).map(|_| ())
@@ -223,6 +254,35 @@ pub(crate) fn setting_request(
     }
 }
 
+/// The role and account of a `tenant.grant_signatory` body, or of the
+/// path of a `tenant.end_signatory`, decoded with the tenant codec. The
+/// role is a wire name such as `financial_signatory` (NOTE 5).
+pub(crate) fn signatory_request(request: &Object) -> Result<(SignatoryRole, AccountId), ApiError> {
+    let role = request.get("role").cloned().ok_or_else(bad)?;
+    let account = request.get("account").cloned().ok_or_else(bad)?;
+    let mut cmd = Object::new();
+    let _ = cmd.insert("account", account);
+    let _ = cmd.insert("kind", Value::from("GrantSignatory"));
+    let _ = cmd.insert("role", role);
+    match decode_command(Value::Object(cmd))? {
+        TenantCommand::GrantSignatory { role, account } => Ok((role, account)),
+        _ => Err(bad()),
+    }
+}
+
+/// The request id of a `tenant.approve_activation` body, decoded with the
+/// tenant codec (SoD-18).
+pub(crate) fn activation_request(request: &Object) -> Result<ActivationRequestId, ApiError> {
+    let id = request.get("request").cloned().ok_or_else(bad)?;
+    let mut cmd = Object::new();
+    let _ = cmd.insert("kind", Value::from("ApproveActivation"));
+    let _ = cmd.insert("request", id);
+    match decode_command(Value::Object(cmd))? {
+        TenantCommand::ApproveActivation { request } => Ok(request),
+        _ => Err(bad()),
+    }
+}
+
 /// The email of a `tenant.invite_admin` request: text with one `@`
 /// between a local part and a domain, no space and no control character,
 /// within [`EMAIL_LIMIT`].
@@ -255,6 +315,75 @@ pub enum TenantView {
     Settings(SettingsView),
     /// `tenant.list_admins`.
     Admins(crate::model::TenantAdmins),
+    /// `tenant.list_signatories` (NOTE 5).
+    Signatories(SignatoryList),
+    /// `tenant.get_activation` (SoD-18).
+    Activation(ActivationView),
+}
+
+/// One signatory binding as the onboarding pages read it: the account,
+/// the role and the account's pseudonymous handle. A binding is
+/// tenant-wide, so it names no programme (NOTE 5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatoryRow {
+    /// The account.
+    pub account: AccountId,
+    /// The role.
+    pub role: SignatoryRole,
+    /// The display handle from `Accounts::display_handle`.
+    pub handle: crate::port::DisplayHandle,
+}
+
+/// `tenant.list_signatories`: the signatory bindings held now, by role
+/// then account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatoryList {
+    rows: Vec<SignatoryRow>,
+}
+
+impl SignatoryList {
+    /// The list of `rows`, by role then account, each binding once.
+    pub(crate) fn new(rows: impl IntoIterator<Item = SignatoryRow>) -> SignatoryList {
+        let mut rows: Vec<SignatoryRow> = rows.into_iter().collect();
+        rows.sort_by_key(|r| (r.role, r.account));
+        rows.dedup_by_key(|r| (r.role, r.account));
+        SignatoryList { rows }
+    }
+
+    /// The rows.
+    pub fn rows(&self) -> &[SignatoryRow] {
+        &self.rows
+    }
+}
+
+/// `tenant.get_activation`: the activation of the organisation (SoD-18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActivationView(pub(crate) Activation);
+
+/// The JSON of an activation: its state, its request and the requesting
+/// and approving admins, each `null` where the state has none.
+fn activation_json(a: Activation, o: &mut Object) {
+    let id = |x: u128| Value::String(x.to_string());
+    let (state, request, requested_by, approved_by) = match a {
+        Activation::NotRequested => ("not_requested", None, None, None),
+        Activation::Requested { request, by } => {
+            ("requested", Some(request.raw()), Some(by.raw()), None)
+        }
+        Activation::Active {
+            request,
+            requested_by,
+            approved_by,
+        } => (
+            "active",
+            Some(request.raw()),
+            Some(requested_by.raw()),
+            Some(approved_by.raw()),
+        ),
+    };
+    let _ = o.insert("state", Value::from(state));
+    let _ = o.insert("request", request.map_or(Value::Null, id));
+    let _ = o.insert("requested_by", requested_by.map_or(Value::Null, id));
+    let _ = o.insert("approved_by", approved_by.map_or(Value::Null, id));
 }
 
 /// One onboarding step as the onboarding pages read it
@@ -419,6 +548,21 @@ impl fstp_json::ToJson for TenantView {
                 }
             }
             TenantView::Admins(list) => return fstp_json::ToJson::to_json(list),
+            TenantView::Signatories(list) => {
+                let rows: Vec<Value> = list
+                    .rows
+                    .iter()
+                    .map(|r| {
+                        let mut row = Object::new();
+                        let _ = row.insert("account", Value::String(r.account.raw().to_string()));
+                        let _ = row.insert("role", Value::from(r.role.name()));
+                        let _ = row.insert("handle", Value::from(r.handle.0.as_str()));
+                        Value::Object(row)
+                    })
+                    .collect();
+                let _ = o.insert("signatories", Value::from(rows));
+            }
+            TenantView::Activation(ActivationView(a)) => activation_json(*a, &mut o),
         }
         Value::Object(o)
     }
@@ -498,6 +642,8 @@ pub(crate) fn samples() -> Vec<TenantView> {
         StepOutcome::Failed(StepFailure::ProbeFailed),
         StepOutcome::Failed(StepFailure::ProberAbsent),
         StepOutcome::Failed(StepFailure::TooFewAdmins),
+        StepOutcome::Failed(StepFailure::NoFinancialSignatory),
+        StepOutcome::Failed(StepFailure::NoLegalSignatory),
         StepOutcome::Failed(StepFailure::AgreementsNotRecorded),
         StepOutcome::Failed(StepFailure::PaymentModeUnset),
         StepOutcome::Failed(StepFailure::Unavailable(Milestone::M5)),
@@ -571,6 +717,29 @@ pub(crate) fn samples() -> Vec<TenantView> {
         if let Some(v) = SettingsView::of(&s) {
             out.push(TenantView::Settings(v));
         }
+    }
+    let row = |n: u128, role| SignatoryRow {
+        account: a(n),
+        role,
+        handle: crate::port::DisplayHandle(format!("signatory-{n}")),
+    };
+    out.push(TenantView::Signatories(SignatoryList::new([])));
+    out.push(TenantView::Signatories(SignatoryList::new([
+        row(2, SignatoryRole::Legal),
+        row(2, SignatoryRole::Financial),
+        row(3, SignatoryRole::Financial),
+    ])));
+    let request = fstp_tenant::ActivationRequestId::from_raw(9);
+    for activation in [
+        Activation::NotRequested,
+        Activation::Requested { request, by: a(1) },
+        Activation::Active {
+            request,
+            requested_by: a(1),
+            approved_by: a(2),
+        },
+    ] {
+        out.push(TenantView::Activation(ActivationView(activation)));
     }
     out
 }

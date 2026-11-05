@@ -28,10 +28,10 @@ use fstp_ledger::SCHEMA_V1;
 use crate::command::{TenantCommand, TenantRecord};
 use crate::refusal::{DecodeError, TenantError};
 use crate::types::{
-    ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef, InferenceDefault,
-    InvitationId, LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode,
-    RpMode, SettingValue, StepFailure, StepOutcome, StepValues, TenantParam, TenantRevision, Token,
-    TokenDigest, VerifyMethod,
+    ActivationRequestId, ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef,
+    InferenceDefault, InvitationId, LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep,
+    PaymentMode, RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepValues,
+    TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
 };
 
 /// The record schema versions this build decodes. Version 1 is the only
@@ -269,6 +269,8 @@ fn outcome_name(o: StepOutcome) -> &'static str {
         StepOutcome::Failed(StepFailure::ProbeFailed) => "probe_failed",
         StepOutcome::Failed(StepFailure::ProberAbsent) => "prober_absent",
         StepOutcome::Failed(StepFailure::TooFewAdmins) => "too_few_admins",
+        StepOutcome::Failed(StepFailure::NoFinancialSignatory) => "no_financial_signatory",
+        StepOutcome::Failed(StepFailure::NoLegalSignatory) => "no_legal_signatory",
         StepOutcome::Failed(StepFailure::AgreementsNotRecorded) => "agreements_not_recorded",
         StepOutcome::Failed(StepFailure::PaymentModeUnset) => "payment_mode_unset",
         StepOutcome::Failed(StepFailure::Unavailable(m)) => match m {
@@ -280,12 +282,14 @@ fn outcome_name(o: StepOutcome) -> &'static str {
     }
 }
 
-const OUTCOMES: [StepOutcome; 11] = [
+const OUTCOMES: [StepOutcome; 13] = [
     StepOutcome::Validated,
     StepOutcome::Failed(StepFailure::InvalidValues),
     StepOutcome::Failed(StepFailure::ProbeFailed),
     StepOutcome::Failed(StepFailure::ProberAbsent),
     StepOutcome::Failed(StepFailure::TooFewAdmins),
+    StepOutcome::Failed(StepFailure::NoFinancialSignatory),
+    StepOutcome::Failed(StepFailure::NoLegalSignatory),
     StepOutcome::Failed(StepFailure::AgreementsNotRecorded),
     StepOutcome::Failed(StepFailure::PaymentModeUnset),
     StepOutcome::Failed(StepFailure::Unavailable(Milestone::M5)),
@@ -354,6 +358,20 @@ fn command_value(cmd: &TenantCommand) -> Value {
             ],
         ),
         TenantCommand::Complete => tagged("Complete", Vec::new()),
+        TenantCommand::GrantSignatory { role, account } => tagged(
+            "GrantSignatory",
+            vec![("account", dec(account.raw())), ("role", s(role.name()))],
+        ),
+        TenantCommand::EndSignatory { role, account } => tagged(
+            "EndSignatory",
+            vec![("account", dec(account.raw())), ("role", s(role.name()))],
+        ),
+        TenantCommand::RequestActivation { request } => {
+            tagged("RequestActivation", vec![("request", dec(request.raw()))])
+        }
+        TenantCommand::ApproveActivation { request } => {
+            tagged("ApproveActivation", vec![("request", dec(request.raw()))])
+        }
     }
 }
 
@@ -447,6 +465,50 @@ fn record_value(rec: &TenantRecord) -> Value {
         TenantRecord::OnboardingCompleted { by } => {
             tagged("OnboardingCompleted", vec![("by", dec(by.raw()))])
         }
+        TenantRecord::SignatoryGranted {
+            role,
+            account,
+            by,
+            at,
+        } => tagged(
+            "SignatoryGranted",
+            vec![
+                ("account", dec(account.raw())),
+                ("at", dec(at.micros())),
+                ("by", dec(by.raw())),
+                ("role", s(role.name())),
+            ],
+        ),
+        TenantRecord::SignatoryEnded {
+            role,
+            account,
+            by,
+            at,
+        } => tagged(
+            "SignatoryEnded",
+            vec![
+                ("account", dec(account.raw())),
+                ("at", dec(at.micros())),
+                ("by", dec(by.raw())),
+                ("role", s(role.name())),
+            ],
+        ),
+        TenantRecord::ActivationRequested { request, by, at } => tagged(
+            "ActivationRequested",
+            vec![
+                ("at", dec(at.micros())),
+                ("by", dec(by.raw())),
+                ("request", dec(request.raw())),
+            ],
+        ),
+        TenantRecord::ActivationApproved { request, by, at } => tagged(
+            "ActivationApproved",
+            vec![
+                ("at", dec(at.micros())),
+                ("by", dec(by.raw())),
+                ("request", dec(request.raw())),
+            ],
+        ),
     }
 }
 
@@ -632,6 +694,14 @@ fn take_invitation(v: &Value) -> R<InvitationId> {
 
 fn take_approval(v: &Value) -> R<ApprovalId> {
     take_u128(v).map(ApprovalId::from_raw)
+}
+
+fn take_request(v: &Value) -> R<ActivationRequestId> {
+    take_u128(v).map(ActivationRequestId::from_raw)
+}
+
+fn take_signatory_role(v: &Value) -> R<SignatoryRole> {
+    take_named(v, &SignatoryRole::ALL, SignatoryRole::name)
 }
 
 fn take_text_ref(v: &Value) -> R<TextRef> {
@@ -840,6 +910,32 @@ fn take_command(v: &Value) -> R<TenantCommand> {
             Fields::of(v, &["kind"])?;
             TenantCommand::Complete
         }
+        "GrantSignatory" => {
+            let f = Fields::of(v, &["account", "kind", "role"])?;
+            TenantCommand::GrantSignatory {
+                role: take_signatory_role(f.get("role")?)?,
+                account: take_account(f.get("account")?)?,
+            }
+        }
+        "EndSignatory" => {
+            let f = Fields::of(v, &["account", "kind", "role"])?;
+            TenantCommand::EndSignatory {
+                role: take_signatory_role(f.get("role")?)?,
+                account: take_account(f.get("account")?)?,
+            }
+        }
+        "RequestActivation" => {
+            let f = Fields::of(v, &["kind", "request"])?;
+            TenantCommand::RequestActivation {
+                request: take_request(f.get("request")?)?,
+            }
+        }
+        "ApproveActivation" => {
+            let f = Fields::of(v, &["kind", "request"])?;
+            TenantCommand::ApproveActivation {
+                request: take_request(f.get("request")?)?,
+            }
+        }
         _ => return Err(err("unknown command kind")),
     })
 }
@@ -918,6 +1014,40 @@ fn take_record(v: &Value) -> R<TenantRecord> {
                 by: take_account(f.get("by")?)?,
             }
         }
+        "SignatoryGranted" => {
+            let f = Fields::of(v, &["account", "at", "by", "kind", "role"])?;
+            TenantRecord::SignatoryGranted {
+                role: take_signatory_role(f.get("role")?)?,
+                account: take_account(f.get("account")?)?,
+                by: take_account(f.get("by")?)?,
+                at: take_instant(f.get("at")?)?,
+            }
+        }
+        "SignatoryEnded" => {
+            let f = Fields::of(v, &["account", "at", "by", "kind", "role"])?;
+            TenantRecord::SignatoryEnded {
+                role: take_signatory_role(f.get("role")?)?,
+                account: take_account(f.get("account")?)?,
+                by: take_account(f.get("by")?)?,
+                at: take_instant(f.get("at")?)?,
+            }
+        }
+        "ActivationRequested" => {
+            let f = Fields::of(v, &["at", "by", "kind", "request"])?;
+            TenantRecord::ActivationRequested {
+                request: take_request(f.get("request")?)?,
+                by: take_account(f.get("by")?)?,
+                at: take_instant(f.get("at")?)?,
+            }
+        }
+        "ActivationApproved" => {
+            let f = Fields::of(v, &["at", "by", "kind", "request"])?;
+            TenantRecord::ActivationApproved {
+                request: take_request(f.get("request")?)?,
+                by: take_account(f.get("by")?)?,
+                at: take_instant(f.get("at")?)?,
+            }
+        }
         _ => return Err(err("unknown record kind")),
     })
 }
@@ -947,7 +1077,8 @@ mod tests {
     fn adr007_command_seeds_round_trip() {
         let seeds = seeds!("tenant_command_decode": "save_identity", "save_organisation",
             "save_payments", "invite_admin", "accept_admin_invitation", "approve_self_grant",
-            "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete");
+            "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
+            "grant_signatory", "end_signatory", "request_activation", "approve_activation");
         for (name, bytes) in seeds {
             let c = decode_command(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_command(&c).as_deref(), Ok(bytes), "{name}");
@@ -961,7 +1092,8 @@ mod tests {
         let seeds = seeds!("tenant_record_decode": "step_saved_channels",
             "step_saved_payments", "step_saved_agreements", "step_validated", "admin_invited",
             "admin_added", "self_grant_approved", "self_grant_approval_used", "setting_p70",
-            "inference_recorded", "completed");
+            "inference_recorded", "completed", "signatory_granted", "signatory_ended",
+            "activation_requested", "activation_approved");
         for (name, bytes) in seeds {
             let r = decode_record(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_record(&r).as_deref(), Ok(bytes), "{name}");

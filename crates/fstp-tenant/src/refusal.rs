@@ -66,6 +66,31 @@ pub enum TenantRefusal {
     TooFewAdmins,
     /// The vault does not report every tenant admin as verified (Q2).
     AdminNotVerified,
+    /// A tenant admin granted a signatory role to their own account. No
+    /// tenant-wide SoD-07 approval exists yet, so a second tenant admin
+    /// grants it instead (SoD-07, NOTE 5; interim, pending Daniel).
+    SignatorySelfGrant,
+    /// The account holds the signatory role already. A role is granted
+    /// again only after its binding ends (M4 design section 15.0).
+    SignatoryHeld,
+    /// The account holds no binding of the signatory role.
+    SignatoryNotHeld,
+    /// The end would leave the role with no holder while the organisation
+    /// is active (SoD-17).
+    LastSignatory,
+    /// No account holds Financial signatory (SoD-14).
+    NoFinancialSignatory,
+    /// No account holds Legal signatory (SoD-15).
+    NoLegalSignatory,
+    /// An activation request is open already (SoD-18).
+    ActivationPending,
+    /// The organisation is active already (SoD-18).
+    AlreadyActive,
+    /// No activation request is open, or the approval names another one
+    /// (SoD-18).
+    ActivationNotOpen,
+    /// The approver requested the activation (SoD-18).
+    SelfActivationApproval,
     /// A record contradicts the state it folds into.
     Inconsistent,
 }
@@ -100,6 +125,16 @@ impl TenantRefusal {
             TenantRefusal::StepsNotValidated => "steps_not_validated",
             TenantRefusal::TooFewAdmins => "too_few_admins",
             TenantRefusal::AdminNotVerified => "admin_not_verified",
+            TenantRefusal::SignatorySelfGrant => "signatory_self_grant",
+            TenantRefusal::SignatoryHeld => "signatory_held",
+            TenantRefusal::SignatoryNotHeld => "signatory_not_held",
+            TenantRefusal::LastSignatory => "last_signatory",
+            TenantRefusal::NoFinancialSignatory => "no_financial_signatory",
+            TenantRefusal::NoLegalSignatory => "no_legal_signatory",
+            TenantRefusal::ActivationPending => "activation_pending",
+            TenantRefusal::AlreadyActive => "already_active",
+            TenantRefusal::ActivationNotOpen => "activation_not_open",
+            TenantRefusal::SelfActivationApproval => "self_activation_approval",
             TenantRefusal::Inconsistent => "inconsistent",
         }
     }

@@ -35,14 +35,14 @@ use fstp_domain::time::Timestamp;
 use fstp_tenant::{
     AgreementVersions, ApprovalId, BankInterface, BrandingPackage, CellKind, DomainName, GrantRef,
     InferenceDefault, InvitationId, LoginMethod, McpSettings, OnboardingStep, PaymentMode,
-    ProbeOutcome, RpMode, SettingValue, StepValues, TenantAnswers, TenantCommand, TenantCtx,
-    TenantError, TenantParam, TenantQuery, TenantRecord, TenantState, Token, TokenDigest,
-    VerifyMethod,
+    ProbeOutcome, RpMode, SettingValue, SignatoryRole, StepValues, TenantAnswers, TenantCommand,
+    TenantCtx, TenantError, TenantParam, TenantQuery, TenantRecord, TenantState, Token,
+    TokenDigest, VerifyMethod,
 };
 
 use super::vocab::{
     self, Approval, Defaults, Env, Grant, Inference, Observed, Op, Probes, RecordView, Setting,
-    Settings, Step, StepInput, Verdict,
+    Settings, Signatory, Step, StepInput, Verdict,
 };
 
 /// The one instant of every adapter run: 2026-01-01T00:00:00Z. No SoD-07
@@ -459,6 +459,20 @@ fn setting_of(s: &Setting) -> SettingValue {
     }
 }
 
+fn signatory_of(r: Signatory) -> SignatoryRole {
+    match r {
+        Signatory::Financial => SignatoryRole::Financial,
+        Signatory::Legal => SignatoryRole::Legal,
+    }
+}
+
+fn signatory_view(r: SignatoryRole) -> Signatory {
+    match r {
+        SignatoryRole::Financial => Signatory::Financial,
+        SignatoryRole::Legal => Signatory::Legal,
+    }
+}
+
 fn grant_of(g: &Grant) -> GrantRef {
     GrantRef {
         grantee: g.grantee,
@@ -516,6 +530,14 @@ fn command(
             fallbacks: tokens(fallbacks)?,
         },
         Op::Complete { .. } => TenantCommand::Complete,
+        Op::GrantSignatory { account, role, .. } => TenantCommand::GrantSignatory {
+            role: signatory_of(*role),
+            account: *account,
+        },
+        Op::EndSignatory { account, role, .. } => TenantCommand::EndSignatory {
+            role: signatory_of(*role),
+            account: *account,
+        },
     })
 }
 
@@ -549,6 +571,22 @@ fn record_view(r: &TenantRecord) -> RecordView {
             }
         }
         TenantRecord::OnboardingCompleted { by } => RecordView::OnboardingCompleted { by: *by },
+        TenantRecord::SignatoryGranted {
+            role, account, by, ..
+        } => RecordView::SignatoryGranted {
+            role: signatory_view(*role),
+            account: *account,
+            by: *by,
+        },
+        TenantRecord::SignatoryEnded {
+            role, account, by, ..
+        } => RecordView::SignatoryEnded {
+            role: signatory_view(*role),
+            account: *account,
+            by: *by,
+        },
+        TenantRecord::ActivationRequested { by, .. } => RecordView::ActivationRequested { by: *by },
+        TenantRecord::ActivationApproved { by, .. } => RecordView::ActivationApproved { by: *by },
     }
 }
 
@@ -596,5 +634,10 @@ fn observed(s: &TenantState) -> Observed {
             fallbacks: i.fallbacks.iter().map(|f| f.as_str().to_string()).collect(),
         }),
         completed: s.completed(),
+        signatories: s
+            .signatories()
+            .iter()
+            .map(|(r, a)| (signatory_view(*r), *a))
+            .collect(),
     }
 }

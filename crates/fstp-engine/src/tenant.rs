@@ -295,6 +295,19 @@ pub fn tenant_refusal(r: TenantRefusal) -> Refusal {
         | TenantRefusal::AlreadyAdmin
         | TenantRefusal::AlreadyCompleted
         | TenantRefusal::StepsNotValidated => (RuleRef::Input, Why::WrongState),
+        // SoD-14 to SoD-18 have no domain rule reference. Their nearest
+        // ones are named here, and the API core names the SoD rule.
+        TenantRefusal::SignatorySelfGrant => (RuleRef::Sod07, Why::GuardFailed),
+        TenantRefusal::SignatoryHeld
+        | TenantRefusal::LastSignatory
+        | TenantRefusal::NoFinancialSignatory
+        | TenantRefusal::NoLegalSignatory => (RuleRef::Input, Why::GuardFailed),
+        TenantRefusal::SignatoryNotHeld => (RuleRef::Input, Why::UnknownEntity),
+        TenantRefusal::ActivationPending
+        | TenantRefusal::AlreadyActive
+        | TenantRefusal::ActivationNotOpen => (RuleRef::Input, Why::WrongState),
+        // SoD-18 holds by analogy with I-67.
+        TenantRefusal::SelfActivationApproval => (RuleRef::I67, Why::GuardFailed),
     };
     Refusal::new(rule, why)
 }

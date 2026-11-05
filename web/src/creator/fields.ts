@@ -240,9 +240,8 @@ const ROWS: readonly (readonly [FieldStep, string, Shape])[] = [
     "comms",
     "p32_channels",
     obj(
-      m("channels", setOf("email", "matrix", "whatsapp")),
-      m("group_types", setOf("programme_announcements", "committee_group", "grantee_cohort", "project_group")),
-      m("whatsapp_account", TEXT),
+      // Email only: Matrix (B-05) and WhatsApp (B-03) are deferred.
+      m("channels", setOf("email")),
     ),
   ],
   ["comms", "p33_escalation", obj(m("after_days", INT), m("to", TEXT))],

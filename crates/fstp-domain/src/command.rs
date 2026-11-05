@@ -54,8 +54,9 @@ pub struct Ctx {
     /// names this account and it differs from the actor. `None` when no
     /// second admin approved.
     pub second_tenant_admin: Option<AccountId>,
-    /// Whether the shell attests that the account this command binds is a
-    /// tenant admin at tenant scope. That account is `GrantRole::account`,
+    /// Whether the shell attests that the account this command binds holds a
+    /// tenant-wide Operations role: tenant admin at tenant scope, or Financial
+    /// or Legal signatory (NOTE 5). That account is `GrantRole::account`,
     /// `AddTeamMember::account` or `AddGuardian::account`, and the actor for
     /// `CreateDraft`. It is `false` for every other command.
     ///
@@ -64,6 +65,8 @@ pub struct Ctx {
     /// every programme of the tenant. The role is tenant-wide, the shell
     /// attests it, and the Roles table places it in Operations
     /// (`SPEC/02-domain/roles-and-sod.md`, confirmed 2026-10-25).
+    /// The signatory roles are tenant-wide Operations roles too (SA-01), so
+    /// the shell sets this flag for their holders as well.
     pub binds_tenant_admin: bool,
 }
 

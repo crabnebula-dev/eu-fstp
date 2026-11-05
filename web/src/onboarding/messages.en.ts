@@ -39,7 +39,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.intro.payments": "The payment mode (P-20) and the bank interface for execution mode.",
   "onboarding.intro.channels": "The channels the platform uses to reach people.",
   "onboarding.intro.administrators":
-    "At least two tenant admins, each with a verified identity (SoD-07). Invite the second admin here.",
+    "At least two tenant admins, each with a verified identity (SoD-07), and a holder of each signatory role (SoD-14, SoD-15). Invite the second admin and grant the signatory roles here.",
   "onboarding.locked": "This step opens once every earlier step is validated.",
   "onboarding.locked_go": "Go to the step that is open",
   "onboarding.save": "Save and validate this step",
@@ -55,6 +55,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.outcome.probe_failed": "The check of this step failed. Correct the setup and save again.",
   "onboarding.outcome.prober_absent": "This cell cannot run the check of this step yet, so the step is not validated.",
   "onboarding.outcome.too_few_admins": "The tenant needs at least two tenant admins.",
+  "onboarding.outcome.no_financial_signatory": "Grant the Financial signatory role to someone below, then save again.",
+  "onboarding.outcome.no_legal_signatory": "Grant the Legal signatory role to someone below, then save again.",
   "onboarding.outcome.agreements_not_recorded": "The control plane has not confirmed these agreement versions.",
   "onboarding.outcome.payment_mode_unset": "Choose and save the payment mode first.",
   "onboarding.outcome.unavailable_m5": "This choice arrives with a later release (M5).",
@@ -113,13 +115,59 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.admin.invite": "Invite as tenant admin",
   "onboarding.admin.invited": "An invitation is on its way to {email}.",
 
+  // Signatory roles (NOTE 5, SoD-14 to SoD-17).
+  "onboarding.signatory.title": "Signatories of the organisation",
+  "onboarding.signatory.intro":
+    "The organisation needs at least one Financial signatory and one Legal signatory before it can be activated. Both roles act for the whole organisation, not for one programme. One person may hold both.",
+  "onboarding.signatory.role.financial_signatory": "Financial signatory",
+  "onboarding.signatory.role.legal_signatory": "Legal signatory",
+  "onboarding.signatory.none": "Nobody holds this role yet.",
+  "onboarding.signatory.missing": "Still needed: {roles}.",
+  "onboarding.signatory.complete": "Both signatory roles have a holder.",
+  "onboarding.signatory.end": "End the {role} role",
+  "onboarding.signatory.ended": "The {role} role has ended for that person.",
+  "onboarding.signatory.grant_title": "Grant a signatory role",
+  "onboarding.signatory.grant_intro":
+    "Granting or ending a signatory role needs your passkey. You cannot grant a role to yourself: another tenant admin grants it to you.",
+  "onboarding.signatory.account_pick": "Choose a tenant admin",
+  "onboarding.signatory.pick": "No tenant admin chosen",
+  "onboarding.signatory.account_other": "Or enter the account number of another person",
+  "onboarding.signatory.account": "Account {account}",
+  "onboarding.signatory.account_invalid": "Choose a tenant admin or enter an account number made of digits.",
+  "onboarding.signatory.role": "Role to grant",
+  "onboarding.signatory.role_missing": "Choose the role to grant.",
+  "onboarding.signatory.grant": "Grant the role",
+  "onboarding.signatory.granted": "{who} now holds the {role} role.",
+
+  // Activation of the organisation (SoD-18).
+  "onboarding.activation.title": "Activate the organisation",
+  "onboarding.activation.intro":
+    "One tenant admin requests activation, and a different tenant admin approves it.",
+  "onboarding.activation.not_requested": "Nobody has requested activation yet.",
+  "onboarding.activation.requested": "{requester} requested activation. A different tenant admin must approve it.",
+  "onboarding.activation.active": "The organisation is active. {requester} requested it and {approver} approved it.",
+  "onboarding.activation.request": "Request activation",
+  "onboarding.activation.request_sent": "Activation is requested. Ask another tenant admin to approve it.",
+  "onboarding.activation.approve_intro": "If you did not request activation, you can approve it now.",
+  "onboarding.activation.approve": "Approve activation",
+  "onboarding.activation.approved": "The organisation is active.",
+
+  // Refusals explained in plain words.
+  "onboarding.refusal.SoD-07": "You cannot grant a role to your own account. Ask another tenant admin to grant it to you.",
+  "onboarding.refusal.SoD-14": "The organisation needs at least one Financial signatory first. Grant that role on the Administrators step.",
+  "onboarding.refusal.SoD-15": "The organisation needs at least one Legal signatory first. Grant that role on the Administrators step.",
+  "onboarding.refusal.SoD-17":
+    "This person is the last holder of the role, and the organisation is active. Grant the role to someone else before you end it here.",
+  "onboarding.refusal.SoD-18":
+    "Activation needs two different tenant admins. The admin who requested it cannot approve it, so ask another tenant admin to approve it.",
+
   // The summary.
   "onboarding.summary.title": "Onboarding summary",
   "onboarding.summary.intro":
     "Onboarding completes once every step is validated and two tenant admins have verified their identity.",
   "onboarding.summary.steps": "Steps",
   "onboarding.summary.complete": "Complete onboarding",
-  "onboarding.summary.completed": "Onboarding is complete.",
+  "onboarding.summary.completed": "Onboarding is complete. Activate the organisation below.",
 
   // The identity page.
   "onboarding.identity_page.title": "Verify your identity",
@@ -183,6 +231,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.p74.role.finance_approver": "Finance approver",
   "onboarding.p74.role.payment_releaser": "Payment releaser",
   "onboarding.p74.role.contract_signatory": "Contract signatory",
+  "onboarding.p74.role.financial_signatory": "Financial signatory",
+  "onboarding.p74.role.legal_signatory": "Legal signatory",
   "onboarding.p74.role.auditor": "Auditor",
   "onboarding.p74.every_role": "every role",
   "onboarding.p74.current": "Enabled: {enabled}. Public tools: {public_tools}. Roles: {roles}.",

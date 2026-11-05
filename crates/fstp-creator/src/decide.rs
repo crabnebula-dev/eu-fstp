@@ -290,7 +290,12 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             if creator.invitation_taken(*invitation) {
                 return Err(CreatorRefusal::InvitationExists);
             }
-            if role.group() == Group::Receiving || *role == Role::TenantAdmin {
+            // A signatory role is tenant-wide (NOTE 5), so a programme
+            // invitation never names it.
+            if role.group() == Group::Receiving
+                || *role == Role::TenantAdmin
+                || role.tenant_wide_signatory()
+            {
                 return Err(CreatorRefusal::RoleNotInvitable);
             }
             records(vec![CreatorRecord::InvitationRecorded {

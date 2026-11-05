@@ -46,6 +46,8 @@ export const ROLE_NAMES = [
   "finance_approver",
   "payment_releaser",
   "contract_signatory",
+  "financial_signatory",
+  "legal_signatory",
   "auditor",
 ] as const;
 
@@ -529,6 +531,8 @@ const CHIP_ORDER: readonly RoleName[] = [
   "finance_approver",
   "payment_releaser",
   "contract_signatory",
+  "financial_signatory",
+  "legal_signatory",
   "auditor",
   "tenant_admin",
   "applicant",

@@ -115,7 +115,7 @@ test.describe('onboarding set values', () => {
   test('r_lg_03_p74_roles_are_every_fstp_domain_role_in_codec_spelling', async () => {
     const m = await load<SetModel>('onboarding', 'model', SET_EXPORTS);
     const rust = rustSpecNames();
-    expect(rust.length).toBe(14);
+    expect(rust.length).toBe(16);
     expect(m.MCP_ROLES.map((k) => m.roleSpecName(k))).toEqual(rust);
     for (const k of m.MCP_ROLES) expect(m.roleOfSpecName(m.roleSpecName(k))).toBe(k);
     expect(m.roleOfSpecName('committee_member')).toBeNull();

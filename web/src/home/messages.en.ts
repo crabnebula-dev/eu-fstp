@@ -120,5 +120,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "role.finance_approver": "Finance approver",
   "role.payment_releaser": "Payment releaser",
   "role.contract_signatory": "Contract signatory",
+  "role.financial_signatory": "Financial signatory",
+  "role.legal_signatory": "Legal signatory",
   "role.auditor": "Auditor",
 });
