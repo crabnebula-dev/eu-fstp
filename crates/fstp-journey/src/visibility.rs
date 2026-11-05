@@ -154,7 +154,8 @@ impl EntryFacts {
 ///
 /// Interim, pending Daniel (`docs/handoff/m4-design.md` section 15.0,
 /// lane j2): the guardian and the IRC member have classes of their own
-/// (O-60, O-58), and the call drafter and tenant admin read no diary.
+/// (O-60, O-58). The call drafter, the tenant admin and the financial
+/// and legal signatories read no diary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Column {
     /// Voyager: applicant and team member.
@@ -202,7 +203,13 @@ impl Column {
             Role::Auditor => Column::Auditor,
             Role::Guardian => Column::Guardian,
             Role::IrcMember => Column::Irc,
-            Role::CallDrafter | Role::TenantAdmin => Column::None,
+            // Interim, fail closed: section 7.2 and the section 1 actor table
+            // name neither signatory, and both bind tenant-wide, with no
+            // programme for the first gate (NOTE 5 of roles-and-sod.md).
+            Role::CallDrafter
+            | Role::TenantAdmin
+            | Role::FinancialSignatory
+            | Role::LegalSignatory => Column::None,
         }
     }
 

@@ -53,6 +53,11 @@
 //! - CallDrafter and TenantAdmin see no diary entry. Tenant admins open
 //!   the erasure log and the synthetic role preview instead (sections 7.3
 //!   and 8.6).
+//! - FinancialSignatory and LegalSignatory see no diary entry. Section 7.2
+//!   and the section 1 actor table name neither. Section 1 lists the
+//!   harbour office as "Finance approver, payment releaser, contract
+//!   signatory". Both bind tenant-wide, with no programme for the first
+//!   gate (`SPEC/02-domain/roles-and-sod.md` NOTE 5). Fail closed.
 //! - "Within P-10" and "as P-10 allows", per `fstp_domain::visibility`
 //!   and P-10 NOTE 1: "assigned reviewers only" admits an assigned
 //!   reviewer. "All committee members" also admits a committee member who
@@ -160,7 +165,12 @@ pub const fn column_of(role: Role) -> Column {
         Role::Auditor => Column::Auditor,
         Role::Guardian => Column::Guardian,
         Role::IrcMember => Column::Irc,
-        Role::CallDrafter | Role::TenantAdmin => Column::None,
+        // Section 7.2 and the section 1 actor table name neither
+        // signatory. They bind tenant-wide (roles-and-sod.md NOTE 5), so no
+        // programme of theirs passes the first gate. Fail closed.
+        Role::CallDrafter | Role::TenantAdmin | Role::FinancialSignatory | Role::LegalSignatory => {
+            Column::None
+        }
     }
 }
 

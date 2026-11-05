@@ -226,6 +226,24 @@ fn cases() -> Vec<Case> {
     f.own = true;
     f.transition = Some((S::Submitted, S::Stage1));
     add(f, false, "transition, call drafter");
+
+    // Financial and legal signatories: interim, fail closed (design
+    // section 15.0, lane j2). Section 7.2 and the section 1 actor table
+    // name neither, and both bind tenant-wide (roles-and-sod.md NOTE 5).
+    // They see no kind, even with every relation on and a grant leg.
+    for role in [Role::FinancialSignatory, Role::LegalSignatory] {
+        for kind in Kind::ALL {
+            let mut f = base(role, kind, ASSIGNED, GRANTED);
+            f.transition = (kind == Kind::StateTransition).then_some((S::Granted, S::InExecution));
+            f.team = true;
+            f.guardian_of = true;
+            f.assigned = true;
+            f.declared_no_conflict = true;
+            f.own = true;
+            f.complaint_reviewer = true;
+            add(f, false, "signatory, any kind, fail closed (NOTE 5)");
+        }
+    }
     out
 }
 

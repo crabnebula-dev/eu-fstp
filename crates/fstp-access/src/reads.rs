@@ -62,8 +62,9 @@
 //! the section 7.2 matrix in its programme. The rule only opens the read.
 //! The dispatch then applies the visibility function to each entry, and a
 //! staff reader of a draft is refused, since drafts are the team's alone
-//! (I-21). Interim, pending Daniel: call drafters and tenant admins read
-//! no diary.
+//! (I-21). Interim, pending Daniel: call drafters, tenant admins and the
+//! financial and legal signatories read no diary. Section 7.2 names no
+//! signatory, and both bind tenant-wide (roles-and-sod.md NOTE 5).
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
@@ -143,7 +144,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 47] = [
+    pub const ALL: [ReadKind; 49] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -261,8 +262,9 @@ const CREATOR_START: ReadRule = ReadRule::AnyOf(&[
 ]);
 /// The readers of a proposal's route position and diary
 /// (`SPEC/12-journey-ui.md` section 10): its team, or a holder of a role
-/// of section 7.2 in the proposal's programme. Call drafters and tenant
-/// admins read no diary (module documentation).
+/// of section 7.2 in the proposal's programme. Call drafters, tenant
+/// admins and the financial and legal signatories read no diary (module
+/// documentation).
 const JOURNEY_READER: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Team,
     ReadRule::Holder(Role::FstpCoordinator),

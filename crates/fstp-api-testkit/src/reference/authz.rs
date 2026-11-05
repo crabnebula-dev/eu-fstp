@@ -801,6 +801,9 @@ pub enum Rule {
     /// sections 7.2 and 10, lane j2). Reading: the team in every state,
     /// and a holder of a role of the section 7.2 matrix in P once X has
     /// left DRAFT (I-21). Call drafters and tenant admins read no diary.
+    /// Nor do financial and legal signatories: section 7.2 names neither,
+    /// and both bind tenant-wide with no programme (roles-and-sod.md NOTE
+    /// 5). Interim, fail closed, design section 15.0 (lane j2).
     /// Which entries show is the visibility function's per request
     /// (I-93), not an authorisation rule, so it is not judged here.
     Journey,
@@ -884,6 +887,7 @@ impl Rule {
             }
             Rule::IrcAssignee | Rule::IrcAct | Rule::IrcCase => &[Some(Role::IrcMember)],
             Rule::Auditor => &[Some(Role::Auditor)],
+            // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
                 Some(Role::ApplicantTeamMember),
