@@ -924,7 +924,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// (design section 15.0, 2026-10-31). The list replaces an exhaustive
 /// match, which could not name the m4reg kinds before they exist. A read missing here
 /// fails `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 45] = [
+const READ_NAMES: [&str; 47] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -970,6 +970,9 @@ const READ_NAMES: [&str; 45] = [
     "GetInvitation",
     "ListProposalAssignments",
     "ListMyRoles",
+    // Lane j2, `SPEC/12-journey-ui.md` section 10.
+    "GetJourney",
+    "GetDiary",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

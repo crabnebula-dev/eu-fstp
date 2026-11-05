@@ -497,6 +497,22 @@ const DECLARANT: &[RoleOrApplicant] = &[
 const COMMITTEE: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::CommitteeChair)];
 const IRC: &[RoleOrApplicant] = &[R(Role::IrcMember)];
 const AUDITOR: &[RoleOrApplicant] = &[R(Role::Auditor)];
+/// The roles of the section 7.2 matrix: every role but call drafter and
+/// tenant admin (lane j2).
+const JOURNEY: &[RoleOrApplicant] = &[
+    R(Role::Applicant),
+    R(Role::ApplicantTeamMember),
+    R(Role::Guardian),
+    R(Role::FstpCoordinator),
+    R(Role::ProgrammeManager),
+    R(Role::CommitteeMember),
+    R(Role::CommitteeChair),
+    R(Role::IrcMember),
+    R(Role::FinanceApprover),
+    R(Role::PaymentReleaser),
+    R(Role::ContractSignatory),
+    R(Role::Auditor),
+];
 
 const IN_NONE: Schema = Schema {
     params: &[],
@@ -1269,6 +1285,21 @@ pub const OPS: &[OpSpec] = &[
         "/proposals/{proposal}/withdrawal",
     )
     .acting(LEAD),
+    // Lane j2, `SPEC/12-journey-ui.md` section 10: the route position and
+    // the diary of one proposal, for its team and permitted staff. Web
+    // only until the journey MCP tools land (section 10 "MCP").
+    OpSpec::read(
+        "proposal.journey",
+        RK::GetJourney,
+        "/proposals/{proposal}/journey",
+    )
+    .acting(JOURNEY),
+    OpSpec::read(
+        "proposal.diary",
+        RK::GetDiary,
+        "/proposals/{proposal}/diary",
+    )
+    .acting(JOURNEY),
     OpSpec::new(
         "guardian.begin_consent",
         OpKind::M3Port(PortKind::BeginGuardianConsent),
