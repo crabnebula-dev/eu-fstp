@@ -120,7 +120,8 @@ pub enum Group {
     Judging,
     /// Applicant, applicant team member and guardian.
     Receiving,
-    /// Tenant admin, finance approver, payment releaser, contract signatory and auditor.
+    /// Tenant admin, finance approver, payment releaser, contract signatory,
+    /// financial signatory, legal signatory and auditor.
     Operations,
 }
 
@@ -171,13 +172,19 @@ pub enum Role {
     PaymentReleaser,
     /// Contract signatory with signing authority (Operations, decided 2026-10-25).
     ContractSignatory,
+    /// Financial signatory (Operations, tenant-wide, NOTE 5, decided by
+    /// Daniel 2026-11-01). It names no programme, so the core never binds it.
+    FinancialSignatory,
+    /// Legal signatory (Operations, tenant-wide, NOTE 5, decided by Daniel
+    /// 2026-11-01). It names no programme, so the core never binds it.
+    LegalSignatory,
     /// Auditor (Operations).
     Auditor,
 }
 
 impl Role {
     /// Every role, in the order of the roles table.
-    pub const ALL: [Role; 14] = [
+    pub const ALL: [Role; 16] = [
         Role::ProgrammeManager,
         Role::CallDrafter,
         Role::FstpCoordinator,
@@ -191,6 +198,8 @@ impl Role {
         Role::FinanceApprover,
         Role::PaymentReleaser,
         Role::ContractSignatory,
+        Role::FinancialSignatory,
+        Role::LegalSignatory,
         Role::Auditor,
     ];
 
@@ -207,6 +216,8 @@ impl Role {
             | Role::FinanceApprover
             | Role::PaymentReleaser
             | Role::ContractSignatory
+            | Role::FinancialSignatory
+            | Role::LegalSignatory
             | Role::Auditor => Group::Operations,
         }
     }
@@ -217,6 +228,14 @@ impl Role {
             self,
             Role::FstpCoordinator | Role::CommitteeMember | Role::CommitteeChair
         )
+    }
+
+    /// Whether the role acts for the whole organisation, so that a binding
+    /// of it names no programme: Financial signatory and Legal signatory
+    /// (NOTE 5, decided by Daniel 2026-11-01). The tenant crate holds
+    /// these bindings, as it holds the tenant admin set.
+    pub const fn tenant_wide_signatory(self) -> bool {
+        matches!(self, Role::FinancialSignatory | Role::LegalSignatory)
     }
 
     /// The role's name as the roles table spells it.
@@ -235,6 +254,8 @@ impl Role {
             Role::FinanceApprover => "Finance approver",
             Role::PaymentReleaser => "Payment releaser",
             Role::ContractSignatory => "Contract signatory",
+            Role::FinancialSignatory => "Financial signatory",
+            Role::LegalSignatory => "Legal signatory",
             Role::Auditor => "Auditor",
         }
     }

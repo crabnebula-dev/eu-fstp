@@ -477,6 +477,8 @@ unit_enum!(Role {
     FinanceApprover,
     PaymentReleaser,
     ContractSignatory,
+    FinancialSignatory,
+    LegalSignatory,
     Auditor,
 });
 unit_enum!(Stage { One, Two });

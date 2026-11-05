@@ -1521,6 +1521,12 @@ pub(crate) mod reply_shape_tests {
             }
             ReadModel::Tenant(crate::tenant::TenantView::Settings(_)) => &["tenant.settings"],
             ReadModel::Tenant(crate::tenant::TenantView::Admins(_)) => &["tenant.list_admins"],
+            ReadModel::Tenant(crate::tenant::TenantView::Signatories(_)) => {
+                &["tenant.list_signatories"]
+            }
+            ReadModel::Tenant(crate::tenant::TenantView::Activation(_)) => {
+                &["tenant.get_activation"]
+            }
             ReadModel::Creator(c) => creator_served_as(c),
             ReadModel::MyRoles(_) => &["me.roles"],
         }

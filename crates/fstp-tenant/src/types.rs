@@ -39,6 +39,9 @@ tenant_id!(
     InvitationId,
     /// A SoD-07 self-grant approval.
     ApprovalId,
+    /// A request to activate the organisation, drawn by the shell. The
+    /// approval names it, so an approval answers one request only (SoD-18).
+    ActivationRequestId,
 );
 
 /// The SHA-256 digest of an invitation token, as M3 stores it
@@ -135,7 +138,8 @@ pub enum OnboardingStep {
     Payments,
     /// The Matrix homeserver and the WhatsApp Business account (M6, M8).
     Channels,
-    /// At least two tenant admins (SoD-07).
+    /// At least two tenant admins (SoD-07), and at least one Financial
+    /// signatory and one Legal signatory (SoD-14, SoD-15).
     Administrators,
 }
 
@@ -255,6 +259,10 @@ pub enum StepFailure {
     ProberAbsent,
     /// Fewer than two tenant admins exist (SoD-07).
     TooFewAdmins,
+    /// No account holds Financial signatory (SoD-14).
+    NoFinancialSignatory,
+    /// No account holds Legal signatory (SoD-15).
+    NoLegalSignatory,
     /// The control plane did not confirm that the tenant accepted the
     /// saved agreement versions, or gave no answer (Q22, Q5: fail closed).
     AgreementsNotRecorded,
@@ -686,4 +694,84 @@ pub struct GrantRef {
     pub programme: ProgrammeId,
     /// The role.
     pub role: Role,
+}
+
+/// A tenant-wide signatory role (NOTE 5 of `roles-and-sod.md`, decided by
+/// Daniel 2026-11-01). A binding of either names no programme. The tenant
+/// state holds these bindings, as it holds the tenant admin set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SignatoryRole {
+    /// Financial signatory (SoD-14).
+    Financial,
+    /// Legal signatory (SoD-15).
+    Legal,
+}
+
+impl SignatoryRole {
+    /// Both roles, Financial first.
+    pub const ALL: [SignatoryRole; 2] = [SignatoryRole::Financial, SignatoryRole::Legal];
+
+    /// The domain role.
+    pub const fn role(self) -> Role {
+        match self {
+            SignatoryRole::Financial => Role::FinancialSignatory,
+            SignatoryRole::Legal => Role::LegalSignatory,
+        }
+    }
+
+    /// The signatory role of `role`, if it is one.
+    pub const fn of_role(role: Role) -> Option<SignatoryRole> {
+        match role {
+            Role::FinancialSignatory => Some(SignatoryRole::Financial),
+            Role::LegalSignatory => Some(SignatoryRole::Legal),
+            _ => None,
+        }
+    }
+
+    /// The spelling in routes and in the codec: the wire name of the
+    /// domain role, such as `"financial_signatory"`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            SignatoryRole::Financial => "financial_signatory",
+            SignatoryRole::Legal => "legal_signatory",
+        }
+    }
+
+    /// The role spelled `s`.
+    pub fn from_name(s: &str) -> Option<SignatoryRole> {
+        SignatoryRole::ALL.into_iter().find(|r| r.name() == s)
+    }
+
+    /// The step failure of a missing holder of the role.
+    pub const fn missing(self) -> StepFailure {
+        match self {
+            SignatoryRole::Financial => StepFailure::NoFinancialSignatory,
+            SignatoryRole::Legal => StepFailure::NoLegalSignatory,
+        }
+    }
+}
+
+/// The activation of the organisation (SoD-14, SoD-15 and SoD-18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Activation {
+    /// No tenant admin has requested activation yet.
+    NotRequested,
+    /// A tenant admin requested activation, and no second admin has
+    /// approved it yet.
+    Requested {
+        /// The request.
+        request: ActivationRequestId,
+        /// The requesting admin.
+        by: AccountId,
+    },
+    /// A second tenant admin approved the request, so the organisation is
+    /// active.
+    Active {
+        /// The approved request.
+        request: ActivationRequestId,
+        /// The requesting admin.
+        requested_by: AccountId,
+        /// The approving admin, never the requester (SoD-18).
+        approved_by: AccountId,
+    },
 }

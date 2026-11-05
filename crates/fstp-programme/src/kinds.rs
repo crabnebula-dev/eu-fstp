@@ -799,64 +799,62 @@ impl Codec for ReminderOffsets {
 
 option_enum! {
     /// A messaging channel (P-32, `03-architecture/notifications.md`).
+    ///
+    /// Email is the one channel. Daniel deferred Matrix (B-05) and
+    /// WhatsApp (B-03) on 2026-11-04, so a value naming either is refused
+    /// with the deferral (`policy-parameters.md`, P-32 row).
     pub enum Channel {
         /// Email.
         Email => "email",
-        /// Matrix.
-        Matrix => "matrix",
-        /// WhatsApp Business.
-        WhatsApp => "whatsapp",
     }
     placeholder Email
 }
 
-option_enum! {
-    /// A group type (P-32).
-    pub enum GroupType {
-        /// Programme announcements.
-        ProgrammeAnnouncements => "programme_announcements",
-        /// The committee group.
-        CommitteeGroup => "committee_group",
-        /// A grantee cohort.
-        GranteeCohort => "grantee_cohort",
-        /// A project group.
-        ProjectGroup => "project_group",
+/// The refusal of a channel Daniel deferred on 2026-11-04, if `name` is
+/// one (`policy-parameters.md`, P-32 row).
+fn deferred_channel(name: &str) -> Option<FromJsonError> {
+    match name {
+        "matrix" => Some(FromJsonError::invalid(
+            "Matrix and its group types are deferred (B-05), so P-32 enables email only",
+        )),
+        "whatsapp" => Some(FromJsonError::invalid(
+            "WhatsApp is deferred (B-03), so P-32 enables email only",
+        )),
+        _ => None,
     }
-    placeholder ProgrammeAnnouncements
 }
 
-/// The P-32 value. JSON: `{"channels", "group_types", "whatsapp_account"}`.
+/// The P-32 value: the enabled channels. JSON: `{"channels": ["email"]}`.
+/// Email only (decided by Daniel 2026-11-04). The parameter id stays
+/// reserved, so the deferred channels can return under it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Channels {
-    /// The enabled channels, none repeated.
+    /// The enabled channels: email, once.
     pub channels: UniqueList<Channel>,
-    /// The enabled group types, none repeated.
-    pub group_types: UniqueList<GroupType>,
-    /// Who owns the WhatsApp account, such as `tenant_owned`.
-    pub whatsapp_account: Token,
 }
 
 impl Codec for Channels {
     fn decode(v: &Value, c: Currency) -> Result<Channels, FromJsonError> {
-        let o = object(v, &["channels", "group_types", "whatsapp_account"])?;
-        Ok(Channels {
-            channels: member(o, "channels", c)?,
-            group_types: member(o, "group_types", c)?,
-            whatsapp_account: member(o, "whatsapp_account", c)?,
-        })
+        let o = object(v, &["channels"])?;
+        if let Some(Value::Array(names)) = o.get("channels") {
+            for (i, n) in names.iter().enumerate() {
+                if let Some(e) = n.as_str().and_then(deferred_channel) {
+                    return Err(e.at_index(i).at_field("channels"));
+                }
+            }
+        }
+        let channels: UniqueList<Channel> = member(o, "channels", c)?;
+        if channels.items() != [Channel::Email] {
+            return Err(FromJsonError::invalid("P-32 enables email, once").at_field("channels"));
+        }
+        Ok(Channels { channels })
     }
     fn encode(&self) -> Value {
-        obj(vec![
-            ("channels", self.channels.encode()),
-            ("group_types", self.group_types.encode()),
-            ("whatsapp_account", self.whatsapp_account.encode()),
-        ])
+        obj(vec![("channels", self.channels.encode())])
     }
     fn placeholder(c: Currency) -> Option<Channels> {
         Some(Channels {
             channels: UniqueList::placeholder(c)?,
-            group_types: UniqueList::placeholder(c)?,
-            whatsapp_account: Token::placeholder(c)?,
         })
     }
 }

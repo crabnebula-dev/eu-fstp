@@ -61,6 +61,12 @@ export type OpName =
   | "tenant.settings"
   | "tenant.invite_admin"
   | "tenant.list_admins"
+  | "tenant.list_signatories"
+  | "tenant.grant_signatory"
+  | "tenant.end_signatory"
+  | "tenant.get_activation"
+  | "tenant.request_activation"
+  | "tenant.approve_activation"
   | "me.get_verification"
   | "tenant.set_login_methods"
   | "tenant.set_step_up_freshness"
@@ -222,6 +228,12 @@ export interface OpParams {
   readonly "tenant.settings": Readonly<Record<never, string>>;
   readonly "tenant.invite_admin": Readonly<Record<never, string>>;
   readonly "tenant.list_admins": Readonly<Record<never, string>>;
+  readonly "tenant.list_signatories": Readonly<Record<never, string>>;
+  readonly "tenant.grant_signatory": Readonly<Record<never, string>>;
+  readonly "tenant.end_signatory": { readonly "role": string; readonly "account": string };
+  readonly "tenant.get_activation": Readonly<Record<never, string>>;
+  readonly "tenant.request_activation": Readonly<Record<never, string>>;
+  readonly "tenant.approve_activation": Readonly<Record<never, string>>;
   readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
   readonly "tenant.set_step_up_freshness": Readonly<Record<never, string>>;
@@ -356,6 +368,12 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.settings",
   "tenant.invite_admin",
   "tenant.list_admins",
+  "tenant.list_signatories",
+  "tenant.grant_signatory",
+  "tenant.end_signatory",
+  "tenant.get_activation",
+  "tenant.request_activation",
+  "tenant.approve_activation",
   "me.get_verification",
   "tenant.set_login_methods",
   "tenant.set_step_up_freshness",
@@ -579,6 +597,90 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "personal",
+    tool: null,
+  },
+  {
+    name: "tenant.list_signatories",
+    method: "GET",
+    path: "/admin/signatories",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "signatories" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "tenant.grant_signatory",
+    method: "POST",
+    path: "/admin/signatories",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "signatories" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.end_signatory",
+    method: "DELETE",
+    path: "/admin/signatories/{role}/{account}",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "signatories" }, { kind: "param", name: "role" }, { kind: "param", name: "account" }],
+    params: ["role", "account"],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.get_activation",
+    method: "GET",
+    path: "/admin/activation",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "activation" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.request_activation",
+    method: "POST",
+    path: "/admin/activation",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "activation" }],
+    params: [],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.approve_activation",
+    method: "POST",
+    path: "/admin/activation/approval",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "activation" }, { kind: "literal", text: "approval" }],
+    params: [],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
     tool: null,
   },
   {
@@ -2686,7 +2788,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "roles": { schema: { kind: "array", items: {
         kind: "object",
         fields: {
-          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "applicant", "applicant_team_member", "guardian", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
+          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "applicant", "applicant_team_member", "guardian", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "financial_signatory", "legal_signatory", "auditor"] }, optional: false },
           "programme": { schema: { kind: "id" }, optional: false },
           "proposal": { schema: { kind: "id" }, optional: true },
           "calls": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
@@ -2722,6 +2824,28 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "tenant.list_signatories": {
+    kind: "object",
+    fields: {
+      "signatories": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "account": { schema: { kind: "id" }, optional: false },
+          "role": { schema: { kind: "enum", values: ["financial_signatory", "legal_signatory"] }, optional: false },
+          "handle": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "tenant.get_activation": {
+    kind: "object",
+    fields: {
+      "state": { schema: { kind: "enum", values: ["not_requested", "requested", "active"] }, optional: false },
+      "request": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "requested_by": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "approved_by": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+    },
+  },
   "tenant.get_step": {
     kind: "object",
     fields: {
@@ -2749,7 +2873,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "admins": { schema: { kind: "array", items: { kind: "id" } }, optional: true },
         },
       } }, optional: false },
-      "outcome": { schema: { kind: "nullable", inner: { kind: "enum", values: ["validated", "invalid_values", "probe_failed", "prober_absent", "too_few_admins", "agreements_not_recorded", "payment_mode_unset", "unavailable_m5", "unavailable_m6", "unavailable_m8", "unavailable_m9"] } }, optional: false },
+      "outcome": { schema: { kind: "nullable", inner: { kind: "enum", values: ["validated", "invalid_values", "probe_failed", "prober_absent", "too_few_admins", "no_financial_signatory", "no_legal_signatory", "agreements_not_recorded", "payment_mode_unset", "unavailable_m5", "unavailable_m6", "unavailable_m8", "unavailable_m9"] } }, optional: false },
       "accepted": { schema: { kind: "nullable", inner: {
         kind: "object",
         fields: {
@@ -2787,7 +2911,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "admins": { schema: { kind: "array", items: { kind: "id" } }, optional: true },
         },
       } }, optional: false },
-      "outcome": { schema: { kind: "nullable", inner: { kind: "enum", values: ["validated", "invalid_values", "probe_failed", "prober_absent", "too_few_admins", "agreements_not_recorded", "payment_mode_unset", "unavailable_m5", "unavailable_m6", "unavailable_m8", "unavailable_m9"] } }, optional: false },
+      "outcome": { schema: { kind: "nullable", inner: { kind: "enum", values: ["validated", "invalid_values", "probe_failed", "prober_absent", "too_few_admins", "no_financial_signatory", "no_legal_signatory", "agreements_not_recorded", "payment_mode_unset", "unavailable_m5", "unavailable_m6", "unavailable_m8", "unavailable_m9"] } }, optional: false },
       "accepted": { schema: { kind: "nullable", inner: {
         kind: "object",
         fields: {

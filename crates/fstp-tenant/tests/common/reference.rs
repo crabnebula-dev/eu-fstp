@@ -34,8 +34,17 @@
 //! - **Q5.** The sending domain and channel checks need a prober. Without
 //!   one they fail closed. A recording fake answers each probe.
 //! - **SoD-07.** The Administrators step validates with at least two tenant
-//!   admins. Completing onboarding needs every step validated, at least
+//!   admins, and (SoD-14, SoD-15, `programme-creator.md` onboarding table)
+//!   with at least one holder of each signatory role. Completing onboarding needs every step validated, at least
 //!   two admins, and every admin verified (design J0, Q2 B interim).
+//! - **Signatory roles** (NOTE 5, SA-01). A tenant admin grants Financial or
+//!   Legal signatory to an account. The grant is high-risk (I-78: an
+//!   Operations role). A grant to the granting admin's own account is
+//!   refused (SoD-07: no second admin approves it in this model). A second
+//!   grant of a held role is refused (design 15.0). SoD-03 bars an account
+//!   with a Receiving binding, as for tenant admin. No verified identity is
+//!   needed (SoD-09). One account may hold both (SoD-16). An end of a held
+//!   binding completes. No activation runs here, so SoD-17 never binds.
 //! - **SoD-07 approvals.** The approver is a tenant admin, the grantee is a
 //!   tenant admin, and they are different accounts (NOTE 3: per account).
 //!   The self-grant uses its approval once (TH-05). Every run has one
@@ -68,7 +77,7 @@ use fstp_domain::rules::ParamId;
 use super::vocab::{
     Approval, Defaults, Env, Inference, InferenceDefault, LoginMethod, Observed, Op,
     P71_DEFAULT_US, P72_ABSOLUTE_DEFAULT_US, P72_IDLE_DEFAULT_US, PaymentMode, Probes, RecordView,
-    Setting, Settings, Step, StepInput, VALID_SPDX, Verdict, spec_default_settings,
+    Setting, Settings, Signatory, Step, StepInput, VALID_SPDX, Verdict, spec_default_settings,
 };
 
 /// One issued invitation in the reference.
@@ -93,6 +102,7 @@ pub struct Reference {
     inference: Option<Inference>,
     configs: BTreeSet<LlmConfigId>,
     completed: bool,
+    signatories: BTreeSet<(Signatory, AccountId)>,
 }
 
 impl Reference {
@@ -109,6 +119,7 @@ impl Reference {
             inference: None,
             configs: BTreeSet::new(),
             completed: false,
+            signatories: BTreeSet::new(),
         }
     }
 
@@ -233,6 +244,17 @@ impl Reference {
                         .as_ref()
                         .is_some_and(|d| d.primary == *primary && d.fallbacks == *fallbacks)
             }
+            Op::GrantSignatory {
+                actor,
+                account,
+                role,
+                ..
+            } => {
+                account != actor
+                    && !self.signatories.contains(&(*role, *account))
+                    && !self.env.receiving.contains(account)
+            }
+            Op::EndSignatory { account, role, .. } => self.signatories.contains(&(*role, *account)),
             Op::Complete { .. } => {
                 !self.completed
                     && Step::ALL.iter().all(|s| self.validated.contains(s))
@@ -252,7 +274,11 @@ impl Reference {
             }
         };
         let probes = !step.needs_prober() || self.env.probes == Probes::Fake { pass: true };
-        let admins = step != Step::Administrators || self.admins.len() >= 2;
+        let admins = step != Step::Administrators
+            || (self.admins.len() >= 2
+                && Signatory::ALL
+                    .iter()
+                    .all(|r| self.signatories.iter().any(|(h, _)| h == r)));
         let agreements = step != Step::Agreements || self.env.agreements_recorded;
         let payments = step != Step::Payments || self.settings.p20 == Some(PaymentMode::RecordOnly);
         own && probes && admins && agreements && payments
@@ -340,6 +366,12 @@ impl Reference {
                 });
             }
             Op::Complete { .. } => self.completed = true,
+            Op::GrantSignatory { account, role, .. } => {
+                self.signatories.insert((*role, *account));
+            }
+            Op::EndSignatory { account, role, .. } => {
+                self.signatories.remove(&(*role, *account));
+            }
         }
     }
 
@@ -376,6 +408,7 @@ impl Reference {
             defaults: self.defaults.clone(),
             inference: self.inference.clone(),
             completed: self.completed,
+            signatories: self.signatories.clone(),
         }
     }
 
@@ -388,11 +421,16 @@ impl Reference {
     }
 }
 
-/// Whether the op is high-risk (design sections 3.5 and 3.6).
+/// Whether the op is high-risk (design sections 3.5 and 3.6, and
+/// `authentication.md` for the signatory grants and ends).
 pub fn is_high_risk(op: &Op) -> bool {
     matches!(
         op,
-        Op::InviteAdmin { .. } | Op::ApproveSelfGrant { .. } | Op::SetSetting { .. }
+        Op::InviteAdmin { .. }
+            | Op::ApproveSelfGrant { .. }
+            | Op::SetSetting { .. }
+            | Op::GrantSignatory { .. }
+            | Op::EndSignatory { .. }
     )
 }
 
@@ -477,6 +515,26 @@ pub fn required_record(op: &Op) -> RecordView {
             by: *actor,
         },
         Op::Complete { actor } => RecordView::OnboardingCompleted { by: *actor },
+        Op::GrantSignatory {
+            actor,
+            account,
+            role,
+            ..
+        } => RecordView::SignatoryGranted {
+            role: *role,
+            account: *account,
+            by: *actor,
+        },
+        Op::EndSignatory {
+            actor,
+            account,
+            role,
+            ..
+        } => RecordView::SignatoryEnded {
+            role: *role,
+            account: *account,
+            by: *actor,
+        },
     }
 }
 

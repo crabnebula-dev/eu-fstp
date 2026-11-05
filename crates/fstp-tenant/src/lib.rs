@@ -8,6 +8,9 @@
 //! - the tenant admin set, its invitations bound to their invitee, and
 //!   the single-use, expiring SoD-07 self-grant approvals, as ledger
 //!   records (Q31 A, interim pending Daniel);
+//! - the tenant-wide Financial and Legal signatory bindings (NOTE 5), and
+//!   the activation of the organisation by a request and a second tenant
+//!   admin's approval (SoD-14 to SoD-18);
 //! - the tenant-level settings P-20, P-69 to P-72 and P-74, one high-risk
 //!   operation per parameter. P-73 and P-78 are not settable in M4;
 //! - the tenant defaults that prefill the programme fields P-18, P-21 and
@@ -50,8 +53,9 @@ pub use state::{
     TenantState,
 };
 pub use types::{
-    AgreementVersions, ApprovalId, BankInterface, BrandingPackage, CellKind, DomainName, GrantRef,
-    InferenceDefault, InvitationId, LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep,
-    PaymentMode, ProviderRef, RpMode, SettingValue, StepFailure, StepOutcome, StepStatus,
-    StepValues, TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
+    Activation, ActivationRequestId, AgreementVersions, ApprovalId, BankInterface, BrandingPackage,
+    CellKind, DomainName, GrantRef, InferenceDefault, InvitationId, LoginMethod, McpSettings,
+    Milestone, ModelRef, OnboardingStep, PaymentMode, ProviderRef, RpMode, SettingValue,
+    SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues, TenantParam, TenantRevision,
+    Token, TokenDigest, VerifyMethod,
 };

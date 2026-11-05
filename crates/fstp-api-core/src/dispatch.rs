@@ -545,9 +545,10 @@ fn refuse_early<P: Seams>(
     e
 }
 
-/// Whether the account `cmd` binds is a tenant admin (design section
-/// 3.7: from the attested admin set only, which the ledger owns under
-/// Q31 A).
+/// Whether the account `cmd` binds holds a tenant-wide Operations role:
+/// tenant admin (design section 3.7: from the attested admin set, which
+/// the ledger owns under Q31 A), or Financial or Legal signatory from the
+/// ledger's signatory bindings (NOTE 5). The core reads it for SoD-03.
 fn binds_admin<P: CellPorts>(
     ports: &P,
     state: &EngineState,
@@ -564,7 +565,7 @@ fn binds_admin<P: CellPorts>(
         Command::Core(Core::CreateDraft { .. }) => actor,
         _ => return false,
     };
-    tenant::is_admin(ports, state, bound)
+    tenant::holds_tenant_operations(ports, state, bound)
 }
 
 /// Runs one call through every step of design section 3.7.
@@ -1553,9 +1554,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             };
             ReadModel::Verification(own_verification(call, a).await?)
         }
-        ReadKind::GetOnboarding | ReadKind::GetTenantSettings | ReadKind::ListTenantAdmins => {
-            tenant::read(call, op, kind).await?
-        }
+        ReadKind::GetOnboarding
+        | ReadKind::GetTenantSettings
+        | ReadKind::ListTenantAdmins
+        | ReadKind::ListSignatories
+        | ReadKind::GetActivation => tenant::read(call, op, kind).await?,
         // Lane m4wire: the creator pages and the approval inbox.
         ReadKind::GetDraft
         | ReadKind::GetReport

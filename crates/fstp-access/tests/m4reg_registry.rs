@@ -66,6 +66,8 @@ const EVERY: &[RoleOrApplicant] = &[
     R(Role::FinanceApprover),
     R(Role::PaymentReleaser),
     R(Role::ContractSignatory),
+    R(Role::FinancialSignatory),
+    R(Role::LegalSignatory),
     R(Role::Auditor),
 ];
 const ADMIN: &[RoleOrApplicant] = &[R(Role::TenantAdmin)];

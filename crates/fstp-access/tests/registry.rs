@@ -473,6 +473,8 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
             "roles.reinstate",
             "tenant.invite_admin",
             "admin.approve_self_grant",
+            "tenant.grant_signatory",
+            "tenant.end_signatory",
         ],
         "",
     ),
@@ -924,7 +926,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// (design section 15.0, 2026-10-31). The list replaces an exhaustive
 /// match, which could not name the m4reg kinds before they exist. A read missing here
 /// fails `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 45] = [
+const READ_NAMES: [&str; 47] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -964,6 +966,8 @@ const READ_NAMES: [&str; 45] = [
     "GetTenantSettings",
     "GetOnboarding",
     "ListTenantAdmins",
+    "ListSignatories",
+    "GetActivation",
     "GetMyVerification",
     "ListProgrammes",
     "ListTemplates",

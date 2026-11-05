@@ -127,7 +127,17 @@ export const API = {
   onboardingStep: (step: OnboardingStepName): string => `/api/v1/admin/onboarding/${step}`,
   /** The POST that starts identity verification of the signed-in admin (J0). */
   meVerification: '/api/v1/me/verification',
+  /** `{ "signatories": [{ "account", "role", "handle" }] }`, the tenant-wide signatory bindings (NOTE 5). */
+  signatories: '/api/v1/admin/signatories',
+  /** `{ "state", "request", "requested_by", "approved_by" }`, the organisation's activation (SoD-18). */
+  activation: '/api/v1/admin/activation',
 } as const;
+
+/** The tenant-wide signatory roles (NOTE 5 of `roles-and-sod.md`), as the wire spells them. */
+export const SIGNATORY_ROLES = ['financial_signatory', 'legal_signatory'] as const;
+
+/** One signatory role. */
+export type SignatoryRoleName = (typeof SIGNATORY_ROLES)[number];
 
 // ---------------------------------------------------------------------------
 // Element contract
@@ -165,6 +175,18 @@ export const STEPUP = { dialog: '#stepup', confirm: '#stepup-confirm' } as const
  * - The summary page has `#onboarding-complete`. Its result is
  *   `#onboarding-complete-outcome` with `data-outcome="completed"`, or a
  *   refusal alert.
+ * - The Administrators step has `#signatories` (SoD-14, SoD-15). It holds
+ *   one `section[data-signatory-role]` per signatory role, listing each
+ *   holder as `li[data-account]`, or `[data-empty="true"]` with no holder.
+ *   `#signatory-missing` names the roles still without a holder. A grant
+ *   picks an account in `#signatory-account` and a role radio, then
+ *   `#signatory-grant` sends it with a step-up (I-78).
+ * - The summary page has `#activation` (SoD-18). `#activation-state`
+ *   carries `data-state` set to `not_requested`, `requested` or
+ *   `active`. `#activation-request` requests activation, and
+ *   `#activation-approve` approves an open request.
+ * - A refusal shows in the page alert, `main [role="alert"]`, with
+ *   `data-rule` set to the rule it names, such as `SoD-07`.
  */
 export const ONBOARDING_UI = {
   steps: '#onboarding-steps',
@@ -182,7 +204,29 @@ export const ONBOARDING_UI = {
   adminInviteEmail: '#admin-invite-email',
   adminInviteSubmit: '#admin-invite-submit',
   admins: '#admins',
+  /** The Administrators step: the signatory holders and the grant form (SoD-14, SoD-15). */
+  signatories: '#signatories',
+  signatoryMissing: '#signatory-missing',
+  signatoryAccount: '#signatory-account',
+  signatoryGrant: '#signatory-grant',
+  /** The summary: the organisation's activation (SoD-18). */
+  activationState: '#activation-state',
+  activationMissing: '#activation-missing',
+  activationRequest: '#activation-request',
+  activationApprove: '#activation-approve',
+  /** The page alert, which names a refused rule in `data-rule`. */
+  alert: 'main [role="alert"]',
 } as const;
+
+/** The radio of signatory role `role` in the grant form of the Administrators step. */
+export function signatoryRoleChoice(role: SignatoryRoleName): string {
+  return `input[type="radio"][name="signatory-role"][value="${role}"]`;
+}
+
+/** The holder `account` of signatory role `role` on the Administrators step. */
+export function signatoryHolder(role: SignatoryRoleName, account: string): string {
+  return `#signatories section[data-signatory-role="${role}"] li[data-account="${account}"]`;
+}
 
 /**
  * Tenant setting pages (`/app/admin/settings/{param}`). `#setting-value`

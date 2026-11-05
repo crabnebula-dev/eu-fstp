@@ -112,11 +112,17 @@ pub fn queries(state: &TenantState, cmd: &TenantCommand) -> Vec<TenantQuery> {
             .map(|i| TenantQuery::HoldsReceiving(i.invitee))
             .into_iter()
             .collect(),
-        TenantCommand::Complete => state
+        TenantCommand::Complete | TenantCommand::RequestActivation { .. } => state
             .admins()
             .iter()
             .map(|a| TenantQuery::AdminVerified(*a))
             .collect(),
+        // A signatory role is an Operations role in every programme of
+        // the tenant, as tenant admin is, so SoD-03 bars a holder of a
+        // Receiving binding (interim, pending Daniel).
+        TenantCommand::GrantSignatory { account, .. } => {
+            vec![TenantQuery::HoldsReceiving(*account)]
+        }
         _ => Vec::new(),
     }
 }
@@ -244,13 +250,56 @@ pub fn decide(
             }
             Ok(vec![TenantRecord::OnboardingCompleted { by }])
         }
+        TenantCommand::GrantSignatory { role, account } => {
+            state.check_grant_signatory(by, *role, *account)?;
+            match answers.receiving.get(account) {
+                Some(false) => {}
+                Some(true) => return Err(TenantRefusal::HoldsReceiving),
+                None => return Err(TenantRefusal::AnswerMissing),
+            }
+            Ok(vec![TenantRecord::SignatoryGranted {
+                role: *role,
+                account: *account,
+                by,
+                at: ctx.at,
+            }])
+        }
+        TenantCommand::EndSignatory { role, account } => {
+            state.check_end_signatory(*role, *account)?;
+            Ok(vec![TenantRecord::SignatoryEnded {
+                role: *role,
+                account: *account,
+                by,
+                at: ctx.at,
+            }])
+        }
+        TenantCommand::RequestActivation { request } => {
+            state.check_request()?;
+            if !state.admins().iter().all(|a| answers.is_verified(*a)) {
+                return Err(TenantRefusal::AdminNotVerified);
+            }
+            Ok(vec![TenantRecord::ActivationRequested {
+                request: *request,
+                by,
+                at: ctx.at,
+            }])
+        }
+        TenantCommand::ApproveActivation { request } => {
+            state.check_approve(*request, by)?;
+            Ok(vec![TenantRecord::ActivationApproved {
+                request: *request,
+                by,
+                at: ctx.at,
+            }])
+        }
     }
 }
 
 /// Whether a save of `values` validates its step: the step's own checks,
 /// then the control plane's confirmation of the agreements (Q22), then
 /// the prober check (Q5: an absent prober fails closed), then the
-/// two-admin rule for the Administrators step (SoD-07).
+/// two-admin rule for the Administrators step (SoD-07) and its holders
+/// of each signatory role (SoD-14, SoD-15).
 fn step_check(
     state: &TenantState,
     values: &StepValues,
@@ -273,8 +322,14 @@ fn step_check(
             ProbeOutcome::Absent => return Err(StepFailure::ProberAbsent),
         }
     }
-    if values.step() == OnboardingStep::Administrators && state.admins().len() < 2 {
-        return Err(StepFailure::TooFewAdmins);
+    if values.step() == OnboardingStep::Administrators {
+        if state.admins().len() < 2 {
+            return Err(StepFailure::TooFewAdmins);
+        }
+        // SoD-14, SoD-15 (`programme-creator.md`, onboarding table).
+        if let Some(role) = state.missing_signatory() {
+            return Err(role.missing());
+        }
     }
     Ok(())
 }
