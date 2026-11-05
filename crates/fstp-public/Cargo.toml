@@ -13,6 +13,7 @@ fstp-programme.workspace = true
 fstp-guide.workspace = true
 fstp-html.workspace = true
 fstp-json.workspace = true
+fstp-money.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

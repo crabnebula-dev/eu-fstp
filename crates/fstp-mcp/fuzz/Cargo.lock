@@ -266,6 +266,7 @@ dependencies = [
  "fstp-guide",
  "fstp-html",
  "fstp-json",
+ "fstp-money",
  "fstp-programme",
 ]
 

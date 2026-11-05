@@ -105,6 +105,29 @@ pub enum ReadModel {
     /// `me.roles`: the caller's own active roles, for the interim home
     /// page of design section 15.0 (2026-10-31; I-86).
     MyRoles(crate::dispatch::me_roles::MyRoles),
+    /// A public page, the feed or a public tool answer, from
+    /// `fstp-public` only (I-87, design section 3.10).
+    Public(PublicReply),
+}
+
+/// The answer to a public operation (design section 3.10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PublicReply {
+    /// A public tool answer or the feed, as `fstp_public` encodes it.
+    Json(Value),
+    /// A server-rendered public page: the bytes of the `fstp-html`
+    /// writer, with no script (R-PB-04).
+    Page(String),
+}
+
+impl ReadModel {
+    /// The HTML of a public page, for the `/p` routes of the web adapter.
+    pub fn public_page(&self) -> Option<&str> {
+        match self {
+            ReadModel::Public(PublicReply::Page(html)) => Some(html),
+            _ => None,
+        }
+    }
 }
 
 /// A decimal string.
@@ -190,6 +213,12 @@ impl ToJson for ReadModel {
             ReadModel::Tenant(v) => v.to_json(),
             ReadModel::Creator(m) => m.to_json(),
             ReadModel::MyRoles(r) => r.to_json(),
+            ReadModel::Public(PublicReply::Json(v)) => v.clone(),
+            ReadModel::Public(PublicReply::Page(html)) => {
+                let mut o = Object::new();
+                let _ = o.insert("html", Value::from(html.as_str()));
+                Value::Object(o)
+            }
         }
     }
 }
@@ -1463,7 +1492,7 @@ pub(crate) mod reply_shape_tests {
             C::Approvals(_) => &["admin.approvals"],
             C::Impact(_) => &["creator.impact"],
             // Unshaped, see [`unshaped`].
-            C::Draft { .. } | C::Proposals(_) => &[],
+            C::Draft { .. } | C::Proposals(_) | C::Preview { .. } => &[],
         }
     }
 
@@ -1478,7 +1507,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Creator(
                 crate::creator::CreatorModel::Draft { .. }
                     | crate::creator::CreatorModel::Proposals(_)
-            )
+                    | crate::creator::CreatorModel::Preview { .. }
+            ) | ReadModel::Public(_)
         )
     }
 
@@ -1523,6 +1553,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Tenant(crate::tenant::TenantView::Admins(_)) => &["tenant.list_admins"],
             ReadModel::Creator(c) => creator_served_as(c),
             ReadModel::MyRoles(_) => &["me.roles"],
+            // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
+            ReadModel::Public(_) => &[],
         }
     }
 
@@ -1687,6 +1719,15 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Creator(crate::creator::CreatorModel::Proposals(Vec::new())),
             ReadModel::MyRoles(my_roles(true)),
             ReadModel::MyRoles(my_roles(false)),
+            ReadModel::Creator(crate::creator::CreatorModel::Preview {
+                kind: "public",
+                blocks: vec![fstp_guide::PreviewBlock {
+                    kind: fstp_guide::PreviewKind::Heading,
+                    text: "SuperSAFE".to_owned(),
+                }],
+            }),
+            ReadModel::Public(PublicReply::Json(Value::Object(Object::new()))),
+            ReadModel::Public(PublicReply::Page("<!DOCTYPE html>".to_owned())),
         ]
         .into_iter()
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
@@ -1759,7 +1800,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 30;
+    const VARIANTS: usize = 31;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1796,6 +1837,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Tenant(_) => 27,
             ReadModel::Creator(_) => 28,
             ReadModel::MyRoles(_) => 29,
+            ReadModel::Public(_) => 30,
         }
     }
 
