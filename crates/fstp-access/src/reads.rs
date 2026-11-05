@@ -41,6 +41,7 @@
 //! The design names none of them, so each name follows its page:
 //!
 //! - `ListTenantAdmins` is a tenant admin read, as the settings are.
+//!   `ListSignatories` and `GetActivation` are too (lane m4/roles).
 //! - `GetMyVerification` is the caller's own object.
 //! - `ListProgrammes` and `ListTemplates` open to a tenant admin and to a
 //!   programme manager of any programme. A cell serves one tenant, so
@@ -114,6 +115,10 @@ pub enum ReadKind {
     GetOnboarding,
     // Lane m4reg: the reads the M4 demo pages call (module documentation).
     ListTenantAdmins,
+    // Lane m4/roles: the signatory holders (NOTE 5) and the activation of
+    // the organisation (SoD-18), tenant admin reads as the admin list is.
+    ListSignatories,
+    GetActivation,
     GetMyVerification,
     ListProgrammes,
     ListTemplates,
@@ -126,7 +131,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 45] = [
+    pub const ALL: [ReadKind; 47] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -166,6 +171,8 @@ impl ReadKind {
         ReadKind::GetTenantSettings,
         ReadKind::GetOnboarding,
         ReadKind::ListTenantAdmins,
+        ReadKind::ListSignatories,
+        ReadKind::GetActivation,
         ReadKind::GetMyVerification,
         ReadKind::ListProgrammes,
         ReadKind::ListTemplates,
@@ -363,6 +370,12 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::TenantAdmin,
         OPEN_ALWAYS,
     ),
+    (
+        ReadKind::ListSignatories,
+        ReadRule::TenantAdmin,
+        OPEN_ALWAYS,
+    ),
+    (ReadKind::GetActivation, ReadRule::TenantAdmin, OPEN_ALWAYS),
     (ReadKind::GetMyVerification, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::ListProgrammes, CREATOR_START, OPEN_ALWAYS),
     (ReadKind::ListTemplates, CREATOR_START, OPEN_ALWAYS),

@@ -27,12 +27,14 @@ use fstp_ledger::{MemStore, RecordStore, Seq};
 use fstp_tenant::{
     AgreementVersions, BankInterface, BrandingPackage, CellKind, DomainName, InferenceDefault,
     InvitationId, OnboardingStep, PaymentMode, ProbeKind, ProbeOutcome, RpMode, SettingValue,
-    StepFailure, StepOutcome, StepStatus, StepValues, TenantCommand, Token, TokenDigest,
-    VerifyMethod,
+    SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues, TenantCommand, Token,
+    TokenDigest, VerifyMethod,
 };
 
 const A1: AccountId = AccountId::from_raw(21);
 const A2: AccountId = AccountId::from_raw(22);
+/// The holder of both signatory roles (SoD-14, SoD-15, NOTE 5).
+const SIGNATORY: AccountId = AccountId::from_raw(23);
 const INVITATION: InvitationId = InvitationId::from_raw(9);
 const DIGEST: TokenDigest = TokenDigest::from_bytes([0x5e; 32]);
 const RECORDED: AgreementVersions = AgreementVersions {
@@ -193,7 +195,8 @@ fn values(step: OnboardingStep) -> StepValues {
 }
 
 /// Walks a self-hosted cell to a validated Administrators step with A2
-/// joined, every probe passing.
+/// joined and [`SIGNATORY`] holding both signatory roles, every probe
+/// passing.
 fn walk_self_hosted(r: &mut Run) {
     for step in [
         OnboardingStep::Organisation,
@@ -231,6 +234,16 @@ fn walk_self_hosted(r: &mut Run) {
         },
     )
     .unwrap();
+    for role in SignatoryRole::ALL {
+        r.cmd(
+            A1,
+            TenantCommand::GrantSignatory {
+                role,
+                account: SIGNATORY,
+            },
+        )
+        .unwrap();
+    }
     r.save(values(OnboardingStep::Administrators), None)
         .unwrap();
 }

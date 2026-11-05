@@ -259,6 +259,14 @@ pub enum TenantKind {
     /// `TenantCommand::RecordInferenceConfig`, saved with the Inference
     /// onboarding step.
     RecordInferenceConfig,
+    /// `TenantCommand::GrantSignatory` (NOTE 5).
+    GrantSignatory,
+    /// `TenantCommand::EndSignatory` (SoD-17).
+    EndSignatory,
+    /// `TenantCommand::RequestActivation` (SoD-14, SoD-15).
+    RequestActivation,
+    /// `TenantCommand::ApproveActivation` (SoD-18).
+    ApproveActivation,
 }
 
 /// A finding operation kind, one per `FindingCommand` variant.
@@ -455,6 +463,8 @@ const EVERY: &[RoleOrApplicant] = &[
     R(Role::FinanceApprover),
     R(Role::PaymentReleaser),
     R(Role::ContractSignatory),
+    R(Role::FinancialSignatory),
+    R(Role::LegalSignatory),
     R(Role::Auditor),
 ];
 const ADMIN: &[RoleOrApplicant] = &[R(Role::TenantAdmin)];
@@ -699,6 +709,51 @@ pub const OPS: &[OpSpec] = &[
     OpSpec::read("tenant.list_admins", RK::ListTenantAdmins, "/admin/admins")
         .acting(ADMIN)
         .class(Personal),
+    // NOTE 5, SoD-14 to SoD-17: the tenant-wide signatory roles. Granting or
+    // ending one changes an Operations role, so each is high-risk (I-78).
+    OpSpec::read(
+        "tenant.list_signatories",
+        RK::ListSignatories,
+        "/admin/signatories",
+    )
+    .acting(ADMIN)
+    .class(Personal),
+    OpSpec::new(
+        "tenant.grant_signatory",
+        OpKind::Tenant(TenantKind::GrantSignatory),
+        Post,
+        "/admin/signatories",
+    )
+    .hr()
+    .acting(ADMIN),
+    OpSpec::new(
+        "tenant.end_signatory",
+        OpKind::Tenant(TenantKind::EndSignatory),
+        Delete,
+        "/admin/signatories/{role}/{account}",
+    )
+    .hr()
+    .acting(ADMIN),
+    // SoD-18: one tenant admin requests activation and another approves
+    // it, by analogy with I-67. The high-risk table of `authentication.md`
+    // names programme activation but not the organisation's, so neither
+    // is high-risk (interim, pending Daniel).
+    OpSpec::read("tenant.get_activation", RK::GetActivation, "/admin/activation")
+        .acting(ADMIN),
+    OpSpec::new(
+        "tenant.request_activation",
+        OpKind::Tenant(TenantKind::RequestActivation),
+        Post,
+        "/admin/activation",
+    )
+    .acting(ADMIN),
+    OpSpec::new(
+        "tenant.approve_activation",
+        OpKind::Tenant(TenantKind::ApproveActivation),
+        Post,
+        "/admin/activation/approval",
+    )
+    .acting(ADMIN),
     // I-86: the caller's own verification state, never through MCP.
     OpSpec::read(
         "me.get_verification",

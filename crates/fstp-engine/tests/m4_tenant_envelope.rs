@@ -44,14 +44,16 @@ use fstp_ledger::{Entry, MemStore, RecordStore, Seq};
 use fstp_tenant::{
     ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef, InferenceDefault,
     InvitationId, LoginMethod, McpSettings, OnboardingStep, PaymentMode, RpMode, SettingValue,
-    StepFailure, StepOutcome, StepValues, TenantRecord, Token, TokenDigest, VerifyMethod,
-    encode_record,
+    SignatoryRole, StepFailure, StepOutcome, StepValues, TenantRecord, Token, TokenDigest,
+    VerifyMethod, encode_record,
 };
 
 /// The first tenant admin, named by the provisioning record.
 const A1: AccountId = AccountId::from_raw(11);
 /// The second tenant admin, invited by A1.
 const A2: AccountId = AccountId::from_raw(12);
+/// The holder of both signatory roles (SoD-14, SoD-15, NOTE 5).
+const SIGNATORY: AccountId = AccountId::from_raw(13);
 /// An account outside the tenant admin set.
 const OUTSIDER: AccountId = AccountId::from_raw(31);
 /// The invitation of A2.
@@ -243,7 +245,8 @@ fn p20_record_only() -> Record {
 }
 
 /// A SaaS tenant through every onboarding step to completion with two
-/// admins, one entry per command, one second apart (design 2.2 J0).
+/// admins and a holder of each signatory role, one entry per command, one
+/// second apart (design 2.2 J0).
 fn onboarding() -> Vec<Batch> {
     let mut t = 1_000_000i64;
     let mut next = || {
@@ -266,6 +269,23 @@ fn onboarding() -> Vec<Batch> {
     out.push(batch(next(), validated(OnboardingStep::Channels, A1)));
     out.push(batch(next(), vec![invited()]));
     out.push(batch(next(), vec![added()]));
+    // SoD-14, SoD-15: the Administrators step validates only with a
+    // holder of each signatory role.
+    let at = next();
+    out.push(batch(
+        at,
+        SignatoryRole::ALL
+            .into_iter()
+            .map(|role| {
+                tenant(TenantRecord::SignatoryGranted {
+                    role,
+                    account: SIGNATORY,
+                    by: A1,
+                    at: Timestamp::from_micros(at),
+                })
+            })
+            .collect(),
+    ));
     out.push(batch(next(), validated(OnboardingStep::Administrators, A2)));
     out.push(batch(
         next(),

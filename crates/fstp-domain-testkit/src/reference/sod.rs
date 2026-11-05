@@ -46,7 +46,8 @@
 //!   committee chair) of one account must never be held at the same time.
 //! - SoD-03: an Operations binding and a Receiving binding of one account in
 //!   one programme are never held at the same time. A tenant admin at tenant
-//!   scope counts as holding an Operations role (`Ctx::binds_tenant_admin`).
+//!   scope, or a holder of Financial or Legal signatory (NOTE 5), counts as
+//!   holding an Operations role (`Ctx::binds_tenant_admin`).
 //!   No cooling-off applies to Operations.
 //! - SoD-07: a tenant admin granting a role to their own account needs
 //!   `second_admin` to name the second tenant admin the shell attested in
@@ -215,6 +216,8 @@ pub const fn spec_group(role: Role) -> RefGroup {
         | Role::FinanceApprover
         | Role::PaymentReleaser
         | Role::ContractSignatory
+        | Role::FinancialSignatory
+        | Role::LegalSignatory
         | Role::Auditor => RefGroup::Operations,
     }
 }
@@ -1218,6 +1221,11 @@ pub fn verdict(view: &View, truth: &GroundTruth, ask: &Ask<'_>) -> Verdict {
             let group = spec_group(*role);
             if group == RefGroup::Receiving {
                 return refuse("Receiving roles arise from proposals");
+            }
+            if matches!(role, Role::FinancialSignatory | Role::LegalSignatory) {
+                // NOTE 5: a signatory binding is tenant-wide and names no
+                // programme, so no programme grant records one.
+                return refuse("NOTE 5: a signatory role names no programme");
             }
             if *role == Role::CommitteeMember && organisation.is_none() {
                 return refuse("SoD-10: a committee binding records the reviewer's organisation");

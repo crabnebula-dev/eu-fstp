@@ -18,7 +18,9 @@
 // - The Payments step changes P-20, a tenant setting and so a high-risk
 //   action with its own step-up (`tenant.set_payment_mode`). The
 //   Administrators step invites a tenant admin, also high-risk
-//   (`tenant.invite_admin`).
+//   (`tenant.invite_admin`). It also shows and grants the holders of
+//   Financial signatory and Legal signatory, which it needs (SoD-14,
+//   SoD-15), each grant and end with its own step-up (`./signatories.ts`).
 
 import { h } from "../../core/dom.js";
 import type { Label } from "../../core/i18n.js";
@@ -41,6 +43,7 @@ import {
   type StepView,
 } from "../model.js";
 import { PATHS, link, loadSteps, statusesOf, stepName, stepNav } from "./common.js";
+import { loadSignatories, signatorySection } from "./signatories.js";
 
 /** The text of a save outcome code. */
 export function outcomeText(code: string): Label {
@@ -506,7 +509,14 @@ export function mount(step: OnboardingStep): void {
     }
     parts.push(form, outcome, nextBox);
     if (step === "administrators") {
+      // SoD-14, SoD-15: the step validates only with a holder of each
+      // signatory role, so the holders show and can be granted here.
+      const holders = await loadSignatories(alert);
+      if (holders === null) return;
       parts.push(
+        signatorySection(alert, admins, holders, async () => {
+          await draw();
+        }),
         adminSection(alert, admins, async () => {
           await draw();
         }),

@@ -5,8 +5,8 @@ use fstp_domain::id::{AccountId, LlmConfigId};
 use fstp_domain::time::Timestamp;
 
 use crate::types::{
-    ApprovalId, GrantRef, InvitationId, ModelRef, OnboardingStep, SettingValue, StepOutcome,
-    StepValues, TenantParam, TenantRevision, TokenDigest,
+    ActivationRequestId, ApprovalId, GrantRef, InvitationId, ModelRef, OnboardingStep,
+    SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam, TenantRevision, TokenDigest,
 };
 
 /// The context of one tenant command, supplied by the shell.
@@ -91,8 +91,37 @@ pub enum TenantCommand {
         fallbacks: Vec<ModelRef>,
     },
     /// Finish onboarding (`tenant.complete`, design section 2.2 J0).
-    /// Section 3.5 lists no command for it, so this one is added.
+    /// Section 3.5 lists no command for it, so this one is added. It does
+    /// not activate the organisation: activation needs a request and a
+    /// second tenant admin's approval (SoD-18).
     Complete,
+    /// Grant a tenant-wide signatory role (NOTE 5). High-risk: it grants an
+    /// Operations role (`authentication.md`, I-78).
+    GrantSignatory {
+        /// The role.
+        role: SignatoryRole,
+        /// The account the role binds.
+        account: AccountId,
+    },
+    /// End an account's binding of a signatory role. High-risk: it changes
+    /// an Operations role (I-78).
+    EndSignatory {
+        /// The role.
+        role: SignatoryRole,
+        /// The account whose binding ends.
+        account: AccountId,
+    },
+    /// Request activation of the organisation (SoD-14, SoD-15, SoD-18).
+    RequestActivation {
+        /// The request, drawn by the shell.
+        request: ActivationRequestId,
+    },
+    /// Approve the open activation request as a tenant admin other than
+    /// its requester (SoD-18).
+    ApproveActivation {
+        /// The request approved, which must be the open one.
+        request: ActivationRequestId,
+    },
 }
 
 /// The kind of a tenant command, as the operation registry names it.
@@ -114,11 +143,19 @@ pub enum TenantKind {
     RecordInferenceConfig,
     /// `tenant.complete`.
     Complete,
+    /// `tenant.grant_signatory`.
+    GrantSignatory,
+    /// `tenant.end_signatory`.
+    EndSignatory,
+    /// `tenant.request_activation`.
+    RequestActivation,
+    /// `tenant.approve_activation`.
+    ApproveActivation,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 13] = [
+    pub const ALL: [TenantKind; 17] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -132,6 +169,10 @@ impl TenantKind {
         TenantKind::SetSetting(TenantParam::P74),
         TenantKind::RecordInferenceConfig,
         TenantKind::Complete,
+        TenantKind::GrantSignatory,
+        TenantKind::EndSignatory,
+        TenantKind::RequestActivation,
+        TenantKind::ApproveActivation,
     ];
 
     /// Whether the kind is high-risk and needs a fresh step-up (R-LG-03).
@@ -140,10 +181,19 @@ impl TenantKind {
     /// - A SoD-07 approval is high-risk, as M3 lists it.
     /// - Every setting change: P-70 by `authentication.md`, the others by
     ///   the strict reading (`STRICT_EXTRA_HIGH_RISK`, design 3.6).
+    /// - Granting or ending a signatory role changes an Operations role
+    ///   (`authentication.md`).
+    /// - Not the request or the approval of the organisation's activation:
+    ///   the high-risk table names programme activation only (interim,
+    ///   pending Daniel).
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
-            TenantKind::InviteAdmin | TenantKind::ApproveSelfGrant | TenantKind::SetSetting(_)
+            TenantKind::InviteAdmin
+                | TenantKind::ApproveSelfGrant
+                | TenantKind::SetSetting(_)
+                | TenantKind::GrantSignatory
+                | TenantKind::EndSignatory
         )
     }
 
@@ -181,6 +231,10 @@ impl TenantCommand {
             TenantCommand::SetSetting { value } => TenantKind::SetSetting(value.param()),
             TenantCommand::RecordInferenceConfig { .. } => TenantKind::RecordInferenceConfig,
             TenantCommand::Complete => TenantKind::Complete,
+            TenantCommand::GrantSignatory { .. } => TenantKind::GrantSignatory,
+            TenantCommand::EndSignatory { .. } => TenantKind::EndSignatory,
+            TenantCommand::RequestActivation { .. } => TenantKind::RequestActivation,
+            TenantCommand::ApproveActivation { .. } => TenantKind::ApproveActivation,
         }
     }
 
@@ -275,5 +329,47 @@ pub enum TenantRecord {
     OnboardingCompleted {
         /// The completing admin.
         by: AccountId,
+    },
+    /// A tenant admin granted a signatory role (NOTE 5). The binding starts
+    /// at `at` and names no programme.
+    SignatoryGranted {
+        /// The role.
+        role: SignatoryRole,
+        /// The account the role binds.
+        account: AccountId,
+        /// The granting admin, never `account` (SoD-07).
+        by: AccountId,
+        /// The start of the binding.
+        at: Timestamp,
+    },
+    /// A tenant admin ended a signatory binding at `at`.
+    SignatoryEnded {
+        /// The role.
+        role: SignatoryRole,
+        /// The account whose binding ended.
+        account: AccountId,
+        /// The ending admin.
+        by: AccountId,
+        /// The end of the binding.
+        at: Timestamp,
+    },
+    /// A tenant admin requested activation of the organisation.
+    ActivationRequested {
+        /// The request.
+        request: ActivationRequestId,
+        /// The requesting admin.
+        by: AccountId,
+        /// The instant of the request.
+        at: Timestamp,
+    },
+    /// A second tenant admin approved the open request, so the
+    /// organisation is active (SoD-18).
+    ActivationApproved {
+        /// The approved request.
+        request: ActivationRequestId,
+        /// The approving admin.
+        by: AccountId,
+        /// The instant of the approval.
+        at: Timestamp,
     },
 }

@@ -310,6 +310,44 @@ pub enum Op {
         /// The issuing account.
         actor: AccountId,
     },
+    /// A tenant admin grants a tenant-wide signatory role (NOTE 5 of
+    /// `roles-and-sod.md`). High-risk: it grants an Operations role.
+    GrantSignatory {
+        /// The issuing account.
+        actor: AccountId,
+        /// The channel.
+        via: Via,
+        /// The account the role binds.
+        account: AccountId,
+        /// The role.
+        role: Signatory,
+    },
+    /// A tenant admin ends a signatory binding. High-risk: it changes an
+    /// Operations role.
+    EndSignatory {
+        /// The issuing account.
+        actor: AccountId,
+        /// The channel.
+        via: Via,
+        /// The account whose binding ends.
+        account: AccountId,
+        /// The role.
+        role: Signatory,
+    },
+}
+
+/// A tenant-wide signatory role of the roles table (SA-01, NOTE 5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Signatory {
+    /// Financial signatory (SoD-14).
+    Financial,
+    /// Legal signatory (SoD-15).
+    Legal,
+}
+
+impl Signatory {
+    /// Both roles.
+    pub const ALL: [Signatory; 2] = [Signatory::Financial, Signatory::Legal];
 }
 
 impl Op {
@@ -322,6 +360,8 @@ impl Op {
             | Op::UseSelfGrantApproval { actor, .. }
             | Op::SetSetting { actor, .. }
             | Op::RecordInference { actor, .. }
+            | Op::GrantSignatory { actor, .. }
+            | Op::EndSignatory { actor, .. }
             | Op::Complete { actor } => *actor,
             Op::AcceptAdminInvitation { account, .. } => *account,
         }
@@ -334,7 +374,9 @@ impl Op {
             | Op::AcceptAdminInvitation { via, .. }
             | Op::ApproveSelfGrant { via, .. }
             | Op::UseSelfGrantApproval { via, .. }
-            | Op::SetSetting { via, .. } => *via,
+            | Op::SetSetting { via, .. }
+            | Op::GrantSignatory { via, .. }
+            | Op::EndSignatory { via, .. } => *via,
             _ => Via::Web,
         }
     }
@@ -439,6 +481,8 @@ pub struct Observed {
     pub inference: Option<Inference>,
     /// Whether onboarding was completed.
     pub completed: bool,
+    /// The signatory bindings held, by role and account (NOTE 5).
+    pub signatories: BTreeSet<(Signatory, AccountId)>,
 }
 
 /// One appended record, in the test vocabulary.
@@ -491,6 +535,34 @@ pub enum RecordView {
     /// The completion record that design section 3.5 lacks (gap).
     OnboardingCompleted {
         /// The completing admin.
+        by: AccountId,
+    },
+    /// A signatory grant.
+    SignatoryGranted {
+        /// The role.
+        role: Signatory,
+        /// The account it binds.
+        account: AccountId,
+        /// The granting admin.
+        by: AccountId,
+    },
+    /// The end of a signatory binding.
+    SignatoryEnded {
+        /// The role.
+        role: Signatory,
+        /// The account whose binding ended.
+        account: AccountId,
+        /// The ending admin.
+        by: AccountId,
+    },
+    /// An activation request (SoD-18).
+    ActivationRequested {
+        /// The requesting admin.
+        by: AccountId,
+    },
+    /// An activation approval (SoD-18).
+    ActivationApproved {
+        /// The approving admin.
         by: AccountId,
     },
 }

@@ -37,9 +37,13 @@ import {
   ONBOARDING_STEPS,
   ONBOARDING_UI,
   PEOPLE_UI,
+  SIGNATORY_ROLES,
   STEPUP,
+  signatoryHolder,
+  signatoryRoleChoice,
   type CreatorStepName,
   type OnboardingStepName,
+  type SignatoryRoleName,
 } from './contract';
 
 /** The repository root. */
@@ -590,6 +594,53 @@ export async function inviteSecondAdmin(
   return { a2, a2Account };
 }
 
+/**
+ * `granter` grants signatory role `role` to `account` on the
+ * Administrators step, with its own step-up (I-78), and sees the new
+ * holder listed. A grant to one's own account is refused (SoD-07, NOTE 5),
+ * so `granter` is a tenant admin other than `account`.
+ */
+export async function grantSignatory(
+  granter: Person,
+  origin: string,
+  account: string,
+  role: SignatoryRoleName,
+): Promise<void> {
+  const page = granter.page;
+  await page.goto(`${origin}${APP.onboarding('administrators')}`);
+  await expect(page.locator(ONBOARDING_UI.signatories)).toBeVisible();
+  await page.locator(ONBOARDING_UI.signatoryAccount).selectOption(account);
+  await page.locator(signatoryRoleChoice(role)).check();
+  await withStepUp(page, page.locator(ONBOARDING_UI.signatoryGrant));
+  await expect(page.locator(signatoryHolder(role, account))).toHaveCount(1);
+}
+
+/**
+ * `granter` grants Financial signatory and Legal signatory to `account`,
+ * so the Administrators step can validate (SoD-14, SoD-15). One account
+ * may hold both (SoD-16).
+ */
+export async function grantSignatories(granter: Person, origin: string, account: string): Promise<void> {
+  for (const role of SIGNATORY_ROLES) await grantSignatory(granter, origin, account, role);
+}
+
+/**
+ * Activates the organisation on the summary page once onboarding is
+ * complete: `requester` requests activation and `approver`, a different
+ * tenant admin, approves it (SoD-18).
+ */
+export async function activateOrganisation(requester: Person, approver: Person, origin: string): Promise<void> {
+  const state = (p: Person): Locator => p.page.locator(ONBOARDING_UI.activationState);
+  await requester.page.goto(`${origin}${APP.onboardingSummary}`);
+  await expect(state(requester)).toHaveAttribute('data-state', 'not_requested');
+  await requester.page.locator(ONBOARDING_UI.activationRequest).click();
+  await expect(state(requester)).toHaveAttribute('data-state', 'requested');
+  await approver.page.goto(`${origin}${APP.onboardingSummary}`);
+  await expect(state(approver)).toHaveAttribute('data-state', 'requested');
+  await approver.page.locator(ONBOARDING_UI.activationApprove).click();
+  await expect(state(approver)).toHaveAttribute('data-state', 'active');
+}
+
 /** Saves the Administrators step and completes onboarding on the summary page. */
 export async function completeOnboarding(page: Page, origin: string): Promise<void> {
   await page.goto(`${origin}${APP.onboarding('administrators')}`);
@@ -600,7 +651,12 @@ export async function completeOnboarding(page: Page, origin: string): Promise<vo
   await expect(page.locator(ONBOARDING_UI.completeOutcome)).toHaveAttribute('data-outcome', 'completed');
 }
 
-/** J0 through the pages: a fresh cell with a tenant whose onboarding completed. */
+/**
+ * J0 through the pages: a fresh cell with a tenant whose onboarding
+ * completed and whose organisation is active. A2 grants both signatory
+ * roles to A1 (SoD-07, SoD-14, SoD-15). A1 requests activation and A2
+ * approves it (SoD-18).
+ */
 export async function onboardedTenant(
   person: () => Promise<Page>,
   control: M4Control,
@@ -615,7 +671,9 @@ export async function onboardedTenant(
     a1,
     opts.a2SameIdentityAsA1 === true ? a1Account : undefined,
   );
+  await grantSignatories(a2, origin, a1Account);
   await completeOnboarding(a1.page, origin);
+  await activateOrganisation(a1, a2, origin);
   return { cell: control.cell, control, a1, a2, a1Account, a2Account };
 }
 

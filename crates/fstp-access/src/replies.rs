@@ -149,11 +149,14 @@ const OWN_STATE_NAMES: &[&str] = &[
 ];
 
 /// Whether creator step 9 can invite to `role`: every role outside the
-/// Receiving group, except tenant admin (`programme-creator.md` step 9,
+/// Receiving group, except tenant admin and the two tenant-wide
+/// signatory roles (NOTE 5) (`programme-creator.md` step 9,
 /// SoD-09). This is the rule `fstp_creator::decide_creator` applies to
 /// `Invite`, so the landing exists for every invitation it records.
 pub const fn invitable(role: Role) -> bool {
-    !matches!(role.group(), Group::Receiving) && !matches!(role, Role::TenantAdmin)
+    !matches!(role.group(), Group::Receiving)
+        && !matches!(role, Role::TenantAdmin)
+        && !role.tenant_wide_signatory()
 }
 
 /// The role as the wire spells it: the role in snake case.
@@ -172,6 +175,8 @@ pub const fn role_wire_name(role: Role) -> &'static str {
         Role::FinanceApprover => "finance_approver",
         Role::PaymentReleaser => "payment_releaser",
         Role::ContractSignatory => "contract_signatory",
+        Role::FinancialSignatory => "financial_signatory",
+        Role::LegalSignatory => "legal_signatory",
         Role::Auditor => "auditor",
     }
 }
@@ -192,6 +197,8 @@ const ROLE_NAMES: &[&str] = &[
     "finance_approver",
     "payment_releaser",
     "contract_signatory",
+    "financial_signatory",
+    "legal_signatory",
     "auditor",
 ];
 
@@ -334,6 +341,8 @@ const ONBOARDING_STEP: Shape = Shape::Object(&[
             "probe_failed",
             "prober_absent",
             "too_few_admins",
+            "no_financial_signatory",
+            "no_legal_signatory",
             "agreements_not_recorded",
             "payment_mode_unset",
             "unavailable_m5",
@@ -640,6 +649,37 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 m("verified", Shape::Bool),
             ])),
         )]),
+    ),
+    // Lane m4/roles. NOTE 5: each signatory binding by account, role and
+    // pseudonymous handle. A binding is tenant-wide, so no row names a
+    // programme.
+    (
+        "tenant.list_signatories",
+        Shape::Object(&[m(
+            "signatories",
+            Shape::Array(&Shape::Object(&[
+                m("account", Shape::Id),
+                m(
+                    "role",
+                    Shape::Enum(&["financial_signatory", "legal_signatory"]),
+                ),
+                m("handle", Shape::String),
+            ])),
+        )]),
+    ),
+    // SoD-18: the activation state, its open or approved request, and the
+    // requesting and approving admins by account.
+    (
+        "tenant.get_activation",
+        Shape::Object(&[
+            m(
+                "state",
+                Shape::Enum(&["not_requested", "requested", "active"]),
+            ),
+            m("request", Shape::Nullable(&Shape::Id)),
+            m("requested_by", Shape::Nullable(&Shape::Id)),
+            m("approved_by", Shape::Nullable(&Shape::Id)),
+        ]),
     ),
     // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its
     // save. The values are those of `fstp-tenant`'s codec, with the data

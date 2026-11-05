@@ -803,7 +803,7 @@ impl Rule {
     /// The roles through which the rule can admit a call (P-74, Q42).
     /// `None` is an account acting with no binding yet.
     pub fn acting(self) -> &'static [Option<Role>] {
-        const EVERY: [Option<Role>; 15] = [
+        const EVERY: [Option<Role>; 17] = [
             None,
             Some(Role::ProgrammeManager),
             Some(Role::CallDrafter),
@@ -818,6 +818,8 @@ impl Rule {
             Some(Role::FinanceApprover),
             Some(Role::PaymentReleaser),
             Some(Role::ContractSignatory),
+            Some(Role::FinancialSignatory),
+            Some(Role::LegalSignatory),
             Some(Role::Auditor),
         ];
         const TEAM: [Option<Role>; 3] = [
@@ -1009,6 +1011,22 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // each verified identity, since onboarding finishes only with two
     // verified admins (J0, SoD-07).
     RefOp::read("tenant.list_admins", T::None, R::TenantAdmin),
+    // Lane m4/roles (SA-01, NOTE 5): the tenant-wide signatory roles. Only a
+    // tenant admin lists, grants or ends them (Q31), and a grant or an end
+    // changes an Operations role, so it is high-risk (I-78). SoD-07 and the
+    // re-grant rule judge the grantee, which the shell refuses as a guard
+    // of the request, never the caller.
+    RefOp::read("tenant.list_signatories", T::None, R::TenantAdmin),
+    RefOp::act("tenant.grant_signatory", T::None, R::TenantAdmin).hr(),
+    RefOp::act("tenant.end_signatory", T::None, R::TenantAdmin).hr(),
+    // SoD-18: any tenant admin reads, requests and approves activation.
+    // Whether the approver is the requester, and whether both signatory
+    // roles are held (SoD-14, SoD-15), are judged on the request. Neither
+    // is high-risk: the table of `authentication.md` names programme
+    // activation only (interim, pending Daniel).
+    RefOp::read("tenant.get_activation", T::None, R::TenantAdmin),
+    RefOp::act("tenant.request_activation", T::None, R::TenantAdmin),
+    RefOp::act("tenant.approve_activation", T::None, R::TenantAdmin),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.

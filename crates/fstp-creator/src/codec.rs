@@ -343,7 +343,7 @@ fn revision(v: &Value) -> R<DraftRevision> {
     ))
 }
 
-const ROLE_NAMES: [(Role, &str); 14] = [
+const ROLE_NAMES: [(Role, &str); 16] = [
     (Role::ProgrammeManager, "ProgrammeManager"),
     (Role::CallDrafter, "CallDrafter"),
     (Role::FstpCoordinator, "FstpCoordinator"),
@@ -357,6 +357,8 @@ const ROLE_NAMES: [(Role, &str); 14] = [
     (Role::FinanceApprover, "FinanceApprover"),
     (Role::PaymentReleaser, "PaymentReleaser"),
     (Role::ContractSignatory, "ContractSignatory"),
+    (Role::FinancialSignatory, "FinancialSignatory"),
+    (Role::LegalSignatory, "LegalSignatory"),
     (Role::Auditor, "Auditor"),
 ];
 
