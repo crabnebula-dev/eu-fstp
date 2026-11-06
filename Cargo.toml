@@ -58,6 +58,8 @@ members = [
     "crates/fstp-api-testkit",
     # M4 journey layer, SPEC/12-journey-ui.md section 14 and ADR-015.
     "crates/fstp-journey",
+    # M5, docs/handoff/m5-design.md section 10, lane L-PDF.
+    "crates/fstp-pdf",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -90,6 +92,12 @@ zeroize = { version = "=1.9.1" }
 # ADR-001 Tier B, A2 and A3: git dependency pinned to one full commit, default features only.
 # Release-gated (I-74). Only fstp-crypto depends on it (design section 2.4 rule 8).
 moduletto = { git = "https://github.com/crabnebula-dev/moduletto", rev = "6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683" }
+# ADR-001 Tier B, record of 2026-11-06 (M5 lane L-PDF): the RustCrypto formats crates for
+# CMS signed attributes and certificate parsing in fstp-pki only. Release-gated (I-74).
+der = { version = "=0.7.10", default-features = false, features = ["alloc", "oid"] }
+spki = { version = "=0.7.3", default-features = false, features = ["alloc"] }
+x509-cert = { version = "=0.2.5", default-features = false }
+cms = { version = "=0.2.3", default-features = false }
 
 # In-house crates.
 fstp-prop = { path = "crates/fstp-prop" }
@@ -142,6 +150,8 @@ fstp-tenant = { path = "crates/fstp-tenant" }
 fstp-access = { path = "crates/fstp-access" }
 fstp-api-core = { path = "crates/fstp-api-core" }
 fstp-journey = { path = "crates/fstp-journey" }
+# M5, docs/handoff/m5-design.md section 10.
+fstp-pdf = { path = "crates/fstp-pdf" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }

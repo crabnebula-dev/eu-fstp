@@ -123,6 +123,10 @@ Exact versions and resolved trees at first use. `deps/allowlist.txt` ties each c
 | rustls-webpki | A | 0.103.16 (through rustls) | `alloc`, `aws-lc-rs`, `std` | 2026-10-24, M1, through rustls |
 | zeroize | A tree, root since A1 | 1.9.1 (`=1.9.1`) | Default features, which enable `alloc`. Resolved: `alloc`, `default`. `derive` is refused | 2026-10-28, M3 lane W0: direct dependency of `fstp-crypto`, `fstp-keys`, `fstp-custody` and `fstp-keyd` |
 | moduletto | B | 0.1.0, git commit `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` (moved 2026-10-29 from `46754f2fccb0a501be278fb2fab63b670101a33d`, A2 pin move record) | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
+| der | B | 0.7.10 (`=0.7.10`) | `alloc` and `oid`, with default features off. cms and x509-cert add `derive` and `pem`. Resolved: `alloc`, `derive`, `flagset`, `oid`, `pem`, `zeroize` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
+| spki | B | 0.7.3 (`=0.7.3`) | `alloc`, with default features off. x509-cert adds `pem`. Resolved: `alloc`, `pem` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
+| x509-cert | B | 0.2.5 (`=0.2.5`) | Default features off. cms adds `pem`. Resolved: `pem`. `std`, `builder`, `hazmat`, `sct` and `arbitrary` are refused | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
+| cms | B | 0.2.3 (`=0.2.3`) | Default features off; cms has no default features. Resolved: none. `builder`, `std` and `pem` are refused, since `builder` would bring the not-allowed `rsa` crate | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
 
 Resolved tree. The runtime and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu, and are the same on both. The platform row, added 2026-10-25, covers every other target.
 
@@ -181,6 +185,16 @@ M3 first-use record, 2026-10-28 (lane W0, the dependency owner of design section
 - `libm 0.2.16` resolves with `arch` and `default` and has no dependencies. It enters through moduletto's `alloc` feature.
 - `zeroize 1.9.1` is unchanged in version, checksum and features (`alloc`, `default`). A1 names `fstp-custody` and `fstp-keyd` as direct users. Design sections 2.2 and 3.2 also give secret types that zeroize on drop to `fstp-crypto` and to `fstp-keys` (`open_blob` returns `Zeroizing<Vec<u8>>`). This line records those two crates as direct users too, as A1 asks of any further crate.
 - Test-only edges, with no new package and no feature change: `fstp-celltest` takes aws-lc-rs as a normal dependency for the ML-KEM-768, ML-DSA-65 and X25519 oracles in its library (A6). The crate is test only and never ships (layering rule 9). `fstp-pki` takes aws-lc-rs, rustls-pki-types and rustls-webpki as dev-dependencies for its round-trip tests. rustls-webpki does not re-export rustls-pki-types, and its path validation takes `UnixTime` and `CertificateDer` from that crate. This test-only edge is outside the "no rustls-pki-types edge from fstp-pki" rule of design section 2.5, which concerns PEM in production code. The `fstp-pki` fuzz project, a separate workspace, takes rustls-pki-types 1.15.1 and rustls-webpki 0.103.16 with the workspace features for its `cert_build_roundtrip` target (design section 15). Its `Cargo.lock` gains only entries that the workspace `Cargo.lock` already holds. rustls-webpki keeps the resolved set `alloc`, `aws-lc-rs`, `std`, and rustls-pki-types keeps `alloc`, `default`, `std`.
+
+M5 first-use record, 2026-11-06 (lane L-PDF, M5 design sections 3.1 and 9):
+
+- `fstp-pki` takes `der 0.7.10`, `spki 0.7.3`, `x509-cert 0.2.5` and `cms 0.2.3` as direct dependencies for its `cms` module. The module encodes the PAdES signed attributes, verifies a signature value through `fstp-crypto` (aws-lc-rs), assembles the detached SignedData and decodes it strictly. It creates no signature (`contracts.md`).
+- The tree covers x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu and is the same on both (`cargo tree --locked --target all -e normal,build -p fstp-pki`, 2026-11-06). New runtime packages: `der 0.7.10`, `spki 0.7.3`, `x509-cert 0.2.5`, `cms 0.2.3`, `const-oid 0.9.6` (features `db`, `default`), `flagset 0.4.7` (`default`), `pem-rfc7468 0.7.0` (`alloc`, `default`) and `base64ct 1.8.3` (`alloc`, `default`).
+- Proc-macro packages, reached only through the `derive` feature that cms and x509-cert enable on der: `der_derive 0.7.3`, `proc-macro2 1.0.107`, `quote 1.0.47`, `syn 2.0.119` (features `clone-impls`, `default`, `derive`, `extra-traits`, `parsing`, `printing`, `proc-macro`) and `unicode-ident 1.0.27`. They run at compile time only. deps-check counts a proc-macro edge from a runtime crate as `runtime`, so `deps/allowlist.txt` gives them that role.
+- `zeroize 1.9.1` is reached through der's `pem` feature too. Its version, checksum and features (`alloc`, `default`) do not change.
+- Checksums are in `deps/allowlist.txt`. `deps/adr-roots.txt` gains the four roots with the resolved features above. `deps/tier-b-confirmations.txt` already names all four, and holds no confirmation, so `deps-check --release` fails on them (I-74).
+- Every binary that links `fstp-pki`, such as `fstp-control` and `fstp-cell`, now ships these Tier B crates. The release gate applies to each of them.
+- Fuzz: `cms_signed_data_decode` in `crates/fstp-pki/fuzz` covers the decoder, as Verification asks of every Tier B parser. The five fuzz lockfiles that reach `fstp-pki` gain the same thirteen entries and nothing else.
 
 ## Amendment of 2026-10-28: M3 dependencies
 

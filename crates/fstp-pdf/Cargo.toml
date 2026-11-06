@@ -1,0 +1,17 @@
+[package]
+name = "fstp-pdf"
+description = "Deterministic PDF writer, TrueType reader and strict signature increment verifier (M5 design sections 3.1 to 3.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
