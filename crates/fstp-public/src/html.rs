@@ -26,6 +26,10 @@
 //! - A call page links its Guide, `/p/{slug}/calls/{call}/guide`, and
 //!   holds the AI disclosure section, `section#ai-disclosure`, whose
 //!   wording is a `TODO(legal)` catalogue text (R-LA-08).
+//! - A call page holds the route of a proposal, `section#route`, as
+//!   static SVG from `fstp_html::route::public_svg` with no viewer position
+//!   (R-JV-06). Its texts are catalogue words and code constants, so it
+//!   writes no dynamic text (I-87).
 //! - The Guide page is the call's published Guide document, byte for byte.
 //! - A page that names a call the view does not hold is
 //!   [`PublicError::NotFound`].
@@ -111,6 +115,10 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.call.guide", "Read the Guide for Applicants"),
     label("public.call.apply", "Sign in to apply"),
     label("public.call.signup", "Create an account"),
+    label(
+        "public.route.heading",
+        "How a proposal moves through a call",
+    ),
     label("public.ai.heading", "Use of AI tools"),
     label("public.aggregates.heading", "Grants so far"),
     label(
@@ -149,10 +157,16 @@ const ENTRIES: &[EntrySource<'static>] = &[
 fn catalogues() -> Result<&'static Catalogues, PublicError> {
     static CATS: OnceLock<Result<Catalogues, HtmlError>> = OnceLock::new();
     CATS.get_or_init(|| {
+        // The route map reads the renderer's own plain-pack entries (R-JV-06).
+        let entries: Vec<EntrySource<'static>> = ENTRIES
+            .iter()
+            .chain(fstp_html::route::CATALOGUE_EN)
+            .copied()
+            .collect();
         Catalogues::new(
             &CatalogueSource {
                 locale: LOCALE,
-                entries: ENTRIES,
+                entries: &entries,
             },
             &[],
         )
@@ -453,6 +467,18 @@ fn call_page(view: &PublicView, paths: &Paths, c: &PublicCall) -> Result<Element
             ),
         );
     }
+    // R-JV-06: the route as static SVG, with no viewer position.
+    main.push_child(
+        Element::new("section")
+            .attr("id", "route")
+            .attr("aria-labelledby", "route-heading")
+            .child(el("h2", "public.route.heading").attr("id", "route-heading"))
+            .child(
+                Element::new("div")
+                    .attr("class", "route-frame")
+                    .child(crate::route::map().map_err(|e| html_err(&e))?),
+            ),
+    );
     main.push_child(
         Element::new("section")
             .attr("id", "ai-disclosure")

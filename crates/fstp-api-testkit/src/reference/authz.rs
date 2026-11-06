@@ -806,7 +806,15 @@ pub enum Rule {
     /// 5). Interim, fail closed, design section 15.0 (lane j2).
     /// Which entries show is the visibility function's per request
     /// (I-93), not an authorisation rule, so it is not judged here.
+    /// Daniel, 2026-11-06: the lead and the team member read in every
+    /// state, a terminal one included, after their bindings end there.
+    /// The guardian's binding ends there too, and the decision names no
+    /// guardian, so the guardian reads only while X is under way.
     Journey,
+    /// The route map of X (ADR-015 amendment of 2026-11-06, section 8.1,
+    /// O-58): the lead and the team member in every state, a terminal one
+    /// included (Daniel, 2026-11-06). The guardian gets no map.
+    RouteMap,
 }
 
 impl Rule {
@@ -862,7 +870,9 @@ impl Rule {
                 Some(Role::Guardian),
             ],
             Rule::Lead => &[Some(Role::Applicant)],
-            Rule::Team | Rule::NegotiationTeam => &TEAM,
+            // The registry names the team for the route map. The guardian is
+            // then refused by the rule itself (section 8.1).
+            Rule::Team | Rule::NegotiationTeam | Rule::RouteMap => &TEAM,
             Rule::Guardian => &[Some(Role::Guardian)],
             Rule::Assignee
             | Rule::ReviewerAct
@@ -1197,6 +1207,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane j2, `SPEC/12-journey-ui.md` section 10: web only.
     RefOp::read("proposal.journey", T::Proposal, R::Journey),
     RefOp::read("proposal.diary", T::Proposal, R::Journey),
+    // Lane j4, ADR-015 amendment of 2026-11-06: the map is the team's
+    // (section 8.1, O-58), and stays the former team's (Daniel,
+    // 2026-11-06). Web only.
+    RefOp::read("proposal.route_map", T::Proposal, R::RouteMap),
     RefOp::act("guardian.begin_consent", T::Proposal, R::Guardian),
     RefOp::read("negotiation.view", T::Proposal, R::NegotiationTeam),
     RefOp::act("negotiation.acknowledge_notice", T::Proposal, R::Lead),
@@ -1409,8 +1423,13 @@ fn admit(
                         | Who::ContractSignatory
                         | Who::Auditor
                 );
-            open(who.team() || (staff && x.is_some_and(|s| s != StateTag::Draft)))
+            // The guardian's binding ends at a terminal state (Daniel,
+            // 2026-11-06), the lead's and the member's give a read-only view.
+            let team = matches!(who, Who::Lead | Who::TeamMember)
+                || (who == Who::Guardian && !x.is_some_and(StateTag::is_terminal));
+            open(team || (staff && x.is_some_and(|s| s != StateTag::Draft)))
         }
+        Rule::RouteMap => open(matches!(who, Who::Lead | Who::TeamMember)),
     }
 }
 

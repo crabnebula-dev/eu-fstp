@@ -121,7 +121,8 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
-/// `proposal.journey` and `proposal.diary` (lane j2, ADR-015).
+/// `proposal.journey` and `proposal.diary` (lane j2, ADR-015), and
+/// `proposal.route_map` (lane j4).
 pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
@@ -1588,6 +1589,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let p = proposal_param(call, op)?;
             ReadModel::Diary(journey::diary(call, p, clearance.rule())?)
         }
+        // Lane j4, ADR-015 amendment of 2026-11-06 (section 8.1, O-58, I-97).
+        ReadKind::GetRouteMap => {
+            let p = proposal_param(call, op)?;
+            ReadModel::RouteMap(journey::route_map(call, p, clearance.rule())?)
+        }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1619,6 +1625,33 @@ enum Ended {
 /// even where it still counts as held, and a voided one never counts.
 fn gives_final_read(b: &Binding) -> bool {
     matches!(b.status, BindingStatus::Active)
+}
+
+/// The roles through which a former lead or team member reads the route
+/// of `proposal` in a terminal state (Daniel, 2026-11-06): each ended
+/// Receiving binding of lead or team member that gives the final-state
+/// read. It is empty while the proposal is under way. The read rule
+/// `ReadRule::FormerTeam` admits the same callers, and no binding is
+/// revived, so every command stays refused.
+fn former_team_roles(state: &EngineState, account: AccountId, proposal: ProposalId) -> Vec<Role> {
+    let terminal = fstp_domain::view::proposal_state(&state.core, proposal)
+        .is_some_and(fstp_domain::StateTag::is_terminal);
+    if !terminal {
+        return Vec::new();
+    }
+    state
+        .core
+        .roster()
+        .ended()
+        .map(|(_, e)| e.binding)
+        .filter(|b| {
+            b.account == account
+                && b.proposal() == Some(proposal)
+                && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+                && gives_final_read(b)
+        })
+        .map(|b| b.role)
+        .collect()
 }
 
 /// The caller's proposals: one per Receiving binding active at `now`,

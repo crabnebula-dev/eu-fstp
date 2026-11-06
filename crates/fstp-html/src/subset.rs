@@ -260,8 +260,11 @@ fn is_aria_name(attr: &str) -> bool {
 //   `role`, `tabindex`, `lang`, `dir` and `aria-` names. No `on`
 //   handler, no `style` and no namespaced name;
 // - `href` is a safe URL, `marker-start` and `marker-end` are
-//   `url(#name)`, and `fill` is `currentColor` or `none`, so no attribute
-//   reaches another resource or carries a colour outside the tokens;
+//   `url(#name)`, `fill` and `stroke` are `currentColor` or `none`, and
+//   `font-size` is a whole number from 1 to 99. So no attribute reaches
+//   another resource or carries a colour outside the tokens. The public
+//   map paints itself with these, since `/p` links no stylesheet (lane
+//   j4, review J4-REV-1, I-70);
 // - no `a` inside another `a`.
 
 /// The elements of the closed SVG subset. `svg` opens it, and every
@@ -293,11 +296,19 @@ fn svg_element_attrs(el: &str) -> &'static [&'static str] {
             "markerheight",
             "orient",
         ],
-        "path" => &["d", "marker-start", "marker-end", "fill"],
-        "line" => &["x1", "y1", "x2", "y2", "marker-start", "marker-end"],
-        "rect" => &["x", "y", "width", "height", "rx", "ry"],
-        "circle" => &["cx", "cy", "r"],
-        "text" => &["x", "y", "dx", "dy", "text-anchor"],
+        "path" => &["d", "marker-start", "marker-end", "fill", "stroke"],
+        "line" => &[
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "marker-start",
+            "marker-end",
+            "stroke",
+        ],
+        "rect" => &["x", "y", "width", "height", "rx", "ry", "fill", "stroke"],
+        "circle" => &["cx", "cy", "r", "fill", "stroke"],
+        "text" => &["x", "y", "dx", "dy", "text-anchor", "fill", "font-size"],
         "tspan" => &["x", "y", "dx", "dy"],
         _ => &[],
     }
@@ -331,19 +342,34 @@ fn is_local_url_ref(value: &str) -> bool {
 }
 
 /// Whether the SVG attributes whose value has a rule of its own carry an
-/// allowed value: markers point inside the document, and `fill` is
-/// `currentColor` or `none`. Other attributes pass.
+/// allowed value: markers point inside the document, `fill` and `stroke`
+/// are `currentColor` or `none`, and `font-size` is a whole number from 1
+/// to 99. Other attributes pass.
 pub(crate) fn svg_value_ok(attr: &str, value: &str) -> bool {
     match attr {
         "marker-start" | "marker-end" => is_local_url_ref(value),
-        "fill" => value == "currentColor" || value == "none",
+        "fill" | "stroke" => value == "currentColor" || value == "none",
+        "font-size" => is_small_whole(value),
         _ => true,
     }
 }
 
 /// Whether `attr` is an SVG attribute whose value has a rule of its own.
 pub(crate) fn svg_value_ruled(attr: &str) -> bool {
-    matches!(attr, "marker-start" | "marker-end" | "fill")
+    matches!(
+        attr,
+        "marker-start" | "marker-end" | "fill" | "stroke" | "font-size"
+    )
+}
+
+/// Whether `value` is a whole number from 1 to 99, with no sign, unit or
+/// leading zero.
+fn is_small_whole(value: &str) -> bool {
+    match value.as_bytes() {
+        [a] => (b'1'..=b'9').contains(a),
+        [a, b] => (b'1'..=b'9').contains(a) && b.is_ascii_digit(),
+        _ => false,
+    }
 }
 
 /// The SVG elements a parent inside `svg` may hold.

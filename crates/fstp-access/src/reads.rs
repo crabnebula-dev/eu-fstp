@@ -65,12 +65,17 @@
 //! (I-21). Interim, pending Daniel: call drafters, tenant admins and the
 //! financial and legal signatories read no diary. Section 7.2 names no
 //! signatory, and both bind tenant-wide (roles-and-sod.md NOTE 5).
+//!
+//! Daniel, 2026-11-06: the Receiving bindings still end at a terminal
+//! state, but the former lead and team members keep a read-only view of
+//! `GetJourney`, `GetDiary` and `GetRouteMap` of that proposal
+//! (`ReadRule::FormerTeam`). No command reads this rule.
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
 use fstp_domain::id::{AccountId, AssignmentId, CallId, ProgrammeId, ProposalId};
 use fstp_domain::policy::{AgentContentAccess, ReadAccess};
-use fstp_domain::roles::{BindingScope, Group, Role};
+use fstp_domain::roles::{BindingScope, BindingStatus, Group, Role};
 use fstp_domain::time::Timestamp;
 use fstp_domain::{State, StateTag};
 use fstp_engine::EngineState;
@@ -140,11 +145,14 @@ pub enum ReadKind {
     // (`SPEC/12-journey-ui.md` section 10, module documentation).
     GetJourney,
     GetDiary,
+    // Lane j4 (ADR-015 amendment of 2026-11-06): the server's checked
+    // map tree of one proposal, for its team (section 8.1, O-58).
+    GetRouteMap,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 49] = [
+    pub const ALL: [ReadKind; 50] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -194,6 +202,7 @@ impl ReadKind {
         ReadKind::ListMyRoles,
         ReadKind::GetJourney,
         ReadKind::GetDiary,
+        ReadKind::GetRouteMap,
     ];
 }
 
@@ -206,6 +215,12 @@ pub enum ReadRule {
     /// The applicant team of the proposal: lead, team members and guardian,
     /// through an active Receiving binding.
     Team,
+    /// A former lead or team member of the proposal, in a terminal state:
+    /// their Receiving binding was active when the domain ended it there
+    /// (`roles-and-sod.md` Receiving bindings). A read-only view of the
+    /// outcome, as `proposal.list_own` gives it, which revives no binding
+    /// (Daniel, 2026-11-06, O-59).
+    FormerTeam,
     /// The lead of the proposal.
     Lead,
     /// The assignee of the target assignment, declared free of conflict,
@@ -267,6 +282,7 @@ const CREATOR_START: ReadRule = ReadRule::AnyOf(&[
 /// documentation).
 const JOURNEY_READER: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Team,
+    ReadRule::FormerTeam,
     ReadRule::Holder(Role::FstpCoordinator),
     ReadRule::Holder(Role::ProgrammeManager),
     ReadRule::Holder(Role::CommitteeMember),
@@ -427,6 +443,14 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // dispatch applies the visibility function per entry (I-93).
     (ReadKind::GetJourney, JOURNEY_READER, OPEN_ALWAYS),
     (ReadKind::GetDiary, JOURNEY_READER, OPEN_ALWAYS),
+    // Lane j4, section 8.1, O-58: the map is the team's alone. Judging
+    // roles keep the strip of `proposal.journey` (section 8.3). Daniel,
+    // 2026-11-06: the former team keeps a read-only view of all three.
+    (
+        ReadKind::GetRouteMap,
+        ReadRule::AnyOf(&[ReadRule::Team, ReadRule::FormerTeam]),
+        OPEN_ALWAYS,
+    ),
 ];
 
 /// The row of `READ_RULES` for `kind`.
@@ -742,6 +766,10 @@ fn judge(
             Some(x) => open(team(state, account, x, now)),
             None => deny(DenyRule::Rac01),
         },
+        ReadRule::FormerTeam => match (ctx.proposal, ctx.state) {
+            (Some(x), Some(s)) if s.is_terminal() => open(former_team(state, account, x)),
+            _ => deny(DenyRule::Rac01),
+        },
         ReadRule::Lead => match ctx.proposal {
             Some(x) => open(receiving(state, account, x, Role::Applicant, now)),
             None => deny(DenyRule::Rac01),
@@ -815,6 +843,21 @@ fn team(state: &State, account: AccountId, proposal: ProposalId, now: Timestamp)
     [Role::Applicant, Role::ApplicantTeamMember, Role::Guardian]
         .iter()
         .any(|r| receiving(state, account, proposal, *r, now))
+}
+
+/// Whether `account` held a Receiving binding of lead or team member on
+/// `proposal` that was active when it ended. The caller checks that the
+/// proposal is terminal, where the domain ends these bindings. A voided
+/// or suspended binding gives no such read. The guardian gets none: the
+/// decision of 2026-11-06 names the lead and the team members.
+fn former_team(state: &State, account: AccountId, proposal: ProposalId) -> bool {
+    state.roster().ended().any(|(_, e)| {
+        let b = e.binding;
+        b.account == account
+            && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+            && b.proposal() == Some(proposal)
+            && matches!(b.status, BindingStatus::Active)
+    })
 }
 
 /// Whether `account` holds an active programme binding of `role` in

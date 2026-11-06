@@ -19,7 +19,8 @@
 //! - inside `svg`, only the closed SVG subset the route renderer emits
 //!   (ADR-015; `subset` "The closed SVG subset"): no script, style,
 //!   event attribute, foreign object, animation or HTML element, local
-//!   markers only, and `fill` of `currentColor` or `none`.
+//!   markers only, `fill` and `stroke` of `currentColor` or `none`, and
+//!   a whole `font-size` from 1 to 99.
 //!
 //! It walks the input once with an explicit stack, so deep nesting cannot
 //! exhaust the call stack. It is fuzzed (`html_wellformed_check`).

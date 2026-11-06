@@ -924,8 +924,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ),
     // Lane j2, `SPEC/12-journey-ui.md` section 10, R-JV-01, R-JV-07: the
     // current node with its formal state name, the completed legs, whether
-    // the caller's role gets the route strip (O-58), and the overlay of the
-    // proposal's original call, null before that call is published.
+    // the caller's role gets the route strip (O-58), whether the caller gets
+    // the full map (the team, section 8.1) and the withdrawal control (the
+    // lead, NOTE 10; lane j4), and the overlay of the proposal's original
+    // call, null before that call is published.
     // I-97: ids, states, times and codes only, never text.
     ("proposal.journey", JOURNEY_REPLY),
     // Lane j2, section 10, I-93, I-97: the diary entries the visibility
@@ -982,6 +984,8 @@ const JOURNEY_REPLY: Shape = Shape::Object(&[
     m("seq", Shape::Id),
     m("legs", Shape::Array(&LEG)),
     m("strip", Shape::Bool),
+    m("map", Shape::Bool),
+    m("withdraw", Shape::Bool),
     m("overlay", Shape::Nullable(&OVERLAY)),
 ]);
 

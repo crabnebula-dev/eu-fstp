@@ -111,6 +111,10 @@ pub enum ReadModel {
     /// `proposal.diary`: the diary entries the caller may see (lane j2,
     /// I-93, I-97).
     Diary(crate::dispatch::journey::DiaryView),
+    /// `proposal.route_map`: the renderer's checked map tree and the node
+    /// statuses of the caller's projection (lane j4, ADR-015 amendment of
+    /// 2026-11-06).
+    RouteMap(crate::dispatch::journey::RouteMapView),
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
@@ -221,6 +225,7 @@ impl ToJson for ReadModel {
             ReadModel::MyRoles(r) => r.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
+            ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -1509,6 +1514,11 @@ pub(crate) mod reply_shape_tests {
     /// import value (lane m4wire). Their members are checked by the
     /// tests of `creator.rs` and the readers of
     /// `web/src/creator/model.ts`.
+    ///
+    /// The route map (lane j4) carries a tree, which no shape kind states
+    /// either. `fstp_html::route::tree` checks it on the server, and
+    /// `readRouteMap` in `web/src/journey/model.ts` reads it, under the
+    /// fuzz target `route_tree`.
     fn unshaped(m: &ReadModel) -> bool {
         matches!(
             m,
@@ -1517,6 +1527,7 @@ pub(crate) mod reply_shape_tests {
                     | crate::creator::CreatorModel::Proposals(_)
                     | crate::creator::CreatorModel::Preview { .. }
             ) | ReadModel::Public(_)
+                | ReadModel::RouteMap(_)
         )
     }
 
@@ -1569,6 +1580,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => &["me.roles"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
+            // Unshaped, see [`unshaped`]: no shape kind states a tree.
+            ReadModel::RouteMap(_) => &[],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Public(_) => &[],
         }
@@ -1609,6 +1622,8 @@ pub(crate) mod reply_shape_tests {
                 Vec::new()
             },
             strip: full,
+            map: full,
+            withdraw: !full,
             overlay: full.then(|| Overlay {
                 policy: fstp_domain::id::PolicyVersionId::from_raw(3),
                 stage2_window: fstp_domain::time::Days::new(14),
@@ -1623,6 +1638,32 @@ pub(crate) mod reply_shape_tests {
                 .collect(),
             }),
         }
+    }
+
+    /// A `proposal.route_map` reply (lane j4): the stage 2 map of the
+    /// design's prototype state.
+    fn route_map_view() -> crate::dispatch::journey::RouteMapView {
+        use fstp_domain::StateTag;
+        use fstp_journey::projector::LegRow;
+        let p = ProposalId::from_raw(1001);
+        let legs: Vec<LegRow> = [
+            (StateTag::Draft, StateTag::Submitted),
+            (StateTag::Submitted, StateTag::Stage1),
+            (StateTag::Stage1, StateTag::Stage2),
+        ]
+        .iter()
+        .zip(0u32..)
+        .map(|((from, to), ord)| LegRow {
+            proposal: p,
+            ord,
+            from: *from,
+            to: *to,
+            at: 1_793_750_400_000_000,
+            source_seq: u64::from(ord) + 11,
+        })
+        .collect();
+        crate::dispatch::journey::route_map_of(p, StateTag::Stage2, &legs)
+            .unwrap_or_else(|| panic!("the route map of the prototype state"))
     }
 
     /// A `proposal.diary` reply (lane j2): one entry with every optional
@@ -1837,6 +1878,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(journey_view(false)),
             ReadModel::Diary(diary_view(true)),
             ReadModel::Diary(diary_view(false)),
+            ReadModel::RouteMap(route_map_view()),
             ReadModel::Creator(crate::creator::CreatorModel::Preview {
                 kind: "public",
                 blocks: vec![fstp_guide::PreviewBlock {
@@ -1918,7 +1960,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 33;
+    const VARIANTS: usize = 34;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1957,7 +1999,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => 29,
             ReadModel::Journey(_) => 30,
             ReadModel::Diary(_) => 31,
-            ReadModel::Public(_) => 32,
+            ReadModel::RouteMap(_) => 32,
+            ReadModel::Public(_) => 33,
         }
     }
 
