@@ -239,7 +239,7 @@ fn check_rest(rest: &str) -> Result<(), UrlError> {
     Ok(())
 }
 
-fn parse_inner(bytes: &[u8]) -> Result<Url, UrlError> {
+fn parse_inner(bytes: &[u8], local_http: fn(&str) -> bool) -> Result<Url, UrlError> {
     if bytes.is_empty() || bytes.len() > MAX_URL_LEN {
         return Err(UrlError::Length);
     }
@@ -280,7 +280,7 @@ fn parse_inner(bytes: &[u8]) -> Result<Url, UrlError> {
         let digits = port.strip_prefix(':').ok_or(UrlError::Port)?;
         Some(parse_port(digits)?)
     };
-    if scheme == Scheme::Http && !is_loopback_host(host) {
+    if scheme == Scheme::Http && !is_loopback_host(host) && !local_http(host) {
         return Err(UrlError::PlainHttp);
     }
     check_rest(rest)?;
@@ -296,7 +296,22 @@ fn parse_inner(bytes: &[u8]) -> Result<Url, UrlError> {
 
 /// Parses a URL in the strict RFC 3986 subset. Fuzzed (`url_parse`).
 pub fn parse_url(bytes: &[u8]) -> Result<Url, OauthError> {
-    parse_inner(bytes).map_err(OauthError::Url)
+    parse_inner(bytes, |_| false).map_err(OauthError::Url)
+}
+
+/// Whether a test cell may serve `host` over plain `http`: a name under
+/// `.localhost`, which resolves to loopback only (RFC 6761 section 6.3).
+#[cfg(feature = "test-cell")]
+pub(crate) fn test_cell_host(host: &str) -> bool {
+    host.ends_with(".localhost")
+}
+
+/// Parses a URL as [`parse_url`] does, except that plain `http` to a
+/// `.localhost` host is admitted too. Only a test cell's configuration
+/// reaches it (feature `test-cell`, lane W3c).
+#[cfg(feature = "test-cell")]
+pub(crate) fn parse_test_cell_url(bytes: &[u8]) -> Result<Url, OauthError> {
+    parse_inner(bytes, test_cell_host).map_err(OauthError::Url)
 }
 
 /// Whether `presented` matches `registered` (ADR-013, TW-4): byte for

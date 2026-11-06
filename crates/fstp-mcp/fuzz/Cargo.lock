@@ -242,6 +242,8 @@ dependencies = [
 name = "fstp-mcp-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-api-core",
+ "fstp-json",
  "fstp-mcp",
  "libfuzzer-sys",
 ]

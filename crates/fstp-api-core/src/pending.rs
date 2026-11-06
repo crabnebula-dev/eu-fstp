@@ -114,6 +114,34 @@ impl ToJson for PendingReceipt {
 
 impl crate::McpSafe for PendingReceipt {}
 
+/// The answer of a prepared action as an MCP tool result carries it in
+/// `structuredContent.data` (I-85, lane W3c):
+/// `{"status":"awaiting_confirmation","confirm_path","expires"}`, as the
+/// web answers [`crate::OpResult::Pending`], except that `confirm_path`
+/// names the platform page `/app/pending/{id}`. The agent holds no
+/// session, so only the user can confirm there, with a step-up. It holds
+/// nothing the user typed. Interim, pending Daniel: the web app builds
+/// that page in a later lane, and the `/app/` shell serves the path now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingAnswer(pub PendingReceipt);
+
+/// The platform page where the user confirms pending action `id`.
+pub(crate) fn confirm_page(id: PendingId) -> String {
+    format!("/app/pending/{}", id.raw())
+}
+
+impl ToJson for PendingAnswer {
+    fn to_json(&self) -> Value {
+        let receipt = PendingReceipt {
+            confirm_path: confirm_page(self.0.id),
+            ..self.0.clone()
+        };
+        crate::OpResult::Pending(receipt).to_json()
+    }
+}
+
+impl crate::McpSafe for PendingAnswer {}
+
 /// One pending action as `pending.list` shows it to its own account.
 /// It carries the full canonical rendering and the agent (TW-9).
 #[derive(Clone, Debug, PartialEq, Eq)]

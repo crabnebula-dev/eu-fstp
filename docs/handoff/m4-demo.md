@@ -136,6 +136,17 @@ The identity page and the onboarding steps load, but their operations are not se
 - No new seed: every scene runs from genesis through production commands, so the ledger already holds each route.
 - `e2e/journey/voyager.spec.ts` runs with `tools/demo/run.sh e2e journey/`. Four of its five tests pass. The applicant test expects the move into STAGE2 as the newest entry, but the STAGE2 scene records two reviewer questions after that move, so "Question received" is newest.
 
+## The MCP server (2026-11-06, lane W3c)
+
+The cell serves `/mcp` and `/mcp/public` at the ADR-013 floor revision, 2025-06-18. One command opens a public session and prints its `Mcp-Session-Id`:
+
+```sh
+curl -si http://a.fstp.localhost:8640/mcp/public -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"demo","version":"0"}}}'
+```
+
+- Send that id back as `Mcp-Session-Id`, with `MCP-Protocol-Version: 2025-06-18`, then `notifications/initialized`, `tools/list` and `tools/call`. `/mcp/public` lists the eight public tools only.
+- `/mcp` without a token gets 401 with a Bearer challenge naming `/.well-known/oauth-protected-resource`. The demo cell is a test cell, so its two metadata documents name its `http` origin as the issuer. No route issues a token yet.
+
 ## Results of the Playwright journeys
 
 Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4disp) with Chromium 1248 and the virtual authenticator, `retries: 0`.

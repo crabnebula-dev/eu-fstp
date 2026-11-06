@@ -430,6 +430,33 @@ async fn resolve<P: Seams>(
     }
 }
 
+/// The rights of a bearer token now, with no operation (TH-63, lane
+/// W3c): the MCP principal of its grant, with roles evaluated at the
+/// instant as step 0 evaluates them. Unlike step 0, a credential that is
+/// no bearer token, or a token with no grant, is refused with
+/// `Unauthenticated` rather than made anonymous. Nothing is recorded.
+pub(crate) async fn tool_rights<P: Seams>(
+    ports: &P,
+    cred: &Credential,
+) -> Result<crate::ToolRights, ApiError> {
+    let unknown = || ApiError::refused(ErrorCode::Unauthenticated, "actor");
+    let Credential::Bearer(token) = cred else {
+        return Err(unknown());
+    };
+    let now = ports.clock().now();
+    let g = match ports.grant(token, now).await {
+        Ok(g) => g,
+        Err(PortError::Unavailable) => {
+            return Err(ApiError::refused(ErrorCode::Unavailable, "token"));
+        }
+        Err(PortError::Refused) => return Err(unknown()),
+    };
+    let state = ports.engine().snapshot();
+    let principal = Principal::mcp(&g, &admins_of(ports, &state, g.account), &state, now)
+        .map_err(|_| unknown())?;
+    Ok(crate::ToolRights { principal })
+}
+
 /// The target object of a request: its path parameters.
 fn target(spec: &OpSpec, request: &Object) -> Object {
     let mut t = Object::new();
@@ -1418,7 +1445,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
             };
             mine.title = lock(&call.st.content).title_of(p);
-            ReadModel::OwnProposal(mine)
+            // R-AU-01, I-84: the team's read of its own proposal appends a
+            // `ContentRead` through every channel (design section 3.8).
+            let seq = append_content_read(call, p).await?;
+            return Ok(OpResult::Done {
+                body: ReadModel::OwnProposal(mine),
+                seq: Some(seq),
+            });
         }
         ReadKind::GetOwnStage2Thread => {
             let p = proposal_param(call, op)?;
@@ -2033,10 +2066,36 @@ async fn content_read<P: Seams>(
     p: ProposalId,
     outcome: Option<&'static str>,
 ) -> Result<OpResult, ApiError> {
+    if call.account().is_none() {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+    }
+    let content = submitted_content(call, p)?;
+    let seq = append_content_read(call, p).await?;
+    let view = crate::views::ContentView {
+        proposal: p.raw(),
+        call: call_of(&call.state, p).map_or(0, CallId::raw),
+        state: state_name(&call.state, p),
+        title: content.title,
+        text: content.narrative,
+        outcome,
+    };
+    Ok(OpResult::Done {
+        body: ReadModel::Content(view),
+        seq: Some(seq),
+    })
+}
+
+/// Runs the domain `ReadContent` of `p` by the caller, through the
+/// caller's channel: it re-runs every read guard and appends one
+/// `ContentRead` (R-AU-01, I-03). The append carries the call's one audit
+/// entry.
+async fn append_content_read<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+) -> Result<fstp_ledger::Seq, ApiError> {
     let Some(account) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
-    let content = submitted_content(call, p)?;
     let cmd = Command::Core(fstp_domain::command::Command::ReadContent { proposal: p });
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
@@ -2050,24 +2109,11 @@ async fn content_read<P: Seams>(
         pending: None,
         second_tenant_admin: None,
     };
-    let seq = call
-        .ports
+    call.ports
         .engine()
         .execute(cmd, ctx, meta)
         .await
-        .map_err(|e| call.refuse(exec_failed(e)))?;
-    let view = crate::views::ContentView {
-        proposal: p.raw(),
-        call: call_of(&call.state, p).map_or(0, CallId::raw),
-        state: state_name(&call.state, p),
-        title: content.title,
-        text: content.narrative,
-        outcome,
-    };
-    Ok(OpResult::Done {
-        body: ReadModel::Content(view),
-        seq: Some(seq),
-    })
+        .map_err(|e| call.refuse(exec_failed(e)))
 }
 
 /// The text behind `r`: one this core stored, else a public text of the

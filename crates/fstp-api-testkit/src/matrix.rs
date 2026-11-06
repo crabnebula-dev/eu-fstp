@@ -462,6 +462,66 @@ impl Shard {
     }
 }
 
+/// The operations a local run checks: `FSTP_MATRIX_OPS`, a comma-separated
+/// list. An entry ending in `.` is a prefix and any other entry is an
+/// exact operation name. Unset, it holds every operation, so CI and the
+/// full check are unchanged. It only narrows local runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpFilter {
+    entries: Vec<String>,
+}
+
+impl OpFilter {
+    /// Parses a list. An empty list or an empty entry refuses, so a typo
+    /// never narrows to nothing.
+    pub fn parse(text: &str) -> Result<OpFilter, String> {
+        let entries: Vec<String> = text.split(',').map(|e| e.trim().to_owned()).collect();
+        if entries.iter().any(String::is_empty) {
+            return Err(format!("FSTP_MATRIX_OPS={text:?} has an empty entry"));
+        }
+        Ok(OpFilter { entries })
+    }
+
+    /// The filter named by `FSTP_MATRIX_OPS`, or every operation when it
+    /// is unset.
+    pub fn from_env() -> Result<OpFilter, String> {
+        match std::env::var("FSTP_MATRIX_OPS") {
+            Ok(text) => OpFilter::parse(&text),
+            Err(_) => Ok(OpFilter::default()),
+        }
+    }
+
+    fn entry_holds(entry: &str, op: &str) -> bool {
+        if entry.ends_with('.') {
+            op.starts_with(entry)
+        } else {
+            op == entry
+        }
+    }
+
+    /// Whether the filter keeps `op`.
+    pub fn holds(&self, op: &str) -> bool {
+        self.entries.is_empty() || self.entries.iter().any(|e| OpFilter::entry_holds(e, op))
+    }
+}
+
+impl Matrix {
+    /// The matrix narrowed to the operations `filter` keeps. The lists of
+    /// operations on one side only are kept whole. An entry that keeps no
+    /// operation refuses, so a misspelt name never passes as clean.
+    pub fn narrowed(mut self, filter: &OpFilter) -> Result<Matrix, String> {
+        if let Some(e) = filter
+            .entries
+            .iter()
+            .find(|e| !self.ops.iter().any(|op| OpFilter::entry_holds(e, op)))
+        {
+            return Err(format!("FSTP_MATRIX_OPS entry {e:?} names no operation"));
+        }
+        self.ops.retain(|op| filter.holds(op));
+        Ok(self)
+    }
+}
+
 /// One disagreement between the system and the reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mismatch {
@@ -569,6 +629,20 @@ pub fn http_channel() -> Result<Box<dyn Channel>, NotImplemented> {
     Ok(Box::new(crate::harness::harness()?.http()))
 }
 
+/// The MCP channel (I-84, design section 8.3): every MCP cell through the
+/// MCP JSON-RPC handler of `fstp-mcp` over `fstp_rt::duplex`, with the
+/// cell's bearer token, and every web cell through the HTTP routes of
+/// `fstp-web`, as [`http_channel`] runs them.
+///
+/// Lane W3c: an MCP cell is a `tools/call` of the operation's tool
+/// through `fstp_mcp::McpServer::call_tool`, below the HTTP transport,
+/// since the fake token port issues tokens no HTTP field can carry. An
+/// operation with no tool is called by its operation name, which the
+/// server refuses as no tool of its table (`NotExposed`).
+pub fn mcp_channel() -> Result<Box<dyn Channel>, NotImplemented> {
+    Ok(Box::new(crate::harness::harness()?.mcp()))
+}
+
 impl Matrix {
     /// The groups of cells one world serves: one per state and policy
     /// row, in a fixed order. Together they hold every cell of
@@ -669,12 +743,27 @@ pub fn threads_from_env() -> usize {
 /// `make`, one per thread, and compares each with the reference of `m`.
 /// Group `i` belongs to `shard` when `i % count == index`, and each
 /// thread runs whole groups, so a world serves all of its cells.
+/// `FSTP_MATRIX_OPS` ([`OpFilter`]) skips the cells of every other
+/// operation, so a local run of any channel checks its own operations
+/// only. Unset, every cell runs.
 pub fn compare_grouped(
     m: &Matrix,
     make: &(dyn Fn() -> Result<Box<dyn Channel>, NotImplemented> + Sync),
     threads: usize,
     shard: Shard,
 ) -> Result<Comparison, NotImplemented> {
+    let filter = OpFilter::from_env()
+        .map_err(|_| NotImplemented::new("FSTP_MATRIX_OPS has an empty entry"))?;
+    if filter
+        .entries
+        .iter()
+        .any(|e| !m.ops.iter().any(|op| OpFilter::entry_holds(e, op)))
+    {
+        return Err(NotImplemented::new(
+            "an FSTP_MATRIX_OPS entry names no operation of the matrix",
+        ));
+    }
+    let filter = &filter;
     let groups: Vec<(StateProfile, Policy)> = m
         .groups()
         .into_iter()
@@ -695,6 +784,9 @@ pub fn compare_grouped(
                             continue;
                         }
                         for cell in m.group_cells(*state, *policy) {
+                            if !filter.holds(cell.op) {
+                                continue;
+                            }
                             out.cells = out.cells.saturating_add(1);
                             let expected = m.reference.expected(&cell);
                             let observed = channel.observe(&cell);

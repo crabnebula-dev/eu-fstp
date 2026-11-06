@@ -27,7 +27,7 @@ use fstp_domain::{Ctx, Via};
 use fstp_engine::EngineState;
 use fstp_ledger::Seq;
 
-use crate::{ActionDigest, ApiCore, Credential, DispatchFuture, Op, RequestHead};
+use crate::{ActionDigest, ApiCore, Credential, DispatchFuture, Op, RequestHead, RightsFuture};
 
 macro_rules! port_id {
     ($($(#[$doc:meta])* $n:ident),* $(,)?) => { $(
@@ -839,6 +839,8 @@ pub(crate) trait Dispatch: Send + Sync {
         head: &'a RequestHead,
         op: Op,
     ) -> DispatchFuture<'a>;
+    /// The rights of a bearer token, with no operation (TH-63).
+    fn tool_rights(&self, cred: Credential) -> RightsFuture<'_>;
 }
 
 /// The ports of one cell inside an [`ApiCore`], with the dispatch state
@@ -862,6 +864,10 @@ impl<P: CellPorts> Dispatch for Core<P> {
             head,
             op,
         ))
+    }
+
+    fn tool_rights(&self, cred: Credential) -> RightsFuture<'_> {
+        Box::pin(async move { crate::dispatch::tool_rights(&self.ports, &cred).await })
     }
 }
 
