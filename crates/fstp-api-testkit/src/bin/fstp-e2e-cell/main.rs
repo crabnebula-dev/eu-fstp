@@ -190,7 +190,9 @@ impl Inner {
         let origin = parse_origin_header(site.origin.as_bytes()).map_err(|e| e.to_string())?;
         let web = fstp_web::router(
             Arc::clone(&core),
-            WebConfig::new(origin, site.assets.clone()),
+            // The cell origin is plain `http` under `.localhost`, so its
+            // OAuth metadata names it as a test cell (lane W3c).
+            WebConfig::new(origin, site.assets.clone()).test_cell(),
         )
         .map_err(|e| e.to_string())?;
         Ok(Inner {

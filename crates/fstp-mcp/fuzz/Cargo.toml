@@ -10,6 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-mcp = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+fstp-api-core = { path = "../../fstp-api-core" }
 
 [[bin]]
 name = "jsonrpc_decode"

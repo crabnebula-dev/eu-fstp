@@ -32,6 +32,9 @@ pub fn limits() -> Limits {
 pub struct WebConfig {
     tenant_origin: Origin,
     assets: AssetSet,
+    /// Whether the OAuth metadata may name a plain `http` issuer under
+    /// `.localhost` (feature `test-cell`). Never set in a shipped build.
+    test_cell: bool,
 }
 
 impl WebConfig {
@@ -43,7 +46,19 @@ impl WebConfig {
         WebConfig {
             tenant_origin,
             assets,
+            test_cell: false,
         }
+    }
+
+    /// The configuration of a test cell on a plain `http` `.localhost`
+    /// origin, such as the e2e cell's: its OAuth metadata documents name
+    /// that origin as the issuer (lane W3c). Only the test-only feature
+    /// `test-cell` builds it.
+    #[cfg(feature = "test-cell")]
+    #[must_use]
+    pub fn test_cell(mut self) -> WebConfig {
+        self.test_cell = true;
+        self
     }
 
     /// The tenant origin.
@@ -56,6 +71,8 @@ impl WebConfig {
 /// The state every handler shares.
 struct Shared {
     backend: Backend,
+    /// The MCP endpoints and OAuth metadata, over the core only.
+    mcp: Option<crate::mcp::Mcp>,
     origin: Origin,
     assets: AssetSet,
     shell: Vec<u8>,
@@ -71,8 +88,10 @@ struct Shared {
 ///   check, then reaches `ApiCore::dispatch` and nothing else.
 /// - `/p/**` serves the public pages and the feed through the API core,
 ///   with no credential (design section 3.10).
-/// - `/mcp`, `/mcp/public`, `/oauth/**` and the OAuth `/.well-known`
-///   documents answer the typed ADR-013 refusal.
+/// - `/mcp` and `/mcp/public` serve the MCP server, and the OAuth
+///   `/.well-known` documents the metadata, over the core (design section
+///   3.8). `/oauth/**` and the stub dispatch answer the typed ADR-013
+///   refusal.
 /// - Every response carries the headers of design section 3.9.
 pub struct WebRouter {
     shared: Arc<Shared>,
@@ -102,8 +121,17 @@ pub fn router(core: Arc<ApiCore>, config: WebConfig) -> Result<WebRouter, WebErr
 /// The router over `backend`.
 pub(crate) fn build(backend: Backend, config: WebConfig) -> Result<WebRouter, WebError> {
     let shell = shell::render(&config.assets);
+    let mcp = match &backend {
+        Backend::Core(core) => Some(crate::mcp::Mcp::new(
+            Arc::clone(core),
+            &config.tenant_origin,
+            config.test_cell,
+        )?),
+        Backend::Refusing => None,
+    };
     let shared = Arc::new(Shared {
         backend,
+        mcp,
         origin: config.tenant_origin,
         assets: config.assets,
         shell,
@@ -240,7 +268,10 @@ impl WebRouter {
                 self.api.handle(req).await
             }
             Surface::Public => public(&self.shared.backend, &req).await,
-            Surface::Adr013 => reply::adr013(),
+            Surface::Adr013 => match &self.shared.mcp {
+                Some(m) => m.answer(req).await,
+                None => reply::adr013(),
+            },
             Surface::Other => reply::not_found(),
         }
     }

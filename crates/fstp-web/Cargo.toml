@@ -21,3 +21,9 @@ fstp-prop.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Test only (lane W3c): `WebConfig::test_cell`, whose OAuth metadata
+# admits a plain `http` issuer under `.localhost`. Only the test-only
+# `fstp-api-testkit` enables it.
+test-cell = ["fstp-oauth/test-cell"]

@@ -16,3 +16,10 @@ fstp-prop.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Test only (lane W3c): `AuthorizationServer::new_test_cell`, which admits
+# a plain `http` issuer under `.localhost` for the e2e cell. Only the
+# test-only `fstp-api-testkit` enables it, through `fstp-web`, and no
+# shipped binary calls the constructor.
+test-cell = []

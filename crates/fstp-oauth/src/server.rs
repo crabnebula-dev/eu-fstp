@@ -590,17 +590,39 @@ impl AuthorizationServer {
     /// capacities must be positive. Loopback `http` is accepted for both,
     /// for test cells on one host.
     pub fn new(cfg: Config) -> Result<AuthorizationServer, OauthError> {
-        let issuer = parse_url(cfg.issuer.as_bytes())
+        AuthorizationServer::build(cfg, parse_url, |_| false)
+    }
+
+    /// A server of a test cell: as [`AuthorizationServer::new`], except
+    /// that the issuer and the resource may also be plain `http` to a
+    /// `.localhost` host, such as the e2e cell's `http://a.fstp.localhost`
+    /// (lane W3c). Only the test-only feature `test-cell` builds it, and
+    /// no shipped binary calls it.
+    #[cfg(feature = "test-cell")]
+    pub fn new_test_cell(cfg: Config) -> Result<AuthorizationServer, OauthError> {
+        AuthorizationServer::build(
+            cfg,
+            crate::url::parse_test_cell_url,
+            crate::url::test_cell_host,
+        )
+    }
+
+    fn build(
+        cfg: Config,
+        parse: fn(&[u8]) -> Result<Url, OauthError>,
+        local_http: fn(&str) -> bool,
+    ) -> Result<AuthorizationServer, OauthError> {
+        let issuer = parse(cfg.issuer.as_bytes())
             .map_err(|_| OauthError::InvalidConfig("the issuer is outside the URL subset"))?;
         if !issuer.path_and_query().is_empty() {
             return Err(OauthError::InvalidConfig("the issuer has a path or query"));
         }
-        let resource = parse_url(cfg.resource.as_bytes())
+        let resource = parse(cfg.resource.as_bytes())
             .map_err(|_| OauthError::InvalidConfig("the resource is outside the URL subset"))?;
         if resource.has_query() {
             return Err(OauthError::InvalidConfig("the resource has a query"));
         }
-        if issuer.scheme() == Scheme::Http && !issuer.is_loopback() {
+        if issuer.scheme() == Scheme::Http && !issuer.is_loopback() && !local_http(issuer.host()) {
             return Err(OauthError::InvalidConfig("the issuer is not https"));
         }
         if cfg.p72_absolute_micros <= 0
@@ -1696,6 +1718,65 @@ mod tests {
             );
         }
         assert!(AuthorizationServer::new(Config::new(ISSUER, MCP, 0, 1)).is_err());
+    }
+
+    /// ADR-013, lane W3c: a production configuration refuses a plain
+    /// `http` issuer and resource under `.localhost`, such as the e2e
+    /// cell's, whatever features the build has. Only
+    /// `AuthorizationServer::new_test_cell` admits them.
+    #[test]
+    fn adr013_production_config_refuses_http_localhost_issuer() {
+        for (i, r) in [
+            (
+                "http://a.fstp.localhost:8985",
+                "http://a.fstp.localhost:8985/mcp",
+            ),
+            ("http://a.fstp.localhost", "http://a.fstp.localhost/mcp"),
+            ("http://a.fstp.localhost:8985", MCP),
+            (ISSUER, "http://a.fstp.localhost:8985/mcp"),
+        ] {
+            assert!(
+                AuthorizationServer::new(Config::new(i, r, 1, 1)).is_err(),
+                "{i} {r} accepted"
+            );
+        }
+    }
+
+    /// ADR-013, lane W3c: the test-cell constructor admits `http` to a
+    /// `.localhost` host, and keeps every other rule: a non-local `http`
+    /// host, a path on the issuer and a query on the resource are refused.
+    #[cfg(feature = "test-cell")]
+    #[test]
+    fn adr013_test_cell_admits_http_localhost_only() {
+        let ok = AuthorizationServer::new_test_cell(Config::new(
+            "http://a.fstp.localhost:8985",
+            "http://a.fstp.localhost:8985/mcp",
+            1,
+            1,
+        ))
+        .unwrap();
+        let doc = fstp_json::parse(&ok.resource_metadata().body).unwrap();
+        assert_eq!(
+            doc.as_object()
+                .and_then(|o| o.get("resource"))
+                .and_then(fstp_json::Value::as_str),
+            Some("http://a.fstp.localhost:8985/mcp")
+        );
+        for (i, r) in [
+            ("http://cell-a.example", "http://cell-a.example/mcp"),
+            (
+                "http://localhost.evil.example",
+                "http://localhost.evil.example/mcp",
+            ),
+            ("http://a.fstp.localhost/x", "http://a.fstp.localhost/mcp"),
+            ("http://a.fstp.localhost", "http://a.fstp.localhost/mcp?x=1"),
+            ("http://a.fstp.localhost", "http://cell-a.example/mcp"),
+        ] {
+            assert!(
+                AuthorizationServer::new_test_cell(Config::new(i, r, 1, 1)).is_err(),
+                "{i} {r} accepted"
+            );
+        }
     }
 
     /// ADR-013: a consent expires, and an expired consent issues no code.

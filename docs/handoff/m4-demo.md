@@ -145,6 +145,17 @@ The identity page and the onboarding steps load, but their operations are not se
 - "List the affected calls" runs `creator.impact` on request. The cell answers 501 for a programme with calls, so programme 1 shows that it cannot list them yet.
 - No read lists a call in DRAFT or APPROVED yet, so the approval takes a call number. `e2e/studio/studio.spec.ts` runs with `tools/demo/run.sh e2e studio/`.
 
+## The MCP server (2026-11-06, lane W3c)
+
+The cell serves `/mcp` and `/mcp/public` at the ADR-013 floor revision, 2025-06-18. One command opens a public session and prints its `Mcp-Session-Id`:
+
+```sh
+curl -si http://a.fstp.localhost:8640/mcp/public -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"demo","version":"0"}}}'
+```
+
+- Send that id back as `Mcp-Session-Id`, with `MCP-Protocol-Version: 2025-06-18`, then `notifications/initialized`, `tools/list` and `tools/call`. `/mcp/public` lists the eight public tools only.
+- `/mcp` without a token gets 401 with a Bearer challenge naming `/.well-known/oauth-protected-resource`. The demo cell is a test cell, so its two metadata documents name its `http` origin as the issuer. No route issues a token yet.
+
 ## Results of the Playwright journeys
 
 Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4disp) with Chromium 1248 and the virtual authenticator, `retries: 0`.

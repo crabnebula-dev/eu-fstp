@@ -1,6 +1,7 @@
 //! The channel harness of the authorisation matrix (M4 design section
-//! 8.3): every cell through `ApiCore::dispatch` directly, and through the
-//! HTTP routes of `fstp-web` over `fstp_rt::duplex`.
+//! 8.3): every cell through `ApiCore::dispatch` directly, through the
+//! HTTP routes of `fstp-web` over `fstp_rt::duplex`, and every MCP cell
+//! through the `tools/call` handler of `fstp_mcp::McpServer` (lane W3c).
 //!
 //! # Worlds
 //!
@@ -1139,6 +1140,8 @@ pub struct Built {
     ports: WorldPorts,
     core: Arc<ApiCore>,
     router: Option<fstp_web::WebRouter>,
+    /// The MCP server of the MCP channel, built on first use.
+    mcp: Option<fstp_mcp::McpServer>,
     targets: Targets,
     /// The cell clock.
     now: i64,
@@ -2053,6 +2056,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         ports: seed.ports,
         core: seed.core,
         router: None,
+        mcp: None,
         targets,
         now,
         tenant_revision,
@@ -3036,13 +3040,19 @@ enum Transport {
     Direct,
     /// The HTTP routes of `fstp-web` over `fstp_rt::duplex`.
     Http,
+    /// MCP cells through `fstp_mcp::McpServer::call_tool`, and web cells
+    /// as [`Transport::Http`] sends them.
+    Mcp,
 }
 
-/// The reply of one call: the dispatch result directly, or an HTTP
-/// status and body.
+/// The reply of one call: the dispatch result directly, an HTTP status
+/// and body, or an MCP `tools/call` result.
 enum Reply {
     Direct(Box<Result<OpResult, ApiError>>),
     Http(u16, Vec<u8>),
+    /// The `CallToolResult`, or the JSON-RPC error, and whether the
+    /// operation has a tool.
+    Mcp(Result<Value, fstp_mcp::RpcError>, bool),
 }
 
 impl Reply {
@@ -3064,6 +3074,7 @@ impl Reply {
                 let hex = str_member(challenge, "digest")?;
                 fstp_api_core::ActionDigest::from_hex(&hex)
             }
+            Reply::Mcp(..) => None,
         }
     }
 }
@@ -3181,6 +3192,8 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
     }
     let send = |w: &mut Built| -> Result<Reply, ChannelFault> {
         match (transport, mcp) {
+            (Transport::Mcp, true) => mcp_call(w, cell.op, &req, &cred),
+            (Transport::Mcp, false) => http_call(w, &req, &cred),
             (_, true) => {
                 let tool = fstp_access::op(cell.op)
                     .and_then(|o| o.tool)
@@ -3234,7 +3247,93 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
     match reply {
         Reply::Direct(r) => observed_of_result(&r),
         Reply::Http(status, body) => observed_of_http(status, &body),
+        Reply::Mcp(r, tool) => observed_of_mcp(&r, tool),
     }
+}
+
+/// The observed outcome of a `tools/call` result (lane W3c). A completed
+/// call carries its read model in `structuredContent.data`, and a refusal
+/// is `isError` with the API refusal body `{"code","rule"}`. A name the
+/// server does not list is refused before any operation: for an
+/// operation with no tool, that is `NotExposed` (I-84).
+pub fn observed_of_mcp(
+    r: &Result<Value, fstp_mcp::RpcError>,
+    tool: bool,
+) -> Result<Observed, ChannelFault> {
+    let v = match r {
+        Ok(v) => v,
+        Err(e) if !tool && *e == fstp_mcp::RpcError::UNKNOWN_TOOL => {
+            return Ok(Observed::ChannelDenied(Denial::NotExposed));
+        }
+        Err(e) => {
+            return Err(ChannelFault::NotImplemented(format!(
+                "JSON-RPC error {}: {}",
+                e.code, e.message
+            )));
+        }
+    };
+    let o = v.as_object();
+    let sc = o
+        .and_then(|o| o.get("structuredContent"))
+        .ok_or_else(|| ChannelFault::Setup(format!("no structuredContent: {}", v.to_compact())))?;
+    let error = o
+        .and_then(|o| o.get("isError"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if error {
+        let Some(code) = str_member(sc, "code") else {
+            return Err(ChannelFault::Setup(format!(
+                "an error result without a code: {}",
+                v.to_compact()
+            )));
+        };
+        return match code.as_str() {
+            "step_up_required" => Ok(Observed::StepUpRequired),
+            "strong_method_required" => Ok(Observed::StrongMethodRequired),
+            other => observed_of(other, str_member(sc, "rule").as_deref()),
+        };
+    }
+    let data = sc.as_object().and_then(|s| s.get("data"));
+    if data.and_then(|d| str_member(d, "status")).as_deref() == Some("awaiting_confirmation") {
+        return Ok(Observed::Pending);
+    }
+    Ok(Observed::Completed)
+}
+
+/// Sends the MCP cell of `op` as a `tools/call` of its tool through the
+/// world's MCP server, on `/mcp` with the cell's credential. An operation
+/// with no tool is called by its operation name, which the server lists
+/// under no tool.
+fn mcp_call(
+    w: &mut Built,
+    op: &str,
+    req: &Request,
+    cred: &Credential,
+) -> Result<Reply, ChannelFault> {
+    if w.mcp.is_none() {
+        let server = fstp_mcp::McpServer::new(
+            Arc::clone(&w.core),
+            fstp_mcp::McpConfig {
+                tenant_origins: vec![ORIGIN.to_owned()],
+                verified_domain: "tenant.fstp.test".to_owned(),
+                resource_metadata_url: format!("{ORIGIN}{}", fstp_oauth::RESOURCE_METADATA_PATH),
+            },
+        )
+        .map_err(|e| ChannelFault::Setup(format!("MCP server: {e}")))?;
+        w.mcp = Some(server);
+    }
+    let server = w
+        .mcp
+        .as_ref()
+        .ok_or_else(|| ChannelFault::Setup("no MCP server".to_owned()))?;
+    let tool = fstp_access::op(op).and_then(|o| o.tool).map(|t| t.name);
+    let r = block_on(server.call_tool(
+        fstp_mcp::Surface::Mcp,
+        cred.clone(),
+        tool.unwrap_or(op),
+        &req.tool_args(),
+    ));
+    Ok(Reply::Mcp(r, tool.is_some()))
 }
 
 /// The observed outcome of an HTTP reply.
@@ -3399,6 +3498,29 @@ pub struct HttpChannel {
     runner: Runner,
 }
 
+/// The MCP channel: every MCP cell through the `tools/call` handler of
+/// `fstp_mcp::McpServer`, and every web cell through the routes of
+/// `fstp-web`, as the HTTP channel sends it (I-84, lane W3c).
+pub struct McpChannel {
+    runner: Runner,
+}
+
+impl std::fmt::Debug for McpChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("McpChannel")
+    }
+}
+
+impl Channel for McpChannel {
+    fn name(&self) -> &'static str {
+        "mcp"
+    }
+
+    fn observe(&mut self, cell: &Cell) -> Result<Observed, ChannelFault> {
+        observe_with(&mut self.runner, cell)
+    }
+}
+
 impl std::fmt::Debug for DirectChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("DirectChannel")
@@ -3465,6 +3587,13 @@ impl Harness {
     pub fn http(&self) -> HttpChannel {
         HttpChannel {
             runner: Runner::new(Transport::Http),
+        }
+    }
+
+    /// A fresh MCP channel, with its own world cache.
+    pub fn mcp(&self) -> McpChannel {
+        McpChannel {
+            runner: Runner::new(Transport::Mcp),
         }
     }
 }
