@@ -30,12 +30,13 @@ use crate::decision::{Ballot, Basis, IrcVerdict, NegotiationFailure, Vote};
 use crate::grant::IneligibleCost;
 use crate::id::{
     AccountId, ActivityTypeId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ClassId,
-    ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, KnockOutCriterionId,
-    LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId,
-    ProposalId, ProximityListId, RequestId, TextId, TextRef, VaultEpoch,
+    ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, HardshipEvidenceId,
+    KnockOutCriterionId, LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId,
+    PolicyVersionId, ProgrammeId, ProposalId, ProximityListId, RequestId, TextId, TextRef,
+    VaultEpoch,
 };
 use crate::oracle::QueryKind;
-use crate::payment::PaymentLine;
+use crate::payment::{CheckKind, CheckPhase, CheckResult, LineEvidence, PaymentKind, PaymentLine};
 use crate::policy::activation::ReportDigest;
 use crate::policy::{
     AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FunderProfileRef, InferenceBinding,
@@ -95,6 +96,7 @@ id_wire!(
     ProximityListId,
     ActivityTypeId,
     ContractId,
+    HardshipEvidenceId,
 );
 
 /// Organisation ids key the P-38 map by their decimal string.
@@ -436,6 +438,16 @@ unit_enum!(SystemCause {
     PaymentPort,
 });
 unit_enum!(ContractEvent { Effective });
+unit_enum!(CheckPhase {
+    Submission,
+    Acceptance
+});
+unit_enum!(CheckKind {
+    PublicLocation,
+    Licence,
+    Balance,
+    Evidence
+});
 unit_enum!(Vote {
     For,
     Against,
@@ -515,6 +527,8 @@ unit_enum!(QueryKind {
     DeclaresAffiliationOnList,
     MeetsTieBreakCountry,
     ChangedSince,
+    BankReleasable,
+    HardshipEvidenceVerified,
 });
 unit_enum!(Row {
     DraftToSubmitted,
@@ -641,11 +655,11 @@ every! {
     /// Every rule except `Param`, whose rules are `PARAMS`.
     FIXED_RULES: [RuleRef; RuleRef::ALL_FIXED] by rule_name {
         I01, I02, I03, I04, I05, I06, I07, I08, I09, I10, I11, I12, I13, I14, I15, I18,
-        I23, I34, I35, I36, I50, I64, I65, I66, I67, I78, I84, I85,
+        I23, I31, I32, I33, I34, I35, I36, I50, I64, I65, I66, I67, I78, I84, I85,
         Sod01, Sod02, Sod03, Sod04, Sod05, Sod06, Sod07, Sod09, Sod10, Sod11, Sod12,
         Rpc01, Rpc02, Rpc03, Rsb01, Rsb02, Rsb03, Rsb05,
         Rev01, Rev02, Rev03, Rev05, Rev06, Rev07, Rev08, Rev09, Rir01, Rir02, Rir04,
-        Rng02, Rng03, Rng05, Rng06, Rcf02, Rcf04, Rac01, Ran01, Rla03, Rla05, Rex04, Rmc05,
+        Rng02, Rng03, Rng05, Rng06, Rcf02, Rcf04, Rac01, Ran01, Rla03, Rla05, Rex04, Rpr04, Rmc05,
         Row, Actor, FactsIncomplete, StaleFacts, OracleDown, Ledger, Input, NotImplemented,
     }
     others { RuleRef::Param(_) }
@@ -750,6 +764,9 @@ const fn rule_name(r: RuleRef) -> &'static str {
         | RuleRef::I15
         | RuleRef::I18
         | RuleRef::I23
+        | RuleRef::I31
+        | RuleRef::I32
+        | RuleRef::I33
         | RuleRef::I34
         | RuleRef::I35
         | RuleRef::I36
@@ -801,6 +818,7 @@ const fn rule_name(r: RuleRef) -> &'static str {
         | RuleRef::Rla03
         | RuleRef::Rla05
         | RuleRef::Rex04
+        | RuleRef::Rpr04
         | RuleRef::Rmc05 => match r.spec_id() {
             Some(s) => s,
             // Ruled out at compile time by the `FIXED_RULES` assertions.
@@ -868,6 +886,15 @@ tagged_enum! {
 }
 
 tagged_enum! {
+    PaymentKind;
+    fields { Milestone {} }
+    money {}
+    tuple { Hardship(evidence) }
+    flat {}
+    flat_money {}
+}
+
+tagged_enum! {
     IrcVerdict;
     fields { Validate {} }
     money {}
@@ -929,7 +956,19 @@ flat_struct!(IneligibleCost { amount, reason });
 flat_struct!(PaymentLine {
     line,
     milestone,
-    amount
+    amount,
+    evidence
+});
+flat_struct!(LineEvidence {
+    location,
+    release,
+    licence,
+    report
+});
+flat_struct!(CheckResult {
+    line,
+    check,
+    failure
 });
 flat_struct!(Milestone {
     id,

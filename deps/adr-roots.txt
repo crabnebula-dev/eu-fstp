@@ -16,3 +16,7 @@ zeroize           ADR-001  alloc,default                                        
 moduletto         ADR-001  alloc,default,libm,std                                                    Tier B, git source (A2, A3): ML-KEM-768 through fstp-crypto only; release-gated (I-74)
 tokio             ADR-002  libc,mio,net,rt,rt-multi-thread,signal,signal-hook-registry,socket2,time,windows-sys  Async runtime; signal for fstp-rt only (review note of 2026-10-28)
 libfuzzer-sys     ADR-003  default,link_libfuzzer                                                    libFuzzer for cargo-fuzz projects, test time only
+der               ADR-001  alloc,derive,flagset,oid,pem,zeroize                                      Tier B (record of 2026-11-06): DER for fstp-pki::cms; release-gated (I-74)
+spki              ADR-001  alloc,pem                                                                 Tier B (record of 2026-11-06): SubjectPublicKeyInfo for fstp-pki::cms; release-gated (I-74)
+x509-cert         ADR-001  pem                                                                       Tier B (record of 2026-11-06): X.509 certificates for fstp-pki::cms; release-gated (I-74)
+cms               ADR-001  -                                                                         Tier B (record of 2026-11-06): CMS SignedData for fstp-pki::cms; release-gated (I-74)

@@ -77,6 +77,9 @@ id!(
     ActivityTypeId,
     /// A contract, as reported by the M5 contract port.
     ContractId,
+    /// Hardship evidence held in the identity vault. The cell holds only
+    /// this opaque reference (R-PR-04).
+    HardshipEvidenceId,
 );
 
 /// Idempotency key of one command, from the shell.

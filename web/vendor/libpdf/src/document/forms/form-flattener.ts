@@ -1,0 +1,677 @@
+/**
+ * Form flattening - converts interactive form fields into static page content.
+ *
+ * This module handles the process of "baking" form field appearances into
+ * the page content, making them non-interactive. After flattening:
+ * - Field appearances are drawn directly in page content
+ * - Widget annotations are removed from pages
+ * - The form structure is cleared
+ *
+ * Use cases:
+ * - Creating print-ready PDFs
+ * - Archival (remove interactivity)
+ * - PDF/A compliance (some profiles disallow forms)
+ *
+ * PDF Reference: Section 12.7 "Interactive Forms"
+ */
+
+import { ContentStreamBuilder } from "../../content/content-stream.js";
+import { Matrix } from "../../helpers/matrix.js";
+import {
+  concatMatrix,
+  drawXObject,
+  popGraphicsState,
+  pushGraphicsState,
+} from "../../helpers/operators.js";
+import { PdfArray } from "../../objects/pdf-array.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
+
+import type { ObjectRegistry } from "../object-registry.js";
+import { removeAnnotationsFromStructTree } from "../struct-tree.js";
+import { SignatureField, type TerminalField } from "./fields/index.js";
+import type { FormFont } from "./form-font.js";
+import type { WidgetAnnotation } from "./widget-annotation.js";
+
+/**
+ * Options for form flattening.
+ */
+export interface FlattenOptions {
+  /** Skip appearance update (use if appearances are known good) */
+  skipAppearanceUpdate?: boolean;
+
+  /**
+   * Force regeneration of all appearances even if they already exist.
+   *
+   * By default, existing appearances are preserved to maintain styling
+   * (backgrounds, borders, rotation) that the generator cannot reproduce.
+   * Set this to true to always use generated appearances with new values.
+   *
+   * Note: Generated appearances may lack custom styling from the original PDF.
+   */
+  regenerateAppearances?: boolean;
+
+  /** Font to use when regenerating appearances */
+  font?: FormFont;
+
+  /** Font size to use (0 = auto) */
+  fontSize?: number;
+
+  /**
+   * Skip signature fields during flattening.
+   *
+   * When true, signature fields are preserved as interactive fields while
+   * all other fields are flattened. This is useful when you want to flatten
+   * filled form data but keep signature fields available for signing.
+   *
+   * @default false
+   */
+  skipSignatures?: boolean;
+}
+
+/**
+ * Interface for AcroForm methods needed by the flattener.
+ */
+export interface FlattenableForm {
+  getFields(): TerminalField[];
+  updateAppearances(options?: { forceRegenerate?: boolean }): void;
+  getDict(): PdfDict;
+  hasSignatures: boolean;
+}
+
+/**
+ * Interface for page tree access.
+ */
+export interface PageTreeAccess {
+  getPages(): PdfRef[];
+}
+
+/**
+ * FormFlattener handles converting interactive form fields to static content.
+ */
+export class FormFlattener {
+  private readonly form: FlattenableForm;
+  private readonly registry: ObjectRegistry;
+  private readonly pageTree: PageTreeAccess | null;
+  private readonly catalog: PdfDict | null;
+
+  constructor(
+    form: FlattenableForm,
+    registry: ObjectRegistry,
+    pageTree: PageTreeAccess | null,
+    catalog: PdfDict | null = null,
+  ) {
+    this.form = form;
+    this.registry = registry;
+    this.pageTree = pageTree;
+    this.catalog = catalog;
+  }
+
+  /**
+   * Flatten all form fields into static page content.
+   */
+  flatten(options: FlattenOptions = {}): void {
+    const allFields = this.form.getFields();
+    const skipSignatures = options.skipSignatures ?? false;
+
+    const signatureFields = skipSignatures
+      ? allFields.filter(f => f instanceof SignatureField)
+      : [];
+
+    // Separate signature fields if we're skipping them
+    const fieldsToFlatten = skipSignatures
+      ? allFields.filter(f => !(f instanceof SignatureField))
+      : allFields;
+
+    // Apply font/size options if provided (only to fields being flattened)
+    if (options.font || options.fontSize !== undefined) {
+      for (const field of fieldsToFlatten) {
+        // Skip read-only fields - they keep their existing appearance
+        if (field.isReadOnly()) {
+          continue;
+        }
+
+        if (options.font) {
+          field.setFont(options.font);
+        }
+
+        if (options.fontSize !== undefined) {
+          field.setFontSize(options.fontSize);
+        }
+      }
+    }
+
+    // Ensure appearances are up-to-date
+    if (!options.skipAppearanceUpdate) {
+      this.form.updateAppearances({
+        forceRegenerate: options.regenerateAppearances,
+      });
+    }
+
+    // Collect widgets grouped by page (only from fields being flattened)
+    const pageWidgets = this.collectWidgetsByPage(fieldsToFlatten);
+
+    // Process each page
+    for (const { pageRef, widgets } of pageWidgets.values()) {
+      this.flattenWidgetsOnPage(pageRef, widgets);
+    }
+
+    // Remove structure tree references (/OBJR kids and /ParentTree entries)
+    // to the flattened widgets. In tagged PDFs the structure tree references
+    // widget annotations, which would otherwise keep the removed fields
+    // reachable and cause full saves to write them back as orphan objects.
+    if (this.catalog) {
+      const removedWidgetRefs = new Set<PdfRef>();
+
+      for (const field of fieldsToFlatten) {
+        for (const widget of field.getWidgets()) {
+          if (widget.ref) {
+            removedWidgetRefs.add(widget.ref);
+          }
+        }
+      }
+
+      removeAnnotationsFromStructTree(this.catalog, this.registry, removedWidgetRefs);
+    }
+
+    // Update form structure
+    const dict = this.form.getDict();
+
+    if (signatureFields.length > 0) {
+      // Keep signature field refs in /Fields array
+      const sigRefs = signatureFields
+        .map(f => f.getRef())
+        .filter((ref): ref is PdfRef => ref !== null);
+      dict.set("Fields", PdfArray.of(...sigRefs));
+    } else {
+      // Clear form structure completely
+      dict.set("Fields", new PdfArray([]));
+    }
+
+    dict.delete("NeedAppearances");
+
+    // Remove XFA for hybrid forms (per PDFBox)
+    // If we flatten a hybrid PDF but leave XFA, viewers might still try to
+    // render the XFA (which would now be invalid/disconnected from the flattened fields)
+    dict.delete("XFA");
+
+    // Remove SigFlags if no signatures remain (per PDFBox)
+    // After flattening, signature fields are gone, so the flags are meaningless
+    if (!this.form.hasSignatures && signatureFields.length === 0) {
+      dict.delete("SigFlags");
+    }
+  }
+
+  /**
+   * Collect all widgets grouped by their containing page.
+   *
+   * @param fields Optional list of fields to collect from. If not provided, uses all form fields.
+   */
+  private collectWidgetsByPage(
+    fields?: TerminalField[],
+  ): Map<string, { pageRef: PdfRef; widgets: WidgetAnnotation[] }> {
+    const result = new Map<string, { pageRef: PdfRef; widgets: WidgetAnnotation[] }>();
+    const fieldsToProcess = fields ?? this.form.getFields();
+
+    for (const field of fieldsToProcess) {
+      // Widgets are pre-resolved during field creation (resolveWidgets)
+      for (const widget of field.getWidgets()) {
+        let pageRef = widget.pageRef;
+
+        // If widget doesn't have /P, try to find its page
+        if (!pageRef) {
+          pageRef = this.findPageForWidget(widget);
+        }
+
+        if (!pageRef) {
+          this.registry.addWarning(`Widget without page reference for field "${field.name}"`);
+          continue;
+        }
+
+        const key = `${pageRef.objectNumber} ${pageRef.generation}`;
+        let entry = result.get(key);
+
+        if (!entry) {
+          entry = { pageRef, widgets: [] };
+          result.set(key, entry);
+        }
+
+        entry.widgets.push(widget);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Find the page containing a widget by scanning page /Annots arrays.
+   * This is expensive but needed for widgets without /P.
+   *
+   * Uses the PageTree if available for efficient page iteration.
+   */
+  private findPageForWidget(widget: WidgetAnnotation): PdfRef | null {
+    if (!widget.ref) {
+      return null;
+    }
+
+    // Use the page tree if available
+    if (!this.pageTree) {
+      this.registry.addWarning("No page tree available; cannot find page for widget without /P");
+      return null;
+    }
+
+    const pageRefs = this.pageTree.getPages();
+
+    for (const pageRef of pageRefs) {
+      const pageDict = this.registry.resolve(pageRef);
+
+      if (!(pageDict instanceof PdfDict)) {
+        continue;
+      }
+
+      const annots = pageDict.getArray("Annots", this.registry.resolve.bind(this.registry));
+
+      if (!annots) {
+        continue;
+      }
+
+      for (let i = 0; i < annots.length; i++) {
+        const annotRef = annots.at(i);
+
+        // PdfRefs are interned, so we can compare with ===
+        if (annotRef instanceof PdfRef && annotRef === widget.ref) {
+          return pageRef;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Flatten widgets on a single page.
+   *
+   * Following PDFBox's approach, we:
+   * 1. Wrap the existing page content in q...Q (save/restore graphics state)
+   * 2. Append our flattened content after the Q
+   *
+   * This isolates the original page's graphics state from our flattened fields.
+   */
+  private flattenWidgetsOnPage(pageRef: PdfRef, widgets: WidgetAnnotation[]): void {
+    const pageDict = this.registry.resolve(pageRef);
+
+    if (!(pageDict instanceof PdfDict)) {
+      return;
+    }
+
+    // Get or create page resources
+    const resolve = this.registry.resolve.bind(this.registry);
+    let resources = pageDict.getDict("Resources", resolve);
+
+    if (!resources) {
+      resources = new PdfDict();
+      pageDict.set("Resources", resources);
+    }
+
+    let xObjects = resources.getDict("XObject", resolve);
+
+    if (!xObjects) {
+      xObjects = new PdfDict();
+      resources.set("XObject", xObjects);
+    }
+
+    // Build flattening content stream
+    const content = new ContentStreamBuilder();
+    const widgetRefs = new Set<string>();
+    let xObjectIndex = 0;
+    let hasVisibleWidgets = false;
+
+    for (const widget of widgets) {
+      // Mark every widget for removal up front. Flattening tears down the
+      // parent field regardless of whether we can render an appearance, so
+      // leaving the widget in the page's /Annots produces an orphaned
+      // annotation (a "ghost" form field that Adobe Reader and similar
+      // viewers still render and treat as interactive even though the
+      // underlying field is gone).
+      if (widget.ref) {
+        widgetRefs.add(`${widget.ref.objectNumber} ${widget.ref.generation}`);
+      }
+
+      // Hidden widgets are removed (above) but not drawn.
+      if (this.isWidgetHidden(widget)) {
+        continue;
+      }
+
+      // Get appearance stream
+      const appearance = widget.getNormalAppearance(widget.appearanceState ?? undefined);
+
+      if (!appearance) {
+        this.registry.addWarning("Widget without appearance stream skipped during flatten");
+        continue;
+      }
+
+      // Check appearance stream has valid BBox dimensions
+      if (!this.isVisibleAppearance(appearance)) {
+        continue;
+      }
+
+      // Normalize appearance stream - ensure it has required XObject Form entries
+      // Some PDFs have appearance streams missing /Subtype /Form which causes
+      // rendering failures in some viewers (e.g., Adobe Reader)
+      this.normalizeAppearanceStream(appearance);
+
+      // Add appearance as XObject
+      const xObjectName = `FlatField${xObjectIndex++}`;
+      const appearanceRef = this.registry.register(appearance);
+      xObjects.set(xObjectName, appearanceRef);
+
+      // Calculate transformation matrix
+      const matrix = this.calculateTransformMatrix(widget, appearance);
+
+      // Add drawing operators
+      content.add(
+        pushGraphicsState(),
+        concatMatrix(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f),
+        drawXObject(`/${xObjectName}`),
+        popGraphicsState(),
+      );
+
+      hasVisibleWidgets = true;
+    }
+
+    // Wrap existing content and append flattened content
+    if (hasVisibleWidgets && !content.isEmpty()) {
+      this.wrapAndAppendContent(pageDict, content.toBytes());
+    }
+
+    // Remove widget annotations from page
+    this.removeAnnotations(pageDict, widgetRefs);
+  }
+
+  /**
+   * Check if appearance stream has valid dimensions.
+   * Per PDFBox: BBox must exist and have width/height > 0.
+   */
+  private isVisibleAppearance(appearance: PdfStream): boolean {
+    const bbox = appearance.getArray("BBox", this.registry.resolve.bind(this.registry));
+
+    if (!bbox || bbox.length < 4) {
+      return false;
+    }
+
+    const [x1, y1, x2, y2] = bbox
+      .toArray()
+      .map(item => (item instanceof PdfNumber ? item.value : 0));
+
+    const width = Math.abs((x2 ?? 0) - (x1 ?? 0));
+    const height = Math.abs((y2 ?? 0) - (y1 ?? 0));
+
+    return width > 0 && height > 0;
+  }
+
+  /**
+   * Wrap existing page content in q...Q and append new content.
+   *
+   * Following PDFBox's approach:
+   * - Prepend "q\n" to the existing content streams
+   * - Append "Q\n" + new content after
+   *
+   * This isolates the original page's graphics state from our additions.
+   */
+  private wrapAndAppendContent(page: PdfDict, newContent: Uint8Array): void {
+    let existing = page.get("Contents");
+
+    // Resolve indirect reference — /Contents may be a PdfRef pointing to a PdfArray
+    // of stream refs. Without resolving, we'd wrap the ref as-is, producing a
+    // nested array reference that PDF viewers cannot interpret.
+    // Only unwrap if the ref points to an array; if it points to a single stream,
+    // keep the PdfRef so it can be placed directly in the new contents array.
+    if (existing instanceof PdfRef) {
+      const resolved = this.registry.resolve(existing);
+
+      if (resolved instanceof PdfArray) {
+        existing = resolved;
+      }
+    }
+
+    // Create prefix stream with "q\n"
+    const prefixBytes = new Uint8Array([0x71, 0x0a]); // "q\n"
+    const prefixStream = new PdfStream(new PdfDict(), prefixBytes);
+    const prefixRef = this.registry.register(prefixStream);
+
+    // Create suffix stream with "Q\n" + new content
+    const suffixBytes = new Uint8Array(2 + newContent.length);
+    suffixBytes[0] = 0x51; // "Q"
+    suffixBytes[1] = 0x0a; // "\n"
+    suffixBytes.set(newContent, 2);
+    const suffixStream = new PdfStream(new PdfDict(), suffixBytes);
+    const suffixRef = this.registry.register(suffixStream);
+
+    if (!existing) {
+      // No existing content - just add our content (no wrapping needed)
+      page.set("Contents", suffixRef);
+    } else if (existing instanceof PdfArray) {
+      // Array of content streams
+      // Insert prefix at start, suffix at end
+      const newArray = PdfArray.of(prefixRef, ...this.getArrayItems(existing), suffixRef);
+      page.set("Contents", newArray);
+    } else {
+      // Single stream or ref - convert to array with prefix and suffix
+      page.set("Contents", PdfArray.of(prefixRef, existing, suffixRef));
+    }
+  }
+
+  /**
+   * Get all items from a PdfArray.
+   */
+  private getArrayItems(arr: PdfArray): PdfRef[] {
+    const items: PdfRef[] = [];
+
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr.at(i);
+
+      if (item instanceof PdfRef) {
+        items.push(item);
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * Calculate transformation matrix to position appearance in widget rect.
+   *
+   * This follows PDFBox's approach:
+   * 1. The appearance stream may have its own Matrix (handling rotation)
+   * 2. We transform the BBox by the appearance Matrix to get "real" bounds
+   * 3. We calculate a simple translate+scale to fit in the annotation rect
+   *
+   * Rotation is handled by the appearance stream's Matrix, NOT by this transform.
+   */
+  private calculateTransformMatrix(widget: WidgetAnnotation, appearance: PdfStream): Matrix {
+    // Widget rectangle on page
+    const [rx1, ry1, rx2, ry2] = widget.rect;
+    const rectWidth = rx2 - rx1;
+    const rectHeight = ry2 - ry1;
+
+    // Get the transformed appearance bounding box
+    // This accounts for any Matrix in the appearance stream
+    const transformedBBox = this.getTransformedAppearanceBBox(appearance);
+
+    // Calculate simple translate + scale (no rotation - that's in appearance Matrix)
+    const scaleX = transformedBBox.width !== 0 ? rectWidth / transformedBBox.width : 1;
+    const scaleY = transformedBBox.height !== 0 ? rectHeight / transformedBBox.height : 1;
+
+    // Translate to annotation position, accounting for BBox origin
+    const translateX = rx1 - transformedBBox.x * scaleX;
+    const translateY = ry1 - transformedBBox.y * scaleY;
+
+    return new Matrix(scaleX, 0, 0, scaleY, translateX, translateY);
+  }
+
+  /**
+   * Get the appearance BBox transformed by the appearance's Matrix.
+   *
+   * The appearance stream may have a Matrix that transforms its coordinate
+   * system (e.g., for rotation). We need to transform the BBox corners
+   * by this matrix to get the "real" bounding box.
+   */
+  private getTransformedAppearanceBBox(appearance: PdfStream): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } {
+    const [bx1, by1, bx2, by2] = this.getAppearanceBBox(appearance);
+
+    // Get the appearance's Matrix (if any)
+    const matrix = this.getAppearanceMatrix(appearance);
+
+    if (matrix.isIdentity()) {
+      // No transformation - return BBox as-is
+      return {
+        x: bx1,
+        y: by1,
+        width: bx2 - bx1,
+        height: by2 - by1,
+      };
+    }
+
+    // Transform all four corners of the BBox
+    const corners = [
+      matrix.transformPoint(bx1, by1), // bottom-left
+      matrix.transformPoint(bx2, by1), // bottom-right
+      matrix.transformPoint(bx2, by2), // top-right
+      matrix.transformPoint(bx1, by2), // top-left
+    ];
+
+    // Find the bounding box of transformed corners
+    const xs = corners.map(p => p.x);
+    const ys = corners.map(p => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
+
+  /**
+   * Get the appearance stream's transformation matrix.
+   */
+  private getAppearanceMatrix(appearance: PdfStream): Matrix {
+    const matrixArray = appearance.getArray("Matrix", this.registry.resolve.bind(this.registry));
+
+    if (!matrixArray || matrixArray.length < 6) {
+      return Matrix.identity();
+    }
+
+    const [a, b, c, d, e, f] = matrixArray
+      .toArray()
+      .map(item => (item instanceof PdfNumber ? item.value : 0));
+
+    return new Matrix(a ?? 0, b ?? 0, c ?? 0, d ?? 0, e ?? 0, f ?? 0);
+  }
+
+  /**
+   * Get appearance BBox, with fallback.
+   */
+  private getAppearanceBBox(appearance: PdfStream): [number, number, number, number] {
+    // PdfStream extends PdfDict, so we call getArray directly
+    const bbox = appearance.getArray("BBox", this.registry.resolve.bind(this.registry));
+
+    if (!bbox || bbox.length < 4) {
+      return [0, 0, 1, 1]; // Fallback
+    }
+
+    const [x1, y1, x2, y2] = bbox
+      .toArray()
+      .map(item => (item instanceof PdfNumber ? item.value : 0));
+
+    return [x1 ?? 0, y1 ?? 0, x2 ?? 0, y2 ?? 0];
+  }
+
+  /**
+   * Remove specific annotations from page.
+   */
+  private removeAnnotations(page: PdfDict, toRemove: Set<string>): void {
+    const annots = page.getArray("Annots", this.registry.resolve.bind(this.registry));
+
+    if (!annots) {
+      return;
+    }
+
+    const remaining: PdfRef[] = [];
+
+    for (let i = 0; i < annots.length; i++) {
+      const item = annots.at(i);
+
+      if (item instanceof PdfRef) {
+        const key = `${item.objectNumber} ${item.generation}`;
+
+        if (toRemove.has(key)) {
+          continue;
+        }
+
+        // Drop dangling refs (targets that don't exist). Per PDF 1.7
+        // §7.3.10 they are null anyway.
+        if (this.registry.resolve(item) === null) {
+          continue;
+        }
+
+        remaining.push(item);
+      }
+    }
+
+    if (remaining.length === 0) {
+      page.delete("Annots");
+    } else if (remaining.length < annots.length) {
+      // Replace the Annots entry with the filtered array
+      page.set("Annots", PdfArray.of(...remaining));
+    }
+  }
+
+  /**
+   * Normalize an appearance stream to ensure it has required XObject Form entries.
+   *
+   * Per PDF spec, a Form XObject stream requires:
+   * - /Subtype /Form (required)
+   * - /BBox (required, should already exist for appearance streams)
+   * - /FormType 1 (optional, defaults to 1)
+   *
+   * Some PDFs have appearance streams missing /Subtype /Form, which causes
+   * Adobe Reader and other strict viewers to fail rendering.
+   */
+  private normalizeAppearanceStream(appearance: PdfStream): void {
+    // Ensure /Subtype /Form is set (required for XObject Form)
+    if (!appearance.has("Subtype")) {
+      appearance.set("Subtype", PdfName.of("Form"));
+    }
+
+    // Ensure /FormType is set (optional, but good practice)
+    if (!appearance.has("FormType")) {
+      appearance.set("FormType", new PdfNumber(1));
+    }
+  }
+
+  /**
+   * Check if widget should be skipped (hidden/invisible).
+   */
+  private isWidgetHidden(widget: WidgetAnnotation): boolean {
+    const flags = widget.flags;
+
+    const HIDDEN = 1 << 1; // Bit 2: Hidden
+    const INVISIBLE = 1 << 0; // Bit 1: Invisible
+    const NO_VIEW = 1 << 5; // Bit 6: NoView
+
+    return (flags & (HIDDEN | INVISIBLE | NO_VIEW)) !== 0;
+  }
+}

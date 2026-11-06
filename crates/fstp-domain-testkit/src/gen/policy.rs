@@ -269,6 +269,13 @@ pub fn base_version(
     for p in LIVE_OPAQUE {
         live_opaque.insert(p, opaque(&format!("synthetic {}", p.spec_id()))?);
     }
+    // The release guard reads the P-36 hold in days (I-33), in the form
+    // `fstp-programme` records: 7 days, the SuperSAFE value.
+    let p36 = fstp_json::parse(br#"{"days":7}"#).map_err(|e| format!("P-36: {e:?}"))?;
+    live_opaque.insert(
+        ParamId::P36,
+        OpaqueValue::from_value(&p36).map_err(|e| format!("P-36: {e:?}"))?,
+    );
     let p04 =
         AmountRange::new(eur(500_000)?, eur(10_000_000)?).map_err(|e| format!("P-04: {e:?}"))?;
     Ok(PolicyVersion {

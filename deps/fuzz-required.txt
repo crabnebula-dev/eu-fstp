@@ -58,3 +58,5 @@ fstp-mcp
 fstp-web
 fstp-web-assets
 fstp-journey
+# M5, docs/handoff/m5-design.md section 10 (lane L-PDF).
+fstp-pdf

@@ -4,5 +4,5 @@
     "noEmit": true
   },
   "include": ["./*.ts", "../support/contract.ts", "../../src/**/*.ts"],
-  "exclude": []
+  "exclude": ["../../src/sign/**"]
 }

@@ -1731,7 +1731,8 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
 /// Kinds that never arrive from a person. In M4 cells, the D13 sweep
 /// issues `ExpireStage2` and `ReEnter`, and M3 issues `VaultChanged`. The
 /// System records `EndScheduledRole` at a binding's scheduled end
-/// (`roles-and-sod.md` Cooling-off NOTE). The rest arrive with M5.
+/// (`roles-and-sod.md` Cooling-off NOTE). The rest arrive with M5, among
+/// them `RecordChecks` from the M5 checks runner (I-32).
 pub const SYSTEM_ONLY: &[CommandKind] = &[
     CK::VaultChanged,
     CK::ExpireStage2,
@@ -1742,6 +1743,7 @@ pub const SYSTEM_ONLY: &[CommandKind] = &[
     CK::RecordDeliverable,
     CK::ActivateAmendment,
     CK::EndScheduledRole,
+    CK::RecordChecks,
 ];
 
 /// Finding and import kinds that never arrive from a person:

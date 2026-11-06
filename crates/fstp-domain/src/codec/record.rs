@@ -19,7 +19,8 @@ use crate::decision::{Basis, EffectiveScoreSet, Stage1Closed};
 use crate::grant::GrantDecided;
 use crate::id::VaultEpoch;
 use crate::id::{
-    AccountId, ContractId, DecisionId, PlanVersionId, ProgrammeId, ProposalId, RequestId,
+    AccountId, ContentDigest, ContractId, DecisionId, PlanVersionId, ProgrammeId, ProposalId,
+    RequestId,
 };
 use crate::payment::PaymentReleased;
 use crate::policy::activation::{ProgrammeActivated, ReportDigest};
@@ -289,8 +290,14 @@ impl Flat for ProgrammeActivated {
 
 /// The release payload, read through `PaymentReleased::from_decoded`.
 impl Flat for PaymentReleased {
-    const NAMES: &'static [&'static str] =
-        &["request", "grant", "acceptors", "approver", "releaser"];
+    const NAMES: &'static [&'static str] = &[
+        "request",
+        "grant",
+        "acceptors",
+        "approver",
+        "releaser",
+        "record_file",
+    ];
 
     fn put_into(&self, o: &mut Object) {
         let _ = o.insert("request", self.request().put());
@@ -298,6 +305,7 @@ impl Flat for PaymentReleased {
         let _ = o.insert("acceptors", self.acceptors().put());
         let _ = o.insert("approver", self.approver().put());
         let _ = o.insert("releaser", self.releaser().put());
+        let _ = o.insert("record_file", self.record_file().put());
     }
 
     fn take_from(f: &Fields<'_>, cx: Cx) -> R<Self> {
@@ -306,8 +314,14 @@ impl Flat for PaymentReleased {
         let acceptors: BTreeSet<AccountId> = f.get("acceptors", cx)?;
         let approver: AccountId = f.get("approver", cx)?;
         let releaser: AccountId = f.get("releaser", cx)?;
+        let record_file: ContentDigest = f.get("record_file", cx)?;
         Ok(PaymentReleased::from_decoded(
-            request, grant, acceptors, approver, releaser,
+            request,
+            grant,
+            acceptors,
+            approver,
+            releaser,
+            record_file,
         ))
     }
 }
@@ -350,6 +364,7 @@ tagged_enum! {
         AmendmentActivated { amendment, plan, route, contract },
         MilestoneClosed { proposal, milestone, by, reason },
         PaymentRequestClosed { request, by, reason },
+        ChecksRecorded { request, phase, results, snapshot },
     }
     money {
         CallDrafted { call, programme, opens, deadline, deadline_zone, budget, text, author },
@@ -357,7 +372,7 @@ tagged_enum! {
         AmountDetermined { decision, proposal, plan_total, deductions, granted, agreed, by, rules },
         CapReserved { proposal, amount, epoch },
         CapReleased { proposal, amount },
-        PaymentRequested { request, grant, lines },
+        PaymentRequested { request, grant, kind, lines },
         LineAccepted { request, line, by, approved, reason },
     }
     tuple { OutboxEnqueued(event) }

@@ -50,10 +50,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fstp_domain::id::{AccountId, ClassId, ProgrammeId, ProposalId, ProximityListId, VaultEpoch};
+use fstp_domain::id::{
+    AccountId, ClassId, HardshipEvidenceId, ProgrammeId, ProposalId, ProximityListId, VaultEpoch,
+};
 use fstp_domain::oracle::{OracleDown, Query, QueryKind};
 use fstp_domain::policy::ExclusionClasses;
-use fstp_domain::time::Timestamp;
+use fstp_domain::time::{Days, MICROS_PER_DAY, Timestamp};
 use fstp_domain_testkit::vault::{
     DownOracle, GroundTruth, HavocOracle, IdentityTag, PendingFact, PriorDeliverables, Relation,
     SyntheticVault, excluded_applicant, minor_applicant, repeat_applicant, sybil_pair,
@@ -359,6 +361,9 @@ impl Facts {
             Query::MeetsTieBreakCountry { account, programme } => {
                 self.country.contains(&(account.raw(), programme.raw()))
             }
+            // The ops of this model write no bank details or hardship
+            // evidence, so the vault holds none (I-33, R-PR-04).
+            Query::BankReleasable { .. } | Query::HardshipEvidenceVerified { .. } => false,
             Query::ChangedSince { epoch } => {
                 let changed: BTreeSet<u128> = self
                     .changes
@@ -547,6 +552,15 @@ fn gen_query(g: &mut Gen, kind: QueryKind, max_epoch: u64) -> Query {
         QueryKind::ChangedSince => Query::ChangedSince {
             epoch: VaultEpoch::from_raw(g.u64_in(0..=max_epoch)),
         },
+        QueryKind::BankReleasable => Query::BankReleasable {
+            grant: ProposalId::from_raw(u128::from(g.u8_in(1..=3))),
+            at: Timestamp::from_micros(i64::from(g.u8_in(0..=9))),
+            hold: Days::new(u16::from(g.u8_in(0..=7))),
+        },
+        QueryKind::HardshipEvidenceVerified => Query::HardshipEvidenceVerified {
+            grant: ProposalId::from_raw(u128::from(g.u8_in(1..=3))),
+            evidence: HardshipEvidenceId::from_raw(u128::from(g.u8_in(1..=3))),
+        },
     }
 }
 
@@ -638,6 +652,13 @@ fn harness_vault_fixed_truth_answers_each_query_kind() {
     // provisional attestation only, which no query counts (NOTE 4).
     truth.attest_adult(a(1), Timestamp::from_micros(10));
     truth.attest_adult_provisional(a(2), Timestamp::from_micros(0));
+    // I-33, R-PR-04: grant 1 has bank details written at 0 and verified,
+    // grant 2 has a write that is not verified, and grant 1 has verified
+    // hardship evidence 1.
+    truth.write_bank(ProposalId::from_raw(1), Timestamp::from_micros(0));
+    truth.verify_bank(ProposalId::from_raw(1));
+    truth.write_bank(ProposalId::from_raw(2), Timestamp::from_micros(0));
+    truth.verify_hardship(ProposalId::from_raw(1), HardshipEvidenceId::from_raw(1));
     let epoch_before_last = truth.epoch();
     truth.verify(a(6));
     let vault = SyntheticVault::new(truth);
@@ -802,6 +823,45 @@ fn harness_vault_fixed_truth_answers_each_query_kind() {
             Query::MeetsTieBreakCountry {
                 account: a(1),
                 programme: ProgrammeId::from_raw(2),
+            },
+            false,
+        ),
+        // I-33: one day of hold elapses at MICROS_PER_DAY after the write.
+        (
+            Query::BankReleasable {
+                grant: ProposalId::from_raw(1),
+                at: Timestamp::from_micros(MICROS_PER_DAY),
+                hold: Days::new(1),
+            },
+            true,
+        ),
+        (
+            Query::BankReleasable {
+                grant: ProposalId::from_raw(1),
+                at: Timestamp::from_micros(MICROS_PER_DAY - 1),
+                hold: Days::new(1),
+            },
+            false,
+        ),
+        (
+            Query::BankReleasable {
+                grant: ProposalId::from_raw(2),
+                at: Timestamp::from_micros(MICROS_PER_DAY),
+                hold: Days::new(1),
+            },
+            false,
+        ),
+        (
+            Query::HardshipEvidenceVerified {
+                grant: ProposalId::from_raw(1),
+                evidence: HardshipEvidenceId::from_raw(1),
+            },
+            true,
+        ),
+        (
+            Query::HardshipEvidenceVerified {
+                grant: ProposalId::from_raw(2),
+                evidence: HardshipEvidenceId::from_raw(1),
             },
             false,
         ),

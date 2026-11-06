@@ -1256,6 +1256,7 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     ),
     (K::WithdrawPaymentRequest, ActorRule::Lead),
     (K::RequestPaymentChanges, ActorRule::AssignedReviewer),
+    (K::RecordChecks, ActorRule::System),
     (K::RecordDeliverable, ActorRule::System),
     (
         K::ProposeAmendment,

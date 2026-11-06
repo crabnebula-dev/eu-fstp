@@ -221,6 +221,7 @@ const fn command_lane(kind: CommandKind) -> Lane {
         | K::ConfirmPaid
         | K::WithdrawPaymentRequest
         | K::RequestPaymentChanges
+        | K::RecordChecks
         | K::ClosePaymentRequest => Lane::Payment,
         K::ProposeAmendment | K::RouteAmendment | K::ActivateAmendment => Lane::Amendment,
     }
@@ -287,6 +288,7 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::PaymentConfirmed { .. }
         | Record::PaymentRequestWithdrawn { .. }
         | Record::PaymentChangesRequested { .. }
+        | Record::ChecksRecorded { .. }
         | Record::PaymentRequestClosed { .. } => Lane::Payment,
         Record::AmendmentProposed { .. }
         | Record::AmendmentRouted { .. }

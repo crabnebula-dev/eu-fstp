@@ -315,6 +315,8 @@ pub struct MoneyPolicy {
     pub p05: i64,
     /// P-26 SPDX identifiers.
     pub p26: BTreeSet<String>,
+    /// P-36 in days, when its live value reads `{"days":N}` (I-33).
+    pub p36: Option<u16>,
 }
 
 /// A call as the money reference sees it.
@@ -778,6 +780,16 @@ impl MoneyView {
                         p04_max: minor(p04.max()),
                         p05: minor(version.live.p05),
                         p26: version.frozen.p26.0.iter().map(|s| s.0.clone()).collect(),
+                        p36: version
+                            .live
+                            .opaque
+                            .get(&fstp_domain::policy::ParamId::P36)
+                            .and_then(|v| {
+                                v.as_str()
+                                    .strip_prefix("{\"days\":")
+                                    .and_then(|s| s.strip_suffix('}'))
+                                    .and_then(|s| s.parse::<u16>().ok())
+                            }),
                     },
                 );
                 self.heads.insert(version.programme, version.id);
@@ -1240,6 +1252,8 @@ pub enum Want {
         approver: AccountId,
         /// The releaser.
         releaser: AccountId,
+        /// The digest of the payment record file.
+        record_file: fstp_domain::id::ContentDigest,
     },
     /// At least one record whose JSON type is this name.
     Typed(&'static str),
@@ -2784,6 +2798,7 @@ fn met(want: &Want, batch: &[Record]) -> bool {
                 acceptors,
                 approver,
                 releaser,
+                record_file,
             },
             Record::PaymentReleased(x),
         ) => {
@@ -2792,6 +2807,7 @@ fn met(want: &Want, batch: &[Record]) -> bool {
                 && x.acceptors() == acceptors
                 && x.approver() == *approver
                 && x.releaser() == *releaser
+                && x.record_file() == *record_file
         }
         (Want::Typed(name), r) => type_name(&r.to_json()).as_deref() == Some(*name),
         _ => false,

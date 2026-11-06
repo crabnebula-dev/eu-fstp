@@ -676,6 +676,12 @@ pub fn ledger_truth(setup: &LifeSetup) -> GroundTruth {
     let mut truth = setup.truth();
     truth.set_identity(R4, tag(R4));
     truth.verify(R4);
+    // Every proposal's payee has verified bank details from before the
+    // P-36 hold, so a scripted release is open (I-33).
+    for (_, proposal, _) in &setup.proposals {
+        truth.write_bank(*proposal, crate::r#gen::money::BANK_SET);
+        truth.verify_bank(*proposal);
+    }
     truth
 }
 
@@ -1680,6 +1686,26 @@ pub fn act_step(ghost: &LedgerGhost, proposal: ProposalId, act: Act) -> Result<V
         Act::Confirm => money::confirm_paid(payment_request(proposal)),
         Act::Terminate => money::terminate(STAFF_PM, proposal),
     };
+    if act == Act::Request {
+        // The synthetic checks runner passes the request at submission and
+        // at acceptance, so line review may accept it (I-32).
+        let lines = [payment_line(proposal)];
+        return Ok(vec![
+            one,
+            money::record_checks(
+                payment_request(proposal),
+                fstp_domain::payment::CheckPhase::Submission,
+                &lines,
+                false,
+            ),
+            money::record_checks(
+                payment_request(proposal),
+                fstp_domain::payment::CheckPhase::Acceptance,
+                &lines,
+                false,
+            ),
+        ]);
+    }
     Ok(vec![one])
 }
 

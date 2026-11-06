@@ -179,6 +179,7 @@ fn m3_command(name: &str) -> Option<CellCommand> {
         }),
         "ReleasePayment" => core(fstp_domain::Command::ReleasePayment {
             request: RequestId::from_raw(1),
+            record_file: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
         }),
         "CreateProgramme" => core(setup.first()?.cmd.clone()),
         "PublishCall" => core(publish(call(1)).cmd),

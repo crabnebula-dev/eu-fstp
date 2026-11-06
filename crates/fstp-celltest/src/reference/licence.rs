@@ -1091,6 +1091,7 @@ pub const fn class_of(kind: CommandKind) -> RefClass {
         | CommandKind::ConfirmPaid
         | CommandKind::WithdrawPaymentRequest
         | CommandKind::RequestPaymentChanges
+        | CommandKind::RecordChecks
         | CommandKind::ClosePaymentRequest => RefClass::Payments,
         // M4 changes D2 and D5: the activation and the round commands are
         // not Q18 option B commands, so the strict reading protects them.
