@@ -29,6 +29,17 @@ export type StepStatus = "locked" | "open" | "saved" | "validated" | "skipped" |
 
 const STATUSES: ReadonlySet<string> = new Set(["locked", "open", "saved", "validated", "skipped", "unavailable"]);
 
+/**
+ * The Channels step values a save sends (P-32). Matrix (B-05) and
+ * WhatsApp (B-03) come later, so the save sends no value for either:
+ * no homeserver and no WhatsApp account, whatever the server holds
+ * (design section 15.0, "Roles lane questions", 2026-11-06).
+ */
+export const CHANNELS_VALUES: Readonly<{ matrix_homeserver: null; whatsapp: false }> = Object.freeze({
+  matrix_homeserver: null,
+  whatsapp: false,
+});
+
 /** Whether `s` names an onboarding step. */
 export function isOnboardingStep(s: string): s is OnboardingStep {
   return (ONBOARDING_STEPS as readonly string[]).includes(s);

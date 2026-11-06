@@ -6,6 +6,7 @@ import { SCHEMAS, VALIDATORS } from "../src/gen/api.js";
 import { ROLE_NAMES } from "../src/home/model.js";
 import { CATALOGUE } from "../src/onboarding/messages.en.js";
 import {
+  CHANNELS_VALUES,
   MCP_ROLES,
   SIGNATORY_ROLES,
   missingSignatories,
@@ -99,4 +100,22 @@ test("r_tn_01_sod18_activation_read_fits_its_state", () => {
       assert(check !== undefined && check(v), `the generated validator refuses ${show(v)}`);
     }
   });
+});
+
+/**
+ * P-32, B-03, B-05 (design section 15.0, "Roles lane questions",
+ * 2026-11-06): the Channels step sends no Matrix or WhatsApp value. The
+ * save carries no homeserver and no WhatsApp account, the only form the
+ * tenant codec takes for "none", and the page names both channels as
+ * coming later from the catalogue.
+ */
+test("r_tn_01_p32_channels_step_sends_no_matrix_or_whatsapp_value", () => {
+  eq({ ...CHANNELS_VALUES }, { matrix_homeserver: null, whatsapp: false }, "no channel value");
+  eq(Object.keys(CHANNELS_VALUES).sort(), ["matrix_homeserver", "whatsapp"], "the codec members only");
+  assert(Object.isFrozen(CHANNELS_VALUES), "the values cannot change");
+  for (const k of ["later_title", "matrix", "whatsapp", "coming_later"]) {
+    const label = CATALOGUE.labels[`onboarding.channels.${k}`];
+    assert(typeof label === "string" && label !== "", `onboarding.channels.${k} is in the catalogue`);
+  }
+  assert(/later/i.test(CATALOGUE.labels["onboarding.channels.coming_later"] ?? ""), "the note says coming later");
 });
