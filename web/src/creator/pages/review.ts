@@ -7,6 +7,8 @@
 //   acknowledgement never clears a failure.
 // - `#preview-guide`, `#preview-public` and `#preview-contract` show the
 //   previews as text, never as markup.
+// - The step navigation is the Planning Studio's, drawn from the report
+//   (`SPEC/12-journey-ui.md` section 8.2).
 // - `#request-activation` stays disabled until the report is clean
 //   (`activationGate`). The server checks again at the request, and the
 //   approval recomputes the report over fresh probes.
@@ -16,7 +18,9 @@ import { busy, frame, hush, ready } from "../frame.js";
 import { t } from "../i18n.js";
 import { CREATOR_STEPS, activationGate, readPreview, type Report, type ReportResult } from "../model.js";
 import { anyObject, call, report } from "../ops.js";
-import { checkText, loadDraft, loadReport, queue, stepNav, stepTitle } from "./common.js";
+import { stepStates } from "../../studio/model.js";
+import { STUDIO_PATHS, kicker, notOpenNote } from "../../studio/view.js";
+import { checkText, link, loadDraft, loadReport, queue, stepNav, stepTitle } from "./common.js";
 
 const PREVIEWS = [
   ["guide", "preview-guide"],
@@ -28,9 +32,26 @@ const PREVIEWS = [
 export function mount(p: string): void {
   const s = CREATOR_STEPS.find((x) => x.id === "review");
   if (s === undefined) return;
-  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error", nav: stepNav(p, "review") });
+  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error" });
   document.title = stepTitle(s);
-  main.append(h("h2", { id: "creator-step-heading" }, [stepTitle(s)]));
+  let nav = stepNav(p, "review", null);
+  const notOpen = h("div", {});
+  main.append(
+    h("p", { class: "voyage-label" }, [t.label("studio.spec_name")]),
+    nav,
+    notOpen,
+    h("p", { class: "card-kicker" }, [kicker("review")]),
+    h("h2", { id: "creator-step-heading" }, [stepTitle(s)]),
+    h("p", {}, [link(STUDIO_PATHS.approval(p), t.label("studio.overview.approval_link"))]),
+  );
+  /** Draws the step navigation from the report. */
+  const showSteps = (): void => {
+    const fresh = stepNav(p, "review", current);
+    nav.replaceWith(fresh);
+    nav = fresh;
+    const mine = stepStates(current).find((x) => x.id === "review");
+    notOpen.replaceChildren(...(mine !== undefined && !mine.open ? [notOpenNote()] : []));
+  };
   const list = h("ul", { id: "report", "aria-labelledby": "report-title" });
   const summary = h("p", { id: "report-summary", role: "status" });
   const status = h("p", { id: "activation-status", role: "status" });
@@ -178,6 +199,7 @@ export function mount(p: string): void {
     }
     current = await loadReport(p, alert);
     renderReport();
+    showSteps();
     const loaded = d !== null && current !== null;
     for (const x of previews) {
       const o = await call("creator.preview", [p, x.kind], undefined, (v) => readPreview(v) !== null);
