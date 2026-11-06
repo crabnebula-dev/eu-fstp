@@ -6,7 +6,7 @@ CrabNebula Ltd operates the hosted service. The same codebase also builds a self
 
 ## Status
 
-Status on 2026-10-31. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. M4 started on 2026-10-29, before M3 closed, so that pages existed for a demo.
+Status on 2026-11-06. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. M4 started on 2026-10-29, before M3 closed, so that pages existed for a demo. M5 started on 2026-11-06, alongside M4, so the whole process can be recorded as one video.
 
 | Milestone | Content | State |
 | --- | --- | --- |
@@ -14,8 +14,8 @@ Status on 2026-10-31. Built milestone by milestone, as `SPEC/09-milestones.md` s
 | M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done |
 | M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done, merged into `main` |
 | M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | In progress. Exit criteria not yet green |
-| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools | In progress. 9 of 24 work-plan steps done |
-| M5 | Contracts, payment requests, payment adapters, MCP client integrations | Not started. Starts after M4 closes |
+| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | In progress. Most interfaces are built. The exit criteria are not yet green |
+| M5 | Contracts with online signing, payment requests in record-only mode, grant completion, and the funder reports (pulled forward from M9) | Design done (`docs/handoff/m5-design.md`). Building starts as M4 lanes finish |
 | M6 to M12 | Timeline and email, the LLM assessor, messaging, export and white-labelling, hardening, the pilot and calibration | Not started |
 
 ### M3: what exists and what is open
@@ -24,17 +24,35 @@ Built: the cell runtime with its routes, engine, record store and signing, and t
 
 Open: the slice cycle steps of the test world, the self-hosted witness, record store gaps, key-volume custody, the control plane run loops, the vault audit chain, and ML-DSA-65 in moduletto. Production anchoring waits on the last one.
 
-### M4: what exists and what is open
+### M4: what is on `main`
 
-Built: tenant onboarding through to two admins, and the programme creator with drafts, validation and activation by a second admin (I-66, I-67). The Guide for Applicants parser and renderer work. Imported funding documents change a draft only through a named programme manager (I-65). The applicant, reviewer, coordinator, committee and IRC pages exist.
+- Tenant onboarding through to two admins, and the signatory roles (SoD-14 to SoD-18).
+- The programme creator, with drafts, validation and activation by a second admin (I-66, I-67). Imported funding documents change a draft only through a named programme manager (I-65).
+- The Planning Studio ("Programme set-up"). It groups the eleven creator steps into five studios and shows the approval and publication rules.
+- The vocabulary packs. Plain grant language is the default, and the optional Voyage pack adds a secondary label (O-55). Labels never override approved or legal text (I-72).
+- The Guide for Applicants parser and renderer.
+- A home page and role navigation after sign-in, and the applicant, reviewer, coordinator, committee and IRC pages.
+- The public pages under `/p`: programme, call, funded and finished pages, the feed and the public research tools. They use no script and set no cookie (R-PB-04), and show only what I-41 to I-43 allow.
+- The journey layer: the projector, the visibility rules, the progress map with its text list and help panels, and the activity log.
+- The OAuth 2.1 server for agent clients, and the authorisation matrix harness.
 
-In progress: strict activation pairing for every programme (D2e), a home page and navigation after sign-in, the profile page, OAuth, the authorisation matrix harness, and the tenant sign-up review.
+### M4: built in lanes, not yet on `main`
 
-Not started: the MCP server, public pages and tools, the admin, auditor and agent pages, the switch from test fakes to the M3 runtime, the full review, and the exit run in CI.
+These are built and tested in their lanes, and merge in batches once CI shows no new failure:
+
+- The progress map drawn from a server-built element tree, the route on the public call pages (R-JV-06), and read-only access for a former team after a proposal ends.
+- Programme invitations (journey J2). The invitee accepts the exact terms shown, and a role is granted only with accepted terms and, for SoD-09, a verified identity.
+- The MCP server (I-84 to I-87). Only `fstp_prepare_call_publication` can prepare a high-risk action.
+- The Guide stored at publication, with numbered corrigenda for later P-05 and P-13 tightening (I-51, I-53).
+- Authorisation matrix fixes for the public, creator, review and committee operations.
+- The applicant vault ports: date of birth (Q23), affiliations, guardian consent and the stage 2 revision.
+- CI split into parallel shards, so the full suite runs on CI.
+
+Still open for the M4 exit: SuperSAFE built end to end through the creator pages, the authorisation matrix fully green, the call cycle to NEGOTIATION in CI, the admin, auditor and agent pages, coverage-guided fuzzing of the TypeScript parsers (Jazzer.js), and the full review.
 
 ### Branches
 
-`main` holds all of M0 to M4 so far, and it is the only integration branch. Work runs in short-lived lane branches that merge into `main` once every gate passes. Some tests are red on purpose: each waits on a seam that a named lane closes. `ci/known-red.txt` lists each one with its seam and lane, and CI fails on any other red test (`tools/test-gate`).
+`main` holds all of M0 to M4 so far, and it is the only integration branch. Work runs in short-lived lane branches. Finished lanes merge in batches: CI runs the full suite against PostgreSQL 16, and the batch merges into `main` when it shows no new failure. Some tests are red on purpose: each waits on a seam that a named lane closes. `ci/known-red.txt` lists each one with its seam and lane, and CI fails on any other red test (`tools/test-gate`).
 
 ### Decisions
 
@@ -48,9 +66,7 @@ The demo runs one test cell with synthetic data only. Sign-in uses real passkeys
 FSTP_DEMO_PORT=8640 tools/demo/run.sh start
 ```
 
-Then open the demo page at `http://127.0.0.1:8641/demo`. It lists the people of the current scene with their sign-in links, every message the cell sent, and links that switch scenes. `docs/handoff/m4-demo.md` gives the click paths and the journey results.
-
-Known gap: after sign-in a person lands on the account page, and the app has no home page or role navigation yet. Work in progress adds both.
+Then open the demo page at `http://127.0.0.1:8641/demo`. It lists the people of the current scene with their sign-in links, every message the cell sent, and links that switch scenes. After sign-in each person lands on their home page, which links their work. `docs/handoff/m4-demo.md` gives the click paths and the journey results.
 
 ## Running it locally
 
@@ -81,7 +97,7 @@ The site runs on your machine only, on loopback, with synthetic data. It needs N
 
 `FSTP_DEMO_PORT=<n>` moves the four listeners: the cell on `<n>`, the front door on `<n + 1>`. `FSTP_DEMO_SIGNIN=off` starts the cell as the e2e suite runs it, with passkeys only. Then the name link of each person enrols a passkey, and the person signs in with it. A name under `.localhost` is a secure context in Chromium, so passkeys work over plain HTTP.
 
-The public call pages are not served yet: `/p` is a stub until `fstp-public` exists. `docs/handoff/m4-demo.md` gives the click paths of each role.
+The front door also links the public pages under `/p`, which work with scripts turned off. `docs/handoff/m4-demo.md` gives the click paths of each role.
 
 ## Repository layout
 
