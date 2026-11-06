@@ -213,9 +213,9 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             base,
             start,
         } => {
+            manager(core, *programme, actor, ctx.now)?;
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
-            manager(core, *programme, actor, ctx.now)?;
             if let StartingPoint::Clone { source } = start
                 && core.policy().programme(*source).is_none()
             {
@@ -245,9 +245,9 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             base,
             fields,
         } => {
+            manager(core, *programme, actor, ctx.now)?;
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
-            manager(core, *programme, actor, ctx.now)?;
             if fields.is_empty() {
                 return Err(CreatorRefusal::NothingToSave);
             }
@@ -270,9 +270,9 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             base,
             field,
         } => {
+            manager(core, *programme, actor, ctx.now)?;
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
-            manager(core, *programme, actor, ctx.now)?;
             accept_narrative(d, *field)?;
             records(vec![CreatorRecord::NarrativeAccepted {
                 programme: *programme,
@@ -288,8 +288,8 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             invitee,
             organisation,
         } => {
-            open_draft(creator, *programme)?;
             manager_or_admin(core, *programme, actor, ctx, ext)?;
+            open_draft(creator, *programme)?;
             if creator.invitation_taken(*invitation) {
                 return Err(CreatorRefusal::InvitationExists);
             }
@@ -314,8 +314,8 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             programme,
             invitation,
         } => {
-            let d = open_draft(creator, *programme)?;
             manager_or_admin(core, *programme, actor, ctx, ext)?;
+            let d = open_draft(creator, *programme)?;
             if !d
                 .invitations()
                 .get(invitation)
@@ -363,9 +363,9 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             revision,
             warning,
         } => {
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = open_draft(creator, *programme)?;
             let head = at_head(d, *revision)?;
-            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
             let report = validate_at(core, creator, *programme, &facts, ext);
             if warning.check.severity() != Severity::Warning || !report.shows_warning(warning) {
@@ -382,9 +382,9 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             programme,
             revision,
         } => {
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = open_draft(creator, *programme)?;
             let head = at_head(d, *revision)?;
-            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
             let report = validate_at(core, creator, *programme, &facts, ext);
             records(vec![CreatorRecord::ActivationRequested {
@@ -430,10 +430,10 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             // saved as a template too, and the fold admits its record
             // after activation. Its saver joins the builder set only
             // before activation.
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = creator
                 .draft(*programme)
                 .ok_or(CreatorRefusal::UnknownDraft)?;
-            manager_or_admin(core, *programme, actor, ctx, ext)?;
             // A shipped template keeps its id, so a tenant-private one
             // cannot take it.
             if creator.template_taken(*template) || draft::is_shipped(*template) {
@@ -458,8 +458,8 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
 /// [`CreatorCommand`], and no codec decodes an [`ImportFieldEdit`]. One
 /// call saves one value, since M4 has no bulk accept (Q30).
 ///
-/// It applies the guards of a save: the draft is open, `base` is the head
-/// and the actor holds an active programme manager binding on the draft.
+/// It applies the guards of a save: the actor holds an active programme
+/// manager binding on the draft, the draft is open and `base` is the head.
 /// The resolver becomes a builder through the `FieldsSaved` record and
 /// through [`CreatorState::observe_import_resolution`].
 ///
@@ -476,9 +476,9 @@ pub fn decide_import_save(
     ctx: &Ctx,
 ) -> Result<CreatorDecision, CreatorRefusal> {
     let actor = account(ctx)?;
+    manager(core, programme, actor, ctx.now)?;
     let d = open_draft(creator, programme)?;
     at_head(d, base)?;
-    manager(core, programme, actor, ctx.now)?;
     let edits = [Edit {
         field: edit.field,
         value: &edit.value,
@@ -588,10 +588,12 @@ fn accept_narrative(d: &Draft, field: FieldId) -> Result<(), CreatorRefusal> {
 }
 
 /// The checks an approval of `programme` at `revision` needs before its
-/// report, in this order: the draft is open, the revision is the head, the
-/// actor is a tenant admin, outside the builder set, verified, sharing no
-/// verified identity with a builder, and a request is live. Returns the
-/// approver and the builder set.
+/// report, in this order: the actor is a tenant admin outside the builder
+/// set, the draft is open, the revision is the head, the actor is
+/// verified and shares no verified identity with a builder, and a request
+/// is live. The actor comes before the draft's state, so a denied actor
+/// is denied in every state (`07-test-plan/test-plan.md`, authorisation
+/// matrix row). Returns the approver and the builder set.
 ///
 /// Interim, pending Daniel: the approver rule is the Q1 reading (a tenant
 /// admin outside the builder set), the vault rule is the Q2 reading, and
@@ -604,14 +606,17 @@ pub(crate) fn approver_checks(
     ext: &CreatorInputs,
 ) -> Result<(AccountId, BTreeSet<AccountId>), CreatorRefusal> {
     let actor = account(ctx)?;
-    let d = open_draft(creator, programme)?;
-    at_head(d, revision)?;
     if !is_admin(actor, ctx, ext) {
         return Err(CreatorRefusal::NotTenantAdmin);
     }
+    let d = creator
+        .draft(programme)
+        .ok_or(CreatorRefusal::UnknownDraft)?;
     if d.builders().contains(&actor) {
         return Err(CreatorRefusal::ApproverIsBuilder);
     }
+    open_draft(creator, programme)?;
+    at_head(d, revision)?;
     match ext.vault.is_verified.get(&actor) {
         Some(true) => {}
         Some(false) => return Err(CreatorRefusal::ApproverUnverified),
@@ -675,6 +680,10 @@ pub(crate) fn holds_manager(
     })
 }
 
+/// Every draft command checks its actor with this or
+/// [`manager_or_admin`] before the draft's state and revision, so a
+/// denied actor is denied in every state (`07-test-plan/test-plan.md`,
+/// authorisation matrix row).
 fn manager(
     core: &State,
     programme: ProgrammeId,

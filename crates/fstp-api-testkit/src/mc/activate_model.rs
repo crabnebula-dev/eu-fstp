@@ -1134,7 +1134,7 @@ pub mod production {
                 (RuleRef::Actor, Why::BindingInactive) => RefRefusal::NotProgrammeManager,
                 (RuleRef::I65, Why::BindingInactive) => RefRefusal::NotProgrammeManager,
                 (RuleRef::Actor, _) => RefRefusal::NotTenantAdmin,
-                (RuleRef::I66, Why::WrongState) if self.active() => RefRefusal::AlreadyActive,
+                (RuleRef::Row, Why::WrongState) => RefRefusal::AlreadyActive,
                 (RuleRef::I66, Why::WrongState) => RefRefusal::NoLiveRequest,
                 (RuleRef::I66, Why::InvalidValue) => RefRefusal::NotAWarning,
                 (RuleRef::I66, _) => self.uncleared()?,

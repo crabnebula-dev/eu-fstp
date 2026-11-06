@@ -149,11 +149,14 @@ pub enum ReadKind {
     // Lane j4 (ADR-015 amendment of 2026-11-06): the server's checked
     // map tree of one proposal, for its team (section 8.1, O-58).
     GetRouteMap,
+    // Lane mcreator: the calls of a programme for the Planning Studio,
+    // each with its state and whether the caller may approve it (R-PC-03).
+    ListCalls,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 50] = [
+    pub const ALL: [ReadKind; 51] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -204,6 +207,7 @@ impl ReadKind {
         ReadKind::GetJourney,
         ReadKind::GetDiary,
         ReadKind::GetRouteMap,
+        ReadKind::ListCalls,
     ];
 }
 
@@ -457,6 +461,16 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     (
         ReadKind::GetRouteMap,
         ReadRule::AnyOf(&[ReadRule::Team, ReadRule::FormerTeam]),
+        OPEN_ALWAYS,
+    ),
+    // Lane mcreator: the call staff of the programme, as for the board.
+    (
+        ReadKind::ListCalls,
+        ReadRule::AnyOf(&[
+            ReadRule::Holder(Role::ProgrammeManager),
+            ReadRule::Holder(Role::CallDrafter),
+            ReadRule::Holder(Role::FstpCoordinator),
+        ]),
         OPEN_ALWAYS,
     ),
 ];

@@ -402,6 +402,21 @@ pub const REPLIES: &[(&str, Shape)] = &[
         ])),
     ),
     ("calls.list_open", Shape::Array(&CALL)),
+    // Lane mcreator: the drafted call the Studio opens next.
+    (
+        "call.draft",
+        Shape::Object(&[m("accepted", Shape::Bool), m("call", Shape::Id)]),
+    ),
+    // Lane mcreator, R-PC-03: each call of the programme, its state, and
+    // whether the caller may approve it now.
+    (
+        "call.list",
+        Shape::Array(&Shape::Object(&[
+            m("call", Shape::Id),
+            m("status", Shape::Enum(&["draft", "approved", "published"])),
+            m("may_approve", Shape::Bool),
+        ])),
+    ),
     ("calls.get", CALL),
     // I-17: "Proposal" plus its id, never a name.
     ("proposal.list_own", Shape::Array(&OWN_PROPOSAL)),

@@ -1153,7 +1153,8 @@ fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
 /// The body of an executed command: `{"accepted": true}`, and for a
 /// command that creates an object the client opens next, the drawn id
 /// that names it. Interim, pending Daniel: only `CreateDraft` names its
-/// new proposal (`proposal.create`, design section 2.2 J4). Other drawn
+/// new proposal (`proposal.create`, design section 2.2 J4), and
+/// `DraftCall` its new call (`call.draft`, lane mcreator). Other drawn
 /// ids, such as bindings and decisions, stay with the server.
 ///
 /// `OpenCutOffRound` answers `{"round": id}` with the drawn round alone,
@@ -1175,8 +1176,11 @@ fn accepted(form: &CmdForm, ids: &[u128]) -> ReadModel {
             });
         }
     }
-    const NAMED: &[(fstp_domain::CommandKind, &str)] =
-        &[(fstp_domain::CommandKind::CreateDraft, "proposal")];
+    // Lane mcreator: a drafted call names its id, which the Studio opens.
+    const NAMED: &[(fstp_domain::CommandKind, &str)] = &[
+        (fstp_domain::CommandKind::CreateDraft, "proposal"),
+        (fstp_domain::CommandKind::DraftCall, "call"),
+    ];
     let Some((_, name)) = NAMED.iter().find(|(k, _)| *k == form.kind) else {
         return ReadModel::Accepted;
     };
@@ -1709,6 +1713,16 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let p = proposal_param(call, op)?;
             ReadModel::RouteMap(journey::route_map(call, p, clearance.rule())?)
         }
+        // Lane mcreator: the Studio's calls of the programme (R-PC-03).
+        ReadKind::ListCalls => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            ReadModel::Calls(staff_calls(&call.state.core, p, a, call.now))
+        }
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1906,6 +1920,8 @@ enum PortCall {
     StateCountry(ProposalId, [u8; 2]),
     /// A team member acknowledges the negotiation notice (R-NG-06).
     AcknowledgeNotice(ProposalId),
+    /// The user adds a passkey (`authentication.md`, high-risk).
+    AddPasskey,
 }
 
 /// An operation an M3 port serves.
@@ -1951,6 +1967,10 @@ async fn m3_port<P: Seams>(
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
             PortCall::ApproveBreakGlass(b, approve)
         }
+        // Adding a passkey is high-risk (`authentication.md`). Its channel
+        // and step-up checks run before the seam, as the cell's
+        // `/auth/passkeys` route runs them before its 501.
+        PortKind::AddPasskey if call.spec.high_risk => PortCall::AddPasskey,
         PortKind::EndSession => PortCall::EndSession(SessionId::from_raw(id("session")?)),
         PortKind::BeginVerification => PortCall::BeginVerification,
         PortKind::SaveWorkspace => {
@@ -2035,6 +2055,9 @@ async fn m3_port<P: Seams>(
         Err(e) => Err(call.refuse(port_failed(e, rule))),
     };
     match port_call {
+        PortCall::AddPasskey => Err(call.refuse(ApiError::NotImplemented(
+            "adding a passkey: no port registers a credential yet, and the cell's /auth/passkeys route answers 501",
+        ))),
         PortCall::ApproveRecovery(r) => done(
             call.ports
                 .recovery()
@@ -2643,6 +2666,40 @@ fn absent_call(state: &EngineState) -> CallId {
         .map(CallId::from_raw)
         .find(|c| calls.get(*c).is_none())
         .unwrap_or(CallId::from_raw(u128::MAX))
+}
+
+/// The calls of programme `p` in call order, each with its state and
+/// whether `viewer` may approve it at `now` (R-PC-03): a draft call, and
+/// an active programme manager binding of `viewer` on `p` outside the
+/// call's drafters. The domain guard decides an approval again.
+fn staff_calls(
+    core: &fstp_domain::State,
+    p: ProgrammeId,
+    viewer: AccountId,
+    now: Timestamp,
+) -> Vec<crate::model::StaffCallRow> {
+    let manager = core.roster().bindings().any(|(_, b)| {
+        b.account == viewer
+            && b.programme == p
+            && b.role == Role::ProgrammeManager
+            && b.active_at(now)
+    });
+    core.calls()
+        .iter()
+        .filter(|(_, v)| v.programme() == p)
+        .map(|(c, v)| {
+            let status = v.status();
+            let drafter =
+                fstp_domain::programme::drafters(core, c).is_none_or(|d| d.contains(&viewer));
+            crate::model::StaffCallRow {
+                call: c,
+                status,
+                may_approve: manager
+                    && !drafter
+                    && status == fstp_domain::programme::CallStatus::Draft,
+            }
+        })
+        .collect()
 }
 
 /// Admits one read that asks the vault, under the per-account limit of

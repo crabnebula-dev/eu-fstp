@@ -118,6 +118,9 @@ pub enum ReadModel {
     /// `review.findings`: the assessor's findings on the reviewer's
     /// proposal, with the reader's own marks (lane mrev, I-10).
     Findings(Vec<crate::views::FindingRow>),
+    /// `call.list`: the calls of a programme for the Planning Studio
+    /// (lane mcreator, R-PC-03).
+    Calls(Vec<StaffCallRow>),
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
@@ -234,6 +237,7 @@ impl ToJson for ReadModel {
             ReadModel::Invitation(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
+            ReadModel::Calls(rows) => array(rows),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -348,6 +352,29 @@ impl ToJson for CallSummary {
         if let Some(r) = &self.recipient_max {
             let _ = o.insert("recipient_max", Value::from(r.as_str()));
         }
+        Value::Object(o)
+    }
+}
+
+/// One call of a programme as the Planning Studio lists it to its staff
+/// (lane mcreator). It names no author or approver (I-17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaffCallRow {
+    /// The call.
+    pub call: CallId,
+    /// Its state.
+    pub status: CallStatus,
+    /// R-PC-03: whether the caller may approve the call now: a programme
+    /// manager outside its drafters, while the call is a draft.
+    pub may_approve: bool,
+}
+
+impl ToJson for StaffCallRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("call", dec(self.call.raw()));
+        let _ = o.insert("status", Value::from(call_status(self.status)));
+        let _ = o.insert("may_approve", Value::Bool(self.may_approve));
         Value::Object(o)
     }
 }
@@ -1558,6 +1585,9 @@ pub(crate) mod reply_shape_tests {
         match m {
             // A command's `{"accepted": true}`: no data, and no entry.
             ReadModel::Accepted => &[],
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "call") => {
+                &["call.draft"]
+            }
             ReadModel::Created(_) => &["proposal.create"],
             ReadModel::PendingActions(_) => &["pending.list"],
             ReadModel::OpenCalls(_) => &["calls.list_open"],
@@ -1604,6 +1634,7 @@ pub(crate) mod reply_shape_tests {
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
+            ReadModel::Calls(_) => &["call.list"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Public(_) => &[],
         }
@@ -1787,6 +1818,19 @@ pub(crate) mod reply_shape_tests {
         vec![
             ReadModel::Accepted,
             ReadModel::Created(vec![("proposal", 1001)]),
+            ReadModel::Created(vec![("call", 2001)]),
+            ReadModel::Calls(vec![
+                StaffCallRow {
+                    call: CallId::from_raw(1),
+                    status: CallStatus::Approved,
+                    may_approve: false,
+                },
+                StaffCallRow {
+                    call: CallId::from_raw(2),
+                    status: CallStatus::Draft,
+                    may_approve: true,
+                },
+            ]),
             ReadModel::PendingActions(vec![pending()]),
             ReadModel::OpenCalls(vec![call()]),
             ReadModel::Call(call()),
@@ -1994,7 +2038,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 36;
+    const VARIANTS: usize = 37;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2035,8 +2079,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Diary(_) => 31,
             ReadModel::RouteMap(_) => 32,
             ReadModel::Findings(_) => 33,
-            ReadModel::Public(_) => 34,
-            ReadModel::Invitation(_) => 35,
+            ReadModel::Calls(_) => 34,
+            ReadModel::Public(_) => 35,
+            ReadModel::Invitation(_) => 36,
         }
     }
 

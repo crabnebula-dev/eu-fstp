@@ -567,8 +567,8 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             if crate::policy::head(state, *programme).is_none() {
                 return Err(unknown());
             }
-            draft_gate(state, *programme, DraftGate::Enforce)?;
             require_holder(state, actor, *programme, &WRITERS, ctx.now)?;
+            draft_gate(state, *programme, DraftGate::Enforce)?;
             if state.used_ids.contains(UsedId::Call(*call)) || state.calls.get(*call).is_some() {
                 return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
             }
@@ -592,9 +592,12 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             budget,
             text,
         } => {
+            // The actor before the call's state (test plan, authorisation
+            // matrix row): a denied actor is denied in every state.
+            let view = state.calls.get(*call).ok_or_else(unknown)?;
+            require_holder(state, actor, view.programme, &WRITERS, ctx.now)?;
             let view = unpublished(state, *call)?;
             draft_gate(state, view.programme, DraftGate::Enforce)?;
-            require_holder(state, actor, view.programme, &WRITERS, ctx.now)?;
             check_call_fields(state, view.programme, *opens, *deadline, *budget)?;
             Ok(vec![Record::CallEdited {
                 call: *call,
@@ -607,18 +610,23 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             }])
         }
         Command::ApproveCallPublication { call, decision } => {
-            let view = unpublished(state, *call)?;
-            draft_gate(state, view.programme, DraftGate::Enforce)?;
+            // The actor and the R-PC-03 drafter rule before the call's
+            // state (test plan, authorisation matrix row).
+            let view = state.calls.get(*call).ok_or_else(unknown)?;
             require_holder(state, actor, view.programme, &MANAGER, ctx.now)?;
-            if state.used_ids.contains(UsedId::Decision(*decision)) {
-                return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
-            }
             let drafters = drafters(state, *call).ok_or_else(unknown)?;
             if drafters.contains(&actor) {
                 return Err(rpc03());
             }
+            let view = unpublished(state, *call)?;
+            draft_gate(state, view.programme, DraftGate::Enforce)?;
+            if state.used_ids.contains(UsedId::Decision(*decision)) {
+                return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
+            }
+            // A call already approved has no row to approval: a state
+            // guard, never the R-PC-03 actor rule.
             if view.status != CallStatus::Draft {
-                return Err(Refusal::new(RuleRef::Rpc03, RefusalReason::WrongState));
+                return Err(Refusal::new(RuleRef::Row, RefusalReason::WrongState));
             }
             Ok(vec![Record::CallApproved {
                 call: *call,
@@ -631,9 +639,10 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             config,
             config_model,
         } => {
+            let view = state.calls.get(*call).ok_or_else(unknown)?;
+            require_holder(state, actor, view.programme, &MANAGER, ctx.now)?;
             let view = unpublished(state, *call)?;
             draft_gate(state, view.programme, DraftGate::Enforce)?;
-            require_holder(state, actor, view.programme, &MANAGER, ctx.now)?;
             let drafters = drafters(state, *call).ok_or_else(unknown)?;
             match view.approval {
                 Some(a)

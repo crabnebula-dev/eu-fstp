@@ -1183,6 +1183,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .hr()
         .tool("fstp_prepare_call_publication"),
     RefOp::read("call.board", T::Call, R::CallStaff).tool("fstp_get_call_board"),
+    // Lane mcreator: the Studio list of the programme's calls. Reading: the
+    // staff who read a call's board read the list of its calls.
+    RefOp::read("call.list", T::Programme, R::CallStaff),
     // J4: public pages, open calls and applicants.
     RefOp::public(
         "public.programme",
