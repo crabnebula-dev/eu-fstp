@@ -2,13 +2,17 @@
 //! D13).
 //!
 //! [`due`] is a pure function from engine state and `now` to the due
-//! System commands of two kinds:
+//! System commands of four kinds:
 //!
 //! - `ExpireStage2` for every proposal in STAGE2 whose P-07 window has
 //!   elapsed without answers and without a "no questions" record
 //!   (`state-machine.md` NOTE 4 and NOTE 5);
 //! - `ReEnter` for every deferred proposal whose next published call has
 //!   opened, into that call (NOTE 8).
+//! - `StartExecution` for every GRANTED grant whose earliest milestone
+//!   start has come (NOTE 11, M5 design section 4.2);
+//! - `Complete` for every grant in execution whose milestones are all
+//!   closed and whose payment requests are all terminal (NOTE 12).
 //!
 //! The cell is to run it on its clock and issue each command as
 //! `Actor::System(SystemCause::Timeline)`. D13 makes it the only issuer of
@@ -18,8 +22,8 @@
 //!
 //! The sweep reads only the core part of the state (I-10). It takes its
 //! commands from `fstp_domain::due`, so it issues nothing the domain
-//! does not list as due at `now`. It keeps the two kinds above and drops
-//! every other due kind, which M4 cells issue elsewhere or not at all. A
+//! does not list as due at `now`. It keeps the four kinds above and drops
+//! every other due kind, which cells issue elsewhere or not at all. A
 //! proposal gets at most one `ReEnter`, the first the domain lists.
 //!
 //! Reading taken where the design is silent: the W0 signature returns a
@@ -52,7 +56,8 @@ impl core::fmt::Display for SweepError {
 
 impl std::error::Error for SweepError {}
 
-/// The `ExpireStage2` and `ReEnter` commands due at `now`, in the order
+/// The `ExpireStage2`, `ReEnter`, `StartExecution` and `Complete` commands
+/// due at `now`, in the order
 /// `fstp_domain::due` lists them, each wrapped as a core engine command.
 ///
 /// Every command is one the System may issue at `now`. The caller runs
@@ -64,7 +69,9 @@ pub fn due(state: &EngineState, now: Timestamp) -> Result<Vec<Command>, SweepErr
     let mut out = Vec::new();
     for cmd in fstp_domain::due(&state.core, now) {
         let keep = match &cmd {
-            fstp_domain::Command::ExpireStage2 { .. } => true,
+            fstp_domain::Command::ExpireStage2 { .. }
+            | fstp_domain::Command::StartExecution { .. }
+            | fstp_domain::Command::Complete { .. } => true,
             fstp_domain::Command::ReEnter { proposal, .. } => reentered.insert(*proposal),
             _ => false,
         };

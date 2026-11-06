@@ -49,7 +49,9 @@ use fstp_domain::id::{
     RequestId, TextRef,
 };
 use fstp_domain::oracle::Answers;
-use fstp_domain::payment::PaymentLine;
+use fstp_domain::payment::{
+    CheckKind, CheckPhase, CheckResult, LineEvidence, PaymentKind, PaymentLine,
+};
 use fstp_domain::policy::{PolicyVersion, SpdxId};
 use fstp_domain::proposal::{Milestone, PlanOrigin, Task};
 use fstp_domain::record::Record;
@@ -516,12 +518,42 @@ pub fn close_request(pm: AccountId, request: RequestId) -> Result<Step, String> 
     Ok(by(pm, cmd))
 }
 
+/// The instant of the verified bank details of every setup grant: one
+/// P-36 hold of 7 days before [`crate::r#gen::roster::T0`], so releases
+/// are open from the start (I-33).
+pub const BANK_SET: Timestamp = Timestamp::from_micros(1_000_000 - 7 * 86_400_000_000);
+
 /// The lead's `RequestPayment` of `lines`: line id, milestone and cents.
+/// Each line carries synthetic public deliverables under `Apache-2.0`.
 pub fn request_payment(
     lead: AccountId,
     request: RequestId,
     grant: ProposalId,
     lines: &[(LineId, MilestoneId, i64)],
+) -> Result<Step, String> {
+    request_payment_as(lead, request, grant, PaymentKind::Milestone, lines, None)
+}
+
+/// The synthetic evidence of `line`: public location, release and report
+/// text, under `Apache-2.0` (P-34).
+pub fn line_evidence(line: LineId) -> LineEvidence {
+    LineEvidence {
+        location: Some(text(98_000u128.saturating_add(line.raw()))),
+        release: Some(text(99_000u128.saturating_add(line.raw()))),
+        licence: Some(SpdxId("Apache-2.0".to_owned())),
+        report: Some(text(99_500u128.saturating_add(line.raw()))),
+    }
+}
+
+/// The lead's `RequestPayment` of `kind`, replacing `replaces` when set
+/// (M5 design reading 4).
+pub fn request_payment_as(
+    lead: AccountId,
+    request: RequestId,
+    grant: ProposalId,
+    kind: PaymentKind,
+    lines: &[(LineId, MilestoneId, i64)],
+    replaces: Option<RequestId>,
 ) -> Result<Step, String> {
     let mut out = Vec::new();
     for (line, milestone, amount) in lines {
@@ -529,6 +561,7 @@ pub fn request_payment(
             line: *line,
             milestone: *milestone,
             amount: pos(*amount)?,
+            evidence: line_evidence(*line),
         });
     }
     Ok(by(
@@ -536,9 +569,56 @@ pub fn request_payment(
         Command::RequestPayment {
             request,
             grant,
+            kind,
             lines: out,
+            replaces,
         },
     ))
+}
+
+/// The snapshot digest of the `phase` checks of `request`.
+pub fn snapshot_of(request: RequestId, phase: CheckPhase) -> ContentDigest {
+    let mut d = [7u8; 32];
+    let (head, tail) = d.split_at_mut(16);
+    head.copy_from_slice(&request.raw().to_be_bytes());
+    if let Some(b) = tail.first_mut() {
+        *b = match phase {
+            CheckPhase::Submission => 1,
+            CheckPhase::Acceptance => 2,
+        };
+    }
+    ContentDigest::from_bytes(d)
+}
+
+/// The checks runner's `RecordChecks` of `phase` on `request`: one licence
+/// result per line of `lines`, each failed with a synthetic reason when
+/// `fail` (I-32, R-PR-02).
+pub fn record_checks(request: RequestId, phase: CheckPhase, lines: &[LineId], fail: bool) -> Step {
+    let results = lines
+        .iter()
+        .map(|l| CheckResult {
+            line: Some(*l),
+            check: CheckKind::Licence,
+            failure: fail.then(|| text(93_000u128.saturating_add(l.raw()))),
+        })
+        .collect();
+    system(
+        SystemCause::PaymentPort,
+        Command::RecordChecks {
+            request,
+            phase,
+            results,
+            snapshot: snapshot_of(request, phase),
+        },
+    )
+}
+
+/// The digest of the record-only payment record file of `request`.
+pub fn record_file_of(request: RequestId) -> ContentDigest {
+    let mut d = [5u8; 32];
+    let (head, _) = d.split_at_mut(16);
+    head.copy_from_slice(&request.raw().to_be_bytes());
+    ContentDigest::from_bytes(d)
 }
 
 /// An `AcceptLine` by `reviewer` approving `approved` cents, with a reason when `reason`.
@@ -578,7 +658,13 @@ pub fn approve_payment(approver: AccountId, request: RequestId) -> Step {
 
 /// A `ReleasePayment` by `releaser`.
 pub fn release_payment(releaser: AccountId, request: RequestId) -> Step {
-    by(releaser, Command::ReleasePayment { request })
+    by(
+        releaser,
+        Command::ReleasePayment {
+            request,
+            record_file: record_file_of(request),
+        },
+    )
 }
 
 /// The payment port's `ConfirmPaid`.
@@ -794,6 +880,9 @@ pub struct MoneySetup {
     pub reviewers: Vec<AccountId>,
     /// Identities set last, overriding the others: account and identity.
     pub identities: Vec<(AccountId, IdentityTag)>,
+    /// Grants whose payee has no bank details in the vault. Every other
+    /// draft gets verified details at [`BANK_SET`] (I-33).
+    pub unbanked: Vec<ProposalId>,
 }
 
 impl MoneySetup {
@@ -815,6 +904,7 @@ impl MoneySetup {
             consents: Vec::new(),
             reviewers: vec![R1, R2],
             identities: Vec::new(),
+            unbanked: Vec::new(),
         }
     }
 
@@ -877,6 +967,14 @@ impl MoneySetup {
             &mut truth,
             self.drafts.iter().map(|d| (d.lead, d.minor)),
         );
+        for d in self
+            .drafts
+            .iter()
+            .filter(|d| !self.unbanked.contains(&d.proposal))
+        {
+            truth.write_bank(d.proposal, BANK_SET);
+            truth.verify_bank(d.proposal);
+        }
         truth
     }
 
@@ -981,6 +1079,10 @@ pub struct MoneyWorld {
     pub money: MoneyView,
     /// The latest policy version of the programme, for P-05 edits.
     pub head: Option<Box<PolicyVersion>>,
+    /// Whether the synthetic checks runner passes every new payment
+    /// request at once, at submission and at acceptance (I-32). Tests of
+    /// the checks themselves turn it off and record each run.
+    pub auto_checks: bool,
 }
 
 impl MoneyWorld {
@@ -990,6 +1092,7 @@ impl MoneyWorld {
             life: LifeWorld::new(backend, truth),
             money: MoneyView::new(),
             head: None,
+            auto_checks: true,
         }
     }
 
@@ -1091,6 +1194,42 @@ impl MoneyWorld {
     /// accepted step with its records, `Ok(None)` a step both refuse, and
     /// `Err` a divergence or a harness failure.
     pub fn step(&self, step: &Step) -> Result<Option<(MoneyWorld, Vec<Record>)>, String> {
+        let Some((mut w, mut records)) = self.step_once(step)? else {
+            return Ok(None);
+        };
+        if !w.auto_checks {
+            return Ok(Some((w, records)));
+        }
+        let asked: Vec<(RequestId, Vec<LineId>)> = records
+            .iter()
+            .filter_map(|r| match r {
+                Record::PaymentRequested { request, lines, .. } => {
+                    Some((*request, lines.iter().map(|l| l.line).collect()))
+                }
+                _ => None,
+            })
+            .collect();
+        for (request, lines) in asked {
+            for phase in [CheckPhase::Submission, CheckPhase::Acceptance] {
+                let s = record_checks(request, phase, &lines, false);
+                match w.step_once(&s)? {
+                    Some((next, more)) => {
+                        w = next;
+                        records.extend(more);
+                    }
+                    None => {
+                        return Err(format!(
+                            "harness: the synthetic {phase:?} checks of {request:?} were refused"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(Some((w, records)))
+    }
+
+    /// [`MoneyWorld::step`] without the synthetic checks runner.
+    fn step_once(&self, step: &Step) -> Result<Option<(MoneyWorld, Vec<Record>)>, String> {
         let mut w = self.clone();
         w.sync()?;
         let context = format!("{:?} by {:?}", step.cmd, step.actor);

@@ -488,6 +488,7 @@ pub(crate) fn table_commands() -> Result<Vec<(&'static str, CellCommand)>, Strin
             "ReleasePayment",
             core(fstp_domain::Command::ReleasePayment {
                 request: RequestId::from_raw(1),
+                record_file: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
             }),
         ),
         ("PublishCall", core(publish(call(1)).cmd)),

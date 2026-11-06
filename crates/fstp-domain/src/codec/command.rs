@@ -65,10 +65,11 @@ tagged_enum! {
         Complete { proposal },
         Terminate { decision, proposal, reason },
         ApprovePayment { request },
-        ReleasePayment { request },
+        ReleasePayment { request, record_file },
         ConfirmPaid { request },
         WithdrawPaymentRequest { request },
         RequestPaymentChanges { request, reason },
+        RecordChecks { request, phase, results, snapshot },
         RecordDeliverable {
             deliverable, grant, milestone, public_location, release, licence, snapshot, accepted
         },
@@ -83,7 +84,7 @@ tagged_enum! {
         EditCall { call, opens, deadline, deadline_zone, budget, text },
         RecordPlanVersion { plan, proposal, origin, supersedes, tasks, content },
         DetermineAmount { decision, proposal, agreed, deductions },
-        RequestPayment { request, grant, lines },
+        RequestPayment { request, grant, kind, lines, replaces },
         AcceptLine { request, line, approved, reason },
     }
     tuple {}

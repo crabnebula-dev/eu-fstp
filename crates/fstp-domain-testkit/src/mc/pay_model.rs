@@ -313,7 +313,15 @@ pub fn fault_releaser_is_approver(s: &PayState) -> Option<PayState> {
     }
     let r = s.world.money.pay.requests.get(&REQ)?;
     let approver = r.approver?;
-    let rec = forge_release(REQ, r.grant, &r.acceptors(), approver, approver).ok()?;
+    let rec = forge_release(
+        REQ,
+        r.grant,
+        &r.acceptors(),
+        approver,
+        approver,
+        crate::r#gen::money::record_file_of(REQ),
+    )
+    .ok()?;
     let w = s.world.inject(&[rec]).ok()?;
     let mut n = s.clone();
     n.world = w;

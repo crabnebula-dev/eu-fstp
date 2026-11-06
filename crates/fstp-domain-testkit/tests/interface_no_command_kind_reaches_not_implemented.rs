@@ -107,6 +107,14 @@ impl Walk {
             Ok(Some((w, records))) => {
                 self.w = w;
                 self.seen.insert(kind);
+                // The synthetic checks runner of the money world records
+                // `RecordChecks` after each request, through production (I-32).
+                if records
+                    .iter()
+                    .any(|r| matches!(r, Record::ChecksRecorded { .. }))
+                {
+                    self.seen.insert(CommandKind::RecordChecks);
+                }
                 records
             }
             Ok(None) => panic!(

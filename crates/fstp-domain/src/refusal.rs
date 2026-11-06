@@ -50,6 +50,12 @@ pub enum RuleRef {
     I18,
     /// I-23: append-only records.
     I23,
+    /// I-31: released payments never exceed the contract amount.
+    I31,
+    /// I-32: acceptance only after passed checks and recorded snapshots.
+    I32,
+    /// I-33: no release inside the bank detail hold.
+    I33,
     /// I-34: assigned reviewers from at least P-39 organisations.
     I34,
     /// I-35: no reviewer on a proposal declaring an affiliation on the reviewer's proximity list.
@@ -153,6 +159,8 @@ pub enum RuleRef {
     Rla05,
     /// R-EX-04: milestone acceptance and payment release by different persons.
     Rex04,
+    /// R-PR-04: hardship contributions need vault-held evidence.
+    Rpr04,
     /// R-MC-05: binding actions through MCP follow P-77.
     Rmc05,
     /// A policy parameter (`SPEC/02-domain/policy-parameters.md`).
@@ -178,7 +186,7 @@ pub enum RuleRef {
 impl RuleRef {
     /// Every variant except `Param`, in declaration order.
     /// `Param` variants are covered by `crate::rules::CATALOGUE`.
-    pub const ALL_FIXED: [RuleRef; 77] = [
+    pub const ALL_FIXED: [RuleRef; 81] = [
         RuleRef::I01,
         RuleRef::I02,
         RuleRef::I03,
@@ -196,6 +204,9 @@ impl RuleRef {
         RuleRef::I15,
         RuleRef::I18,
         RuleRef::I23,
+        RuleRef::I31,
+        RuleRef::I32,
+        RuleRef::I33,
         RuleRef::I34,
         RuleRef::I35,
         RuleRef::I36,
@@ -247,6 +258,7 @@ impl RuleRef {
         RuleRef::Rla03,
         RuleRef::Rla05,
         RuleRef::Rex04,
+        RuleRef::Rpr04,
         RuleRef::Rmc05,
         RuleRef::Row,
         RuleRef::Actor,
@@ -279,6 +291,9 @@ impl RuleRef {
             RuleRef::I15 => "I-15",
             RuleRef::I18 => "I-18",
             RuleRef::I23 => "I-23",
+            RuleRef::I31 => "I-31",
+            RuleRef::I32 => "I-32",
+            RuleRef::I33 => "I-33",
             RuleRef::I34 => "I-34",
             RuleRef::I35 => "I-35",
             RuleRef::I36 => "I-36",
@@ -330,6 +345,7 @@ impl RuleRef {
             RuleRef::Rla03 => "R-LA-03",
             RuleRef::Rla05 => "R-LA-05",
             RuleRef::Rex04 => "R-EX-04",
+            RuleRef::Rpr04 => "R-PR-04",
             RuleRef::Rmc05 => "R-MC-05",
             RuleRef::Param(p) => p.spec_id(),
             RuleRef::Row

@@ -30,6 +30,7 @@ use fstp_domain::assignment::AssignmentKind;
 use fstp_domain::command::{Actor, DeclarationSubject};
 use fstp_domain::decision::Vote;
 use fstp_domain::id::{AccountId, BindingId, LineId, RequestId};
+use fstp_domain::payment::CheckPhase;
 use fstp_domain::roles::Role;
 use fstp_domain::scoring::{ScoreKey, Stage};
 use fstp_domain::time::Timestamp;
@@ -197,6 +198,7 @@ pub fn cell_command_in(session: u8, c: u8) -> CellCommand {
         ),
         2 => core(fstp_domain::Command::ReleasePayment {
             request: RequestId::from_raw(1),
+            record_file: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
         }),
         _ => CellCommand::Auth(AuthCommand::RegisterCredential {
             account: own,
@@ -379,6 +381,7 @@ fn release_setup() -> MoneySetup {
         consents: Vec::new(),
         reviewers: vec![R1, R2],
         identities: Vec::new(),
+        unbanked: Vec::new(),
     }
 }
 
@@ -485,6 +488,15 @@ fn release_path(setup: &MoneySetup) -> Result<Vec<Step>, String> {
         PC,
         &[(RELEASE_LINE, money::milestone_n(PC, 0), RELEASE_CENTS)],
     )?);
+    // The synthetic checks runner passes the request (I-32).
+    for phase in [CheckPhase::Submission, CheckPhase::Acceptance] {
+        out.push(money::record_checks(
+            RELEASE_REQUEST,
+            phase,
+            &[RELEASE_LINE],
+            false,
+        ));
+    }
     out.push(money::accept_line(
         R1,
         RELEASE_REQUEST,

@@ -89,6 +89,7 @@ fn sample(kind: CommandKind) -> Option<Sample> {
             actor: OTHER,
             cmd: fstp_domain::Command::ReleasePayment {
                 request: RequestId::from_raw(1),
+                record_file: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
             },
             legal_on_web: false,
         },

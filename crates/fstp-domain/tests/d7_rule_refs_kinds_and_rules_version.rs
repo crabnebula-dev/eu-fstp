@@ -33,11 +33,13 @@ fn d7_rule_refs_name_i65_i66_i67() {
     }
 }
 
-/// D7, I-84: `CommandKind::ALL` holds each of the 62 kinds once, the four
-/// M4 kinds among them, and `ACTOR_RULES` gives each an actor rule.
+/// D7, I-84: `CommandKind::ALL` holds each of its kinds once, the four M4
+/// kinds among them, and `ACTOR_RULES` gives each an actor rule. M4 has
+/// 62 kinds. M5 adds the System command `RecordChecks` (I-32), so 63.
 #[test]
 fn d7_command_kinds_grow_by_the_m4_kinds() {
-    assert_eq!(CommandKind::ALL.len(), 62);
+    assert_eq!(CommandKind::ALL.len(), 63);
+    assert!(CommandKind::ALL.contains(&CommandKind::RecordChecks));
     let distinct: std::collections::BTreeSet<CommandKind> = CommandKind::ALL.into_iter().collect();
     assert_eq!(
         distinct.len(),

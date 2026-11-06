@@ -14,9 +14,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_money::NonNegAmount;
 
-use crate::id::{AccountId, ContentDigest, ProgrammeId, ProposalId, ProximityListId, VaultEpoch};
+use crate::id::{
+    AccountId, ContentDigest, HardshipEvidenceId, ProgrammeId, ProposalId, ProximityListId,
+    VaultEpoch,
+};
 use crate::policy::ExclusionClasses;
-use crate::time::Timestamp;
+use crate::time::{Days, Timestamp};
 
 /// One vault query. Amounts have no order (ADR-006), so queries have none either.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -105,6 +108,27 @@ pub enum Query {
         /// The epoch the state has processed.
         epoch: VaultEpoch,
     },
+    /// May a payment of this grant be released at this instant? (I-33, R-PR-05)
+    ///
+    /// The answer is yes only when the latest bank detail write for the
+    /// grant, the first one included, has a completed re-verification, at
+    /// least `hold` days have passed since that write (P-36), and no
+    /// dispute is open (M5 design 12.1, Q1 A). It names no account.
+    BankReleasable {
+        /// The grant whose payee is asked about.
+        grant: ProposalId,
+        /// The instant of the release.
+        at: Timestamp,
+        /// The P-36 hold.
+        hold: Days,
+    },
+    /// Is this hardship evidence verified for this grant? (R-PR-04)
+    HardshipEvidenceVerified {
+        /// The grant.
+        grant: ProposalId,
+        /// The opaque reference the hardship request carries.
+        evidence: HardshipEvidenceId,
+    },
 }
 
 /// The fieldless tag of a [`Query`].
@@ -132,11 +156,15 @@ pub enum QueryKind {
     MeetsTieBreakCountry,
     /// [`Query::ChangedSince`].
     ChangedSince,
+    /// [`Query::BankReleasable`].
+    BankReleasable,
+    /// [`Query::HardshipEvidenceVerified`].
+    HardshipEvidenceVerified,
 }
 
 impl QueryKind {
     /// Every kind, in the order of the query table in `SPEC/03-architecture/overview.md`.
-    pub const ALL: [QueryKind; 11] = [
+    pub const ALL: [QueryKind; 13] = [
         QueryKind::IsVerified,
         QueryKind::SameIdentityAsAny,
         QueryKind::HasConflict,
@@ -148,6 +176,8 @@ impl QueryKind {
         QueryKind::DeclaresAffiliationOnList,
         QueryKind::MeetsTieBreakCountry,
         QueryKind::ChangedSince,
+        QueryKind::BankReleasable,
+        QueryKind::HardshipEvidenceVerified,
     ];
 
     /// The question as the query table spells it.
@@ -182,6 +212,12 @@ impl QueryKind {
             QueryKind::ChangedSince => {
                 "Which accounts have vault facts that changed since a given vault epoch?"
             }
+            QueryKind::BankReleasable => {
+                "May a payment of this grant be released at this instant under P-36?"
+            }
+            QueryKind::HardshipEvidenceVerified => {
+                "Is this hardship evidence verified for this grant?"
+            }
         }
     }
 }
@@ -201,6 +237,8 @@ impl Query {
             Query::DeclaresAffiliationOnList { .. } => QueryKind::DeclaresAffiliationOnList,
             Query::MeetsTieBreakCountry { .. } => QueryKind::MeetsTieBreakCountry,
             Query::ChangedSince { .. } => QueryKind::ChangedSince,
+            Query::BankReleasable { .. } => QueryKind::BankReleasable,
+            Query::HardshipEvidenceVerified { .. } => QueryKind::HardshipEvidenceVerified,
         }
     }
 }

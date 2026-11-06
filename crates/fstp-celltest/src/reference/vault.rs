@@ -582,6 +582,9 @@ impl Facts {
                 }
             }
             Query::ChangedSince { .. } => false,
+            // The bank and hardship queries of M5 (Q1 A) have no facts in
+            // this twin yet, so they fail closed (I-33, R-PR-04).
+            Query::BankReleasable { .. } | Query::HardshipEvidenceVerified { .. } => false,
         }
     }
 
@@ -644,6 +647,9 @@ pub fn named(q: &Query) -> (BTreeSet<AccountId>, Option<ProposalId>) {
         Query::DeclaresAffiliationOnList { team, .. } => (team.clone(), None),
         Query::HasGuardianConsent { proposal } => (BTreeSet::new(), Some(*proposal)),
         Query::ChangedSince { .. } => (BTreeSet::new(), None),
+        Query::BankReleasable { .. } | Query::HardshipEvidenceVerified { .. } => {
+            (BTreeSet::new(), None)
+        }
     }
 }
 
@@ -2007,6 +2013,17 @@ pub mod wire {
                 programme.raw()
             ),
             Query::ChangedSince { epoch } => format!("{{\"epoch\":{}}}", epoch.raw()),
+            Query::BankReleasable { grant, at, hold } => format!(
+                "{{\"at\":{},\"grant\":\"{}\",\"hold\":{}}}",
+                at.micros(),
+                grant.raw(),
+                hold.get()
+            ),
+            Query::HardshipEvidenceVerified { grant, evidence } => format!(
+                "{{\"evidence\":\"{}\",\"grant\":\"{}\"}}",
+                evidence.raw(),
+                grant.raw()
+            ),
         };
         WireQuery {
             kind: query_kind(q),

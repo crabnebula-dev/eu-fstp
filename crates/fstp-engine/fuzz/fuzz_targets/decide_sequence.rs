@@ -41,11 +41,13 @@ use fstp_domain::decision::{IrcVerdict, Vote};
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CommandId, ContentDigest, ContractId,
-    DecisionId, DeliverableId, Handle, KnockOutCriterionId, LineId, LlmConfigId, MilestoneId,
+    DecisionId, DeliverableId, Handle, HardshipEvidenceId, KnockOutCriterionId, LineId, LlmConfigId, MilestoneId,
     OrganisationId, PlanVersionId, ProgrammeId, ProposalId, RequestId, TextId, TextRef, VaultEpoch,
 };
 use fstp_domain::oracle::{Answer, Answers, OracleDown, Query, QueryKind};
-use fstp_domain::payment::PaymentLine;
+use fstp_domain::payment::{
+    CheckKind, CheckPhase, CheckResult, LineEvidence, PaymentKind, PaymentLine,
+};
 use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::policy::{ModelRef, SpdxId};
 use fstp_domain::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin};
@@ -433,12 +435,24 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
                     line: LineId::from_raw(b.id()),
                     milestone: MilestoneId::from_raw(b.id()),
                     amount: b.pos()?,
+                    evidence: LineEvidence {
+                        location: b.opt_text(),
+                        release: b.opt_text(),
+                        licence: b.bool().then(|| SpdxId("MIT".to_owned())),
+                        report: b.opt_text(),
+                    },
                 });
             }
             Core::RequestPayment {
                 request: request(b.id()),
                 grant: proposal(b.id()),
+                kind: if b.bool() {
+                    PaymentKind::Milestone
+                } else {
+                    PaymentKind::Hardship(HardshipEvidenceId::from_raw(b.id()))
+                },
                 lines,
+                replaces: b.bool().then(|| request(b.id())),
             }
         }
         43 => Core::AcceptLine {
@@ -452,6 +466,7 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
         },
         45 => Core::ReleasePayment {
             request: request(b.id()),
+            record_file: ContentDigest::from_bytes([b.u8(); 32]),
         },
         46 => Core::ConfirmPaid {
             request: request(b.id()),
@@ -514,6 +529,23 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
             report: ReportDigest::from_bytes([b.u8(); 32]),
             revision: u32::from(b.u8()),
             creator_builders: (0..b.u8() % 3).map(|_| b.account()).collect(),
+        },
+        // M5: a run of the automated checks (I-32).
+        57 => Core::RecordChecks {
+            request: request(b.id()),
+            phase: if b.bool() {
+                CheckPhase::Submission
+            } else {
+                CheckPhase::Acceptance
+            },
+            results: (0..b.u8() % 3)
+                .map(|_| CheckResult {
+                    line: b.bool().then(|| LineId::from_raw(b.id())),
+                    check: CheckKind::Licence,
+                    failure: b.opt_text(),
+                })
+                .collect(),
+            snapshot: ContentDigest::from_bytes([b.u8(); 32]),
         },
         _ => Core::ActivateAmendment {
             amendment: amendment(b.id()),

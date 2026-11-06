@@ -101,7 +101,8 @@ fn carried(kind: OpKind) -> &'static [CommandKind] {
 /// design lists eight. `EndScheduledRole` postdates that list: its actor is
 /// the System, which records a scheduled end at its instant
 /// (`roles-and-sod.md` Cooling-off NOTE). So it is system-only too.
-const EXPECTED_SYSTEM_ONLY: [&str; 9] = [
+/// `RecordChecks` joins in M5 (design section 4.2, I-32).
+const EXPECTED_SYSTEM_ONLY: [&str; 10] = [
     "VaultChanged",
     "ExpireStage2",
     "ReEnter",
@@ -111,6 +112,7 @@ const EXPECTED_SYSTEM_ONLY: [&str; 9] = [
     "RecordDeliverable",
     "ActivateAmendment",
     "EndScheduledRole",
+    "RecordChecks",
 ];
 
 /// The grant, contract, payment and amendment kinds whose operations
@@ -146,7 +148,8 @@ const NEW_IN_M4: [&str; 4] = [
 /// operation, `SYSTEM_ONLY`, `COMPOSED_ONLY` or `LATER`. Routed means an
 /// operation of kind `OpKind::Command`, or one that carries the kind as
 /// design sections 3.2 and 3.6 state. In M4 that gives 37 routed, 9
-/// system-only, 1 composed and 15 later kinds, 62 in all.
+/// system-only, 1 composed and 15 later kinds, 62 in all. M5 adds the
+/// system-only `RecordChecks`, so 63.
 #[test]
 fn ops_cover_every_command_kind_once() {
     let all: BTreeSet<String> = names(&CommandKind::ALL);
@@ -226,7 +229,11 @@ fn ops_cover_every_command_kind_once() {
     let stray: Vec<&String> = routed.keys().filter(|k| !all.contains(*k)).collect();
     assert!(stray.is_empty(), "routed kinds outside ALL: {stray:?}");
     assert_eq!(routed.len(), 37, "routed command kinds");
-    assert_eq!(all.len(), 62, "CommandKind::ALL in M4");
+    assert_eq!(
+        all.len(),
+        63,
+        "CommandKind::ALL in M4, with RecordChecks of M5"
+    );
 }
 
 /// The finding operation kind of a `FindingCommand`. The match has no
