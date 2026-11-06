@@ -20,3 +20,4 @@ der               ADR-001  alloc,derive,flagset,oid,pem,zeroize                 
 spki              ADR-001  alloc,pem                                                                 Tier B (record of 2026-11-06): SubjectPublicKeyInfo for fstp-pki::cms; release-gated (I-74)
 x509-cert         ADR-001  pem                                                                       Tier B (record of 2026-11-06): X.509 certificates for fstp-pki::cms; release-gated (I-74)
 cms               ADR-001  -                                                                         Tier B (record of 2026-11-06): CMS SignedData for fstp-pki::cms; release-gated (I-74)
+webpki-roots      ADR-001  -                                                                         Tier A (amendment of 2026-11-06): public TLS root store for fstp-tls only; data, no cryptographic code

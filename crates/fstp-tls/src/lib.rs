@@ -14,6 +14,9 @@
 //! - Mutual TLS for traffic between components (R-NF-09):
 //!   [`ClientConfig::mutual`] presents a client certificate and
 //!   [`ServerConfig::mutual`] requires one.
+//! - External services: [`ClientConfig::public_roots`] trusts the Mozilla
+//!   root set of webpki-roots (ADR-001 amendment of 2026-11-06) and always
+//!   verifies the chain and the host name.
 //! - Session resumption is allowed on both sides for less than
 //!   [`MAX_RESUMPTION_AGE`] (one hour) after the full handshake that
 //!   authenticated the session (policy P2). A chain of resumptions never
@@ -38,8 +41,8 @@ mod resumption_tests;
 mod stream;
 
 pub use crate::config::{
-    ClientConfig, ClientConfigBuilder, MAX_ALPN_LEN, MAX_ALPN_PROTOCOLS, PemLimits, ServerConfig,
-    ServerConfigBuilder,
+    ClientConfig, ClientConfigBuilder, MAX_ALPN_LEN, MAX_ALPN_PROTOCOLS, PUBLIC_ROOT_COUNT,
+    PemLimits, ServerConfig, ServerConfigBuilder,
 };
 pub use crate::error::{TlsError, TlsErrorKind};
 pub use crate::provider::{CIPHER_SUITES, KEY_EXCHANGE_GROUPS};

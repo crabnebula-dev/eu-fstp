@@ -89,14 +89,29 @@ fn parse_key(
         .map_err(|_| TlsError::config(format!("{what}: no valid private key found")))
 }
 
+/// Number of public trust anchors that [`ClientConfig::public_roots`]
+/// trusts: the Mozilla root program set compiled into webpki-roots
+/// (ADR-001 amendment of 2026-11-06).
+pub const PUBLIC_ROOT_COUNT: usize = webpki_roots::TLS_SERVER_ROOTS.len();
+
 fn parse_roots(pem: &[u8], what: &str, limits: &PemLimits) -> Result<RootCertStore, TlsError> {
     let mut roots = RootCertStore::empty();
+    add_pem_roots(&mut roots, pem, what, limits)?;
+    Ok(roots)
+}
+
+fn add_pem_roots(
+    roots: &mut RootCertStore,
+    pem: &[u8],
+    what: &str,
+    limits: &PemLimits,
+) -> Result<(), TlsError> {
     for cert in parse_certs(pem, what, limits)? {
         roots
             .add(cert)
             .map_err(|e| TlsError::config_from(what, e))?;
     }
-    Ok(roots)
+    Ok(())
 }
 
 fn check_alpn(protocols: &[Vec<u8>]) -> Result<(), TlsError> {
@@ -139,6 +154,8 @@ pub struct ClientConfig {
     pub(crate) inner: Arc<rustls::ClientConfig>,
     /// `None` only for plain rustls configurations that tests build.
     pub(crate) sessions: Option<Arc<ClientSessions>>,
+    /// Whether the public root store is among the trusted roots.
+    pub(crate) public_roots: bool,
 }
 
 impl fmt::Debug for ClientConfig {
@@ -149,6 +166,7 @@ impl fmt::Debug for ClientConfig {
                 "client_auth",
                 &self.inner.client_auth_cert_resolver.has_certs(),
             )
+            .field("public_roots", &self.public_roots)
             .field("resumption", &self.sessions.is_some())
             .finish_non_exhaustive()
     }
@@ -162,6 +180,7 @@ impl ClientConfig {
         Self {
             inner: Arc::new(cfg),
             sessions: None,
+            public_roots: false,
         }
     }
 
@@ -182,11 +201,40 @@ impl ClientConfig {
     /// Starts a configuration that trusts the CA certificates in `roots_pem`.
     pub fn builder(roots_pem: &[u8]) -> ClientConfigBuilder<'_> {
         ClientConfigBuilder {
-            roots_pem,
+            roots_pem: Some(roots_pem),
+            public_roots: false,
             client_auth: None,
             alpn: Vec::new(),
             limits: PemLimits::default(),
         }
+    }
+
+    /// Starts a configuration that trusts the public root store: the
+    /// Mozilla root program set of webpki-roots (ADR-001 amendment of
+    /// 2026-11-06). Use it for external services such as mail relays,
+    /// inference endpoints and the CrabNebula service hosts.
+    ///
+    /// The server certificate chain and the host name are always verified.
+    /// [`ClientConfigBuilder::also_trust_pem`] adds a pinned CA on top.
+    pub fn public_roots_builder() -> ClientConfigBuilder<'static> {
+        ClientConfigBuilder {
+            roots_pem: None,
+            public_roots: true,
+            client_auth: None,
+            alpn: Vec::new(),
+            limits: PemLimits::default(),
+        }
+    }
+
+    /// A configuration that trusts the public root store only and presents
+    /// no client certificate. See [`ClientConfig::public_roots_builder`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TlsErrorKind::Config`](crate::TlsErrorKind::Config) error
+    /// when rustls refuses the configuration.
+    pub fn public_roots() -> Result<Self, TlsError> {
+        Self::public_roots_builder().build()
     }
 
     /// A configuration that trusts `roots_pem` and presents no client
@@ -217,7 +265,8 @@ impl ClientConfig {
 /// Builder for [`ClientConfig`]. PEM input is parsed in
 /// [`ClientConfigBuilder::build`], after all limits are known.
 pub struct ClientConfigBuilder<'a> {
-    roots_pem: &'a [u8],
+    roots_pem: Option<&'a [u8]>,
+    public_roots: bool,
     client_auth: Option<(&'a [u8], &'a [u8])>,
     alpn: Vec<Vec<u8>>,
     limits: PemLimits,
@@ -226,6 +275,8 @@ pub struct ClientConfigBuilder<'a> {
 impl fmt::Debug for ClientConfigBuilder<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClientConfigBuilder")
+            .field("public_roots", &self.public_roots)
+            .field("pinned_roots", &self.roots_pem.is_some())
             .field("client_auth", &self.client_auth.is_some())
             .field("alpn", &self.alpn)
             .field("limits", &self.limits)
@@ -234,6 +285,24 @@ impl fmt::Debug for ClientConfigBuilder<'_> {
 }
 
 impl<'a> ClientConfigBuilder<'a> {
+    /// Trusts the CA certificates in `roots_pem` as well, for example a CA
+    /// that a tenant pins for its own relay or endpoint. It replaces any
+    /// PEM roots set before. On a public-roots builder the public roots
+    /// stay trusted, so the pinned CA widens trust and never narrows it.
+    #[must_use]
+    pub fn also_trust_pem<'b>(self, roots_pem: &'b [u8]) -> ClientConfigBuilder<'b>
+    where
+        'a: 'b,
+    {
+        ClientConfigBuilder {
+            roots_pem: Some(roots_pem),
+            public_roots: self.public_roots,
+            client_auth: self.client_auth,
+            alpn: self.alpn,
+            limits: self.limits,
+        }
+    }
+
     /// Presents the certificate chain `chain_pem` (leaf first) with the
     /// private key `key_pem` when the server asks for client authentication.
     #[must_use]
@@ -265,7 +334,18 @@ impl<'a> ClientConfigBuilder<'a> {
     /// match the chain, or when an ALPN value is out of range.
     pub fn build(self) -> Result<ClientConfig, TlsError> {
         check_alpn(&self.alpn)?;
-        let roots = parse_roots(self.roots_pem, "client trust roots", &self.limits)?;
+        let mut roots = RootCertStore::empty();
+        if self.public_roots {
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        }
+        if let Some(pem) = self.roots_pem {
+            add_pem_roots(&mut roots, pem, "client trust roots", &self.limits)?;
+        }
+        if roots.is_empty() {
+            return Err(TlsError::config("client trust roots: no root"));
+        }
+        // rustls verifies the chain to these roots and the host name with
+        // its webpki server verifier. No configuration here disables it.
         let builder = rustls::ClientConfig::builder_with_provider(crypto_provider())
             .with_protocol_versions(TLS13_ONLY)
             .map_err(|e| TlsError::config_from("client protocol versions", e))?
@@ -291,6 +371,7 @@ impl<'a> ClientConfigBuilder<'a> {
                 CLIENT_SERVERS,
                 CLIENT_TICKETS_PER_SERVER,
             ))),
+            public_roots: self.public_roots,
         })
     }
 }
