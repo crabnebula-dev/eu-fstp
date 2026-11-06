@@ -33,12 +33,12 @@ Daniel asked for the pages to become a proper website to share, built with the T
 - **Tokens and layout.** `web/src/site/tokens.css` and `web/src/auth/tokens.css` are copies of `design/tokens.css`. Every page sits on them in light and dark, with the top bar, the sidebar and the footer of `nav-pattern.html`. A proposal state shows as a chip with its text.
 - **The front door.** `/demo` names the scene in `#demo-scene`, then each person with their role and one line on what they can do.
 - **Demo sign-in.** `tools/demo/run.sh` starts the cell with `--demo-signin` (`FSTP_DEMO_SIGNIN=off` turns it off). The front door then gives each person a "Sign in as <name>" link. One click opens a session on the cell origin and lands on `/app/`, with no passkey. The link carries a single-use token of at most five minutes of cell clock, which the control base issues and `/auth/demo-signin` redeems once. A reused, expired or forged token is refused with an alert and sets no cookie. The session is a passkey session in the fake port, so every guard holds. Its step-up dialog shows a plain "Confirm" button, and the command still records a step-up. Every `/app/` page of such a session, and the M3 page `/auth/account`, says "Demo sign-in" in the top bar. Both pages name the session's method as a passkey, since the fake port records it so. On `/auth/account`, removing a passkey or ending a session still asks for a passkey, which a demo account does not have, so that page is not part of the demo. The demo modules are served only with the flag. The route, the flag and the bypass live in `fstp-e2e-cell` only (rule A9). Without the flag the route answers 404, which `e2e/site/demo.spec.ts` and `crates/fstp-web/tests/demo_signin_absent.rs` check.
+- **Public pages.** In a scene with a published call, the front door's top bar links "Public open calls" (`a[data-demo-link="public-calls"]`), the page `/p/1/` on the cell origin. The programme page lists the open calls. Each call page shows the dates with their zone, the budget and the P-04 range as server text, the P-09 rules and the AI disclosure. The pages hold no script and set no cookie, so they work with scripts off. No Guide link and no grant shows yet: the Guide needs the data protection texts, which no port supplies, and the grantee choice records come with M9. `/p/1/funded` and `/p/1/finished` say that nothing is public yet.
 - **Account.** The sidebar's Account opens the profile page `/app/me`, with the verification status, the roles held and the sessions. The top bar's "Passkeys and sessions" opens the M3 page `/auth/account`, which adds and removes passkeys.
 
 Screens not built, each because its operation is missing:
 
 - `home-operations`: no seeded persona and no queue read.
-- `calls-public`, `call-detail-public` and `public-calls-feed`: the `public.*` operations answer `not_implemented`, and `/p` is a 501 stub.
 - `packing-check`: no pre-submission check operation.
 - The "on hold" panel of `end-states`: `proposal.view` carries no I-18 hold member.
 - `admin-members` and `admin-org`: no read of the tenant's members with their roles, or of the organisation record.
@@ -80,7 +80,7 @@ The identity page and the onboarding steps load, but their operations are not se
 1. Choose the applicant scene `OPEN_CALL`.
 2. The demo page names the sign-up address. Open `/auth/signup`, enter a synthetic address such as `demo@e2e.invalid` and send it.
 3. The demo page never reloads by itself, so focus stays where it is. Choose "Refresh this page", then, under "Messages the cell sent", open the sign-up link and create a passkey.
-4. The home page says that the person holds no role yet and offers "Open calls". Choose it, then the call. The page shows the amounts as server text, the deadline with its zone and the AI disclosure.
+4. The home page says that the person holds no role yet and offers "Open calls". Choose it, then the call. The page shows the amounts as server text, the deadline with its zone and the AI disclosure. The public pages show the same call with no sign-in: choose "Public open calls" on the demo page.
 5. Choose "Start a proposal". The workspace autosaves the title, the neutral summary and the narrative as you type (I-21).
 6. Open "Plan", enter one milestone of 1500.50 with a start and a due day, and save. The cell shows the total. A non-canonical amount such as 1500.5 is refused in the page.
 7. Open "Eligibility" and state a country. It goes to the vault route only (R-NG-01).

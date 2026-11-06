@@ -256,6 +256,61 @@ pub(crate) fn decode_route_in(
     finish(spec, request, false)
 }
 
+/// The longest public page path, in bytes.
+const PUBLIC_PATH_LIMIT: usize = 512;
+
+/// Whether `kind` is served under `/p`: a page or the feed. The other
+/// public kinds are tools only (M4 design section 3.10).
+fn served_under_p(kind: OpKind) -> bool {
+    use fstp_access::PublicKind as K;
+    matches!(
+        kind,
+        OpKind::Public(K::Programme | K::Call | K::Guide | K::Funded | K::Finished | K::Feed)
+    )
+}
+
+/// Decodes one public page request (M4 design section 3.10). `path` is
+/// the raw path, such as `/p/supersafe/calls/3`, with no query. The
+/// routes are `/p/{slug}/`, `/p/{slug}/calls/{call}`,
+/// `/p/{slug}/calls/{call}/guide`, `/p/{slug}/funded`,
+/// `/p/{slug}/finished` and `/p/{slug}/feed.json`. The programme page
+/// is the registry route `/p/{slug}` and the feed `/p/{slug}/feed`, so
+/// the path is mapped onto them before the registry match. Every other
+/// path is not found. Fuzzed through [`decode_request`].
+pub fn decode_public_page(path: &str) -> Result<Op, ApiError> {
+    decode_public_in(OPS, path)
+}
+
+/// [`decode_public_page`] over the operation table `ops`.
+pub(crate) fn decode_public_in(ops: &'static [OpSpec], path: &str) -> Result<Op, ApiError> {
+    let none = || ApiError::refused(crate::ErrorCode::NotFound, "route");
+    if path.len() > PUBLIC_PATH_LIMIT {
+        return Err(none());
+    }
+    let segments: Vec<&str> = path.split('/').collect();
+    let route = match segments.as_slice() {
+        ["", "p", slug, ""] => format!("/p/{slug}"),
+        ["", "p", slug, "feed.json"] => format!("/p/{slug}/feed"),
+        ["", "p", _, "feed"] | ["", "p", _] => return Err(none()),
+        _ => path.to_owned(),
+    };
+    let (spec, params) = ops
+        .iter()
+        .filter(|s| served_under_p(s.kind))
+        .find_map(|spec| {
+            let (_, pattern) = spec.route?;
+            match_route(pattern, &route).map(|params| (spec, params))
+        })
+        .ok_or_else(none)?;
+    let mut request = Object::new();
+    for (name, value) in params {
+        if request.insert(name, Value::String(value)).is_some() {
+            return Err(bad());
+        }
+    }
+    finish(spec, request, false)
+}
+
 /// Decodes one MCP `tools/call` into its operation (design section 3.8).
 /// `tool` is a tool name of the registry, such as
 /// `fstp_prepare_call_publication`. `arguments` is the JSON object of the
@@ -299,7 +354,8 @@ pub(crate) fn decode_tool_in(
 ///   up to the first zero byte fill its path parameters in order, split at
 ///   `\n`. The rest is the body, through [`decode_route`].
 /// - 2, raw route: the next byte selects the method, the bytes up to the
-///   first zero byte are the path, and the rest is the body.
+///   first zero byte are the path, and the rest is the body. A `GET` of a
+///   path under `/p/` goes through [`decode_public_page`] instead.
 /// - 3, guided tool: the next byte selects a tool, and the rest is its
 ///   arguments, through [`decode_tool`].
 /// - 4, raw tool: the bytes up to the first zero byte are the tool name,
@@ -365,6 +421,9 @@ pub(crate) fn decode_request_in(ops: &'static [OpSpec], bytes: &[u8]) -> Result<
             let method = pick(&methods, selector).copied().ok_or_else(none)?;
             let (path, body) = split_zero(tail);
             let path = std::str::from_utf8(path).map_err(|_| bad())?;
+            if method == Method::Get && path.starts_with("/p/") {
+                return decode_public_in(ops, path);
+            }
             decode_route_in(ops, method, path, body)
         }
         3 => {
@@ -489,6 +548,33 @@ mod tests {
     use fstp_domain::roles::Role;
 
     use super::*;
+
+    /// R-PB-04, design section 3.10: each public route decodes to its
+    /// page or the feed, and every other `/p` path is not found.
+    #[test]
+    fn r_pb_04_public_routes_decode_to_their_pages() {
+        let cases = [
+            ("/p/supersafe/", Some("public.programme")),
+            ("/p/supersafe/calls/3", Some("public.call")),
+            ("/p/supersafe/calls/3/guide", Some("public.guide")),
+            ("/p/supersafe/funded", Some("public.funded")),
+            ("/p/supersafe/finished", Some("public.finished")),
+            ("/p/supersafe/feed.json", Some("public.feed")),
+            ("/p/1/", Some("public.programme")),
+            ("/p/supersafe", None),
+            ("/p/supersafe/feed", None),
+            ("/p/supersafe/calls", None),
+            ("/p/supersafe/deadlines", None),
+            ("/p/supersafe/calls/03", None),
+            ("/p/Super/", None),
+            ("/p//", None),
+            ("/p/", None),
+        ];
+        for (path, want) in cases {
+            let got = decode_public_page(path).ok().map(|op| op.name());
+            assert_eq!(got, want, "{path}");
+        }
+    }
 
     const AUTHOR: &[RoleOrApplicant] = &[RoleOrApplicant::Role(Role::ProgrammeManager)];
     const CALL_BODY: Schema = Schema {

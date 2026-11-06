@@ -22,7 +22,9 @@
 //! do (`[data-demo-does]`) and their one-time enrolment link, which stays
 //! the first link of the person (`e2e/navigation/support.ts` `DemoPage`).
 //! On a cell started with `--demo-signin`, each person also gets a "Sign
-//! in as <name>" link (`crate::demo_signin`).
+//! in as <name>" link (`crate::demo_signin`). In a scene with a published
+//! call, the top bar links the public open calls page on the cell origin
+//! (`a[data-demo-link="public-calls"]`, R-PB-04).
 //!
 //! The scene and clock links change the cell on a GET, so a person can
 //! follow them from this page. A request from this page carries
@@ -443,6 +445,22 @@ pub(crate) fn short_line(inner: &Inner, account: AccountId) -> String {
     }
 }
 
+/// The public open calls page of the scene (R-PB-01, R-PB-04, design
+/// section 3.10): `/p/{programme}/` of the first programme with a
+/// published call, by its id in decimal, which the public routes accept
+/// as its slug. `None` in a scene with no published call.
+fn public_calls_path(inner: &Inner) -> Option<String> {
+    let state = inner.ports.engine.state();
+    state
+        .core
+        .calls()
+        .iter()
+        .filter(|(_, c)| c.status() == fstp_domain::programme::CallStatus::Published)
+        .map(|(_, c)| c.programme())
+        .min()
+        .map(|p| format!("/p/{}/", p.raw()))
+}
+
 /// The demo page.
 fn page(site: &Site) -> Response {
     let inner = site.inner();
@@ -514,6 +532,14 @@ fn page(site: &Site) -> Response {
         .map(|a| format!("<a href=\"/demo/applicant?at={a}\">{a}</a> "))
         .collect();
     let origin = esc(&site.info.origin);
+    let public = public_calls_path(&inner)
+        .map(|p| {
+            format!(
+                "<a class=\"tool-link\" data-demo-link=\"public-calls\" href=\"{origin}{p}\" target=\"_blank\" rel=\"noopener\">Public open calls</a>",
+                p = esc(&p)
+            )
+        })
+        .unwrap_or_default();
     let scene = esc(&inner.scene());
     let how = if site.info.demo_signin {
         "Choose \"Sign in as\" to open the person's home page in one click, with no passkey. Use one browser profile per person, such as a new incognito window each. Pages signed in this way say \"Demo sign-in\" in the top bar. The name link enrols a passkey instead, and works once."
@@ -526,7 +552,7 @@ fn page(site: &Site) -> Response {
 <title>FSTP demo, cell {name}</title>\
 <link rel=\"stylesheet\" href=\"/demo/tokens.css\"><link rel=\"stylesheet\" href=\"/demo/front-door.css\"></head><body>\n\
 <header class=\"site-header\"><div class=\"topbar\"><span class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">F</span><span>FSTP demo</span></span>\
-<span class=\"topbar-spacer\"></span><a class=\"tool-link\" href=\"{origin}/app/calls\" target=\"_blank\" rel=\"noopener\">Open calls on the cell</a></div></header>\n\
+<span class=\"topbar-spacer\"></span>{public}<a class=\"tool-link\" href=\"{origin}/app/calls\" target=\"_blank\" rel=\"noopener\">Open calls on the cell</a></div></header>\n\
 <main id=\"main\">\n\
 <h1>FSTP demo, cell {name}</h1>\n\
 <p id=\"demo-scene\" class=\"scene\">Scene: <strong>{scene}</strong></p>\n\

@@ -18,6 +18,8 @@
 //!   occurrence. Parameter-bound text is never editable (I-51).
 //! - [`missing_sections`] names the required sections a template lacks
 //!   (I-52), and [`preview`] gathers everything the creator reports.
+//! - [`preview_text`] shows a draft's Guide as text blocks, with a marker
+//!   naming each placeholder that has no value yet.
 //!
 //! [`ShippedProfiles`] is the only production profile source. It compiles
 //! in `crates/fstp-guide/profiles/**`. The synthetic legal-wording profile
@@ -34,6 +36,7 @@
 )]
 
 mod markdown;
+mod preview;
 mod profile;
 mod render;
 mod resolve;
@@ -41,6 +44,7 @@ mod sections;
 
 use std::collections::BTreeMap;
 
+pub use preview::{PreviewBlock, PreviewKind, preview_text};
 pub use profile::{
     FunderProfile, HORIZON_EUROPE, LEGAL_MARKER, LEGAL_SECTIONS, LegalSection, MAX_GUIDE_BYTES,
     ProfileError, ProfileFiles, ProfileSource, ShippedProfiles, WordingStatus,

@@ -125,6 +125,8 @@ mod creator_ops;
 pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
+/// The public pages, the feed and the public tools (lane W2c).
+mod public;
 /// The tenant operations (lane m4tenant).
 mod tenant;
 
@@ -681,9 +683,7 @@ pub(crate) async fn run<P: Seams>(
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
             "finding marks: the finding request form (lane W3b, after M4 W5)",
         ))),
-        OpKind::Public(_) => Err(call.refuse(ApiError::NotImplemented(
-            "public tools: fstp-public (lane W2c)",
-        ))),
+        OpKind::Public(kind) => public::read(&call, &op, kind).await,
     }
 }
 
