@@ -7,8 +7,10 @@
 # Jobs:
 #   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
-#   test         cargo test on the workspace with a real PostgreSQL 16, gated by
-#                the known-red list in ci/known-red.txt (tools/test-gate)
+#   test         cargo test with a real PostgreSQL 16 in parallel parts: the
+#                workspace in three, and the HTTP and direct matrix tests in
+#                shards. Each part is gated by the known-red list in
+#                ci/known-red.txt (tools/test-gate --partial)
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
@@ -20,7 +22,9 @@ name: ci
 
 on:
   push:
-    branches: [master, main]
+    # batch/** carries a merge batch: the lead merges it into main once its
+    # CI shows no new failure (Daniel, 2026-11-06).
+    branches: [master, main, "batch/**"]
   pull_request:
   workflow_dispatch:
 
@@ -29,9 +33,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A newer push cancels an older run only on pull requests. Every commit
-  # on the main branches keeps its own CI result.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer push cancels an older run on pull requests and batch branches.
+  # Every commit on the main branches keeps its own CI result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/batch/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -96,16 +100,62 @@ jobs:
             cargo clippy --manifest-path "$m" --all-targets --locked -- -D warnings
           done
 
+  # The tests run as parallel parts, each on its own runner (Daniel,
+  # 2026-11-06). Each part builds only what it runs, and test-gate judges
+  # it in partial mode against its own log. Together the parts run every
+  # test of the workspace once, and the direct matrix once over its shards.
   test:
-    name: tests (PostgreSQL 16)
+    name: tests (${{ matrix.part }})
     needs: deps-check
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # packages: the cargo test target selection. filter and skip: the
+        # libtest filters, which test-gate repeats so it judges the same
+        # selection. shard: FSTP_MATRIX_SHARD for the matrix tests.
+        include:
+          - part: workspace
+            packages: --workspace --exclude fstp-api-testkit --exclude fstp-domain-testkit
+            timeout: 60
+          - part: domain-testkit
+            packages: -p fstp-domain-testkit
+            timeout: 60
+          - part: api-testkit
+            packages: -p fstp-api-testkit
+            skip: t_authz_matrix_direct t_authz_matrix_http
+            timeout: 60
+          # Q34 B: HTTP and MCP at the 9-row policy covering array. Measured
+          # locally on 4 threads: about 53 minutes in all, so 4 shards.
+          - { part: matrix-http-0, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 0/4, timeout: 50 }
+          - { part: matrix-http-1, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 1/4, timeout: 50 }
+          - { part: matrix-http-2, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 2/4, timeout: 50 }
+          - { part: matrix-http-3, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 3/4, timeout: 50 }
+          # Q34 B: the direct channel at the full policy product (144
+          # policies). Measured locally on 4 threads: about 250 minutes in
+          # all, so 12 shards of about 21 minutes.
+          - { part: matrix-direct-0, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 0/12, timeout: 55 }
+          - { part: matrix-direct-1, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 1/12, timeout: 55 }
+          - { part: matrix-direct-2, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 2/12, timeout: 55 }
+          - { part: matrix-direct-3, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 3/12, timeout: 55 }
+          - { part: matrix-direct-4, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 4/12, timeout: 55 }
+          - { part: matrix-direct-5, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 5/12, timeout: 55 }
+          - { part: matrix-direct-6, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 6/12, timeout: 55 }
+          - { part: matrix-direct-7, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 7/12, timeout: 55 }
+          - { part: matrix-direct-8, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 8/12, timeout: 55 }
+          - { part: matrix-direct-9, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 9/12, timeout: 55 }
+          - { part: matrix-direct-10, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 10/12, timeout: 55 }
+          - { part: matrix-direct-11, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 11/12, timeout: 55 }
     env:
       # The M2 testkit builds about 160 test binaries, and each links every
       # M2 crate. With full debug info they fill the runner's disk. Line
       # tables keep file and line numbers in panics and backtraces.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      TEST_PACKAGES: ${{ matrix.packages }}
+      TEST_FILTER: ${{ matrix.filter }}
+      TEST_SKIP: ${{ matrix.skip }}
+      TEST_SHARD: ${{ matrix.shard }}
     steps:
       - name: Check out with plain git
         env:
@@ -155,19 +205,30 @@ jobs:
       # Some tests are red on purpose: each waits on a seam that a named
       # lane closes, and ci/known-red.txt lists it with that seam and lane.
       # The run itself may fail; test-gate decides. It fails on any red
-      # test not on the list, on a listed test that passes or did not run,
-      # on a crashed test binary and on a compile error.
+      # test not on the list, on a listed test that passes, on a crashed
+      # test binary and on a compile error. In partial mode it calls a
+      # listed test stale only when its binary ran here and this part's
+      # libtest filters select it.
       - name: cargo test, then the known-red gate
         run: |
           set -uo pipefail
-          cargo test --workspace --locked --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
-          cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "$RUNNER_TEMP/cargo-test.log"
+          read -ra packages <<< "$TEST_PACKAGES"
+          libtest=()
+          gate=(--partial)
+          for f in $TEST_FILTER; do libtest+=("$f"); gate+=(--filter "$f"); done
+          for s in $TEST_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done
+          if [ -n "$TEST_SHARD" ]; then export FSTP_MATRIX_SHARD="$TEST_SHARD"; fi
+          echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
+          cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
+          cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
       # The SQLSTATE condition-name table must match this PostgreSQL 16.
       - name: SQLSTATE table matches the server
+        if: matrix.part == 'workspace'
         run: bash crates/fstp-pgwire/tools/gen-sqlstate.sh --check
       # rustls 0.23.46 asserts in debug builds after close_notify; release
       # builds must return a typed error instead (ADR-001 record, D4).
       - name: TLS after close_notify in a release build
+        if: matrix.part == 'workspace'
         run: cargo test --release --locked -p fstp-tls --test tls d4_invalid_record_after_close_notify
 
   deps-check:

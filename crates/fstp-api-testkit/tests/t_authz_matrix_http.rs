@@ -284,3 +284,16 @@ fn t_authz_matrix_http_agreement_is_two_way() {
         );
     }
 }
+
+/// Q34 B (Daniel, 2026-11-06), design section 8.3: the HTTP channel runs
+/// the policy covering array, while the direct channel runs the full
+/// policy product over the same operation, principal, state and session
+/// cells.
+#[test]
+fn q34_http_matrix_runs_the_covering_array() {
+    let http = matrix::matrix().unwrap_or_else(|e| panic!("{e}"));
+    let direct = matrix::direct_matrix().unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(http.policy_rows(), matrix::PolicyRows::Covering);
+    assert_eq!(direct.policy_rows(), matrix::PolicyRows::Full);
+    assert_eq!(http.ops(), direct.ops());
+}
