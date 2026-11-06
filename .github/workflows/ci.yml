@@ -262,10 +262,11 @@ jobs:
           set -euo pipefail
           (cd web && npm ci --ignore-scripts --no-audit --no-fund)
           (cd e2e && npm ci --ignore-scripts --no-audit --no-fund)
-      - name: tsc on the pages, the build, the conformance checks and the tests
+      - name: tsc on the pages, the signing Worker with the vendored LibPDF, the build, the conformance checks and the tests
         run: |
           set -euo pipefail
           web/node_modules/.bin/tsc -p web/tsconfig.json
+          web/node_modules/.bin/tsc -b web/src/sign
           web/node_modules/.bin/tsc -p web/build
           web/node_modules/.bin/tsc -p web/test/conformance
           web/node_modules/.bin/tsc -p web/test

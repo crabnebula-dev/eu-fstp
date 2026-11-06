@@ -109,18 +109,18 @@ export class IndirectObjectParser {
       value = this.readStream(result.object);
 
       // Consume "endobj" directly from scanner (reader state is out of sync)
-      try {
-        this.expectKeyword("endobj");
-      } catch {
-        // Be lenient - some PDFs have issues with endobj
-      }
+      // FSTP (ADR-016): strict parse, a missing endobj is refused.
+      this.expectKeyword("endobj");
     } else {
       value = result.object;
 
       // Consume "endobj" keyword via reader
-      const endObjToken = reader.nextToken();
-      if (endObjToken.type !== "keyword" || endObjToken.value !== "endobj") {
-        // Be lenient - some PDFs omit endobj
+      // FSTP (ADR-016): the object parser has already read it into its
+      // lookahead buffer, so it is taken from there.
+      const endObjToken = objectParser.peekBuffered();
+      if (endObjToken === null || endObjToken.type !== "keyword" || endObjToken.value !== "endobj") {
+        // FSTP (ADR-016): strict parse, a missing endobj is refused.
+        throw new ObjectParseError("Expected 'endobj' keyword");
       }
     }
 
@@ -154,33 +154,12 @@ export class IndirectObjectParser {
 
     const startPos = this.scanner.position;
 
-    // Try to resolve /Length from the dict. If that fails (e.g. indirect
-    // ref during brute-force recovery with no resolver), fall back to
-    // scanning for the "endstream" keyword to determine the length.
-    let length = -1;
+    // FSTP (ADR-016): strict parse. /Length is a direct integer and the
+    // "endstream" keyword follows the data; nothing scans for it.
+    const length = this.resolveLength(dict);
 
-    try {
-      length = this.resolveLength(dict);
-    } catch {
-      length = -1;
-    }
-
-    // Validate /Length: the "endstream" keyword must follow the data.
-    // Malformed PDFs often carry a wrong /Length — recover by scanning
-    // for endstream instead of trusting the declared value.
-    if (length >= 0 && !this.isEndstreamAt(startPos + length)) {
-      this.warn(
-        `Stream /Length ${length} does not point at endstream, scanning for actual end`,
-        startPos,
-      );
-
-      length = -1;
-    }
-
-    length = length < 0 ? this.findEndStream(startPos) : length;
-
-    if (length < 0) {
-      throw new ObjectParseError("Stream has no valid /Length and no endstream found");
+    if (!Number.isSafeInteger(length) || length < 0 || !this.isEndstreamAt(startPos + length)) {
+      throw new ObjectParseError(`Stream /Length ${length} does not point at endstream`);
     }
 
     // Read exactly `length` bytes.
@@ -303,54 +282,8 @@ export class IndirectObjectParser {
   }
 
   /**
-   * Scan forward from startPos looking for the "endstream" keyword.
-   * Returns the stream data length (excluding any EOL before endstream),
-   * or -1 if not found.
-   */
-  private findEndStream(startPos: number): number {
-    const bytes = this.scanner.bytes;
-    const len = bytes.length;
-
-    // "endstream" as byte values
-    const sig = [0x65, 0x6e, 0x64, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d];
-    const sigLen = sig.length;
-
-    for (let i = startPos; i <= len - sigLen; i++) {
-      let match = true;
-
-      for (let j = 0; j < sigLen; j++) {
-        if (bytes[i + j] !== sig[j]) {
-          match = false;
-          break;
-        }
-      }
-
-      if (match) {
-        // Found "endstream" at position i.
-        // Strip the optional EOL that precedes it (part of stream framing,
-        // not stream data — per PDF spec 7.3.8.1).
-        let end = i;
-
-        if (end > startPos && bytes[end - 1] === LF) {
-          end--;
-
-          if (end > startPos && bytes[end - 1] === CR) {
-            end--;
-          }
-        } else if (end > startPos && bytes[end - 1] === CR) {
-          end--;
-        }
-
-        return end - startPos;
-      }
-    }
-
-    return -1;
-  }
-
-  /**
    * Resolve the /Length value from the stream dict.
-   * Handles both direct values and indirect references.
+   * FSTP (ADR-016): direct values only.
    */
   private resolveLength(dict: PdfDict): number {
     const lengthObj = dict.get("Length");
@@ -364,25 +297,10 @@ export class IndirectObjectParser {
       return lengthObj.value;
     }
 
-    // Indirect reference
+    // FSTP (ADR-016): an indirect /Length is refused. The server writes
+    // direct lengths, and resolving one could re-enter this parser.
     if (lengthObj.type === "ref") {
-      const ref = lengthObj;
-
-      if (!this.lengthResolver) {
-        throw new ObjectParseError(
-          `Cannot resolve indirect /Length reference ${ref.objectNumber} ${ref.generation} R: no resolver provided`,
-        );
-      }
-
-      const length = this.lengthResolver(ref);
-
-      if (length === null) {
-        throw new ObjectParseError(
-          `Could not resolve /Length reference ${ref.objectNumber} ${ref.generation} R`,
-        );
-      }
-
-      return length;
+      throw new ObjectParseError("Indirect stream /Length is refused");
     }
 
     throw new ObjectParseError(`Invalid /Length type: ${lengthObj.type}`);

@@ -119,6 +119,7 @@ modified src/fonts/standard-14.ts
 modified src/fonts/to-unicode.ts
 modified src/fonts/widths-builder.ts
 modified src/helpers/encoding.ts
+modified src/helpers/lru-cache.ts
 modified src/helpers/operators.ts
 modified src/helpers/strings.ts
 modified src/helpers/types.ts
@@ -143,7 +144,9 @@ modified src/objects/pdf-stream.ts
 modified src/objects/pdf-string.ts
 modified src/parser/brute-force-parser.ts
 modified src/parser/document-parser.ts
+modified src/parser/errors.ts
 modified src/parser/indirect-object-parser.ts
+added src/parser/limits.ts
 modified src/parser/object-parser.ts
 modified src/parser/object-stream-parser.ts
 modified src/parser/token-reader.ts

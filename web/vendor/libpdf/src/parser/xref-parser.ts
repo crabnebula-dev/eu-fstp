@@ -1,11 +1,9 @@
 import { CR, DIGIT_0, DIGIT_9, isWhitespace, LF, SPACE, TAB } from "../helpers/chars.js";
 import type { Scanner } from "../io/scanner.js";
 import type { PdfDict } from "../objects/pdf-dict.js";
-import { PdfNumber } from "../objects/pdf-number.js";
-import { PdfStream } from "../objects/pdf-stream.js";
 
-import { XRefParseError } from "./errors.js";
-import { IndirectObjectParser } from "./indirect-object-parser.js";
+import { RefusedError, XRefParseError } from "./errors.js";
+import { checkLimit, LIMITS } from "./limits.js";
 import { ObjectParser } from "./object-parser.js";
 import { TokenReader } from "./token-reader.js";
 
@@ -76,11 +74,36 @@ export class XRefParser {
     let pos = startxrefPos + 9;
     pos = this.skipWhitespace(pos);
 
-    // Read the offset number
+    // FSTP (ADR-016): strict tail. One to ten digits, whitespace, "%%EOF",
+    // then nothing but spaces, tabs and line ends to the end of the file.
+    let end = pos;
+
+    while (end < len && bytes[end] >= DIGIT_0 && bytes[end] <= DIGIT_9) {
+      end++;
+    }
+
+    if (end === pos || end - pos > 10) {
+      throw new XRefParseError("Invalid startxref offset");
+    }
+
     const offset = this.readIntegerAt(pos);
 
     if (offset === null) {
       throw new XRefParseError("Invalid startxref offset");
+    }
+
+    let tail = this.skipWhitespace(end);
+
+    if (tail === end || !this.matchesAt(tail, "%%EOF")) {
+      throw new XRefParseError("startxref is not followed by %%EOF");
+    }
+
+    tail += 5;
+
+    tail = this.skipWhitespace(tail);
+
+    if (tail !== len) {
+      throw new XRefParseError("Bytes follow %%EOF");
     }
 
     return offset;
@@ -102,8 +125,9 @@ export class XRefParser {
     }
 
     // Digit starts "N M obj" (stream format)
+    // FSTP (ADR-016): xref streams are refused; the server writes tables.
     if (firstByte >= DIGIT_0 && firstByte <= DIGIT_9) {
-      return this.parseStream();
+      throw new RefusedError("xref-stream", `an xref stream at offset ${offset}`);
     }
 
     throw new XRefParseError(`Unknown xref format at offset ${offset}`);
@@ -182,164 +206,6 @@ export class XRefParser {
   }
 
   /**
-   * Parse xref stream format (PDF 1.5+).
-   * Scanner must be positioned at stream object start ("N M obj").
-   *
-   * XRef streams encode cross-reference data as binary in a stream object.
-   * The stream dictionary contains:
-   * - /Type /XRef
-   * - /Size - total number of objects
-   * - /W [w1 w2 w3] - byte widths for type, offset, generation fields
-   * - /Index [first count ...] - object number ranges (optional, defaults to [0 Size])
-   */
-  parseStream(): XRefData {
-    // Parse the indirect object containing the xref stream
-    const parser = new IndirectObjectParser(this.scanner);
-    const indirectObj = parser.parseObject();
-
-    if (!(indirectObj.value instanceof PdfStream)) {
-      throw new XRefParseError("Expected XRef stream object");
-    }
-
-    const stream = indirectObj.value;
-
-    // Validate /Type is /XRef (optional per spec, but good to check)
-    const type = stream.getName("Type");
-    if (type !== undefined && type.value !== "XRef") {
-      throw new XRefParseError(`Expected /Type /XRef, got /Type /${type.value}`);
-    }
-
-    // Get required /W array (field widths)
-    const wArray = stream.getArray("W");
-    if (wArray === undefined || wArray.length < 3) {
-      throw new XRefParseError("XRef stream missing or invalid /W array");
-    }
-
-    const w0 = wArray.at(0);
-    const w1Val = wArray.at(1);
-    const w2Val = wArray.at(2);
-
-    const w1 = w0 instanceof PdfNumber ? w0.value : 0; // Type field width
-    const w2 = w1Val instanceof PdfNumber ? w1Val.value : 0; // Offset field width
-    const w3 = w2Val instanceof PdfNumber ? w2Val.value : 0; // Generation field width
-
-    // Validate field widths to prevent integer overflow during parsing.
-    // JavaScript safely handles integers up to 2^53-1, but bitwise operations
-    // are limited to 32 bits. Fields wider than 6 bytes (48 bits) could cause
-    // issues with shift operations. Most PDFs use 1-4 byte widths.
-    const MAX_FIELD_WIDTH = 6;
-
-    if (w1 < 0 || w1 > MAX_FIELD_WIDTH) {
-      throw new XRefParseError(`Invalid XRef stream field width w1=${w1} (max ${MAX_FIELD_WIDTH})`);
-    }
-
-    if (w2 < 0 || w2 > MAX_FIELD_WIDTH) {
-      throw new XRefParseError(`Invalid XRef stream field width w2=${w2} (max ${MAX_FIELD_WIDTH})`);
-    }
-
-    if (w3 < 0 || w3 > MAX_FIELD_WIDTH) {
-      throw new XRefParseError(`Invalid XRef stream field width w3=${w3} (max ${MAX_FIELD_WIDTH})`);
-    }
-
-    const entrySize = w1 + w2 + w3;
-
-    // Get /Size (total object count)
-    const size = stream.getNumber("Size")?.value;
-    if (size === undefined) {
-      throw new XRefParseError("XRef stream missing /Size");
-    }
-
-    // Get /Index array or default to [0 Size]
-    const indexArray = stream.getArray("Index");
-    const ranges: Array<{ first: number; count: number }> = [];
-
-    if (indexArray !== undefined) {
-      for (let i = 0; i < indexArray.length; i += 2) {
-        const firstObj = indexArray.at(i);
-        const countObj = indexArray.at(i + 1);
-
-        if (!(firstObj instanceof PdfNumber) || !(countObj instanceof PdfNumber)) {
-          throw new XRefParseError("Invalid /Index array in XRef stream");
-        }
-
-        ranges.push({ first: firstObj.value, count: countObj.value });
-      }
-    } else {
-      // Default: single range [0, Size]
-      ranges.push({ first: 0, count: size });
-    }
-
-    // Decode the stream data
-    const decodedData = stream.getDecodedData();
-
-    // Parse entries from binary data
-    const entries = new Map<number, XRefEntry>();
-    let dataOffset = 0;
-
-    for (const range of ranges) {
-      for (let i = 0; i < range.count; i++) {
-        const objNum = range.first + i;
-
-        if (dataOffset + entrySize > decodedData.length) {
-          throw new XRefParseError("XRef stream data truncated");
-        }
-
-        // Read type field (default to 1 if width is 0)
-        // Use multiplication instead of bitwise shift to avoid 32-bit overflow
-        let entryType = w1 === 0 ? 1 : 0;
-        for (let j = 0; j < w1; j++) {
-          entryType = entryType * 256 + decodedData[dataOffset++];
-        }
-
-        // Read field 2 (offset or object stream number)
-        let field2 = 0;
-        for (let j = 0; j < w2; j++) {
-          field2 = field2 * 256 + decodedData[dataOffset++];
-        }
-
-        // Read field 3 (generation or index in object stream)
-        let field3 = 0;
-        for (let j = 0; j < w3; j++) {
-          field3 = field3 * 256 + decodedData[dataOffset++];
-        }
-
-        // Create entry based on type
-        let entry: XRefEntry;
-        switch (entryType) {
-          case 0:
-            // Free entry
-            entry = { type: "free", nextFree: field2, generation: field3 };
-            break;
-          case 1:
-            // Uncompressed object
-            entry = { type: "uncompressed", offset: field2, generation: field3 };
-            break;
-          case 2:
-            // Compressed object in object stream
-            entry = { type: "compressed", streamObjNum: field2, indexInStream: field3 };
-            break;
-          default:
-            throw new XRefParseError(`Invalid XRef entry type: ${entryType}`);
-        }
-
-        // Only store if not already present (first definition wins)
-        if (!entries.has(objNum)) {
-          entries.set(objNum, entry);
-        }
-      }
-    }
-
-    // The stream dictionary serves as the trailer
-    const prev = stream.getNumber("Prev")?.value;
-
-    return {
-      entries,
-      trailer: stream,
-      prev,
-    };
-  }
-
-  /**
    * Parse a single subsection of the xref table.
    */
   private parseSubsection(entries: Map<number, XRefEntry>): void {
@@ -360,6 +226,9 @@ export class XRefParser {
 
     this.skipWhitespaceFromCurrent();
 
+    // FSTP (ADR-016): object numbers stay below the hard object limit.
+    checkLimit("an xref subsection ending at object", firstObjNum + count, LIMITS.maxObjects);
+
     // Read entries
     const parsedEntries: XRefEntry[] = [];
 
@@ -367,26 +236,14 @@ export class XRefParser {
       parsedEntries.push(this.parseEntry());
     }
 
-    // Detect off-by-one in subsection start: some malformed PDFs report
-    // firstObjNum=1 when the entries actually start at object 0.
-    // The free list head (generation 65535, type free) is always object 0,
-    // so if we see it at position 1, correct it. (Same fix as pdf.js #3248/#7229)
-    let correctedFirstObjNum = firstObjNum;
-
-    if (
-      firstObjNum === 1 &&
-      parsedEntries.length > 0 &&
-      parsedEntries[0].type === "free" &&
-      parsedEntries[0].generation === 65535
-    ) {
-      correctedFirstObjNum = 0;
-      console.warn(
-        "XRef: corrected subsection start from 1 to 0 (free list head at wrong position)",
-      );
-    }
-
+    // FSTP (ADR-016): strict parse. No off-by-one correction, and an
+    // object number given twice in one section is refused.
     for (let i = 0; i < parsedEntries.length; i++) {
-      entries.set(correctedFirstObjNum + i, parsedEntries[i]);
+      if (entries.has(firstObjNum + i)) {
+        throw new XRefParseError(`Object ${firstObjNum + i} appears twice in one xref section`);
+      }
+
+      entries.set(firstObjNum + i, parsedEntries[i]);
     }
   }
 

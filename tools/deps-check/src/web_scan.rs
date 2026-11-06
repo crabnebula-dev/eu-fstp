@@ -18,6 +18,13 @@
 //!   dynamic `import()` needs a string literal, `require` is refused, and
 //!   so is a triple-slash reference directive.
 //!
+//! The vendored LibPDF (ADR-016) adds two scopes. The shipped modules
+//! that `web/vendor/libpdf/tsconfig.json` lists in `files` are scanned
+//! with the same rules, and each may import only another shipped module.
+//! A module below `web/src/sign` may also import a shipped module. The
+//! unbuilt vendored modules are not scanned; web/test/libpdf.test.ts
+//! checks that no shipped module reaches one.
+//!
 //! Strict additions, interim pending Daniel:
 //!
 //! - The HTML sinks `setHTMLUnsafe`, `parseHTMLUnsafe` and
@@ -42,6 +49,7 @@
 //! closes no `if`, `while`, `for` or `with` head.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -50,6 +58,12 @@ use crate::report::Finding;
 
 /// The scanned directory.
 pub(crate) const WEB_SRC: &str = "web/src";
+/// The vendored LibPDF directory (ADR-016).
+const VENDOR_LIBPDF: &str = "web/vendor/libpdf";
+/// The vendored project file whose `files` list names the shipped modules.
+const VENDOR_TSCONFIG: &str = "web/vendor/libpdf/tsconfig.json";
+/// The folder of `web/src` whose modules may import shipped vendored modules.
+const SIGN_DIR: &str = "sign";
 /// Upper bound on the size of one scanned file.
 const MAX_TS: u64 = 8 << 20;
 
@@ -628,9 +642,98 @@ pub(crate) fn specifier_inside(dir: &Path, spec: &str) -> bool {
     !parts.is_empty()
 }
 
+/// The segments of `spec` resolved lexically against `base`, or None
+/// when it is not a relative specifier or climbs above the root.
+fn resolve_relative(base: &[String], spec: &str) -> Option<Vec<String>> {
+    if !(spec.starts_with("./") || spec.starts_with("../")) || spec.contains('\\') {
+        return None;
+    }
+    let mut parts = base.to_vec();
+    for seg in spec.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            _ => parts.push(seg.to_owned()),
+        }
+    }
+    Some(parts)
+}
+
+fn segments(dir: &Path) -> Vec<String> {
+    dir.components()
+        .filter_map(|c| match c {
+            Component::Normal(p) => Some(p.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `parts`, below `web/vendor/libpdf`, name a shipped module by
+/// its `.js` specifier.
+fn names_shipped(parts: &[String], shipped: &BTreeSet<String>) -> bool {
+    let joined = parts.join("/");
+    joined
+        .strip_suffix(".js")
+        .is_some_and(|stem| shipped.contains(&format!("{stem}.ts")))
+}
+
+/// ADR-016: whether `spec`, in a file of the directory `dir` below
+/// `web/src`, stays inside `web/src` or, from `web/src/sign`, names a
+/// shipped vendored module.
+pub(crate) fn sign_specifier_allowed(dir: &Path, spec: &str, shipped: &BTreeSet<String>) -> bool {
+    if specifier_inside(dir, spec) {
+        return true;
+    }
+    let mut base = vec!["src".to_owned()];
+    base.extend(segments(dir));
+    if base.get(1).map(String::as_str) != Some(SIGN_DIR) {
+        return false;
+    }
+    match resolve_relative(&base, spec) {
+        Some(parts) => match parts.as_slice() {
+            [v, l, rest @ ..] if v == "vendor" && l == "libpdf" => names_shipped(rest, shipped),
+            _ => false,
+        },
+        None => false,
+    }
+}
+
+/// ADR-016: whether `spec`, in a shipped vendored module of the directory
+/// `dir` below `web/vendor/libpdf`, names another shipped module.
+pub(crate) fn vendor_specifier_allowed(dir: &Path, spec: &str, shipped: &BTreeSet<String>) -> bool {
+    resolve_relative(&segments(dir), spec).is_some_and(|parts| names_shipped(&parts, shipped))
+}
+
+/// The shipped modules of the vendored project: each `"src/....ts"` line
+/// of its `files` list. A missing file gives none, so nothing vendored
+/// is importable.
+fn shipped_modules(root: &Path) -> BTreeSet<String> {
+    let Ok(text) = fs::read_to_string(root.join(VENDOR_TSCONFIG)) else {
+        return BTreeSet::new();
+    };
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim().trim_end_matches(',');
+            let inner = l.strip_prefix('"')?.strip_suffix('"')?;
+            (inner.starts_with("src/")
+                && inner.ends_with(".ts")
+                && !inner.contains("..")
+                && !inner.contains('\\'))
+            .then(|| inner.to_owned())
+        })
+        .collect()
+}
+
 /// Every rule violation in one file, as a line and a description. `dir`
 /// is the file's directory relative to `web/src`.
 pub(crate) fn scan_ts(dir: &Path, text: &str) -> Vec<(usize, String)> {
+    scan_ts_with(text, &|spec| specifier_inside(dir, spec), "web/src")
+}
+
+/// `scan_ts` with the import rule `allowed`, named `scope` in findings.
+fn scan_ts_with(text: &str, allowed: &dyn Fn(&str) -> bool, scope: &str) -> Vec<(usize, String)> {
     let lx = lex_ts(text);
     let mut out = Vec::new();
     if !lx.closed {
@@ -717,11 +820,11 @@ pub(crate) fn scan_ts(dir: &Path, text: &str) -> Vec<(usize, String)> {
                 };
                 if let Some(j) = spec_at
                     && let Some(spec) = get(j)
-                    && (spec.split || !specifier_inside(dir, spec.s))
+                    && (spec.split || !allowed(spec.s))
                 {
                     out.push((
                         spec.line,
-                        format!("the import `{}` from outside web/src", spec.s),
+                        format!("the import `{}` from outside {scope}", spec.s),
                     ));
                 }
             }
@@ -750,9 +853,35 @@ pub(crate) fn scan_ts(dir: &Path, text: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// Scans every file below `web/src` and reports each violation.
+/// Scans every file below `web/src` and the shipped vendored LibPDF
+/// modules, and reports each violation.
 pub(crate) fn check(root: &Path, walk: &Walk) -> Vec<Finding> {
     let mut out = Vec::new();
+    let shipped = shipped_modules(root);
+    let vendor = Path::new(VENDOR_LIBPDF);
+    for f in walk.files.iter().filter(|f| f.rel.starts_with(vendor)) {
+        let Ok(inner) = f.rel.strip_prefix(vendor) else {
+            continue;
+        };
+        let inner = inner.to_string_lossy().replace('\\', "/");
+        if !shipped.contains(&inner) {
+            continue;
+        }
+        let rel = f.rel.display().to_string();
+        let dir = Path::new(&inner)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        if let Some(text) = read_scanned(root, f, &rel, &mut out) {
+            let scope = "the shipped vendored modules";
+            let found = scan_ts_with(
+                &text,
+                &|spec| vendor_specifier_allowed(&dir, spec, &shipped),
+                scope,
+            );
+            report(&rel, found, "ADR-016, ADR-014", &mut out);
+        }
+    }
     let base = Path::new(WEB_SRC);
     for f in walk.files.iter().filter(|f| f.rel.starts_with(base)) {
         let rel = f.rel.display().to_string();
@@ -776,27 +905,8 @@ pub(crate) fn check(root: &Path, walk: &Walk) -> Vec<Finding> {
         if !name.ends_with(".ts") {
             continue;
         }
-        let path = root.join(&f.rel);
-        match fs::metadata(&path) {
-            Ok(m) if m.len() > MAX_TS => {
-                out.push(Finding::error(
-                    "scan-limit",
-                    format!("{rel} is larger than {MAX_TS} bytes"),
-                ));
-                continue;
-            }
-            Ok(_) => {}
-            Err(e) => {
-                out.push(Finding::error("scan-io", format!("cannot read {rel}: {e}")));
-                continue;
-            }
-        }
-        let text = match fs::read(&path) {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(e) => {
-                out.push(Finding::error("scan-io", format!("cannot read {rel}: {e}")));
-                continue;
-            }
+        let Some(text) = read_scanned(root, f, &rel, &mut out) else {
+            continue;
         };
         let dir: PathBuf = f
             .rel
@@ -805,14 +915,63 @@ pub(crate) fn check(root: &Path, walk: &Walk) -> Vec<Finding> {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        for (line, what) in scan_ts(&dir, &text) {
-            out.push(Finding::error(
-                "web-scan",
-                format!("{rel}:{line} has {what} (M4 design section 3.9, ADR-014)"),
-            ));
-        }
+        let found = if dir.starts_with(SIGN_DIR) {
+            let allowed = |spec: &str| sign_specifier_allowed(&dir, spec, &shipped);
+            scan_ts_with(&text, &allowed, "web/src and the shipped vendored modules")
+        } else {
+            scan_ts(&dir, &text)
+        };
+        report(&rel, found, "M4 design section 3.9, ADR-014", &mut out);
     }
     out
+}
+
+/// The text of one scanned file, or None after reporting why it cannot be read.
+fn read_scanned(
+    root: &Path,
+    f: &crate::repo::RepoFile,
+    rel: &str,
+    out: &mut Vec<Finding>,
+) -> Option<String> {
+    if f.kind != Kind::File {
+        out.push(Finding::error(
+            "web-scan",
+            format!("{rel} is not a regular file; the web scan reads regular files only (ADR-014)"),
+        ));
+        return None;
+    }
+    let path = root.join(&f.rel);
+    match fs::metadata(&path) {
+        Ok(m) if m.len() > MAX_TS => {
+            out.push(Finding::error(
+                "scan-limit",
+                format!("{rel} is larger than {MAX_TS} bytes"),
+            ));
+            return None;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            out.push(Finding::error("scan-io", format!("cannot read {rel}: {e}")));
+            return None;
+        }
+    }
+    match fs::read(&path) {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(e) => {
+            out.push(Finding::error("scan-io", format!("cannot read {rel}: {e}")));
+            None
+        }
+    }
+}
+
+/// Reports each finding of one file.
+fn report(rel: &str, found: Vec<(usize, String)>, source: &str, out: &mut Vec<Finding>) {
+    for (line, what) in found {
+        out.push(Finding::error(
+            "web-scan",
+            format!("{rel}:{line} has {what} ({source})"),
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -951,6 +1110,84 @@ mod tests {
         assert!(!specifier_inside(Path::new(""), "../x.js"));
         assert!(!specifier_inside(Path::new("core"), "/abs.js"));
         assert!(!specifier_inside(Path::new("core"), "dom.js"));
+    }
+
+    fn shipped() -> BTreeSet<String> {
+        ["src/io/scanner.ts", "src/parser/errors.ts"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect()
+    }
+
+    /// ADR-016: a module below web/src/sign may import a shipped vendored
+    /// module, and nothing else outside web/src.
+    #[test]
+    fn adr016_sign_imports_only_shipped_vendored_modules() {
+        let s = shipped();
+        let sign = Path::new("sign");
+        assert!(sign_specifier_allowed(
+            sign,
+            "../../vendor/libpdf/src/io/scanner.js",
+            &s
+        ));
+        assert!(sign_specifier_allowed(sign, "./errors.js", &s));
+        assert!(!sign_specifier_allowed(
+            sign,
+            "../../vendor/libpdf/src/filters/flate-filter.js",
+            &s
+        ));
+        assert!(!sign_specifier_allowed(
+            sign,
+            "../../vendor/libpdf/src/io/scanner.ts",
+            &s
+        ));
+        assert!(!sign_specifier_allowed(
+            sign,
+            "../../vendor/libpdf/package.json",
+            &s
+        ));
+        assert!(!sign_specifier_allowed(
+            sign,
+            "../../../vendor/libpdf/src/io/scanner.js",
+            &s
+        ));
+        assert!(!sign_specifier_allowed(sign, "pako", &s));
+        assert!(!sign_specifier_allowed(
+            Path::new("core"),
+            "../../vendor/libpdf/src/io/scanner.js",
+            &s
+        ));
+    }
+
+    /// ADR-016: a shipped vendored module may import only another shipped
+    /// module, never a bare package or an unbuilt module.
+    #[test]
+    fn adr016_vendored_imports_stay_in_the_shipped_set() {
+        let s = shipped();
+        let dir = Path::new("src/io");
+        assert!(vendor_specifier_allowed(dir, "../parser/errors.js", &s));
+        assert!(vendor_specifier_allowed(dir, "./scanner.js", &s));
+        assert!(!vendor_specifier_allowed(
+            dir,
+            "../security/standard-handler.js",
+            &s
+        ));
+        assert!(!vendor_specifier_allowed(dir, "lru-cache", &s));
+        assert!(!vendor_specifier_allowed(dir, "#src/io/scanner", &s));
+        assert!(!vendor_specifier_allowed(
+            dir,
+            "../../../../src/core/dom.js",
+            &s
+        ));
+        let found = scan_ts_with(
+            "import { LRUCache } from \"lru-cache\";\n",
+            &|spec| vendor_specifier_allowed(dir, spec, &s),
+            "the shipped vendored modules",
+        );
+        assert!(
+            !found.is_empty(),
+            "a bare import in a shipped module is refused"
+        );
     }
 
     /// ADR-014: the lexer properties the `ts_token_scan` fuzz target checks

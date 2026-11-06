@@ -7,5 +7,5 @@
     "types": []
   },
   "include": ["../src/**/*.ts", "./**/*.ts", "../fuzz/**/*.ts"],
-  "exclude": ["./conformance/**"]
+  "exclude": ["./conformance/**", "../src/sign/**"]
 }

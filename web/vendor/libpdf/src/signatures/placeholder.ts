@@ -8,10 +8,14 @@
  * PDF Reference: Section 12.8.1 "Signature Dictionary"
  */
 
-import { bytesToHex } from "../helpers/buffer.js";
 import { PdfRaw } from "../objects/pdf-raw.js";
 
-import { PlaceholderError } from "./types.js";
+/*
+ * FSTP (ADR-016): the browser prepares the placeholders and patches
+ * /ByteRange only. Writing the signature into /Contents happens on the
+ * server, so patchContents and its PlaceholderError are removed, and the
+ * module no longer reaches ./types.js.
+ */
 
 /** Default placeholder size in bytes (12KB) */
 export const DEFAULT_PLACEHOLDER_SIZE = 12288;
@@ -159,10 +163,11 @@ function findBytesReverse(buffer: Uint8Array, pattern: Uint8Array): number {
  * (newest) signature dictionary, which is important for PDFs with existing signatures.
  *
  * @param buffer - The PDF buffer to search
+ * @param searchFrom - The first offset the placeholder may sit at
  * @returns Placeholder position information
  * @throws {Error} if placeholders cannot be found
  */
-export function findPlaceholders(buffer: Uint8Array): PlaceholderInfo {
+export function findPlaceholders(buffer: Uint8Array, searchFrom = 0): PlaceholderInfo {
   const encoder = new TextEncoder();
 
   // Find ByteRange placeholder by searching backwards (find LAST occurrence)
@@ -172,7 +177,9 @@ export function findPlaceholders(buffer: Uint8Array): PlaceholderInfo {
 
   const byteRangeKeyPos = findBytesReverse(buffer, byteRangeKey);
 
-  if (byteRangeKeyPos === -1) {
+  // FSTP (ADR-016): the placeholder must lie in the new increment, at or
+  // after `searchFrom`, never in an earlier revision.
+  if (byteRangeKeyPos === -1 || byteRangeKeyPos < searchFrom) {
     throw new Error("ByteRange placeholder not found in PDF");
   }
 
@@ -317,41 +324,6 @@ export function patchByteRange(
   const newBytes = encoder.encode(newValue);
 
   buffer.set(newBytes, placeholders.byteRangeStart);
-}
-
-/**
- * Patch the Contents value in the buffer.
- *
- * Replaces the placeholder zeros with the actual signature hex string.
- *
- * @param buffer - The PDF buffer to patch (modified in place)
- * @param placeholders - Placeholder position info
- * @param signature - The signature bytes to embed
- * @throws {PlaceholderError} if signature is too large for placeholder
- */
-export function patchContents(
-  buffer: Uint8Array,
-  placeholders: PlaceholderInfo,
-  signature: Uint8Array,
-): { paddedHex: string } {
-  // Convert signature to uppercase hex
-  const hexSignature = bytesToHex(signature);
-
-  // Check if it fits
-  if (hexSignature.length > placeholders.contentsLength) {
-    throw new PlaceholderError(signature.length, placeholders.contentsLength / 2);
-  }
-
-  // Pad with zeros on the right to fill the placeholder
-  const paddedHex = hexSignature.padEnd(placeholders.contentsLength, "0");
-
-  // Write the hex string
-  const encoder = new TextEncoder();
-  const hexBytes = encoder.encode(paddedHex);
-
-  buffer.set(hexBytes, placeholders.contentsStart);
-
-  return { paddedHex };
 }
 
 /**

@@ -1,10 +1,8 @@
-import type { FilterSpec } from "../filters/filter.js";
-import { FilterPipeline } from "../filters/filter-pipeline.js";
 import type { ByteWriter } from "../io/byte-writer.js";
+import { RefusedError } from "../parser/errors.js";
 
-import { PdfArray } from "./pdf-array.js";
 import { PdfDict } from "./pdf-dict.js";
-import { PdfName } from "./pdf-name.js";
+import type { PdfName } from "./pdf-name.js";
 import type { PdfObject } from "./pdf-object.js";
 
 /**
@@ -97,102 +95,37 @@ export class PdfStream extends PdfDict {
   }
 
   /**
-   * Get the decoded (decompressed) stream data.
+   * Get the decoded stream data.
    *
-   * Applies any filters specified in /Filter in order.
-   * Results are not cached - call once and store if needed.
+   * FSTP (ADR-016): the filters module is not built. An unfiltered stream
+   * returns its bytes; a filtered one is refused with a typed error.
    *
-   * @returns Decoded data
-   * @throws {Error} if a filter fails or is unknown
+   * @returns The stream bytes
+   * @throws {RefusedError} if the stream has a /Filter
    */
   getDecodedData(): Uint8Array {
-    const filterEntry = this.get("Filter");
-
-    // No filter - return raw data
-    if (!filterEntry) {
-      return this._data;
+    if (this.has("Filter")) {
+      throw new RefusedError("filter", "filtered streams are not decoded");
     }
 
-    // Build filter specs
-    const filterSpecs = this.buildFilterSpecs(filterEntry);
-
-    if (filterSpecs.length === 0) {
-      return this._data;
-    }
-
-    // Decode through filter pipeline
-    return FilterPipeline.decode(this._data, filterSpecs);
+    return this._data;
   }
 
   /**
-   * Get the encoded (compressed) stream data.
+   * Get the encoded stream data.
    *
-   * **Important:** This method assumes `_data` contains *decoded* bytes
-   * and applies the filters specified in /Filter to encode them.
+   * FSTP (ADR-016): the filters module is not built, so only unfiltered
+   * streams have encoded data.
    *
-   * This is typically used after `setData()` has been called with
-   * uncompressed content, and you need to get the compressed form.
-   *
-   * If the stream was just parsed and hasn't been modified, `_data`
-   * is already encoded - calling this would double-encode! In that
-   * case, just use the `.data` property directly.
-   *
-   * @returns Encoded data (compressed if filters are specified)
+   * @returns The stream bytes
+   * @throws {RefusedError} if the stream has a /Filter
    */
   getEncodedData(): Uint8Array {
-    const filterEntry = this.get("Filter");
-
-    if (!filterEntry) {
-      return this._data;
+    if (this.has("Filter")) {
+      throw new RefusedError("filter", "filtered streams are not encoded");
     }
 
-    const filterSpecs = this.buildFilterSpecs(filterEntry);
-
-    if (filterSpecs.length === 0) {
-      return this._data;
-    }
-
-    return FilterPipeline.encode(this._data, filterSpecs);
-  }
-
-  /**
-   * Build filter specs from /Filter and /DecodeParms entries.
-   */
-  private buildFilterSpecs(filterEntry: PdfObject): FilterSpec[] {
-    const filters: PdfName[] = [];
-    const params: (PdfDict | null)[] = [];
-
-    // Collect filter names
-    if (filterEntry instanceof PdfName) {
-      filters.push(filterEntry);
-    } else if (filterEntry instanceof PdfArray) {
-      for (const item of filterEntry) {
-        if (item instanceof PdfName) {
-          filters.push(item);
-        }
-      }
-    }
-
-    // Collect decode parameters
-    const parmsEntry = this.get("DecodeParms");
-
-    if (parmsEntry instanceof PdfDict) {
-      params.push(parmsEntry);
-    } else if (parmsEntry instanceof PdfArray) {
-      for (const item of parmsEntry) {
-        if (item instanceof PdfDict) {
-          params.push(item);
-        } else {
-          params.push(null); // null entry means no params for this filter
-        }
-      }
-    }
-
-    // Build specs
-    return filters.map((filter, i) => ({
-      name: filter.value,
-      params: params[i] ?? undefined,
-    }));
+    return this._data;
   }
 
   /**

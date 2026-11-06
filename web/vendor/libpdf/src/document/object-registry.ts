@@ -29,6 +29,27 @@ export class ObjectRegistry {
   /** New objects created by the user (ref → object) */
   private newObjects = new Map<PdfRef, PdfObject>();
 
+  /**
+   * FSTP (ADR-016): the first PdfRef instance seen for each "num gen".
+   * PdfRef interning is a bounded cache, so two instances can name the
+   * same object. Every map operation goes through `canonical`, so one
+   * object never sits under two keys and is never written twice.
+   */
+  private canonicalRefs = new Map<string, PdfRef>();
+
+  private canonical(ref: PdfRef): PdfRef {
+    const key = `${ref.objectNumber} ${ref.generation}`;
+    const known = this.canonicalRefs.get(key);
+
+    if (known !== undefined) {
+      return known;
+    }
+
+    this.canonicalRefs.set(key, ref);
+
+    return ref;
+  }
+
   /** Reverse mapping: object → ref (uses WeakMap for GC) */
   private objectToRef = new WeakMap<object, PdfRef>();
 
@@ -76,6 +97,7 @@ export class ObjectRegistry {
    * @param obj - The parsed object
    */
   addLoaded(ref: PdfRef, obj: PdfObject): void {
+    ref = this.canonical(ref);
     this.loaded.set(ref, obj);
 
     // Only add to reverse map if it's an object type (not primitives)
@@ -92,7 +114,7 @@ export class ObjectRegistry {
    */
   register(obj: PdfObject): PdfRef {
     // Assign new object number, generation 0
-    const ref = PdfRef.of(this._nextObjNum++, 0);
+    const ref = this.canonical(PdfRef.of(this._nextObjNum++, 0));
 
     this.newObjects.set(ref, obj);
 
@@ -113,7 +135,7 @@ export class ObjectRegistry {
    * @returns The allocated reference
    */
   allocateRef(): PdfRef {
-    return PdfRef.of(this._nextObjNum++, 0);
+    return this.canonical(PdfRef.of(this._nextObjNum++, 0));
   }
 
   /**
@@ -123,6 +145,7 @@ export class ObjectRegistry {
    * @param obj - The object to register
    */
   registerAt(ref: PdfRef, obj: PdfObject): void {
+    ref = this.canonical(ref);
     this.newObjects.set(ref, obj);
 
     // Add to reverse map if it's an object type
@@ -155,6 +178,8 @@ export class ObjectRegistry {
    * @returns The object, or null if not found
    */
   getObject(ref: PdfRef): PdfObject | null {
+    ref = this.canonical(ref);
+
     return this.loaded.get(ref) ?? this.newObjects.get(ref) ?? null;
   }
 
@@ -215,7 +240,7 @@ export class ObjectRegistry {
    * Check if an object is new (not loaded from the PDF).
    */
   isNew(ref: PdfRef): boolean {
-    return this.newObjects.has(ref);
+    return this.newObjects.has(this.canonical(ref));
   }
 
   /**

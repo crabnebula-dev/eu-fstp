@@ -84,3 +84,24 @@ export class StructureError extends RecoverableParseError {
     this.name = "StructureError";
   }
 }
+
+/**
+ * FSTP (ADR-016): the reasons the strict parser refuses a file it could
+ * read. `encrypted`, `object-stream` and `xref-stream` are features the
+ * server's revisions never use. `filter` is a filtered stream whose
+ * decoded bytes were asked for. `limit` is a hard limit of `./limits.js`.
+ */
+export type RefusalReason = "encrypted" | "object-stream" | "xref-stream" | "filter" | "limit";
+
+/**
+ * FSTP (ADR-016): a typed refusal of the strict parser. Never recovered.
+ */
+export class RefusedError extends UnrecoverableParseError {
+  readonly reason: RefusalReason;
+
+  constructor(reason: RefusalReason, message: string) {
+    super(message);
+    this.name = "RefusedError";
+    this.reason = reason;
+  }
+}

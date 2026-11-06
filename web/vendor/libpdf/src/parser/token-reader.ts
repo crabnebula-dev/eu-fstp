@@ -28,6 +28,9 @@ import {
 } from "../helpers/chars.js";
 import type { Scanner } from "../io/scanner.js";
 
+import { ObjectParseError } from "./errors.js";
+import { checkLimit, LIMITS } from "./limits.js";
+
 import type {
   DelimiterToken,
   KeywordToken,
@@ -307,6 +310,9 @@ export class TokenReader {
       pos++;
     }
 
+    // FSTP (ADR-016): the hard string limit applies to names too.
+    checkLimit("a name of", pos - start, LIMITS.maxStringBytes);
+
     if (!hasEscape) {
       // Common case: pure ASCII name with no escapes.
       // Build string directly from byte range — no intermediate array,
@@ -385,8 +391,8 @@ export class TokenReader {
       const byte = this.scanner.peek();
 
       if (byte === -1) {
-        // Unterminated string - return what we have
-        break;
+        // FSTP (ADR-016): strict parse, an unterminated string is refused.
+        throw new ObjectParseError("Unterminated literal string");
       }
 
       this.scanner.advance();
@@ -437,6 +443,8 @@ export class TokenReader {
 
       bytes.push(byte);
     }
+
+    checkLimit("a string of", bytes.length, LIMITS.maxStringBytes);
 
     return {
       type: "string",
@@ -534,11 +542,13 @@ export class TokenReader {
     while (true) {
       const byte = this.scanner.peek();
 
-      if (byte === -1 || byte === CHAR_ANGLE_BRACKET_CLOSE) {
-        // EOF or >
-        if (byte === CHAR_ANGLE_BRACKET_CLOSE) {
-          this.scanner.advance();
-        }
+      if (byte === -1) {
+        // FSTP (ADR-016): strict parse, an unterminated string is refused.
+        throw new ObjectParseError("Unterminated hex string");
+      }
+
+      if (byte === CHAR_ANGLE_BRACKET_CLOSE) {
+        this.scanner.advance();
 
         break;
       }
@@ -561,9 +571,13 @@ export class TokenReader {
         }
       }
 
-      // Invalid character - skip with warning (lenient)
-      // TODO: Add warning callback
+      if (!isHexDigit(byte)) {
+        // FSTP (ADR-016): strict parse, a non-hex byte is refused.
+        throw new ObjectParseError("Invalid byte in hex string");
+      }
     }
+
+    checkLimit("a hex string of", bytes.length, LIMITS.maxStringBytes);
 
     // Odd number of hex digits - pad with 0
     if (pendingNibble !== null) {

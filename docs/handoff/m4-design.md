@@ -1863,6 +1863,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | Roles lane questions (2026-11-06) | Answered | Approving a programme's activation is high-risk and needs a step-up. The domain core refuses a Receiving binding to a signatory role holder in the same tenant. `me.roles` includes the two signatory roles. The onboarding Channels step shows Matrix and WhatsApp disabled, marked "coming later" (B-05, B-03) |
 | Guide data protection summary and privacy address (2026-11-06) | Platform default, tenant override | Daniel provides a platform default, with `TODO(legal)` wording until he supplies it. A tenant may override both values |
 | Progress map rendering (2026-11-06) | Server tree as data | The journey read returns the Rust renderer's checked element tree, and the browser builds it against the closed SVG subset. ADR-015 is amended (lane j4) |
+| ADR-016, vendored LibPDF (2026-11-06) | Accepted | LibPDF-js/core 0.5.3 is vendored at `web/vendor/libpdf/` for browser-side signature preparation only. No npm runtime package enters the platform. The `TODO(legal)` on the licence notices stays open |
 
 ### 15.1 These block the milestone
 

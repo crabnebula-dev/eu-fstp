@@ -8,7 +8,8 @@ import type { PdfObject } from "../objects/pdf-object.js";
 import { PdfRef } from "../objects/pdf-ref.js";
 import { PdfString } from "../objects/pdf-string.js";
 
-import { ObjectParseError } from "./errors.js";
+import { ObjectParseError, RefusedError } from "./errors.js";
+import { LIMITS } from "./limits.js";
 import type { Token } from "./token.js";
 import type { TokenReader } from "./token-reader.js";
 
@@ -34,7 +35,8 @@ export type WarningCallback = (message: string, position: number) => void;
  * parsing of malformed input.
  */
 export class ObjectParser {
-  private static readonly MAX_DEPTH = 500;
+  // FSTP (ADR-016): the hard nesting limit, refused with a typed error.
+  private static readonly MAX_DEPTH = LIMITS.maxDepth;
 
   private buf1: Token | null = null;
   private buf2: Token | null = null;
@@ -60,7 +62,7 @@ export class ObjectParser {
   parseObject(): ParseResult | null {
     if (++this.depth > ObjectParser.MAX_DEPTH) {
       this.depth--;
-      throw new ObjectParseError("Maximum nesting depth exceeded");
+      throw new RefusedError("limit", `nesting deeper than ${ObjectParser.MAX_DEPTH}`);
     }
 
     try {
@@ -74,6 +76,16 @@ export class ObjectParser {
     } finally {
       this.depth--;
     }
+  }
+
+  /**
+   * FSTP (ADR-016): the token after the last parsed object, from the
+   * lookahead buffer, so a caller can require the "endobj" keyword.
+   */
+  peekBuffered(): Token | null {
+    this.ensureBufferFilled();
+
+    return this.buf1;
   }
 
   private ensureBufferFilled(): void {
