@@ -9,6 +9,7 @@ import { mount as imports } from "./pages/imports.js";
 import { mount as review } from "./pages/review.js";
 import { mountNew, mountStart } from "./pages/start.js";
 import { mount as step } from "./pages/step.js";
+import { mountApproval, mountGuide, mountOverview } from "../studio/pages.js";
 
 /** A route and the page it mounts. */
 export interface PageRoute extends RouteDef {
@@ -17,7 +18,10 @@ export interface PageRoute extends RouteDef {
 
 const programme = { programme: isProgrammeId };
 
-/** The routes of the creator pages. */
+/**
+ * The routes of the creator pages, with the Planning Studio pages over
+ * them (`SPEC/12-journey-ui.md` section 8.2).
+ */
 export const CREATOR_ROUTES: readonly PageRoute[] = [
   { name: "creator.new", pattern: "/app/creator/new", segments: {}, mount: () => mountNew() },
   { name: "creator.approvals", pattern: "/app/admin/approvals", segments: {}, mount: () => approvals() },
@@ -26,6 +30,24 @@ export const CREATOR_ROUTES: readonly PageRoute[] = [
     pattern: "/app/programmes/{programme}/creator/start",
     segments: programme,
     mount: (p) => mountStart(p["programme"] ?? ""),
+  },
+  {
+    name: "studio.overview",
+    pattern: "/app/programmes/{programme}/studio",
+    segments: programme,
+    mount: (p) => mountOverview(p["programme"] ?? ""),
+  },
+  {
+    name: "studio.approval",
+    pattern: "/app/programmes/{programme}/studio/approval",
+    segments: programme,
+    mount: (p) => mountApproval(p["programme"] ?? ""),
+  },
+  {
+    name: "studio.guide",
+    pattern: "/app/programmes/{programme}/studio/guide",
+    segments: programme,
+    mount: (p) => mountGuide(p["programme"] ?? ""),
   },
   {
     name: "creator.imports",

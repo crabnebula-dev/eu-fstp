@@ -19,6 +19,15 @@
 //   It then computes the `ValueDigest` and sets `Provenance::Manual`, so a
 //   client never asserts where a value came from.
 // - Step 9 also holds the invitations of the People step.
+// - The Planning Studio (`SPEC/12-journey-ui.md` section 8.2): the step
+//   navigation groups the steps under the five studios, each step with
+//   the state of the creator's report. `#creator-step-next` is a link
+//   only once this step has no failure, and a step opened before an
+//   earlier one validated says so. The report is read on load and after
+//   each save, never computed here.
+// - On an active programme, the P-01 and P-09 editors say before the save
+//   that a change returns each approved call to DRAFT (R-PC-03 NOTE), and
+//   the page says that a change applies from the next call (I-12).
 
 import { h } from "../../core/dom.js";
 import { inviteSection } from "../../people/invite.js";
@@ -26,9 +35,11 @@ import { clearProblems, fieldEditor, showProblems, type FieldEditor, type Proble
 import { fieldsOf } from "../fields.js";
 import { busy, frame, hush, ready, statusRegion, warn } from "../frame.js";
 import { labelOr, t } from "../i18n.js";
-import { CREATOR_STEPS, canonicalJson, draftValue, nextStep, stepOfResult, type Draft } from "../model.js";
+import { CREATOR_STEPS, canonicalJson, draftValue, readReport, stepOfResult, type Draft, type Report } from "../model.js";
 import { anyObject, call, report } from "../ops.js";
-import { PATHS, checkText, link, loadDraft, loadReport, queue, stepNav, stepTitle } from "./common.js";
+import { stepStates } from "../../studio/model.js";
+import { afterApprovalNote, frozenNote, kicker, nextControl, notOpenNote } from "../../studio/view.js";
+import { checkText, loadDraft, loadReport, queue, stepNav, stepTitle } from "./common.js";
 
 /** One field on the page. */
 interface Shown {
@@ -44,9 +55,31 @@ export function mount(p: string, step: string): void {
   if (s === undefined) return;
   // The `planning-studio` prototype: "Programme set-up" heads every step,
   // and the step names itself in its `h2` and the document title.
-  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error", nav: stepNav(p, step) });
+  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error" });
   document.title = stepTitle(s);
-  main.append(h("h2", { id: "creator-step-heading" }, [stepTitle(s)]));
+  let nav = stepNav(p, s.id, null);
+  const notOpen = h("div", {});
+  const nextBox = h("span", {});
+  const frozen = h("div", {});
+  main.append(
+    h("p", { class: "voyage-label" }, [t.label("studio.spec_name")]),
+    nav,
+    notOpen,
+    h("p", { class: "card-kicker" }, [kicker(s.id)]),
+    h("h2", { id: "creator-step-heading" }, [stepTitle(s)]),
+    frozen,
+  );
+
+  /** Shows the report's state of every step, and whether the next one opens. */
+  const showState = (r: Report | null): void => {
+    const fresh = stepNav(p, s.id, r);
+    nav.replaceWith(fresh);
+    nav = fresh;
+    const states = stepStates(r);
+    nextBox.replaceChildren(nextControl(p, s.id, states));
+    const mine = states.find((x) => x.id === s.id);
+    notOpen.replaceChildren(...(mine !== undefined && !mine.open ? [notOpenNote()] : []));
+  };
   const fieldsBox = h("div", { id: "creator-fields" });
   const status = statusRegion("creator-step-status");
   const checks = h("ul", { id: "creator-step-checks", "aria-label": t.label("creator.step.checks") });
@@ -60,6 +93,10 @@ export function mount(p: string, step: string): void {
       const pendingText = Object.hasOwn(d.pendingNarratives, f.key) ? d.pendingNarratives[f.key] : undefined;
       const value = pendingText ?? draftValue(d, f.key);
       const editor = fieldEditor(f, value, { mark: true, prefix: `f.${f.key}` });
+      const note = afterApprovalNote(f.key, d.status);
+      if (note !== null) {
+        editor.notes.append(note);
+      }
       const item: Shown = { key: f.key, editor, pending: pendingText !== undefined };
       if (item.pending) {
         addAccept(item);
@@ -67,6 +104,7 @@ export function mount(p: string, step: string): void {
       return item;
     });
     fieldsBox.replaceChildren(...shown.map((x) => x.editor.root));
+    frozen.replaceChildren(...(d.status === "active" ? [frozenNote()] : []));
   };
 
   /** The template note and the accept button of a pending narrative. */
@@ -116,6 +154,7 @@ export function mount(p: string, step: string): void {
 
   const showChecks = async (): Promise<void> => {
     const r = await loadReport(p, alert);
+    showState(r);
     const mine = r === null ? [] : r.results.filter((x) => stepOfResult(x) === step);
     checks.replaceChildren(
       ...mine.map((x) =>
@@ -173,22 +212,23 @@ export function mount(p: string, step: string): void {
     ),
   );
 
-  const after = nextStep(step);
-  const nav = h("div", { class: "fstp-actions" }, [save]);
-  if (after !== null) {
-    nav.append(link(PATHS.step(p, after), t.label("creator.step.next"), { id: "creator-step-next" }));
-  }
+  const actions = h("div", { class: "fstp-actions" }, [save, nextBox]);
   main.append(h("p", {}, [labelOr(`creator.intro.${step}`, () => t.label("creator.step.intro"))]), fieldsBox);
   if (step === "people") {
     main.append(inviteSection(p, alert));
   }
-  main.append(nav, status, h("h2", {}, [t.label("creator.step.checks")]), checks);
+  main.append(actions, status, h("h2", {}, [t.label("creator.step.checks")]), checks);
 
   void write(async () => {
     const d = await loadDraft(p, alert);
     if (d === null) return;
     draft = d;
     render(d);
+    // The report on load says which steps open. A report the cell cannot
+    // give leaves the later steps locked, with no alert: the save shows
+    // its own outcome.
+    const o = await call("creator.get_report", [p], undefined, (v) => readReport(v) !== null);
+    showState(o.kind === "done" ? readReport(o.body) : null);
     ready(main);
   });
 }
