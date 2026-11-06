@@ -33,6 +33,7 @@ pub mod engine;
 pub mod fixture;
 pub mod ids;
 pub mod misc;
+pub mod people_requests;
 mod reads;
 pub mod requests;
 pub mod sessions;

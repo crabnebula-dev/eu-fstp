@@ -143,6 +143,7 @@ pub(crate) fn creator_kind(cmd: &CreatorCommand) -> u8 {
         CreatorCommand::RequestActivation { .. } => 7,
         CreatorCommand::ApproveActivation { .. } => 8,
         CreatorCommand::SaveAsTenantTemplate { .. } => 9,
+        CreatorCommand::AcceptInvitation { .. } => 10,
     }
 }
 
@@ -182,7 +183,7 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
             (RuleRef::Ledger, Why::IdReused)
         }
         C::AlreadyActive | C::NoLiveRequest => (RuleRef::I66, Why::WrongState),
-        C::StaleRevision => (RuleRef::Input, Why::WrongState),
+        C::StaleRevision | C::AlreadyAccepted => (RuleRef::Input, Why::WrongState),
         C::NotAnAccount | C::NotTenantAdmin => (RuleRef::Actor, Why::WrongActor),
         C::NotProgrammeManager => (RuleRef::Actor, Why::BindingInactive),
         C::NothingToSave | C::RoleNotInvitable => (RuleRef::Input, Why::InvalidValue),
@@ -509,8 +510,64 @@ pub fn decide_creator_command(
             .map_err(CreatorFailure::Core)?;
         out.extend(records.into_iter().map(Record::Core));
     }
+    if let Some(r) = terms_record(state, cmd, ctx) {
+        out.push(Record::Core(r));
+    }
     out.extend(tail);
     Ok(out)
+}
+
+/// The core `TermsAccepted` of an accepted invitation (J2, lane inv): the
+/// actor's account, the invited role and the terms the shell showed.
+/// `None` for every other command. The creator decided the acceptance
+/// before, so the invitation is live and open here.
+fn terms_record(state: &EngineState, cmd: &CreatorCommand, ctx: &Ctx) -> Option<CoreRecord> {
+    let CreatorCommand::AcceptInvitation {
+        programme,
+        invitation,
+        version,
+        terms,
+    } = cmd
+    else {
+        return None;
+    };
+    let role = state
+        .creator
+        .draft(*programme)?
+        .invitations()
+        .get(invitation)?
+        .role;
+    Some(CoreRecord::TermsAccepted {
+        account: actor_account(ctx)?,
+        programme: *programme,
+        role,
+        invitation: fstp_domain::id::RoleInvitationId::from_raw(invitation.raw()),
+        version: *version,
+        terms: *terms,
+    })
+}
+
+/// The accepted confidentiality terms that a grant of `role` to `account`
+/// on `programme` is composed from (J2, "Confidentiality on binding",
+/// lane inv): the version and the stored text of the `TermsAccepted` of a
+/// live invitation of that role, accepted by that account. `None` when no
+/// such record exists, and then no grant of the role is composed.
+///
+/// Interim, pending Daniel: the shell composes the grant through this
+/// lookup. The driver does not refuse a core `GrantRole` without it, since
+/// the M2 world and its test setups grant roles with no invitation.
+pub fn terms_accepted(
+    state: &EngineState,
+    account: AccountId,
+    programme: ProgrammeId,
+    role: fstp_domain::roles::Role,
+) -> Option<(u32, fstp_domain::id::TextRef)> {
+    state
+        .creator
+        .draft(programme)?
+        .live_invitations()
+        .find(|(_, i)| i.role == role && i.accepted == Some(account))
+        .and_then(|(_, i)| i.terms)
 }
 
 /// The `IsVerified` answers an approval read, in account order.

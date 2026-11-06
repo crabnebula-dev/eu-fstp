@@ -19,12 +19,32 @@ use super::lock;
 pub struct FakeAccounts {
     invited: Arc<Mutex<usize>>,
     names: Arc<Mutex<BTreeMap<AccountId, String>>>,
+    /// Every invitation M3 received, oldest first (lane inv).
+    kinds: Arc<Mutex<Vec<InviteKind>>>,
 }
 
 impl FakeAccounts {
     /// How many invitations were made.
     pub fn invited(&self) -> usize {
         *lock(&self.invited)
+    }
+
+    /// Every invitation M3 received, oldest first, with its email and
+    /// link token (J2, lane inv). Only M3 sees these, so a test reads the
+    /// token here, never from a reply or the ledger.
+    pub fn invitations(&self) -> Vec<InviteKind> {
+        lock(&self.kinds).clone()
+    }
+
+    /// The link token, in its link spelling, of the newest invitation M3
+    /// received for `email`.
+    pub fn token_for(&self, email: &str) -> Option<String> {
+        lock(&self.kinds).iter().rev().find_map(|k| match k {
+            InviteKind::ProgrammeRole {
+                email: e, token, ..
+            } if e == email => Some(token.hex()),
+            InviteKind::ProgrammeRole { .. } => None,
+        })
     }
 
     /// Gives `a` the pseudonymous display handle `handle`, such as the
@@ -35,11 +55,18 @@ impl FakeAccounts {
 }
 
 impl Accounts for FakeAccounts {
+    /// Records the invitation as M3 would before mailing it, and answers
+    /// the landing link `/app/invitation#<token>` (J2).
     async fn invite(&self, kind: InviteKind) -> Result<InvitationLink, PortError> {
-        let _ = kind;
+        let link = match &kind {
+            InviteKind::ProgrammeRole { token, .. } => {
+                format!("/app/invitation#{}", token.hex())
+            }
+        };
+        lock(&self.kinds).push(kind);
         let mut n = lock(&self.invited);
         *n = n.saturating_add(1);
-        Ok(InvitationLink(format!("/fake/invitations/{n}")))
+        Ok(InvitationLink(link))
     }
 
     /// The handle given by [`FakeAccounts::name`], else one made from the

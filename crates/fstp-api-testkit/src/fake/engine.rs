@@ -164,6 +164,12 @@ impl FakeEngine {
             .collect()
     }
 
+    /// A copy of the ledger, so a test opens a fresh cell over it, as a
+    /// restarted core replays its ledger (lane inv).
+    pub fn store_copy(&self) -> MemStore<Record> {
+        lock(&self.inner).engine.store().clone()
+    }
+
     /// Every `dry_run` call, in order.
     pub fn dry_runs(&self) -> Vec<DryRun> {
         lock(&self.inner).dry_runs.clone()

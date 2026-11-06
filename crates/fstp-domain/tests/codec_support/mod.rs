@@ -50,7 +50,7 @@ use fstp_domain::id::{
     AccountId, ActivityTypeId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ClassId,
     ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, KnockOutCriterionId,
     LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId,
-    ProposalId, ProximityListId, RequestId, TextId, TextRef, VaultEpoch,
+    ProposalId, ProximityListId, RequestId, RoleInvitationId, TextId, TextRef, VaultEpoch,
 };
 use fstp_domain::oracle::QueryKind;
 use fstp_domain::payment::PaymentLine;
@@ -736,12 +736,14 @@ pub(crate) enum RecordTag {
     CutOffRoundOpened,
     BallotCast,
     VoteDelegated,
+    // J2, lane inv.
+    TermsAccepted,
 }
 
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
     /// tags of M4 changes D2 and D5.
-    pub(crate) const ALL: [RecordTag; 64] = [
+    pub(crate) const ALL: [RecordTag; 65] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -806,6 +808,7 @@ impl RecordTag {
         RecordTag::CutOffRoundOpened,
         RecordTag::BallotCast,
         RecordTag::VoteDelegated,
+        RecordTag::TermsAccepted,
     ];
 
     /// The payloads that only a witness or a core guard builds: the four of
@@ -910,6 +913,7 @@ impl RecordTag {
             Record::CutOffRoundOpened { .. } => RecordTag::CutOffRoundOpened,
             Record::BallotCast { .. } => RecordTag::BallotCast,
             Record::VoteDelegated { .. } => RecordTag::VoteDelegated,
+            Record::TermsAccepted { .. } => RecordTag::TermsAccepted,
         }
     }
 
@@ -2169,6 +2173,14 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             digest: digest(g),
             holds: g.bool(),
             epoch: epoch(g),
+        },
+        RecordTag::TermsAccepted => Record::TermsAccepted {
+            account: id(g, d, AccountId::from_raw),
+            programme: id(g, d, ProgrammeId::from_raw),
+            role: role(g),
+            invitation: id(g, d, RoleInvitationId::from_raw),
+            version: g.u32_in(1..=u32::MAX),
+            terms: text(g, d),
         },
         RecordTag::OutboxEnqueued => Record::OutboxEnqueued(outbox(g, d)),
         RecordTag::PaymentRequested => Record::PaymentRequested {

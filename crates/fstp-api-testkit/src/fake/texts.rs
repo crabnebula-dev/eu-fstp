@@ -47,6 +47,16 @@ impl FakeTexts {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// The bytes of every stored text, for a test that scans the store
+    /// for a secret (lane inv, the link token).
+    pub fn all(&self) -> Vec<Vec<u8>> {
+        lock(&self.state)
+            .rows
+            .values()
+            .map(|(_, _, b)| b.clone())
+            .collect()
+    }
 }
 
 impl FakeTexts {

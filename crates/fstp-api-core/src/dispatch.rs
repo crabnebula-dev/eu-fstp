@@ -125,6 +125,10 @@ mod creator_ops;
 pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
+/// The people operations of journey J2 (lane inv). The file sits beside
+/// `creator.rs`, as the lane's file plan names it.
+#[path = "people.rs"]
+pub(crate) mod people;
 /// The public pages, the feed and the public tools (lane W2c).
 mod public;
 /// The tenant operations (lane m4tenant).
@@ -975,11 +979,22 @@ async fn command<P: Seams>(
     if !check_target(&call.state, &op.request) {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
     }
+    // Lane inv, J2: a grant by invitation stands for the grant of the
+    // accepting account in the invited role, with the accepted terms as
+    // its confidentiality text (`people`). The digest stays the one of the
+    // request the admin sent.
+    let composed = people::grant_request(&call.state, op, call.now).map_err(|e| call.refuse(e))?;
+    let (op, preset) = match &composed {
+        Some((rewritten, texts)) => (rewritten, texts.clone()),
+        None => (op, BTreeMap::new()),
+    };
     let second = second_admin(call, &op.request)
         .await
         .map_err(|e| call.refuse(e))?;
     let mut ids = Vec::new();
-    let cmd = build(call, &form, op, &BTreeMap::new(), &mut ids).map_err(|e| call.refuse(e))?;
+    let cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
+    // J2: a Drafting or Judging grant is composed only from accepted terms.
+    people::grant_admitted(&call.state, &cmd).map_err(|e| call.refuse(e))?;
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = Ctx {
         second_tenant_admin: second,
@@ -1009,9 +1024,10 @@ async fn command<P: Seams>(
         None
     };
     // Step 8.
-    let texts = store_texts(call, &form, op)
+    let mut texts = store_texts(call, &form, op)
         .await
         .map_err(|e| call.refuse(e))?;
+    texts.extend(preset);
     let cmd = build(call, &form, op, &texts, &mut ids).map_err(|e| call.refuse(e))?;
     let meta = ExecMeta {
         via: call.caller.via(),
@@ -1245,6 +1261,8 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let mut ids = Vec::new();
     let cmd =
         build(call, &form, &stored, &BTreeMap::new(), &mut ids).map_err(|e| call.refuse(e))?;
+    // J2 (lane inv): a confirmed grant needs accepted terms too.
+    people::grant_admitted(&call.state, &cmd).map_err(|e| call.refuse(e))?;
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, Via::Web, command_id);
     dry_run(call, account, &cmd, ctx)
@@ -1588,6 +1606,8 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let p = proposal_param(call, op)?;
             ReadModel::Diary(journey::diary(call, p, clearance.rule())?)
         }
+        // Lane inv, J2: the invitation landing, by its link token only.
+        ReadKind::GetInvitation => ReadModel::Invitation(people::landing(call, op).await?),
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1774,6 +1794,15 @@ async fn m3_port<P: Seams>(
         // (`roles-and-sod.md` roles table). R-AC-01 governs proposal
         // reads under P-10 only.
         return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
+    }
+    // Lane inv, J2: the invitation acceptance and its verification name
+    // the invitation by its link token (`people`).
+    match kind {
+        PortKind::AcceptInvitation => return people::accept(call, op, account).await,
+        PortKind::BeginInvitationVerification => {
+            return people::begin_verification(call, op, account).await;
+        }
+        _ => {}
     }
     let id = |name: &str| {
         forms::id_param(&op.request, name)

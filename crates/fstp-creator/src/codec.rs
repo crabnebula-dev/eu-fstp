@@ -908,6 +908,20 @@ impl ToJson for CreatorCommand {
                 "SaveAsTenantTemplate",
                 vec![p(*programme), ("template", dec(template.raw()))],
             ),
+            CreatorCommand::AcceptInvitation {
+                programme,
+                invitation,
+                version,
+                terms,
+            } => tagged(
+                "AcceptInvitation",
+                vec![
+                    p(*programme),
+                    ("invitation", dec(invitation.raw())),
+                    ("version", dec(u128::from(*version))),
+                    ("terms", put_text_ref(*terms)),
+                ],
+            ),
         }
     }
 }
@@ -1003,6 +1017,15 @@ impl FromJson for CreatorCommand {
                 Ok(CreatorCommand::SaveAsTenantTemplate {
                     programme: at(o, "programme", programme)?,
                     template: TemplateId::from_raw(at(o, "template", take_dec)?),
+                })
+            }
+            "AcceptInvitation" => {
+                let o = o(&["kind", "programme", "invitation", "version", "terms"])?;
+                Ok(CreatorCommand::AcceptInvitation {
+                    programme: at(o, "programme", programme)?,
+                    invitation: InvitationId::from_raw(at(o, "invitation", take_dec)?),
+                    version: at(o, "version", take_u32)?,
+                    terms: at(o, "terms", text_ref)?,
                 })
             }
             _ => Err(FromJsonError::invalid("unknown kind")),

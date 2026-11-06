@@ -32,7 +32,7 @@ use crate::id::{
     AccountId, ActivityTypeId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ClassId,
     ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, KnockOutCriterionId,
     LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId,
-    ProposalId, ProximityListId, RequestId, TextId, TextRef, VaultEpoch,
+    ProposalId, ProximityListId, RequestId, RoleInvitationId, TextId, TextRef, VaultEpoch,
 };
 use crate::oracle::QueryKind;
 use crate::payment::PaymentLine;
@@ -95,6 +95,7 @@ id_wire!(
     ProximityListId,
     ActivityTypeId,
     ContractId,
+    RoleInvitationId,
 );
 
 /// Organisation ids key the P-38 map by their decimal string.

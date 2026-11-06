@@ -29,7 +29,8 @@ use crate::grant::{GrantDecided, IneligibleCost};
 use crate::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ContentDigest, ContractId,
     DecisionId, DeliverableId, Handle, LineId, LlmConfigId, MilestoneId, OrganisationId,
-    PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, TextRef, VaultEpoch,
+    PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, RoleInvitationId, TextRef,
+    VaultEpoch,
 };
 use crate::oracle::QueryKind;
 use crate::payment::{PaymentLine, PaymentReleased};
@@ -728,6 +729,29 @@ pub enum Record {
         holds: bool,
         /// The vault epoch.
         epoch: VaultEpoch,
+    },
+    /// An invitee accepted the confidentiality terms of a programme role
+    /// ("Confidentiality on binding", M4 design section 2.2 J2, lane inv).
+    ///
+    /// The engine appends it for an accepted creator invitation. It names
+    /// no contact address and no link token (I-86, ADR-007). The core
+    /// projection keeps nothing of it. The creator projection folds it
+    /// into the invitation, and the grant of the role is composed only
+    /// from it (`fstp_engine::compose::terms_accepted`).
+    TermsAccepted {
+        /// The accepting account.
+        account: AccountId,
+        /// The programme.
+        programme: ProgrammeId,
+        /// The invited role.
+        role: Role,
+        /// The creator invitation accepted.
+        invitation: RoleInvitationId,
+        /// The version of the confidentiality terms the invitee was shown.
+        version: u32,
+        /// The terms as accepted, with the programme's P-75 and P-77
+        /// choices bound, as a confidential text of the programme.
+        terms: TextRef,
     },
     /// A notification or group event was enqueued.
     OutboxEnqueued(OutboxEvent),

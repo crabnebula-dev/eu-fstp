@@ -828,6 +828,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
             Shape::Array(&Shape::Object(&[m("call", Shape::Id)])),
         )]),
     ),
+    // SoD-09, J2 (lane inv): where the acceptor goes to verify identity,
+    // as for `me.begin_verification`.
+    (
+        "people.begin_verification",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
     // SoD-09, J2: the role, the terms version, the programme's P-75 and
     // P-77 choices for the terms of a Judging role, and the state.
     (

@@ -129,12 +129,78 @@ pub struct StepUpProof {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StepUpRequired;
 
-/// What an invitation is for.
+/// The secret token of an invitation link (J2, lane inv).
 ///
-/// W0 placeholder with no fields. The lead writes it with the M3 seam.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InviteKind {
-    _w0: (),
+/// The API core draws it through `fstp-crypto` and hands it to M3 only,
+/// inside an [`InviteKind`]. The ledger holds only its digest. Its
+/// `Debug` never shows the bytes, so no log line carries it in clear.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LinkToken([u8; 32]);
+
+impl LinkToken {
+    /// The token with the drawn bytes `b`.
+    pub const fn from_bytes(b: [u8; 32]) -> LinkToken {
+        LinkToken(b)
+    }
+
+    /// The token's bytes.
+    pub const fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// The token as the link carries it: 64 lowercase hexadecimal digits,
+    /// the spelling the `invitation_token` route parameter takes.
+    pub fn hex(&self) -> String {
+        crate::action::hex(&self.0)
+    }
+}
+
+impl std::fmt::Debug for LinkToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LinkToken(..)")
+    }
+}
+
+/// What an invitation is for, as M3 receives it to mail the link and
+/// bind the address to the enrolled account (J2, lane inv).
+///
+/// Interim, pending Daniel and the lead: the test author of lane inv
+/// wrote this shape before the production code. The email goes to M3
+/// and the text store only, never to the ledger (I-86). Its `Debug`
+/// shows neither the email nor the token.
+#[derive(Clone, PartialEq, Eq)]
+pub enum InviteKind {
+    /// An invitation to a programme role (`creator.invite`).
+    ProgrammeRole {
+        /// The programme.
+        programme: ProgrammeId,
+        /// The invitation of the creator draft.
+        invitation: fstp_creator::InvitationId,
+        /// The invited role.
+        role: fstp_domain::roles::Role,
+        /// The address M3 mails the link to.
+        email: String,
+        /// The link token.
+        token: LinkToken,
+    },
+}
+
+impl std::fmt::Debug for InviteKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InviteKind::ProgrammeRole {
+                programme,
+                invitation,
+                role,
+                ..
+            } => f
+                .debug_struct("ProgrammeRole")
+                .field("programme", programme)
+                .field("invitation", invitation)
+                .field("role", role)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 /// An invitation link.
@@ -179,6 +245,9 @@ pub enum VerificationPurpose {
     Applicant,
     /// Tenant admin identity, for the I-67 Sybil check (design section 6.1, item 13).
     AdminIdentity,
+    /// The identity of an invitee who accepted a Drafting or Judging role,
+    /// for SoD-09 (J2, `people.begin_verification`, lane inv).
+    ProgrammeRole,
 }
 
 /// Where the browser goes to verify.

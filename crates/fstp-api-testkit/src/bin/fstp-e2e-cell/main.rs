@@ -50,6 +50,7 @@ mod control;
 mod demo;
 mod demo_signin;
 mod onboarding;
+mod people;
 mod scenario;
 mod wire;
 
@@ -289,7 +290,7 @@ impl Handler for CellOrigin {
             if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
                 return onboarding::invite_admin(&inner, req).await;
             }
-            let r = inner.web.serve(req).await;
+            let r = people::serve(&inner, req).await;
             match demo {
                 Some(m) => demo_signin::mark_shell(r, m),
                 None => r,

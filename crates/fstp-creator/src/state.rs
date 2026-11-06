@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
-use fstp_domain::id::{AccountId, BindingId, ContentDigest, OrganisationId, ProgrammeId};
+use fstp_domain::id::{AccountId, BindingId, ContentDigest, OrganisationId, ProgrammeId, TextRef};
 use fstp_domain::policy::FunderProfileRef;
 use fstp_domain::record::Record;
 use fstp_domain::roles::Role;
@@ -77,6 +77,10 @@ pub struct Invitation {
     /// (J2, `people.accept_invitation`) reported it through
     /// [`CreatorState::observe_invitation_accepted`].
     pub accepted: Option<AccountId>,
+    /// The confidentiality terms the accepting account accepted: their
+    /// version and the stored text, from the core `TermsAccepted` (J2,
+    /// lane inv). `None` before the acceptance.
+    pub terms: Option<(u32, TextRef)>,
 }
 
 impl Invitation {
@@ -517,6 +521,7 @@ impl CreatorState {
                         by: *by,
                         withdrawn: false,
                         accepted: None,
+                        terms: None,
                     },
                 );
                 self.invitations.insert(*invitation);
@@ -579,6 +584,24 @@ impl CreatorState {
     /// Records on programmes with no draft, and other core records,
     /// change nothing here.
     pub fn observe_core(&mut self, seq: Seq, record: &Record) -> Result<(), CreatorFoldError> {
+        if let Record::TermsAccepted {
+            account,
+            programme,
+            role,
+            invitation,
+            version,
+            terms,
+        } = record
+        {
+            return self.observe_terms_accepted(
+                seq,
+                *programme,
+                InvitationId::from_raw(invitation.raw()),
+                *account,
+                *role,
+                (*version, *terms),
+            );
+        }
         let (programme, author) = match record {
             Record::ProgrammeCreated { programme, by, .. } => (*programme, Some(*by)),
             Record::PolicyVersionRecorded { version, author } => (version.programme, Some(*author)),
@@ -707,6 +730,40 @@ impl CreatorState {
         }
         if let Some(i) = draft.invitations.get_mut(&invitation) {
             i.accepted = Some(account);
+        }
+        Ok(())
+    }
+
+    /// Folds the core `TermsAccepted` of `invitation` on `programme` by
+    /// `account` in the ledger entry `seq` (J2, lane inv): the acceptance
+    /// of [`CreatorState::observe_invitation_accepted`], with the version
+    /// and the stored text of the accepted terms. The record must name the
+    /// invited role, or the fold refuses it as `InviteeMismatch`.
+    pub fn observe_terms_accepted(
+        &mut self,
+        seq: Seq,
+        programme: ProgrammeId,
+        invitation: InvitationId,
+        account: AccountId,
+        role: Role,
+        terms: (u32, TextRef),
+    ) -> Result<(), CreatorFoldError> {
+        let invited = self
+            .drafts
+            .get(&programme)
+            .and_then(|d| d.invitations.get(&invitation))
+            .map(|i| i.role)
+            .ok_or(CreatorFoldError::UnknownInvitation)?;
+        if invited != role {
+            return Err(CreatorFoldError::InviteeMismatch);
+        }
+        self.observe_invitation_accepted(seq, programme, invitation, account)?;
+        if let Some(i) = self
+            .drafts
+            .get_mut(&programme)
+            .and_then(|d| d.invitations.get_mut(&invitation))
+        {
+            i.terms = Some(terms);
         }
         Ok(())
     }

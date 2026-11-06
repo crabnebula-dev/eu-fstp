@@ -341,6 +341,7 @@ tagged_enum! {
         NegotiationDeclined { proposal, reason, rules },
         TerminationRecorded { decision, proposal, by, reason },
         VaultOutcome { kind, digest, holds, epoch },
+        TermsAccepted { account, programme, role, invitation, version, terms },
         PaymentApproved { request, by },
         PaymentConfirmed { request, by },
         PaymentRequestWithdrawn { request, by },
