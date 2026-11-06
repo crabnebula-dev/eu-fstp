@@ -1757,6 +1757,113 @@ fn activate(seed: &mut Seeder, p: ProgrammeId, approver: AccountId) -> Result<()
     Ok(())
 }
 
+/// Acknowledges every warning of the draft P that has no live
+/// acknowledgement, then requests its activation as its manager, so the
+/// request is live at the head revision. The clock moves with each call,
+/// so a binding end scheduled meanwhile can raise a fresh warning: the
+/// report is read again until it shows none unacknowledged.
+fn request_live(seed: &mut Seeder, p: ProgrammeId) -> Result<(), String> {
+    for _ in 0..3 {
+        let report = seed.api(
+            PM,
+            ApiMethod::Get,
+            &format!("/programmes/{}/draft/report", p.raw()),
+            &Value::Null,
+        )?;
+        let open: Vec<String> = report_rows(&report)
+            .into_iter()
+            .filter(|(_, severity, ack, _)| severity == "warning" && !ack)
+            .map(|(_, _, _, key)| key)
+            .collect();
+        if open.is_empty() {
+            break;
+        }
+        for key in open {
+            let rev = draft_revision(seed, PM, p)?;
+            seed.api(
+                PM,
+                ApiMethod::Post,
+                &format!("/programmes/{}/draft/acknowledgements", p.raw()),
+                &obj(vec![("revision", s(&rev)), ("warning", s(&key))]),
+            )?;
+        }
+    }
+    // A report that does not clear refuses the request with I-66, and the
+    // world keeps no live request, as before this step.
+    let rev = draft_revision(seed, PM, p)?;
+    let _ = seed.api(
+        PM,
+        ApiMethod::Post,
+        &format!("/programmes/{}/activation-request", p.raw()),
+        &obj(vec![("revision", s(&rev))]),
+    );
+    Ok(())
+}
+
+/// The pending actions of the call authors of the active programme P
+/// (I-85, R-MC-05): under a P-77 "draft only" row each drafts a call
+/// through MCP, which waits for a web confirmation, keyed by account with
+/// its digest. MCP prepares no operation of another account without a
+/// step-up, so the `pending.*` cells of the others name no action. The
+/// calls run at the world's instant, so no action has expired.
+fn pending_actions(
+    seed: &mut Seeder,
+    p: ProgrammeId,
+) -> Result<BTreeMap<AccountId, (PendingId, String)>, String> {
+    let mut out = BTreeMap::new();
+    let args = obj(vec![
+        ("programme", s(&p.raw().to_string())),
+        ("opens", dec(u128::try_from(OPENS).unwrap_or(0))),
+        ("deadline", dec(u128::try_from(DEADLINE).unwrap_or(0))),
+        ("deadline_zone", s("Europe/Brussels")),
+        ("currency", s("EUR")),
+        ("budget", s("400000.00")),
+        ("text", s("SYNTHETIC PENDING CALL TEXT")),
+    ])
+    .to_compact()
+    .into_bytes();
+    for a in [PM, PM_DRAFTER, DRAFTER] {
+        let token = seed
+            .ports
+            .tokens
+            .issue(a, agent_of(a), Scope::ALL, LoginMethod::Passkey);
+        let r = decode_tool("fstp_draft_call", &args).and_then(|op| {
+            block_on(
+                seed.core
+                    .dispatch(Credential::Bearer(token), &RequestHead::new(), op),
+            )
+        });
+        let Ok(OpResult::Pending(receipt)) = r else {
+            continue;
+        };
+        let cookie = seed.login(a).cookie;
+        let list = decode_route(ApiMethod::Get, "/me/pending-actions", &[])
+            .and_then(|op| {
+                block_on(seed.core.dispatch(
+                    Credential::SessionCookie(cookie),
+                    &RequestHead::new(),
+                    op,
+                ))
+            })
+            .map_err(|e| format!("pending.list: {}", e.to_json().to_compact()))?;
+        let OpResult::Done { body, .. } = list else {
+            return Err("pending.list did not complete".to_owned());
+        };
+        let id = receipt.id.raw().to_string();
+        let digest = body
+            .to_json()
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|r| str_member(r, "id").as_deref() == Some(id.as_str()))
+                    .and_then(|r| str_member(r, "digest"))
+            })
+            .ok_or_else(|| format!("pending.list does not show the action {id}"))?;
+        out.insert(a, (receipt.id, digest));
+    }
+    Ok(out)
+}
+
 /// What a world's lifecycle reached, for the targets.
 #[derive(Default)]
 struct Reached {
@@ -1986,10 +2093,16 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         if activated {
             staff(&mut seed, p, &mut reached)?;
             lifecycle(&mut seed, p, key, &mut reached)?;
-        } else {
-            revision = Some(draft_revision(&mut seed, PM, p)?);
         }
         end_binding_of(&mut seed, p, PM_ENDED, key)?;
+        // The end of a binding on the draft is an edit, so the creator
+        // cells name the revision after it, and an approval cell meets a
+        // live request there (design 3.7 step 5). The report of a
+        // sole-admin draft fails, so no request is admitted.
+        if !activated && !sole {
+            request_live(&mut seed, p)?;
+        }
+        revision = Some(draft_revision(&mut seed, PM, p)?);
         seed
     };
     let now = match key.state {
@@ -2011,6 +2124,12 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         ));
     }
     seed.at(now);
+    let pending = match programme {
+        Some(p) if !sole && depth(key.state) >= 1 && key.policy.p77_draft_only => {
+            pending_actions(&mut seed, p)?
+        }
+        _ => BTreeMap::new(),
+    };
     let tenant_revision = {
         let v = seed.api(
             first_admin,
@@ -2045,7 +2164,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         binding_end: reached.binding_end,
         narrative,
         warning,
-        pending: BTreeMap::new(),
+        pending,
         p71: seed.ports.step_up.p71(),
     };
     let head = seed.ports.engine.head();

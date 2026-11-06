@@ -181,7 +181,10 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
         C::DraftExists | C::InvitationExists | C::TemplateExists => {
             (RuleRef::Ledger, Why::IdReused)
         }
-        C::AlreadyActive | C::NoLiveRequest => (RuleRef::I66, Why::WrongState),
+        // A draft command on an active programme is a state guard: the
+        // transition row, never I-66, which only a draft programme names.
+        C::AlreadyActive => (RuleRef::Row, Why::WrongState),
+        C::NoLiveRequest => (RuleRef::I66, Why::WrongState),
         C::StaleRevision => (RuleRef::Input, Why::WrongState),
         C::NotAnAccount | C::NotTenantAdmin => (RuleRef::Actor, Why::WrongActor),
         C::NotProgrammeManager => (RuleRef::Actor, Why::BindingInactive),
@@ -645,5 +648,16 @@ mod tests {
         ] {
             assert_eq!(creator_refusal(c).rule, rule, "{c:?}");
         }
+    }
+
+    /// I-66, test plan authorisation matrix row: a creator command on an
+    /// active programme is a state guard, so it names no I-66 refusal,
+    /// which the matrix reads as a draft programme.
+    #[test]
+    fn i66_creator_command_on_an_active_programme_is_a_state_guard() {
+        let r = creator_refusal(CreatorRefusal::AlreadyActive);
+        assert_ne!(r.rule, RuleRef::I66);
+        assert_eq!(r.rule, RuleRef::Row);
+        assert_eq!(r.reason, RefusalReason::WrongState);
     }
 }

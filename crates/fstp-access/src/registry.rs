@@ -1102,6 +1102,9 @@ pub const OPS: &[OpSpec] = &[
             &IN_CALL,
             Scope::CallsRead,
         ),
+    // Lane mcreator: the Planning Studio's list of a programme's calls,
+    // each with its state and whether the caller may approve it (R-PC-03).
+    OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_STAFF),
     // J4: public pages, open calls and applicants.
     OpSpec::public("public.programme", PublicKind::Programme, "/p/{slug}").tool(
         "fstp_public_get_programme",

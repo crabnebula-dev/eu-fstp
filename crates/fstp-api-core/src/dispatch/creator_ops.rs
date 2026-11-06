@@ -52,9 +52,9 @@
 //! - `creator.preview` answers the Guide and the public page previews
 //!   from `fstp-guide` and `fstp-public`. The contract placeholder
 //!   preview stays a seam until a contract renderer exists (M8).
-//! - `creator.impact` answers the empty list for a programme with no
-//!   call, which is every draft (change D3). A programme with calls needs
-//!   `fstp_programme::impact` (an `fstp-programme` edge, the lead).
+//! - `creator.impact` lists the calls a change reaches, through
+//!   `fstp_creator::affected_calls` over `fstp_programme::impact`
+//!   (R-PG-04). A draft has no call (change D3), so its list is empty.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -439,19 +439,23 @@ async fn programme_read<P: Seams>(
         if state.core.policy().programme(p).is_none() {
             return Err(call.refuse(no_draft()));
         }
-        let calls: Vec<ImpactRow> = state
+        let calls: Vec<fstp_domain::id::CallId> = state
             .core
             .calls()
             .iter()
             .filter(|(_, v)| v.programme() == p)
-            .map(|(call, _)| ImpactRow { call })
+            .map(|(c, _)| c)
             .collect();
-        if !calls.is_empty() {
-            return Err(call.refuse(ApiError::NotImplemented(
-                "the impact of a change on a programme's calls: fstp_programme::impact (an fstp-programme edge of fstp-api-core, the lead)",
-            )));
-        }
-        return Ok(CreatorModel::Impact(calls));
+        // A published call whose limits do not read fails closed: leaving
+        // it out would under-report the change (R-PG-04).
+        let affected = fstp_creator::affected_calls(&state.core, p, &calls)
+            .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-PG-04")))?;
+        return Ok(CreatorModel::Impact(
+            affected
+                .into_iter()
+                .map(|call| ImpactRow { call })
+                .collect(),
+        ));
     }
     let d = state
         .creator

@@ -557,6 +557,73 @@ pub fn compare(
     out
 }
 
+/// The operations a local run judges, from `FSTP_MATRIX_OPS`: a
+/// comma-separated list where an entry ending in `.` is a prefix, such as
+/// `public.`, and any other entry is an exact operation name. Unset, it
+/// admits every operation. It only narrows a local run: a cell it keeps is
+/// judged exactly as in the full matrix.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpFilter {
+    entries: Option<Vec<String>>,
+}
+
+impl OpFilter {
+    /// The filter of `text`, or every operation when it is `None`. A value
+    /// with no entry refuses, so a typo never runs an empty matrix.
+    pub fn parse(text: Option<&str>) -> Result<OpFilter, String> {
+        let Some(text) = text else {
+            return Ok(OpFilter { entries: None });
+        };
+        let entries: Vec<String> = text
+            .split(',')
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if entries.is_empty() {
+            return Err(format!("FSTP_MATRIX_OPS={text:?} names no operation"));
+        }
+        Ok(OpFilter {
+            entries: Some(entries),
+        })
+    }
+
+    /// The filter named by `FSTP_MATRIX_OPS`.
+    pub fn from_env() -> Result<OpFilter, String> {
+        OpFilter::parse(std::env::var("FSTP_MATRIX_OPS").ok().as_deref())
+    }
+
+    /// Whether the filter keeps the operation `name`.
+    pub fn admits(&self, name: &str) -> bool {
+        let Some(entries) = &self.entries else {
+            return true;
+        };
+        entries.iter().any(|e| {
+            if e.ends_with('.') {
+                name.starts_with(e.as_str())
+            } else {
+                name == e
+            }
+        })
+    }
+}
+
+impl Matrix {
+    /// The same matrix over the operations `filter` keeps. The reference
+    /// and the judgement of every kept cell are unchanged.
+    pub fn narrowed(self, filter: &OpFilter) -> Matrix {
+        let keep = |v: Vec<&'static str>| -> Vec<&'static str> {
+            v.into_iter().filter(|n| filter.admits(n)).collect()
+        };
+        Matrix {
+            ops: keep(self.ops),
+            missing_from_ops: keep(self.missing_from_ops),
+            unknown_to_reference: keep(self.unknown_to_reference),
+            reference: self.reference,
+        }
+    }
+}
+
 /// The direct channel: every cell through `ApiCore::dispatch` on the
 /// fake cells of the harness (`crate::harness`).
 pub fn direct_channel() -> Result<Box<dyn Channel>, NotImplemented> {
@@ -838,6 +905,7 @@ mod tests {
     /// `dispatch` equals the reference, both ways. The registry and the
     /// reference hold the same operations. Red until the registry, the
     /// API core and the harness's direct channel exist.
+    /// `FSTP_MATRIX_OPS` narrows a local run to some operations.
     #[test]
     fn t_authz_matrix_direct() {
         let m = matrix().unwrap_or_else(|e| panic!("{e}"));
@@ -851,6 +919,8 @@ mod tests {
             "OPS entries the reference does not judge: {:?}",
             m.unknown_to_reference()
         );
+        let ops = OpFilter::from_env().unwrap_or_else(|e| panic!("{e}"));
+        let m = m.narrowed(&ops);
         let shard = Shard::from_env().unwrap_or_else(|e| panic!("{e}"));
         let c = compare_grouped(&m, &direct_channel, threads_from_env(), shard)
             .unwrap_or_else(|e| panic!("{e}"));

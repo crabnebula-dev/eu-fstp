@@ -110,6 +110,7 @@ export type OpName =
   | "call.approve"
   | "call.publish"
   | "call.board"
+  | "call.list"
   | "public.programme"
   | "public.list_open_calls"
   | "public.call"
@@ -279,6 +280,7 @@ export interface OpParams {
   readonly "call.approve": { readonly "call": string };
   readonly "call.publish": { readonly "call": string };
   readonly "call.board": { readonly "call": string };
+  readonly "call.list": { readonly "programme": string };
   readonly "public.programme": { readonly "slug": string };
   readonly "public.list_open_calls": { readonly "slug": string };
   readonly "public.call": { readonly "slug": string; readonly "call": string };
@@ -421,6 +423,7 @@ export const OP_NAMES: readonly OpName[] = [
   "call.approve",
   "call.publish",
   "call.board",
+  "call.list",
   "public.programme",
   "public.list_open_calls",
   "public.call",
@@ -1290,6 +1293,20 @@ export const OPERATIONS: readonly Operation[] = [
     session: "any",
     classification: "confidential",
     tool: { name: "fstp_get_call_board", scope: "calls:read", prepareOnly: false },
+  },
+  {
+    name: "call.list",
+    method: "GET",
+    path: "/programmes/{programme}/calls",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "calls" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
   },
   {
     name: "public.programme",
@@ -2567,6 +2584,21 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "grant_min": { schema: { kind: "amount" }, optional: true },
       "grant_max": { schema: { kind: "amount" }, optional: true },
       "recipient_max": { schema: { kind: "amount" }, optional: true },
+    },
+  } },
+  "call.draft": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "call.list": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["draft", "approved", "published"] }, optional: false },
+      "may_approve": { schema: { kind: "bool" }, optional: false },
     },
   } },
   "calls.get": {

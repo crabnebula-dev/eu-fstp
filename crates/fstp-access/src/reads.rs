@@ -140,11 +140,14 @@ pub enum ReadKind {
     // (`SPEC/12-journey-ui.md` section 10, module documentation).
     GetJourney,
     GetDiary,
+    // Lane mcreator: the calls of a programme for the Planning Studio,
+    // each with its state and whether the caller may approve it (R-PC-03).
+    ListCalls,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 49] = [
+    pub const ALL: [ReadKind; 50] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -194,6 +197,7 @@ impl ReadKind {
         ReadKind::ListMyRoles,
         ReadKind::GetJourney,
         ReadKind::GetDiary,
+        ReadKind::ListCalls,
     ];
 }
 
@@ -427,6 +431,16 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // dispatch applies the visibility function per entry (I-93).
     (ReadKind::GetJourney, JOURNEY_READER, OPEN_ALWAYS),
     (ReadKind::GetDiary, JOURNEY_READER, OPEN_ALWAYS),
+    // Lane mcreator: the call staff of the programme, as for the board.
+    (
+        ReadKind::ListCalls,
+        ReadRule::AnyOf(&[
+            ReadRule::Holder(Role::ProgrammeManager),
+            ReadRule::Holder(Role::CallDrafter),
+            ReadRule::Holder(Role::FstpCoordinator),
+        ]),
+        OPEN_ALWAYS,
+    ),
 ];
 
 /// The row of `READ_RULES` for `kind`.

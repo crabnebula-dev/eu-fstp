@@ -45,7 +45,7 @@ pub use compile::{
 };
 pub use impact::{
     CallFacts, CallImpact, CorrigendumNeed, ImpactEffect, ImpactError, ProgrammeEffect,
-    PublishedLimits, call_facts, impact, impact_on, programme_effects,
+    PublishedLimits, affected, affected_calls, call_facts, impact, impact_on, programme_effects,
 };
 pub use profile::FunderProfile;
 pub use spec::{
