@@ -1,0 +1,15 @@
+[package]
+name = "fstp-smtp"
+description = "In-house SMTP submission client over implicit TLS on port 465 through fstp-tls (M6 design section 5.2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-rt.workspace = true
+fstp-tls.workspace = true
+
+[lints]
+workspace = true

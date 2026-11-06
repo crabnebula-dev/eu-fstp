@@ -62,3 +62,5 @@ fstp-journey
 fstp-pdf
 # M12, docs/handoff/m10-m12-design.md section 3.1 (lane L12-METRICS).
 fstp-calib
+# M6, docs/handoff/m6-design.md section 10 (lane L6-SMTP).
+fstp-smtp
