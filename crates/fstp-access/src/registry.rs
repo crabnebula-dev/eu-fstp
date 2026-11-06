@@ -491,6 +491,7 @@ const TEAM: &[RoleOrApplicant] = &[
 ];
 const GUARDIAN: &[RoleOrApplicant] = &[R(Role::Guardian)];
 const REVIEWER: &[RoleOrApplicant] = &[R(Role::CommitteeMember)];
+const FINDING_MARKER: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::IrcMember)];
 const CONTENT: &[RoleOrApplicant] = &[
     R(Role::Applicant),
     R(Role::ApplicantTeamMember),
@@ -504,6 +505,8 @@ const DECLARANT: &[RoleOrApplicant] = &[
     R(Role::CommitteeMember),
     R(Role::IrcMember),
 ];
+const PROPOSAL_DECLARANT: &[RoleOrApplicant] =
+    &[R(Role::FstpCoordinator), R(Role::CommitteeMember)];
 const COMMITTEE: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::CommitteeChair)];
 const IRC: &[RoleOrApplicant] = &[R(Role::IrcMember)];
 const AUDITOR: &[RoleOrApplicant] = &[R(Role::Auditor)];
@@ -1399,7 +1402,9 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/proposals/{proposal}/coordinator-declaration",
     )
-    .acting(COORDINATOR),
+    // Under P-10 "all committee members" every committee member declares
+    // per proposal too (`roles-and-sod.md` Conflict declarations).
+    .acting(PROPOSAL_DECLARANT),
     OpSpec::read(
         "review.read_content",
         RK::GetContent,
@@ -1571,7 +1576,8 @@ pub const OPS: &[OpSpec] = &[
         "/findings/{finding}/mark",
     )
     .binding()
-    .acting(REVIEWER),
+    // The engine's `Mark` rule admits a reviewer or an IRC assignee.
+    .acting(FINDING_MARKER),
     // J7: the committee and the cut-off rounds of change D5.
     OpSpec::read("committee.ranking", RK::GetRankingView, "/calls/{call}/ranking")
         .acting(COMMITTEE)

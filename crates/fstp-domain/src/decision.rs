@@ -110,7 +110,7 @@ use fstp_money::{Amount, Percent, Ratio};
 
 use crate::assignment::{
     AssignmentKind, cleared_act, committee_organisation, conflict_query, cut_off_recusal_queries,
-    qualifying_assignment, recused_from_cut_off, reviewer_act,
+    own_assignment, recused_from_cut_off, reviewer_act,
 };
 use crate::command::{Actor, Command, Ctx};
 use crate::engine::FoldError;
@@ -589,6 +589,15 @@ fn plan_knock_out(state: &State, cmd: &Command, ctx: &Ctx) -> Result<AccountId, 
     else {
         return Err(life::wrong_state());
     };
+    // The coordinator's conflict (I-03) and declaration (R-CF-02) come
+    // before the proposal's state (test plan, authorisation matrix).
+    let coordinator = holder(state, *proposal, Role::FstpCoordinator, ctx)?;
+    if state.review().conflict_fact(coordinator, *proposal) {
+        return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    if !state.review().cleared(coordinator, *proposal) {
+        return Err(Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed));
+    }
     let actor = intake_basis(state, *proposal, *decision, ctx)?;
     if life::facts(state, *proposal).is_some_and(|f| f.knock_out.is_some()) {
         return Err(life::wrong_state());
@@ -1035,13 +1044,12 @@ fn plan_rank(
     let Command::RankAfterStage2 { proposal } = cmd else {
         return Err(life::wrong_state());
     };
+    // The actor first, then the state (test plan, authorisation matrix).
+    let actor = crate::policy::actor_account(ctx)?;
+    let assignment = own_assignment(state, actor, *proposal, AssignmentKind::Reviewer, ctx.now)?;
     if life::state_of(state, *proposal)? != StateTag::Stage2 {
         return Err(life::wrong_state());
     }
-    let actor = crate::policy::actor_account(ctx)?;
-    let assignment =
-        qualifying_assignment(state, actor, *proposal, AssignmentKind::Reviewer, ctx.now)
-            .ok_or(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive))?;
     require_stage2_organisations(state, *proposal, ctx.now)?;
     Ok((actor, *proposal, assignment))
 }
@@ -1299,6 +1307,20 @@ fn member(
     Ok((actor, members))
 }
 
+/// Refuses `actor` under I-03 when it holds a conflict fact on a RANKED
+/// proposal of `call`: it recuses from the call's cut-off vote
+/// (Conflict declarations). This comes before the ballot's own checks,
+/// and the vault answers judge the rest of the recusal in the decision.
+fn recused_by_fact(state: &State, actor: AccountId, call: CallId) -> Result<(), Refusal> {
+    if ranked_in(state, call)
+        .iter()
+        .any(|p| state.review().conflict_fact(actor, *p))
+    {
+        return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    Ok(())
+}
+
 /// Checks a round command against the state (D5):
 ///
 /// - `OpenCutOffRound`: a committee member, a fresh round id, a published
@@ -1353,9 +1375,12 @@ fn plan_round(state: &State, cmd: &Command, ctx: &Ctx) -> Result<RoundPlan, Refu
             })
         }
         Command::CastBallot { round, .. } => {
-            let r = live_round(state, *round)?;
-            let programme = published_programme(state, r.call)?;
+            // The member first, then the round's state (test plan,
+            // authorisation matrix).
+            let programme = published_programme(state, round_call(state, *round)?)?;
             let (actor, _) = member(state, programme, ctx)?;
+            recused_by_fact(state, actor, round_call(state, *round)?)?;
+            let r = live_round(state, *round)?;
             if r.cast.contains_key(&actor) || r.delegated.contains_key(&actor) {
                 return Err(ballot_refused());
             }
@@ -1369,9 +1394,12 @@ fn plan_round(state: &State, cmd: &Command, ctx: &Ctx) -> Result<RoundPlan, Refu
             })
         }
         Command::DelegateVote { round, to } => {
-            let r = live_round(state, *round)?;
-            let programme = published_programme(state, r.call)?;
+            // The member first, then the round's state (test plan,
+            // authorisation matrix).
+            let programme = published_programme(state, round_call(state, *round)?)?;
             let (actor, members) = member(state, programme, ctx)?;
+            recused_by_fact(state, actor, round_call(state, *round)?)?;
+            let r = live_round(state, *round)?;
             let holds_vote = |m: &AccountId| r.delegated.values().any(|t| t == m);
             if !members.contains(to)
                 || *to == actor
@@ -1393,9 +1421,11 @@ fn plan_round(state: &State, cmd: &Command, ctx: &Ctx) -> Result<RoundPlan, Refu
             })
         }
         Command::RecordCutOff { round } => {
-            let r = live_round(state, *round)?;
-            let programme = published_programme(state, r.call)?;
+            // The member first, then the round's state (test plan,
+            // authorisation matrix).
+            let programme = published_programme(state, round_call(state, *round)?)?;
             let (actor, members) = member(state, programme, ctx)?;
+            let r = live_round(state, *round)?;
             let tied = check_order(state, r.call, &r.order, r.nominated, r.tie_breaks)?;
             Ok(RoundPlan {
                 actor,

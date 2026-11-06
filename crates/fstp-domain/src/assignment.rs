@@ -472,12 +472,9 @@ pub(crate) fn reviewer_basis(
     if a.reviewer != account {
         return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
     }
-    if proposal_state(state, a.proposal).is_none_or(StateTag::is_terminal) {
-        return Err(wrong_state());
-    }
-    if !a.active() || current_call(state, a.proposal) != Some(a.call) {
-        return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
-    }
+    // The actor's refusals come before the state's (test plan,
+    // authorisation matrix): an inactive binding, a conflict (I-03), a
+    // missing declaration (R-CF-02), then an inactive assignment.
     let programme = programme_of(state, a.proposal)?;
     if state
         .roster
@@ -488,6 +485,15 @@ pub(crate) fn reviewer_basis(
     }
     if state.review.conflict_fact(account, a.proposal) {
         return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    if a.status == AssignmentStatus::AwaitingDeclaration {
+        return Err(Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed));
+    }
+    if !a.active() || current_call(state, a.proposal) != Some(a.call) {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
+    }
+    if proposal_state(state, a.proposal).is_none_or(StateTag::is_terminal) {
+        return Err(wrong_state());
     }
     Ok(a)
 }
@@ -531,6 +537,31 @@ pub(crate) fn qualifying_assignment(
         .filter(|(_, a)| a.reviewer == account && a.proposal == proposal && a.kind == kind)
         .find(|(id, _)| reviewer_basis(state, account, **id, now).is_ok())
         .map(|(id, _)| *id)
+}
+
+/// The qualifying assignment of `kind` that `account` holds on
+/// `proposal` at `now`, or the refusal of its own assignment there. A
+/// conflict (I-03), a missing declaration (R-CF-02) or a state refusal
+/// of one of its assignments names that rule. With no assignment of its
+/// own the refusal is the actor's.
+pub(crate) fn own_assignment(
+    state: &State,
+    account: AccountId,
+    proposal: ProposalId,
+    kind: AssignmentKind,
+    now: Timestamp,
+) -> Result<AssignmentId, Refusal> {
+    if let Some(id) = qualifying_assignment(state, account, proposal, kind, now) {
+        return Ok(id);
+    }
+    let refusal = state
+        .review
+        .assignments
+        .iter()
+        .filter(|(_, a)| a.reviewer == account && a.proposal == proposal && a.kind == kind)
+        .filter_map(|(id, _)| reviewer_basis(state, account, *id, now).err())
+        .find(|r| r.rule != RuleRef::Actor);
+    Err(refusal.unwrap_or(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive)))
 }
 
 /// The [`ReviewerAct`] of `account` on `proposal` through its qualifying
@@ -1118,6 +1149,15 @@ fn check_declare(
             }
             let programme = programme_of(state, a.proposal)?;
             crate::policy::require_holder(state, actor, programme, &[a.kind.role()], ctx.now)?;
+            // A declared conflict is final (Daniel, 2026-11-06): a second
+            // declaration is refused under I-03, and a released assignment
+            // is no longer the actor's, before its state is judged.
+            if state.review.conflict_fact(actor, a.proposal) {
+                return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+            }
+            if !a.unreleased() {
+                return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
+            }
             if !declaration_open(a.status, conflicted) {
                 return Err(wrong_state());
             }
@@ -1147,12 +1187,12 @@ fn check_declare(
             if !coordinator && !member {
                 return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
             }
-            if current == StateTag::Draft || current.is_terminal() {
-                return Err(wrong_state());
-            }
             if state.review.conflict_fact(actor, proposal) {
                 // The fact is permanent for the proposal (design 2.7).
                 return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+            }
+            if current == StateTag::Draft || current.is_terminal() {
+                return Err(wrong_state());
             }
             if state.review.cleared(actor, proposal) && !conflicted {
                 return Err(invalid());

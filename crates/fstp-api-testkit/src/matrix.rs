@@ -916,7 +916,7 @@ mod tests {
     //! self-tests of the generator, the comparison and the reference.
 
     use super::*;
-    use crate::reference::authz::{REFERENCE_OPS, authz_reference, expected as judge};
+    use crate::reference::authz::{REFERENCE_OPS, Target, authz_reference, expected as judge};
     use fstp_access::{OPS, OpKind, READ_RULES};
     use fstp_domain::StateTag;
 
@@ -1301,6 +1301,379 @@ mod tests {
                 "{op}: web cells {has_web}"
             );
         }
+    }
+
+    /// T-AUTHZ-MATRIX: `FSTP_MATRIX_OPS` keeps a prefix entry's operations
+    /// and an exact entry's one operation. Unset keeps every cell, and an
+    /// entry that names nothing refuses.
+    #[test]
+    fn t_authz_matrix_op_filter_narrows_by_prefix_and_name() {
+        let all = small_matrix();
+        let none = OpFilter::default();
+        let kept = small_matrix()
+            .narrowed(&none)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(kept.ops(), all.ops());
+        assert_eq!(kept.groups(), all.groups());
+        let f = OpFilter::parse("review.,public.call").unwrap_or_else(|e| panic!("{e}"));
+        let m = small_matrix()
+            .narrowed(&f)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let want: Vec<&str> = all
+            .ops()
+            .iter()
+            .copied()
+            .filter(|o| o.starts_with("review.") || *o == "public.call")
+            .collect();
+        assert_eq!(m.ops(), want);
+        assert!(m.ops().contains(&"review.read_content"));
+        assert!(m.cells().all(|c| f.holds(c.op)));
+        assert!(m.cells().count() > 0);
+        assert!(!f.holds("public.calls"));
+        assert!(!f.holds("reviewer.x"));
+        let typo = OpFilter::parse("reveiw.").unwrap_or_else(|e| panic!("{e}"));
+        assert!(small_matrix().narrowed(&typo).is_err());
+        assert!(OpFilter::parse("review.,").is_err());
+        assert!(OpFilter::parse("").is_err());
+    }
+
+    /// R-CF-02, I-03: a declaration precedes every content read. Through
+    /// the direct channel, an undeclared coordinator, reviewer or IRC
+    /// assignee is refused each content read with a conflict refusal, both
+    /// as the reference judges it and as dispatch answers it. The title
+    /// and neutral summary stay open to the undeclared reviewer before the
+    /// declaration (`roles-and-sod.md` Conflict declarations).
+    #[test]
+    fn r_cf_02_declaration_precedes_every_content_read() {
+        let r = reference();
+        let mut channel = direct_channel().unwrap_or_else(|e| panic!("{e}"));
+        let sessions = [PASS, mcp(true)];
+        let reads = [
+            "review.read_content",
+            "review.score_sheet",
+            "review.stage2_thread",
+            "review.findings",
+        ];
+        let undeclared = [
+            Who::CoordinatorUndeclared,
+            Who::AssignedReviewerUndeclared,
+            Who::IrcAssigneeUndeclared,
+        ];
+        let mut refused = 0usize;
+        let mut summaries = 0usize;
+        for tag in [
+            StateTag::Submitted,
+            StateTag::Stage1,
+            StateTag::Stage2,
+            StateTag::IrcReview,
+            StateTag::Negotiation,
+        ] {
+            let state = StateProfile::Proposal(tag);
+            for p10 in [P10::AssignedOnly, P10::AllCommittee, P10::OperatorStaffOnly] {
+                let policy = Policy {
+                    p10,
+                    p75_on: true,
+                    ..Policy::SUPERSAFE
+                };
+                for name in reads.iter().chain(["review.declaration_view"].iter()) {
+                    let op = r.op(name).copied().unwrap_or_else(|| panic!("no {name}"));
+                    if !target_exists(op.target, state) {
+                        continue;
+                    }
+                    for who in undeclared.into_iter().filter(|w| feasible(*w, state)) {
+                        for session in sessions {
+                            let cell = CellKey {
+                                op: op.name,
+                                who,
+                                state,
+                                policy,
+                                session,
+                            };
+                            let e = r.expected(&cell);
+                            let o = channel.observe(&cell);
+                            let class = o.as_ref().map(class_of);
+                            if *name == "review.declaration_view" {
+                                if e == Some(Expected::Allow) {
+                                    summaries += 1;
+                                    assert_eq!(class, Ok(ObservedClass::Done), "{cell:?}: {o:?}");
+                                }
+                                continue;
+                            }
+                            assert!(
+                                matches!(e, Some(Expected::Deny(_))),
+                                "reference opens {cell:?}"
+                            );
+                            assert_ne!(class, Ok(ObservedClass::Done), "{cell:?}");
+                            if e == Some(Expected::Deny(AuthClass::Conflict)) {
+                                refused += 1;
+                                assert_eq!(
+                                    class,
+                                    Ok(ObservedClass::Auth(AuthClass::Conflict)),
+                                    "{cell:?}: {o:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(refused > 0 && summaries > 0, "{refused} {summaries}");
+    }
+
+    /// The direct channel's answer to one web cell under SUPERSAFE with
+    /// `p10`, and the reference's, when the target and the principal exist.
+    fn direct_cell(
+        channel: &mut Box<dyn Channel>,
+        op: &'static str,
+        who: Who,
+        state: StateProfile,
+        p10: P10,
+    ) -> Option<(Expected, Result<Observed, ChannelFault>)> {
+        let r = reference();
+        let spec = r.op(op).copied().unwrap_or_else(|| panic!("no {op}"));
+        if !target_exists(spec.target, state) || !feasible(who, state) {
+            return None;
+        }
+        let cell = CellKey {
+            op,
+            who,
+            state,
+            policy: Policy { p10, ..SS },
+            session: PASS,
+        };
+        let e = r
+            .expected(&cell)
+            .unwrap_or_else(|| panic!("unjudged {cell:?}"));
+        Some((e, channel.observe(&cell)))
+    }
+
+    /// T-AUTHZ-MATRIX, test plan "Authorisation matrix": an actor denial
+    /// comes before every state or input refusal. In every state, a
+    /// principal the operation never admits is refused as an actor by
+    /// the review and committee commands, never by the state of the
+    /// round, the proposal or the assignment.
+    #[test]
+    fn t_authz_matrix_actor_denial_precedes_state_refusals() {
+        let mut channel = direct_channel().unwrap_or_else(|e| panic!("{e}"));
+        let ops = [
+            "review.knock_out",
+            "review.declare_assignment",
+            "review.score",
+            "review.correct_score",
+            "review.ranking_summary",
+            "review.rank",
+            "review.mark_finding",
+            "committee.open_round",
+            "committee.cast",
+            "committee.delegate",
+            "committee.record_cutoff",
+        ];
+        let outsiders = [
+            Who::Auditor,
+            Who::CallDrafter,
+            Who::IrcMember,
+            Who::ReleasedReviewer,
+            Who::SuspendedReviewer,
+        ];
+        let mut n = 0usize;
+        for state in StateProfile::all() {
+            for op in ops {
+                for who in outsiders {
+                    let Some((e, o)) = direct_cell(&mut channel, op, who, state, P10::AssignedOnly)
+                    else {
+                        continue;
+                    };
+                    if e != Expected::Deny(AuthClass::Actor) {
+                        continue;
+                    }
+                    n += 1;
+                    let class = o.as_ref().map(class_of);
+                    assert_eq!(
+                        class,
+                        Ok(ObservedClass::Auth(AuthClass::Actor)),
+                        "{op} {who:?} {state:?}: {o:?}"
+                    );
+                }
+            }
+        }
+        assert!(n > 100, "{n}");
+    }
+
+    /// R-CF-02, I-03: an assigned reviewer who has not declared is refused
+    /// every reviewer act under R-CF-02, and one with a declared conflict
+    /// under I-03, in every state where the assignment exists. The same
+    /// holds for the coordinator's knock-out check (`roles-and-sod.md`
+    /// Conflict declarations). Neither is a plain actor denial.
+    #[test]
+    fn r_cf_02_i03_reviewer_acts_refuse_undeclared_and_conflicted() {
+        let mut channel = direct_channel().unwrap_or_else(|e| panic!("{e}"));
+        let acts = [
+            "review.score",
+            "review.correct_score",
+            "review.ranking_summary",
+            "review.rank",
+            "review.mark_finding",
+            "stage2.ask",
+            "stage2.no_questions",
+        ];
+        let rows: Vec<(&'static str, Who, &str)> = acts
+            .iter()
+            .flat_map(|op| {
+                [
+                    (*op, Who::AssignedReviewerUndeclared, "R-CF-02"),
+                    (*op, Who::AssignedReviewerConflicted, "I-03"),
+                ]
+            })
+            .chain([
+                ("review.knock_out", Who::CoordinatorUndeclared, "R-CF-02"),
+                ("review.knock_out", Who::CoordinatorConflicted, "I-03"),
+            ])
+            .collect();
+        let mut n = 0usize;
+        for state in StateProfile::all() {
+            for (op, who, rule) in &rows {
+                let Some((e, o)) = direct_cell(&mut channel, op, *who, state, P10::AssignedOnly)
+                else {
+                    continue;
+                };
+                n += 1;
+                assert_eq!(
+                    e,
+                    Expected::Deny(AuthClass::Conflict),
+                    "{op} {who:?} {state:?}"
+                );
+                assert_eq!(
+                    o,
+                    Ok(Observed::Refused(Some((*rule).to_owned()))),
+                    "{op} {who:?} {state:?}"
+                );
+            }
+        }
+        assert!(n > 100, "{n}");
+    }
+
+    /// R-AC-01, I-21, `roles-and-sod.md` Receiving bindings (Daniel,
+    /// 2026-11-06): once X is terminal the former lead and team member
+    /// keep a read-only view of its content. They read `proposal.view`,
+    /// `stage2.view` and `review.read_content` after NOT_SELECTED, no
+    /// binding revives, and every command of X is refused them. The
+    /// guardian, whom the decision does not name, reads nothing there.
+    #[test]
+    fn r_ac_01_former_team_reads_own_proposal_read_only_after_terminal_state() {
+        let mut channel = direct_channel().unwrap_or_else(|e| panic!("{e}"));
+        let reads = ["proposal.view", "stage2.view", "review.read_content"];
+        for tag in [
+            StateTag::NotSelected,
+            StateTag::Declined,
+            StateTag::Withdrawn,
+            StateTag::Completed,
+            StateTag::Terminated,
+        ] {
+            let state = StateProfile::Proposal(tag);
+            for op in reads {
+                for who in [Who::Lead, Who::TeamMember] {
+                    let (e, o) = direct_cell(&mut channel, op, who, state, P10::AssignedOnly)
+                        .unwrap_or_else(|| panic!("{op} {who:?} {tag:?} infeasible"));
+                    assert_eq!(e, Expected::Allow, "{op} {who:?} {tag:?}");
+                    assert_eq!(o, Ok(Observed::Completed), "{op} {who:?} {tag:?}");
+                }
+                if let Some((e, o)) =
+                    direct_cell(&mut channel, op, Who::Guardian, state, P10::AssignedOnly)
+                {
+                    assert_eq!(e, Expected::Deny(AuthClass::Visibility), "{op} {tag:?}");
+                    assert_eq!(
+                        o.as_ref().map(class_of),
+                        Ok(ObservedClass::Auth(AuthClass::Visibility)),
+                        "{op} {tag:?}: {o:?}"
+                    );
+                }
+            }
+        }
+        let not_selected = StateProfile::Proposal(StateTag::NotSelected);
+        let mut commands = 0usize;
+        for op in REFERENCE_OPS.iter().filter(|o| !o.read && !o.public) {
+            let Some((_, o)) = direct_cell(
+                &mut channel,
+                op.name,
+                Who::Lead,
+                not_selected,
+                P10::AssignedOnly,
+            ) else {
+                continue;
+            };
+            if op.target == Target::None || op.target == Target::Programme {
+                continue;
+            }
+            commands += 1;
+            assert!(
+                !matches!(o, Ok(Observed::Completed | Observed::Pending)),
+                "{} done by the former lead: {o:?}",
+                op.name
+            );
+        }
+        assert!(commands > 10, "{commands}");
+    }
+
+    /// R-CF-02, I-03 (Daniel, 2026-11-06): a declared conflict is final. A
+    /// second declaration on the same proposal is refused under I-03, at
+    /// proposal level and on the assignment alike, and the person stays
+    /// recused from the cut-off vote while X is RANKED.
+    #[test]
+    fn r_cf_02_i03_second_declaration_after_a_conflict_is_refused() {
+        let mut channel = direct_channel().unwrap_or_else(|e| panic!("{e}"));
+        let rows = [
+            (
+                "review.declare_proposal",
+                Who::CoordinatorConflicted,
+                P10::AssignedOnly,
+            ),
+            (
+                "review.declare_proposal",
+                Who::AssignedReviewerConflicted,
+                P10::AllCommittee,
+            ),
+            (
+                "review.declare_assignment",
+                Who::AssignedReviewerConflicted,
+                P10::AssignedOnly,
+            ),
+            ("irc.declare", Who::IrcAssigneeConflicted, P10::AssignedOnly),
+        ];
+        let mut n = 0usize;
+        for state in StateProfile::all() {
+            for (op, who, p10) in rows {
+                let Some((e, o)) = direct_cell(&mut channel, op, who, state, p10) else {
+                    continue;
+                };
+                n += 1;
+                assert_eq!(
+                    e,
+                    Expected::Deny(AuthClass::Conflict),
+                    "{op} {who:?} {state:?}"
+                );
+                assert_eq!(
+                    o,
+                    Ok(Observed::Refused(Some("I-03".to_owned()))),
+                    "{op} {who:?} {state:?}"
+                );
+            }
+        }
+        assert!(n > 20, "{n}");
+        let ranked = StateProfile::Proposal(StateTag::Ranked);
+        let (e, o) = direct_cell(
+            &mut channel,
+            "committee.cast",
+            Who::AssignedReviewerConflicted,
+            ranked,
+            P10::AssignedOnly,
+        )
+        .unwrap_or_else(|| panic!("infeasible"));
+        assert_eq!(e, Expected::Deny(AuthClass::Conflict));
+        assert_eq!(
+            o.as_ref().map(class_of),
+            Ok(ObservedClass::Auth(AuthClass::Conflict)),
+            "{o:?}"
+        );
     }
 
     /// Design section 8.3: shards partition the cells.
@@ -1943,6 +2316,94 @@ mod tests {
         );
         let open = |who, st| at("committee.open_round", who, st, SS, PASS);
         assert_eq!(open(Who::AssignedReviewerConflicted, S1), Expected::Allow);
+    }
+
+    /// R-EV-09, `roles-and-sod.md` Conflict declarations: a conflict on a
+    /// ranked proposal recuses a member from that call's cut-off vote.
+    /// Once the cut-off is recorded no proposal of the call is RANKED, so
+    /// nobody is recused. A ballot on the recorded round is then refused
+    /// by its state, never by a recusal, and a non-member stays refused.
+    #[test]
+    fn r_ev_09_reference_recusal_ends_with_the_ranked_vote() {
+        let negotiation = StateProfile::Proposal(StateTag::Negotiation);
+        for op in [
+            "committee.cast",
+            "committee.delegate",
+            "committee.record_cutoff",
+            "committee.open_round",
+        ] {
+            for who in [Who::RecusedCommitteeMember, Who::AssignedReviewerConflicted] {
+                assert_eq!(at(op, who, negotiation, SS, PASS), Expected::Allow, "{op}");
+            }
+            assert_eq!(
+                at(op, Who::IrcMember, negotiation, SS, PASS),
+                Expected::Deny(AuthClass::Actor),
+                "{op}"
+            );
+        }
+    }
+
+    /// I-03, R-CF-04, `roles-and-sod.md` Identity discovery: the scores a
+    /// suspended reviewer gave get a notifiable conflict, so once it scored
+    /// (from the stage 1 close on) a conflict bars its reads of X. Before
+    /// the close it scored nothing, and it is refused as an outsider.
+    #[test]
+    fn i03_reference_suspended_reviewer_scores_bar_its_reads() {
+        let s2 = StateProfile::Proposal(StateTag::Stage2);
+        let negotiation = StateProfile::Proposal(StateTag::Negotiation);
+        let conflict = Expected::Deny(AuthClass::Conflict);
+        let hidden = Expected::Deny(AuthClass::Visibility);
+        let who = Who::SuspendedReviewer;
+        for op in [
+            "review.read_content",
+            "review.declaration_view",
+            "review.score_sheet",
+            "review.stage2_thread",
+            "review.findings",
+        ] {
+            assert_eq!(at(op, who, s2, SS, PASS), conflict, "{op}");
+        }
+        assert_eq!(
+            at("review.read_content", who, negotiation, SS, PASS),
+            conflict
+        );
+        for op in ["review.read_content", "review.score_sheet"] {
+            assert_eq!(at(op, who, S1, SS, PASS), hidden, "{op}");
+        }
+        assert_eq!(
+            at("review.score", who, s2, SS, PASS),
+            Expected::Deny(AuthClass::Actor)
+        );
+    }
+
+    /// R-CF-02, `roles-and-sod.md` Conflict declarations: under P-10 "all
+    /// committee members" every committee member declares per proposal,
+    /// so the proposal-level declaration admits them. Under the other
+    /// P-10 values, and for the chair, only the coordinator declares.
+    #[test]
+    fn r_cf_02_reference_committee_members_declare_under_all_committee() {
+        let all = Policy {
+            p10: P10::AllCommittee,
+            ..SS
+        };
+        let op = "review.declare_proposal";
+        for who in [
+            Who::CommitteeMember,
+            Who::AssignedReviewer,
+            Who::ReleasedReviewer,
+        ] {
+            assert_eq!(at(op, who, S1, all, PASS), Expected::Allow, "{who:?}");
+            assert_eq!(at(op, who, S1, SS, PASS), Expected::Deny(AuthClass::Actor));
+        }
+        assert_eq!(
+            at(op, Who::CommitteeChair, S1, all, PASS),
+            Expected::Deny(AuthClass::Actor)
+        );
+        assert_eq!(
+            at(op, Who::SuspendedReviewer, S1, all, PASS),
+            Expected::Deny(AuthClass::Actor)
+        );
+        assert_eq!(at(op, Who::Coordinator, S1, SS, PASS), Expected::Allow);
     }
 
     /// The operations lane m4reg adds for the M4 demo pages: the reads the

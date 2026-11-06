@@ -115,6 +115,9 @@ pub enum ReadModel {
     /// statuses of the caller's projection (lane j4, ADR-015 amendment of
     /// 2026-11-06).
     RouteMap(crate::dispatch::journey::RouteMapView),
+    /// `review.findings`: the assessor's findings on the reviewer's
+    /// proposal, with the reader's own marks (lane mrev, I-10).
+    Findings(Vec<crate::views::FindingRow>),
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
@@ -230,6 +233,7 @@ impl ToJson for ReadModel {
             ReadModel::Diary(v) => v.to_json(),
             ReadModel::Invitation(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
+            ReadModel::Findings(rows) => array(rows),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -1363,6 +1367,17 @@ pub(crate) mod reply_shape_tests {
         row
     }
 
+    fn finding_row(mark: Option<&'static str>) -> crate::views::FindingRow {
+        crate::views::FindingRow {
+            finding: 1,
+            kind: "Completeness",
+            severity: "Major",
+            confidence: 1000,
+            statement: "SYNTHETIC FINDING".to_owned(),
+            mark,
+        }
+    }
+
     fn thread() -> crate::views::Stage2Thread {
         crate::views::Stage2Thread {
             state: "STAGE2",
@@ -1588,6 +1603,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Invitation(_) => &["people.get_invitation"],
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
+            ReadModel::Findings(_) => &["review.findings"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Public(_) => &[],
         }
@@ -1885,6 +1901,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Diary(diary_view(true)),
             ReadModel::Diary(diary_view(false)),
             ReadModel::RouteMap(route_map_view()),
+            ReadModel::Findings(Vec::new()),
+            ReadModel::Findings(vec![finding_row(Some("Agreed")), finding_row(None)]),
             ReadModel::Creator(crate::creator::CreatorModel::Preview {
                 kind: "public",
                 blocks: vec![fstp_guide::PreviewBlock {
@@ -1976,7 +1994,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 35;
+    const VARIANTS: usize = 36;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2016,8 +2034,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(_) => 30,
             ReadModel::Diary(_) => 31,
             ReadModel::RouteMap(_) => 32,
-            ReadModel::Public(_) => 33,
-            ReadModel::Invitation(_) => 34,
+            ReadModel::Findings(_) => 33,
+            ReadModel::Public(_) => 34,
+            ReadModel::Invitation(_) => 35,
         }
     }
 

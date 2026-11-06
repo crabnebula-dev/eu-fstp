@@ -319,9 +319,10 @@ fn i86_unconfirmed_verification_stops_reading_pending() {
 }
 
 /// R-SB-03, R-EV-04, `roles-and-sod.md` Receiving bindings: a withdrawal
-/// ends the team's bindings, so `proposal.view` refuses the lead under
-/// R-AC-01. The lead's own list still holds the proposal in its final
-/// state, and another account's list does not.
+/// ends the team's bindings. The former lead keeps a read-only view
+/// (Daniel, 2026-11-06): `proposal.view` shows the final state, and a
+/// second withdrawal is refused. The lead's own list still holds the
+/// proposal in its final state, and another account's list does not.
 #[test]
 fn r_sb_03_withdrawn_proposal_stays_in_the_leads_own_list() {
     let c = FakeCell::new().unwrap();
@@ -331,9 +332,14 @@ fn r_sb_03_withdrawn_proposal_stays_in_the_leads_own_list() {
     assert!(matches!(r, Ok(OpResult::Done { .. })), "withdraw: {r:?}");
     let view = format!("/proposals/{}", PX.raw());
     match c.web(&lead, decode_route(Method::Get, &view, &[])) {
-        Err(ApiError::Refused { rule, .. }) => assert_eq!(rule, "R-AC-01"),
+        Ok(OpResult::Done {
+            body: ReadModel::OwnProposal(p),
+            ..
+        }) => assert_eq!(p.state, "WITHDRAWN"),
         other => panic!("proposal.view gave {other:?}"),
     }
+    let again = c.web(&lead, decode_route(Method::Post, &path, b"{}"));
+    assert!(matches!(again, Err(ApiError::Refused { .. })), "{again:?}");
     let own = |who| {
         let login = c.login(who, LoginMethod::Passkey);
         match c.web(&login, decode_route(Method::Get, "/me/proposals", &[])) {

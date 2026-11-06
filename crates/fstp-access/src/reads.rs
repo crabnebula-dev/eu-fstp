@@ -68,7 +68,8 @@
 //!
 //! Daniel, 2026-11-06: the Receiving bindings still end at a terminal
 //! state, but the former lead and team members keep a read-only view of
-//! `GetJourney`, `GetDiary` and `GetRouteMap` of that proposal
+//! `GetJourney`, `GetDiary`, `GetRouteMap`, `GetOwnProposal`,
+//! `GetOwnStage2Thread` and `GetContent` of that proposal
 //! (`ReadRule::FormerTeam`). No command reads this rule.
 
 use fstp_domain::Via;
@@ -217,9 +218,9 @@ pub enum ReadRule {
     Team,
     /// A former lead or team member of the proposal, in a terminal state:
     /// their Receiving binding was active when the domain ended it there
-    /// (`roles-and-sod.md` Receiving bindings). A read-only view of the
-    /// outcome, as `proposal.list_own` gives it, which revives no binding
-    /// (Daniel, 2026-11-06, O-59).
+    /// (`roles-and-sod.md` Receiving bindings). A read-only view of their
+    /// own proposal and of the outcome, as `proposal.list_own` gives it,
+    /// which revives no binding (Daniel, 2026-11-06, O-59).
     FormerTeam,
     /// The lead of the proposal.
     Lead,
@@ -264,6 +265,9 @@ pub enum ReadRule {
 }
 
 const OPEN_ALWAYS: &[StateTag] = &StateTag::ALL;
+/// The team, or in a terminal state its former lead and members (Daniel,
+/// 2026-11-06).
+const TEAM_OR_FORMER: ReadRule = ReadRule::AnyOf(&[ReadRule::Team, ReadRule::FormerTeam]);
 const COMMITTEE: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Holder(Role::CommitteeMember),
     ReadRule::Holder(Role::CommitteeChair),
@@ -325,9 +329,9 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     (ReadKind::GetPublicCall, ReadRule::Public, OPEN_ALWAYS),
     (ReadKind::GetGuide, ReadRule::Public, OPEN_ALWAYS),
     (ReadKind::ListOwnProposals, ReadRule::Own, OPEN_ALWAYS),
-    (ReadKind::GetOwnProposal, ReadRule::Team, OPEN_ALWAYS),
+    (ReadKind::GetOwnProposal, TEAM_OR_FORMER, OPEN_ALWAYS),
     (ReadKind::GetOwnWorkspace, ReadRule::Team, OPEN_ALWAYS),
-    (ReadKind::GetOwnStage2Thread, ReadRule::Team, OPEN_ALWAYS),
+    (ReadKind::GetOwnStage2Thread, TEAM_OR_FORMER, OPEN_ALWAYS),
     (ReadKind::GetOwnNotices, ReadRule::Own, OPEN_ALWAYS),
     (
         ReadKind::GetNegotiationLanding,
@@ -348,7 +352,11 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     ),
     (
         ReadKind::GetContent,
-        ReadRule::AnyOf(&[ReadRule::Team, ReadRule::ContentReader]),
+        ReadRule::AnyOf(&[
+            ReadRule::Team,
+            ReadRule::FormerTeam,
+            ReadRule::ContentReader,
+        ]),
         OPEN_ALWAYS,
     ),
     (
