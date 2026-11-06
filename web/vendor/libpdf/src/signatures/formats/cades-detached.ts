@@ -11,7 +11,7 @@
 import { fromBER, ObjectIdentifier, OctetString, Sequence } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { toArrayBuffer } from "../../helpers/buffer";
+import { toArrayBuffer } from "../../helpers/buffer.js";
 import {
   OID_CONTENT_TYPE,
   OID_DATA,
@@ -22,16 +22,16 @@ import {
   OID_SIGNED_DATA,
   OID_SIGNING_CERTIFICATE_V2,
   OID_TIMESTAMP_TOKEN,
-} from "../oids";
-import type { DigestAlgorithm } from "../types";
-import { hashData } from "../utils";
+} from "../oids.js";
+import type { DigestAlgorithm } from "../types.js";
+import { hashData } from "../utils.js";
 import {
   encodeSignedAttributesForSigning,
   getDigestAlgorithmOid,
   getSignatureAlgorithmOid,
   parseCertificate,
-} from "./common";
-import type { CMSCreateOptions, CMSFormatBuilder, CMSSignedData } from "./types";
+} from "./common.js";
+import type { CMSCreateOptions, CMSFormatBuilder, CMSSignedData } from "./types.js";
 
 /**
  * CAdES Detached signature format builder.

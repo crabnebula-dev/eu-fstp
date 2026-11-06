@@ -7,9 +7,9 @@
  * @see PDF 2.0 Specification, Section 7.6.2 (Standard encryption dictionary)
  */
 
-import { PdfDict } from "../objects/pdf-dict";
-import { EncryptionDictError } from "./errors";
-import { parsePermissions, type Permissions } from "./permissions";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { EncryptionDictError } from "./errors.js";
+import { parsePermissions, type Permissions } from "./permissions.js";
 import {
   type CryptFilter,
   type EncryptionAlgorithm,
@@ -19,9 +19,9 @@ import {
   isCryptFilterMethod,
   isEncryptionRevision,
   isEncryptionVersion,
-} from "./schemas";
+} from "./schemas.js";
 
-export { EncryptionDictError } from "./errors";
+export { EncryptionDictError } from "./errors.js";
 // Re-export types for convenience
 export type {
   AuthEvent,
@@ -30,7 +30,7 @@ export type {
   EncryptionAlgorithm,
   EncryptionRevision,
   EncryptionVersion,
-} from "./schemas";
+} from "./schemas.js";
 
 /**
  * Parsed encryption dictionary.

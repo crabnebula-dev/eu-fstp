@@ -8,15 +8,15 @@
  * @internal This is an internal class, not part of the public API.
  */
 
-import type { ObjectRegistry } from "#src/document/object-registry";
-import type { EmbeddedFont } from "#src/fonts/embedded-font";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfObject } from "#src/objects/pdf-object";
-import type { PdfRef } from "#src/objects/pdf-ref";
-import type { StandardSecurityHandler } from "#src/security/standard-handler";
+import type { ObjectRegistry } from "../document/object-registry.js";
+import type { EmbeddedFont } from "../fonts/embedded-font.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
+import type { StandardSecurityHandler } from "../security/standard-handler.js";
 
-import type { PDFCatalog } from "./pdf-catalog";
-import type { PDFPageTree } from "./pdf-page-tree";
+import type { PDFCatalog } from "./pdf-catalog.js";
+import type { PDFPageTree } from "./pdf-page-tree.js";
 
 /**
  * Function type for resolving embedded font references.

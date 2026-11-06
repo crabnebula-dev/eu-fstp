@@ -12,10 +12,10 @@
  * Data extracted from pdf.js metrics.js (Mozilla, Apache 2.0 License)
  */
 
-import type { FontEncoding } from "#src/fonts/encodings/encoding";
-import { SymbolEncoding } from "#src/fonts/encodings/symbol";
-import { WinAnsiEncoding } from "#src/fonts/encodings/win-ansi";
-import { ZapfDingbatsEncoding } from "#src/fonts/encodings/zapf-dingbats";
+import type { FontEncoding } from "./encodings/encoding.js";
+import { SymbolEncoding } from "./encodings/symbol.js";
+import { WinAnsiEncoding } from "./encodings/win-ansi.js";
+import { ZapfDingbatsEncoding } from "./encodings/zapf-dingbats.js";
 
 /**
  * Standard 14 font names.

@@ -4,17 +4,17 @@
  * Creates the appropriate field type based on /FT and /Ff values.
  */
 
-import { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import { PdfDict } from "../../../objects/pdf-dict.js";
+import type { PdfRef } from "../../../objects/pdf-ref.js";
 
-import type { ObjectRegistry } from "../../object-registry";
-import type { TerminalField } from "./base";
-import { CheckboxField } from "./checkbox-field";
-import { DropdownField, ListBoxField } from "./choice-fields";
-import { ButtonField, SignatureField, UnknownField } from "./other-fields";
-import { RadioField } from "./radio-field";
-import { TextField } from "./text-field";
-import { type AcroFormLike, FieldFlags } from "./types";
+import type { ObjectRegistry } from "../../object-registry.js";
+import type { TerminalField } from "./base.js";
+import { CheckboxField } from "./checkbox-field.js";
+import { DropdownField, ListBoxField } from "./choice-fields.js";
+import { ButtonField, SignatureField, UnknownField } from "./other-fields.js";
+import { RadioField } from "./radio-field.js";
+import { TextField } from "./text-field.js";
+import { type AcroFormLike, FieldFlags } from "./types.js";
 
 /**
  * Create a terminal FormField instance based on /FT and /Ff.

@@ -1,4 +1,4 @@
-import type { PdfDict } from "#src/objects/pdf-dict";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
 /**
  * Filter specification from PDF stream dictionary.

@@ -18,8 +18,8 @@
  * take no part in collision or repeat checks. Only horizontal text is handled.
  */
 
-import type { ExtractedChar, TextLine, TextSpan } from "./types";
-import { mergeBboxes } from "./types";
+import type { ExtractedChar, TextLine, TextSpan } from "./types.js";
+import { mergeBboxes } from "./types.js";
 
 /**
  * Run continuity, as fractions of the font size. A glyph may start up to

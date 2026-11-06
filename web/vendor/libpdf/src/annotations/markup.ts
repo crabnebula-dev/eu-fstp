@@ -10,17 +10,17 @@
  * PDF Reference: Section 12.5.6.2 "Markup Annotations"
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfBool } from "#src/objects/pdf-bool";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfBool } from "../objects/pdf-bool.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { PDFAnnotation, rectToArray } from "./base";
-import { PDFPopupAnnotation } from "./popup";
-import type { PopupOptions } from "./types";
+import { PDFAnnotation, rectToArray } from "./base.js";
+import { PDFPopupAnnotation } from "./popup.js";
+import type { PopupOptions } from "./types.js";
 
 /**
  * Base class for markup annotations.

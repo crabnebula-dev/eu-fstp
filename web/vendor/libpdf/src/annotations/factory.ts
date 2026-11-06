@@ -5,29 +5,29 @@
  * Handles unknown annotation types gracefully.
  */
 
-import type { ObjectRegistry } from "#src/document/object-registry";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import type { ObjectRegistry } from "../document/object-registry.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import { PDFAnnotation } from "./base";
-import { PDFCaretAnnotation } from "./caret";
-import { PDFFileAttachmentAnnotation } from "./file-attachment";
-import { PDFFreeTextAnnotation } from "./free-text";
-import { PDFInkAnnotation } from "./ink";
-import { PDFLineAnnotation } from "./line";
-import { PDFLinkAnnotation } from "./link";
-import { PDFPolygonAnnotation, PDFPolylineAnnotation } from "./polygon";
-import { PDFPopupAnnotation } from "./popup";
-import { PDFCircleAnnotation, PDFSquareAnnotation } from "./square-circle";
-import { PDFStampAnnotation } from "./stamp";
-import { PDFTextAnnotation } from "./text";
+import { PDFAnnotation } from "./base.js";
+import { PDFCaretAnnotation } from "./caret.js";
+import { PDFFileAttachmentAnnotation } from "./file-attachment.js";
+import { PDFFreeTextAnnotation } from "./free-text.js";
+import { PDFInkAnnotation } from "./ink.js";
+import { PDFLineAnnotation } from "./line.js";
+import { PDFLinkAnnotation } from "./link.js";
+import { PDFPolygonAnnotation, PDFPolylineAnnotation } from "./polygon.js";
+import { PDFPopupAnnotation } from "./popup.js";
+import { PDFCircleAnnotation, PDFSquareAnnotation } from "./square-circle.js";
+import { PDFStampAnnotation } from "./stamp.js";
+import { PDFTextAnnotation } from "./text.js";
 import {
   PDFHighlightAnnotation,
   PDFSquigglyAnnotation,
   PDFStrikeOutAnnotation,
   PDFUnderlineAnnotation,
-} from "./text-markup";
-import { isAnnotationSubtype, type AnnotationSubtype } from "./types";
+} from "./text-markup.js";
+import { isAnnotationSubtype, type AnnotationSubtype } from "./types.js";
 
 /**
  * Unknown annotation - fallback for unsupported types.

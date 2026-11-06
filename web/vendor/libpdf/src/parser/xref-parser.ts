@@ -1,13 +1,13 @@
-import { CR, DIGIT_0, DIGIT_9, isWhitespace, LF, SPACE, TAB } from "#src/helpers/chars";
-import type { Scanner } from "#src/io/scanner";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfStream } from "#src/objects/pdf-stream";
+import { CR, DIGIT_0, DIGIT_9, isWhitespace, LF, SPACE, TAB } from "../helpers/chars.js";
+import type { Scanner } from "../io/scanner.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
-import { XRefParseError } from "./errors";
-import { IndirectObjectParser } from "./indirect-object-parser";
-import { ObjectParser } from "./object-parser";
-import { TokenReader } from "./token-reader";
+import { XRefParseError } from "./errors.js";
+import { IndirectObjectParser } from "./indirect-object-parser.js";
+import { ObjectParser } from "./object-parser.js";
+import { TokenReader } from "./token-reader.js";
 
 /**
  * Entry in the cross-reference table.

@@ -4,10 +4,10 @@
  * PDF Reference: Section 12.7.4.3 "Text Fields"
  */
 
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfString } from "../../../objects/pdf-string.js";
 
-import { TerminalField } from "./base";
-import { FieldFlags } from "./types";
+import { TerminalField } from "./base.js";
+import { FieldFlags } from "./types.js";
 
 /**
  * Text input field.

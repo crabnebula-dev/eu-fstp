@@ -5,8 +5,8 @@
  * Returns match results with bounding box information.
  */
 
-import type { BoundingBox, ExtractedChar, FindTextOptions, PageText, TextMatch } from "./types";
-import { mergeBboxes } from "./types";
+import type { BoundingBox, ExtractedChar, FindTextOptions, PageText, TextMatch } from "./types.js";
+import { mergeBboxes } from "./types.js";
 
 /**
  * Search for text in a page.

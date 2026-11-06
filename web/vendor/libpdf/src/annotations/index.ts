@@ -6,29 +6,29 @@
  */
 
 // Base classes
-export { PDFAnnotation, parseColorArray, rectToArray } from "./base";
+export { PDFAnnotation, parseColorArray, rectToArray } from "./base.js";
 // Flattening
-export { AnnotationFlattener } from "./flattener";
+export { AnnotationFlattener } from "./flattener.js";
 // Annotation types
-export { type CaretSymbol, PDFCaretAnnotation } from "./caret";
+export { type CaretSymbol, PDFCaretAnnotation } from "./caret.js";
 // Factory
 export {
   createAnnotation,
   isPopupAnnotation,
   isWidgetAnnotation,
   PDFUnknownAnnotation,
-} from "./factory";
-export { PDFFileAttachmentAnnotation } from "./file-attachment";
-export { type FreeTextJustification, PDFFreeTextAnnotation } from "./free-text";
-export { PDFInkAnnotation } from "./ink";
-export { PDFLineAnnotation } from "./line";
-export { type HighlightMode, type LinkAction, PDFLinkAnnotation } from "./link";
-export { PDFMarkupAnnotation } from "./markup";
-export { PDFPolygonAnnotation, PDFPolylineAnnotation } from "./polygon";
-export { PDFPopupAnnotation } from "./popup";
-export { PDFCircleAnnotation, PDFSquareAnnotation } from "./square-circle";
-export { PDFStampAnnotation, STANDARD_STAMPS } from "./stamp";
-export { PDFTextAnnotation, type TextAnnotationState, type TextAnnotationStateModel } from "./text";
+} from "./factory.js";
+export { PDFFileAttachmentAnnotation } from "./file-attachment.js";
+export { type FreeTextJustification, PDFFreeTextAnnotation } from "./free-text.js";
+export { PDFInkAnnotation } from "./ink.js";
+export { PDFLineAnnotation } from "./line.js";
+export { type HighlightMode, type LinkAction, PDFLinkAnnotation } from "./link.js";
+export { PDFMarkupAnnotation } from "./markup.js";
+export { PDFPolygonAnnotation, PDFPolylineAnnotation } from "./polygon.js";
+export { PDFPopupAnnotation } from "./popup.js";
+export { PDFCircleAnnotation, PDFSquareAnnotation } from "./square-circle.js";
+export { PDFStampAnnotation, STANDARD_STAMPS } from "./stamp.js";
+export { PDFTextAnnotation, type TextAnnotationState, type TextAnnotationStateModel } from "./text.js";
 export {
   PDFHighlightAnnotation,
   PDFSquigglyAnnotation,
@@ -37,7 +37,7 @@ export {
   PDFUnderlineAnnotation,
   rectsToQuadPoints,
   rectToQuadPoints,
-} from "./text-markup";
+} from "./text-markup.js";
 
 // Types
 export {
@@ -68,4 +68,4 @@ export {
   type TextAnnotationIcon,
   type TextAnnotationOptions,
   type TextMarkupAnnotationOptions,
-} from "./types";
+} from "./types.js";

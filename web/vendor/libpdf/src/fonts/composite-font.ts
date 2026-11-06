@@ -17,19 +17,19 @@
  * >>
  */
 
-import type { RefResolver } from "#src/helpers/types.ts";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name.ts";
-import type { PdfObject } from "#src/objects/pdf-object.ts";
-import { PdfRef } from "#src/objects/pdf-ref.ts";
-import { PdfStream } from "#src/objects/pdf-stream.ts";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
-import { CIDFont, parseCIDFont } from "./cid-font";
-import { CMap, parseCMap } from "./cmap";
-import type { FontDescriptor } from "./font-descriptor";
-import { type CharCode, PdfFont } from "./pdf-font";
-import type { ToUnicodeMap } from "./to-unicode";
+import { CIDFont, parseCIDFont } from "./cid-font.js";
+import { CMap, parseCMap } from "./cmap.js";
+import type { FontDescriptor } from "./font-descriptor.js";
+import { type CharCode, PdfFont } from "./pdf-font.js";
+import type { ToUnicodeMap } from "./to-unicode.js";
 
 /**
  * CompositeFont handles Type0 composite fonts (CJK, Unicode).

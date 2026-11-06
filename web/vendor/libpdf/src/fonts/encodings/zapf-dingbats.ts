@@ -4,7 +4,7 @@
  * This encoding contains decorative symbols, checkmarks, arrows, etc.
  */
 
-import { SimpleEncoding } from "./encoding.ts";
+import { SimpleEncoding } from "./encoding.js";
 
 // prettier-ignore
 const ZAPF_DINGBATS_TO_UNICODE: (number | undefined)[] = [

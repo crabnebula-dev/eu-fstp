@@ -10,20 +10,20 @@
  * - Adding document timestamps for archival (B-LTA)
  */
 
-import { SignatureField } from "#src/document/forms/fields";
-import { hexToBytes } from "#src/helpers/buffer.ts";
-import { formatPdfDate } from "#src/helpers/format.ts";
-import { generateUniqueName } from "#src/helpers/strings";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
-import { CAdESDetachedBuilder } from "#src/signatures/formats/cades-detached";
-import { PKCS7DetachedBuilder } from "#src/signatures/formats/pkcs7-detached";
-import type { CMSFormatBuilder } from "#src/signatures/formats/types";
-import { DSSBuilder, type LtvData, LtvDataGatherer } from "#src/signatures/ltv";
+import { SignatureField } from "../document/forms/fields/index.js";
+import { hexToBytes } from "../helpers/buffer.js";
+import { formatPdfDate } from "../helpers/format.js";
+import { generateUniqueName } from "../helpers/strings.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
+import { CAdESDetachedBuilder } from "../signatures/formats/cades-detached.js";
+import { PKCS7DetachedBuilder } from "../signatures/formats/pkcs7-detached.js";
+import type { CMSFormatBuilder } from "../signatures/formats/types.js";
+import { DSSBuilder, type LtvData, LtvDataGatherer } from "../signatures/ltv/index.js";
 import {
   calculateByteRange,
   createByteRangePlaceholderObject,
@@ -33,8 +33,8 @@ import {
   findPlaceholders,
   patchByteRange,
   patchContents,
-} from "#src/signatures/placeholder";
-import { DefaultRevocationProvider } from "#src/signatures/revocation";
+} from "../signatures/placeholder.js";
+import { DefaultRevocationProvider } from "../signatures/revocation.js";
 import {
   type ArchivalDataOptions,
   type ArchivalDataResult,
@@ -51,10 +51,10 @@ import {
   type TimestampResult,
   type ValidationDataOptions,
   type ValidationDataResult,
-} from "#src/signatures/types";
-import { escapePdfString, hashData } from "#src/signatures/utils";
+} from "../signatures/types.js";
+import { escapePdfString, hashData } from "../signatures/utils.js";
 
-import type { PDF } from "./pdf";
+import type { PDF } from "./pdf.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper functions (moved from sign.ts)

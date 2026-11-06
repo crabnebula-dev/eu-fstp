@@ -9,17 +9,17 @@
  * PDF Reference: Section 12.7 "Interactive Forms"
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfArray } from "../../../objects/pdf-array.js";
+import { PdfDict } from "../../../objects/pdf-dict.js";
+import { PdfName } from "../../../objects/pdf-name.js";
+import type { PdfObject } from "../../../objects/pdf-object.js";
+import { PdfRef } from "../../../objects/pdf-ref.js";
+import { PdfString } from "../../../objects/pdf-string.js";
 
-import type { ObjectRegistry } from "../../object-registry";
-import type { FormFont } from "../form-font";
-import { WidgetAnnotation } from "../widget-annotation";
-import { type AcroFormLike, FieldFlags, type FieldType, type RgbColor } from "./types";
+import type { ObjectRegistry } from "../../object-registry.js";
+import type { FormFont } from "../form-font.js";
+import { WidgetAnnotation } from "../widget-annotation.js";
+import { type AcroFormLike, FieldFlags, type FieldType, type RgbColor } from "./types.js";
 
 /**
  * Base class for all form fields.

@@ -1,9 +1,9 @@
-import type { RefResolver } from "#src/helpers/types";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
 
 /**
  * Manages the page tree structure of a PDF document.

@@ -13,7 +13,7 @@
 import { fromBER, ObjectIdentifier, OctetString, UTCTime } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { toArrayBuffer } from "../../helpers/buffer";
+import { toArrayBuffer } from "../../helpers/buffer.js";
 import {
   OID_CONTENT_TYPE,
   OID_DATA,
@@ -21,16 +21,16 @@ import {
   OID_SIGNED_DATA,
   OID_SIGNING_TIME,
   OID_TIMESTAMP_TOKEN,
-} from "../oids";
-import type { DigestAlgorithm, Signer } from "../types";
+} from "../oids.js";
+import type { DigestAlgorithm, Signer } from "../types.js";
 import {
   buildCMSAlgorithmProtection,
   encodeSignedAttributesForSigning,
   getDigestAlgorithmOid,
   getSignatureAlgorithmOid,
   parseCertificate,
-} from "./common";
-import type { CMSCreateOptions, CMSFormatBuilder, CMSSignedData } from "./types";
+} from "./common.js";
+import type { CMSCreateOptions, CMSFormatBuilder, CMSSignedData } from "./types.js";
 
 /**
  * PKCS#7 Detached signature format builder.

@@ -7,15 +7,15 @@
  * PDF Reference: Section 12.7 "Interactive Forms"
  */
 
-import type { PDFPageTree } from "#src/api/pdf-page-tree";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
+import type { PDFPageTree } from "../../api/pdf-page-tree.js";
+import { PdfArray } from "../../objects/pdf-array.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
 
-import type { ObjectRegistry } from "../object-registry";
-import { AppearanceGenerator, extractAppearanceStyle } from "./appearance-generator";
-import { FieldTree } from "./field-tree";
+import type { ObjectRegistry } from "../object-registry.js";
+import { AppearanceGenerator, extractAppearanceStyle } from "./appearance-generator.js";
+import { FieldTree } from "./field-tree.js";
 import {
   type AcroFormLike,
   ButtonField,
@@ -26,9 +26,9 @@ import {
   RadioField,
   type TerminalField,
   TextField,
-} from "./fields";
-import { type FlattenOptions, FormFlattener } from "./form-flattener";
-import { type ExistingFont, type FormFont, parseExistingFont } from "./form-font";
+} from "./fields/index.js";
+import { type FlattenOptions, FormFlattener } from "./form-flattener.js";
+import { type ExistingFont, type FormFont, parseExistingFont } from "./form-font.js";
 
 /**
  * AcroForm represents a PDF's interactive form.

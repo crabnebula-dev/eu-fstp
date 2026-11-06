@@ -13,10 +13,10 @@
  * PDF Reference: Section 12.5.5 "Appearance Streams"
  */
 
-import type { PdfStream } from "#src/objects/pdf-stream";
+import type { PdfStream } from "../../objects/pdf-stream.js";
 
-import type { ObjectRegistry } from "../object-registry";
-import type { AcroForm } from "./acro-form";
+import type { ObjectRegistry } from "../object-registry.js";
+import type { AcroForm } from "./acro-form.js";
 import type {
   ButtonField,
   CheckboxField,
@@ -24,9 +24,9 @@ import type {
   ListBoxField,
   RadioField,
   TextField,
-} from "./fields";
-import type { FormFont } from "./form-font";
-import type { WidgetAnnotation } from "./widget-annotation";
+} from "./fields/index.js";
+import type { FormFont } from "./form-font.js";
+import type { WidgetAnnotation } from "./widget-annotation.js";
 
 // Re-export types and utilities for external use
 export {
@@ -35,13 +35,13 @@ export {
   type FontMetrics,
   type ParsedDA,
   parseDAString,
-} from "./appearance-utils";
+} from "./appearance-utils.js";
 
 // Import implementation modules
-import type { AppearanceContext, ExtractedAppearanceStyle } from "./appearance-utils";
-import * as ButtonAppearance from "./button-appearance";
-import * as ChoiceAppearance from "./choice-appearance";
-import * as TextAppearance from "./text-appearance";
+import type { AppearanceContext, ExtractedAppearanceStyle } from "./appearance-utils.js";
+import * as ButtonAppearance from "./button-appearance.js";
+import * as ChoiceAppearance from "./choice-appearance.js";
+import * as TextAppearance from "./text-appearance.js";
 
 /**
  * Generator for form field appearance streams.

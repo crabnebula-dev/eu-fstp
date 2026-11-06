@@ -1,8 +1,8 @@
-import type { PdfDict } from "#src/objects/pdf-dict";
+import type { PdfDict } from "../objects/pdf-dict.js";
 import pako from "pako";
 
-import type { Filter } from "./filter";
-import { applyPredictor } from "./predictor";
+import type { Filter } from "./filter.js";
+import { applyPredictor } from "./predictor.js";
 
 /**
  * FlateDecode filter - zlib/deflate compression.

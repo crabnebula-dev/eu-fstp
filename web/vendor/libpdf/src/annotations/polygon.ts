@@ -7,14 +7,14 @@
  * PDF Reference: Section 12.5.6.9 "Polygon and Polyline Annotations"
  */
 
-import { type Color, colorToArray } from "#src/helpers/colors";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
+import { type Color, colorToArray } from "../helpers/colors.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
 
-import { parseColorArray } from "./base";
-import { PDFMarkupAnnotation } from "./markup";
-import type { LineEndingStyle, Point } from "./types";
+import { parseColorArray } from "./base.js";
+import { PDFMarkupAnnotation } from "./markup.js";
+import type { LineEndingStyle, Point } from "./types.js";
 
 /**
  * Base class for Polygon and Polyline annotations.

@@ -5,17 +5,17 @@
  * information, suitable for searching and text extraction.
  */
 
-import { ContentStreamParser } from "#src/content/parsing/content-stream-parser";
+import { ContentStreamParser } from "../content/parsing/content-stream-parser.js";
 import {
   isInlineImageOperation,
   type AnyOperation,
   type ContentToken,
-} from "#src/content/parsing/types";
-import type { PdfStream } from "#src/objects/pdf-stream";
+} from "../content/parsing/types.js";
+import type { PdfStream } from "../objects/pdf-stream.js";
 
-import type { TextResources } from "./text-resources";
-import { TextState } from "./text-state";
-import type { ExtractedChar } from "./types";
+import type { TextResources } from "./text-resources.js";
+import { TextState } from "./text-state.js";
+import type { ExtractedChar } from "./types.js";
 
 /** Cycles are caught by identity; this guards the call stack against deep chains. */
 const MAX_FORM_DEPTH = 32;

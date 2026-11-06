@@ -4,7 +4,7 @@
  * This encoding contains Greek letters and mathematical symbols.
  */
 
-import { SimpleEncoding } from "./encoding.ts";
+import { SimpleEncoding } from "./encoding.js";
 
 // prettier-ignore
 const SYMBOL_TO_UNICODE: (number | undefined)[] = [

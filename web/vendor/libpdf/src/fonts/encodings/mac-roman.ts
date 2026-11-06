@@ -4,7 +4,7 @@
  * This encoding is based on the classic Mac OS character encoding.
  */
 
-import { SimpleEncoding } from "./encoding.ts";
+import { SimpleEncoding } from "./encoding.js";
 
 // prettier-ignore
 const MAC_ROMAN_TO_UNICODE: (number | undefined)[] = [

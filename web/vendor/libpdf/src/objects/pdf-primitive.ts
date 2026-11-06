@@ -10,7 +10,7 @@
  * themselves" principle.
  */
 
-import type { ByteWriter } from "#src/io/byte-writer";
+import type { ByteWriter } from "../io/byte-writer.js";
 
 export interface PdfPrimitive {
   /**

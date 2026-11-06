@@ -2,9 +2,9 @@
  * CFF CID-keyed font program wrapper.
  */
 
-import type { CFFCIDFont } from "#src/fontbox/cff/parser.ts";
+import type { CFFCIDFont } from "../../fontbox/cff/parser.js";
 
-import type { FontProgram } from "./base.ts";
+import type { FontProgram } from "./base.js";
 
 /**
  * Wrapper for CFF CID-keyed fonts.

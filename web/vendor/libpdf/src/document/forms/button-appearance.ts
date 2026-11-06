@@ -7,7 +7,7 @@
  * - Push buttons
  */
 
-import { ContentStreamBuilder } from "#src/content/content-stream";
+import { ContentStreamBuilder } from "../../content/content-stream.js";
 import {
   beginText,
   endText,
@@ -22,10 +22,10 @@ import {
   setStrokingGray,
   showText,
   stroke,
-} from "#src/helpers/operators";
-import { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
+} from "../../helpers/operators.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import type { PdfStream } from "../../objects/pdf-stream.js";
+import { PdfString } from "../../objects/pdf-string.js";
 
 import {
   type AppearanceContext,
@@ -40,10 +40,10 @@ import {
   getFontResourceName,
   parseDefaultAppearance,
   resolveAppearanceFont,
-} from "./appearance-utils";
-import type { ButtonField, CheckboxField, RadioField } from "./fields";
-import type { FormFont } from "./form-font";
-import type { WidgetAnnotation } from "./widget-annotation";
+} from "./appearance-utils.js";
+import type { ButtonField, CheckboxField, RadioField } from "./fields/index.js";
+import type { FormFont } from "./form-font.js";
+import type { WidgetAnnotation } from "./widget-annotation.js";
 
 /**
  * ZapfDingbats glyph codes for checkbox/radio.

@@ -5,7 +5,7 @@
  * including position information for searching and highlighting.
  */
 
-import { max, min } from "#src/helpers/math";
+import { max, min } from "../helpers/math.js";
 
 /**
  * Rectangle in PDF coordinates (origin at bottom-left).

@@ -7,11 +7,11 @@
  * PDF Reference: Section 12.7.3.1 "Field Dictionaries"
  */
 
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfRef } from "#src/objects/pdf-ref";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
 
-import type { ObjectRegistry } from "../object-registry";
-import { createFormField, type FormField, NonTerminalField, TerminalField } from "./fields";
+import type { ObjectRegistry } from "../object-registry.js";
+import { createFormField, type FormField, NonTerminalField, TerminalField } from "./fields/index.js";
 
 /**
  * Interface for AcroForm-like objects that can provide field tree iteration.

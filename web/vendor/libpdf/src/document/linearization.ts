@@ -9,8 +9,8 @@
  * (which strips the linearization).
  */
 
-import type { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
 
 /**
  * Linearization dictionary parameters.

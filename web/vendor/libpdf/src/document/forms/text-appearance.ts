@@ -7,7 +7,7 @@
  * - Comb fields (character cells)
  */
 
-import { ContentStreamBuilder } from "#src/content/content-stream";
+import { ContentStreamBuilder } from "../../content/content-stream.js";
 import {
   beginMarkedContent,
   beginText,
@@ -26,8 +26,8 @@ import {
   setStrokingGray,
   showText,
   stroke,
-} from "#src/helpers/operators";
-import type { PdfStream } from "#src/objects/pdf-stream";
+} from "../../helpers/operators.js";
+import type { PdfStream } from "../../objects/pdf-stream.js";
 
 import {
   type AppearanceContext,
@@ -43,10 +43,10 @@ import {
   parseDefaultAppearance,
   type ParsedDA,
   resolveAppearanceFont,
-} from "./appearance-utils";
-import type { RgbColor, TextField } from "./fields";
-import type { FormFont } from "./form-font";
-import type { WidgetAnnotation } from "./widget-annotation";
+} from "./appearance-utils.js";
+import type { RgbColor, TextField } from "./fields/index.js";
+import type { FormFont } from "./form-font.js";
+import type { WidgetAnnotation } from "./widget-annotation.js";
 
 /**
  * Context for text appearance generation.

@@ -2,9 +2,9 @@
  * Shared utilities for appearance stream generation.
  */
 
-import type { Operator } from "#src/content/operators";
-import { ContentStreamParser } from "#src/content/parsing/content-stream-parser";
-import { isParsedOperation, type ContentToken } from "#src/content/parsing/types";
+import type { Operator } from "../../content/operators.js";
+import { ContentStreamParser } from "../../content/parsing/content-stream-parser.js";
+import { isParsedOperation, type ContentToken } from "../../content/parsing/types.js";
 import {
   closePath,
   curveTo,
@@ -21,22 +21,22 @@ import {
   setStrokingGray,
   setStrokingRGB,
   stroke,
-} from "#src/helpers/operators";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import type { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
+} from "../../helpers/operators.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import type { PdfStream } from "../../objects/pdf-stream.js";
+import { PdfString } from "../../objects/pdf-string.js";
 
-import type { ObjectRegistry } from "../object-registry";
-import type { AcroForm } from "./acro-form";
-import type { FormField, RgbColor } from "./fields";
+import type { ObjectRegistry } from "../object-registry.js";
+import type { AcroForm } from "./acro-form.js";
+import type { FormField, RgbColor } from "./fields/index.js";
 import {
   ExistingFont,
   type FormFont,
   isEmbeddedFont,
   isExistingFont,
   mapToStandardFont,
-} from "./form-font";
+} from "./form-font.js";
 
 /**
  * Parsed default appearance string components.

@@ -1,7 +1,7 @@
-import { formatPdfNumber } from "#src/helpers/format";
-import type { ByteWriter } from "#src/io/byte-writer";
+import { formatPdfNumber } from "../helpers/format.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 /**
  * PDF numeric object (integer or real).

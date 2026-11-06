@@ -1,26 +1,26 @@
-import type { Scanner } from "#src/io/scanner";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
-import { type CredentialInput, normalizeCredential } from "#src/security/credentials";
+import type { Scanner } from "../io/scanner.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
+import { type CredentialInput, normalizeCredential } from "../security/credentials.js";
 import {
   type EncryptionDict,
   isEncryptedTrailer,
   parseEncryptionDict,
-} from "#src/security/encryption-dict";
-import { EncryptionDictError } from "#src/security/errors";
-import type { Permissions } from "#src/security/permissions";
-import { StandardSecurityHandler, tryEmptyPassword } from "#src/security/standard-handler";
+} from "../security/encryption-dict.js";
+import { EncryptionDictError } from "../security/errors.js";
+import type { Permissions } from "../security/permissions.js";
+import { StandardSecurityHandler, tryEmptyPassword } from "../security/standard-handler.js";
 
-import { BruteForceParser } from "./brute-force-parser";
-import { RecoverableParseError, StructureError, UnrecoverableParseError } from "./errors";
-import { IndirectObjectParser, type LengthResolver } from "./indirect-object-parser";
-import { ObjectStreamParser } from "./object-stream-parser";
-import { type XRefEntry, XRefParser } from "./xref-parser";
+import { BruteForceParser } from "./brute-force-parser.js";
+import { RecoverableParseError, StructureError, UnrecoverableParseError } from "./errors.js";
+import { IndirectObjectParser, type LengthResolver } from "./indirect-object-parser.js";
+import { ObjectStreamParser } from "./object-stream-parser.js";
+import { type XRefEntry, XRefParser } from "./xref-parser.js";
 
 /**
  * Options for document parsing.

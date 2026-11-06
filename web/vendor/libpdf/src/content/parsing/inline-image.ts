@@ -17,11 +17,11 @@ import {
   LF,
   NUL,
   SPACE,
-} from "#src/helpers/chars";
-import type { Scanner } from "#src/io/scanner";
+} from "../../helpers/chars.js";
+import type { Scanner } from "../../io/scanner.js";
 
-import { KNOWN_OPERATORS } from "./operators";
-import type { ContentToken } from "./types";
+import { KNOWN_OPERATORS } from "./operators.js";
+import type { ContentToken } from "./types.js";
 
 const E = 0x45; // 'E'
 const I = 0x49; // 'I'

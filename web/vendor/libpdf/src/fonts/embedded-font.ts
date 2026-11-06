@@ -8,13 +8,13 @@
  * - ToUnicode map generation
  */
 
-import type { TrueTypeFont } from "#src/fontbox/ttf/truetype-font.ts";
-import type { PdfRef } from "#src/objects/pdf-ref.ts";
+import type { TrueTypeFont } from "../fontbox/ttf/truetype-font.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import { parseFontProgram } from "./embedded-parser.ts";
-import { FontDescriptor } from "./font-descriptor.ts";
-import { type FontProgram, TrueTypeFontProgram } from "./font-program/index.ts";
-import { type CharCode, PdfFont } from "./pdf-font.ts";
+import { parseFontProgram } from "./embedded-parser.js";
+import { FontDescriptor } from "./font-descriptor.js";
+import { type FontProgram, TrueTypeFontProgram } from "./font-program/index.js";
+import { type CharCode, PdfFont } from "./pdf-font.js";
 
 /**
  * Options for embedding a font.

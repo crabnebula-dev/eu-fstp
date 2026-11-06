@@ -2,7 +2,7 @@
  * PDF string encoding utilities.
  */
 
-import { CHAR_BACKSLASH, CHAR_PARENTHESIS_CLOSE, CHAR_PARENTHESIS_OPEN } from "./chars";
+import { CHAR_BACKSLASH, CHAR_PARENTHESIS_CLOSE, CHAR_PARENTHESIS_OPEN } from "./chars.js";
 
 /**
  * Escape a PDF literal string for serialization.

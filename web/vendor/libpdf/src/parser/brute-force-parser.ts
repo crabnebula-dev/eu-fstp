@@ -1,13 +1,13 @@
-import { DIGIT_0, DIGIT_9, isDelimiter, isWhitespace } from "#src/helpers/chars";
-import type { Scanner } from "#src/io/scanner";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+import { DIGIT_0, DIGIT_9, isDelimiter, isWhitespace } from "../helpers/chars.js";
+import type { Scanner } from "../io/scanner.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
-import { IndirectObjectParser } from "./indirect-object-parser";
-import { ObjectParser } from "./object-parser";
-import { ObjectStreamParser } from "./object-stream-parser";
-import { TokenReader } from "./token-reader";
+import { IndirectObjectParser } from "./indirect-object-parser.js";
+import { ObjectParser } from "./object-parser.js";
+import { ObjectStreamParser } from "./object-stream-parser.js";
+import { TokenReader } from "./token-reader.js";
 
 /**
  * Entry for a discovered object in the file.

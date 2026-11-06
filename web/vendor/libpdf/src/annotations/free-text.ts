@@ -7,11 +7,11 @@
  * PDF Reference: Section 12.5.6.6 "Free Text Annotations"
  */
 
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { PDFMarkupAnnotation } from "./markup";
+import { PDFMarkupAnnotation } from "./markup.js";
 
 /**
  * Text justification for FreeText annotations.

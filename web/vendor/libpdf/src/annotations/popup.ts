@@ -7,10 +7,10 @@
  * PDF Reference: Section 12.5.6.14 "Popup Annotations"
  */
 
-import { PdfBool } from "#src/objects/pdf-bool";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import { PdfBool } from "../objects/pdf-bool.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import { PDFAnnotation } from "./base";
+import { PDFAnnotation } from "./base.js";
 
 /**
  * Popup annotation - displays text in a pop-up window.

@@ -10,8 +10,8 @@
  * @see PDF 2.0 Specification, Section 7.6.3.3 (AES-256 encryption)
  */
 
-import { aesDecrypt, aesEncrypt } from "../ciphers/aes";
-import { AbstractSecurityHandler } from "./abstract";
+import { aesDecrypt, aesEncrypt } from "../ciphers/aes.js";
+import { AbstractSecurityHandler } from "./abstract.js";
 
 export class AES256Handler extends AbstractSecurityHandler {
   readonly algorithm = "AES-256" as const;

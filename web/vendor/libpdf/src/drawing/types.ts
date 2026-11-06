@@ -2,11 +2,11 @@
  * Drawing API types and option interfaces.
  */
 
-import type { PDFPattern } from "#src/drawing/resources/index";
-import type { BBox } from "#src/drawing/resources/types";
-import type { EmbeddedFont } from "#src/fonts/embedded-font";
-import type { Standard14FontName } from "#src/fonts/standard-14";
-import type { Color } from "#src/helpers/colors";
+import type { PDFPattern } from "./resources/index.js";
+import type { BBox } from "./resources/types.js";
+import type { EmbeddedFont } from "../fonts/embedded-font.js";
+import type { Standard14FontName } from "../fonts/standard-14.js";
+import type { Color } from "../helpers/colors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Common Types

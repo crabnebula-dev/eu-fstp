@@ -11,16 +11,16 @@
 import { fromBER, ObjectIdentifier, OctetString, Sequence } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { toArrayBuffer } from "../helpers/buffer";
-import { getCrypto } from "./crypto";
+import { toArrayBuffer } from "../helpers/buffer.js";
+import { getCrypto } from "./crypto/index.js";
 import {
   OID_AD_OCSP,
   OID_AUTHORITY_INFO_ACCESS,
   OID_CRL_DISTRIBUTION_POINTS,
   OID_SHA1,
-} from "./oids";
-import type { RevocationProvider } from "./types";
-import { RevocationError } from "./types";
+} from "./oids.js";
+import type { RevocationProvider } from "./types.js";
+import { RevocationError } from "./types.js";
 
 /**
  * Options for DefaultRevocationProvider.

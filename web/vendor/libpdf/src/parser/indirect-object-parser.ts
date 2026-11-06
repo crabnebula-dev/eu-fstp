@@ -1,13 +1,13 @@
-import { CR, isWhitespace, LF } from "#src/helpers/chars";
-import type { Scanner } from "#src/io/scanner";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfObject } from "#src/objects/pdf-object";
-import type { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+import { CR, isWhitespace, LF } from "../helpers/chars.js";
+import type { Scanner } from "../io/scanner.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
-import { ObjectParseError } from "./errors";
-import { ObjectParser, type WarningCallback } from "./object-parser";
-import { TokenReader } from "./token-reader";
+import { ObjectParseError } from "./errors.js";
+import { ObjectParser, type WarningCallback } from "./object-parser.js";
+import { TokenReader } from "./token-reader.js";
 
 /**
  * Parsed indirect object.

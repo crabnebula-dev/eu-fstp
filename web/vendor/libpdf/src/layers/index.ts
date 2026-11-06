@@ -5,5 +5,5 @@
  * Important for security before signing documents.
  */
 
-export { flattenLayers, getLayers, hasLayers, validateOCGStructure } from "./layers";
-export type { FlattenLayersResult, LayerInfo } from "./types";
+export { flattenLayers, getLayers, hasLayers, validateOCGStructure } from "./layers.js";
+export type { FlattenLayersResult, LayerInfo } from "./types.js";

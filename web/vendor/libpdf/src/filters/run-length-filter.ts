@@ -1,7 +1,7 @@
-import { ByteWriter } from "#src/io/byte-writer";
-import type { PdfDict } from "#src/objects/pdf-dict";
+import { ByteWriter } from "../io/byte-writer.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
-import type { Filter } from "./filter";
+import type { Filter } from "./filter.js";
 
 /**
  * RunLengthDecode filter.

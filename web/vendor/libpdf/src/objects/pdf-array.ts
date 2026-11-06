@@ -1,8 +1,8 @@
-import type { RefResolver } from "#src/helpers/types.ts";
-import type { ByteWriter } from "#src/io/byte-writer";
+import type { RefResolver } from "../helpers/types.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfObject } from "./pdf-object";
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfObject } from "./pdf-object.js";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 /**
  * PDF array object (mutable).

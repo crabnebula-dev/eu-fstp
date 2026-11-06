@@ -10,18 +10,18 @@
  * PDF Reference: Section 12.5.6.5 "Link Annotations"
  */
 
-import { PDFPage } from "#src/api/pdf-page.ts";
-import { colorToArray } from "#src/helpers/colors";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNull } from "#src/objects/pdf-null";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+import { PDFPage } from "../api/pdf-page.js";
+import { colorToArray } from "../helpers/colors.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNull } from "../objects/pdf-null.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { PDFAnnotation, rectToArray } from "./base";
-import { isDestinationType, type LinkAnnotationOptions, type LinkDestination } from "./types";
+import { PDFAnnotation, rectToArray } from "./base.js";
+import { isDestinationType, type LinkAnnotationOptions, type LinkDestination } from "./types.js";
 
 function destinationPageToRef(page: PdfRef | PDFPage): PdfRef {
   if (page instanceof PdfRef) {

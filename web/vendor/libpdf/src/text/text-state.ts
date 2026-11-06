@@ -6,8 +6,8 @@
  * text state parameters (Section 9.3).
  */
 
-import type { PdfFont } from "#src/fonts/pdf-font";
-import { Matrix } from "#src/helpers/matrix";
+import type { PdfFont } from "../fonts/pdf-font.js";
+import { Matrix } from "../helpers/matrix.js";
 
 /**
  * Graphics state that can be saved/restored with q/Q operators.

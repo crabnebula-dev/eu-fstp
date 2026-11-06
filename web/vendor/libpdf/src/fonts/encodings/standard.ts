@@ -5,7 +5,7 @@
  * as their base encoding.
  */
 
-import { SimpleEncoding } from "./encoding.ts";
+import { SimpleEncoding } from "./encoding.js";
 
 const STANDARD_TO_UNICODE: (number | undefined)[] = [
   // 0x00-0x1F: Control characters (undefined in PDF)

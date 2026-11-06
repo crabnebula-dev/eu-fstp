@@ -9,9 +9,9 @@
  * - Y-axis flipping for PDF coordinate system (optional, default: true)
  */
 
-import { arcToBezier } from "./arc-to-bezier";
-import type { SvgPathCommand } from "./path-parser";
-import { parseSvgPath } from "./path-parser";
+import { arcToBezier } from "./arc-to-bezier.js";
+import type { SvgPathCommand } from "./path-parser.js";
+import { parseSvgPath } from "./path-parser.js";
 
 /**
  * Options for SVG path execution.

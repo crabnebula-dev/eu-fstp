@@ -2,7 +2,7 @@
  * Utility functions for content stream operations.
  */
 
-import type { AnyOperation, ContentToken } from "./types";
+import type { AnyOperation, ContentToken } from "./types.js";
 
 /**
  * Filter out marked content blocks matching a predicate.

@@ -2,14 +2,14 @@
  * Builder for constructing PDF content streams from operators.
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfStream } from "#src/objects/pdf-stream";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
-import type { Operator } from "./operators";
-import { ContentStreamSerializer } from "./parsing/content-stream-serializer";
+import type { Operator } from "./operators.js";
+import { ContentStreamSerializer } from "./parsing/content-stream-serializer.js";
 
 /**
  * Builder for constructing content streams from operators.

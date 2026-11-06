@@ -22,8 +22,8 @@ export {
   type SaveOptions,
   type SetTitleOptions,
   type TrappedStatus,
-} from "./api/pdf";
-export { PDFEmbeddedPage } from "./api/pdf-embedded-page";
+} from "./api/pdf.js";
+export { PDFEmbeddedPage } from "./api/pdf-embedded-page.js";
 export {
   type CheckboxOptions,
   type CheckboxSymbol,
@@ -38,13 +38,13 @@ export {
   type SignatureFieldOptions,
   type TextAlignment,
   type TextFieldOptions,
-} from "./api/pdf-form";
+} from "./api/pdf-form.js";
 export {
   type DrawFieldOptions,
   type DrawPageOptions,
   PDFPage,
   type Rectangle,
-} from "./api/pdf-page";
+} from "./api/pdf-page.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Color and Rotation Helpers
@@ -60,8 +60,8 @@ export type {
   RadioField,
   SignatureField,
   TextField,
-} from "./document/forms/fields";
-export type { FlattenOptions } from "./document/forms/form-flattener";
+} from "./document/forms/fields/index.js";
+export type { FlattenOptions } from "./document/forms/form-flattener.js";
 export {
   // Color presets
   black,
@@ -76,14 +76,14 @@ export {
   red,
   rgb,
   white,
-} from "./helpers/colors";
-export { type Degrees, degrees } from "./helpers/rotations";
+} from "./helpers/colors.js";
+export { type Degrees, degrees } from "./helpers/rotations.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layers (Optional Content Groups)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type { FlattenLayersResult, LayerInfo } from "./layers/types";
+export type { FlattenLayersResult, LayerInfo } from "./layers/types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Security
@@ -97,8 +97,8 @@ export type {
   ProtectionOptions,
   RemoveProtectionOptions,
   SecurityInfo,
-} from "./api/pdf-security";
-export { PermissionDeniedError, SecurityError } from "./security/errors";
+} from "./api/pdf-security.js";
+export { PermissionDeniedError, SecurityError } from "./security/errors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Digital Signatures
@@ -123,7 +123,7 @@ export type {
   TimestampResult,
   ValidationDataOptions,
   ValidationDataResult,
-} from "./signatures";
+} from "./signatures/index.js";
 export {
   CertificateChainError,
   CryptoKeySigner,
@@ -136,36 +136,36 @@ export {
   SignatureError,
   SignerError,
   TimestampError,
-} from "./signatures";
+} from "./signatures/index.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PDF Objects
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { PdfArray } from "./objects/pdf-array";
-export { PdfBool } from "./objects/pdf-bool";
-export { PdfDict } from "./objects/pdf-dict";
-export { PdfName } from "./objects/pdf-name";
-export { PdfNull } from "./objects/pdf-null";
-export { PdfNumber } from "./objects/pdf-number";
-export type { PdfObject } from "./objects/pdf-object";
-export { PdfRef } from "./objects/pdf-ref";
-export { PdfStream } from "./objects/pdf-stream";
-export { PdfString } from "./objects/pdf-string";
+export { PdfArray } from "./objects/pdf-array.js";
+export { PdfBool } from "./objects/pdf-bool.js";
+export { PdfDict } from "./objects/pdf-dict.js";
+export { PdfName } from "./objects/pdf-name.js";
+export { PdfNull } from "./objects/pdf-null.js";
+export { PdfNumber } from "./objects/pdf-number.js";
+export type { PdfObject } from "./objects/pdf-object.js";
+export { PdfRef } from "./objects/pdf-ref.js";
+export { PdfStream } from "./objects/pdf-stream.js";
+export { PdfString } from "./objects/pdf-string.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fonts
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type { EmbeddedFont, EmbedFontOptions } from "./fonts/embedded-font";
-export { type Standard14FontName, StandardFonts } from "./fonts/standard-14";
-export { Standard14Font } from "./fonts/standard-14-font";
+export type { EmbeddedFont, EmbedFontOptions } from "./fonts/embedded-font.js";
+export { type Standard14FontName, StandardFonts } from "./fonts/standard-14.js";
+export { Standard14Font } from "./fonts/standard-14-font.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Images
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { PDFImage } from "./images/pdf-image";
+export { PDFImage } from "./images/pdf-image.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Drawing API
@@ -199,15 +199,15 @@ export {
   type RotationOrigin,
   type RotationOriginName,
   type TextLine,
-} from "#src/drawing";
+} from "./drawing/index.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Low-Level Drawing API
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { Matrix } from "./helpers/matrix";
-export * as ops from "./helpers/operators";
-export { ColorSpace } from "./helpers/colorspace";
+export { Matrix } from "./helpers/matrix.js";
+export * as ops from "./helpers/operators.js";
+export { ColorSpace } from "./helpers/colorspace.js";
 
 // Low-level types and resource interfaces
 export type {
@@ -231,13 +231,13 @@ export type {
   RadialShadingOptions,
   ShadingPatternOptions,
   TilingPatternOptions,
-} from "./drawing/resources/index";
+} from "./drawing/resources/index.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { parsePem, type PemBlock } from "./helpers/pem";
+export { parsePem, type PemBlock } from "./helpers/pem.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Annotations
@@ -308,4 +308,4 @@ export {
   type TextAnnotationState,
   type TextAnnotationStateModel,
   type TextMarkupAnnotationOptions,
-} from "./annotations";
+} from "./annotations/index.js";

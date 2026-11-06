@@ -18,29 +18,29 @@
  * >>
  */
 
-import type { RefResolver } from "#src/helpers/types.ts";
-import { unicodeToGlyphName } from "#src/helpers/unicode";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name.ts";
-import { PdfNumber } from "#src/objects/pdf-number.ts";
+import type { RefResolver } from "../helpers/types.js";
+import { unicodeToGlyphName } from "../helpers/unicode.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
 
-import { parseEmbeddedProgram } from "./embedded-parser";
-import { DifferencesEncoding } from "./encodings/differences";
-import type { FontEncoding } from "./encodings/encoding";
-import { MacRomanEncoding } from "./encodings/mac-roman";
-import { StandardEncoding } from "./encodings/standard";
-import { SymbolEncoding } from "./encodings/symbol";
-import { WinAnsiEncoding } from "./encodings/win-ansi";
-import { ZapfDingbatsEncoding } from "./encodings/zapf-dingbats";
-import { FontDescriptor } from "./font-descriptor";
-import type { FontProgram } from "./font-program/index.ts";
-import { PdfFont } from "./pdf-font";
+import { parseEmbeddedProgram } from "./embedded-parser.js";
+import { DifferencesEncoding } from "./encodings/differences.js";
+import type { FontEncoding } from "./encodings/encoding.js";
+import { MacRomanEncoding } from "./encodings/mac-roman.js";
+import { StandardEncoding } from "./encodings/standard.js";
+import { SymbolEncoding } from "./encodings/symbol.js";
+import { WinAnsiEncoding } from "./encodings/win-ansi.js";
+import { ZapfDingbatsEncoding } from "./encodings/zapf-dingbats.js";
+import { FontDescriptor } from "./font-descriptor.js";
+import type { FontProgram } from "./font-program/index.js";
+import { PdfFont } from "./pdf-font.js";
 import {
   getStandard14DefaultWidth,
   getStandard14GlyphWidth,
   isStandard14Font,
-} from "./standard-14";
-import type { ToUnicodeMap } from "./to-unicode";
+} from "./standard-14.js";
+import type { ToUnicodeMap } from "./to-unicode.js";
 
 export type SimpleFontSubtype = "TrueType" | "Type1" | "Type3" | "MMType1";
 

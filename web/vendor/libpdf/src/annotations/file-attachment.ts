@@ -7,12 +7,12 @@
  * PDF Reference: Section 12.5.6.15 "File Attachment Annotations"
  */
 
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import { PDFMarkupAnnotation } from "./markup";
-import { isFileAttachmentIcon, type FileAttachmentIcon } from "./types";
+import { PDFMarkupAnnotation } from "./markup.js";
+import { isFileAttachmentIcon, type FileAttachmentIcon } from "./types.js";
 
 /**
  * File attachment annotation - embedded file icon.

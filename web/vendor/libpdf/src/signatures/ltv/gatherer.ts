@@ -9,18 +9,18 @@
  * RFC 5652: Cryptographic Message Syntax (CMS)
  */
 
-import { toArrayBuffer } from "#src/helpers/buffer.ts";
-import { buildCertificateChain } from "#src/signatures/aia.ts";
-import { OID_SIGNED_DATA, OID_TIMESTAMP_TOKEN } from "#src/signatures/oids.ts";
+import { toArrayBuffer } from "../../helpers/buffer.js";
+import { buildCertificateChain } from "../aia.js";
+import { OID_SIGNED_DATA, OID_TIMESTAMP_TOKEN } from "../oids.js";
 import {
   DefaultRevocationProvider,
   extractOcspResponderCerts,
-} from "#src/signatures/revocation.ts";
-import { CertificateChainError, type RevocationProvider } from "#src/signatures/types.ts";
+} from "../revocation.js";
+import { CertificateChainError, type RevocationProvider } from "../types.js";
 import { fromBER } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { computeSha1Hex } from "./vri";
+import { computeSha1Hex } from "./vri.js";
 
 /**
  * Warning encountered during LTV data gathering.

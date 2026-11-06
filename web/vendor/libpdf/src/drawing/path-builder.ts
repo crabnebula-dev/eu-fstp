@@ -5,8 +5,8 @@
  * lines, curves, and basic shapes, then painting them with fill/stroke.
  */
 
-import type { Operator } from "#src/content/operators";
-import { KAPPA } from "#src/helpers/constants";
+import type { Operator } from "../content/operators.js";
+import { KAPPA } from "../helpers/constants.js";
 import {
   clip,
   clipEvenOdd,
@@ -15,13 +15,13 @@ import {
   endPath,
   lineTo,
   moveTo,
-} from "#src/helpers/operators";
-import { executeSvgPathString, type SvgPathExecutorOptions } from "#src/svg/path-executor";
+} from "../helpers/operators.js";
+import { executeSvgPathString, type SvgPathExecutorOptions } from "../svg/path-executor.js";
 
-import { wrapPathOps } from "./operations";
-import type { PDFPattern, PDFShading } from "./resources";
-import { serializeOperators } from "./serialize";
-import type { PathOptions } from "./types";
+import { wrapPathOps } from "./operations.js";
+import type { PDFPattern, PDFShading } from "./resources/index.js";
+import { serializeOperators } from "./serialize.js";
+import type { PathOptions } from "./types.js";
 
 /**
  * Callback type for appending content to a page.

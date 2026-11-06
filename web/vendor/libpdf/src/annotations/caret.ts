@@ -7,9 +7,9 @@
  * PDF Reference: Section 12.5.6.11 "Caret Annotations"
  */
 
-import { PdfName } from "#src/objects/pdf-name";
+import { PdfName } from "../objects/pdf-name.js";
 
-import { PDFMarkupAnnotation } from "./markup";
+import { PDFMarkupAnnotation } from "./markup.js";
 
 /**
  * Caret symbol types.

@@ -4,12 +4,12 @@
  * These create Operator instances for building PDF content streams.
  */
 
-import { Op, Operator } from "#src/content/operators";
-import type { PdfArray } from "#src/objects/pdf-array";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import { PdfString } from "#src/objects/pdf-string";
+import { Op, Operator } from "../content/operators.js";
+import type { PdfArray } from "../objects/pdf-array.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { Matrix } from "./matrix";
+import { Matrix } from "./matrix.js";
 
 /**
  * Normalize a resource name to ensure it has a leading slash.

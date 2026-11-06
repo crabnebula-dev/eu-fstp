@@ -8,9 +8,9 @@ import {
   getStandard14GlyphWidth,
   isStandard14Font,
   type Standard14FontName,
-} from "#src/fonts/standard-14";
+} from "../fonts/standard-14.js";
 
-import type { FontInput } from "./types";
+import type { FontInput } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

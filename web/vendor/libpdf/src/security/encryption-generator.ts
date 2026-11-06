@@ -7,22 +7,22 @@
  * @see PDF 2.0 Specification, Section 7.6.4 (Standard Security Handler)
  */
 
-import type { ProtectionOptions } from "#src/api/pdf-security";
-import { PdfBool } from "#src/objects/pdf-bool";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfString } from "#src/objects/pdf-string";
+import type { ProtectionOptions } from "../api/pdf-security.js";
+import { PdfBool } from "../objects/pdf-bool.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfString } from "../objects/pdf-string.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 
-import type { EncryptionDict } from "./encryption-dict";
+import type { EncryptionDict } from "./encryption-dict.js";
 import {
   generateOwnerEntries,
   generatePermsEntry,
   generateUserEntries,
-} from "./key-derivation/sha-based";
-import { DEFAULT_PERMISSIONS, encodePermissions, type Permissions } from "./permissions";
-import { StandardSecurityHandler } from "./standard-handler";
+} from "./key-derivation/sha-based.js";
+import { DEFAULT_PERMISSIONS, encodePermissions, type Permissions } from "./permissions.js";
+import { StandardSecurityHandler } from "./standard-handler.js";
 
 /**
  * Generated encryption data for writing to PDF.

@@ -10,9 +10,9 @@
  * @see PDF 2.0 Specification, Section 7.6.2 (Algorithm 1)
  */
 
-import { rc4 } from "../ciphers/rc4";
-import { deriveObjectKey } from "../key-derivation/md5-based";
-import { AbstractSecurityHandler } from "./abstract";
+import { rc4 } from "../ciphers/rc4.js";
+import { deriveObjectKey } from "../key-derivation/md5-based.js";
+import { AbstractSecurityHandler } from "./abstract.js";
 
 export class RC4Handler extends AbstractSecurityHandler {
   readonly algorithm = "RC4" as const;

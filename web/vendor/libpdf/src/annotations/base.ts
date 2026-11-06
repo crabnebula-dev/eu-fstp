@@ -7,15 +7,15 @@
  * PDF Reference: Section 12.5 "Annotations"
  */
 
-import type { ObjectRegistry } from "#src/document/object-registry";
-import { type Color, cmyk, colorToArray, grayscale, rgb } from "#src/helpers/colors";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
+import type { ObjectRegistry } from "../document/object-registry.js";
+import { type Color, cmyk, colorToArray, grayscale, rgb } from "../helpers/colors.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
 
 import {
   AnnotationFlags,
@@ -24,7 +24,7 @@ import {
   type BorderStyle,
   type BorderStyleType,
   type Rect,
-} from "./types";
+} from "./types.js";
 
 /**
  * Map PDF border style codes to our type.

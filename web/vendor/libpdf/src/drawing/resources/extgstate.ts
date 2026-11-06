@@ -2,12 +2,12 @@
  * Extended graphics state resources.
  */
 
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import type { PdfRef } from "../../objects/pdf-ref.js";
 
-import type { BlendMode } from "./types";
+import type { BlendMode } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Options

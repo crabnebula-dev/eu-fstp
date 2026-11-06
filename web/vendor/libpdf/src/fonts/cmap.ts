@@ -9,7 +9,7 @@ import {
   CMap as FontboxCMap,
   CodespaceRange,
   parseCMap as parseFontboxCMap,
-} from "#src/fontbox/cmap";
+} from "../fontbox/cmap/index.js";
 
 const IDENTITY_NAMES = new Set(["Identity-H", "Identity-V"]);
 

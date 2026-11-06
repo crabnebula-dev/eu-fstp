@@ -7,9 +7,9 @@
  * byte-writing logic lives in each object's toBytes() method.
  */
 
-import { ByteWriter } from "#src/io/byte-writer";
-import type { PdfObject } from "#src/objects/pdf-object";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import { ByteWriter } from "../io/byte-writer.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
 /**
  * Serialize a PDF object to bytes.

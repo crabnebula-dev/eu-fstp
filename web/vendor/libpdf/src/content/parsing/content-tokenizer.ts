@@ -5,11 +5,11 @@
  * Post-processes keywords to distinguish operators from true/false/null.
  */
 
-import { Scanner } from "#src/io/scanner";
-import type { Token } from "#src/parser/token";
-import { TokenReader } from "#src/parser/token-reader";
+import { Scanner } from "../../io/scanner.js";
+import type { Token } from "../../parser/token.js";
+import { TokenReader } from "../../parser/token-reader.js";
 
-import type { ArrayToken, ContentToken, DictToken, OperatorToken } from "./types";
+import type { ArrayToken, ContentToken, DictToken, OperatorToken } from "./types.js";
 
 type ContentOrOperatorToken = ContentToken | OperatorToken;
 

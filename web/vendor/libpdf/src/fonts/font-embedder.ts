@@ -9,28 +9,28 @@
  * - ToUnicode CMap stream
  */
 
-import { CFFSubsetter } from "#src/fontbox/cff/subsetter.ts";
-import { TTFSubsetter } from "#src/fontbox/ttf/subsetter.ts";
-import { max } from "#src/helpers/math";
-import { PdfArray } from "#src/objects/pdf-array.ts";
-import { PdfDict } from "#src/objects/pdf-dict.ts";
-import { PdfName } from "#src/objects/pdf-name.ts";
-import { PdfNumber } from "#src/objects/pdf-number.ts";
-import type { PdfRef } from "#src/objects/pdf-ref.ts";
-import { PdfStream } from "#src/objects/pdf-stream.ts";
-import { PdfString } from "#src/objects/pdf-string.ts";
+import { CFFSubsetter } from "../fontbox/cff/subsetter.js";
+import { TTFSubsetter } from "../fontbox/ttf/subsetter.js";
+import { max } from "../helpers/math.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import type { EmbeddedFont } from "./embedded-font.ts";
-import { isCFFCIDFontProgram } from "./font-program/cff-cid.ts";
-import { isCFFType1FontProgram } from "./font-program/cff.ts";
-import type { FontProgram } from "./font-program/index.ts";
-import { isTrueTypeFontProgram } from "./font-program/truetype.ts";
-import { buildToUnicodeCMapFromGids } from "./to-unicode-builder.ts";
+import type { EmbeddedFont } from "./embedded-font.js";
+import { isCFFCIDFontProgram } from "./font-program/cff-cid.js";
+import { isCFFType1FontProgram } from "./font-program/cff.js";
+import type { FontProgram } from "./font-program/index.js";
+import { isTrueTypeFontProgram } from "./font-program/truetype.js";
+import { buildToUnicodeCMapFromGids } from "./to-unicode-builder.js";
 import {
   buildWidthsArrayFromGids,
   optimizeWidthsArray,
   widthEntriesToPdfArray,
-} from "./widths-builder.ts";
+} from "./widths-builder.js";
 
 /**
  * Unicode ranges for full font embedding.

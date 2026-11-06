@@ -5,7 +5,7 @@
 import { Constructed, fromBER, Null, ObjectIdentifier, Sequence } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { toArrayBuffer } from "../../helpers/buffer";
+import { toArrayBuffer } from "../../helpers/buffer.js";
 import {
   OID_CMS_ALGORITHM_PROTECTION,
   OID_ECDSA_WITH_SHA256,
@@ -17,8 +17,8 @@ import {
   OID_SHA384_WITH_RSA,
   OID_SHA512,
   OID_SHA512_WITH_RSA,
-} from "../oids";
-import type { DigestAlgorithm, Signer } from "../types";
+} from "../oids.js";
+import type { DigestAlgorithm, Signer } from "../types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Algorithm OID Helpers

@@ -1,16 +1,16 @@
 /**
  * PDF object types and type guards.
  */
-import type { PdfArray } from "./pdf-array";
-import type { PdfBool } from "./pdf-bool";
-import type { PdfDict } from "./pdf-dict";
-import type { PdfName } from "./pdf-name";
-import type { PdfNull } from "./pdf-null";
-import type { PdfNumber } from "./pdf-number";
-import type { PdfRaw } from "./pdf-raw";
-import type { PdfRef } from "./pdf-ref";
-import type { PdfStream } from "./pdf-stream";
-import type { PdfString } from "./pdf-string";
+import type { PdfArray } from "./pdf-array.js";
+import type { PdfBool } from "./pdf-bool.js";
+import type { PdfDict } from "./pdf-dict.js";
+import type { PdfName } from "./pdf-name.js";
+import type { PdfNull } from "./pdf-null.js";
+import type { PdfNumber } from "./pdf-number.js";
+import type { PdfRaw } from "./pdf-raw.js";
+import type { PdfRef } from "./pdf-ref.js";
+import type { PdfStream } from "./pdf-stream.js";
+import type { PdfString } from "./pdf-string.js";
 
 /**
  * Union of all PDF object types.

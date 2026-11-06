@@ -7,15 +7,15 @@
  * PDF Reference: Section 12.5.6.12 "Rubber Stamp Annotations"
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { rectToArray } from "./base";
-import { PDFMarkupAnnotation } from "./markup";
-import type { StampAnnotationOptions, StampName } from "./types";
+import { rectToArray } from "./base.js";
+import { PDFMarkupAnnotation } from "./markup.js";
+import type { StampAnnotationOptions, StampName } from "./types.js";
 
 /**
  * Standard stamp names as defined in PDF spec.

@@ -7,12 +7,12 @@
  * - /FontFile3: CFF or OpenType font program (with /Subtype)
  */
 
-import { parseCFF } from "#src/fontbox/cff/parser.ts";
-import { parseTTF } from "#src/fontbox/ttf/parser.ts";
-import { parsePfb } from "#src/fontbox/type1/pfb-parser.ts";
-import type { RefResolver } from "#src/helpers/types.ts";
-import type { PdfDict } from "#src/objects/pdf-dict.ts";
-import { PdfStream } from "#src/objects/pdf-stream.ts";
+import { parseCFF } from "../fontbox/cff/parser.js";
+import { parseTTF } from "../fontbox/ttf/parser.js";
+import { parsePfb } from "../fontbox/type1/pfb-parser.js";
+import type { RefResolver } from "../helpers/types.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
 import {
   CFFCIDFontProgram,
@@ -20,7 +20,7 @@ import {
   type FontProgram,
   TrueTypeFontProgram,
   Type1FontProgram,
-} from "./font-program/index.ts";
+} from "./font-program/index.js";
 
 /**
  * Options for parsing embedded font programs.

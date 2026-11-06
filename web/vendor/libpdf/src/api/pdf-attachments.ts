@@ -30,13 +30,13 @@ import {
   createFileSpec,
   getEmbeddedFileStream,
   parseFileSpec,
-} from "#src/attachments/file-spec.ts";
-import type { AddAttachmentOptions, AttachmentInfo } from "#src/attachments/types.ts";
-import { buildNameTree } from "#src/document/name-tree.ts";
-import { PdfDict } from "#src/objects/pdf-dict.ts";
-import type { PdfRef } from "#src/objects/pdf-ref.ts";
+} from "../attachments/file-spec.js";
+import type { AddAttachmentOptions, AttachmentInfo } from "../attachments/types.js";
+import { buildNameTree } from "../document/name-tree.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import type { PDFContext } from "./pdf-context.ts";
+import type { PDFContext } from "./pdf-context.js";
 
 /**
  * PDFAttachments manages file attachments for a PDF document.

@@ -4,7 +4,7 @@
  * Generates appearance streams for annotations that lack them.
  */
 
-export { generateHighlightAppearance } from "./highlight";
-export { generateSquigglyAppearance } from "./squiggly";
-export { generateStrikeOutAppearance } from "./strikeout";
-export { generateUnderlineAppearance } from "./underline";
+export { generateHighlightAppearance } from "./highlight.js";
+export { generateSquigglyAppearance } from "./squiggly.js";
+export { generateStrikeOutAppearance } from "./strikeout.js";
+export { generateUnderlineAppearance } from "./underline.js";

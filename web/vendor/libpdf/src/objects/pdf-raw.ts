@@ -9,9 +9,9 @@
  * PDF syntax for the context where they're used.
  */
 
-import type { ByteWriter } from "#src/io/byte-writer";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 /**
  * A raw bytes object that serializes without any transformation.

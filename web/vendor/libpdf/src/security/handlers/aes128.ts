@@ -11,9 +11,9 @@
  * @see PDF 2.0 Specification, Section 7.6.3.2 (AES encryption)
  */
 
-import { aesDecrypt, aesEncrypt } from "../ciphers/aes";
-import { deriveObjectKey } from "../key-derivation/md5-based";
-import { AbstractSecurityHandler } from "./abstract";
+import { aesDecrypt, aesEncrypt } from "../ciphers/aes.js";
+import { deriveObjectKey } from "../key-derivation/md5-based.js";
+import { AbstractSecurityHandler } from "./abstract.js";
 
 export class AES128Handler extends AbstractSecurityHandler {
   readonly algorithm = "AES-128" as const;

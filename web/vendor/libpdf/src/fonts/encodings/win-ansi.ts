@@ -6,7 +6,7 @@
  * characters instead of control characters.
  */
 
-import { SimpleEncoding } from "./encoding.ts";
+import { SimpleEncoding } from "./encoding.js";
 
 const WIN_ANSI_TO_UNICODE: (number | undefined)[] = [
   // 0x00-0x1F: Control characters (undefined in PDF)

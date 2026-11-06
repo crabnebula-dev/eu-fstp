@@ -5,9 +5,9 @@
 import { fromBER } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { toArrayBuffer } from "../helpers/buffer";
-import { OID_SIGNED_DATA, OID_TIMESTAMP_TOKEN } from "./oids";
-import type { DigestAlgorithm } from "./types";
+import { toArrayBuffer } from "../helpers/buffer.js";
+import { OID_SIGNED_DATA, OID_TIMESTAMP_TOKEN } from "./oids.js";
+import type { DigestAlgorithm } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String Escaping

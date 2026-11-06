@@ -15,12 +15,12 @@
  * @see PDF 1.7 spec section 7.9.6
  */
 
-import type { RefResolver } from "#src/helpers/types";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
 
 /**
  * Maximum depth for tree traversal (prevents infinite loops on malformed PDFs).

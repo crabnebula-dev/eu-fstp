@@ -6,15 +6,15 @@
  * invoking stream (deprecated by the spec, relied on by producers).
  */
 
-import { parseFont } from "#src/fonts/font-factory";
-import type { PdfFont } from "#src/fonts/pdf-font";
-import { parseToUnicode, type ToUnicodeMap } from "#src/fonts/to-unicode";
-import { Matrix } from "#src/helpers/matrix";
-import type { RefResolver } from "#src/helpers/types";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfStream } from "#src/objects/pdf-stream";
+import { parseFont } from "../fonts/font-factory.js";
+import type { PdfFont } from "../fonts/pdf-font.js";
+import { parseToUnicode, type ToUnicodeMap } from "../fonts/to-unicode.js";
+import { Matrix } from "../helpers/matrix.js";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
 export interface FormXObject {
   /** Identity is used to detect recursion */

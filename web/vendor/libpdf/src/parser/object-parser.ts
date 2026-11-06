@@ -1,16 +1,16 @@
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfBool } from "#src/objects/pdf-bool";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNull } from "#src/objects/pdf-null";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfBool } from "../objects/pdf-bool.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNull } from "../objects/pdf-null.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { ObjectParseError } from "./errors";
-import type { Token } from "./token";
-import type { TokenReader } from "./token-reader";
+import { ObjectParseError } from "./errors.js";
+import type { Token } from "./token.js";
+import type { TokenReader } from "./token-reader.js";
 
 /**
  * Result of parsing an object.

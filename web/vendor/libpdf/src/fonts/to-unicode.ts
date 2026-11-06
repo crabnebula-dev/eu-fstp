@@ -4,7 +4,7 @@
  * Thin wrapper over the fontbox CMap exposing the code-to-Unicode side.
  */
 
-import { bytesToInt, CMap, intToBytes, parseCMap } from "#src/fontbox/cmap";
+import { bytesToInt, CMap, intToBytes, parseCMap } from "../fontbox/cmap/index.js";
 
 export class ToUnicodeMap {
   private readonly cmap: CMap;

@@ -21,7 +21,7 @@ import {
   getStandard14GlyphWidth,
   isStandard14Font,
   type Standard14FontName,
-} from "./standard-14";
+} from "./standard-14.js";
 
 /**
  * A wrapper class for Standard 14 fonts that provides measurement methods.

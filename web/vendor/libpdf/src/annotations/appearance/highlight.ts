@@ -5,15 +5,15 @@
  * to allow text to show through.
  */
 
-import { type Color, colorToArray } from "#src/helpers/colors";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfBool } from "#src/objects/pdf-bool";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfStream } from "#src/objects/pdf-stream";
+import { type Color, colorToArray } from "../../helpers/colors.js";
+import { PdfArray } from "../../objects/pdf-array.js";
+import { PdfBool } from "../../objects/pdf-bool.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
 
-import type { Rect } from "../types";
+import type { Rect } from "../types.js";
 
 /**
  * Generate the normal appearance stream for a highlight annotation.

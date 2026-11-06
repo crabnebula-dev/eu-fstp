@@ -15,10 +15,10 @@
 
 import * as pkijs from "pkijs";
 
-import { toArrayBuffer } from "../../helpers/buffer";
-import { PKCS12KDF } from "./pkcs12-kdf";
-import { RC2 } from "./rc2";
-import { TripleDES } from "./triple-des";
+import { toArrayBuffer } from "../../helpers/buffer.js";
+import { PKCS12KDF } from "./pkcs12-kdf.js";
+import { RC2 } from "./rc2.js";
+import { TripleDES } from "./triple-des.js";
 
 type AlgorithmIdentifier = string | { name: string };
 

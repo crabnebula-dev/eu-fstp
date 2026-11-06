@@ -1,11 +1,11 @@
-import type { FilterSpec } from "#src/filters/filter";
-import { FilterPipeline } from "#src/filters/filter-pipeline";
-import type { ByteWriter } from "#src/io/byte-writer";
+import type { FilterSpec } from "../filters/filter.js";
+import { FilterPipeline } from "../filters/filter-pipeline.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import { PdfArray } from "./pdf-array";
-import { PdfDict } from "./pdf-dict";
-import { PdfName } from "./pdf-name";
-import type { PdfObject } from "./pdf-object";
+import { PdfArray } from "./pdf-array.js";
+import { PdfDict } from "./pdf-dict.js";
+import { PdfName } from "./pdf-name.js";
+import type { PdfObject } from "./pdf-object.js";
 
 /**
  * PDF stream object (dictionary + binary data).

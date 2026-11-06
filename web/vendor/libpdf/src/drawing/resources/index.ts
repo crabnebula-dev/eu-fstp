@@ -9,7 +9,7 @@
  */
 
 // Types
-export type { BBox, BlendMode, PatternMatrix } from "./types";
+export type { BBox, BlendMode, PatternMatrix } from "./types.js";
 
 // Shading
 export type {
@@ -19,17 +19,17 @@ export type {
   LinearGradientOptions,
   RadialCoords,
   RadialShadingOptions,
-} from "./shading";
-export { PDFShading } from "./shading";
+} from "./shading.js";
+export { PDFShading } from "./shading.js";
 
 // Pattern
-export type { ImagePatternOptions, ShadingPatternOptions, TilingPatternOptions } from "./pattern";
-export { PDFShadingPattern, PDFTilingPattern, type PDFPattern } from "./pattern";
+export type { ImagePatternOptions, ShadingPatternOptions, TilingPatternOptions } from "./pattern.js";
+export { PDFShadingPattern, PDFTilingPattern, type PDFPattern } from "./pattern.js";
 
 // ExtGState
-export type { ExtGStateOptions } from "./extgstate";
-export { PDFExtGState } from "./extgstate";
+export type { ExtGStateOptions } from "./extgstate.js";
+export { PDFExtGState } from "./extgstate.js";
 
 // Form XObject
-export type { FormXObjectOptions } from "./form-xobject";
-export { PDFFormXObject } from "./form-xobject";
+export type { FormXObjectOptions } from "./form-xobject.js";
+export { PDFFormXObject } from "./form-xobject.js";

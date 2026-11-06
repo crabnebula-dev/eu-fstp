@@ -5,16 +5,16 @@
  * provides functionality to flatten layers (make all content visible).
  */
 
-import type { PDFContext } from "#src/api/pdf-context";
-import type { RefResolver } from "#src/helpers/types";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+import type { PDFContext } from "../api/pdf-context.js";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import type { FlattenLayersResult, LayerInfo } from "./types";
+import type { FlattenLayersResult, LayerInfo } from "./types.js";
 
 /**
  * Parsed default configuration from OCProperties.D

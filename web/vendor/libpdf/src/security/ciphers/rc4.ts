@@ -14,7 +14,7 @@
  * @see https://en.wikipedia.org/wiki/RC4
  */
 
-import { SINGLE_BYTE_MASK } from "#src/helpers/chars";
+import { SINGLE_BYTE_MASK } from "../../helpers/chars.js";
 
 /**
  * RC4 cipher for PDF encryption.

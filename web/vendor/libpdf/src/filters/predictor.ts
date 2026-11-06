@@ -1,5 +1,5 @@
-import { SINGLE_BYTE_MASK } from "#src/helpers/chars";
-import type { PdfDict } from "#src/objects/pdf-dict";
+import { SINGLE_BYTE_MASK } from "../helpers/chars.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
 /**
  * Apply predictor algorithm to decompressed data.

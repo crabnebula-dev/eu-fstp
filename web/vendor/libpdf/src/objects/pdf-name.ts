@@ -1,8 +1,8 @@
-import { HEX_TABLE } from "#src/helpers/buffer";
-import { CHAR_HASH, DELIMITERS, WHITESPACE } from "#src/helpers/chars";
-import type { ByteWriter } from "#src/io/byte-writer";
+import { HEX_TABLE } from "../helpers/buffer.js";
+import { CHAR_HASH, DELIMITERS, WHITESPACE } from "../helpers/chars.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 // Characters that need hex escaping in names (PDF 1.7 spec 7.3.5)
 // These are: whitespace, delimiters (), <>, [], {}, /, %, #

@@ -4,9 +4,9 @@
  * PDF Reference: Section 12.5 "Annotations"
  */
 
-import type { PDFPage } from "#src/api/pdf-page";
-import type { Color } from "#src/helpers/colors";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import type { PDFPage } from "../api/pdf-page.js";
+import type { Color } from "../helpers/colors.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
 /**
  * Annotation subtype values as defined in PDF spec Table 169.

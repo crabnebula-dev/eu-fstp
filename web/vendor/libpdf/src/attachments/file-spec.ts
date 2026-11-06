@@ -17,17 +17,17 @@
  * @see PDF 1.7 spec section 7.11.3
  */
 
-import { formatPdfDate, parsePdfDate } from "#src/helpers/format";
-import type { RefResolver } from "#src/helpers/types";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
+import { formatPdfDate, parsePdfDate } from "../helpers/format.js";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import type { AddAttachmentOptions, AttachmentInfo } from "./types";
+import type { AddAttachmentOptions, AttachmentInfo } from "./types.js";
 
 /**
  * MIME type mappings for auto-detection.

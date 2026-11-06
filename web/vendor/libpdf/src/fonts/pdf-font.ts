@@ -11,7 +11,7 @@
  * - Unicode conversion (for text extraction)
  */
 
-import type { FontDescriptor } from "./font-descriptor";
+import type { FontDescriptor } from "./font-descriptor.js";
 
 /** A character code and the number of bytes it occupied in the string. */
 export interface CharCode {

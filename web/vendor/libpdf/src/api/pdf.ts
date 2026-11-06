@@ -5,14 +5,14 @@
  * Wraps the low-level parsing and writing infrastructure.
  */
 
-import { AnnotationFlattener } from "#src/annotations/flattener";
-import type { FlattenAnnotationsOptions } from "#src/annotations/types";
-import type { AddAttachmentOptions, AttachmentInfo } from "#src/attachments/types";
-import { hasChanges } from "#src/document/change-collector";
-import type { FlattenOptions } from "#src/document/forms/form-flattener";
-import { isLinearizationDict } from "#src/document/linearization";
-import { ObjectCopier } from "#src/document/object-copier";
-import { ObjectRegistry } from "#src/document/object-registry";
+import { AnnotationFlattener } from "../annotations/flattener.js";
+import type { FlattenAnnotationsOptions } from "../annotations/types.js";
+import type { AddAttachmentOptions, AttachmentInfo } from "../attachments/types.js";
+import { hasChanges } from "../document/change-collector.js";
+import type { FlattenOptions } from "../document/forms/form-flattener.js";
+import { isLinearizationDict } from "../document/linearization.js";
+import { ObjectCopier } from "../document/object-copier.js";
+import { ObjectRegistry } from "../document/object-registry.js";
 import {
   PDFExtGState,
   PDFFormXObject,
@@ -27,34 +27,34 @@ import {
   type RadialShadingOptions,
   type ShadingPatternOptions,
   type TilingPatternOptions,
-} from "#src/drawing/resources/index";
-import { serializeOperators } from "#src/drawing/serialize";
-import type { EmbeddedFont, EmbedFontOptions } from "#src/fonts/embedded-font";
-import { formatPdfDate, parsePdfDate } from "#src/helpers/format";
-import { min } from "#src/helpers/math";
-import { resolvePageSize } from "#src/helpers/page-size";
-import { checkIncrementalSaveBlocker, type IncrementalSaveBlocker } from "#src/helpers/save-utils";
-import { isJpeg, parseJpegHeader } from "#src/images/jpeg";
-import { PDFImage } from "#src/images/pdf-image";
-import { isPng, parsePng } from "#src/images/png";
-import { Scanner } from "#src/io/scanner";
-import * as LayerUtils from "#src/layers/index";
-import type { FlattenLayersResult, LayerInfo } from "#src/layers/types";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfBool } from "#src/objects/pdf-bool";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
-import { DocumentParser, type ParseOptions } from "#src/parser/document-parser";
-import { XRefParser } from "#src/parser/xref-parser";
-import { generateEncryption, reconstructEncryptDict } from "#src/security/encryption-generator";
-import { PermissionDeniedError } from "#src/security/errors";
-import { DEFAULT_PERMISSIONS, type Permissions } from "#src/security/permissions";
-import type { StandardSecurityHandler } from "#src/security/standard-handler.ts";
+} from "../drawing/resources/index.js";
+import { serializeOperators } from "../drawing/serialize.js";
+import type { EmbeddedFont, EmbedFontOptions } from "../fonts/embedded-font.js";
+import { formatPdfDate, parsePdfDate } from "../helpers/format.js";
+import { min } from "../helpers/math.js";
+import { resolvePageSize } from "../helpers/page-size.js";
+import { checkIncrementalSaveBlocker, type IncrementalSaveBlocker } from "../helpers/save-utils.js";
+import { isJpeg, parseJpegHeader } from "../images/jpeg.js";
+import { PDFImage } from "../images/pdf-image.js";
+import { isPng, parsePng } from "../images/png.js";
+import { Scanner } from "../io/scanner.js";
+import * as LayerUtils from "../layers/index.js";
+import type { FlattenLayersResult, LayerInfo } from "../layers/types.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfBool } from "../objects/pdf-bool.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
+import { DocumentParser, type ParseOptions } from "../parser/document-parser.js";
+import { XRefParser } from "../parser/xref-parser.js";
+import { generateEncryption, reconstructEncryptDict } from "../security/encryption-generator.js";
+import { PermissionDeniedError } from "../security/errors.js";
+import { DEFAULT_PERMISSIONS, type Permissions } from "../security/permissions.js";
+import type { StandardSecurityHandler } from "../security/standard-handler.js";
 import type {
   ArchivalDataOptions,
   ArchivalDataResult,
@@ -64,20 +64,20 @@ import type {
   TimestampResult,
   ValidationDataOptions,
   ValidationDataResult,
-} from "#src/signatures/types";
-import type { FindTextOptions, PageText, TextMatch } from "#src/text/types";
-import { writeComplete, writeIncremental } from "#src/writer/pdf-writer";
+} from "../signatures/types.js";
+import type { FindTextOptions, PageText, TextMatch } from "../text/types.js";
+import { writeComplete, writeIncremental } from "../writer/pdf-writer.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import { deflate } from "pako";
 
-import { PDFAttachments } from "./pdf-attachments";
-import { PDFCatalog } from "./pdf-catalog";
-import { PDFContext, type DocumentInfo } from "./pdf-context";
-import { PDFEmbeddedPage } from "./pdf-embedded-page";
-import { PDFFonts } from "./pdf-fonts";
-import { PDFForm } from "./pdf-form";
-import { PDFPage } from "./pdf-page";
-import { PDFPageTree } from "./pdf-page-tree";
+import { PDFAttachments } from "./pdf-attachments.js";
+import { PDFCatalog } from "./pdf-catalog.js";
+import { PDFContext, type DocumentInfo } from "./pdf-context.js";
+import { PDFEmbeddedPage } from "./pdf-embedded-page.js";
+import { PDFFonts } from "./pdf-fonts.js";
+import { PDFForm } from "./pdf-form.js";
+import { PDFPage } from "./pdf-page.js";
+import { PDFPageTree } from "./pdf-page-tree.js";
 import type {
   AuthenticationResult,
   EncryptionAlgorithmOption,
@@ -85,8 +85,8 @@ import type {
   ProtectionOptions,
   RemoveProtectionOptions,
   SecurityInfo,
-} from "./pdf-security";
-import { PDFSignature } from "./pdf-signature";
+} from "./pdf-security.js";
+import { PDFSignature } from "./pdf-signature.js";
 
 /**
  * Options for loading a PDF.

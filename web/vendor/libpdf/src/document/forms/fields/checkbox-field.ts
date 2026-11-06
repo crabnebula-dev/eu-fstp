@@ -4,9 +4,9 @@
  * PDF Reference: Section 12.7.4.2 "Button Fields"
  */
 
-import { PdfName } from "#src/objects/pdf-name";
+import { PdfName } from "../../../objects/pdf-name.js";
 
-import { TerminalField } from "./base";
+import { TerminalField } from "./base.js";
 
 /**
  * Checkbox field (single or group).

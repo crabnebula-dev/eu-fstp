@@ -5,9 +5,9 @@
  * Accepts both ParsedOperation and Operator for mixed workflows.
  */
 
-import { Operator } from "#src/content/operators";
-import { concatBytes } from "#src/helpers/buffer";
-import { formatPdfNumber } from "#src/helpers/format";
+import { Operator } from "../operators.js";
+import { concatBytes } from "../../helpers/buffer.js";
+import { formatPdfNumber } from "../../helpers/format.js";
 
 import {
   type AnyOperation,
@@ -15,7 +15,7 @@ import {
   type InlineImageOperation,
   isInlineImageOperation,
   type ParsedOperation,
-} from "./types";
+} from "./types.js";
 
 const encoder = new TextEncoder();
 const SPACE = new Uint8Array([0x20]);

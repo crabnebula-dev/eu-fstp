@@ -2,9 +2,9 @@
  * Type 1 font program wrapper.
  */
 
-import type { Type1Font } from "#src/fontbox/type1/font.ts";
+import type { Type1Font } from "../../fontbox/type1/font.js";
 
-import type { FontProgram } from "./base.ts";
+import type { FontProgram } from "./base.js";
 
 /**
  * Wrapper for Type 1 fonts.

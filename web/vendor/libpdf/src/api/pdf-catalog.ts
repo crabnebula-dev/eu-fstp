@@ -8,9 +8,9 @@
  * PDF Reference: Section 7.7.2 "Document Catalog"
  */
 
-import { NameTree } from "#src/document/name-tree";
-import type { ObjectRegistry } from "#src/document/object-registry";
-import { PdfDict } from "#src/objects/pdf-dict";
+import { NameTree } from "../document/name-tree.js";
+import type { ObjectRegistry } from "../document/object-registry.js";
+import { PdfDict } from "../objects/pdf-dict.js";
 
 /**
  * PDFCatalog provides access to the document catalog and its sub-structures.

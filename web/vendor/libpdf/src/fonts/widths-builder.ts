@@ -10,10 +10,10 @@
  *   CIDs 100-200 = 500
  */
 
-import { PdfArray } from "#src/objects/pdf-array.ts";
-import { PdfNumber } from "#src/objects/pdf-number.ts";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfNumber } from "../objects/pdf-number.js";
 
-import type { FontProgram } from "./font-program/index.ts";
+import type { FontProgram } from "./font-program/index.js";
 
 /**
  * Width entry types for the /W array.

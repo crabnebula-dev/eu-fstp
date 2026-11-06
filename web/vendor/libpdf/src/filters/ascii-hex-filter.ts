@@ -1,8 +1,8 @@
-import { CR, hexValue, LF, SPACE, TAB } from "#src/helpers/chars";
-import { ByteWriter } from "#src/io/byte-writer";
-import type { PdfDict } from "#src/objects/pdf-dict";
+import { CR, hexValue, LF, SPACE, TAB } from "../helpers/chars.js";
+import { ByteWriter } from "../io/byte-writer.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
-import type { Filter } from "./filter";
+import type { Filter } from "./filter.js";
 
 /**
  * ASCIIHexDecode filter.

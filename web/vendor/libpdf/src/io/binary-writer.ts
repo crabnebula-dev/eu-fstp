@@ -10,7 +10,7 @@
  * - Efficient growing buffer from ByteWriter
  */
 
-import { ByteWriter, type ByteWriterOptions } from "./byte-writer.ts";
+import { ByteWriter, type ByteWriterOptions } from "./byte-writer.js";
 
 export class BinaryWriter extends ByteWriter {
   /**

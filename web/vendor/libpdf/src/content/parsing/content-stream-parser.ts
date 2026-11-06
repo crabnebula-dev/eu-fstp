@@ -4,9 +4,9 @@
  * Parses PDF content streams into structured operations.
  */
 
-import { ContentTokenizer } from "./content-tokenizer";
-import { extractInlineImageData } from "./inline-image";
-import type { AnyOperation, ContentToken, InlineImageOperation, ParseResult } from "./types";
+import { ContentTokenizer } from "./content-tokenizer.js";
+import { extractInlineImageData } from "./inline-image.js";
+import type { AnyOperation, ContentToken, InlineImageOperation, ParseResult } from "./types.js";
 
 /**
  * Parser for PDF content streams.

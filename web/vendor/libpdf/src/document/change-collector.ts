@@ -6,12 +6,12 @@
  * cost paid only when saving.
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
 
-import type { ObjectRegistry } from "./object-registry";
+import type { ObjectRegistry } from "./object-registry.js";
 
 /**
  * Result of collecting changes for incremental save.

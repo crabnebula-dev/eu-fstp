@@ -2,16 +2,16 @@
  * Pattern resources (tiling and shading patterns).
  */
 
-import type { Operator } from "#src/content/operators";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+import type { Operator } from "../../content/operators.js";
+import { PdfArray } from "../../objects/pdf-array.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import type { PdfRef } from "../../objects/pdf-ref.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
 
-import type { PDFShading } from "./shading";
-import type { BBox, PatternMatrix } from "./types";
+import type { PDFShading } from "./shading.js";
+import type { BBox, PatternMatrix } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Options

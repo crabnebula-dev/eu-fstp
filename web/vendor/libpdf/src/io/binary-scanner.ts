@@ -1,4 +1,4 @@
-import { Scanner } from "./scanner.ts";
+import { Scanner } from "./scanner.js";
 
 /**
  * Scanner extended with big-endian binary reading methods.

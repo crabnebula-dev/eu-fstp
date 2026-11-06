@@ -7,7 +7,7 @@
  * - VRI key computation
  */
 
-export { DSSBuilder } from "./dss-builder";
-export type { LtvData, LtvGathererOptions, LtvWarning } from "./gatherer";
-export { LtvDataGatherer } from "./gatherer";
-export { computeSha1Hex, computeVriKey } from "./vri";
+export { DSSBuilder } from "./dss-builder.js";
+export type { LtvData, LtvGathererOptions, LtvWarning } from "./gatherer.js";
+export { LtvDataGatherer } from "./gatherer.js";
+export { computeSha1Hex, computeVriKey } from "./vri.js";

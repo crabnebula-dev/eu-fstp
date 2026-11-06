@@ -4,19 +4,19 @@
  * PDF Reference: Section 12.7.4.4 "Choice Fields"
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfArray } from "../../../objects/pdf-array.js";
+import { PdfName } from "../../../objects/pdf-name.js";
+import { PdfNumber } from "../../../objects/pdf-number.js";
+import { PdfString } from "../../../objects/pdf-string.js";
 
-import { TerminalField } from "./base";
-import { type ChoiceOption, FieldFlags } from "./types";
+import { TerminalField } from "./base.js";
+import { type ChoiceOption, FieldFlags } from "./types.js";
 
 /**
  * Parse /Opt array for choice fields.
  */
 function parseChoiceOptions(
-  opt: ReturnType<import("#src/objects/pdf-dict").PdfDict["getArray"]>,
+  opt: ReturnType<import("../../../objects/pdf-dict.js").PdfDict["getArray"]>,
 ): ChoiceOption[] {
   if (!opt) {
     return [];

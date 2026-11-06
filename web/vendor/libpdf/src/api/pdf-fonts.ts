@@ -23,15 +23,15 @@
  * ```
  */
 
-import { EmbeddedFont, type EmbedFontOptions } from "#src/fonts/embedded-font.ts";
+import { EmbeddedFont, type EmbedFontOptions } from "../fonts/embedded-font.js";
 import {
   createFontObjects,
   createFontObjectsFull,
   registerFontObjects,
-} from "#src/fonts/font-embedder.ts";
-import type { PdfRef } from "#src/objects/pdf-ref.ts";
+} from "../fonts/font-embedder.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import type { PDFContext } from "./pdf-context.ts";
+import type { PDFContext } from "./pdf-context.js";
 
 /**
  * PDFFonts manages font embedding for a PDF document.

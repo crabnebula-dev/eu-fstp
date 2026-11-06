@@ -38,7 +38,7 @@
  * ```
  */
 
-import { AcroForm } from "#src/document/forms/acro-form";
+import { AcroForm } from "../document/forms/acro-form.js";
 import {
   ButtonField,
   CheckboxField,
@@ -51,19 +51,19 @@ import {
   SignatureField,
   TerminalField,
   TextField,
-} from "#src/document/forms/fields";
-import type { FlattenOptions } from "#src/document/forms/form-flattener";
-import type { EmbeddedFont } from "#src/fonts/embedded-font";
-import { type Color, colorToArray } from "#src/helpers/colors";
-import type { Degrees } from "#src/helpers/rotations";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfString } from "#src/objects/pdf-string";
+} from "../document/forms/fields/index.js";
+import type { FlattenOptions } from "../document/forms/form-flattener.js";
+import type { EmbeddedFont } from "../fonts/embedded-font.js";
+import { type Color, colorToArray } from "../helpers/colors.js";
+import type { Degrees } from "../helpers/rotations.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import type { PDFContext } from "./pdf-context";
+import type { PDFContext } from "./pdf-context.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants

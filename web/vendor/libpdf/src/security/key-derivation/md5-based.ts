@@ -9,10 +9,10 @@
  * @see PDF 1.7 Specification, Section 7.6.3.4 (Algorithm 3 - Owner password)
  */
 
-import { SINGLE_BYTE_MASK } from "#src/helpers/chars";
+import { SINGLE_BYTE_MASK } from "../../helpers/chars.js";
 import { md5 } from "@noble/hashes/legacy.js";
 
-import { RC4Cipher } from "../ciphers/rc4";
+import { RC4Cipher } from "../ciphers/rc4.js";
 
 /**
  * Standard 32-byte padding used for password operations.

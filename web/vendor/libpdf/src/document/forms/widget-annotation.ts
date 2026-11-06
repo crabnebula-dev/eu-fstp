@@ -7,14 +7,14 @@
  * PDF Reference: Section 12.5.6.19 "Widget Annotations"
  */
 
-import type { PdfArray } from "#src/objects/pdf-array.ts";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+import type { PdfArray } from "../../objects/pdf-array.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
 
-import type { ObjectRegistry } from "../object-registry";
+import type { ObjectRegistry } from "../object-registry.js";
 
 /**
  * Appearance characteristics from /MK dictionary.

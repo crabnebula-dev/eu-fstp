@@ -15,26 +15,26 @@
  * PDF Reference: Section 12.7 "Interactive Forms"
  */
 
-import { ContentStreamBuilder } from "#src/content/content-stream";
-import { Matrix } from "#src/helpers/matrix";
+import { ContentStreamBuilder } from "../../content/content-stream.js";
+import { Matrix } from "../../helpers/matrix.js";
 import {
   concatMatrix,
   drawXObject,
   popGraphicsState,
   pushGraphicsState,
-} from "#src/helpers/operators";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+} from "../../helpers/operators.js";
+import { PdfArray } from "../../objects/pdf-array.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfNumber } from "../../objects/pdf-number.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
 
-import type { ObjectRegistry } from "../object-registry";
-import { removeAnnotationsFromStructTree } from "../struct-tree";
-import { SignatureField, type TerminalField } from "./fields";
-import type { FormFont } from "./form-font";
-import type { WidgetAnnotation } from "./widget-annotation";
+import type { ObjectRegistry } from "../object-registry.js";
+import { removeAnnotationsFromStructTree } from "../struct-tree.js";
+import { SignatureField, type TerminalField } from "./fields/index.js";
+import type { FormFont } from "./form-font.js";
+import type { WidgetAnnotation } from "./widget-annotation.js";
 
 /**
  * Options for form flattening.

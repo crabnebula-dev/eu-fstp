@@ -25,8 +25,8 @@ import {
   SINGLE_BYTE_MASK,
   TAB,
   WHITESPACE,
-} from "#src/helpers/chars";
-import type { Scanner } from "#src/io/scanner";
+} from "../helpers/chars.js";
+import type { Scanner } from "../io/scanner.js";
 
 import type {
   DelimiterToken,
@@ -35,7 +35,7 @@ import type {
   NumberToken,
   StringToken,
   Token,
-} from "./token";
+} from "./token.js";
 
 /**
  * Shared TextDecoder instance to avoid creating new ones in hot paths.

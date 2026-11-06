@@ -5,7 +5,7 @@
  * permissions, and authentication state.
  */
 
-import type { Permissions } from "#src/security/permissions";
+import type { Permissions } from "../security/permissions.js";
 
 // Re-export Permissions for convenience
 export type { Permissions };

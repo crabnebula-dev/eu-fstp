@@ -14,42 +14,42 @@
  * PDF Reference: Section 12.5 "Annotations"
  */
 
-import { ContentStreamBuilder } from "#src/content/content-stream";
-import type { ObjectRegistry } from "#src/document/object-registry";
-import { Matrix } from "#src/helpers/matrix";
+import { ContentStreamBuilder } from "../content/content-stream.js";
+import type { ObjectRegistry } from "../document/object-registry.js";
+import { Matrix } from "../helpers/matrix.js";
 import {
   concatMatrix,
   drawXObject,
   popGraphicsState,
   pushGraphicsState,
-} from "#src/helpers/operators";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+} from "../helpers/operators.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
 import {
   generateHighlightAppearance,
   generateSquigglyAppearance,
   generateStrikeOutAppearance,
   generateUnderlineAppearance,
-} from "./appearance";
-import { PDFAnnotation } from "./base";
-import { createAnnotation, isPopupAnnotation, isWidgetAnnotation } from "./factory";
+} from "./appearance/index.js";
+import { PDFAnnotation } from "./base.js";
+import { createAnnotation, isPopupAnnotation, isWidgetAnnotation } from "./factory.js";
 import {
   PDFHighlightAnnotation,
   PDFSquigglyAnnotation,
   PDFStrikeOutAnnotation,
   PDFUnderlineAnnotation,
-} from "./text-markup";
+} from "./text-markup.js";
 import {
   AnnotationFlags,
   isAnnotationSubtype,
   type AnnotationSubtype,
   type FlattenAnnotationsOptions,
-} from "./types";
+} from "./types.js";
 
 /**
  * Annotation types that should never be flattened.

@@ -5,9 +5,9 @@
  * from PDF pages, and search for text patterns.
  */
 
-export { getPlainText, groupCharsIntoLines, type LineGrouperOptions } from "./line-grouper";
-export { TextExtractor } from "./text-extractor";
-export { type FormXObject, TextResources } from "./text-resources";
-export { searchPage, searchPages } from "./text-search";
-export { TextState } from "./text-state";
-export * from "./types";
+export { getPlainText, groupCharsIntoLines, type LineGrouperOptions } from "./line-grouper.js";
+export { TextExtractor } from "./text-extractor.js";
+export { type FormXObject, TextResources } from "./text-resources.js";
+export { searchPage, searchPages } from "./text-search.js";
+export { TextState } from "./text-state.js";
+export * from "./types.js";

@@ -2,8 +2,8 @@
  * Operator serialization utilities for content streams.
  */
 
-import type { Operator } from "#src/content/operators";
-import { ByteWriter } from "#src/io/byte-writer";
+import type { Operator } from "../content/operators.js";
+import { ByteWriter } from "../io/byte-writer.js";
 
 const NEWLINE = 0x0a;
 

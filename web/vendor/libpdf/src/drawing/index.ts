@@ -6,15 +6,15 @@
  */
 
 // Operations (for advanced users building custom content streams)
-export { drawCircleOps, drawEllipseOps, drawLineOps, drawRectangleOps } from "./operations";
+export { drawCircleOps, drawEllipseOps, drawLineOps, drawRectangleOps } from "./operations.js";
 // Path builder
-export { PathBuilder } from "./path-builder";
+export { PathBuilder } from "./path-builder.js";
 // Serialization
-export { serializeOperators } from "./serialize";
-export type { LayoutResult, PositionedWord, TextLine } from "./text-layout";
+export { serializeOperators } from "./serialize.js";
+export type { LayoutResult, PositionedWord, TextLine } from "./text-layout.js";
 
 // Text layout utilities
-export { layoutJustifiedLine, layoutText, measureText } from "./text-layout";
+export { layoutJustifiedLine, layoutText, measureText } from "./text-layout.js";
 // Types
 export type {
   BoundingBox,
@@ -33,5 +33,5 @@ export type {
   RotationOrigin,
   RotationOriginName,
   TextAlignment,
-} from "./types";
-export { lineCapToNumber, lineJoinToNumber, resolveRotationOrigin } from "./types";
+} from "./types.js";
+export { lineCapToNumber, lineJoinToNumber, resolveRotationOrigin } from "./types.js";

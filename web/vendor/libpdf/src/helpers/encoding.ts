@@ -11,7 +11,7 @@
 
 /** biome-ignore-all lint/complexity/useSimpleNumberKeys: remaps character codes */
 
-import { CR, LF, TAB } from "./chars";
+import { CR, LF, TAB } from "./chars.js";
 
 /**
  * PDFDocEncoding to Unicode mapping for bytes 0x80-0x9F.

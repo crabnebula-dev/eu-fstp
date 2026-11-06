@@ -11,11 +11,11 @@
  * @see PDF 2.0 Specification (ISO 32000-2), Section 7.6.4.3.4 (Algorithm 2.B)
  */
 
-import { SINGLE_BYTE_MASK } from "#src/helpers/chars";
+import { SINGLE_BYTE_MASK } from "../../helpers/chars.js";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import { sha256, sha384, sha512 } from "@noble/hashes/sha2.js";
 
-import { aesDecryptWithIv, aesEcbDecrypt, aesEcbEncrypt, aesEncryptWithIv } from "../ciphers/aes";
+import { aesDecryptWithIv, aesEcbDecrypt, aesEcbEncrypt, aesEncryptWithIv } from "../ciphers/aes.js";
 
 /** Maximum password length for R5-R6 (UTF-8 bytes) */
 export const MAX_PASSWORD_LENGTH = 127;

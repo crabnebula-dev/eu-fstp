@@ -4,11 +4,11 @@
  * PDF Reference: Section 12.7.4.2 "Button Fields"
  */
 
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfString } from "#src/objects/pdf-string";
+import { PdfName } from "../../../objects/pdf-name.js";
+import { PdfString } from "../../../objects/pdf-string.js";
 
-import { TerminalField } from "./base";
-import { FieldFlags } from "./types";
+import { TerminalField } from "./base.js";
+import { FieldFlags } from "./types.js";
 
 /**
  * Radio button group.

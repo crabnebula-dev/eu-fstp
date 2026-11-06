@@ -18,18 +18,18 @@
  * >>
  */
 
-import type { RefResolver } from "#src/helpers/types.ts";
-import { PdfName } from "#src/index.ts";
-import { PdfArray } from "#src/objects/pdf-array";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import { PdfRef } from "#src/objects/pdf-ref.ts";
-import { PdfStream } from "#src/objects/pdf-stream.ts";
+import type { RefResolver } from "../helpers/types.js";
+import { PdfName } from "../index.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
-import { type EmbeddedParserOptions, parseEmbeddedProgram } from "./embedded-parser";
-import { FontDescriptor } from "./font-descriptor";
-import { isCFFCIDFontProgram } from "./font-program/cff-cid.ts";
-import type { FontProgram } from "./font-program/index.ts";
-import type { ToUnicodeMap } from "./to-unicode";
+import { type EmbeddedParserOptions, parseEmbeddedProgram } from "./embedded-parser.js";
+import { FontDescriptor } from "./font-descriptor.js";
+import { isCFFCIDFontProgram } from "./font-program/cff-cid.js";
+import type { FontProgram } from "./font-program/index.js";
+import type { ToUnicodeMap } from "./to-unicode.js";
 
 export type CIDFontSubtype = "CIDFontType0" | "CIDFontType2";
 

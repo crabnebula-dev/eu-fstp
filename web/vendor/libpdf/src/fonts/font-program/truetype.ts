@@ -2,10 +2,10 @@
  * TrueType/OpenType font program wrapper.
  */
 
-import { parseCFF } from "#src/fontbox/cff/parser.ts";
-import type { TrueTypeFont } from "#src/fontbox/ttf/truetype-font.ts";
+import { parseCFF } from "../../fontbox/cff/parser.js";
+import type { TrueTypeFont } from "../../fontbox/ttf/truetype-font.js";
 
-import type { FontProgram } from "./base.ts";
+import type { FontProgram } from "./base.js";
 
 /**
  * Wrapper for TrueType/OpenType fonts.

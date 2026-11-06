@@ -19,9 +19,9 @@
  */
 
 // Field name generation
-export { generateUniqueName } from "../helpers/strings";
+export { generateUniqueName } from "../helpers/strings.js";
 // AIA Chain Building
-export { type AiaChainBuilderOptions, buildCertificateChain } from "./aia";
+export { type AiaChainBuilderOptions, buildCertificateChain } from "./aia.js";
 // LTV (Long-Term Validation) - DSS building and data gathering
 export {
   DSSBuilder,
@@ -29,17 +29,17 @@ export {
   LtvDataGatherer,
   type LtvGathererOptions,
   type LtvWarning,
-} from "./ltv";
+} from "./ltv/index.js";
 // Revocation
 export {
   DefaultRevocationProvider,
   type DefaultRevocationProviderOptions,
   extractOcspResponderCerts,
-} from "./revocation";
+} from "./revocation.js";
 // Signers
-export { CryptoKeySigner, GoogleKmsSigner, P12Signer, type P12SignerOptions } from "./signers";
+export { CryptoKeySigner, GoogleKmsSigner, P12Signer, type P12SignerOptions } from "./signers/index.js";
 // Timestamp
-export { HttpTimestampAuthority, type HttpTimestampAuthorityOptions } from "./timestamp";
+export { HttpTimestampAuthority, type HttpTimestampAuthorityOptions } from "./timestamp.js";
 // Types
 export type {
   ArchivalDataOptions,
@@ -60,7 +60,7 @@ export type {
   TimestampResult,
   ValidationDataOptions,
   ValidationDataResult,
-} from "./types";
+} from "./types.js";
 // Errors
 export {
   CertificateChainError,
@@ -70,10 +70,10 @@ export {
   SignatureError,
   SignerError,
   TimestampError,
-} from "./types";
+} from "./types.js";
 // Utilities (for advanced use cases)
 export {
   extractCmsCertificates,
   extractTimestampCertificates,
   extractTimestampFromCms,
-} from "./utils";
+} from "./utils.js";

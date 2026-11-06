@@ -20,7 +20,7 @@ export {
   type SvgPathCommand,
   type SvgPathCommandType,
   type VerticalLineCommand,
-} from "./path-parser";
+} from "./path-parser.js";
 
 // Executor
 export {
@@ -28,7 +28,7 @@ export {
   executeSvgPathString,
   type PathSink,
   type SvgPathExecutorOptions,
-} from "./path-executor";
+} from "./path-executor.js";
 
 // Arc to Bezier (for advanced users)
-export { arcToBezier, type ArcEndpoint, type BezierCurve } from "./arc-to-bezier";
+export { arcToBezier, type ArcEndpoint, type BezierCurve } from "./arc-to-bezier.js";

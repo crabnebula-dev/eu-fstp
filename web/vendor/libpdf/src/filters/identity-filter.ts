@@ -1,6 +1,6 @@
-import type { PdfDict } from "#src/objects/pdf-dict";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
-import type { Filter } from "./filter";
+import type { Filter } from "./filter.js";
 
 /**
  * Identity filter - passes data through unchanged.

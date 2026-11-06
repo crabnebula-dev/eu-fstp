@@ -5,13 +5,13 @@
  * appropriate font class (SimpleFont or Type0Font).
  */
 
-import type { RefResolver } from "#src/helpers/types.ts";
-import type { PdfDict } from "#src/objects/pdf-dict";
+import type { RefResolver } from "../helpers/types.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
-import { CompositeFont, parseCompositeFont } from "./composite-font";
-import { PdfFont } from "./pdf-font";
-import { parseSimpleFont, SimpleFont } from "./simple-font";
-import type { ToUnicodeMap } from "./to-unicode";
+import { CompositeFont, parseCompositeFont } from "./composite-font.js";
+import { PdfFont } from "./pdf-font.js";
+import { parseSimpleFont, SimpleFont } from "./simple-font.js";
+import type { ToUnicodeMap } from "./to-unicode.js";
 
 // Re-export PdfFont for convenience
 export { PdfFont };

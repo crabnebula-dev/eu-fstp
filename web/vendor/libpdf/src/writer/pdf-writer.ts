@@ -7,23 +7,23 @@
  * Uses a single ByteWriter for the entire PDF to minimize allocations.
  */
 
-import { clearAllDirtyFlags, collectChanges } from "#src/document/change-collector";
-import type { ObjectRegistry } from "#src/document/object-registry";
-import { FilterPipeline } from "#src/filters/filter-pipeline";
-import { CR, LF } from "#src/helpers/chars";
-import { max } from "#src/helpers/math";
-import { ByteWriter } from "#src/io/byte-writer";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNull } from "#src/objects/pdf-null";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
-import type { StandardSecurityHandler } from "#src/security/standard-handler";
+import { clearAllDirtyFlags, collectChanges } from "../document/change-collector.js";
+import type { ObjectRegistry } from "../document/object-registry.js";
+import { FilterPipeline } from "../filters/filter-pipeline.js";
+import { CR, LF } from "../helpers/chars.js";
+import { max } from "../helpers/math.js";
+import { ByteWriter } from "../io/byte-writer.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNull } from "../objects/pdf-null.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
+import type { StandardSecurityHandler } from "../security/standard-handler.js";
 
-import { writeXRefStream, writeXRefTable, type XRefWriteEntry } from "./xref-writer";
+import { writeXRefStream, writeXRefTable, type XRefWriteEntry } from "./xref-writer.js";
 
 /**
  * Options for PDF writing.

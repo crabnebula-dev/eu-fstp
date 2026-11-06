@@ -10,8 +10,8 @@
  * Where each code starts a sequence of glyph name overrides.
  */
 
-import type { FontEncoding } from "./encoding.ts";
-import { glyphToUnicode } from "./glyph-list.ts";
+import type { FontEncoding } from "./encoding.js";
+import { glyphToUnicode } from "./glyph-list.js";
 
 /**
  * DifferencesEncoding wraps a base encoding with glyph overrides.

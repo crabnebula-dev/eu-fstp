@@ -8,9 +8,9 @@ import { fromBER } from "asn1js";
 import * as pkijs from "pkijs";
 import { createCMSECDSASignature } from "pkijs";
 
-import { toArrayBuffer } from "../../helpers/buffer";
-import { buildCertificateChain } from "../aia";
-import { decryptLegacyPbe, getCrypto, isLegacyPbeOid, PKCS12KDF } from "../crypto";
+import { toArrayBuffer } from "../../helpers/buffer.js";
+import { buildCertificateChain } from "../aia.js";
+import { decryptLegacyPbe, getCrypto, isLegacyPbeOid, PKCS12KDF } from "../crypto/index.js";
 import {
   OID_CERT_BAG,
   OID_EC_PUBLIC_KEY,
@@ -20,9 +20,9 @@ import {
   OID_SECP256R1,
   OID_SECP384R1,
   OID_SECP521R1,
-} from "../oids";
-import type { DigestAlgorithm, KeyType, SignatureAlgorithm, Signer } from "../types";
-import { CertificateChainError, SignerError } from "../types";
+} from "../oids.js";
+import type { DigestAlgorithm, KeyType, SignatureAlgorithm, Signer } from "../types.js";
+import { CertificateChainError, SignerError } from "../types.js";
 
 /**
  * Options for creating a P12Signer.

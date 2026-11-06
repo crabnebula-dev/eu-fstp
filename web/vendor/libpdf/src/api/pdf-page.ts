@@ -20,26 +20,26 @@
  */
 
 // Annotation types
-import type { PDFAnnotation } from "#src/annotations/base";
-import type { PDFCaretAnnotation } from "#src/annotations/caret";
-import { createAnnotation, isPopupAnnotation, isWidgetAnnotation } from "#src/annotations/factory";
-import type { PDFFileAttachmentAnnotation } from "#src/annotations/file-attachment";
-import { AnnotationFlattener } from "#src/annotations/flattener";
-import type { PDFFreeTextAnnotation } from "#src/annotations/free-text";
-import { PDFInkAnnotation } from "#src/annotations/ink";
-import { PDFLineAnnotation } from "#src/annotations/line";
-import { PDFLinkAnnotation } from "#src/annotations/link";
-import type { PDFPolygonAnnotation, PDFPolylineAnnotation } from "#src/annotations/polygon";
-import { PDFPopupAnnotation } from "#src/annotations/popup";
-import { PDFCircleAnnotation, PDFSquareAnnotation } from "#src/annotations/square-circle";
-import { PDFStampAnnotation } from "#src/annotations/stamp";
-import { PDFTextAnnotation } from "#src/annotations/text";
+import type { PDFAnnotation } from "../annotations/base.js";
+import type { PDFCaretAnnotation } from "../annotations/caret.js";
+import { createAnnotation, isPopupAnnotation, isWidgetAnnotation } from "../annotations/factory.js";
+import type { PDFFileAttachmentAnnotation } from "../annotations/file-attachment.js";
+import { AnnotationFlattener } from "../annotations/flattener.js";
+import type { PDFFreeTextAnnotation } from "../annotations/free-text.js";
+import { PDFInkAnnotation } from "../annotations/ink.js";
+import { PDFLineAnnotation } from "../annotations/line.js";
+import { PDFLinkAnnotation } from "../annotations/link.js";
+import type { PDFPolygonAnnotation, PDFPolylineAnnotation } from "../annotations/polygon.js";
+import { PDFPopupAnnotation } from "../annotations/popup.js";
+import { PDFCircleAnnotation, PDFSquareAnnotation } from "../annotations/square-circle.js";
+import { PDFStampAnnotation } from "../annotations/stamp.js";
+import { PDFTextAnnotation } from "../annotations/text.js";
 import {
   PDFHighlightAnnotation,
   PDFSquigglyAnnotation,
   PDFStrikeOutAnnotation,
   PDFUnderlineAnnotation,
-} from "#src/annotations/text-markup";
+} from "../annotations/text-markup.js";
 import type {
   CircleAnnotationOptions,
   FlattenAnnotationsOptions,
@@ -51,10 +51,10 @@ import type {
   StampAnnotationOptions,
   TextAnnotationOptions,
   TextMarkupAnnotationOptions,
-} from "#src/annotations/types";
-import type { Operator } from "#src/content/operators";
-import { AcroForm } from "#src/document/forms/acro-form";
-import { AppearanceGenerator } from "#src/document/forms/appearance-generator";
+} from "../annotations/types.js";
+import type { Operator } from "../content/operators.js";
+import { AcroForm } from "../document/forms/acro-form.js";
+import { AppearanceGenerator } from "../document/forms/appearance-generator.js";
 import {
   CheckboxField,
   DropdownField,
@@ -63,21 +63,21 @@ import {
   SignatureField,
   TextField,
   type FormField,
-} from "#src/document/forms/fields";
-import { TerminalField } from "#src/document/forms/fields/base";
-import type { WidgetAnnotation } from "#src/document/forms/widget-annotation";
+} from "../document/forms/fields/index.js";
+import { TerminalField } from "../document/forms/fields/base.js";
+import type { WidgetAnnotation } from "../document/forms/widget-annotation.js";
 import {
   drawCircleOps,
   drawEllipseOps,
   drawLineOps,
   drawRectangleOps,
   setFillColor,
-} from "#src/drawing/operations";
-import { PathBuilder } from "#src/drawing/path-builder";
-import type { PDFFormXObject, PDFPattern, PDFShading } from "#src/drawing/resources/index";
-import { PDFExtGState } from "#src/drawing/resources/index";
-import { serializeOperators } from "#src/drawing/serialize";
-import { layoutJustifiedLine, layoutText, measureText } from "#src/drawing/text-layout";
+} from "../drawing/operations.js";
+import { PathBuilder } from "../drawing/path-builder.js";
+import type { PDFFormXObject, PDFPattern, PDFShading } from "../drawing/resources/index.js";
+import { PDFExtGState } from "../drawing/resources/index.js";
+import { serializeOperators } from "../drawing/serialize.js";
+import { layoutJustifiedLine, layoutText, measureText } from "../drawing/text-layout.js";
 import type {
   DrawCircleOptions,
   DrawEllipseOptions,
@@ -88,20 +88,20 @@ import type {
   DrawTextOptions,
   FontInput,
   Rotation,
-} from "#src/drawing/types";
-import { resolveRotationOrigin } from "#src/drawing/types";
-import { EmbeddedFont } from "#src/fonts/embedded-font";
+} from "../drawing/types.js";
+import { resolveRotationOrigin } from "../drawing/types.js";
+import { EmbeddedFont } from "../fonts/embedded-font.js";
 import {
   getEncodingForStandard14,
   getStandard14BasicMetrics,
   isStandard14Font,
   isWinAnsiStandard14,
-} from "#src/fonts/standard-14";
+} from "../fonts/standard-14.js";
 // Annotation utilities - imported here to avoid dynamic require issues
-import { concatBytes } from "#src/helpers/buffer";
-import { black } from "#src/helpers/colors";
-import { ColorSpace } from "#src/helpers/colorspace";
-import { max } from "#src/helpers/math";
+import { concatBytes } from "../helpers/buffer.js";
+import { black } from "../helpers/colors.js";
+import { ColorSpace } from "../helpers/colorspace.js";
+import { max } from "../helpers/math.js";
 import {
   beginText,
   concatMatrix,
@@ -112,24 +112,24 @@ import {
   setGraphicsState,
   setTextMatrix,
   showText,
-} from "#src/helpers/operators";
-import * as operatorHelpers from "#src/helpers/operators";
-import type { PDFImage } from "#src/images/pdf-image";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
-import { PdfString } from "#src/objects/pdf-string";
-import { getPlainText, groupCharsIntoLines } from "#src/text/line-grouper";
-import { TextExtractor } from "#src/text/text-extractor";
-import { TextResources } from "#src/text/text-resources";
-import { searchPage } from "#src/text/text-search";
-import type { ExtractTextOptions, FindTextOptions, PageText, TextMatch } from "#src/text/types";
+} from "../helpers/operators.js";
+import * as operatorHelpers from "../helpers/operators.js";
+import type { PDFImage } from "../images/pdf-image.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
+import { PdfString } from "../objects/pdf-string.js";
+import { getPlainText, groupCharsIntoLines } from "../text/line-grouper.js";
+import { TextExtractor } from "../text/text-extractor.js";
+import { TextResources } from "../text/text-resources.js";
+import { searchPage } from "../text/text-search.js";
+import type { ExtractTextOptions, FindTextOptions, PageText, TextMatch } from "../text/types.js";
 
-import type { PDFContext } from "./pdf-context";
-import type { PDFEmbeddedPage } from "./pdf-embedded-page";
+import type { PDFContext } from "./pdf-context.js";
+import type { PDFEmbeddedPage } from "./pdf-embedded-page.js";
 
 /**
  * A rectangle defined by [x1, y1, x2, y2] coordinates.

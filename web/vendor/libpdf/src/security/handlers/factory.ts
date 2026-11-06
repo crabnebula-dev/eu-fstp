@@ -5,11 +5,11 @@
  * the encryption version, revision, and crypt filter configuration.
  */
 
-import type { EncryptionDict } from "../encryption-dict";
-import { type AbstractSecurityHandler, IdentityHandler } from "./abstract";
-import { AES128Handler } from "./aes128";
-import { AES256Handler } from "./aes256";
-import { RC4Handler } from "./rc4";
+import type { EncryptionDict } from "../encryption-dict.js";
+import { type AbstractSecurityHandler, IdentityHandler } from "./abstract.js";
+import { AES128Handler } from "./aes128.js";
+import { AES256Handler } from "./aes256.js";
+import { RC4Handler } from "./rc4.js";
 
 /**
  * Handler configuration for a document.

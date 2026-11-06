@@ -8,23 +8,23 @@
  * PDF Reference: Section 12.7.3.3 "Variable Text"
  */
 
-import { type CIDFont, parseCIDFont } from "#src/fonts/cid-font";
-import { EmbeddedFont } from "#src/fonts/embedded-font";
-import { parseSimpleFont, type SimpleFont } from "#src/fonts/simple-font";
+import { type CIDFont, parseCIDFont } from "../../fonts/cid-font.js";
+import { EmbeddedFont } from "../../fonts/embedded-font.js";
+import { parseSimpleFont, type SimpleFont } from "../../fonts/simple-font.js";
 import {
   FONT_BASIC_METRICS,
   getStandard14DefaultWidth,
   getStandard14GlyphWidth,
   isStandard14Font,
-} from "#src/fonts/standard-14";
-import { parseToUnicode, type ToUnicodeMap } from "#src/fonts/to-unicode";
-import type { RefResolver } from "#src/helpers/types";
-import { unicodeToGlyphName } from "#src/helpers/unicode";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+} from "../../fonts/standard-14.js";
+import { parseToUnicode, type ToUnicodeMap } from "../../fonts/to-unicode.js";
+import type { RefResolver } from "../../helpers/types.js";
+import { unicodeToGlyphName } from "../../helpers/unicode.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
 
-import type { ObjectRegistry } from "../object-registry";
+import type { ObjectRegistry } from "../object-registry.js";
 
 /**
  * Union type for fonts usable in form fields.

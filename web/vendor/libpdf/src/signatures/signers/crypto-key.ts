@@ -6,8 +6,8 @@
 
 import { createCMSECDSASignature } from "pkijs";
 
-import { getCrypto } from "../crypto";
-import type { DigestAlgorithm, KeyType, SignatureAlgorithm, Signer } from "../types";
+import { getCrypto } from "../crypto/index.js";
+import type { DigestAlgorithm, KeyType, SignatureAlgorithm, Signer } from "../types.js";
 
 /**
  * Signer that uses a Web Crypto CryptoKey directly.

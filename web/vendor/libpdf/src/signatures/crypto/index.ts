@@ -13,7 +13,7 @@ export {
   getCrypto,
   isLegacyPbeOid,
   LEGACY_PBE_OIDS,
-} from "./crypto-engine";
-export { PKCS12KDF } from "./pkcs12-kdf";
-export { RC2 } from "./rc2";
-export { TripleDES } from "./triple-des";
+} from "./crypto-engine.js";
+export { PKCS12KDF } from "./pkcs12-kdf.js";
+export { RC2 } from "./rc2.js";
+export { TripleDES } from "./triple-des.js";

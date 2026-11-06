@@ -8,10 +8,10 @@
  * PDF Reference: Section 12.8.1 "Signature Dictionary"
  */
 
-import { bytesToHex } from "#src/helpers/buffer.ts";
-import { PdfRaw } from "#src/objects/pdf-raw";
+import { bytesToHex } from "../helpers/buffer.js";
+import { PdfRaw } from "../objects/pdf-raw.js";
 
-import { PlaceholderError } from "./types";
+import { PlaceholderError } from "./types.js";
 
 /** Default placeholder size in bytes (12KB) */
 export const DEFAULT_PLACEHOLDER_SIZE = 12288;

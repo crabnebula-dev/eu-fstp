@@ -6,14 +6,14 @@
  * digest is sent for signing.
  */
 
-import { toArrayBuffer } from "#src/helpers/buffer.ts";
-import { derToPem, isPem, normalizePem, parsePem } from "#src/helpers/pem.ts";
+import { toArrayBuffer } from "../../helpers/buffer.js";
+import { derToPem, isPem, normalizePem, parsePem } from "../../helpers/pem.js";
 import { fromBER } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { buildCertificateChain } from "../aia";
-import { CertificateChainError, KmsSignerError } from "../types";
-import type { DigestAlgorithm, KeyType, SignatureAlgorithm, Signer } from "../types";
+import { buildCertificateChain } from "../aia.js";
+import { CertificateChainError, KmsSignerError } from "../types.js";
+import type { DigestAlgorithm, KeyType, SignatureAlgorithm, Signer } from "../types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

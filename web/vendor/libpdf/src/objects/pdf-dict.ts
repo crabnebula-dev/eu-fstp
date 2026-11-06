@@ -1,14 +1,14 @@
-import type { RefResolver } from "#src/helpers/types";
-import type { ByteWriter } from "#src/io/byte-writer";
+import type { RefResolver } from "../helpers/types.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfArray } from "./pdf-array";
-import type { PdfBool } from "./pdf-bool";
-import { PdfName } from "./pdf-name";
-import type { PdfNumber } from "./pdf-number";
-import type { PdfObject } from "./pdf-object";
-import type { PdfPrimitive } from "./pdf-primitive";
-import { PdfRef } from "./pdf-ref";
-import type { PdfString } from "./pdf-string";
+import type { PdfArray } from "./pdf-array.js";
+import type { PdfBool } from "./pdf-bool.js";
+import { PdfName } from "./pdf-name.js";
+import type { PdfNumber } from "./pdf-number.js";
+import type { PdfObject } from "./pdf-object.js";
+import type { PdfPrimitive } from "./pdf-primitive.js";
+import { PdfRef } from "./pdf-ref.js";
+import type { PdfString } from "./pdf-string.js";
 
 /**
  * PDF dictionary object (mutable).

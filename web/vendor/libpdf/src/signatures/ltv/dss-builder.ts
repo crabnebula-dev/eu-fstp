@@ -8,17 +8,17 @@
  * ETSI EN 319 142-1: PAdES digital signatures
  */
 
-import type { ObjectRegistry } from "#src/document/object-registry.ts";
-import { formatPdfDate, parsePdfDate } from "#src/helpers/format.ts";
-import { PdfArray } from "#src/objects/pdf-array.ts";
-import { PdfDict } from "#src/objects/pdf-dict.ts";
-import { PdfName } from "#src/objects/pdf-name.ts";
-import { PdfRef } from "#src/objects/pdf-ref.ts";
-import { PdfStream } from "#src/objects/pdf-stream.ts";
-import { PdfString } from "#src/objects/pdf-string.ts";
+import type { ObjectRegistry } from "../../document/object-registry.js";
+import { formatPdfDate, parsePdfDate } from "../../helpers/format.js";
+import { PdfArray } from "../../objects/pdf-array.js";
+import { PdfDict } from "../../objects/pdf-dict.js";
+import { PdfName } from "../../objects/pdf-name.js";
+import { PdfRef } from "../../objects/pdf-ref.js";
+import { PdfStream } from "../../objects/pdf-stream.js";
+import { PdfString } from "../../objects/pdf-string.js";
 
-import type { LtvData } from "./gatherer";
-import { computeSha1Hex, computeVriKey } from "./vri";
+import type { LtvData } from "./gatherer.js";
+import { computeSha1Hex, computeVriKey } from "./vri.js";
 
 /**
  * Options for DSSBuilder.

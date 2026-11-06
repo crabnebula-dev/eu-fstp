@@ -1,10 +1,10 @@
-import { Scanner } from "#src/io/scanner";
-import type { PdfObject } from "#src/objects/pdf-object";
-import type { PdfStream } from "#src/objects/pdf-stream";
+import { Scanner } from "../io/scanner.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import type { PdfStream } from "../objects/pdf-stream.js";
 
-import { ObjectParseError } from "./errors";
-import { ObjectParser, type WarningCallback } from "./object-parser";
-import { TokenReader } from "./token-reader";
+import { ObjectParseError } from "./errors.js";
+import { ObjectParser, type WarningCallback } from "./object-parser.js";
+import { TokenReader } from "./token-reader.js";
 
 /**
  * Index entry for an object within an object stream.

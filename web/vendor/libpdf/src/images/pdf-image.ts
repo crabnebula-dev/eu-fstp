@@ -5,7 +5,7 @@
  * Used with `page.drawImage()` to render images on pages.
  */
 
-import type { PdfRef } from "#src/objects/pdf-ref";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
 /**
  * PDFImage represents an embedded image XObject.

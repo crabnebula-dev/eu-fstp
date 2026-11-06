@@ -7,7 +7,7 @@
  * PDF 2.0: Section 12.8.4.3 - Document Security Store dictionary
  */
 
-import { bytesToHex, toArrayBuffer } from "#src/helpers/buffer.ts";
+import { bytesToHex, toArrayBuffer } from "../../helpers/buffer.js";
 
 /**
  * Compute SHA-1 hash for VRI key (uppercase).

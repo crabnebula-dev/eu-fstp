@@ -2,8 +2,8 @@
  * PDF FontDescriptor - contains font metrics and flags.
  */
 
-import type { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number.ts";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
 
 /**
  * Font flags as defined in PDF spec Table 123.

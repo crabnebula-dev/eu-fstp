@@ -15,12 +15,12 @@
  * This module provides type-safe creation and serialization of operators.
  */
 
-import { formatPdfNumber } from "#src/helpers/format";
-import { ByteWriter } from "#src/io/byte-writer";
-import type { PdfArray } from "#src/objects/pdf-array";
-import type { PdfDict } from "#src/objects/pdf-dict";
-import type { PdfName } from "#src/objects/pdf-name";
-import type { PdfString } from "#src/objects/pdf-string";
+import { formatPdfNumber } from "../helpers/format.js";
+import { ByteWriter } from "../io/byte-writer.js";
+import type { PdfArray } from "../objects/pdf-array.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
+import type { PdfName } from "../objects/pdf-name.js";
+import type { PdfString } from "../objects/pdf-string.js";
 
 /** Valid operand types */
 export type Operand = number | string | PdfName | PdfString | PdfArray | PdfDict;

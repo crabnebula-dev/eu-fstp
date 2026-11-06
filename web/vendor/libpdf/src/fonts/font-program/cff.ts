@@ -2,9 +2,9 @@
  * CFF Type1-equivalent font program wrapper.
  */
 
-import type { CFFType1Font } from "#src/fontbox/cff/parser.ts";
+import type { CFFType1Font } from "../../fontbox/cff/parser.js";
 
-import type { FontProgram } from "./base.ts";
+import type { FontProgram } from "./base.js";
 
 /**
  * Wrapper for CFF Type1-equivalent fonts.

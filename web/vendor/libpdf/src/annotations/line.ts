@@ -7,16 +7,16 @@
  * PDF Reference: Section 12.5.6.7 "Line Annotations"
  */
 
-import { type Color, colorToArray, rgb } from "#src/helpers/colors";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import { PdfString } from "#src/objects/pdf-string";
+import { type Color, colorToArray, rgb } from "../helpers/colors.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import { PdfString } from "../objects/pdf-string.js";
 
-import { parseColorArray } from "./base";
-import { PDFMarkupAnnotation } from "./markup";
-import type { LineAnnotationOptions, LineEndingStyle, Point } from "./types";
+import { parseColorArray } from "./base.js";
+import { PDFMarkupAnnotation } from "./markup.js";
+import type { LineAnnotationOptions, LineEndingStyle, Point } from "./types.js";
 
 /**
  * Line annotation - a line with optional arrow endings.

@@ -1,6 +1,6 @@
-import type { ByteWriter } from "#src/io/byte-writer";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 /**
  * PDF null object - a singleton representing the null value.

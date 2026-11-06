@@ -1,8 +1,8 @@
-import { ByteWriter } from "#src/io/byte-writer.ts";
-import type { PdfDict } from "#src/objects/pdf-dict";
+import { ByteWriter } from "../io/byte-writer.js";
+import type { PdfDict } from "../objects/pdf-dict.js";
 
-import type { Filter } from "./filter";
-import { applyPredictor } from "./predictor";
+import type { Filter } from "./filter.js";
+import { applyPredictor } from "./predictor.js";
 
 /**
  * LZWDecode filter.

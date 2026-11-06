@@ -4,11 +4,11 @@
  * Provides parsing, serialization, and utilities for PDF content streams.
  */
 
-export { ContentStreamParser } from "./content-stream-parser";
-export { ContentStreamSerializer } from "./content-stream-serializer";
-export { ContentTokenizer } from "./content-tokenizer";
-export { extractInlineImageData } from "./inline-image";
-export { KNOWN_OPERATORS } from "./operators";
+export { ContentStreamParser } from "./content-stream-parser.js";
+export { ContentStreamSerializer } from "./content-stream-serializer.js";
+export { ContentTokenizer } from "./content-tokenizer.js";
+export { extractInlineImageData } from "./inline-image.js";
+export { KNOWN_OPERATORS } from "./operators.js";
 export type {
   AnyOperation,
   ArrayToken,
@@ -23,11 +23,11 @@ export type {
   ParsedOperation,
   ParseResult,
   StringToken,
-} from "./types";
-export { isInlineImageOperation, isParsedOperation } from "./types";
+} from "./types.js";
+export { isInlineImageOperation, isParsedOperation } from "./types.js";
 export {
   extractTextOperations,
   filterMarkedContent,
   findOperations,
   isInsideMarkedContent,
-} from "./utils";
+} from "./utils.js";

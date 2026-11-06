@@ -4,7 +4,7 @@
  * PDF Reference: Section 12.7 "Interactive Forms"
  */
 
-import type { TerminalField } from "./base";
+import type { TerminalField } from "./base.js";
 
 /**
  * Interface for AcroForm-like objects that fields can reference.

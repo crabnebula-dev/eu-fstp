@@ -7,12 +7,12 @@
  * RFC 5280: Section 4.2.2.1 - Authority Information Access
  */
 
-import { bytesToHex, toArrayBuffer } from "#src/helpers/buffer.ts";
+import { bytesToHex, toArrayBuffer } from "../helpers/buffer.js";
 import { fromBER } from "asn1js";
 import * as pkijs from "pkijs";
 
-import { OID_AD_CA_ISSUERS, OID_AUTHORITY_INFO_ACCESS } from "./oids";
-import { CertificateChainError } from "./types";
+import { OID_AD_CA_ISSUERS, OID_AUTHORITY_INFO_ACCESS } from "./oids.js";
+import { CertificateChainError } from "./types.js";
 
 /**
  * Options for AIA chain builder.

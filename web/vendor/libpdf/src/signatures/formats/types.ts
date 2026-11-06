@@ -2,7 +2,7 @@
  * Signature format types.
  */
 
-import type { DigestAlgorithm, Signer } from "../types";
+import type { DigestAlgorithm, Signer } from "../types.js";
 
 /**
  * Signature format (SubFilter in PDF).

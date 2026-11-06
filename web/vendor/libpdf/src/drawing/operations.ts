@@ -5,10 +5,10 @@
  * text, and images. They are used internally by PDFPage drawing methods.
  */
 
-import type { Operator } from "#src/content/operators";
-import type { Color } from "#src/helpers/colors";
-import { ColorSpace } from "#src/helpers/colorspace";
-import { KAPPA } from "#src/helpers/constants";
+import type { Operator } from "../content/operators.js";
+import type { Color } from "../helpers/colors.js";
+import { ColorSpace } from "../helpers/colorspace.js";
+import { KAPPA } from "../helpers/constants.js";
 import {
   closePath,
   concatMatrix,
@@ -38,11 +38,11 @@ import {
   setStrokingGray,
   setStrokingRGB,
   stroke,
-} from "#src/helpers/operators";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfNumber } from "#src/objects/pdf-number";
+} from "../helpers/operators.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfNumber } from "../objects/pdf-number.js";
 
-import { type LineCap, type LineJoin, lineCapToNumber, lineJoinToNumber } from "./types";
+import { type LineCap, type LineJoin, lineCapToNumber, lineJoinToNumber } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Color Operators

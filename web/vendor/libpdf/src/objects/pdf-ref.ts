@@ -1,7 +1,7 @@
-import { LRUCache } from "#src/helpers/lru-cache";
-import type { ByteWriter } from "#src/io/byte-writer";
+import { LRUCache } from "../helpers/lru-cache.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 /**
  * Default cache size for PdfRef interning.

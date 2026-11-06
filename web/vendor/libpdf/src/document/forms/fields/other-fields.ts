@@ -5,9 +5,9 @@
  * PDF Reference: Section 12.7.4.2 "Button Fields"
  */
 
-import { PdfDict } from "#src/objects/pdf-dict";
+import { PdfDict } from "../../../objects/pdf-dict.js";
 
-import { TerminalField } from "./base";
+import { TerminalField } from "./base.js";
 
 /**
  * Signature field.

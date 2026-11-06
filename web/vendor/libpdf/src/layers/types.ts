@@ -6,7 +6,7 @@
  * for security before signing.
  */
 
-import type { PdfRef } from "#src/objects/pdf-ref";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
 /**
  * Information about a single layer (OCG).

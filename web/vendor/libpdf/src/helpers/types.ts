@@ -2,8 +2,8 @@
  * Shared type definitions used across the library.
  */
 
-import type { PdfObject } from "#src/objects/pdf-object";
-import type { PdfRef } from "#src/objects/pdf-ref";
+import type { PdfObject } from "../objects/pdf-object.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
 /**
  * Function type for resolving a PdfRef to its target PdfObject.

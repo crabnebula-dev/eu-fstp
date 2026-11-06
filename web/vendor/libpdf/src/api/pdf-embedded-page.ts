@@ -16,9 +16,9 @@
  * ```
  */
 
-import type { PdfRef } from "#src/objects/pdf-ref";
+import type { PdfRef } from "../objects/pdf-ref.js";
 
-import type { Rectangle } from "./pdf-page";
+import type { Rectangle } from "./pdf-page.js";
 
 /**
  * A page embedded as a Form XObject.

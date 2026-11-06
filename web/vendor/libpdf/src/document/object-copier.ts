@@ -14,16 +14,16 @@
  * All operations are synchronous — there is no I/O involved in object copying.
  */
 
-import type { PDF } from "#src/api/pdf";
-import type { FilterSpec } from "#src/filters/filter";
-import { FilterPipeline } from "#src/filters/filter-pipeline";
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfName } from "#src/objects/pdf-name";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import { PdfStream } from "#src/objects/pdf-stream";
+import type { PDF } from "../api/pdf.js";
+import type { FilterSpec } from "../filters/filter.js";
+import { FilterPipeline } from "../filters/filter-pipeline.js";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import { PdfStream } from "../objects/pdf-stream.js";
 
 /**
  * Options for ObjectCopier.

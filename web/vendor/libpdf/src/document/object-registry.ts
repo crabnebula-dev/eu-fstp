@@ -5,11 +5,11 @@
  * tracks new objects, and assigns object numbers.
  */
 
-import { max } from "#src/helpers/math";
-import type { RefResolver } from "#src/helpers/types";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
-import type { XRefEntry } from "#src/parser/xref-parser";
+import { max } from "../helpers/math.js";
+import type { RefResolver } from "../helpers/types.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
+import type { XRefEntry } from "../parser/xref-parser.js";
 
 /**
  * Registry for managing PDF objects and their references.

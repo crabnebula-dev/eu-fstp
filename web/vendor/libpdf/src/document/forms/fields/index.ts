@@ -5,15 +5,15 @@
  */
 
 // Base classes
-export { FormField, NonTerminalField, TerminalField } from "./base";
-export { CheckboxField } from "./checkbox-field";
-export { DropdownField, ListBoxField } from "./choice-fields";
+export { FormField, NonTerminalField, TerminalField } from "./base.js";
+export { CheckboxField } from "./checkbox-field.js";
+export { DropdownField, ListBoxField } from "./choice-fields.js";
 // Factory
-export { createFormField } from "./factory";
-export { ButtonField, SignatureField, UnknownField } from "./other-fields";
-export { RadioField } from "./radio-field";
+export { createFormField } from "./factory.js";
+export { ButtonField, SignatureField, UnknownField } from "./other-fields.js";
+export { RadioField } from "./radio-field.js";
 // Field implementations
-export { TextField } from "./text-field";
+export { TextField } from "./text-field.js";
 // Types and constants
 export {
   type AcroFormLike,
@@ -21,4 +21,4 @@ export {
   FieldFlags,
   type FieldType,
   type RgbColor,
-} from "./types";
+} from "./types.js";

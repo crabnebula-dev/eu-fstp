@@ -1,15 +1,15 @@
 /** biome-ignore-all lint/complexity/noStaticOnlyClass: utility class */
 
-import { ASCIIHexFilter } from "./ascii-hex-filter";
-import { ASCII85Filter } from "./ascii85-filter";
-import { CCITTFaxFilter } from "./ccitt-fax-filter";
-import { DCTFilter } from "./dct-filter";
-import type { Filter, FilterSpec } from "./filter";
-import { FlateFilter } from "./flate-filter";
-import { JBIG2Filter } from "./jbig2-filter";
-import { JPXFilter } from "./jpx-filter";
-import { LZWFilter } from "./lzw-filter";
-import { RunLengthFilter } from "./run-length-filter";
+import { ASCIIHexFilter } from "./ascii-hex-filter.js";
+import { ASCII85Filter } from "./ascii85-filter.js";
+import { CCITTFaxFilter } from "./ccitt-fax-filter.js";
+import { DCTFilter } from "./dct-filter.js";
+import type { Filter, FilterSpec } from "./filter.js";
+import { FlateFilter } from "./flate-filter.js";
+import { JBIG2Filter } from "./jbig2-filter.js";
+import { JPXFilter } from "./jpx-filter.js";
+import { LZWFilter } from "./lzw-filter.js";
+import { RunLengthFilter } from "./run-length-filter.js";
 
 /**
  * Registry and executor for PDF stream filters.

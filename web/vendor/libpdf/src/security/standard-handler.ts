@@ -11,23 +11,23 @@
  * @see PDF 2.0 Specification, Section 7.6.4 (Standard Security Handler)
  */
 
-import { type DecryptionCredential, isPasswordCredential } from "./credentials";
+import { type DecryptionCredential, isPasswordCredential } from "./credentials.js";
 import {
   type EncryptionDict,
   getKeyLengthBytes,
   type EncryptionRevision,
   type EncryptionVersion,
-} from "./encryption-dict";
-import { UnsupportedEncryptionError } from "./errors";
-import type { AbstractSecurityHandler } from "./handlers/abstract";
-import { createHandlers, type HandlerConfig } from "./handlers/factory";
-import { verifyOwnerPassword, verifyUserPassword } from "./key-derivation/md5-based";
+} from "./encryption-dict.js";
+import { UnsupportedEncryptionError } from "./errors.js";
+import type { AbstractSecurityHandler } from "./handlers/abstract.js";
+import { createHandlers, type HandlerConfig } from "./handlers/factory.js";
+import { verifyOwnerPassword, verifyUserPassword } from "./key-derivation/md5-based.js";
 import {
   verifyOwnerPasswordR56,
   verifyPermsEntry,
   verifyUserPasswordR56,
-} from "./key-derivation/sha-based";
-import type { Permissions } from "./permissions";
+} from "./key-derivation/sha-based.js";
+import type { Permissions } from "./permissions.js";
 
 /**
  * Authentication result from password verification.

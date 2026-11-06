@@ -1,10 +1,10 @@
-import { bytesToHex, hexToBytes } from "#src/helpers/buffer";
-import { CHAR_PARENTHESIS_CLOSE, CHAR_PARENTHESIS_OPEN } from "#src/helpers/chars";
-import { canEncodePdfDoc, decodeTextString, encodeTextString } from "#src/helpers/encoding";
-import { escapeLiteralString } from "#src/helpers/strings";
-import type { ByteWriter } from "#src/io/byte-writer.ts";
+import { bytesToHex, hexToBytes } from "../helpers/buffer.js";
+import { CHAR_PARENTHESIS_CLOSE, CHAR_PARENTHESIS_OPEN } from "../helpers/chars.js";
+import { canEncodePdfDoc, decodeTextString, encodeTextString } from "../helpers/encoding.js";
+import { escapeLiteralString } from "../helpers/strings.js";
+import type { ByteWriter } from "../io/byte-writer.js";
 
-import type { PdfPrimitive } from "./pdf-primitive";
+import type { PdfPrimitive } from "./pdf-primitive.js";
 
 /**
  * PDF string object.

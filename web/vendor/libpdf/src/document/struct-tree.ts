@@ -16,13 +16,13 @@
  * PDF Reference: Section 14.7 "Logical Structure"
  */
 
-import { PdfArray } from "#src/objects/pdf-array";
-import { PdfDict } from "#src/objects/pdf-dict";
-import { PdfNumber } from "#src/objects/pdf-number";
-import type { PdfObject } from "#src/objects/pdf-object";
-import { PdfRef } from "#src/objects/pdf-ref";
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfObject } from "../objects/pdf-object.js";
+import { PdfRef } from "../objects/pdf-ref.js";
 
-import type { ObjectRegistry } from "./object-registry";
+import type { ObjectRegistry } from "./object-registry.js";
 
 /**
  * Remove all structure tree references to the given annotations.
