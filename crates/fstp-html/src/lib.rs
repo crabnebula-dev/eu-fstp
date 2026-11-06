@@ -12,7 +12,8 @@
 //! - the well-formedness checker that tests and fuzz targets use
 //!   ([`check_wellformed`]);
 //! - the `Accept-Language` parser and locale negotiation
-//!   ([`parse_accept_language`], [`negotiate_locale`]).
+//!   ([`parse_accept_language`], [`negotiate_locale`]);
+//! - the route SVG renderer and its text alternative ([`route`]; ADR-015).
 //!
 //! Every rule the design leaves open is an interim reading, pending
 //! Daniel. Each is stated in the module that builds it.
@@ -50,6 +51,7 @@ mod check;
 mod error;
 mod lang;
 mod message;
+pub mod route;
 mod subset;
 mod url;
 mod writer;
@@ -66,4 +68,4 @@ pub use lang::{
 };
 pub use message::{MAX_MESSAGE_BYTES, MAX_PLACEHOLDER_BYTES, MessageFormat, parse_message_format};
 pub use url::SafeUrl;
-pub use writer::{Document, Element, HtmlDocument, MAX_DEPTH, Node, TraceEvent, TracePlace};
+pub use writer::{Document, Element, HtmlDocument, Lines, MAX_DEPTH, Node, TraceEvent, TracePlace};

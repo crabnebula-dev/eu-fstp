@@ -15,7 +15,11 @@
 //! - plain characters only, `&` only as a terminated reference to a plain
 //!   character, and no raw `<` in text;
 //! - the placement rules of the HTML tree builder;
-//! - safe URLs in `href`, `src` and `action`.
+//! - safe URLs in `href`, `src` and `action`;
+//! - inside `svg`, only the closed SVG subset the route renderer emits
+//!   (ADR-015; `subset` "The closed SVG subset"): no script, style,
+//!   event attribute, foreign object, animation or HTML element, local
+//!   markers only, and `fill` of `currentColor` or `none`.
 //!
 //! It walks the input once with an explicit stack, so deep nesting cannot
 //! exhaust the call stack. It is fuzzed (`html_wellformed_check`).
@@ -24,7 +28,8 @@ use std::collections::BTreeMap;
 
 use crate::HtmlError;
 use crate::subset::{
-    CONTAINERS, Open, RCDATA, URL_ATTRS, VOID, attr_allowed, intern, is_lang_tag, is_plain,
+    Open, URL_ATTRS, VOID, attr_allowed_in, holds_no_text, intern, is_lang_tag, is_plain,
+    is_rcdata, svg_value_ok,
 };
 use crate::url::is_safe_url;
 
@@ -134,7 +139,7 @@ impl<'a> Checker<'a> {
                 || (later
                     && match kind {
                         NameKind::Tag => c.is_ascii_digit(),
-                        NameKind::Attr => c == '-',
+                        NameKind::Attr => c == '-' || c.is_ascii_digit(),
                     });
             if !ok {
                 break;
@@ -237,7 +242,7 @@ impl<'a> Checker<'a> {
                 self.start_tag()?;
             } else {
                 let text = self.chars('<', Ctx::Text)?;
-                if CONTAINERS.contains(&name)
+                if holds_no_text(self.open.in_svg(), name)
                     && !text.chars().all(|c| matches!(c, ' ' | '\t' | '\n'))
                 {
                     return Err(self.err("text directly inside a container element"));
@@ -258,12 +263,14 @@ impl<'a> Checker<'a> {
         let name = intern(raw).ok_or_else(|| self.err("the element is not in the subset"))?;
         self.open.check(name).map_err(|rule| self.err(rule))?;
         let void = VOID.contains(&name);
-        let attrs = self.attributes(name, void)?;
+        // Inside `svg`, or the `svg` element itself: the SVG subset rules.
+        let svg = self.open.in_svg() || name == "svg";
+        let attrs = self.attributes(name, void, svg)?;
         if void {
             self.complete(name, attrs);
             return Ok(());
         }
-        if RCDATA.contains(&name) {
+        if is_rcdata(svg, name) {
             self.chars('<', Ctx::Text)?;
             if !self.eat_end(name) {
                 return Err(self.err("an RCDATA element holds markup or is not closed"));
@@ -280,7 +287,12 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    fn attributes(&mut self, el: &'static str, void: bool) -> Result<Attrs<'a>, HtmlError> {
+    fn attributes(
+        &mut self,
+        el: &'static str,
+        void: bool,
+        svg: bool,
+    ) -> Result<Attrs<'a>, HtmlError> {
         let mut attrs = Attrs::new();
         loop {
             let ws = self.skip_ws();
@@ -300,7 +312,7 @@ impl<'a> Checker<'a> {
                 return Err(self.err("no whitespace before an attribute"));
             }
             let attr = self.name(NameKind::Attr)?;
-            if !attr_allowed(el, attr) {
+            if !attr_allowed_in(svg, el, attr) {
                 return Err(self.err("the attribute is not allowed on the element"));
             }
             let value = if self.eat("=") {
@@ -315,6 +327,9 @@ impl<'a> Checker<'a> {
             } else {
                 String::new()
             };
+            if svg && !svg_value_ok(attr, &value) {
+                return Err(self.err("the value is outside the SVG subset"));
+            }
             if URL_ATTRS.contains(&attr) && !is_safe_url(&value) {
                 return Err(self.err("the URL is not safe"));
             }

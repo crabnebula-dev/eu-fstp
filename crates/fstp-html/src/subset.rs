@@ -229,8 +229,155 @@ pub(crate) fn attr_allowed(el: &str, attr: &str) -> bool {
     if GLOBAL_ATTRS.contains(&attr) || element_attrs(el).contains(&attr) {
         return true;
     }
+    is_aria_name(attr)
+}
+
+/// Whether `attr` is an `aria-` name of lower-case letters.
+fn is_aria_name(attr: &str) -> bool {
     attr.strip_prefix("aria-")
         .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_lowercase()))
+}
+
+// ---------------------------------------------------------------------------
+// The closed SVG subset (ADR-015 "Rendering home and zones", lane j3)
+// ---------------------------------------------------------------------------
+//
+// Interim reading, pending Daniel. ADR-015 puts the route SVG renderer in
+// this crate and asks the checker to accept the SVG elements and
+// attributes the renderer emits, and nothing else. An `svg` element may
+// stand where the body rules allow it, but never inside `a` or `button`.
+// Inside it:
+//
+// - only the elements of `SVG_ELEMENTS`, each below the parents of
+//   `svg_children`. No script, style, foreign object, image, `use`,
+//   animation element or HTML element: an HTML start tag would break out
+//   of foreign content;
+// - `title`, `desc` and `tspan` hold text only, `text` holds text and
+//   `tspan`, and `title` is an SVG element, not RCDATA. Every other SVG
+//   element holds only layout whitespace;
+// - lower-case attribute names from `svg_element_attrs`, which the HTML
+//   parser adjusts (`viewbox` becomes `viewBox`), plus `id`, `class`,
+//   `role`, `tabindex`, `lang`, `dir` and `aria-` names. No `on`
+//   handler, no `style` and no namespaced name;
+// - `href` is a safe URL, `marker-start` and `marker-end` are
+//   `url(#name)`, and `fill` is `currentColor` or `none`, so no attribute
+//   reaches another resource or carries a colour outside the tokens;
+// - no `a` inside another `a`.
+
+/// The elements of the closed SVG subset. `svg` opens it, and every
+/// other one stands only inside `svg`.
+pub(crate) const SVG_ELEMENTS: &[&str] = &[
+    "svg", "title", "desc", "defs", "marker", "g", "a", "path", "line", "rect", "circle", "text",
+    "tspan",
+];
+
+/// SVG elements that hold only elements and layout whitespace.
+pub(crate) const SVG_CONTAINERS: &[&str] = &[
+    "svg", "defs", "marker", "g", "a", "path", "line", "rect", "circle",
+];
+
+/// Attributes allowed on every element of the SVG subset, besides the
+/// `aria-` names.
+const SVG_GLOBAL_ATTRS: &[&str] = &["id", "class", "role", "tabindex", "lang", "dir"];
+
+/// Attributes allowed on one SVG element, beyond the global ones.
+fn svg_element_attrs(el: &str) -> &'static [&'static str] {
+    match el {
+        "svg" => &["viewbox"],
+        "a" => &["href"],
+        "marker" => &[
+            "viewbox",
+            "refx",
+            "refy",
+            "markerwidth",
+            "markerheight",
+            "orient",
+        ],
+        "path" => &["d", "marker-start", "marker-end", "fill"],
+        "line" => &["x1", "y1", "x2", "y2", "marker-start", "marker-end"],
+        "rect" => &["x", "y", "width", "height", "rx", "ry"],
+        "circle" => &["cx", "cy", "r"],
+        "text" => &["x", "y", "dx", "dy", "text-anchor"],
+        "tspan" => &["x", "y", "dx", "dy"],
+        _ => &[],
+    }
+}
+
+/// Whether attribute `attr` is allowed on SVG element `el`.
+pub(crate) fn svg_attr_allowed(el: &str, attr: &str) -> bool {
+    SVG_GLOBAL_ATTRS.contains(&attr) || svg_element_attrs(el).contains(&attr) || is_aria_name(attr)
+}
+
+/// Whether attribute `attr` is allowed on `el`, in SVG context or not.
+pub(crate) fn attr_allowed_in(svg: bool, el: &str, attr: &str) -> bool {
+    if svg {
+        svg_attr_allowed(el, attr)
+    } else {
+        attr_allowed(el, attr)
+    }
+}
+
+/// Whether `value` is `url(#name)` with a name of ASCII letters, digits,
+/// `-` and `_`: a reference inside the same document only.
+fn is_local_url_ref(value: &str) -> bool {
+    value
+        .strip_prefix("url(#")
+        .and_then(|r| r.strip_suffix(')'))
+        .is_some_and(|n| {
+            !n.is_empty()
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+
+/// Whether the SVG attributes whose value has a rule of its own carry an
+/// allowed value: markers point inside the document, and `fill` is
+/// `currentColor` or `none`. Other attributes pass.
+pub(crate) fn svg_value_ok(attr: &str, value: &str) -> bool {
+    match attr {
+        "marker-start" | "marker-end" => is_local_url_ref(value),
+        "fill" => value == "currentColor" || value == "none",
+        _ => true,
+    }
+}
+
+/// Whether `attr` is an SVG attribute whose value has a rule of its own.
+pub(crate) fn svg_value_ruled(attr: &str) -> bool {
+    matches!(attr, "marker-start" | "marker-end" | "fill")
+}
+
+/// The SVG elements a parent inside `svg` may hold.
+fn svg_children(parent: &str) -> &'static [&'static str] {
+    match parent {
+        "svg" => &[
+            "title", "desc", "defs", "g", "a", "path", "line", "rect", "circle", "text",
+        ],
+        "g" => &[
+            "title", "desc", "g", "a", "path", "line", "rect", "circle", "text",
+        ],
+        "a" => &[
+            "title", "desc", "g", "path", "line", "rect", "circle", "text",
+        ],
+        "defs" => &["marker"],
+        "marker" => &["path"],
+        "text" => &["tspan"],
+        _ => &[],
+    }
+}
+
+/// Whether `el` holds no text but layout whitespace, in SVG context or
+/// not.
+pub(crate) fn holds_no_text(svg: bool, el: &str) -> bool {
+    if svg {
+        SVG_CONTAINERS.contains(&el)
+    } else {
+        CONTAINERS.contains(&el)
+    }
+}
+
+/// Whether `el` is RCDATA, in SVG context or not. An SVG `title` is not.
+pub(crate) fn is_rcdata(svg: bool, el: &str) -> bool {
+    !svg && RCDATA.contains(&el)
 }
 
 /// Whether `s` is a language tag the subset accepts in `lang`:
@@ -251,6 +398,7 @@ pub(crate) fn intern(name: &str) -> Option<&'static str> {
         .iter()
         .chain(HEAD_ELEMENTS)
         .chain(BODY_ELEMENTS)
+        .chain(SVG_ELEMENTS)
         .find(|n| **n == name)
         .copied()
 }
@@ -266,12 +414,18 @@ pub(crate) struct Open {
     form: usize,
     button: usize,
     caption: usize,
+    svg: usize,
 }
 
 impl Open {
     /// The number of open elements.
     pub(crate) fn depth(&self) -> usize {
         self.stack.len()
+    }
+
+    /// Whether an `svg` element is open, so the SVG subset applies.
+    pub(crate) fn in_svg(&self) -> bool {
+        self.svg > 0
     }
 
     /// The innermost open element.
@@ -286,6 +440,7 @@ impl Open {
             "form" => Some(&mut self.form),
             "button" => Some(&mut self.button),
             "caption" => Some(&mut self.caption),
+            "svg" => Some(&mut self.svg),
             _ if HEADINGS.contains(&name) => Some(&mut self.headings),
             _ => None,
         }
@@ -335,7 +490,23 @@ impl Open {
             }
             Some(_) => {}
         }
-        if !BODY_ELEMENTS.contains(&name) {
+        if self.svg > 0 {
+            // Inside `svg`: the SVG subset alone. An HTML `a` or `button`
+            // never holds an `svg`, so an open `a` here is an SVG `a`.
+            let parent = self.parent().unwrap_or("");
+            if !svg_children(parent).contains(&name) {
+                return Err("the SVG element may not hold the element (closed SVG subset)");
+            }
+            if name == "a" && self.a > 0 {
+                return Err("an SVG a inside an SVG a");
+            }
+            return Ok(());
+        }
+        if name == "svg" {
+            if self.a > 0 || self.button > 0 {
+                return Err("svg inside an interactive element");
+            }
+        } else if !BODY_ELEMENTS.contains(&name) {
             return Err("the element is not allowed below body");
         }
         let parent = self.parent().unwrap_or("");

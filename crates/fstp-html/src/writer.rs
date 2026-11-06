@@ -31,8 +31,8 @@ use crate::catalogue::{
 };
 use crate::message::{Part, arg};
 use crate::subset::{
-    BOOLEAN_ATTRS, CONTAINERS, DROPS_LEADING_LF, Open, RCDATA, URL_ATTRS, VOID, attr_allowed,
-    is_lang_tag, is_plain,
+    BOOLEAN_ATTRS, DROPS_LEADING_LF, Open, URL_ATTRS, VOID, attr_allowed_in, holds_no_text,
+    is_lang_tag, is_plain, is_rcdata, svg_value_ok, svg_value_ruled,
 };
 use crate::url::SafeUrl;
 
@@ -144,6 +144,7 @@ enum Repr {
     El(Element),
     Text(String),
     Msg(Msg),
+    Lines(Msg, Lines),
 }
 
 /// A node of a page: an element, a dynamic text or a catalogue message.
@@ -165,6 +166,74 @@ impl Node {
     pub fn approved(text: &ApprovedText, args: &[(&str, &str)]) -> Node {
         Node(Repr::Msg(Msg::approved(text, args)))
     }
+
+    /// An interface string of the catalogue, wrapped into SVG lines: one
+    /// `tspan` per line, laid out by `lines`. It stands only inside an
+    /// SVG `text` element. The text is wrapped at spaces after the
+    /// catalogue resolves it, so a terminology override wraps too.
+    pub fn label_lines(label: &Label, args: &[(&str, &str)], lines: Lines) -> Node {
+        Node(Repr::Lines(Msg::label(label, args), lines))
+    }
+}
+
+/// How [`Node::label_lines`] lays out the lines of a message, in SVG user
+/// units.
+///
+/// The words, split at spaces, fill each line greedily up to `width`
+/// characters. A longer word stands on a line of its own. Words beyond
+/// `max` lines join the last line. The lines are centred on `y`, `step`
+/// apart, and each starts at `x`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Lines {
+    /// The `x` of every line.
+    pub x: i32,
+    /// The `y` of the middle of the lines.
+    pub y: i32,
+    /// The distance from one line to the next.
+    pub step: i32,
+    /// The most characters a line takes, unless one word is longer.
+    pub width: usize,
+    /// The most lines.
+    pub max: usize,
+}
+
+impl Lines {
+    /// The lines of `text`. No line is empty, and a text with no word has
+    /// no line.
+    pub fn wrap(&self, text: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for word in text.split(' ').filter(|w| !w.is_empty()) {
+            let fits = out.last().is_some_and(|l| {
+                l.chars()
+                    .count()
+                    .saturating_add(1)
+                    .saturating_add(word.chars().count())
+                    <= self.width
+            });
+            let full = out.len() >= self.max.max(1);
+            match out.last_mut() {
+                Some(l) if fits || full => {
+                    l.push(' ');
+                    l.push_str(word);
+                }
+                _ => out.push(word.to_owned()),
+            }
+        }
+        out
+    }
+
+    /// The `y` of line `i` of `n`.
+    pub fn y_of(&self, i: usize, n: usize) -> i32 {
+        let n = i32::try_from(n).unwrap_or(i32::MAX);
+        let i = i32::try_from(i).unwrap_or(i32::MAX);
+        let first = self.y.saturating_sub(
+            n.saturating_sub(1)
+                .saturating_mul(self.step)
+                .checked_div(2)
+                .unwrap_or(0),
+        );
+        first.saturating_add(i.saturating_mul(self.step))
+    }
 }
 
 impl From<Element> for Node {
@@ -179,6 +248,7 @@ enum AttrValue {
     Url(SafeUrl),
     Flag,
     Msg(Msg),
+    Parts(Vec<Node>),
 }
 
 /// An element of a page body.
@@ -230,6 +300,15 @@ impl Element {
     ) -> Element {
         self.attrs
             .push((name, AttrValue::Msg(Msg::label(label, args))));
+        self
+    }
+
+    /// Adds an attribute whose value joins `parts` in order: dynamic texts
+    /// and catalogue messages, such as an accessible name made of a
+    /// label, a formal state name and status words. An element part is
+    /// refused when the page renders.
+    pub fn attr_parts(mut self, name: &'static str, parts: Vec<Node>) -> Element {
+        self.attrs.push((name, AttrValue::Parts(parts)));
         self
     }
 
@@ -409,6 +488,17 @@ fn push_text(out: &mut String, s: &str) {
     }
 }
 
+/// Escapes text content inside `svg`: as [`push_text`], and quotes too.
+fn push_svg_text(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => push_text(out, c.encode_utf8(&mut [0; 4])),
+        }
+    }
+}
+
 /// Escapes a double-quoted attribute value. A character that is not
 /// plain becomes U+FFFD.
 fn push_attr(out: &mut String, s: &str) {
@@ -466,7 +556,9 @@ fn render<S: Sink>(
         match &n.0 {
             Repr::Text(t) => w.text(t),
             Repr::Msg(m) => w.message(m, &TracePlace::Text)?,
-            Repr::El(_) => return Err(page_err("title", "the title holds only text and messages")),
+            Repr::El(_) | Repr::Lines(..) => {
+                return Err(page_err("title", "the title holds only text and messages"));
+            }
         }
     }
     w.out.push_str("</title>");
@@ -504,7 +596,18 @@ fn render<S: Sink>(
 impl<S: Sink> Writer<'_, '_, S> {
     fn text(&mut self, t: &str) {
         self.sink.dynamic(&TracePlace::Text, t);
-        push_text(&mut self.out, t);
+        let escape = self.text_escape();
+        escape(&mut self.out, t);
+    }
+
+    /// The text escaper here. Inside `svg` it escapes quotes as well, so
+    /// no text of foreign content reads as attribute markup.
+    fn text_escape(&self) -> fn(&mut String, &str) {
+        if self.open.in_svg() {
+            push_svg_text
+        } else {
+            push_text
+        }
     }
 
     /// Writes a message at `place`: its literals, and each argument once
@@ -516,7 +619,7 @@ impl<S: Sink> Writer<'_, '_, S> {
             .map_err(|rule| message_err(&m.id, rule))?;
         self.sink.message(m.kind, &m.id, place);
         let escape: fn(&mut String, &str) = match place {
-            TracePlace::Text => push_text,
+            TracePlace::Text => self.text_escape(),
             TracePlace::Attr(_) | TracePlace::Url(_) => push_attr,
         };
         for part in format.parts() {
@@ -536,12 +639,14 @@ impl<S: Sink> Writer<'_, '_, S> {
     fn node(&mut self, n: &Node, parent: &'static str) -> Result<(), HtmlError> {
         match &n.0 {
             Repr::El(e) => {
-                if RCDATA.contains(&parent) {
+                if is_rcdata(self.open.in_svg(), parent) {
                     return Err(page_err(parent, "the element holds only text and messages"));
                 }
                 self.element(e)
             }
-            Repr::Text(_) | Repr::Msg(_) if CONTAINERS.contains(&parent) => {
+            Repr::Text(_) | Repr::Msg(_) | Repr::Lines(..)
+                if holds_no_text(self.open.in_svg(), parent) =>
+            {
                 Err(page_err(parent, "the element holds no text"))
             }
             Repr::Text(t) => {
@@ -549,7 +654,40 @@ impl<S: Sink> Writer<'_, '_, S> {
                 Ok(())
             }
             Repr::Msg(m) => self.message(m, &TracePlace::Text),
+            Repr::Lines(m, lines) => self.lines(m, lines, parent),
         }
+    }
+
+    /// Writes message `m` as SVG lines inside `parent`, one `tspan` each.
+    fn lines(&mut self, m: &Msg, lines: &Lines, parent: &'static str) -> Result<(), HtmlError> {
+        if parent != "text" || !self.open.in_svg() {
+            return Err(page_err(parent, "label lines stand only in an SVG text"));
+        }
+        self.open
+            .check("tspan")
+            .map_err(|rule| page_err("tspan", rule))?;
+        let format = self.cat.get(m.kind, &m.id)?;
+        let text = format
+            .format(&m.args)
+            .map_err(|rule| message_err(&m.id, rule))?;
+        self.sink.message(m.kind, &m.id, &TracePlace::Text);
+        for part in format.parts() {
+            if let Part::Arg(n) = part {
+                self.sink.dynamic(&TracePlace::Text, arg(&m.args, n));
+            }
+        }
+        let wrapped = lines.wrap(&text);
+        let n = wrapped.len();
+        for (i, line) in wrapped.iter().enumerate() {
+            self.out.push_str("<tspan x=\"");
+            self.out.push_str(&lines.x.to_string());
+            self.out.push_str("\" y=\"");
+            self.out.push_str(&lines.y_of(i, n).to_string());
+            self.out.push_str("\">");
+            push_svg_text(&mut self.out, line);
+            self.out.push_str("</tspan>");
+        }
+        Ok(())
     }
 
     fn element(&mut self, e: &Element) -> Result<(), HtmlError> {
@@ -596,7 +734,9 @@ impl<S: Sink> Writer<'_, '_, S> {
         name: &'static str,
         value: &AttrValue,
     ) -> Result<(), HtmlError> {
-        if !attr_allowed(tag, name) {
+        // The new element is not open yet, so `svg` itself counts here.
+        let svg = self.open.in_svg() || tag == "svg";
+        if !attr_allowed_in(svg, tag, name) {
             return Err(attr_err(
                 tag,
                 name,
@@ -616,8 +756,14 @@ impl<S: Sink> Writer<'_, '_, S> {
             AttrValue::Url(_) if !is_url => {
                 return Err(attr_err(tag, name, "the attribute takes no URL"));
             }
-            AttrValue::Text(_) | AttrValue::Msg(_) if is_url => {
+            AttrValue::Text(_) | AttrValue::Msg(_) | AttrValue::Parts(_) if is_url => {
                 return Err(attr_err(tag, name, "the attribute takes a SafeUrl"));
+            }
+            AttrValue::Text(t) if svg && svg_value_ruled(name) && !svg_value_ok(name, t) => {
+                return Err(attr_err(tag, name, "the value is outside the SVG subset"));
+            }
+            AttrValue::Msg(_) | AttrValue::Parts(_) if svg && svg_value_ruled(name) => {
+                return Err(attr_err(tag, name, "the SVG attribute takes a fixed text"));
             }
             _ => {}
         }
@@ -634,6 +780,20 @@ impl<S: Sink> Writer<'_, '_, S> {
                 push_attr(&mut self.out, u.as_str());
             }
             AttrValue::Msg(m) => self.message(m, &TracePlace::Attr(name))?,
+            AttrValue::Parts(parts) => {
+                for p in parts {
+                    match &p.0 {
+                        Repr::Text(t) => {
+                            self.sink.dynamic(&TracePlace::Attr(name), t);
+                            push_attr(&mut self.out, t);
+                        }
+                        Repr::Msg(m) => self.message(m, &TracePlace::Attr(name))?,
+                        Repr::El(_) | Repr::Lines(..) => {
+                            return Err(attr_err(tag, name, "an attribute holds only text"));
+                        }
+                    }
+                }
+            }
             AttrValue::Flag => {}
         }
         self.out.push('"');

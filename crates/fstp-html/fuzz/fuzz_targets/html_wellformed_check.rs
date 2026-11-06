@@ -92,6 +92,21 @@ const TAGS: &[&str] = &[
     "body",
     "title",
     "meta",
+    // The closed SVG subset (lane j3, ADR-015), and SVG elements outside it.
+    "svg",
+    "g",
+    "rect",
+    "circle",
+    "path",
+    "line",
+    "text",
+    "tspan",
+    "desc",
+    "defs",
+    "marker",
+    "foreignobject",
+    "animate",
+    "use",
 ];
 
 /// Attributes the builder draws, including some the writer must refuse.
@@ -113,6 +128,19 @@ const ATTRS: &[&str] = &[
     "lang",
     "onclick",
     "style",
+    // SVG attributes (lane j3, ADR-015), allowed and refused.
+    "viewbox",
+    "x",
+    "y1",
+    "rx",
+    "d",
+    "marker-end",
+    "fill",
+    "stroke",
+    "text-anchor",
+    "aria-hidden",
+    "role",
+    "onload",
 ];
 
 /// `<meta name>` values the builder draws, including some the writer must

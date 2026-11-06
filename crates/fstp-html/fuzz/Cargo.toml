@@ -32,6 +32,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "route_svg_render"
+path = "fuzz_targets/route_svg_render.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

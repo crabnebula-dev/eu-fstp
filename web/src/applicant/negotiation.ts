@@ -11,6 +11,7 @@
 
 import { h } from "../core/dom.js";
 import { navigate } from "../core/router.js";
+import { activityNav } from "../journey/links.js";
 import { call } from "./client.js";
 import { loadProposal } from "./load.js";
 import { NOTICE_VERSIONS } from "./messages.en.js";
@@ -135,6 +136,8 @@ export function mountGuardian(id: string): void {
     if (p === null) {
       return;
     }
+    // O-60: the guardian's own consent steps are in the activity log.
+    f.main.append(activityNav(id));
     // Only the guardian gives consent (registry GUARDIAN), and consent
     // opens at the last IRC validation and in NEGOTIATION (NOTE 14).
     if (p.role !== "guardian" || !guardianConsentOpen(p.state)) {

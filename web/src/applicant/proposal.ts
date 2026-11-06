@@ -10,6 +10,7 @@
 // and Escape close it.
 
 import { h } from "../core/dom.js";
+import { journeyNav } from "../journey/links.js";
 import { call } from "./client.js";
 import { isEmail } from "./email.js";
 import { loadProposal } from "./load.js";
@@ -266,7 +267,8 @@ export function mountProposal(id: string, done?: string): void {
       " ",
       h("span", { class: "state-name" }, [p.state]),
     ]);
-    f.main.append(title, state, ...outcomePanel(p.state));
+    // R-JV-01: the progress map and the activity log of the proposal.
+    f.main.append(title, state, journeyNav(p.proposal), ...outcomePanel(p.state));
     if (p.call !== undefined) {
       f.main.append(h("p", {}, [h("a", { href: APP.call(p.call) }, [t("proposal.call_link")])]));
     }

@@ -8,7 +8,8 @@
 // 2. the creator, onboarding and people pages (lane W4a);
 // 3. the call and applicant pages (lane W4b);
 // 4. the Judging pages of the coordinator, reviewers, committee and IRC
-//    (lane W4c).
+//    (lane W4c), with the "Proposal status" strip of section 8.3;
+// 5. the progress map and the activity log of a proposal (lane j3).
 //
 // The tables hold disjoint patterns, so the order only fixes which table
 // is asked first. A path that no table holds shows the not-found page.
@@ -35,6 +36,8 @@ import { VISUALLY_HIDDEN_CLASS } from "../core/a11y.js";
 import { createRouter, rerender, startNavigation } from "../core/router.js";
 import { CREATOR_ROUTES, type PageRoute } from "../creator/routes.js";
 import { mountHome } from "../home/page.js";
+import { addJudgingStrip } from "../journey/pages.js";
+import { JOURNEY_ROUTES } from "../journey/routes.js";
 import { startSession } from "../home/session.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
@@ -59,6 +62,20 @@ function mountStaff(path: string): boolean {
   return true;
 }
 
+let journey: ReturnType<typeof createRouter> | null = null;
+
+/** Mounts a voyager page: the progress map or the activity log (lane j3). False when none has the path. */
+function mountJourney(path: string): boolean {
+  journey ??= createRouter(JOURNEY_ROUTES);
+  const m = journey.match(path);
+  const route = m === null ? undefined : JOURNEY_ROUTES.find((r) => r.name === m.name);
+  if (m === null || route === undefined) {
+    return false;
+  }
+  route.mount(m.params);
+  return true;
+}
+
 /** The element the Judging pages render into: the shell's `#app`, else the body. */
 function root(): HTMLElement {
   const app = document.getElementById("app");
@@ -76,10 +93,13 @@ async function run(path: string): Promise<void> {
     mountHome();
     return;
   }
-  if (mountSite(path) || mountStaff(path) || mountApplicantPage(path)) {
+  if (mountSite(path) || mountStaff(path) || mountJourney(path) || mountApplicantPage(path)) {
     return;
   }
   if (await mountJudging(browserEnv(root()), path)) {
+    // Section 8.3: a reviewer's or coordinator's proposal page gets the
+    // "Proposal status" strip when the journey read gives one (O-58).
+    await addJudgingStrip(path);
     return;
   }
   mountNotFound();

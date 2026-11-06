@@ -98,7 +98,18 @@ pub(crate) fn refused() -> Vec<(&'static str, Vec<u8>)> {
         ("style element", with_body("<style>p{}</style>")),
         ("iframe", with_body("<iframe></iframe>")),
         ("object", with_body("<object></object>")),
-        ("svg", with_body("<svg></svg>")),
+        // Lane j3 (ADR-015): the closed SVG subset is allowed, so a bare
+        // `svg` is no longer a refusal. Foreign content outside that
+        // subset still is.
+        (
+            "svg holding a foreign object",
+            with_body("<svg><foreignobject></foreignobject></svg>"),
+        ),
+        (
+            "svg holding a script",
+            with_body("<svg><script></script></svg>"),
+        ),
+        ("math", with_body("<math></math>")),
         ("template", with_body("<template></template>")),
         ("noscript", with_body("<noscript></noscript>")),
         ("unknown element", with_body("<blink>a</blink>")),
