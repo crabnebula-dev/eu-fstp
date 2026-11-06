@@ -20,6 +20,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "vocab_parse"
+path = "fuzz_targets/vocab_parse.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

@@ -45,6 +45,12 @@ export interface I18nOptions {
   readonly catalogues: readonly CatalogueInput[];
   readonly locale: string;
   readonly overrides?: Readonly<Record<string, string>>;
+  /**
+   * The secondary labels of a switched-on Voyage pack, by label id
+   * (O-55). An id this catalogue has no label for is ignored, since a
+   * pack covers every surface and a catalogue only its own.
+   */
+  readonly secondary?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -55,6 +61,12 @@ export interface I18n {
   readonly locale: string;
   label(id: string, args?: Readonly<Record<string, string>>): Label;
   approved(id: string, args?: Readonly<Record<string, string>>): ApprovedText;
+  /**
+   * The Voyage label of a label id, shown as a secondary line beside the
+   * label (O-55). `null` when no pack is switched on, the pack has none,
+   * or it reads as the label itself. An unknown id throws.
+   */
+  secondary(id: string, args?: Readonly<Record<string, string>>): Label | null;
 }
 
 /** The error for a catalogue, override or lookup outside the rules. */
@@ -211,7 +223,8 @@ function format(m: Message, id: string, args: unknown): string {
  * The catalogue of `opts.locale`. It throws `I18nError` for an unknown
  * locale, a locale given twice, a message that does not parse, an id that
  * is both a label and approved text, an override of an approved id
- * (I-72), and an override of an unknown label or one that does not parse.
+ * (I-72), an override of an unknown label or one that does not parse, and
+ * a secondary label for approved wording (I-72) or one that does not parse.
  *
  * Interim strict reading, pending Daniel: an override must keep the
  * placeholders of the label it replaces, so a page's arguments still fit.
@@ -268,6 +281,29 @@ export function createI18n(opts: I18nOptions): I18n {
     }
   }
   const approved = chosen.approved;
+  const approvedIds = new Set<string>();
+  for (const c of byLocale.values()) {
+    for (const id of c.approved.keys()) {
+      approvedIds.add(id);
+    }
+  }
+  const secondary = new Map<string, Message>();
+  if (opts.secondary !== undefined) {
+    for (const [id, text] of record(opts.secondary, "secondary labels")) {
+      if (approvedIds.has(id)) {
+        throw new I18nError(`approved text ${id} takes no secondary label (I-72)`);
+      }
+      const label = labels.get(id);
+      if (label === undefined) {
+        continue;
+      }
+      const m = compileMessage(text, `secondary label of ${id}`);
+      if (!sameNames(m.names, label.names)) {
+        throw new I18nError(`secondary label of ${id} changes its placeholders`);
+      }
+      secondary.set(id, m);
+    }
+  }
   return Object.freeze({
     locale,
     label(id: string, args?: Readonly<Record<string, string>>): Label {
@@ -283,6 +319,18 @@ export function createI18n(opts: I18nOptions): I18n {
         throw new I18nError(`unknown approved text ${String(id)}`);
       }
       return format(m, id, args) as ApprovedText;
+    },
+    secondary(id: string, args?: Readonly<Record<string, string>>): Label | null {
+      const m = labels.get(id);
+      if (m === undefined) {
+        throw new I18nError(`unknown label ${String(id)}`);
+      }
+      const s = secondary.get(id);
+      if (s === undefined) {
+        return null;
+      }
+      const text = format(s, id, args);
+      return text === format(m, id, args) ? null : (text as Label);
     },
   });
 }
