@@ -17,7 +17,9 @@
 //! - the programmes of the caller's programme manager bindings that hold
 //!   a creator draft, so the home page links the creator and people pages
 //!   only where they can load (both read the draft);
-//! - whether the caller is a tenant admin of the attested admin set.
+//! - whether the caller is a tenant admin of the attested admin set;
+//! - the tenant-wide signatory roles the caller holds, Financial first
+//!   (NOTE 5; design section 15.0, "Roles lane questions", 2026-11-06).
 //!
 //! The reply names the caller's own bindings only. It holds no name, no
 //! email, no identity attribute and nothing about any other account
@@ -78,6 +80,9 @@ pub struct MyRoles {
     /// The programmes of the caller's programme manager bindings that hold
     /// a creator draft, ascending.
     pub drafts: Vec<ProgrammeId>,
+    /// The tenant-wide signatory roles the caller holds, Financial first
+    /// (NOTE 5). They bind no programme, so `roles` never names them.
+    pub signatories: Vec<Role>,
 }
 
 /// A decimal string.
@@ -125,6 +130,15 @@ impl ToJson for MyRoles {
         let _ = o.insert(
             "drafts",
             Value::Array(self.drafts.iter().map(|p| dec(p.raw())).collect()),
+        );
+        let _ = o.insert(
+            "signatories",
+            Value::Array(
+                self.signatories
+                    .iter()
+                    .map(|r| Value::from(fstp_access::role_wire_name(*r)))
+                    .collect(),
+            ),
         );
         Value::Object(o)
     }
@@ -221,11 +235,22 @@ pub(super) async fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> My
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    // NOTE 5: the signatory roles live in the tenant fold, not the
+    // roster. Before the ledger holds the tenant part, nobody holds one.
+    let signatories: Vec<Role> = match state.tenant.state() {
+        Some(ts) => fstp_tenant::SignatoryRole::ALL
+            .into_iter()
+            .filter(|r| ts.holds_signatory(*r, account))
+            .map(fstp_tenant::SignatoryRole::role)
+            .collect(),
+        None => Vec::new(),
+    };
     MyRoles {
         tenant_admin: call.caller.p.tenant_admin(),
         roles,
         calls,
         rounds,
         drafts,
+        signatories,
     }
 }

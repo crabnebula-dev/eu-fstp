@@ -111,10 +111,11 @@ fn i86_me_roles_lists_exactly_the_callers_own_bindings() {
     );
 }
 
-/// I-86: the reply carries no email and no name. It holds the five
+/// I-86: the reply carries no email and no name. It holds the six
 /// members of its shape: ids of programmes, proposals, calls and rounds,
 /// role names, the published call titles, the caller's drafted
-/// programmes and the tenant admin flag.
+/// programmes, the caller's signatory roles (NOTE 5) and the tenant
+/// admin flag.
 #[test]
 fn i86_me_roles_names_no_account_and_no_email() {
     let c = cell();
@@ -128,9 +129,16 @@ fn i86_me_roles_names_no_account_and_no_email() {
         };
         assert_eq!(
             keys,
-            ["calls", "drafts", "roles", "rounds", "tenant_admin"]
-                .into_iter()
-                .collect(),
+            [
+                "calls",
+                "drafts",
+                "roles",
+                "rounds",
+                "signatories",
+                "tenant_admin",
+            ]
+            .into_iter()
+            .collect(),
             "{s}"
         );
     }

@@ -651,7 +651,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
     // title of each call they name, and the open cut-off rounds of the
     // caller's committee calls, and the caller's programme manager
     // programmes that hold a creator draft. No name, no email and no
-    // other account.
+    // other account. NOTE 5 (design section 15.0, 2026-11-06): the
+    // tenant-wide signatory roles the caller holds, Financial first.
     // A call title is the published call text, which anyone may read.
     (
         "me.roles",
@@ -681,6 +682,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 ])),
             ),
             m("drafts", Shape::Array(&Shape::Id)),
+            m(
+                "signatories",
+                Shape::Array(&Shape::Enum(&["financial_signatory", "legal_signatory"])),
+            ),
         ]),
     ),
     // Lane m4reg. SoD-07: each admin by account and pseudonymous handle,

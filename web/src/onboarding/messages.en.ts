@@ -100,7 +100,10 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.p20.record_only": "Record only",
   "onboarding.p20.execution": "Execution",
   "onboarding.channels.email": "Email is the channel of this release. The platform sends every message by email, so this step needs no setting.",
-  "onboarding.channels.later": "Other channels come in a later release.",
+  "onboarding.channels.later_title": "Later channels",
+  "onboarding.channels.matrix": "Matrix homeserver",
+  "onboarding.channels.whatsapp": "Use a WhatsApp Business account",
+  "onboarding.channels.coming_later": "Coming later. Matrix and WhatsApp arrive in a later release, so these fields stay disabled and the platform saves no value for them.",
   "onboarding.administrators.review": "Saving this step records the tenant admins listed below.",
 
   // Administrators.

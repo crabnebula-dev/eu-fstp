@@ -310,6 +310,7 @@ test("r_pc_03_studio_drafter_sees_no_approve_control", () => {
     calls: [{ call: "3", title: "Synthetic call" }],
     rounds: [],
     drafts: [],
+    signatories: [],
   });
   const pm = roles({
     tenant_admin: false,
@@ -320,6 +321,7 @@ test("r_pc_03_studio_drafter_sees_no_approve_control", () => {
     calls: [],
     rounds: [],
     drafts: ["7"],
+    signatories: [],
   });
   eq(mayApproveCalls(drafter, "7"), false, "a call drafter may not approve");
   eq(mayApproveCalls(pm, "7"), true, "a programme manager may ask to approve");

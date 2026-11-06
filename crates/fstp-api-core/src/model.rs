@@ -1807,6 +1807,7 @@ pub(crate) mod reply_shape_tests {
                 calls: Vec::new(),
                 rounds: Vec::new(),
                 drafts: Vec::new(),
+                signatories: Vec::new(),
             };
         }
         MyRoles {
@@ -1840,6 +1841,7 @@ pub(crate) mod reply_shape_tests {
                 call: CallId::from_raw(1),
             }],
             drafts: vec![ProgrammeId::from_raw(1)],
+            signatories: vec![Role::FinancialSignatory, Role::LegalSignatory],
         }
     }
 

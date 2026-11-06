@@ -39,6 +39,9 @@
 // - A person with no role sees `#home-no-role`, which says so. The list
 //   then holds the open calls only.
 // - `#home-other` names each role this release has no page for.
+// - `#home-signatory` names each signatory role the caller holds, one
+//   `li[data-signatory="<role>"]` each (NOTE 5; design section 15.0,
+//   2026-11-06).
 //
 // Every element is built with `h`, and every text goes in as a text node.
 
@@ -442,6 +445,29 @@ function otherRoles(w: Work): HTMLElement[] {
   ];
 }
 
+/**
+ * The tenant-wide signatory roles of the caller (NOTE 5). What they
+ * approve has no page until M5, so each role is named without a link.
+ */
+function signatoryRoles(w: Work): HTMLElement[] {
+  if (w.signatories.length === 0) {
+    return [];
+  }
+  return [
+    h("section", { id: "home-signatory", class: "card", "aria-labelledby": "home-signatory-heading" }, [
+      h("h2", { id: "home-signatory-heading" }, [homeLabel("home.signatory.title")]),
+      h(
+        "ul",
+        { class: "fstp-list" },
+        w.signatories.map((role) =>
+          h("li", { "data-signatory": role }, [homeLabel("home.signatory.item", { role: homeLabel(`role.${role}`) })]),
+        ),
+      ),
+      h("p", { class: "text-sm" }, [homeLabel("home.signatory.later")]),
+    ]),
+  ];
+}
+
 /** Whether the caller holds the tenant admin role and nothing else. */
 function adminOnly(r: MyRoles): boolean {
   return r.tenantAdmin && r.roles.length === 0;
@@ -504,7 +530,7 @@ export function mountHome(): void {
         cardElement({ id: "home-calls", title: homeLabel("home.group.everyone"), body: [h("p", { class: "text-sm" }, [homeLabel("home.calls.intro")])], items: everyone }, null),
       ]),
     ]);
-    parts.push(work, ...otherRoles(w));
+    parts.push(work, ...signatoryRoles(w), ...otherRoles(w));
     home.replaceChildren(...parts);
   })().catch(failed);
 }

@@ -28,6 +28,7 @@ import { busy, frame, hush, warn } from "../../creator/frame.js";
 import { anyObject, call, report } from "../../creator/ops.js";
 import { labelOr, t } from "../i18n.js";
 import {
+  CHANNELS_VALUES,
   ONBOARDING_STEPS,
   PAYMENT_MODES,
   accountSet,
@@ -204,14 +205,25 @@ function controls(step: OnboardingStep, view: StepView, admins: readonly AdminRo
           new Set(typeof v["bank_interface"] === "string" ? [v["bank_interface"]] : []),
         ),
       ];
-    case "channels":
-      // P-32: email is the one channel of this release. The other
-      // channels wait on B-03 and B-05, so the step offers no control for
-      // them, and the save sends their stored values back unchanged.
+    case "channels": {
+      // P-32: email is the one channel of this release. Matrix (B-05) and
+      // WhatsApp (B-03) show disabled and marked as coming later, and the
+      // save sends no value for them (design section 15.0, 2026-11-06).
+      const note = "ob-channels-later-note";
+      const later = { disabled: true, "aria-describedby": note } as const;
       return [
         h("p", { id: "ob-channels-email" }, [t.label("onboarding.channels.email")]),
-        h("p", { class: "fstp-hint" }, [t.label("onboarding.channels.later")]),
+        h("fieldset", { id: "ob-channels-later", class: "fstp-group", disabled: true }, [
+          h("legend", {}, [t.label("onboarding.channels.later_title")]),
+          textControl("matrix_homeserver", t.label("onboarding.channels.matrix"), "", { ...later, autocomplete: "off" }),
+          h("div", { class: "fstp-check" }, [
+            h("input", { id: "ob.whatsapp", type: "checkbox", name: "whatsapp", ...later }),
+            h("label", { for: "ob.whatsapp" }, [t.label("onboarding.channels.whatsapp")]),
+          ]),
+          h("p", { id: note, class: "fstp-hint" }, [t.label("onboarding.channels.coming_later")]),
+        ]),
       ];
+    }
     case "administrators":
       return [h("p", {}, [t.label("onboarding.administrators.review")])];
   }
@@ -262,12 +274,10 @@ function values(step: OnboardingStep, form: HTMLElement, view: StepView, admins:
       };
     case "payments":
       return { ok: { bank_interface: checked(form, "bank_interface")[0] ?? "" } };
-    case "channels": {
-      // The stored members stay as the server holds them (P-32, scope item 6).
-      const v = view.values ?? {};
-      const homeserver = typeof v["matrix_homeserver"] === "string" ? v["matrix_homeserver"] : null;
-      return { ok: { matrix_homeserver: homeserver, whatsapp: v["whatsapp"] === true } };
-    }
+    case "channels":
+      // P-32, B-03, B-05: no Matrix or WhatsApp value goes out, whatever
+      // the disabled fields or the server hold.
+      return { ok: { ...CHANNELS_VALUES } };
     case "administrators": {
       const set = accountSet(admins.map((a) => a.account));
       return set === null ? invalid : { ok: { admins: set } };

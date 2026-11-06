@@ -2929,6 +2929,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         },
       } }, optional: false },
       "drafts": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
+      "signatories": { schema: { kind: "array", items: { kind: "enum", values: ["financial_signatory", "legal_signatory"] } }, optional: false },
     },
   },
   "tenant.list_admins": {
