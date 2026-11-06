@@ -291,7 +291,10 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         Record::AmendmentProposed { .. }
         | Record::AmendmentRouted { .. }
         | Record::AmendmentActivated { .. } => Lane::Amendment,
-        Record::VaultOutcome { .. } | Record::OutboxEnqueued(_) => return None,
+        // J2, lane inv: the engine and the creator fold `TermsAccepted`.
+        Record::VaultOutcome { .. } | Record::OutboxEnqueued(_) | Record::TermsAccepted { .. } => {
+            return None;
+        }
     };
     Some(lane)
 }

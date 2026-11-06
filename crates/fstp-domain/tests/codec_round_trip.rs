@@ -132,6 +132,7 @@ record_round_trip! {
     i23_codec_round_trip_record_termination_recorded => TerminationRecorded,
     i23_codec_round_trip_record_transitioned => Transitioned,
     i23_codec_round_trip_record_vault_outcome => VaultOutcome,
+    i23_codec_round_trip_record_terms_accepted => TermsAccepted,
     i23_codec_round_trip_record_outbox_enqueued => OutboxEnqueued,
     i23_codec_round_trip_record_payment_requested => PaymentRequested,
     i23_codec_round_trip_record_line_accepted => LineAccepted,

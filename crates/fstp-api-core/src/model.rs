@@ -114,6 +114,9 @@ pub enum ReadModel {
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
+    /// `people.get_invitation`: the invitation landing (SoD-09, J2, lane
+    /// inv). It names no account, no inviter and no address.
+    Invitation(InvitationLanding),
 }
 
 /// The answer to a public operation (design section 3.10).
@@ -221,6 +224,7 @@ impl ToJson for ReadModel {
             ReadModel::MyRoles(r) => r.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
+            ReadModel::Invitation(v) => v.to_json(),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -792,15 +796,16 @@ impl ToJson for InvitationLanding {
             Some(McpBindingActions::Allowed) => Value::from("allowed"),
             None => Value::Null,
         };
+        // In key order, as the canonical text has it (J2, lane inv).
         object(vec![
+            ("p75", p75),
+            ("p77", p77),
             (
                 "role",
                 Value::from(invited_role(self.role).unwrap_or_default()),
             ),
-            ("terms_version", Value::from(self.terms_version.get())),
-            ("p75", p75),
-            ("p77", p77),
             ("state", Value::from(self.state.as_str())),
+            ("terms_version", Value::from(self.terms_version.get())),
         ])
     }
 }
@@ -1534,7 +1539,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::OwnProposals(_) => &["proposal.list_own"],
             ReadModel::Assignments(_) => &["me.assignments", "me.irc_cases"],
             ReadModel::Sessions(_) => &["me.sessions"],
-            ReadModel::Redirect(_) => &["me.begin_verification"],
+            ReadModel::Redirect(_) => &["me.begin_verification", "people.begin_verification"],
             ReadModel::IntakeQueue(_) => &["intake.queue"],
             ReadModel::Board(_) => &["call.board"],
             ReadModel::DeclarationView(_) => &["review.declaration_view"],
@@ -1569,6 +1574,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => &["me.roles"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
+            ReadModel::Invitation(_) => &["people.get_invitation"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Public(_) => &[],
         }
@@ -1846,6 +1852,16 @@ pub(crate) mod reply_shape_tests {
             }),
             ReadModel::Public(PublicReply::Json(Value::Object(Object::new()))),
             ReadModel::Public(PublicReply::Page("<!DOCTYPE html>".to_owned())),
+            ReadModel::Invitation(
+                InvitationLanding::new(
+                    Role::CommitteeMember,
+                    std::num::NonZeroU32::MIN,
+                    Some(true),
+                    Some(McpBindingActions::Allowed),
+                    InvitationState::Accepted,
+                )
+                .unwrap(),
+            ),
         ]
         .into_iter()
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
@@ -1918,7 +1934,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 33;
+    const VARIANTS: usize = 34;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1958,6 +1974,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(_) => 30,
             ReadModel::Diary(_) => 31,
             ReadModel::Public(_) => 32,
+            ReadModel::Invitation(_) => 33,
         }
     }
 

@@ -3098,6 +3098,12 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "people.begin_verification": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
   "people.get_invitation": {
     kind: "object",
     fields: {

@@ -329,6 +329,25 @@ pub enum CreatorCommand {
         /// The new template.
         template: TemplateId,
     },
+    /// The actor accepts the confidentiality terms of an invitation by
+    /// contact address (J2, `people.accept_invitation`, lane inv).
+    ///
+    /// The shell resolves the invitation from the link token the invitee
+    /// holds, so the command names neither the token nor an address. It
+    /// records no creator record: the engine appends the core
+    /// `TermsAccepted`, which the creator folds through
+    /// [`crate::CreatorState::observe_invitation_accepted`].
+    AcceptInvitation {
+        /// The programme of the invitation.
+        programme: ProgrammeId,
+        /// The invitation.
+        invitation: InvitationId,
+        /// The version of the confidentiality terms the invitee was shown.
+        version: u32,
+        /// The terms as shown, stored by the shell as a confidential text
+        /// of the programme.
+        terms: TextRef,
+    },
 }
 
 impl CreatorCommand {
@@ -344,7 +363,8 @@ impl CreatorCommand {
             | CreatorCommand::AcknowledgeWarning { programme, .. }
             | CreatorCommand::RequestActivation { programme, .. }
             | CreatorCommand::ApproveActivation { programme, .. }
-            | CreatorCommand::SaveAsTenantTemplate { programme, .. } => *programme,
+            | CreatorCommand::SaveAsTenantTemplate { programme, .. }
+            | CreatorCommand::AcceptInvitation { programme, .. } => *programme,
         }
     }
 

@@ -233,6 +233,12 @@ impl FakeVault {
         lock(&self.log).intake.clone()
     }
 
+    /// Every verification the vault began: purpose and account, in order
+    /// (lane inv, `people.begin_verification`).
+    pub fn verifications(&self) -> Vec<(VerificationPurpose, AccountId)> {
+        lock(&self.log).verifications.clone()
+    }
+
     /// Every answer the vault port gave, in order.
     pub fn port_asks(&self) -> Vec<(Query, Answer)> {
         lock(&self.log).asks.clone()

@@ -77,6 +77,10 @@ id!(
     ActivityTypeId,
     /// A contract, as reported by the M5 contract port.
     ContractId,
+    /// A creator invitation to a programme role (J2, lane inv), by the
+    /// creator's id, so a core `TermsAccepted` names the invitation it
+    /// accepts.
+    RoleInvitationId,
 );
 
 /// Idempotency key of one command, from the shell.

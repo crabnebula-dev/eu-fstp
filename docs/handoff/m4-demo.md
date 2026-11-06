@@ -163,7 +163,7 @@ Run against the cell on 2026-10-31 at m4/int-b 9c32f1a plus lane m4/home (the ho
 | `e2e/review/*` and `e2e/review/unit/*` | 63 of 63 | |
 | `e2e/applicant/*` | 48 of 54 | The six known failures: the Guide, affiliations, the stage 2 revision, guardian consent, the copy request and the review decoders' fuzz check |
 | `e2e/onboarding.spec.ts`, `e2e/onboarding_logic.spec.ts` | 17 of 17 | |
-| `e2e/creator/*` | 23 of 37 | The import, second-person and SuperSAFE journeys (14) wait for the programme invitation mail: the e2e cell sends admin invitations only |
+| `e2e/creator/*` | 23 of 37 | The import, second-person and SuperSAFE journeys (14). Since lane inv (2026-11-06) the cell mails each programme invitation as kind `invitation` with `/app/invitation#<token>`, and the invitee enrols, accepts the terms and verifies. The journeys now stop at the grant on the people admin page: its body `{invitation}` fails the strict `roles.grant` decoder of `fstp-api-core/src/forms.rs`, outside the lane |
 
 ## What does not run, and why
 

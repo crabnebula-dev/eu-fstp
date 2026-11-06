@@ -19,8 +19,8 @@ use crate::check::{CheckId, Severity};
 use crate::draft;
 use crate::inputs::CreatorInputs;
 use crate::model::{
-    CreatorCommand, CreatorRecord, DraftRevision, ImportFieldEdit, Provenance, StartingPoint,
-    ValueDigest,
+    CreatorCommand, CreatorRecord, DraftRevision, ImportFieldEdit, Invitee, Provenance,
+    StartingPoint, ValueDigest,
 };
 use crate::probe::ProbeKind;
 use crate::state::{CreatorState, Draft};
@@ -95,6 +95,9 @@ pub enum CreatorRefusal {
     RoleNotInvitable,
     /// The template id is taken.
     TemplateExists,
+    /// J2: the invitation was accepted already. A second acceptance by
+    /// the same account is refused, and one by another account too.
+    AlreadyAccepted,
     /// The acknowledged key is not a warning the current report shows
     /// (reading R5, interim, pending Daniel).
     NotAWarning,
@@ -325,6 +328,35 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                 invitation: *invitation,
                 by: actor,
             }])
+        }
+        CreatorCommand::AcceptInvitation {
+            programme,
+            invitation,
+            version,
+            ..
+        } => {
+            // J2: a live invitation by contact address, accepted once by
+            // one account, after activation too. The shell checks the
+            // terms version it showed; the ledger keeps any version from 1.
+            let d = creator
+                .draft(*programme)
+                .ok_or(CreatorRefusal::UnknownDraft)?;
+            let i = d
+                .invitations()
+                .get(invitation)
+                .filter(|i| !i.withdrawn)
+                .ok_or(CreatorRefusal::UnknownInvitation)?;
+            if !matches!(i.invitee, Invitee::Pending { .. }) {
+                return Err(CreatorRefusal::UnknownInvitation);
+            }
+            if i.accepted.is_some() {
+                return Err(CreatorRefusal::AlreadyAccepted);
+            }
+            if *version == 0 {
+                return Err(CreatorRefusal::NothingToSave);
+            }
+            let _ = actor;
+            records(Vec::new())
         }
         CreatorCommand::AcknowledgeWarning {
             programme,

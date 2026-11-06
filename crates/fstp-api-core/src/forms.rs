@@ -542,6 +542,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
     if let Some(r) = crate::tenant::check(spec, request) {
         return r;
     }
+    // A grant by invitation (J2) carries `{invitation}`, which the people
+    // page sends. Its own decoder judges it; any other body falls through.
+    if spec.name == "roles.grant"
+        && let Some(r) = crate::dispatch::people::check_grant_by_invitation(request)
+    {
+        return r.map(|_| ());
+    }
     let body = request.keys().filter(|k| !params.contains(k));
     if let Some(f) = op_form(spec) {
         return check_command(&f, request, body.collect());
