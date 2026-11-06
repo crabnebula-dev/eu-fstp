@@ -1,0 +1,198 @@
+/**
+ * PDFMarkupAnnotation - Base class for markup annotations.
+ *
+ * Markup annotations include Text, FreeText, Line, Square, Circle,
+ * Polygon, PolyLine, Highlight, Underline, Squiggly, StrikeOut,
+ * Stamp, Caret, Ink, and FileAttachment.
+ *
+ * They share common properties like title, popup, opacity, and dates.
+ *
+ * PDF Reference: Section 12.5.6.2 "Markup Annotations"
+ */
+
+import { PdfArray } from "../objects/pdf-array.js";
+import { PdfBool } from "../objects/pdf-bool.js";
+import { PdfDict } from "../objects/pdf-dict.js";
+import { PdfName } from "../objects/pdf-name.js";
+import { PdfNumber } from "../objects/pdf-number.js";
+import type { PdfRef } from "../objects/pdf-ref.js";
+import { PdfString } from "../objects/pdf-string.js";
+
+import { PDFAnnotation, rectToArray } from "./base.js";
+import { PDFPopupAnnotation } from "./popup.js";
+import type { PopupOptions } from "./types.js";
+
+/**
+ * Base class for markup annotations.
+ */
+export class PDFMarkupAnnotation extends PDFAnnotation {
+  /** Cached popup annotation */
+  private _popup: PDFPopupAnnotation | null | undefined = undefined;
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Markup-Specific Properties
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Text label for the annotation (often the author name).
+   */
+  get title(): string | null {
+    const t = this.dict.getString("T", this.registry.resolve.bind(this.registry));
+
+    return t?.asString() ?? null;
+  }
+
+  /**
+   * Set the title/author.
+   */
+  setTitle(title: string): void {
+    this.dict.set("T", PdfString.fromString(title));
+    this.markModified();
+  }
+
+  /**
+   * Opacity (CA) - constant opacity value for the annotation.
+   * Range 0-1, where 0 is fully transparent and 1 is fully opaque.
+   */
+  get opacity(): number {
+    const ca = this.dict.getNumber("CA", this.registry.resolve.bind(this.registry));
+
+    return ca?.value ?? 1;
+  }
+
+  /**
+   * Set the opacity.
+   */
+  setOpacity(opacity: number): void {
+    const clamped = Math.max(0, Math.min(1, opacity));
+    this.dict.set("CA", PdfNumber.of(clamped));
+    this.markModified();
+  }
+
+  /**
+   * Creation date (CreationDate).
+   */
+  get creationDate(): string | null {
+    const cd = this.dict.getString("CreationDate", this.registry.resolve.bind(this.registry));
+
+    return cd?.asString() ?? null;
+  }
+
+  /**
+   * Set the creation date.
+   */
+  setCreationDate(date: string): void {
+    this.dict.set("CreationDate", PdfString.fromString(date));
+    this.markModified();
+  }
+
+  /**
+   * Subject - the subject of the annotation.
+   */
+  get subject(): string | null {
+    const subj = this.dict.getString("Subj", this.registry.resolve.bind(this.registry));
+
+    return subj?.asString() ?? null;
+  }
+
+  /**
+   * Set the subject.
+   */
+  setSubject(subject: string): void {
+    this.dict.set("Subj", PdfString.fromString(subject));
+    this.markModified();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Popup Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Reference to an associated popup annotation.
+   */
+  get popupRef(): PdfRef | null {
+    const popup = this.dict.get("Popup");
+
+    return popup?.type === "ref" ? popup : null;
+  }
+
+  /**
+   * Get the associated popup annotation, if any.
+   */
+  getPopup(): PDFPopupAnnotation | null {
+    if (this._popup !== undefined) {
+      return this._popup;
+    }
+
+    const popupRef = this.popupRef;
+
+    if (!popupRef) {
+      this._popup = null;
+
+      return null;
+    }
+
+    const popupDict = this.registry.resolve(popupRef);
+
+    if (popupDict instanceof PdfDict) {
+      this._popup = new PDFPopupAnnotation(popupDict, popupRef, this.registry);
+
+      return this._popup;
+    }
+
+    this._popup = null;
+
+    return null;
+  }
+
+  /**
+   * Create a popup annotation associated with this annotation.
+   * The popup is added to the parent annotation and registered.
+   */
+  createPopup(options: PopupOptions): PDFPopupAnnotation {
+    if (!this.ref) {
+      throw new Error("Cannot create popup for annotation without reference");
+    }
+
+    const popupDict = PdfDict.of({
+      Type: PdfName.of("Annot"),
+      Subtype: PdfName.of("Popup"),
+      Rect: new PdfArray(rectToArray(options.rect)),
+      Parent: this.ref,
+    });
+
+    if (options.open) {
+      popupDict.set("Open", PdfBool.of(true));
+    }
+
+    // Register the popup
+    const popupRef = this.registry.register(popupDict);
+
+    // Link this annotation to the popup
+    this.dict.set("Popup", popupRef);
+    this.markModified();
+
+    const popup = new PDFPopupAnnotation(popupDict, popupRef, this.registry);
+    this._popup = popup;
+
+    return popup;
+  }
+
+  /**
+   * Get the reply-to annotation reference (for replies).
+   */
+  get inReplyToRef(): PdfRef | null {
+    const irt = this.dict.get("IRT");
+
+    return irt?.type === "ref" ? irt : null;
+  }
+
+  /**
+   * Intent (IT) - the intent of the markup annotation.
+   */
+  get intent(): string | null {
+    const it = this.dict.getName("IT", this.registry.resolve.bind(this.registry));
+
+    return it?.value ?? null;
+  }
+}

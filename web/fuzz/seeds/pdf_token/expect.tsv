@@ -1,0 +1,14 @@
+# pdf_token corpus (ADR-016). Each line is <verdict><TAB><JSON string of bytes, one code unit per byte>.
+# The verdict is object, or refuse:<code> with the refusal code of web/src/sign/errors.ts.
+# Synthetic data only, written by web/fuzz/pdf_fixture.ts (ADR-016).
+object	"<< /Type /Catalog /Pages 2 0 R >>"
+object	"[1 -3 +4 .5 (str) <414243> /Name true false null 4 0 R]"
+object	"(nested (parens) and \\) escape \\061)"
+object	"<< /A << /B [ [ ] ] >> /C <> >>"
+object	"/Name#20With#20Space"
+object	"12 0 R"
+refuse:malformed	""
+refuse:malformed	"<< /A"
+refuse:malformed	">>"
+refuse:malformed	"<< /A 1 /B >>"
+refuse:limit	"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"

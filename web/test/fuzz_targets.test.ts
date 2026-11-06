@@ -53,11 +53,23 @@ async function caught(t: FuzzTarget): Promise<void> {
   assert(!out.ok, `${t.name} did not catch the mutant`);
 }
 
-/** TH-26, H-05: every TypeScript parser of design section 9 has its fuzz target and a non-empty corpus. */
+/** TH-26, H-05, ADR-016: every TypeScript parser of design section 9 and the vendored LibPDF has its fuzz target and a non-empty corpus. */
 test("th26_every_typescript_parser_has_a_fuzz_target", () => {
   eq(
     TARGETS.map((t) => t.name).sort(),
-    ["message_format", "money_parse", "return_path", "router_match", "safe_url", "validators"],
+    [
+      "message_format",
+      "money_parse",
+      "pdf_document",
+      "pdf_prepare",
+      "pdf_prepare_differential",
+      "pdf_token",
+      "pdf_xref",
+      "return_path",
+      "router_match",
+      "safe_url",
+      "validators",
+    ],
     "target names",
   );
   for (const t of TARGETS) {
