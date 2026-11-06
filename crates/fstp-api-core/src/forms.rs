@@ -498,6 +498,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
             BodyRule::Exactly(&["narrative", "summary", "title"])
         }
         OpKind::M3Port(PortKind::StateCountry) => BodyRule::Exactly(&["country"]),
+        // `review.mark_finding`: the reviewer's mark, `Agreed` or `Disputed`.
+        OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
         OpKind::M3Port(PortKind::AcknowledgeNegotiationNotice) => {
             BodyRule::Exactly(&["notice_version"])
         }
@@ -576,6 +578,11 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
             .get("shown")
             .and_then(Value::as_str)
             .and_then(crate::ActionDigest::from_hex)
+            .is_some(),
+        OpKind::Finding(fstp_access::FindingKind::Mark) => request
+            .get("mark")
+            .and_then(Value::as_str)
+            .and_then(finding_mark)
             .is_some(),
         OpKind::M3Port(fstp_access::PortKind::ApproveBreakGlass) => {
             request.get("approve").and_then(Value::as_bool).is_some()
@@ -1039,6 +1046,15 @@ impl TextRefJson for TextRef {
 /// The codec name of a command kind: its variant name.
 fn kind_name(kind: CommandKind) -> String {
     format!("{kind:?}")
+}
+
+/// The mark of `review.mark_finding` by its wire spelling (I-10).
+pub(crate) fn finding_mark(s: &str) -> Option<fstp_engine::Mark> {
+    match s {
+        "Agreed" => Some(fstp_engine::Mark::Agreed),
+        "Disputed" => Some(fstp_engine::Mark::Disputed),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

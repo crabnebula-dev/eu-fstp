@@ -120,7 +120,9 @@ pub use tenant::{Provisioning, TenantEntry, TenantFacts, TenantPart, TenantReque
 // the functions below route to `findings` (lane L-FIND-B).
 // ---------------------------------------------------------------------------
 
-pub use fstp_findings::{FindingCommand, FindingRecord, FindingStore};
+pub use fstp_findings::{
+    Finding, FindingCommand, FindingId, FindingKind, FindingRecord, FindingStore, Mark, Severity,
+};
 
 /// The vault questions a finding command needs. Only a `Mark` asks one,
 /// `HasConflict` for the marking reviewer (I-03). A finding command never

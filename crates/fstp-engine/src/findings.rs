@@ -59,7 +59,7 @@
 //!
 //! Status: lane L-FIND-B of milestone M2.
 
-use fstp_domain::assignment::Assignment;
+use fstp_domain::assignment::{Assignment, AssignmentStatus};
 use fstp_domain::command::{Actor, Ctx, Via};
 use fstp_domain::engine::FoldError;
 use fstp_domain::id::{AccountId, CallId, ProposalId};
@@ -345,9 +345,40 @@ fn mark_basis<'s>(
         return Err(mark_refused());
     };
     if !may_mark(&state.core, by, f, ctx.now) {
-        return Err(mark_refused());
+        return Err(assignee_refusal(&state.core, by, f, ctx.now).unwrap_or(mark_refused()));
     }
     Ok((by, f))
+}
+
+/// The conflict refusal of a `Mark` by an assignee of the finding's
+/// proposal in the finding's call, over an active binding of its role:
+/// I-03 for a conflict fact, R-CF-02 for an assignment still awaiting
+/// its declaration (`roles-and-sod.md` Conflict declarations). It names
+/// only what the assignee already knows, since its own assignment is on
+/// that proposal. `None` for anyone else, who gets [`mark_refused`].
+fn assignee_refusal(core: &State, by: AccountId, f: &Finding, now: Timestamp) -> Option<Refusal> {
+    let review = core.review();
+    let programme = core.calls().get(f.call)?.programme();
+    let mut own = review.assignments().filter(|(_, a)| {
+        a.reviewer == by
+            && a.proposal == f.proposal
+            && a.call == f.call
+            && a.kind.reviews_proposal()
+            && core.roster().bindings().any(|(_, b)| {
+                b.account == by
+                    && b.role == a.kind.role()
+                    && b.programme == programme
+                    && b.active_at(now)
+            })
+    });
+    let first = own.next()?;
+    if review.conflict_fact(by, f.proposal) {
+        return Some(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    std::iter::once(first)
+        .chain(own)
+        .any(|(_, a)| a.status == AssignmentStatus::AwaitingDeclaration)
+        .then(|| Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed))
 }
 
 /// The `HasConflict` question for `account` and the team of `proposal`:

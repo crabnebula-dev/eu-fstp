@@ -538,6 +538,26 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ),
         ]),
     ),
+    // I-10, I-17, TH-01: the assessor's findings on the reviewer's
+    // proposal, each with the reader's own mark. The statement is
+    // untrusted data, shown as text only. No member names an account.
+    (
+        "review.findings",
+        Shape::Array(&Shape::Object(&[
+            m("finding", Shape::Id),
+            m(
+                "kind",
+                Shape::Enum(&["Completeness", "Quality", "Accuracy", "Integrity"]),
+            ),
+            m("severity", Shape::Enum(&["Info", "Minor", "Major"])),
+            m("confidence", Shape::Int),
+            m("statement", Shape::String),
+            m(
+                "mark",
+                Shape::Nullable(&Shape::Enum(&["Agreed", "Disputed"])),
+            ),
+        ])),
+    ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
     (
         "review.stage2_thread",

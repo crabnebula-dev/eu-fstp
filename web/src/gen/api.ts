@@ -2764,6 +2764,17 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "review.findings": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "finding": { schema: { kind: "id" }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["Completeness", "Quality", "Accuracy", "Integrity"] }, optional: false },
+      "severity": { schema: { kind: "enum", values: ["Info", "Minor", "Major"] }, optional: false },
+      "confidence": { schema: { kind: "int" }, optional: false },
+      "statement": { schema: { kind: "string" }, optional: false },
+      "mark": { schema: { kind: "nullable", inner: { kind: "enum", values: ["Agreed", "Disputed"] } }, optional: false },
+    },
+  } },
   "review.stage2_thread": {
     kind: "object",
     fields: {

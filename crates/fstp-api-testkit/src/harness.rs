@@ -741,6 +741,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ])
         }
         "committee.cast" => obj(vec![("vote", s("For"))]),
+        "review.mark_finding" => obj(vec![("mark", s("Agreed"))]),
         "committee.delegate" => obj(vec![("to", dec(MEMBER.raw()))]),
         "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
         "agents.consent" => obj(vec![]),
@@ -1240,6 +1241,36 @@ impl Seeder {
             .environment(Command::Core(cmd), ctx)
             .map(|_| ())
             .map_err(|e| format!("{kind:?} by the system: {e}"))
+    }
+
+    /// Records finding 1 on `x` of `call` through the assessor's system
+    /// path under the call's pin (I-10, I-11). `review.mark_finding` and
+    /// `review.findings` address it.
+    fn finding(&mut self, call: CallId, x: ProposalId) -> Result<(), String> {
+        let state = self.ports.engine.state();
+        let config = state
+            .core
+            .calls()
+            .get(call)
+            .and_then(|v| v.llm_config())
+            .ok_or("the call has no assessor pin")?;
+        let f = fstp_domain_testkit::r#gen::findings::finding(
+            1,
+            call,
+            x,
+            config,
+            fstp_engine::FindingKind::Completeness,
+            "SYNTHETIC FINDING",
+        );
+        let ctx = self.ctx(Actor::System(SystemCause::Timeline));
+        self.ports
+            .engine
+            .environment(
+                Command::Finding(fstp_engine::FindingCommand::Record(f)),
+                ctx,
+            )
+            .map(|_| ())
+            .map_err(|e| format!("a finding by the assessor: {e}"))
     }
 
     /// The passkey session of `account`.
@@ -2474,6 +2505,15 @@ fn proposal_to(
         DeclarationSubject::Proposal(x),
         true,
     )?;
+    // Under P-10 "all committee members" every committee member declares
+    // per proposal (`roles-and-sod.md` Conflict declarations, R-CF-02).
+    if key.policy.p10 == P10::AllCommittee {
+        for m in [MEMBER, REVIEWER_RELEASED] {
+            declare(seed, m, DeclarationSubject::Proposal(x), false)?;
+        }
+    }
+    // The assessor's finding on X, which the reviewers read and mark.
+    seed.finding(c, x)?;
     if target == S::Ineligible {
         let outcomes = kos
             .iter()

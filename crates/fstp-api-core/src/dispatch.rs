@@ -680,10 +680,56 @@ pub(crate) async fn run<P: Seams>(
             creator_ops::command(&call, &op).await
         }
         OpKind::Tenant(kind) => tenant::command(&call, &op, kind).await,
+        OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(&call, &op).await,
+        // `Record` and `Regenerate` are the assessor's, through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
-            "finding marks: the finding request form (lane W3b, after M4 W5)",
+            "a finding command that only the assessor issues",
         ))),
         OpKind::Public(kind) => public::read(&call, &op, kind).await,
+    }
+}
+
+/// `review.mark_finding`: the acting reviewer's mark on a finding, run
+/// as `FindingCommand::Mark` (I-03, I-10). The engine judges who may
+/// mark. It is web only, so it is never prepared.
+async fn finding_mark<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
+    let Some(account) = call.account() else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+    };
+    let bad = || call.refuse(ApiError::bad_request(forms::REQUEST_RULE));
+    let finding = forms::id_param(&op.request, "finding").ok_or_else(bad)?;
+    let mark = op
+        .request
+        .get("mark")
+        .and_then(Value::as_str)
+        .and_then(forms::finding_mark)
+        .ok_or_else(bad)?;
+    let cmd = Command::Finding(fstp_engine::FindingCommand::Mark {
+        finding: fstp_engine::FindingId::from_raw(finding),
+        mark,
+    });
+    let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+    let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
+    // Step 5.
+    dry_run(call, account, &cmd, ctx)
+        .await
+        .map_err(|e| call.refuse(e))?;
+    let meta = ExecMeta {
+        via: call.caller.via(),
+        session: call.caller.session,
+        agent: call.caller.agent,
+        op: OpName(call.spec.name),
+        request: call.digest,
+        step_up: None,
+        pending: None,
+        second_tenant_admin: None,
+    };
+    match call.ports.engine().execute(cmd, ctx, meta).await {
+        Ok(seq) => Ok(OpResult::Done {
+            body: ReadModel::Accepted,
+            seq: Some(seq),
+        }),
+        Err(e) => Err(call.refuse(exec_failed(e))),
     }
 }
 
@@ -1411,7 +1457,9 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let p = proposal_param(call, op)?;
-            let Some(mut mine) = own_proposals(&call.state, a, call.now, Ended::Excluded)
+            // The read rule admitted the caller, the former team included
+            // in a terminal state (Daniel, 2026-11-06).
+            let Some(mut mine) = own_proposals(&call.state, a, call.now, Ended::Final)
                 .into_iter()
                 .find(|x| x.proposal == p)
             else {
@@ -1528,6 +1576,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetScoreSheet => {
             let a = assignment_param(call, op, "assignment")?;
             ReadModel::ScoreSheet(score_sheet(call, a)?)
+        }
+        ReadKind::GetFindings => {
+            let Some(viewer) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            let a = assignment_param(call, op, "assignment")?;
+            ReadModel::Findings(findings(call, a, viewer)?)
         }
         ReadKind::GetStage2Thread => {
             let a = assignment_param(call, op, "assignment")?;
@@ -2036,7 +2091,18 @@ async fn content_read<P: Seams>(
     let Some(account) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
-    let content = submitted_content(call, p)?;
+    // A draft has no submitted content. Only its team reads it (I-21), as
+    // `authorize_read` and the domain's `ReadContent` both check, and the
+    // team reads its latest workspace (R-AC-01).
+    let draft = fstp_domain::view::proposal_state(&call.state.core, p)
+        == Some(fstp_domain::StateTag::Draft);
+    let content = if draft {
+        lock(&call.st.content)
+            .workspace(p)
+            .ok_or_else(|| call.refuse(content_unknown()))?
+    } else {
+        submitted_content(call, p)?
+    };
     let cmd = Command::Core(fstp_domain::command::Command::ReadContent { proposal: p });
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
@@ -2156,6 +2222,52 @@ fn proposal_rows<P: Seams>(
 /// state yet (lane W2e), so the label names the criterion by number.
 fn criterion_label(id: u128) -> String {
     format!("Criterion {id}")
+}
+
+/// The findings on the proposal of assignment `a` from the assignment's
+/// call, which keeps them (Q15), with the viewer's own marks (I-10).
+fn findings<P: Seams>(
+    call: &Call<'_, P>,
+    a: AssignmentId,
+    viewer: AccountId,
+) -> Result<Vec<crate::views::FindingRow>, ApiError> {
+    use fstp_engine::{FindingKind, Mark, Severity};
+    let assignment = call
+        .state
+        .core
+        .review()
+        .get(a)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    let store = &call.state.findings;
+    Ok(store
+        .findings_of(assignment.call)
+        .into_iter()
+        .filter(|f| f.proposal == assignment.proposal)
+        .map(|f| crate::views::FindingRow {
+            finding: f.id.raw(),
+            kind: match f.kind {
+                FindingKind::Completeness => "Completeness",
+                FindingKind::Quality => "Quality",
+                FindingKind::Accuracy => "Accuracy",
+                FindingKind::Integrity => "Integrity",
+            },
+            severity: match f.severity {
+                Severity::Info => "Info",
+                Severity::Minor => "Minor",
+                Severity::Major => "Major",
+            },
+            confidence: f.confidence.permille(),
+            statement: f.statement.as_data().to_owned(),
+            mark: store
+                .marks_of(f.id)
+                .filter(|(by, _)| *by == viewer)
+                .last()
+                .map(|(_, m)| match m {
+                    Mark::Agreed => "Agreed",
+                    Mark::Disputed => "Disputed",
+                }),
+        })
+        .collect())
 }
 
 /// The score sheet of reviewer assignment `a`: the stage of its proposal,
