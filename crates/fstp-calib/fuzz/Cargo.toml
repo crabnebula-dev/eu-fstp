@@ -1,0 +1,24 @@
+[package]
+name = "fstp-calib-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-calib = { path = ".." }
+
+[[bin]]
+name = "fixture_parse"
+path = "fuzz_targets/fixture_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

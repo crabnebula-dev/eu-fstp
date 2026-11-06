@@ -1,0 +1,180 @@
+fstp-calib	1
+# Synthetic calibration fixture (M12, L12-METRICS). Every record is invented.
+# The expected report is hand computed in tests/report.rs.
+corpus	synthetic
+proposal	S01	seeded
+proposal	S02	seeded
+proposal	S03	seeded
+proposal	S04	seeded
+proposal	C01	clean
+proposal	C02	clean
+proposal	C03	clean
+proposal	C04	clean
+proposal	V01	clean
+proposal	V02	clean
+variant	V01	C01	injected
+variant	V02	C02	fluency
+# Five seeded omissions per seeded proposal; S04 o5 is missed.
+seed	S01	o1	omission
+seed	S01	o2	omission
+seed	S01	o3	omission
+seed	S01	o4	omission
+seed	S01	o5	omission
+seed	S02	o1	omission
+seed	S02	o2	omission
+seed	S02	o3	omission
+seed	S02	o4	omission
+seed	S02	o5	omission
+seed	S03	o1	omission
+seed	S03	o2	omission
+seed	S03	o3	omission
+seed	S03	o4	omission
+seed	S03	o5	omission
+seed	S04	o1	omission
+seed	S04	o2	omission
+seed	S04	o3	omission
+seed	S04	o4	omission
+seed	S04	o5	omission
+# Ten seeded false or inflated claims; S04 a2 is missed.
+seed	S01	a1	claim
+seed	S01	a2	claim
+seed	S01	a3	claim
+seed	S02	a1	claim
+seed	S02	a2	claim
+seed	S02	a3	claim
+seed	S03	a1	claim
+seed	S03	a2	claim
+seed	S04	a1	claim
+seed	S04	a2	claim
+finding	S01	1	f-o1	completeness	major	o1
+finding	S01	1	f-o2	completeness	major	o2
+finding	S01	1	f-o3	completeness	major	o3
+finding	S01	1	f-o4	completeness	major	o4
+finding	S01	1	f-o5	completeness	major	o5
+finding	S02	1	f-o1	completeness	major	o1
+finding	S02	1	f-o2	completeness	major	o2
+finding	S02	1	f-o3	completeness	major	o3
+finding	S02	1	f-o4	completeness	major	o4
+finding	S02	1	f-o5	completeness	major	o5
+finding	S03	1	f-o1	completeness	major	o1
+finding	S03	1	f-o2	completeness	major	o2
+finding	S03	1	f-o3	completeness	major	o3
+finding	S03	1	f-o4	completeness	major	o4
+finding	S03	1	f-o5	completeness	major	o5
+finding	S04	1	f-o1	completeness	major	o1
+finding	S04	1	f-o2	completeness	major	o2
+finding	S04	1	f-o3	completeness	major	o3
+finding	S04	1	f-o4	completeness	major	o4
+finding	S01	1	f-a1	accuracy	major	a1
+finding	S01	1	f-a2	accuracy	major	a2
+finding	S01	1	f-a3	accuracy	major	a3
+finding	S02	1	f-a1	accuracy	major	a1
+finding	S02	1	f-a2	accuracy	major	a2
+finding	S02	1	f-a3	accuracy	major	a3
+finding	S03	1	f-a1	accuracy	major	a1
+finding	S03	1	f-a2	accuracy	major	a2
+finding	S04	1	f-a1	accuracy	major	a1
+# Clean proposals. The two major quality findings have majority agreement.
+finding	C01	1	q1	quality	major	-
+mark	C01	q1	r1	agreed
+mark	C01	q1	r2	agreed
+mark	C01	q1	r3	disputed
+finding	V01	1	q1	quality	major	-
+finding	V01	1	i1	integrity	major	-
+mark	V01	q1	r1	agreed
+mark	V01	q1	r2	agreed
+# Five repeated runs; C03 run 5 deviates.
+runs	C02	5
+runs	C03	5
+runs	C04	5
+runs	V02	5
+finding	C02	1	q1	quality	minor	-
+finding	C02	2	q2	quality	minor	-
+finding	C02	3	q3	quality	minor	-
+finding	C02	4	q4	quality	minor	-
+finding	C02	5	q5	quality	minor	-
+finding	V02	1	q1	quality	minor	-
+finding	V02	2	q2	quality	minor	-
+finding	V02	3	q3	quality	minor	-
+finding	V02	4	q4	quality	minor	-
+finding	V02	5	q5	quality	minor	-
+finding	C03	1	q1	quality	minor	-
+finding	C03	2	q2	quality	minor	-
+finding	C03	3	q3	quality	minor	-
+finding	C03	4	q4	quality	minor	-
+finding	C03	5	q5	quality	major	-
+mark	C03	q5	r1	disputed
+# Blind human panel ratings against the assessor, per finding type.
+# Completeness: Krippendorff's worked example (four raters, twelve units, values 1 to 5).
+rating	completeness	u01	assessor	1
+rating	completeness	u02	assessor	2
+rating	completeness	u03	assessor	3
+rating	completeness	u04	assessor	3
+rating	completeness	u05	assessor	2
+rating	completeness	u06	assessor	1
+rating	completeness	u07	assessor	4
+rating	completeness	u08	assessor	1
+rating	completeness	u09	assessor	2
+rating	completeness	u01	h1	1
+rating	completeness	u02	h1	2
+rating	completeness	u03	h1	3
+rating	completeness	u04	h1	3
+rating	completeness	u05	h1	2
+rating	completeness	u06	h1	2
+rating	completeness	u07	h1	4
+rating	completeness	u08	h1	1
+rating	completeness	u09	h1	2
+rating	completeness	u10	h1	5
+rating	completeness	u12	h1	3
+rating	completeness	u02	h2	3
+rating	completeness	u03	h2	3
+rating	completeness	u04	h2	3
+rating	completeness	u05	h2	2
+rating	completeness	u06	h2	3
+rating	completeness	u07	h2	4
+rating	completeness	u08	h2	2
+rating	completeness	u09	h2	2
+rating	completeness	u10	h2	5
+rating	completeness	u11	h2	1
+rating	completeness	u01	h3	1
+rating	completeness	u02	h3	2
+rating	completeness	u03	h3	3
+rating	completeness	u04	h3	3
+rating	completeness	u05	h3	2
+rating	completeness	u06	h3	4
+rating	completeness	u07	h3	4
+rating	completeness	u08	h3	1
+rating	completeness	u09	h3	2
+rating	completeness	u10	h3	5
+rating	completeness	u11	h3	1
+# Quality and accuracy: severity codes 0 none, 1 minor, 2 major.
+rating	quality	u01	assessor	2
+rating	quality	u02	assessor	1
+rating	quality	u03	assessor	0
+rating	quality	u04	assessor	2
+rating	quality	u05	assessor	0
+rating	quality	u06	assessor	1
+rating	quality	u01	h1	2
+rating	quality	u02	h1	1
+rating	quality	u03	h1	0
+rating	quality	u04	h1	2
+rating	quality	u05	h1	0
+rating	quality	u06	h1	1
+rating	quality	u01	h2	2
+rating	quality	u02	h2	1
+rating	quality	u03	h2	0
+rating	quality	u04	h2	1
+rating	quality	u05	h2	0
+rating	quality	u06	h2	1
+rating	accuracy	u01	assessor	2
+rating	accuracy	u02	assessor	0
+rating	accuracy	u03	assessor	0
+rating	accuracy	u04	assessor	2
+rating	accuracy	u01	h1	2
+rating	accuracy	u02	h1	0
+rating	accuracy	u03	h1	2
+rating	accuracy	u04	h1	2
+rating	accuracy	u01	h2	2
+rating	accuracy	u02	h2	0
+rating	accuracy	u03	h2	0
+rating	accuracy	u04	h2	2
