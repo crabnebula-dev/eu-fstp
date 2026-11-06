@@ -6,6 +6,9 @@
 // the import proposals, the impact read, `me.roles` and `calls.get`.
 // Every reply here is synthetic.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 import { CREATOR_STEPS, type Report, type ReportResult, type ProposalRow } from "../src/creator/model.js";
 import { readMyRoles, type MyRoles } from "../src/home/model.js";
 import {
@@ -30,6 +33,7 @@ import {
 } from "../src/studio/view.js";
 import { FakeElement, asFake, freshDom, sinkUses } from "./support/fakedom.js";
 import { assert, eq, forAll, show, test } from "./support/harness.js";
+import { WEB_DIR } from "./support/paths.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -415,4 +419,53 @@ test("r_ga_01_studio_guide_preview_path", () => {
   eq(STUDIO_PATHS.overview("7"), "/app/programmes/7/studio", "the overview");
   eq(STUDIO_PATHS.approval("7"), "/app/programmes/7/studio/approval", "approval and publication");
   eq(STUDIO_PATHS.guide("7"), "/app/programmes/7/studio/guide", "the Guide preview");
+});
+
+/** The value names a module imports from `../gen/api.js`, or its relative imports, from source `src`. */
+function importsOf(src: string): { readonly local: string[]; readonly gen: string[] } {
+  const local: string[] = [];
+  const gen: string[] = [];
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)\s+(type\s+)?([^;]*?)\s+from\s+"([^"]+)"/g)) {
+    const typeOnly = m[1] !== undefined;
+    const names = m[2] ?? "";
+    const spec = m[3] ?? "";
+    if (typeOnly || !spec.startsWith(".")) continue;
+    if (spec.endsWith("/gen/api.js")) {
+      for (const n of names.replace(/[{}]/g, "").split(",")) {
+        const name = n.trim();
+        if (name !== "" && !name.startsWith("type ")) gen.push(name);
+      }
+    }
+    local.push(spec);
+  }
+  return { local, gen };
+}
+
+/**
+ * R-PG-01: the creator bundle (creator, onboarding, people and the
+ * studio pages) reads only `OPERATIONS` from the generated table. A
+ * page that needs a generated validator would fail to load under the
+ * operation table the creator e2e wire checks serve, so no page of the
+ * bundle could mark itself ready.
+ */
+test("r_pg_01_creator_bundle_reads_only_the_generated_operation_table", () => {
+  const src = join(WEB_DIR, "src");
+  const seen = new Set<string>();
+  const todo = [join(src, "creator", "main.ts")];
+  const extra: string[] = [];
+  while (todo.length > 0) {
+    const file = todo.pop() ?? "";
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const { local, gen } = importsOf(readFileSync(file, "utf8"));
+    for (const name of gen.filter((n) => n !== "OPERATIONS")) {
+      extra.push(`${file.slice(src.length + 1)} imports ${name}`);
+    }
+    for (const spec of local) {
+      const next = join(dirname(file), spec).replace(/\.js$/, ".ts");
+      if (!next.endsWith(join("gen", "api.ts"))) todo.push(next);
+    }
+  }
+  assert(seen.has(join(src, "studio", "pages.ts")), "the walk reaches the studio pages");
+  eq(extra, [], "generated names beyond OPERATIONS in the creator bundle");
 });

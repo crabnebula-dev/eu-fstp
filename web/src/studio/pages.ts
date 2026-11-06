@@ -25,7 +25,7 @@ import { t } from "../creator/i18n.js";
 import { readPreview, readProposals, type Draft, type ProposalRow, type Report } from "../creator/model.js";
 import { anyObject, call, report } from "../creator/ops.js";
 import { PATHS, link, loadDraft, loadReport } from "../creator/pages/common.js";
-import { myRoles } from "../home/session.js";
+import { readMyRoles, type MyRoles } from "../home/model.js";
 import { readCallState, readImpact, programmeCalls, stepStates, type CallRow } from "./model.js";
 import {
   STUDIO_PATHS,
@@ -173,12 +173,17 @@ export function mountApproval(p: string): void {
     const d = await loadDraft(p, alert);
     const r: Report | null = d === null ? null : await loadReport(p, alert);
     if (d !== null) activation.replaceWith(activationPanel(p, r, statusOf(d)));
-    const roles = await myRoles();
-    if (roles.kind !== "roles") return;
-    const controls = callControls();
-    wire(controls);
-    const rows = await callRows(programmeCalls(roles.roles, p));
-    calls.replaceWith(callsPanel(roles.roles, p, rows, (c) => roles.roles.titles.get(c) ?? callName(c), controls.root));
+    // `me.roles` through the creator's own call, so the creator bundle
+    // reads only the generated operation table. A failed read leaves the
+    // call controls out, and the page is still ready.
+    const o = await call("me.roles", [], undefined, (v) => readMyRoles(v) !== null);
+    const roles: MyRoles | null = o.kind === "done" ? readMyRoles(o.body) : null;
+    if (roles !== null) {
+      const controls = callControls();
+      wire(controls);
+      const rows = await callRows(programmeCalls(roles, p));
+      calls.replaceWith(callsPanel(roles, p, rows, (c) => roles.titles.get(c) ?? callName(c), controls.root));
+    }
     if (d !== null) ready(main);
   })();
 }
