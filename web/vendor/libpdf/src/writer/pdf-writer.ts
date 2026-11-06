@@ -1,0 +1,791 @@
+/**
+ * PDF file writer.
+ *
+ * Supports both full save (rewrite everything) and incremental save
+ * (append only changed objects).
+ *
+ * Uses a single ByteWriter for the entire PDF to minimize allocations.
+ */
+
+import { clearAllDirtyFlags, collectChanges } from "#src/document/change-collector";
+import type { ObjectRegistry } from "#src/document/object-registry";
+import { FilterPipeline } from "#src/filters/filter-pipeline";
+import { CR, LF } from "#src/helpers/chars";
+import { max } from "#src/helpers/math";
+import { ByteWriter } from "#src/io/byte-writer";
+import { PdfArray } from "#src/objects/pdf-array";
+import { PdfDict } from "#src/objects/pdf-dict";
+import { PdfName } from "#src/objects/pdf-name";
+import { PdfNull } from "#src/objects/pdf-null";
+import type { PdfObject } from "#src/objects/pdf-object";
+import { PdfRef } from "#src/objects/pdf-ref";
+import { PdfStream } from "#src/objects/pdf-stream";
+import { PdfString } from "#src/objects/pdf-string";
+import type { StandardSecurityHandler } from "#src/security/standard-handler";
+
+import { writeXRefStream, writeXRefTable, type XRefWriteEntry } from "./xref-writer";
+
+/**
+ * Options for PDF writing.
+ */
+export interface WriteOptions {
+  /** PDF version string (default: "1.7") */
+  version?: string;
+
+  /** Root catalog reference */
+  root: PdfRef;
+
+  /** Info dictionary reference (optional) */
+  info?: PdfRef;
+
+  /** Encrypt dictionary reference (optional) */
+  encrypt?: PdfRef;
+
+  /** Document ID (optional, two 16-byte arrays) */
+  id?: [Uint8Array, Uint8Array];
+
+  /** Use XRef stream instead of table (PDF 1.5+) */
+  useXRefStream?: boolean;
+
+  /**
+   * Compress uncompressed streams with FlateDecode (default: true).
+   *
+   * When enabled, streams without a /Filter entry will be compressed
+   * before writing. Streams that already have filters (including image
+   * formats like DCTDecode/JPXDecode) are left unchanged.
+   */
+  compressStreams?: boolean;
+
+  /**
+   * Minimum stream size in bytes to attempt compression (default: 512).
+   *
+   * Streams smaller than this threshold are written uncompressed.
+   * Deflate initialization has a fixed cost (~0.023ms for pako's 64KB
+   * hash table) that dominates for small payloads, and tiny streams
+   * rarely achieve meaningful compression.
+   *
+   * Set to 0 to compress all streams regardless of size.
+   */
+  compressionThreshold?: number;
+
+  /**
+   * Security handler for encrypting content.
+   *
+   * When provided, strings and streams will be encrypted before writing.
+   * The encrypt dictionary reference must also be provided.
+   */
+  securityHandler?: StandardSecurityHandler;
+
+  /**
+   * Hint for the final PDF size in bytes.
+   *
+   * When provided, the ByteWriter will pre-allocate a buffer of this size,
+   * reducing the need for reallocations during writing.
+   */
+  sizeHint?: number;
+}
+
+/**
+ * Options for incremental save.
+ */
+export interface IncrementalWriteOptions extends WriteOptions {
+  /** Original PDF bytes */
+  originalBytes: Uint8Array;
+
+  /** Offset of the original xref */
+  originalXRefOffset: number;
+}
+
+/**
+ * Result of a write operation.
+ */
+export interface WriteResult {
+  /** The written PDF bytes */
+  bytes: Uint8Array;
+
+  /** Byte offset where the xref section starts */
+  xrefOffset: number;
+}
+
+/**
+ * Write an indirect object to the ByteWriter.
+ *
+ * Format: "N G obj\n[object]\nendobj\n"
+ */
+function writeIndirectObject(writer: ByteWriter, ref: PdfRef, obj: PdfObject): void {
+  writer.writeAscii(`${ref.objectNumber} ${ref.generation} obj\n`);
+  obj.toBytes(writer);
+  writer.writeAscii("\nendobj\n");
+}
+
+/**
+ * Prepare an object for writing, applying compression if needed.
+ *
+ * For PdfStream objects without a /Filter entry, compresses the data
+ * with FlateDecode and returns a new stream with the compressed data.
+ * The original stream is not modified.
+ *
+ * Streams that already have filters are returned unchanged - this includes
+ * image formats (DCTDecode, JPXDecode, etc.) that are already compressed.
+ */
+const DEFAULT_COMPRESSION_THRESHOLD = 512;
+
+function prepareObjectForWrite(
+  obj: PdfObject,
+  compress: boolean,
+  compressionThreshold: number,
+): PdfObject {
+  // Only process streams
+  if (!(obj instanceof PdfStream)) {
+    return obj;
+  }
+
+  // Already has a filter - leave it alone
+  if (obj.has("Filter")) {
+    return obj;
+  }
+
+  // Compression disabled
+  if (!compress) {
+    return obj;
+  }
+
+  // Pako's deflate initialization zeros a 64KB hash table on every call
+  // (~0.023ms). For streams below the threshold the compression savings
+  // are negligible relative to the init cost, especially when writing
+  // many PDFs (e.g. splitting 2000 pages).
+  if (obj.data.length < compressionThreshold) {
+    return obj;
+  }
+
+  // Compress with FlateDecode
+  const compressed = FilterPipeline.encode(obj.data, { name: "FlateDecode" });
+
+  // Only use compression if it actually reduces size
+  if (compressed.length >= obj.data.length) {
+    return obj;
+  }
+
+  // Create a new stream with compressed data
+  // Copy all existing entries from the original stream
+  const compressedStream = new PdfStream(obj, compressed);
+  compressedStream.set("Filter", PdfName.of("FlateDecode"));
+
+  return compressedStream;
+}
+
+/**
+ * Encryption context for writing.
+ */
+interface EncryptionContext {
+  handler: StandardSecurityHandler;
+  objectNumber: number;
+  generation: number;
+}
+
+/**
+ * Recursively encrypt an object for writing.
+ *
+ * Creates a new object tree with all strings and stream data encrypted.
+ * References, names, numbers, and booleans are returned unchanged.
+ *
+ * @param obj - The object to encrypt
+ * @param ctx - Encryption context with handler and object reference
+ * @returns Encrypted copy of the object
+ */
+function encryptObject(obj: PdfObject, ctx: EncryptionContext): PdfObject {
+  if (obj instanceof PdfString) {
+    // Encrypt string bytes
+    const encrypted = ctx.handler.encryptString(obj.bytes, ctx.objectNumber, ctx.generation);
+    // Always use hex format for encrypted strings (cleaner, no escaping issues)
+    return new PdfString(encrypted, "hex");
+  }
+
+  if (obj instanceof PdfStream) {
+    // Check if this stream type should be encrypted
+    const streamType = obj.getName("Type")?.value;
+
+    if (!ctx.handler.shouldEncryptStream(streamType)) {
+      // Recursively encrypt dictionary entries but not stream data
+      return encryptStreamDict(obj, ctx);
+    }
+
+    // Encrypt stream data
+    const encryptedData = ctx.handler.encryptStream(obj.data, ctx.objectNumber, ctx.generation);
+
+    // Create new stream with encrypted data and encrypted dict entries
+    const encryptedStream = new PdfStream([], encryptedData);
+
+    // Copy and encrypt dictionary entries
+    for (const [key, value] of obj) {
+      if (key.value === "Length") {
+        continue; // Skip Length, will be recalculated
+      }
+
+      encryptedStream.set(key.value, encryptObject(value, ctx));
+    }
+
+    return encryptedStream;
+  }
+
+  if (obj instanceof PdfDict) {
+    // Recursively encrypt dictionary values
+    const encrypted = new PdfDict();
+
+    for (const [key, value] of obj) {
+      encrypted.set(key.value, encryptObject(value, ctx));
+    }
+
+    return encrypted;
+  }
+
+  if (obj instanceof PdfArray) {
+    // Recursively encrypt array elements
+    const encrypted = new PdfArray();
+
+    for (const item of obj) {
+      encrypted.push(encryptObject(item, ctx));
+    }
+
+    return encrypted;
+  }
+
+  // Other types (PdfRef, PdfName, PdfNumber, PdfBool, PdfNull) pass through unchanged
+  return obj;
+}
+
+/**
+ * Encrypt dictionary entries of a stream without encrypting stream data.
+ * Used for streams that should not be encrypted (XRef, unencrypted metadata).
+ */
+function encryptStreamDict(stream: PdfStream, ctx: EncryptionContext): PdfStream {
+  const encrypted = new PdfStream([], stream.data);
+
+  for (const [key, value] of stream) {
+    if (key.value === "Length") {
+      continue;
+    }
+
+    encrypted.set(key.value, encryptObject(value, ctx));
+  }
+
+  return encrypted;
+}
+
+/**
+ * Renumber a single PdfRef using the renumbering map.
+ *
+ * Returns a new PdfRef pointing at the mapped object number, or the original
+ * ref if the object is not in the map (which should not happen for refs to
+ * reachable objects, but is allowed defensively so unreachable trailing refs
+ * don't crash the writer).
+ */
+function renumberRef(ref: PdfRef, renumberMap: Map<number, number>): PdfRef {
+  const newNum = renumberMap.get(ref.objectNumber);
+
+  if (newNum === undefined) {
+    return ref;
+  }
+
+  return PdfRef.of(newNum, ref.generation);
+}
+
+/**
+ * Recursively renumber indirect references inside an object onto the new
+ * numbering. Returns a structural copy of dictionaries, arrays, and streams
+ * with all `PdfRef` children replaced by renumbered references. Primitives
+ * (names, numbers, strings, booleans, null) are returned unchanged because
+ * they carry no embedded refs.
+ *
+ * The original object graph is not mutated — this is important because the
+ * in-memory `PDF` instance may be reused after `save()`, and mutating its
+ * objects would corrupt subsequent operations.
+ */
+function renumberRefs(obj: PdfObject, renumberMap: Map<number, number>): PdfObject {
+  if (obj instanceof PdfRef) {
+    const newNum = renumberMap.get(obj.objectNumber);
+
+    if (newNum === undefined) {
+      return PdfNull.instance;
+    }
+
+    return PdfRef.of(newNum, obj.generation);
+  }
+
+  if (obj instanceof PdfStream) {
+    // PdfStream extends PdfDict but carries binary data. Build a new stream
+    // sharing the same data buffer (data is immutable from the writer's POV)
+    // and copy the renumbered dict entries.
+    const renumbered = new PdfStream([], obj.data);
+
+    for (const [key, value] of obj) {
+      renumbered.set(key.value, renumberRefs(value, renumberMap));
+    }
+
+    return renumbered;
+  }
+
+  if (obj instanceof PdfDict) {
+    const renumbered = new PdfDict();
+
+    for (const [key, value] of obj) {
+      renumbered.set(key.value, renumberRefs(value, renumberMap));
+    }
+
+    return renumbered;
+  }
+
+  if (obj instanceof PdfArray) {
+    const renumbered = new PdfArray();
+
+    for (const item of obj) {
+      renumbered.push(renumberRefs(item, renumberMap));
+    }
+
+    return renumbered;
+  }
+
+  // Primitives carry no embedded refs.
+  return obj;
+}
+
+/**
+ * Collect all refs reachable from the document root and trailer entries.
+ *
+ * Walks the object graph starting from Root, Info, and Encrypt (if present),
+ * returning the set of all object keys (as "objNum gen" strings) that are reachable.
+ * This is used for garbage collection during full saves.
+ */
+function collectReachableRefs(
+  registry: ObjectRegistry,
+  root: PdfRef,
+  info?: PdfRef,
+  encrypt?: PdfRef,
+): Set<string> {
+  const visited = new Set<string>();
+  const stack: PdfObject[] = [root];
+
+  if (info) {
+    stack.push(info);
+  }
+
+  if (encrypt) {
+    stack.push(encrypt);
+  }
+
+  while (stack.length > 0) {
+    const obj = stack.pop()!;
+
+    if (obj instanceof PdfRef) {
+      const key = `${obj.objectNumber} ${obj.generation}`;
+
+      if (visited.has(key)) {
+        continue;
+      }
+
+      visited.add(key);
+
+      const resolved = registry.resolve(obj);
+
+      if (resolved !== null) {
+        stack.push(resolved);
+      }
+    } else if (obj instanceof PdfDict) {
+      // PdfStream extends PdfDict, so this handles both
+      for (const [, value] of obj) {
+        if (value != null) {
+          stack.push(value);
+        }
+      }
+    } else if (obj instanceof PdfArray) {
+      for (const item of obj) {
+        stack.push(item);
+      }
+    }
+  }
+
+  return visited;
+}
+
+/**
+ * Write a complete PDF from scratch.
+ *
+ * Structure:
+ * ```
+ * %PDF-X.Y
+ * %[binary comment]
+ * 1 0 obj
+ * ...
+ * endobj
+ * 2 0 obj
+ * ...
+ * xref
+ * ...
+ * trailer
+ * ...
+ * startxref
+ * ...
+ * %%EOF
+ * ```
+ */
+export function writeComplete(registry: ObjectRegistry, options: WriteOptions): WriteResult {
+  const writer = new ByteWriter(undefined, {
+    initialSize: options.sizeHint,
+  });
+
+  const compress = options.compressStreams ?? true;
+  const threshold = options.compressionThreshold ?? DEFAULT_COMPRESSION_THRESHOLD;
+
+  // Version
+  const version = options.version ?? "1.7";
+  writer.writeAscii(`%PDF-${version}\n`);
+
+  // Binary comment (signals binary file to text tools)
+  // Use high-byte characters as recommended by PDF spec
+  writer.writeBytes(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a])); // %âãÏÓ\n
+
+  // Track offsets for xref
+  const offsets = new Map<number, { offset: number; generation: number }>();
+
+  // Collect only reachable objects (garbage collection)
+  // This ensures orphan objects are not written to the output
+  const reachableKeys = collectReachableRefs(registry, options.root, options.info, options.encrypt);
+
+  // Build a renumbering map that assigns sequential object numbers (1, 2, 3, ...)
+  // to all reachable objects. Without this, operations like flattenAll() that
+  // remove objects leave gaps in the xref subsections of the resulting full
+  // save — e.g. xref subsections "0 5", "9 11", "27 7" instead of one
+  // contiguous "0 N". Some strict validators (notably Adobe's LTV gate on
+  // signed PDFs) appear to treat gap-laden baselines as suspect, which can
+  // suppress the LTV-enabled badge even when the signature and DSS are valid.
+  //
+  // Compaction also avoids embedding a record of how many objects the PDF
+  // used to have before garbage collection.
+  const renumberMap = new Map<number, number>();
+  let nextNum = 1;
+
+  for (const [ref] of registry.entries()) {
+    const key = `${ref.objectNumber} ${ref.generation}`;
+
+    if (!reachableKeys.has(key)) {
+      continue;
+    }
+
+    renumberMap.set(ref.objectNumber, nextNum++);
+  }
+
+  // Renumber trailer-level refs (Root / Info / Encrypt) onto the new numbering.
+  const renumberedRoot = renumberRef(options.root, renumberMap);
+  const renumberedInfo = options.info ? renumberRef(options.info, renumberMap) : undefined;
+  const renumberedEncrypt = options.encrypt ? renumberRef(options.encrypt, renumberMap) : undefined;
+
+  // Write only reachable objects and record offsets
+  for (const [ref, obj] of registry.entries()) {
+    const key = `${ref.objectNumber} ${ref.generation}`;
+
+    if (!reachableKeys.has(key)) {
+      continue; // Skip orphan objects
+    }
+
+    const newObjectNumber = renumberMap.get(ref.objectNumber)!;
+    const newRef = PdfRef.of(newObjectNumber, ref.generation);
+
+    // Prepare object (compress streams if needed)
+    let prepared = prepareObjectForWrite(obj, compress, threshold);
+
+    // Renumber any indirect references inside this object onto the new
+    // numbering before writing. Without this the body would still reference
+    // old object numbers, producing a broken PDF.
+    prepared = renumberRefs(prepared, renumberMap);
+
+    // Apply encryption if security handler is provided
+    // Skip encrypting the /Encrypt dictionary itself.
+    // Encryption keys are derived from the object number, so we use the NEW
+    // number — the saved PDF only knows about the new numbering.
+    if (options.securityHandler && options.encrypt && ref !== options.encrypt) {
+      prepared = encryptObject(prepared, {
+        handler: options.securityHandler,
+        objectNumber: newObjectNumber,
+        generation: ref.generation,
+      });
+    }
+
+    offsets.set(newObjectNumber, {
+      offset: writer.position,
+      generation: ref.generation,
+    });
+
+    writeIndirectObject(writer, newRef, prepared);
+  }
+
+  // Record xref offset before writing it
+  const xrefOffset = writer.position;
+
+  // Build xref entries
+  const entries: XRefWriteEntry[] = [
+    // Object 0 is always the free list head
+    { objectNumber: 0, generation: 65535, type: "free", offset: 0 },
+  ];
+
+  for (const [objNum, info] of offsets) {
+    entries.push({
+      objectNumber: objNum,
+      generation: info.generation,
+      type: "inuse",
+      offset: info.offset,
+    });
+  }
+
+  // Write xref section
+  if (options.useXRefStream) {
+    const xrefObjNum = nextNum;
+
+    // Add entry for the xref stream itself
+    entries.push({
+      objectNumber: xrefObjNum,
+      generation: 0,
+      type: "inuse",
+      offset: xrefOffset,
+    });
+
+    // Size is max object number + 1
+    const size =
+      max(
+        entries.map(e => e.objectNumber),
+        0,
+      ) + 1;
+
+    writeXRefStream(writer, {
+      entries,
+      size,
+      xrefOffset,
+      root: renumberedRoot,
+      info: renumberedInfo,
+      encrypt: renumberedEncrypt,
+      id: options.id,
+      streamObjectNumber: xrefObjNum,
+    });
+  } else {
+    // Size is max object number + 1
+    const size =
+      max(
+        entries.map(e => e.objectNumber),
+        0,
+      ) + 1;
+
+    writeXRefTable(writer, {
+      entries,
+      size,
+      xrefOffset,
+      root: renumberedRoot,
+      info: renumberedInfo,
+      encrypt: renumberedEncrypt,
+      id: options.id,
+    });
+  }
+
+  return {
+    bytes: writer.toBytes(),
+    xrefOffset,
+  };
+}
+
+/**
+ * Write an incremental update to a PDF.
+ *
+ * Appends only the changed/new objects to the original PDF bytes,
+ * preserving the original content exactly.
+ *
+ * Structure:
+ * ```
+ * [original PDF bytes]
+ * [modified object 1]
+ * [modified object 2]
+ * ...
+ * xref
+ * ...
+ * trailer
+ * << ... /Prev [originalXRefOffset] >>
+ * startxref
+ * ...
+ * %%EOF
+ * ```
+ */
+export function writeIncremental(
+  registry: ObjectRegistry,
+  options: IncrementalWriteOptions,
+): WriteResult {
+  // Collect changes
+  const changes = collectChanges(registry);
+
+  // If no changes, return original (should caller handle this?)
+  if (changes.modified.size === 0 && changes.created.size === 0) {
+    return {
+      bytes: options.originalBytes,
+      xrefOffset: options.originalXRefOffset,
+    };
+  }
+
+  const compress = options.compressStreams ?? true;
+  const threshold = options.compressionThreshold ?? DEFAULT_COMPRESSION_THRESHOLD;
+
+  // Initialize ByteWriter with original bytes
+  const writer = new ByteWriter(options.originalBytes);
+
+  // Ensure there's a newline before appended content
+  const lastByte = options.originalBytes[options.originalBytes.length - 1];
+
+  if (lastByte !== LF && lastByte !== CR) {
+    writer.writeByte(0x0a); // newline
+  }
+
+  // Track offsets for new xref
+  const offsets = new Map<number, { offset: number; generation: number }>();
+
+  // Write modified objects
+  for (const [ref, obj] of changes.modified) {
+    let prepared = prepareObjectForWrite(obj, compress, threshold);
+
+    // Apply encryption if security handler is provided
+    // Skip encrypting the /Encrypt dictionary itself
+    if (options.securityHandler && options.encrypt && ref !== options.encrypt) {
+      prepared = encryptObject(prepared, {
+        handler: options.securityHandler,
+        objectNumber: ref.objectNumber,
+        generation: ref.generation,
+      });
+    }
+
+    offsets.set(ref.objectNumber, {
+      offset: writer.position,
+      generation: ref.generation,
+    });
+
+    writeIndirectObject(writer, ref, prepared);
+  }
+
+  // Write new objects
+  for (const [ref, obj] of changes.created) {
+    let prepared = prepareObjectForWrite(obj, compress, threshold);
+
+    // Apply encryption if security handler is provided
+    // Skip encrypting the /Encrypt dictionary itself
+    if (options.securityHandler && options.encrypt && ref !== options.encrypt) {
+      prepared = encryptObject(prepared, {
+        handler: options.securityHandler,
+        objectNumber: ref.objectNumber,
+        generation: ref.generation,
+      });
+    }
+
+    offsets.set(ref.objectNumber, {
+      offset: writer.position,
+      generation: ref.generation,
+    });
+
+    writeIndirectObject(writer, ref, prepared);
+  }
+
+  // Record xref offset
+  const xrefOffset = writer.position;
+
+  // Build xref entries (only for changed objects)
+  const entries: XRefWriteEntry[] = [];
+
+  for (const [objNum, info] of offsets) {
+    entries.push({
+      objectNumber: objNum,
+      generation: info.generation,
+      type: "inuse",
+      offset: info.offset,
+    });
+  }
+
+  // Write xref section with /Prev pointer
+  if (options.useXRefStream) {
+    const xrefObjNum = registry.nextObjectNumber;
+
+    // Add entry for the xref stream itself
+    entries.push({
+      objectNumber: xrefObjNum,
+      generation: 0,
+      type: "inuse",
+      offset: xrefOffset,
+    });
+
+    // Size must cover all objects (original + new), including xref stream
+    const size = Math.max(changes.maxObjectNumber + 1, xrefObjNum + 1);
+
+    writeXRefStream(writer, {
+      entries,
+      size,
+      xrefOffset,
+      prev: options.originalXRefOffset,
+      root: options.root,
+      info: options.info,
+      encrypt: options.encrypt,
+      id: options.id,
+      streamObjectNumber: xrefObjNum,
+    });
+  } else {
+    // Size must cover all objects (original + new)
+    const size = Math.max(changes.maxObjectNumber + 1, registry.nextObjectNumber);
+
+    writeXRefTable(writer, {
+      entries,
+      size,
+      xrefOffset,
+      prev: options.originalXRefOffset,
+      root: options.root,
+      info: options.info,
+      encrypt: options.encrypt,
+      id: options.id,
+    });
+  }
+
+  // Clear dirty flags and commit new objects
+  clearAllDirtyFlags(registry);
+  registry.commitNewObjects();
+
+  return {
+    bytes: writer.toBytes(),
+    xrefOffset,
+  };
+}
+
+/**
+ * Utility to check if incremental save produced valid output.
+ *
+ * Verifies that:
+ * 1. Original bytes are preserved exactly
+ * 2. New content starts after original
+ * 3. Basic structure is valid
+ */
+export function verifyIncrementalSave(
+  original: Uint8Array,
+  result: Uint8Array,
+): { valid: boolean; error?: string } {
+  // Result must be at least as long as original
+  if (result.length < original.length) {
+    return { valid: false, error: "Result shorter than original" };
+  }
+
+  // Original bytes must be preserved exactly
+  for (let i = 0; i < original.length; i++) {
+    if (result[i] !== original[i]) {
+      return {
+        valid: false,
+        error: `Byte mismatch at offset ${i}: expected ${original[i]}, got ${result[i]}`,
+      };
+    }
+  }
+
+  // Check for %%EOF at end
+  const tail = new TextDecoder().decode(result.slice(-10));
+
+  if (!tail.includes("%%EOF")) {
+    return { valid: false, error: "Missing %%EOF at end" };
+  }
+
+  return { valid: true };
+}

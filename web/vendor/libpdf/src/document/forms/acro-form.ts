@@ -1,0 +1,808 @@
+/**
+ * AcroForm - Interactive form support.
+ *
+ * Provides access to the document's interactive form, including
+ * field tree traversal and field value reading.
+ *
+ * PDF Reference: Section 12.7 "Interactive Forms"
+ */
+
+import type { PDFPageTree } from "#src/api/pdf-page-tree";
+import { PdfArray } from "#src/objects/pdf-array";
+import { PdfDict } from "#src/objects/pdf-dict";
+import { PdfNumber } from "#src/objects/pdf-number";
+import { PdfRef } from "#src/objects/pdf-ref";
+
+import type { ObjectRegistry } from "../object-registry";
+import { AppearanceGenerator, extractAppearanceStyle } from "./appearance-generator";
+import { FieldTree } from "./field-tree";
+import {
+  type AcroFormLike,
+  ButtonField,
+  CheckboxField,
+  createFormField,
+  DropdownField,
+  ListBoxField,
+  RadioField,
+  type TerminalField,
+  TextField,
+} from "./fields";
+import { type FlattenOptions, FormFlattener } from "./form-flattener";
+import { type ExistingFont, type FormFont, parseExistingFont } from "./form-font";
+
+/**
+ * AcroForm represents a PDF's interactive form.
+ */
+export class AcroForm implements AcroFormLike {
+  private readonly dict: PdfDict;
+  private readonly registry: ObjectRegistry;
+  private readonly pageTree: PDFPageTree | null;
+  private readonly catalog: PdfDict | null;
+
+  private fieldsCache: TerminalField[] | null = null;
+
+  /** Default font for all fields */
+  private _defaultFont: FormFont | null = null;
+
+  /** Default font size for all fields */
+  private _defaultFontSize = 0;
+
+  /** Cache of existing fonts from /DR */
+  private existingFontsCache: Map<string, ExistingFont> | null = null;
+
+  private constructor(
+    dict: PdfDict,
+    registry: ObjectRegistry,
+    pageTree: PDFPageTree | null,
+    catalog: PdfDict | null,
+  ) {
+    this.dict = dict;
+    this.registry = registry;
+    this.pageTree = pageTree;
+    this.catalog = catalog;
+  }
+
+  /**
+   * Load AcroForm from catalog.
+   * Returns null if no AcroForm present.
+   *
+   * @param catalog The document catalog dictionary
+   * @param registry The object registry for resolving references
+   * @param pageTree Optional page tree for efficient page lookups during flattening
+   */
+  static load(catalog: PdfDict, registry: ObjectRegistry, pageTree?: PDFPageTree): AcroForm | null {
+    const resolve = registry.resolve.bind(registry);
+    const dict = catalog.getDict("AcroForm", resolve);
+
+    if (!dict) {
+      return null;
+    }
+
+    return new AcroForm(dict, registry, pageTree ?? null, catalog);
+  }
+
+  /**
+   * Default resources dictionary (fonts, etc.).
+   */
+  getDefaultResources(): PdfDict | null {
+    return this.dict.getDict("DR", this.registry.resolve.bind(this.registry)) ?? null;
+  }
+
+  /**
+   * Default appearance string.
+   */
+  get defaultAppearance(): string {
+    const da = this.dict.getString("DA");
+
+    return da?.asString() ?? "/Helv 0 Tf 0 g";
+  }
+
+  /**
+   * Default quadding (text alignment).
+   * 0 = left, 1 = center, 2 = right
+   */
+  get defaultQuadding(): number {
+    return this.dict.getNumber("Q")?.value ?? 0;
+  }
+
+  /**
+   * Whether viewer should generate appearances.
+   * If true, the viewer generates appearances for fields without /AP.
+   */
+  get needAppearances(): boolean {
+    return this.dict.getBool("NeedAppearances")?.value ?? false;
+  }
+
+  /**
+   * Signature flags.
+   * Bit 1: SignaturesExist
+   * Bit 2: AppendOnly
+   */
+  get signatureFlags(): number {
+    return this.dict.getNumber("SigFlags")?.value ?? 0;
+  }
+
+  /**
+   * Whether the document contains signatures.
+   */
+  get hasSignatures(): boolean {
+    return (this.signatureFlags & 1) !== 0;
+  }
+
+  /**
+   * Whether the document should be saved incrementally (append-only).
+   */
+  get isAppendOnly(): boolean {
+    return (this.signatureFlags & 2) !== 0;
+  }
+
+  /**
+   * Get all terminal fields (flattened).
+   * Non-terminal fields (containers) are not included.
+   */
+  getFields(): TerminalField[] {
+    if (this.fieldsCache) {
+      return this.fieldsCache;
+    }
+
+    const fieldsArray = this.dict.getArray("Fields", this.registry.resolve.bind(this.registry));
+
+    if (!fieldsArray) {
+      return [];
+    }
+
+    const visited = new Set<string>();
+    const fields = this.collectFields(fieldsArray, visited, "");
+
+    this.fieldsCache = fields;
+
+    return fields;
+  }
+
+  /**
+   * Get field by fully-qualified name.
+   * Returns null if not found.
+   */
+  getField(name: string): TerminalField | null {
+    const fields = this.getFields();
+
+    return fields.find(f => f.name === name) ?? null;
+  }
+
+  /**
+   * Get all fields of a specific type.
+   */
+  getFieldsOfType<T extends TerminalField>(type: T["type"]): T[] {
+    const fields = this.getFields();
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return fields.filter(f => f.type === type) as unknown as T[];
+  }
+
+  /**
+   * Get the underlying dictionary.
+   */
+  getDict(): PdfDict {
+    return this.dict;
+  }
+
+  /**
+   * Get the field tree for safe iteration over the form hierarchy.
+   *
+   * The field tree provides:
+   * - Cycle-safe iteration (handles circular references)
+   * - Breadth-first ordering
+   * - Access to both terminal and non-terminal fields
+   * - Parent references set on all fields
+   *
+   * @example
+   * ```typescript
+   * const tree = await form.getFieldTree();
+   *
+   * // Iterate all fields
+   * for (const field of tree) {
+   *   console.log(field.name, field.type);
+   * }
+   *
+   * // Iterate only terminal fields (value-holding)
+   * for (const field of tree.terminalFields()) {
+   *   console.log(field.name, field.getValue());
+   * }
+   * ```
+   */
+  getFieldTree(): FieldTree {
+    return FieldTree.load(this, this.registry);
+  }
+
+  /**
+   * Clear the fields cache.
+   * Call this after modifying the form structure.
+   */
+  clearCache(): void {
+    this.fieldsCache = null;
+    this.existingFontsCache = null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Default Font Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Set the default font for all fields.
+   *
+   * This font will be used for fields that don't have an explicit font set.
+   */
+  setDefaultFont(font: FormFont): void {
+    this._defaultFont = font;
+  }
+
+  /**
+   * Get the default font.
+   */
+  getDefaultFont(): FormFont | null {
+    return this._defaultFont;
+  }
+
+  /**
+   * Set the default font size for all fields.
+   *
+   * Use 0 for auto-size.
+   */
+  setDefaultFontSize(size: number): void {
+    if (size < 0) {
+      throw new Error(`Font size cannot be negative: ${size}`);
+    }
+
+    this._defaultFontSize = size;
+  }
+
+  /**
+   * Get the default font size.
+   */
+  getDefaultFontSize(): number {
+    return this._defaultFontSize;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Existing Font Access
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get an existing font from the PDF's resources.
+   *
+   * Looks up fonts in the AcroForm's /DR (Default Resources) dictionary.
+   *
+   * @param name Font name including slash, e.g., "/Helv", "/ZaDb"
+   * @returns ExistingFont wrapper or null if not found
+   */
+  getExistingFont(name: string): ExistingFont | null {
+    this.ensureExistingFontsLoaded();
+
+    const cleanName = name.startsWith("/") ? name.slice(1) : name;
+
+    return this.existingFontsCache?.get(cleanName) ?? null;
+  }
+
+  /**
+   * List all fonts available in the PDF's default resources.
+   */
+  getAvailableFonts(): ExistingFont[] {
+    this.ensureExistingFontsLoaded();
+
+    return this.existingFontsCache ? [...this.existingFontsCache.values()] : [];
+  }
+
+  /**
+   * Load existing fonts from /DR if not already cached.
+   */
+  private ensureExistingFontsLoaded(): void {
+    if (this.existingFontsCache !== null) {
+      return;
+    }
+
+    this.existingFontsCache = new Map();
+
+    const resolve = this.registry.resolve.bind(this.registry);
+
+    const dr = this.dict.getDict("DR", resolve);
+
+    if (!dr) {
+      return;
+    }
+
+    const fonts = dr.getDict("Font", resolve);
+
+    if (!fonts) {
+      return;
+    }
+
+    for (const key of fonts.keys()) {
+      const fontName = key.value;
+      const fontObj = fonts.get(fontName);
+
+      if (fontObj) {
+        if (fontObj instanceof PdfDict || fontObj instanceof PdfRef) {
+          const existingFont = parseExistingFont(fontName, fontObj, this.registry);
+
+          this.existingFontsCache.set(fontName, existingFont);
+        }
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Appearance Generation
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Update appearance for a single field.
+   *
+   * Called automatically by setValue() on field classes.
+   * Regenerates the visual appearance stream for the field.
+   *
+   * @internal
+   */
+  updateFieldAppearance(field: TerminalField): void {
+    // Skip read-only fields during regeneration (preserve existing appearance)
+    if (field.isReadOnly()) {
+      return;
+    }
+
+    const generator = new AppearanceGenerator(this, this.registry);
+
+    if (field instanceof TextField) {
+      for (const widget of field.getWidgets()) {
+        const existingAppearance = widget.getNormalAppearance();
+        const existingStyle = existingAppearance
+          ? extractAppearanceStyle(existingAppearance)
+          : undefined;
+
+        const stream = generator.generateTextAppearance(field, widget, existingStyle);
+
+        widget.setNormalAppearance(stream);
+      }
+    }
+
+    if (field instanceof CheckboxField) {
+      for (const widget of field.getWidgets()) {
+        const onValue = widget.getOnValue() ?? "Yes";
+
+        // Skip if all state appearances exist
+        if (widget.hasAppearancesForStates([onValue, "Off"])) {
+          continue;
+        }
+
+        const { on, off } = generator.generateCheckboxAppearance(field, widget, onValue);
+
+        widget.setNormalAppearance(on, onValue);
+        widget.setNormalAppearance(off, "Off");
+      }
+    }
+
+    if (field instanceof RadioField) {
+      for (const widget of field.getWidgets()) {
+        const value = widget.getOnValue() ?? "Choice";
+
+        // Skip if all state appearances exist
+        if (widget.hasAppearancesForStates([value, "Off"])) {
+          continue;
+        }
+
+        const { selected, off } = generator.generateRadioAppearance(field, widget, value);
+
+        widget.setNormalAppearance(selected, value);
+        widget.setNormalAppearance(off, "Off");
+      }
+    }
+
+    if (field instanceof DropdownField) {
+      for (const widget of field.getWidgets()) {
+        const stream = generator.generateDropdownAppearance(field, widget);
+
+        widget.setNormalAppearance(stream);
+      }
+    }
+
+    if (field instanceof ListBoxField) {
+      for (const widget of field.getWidgets()) {
+        const stream = generator.generateListBoxAppearance(field, widget);
+
+        widget.setNormalAppearance(stream);
+      }
+    }
+
+    if (field instanceof ButtonField) {
+      // NEVER regenerate button appearances
+      // No action required
+    }
+
+    // Clear NeedAppearances flag
+    this.dict.delete("NeedAppearances");
+  }
+
+  /**
+   * Update appearances for all fields that need it.
+   *
+   * This generates appearance streams for fields whose values
+   * have been modified (needsAppearanceUpdate is true).
+   *
+   * @param options.forceRegenerate Force regeneration even if appearances exist
+   */
+  updateAppearances(options: { forceRegenerate?: boolean } = {}): void {
+    const generator = new AppearanceGenerator(this, this.registry);
+
+    const fields = this.getFields();
+
+    for (const field of fields) {
+      if (!field.needsAppearanceUpdate) {
+        continue;
+      }
+
+      // Skip read-only fields during regeneration (preserve existing appearance)
+      if (field.isReadOnly()) {
+        field.needsAppearanceUpdate = false;
+        continue;
+      }
+
+      const forceRegen = options.forceRegenerate ?? false;
+
+      if (field instanceof TextField) {
+        for (const widget of field.getWidgets()) {
+          // Extract existing styling before regenerating
+          // This preserves colors, fonts, borders from the original appearance
+          const existingAppearance = widget.getNormalAppearance();
+          const existingStyle = existingAppearance
+            ? extractAppearanceStyle(existingAppearance)
+            : undefined;
+
+          const stream = generator.generateTextAppearance(field, widget, existingStyle);
+
+          widget.setNormalAppearance(stream);
+        }
+      }
+
+      if (field instanceof CheckboxField) {
+        for (const widget of field.getWidgets()) {
+          const onValue = widget.getOnValue() ?? "Yes";
+
+          // Skip if all state appearances exist and not forcing regeneration
+          // Existing appearances are usually better than generated ones
+          if (!forceRegen && widget.hasAppearancesForStates([onValue, "Off"])) {
+            continue;
+          }
+
+          const { on, off } = generator.generateCheckboxAppearance(field, widget, onValue);
+
+          widget.setNormalAppearance(on, onValue);
+          widget.setNormalAppearance(off, "Off");
+        }
+      }
+
+      if (field instanceof RadioField) {
+        for (const widget of field.getWidgets()) {
+          const value = widget.getOnValue() ?? "Choice";
+
+          // Skip if all state appearances exist and not forcing regeneration
+          if (!forceRegen && widget.hasAppearancesForStates([value, "Off"])) {
+            continue;
+          }
+
+          const { selected, off } = generator.generateRadioAppearance(field, widget, value);
+
+          widget.setNormalAppearance(selected, value);
+          widget.setNormalAppearance(off, "Off");
+        }
+      }
+
+      if (field instanceof DropdownField) {
+        for (const widget of field.getWidgets()) {
+          // Skip if appearance exists and not forcing regeneration
+          if (!forceRegen && widget.hasNormalAppearance()) {
+            continue;
+          }
+
+          const stream = generator.generateDropdownAppearance(field, widget);
+
+          widget.setNormalAppearance(stream);
+        }
+      }
+
+      if (field instanceof ListBoxField) {
+        for (const widget of field.getWidgets()) {
+          // Skip if appearance exists and not forcing regeneration
+          if (!forceRegen && widget.hasNormalAppearance()) {
+            continue;
+          }
+
+          const stream = generator.generateListBoxAppearance(field, widget);
+
+          widget.setNormalAppearance(stream);
+        }
+      }
+
+      if (field instanceof ButtonField) {
+        // NEVER regenerate button appearances - they have custom artwork
+        // that we cannot faithfully reproduce. Button appearances are
+        // created by the PDF author and should be preserved.
+      }
+
+      field.needsAppearanceUpdate = false;
+    }
+
+    // Clear NeedAppearances flag since we've generated them
+    this.dict.delete("NeedAppearances");
+  }
+
+  /**
+   * Mark all fields as needing appearance update.
+   */
+  markAllNeedAppearanceUpdate(): void {
+    const fields = this.getFields();
+
+    for (const field of fields) {
+      field.needsAppearanceUpdate = true;
+    }
+  }
+
+  /**
+   * Collect all terminal fields from a /Kids or /Fields array.
+   */
+  private collectFields(kids: PdfArray, visited: Set<string>, parentName: string): TerminalField[] {
+    const fields: TerminalField[] = [];
+
+    for (let i = 0; i < kids.length; i++) {
+      let item = kids.at(i);
+      const ref = item instanceof PdfRef ? item : null;
+      const refKey = ref ? `${ref.objectNumber} ${ref.generation}` : "";
+
+      // Detect circular references
+      if (refKey && visited.has(refKey)) {
+        this.registry.addWarning(`Circular reference in form field tree: ${refKey}`);
+
+        continue;
+      }
+
+      if (refKey) {
+        visited.add(refKey);
+      }
+
+      // Resolve the field dictionary
+      let dict: PdfDict | null = null;
+
+      if (item instanceof PdfRef) {
+        item = this.registry.resolve(item) ?? undefined;
+      }
+
+      if (item instanceof PdfDict) {
+        dict = item;
+      }
+
+      if (!dict) {
+        continue;
+      }
+
+      // Build fully-qualified name
+      const partialName = dict.getString("T")?.asString() ?? "";
+      const fullName = parentName
+        ? partialName
+          ? `${parentName}.${partialName}`
+          : parentName
+        : partialName;
+
+      // Check if terminal or non-terminal
+      if (this.isTerminalField(dict)) {
+        const field = createFormField(dict, ref, this.registry, this, fullName);
+
+        field.resolveWidgets();
+
+        fields.push(field);
+      } else {
+        // Non-terminal: recurse into children
+        const childKids = dict.getArray("Kids", this.registry.resolve.bind(this.registry));
+
+        if (childKids) {
+          fields.push(...this.collectFields(childKids, visited, fullName));
+        }
+      }
+    }
+
+    return fields;
+  }
+
+  /**
+   * Check if a field dictionary is a terminal field.
+   *
+   * A field is terminal if:
+   * - It has no /Kids, OR
+   * - Its /Kids contain widgets (no /T) rather than child fields (have /T)
+   */
+  private isTerminalField(dict: PdfDict): boolean {
+    const kids = dict.getArray("Kids", this.registry.resolve.bind(this.registry));
+
+    if (!kids || kids.length === 0) {
+      return true;
+    }
+
+    // Check the first kid - if it has /T, these are child fields (non-terminal)
+    // If it has no /T, these are widgets (terminal)
+    let firstKid = kids.at(0);
+
+    if (!firstKid) {
+      return true;
+    }
+
+    let firstKidDict: PdfDict | null = null;
+
+    if (firstKid instanceof PdfRef) {
+      firstKid = this.registry.resolve(firstKid) ?? undefined;
+    }
+
+    if (firstKid instanceof PdfDict) {
+      firstKidDict = firstKid;
+    }
+
+    if (!firstKidDict) {
+      return true;
+    }
+
+    // If first kid has /T, it's a child field → parent is non-terminal
+    // If first kid has no /T, it's a widget → parent is terminal
+    return !firstKidDict.has("T");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Font Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Add a font to the AcroForm's Default Resources (/DR) dictionary.
+   *
+   * This is called automatically when creating fields with embedded fonts.
+   * The font is added to /DR/Font with an auto-generated name if not already present.
+   *
+   * @param fontRef Reference to the font dictionary
+   * @param name Optional name for the font (e.g., "F1"). If not provided, one is generated.
+   * @returns The font name used in the /DR dictionary
+   */
+  addFontToResources(fontRef: PdfRef, name?: string): string {
+    const resolve = this.registry.resolve.bind(this.registry);
+
+    // Ensure /DR exists
+    let dr = this.dict.getDict("DR", resolve);
+
+    if (!dr) {
+      dr = new PdfDict();
+      this.dict.set("DR", dr);
+    }
+
+    // Ensure /DR/Font exists
+    let fontsDict = dr.getDict("Font", resolve);
+
+    if (!fontsDict) {
+      fontsDict = new PdfDict();
+      dr.set("Font", fontsDict);
+    }
+
+    // Check if font is already in resources (PdfRef is interned, so === works)
+    for (const key of fontsDict.keys()) {
+      const existing = fontsDict.get(key.value);
+
+      if (existing instanceof PdfRef && existing === fontRef) {
+        return key.value;
+      }
+    }
+
+    // Generate a name if not provided
+    const fontName = name ?? this.generateFontName(fontsDict);
+    fontsDict.set(fontName, fontRef);
+
+    // Clear existing fonts cache since we modified DR
+    this.existingFontsCache = null;
+
+    return fontName;
+  }
+
+  /**
+   * Generate a unique font name for the /DR/Font dictionary.
+   */
+  private generateFontName(fontsDict: PdfDict): string {
+    let counter = 1;
+    let name = `F${counter}`;
+
+    while (fontsDict.has(name)) {
+      counter++;
+      name = `F${counter}`;
+    }
+
+    return name;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Field Creation
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Add a field reference to the Fields array.
+   *
+   * @param fieldRef Reference to the field dictionary
+   */
+  addField(fieldRef: PdfRef): void {
+    let fieldsArray = this.dict.getArray("Fields", this.registry.resolve.bind(this.registry));
+
+    if (!fieldsArray) {
+      fieldsArray = new PdfArray([]);
+      this.dict.set("Fields", fieldsArray);
+    }
+
+    fieldsArray.push(fieldRef);
+
+    // Set signature flags if not already set
+    const currentFlags = this.signatureFlags;
+
+    if ((currentFlags & 3) !== 3) {
+      this.dict.set("SigFlags", PdfNumber.of(3)); // SignaturesExist + AppendOnly
+    }
+
+    // Clear cache since we added a field
+    this.clearCache();
+  }
+
+  /**
+   * Remove a field reference from the Fields array.
+   *
+   * This only removes the field from the AcroForm's /Fields array.
+   * Widget removal from pages must be handled separately.
+   *
+   * @param fieldRef Reference to the field dictionary to remove
+   * @returns true if the field was found and removed, false otherwise
+   */
+  removeField(fieldRef: PdfRef): boolean {
+    const fieldsArray = this.dict.getArray("Fields", this.registry.resolve.bind(this.registry));
+
+    if (!fieldsArray) {
+      return false;
+    }
+
+    // Find and remove the field reference
+    for (let i = 0; i < fieldsArray.length; i++) {
+      const item = fieldsArray.at(i);
+
+      if (item instanceof PdfRef && item === fieldRef) {
+        fieldsArray.remove(i);
+        this.clearCache();
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Form Flattening
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Flatten all form fields into static page content.
+   *
+   * This converts interactive form fields into static graphics. After flattening:
+   * - Field appearances are drawn directly in page content
+   * - Widget annotations are removed from pages
+   * - The form structure is cleared
+   *
+   * Use cases:
+   * - Creating print-ready PDFs
+   * - Archival (remove interactivity)
+   * - PDF/A compliance (some profiles disallow forms)
+   *
+   * @param options Flattening options
+   */
+  flatten(options: FlattenOptions = {}): void {
+    const flattener = new FormFlattener(this, this.registry, this.pageTree, this.catalog);
+
+    flattener.flatten(options);
+
+    // Clear field cache after flattening
+    this.fieldsCache = null;
+  }
+}

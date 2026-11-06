@@ -1,0 +1,9 @@
+repository: https://github.com/LibPDF-js/core
+package: @libpdf/core
+version: 0.5.3
+commit: 6bb53b8c7574c1a91992812bcfca8121a11eace8
+src-tree: 2d817a095f34f4177b1b50f92392336ac5200cb1
+license-blob: 03e95b9d30aa4957489f78f576a66d241e08b368
+fontbox-notice: apache/pdfbox NOTICE.txt at b6c88b8a4252f10a23593907e3439d168877de0e, blob 4da75301eaf795d26cd31b56c86937c70d084978
+imported: src/ without tests (*.test.ts, src/test-utils.ts, src/integration/, src/signatures/formats/test-helpers.ts), and LICENSE.md
+decision: docs/adr/ADR-016-vendored-libpdf.md

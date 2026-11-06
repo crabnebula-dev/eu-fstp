@@ -1,0 +1,236 @@
+import { Scanner } from "#src/io/scanner";
+import type { PdfObject } from "#src/objects/pdf-object";
+import type { PdfStream } from "#src/objects/pdf-stream";
+
+import { ObjectParseError } from "./errors";
+import { ObjectParser, type WarningCallback } from "./object-parser";
+import { TokenReader } from "./token-reader";
+
+/**
+ * Index entry for an object within an object stream.
+ */
+interface ObjectStreamEntry {
+  /** Object number */
+  objNum: number;
+  /** Byte offset relative to /First */
+  offset: number;
+}
+
+/**
+ * Options for ObjectStreamParser.
+ */
+export interface ObjectStreamParserOptions {
+  /**
+   * Enable recovery mode for lenient parsing of contained objects.
+   * Malformed objects produce partial results instead of throwing.
+   */
+  recoveryMode?: boolean;
+
+  /** Callback for warnings emitted during lenient parsing. */
+  onWarning?: WarningCallback;
+}
+
+/**
+ * Parser for PDF object streams (/Type /ObjStm).
+ *
+ * Object streams (PDF 1.5+) store multiple objects in a single compressed stream,
+ * enabling significant file size reduction. The stream format is:
+ *
+ * 1. Index section: N pairs of integers (objNum offset)
+ * 2. Object section: Objects stored sequentially without obj/endobj wrappers
+ *
+ * @example
+ * ```typescript
+ * const parser = new ObjectStreamParser(stream);
+ * await parser.parse();
+ *
+ * // Get object by index (from XRef entry)
+ * const obj = await parser.getObject(0);
+ *
+ * // Get all objects at once
+ * const allObjects = await parser.getAllObjects();
+ * ```
+ */
+export class ObjectStreamParser {
+  private index: ObjectStreamEntry[] | null = null;
+  private decodedData: Uint8Array | null = null;
+  private readonly first: number;
+  private readonly n: number;
+
+  constructor(
+    private stream: PdfStream,
+    private options: ObjectStreamParserOptions = {},
+  ) {
+    // Validate stream type
+    const type = stream.getName("Type");
+
+    if (type?.value !== "ObjStm") {
+      throw new ObjectParseError(`Expected /Type /ObjStm, got ${type?.value ?? "none"}`);
+    }
+
+    // Read required entries
+    const n = stream.getNumber("N");
+    const first = stream.getNumber("First");
+
+    if (n === undefined) {
+      throw new ObjectParseError("Object stream missing required /N entry");
+    }
+
+    if (first === undefined) {
+      throw new ObjectParseError("Object stream missing required /First entry");
+    }
+
+    this.n = n.value;
+    this.first = first.value;
+  }
+
+  /**
+   * Decompress and parse the stream index.
+   * Called automatically by getObject/getAllObjects if needed.
+   */
+  parse(): void {
+    if (this.index !== null) {
+      return; // Already parsed
+    }
+
+    // Decompress stream data
+    this.decodedData = this.stream.getDecodedData();
+
+    // Parse the index (N pairs of integers before /First)
+    this.index = this.parseIndex();
+  }
+
+  /**
+   * Parse the index section of the object stream.
+   * Returns array of (objNum, offset) pairs.
+   */
+  private parseIndex(): ObjectStreamEntry[] {
+    const result: ObjectStreamEntry[] = [];
+
+    if (this.decodedData === null) {
+      throw new ObjectParseError("Decoded data not parsed");
+    }
+
+    // Create scanner for the index portion only
+    const indexData = this.decodedData.subarray(0, this.first);
+    const scanner = new Scanner(indexData);
+    const reader = new TokenReader(scanner);
+
+    for (let i = 0; i < this.n; i++) {
+      const objNumToken = reader.nextToken();
+      const offsetToken = reader.nextToken();
+
+      if (objNumToken.type !== "number") {
+        throw new ObjectParseError(
+          `Invalid object stream index at entry ${i}: expected object number, got ${objNumToken.type}`,
+        );
+      }
+
+      if (offsetToken.type !== "number") {
+        throw new ObjectParseError(
+          `Invalid object stream index at entry ${i}: expected offset, got ${offsetToken.type}`,
+        );
+      }
+
+      result.push({
+        objNum: objNumToken.value,
+        offset: offsetToken.value,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Get an object by its index within the stream.
+   *
+   * @param index - 0-based index from XRef entry's indexInStream
+   * @returns The parsed object, or null if index is out of range
+   */
+  getObject(index: number): PdfObject | null {
+    this.parse();
+
+    if (this.index === null) {
+      throw new ObjectParseError("Index not parsed");
+    }
+
+    if (index < 0 || index >= this.index.length) {
+      return null;
+    }
+
+    const entry = this.index[index];
+
+    if (this.decodedData === null) {
+      throw new ObjectParseError("Decoded data not parsed");
+    }
+
+    // Create scanner starting at the object's offset within the object section
+    const objectSection = this.decodedData.subarray(this.first);
+    const scanner = new Scanner(objectSection);
+
+    scanner.moveTo(entry.offset);
+
+    const reader = new TokenReader(scanner);
+    const parser = new ObjectParser(reader);
+
+    parser.recoveryMode = this.options.recoveryMode ?? false;
+    parser.onWarning = this.options.onWarning ?? null;
+
+    const result = parser.parseObject();
+
+    return result?.object ?? null;
+  }
+
+  /**
+   * Get all objects in this stream.
+   *
+   * @returns Map of object number → parsed object
+   */
+  getAllObjects(): Map<number, PdfObject> {
+    this.parse();
+
+    if (this.index === null) {
+      throw new ObjectParseError("Index not parsed");
+    }
+
+    const result = new Map<number, PdfObject>();
+
+    for (let i = 0; i < this.index.length; i++) {
+      const obj = this.getObject(i);
+
+      if (obj !== null) {
+        result.set(this.index[i].objNum, obj);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get the object number at a given index.
+   *
+   * @param index - 0-based index from XRef entry's indexInStream
+   * @returns Object number, or null if index is out of range
+   */
+  getObjectNumber(index: number): number | null {
+    if (!this.index || index < 0 || index >= this.index.length) {
+      return null;
+    }
+
+    return this.index[index].objNum;
+  }
+
+  /**
+   * Get the number of objects in this stream.
+   */
+  get objectCount(): number {
+    return this.n;
+  }
+
+  /**
+   * Check if the stream has been parsed yet.
+   */
+  get isParsed(): boolean {
+    return this.index !== null;
+  }
+}

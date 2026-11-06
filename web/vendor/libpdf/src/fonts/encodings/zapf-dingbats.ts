@@ -1,0 +1,293 @@
+/**
+ * ZapfDingbatsEncoding - encoding for the ZapfDingbats font.
+ *
+ * This encoding contains decorative symbols, checkmarks, arrows, etc.
+ */
+
+import { SimpleEncoding } from "./encoding.ts";
+
+// prettier-ignore
+const ZAPF_DINGBATS_TO_UNICODE: (number | undefined)[] = [
+  // 0x00-0x1F: Undefined
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  // 0x20-0x3F: Dingbats
+  0x0020,
+  0x2701,
+  0x2702,
+  0x2703,
+  0x2704,
+  0x260e,
+  0x2706,
+  0x2707, // space ✁ ✂ ✃ ✄ ☎ ✆ ✇
+  0x2708,
+  0x2709,
+  0x261b,
+  0x261e,
+  0x270c,
+  0x270d,
+  0x270e,
+  0x270f, // ✈ ✉ ☛ ☞ ✌ ✍ ✎ ✏
+  0x2710,
+  0x2711,
+  0x2712,
+  0x2713,
+  0x2714,
+  0x2715,
+  0x2716,
+  0x2717, // ✐ ✑ ✒ ✓ ✔ ✕ ✖ ✗
+  0x2718,
+  0x2719,
+  0x271a,
+  0x271b,
+  0x271c,
+  0x271d,
+  0x271e,
+  0x271f, // ✘ ✙ ✚ ✛ ✜ ✝ ✞ ✟
+  // 0x40-0x5F: Stars and crosses
+  0x2720,
+  0x2721,
+  0x2722,
+  0x2723,
+  0x2724,
+  0x2725,
+  0x2726,
+  0x2727, // ✠ ✡ ✢ ✣ ✤ ✥ ✦ ✧
+  0x2605,
+  0x2729,
+  0x272a,
+  0x272b,
+  0x272c,
+  0x272d,
+  0x272e,
+  0x272f, // ★ ✩ ✪ ✫ ✬ ✭ ✮ ✯
+  0x2730,
+  0x2731,
+  0x2732,
+  0x2733,
+  0x2734,
+  0x2735,
+  0x2736,
+  0x2737, // ✰ ✱ ✲ ✳ ✴ ✵ ✶ ✷
+  0x2738,
+  0x2739,
+  0x273a,
+  0x273b,
+  0x273c,
+  0x273d,
+  0x273e,
+  0x273f, // ✸ ✹ ✺ ✻ ✼ ✽ ✾ ✿
+  // 0x60-0x7F: Florals and shapes
+  0x2740,
+  0x2741,
+  0x2742,
+  0x2743,
+  0x2744,
+  0x2745,
+  0x2746,
+  0x2747, // ❀ ❁ ❂ ❃ ❄ ❅ ❆ ❇
+  0x2748,
+  0x2749,
+  0x274a,
+  0x274b,
+  0x25cf,
+  0x274d,
+  0x25a0,
+  0x274f, // ❈ ❉ ❊ ❋ ● ❍ ■ ❏
+  0x2750,
+  0x2751,
+  0x2752,
+  0x25b2,
+  0x25bc,
+  0x25c6,
+  0x2756,
+  0x25d7, // ❐ ❑ ❒ ▲ ▼ ◆ ❖ ◗
+  0x2758,
+  0x2759,
+  0x275a,
+  0x275b,
+  0x275c,
+  0x275d,
+  0x275e,
+  undefined, // ❘ ❙ ❚ ❛ ❜ ❝ ❞
+  // 0x80-0x9F: Mostly undefined with some brackets
+  0x2768,
+  0x2769,
+  0x276a,
+  0x276b,
+  0x276c,
+  0x276d,
+  0x276e,
+  0x276f, // ❨ ❩ ❪ ❫ ❬ ❭ ❮ ❯
+  0x2770,
+  0x2771,
+  0x2772,
+  0x2773,
+  0x2774,
+  0x2775,
+  undefined,
+  undefined, // ❰ ❱ ❲ ❳ ❴ ❵
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  // 0xA0-0xBF: Ornaments and numbers
+  undefined,
+  0x2761,
+  0x2762,
+  0x2763,
+  0x2764,
+  0x2765,
+  0x2766,
+  0x2767, // ❡ ❢ ❣ ❤ ❥ ❦ ❧
+  0x2663,
+  0x2666,
+  0x2665,
+  0x2660,
+  0x2460,
+  0x2461,
+  0x2462,
+  0x2463, // ♣ ♦ ♥ ♠ ① ② ③ ④
+  0x2464,
+  0x2465,
+  0x2466,
+  0x2467,
+  0x2468,
+  0x2469,
+  0x2776,
+  0x2777, // ⑤ ⑥ ⑦ ⑧ ⑨ ⑩ ❶ ❷
+  0x2778,
+  0x2779,
+  0x277a,
+  0x277b,
+  0x277c,
+  0x277d,
+  0x277e,
+  0x277f, // ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿
+  // 0xC0-0xDF: More numbered circles
+  0x2780,
+  0x2781,
+  0x2782,
+  0x2783,
+  0x2784,
+  0x2785,
+  0x2786,
+  0x2787, // ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇
+  0x2788,
+  0x2789,
+  0x278a,
+  0x278b,
+  0x278c,
+  0x278d,
+  0x278e,
+  0x278f, // ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏
+  0x2790,
+  0x2791,
+  0x2792,
+  0x2793,
+  0x2794,
+  0x2192,
+  0x2194,
+  0x2195, // ➐ ➑ ➒ ➓ ➔ → ↔ ↕
+  0x2798,
+  0x2799,
+  0x279a,
+  0x279b,
+  0x279c,
+  0x279d,
+  0x279e,
+  0x279f, // ➘ ➙ ➚ ➛ ➜ ➝ ➞ ➟
+  // 0xE0-0xFF: Arrows
+  0x27a0,
+  0x27a1,
+  0x27a2,
+  0x27a3,
+  0x27a4,
+  0x27a5,
+  0x27a6,
+  0x27a7, // ➠ ➡ ➢ ➣ ➤ ➥ ➦ ➧
+  0x27a8,
+  0x27a9,
+  0x27aa,
+  0x27ab,
+  0x27ac,
+  0x27ad,
+  0x27ae,
+  0x27af, // ➨ ➩ ➪ ➫ ➬ ➭ ➮ ➯
+  undefined,
+  0x27b1,
+  0x27b2,
+  0x27b3,
+  0x27b4,
+  0x27b5,
+  0x27b6,
+  0x27b7, // ➱ ➲ ➳ ➴ ➵ ➶ ➷
+  0x27b8,
+  0x27b9,
+  0x27ba,
+  0x27bb,
+  0x27bc,
+  0x27bd,
+  0x27be,
+  undefined, // ➸ ➹ ➺ ➻ ➼ ➽ ➾
+];
+
+/**
+ * ZapfDingbatsEncoding implementation.
+ * Singleton instance available as `ZapfDingbatsEncoding.instance`.
+ */
+export class ZapfDingbatsEncoding extends SimpleEncoding {
+  readonly name = "ZapfDingbatsEncoding";
+  protected readonly toUnicode = ZAPF_DINGBATS_TO_UNICODE;
+
+  private static _instance: ZapfDingbatsEncoding | null = null;
+
+  static get instance(): ZapfDingbatsEncoding {
+    if (!ZapfDingbatsEncoding._instance) {
+      ZapfDingbatsEncoding._instance = new ZapfDingbatsEncoding();
+    }
+    return ZapfDingbatsEncoding._instance;
+  }
+}
