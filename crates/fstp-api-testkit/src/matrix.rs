@@ -100,12 +100,17 @@ fn policy_rows(op: &RefOp) -> Vec<Policy> {
 /// The sessions of one operation and principal.
 fn sessions(op: &RefOp, who: Who) -> Vec<Session> {
     let mut out = Vec::new();
+    // A public research tool has no page, so no web cell (M4 design
+    // section 3.10, "Routes").
+    let web = !op.public || op.page;
     if !who.account() {
-        out.push(Session {
-            login: None,
-            step_up: StepUp::Absent,
-            channel: Via::Web,
-        });
+        if web {
+            out.push(Session {
+                login: None,
+                step_up: StepUp::Absent,
+                channel: Via::Web,
+            });
+        }
         if op.public {
             out.push(Session {
                 login: None,
@@ -120,7 +125,12 @@ fn sessions(op: &RefOp, who: Who) -> Vec<Session> {
     } else {
         &[StepUp::Absent]
     };
-    for login in [Login::Passkey, Login::MagicLink, Login::Opaque] {
+    let logins: &[Login] = if web {
+        &[Login::Passkey, Login::MagicLink, Login::Opaque]
+    } else {
+        &[]
+    };
+    for login in logins.iter().copied() {
         for step_up in steps {
             out.push(Session {
                 login: Some(login),
@@ -557,6 +567,73 @@ pub fn compare(
     out
 }
 
+/// The operations a local run judges, from `FSTP_MATRIX_OPS`: a
+/// comma-separated list where an entry ending in `.` is a prefix, such as
+/// `public.`, and any other entry is an exact operation name. Unset, it
+/// admits every operation. It only narrows a local run: a cell it keeps is
+/// judged exactly as in the full matrix.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpFilter {
+    entries: Option<Vec<String>>,
+}
+
+impl OpFilter {
+    /// The filter of `text`, or every operation when it is `None`. A value
+    /// with no entry refuses, so a typo never runs an empty matrix.
+    pub fn parse(text: Option<&str>) -> Result<OpFilter, String> {
+        let Some(text) = text else {
+            return Ok(OpFilter { entries: None });
+        };
+        let entries: Vec<String> = text
+            .split(',')
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if entries.is_empty() {
+            return Err(format!("FSTP_MATRIX_OPS={text:?} names no operation"));
+        }
+        Ok(OpFilter {
+            entries: Some(entries),
+        })
+    }
+
+    /// The filter named by `FSTP_MATRIX_OPS`.
+    pub fn from_env() -> Result<OpFilter, String> {
+        OpFilter::parse(std::env::var("FSTP_MATRIX_OPS").ok().as_deref())
+    }
+
+    /// Whether the filter keeps the operation `name`.
+    pub fn admits(&self, name: &str) -> bool {
+        let Some(entries) = &self.entries else {
+            return true;
+        };
+        entries.iter().any(|e| {
+            if e.ends_with('.') {
+                name.starts_with(e.as_str())
+            } else {
+                name == e
+            }
+        })
+    }
+}
+
+impl Matrix {
+    /// The same matrix over the operations `filter` keeps. The reference
+    /// and the judgement of every kept cell are unchanged.
+    pub fn narrowed(self, filter: &OpFilter) -> Matrix {
+        let keep = |v: Vec<&'static str>| -> Vec<&'static str> {
+            v.into_iter().filter(|n| filter.admits(n)).collect()
+        };
+        Matrix {
+            ops: keep(self.ops),
+            missing_from_ops: keep(self.missing_from_ops),
+            unknown_to_reference: keep(self.unknown_to_reference),
+            reference: self.reference,
+        }
+    }
+}
+
 /// The direct channel: every cell through `ApiCore::dispatch` on the
 /// fake cells of the harness (`crate::harness`).
 pub fn direct_channel() -> Result<Box<dyn Channel>, NotImplemented> {
@@ -838,6 +915,7 @@ mod tests {
     /// `dispatch` equals the reference, both ways. The registry and the
     /// reference hold the same operations. Red until the registry, the
     /// API core and the harness's direct channel exist.
+    /// `FSTP_MATRIX_OPS` narrows a local run to some operations.
     #[test]
     fn t_authz_matrix_direct() {
         let m = matrix().unwrap_or_else(|e| panic!("{e}"));
@@ -851,6 +929,8 @@ mod tests {
             "OPS entries the reference does not judge: {:?}",
             m.unknown_to_reference()
         );
+        let ops = OpFilter::from_env().unwrap_or_else(|e| panic!("{e}"));
+        let m = m.narrowed(&ops);
         let shard = Shard::from_env().unwrap_or_else(|e| panic!("{e}"));
         let c = compare_grouped(&m, &direct_channel, threads_from_env(), shard)
             .unwrap_or_else(|e| panic!("{e}"));
@@ -1047,6 +1127,94 @@ mod tests {
         let c = compare(&m, None, &mut oracle, Shard::ALL);
         assert_eq!(c.by_op.get("made.up"), Some(&1), "{}", report(&c));
         assert_eq!(c.failures, 1);
+    }
+
+    /// T-AUTHZ-MATRIX: with `FSTP_MATRIX_OPS` unset the filter keeps every
+    /// cell, so the full check is unchanged, and a value that names no
+    /// operation refuses.
+    #[test]
+    fn t_authz_matrix_op_filter_unset_runs_every_cell() {
+        let all = OpFilter::parse(None).unwrap_or_else(|e| panic!("{e}"));
+        let full = matrix_over(&reference_names(), reference());
+        let total = full.cells().count();
+        let ops = full.ops().to_vec();
+        let narrowed = full.narrowed(&all);
+        assert_eq!(narrowed.ops(), ops.as_slice());
+        assert_eq!(narrowed.cells().count(), total);
+        for bad in ["", " ", ",", " , "] {
+            assert!(OpFilter::parse(Some(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    /// T-AUTHZ-MATRIX: an entry ending in `.` keeps that prefix and any
+    /// other entry keeps one exact name. A kept cell is judged as in the
+    /// full matrix.
+    #[test]
+    fn t_authz_matrix_op_filter_narrows_cells() {
+        let f =
+            OpFilter::parse(Some("public.,call.publish,call.")).unwrap_or_else(|e| panic!("{e}"));
+        let g = OpFilter::parse(Some("public.,call.publish")).unwrap_or_else(|e| panic!("{e}"));
+        assert!(f.admits("call.edit") && !g.admits("call.edit"));
+        assert!(g.admits("public.call") && g.admits("call.publish"));
+        assert!(!g.admits("calls.guide") && !g.admits("public") && !g.admits("call.publis"));
+        let full = matrix_over(&reference_names(), reference());
+        let want: Vec<Cell> = full
+            .cells()
+            .filter(|c| c.op.starts_with("public.") || c.op == "call.publish")
+            .collect();
+        let narrowed = matrix_over(&reference_names(), reference()).narrowed(&g);
+        let ops: Vec<&str> = narrowed.ops().to_vec();
+        assert_eq!(ops.len(), 10, "{ops:?}");
+        let got: Vec<Cell> = narrowed.cells().collect();
+        assert_eq!(got, want);
+        let mut grouped = 0usize;
+        for (state, policy) in narrowed.groups() {
+            for c in narrowed.group_cells(state, policy) {
+                assert_eq!(
+                    narrowed.reference().expected(&c),
+                    full.reference().expected(&c)
+                );
+                grouped += 1;
+            }
+        }
+        assert_eq!(grouped, want.len());
+    }
+
+    /// I-87, R-PB-04, M4 design section 3.10 "Routes": the public pages and
+    /// the feed have web cells, which admit anyone with or without a
+    /// session. The open-call list, the deadlines and the eligibility are
+    /// public tools with no page under `/p`, so they have MCP cells only.
+    #[test]
+    fn i87_r_pb_04_tool_only_public_ops_have_no_web_cell() {
+        let tools_only = [
+            "public.deadlines",
+            "public.eligibility",
+            "public.list_open_calls",
+        ];
+        let filter = OpFilter::parse(Some("public.")).unwrap_or_else(|e| panic!("{e}"));
+        let m = matrix_over(&reference_names(), reference()).narrowed(&filter);
+        assert_eq!(m.ops().len(), 9, "{:?}", m.ops());
+        let mut web: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut mcp: BTreeMap<&str, u64> = BTreeMap::new();
+        for c in m.cells() {
+            let n = match c.session.channel {
+                Via::Web => web.entry(c.op).or_insert(0),
+                Via::Mcp { .. } => mcp.entry(c.op).or_insert(0),
+            };
+            *n += 1;
+            if c.session.channel == Via::Web {
+                assert_eq!(m.reference().expected(&c), Some(Expected::Allow), "{c:?}");
+            }
+        }
+        for op in m.ops() {
+            assert!(mcp.get(op).is_some_and(|n| *n > 0), "{op} has no MCP cell");
+            let has_web = web.get(op).is_some_and(|n| *n > 0);
+            assert_eq!(
+                has_web,
+                !tools_only.contains(op),
+                "{op}: web cells {has_web}"
+            );
+        }
     }
 
     /// Design section 8.3: shards partition the cells.

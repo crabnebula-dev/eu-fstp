@@ -929,6 +929,11 @@ pub struct RefOp {
     pub read: bool,
     /// A public page or tool: no account, no session rule.
     pub public: bool,
+    /// A public operation the web serves as a page or the feed under `/p`
+    /// (M4 design section 3.10, "Routes"). A public operation without one
+    /// is a public research tool only (`mcp-server.md`), so the matrix gives
+    /// it no web cell. False for every other operation.
+    pub page: bool,
     /// High-risk by the table of `authentication.md` or by the strict
     /// reading of Q10.
     pub high_risk: bool,
@@ -950,6 +955,7 @@ impl RefOp {
             rule,
             read: false,
             public: false,
+            page: false,
             high_risk: false,
             binding: false,
             draft_gate: false,
@@ -974,8 +980,18 @@ impl RefOp {
         };
         RefOp {
             public: true,
+            page: true,
             tool,
             ..RefOp::read(name, target, Rule::Anyone)
+        }
+    }
+
+    /// A public research tool with no page under `/p` (M4 design section
+    /// 3.10, "Routes").
+    const fn tool_only(self) -> RefOp {
+        RefOp {
+            page: false,
+            ..self
         }
     }
 
@@ -1136,7 +1152,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         "public.list_open_calls",
         T::Programme,
         Some("fstp_public_list_open_calls"),
-    ),
+    )
+    .tool_only(),
     RefOp::public(
         "public.call",
         T::PublishedCall,
@@ -1151,12 +1168,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         "public.deadlines",
         T::Programme,
         Some("fstp_public_get_deadlines"),
-    ),
+    )
+    .tool_only(),
     RefOp::public(
         "public.eligibility",
         T::Programme,
         Some("fstp_public_get_eligibility"),
-    ),
+    )
+    .tool_only(),
     RefOp::public(
         "public.funded",
         T::Programme,

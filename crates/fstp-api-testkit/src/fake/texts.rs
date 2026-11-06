@@ -47,6 +47,19 @@ impl FakeTexts {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Replaces the texts with a copy of those of `from`, each under its
+    /// reference, so a ledger copied from `from`'s cell resolves every
+    /// text it names. Every clone of `self` sees the copy.
+    pub fn copy_from(&self, from: &FakeTexts) {
+        let (rows, next) = {
+            let s = lock(&from.state);
+            (s.rows.clone(), s.next)
+        };
+        let mut s = lock(&self.state);
+        s.rows = rows;
+        s.next = next;
+    }
 }
 
 impl FakeTexts {
