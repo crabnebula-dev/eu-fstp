@@ -20,6 +20,7 @@ pub mod mc;
 pub mod profiles;
 pub mod reference;
 pub mod scenario;
+pub mod smtp_sink;
 
 /// The refusal of a W0 stub. It names the operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

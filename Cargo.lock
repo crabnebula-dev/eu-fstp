@@ -201,7 +201,9 @@ dependencies = [
  "fstp-public",
  "fstp-rt",
  "fstp-signup",
+ "fstp-smtp",
  "fstp-tenant",
+ "fstp-tls",
  "fstp-web",
  "fstp-web-assets",
  "fstp-webauthn",
@@ -735,6 +737,14 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-smtp"
+version = "0.1.0"
+dependencies = [
+ "fstp-rt",
+ "fstp-tls",
 ]
 
 [[package]]

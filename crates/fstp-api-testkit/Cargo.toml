@@ -36,6 +36,8 @@ fstp-crypto.workspace = true
 fstp-webauthn.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true
+fstp-tls.workspace = true
+fstp-smtp.workspace = true
 
 [lints]
 workspace = true

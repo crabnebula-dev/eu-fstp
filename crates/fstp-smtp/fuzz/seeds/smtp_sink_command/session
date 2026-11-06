@@ -1,0 +1,5 @@
+EHLO cell.fstp.test
+MAIL FROM:<noreply@cell.fstp.test> BODY=8BITMIME
+RCPT TO:<a@example.test>
+DATA
+QUIT
