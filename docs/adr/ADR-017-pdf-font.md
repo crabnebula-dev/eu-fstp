@@ -1,6 +1,6 @@
 # ADR-017: The one embedded PDF font
 
-Status: Proposed 2026-11-06 (M5 lane L-PDF). Needs Daniel's acceptance. The `TODO(legal)` items below stay open until he answers them.
+Status: Accepted 2026-11-06 (Daniel Thompson-Yvetot). The `TODO(legal)` items on the OFL stay open.
 
 ## Context
 
