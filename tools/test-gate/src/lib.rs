@@ -13,6 +13,10 @@
 //! - the output holds a compile error, or no test binary ran;
 //! - two runs of the same key disagree, so the key is ambiguous.
 //!
+//! A CI shard runs part of the workspace. Its gate, [`check_partial`],
+//! calls a listed test stale only when its binary ran and the shard's
+//! libtest filters select it.
+//!
 //! A test is keyed `<binary>::<test>`. The binary is the name cargo
 //! prints in `Running ... (target/<profile>/deps/<binary>-<hash>)`
 //! without its hash, or `doctest:<crate>` for a doc-test run.
@@ -247,8 +251,46 @@ impl fmt::Display for Problem {
     }
 }
 
+/// The libtest selection of a sharded run: the filters and skips passed
+/// after `--`. A test is selected when its name holds one of the filters,
+/// or there is none, and holds none of the skips, as libtest decides
+/// without `--exact`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// The positional filters.
+    pub filters: Vec<String>,
+    /// The `--skip` filters.
+    pub skips: Vec<String>,
+}
+
+impl Selection {
+    /// Whether libtest runs the test named `test` under this selection.
+    pub fn selects(&self, test: &str) -> bool {
+        (self.filters.is_empty() || self.filters.iter().any(|f| test.contains(f.as_str())))
+            && !self.skips.iter().any(|s| test.contains(s.as_str()))
+    }
+}
+
 /// Every reason `run` fails against `list`, sorted. Empty when it passes.
 pub fn check(run: &Run, list: &[Entry]) -> Vec<Problem> {
+    judge(run, list, |_| true)
+}
+
+/// The gate of one CI shard, which runs only part of the workspace
+/// (Daniel, 2026-11-06). A listed test that did not run is stale only
+/// when its binary ran and `selection` selects it. Every other rule is
+/// that of [`check`].
+pub fn check_partial(run: &Run, list: &[Entry], selection: &Selection) -> Vec<Problem> {
+    judge(run, list, |e| {
+        e.key
+            .split_once("::")
+            .is_some_and(|(bin, test)| run.binaries.contains(bin) && selection.selects(test))
+    })
+}
+
+/// The rules of the gate. `judged_stale` says which listed tests that did
+/// not run are stale.
+fn judge(run: &Run, list: &[Entry], judged_stale: impl Fn(&Entry) -> bool) -> Vec<Problem> {
     let mut problems = BTreeSet::new();
     if run.compile_error {
         problems.insert(Problem::CompileError);
@@ -278,7 +320,7 @@ pub fn check(run: &Run, list: &[Entry]) -> Vec<Problem> {
         }
     }
     for e in list {
-        if !run.tests.contains_key(&e.key) {
+        if !run.tests.contains_key(&e.key) && judged_stale(e) {
             problems.insert(Problem::Stale(e.key.clone()));
         }
     }
@@ -377,6 +419,83 @@ test result: ok. 1 passed
         let run = read_run(&text);
         assert!(run.tests.is_empty());
         assert!(check(&run, &[]).is_empty());
+    }
+
+    fn select(filters: &[&str], skips: &[&str]) -> Selection {
+        Selection {
+            filters: filters.iter().map(|s| (*s).to_owned()).collect(),
+            skips: skips.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    /// CI shards (Daniel, 2026-11-06): a partial gate does not call an
+    /// entry stale when its binary did not run in this shard. The full
+    /// gate still does.
+    #[test]
+    fn known_red_partial_ignores_entries_of_binaries_that_did_not_run() {
+        let run = read_run(RUN);
+        let l = list("a::two | s | l\nzz::t | s | l\ndoctest:zz::f (line 1) | s | l");
+        assert!(check_partial(&run, &l, &Selection::default()).is_empty());
+        assert_eq!(
+            check(&run, &l),
+            vec![
+                Problem::Stale("doctest:zz::f (line 1)".into()),
+                Problem::Stale("zz::t".into())
+            ]
+        );
+    }
+
+    /// CI shards: in a binary that ran, an entry the libtest filters
+    /// select and that did not run is stale, as in the full gate. An
+    /// entry the filters leave out, or a skip names, is not judged.
+    #[test]
+    fn known_red_partial_stale_follows_the_libtest_selection() {
+        let run = read_run(RUN);
+        let l = list("a::two | s | l\na::gone | s | l");
+        let stale = vec![Problem::Stale("a::gone".into())];
+        assert_eq!(check_partial(&run, &l, &Selection::default()), stale);
+        assert_eq!(check_partial(&run, &l, &select(&["on"], &[])), stale);
+        assert_eq!(check_partial(&run, &l, &select(&["tw", "go"], &[])), stale);
+        assert!(check_partial(&run, &l, &select(&["two"], &[])).is_empty());
+        assert!(check_partial(&run, &l, &select(&[], &["gon"])).is_empty());
+        assert!(check_partial(&run, &l, &select(&["o"], &["ne"])).is_empty());
+    }
+
+    /// CI shards: the partial gate keeps every other rule. A failure not
+    /// listed, a listed test that passes, a crash, a compile error, an
+    /// empty run and an ambiguous key each still fail it, whatever the
+    /// filters and skips say.
+    #[test]
+    fn known_red_partial_keeps_every_other_rule() {
+        let skip_all = select(&["zzz"], &["t", "o", "x"]);
+        let run = read_run(RUN);
+        for sel in [Selection::default(), skip_all.clone()] {
+            assert_eq!(
+                check_partial(&run, &[], &sel),
+                vec![Problem::NewFailure("a::two".into())]
+            );
+            assert_eq!(
+                check_partial(&run, &list("a::two | s | l\na::one | s | l"), &sel),
+                vec![Problem::NowPassing("a::one".into())]
+            );
+        }
+        let crash = read_run("     Running tests/b.rs (target/debug/deps/b-00ff)\ntest x ... ok\n");
+        assert_eq!(
+            check_partial(&crash, &[], &skip_all),
+            vec![Problem::Unfinished("b".into())]
+        );
+        let broken = read_run("error[E0425]: cannot find value `x`\n");
+        assert_eq!(
+            check_partial(&broken, &[], &skip_all),
+            vec![Problem::CompileError, Problem::NothingRan]
+        );
+        let twice = read_run(
+            "     Running tests/c.rs (target/debug/deps/c-01)\ntest t ... ok\ntest t ... FAILED\ntest result: x\n",
+        );
+        assert_eq!(
+            check_partial(&twice, &[], &skip_all),
+            vec![Problem::Ambiguous("c::t".into())]
+        );
     }
 
     /// The list refuses malformed, empty, spaced and repeated entries.

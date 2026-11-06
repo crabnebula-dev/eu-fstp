@@ -9,13 +9,14 @@
 //!
 //! A cell exists only where its target and its principal can exist in the
 //! state, as `reference::authz::{target_exists, feasible}` decide. Every
-//! operation, principal and state cell that can exist is kept. Policy
-//! rows follow the covering array of design section 8.3, and reads run
-//! every P-10 value at each row. Web cells vary the login method for
-//! account principals, and the step-up for high-risk operations. MCP
-//! cells use a passkey-strength token, since a weaker session cannot
-//! connect an agent (I-78). They run with and without the scope where the
-//! operation has a scoped tool.
+//! operation, principal and state cell that can exist is kept. Q34 B
+//! (Daniel, 2026-11-06): the direct channel runs the full policy product
+//! ([`direct_matrix`]). The HTTP and MCP channels run the covering array
+//! of design section 8.3, and reads run every P-10 value at each row.
+//! Web cells vary the login method for account principals, and the
+//! step-up for high-risk operations. MCP cells use a passkey-strength
+//! token, since a weaker session cannot connect an agent (I-78). They
+//! run with and without the scope where the operation has a scoped tool.
 //!
 //! A [`Channel`] runs one cell through the system and reports what it
 //! observed. [`compare`] checks every cell against the reference in both
@@ -34,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::NotImplemented;
 use crate::reference::authz::{
-    AuthClass, AuthzReference, CellKey, Channel as Via, Expected, Login, P10, Policy, RefOp,
+    AuthClass, AuthzReference, CellKey, Channel as Via, Expected, Login, P10, P74, Policy, RefOp,
     Session, StateProfile, StepUp, Who, feasible, target_exists,
 };
 
@@ -45,9 +46,20 @@ pub type Cell = CellKey;
 #[derive(Debug)]
 pub struct Matrix {
     reference: AuthzReference,
+    rows: PolicyRows,
     ops: Vec<&'static str>,
     missing_from_ops: Vec<&'static str>,
     unknown_to_reference: Vec<&'static str>,
+}
+
+/// The policy rows a matrix runs at (Q34 B, Daniel, 2026-11-06).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolicyRows {
+    /// The covering array of design section 8.3, with every P-10 value
+    /// at each row for reads: the HTTP and MCP channels.
+    Covering,
+    /// The full product of the six policy parameters: the direct channel.
+    Full,
 }
 
 impl Matrix {
@@ -67,6 +79,17 @@ impl Matrix {
         &self.unknown_to_reference
     }
 
+    /// The policy rows this matrix runs at.
+    pub fn policy_rows(&self) -> PolicyRows {
+        self.rows
+    }
+
+    /// This matrix at `rows`. Every operation, principal, state and
+    /// session cell stays; only the policy dimension changes.
+    pub fn with_policy_rows(self, rows: PolicyRows) -> Matrix {
+        Matrix { rows, ..self }
+    }
+
     /// The reference this matrix was built against.
     pub fn reference(&self) -> &AuthzReference {
         &self.reference
@@ -77,13 +100,39 @@ impl Matrix {
         self.ops
             .iter()
             .filter_map(|name| self.reference.op(name).copied())
-            .flat_map(op_cells)
+            .flat_map(|op| op_cells(op, self.rows))
     }
 }
 
-/// The policy rows of one operation: the covering array, and for reads
-/// every P-10 value at each row.
-fn policy_rows(op: &RefOp) -> Vec<Policy> {
+/// The full product of P-10 and P-74 (three values each) and P-11, P-28,
+/// P-75 and P-77 (two each): 144 policies, the SuperSAFE one first.
+fn full_policy_product() -> Vec<Policy> {
+    let mut out = Vec::new();
+    for p10 in [P10::AssignedOnly, P10::AllCommittee, P10::OperatorStaffOnly] {
+        for p74 in [P74::AllRoles, P74::Disabled, P74::ReceivingOnly] {
+            for bits in 0u8..16 {
+                let on = |b: u8| bits & (1 << b) != 0;
+                out.push(Policy {
+                    p10,
+                    p74,
+                    p11_anonymous: !on(0),
+                    p28_on: on(1),
+                    p75_on: on(2),
+                    p77_draft_only: !on(3),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The policy rows of one operation. Under [`PolicyRows::Covering`], the
+/// covering array, and for reads every P-10 value at each row. Under
+/// [`PolicyRows::Full`], the full product.
+fn policy_rows(op: &RefOp, rows: PolicyRows) -> Vec<Policy> {
+    if rows == PolicyRows::Full {
+        return full_policy_product();
+    }
     let rows = Policy::covering_rows();
     if !op.read {
         return rows.to_vec();
@@ -144,8 +193,8 @@ fn sessions(op: &RefOp, who: Who) -> Vec<Session> {
 }
 
 /// Every cell of one operation.
-fn op_cells(op: RefOp) -> impl Iterator<Item = Cell> {
-    let rows = policy_rows(&op);
+fn op_cells(op: RefOp, rows: PolicyRows) -> impl Iterator<Item = Cell> {
+    let rows = policy_rows(&op, rows);
     StateProfile::all()
         .into_iter()
         .filter(move |s| target_exists(op.target, *s))
@@ -180,6 +229,7 @@ pub fn matrix_over(registry: &[&'static str], reference: AuthzReference) -> Matr
     let ops = registry.union(&known).copied().collect();
     Matrix {
         reference,
+        rows: PolicyRows::Covering,
         ops,
         missing_from_ops,
         unknown_to_reference,
@@ -198,6 +248,12 @@ pub fn matrix() -> Result<Matrix, NotImplemented> {
     }
     let reference = crate::reference::authz::authz_reference()?;
     Ok(matrix_over(&names, reference))
+}
+
+/// The matrix of the direct channel: [`matrix`] at the full policy
+/// product (Q34 B, Daniel, 2026-11-06).
+pub fn direct_matrix() -> Result<Matrix, NotImplemented> {
+    Ok(matrix()?.with_policy_rows(PolicyRows::Full))
 }
 
 /// A channel denial that dispatch returns before the dry run.
@@ -576,7 +632,7 @@ impl Matrix {
     pub fn groups(&self) -> Vec<(StateProfile, Policy)> {
         let mut rows = BTreeSet::new();
         for op in self.ops.iter().filter_map(|n| self.reference.op(n)) {
-            rows.extend(policy_rows(op));
+            rows.extend(policy_rows(op, self.rows));
         }
         let mut out = Vec::new();
         for state in StateProfile::all() {
@@ -591,7 +647,9 @@ impl Matrix {
     pub fn group_cells(&self, state: StateProfile, policy: Policy) -> Vec<Cell> {
         let mut out = Vec::new();
         for op in self.ops.iter().filter_map(|n| self.reference.op(n)) {
-            if !target_exists(op.target, state) || !policy_rows(op).contains(&policy) {
+            if !target_exists(op.target, state)
+                || !(self.rows == PolicyRows::Full || policy_rows(op, self.rows).contains(&policy))
+            {
                 continue;
             }
             for who in Who::ALL.into_iter().filter(|w| feasible(*w, state)) {
@@ -840,7 +898,7 @@ mod tests {
     /// API core and the harness's direct channel exist.
     #[test]
     fn t_authz_matrix_direct() {
-        let m = matrix().unwrap_or_else(|e| panic!("{e}"));
+        let m = direct_matrix().unwrap_or_else(|e| panic!("{e}"));
         assert!(
             m.missing_from_ops().is_empty(),
             "reference operations OPS lacks: {:?}",
@@ -1096,6 +1154,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The policies of each operation, principal, state and session cell.
+    fn policies_per_cell(
+        m: &Matrix,
+    ) -> BTreeMap<(&'static str, Who, StateProfile, Session), BTreeSet<Policy>> {
+        let mut out: BTreeMap<_, BTreeSet<Policy>> = BTreeMap::new();
+        for c in m.cells() {
+            out.entry((c.op, c.who, c.state, c.session))
+                .or_default()
+                .insert(c.policy);
+        }
+        out
+    }
+
+    /// Q34 B (Daniel, 2026-11-06), design section 8.3: the direct matrix
+    /// runs every operation, principal, state and session cell at every
+    /// policy of the full product of P-10, P-74 (three values each) and
+    /// P-11, P-28, P-75 and P-77 (two each), 144 policies.
+    #[test]
+    fn q34_direct_matrix_runs_the_full_policy_product() {
+        assert_eq!(
+            direct_matrix().map(|m| m.policy_rows()).ok(),
+            Some(PolicyRows::Full)
+        );
+        let full: BTreeSet<Policy> = full_policy_product().into_iter().collect();
+        assert_eq!(full.len(), 144);
+        assert!(Policy::covering_rows().iter().all(|r| full.contains(r)));
+        let m = small_matrix().with_policy_rows(PolicyRows::Full);
+        let per_cell = policies_per_cell(&m);
+        assert!(!per_cell.is_empty());
+        for (key, policies) in per_cell {
+            assert_eq!(policies, full, "{key:?}");
+        }
+    }
+
+    /// Q34 B, design section 8.3: the HTTP and MCP matrix keeps every
+    /// operation, principal, state and session cell of the direct one,
+    /// and covers policy with the 9-row covering array, with every P-10
+    /// value at each row for reads.
+    #[test]
+    fn q34_covering_matrix_keeps_every_op_principal_state_and_session() {
+        assert_eq!(
+            matrix().map(|m| m.policy_rows()).ok(),
+            Some(PolicyRows::Covering)
+        );
+        let covering = policies_per_cell(&small_matrix());
+        let full = policies_per_cell(&small_matrix().with_policy_rows(PolicyRows::Full));
+        assert_eq!(
+            covering.keys().collect::<Vec<_>>(),
+            full.keys().collect::<Vec<_>>()
+        );
+        let rows: BTreeSet<Policy> = Policy::covering_rows().into_iter().collect();
+        let with_p10: BTreeSet<Policy> = rows
+            .iter()
+            .flat_map(|r| {
+                [P10::AssignedOnly, P10::AllCommittee, P10::OperatorStaffOnly]
+                    .map(|p10| Policy { p10, ..*r })
+            })
+            .collect();
+        let r = reference();
+        for ((op, ..), policies) in covering {
+            let read = r.op(op).map(|o| o.read);
+            let want = if read == Some(true) { &with_p10 } else { &rows };
+            assert_eq!(&policies, want, "{op}");
+        }
+    }
+
+    /// Q34 B, design section 8.3: under the full policy product the
+    /// groups a world serves still hold every cell once, so sharding by
+    /// group judges the whole direct matrix.
+    #[test]
+    fn q34_full_product_groups_partition_the_cells() {
+        let m = small_matrix().with_policy_rows(PolicyRows::Full);
+        let all: BTreeSet<Cell> = m.cells().collect();
+        let mut grouped = BTreeSet::new();
+        let mut n = 0usize;
+        for (state, policy) in m.groups() {
+            for c in m.group_cells(state, policy) {
+                n += 1;
+                grouped.insert(c);
+            }
+        }
+        assert_eq!(n, all.len(), "a cell in two groups");
+        assert_eq!(grouped, all);
     }
 
     /// Design section 8.3: over the reference's own catalogue, every
