@@ -1,6 +1,6 @@
 # ADR-016: Vendored LibPDF for browser-side signature preparation
 
-Status: Proposed, 2026-11-06. Awaits Daniel's acceptance. Lane L-LIBPDF of `docs/handoff/m5-design.md` does not start before it.
+Status: Accepted 2026-11-06 (Daniel Thompson-Yvetot). The `TODO(legal)` on the licence notices stays open.
 
 ## Context
 
