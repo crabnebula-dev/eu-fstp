@@ -324,6 +324,50 @@ pub enum Command {
     /// A tenant command with the shell's facts, decided by
     /// `fstp_tenant::decide` over the tenant part (design section 3.5).
     Tenant(TenantRequest),
+    /// A stage 2 revision, decided by `compose::decide_revision` in one
+    /// entry (R-EV-05).
+    Stage2Revision(Stage2Revision),
+}
+
+/// A stage 2 revision (R-EV-05, NOTE 1, M4 design section 2.2 J4): the
+/// core `RecordPlanVersion` of origin "stage 2 revision" and the core
+/// `SubmitRevision` of that plan, decided in that order in one entry, as
+/// the creator's approval composes its core activation. Only
+/// [`Stage2Revision::new`] builds it, so the two always name the same plan
+/// and proposal.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Stage2Revision {
+    plan: fstp_domain::Command,
+}
+
+impl Stage2Revision {
+    /// The revision that records `plan` and submits it, or `None` unless
+    /// `plan` is a `RecordPlanVersion` of origin "stage 2 revision".
+    pub fn new(plan: fstp_domain::Command) -> Option<Stage2Revision> {
+        matches!(
+            plan,
+            fstp_domain::Command::RecordPlanVersion {
+                origin: fstp_domain::proposal::PlanOrigin::Stage2Revision,
+                ..
+            }
+        )
+        .then_some(Stage2Revision { plan })
+    }
+
+    /// The core commands, in the order they are decided: the plan, then
+    /// its submission.
+    pub fn commands(&self) -> [fstp_domain::Command; 2] {
+        let submit = match &self.plan {
+            fstp_domain::Command::RecordPlanVersion { plan, proposal, .. } => {
+                fstp_domain::Command::SubmitRevision {
+                    proposal: *proposal,
+                    plan: *plan,
+                }
+            }
+            other => other.clone(),
+        };
+        [self.plan.clone(), submit]
+    }
 }
 
 /// Hashes the side and the inner command. A creator command hashes its
@@ -356,6 +400,10 @@ impl core::hash::Hash for Command {
             Command::Tenant(t) => {
                 5u8.hash(state);
                 t.command.kind().hash(state);
+            }
+            Command::Stage2Revision(r) => {
+                6u8.hash(state);
+                r.hash(state);
             }
         }
     }

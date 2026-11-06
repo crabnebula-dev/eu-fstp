@@ -7,18 +7,26 @@
 //! is not cryptographic. The M3 driver computes the real digest of the
 //! query's canonical encoding (`Answer::digest`, overview NOTE 5).
 //!
-//! Intake (`state_country`, `declare_affiliations`, `declare_minor`)
-//! takes `VaultBound<T>`, which has no accessor, so the fake records only
-//! that an intake of a kind arrived for an account and a proposal. It
-//! never sees the fact (I-86, R-NG-01).
+//! Intake (`state_country`, `declare_affiliations`, `state_birth_date`)
+//! takes `VaultBound<T>`. The fake records only that an intake of a kind
+//! arrived for an account and a proposal, and keeps no country and no
+//! affiliation text (I-86, R-NG-01). A date of birth (Q23 B) is kept only
+//! as the instant from which the lead is 18, as an attestation of the
+//! shared facts, so `IsVerifiedAdultAtDeadline` answers its one bit
+//! relative to each deadline (R-ID-04, state-machine NOTE 14).
+//!
+//! Interim reading of lane mapp, pending Daniel: the stated date counts
+//! as the lead's over-18 attestation (R-NG-01 NOTE), and a later
+//! verification that shows the lead under 18 conflicts with it, so the
+//! vault answers nothing until a manual check (NOTE 14).
 
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
-    Affiliations, AsyncIdentityOracle, CountryCode, ExclusionClasses, Receipt, Vault, VaultBound,
-    VerificationPurpose, VerificationRedirect,
+    Affiliations, AsyncIdentityOracle, BirthDate, CountryCode, ExclusionClasses, Receipt, Vault,
+    VaultBound, VerificationPurpose, VerificationRedirect,
 };
 use fstp_domain::id::{AccountId, ClassId, ContentDigest, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
@@ -106,8 +114,8 @@ pub enum IntakeKind {
     Country,
     /// `declare_affiliations`.
     Affiliations,
-    /// `declare_minor`.
-    Minor,
+    /// `state_birth_date` (Q23 B).
+    BirthDate,
 }
 
 #[derive(Debug, Default)]
@@ -131,6 +139,9 @@ pub struct FakeVault {
     /// their P-38 lists, when the Q35 answers follow the asked content
     /// rather than the fixed bits of [`FakeVault::set_q35`].
     q35_known: Arc<Mutex<Option<Q35Known>>>,
+    /// The vault origin, such as `http://id.a.fstp.localhost:8640`, whose
+    /// write page a guardian consent opens (M3 design section 6.5).
+    origin: Arc<Mutex<Option<String>>>,
 }
 
 /// What the synthetic vault knows for the Q35 answers (see
@@ -152,7 +163,19 @@ impl FakeVault {
             log: Arc::new(Mutex::new(Log::default())),
             q35: Arc::new(Mutex::new((true, true))),
             q35_known: Arc::new(Mutex::new(None)),
+            origin: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Sets the vault origin whose write page a guardian consent opens.
+    /// Without one, a guardian consent fails as the vault down would.
+    pub fn set_origin(&self, origin: &str) {
+        *lock(&self.origin) = Some(origin.to_owned());
+    }
+
+    /// Every verification the vault started: purpose and account.
+    pub fn verifications(&self) -> Vec<(VerificationPurpose, AccountId)> {
+        lock(&self.log).verifications.clone()
     }
 
     /// Sets the Q35 answers of the synthetic vault: whether it knows
@@ -298,13 +321,18 @@ impl Vault for FakeVault {
         self.receipt(IntakeKind::Affiliations, a, p)
     }
 
-    async fn declare_minor(
+    /// Q23 B: the vault derives the instant from which the lead is 18 and
+    /// keeps that alone. A date it cannot place is refused.
+    async fn state_birth_date(
         &self,
         a: AccountId,
         p: ProposalId,
-        _fact: VaultBound<bool>,
+        fact: VaultBound<BirthDate>,
     ) -> Result<Receipt, OracleDown> {
-        self.receipt(IntakeKind::Minor, a, p)
+        let from = fact.into_vault().adult_from().ok_or(OracleDown)?;
+        let receipt = self.receipt(IntakeKind::BirthDate, a, p)?;
+        lock(&self.truth).attest_adult(a, from);
+        Ok(receipt)
     }
 
     async fn begin_verification(
@@ -315,13 +343,21 @@ impl Vault for FakeVault {
         if *lock(&self.down) {
             return Err(OracleDown);
         }
+        // I-18: the guardian consents on the vault's write page, with a
+        // synthetic ticket in the fragment (M3 design section 6.5).
+        let origin = lock(&self.origin).clone();
         let mut log = lock(&self.log);
-        log.verifications.push((purpose, a));
         let n = log.next;
+        let to = match purpose {
+            VerificationPurpose::GuardianConsent(_) => {
+                let origin = origin.ok_or(OracleDown)?;
+                format!("{origin}/w#synthetic-ticket-{n}")
+            }
+            _ => format!("/fake-vault/verifications/{n}"),
+        };
+        log.verifications.push((purpose, a));
         log.next = n.saturating_add(1);
-        Ok(VerificationRedirect(format!(
-            "/fake-vault/verifications/{n}"
-        )))
+        Ok(VerificationRedirect(to))
     }
 
     /// Whether the synthetic vault knows every class (Q35, synthetic

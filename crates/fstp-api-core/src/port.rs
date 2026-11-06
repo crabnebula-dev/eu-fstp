@@ -155,6 +155,13 @@ impl<T> VaultBound<T> {
     pub fn new(fact: T) -> VaultBound<T> {
         VaultBound(fact)
     }
+
+    /// The fact, for the vault client that delivers it. Only an
+    /// implementation of [`Vault`] calls it. The API core never does
+    /// (I-86, R-NG-01).
+    pub fn into_vault(self) -> T {
+        self.0
+    }
 }
 
 /// A vault receipt for one intake.
@@ -165,11 +172,137 @@ pub struct Receipt(pub u128);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CountryCode(pub [u8; 2]);
 
-/// Declared affiliations of one account.
+/// Declared affiliations of one account, as the lead wrote them (R-NG-01).
 ///
-/// W0 placeholder with no fields. The lead writes it with the M3 seam.
-pub struct Affiliations {
-    _w0: (),
+/// Interim reading of lane mapp, pending Daniel: free text of 1 to
+/// [`Affiliations::MAX_LEN`] bytes with a character other than white
+/// space, read by the vault only. Like [`VaultBound`], it has no `Debug`,
+/// `Clone` or accessor here except for the vault client.
+pub struct Affiliations(String);
+
+impl Affiliations {
+    /// The longest declaration, in bytes.
+    pub const MAX_LEN: usize = 4096;
+
+    /// The declaration `text`, or `None` when it is blank or too long.
+    pub fn new(text: &str) -> Option<Affiliations> {
+        let fits = text.len() <= Affiliations::MAX_LEN;
+        (fits && !text.trim().is_empty()).then(|| Affiliations(text.to_owned()))
+    }
+
+    /// The text, for the vault client that delivers it (I-86).
+    pub fn into_text(self) -> String {
+        self.0
+    }
+}
+
+/// A date of birth the lead states at submission, to the vault only
+/// (Q23 B, design section 15.0, 2026-11-06; R-ID-04, I-18, I-86).
+///
+/// It has no `Debug`, `Display`, `Clone` or JSON form, so no log, reply
+/// or ledger record can carry it. Only the vault reads it, through
+/// [`BirthDate::adult_from`].
+///
+/// TODO(legal): L-02, the legal basis for collecting the date of birth
+/// before NEGOTIATION, and whether Article 8 GDPR applies to it.
+pub struct BirthDate {
+    year: i64,
+    month: i64,
+    day: i64,
+}
+
+impl BirthDate {
+    /// The date `YYYY-MM-DD`: a real calendar day from 1900-01-01 to
+    /// 9999-12-31, ASCII digits only, or `None`.
+    pub fn parse(s: &str) -> Option<BirthDate> {
+        let b = s.as_bytes();
+        if b.len() != 10 || b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
+            return None;
+        }
+        let num = |r: core::ops::Range<usize>| -> Option<i64> {
+            let part = s.get(r)?;
+            if !part.bytes().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            part.parse().ok()
+        };
+        let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
+        if year < 1900 || !(1..=12).contains(&month) || day < 1 || day > month_len(year, month)? {
+            return None;
+        }
+        Some(BirthDate { year, month, day })
+    }
+
+    /// The instant from which the person is 18 in every time zone: noon
+    /// UTC of the 18th birthday, which is the start of that day at
+    /// UTC-12. A birthday of 29 February falls on 1 March in a year
+    /// without it. The vault compares it with a call deadline and answers
+    /// one bit (R-ID-04, state-machine NOTE 14). `None` past year 9999.
+    ///
+    /// Interim reading of lane mapp, pending Daniel: the latest zone
+    /// decides, so no lead counts as 18 before the birthday anywhere.
+    pub fn adult_from(&self) -> Option<Timestamp> {
+        let year = self.year.checked_add(18)?;
+        if year > 9999 {
+            return None;
+        }
+        let (month, day) = if self.day > month_len(year, self.month)? {
+            (3, 1)
+        } else {
+            (self.month, self.day)
+        };
+        let days = days_from_civil(year, month, day)?;
+        let micros = days
+            .checked_mul(86_400)?
+            .checked_add(12 * 3_600)?
+            .checked_mul(1_000_000)?;
+        Some(Timestamp::from_micros(micros))
+    }
+}
+
+/// The length of `month` of `year`, or `None` for no month.
+fn month_len(year: i64, month: i64) -> Option<i64> {
+    let leap = (year.rem_euclid(4) == 0 && year.rem_euclid(100) != 0) || year.rem_euclid(400) == 0;
+    let lens = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    lens.get(usize::try_from(month.checked_sub(1)?).ok()?)
+        .copied()
+}
+
+/// Days from 1970-01-01 to a valid civil date, on integers only.
+fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
+    let (yy, mm) = if m <= 2 {
+        (y.checked_sub(1)?, m.checked_add(9)?)
+    } else {
+        (y, m.checked_sub(3)?)
+    };
+    let era = yy.div_euclid(400);
+    let yoe = yy.checked_sub(era.checked_mul(400)?)?;
+    let doy = mm
+        .checked_mul(153)?
+        .checked_add(2)?
+        .div_euclid(5)
+        .checked_add(d.checked_sub(1)?)?;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe.div_euclid(4))?
+        .checked_sub(yoe.div_euclid(100))?
+        .checked_add(doy)?;
+    era.checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)
 }
 
 /// Why a verification runs.
@@ -179,6 +312,11 @@ pub enum VerificationPurpose {
     Applicant,
     /// Tenant admin identity, for the I-67 Sybil check (design section 6.1, item 13).
     AdminIdentity,
+    /// The guardian's identity and consent for a minor-flagged proposal,
+    /// on the vault origin (I-18, R-NG-01 NOTE, state-machine NOTE 14).
+    /// The redirect is the vault's write page with the ticket in the
+    /// fragment (M3 design section 6.5).
+    GuardianConsent(ProposalId),
 }
 
 /// Where the browser goes to verify.
@@ -478,12 +616,14 @@ pub trait Vault: AsyncIdentityOracle {
         p: ProposalId,
         d: VaultBound<Affiliations>,
     ) -> impl Future<Output = Result<Receipt, OracleDown>> + Send;
-    /// Declares whether the lead is under 18 at the deadline, to the vault only.
-    fn declare_minor(
+    /// States the lead's date of birth, to the vault only (Q23 B). The
+    /// vault derives from it whether the lead is 18 at a call deadline and
+    /// answers that one bit to `IsVerifiedAdultAtDeadline`.
+    fn state_birth_date(
         &self,
         a: AccountId,
         p: ProposalId,
-        under_18_at_deadline: VaultBound<bool>,
+        d: VaultBound<BirthDate>,
     ) -> impl Future<Output = Result<Receipt, OracleDown>> + Send;
     /// Starts a verification.
     fn begin_verification(
@@ -921,5 +1061,76 @@ pub fn api_core<P: CellPorts>(ports: P) -> ApiCore {
             ports,
             state: crate::dispatch::State::default(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    const DAY: i64 = 86_400_000_000;
+
+    /// Q23 B, R-ID-04: a date of birth is a real calendar day from 1900
+    /// in the one spelling `YYYY-MM-DD`.
+    #[test]
+    fn r_id_04_birth_date_takes_real_days_only() {
+        for ok in [
+            "1900-01-01",
+            "2009-07-14",
+            "2008-02-29",
+            "2000-02-29",
+            "9999-12-31",
+        ] {
+            assert!(BirthDate::parse(ok).is_some(), "{ok}");
+        }
+        for bad in [
+            "",
+            "1899-12-31",
+            "2009-02-29",
+            "1900-02-29",
+            "2009-13-01",
+            "2009-00-10",
+            "2009-04-31",
+            "2009-7-14",
+            "2009/07/14",
+            "+009-07-14",
+            "2009-07-1a",
+            "2009-07-14T00:00:00Z",
+            "２００９-07-14",
+        ] {
+            assert!(BirthDate::parse(bad).is_none(), "{bad}");
+        }
+    }
+
+    /// Q23 B, R-ID-04, state-machine NOTE 14: the vault's bit turns at
+    /// noon UTC of the 18th birthday, and a 29 February birthday turns on
+    /// 1 March of a year without it.
+    #[test]
+    fn r_id_04_adult_from_is_noon_utc_of_the_18th_birthday() {
+        let at = |s: &str| BirthDate::parse(s).unwrap().adult_from().unwrap().micros();
+        assert_eq!(at("2009-07-14"), 1_815_566_400 * 1_000_000);
+        assert_eq!(at("2008-02-29"), 1_772_366_400 * 1_000_000);
+        assert_eq!(at("1952-01-01"), DAY / 2);
+        assert_eq!(at("2009-07-15") - at("2009-07-14"), DAY);
+        assert!(
+            BirthDate::parse("9982-01-01")
+                .unwrap()
+                .adult_from()
+                .is_none()
+        );
+    }
+
+    /// R-NG-01: a declaration of affiliations is not blank and fits its
+    /// bound.
+    #[test]
+    fn r_ng_01_affiliations_are_not_blank_and_bounded() {
+        assert!(Affiliations::new("Synthetic organisation").is_some());
+        assert!(Affiliations::new(" \n\t").is_none());
+        assert!(Affiliations::new("").is_none());
+        assert!(Affiliations::new(&"a".repeat(Affiliations::MAX_LEN)).is_some());
+        assert!(Affiliations::new(&"a".repeat(Affiliations::MAX_LEN + 1)).is_none());
+        assert_eq!(Affiliations::new("x").unwrap().into_text(), "x");
     }
 }

@@ -1181,6 +1181,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("proposal.add_guardian", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.state_country", T::Proposal, R::Lead),
     RefOp::act("proposal.declare_affiliations", T::Proposal, R::Lead),
+    RefOp::act("proposal.state_birth_date", T::Proposal, R::Lead),
     RefOp::act("proposal.submit", T::Proposal, R::Lead)
         .binding()
         .tool("fstp_submit_proposal"),

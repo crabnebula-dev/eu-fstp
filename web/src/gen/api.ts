@@ -132,6 +132,7 @@ export type OpName =
   | "proposal.add_guardian"
   | "proposal.state_country"
   | "proposal.declare_affiliations"
+  | "proposal.state_birth_date"
   | "proposal.submit"
   | "proposal.request_copy"
   | "me.notices"
@@ -301,6 +302,7 @@ export interface OpParams {
   readonly "proposal.add_guardian": { readonly "proposal": string };
   readonly "proposal.state_country": { readonly "proposal": string };
   readonly "proposal.declare_affiliations": { readonly "proposal": string };
+  readonly "proposal.state_birth_date": { readonly "proposal": string };
   readonly "proposal.submit": { readonly "proposal": string };
   readonly "proposal.request_copy": { readonly "proposal": string };
   readonly "me.notices": Readonly<Record<never, string>>;
@@ -443,6 +445,7 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.add_guardian",
   "proposal.state_country",
   "proposal.declare_affiliations",
+  "proposal.state_birth_date",
   "proposal.submit",
   "proposal.request_copy",
   "me.notices",
@@ -1600,6 +1603,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "proposal.state_birth_date",
+    method: "PUT",
+    path: "/proposals/{proposal}/vault/birth_date",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "vault" }, { kind: "literal", text: "birth_date" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "proposal.submit",
     method: "POST",
     path: "/proposals/{proposal}/submission",
@@ -2654,6 +2671,14 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "total": { schema: { kind: "amount" }, optional: true },
     },
   },
+  "stage2.revise": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "plan": { schema: { kind: "id" }, optional: true },
+      "total": { schema: { kind: "amount" }, optional: true },
+    },
+  },
   "stage2.view": {
     kind: "object",
     fields: {
@@ -2810,6 +2835,12 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     },
   } },
   "me.begin_verification": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "guardian.begin_consent": {
     kind: "object",
     fields: {
       "redirect": { schema: { kind: "string" }, optional: false },

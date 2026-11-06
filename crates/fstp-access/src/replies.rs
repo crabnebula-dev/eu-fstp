@@ -437,6 +437,18 @@ pub const REPLIES: &[(&str, Shape)] = &[
             opt("total", Shape::Amount),
         ]),
     ),
+    // R-EV-05 (lane mapp): the page form of a stage 2 revision records
+    // the plan and submits it in one entry, and answers as a recorded
+    // plan does. The form that names a recorded plan answers
+    // `{"accepted": true}`.
+    (
+        "stage2.revise",
+        Shape::Object(&[
+            m("accepted", Shape::Bool),
+            opt("plan", Shape::Id),
+            opt("total", Shape::Amount),
+        ]),
+    ),
     // TH-08: each question under its P-11 handle, with its day only.
     (
         "stage2.view",
@@ -598,6 +610,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ),
     (
         "me.begin_verification",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    // I-18 (lane mapp): the vault's write page, where the guardian gives
+    // consent.
+    (
+        "guardian.begin_consent",
         Shape::Object(&[m("redirect", Shape::String)]),
     ),
     // I-86, design section 15.0 (2026-10-31): the caller's own active

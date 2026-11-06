@@ -41,7 +41,9 @@ fn bad() -> ApiError {
 pub(crate) fn rewrite(spec: &OpSpec, request: &mut Object) -> Result<(), ApiError> {
     match spec.name {
         "proposal.submit" => submission(request),
-        "proposal.record_plan" => plan(request),
+        // R-EV-05 (lane mapp): the stage 2 revision page sends the plan
+        // page form, which the revision records and submits in one entry.
+        "proposal.record_plan" | "stage2.revise" => plan(request),
         _ => Ok(()),
     }
 }

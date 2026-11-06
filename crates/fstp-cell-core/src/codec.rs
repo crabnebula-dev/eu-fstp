@@ -624,6 +624,13 @@ impl ToJson for CellCommand {
             CellCommand::Engine(fstp_engine::Command::Tenant(c)) => {
                 wrap("onboarding", fstp_engine::tenant::request_json(c))
             }
+            // Lane mapp (R-EV-05): the plan the revision records, under
+            // its own member. The decoder does not read it back yet; the
+            // lead adds it with the cell route of `stage2.revise`.
+            CellCommand::Engine(fstp_engine::Command::Stage2Revision(r)) => {
+                let [plan, _] = r.commands();
+                wrap("stage2_revision", plan.to_json())
+            }
             CellCommand::Auth(c) => wrap("auth", auth_command_json(c)),
             CellCommand::Tenant(c) => wrap("tenant", tenant_command_json(c)),
             CellCommand::Text(c) => wrap("text", text_command_json(c)),

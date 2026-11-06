@@ -180,6 +180,18 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "submit.done": "The proposal is submitted.",
   "submit.not_draft": "Only a draft can be submitted. This proposal is in the state {state}.",
   "submit.closed": "The call deadline has passed, so this proposal cannot be submitted.",
+  // Q23 B (design section 15.0, 2026-11-06): the date of birth goes to
+  // the identity vault only, which answers one bit: whether the lead is
+  // under 18 at the call deadline. TODO(legal): L-02, Daniel supplies the
+  // wording of the legal basis for collecting it before NEGOTIATION, and
+  // whether Article 8 GDPR applies. These texts state facts only.
+  "submit.dob.heading": "Date of birth, for the identity vault",
+  "submit.dob.intro":
+    "Your date of birth goes to the identity vault only. The platform learns only whether you are under 18 at the call deadline. Without it, the proposal needs a guardian's consent before negotiation.",
+  "submit.dob": "Date of birth",
+  "submit.dob_save": "Send the date of birth to the identity vault",
+  "submit.dob_required": "Enter a date of birth.",
+  "submit.dob_saved": "Your date of birth is stored in the identity vault.",
 
   "stage2.title": "Stage 2 questions",
   "stage2.from": "Question from {handle}",

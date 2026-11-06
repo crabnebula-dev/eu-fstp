@@ -29,6 +29,7 @@ export type ApplicantOp =
   | "proposal.add_guardian"
   | "proposal.state_country"
   | "proposal.declare_affiliations"
+  | "proposal.state_birth_date"
   | "proposal.submit"
   | "proposal.request_copy"
   | "proposal.withdraw"

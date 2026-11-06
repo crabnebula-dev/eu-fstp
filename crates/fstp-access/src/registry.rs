@@ -345,6 +345,8 @@ pub enum PortKind {
     StateCountry,
     /// The declared affiliations, to the vault only.
     DeclareAffiliations,
+    /// The lead's date of birth, to the vault only (Q23 B).
+    StateBirthDate,
     /// An autosave to the private workspace (I-21).
     SaveWorkspace,
     /// A request for a copy of the application (R-SB-04).
@@ -1264,6 +1266,16 @@ pub const OPS: &[OpSpec] = &[
         OpKind::M3Port(PortKind::DeclareAffiliations),
         Put,
         "/proposals/{proposal}/vault/affiliations",
+    )
+    .acting(LEAD)
+    .class(Personal),
+    // Q23 B (design section 15.0, 2026-11-06): the lead states a date of
+    // birth at submission, to the vault only. No tool (I-86).
+    OpSpec::new(
+        "proposal.state_birth_date",
+        OpKind::M3Port(PortKind::StateBirthDate),
+        Put,
+        "/proposals/{proposal}/vault/birth_date",
     )
     .acting(LEAD)
     .class(Personal),

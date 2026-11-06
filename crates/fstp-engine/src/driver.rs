@@ -227,6 +227,10 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             crate::tenant::tenant_queries(state, t, ctx)
         }
+        Command::Stage2Revision(r) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::revision_queries(state, r, ctx)
+        }
     }
 }
 
@@ -262,6 +266,10 @@ fn route_decide(
         Command::Tenant(t) => {
             crate::ledger_clock(state, ctx)?;
             crate::tenant::decide_tenant(state, t, ctx, answers)
+        }
+        Command::Stage2Revision(r) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::decide_revision(state, r, ctx, answers)
         }
     }
 }

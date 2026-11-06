@@ -129,6 +129,49 @@ test.describe('J4 submit', () => {
   });
 
   /**
+   * I-86, I-18, R-SB-01, R-SB-02 and Q23 B (design section 15.0,
+   * 2026-11-06): the lead states a date of birth at submission, in its own
+   * form, to the vault route only. No other request carries it, no reply
+   * echoes it, and no page shows it afterwards. A lead under 18 at the
+   * deadline still submits without a guardian.
+   */
+  test('i86_date_of_birth_reaches_only_the_vault', async ({ person, request }) => {
+    const { origin, control } = await freshCell(request);
+    const d = await draftedProposal(person, control, origin, 'dob');
+    const traffic = new Traffic(d.page);
+    const dob = '2011-07-14';
+    await d.page.goto(`${origin}${APP.submit(d.proposal)}`);
+    await d.page.locator(AUI.submit.birthDate).fill(dob);
+    const stated = d.page.waitForResponse(
+      (r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === API.birthDate(d.proposal),
+    );
+    await d.page.locator(AUI.submit.birthDateSave).click();
+    expect((await stated).ok(), 'the vault route accepts the date').toBe(true);
+    await expect(d.page.locator(AUI.submit.birthDateStatus)).toHaveAttribute('data-status', 'saved');
+    await expect(d.page.locator(AUI.submit.birthDate), 'the page keeps no copy').toHaveValue('');
+
+    const { response } = await submitDraft(d.page, origin, d.proposal);
+    expect(response.ok(), 'a minor submits without a guardian (R-SB-02)').toBe(true);
+    await expectState(d.page, origin, d.proposal, 'SUBMITTED');
+    for (const path of [APP.proposal(d.proposal), APP.submit(d.proposal), APP.proposals]) {
+      await d.page.goto(`${origin}${path}`);
+      await expect(d.page.locator('main')).toBeVisible();
+      expect(await d.page.content(), `${path} shows no date of birth`).not.toContain(dob);
+    }
+    await traffic.settle();
+
+    const vault = traffic.to('PUT', API.birthDate(d.proposal));
+    expect(vault).toHaveLength(1);
+    expect(jsonLeaves(parsedOrNull(vault[0]?.body ?? null)).strings).toEqual([dob]);
+    const elsewhere = traffic.sent.filter((r) => r.path !== API.birthDate(d.proposal) && (r.body ?? '').includes(dob));
+    expect(elsewhere.map((r) => `${r.method} ${r.path}`), 'no other request carries it').toEqual([]);
+    const echoed = traffic.received.filter((r) => (r.body ?? '').includes(dob));
+    expect(echoed.map((r) => `${r.method} ${r.path}`), 'no reply echoes it').toEqual([]);
+    const guardian = traffic.sent.filter((r) => r.path.includes('/guardian'));
+    expect(guardian.map((r) => `${r.method} ${r.path}`), 'no guardian request').toEqual([]);
+  });
+
+  /**
    * `state-machine.md`, DRAFT to SUBMITTED needs the call open. Once the
    * deadline has passed on the cell clock, no submission is accepted, the
    * page says so in an alert, and the proposal stays DRAFT. The page may
