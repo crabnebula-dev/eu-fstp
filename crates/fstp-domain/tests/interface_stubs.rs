@@ -22,7 +22,9 @@ use fstp_domain::id::{
     TextRef, VaultEpoch,
 };
 use fstp_domain::oracle::{Answer, Answers, Query, QueryKind};
-use fstp_domain::payment::PaymentLine;
+use fstp_domain::payment::{
+    CheckKind, CheckPhase, CheckResult, LineEvidence, PaymentKind, PaymentLine,
+};
 use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::policy::{
     AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
@@ -1098,11 +1100,19 @@ fn sample(kind: CommandKind) -> Command {
         K::RequestPayment => Command::RequestPayment {
             request,
             grant: proposal,
+            kind: PaymentKind::Milestone,
             lines: vec![PaymentLine {
                 line: LineId::from_raw(7),
                 milestone,
                 amount: pos(100),
+                evidence: LineEvidence {
+                    location: Some(text_ref(19)),
+                    release: None,
+                    licence: None,
+                    report: None,
+                },
             }],
+            replaces: None,
         },
         K::AcceptLine => Command::AcceptLine {
             request,
@@ -1111,12 +1121,25 @@ fn sample(kind: CommandKind) -> Command {
             reason: None,
         },
         K::ApprovePayment => Command::ApprovePayment { request },
-        K::ReleasePayment => Command::ReleasePayment { request },
+        K::ReleasePayment => Command::ReleasePayment {
+            request,
+            record_file: ContentDigest::from_bytes([3; 32]),
+        },
         K::ConfirmPaid => Command::ConfirmPaid { request },
         K::WithdrawPaymentRequest => Command::WithdrawPaymentRequest { request },
         K::RequestPaymentChanges => Command::RequestPaymentChanges {
             request,
             reason: text_ref(18),
+        },
+        K::RecordChecks => Command::RecordChecks {
+            request,
+            phase: CheckPhase::Submission,
+            results: vec![CheckResult {
+                line: Some(LineId::from_raw(7)),
+                check: CheckKind::Licence,
+                failure: None,
+            }],
+            snapshot: ContentDigest::from_bytes([4; 32]),
         },
         K::RecordDeliverable => Command::RecordDeliverable {
             deliverable: DeliverableId::from_raw(7),

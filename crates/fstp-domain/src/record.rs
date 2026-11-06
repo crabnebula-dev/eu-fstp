@@ -32,7 +32,7 @@ use crate::id::{
     PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, TextRef, VaultEpoch,
 };
 use crate::oracle::QueryKind;
-use crate::payment::{PaymentLine, PaymentReleased};
+use crate::payment::{CheckPhase, CheckResult, PaymentKind, PaymentLine, PaymentReleased};
 pub use crate::policy::activation::ProgrammeActivated;
 use crate::policy::{PolicyVersion, SpdxId};
 use crate::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin, ReentryStage, Task};
@@ -737,8 +737,22 @@ pub enum Record {
         request: RequestId,
         /// The grant.
         grant: ProposalId,
+        /// Milestone claim or hardship contribution (R-PR-04).
+        kind: PaymentKind,
         /// Its lines.
         lines: Vec<PaymentLine>,
+    },
+    /// A run of the automated checks was recorded with its evidence
+    /// snapshot (I-32, R-PR-02, R-PR-03).
+    ChecksRecorded {
+        /// The request.
+        request: RequestId,
+        /// Submission or acceptance.
+        phase: CheckPhase,
+        /// The outcome of each check.
+        results: Vec<CheckResult>,
+        /// The digest of the evidence snapshot (TH-24).
+        snapshot: ContentDigest,
     },
     /// A line was accepted.
     LineAccepted {

@@ -326,7 +326,7 @@ fn steps(w: &MoneyWorld, versions: usize, action: &McAction) -> Option<Vec<Step>
                 .pay
                 .requests
                 .iter()
-                .find(|(_, r)| r.grant == *p && r.state == RequestState::Submitted)?;
+                .find(|(_, r)| r.grant == *p && r.state == RequestState::UnderReview)?;
             let (line, l) = r.lines.iter().find(|(_, l)| l.decided.is_none())?;
             vec![accept_line(R1, *id, *line, l.requested, false).ok()?]
         }

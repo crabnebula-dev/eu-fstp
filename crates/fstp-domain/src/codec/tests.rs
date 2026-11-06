@@ -81,6 +81,7 @@ fn i23_witness_payloads_round_trip_at_domain_edges() {
                 .collect(),
             AccountId::from_raw(4),
             AccountId::from_raw(5),
+            crate::id::ContentDigest::from_bytes([0xab; 32]),
         )),
     ];
     for r in &records {
@@ -195,6 +196,7 @@ fn adr007_amount_free_money_record_writes_eur() {
     let r = Record::PaymentRequested {
         request: RequestId::from_raw(1),
         grant: ProposalId::from_raw(2),
+        kind: crate::payment::PaymentKind::Milestone,
         lines: Vec::new(),
     };
     let text = round_trip(&r);

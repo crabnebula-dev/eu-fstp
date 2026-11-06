@@ -48,12 +48,15 @@ use fstp_domain::decision::{Ballot, IrcVerdict, NegotiationFailure, Vote};
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
     AccountId, ActivityTypeId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ClassId,
-    ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, KnockOutCriterionId,
-    LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId,
-    ProposalId, ProximityListId, RequestId, TextId, TextRef, VaultEpoch,
+    ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, HardshipEvidenceId,
+    KnockOutCriterionId, LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId,
+    PolicyVersionId, ProgrammeId, ProposalId, ProximityListId, RequestId, TextId, TextRef,
+    VaultEpoch,
 };
 use fstp_domain::oracle::QueryKind;
-use fstp_domain::payment::PaymentLine;
+use fstp_domain::payment::{
+    CheckKind, CheckPhase, CheckResult, LineEvidence, PaymentKind, PaymentLine,
+};
 use fstp_domain::policy::activation::ReportDigest;
 use fstp_domain::policy::{
     AgentContentAccess, EffectiveScoreRule, ExclusionClasses, FrozenValues, FunderProfileRef,
@@ -725,6 +728,7 @@ pub(crate) enum RecordTag {
     PaymentConfirmed,
     PaymentRequestWithdrawn,
     PaymentChangesRequested,
+    ChecksRecorded,
     DeliverableRecorded,
     AmendmentProposed,
     AmendmentRouted,
@@ -741,7 +745,7 @@ pub(crate) enum RecordTag {
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
     /// tags of M4 changes D2 and D5.
-    pub(crate) const ALL: [RecordTag; 64] = [
+    pub(crate) const ALL: [RecordTag; 65] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -796,6 +800,7 @@ impl RecordTag {
         RecordTag::PaymentConfirmed,
         RecordTag::PaymentRequestWithdrawn,
         RecordTag::PaymentChangesRequested,
+        RecordTag::ChecksRecorded,
         RecordTag::DeliverableRecorded,
         RecordTag::AmendmentProposed,
         RecordTag::AmendmentRouted,
@@ -900,6 +905,7 @@ impl RecordTag {
             Record::PaymentConfirmed { .. } => RecordTag::PaymentConfirmed,
             Record::PaymentRequestWithdrawn { .. } => RecordTag::PaymentRequestWithdrawn,
             Record::PaymentChangesRequested { .. } => RecordTag::PaymentChangesRequested,
+            Record::ChecksRecorded { .. } => RecordTag::ChecksRecorded,
             Record::DeliverableRecorded(_) => RecordTag::DeliverableRecorded,
             Record::AmendmentProposed { .. } => RecordTag::AmendmentProposed,
             Record::AmendmentRouted { .. } => RecordTag::AmendmentRouted,
@@ -1467,9 +1473,45 @@ fn lines(g: &mut Gen, d: &mut Draw) -> G<Vec<PaymentLine>> {
             line: id(g, d, LineId::from_raw),
             milestone: id(g, d, MilestoneId::from_raw),
             amount: pos(g)?,
+            evidence: LineEvidence {
+                location: opt_text(g, d),
+                release: opt_text(g, d),
+                licence: if g.bool() { Some(spdx(g)) } else { None },
+                report: opt_text(g, d),
+            },
         });
     }
     Ok(out)
+}
+
+fn payment_kind(g: &mut Gen, d: &mut Draw) -> PaymentKind {
+    if g.bool() {
+        PaymentKind::Milestone
+    } else {
+        PaymentKind::Hardship(id(g, d, HardshipEvidenceId::from_raw))
+    }
+}
+
+fn check_results(g: &mut Gen, d: &mut Draw) -> Vec<CheckResult> {
+    let kinds = [
+        CheckKind::PublicLocation,
+        CheckKind::Licence,
+        CheckKind::Balance,
+        CheckKind::Evidence,
+    ];
+    let mut out = Vec::new();
+    for _ in 0..g.usize_in(d.min_len()..=3) {
+        out.push(CheckResult {
+            line: if g.bool() {
+                Some(id(g, d, LineId::from_raw))
+            } else {
+                None
+            },
+            check: *g.pick(&kinds),
+            failure: opt_text(g, d),
+        });
+    }
+    out
 }
 
 fn accounts(g: &mut Gen, d: &mut Draw) -> BTreeSet<AccountId> {
@@ -1813,7 +1855,13 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::RequestPayment => Command::RequestPayment {
             request: id(g, d, RequestId::from_raw),
             grant: id(g, d, ProposalId::from_raw),
+            kind: payment_kind(g, d),
             lines: lines(g, d)?,
+            replaces: if g.bool() {
+                Some(id(g, d, RequestId::from_raw))
+            } else {
+                None
+            },
         },
         CommandKind::AcceptLine => Command::AcceptLine {
             request: id(g, d, RequestId::from_raw),
@@ -1826,6 +1874,7 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         },
         CommandKind::ReleasePayment => Command::ReleasePayment {
             request: id(g, d, RequestId::from_raw),
+            record_file: digest(g),
         },
         CommandKind::ConfirmPaid => Command::ConfirmPaid {
             request: id(g, d, RequestId::from_raw),
@@ -1836,6 +1885,12 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::RequestPaymentChanges => Command::RequestPaymentChanges {
             request: id(g, d, RequestId::from_raw),
             reason: text(g, d),
+        },
+        CommandKind::RecordChecks => Command::RecordChecks {
+            request: id(g, d, RequestId::from_raw),
+            phase: *g.pick(&[CheckPhase::Submission, CheckPhase::Acceptance]),
+            results: check_results(g, d),
+            snapshot: digest(g),
         },
         CommandKind::RecordDeliverable => Command::RecordDeliverable {
             deliverable: id(g, d, DeliverableId::from_raw),
@@ -2174,6 +2229,7 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
         RecordTag::PaymentRequested => Record::PaymentRequested {
             request: id(g, d, RequestId::from_raw),
             grant: id(g, d, ProposalId::from_raw),
+            kind: payment_kind(g, d),
             lines: lines(g, d)?,
         },
         RecordTag::LineAccepted => Record::LineAccepted {
@@ -2199,6 +2255,12 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             request: id(g, d, RequestId::from_raw),
             by: id(g, d, AccountId::from_raw),
             reason: text(g, d),
+        },
+        RecordTag::ChecksRecorded => Record::ChecksRecorded {
+            request: id(g, d, RequestId::from_raw),
+            phase: *g.pick(&[CheckPhase::Submission, CheckPhase::Acceptance]),
+            results: check_results(g, d),
+            snapshot: digest(g),
         },
         RecordTag::DeliverableRecorded => Record::DeliverableRecorded(DeliverableRecorded {
             deliverable: id(g, d, DeliverableId::from_raw),

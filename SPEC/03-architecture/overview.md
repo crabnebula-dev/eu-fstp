@@ -42,8 +42,10 @@ The vault holds verified identity attributes, verification records, over-18 atte
 | Does any team member declare an affiliation on this proximity list? | I-35 |
 | Does this applicant meet the P-17 country condition of this programme? | R-EV-08, P-17 |
 | Which accounts have vault facts that changed since a given vault epoch? | Reaction to vault changes |
+| May a payment of this grant be released at this instant under P-36? | I-33, R-PR-05 |
+| Is this hardship evidence verified for this grant? | R-PR-04 |
 
-The change query returns account identifiers and no attributes. After a provisional verification, it also lists every other account that the facts revealed by that verification touch (confirmed 2026-10-25). The query set was decided on 2026-10-25. The over-18 attestation query was added to it (decided 2026-10-28, NOTE 7).
+The change query returns account identifiers and no attributes. After a provisional verification, it also lists every other account that the facts revealed by that verification touch (confirmed 2026-10-25). The query set was decided on 2026-10-25. The over-18 attestation query was added to it (decided 2026-10-28, NOTE 7). The bank release and hardship evidence queries were added to it (decided 2026-11-06, M5 design Q1 A). The release query holds only when the latest bank detail write, the first one included, has a completed re-verification, P-36 has elapsed since that write, and no dispute is open.
 
 NOTE 1: The application builds each candidate set from its own bindings: active bindings, and bindings inside a cooling-off bar (`02-domain/roles-and-sod.md` Cooling-off). For the cap queries it sends per-account totals of granted and reserved amounts, and the vault groups them by verified identity.
 

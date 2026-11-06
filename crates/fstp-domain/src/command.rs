@@ -21,7 +21,7 @@ use crate::id::{
     OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, TextRef,
     VaultEpoch,
 };
-use crate::payment::PaymentLine;
+use crate::payment::{CheckPhase, CheckResult, PaymentKind, PaymentLine};
 use crate::policy::activation::ReportDigest;
 use crate::policy::{ModelRef, PolicyVersion, SpdxId};
 use crate::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin, Task};
@@ -577,14 +577,20 @@ pub enum Command {
         /// The recorded reason.
         reason: TextRef,
     },
-    /// Request a payment.
+    /// Request a payment, or resubmit a returned one (M5 design reading 4).
     RequestPayment {
         /// The new request.
         request: RequestId,
         /// The grant.
         grant: ProposalId,
+        /// Milestone claim or hardship contribution (R-PR-04).
+        kind: PaymentKind,
         /// Its lines.
         lines: Vec<PaymentLine>,
+        /// The request this one replaces: one in CHECKS_FAILED or
+        /// CHANGES_REQUESTED, withdrawn in the same batch, so its pending
+        /// amounts return first (I-58). `None` for a new request.
+        replaces: Option<RequestId>,
     },
     /// Accept one line (`SPEC/02-domain/payment-requests.md`).
     AcceptLine {
@@ -602,10 +608,13 @@ pub enum Command {
         /// The request.
         request: RequestId,
     },
-    /// Release a payment (I-05).
+    /// Release a payment (I-05, I-31, I-33).
     ReleasePayment {
         /// The request.
         request: RequestId,
+        /// The digest of the record-only payment record file, computed by
+        /// the shell (M5 design reading 6).
+        record_file: ContentDigest,
     },
     /// Confirm a payment as paid.
     ConfirmPaid {
@@ -623,6 +632,19 @@ pub enum Command {
         request: RequestId,
         /// The requested changes.
         reason: TextRef,
+    },
+    /// Record a run of the automated checks with its evidence snapshot
+    /// (I-32, R-PR-02, R-PR-03).
+    RecordChecks {
+        /// The request.
+        request: RequestId,
+        /// Submission or acceptance.
+        phase: CheckPhase,
+        /// The outcome of each check.
+        results: Vec<CheckResult>,
+        /// The digest of the evidence snapshot: identifiers, content hashes
+        /// and retrieval time (TH-24).
+        snapshot: ContentDigest,
     },
     /// Record a deliverable from the M5 checks (I-15).
     RecordDeliverable {
@@ -801,6 +823,8 @@ pub enum CommandKind {
     WithdrawPaymentRequest,
     /// [`Command::RequestPaymentChanges`].
     RequestPaymentChanges,
+    /// [`Command::RecordChecks`].
+    RecordChecks,
     /// [`Command::RecordDeliverable`].
     RecordDeliverable,
     /// [`Command::ProposeAmendment`].
@@ -817,7 +841,7 @@ pub enum CommandKind {
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 62] = [
+    pub const ALL: [CommandKind; 63] = [
         CommandKind::CreateProgramme,
         CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
@@ -874,6 +898,7 @@ impl CommandKind {
         CommandKind::ConfirmPaid,
         CommandKind::WithdrawPaymentRequest,
         CommandKind::RequestPaymentChanges,
+        CommandKind::RecordChecks,
         CommandKind::RecordDeliverable,
         CommandKind::ProposeAmendment,
         CommandKind::RouteAmendment,
@@ -929,6 +954,7 @@ impl CommandKind {
                 | CommandKind::StartExecution
                 | CommandKind::Complete
                 | CommandKind::RecordDeliverable
+                | CommandKind::RecordChecks
                 | CommandKind::ActivateAmendment
         )
     }
@@ -994,6 +1020,7 @@ impl Command {
             Command::ConfirmPaid { .. } => CommandKind::ConfirmPaid,
             Command::WithdrawPaymentRequest { .. } => CommandKind::WithdrawPaymentRequest,
             Command::RequestPaymentChanges { .. } => CommandKind::RequestPaymentChanges,
+            Command::RecordChecks { .. } => CommandKind::RecordChecks,
             Command::RecordDeliverable { .. } => CommandKind::RecordDeliverable,
             Command::ProposeAmendment { .. } => CommandKind::ProposeAmendment,
             Command::RouteAmendment { .. } => CommandKind::RouteAmendment,

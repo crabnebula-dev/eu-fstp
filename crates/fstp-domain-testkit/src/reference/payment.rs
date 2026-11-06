@@ -27,20 +27,33 @@
 //! - `RequestPayment` is the lead's, on a grant in IN_EXECUTION. Each line
 //!   names a milestone of the effective contract version that is not
 //!   closed (I-59), and the request keeps paid plus pending within each
-//!   milestone amount (I-58). The request starts in SUBMITTED. The M5
-//!   checks are facts the domain does not hold in M2, so line review opens
-//!   on SUBMITTED.
+//!   milestone amount (I-58). The request starts in SUBMITTED. Hardship
+//!   lines claim milestones the same way (M5 design 12.1, Q4). A
+//!   resubmission names a request of the grant in CHECKS_FAILED or
+//!   CHANGES_REQUESTED, which is withdrawn first, so its pending lines do
+//!   not count (reading 4).
+//! - `RecordChecks` is the System's. Its submission run needs SUBMITTED
+//!   and its acceptance run UNDER_REVIEW, and every line has a result. A
+//!   passed submission run opens line review in UNDER_REVIEW. A failure in
+//!   either run returns the request to CHECKS_FAILED (R-PR-02).
 //! - `AcceptLine` is an assigned reviewer's without conflict (I-03), never
 //!   a mentor of the grant, whom the vault relates to the lead (SoD-12,
 //!   I-54). One decision per line. The approved amount is at most the
 //!   requested amount, and a lower one needs a reason (I-60). When every
 //!   line is decided, the request is ACCEPTED with at least one approved
-//!   line above zero, and REJECTED otherwise.
+//!   line above zero, and REJECTED otherwise. Line review needs
+//!   UNDER_REVIEW, and the decision that makes the request ACCEPTED needs
+//!   passed submission and acceptance runs with their snapshots (I-32).
 //! - `RequestPaymentChanges` is an assigned reviewer's on a request in
-//!   SUBMITTED, and makes it CHANGES_REQUESTED.
-//! - `ApprovePayment` is an active finance approver's on an ACCEPTED request.
+//!   UNDER_REVIEW, and makes it CHANGES_REQUESTED.
+//! - `ApprovePayment` is an active finance approver's on an ACCEPTED
+//!   request. A hardship request needs evidence the vault verified for the
+//!   grant (R-PR-04).
 //! - `ReleasePayment` is an active payment releaser's on a
-//!   PAYMENT_APPROVED request, under I-05.
+//!   PAYMENT_APPROVED request, under I-05. The paid total plus the request
+//!   stays within the granted amount (I-31). The vault holds the latest
+//!   bank detail write of the grant verified, P-36 days old or more, and
+//!   undisputed (I-33). P-36 is read from the head policy as `{"days":N}`.
 //!   Test-author choice: both are refused once the grant is COMPLETED or
 //!   TERMINATED, since its counted sum is then its paid total (I-64) and a
 //!   later release would raise it past the I-14 check.
@@ -131,8 +144,9 @@
 //!
 //! ```no_run
 //! use fstp_domain::payment::{Approved, PaymentChain, PaymentReleased, Released};
-//! fn record(c: &PaymentChain<Released>) -> PaymentReleased {
-//!     PaymentReleased::from_chain(c)
+//! use fstp_domain::id::ContentDigest;
+//! fn record(c: &PaymentChain<Released>, f: ContentDigest) -> PaymentReleased {
+//!     PaymentReleased::from_chain(c, f)
 //! }
 //! ```
 //!
@@ -140,19 +154,23 @@
 //!
 //! ```compile_fail
 //! use fstp_domain::payment::{Approved, PaymentChain, PaymentReleased, Released};
-//! fn record(c: &PaymentChain<Approved>) -> PaymentReleased {
-//!     PaymentReleased::from_chain(c)
+//! use fstp_domain::id::ContentDigest;
+//! fn record(c: &PaymentChain<Approved>, f: ContentDigest) -> PaymentReleased {
+//!     PaymentReleased::from_chain(c, f)
 //! }
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::command::{Actor, Command, SystemCause};
-use fstp_domain::id::{AccountId, LineId, MilestoneId, ProposalId, RequestId, TextRef};
-use fstp_domain::payment::PaymentLine;
+use fstp_domain::id::{
+    AccountId, ContentDigest, LineId, MilestoneId, ProposalId, RequestId, TextRef,
+};
+use fstp_domain::payment::{CheckPhase, CheckResult, PaymentKind, PaymentLine};
 use fstp_domain::record::Record;
 use fstp_domain::roles::Role;
 use fstp_domain::rules::StateTag;
+use fstp_domain::time::Days;
 use fstp_money::NonNegAmount;
 
 use crate::reference::money::{
@@ -164,10 +182,12 @@ use crate::vault::GroundTruth;
 /// The state of a payment request (`payment-requests.md` States).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RequestState {
-    /// Submitted for checks and review.
+    /// Submitted for checks.
     Submitted,
-    /// Returned with failed checks. No M2 command reaches it.
+    /// Returned with failed checks (R-PR-02).
     ChecksFailed,
+    /// The submission checks passed. Line review is open.
+    UnderReview,
     /// Returned with requested changes.
     ChangesRequested,
     /// Every line decided, at least one approved.
@@ -204,6 +224,7 @@ impl RequestState {
             self,
             RequestState::Submitted
                 | RequestState::ChecksFailed
+                | RequestState::UnderReview
                 | RequestState::ChangesRequested
                 | RequestState::Accepted
                 | RequestState::PaymentApproved
@@ -232,10 +253,16 @@ pub struct RefLine {
 pub struct RefRequest {
     /// The grant.
     pub grant: ProposalId,
+    /// Milestone claim or hardship contribution.
+    pub kind: PaymentKind,
     /// Its lines.
     pub lines: BTreeMap<LineId, RefLine>,
     /// Its state.
     pub state: RequestState,
+    /// The snapshot of the passed submission checks (I-32).
+    pub submission: Option<ContentDigest>,
+    /// The snapshot of the passed acceptance checks (I-32).
+    pub acceptance: Option<ContentDigest>,
     /// The finance approver.
     pub approver: Option<AccountId>,
     /// The payment releaser.
@@ -295,8 +322,22 @@ impl PayView {
 
     /// Paid plus pending on `milestone` of `grant`.
     pub fn used(&self, grant: ProposalId, milestone: MilestoneId) -> i64 {
+        self.used_except(grant, milestone, None)
+    }
+
+    /// Paid plus pending on `milestone` of `grant` without the lines of
+    /// `except`, a request a resubmission withdraws in the same batch.
+    pub fn used_except(
+        &self,
+        grant: ProposalId,
+        milestone: MilestoneId,
+        except: Option<RequestId>,
+    ) -> i64 {
         sum(self
-            .requests_of(grant)
+            .requests
+            .iter()
+            .filter(|(id, r)| r.grant == grant && Some(**id) != except)
+            .map(|(_, r)| r)
             .filter(|r| r.state.paid() || r.state.pending())
             .flat_map(|r| r.lines.values())
             .filter(|l| l.milestone == milestone)
@@ -340,6 +381,7 @@ impl PayView {
             Record::PaymentRequested {
                 request,
                 grant,
+                kind,
                 lines,
             } => {
                 let mut out = BTreeMap::new();
@@ -358,8 +400,11 @@ impl PayView {
                     *request,
                     RefRequest {
                         grant: *grant,
+                        kind: *kind,
                         lines: out,
                         state: RequestState::Submitted,
+                        submission: None,
+                        acceptance: None,
                         approver: None,
                         releaser: None,
                     },
@@ -400,6 +445,23 @@ impl PayView {
             }
             Record::PaymentChangesRequested { request, .. } => {
                 self.get_mut(*request)?.state = RequestState::ChangesRequested;
+            }
+            Record::ChecksRecorded {
+                request,
+                phase,
+                results,
+                snapshot,
+            } => {
+                let passed = results.iter().all(|c| c.failure.is_none());
+                let r = self.get_mut(*request)?;
+                match (phase, passed) {
+                    (CheckPhase::Submission, true) => {
+                        r.submission = Some(*snapshot);
+                        r.state = RequestState::UnderReview;
+                    }
+                    (CheckPhase::Acceptance, true) => r.acceptance = Some(*snapshot),
+                    (_, false) => r.state = RequestState::ChecksFailed,
+                }
             }
             Record::PaymentApproved { request, by } => {
                 let r = self.get_mut(*request)?;
@@ -487,8 +549,16 @@ pub fn pay_verdict(cx: &MoneyCx<'_>, actor: Actor, cmd: &Command) -> Option<Mone
         Command::RequestPayment {
             request,
             grant,
+            kind,
             lines,
-        } => request_payment(cx, actor, *request, *grant, lines),
+            replaces,
+        } => request_payment(cx, actor, *request, *grant, *kind, lines, *replaces),
+        Command::RecordChecks {
+            request,
+            phase,
+            results,
+            snapshot,
+        } => record_checks(actor, cx, *request, *phase, results, *snapshot),
         Command::AcceptLine {
             request,
             line,
@@ -497,7 +567,10 @@ pub fn pay_verdict(cx: &MoneyCx<'_>, actor: Actor, cmd: &Command) -> Option<Mone
         } => accept_line(cx, actor, *request, *line, *approved, *reason),
         Command::RequestPaymentChanges { request, reason } => changes(cx, actor, *request, *reason),
         Command::ApprovePayment { request } => approve(cx, actor, *request),
-        Command::ReleasePayment { request } => release(cx, actor, *request),
+        Command::ReleasePayment {
+            request,
+            record_file,
+        } => release(cx, actor, *request, *record_file),
         Command::ConfirmPaid { request } => confirm(cx, actor, *request),
         Command::WithdrawPaymentRequest { request } => withdraw(cx, actor, *request),
         _ => return None,
@@ -510,12 +583,15 @@ fn holds(cx: &MoneyCx<'_>, a: AccountId, role: Role, grant: ProposalId) -> bool 
         .is_some_and(|p| holds_active(cx.sod, a, role, p, cx.now))
 }
 
+#[allow(clippy::too_many_arguments, reason = "one argument per command member")]
 fn request_payment(
     cx: &MoneyCx<'_>,
     actor: Actor,
     request: RequestId,
     grant: ProposalId,
+    kind: PaymentKind,
     lines: &[PaymentLine],
+    replaces: Option<RequestId>,
 ) -> MoneyVerdict {
     let Some(a) = account(actor) else {
         return refuse("RequestPayment is the lead's");
@@ -525,6 +601,18 @@ fn request_payment(
     }
     if cx.money.proposals.get(&grant).map(|p| p.state) != Some(StateTag::InExecution) {
         return refuse("RequestPayment needs IN_EXECUTION");
+    }
+    if let Some(old) = replaces {
+        let open = cx.money.pay.requests.get(&old).is_some_and(|r| {
+            r.grant == grant
+                && matches!(
+                    r.state,
+                    RequestState::ChecksFailed | RequestState::ChangesRequested
+                )
+        });
+        if !open {
+            return refuse("a resubmission replaces a returned request of the grant");
+        }
     }
     if cx.money.pay.requests.contains_key(&request) {
         return refuse("request id reused");
@@ -555,22 +643,74 @@ fn request_payment(
         }
         let e = asked.entry(l.milestone).or_insert(0);
         *e = e.saturating_add(l.amount.amount().minor());
-        let used = cx.money.pay.used(grant, l.milestone).saturating_add(*e);
+        let used = cx
+            .money
+            .pay
+            .used_except(grant, l.milestone, replaces)
+            .saturating_add(*e);
         if used > m.amount {
             return refuse("I-58: paid plus pending would exceed the milestone amount");
         }
     }
     let mut e = MoneyExpect::new();
+    if let Some(old) = replaces {
+        e.push_exact(Record::PaymentRequestWithdrawn {
+            request: old,
+            by: a,
+        });
+    }
     e.push_exact(Record::PaymentRequested {
         request,
         grant,
+        kind,
         lines: lines.to_vec(),
     });
     MoneyVerdict::Accept(e)
 }
 
 fn open_for_review(r: &RequestState) -> bool {
-    matches!(r, RequestState::Submitted)
+    matches!(r, RequestState::UnderReview)
+}
+
+/// `RecordChecks` is the System's, from the checks runner. The submission
+/// run needs SUBMITTED and the acceptance run UNDER_REVIEW. Every line has
+/// a result, and every result names a line of the request or none.
+fn record_checks(
+    actor: Actor,
+    cx: &MoneyCx<'_>,
+    request: RequestId,
+    phase: CheckPhase,
+    results: &[CheckResult],
+    snapshot: ContentDigest,
+) -> MoneyVerdict {
+    if !matches!(actor, Actor::System(_)) {
+        return refuse("RecordChecks is the System's");
+    }
+    let Some(r) = cx.money.pay.requests.get(&request) else {
+        return refuse("unknown request");
+    };
+    let wanted = match phase {
+        CheckPhase::Submission => RequestState::Submitted,
+        CheckPhase::Acceptance => RequestState::UnderReview,
+    };
+    if r.state != wanted {
+        return refuse("the checks run on SUBMITTED, then on UNDER_REVIEW");
+    }
+    let named: BTreeSet<LineId> = results.iter().filter_map(|c| c.line).collect();
+    if results.is_empty()
+        || r.lines.keys().any(|l| !named.contains(l))
+        || named.iter().any(|l| !r.lines.contains_key(l))
+    {
+        return refuse("R-PR-02: every line of the request has a check result");
+    }
+    let mut e = MoneyExpect::new();
+    e.push_exact(Record::ChecksRecorded {
+        request,
+        phase,
+        results: results.to_vec(),
+        snapshot,
+    });
+    MoneyVerdict::Accept(e)
 }
 
 fn accept_line(
@@ -605,6 +745,17 @@ fn accept_line(
     }
     if amount < l.requested && reason.is_none() {
         return refuse("I-60: a lower approval needs a reason");
+    }
+    let last = r
+        .lines
+        .iter()
+        .all(|(id, x)| *id == line || x.decided.is_some());
+    let any = amount > 0
+        || r.lines
+            .values()
+            .any(|x| x.decided.is_some_and(|(_, v)| v > 0));
+    if last && any && (r.submission.is_none() || r.acceptance.is_none()) {
+        return refuse("I-32: acceptance needs passed checks and both snapshots");
     }
     let mut e = MoneyExpect::new();
     e.push_exact(Record::LineAccepted {
@@ -663,12 +814,22 @@ fn approve(cx: &MoneyCx<'_>, actor: Actor, request: RequestId) -> MoneyVerdict {
     if grant_closed(cx, r.grant) {
         return refuse("I-64: no approval once the grant is COMPLETED or TERMINATED");
     }
+    if let PaymentKind::Hardship(evidence) = r.kind
+        && !cx.truth.hardship_verified(r.grant, evidence)
+    {
+        return refuse("R-PR-04: the hardship evidence is not verified in the vault");
+    }
     let mut e = MoneyExpect::new();
     e.push_exact(Record::PaymentApproved { request, by: a });
     MoneyVerdict::Accept(e)
 }
 
-fn release(cx: &MoneyCx<'_>, actor: Actor, request: RequestId) -> MoneyVerdict {
+fn release(
+    cx: &MoneyCx<'_>,
+    actor: Actor,
+    request: RequestId,
+    record_file: ContentDigest,
+) -> MoneyVerdict {
     let Some(a) = account(actor) else {
         return refuse("ReleasePayment is the payment releaser's");
     };
@@ -684,6 +845,23 @@ fn release(cx: &MoneyCx<'_>, actor: Actor, request: RequestId) -> MoneyVerdict {
     if grant_closed(cx, r.grant) {
         return refuse("I-64, I-14: no release once the grant is COMPLETED or TERMINATED");
     }
+    let granted = cx.money.proposals.get(&r.grant).and_then(|p| p.granted);
+    let this: i64 = r
+        .lines
+        .values()
+        .filter_map(|l| l.decided.map(|(_, v)| v))
+        .sum();
+    if granted.is_none_or(|g| cx.money.pay.paid_total(r.grant).saturating_add(this) > g) {
+        return refuse("I-31: the release would exceed the contract amount");
+    }
+    let hold = cx
+        .money
+        .programme_of(r.grant)
+        .and_then(|p| cx.money.head(p))
+        .and_then(|p| p.p36);
+    if !hold.is_some_and(|d| cx.truth.bank_releasable(r.grant, cx.now, Days::new(d))) {
+        return refuse("I-33: the bank details are inside the hold, unverified or disputed");
+    }
     let acceptors = r.acceptors();
     let Some(approver) = r.approver else {
         return refuse("no approver");
@@ -698,8 +876,9 @@ fn release(cx: &MoneyCx<'_>, actor: Actor, request: RequestId) -> MoneyVerdict {
         acceptors: acceptors.clone(),
         approver,
         releaser: a,
+        record_file,
     });
-    if let Ok(rec) = forge_release(request, r.grant, &acceptors, approver, a) {
+    if let Ok(rec) = forge_release(request, r.grant, &acceptors, approver, a, record_file) {
         e.synth.push(rec);
     }
     MoneyVerdict::Accept(e)
@@ -751,17 +930,24 @@ pub fn forge_release(
     acceptors: &BTreeSet<AccountId>,
     approver: AccountId,
     releaser: AccountId,
+    record_file: ContentDigest,
 ) -> Result<Record, String> {
     let list: Vec<String> = acceptors
         .iter()
         .map(|a| format!("\"{}\"", a.raw()))
         .collect();
+    let hex: String = record_file
+        .bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     let text = format!(
-        "{{\"acceptors\":[{}],\"approver\":\"{}\",\"grant\":\"{}\",\"releaser\":\"{}\",\
-         \"request\":\"{}\",\"type\":\"PaymentReleased\"}}",
+        "{{\"acceptors\":[{}],\"approver\":\"{}\",\"grant\":\"{}\",\"record_file\":\"{}\",\
+         \"releaser\":\"{}\",\"request\":\"{}\",\"type\":\"PaymentReleased\"}}",
         list.join(","),
         approver.raw(),
         grant.raw(),
+        hex,
         releaser.raw(),
         request.raw()
     );

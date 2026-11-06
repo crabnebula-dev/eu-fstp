@@ -68,14 +68,22 @@
 //! - An attestation becomes effective under the NOTE 4 commit protocol,
 //!   like a verification. Adding, making effective or withdrawing one
 //!   lists its account in `ChangedSince`.
+//! - Bank details and hardship evidence are facts about the payee of a
+//!   grant, kept per grant (M5 design 12.1, Q1 A). Each mutator advances
+//!   the epoch and changes no account, as a consent does. Every bank
+//!   detail write, the first included, starts a hold. `BankReleasable`
+//!   holds only when a verification completed after the latest write, the
+//!   P-36 days of the query have passed since that write, and no dispute
+//!   is open (I-33). A grant with no write is never releasable.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::id::{
-    AccountId, ClassId, ContentDigest, ProgrammeId, ProposalId, ProximityListId, VaultEpoch,
+    AccountId, ClassId, ContentDigest, HardshipEvidenceId, ProgrammeId, ProposalId,
+    ProximityListId, VaultEpoch,
 };
 use fstp_domain::oracle::{Answer, OracleDown, Query};
-use fstp_domain::time::Timestamp;
+use fstp_domain::time::{Days, Timestamp};
 use fstp_engine::IdentityOracle;
 use fstp_money::{Amount, NonNegAmount};
 use fstp_prop::Gen;
@@ -142,6 +150,17 @@ pub enum AgeCheck {
     Minor,
 }
 
+/// The bank detail facts of the payee of one grant (I-33).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BankFacts {
+    /// The instant of the latest write.
+    pub written: Timestamp,
+    /// Whether a verification completed after that write.
+    pub verified: bool,
+    /// Whether a dispute is open.
+    pub disputed: bool,
+}
+
 /// The facts of a synthetic vault, with its epoch and change log.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroundTruth {
@@ -165,6 +184,10 @@ pub struct GroundTruth {
     /// Effective verifications that show an account under 18: the instant
     /// from which each shows it 18 or older (state-machine NOTE 14).
     under_18: BTreeMap<AccountId, Timestamp>,
+    /// Bank detail facts per grant (I-33).
+    bank: BTreeMap<ProposalId, BankFacts>,
+    /// Verified hardship evidence per grant (R-PR-04).
+    hardship: BTreeSet<(ProposalId, HardshipEvidenceId)>,
     epoch: VaultEpoch,
     /// The accounts changed by the mutation that produced each epoch.
     changes: Vec<(VaultEpoch, BTreeSet<AccountId>)>,
@@ -193,6 +216,8 @@ impl GroundTruth {
             adults: BTreeMap::new(),
             provisional_adults: BTreeMap::new(),
             under_18: BTreeMap::new(),
+            bank: BTreeMap::new(),
+            hardship: BTreeSet::new(),
             epoch: VaultEpoch::GENESIS,
             changes: Vec::new(),
         }
@@ -318,6 +343,68 @@ impl GroundTruth {
     pub fn meet_country(&mut self, account: AccountId, programme: ProgrammeId) {
         self.country.insert((account, programme));
         self.commit([account].into_iter().collect());
+    }
+
+    /// Records a bank detail write for the payee of `grant` at `at`. It
+    /// replaces the details and starts the hold: the write is unverified
+    /// until [`GroundTruth::verify_bank`] (I-33, R-PR-05).
+    pub fn write_bank(&mut self, grant: ProposalId, at: Timestamp) {
+        let disputed = self.bank.get(&grant).is_some_and(|b| b.disputed);
+        self.bank.insert(
+            grant,
+            BankFacts {
+                written: at,
+                verified: false,
+                disputed,
+            },
+        );
+        self.commit(BTreeSet::new());
+    }
+
+    /// Records a completed verification of the latest bank detail write of
+    /// `grant`. Without a write it changes nothing but the epoch.
+    pub fn verify_bank(&mut self, grant: ProposalId) {
+        if let Some(b) = self.bank.get_mut(&grant) {
+            b.verified = true;
+        }
+        self.commit(BTreeSet::new());
+    }
+
+    /// Opens (`open`) or resolves a dispute of the bank details of `grant`.
+    pub fn dispute_bank(&mut self, grant: ProposalId, open: bool) {
+        if let Some(b) = self.bank.get_mut(&grant) {
+            b.disputed = open;
+        }
+        self.commit(BTreeSet::new());
+    }
+
+    /// The bank detail facts of `grant`, if any write exists.
+    pub fn bank(&self, grant: ProposalId) -> Option<BankFacts> {
+        self.bank.get(&grant).copied()
+    }
+
+    /// Whether a payment of `grant` may be released at `at` under a hold of
+    /// `hold` days (I-33): the latest write is verified, the hold has
+    /// passed since it, and no dispute is open.
+    pub fn bank_releasable(&self, grant: ProposalId, at: Timestamp, hold: Days) -> bool {
+        self.bank.get(&grant).is_some_and(|b| {
+            b.verified
+                && !b.disputed
+                && b.written
+                    .checked_add_days(hold)
+                    .is_some_and(|end| end <= at)
+        })
+    }
+
+    /// Records verified hardship evidence `evidence` for `grant` (R-PR-04).
+    pub fn verify_hardship(&mut self, grant: ProposalId, evidence: HardshipEvidenceId) {
+        self.hardship.insert((grant, evidence));
+        self.commit(BTreeSet::new());
+    }
+
+    /// Whether `evidence` is verified hardship evidence for `grant`.
+    pub fn hardship_verified(&self, grant: ProposalId, evidence: HardshipEvidenceId) -> bool {
+        self.hardship.contains(&(grant, evidence))
     }
 
     /// Records an effective verified over-18 attestation of `account`, which
@@ -597,6 +684,10 @@ impl GroundTruth {
                 self.country.contains(&(*account, *programme))
             }
             Query::ChangedSince { epoch } => !self.changed_since(*epoch).is_empty(),
+            Query::BankReleasable { grant, at, hold } => self.bank_releasable(*grant, *at, *hold),
+            Query::HardshipEvidenceVerified { grant, evidence } => {
+                self.hardship_verified(*grant, *evidence)
+            }
         }
     }
 
