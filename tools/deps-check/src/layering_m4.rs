@@ -531,7 +531,7 @@ impl LicenceCache {
 
 /// The `license` value of a manifest's `[package]` table, following
 /// `license.workspace = true` to the nearest workspace manifest above it.
-fn manifest_licence(manifest: &Path) -> Option<String> {
+pub(crate) fn manifest_licence(manifest: &Path) -> Option<String> {
     let text = fs::read_to_string(manifest).ok()?;
     match table_licence(&text, "package")? {
         Licence::Value(v) => Some(v),
@@ -580,8 +580,10 @@ fn table_licence(text: &str, table: &str) -> Option<Licence> {
         if compact == "license.workspace=true" || compact == "license={workspace=true}" {
             return Some(Licence::Workspace);
         }
-        if let Some(rest) = compact.strip_prefix("license=") {
-            return Some(Licence::Value(rest.trim_matches('"').to_owned()));
+        if compact.starts_with("license=") {
+            // The value keeps its spaces: `MIT OR Apache-2.0` (R-NF-07).
+            let value = line.split_once('=').map_or("", |(_, v)| v.trim());
+            return Some(Licence::Value(value.trim_matches('"').to_owned()));
         }
     }
     None
@@ -1737,6 +1739,16 @@ mod tests {
         assert_eq!(
             table_licence("[dependencies]\nlicense = \"EUPL\"\n", "package"),
             None
+        );
+    }
+
+    /// R-NF-07: the SBOM reads the same field, so an SPDX expression keeps
+    /// its spaces.
+    #[test]
+    fn r_nf_07_licence_expression_keeps_spaces() {
+        assert_eq!(
+            table_licence("[package]\nlicense = \"MIT OR Apache-2.0\"\n", "package"),
+            Some(Licence::Value("MIT OR Apache-2.0".into()))
         );
     }
 }

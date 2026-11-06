@@ -78,3 +78,10 @@ bench = false
 unsafe_code = "forbid"
 
 [workspace]
+
+[[bin]]
+name = "sbom_integrity_decode"
+path = "fuzz_targets/sbom_integrity_decode.rs"
+test = false
+doc = false
+bench = false

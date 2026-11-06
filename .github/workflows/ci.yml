@@ -12,6 +12,8 @@
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
+#   sbom         the CycloneDX 1.6 SBOM from deps-check, written twice and
+#                compared byte for byte (R-NF-07, ADR-003)
 #
 # Every job that builds or runs code needs deps-check, so no crate outside
 # the allowlist is compiled before the gate has passed. The deps-check job
@@ -213,6 +215,59 @@ jobs:
           fi
       - name: Dependency allowlist, no-Python, fuzz-target and layering gates
         run: cargo run --locked -p deps-check -- --root .
+
+  sbom:
+    name: sbom (CycloneDX 1.6, R-NF-07)
+    needs: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # The same ADR-003 pins as the web job. The SBOM lists them as
+      # build-time components.
+      NODE_VERSION: "24.11.1"
+      NPM_VERSION: "11.6.2"
+      NODE_SHA256: "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8"
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          rustup toolchain install --no-self-update || rustup show
+      - name: Write the SBOM twice and check the bytes are identical
+        run: |
+          set -euo pipefail
+          mkdir -p target/sbom
+          for run in 1 2; do
+            cargo run --locked -p deps-check -- sbom --root . \
+              --out "target/sbom/run$run.cdx.json" \
+              --node-version "$NODE_VERSION" --node-sha256 "$NODE_SHA256" \
+              --npm-version "$NPM_VERSION"
+          done
+          cmp target/sbom/run1.cdx.json target/sbom/run2.cdx.json
+          mv target/sbom/run1.cdx.json target/sbom/fstp.cdx.json
+          rm target/sbom/run2.cdx.json
+      - name: Publish the SBOM in the job log and summary
+        run: |
+          set -euo pipefail
+          # This workflow uses no actions, so the SBOM is a build output of
+          # this job's log. Its SHA-256 goes to the job summary.
+          sha256sum target/sbom/fstp.cdx.json | tee -a "$GITHUB_STEP_SUMMARY"
+          cat target/sbom/fstp.cdx.json
 
   web:
     name: web (tsc, web tests, fuzz harness, generated types)
