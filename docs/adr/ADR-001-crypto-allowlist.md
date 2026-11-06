@@ -347,3 +347,22 @@ ADR-004's drafts of 2026-10-28 use two aws-lc-rs functions that the Tier A row a
 - Neither function is a new primitive in our code. Both are reached only through `fstp-crypto`. Its `aead` module would take the GCM-SIV algorithm.
 - PBKDF2 is not new to the tree. `fstp-crypto` has exposed `pbkdf2_hmac_sha256` over `aws_lc_rs::pbkdf2` since M1, and `fstp-pgwire` uses it for SCRAM. The row above records that function as a use and adds the file custody use. `fstp-keyd` calls the existing wrapper, so no new wrapper is written.
 - The PBKDF2 iteration floor and parameters are fixed in ADR-004, not here.
+
+## Amendment of 2026-11-06: public TLS root store
+
+Status: Accepted by Daniel in principle on 2026-11-06, as relayed by the lead for lane tlsroots. The exact version, licence notice and tree below await his review.
+
+Context: production SMTP relays (M6, `m6-design.md` Q1) and inference endpoints (M7, `m7-design.md` Q2, the Anthropic Messages API by default) present certificates under public CAs. No crate of this ADR shipped public roots, so `fstp-tls` could trust only PEM roots that a caller supplied.
+
+| Crate | Tier | Version | Features | First use |
+| --- | --- | --- | --- | --- |
+| webpki-roots | A | 1.0.9 (`=1.0.9`) | Default features off. The crate defines no features. Resolved: none. Its one dependency, rustls-pki-types, is taken with default features off, so the rustls-pki-types set stays `alloc`, `default`, `std` | 2026-11-06, lane tlsroots: `fstp-tls` only |
+
+- What it is: a compiled-in copy of the Mozilla root program's server authentication trust anchors, generated from the CCADB report. It holds data only and no cryptographic code. Path validation stays with rustls-webpki.
+- Why this crate: it is the root store maintained by the rustls project for rustls 0.23. It needs no platform verifier and no I/O, so every target and the cell image behave the same.
+- Licence: the crate declares `CDLA-Permissive-2.0` for its code and data. Section 2.1 of that agreement asks a recipient who shares the data to make the agreement text available with it. `TODO(legal)`: Daniel to confirm how shipped binaries carry that notice, and that the licence fits the platform licence.
+- Resolved tree: `webpki-roots 1.0.9` and `rustls-pki-types 1.15.1`. No new transitive package enters the tree. The `.crate` SHA-256 is `7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a`, as `Cargo.lock` and `deps/allowlist.txt` record it.
+- `deps/adr-roots.txt` gains `webpki-roots ADR-001 -`. `deps/allowlist.txt` gains the runtime row.
+- Use: `fstp_tls::ClientConfig::public_roots` verifies a server certificate chain against these roots and checks the host name. Verification is never disabled. `ClientConfigBuilder::also_trust_pem` adds a pinned CA on top, and `ClientConfig::new` keeps a pinned CA alone. So a per-tenant pinned CA stays possible and is never required.
+- Only `fstp-tls` depends on the crate. `fstp-cell::egress::service_tls` builds the configuration for the CrabNebula service hosts. M6 and M7 lanes take the same constructor for relays and inference endpoints.
+- Freshness: the root set changes when Mozilla's program changes. A version move needs a new row here, as for any crate. Updating at least once per release is a release checklist item for M10.

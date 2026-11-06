@@ -106,6 +106,9 @@ der = { version = "=0.7.10", default-features = false, features = ["alloc", "oid
 spki = { version = "=0.7.3", default-features = false, features = ["alloc"] }
 x509-cert = { version = "=0.2.5", default-features = false }
 cms = { version = "=0.2.3", default-features = false }
+# ADR-001 amendment of 2026-11-06 (lane tlsroots): the Mozilla root set for server
+# authentication to external services. Data only; fstp-tls alone depends on it.
+webpki-roots = { version = "=1.0.9", default-features = false }
 
 # In-house crates.
 fstp-prop = { path = "crates/fstp-prop" }
