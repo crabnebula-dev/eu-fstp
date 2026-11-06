@@ -62,6 +62,8 @@ members = [
     "crates/fstp-pdf",
     # M12, docs/handoff/m10-m12-design.md section 3.1, lane L12-METRICS.
     "crates/fstp-calib",
+    # M5, lane L-RPT.
+    "crates/fstp-report",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -158,6 +160,7 @@ fstp-journey = { path = "crates/fstp-journey" }
 fstp-pdf = { path = "crates/fstp-pdf" }
 # M12, docs/handoff/m10-m12-design.md section 3.1.
 fstp-calib = { path = "crates/fstp-calib" }
+fstp-report = { path = "crates/fstp-report" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }
