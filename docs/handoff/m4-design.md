@@ -1863,6 +1863,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | Roles lane questions (2026-11-06) | Answered | Approving a programme's activation is high-risk and needs a step-up. The domain core refuses a Receiving binding to a signatory role holder in the same tenant. `me.roles` includes the two signatory roles. The onboarding Channels step shows Matrix and WhatsApp disabled, marked "coming later" (B-05, B-03) |
 | Guide data protection summary and privacy address (2026-11-06) | Platform default, tenant override | Daniel provides a platform default, with `TODO(legal)` wording until he supplies it. A tenant may override both values |
 | Progress map rendering (2026-11-06) | Server tree as data | The journey read returns the Rust renderer's checked element tree, and the browser builds it against the closed SVG subset. ADR-015 is amended (lane j4) |
+| PDF font and CMS crates (2026-11-06, M5 lane L-PDF) | Pending Daniel | ADR-017 (Proposed) pins IBM Plex Sans Regular 1.1.0 under the OFL 1.1, with three `TODO(legal)` items. The ADR-001 record adds der, spki, x509-cert and cms (Tier B) for `fstp-pki::cms` |
 
 ### 15.1 These block the milestone
 

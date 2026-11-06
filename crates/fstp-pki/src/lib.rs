@@ -3,10 +3,12 @@
 //!
 //! The crate is pure. It returns the bytes to sign and assembles the
 //! certificate from a signature, so the caller signs through aws-lc-rs or
-//! custody. It reaches no I/O crate and parses nothing (layering rule 1).
+//! custody. It reaches no I/O crate (layering rule 1). Since M5, [`cms`]
+//! parses certificates and CMS through the ADR-001 Tier B formats crates.
 //! PEM is written in-house, since `rustls-pki-types` only decodes it.
 
 pub mod cert;
+pub mod cms;
 mod der;
 pub mod pem;
 pub mod pop;

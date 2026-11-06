@@ -1,0 +1,32 @@
+[package]
+name = "fstp-pdf-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-pdf = { path = ".." }
+fstp-crypto = { path = "../../fstp-crypto" }
+
+[[bin]]
+name = "increment_verify"
+path = "fuzz_targets/increment_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "truetype_decode"
+path = "fuzz_targets/truetype_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
