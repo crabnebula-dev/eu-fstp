@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_api_testkit::matrix::{self, Observed, agrees, class_of};
-use fstp_api_testkit::reference::authz::{Channel as Via, Expected, Who};
+use fstp_api_testkit::reference::authz::{Channel as Via, Expected, StateProfile, Who};
 
 /// T-AUTHZ-MATRIX, H-01: a `not_found` reply that names a missing route,
 /// tool, pending action (I-85) or agent client (R-MC-03) is no proof that
@@ -31,6 +31,8 @@ fn review_authz_not_found_never_agrees_with_allow() {
 /// `not_found` with rule `route`. The comparison still counts the cell as
 /// agreeing with the reference's `Allow`, so the direct matrix passes
 /// every public-page cell vacuously.
+/// Only an active programme is public, so the cell is one of an active
+/// programme: a draft programme rightly answers not found.
 #[test]
 fn review_authz_direct_public_page_cell_is_not_vacuous() {
     let m = matrix::matrix().unwrap_or_else(|e| panic!("{e}"));
@@ -39,9 +41,12 @@ fn review_authz_direct_public_page_cell_is_not_vacuous() {
         .into_iter()
         .flat_map(|(s, p)| m.group_cells(s, p))
         .find(|c| {
-            c.op == "public.programme" && c.who == Who::Anonymous && c.session.channel == Via::Web
+            c.op == "public.programme"
+                && c.state == StateProfile::ProgrammeActive
+                && c.who == Who::Anonymous
+                && c.session.channel == Via::Web
         })
-        .expect("a public.programme cell for an anonymous web caller");
+        .expect("a public.programme cell of an active programme for an anonymous web caller");
     let reference =
         fstp_api_testkit::reference::authz::authz_reference().unwrap_or_else(|e| panic!("{e}"));
     let expected = reference.expected(&cell).expect("the reference judges it");

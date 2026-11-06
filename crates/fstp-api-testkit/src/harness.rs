@@ -52,7 +52,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use fstp_api_core::decode::{Method as ApiMethod, decode_route, decode_tool};
+use fstp_api_core::decode::{Method as ApiMethod, decode_public_page, decode_route, decode_tool};
 use fstp_api_core::meta::Scope;
 use fstp_api_core::port::{AgentClientId, LoginMethod, PendingId, api_core};
 use fstp_api_core::{ApiCore, ApiError, Credential, OpResult, RequestHead};
@@ -816,6 +816,7 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         let step = v.as_str().unwrap_or("organisation").to_owned();
         path = path.replace("/organisation", &format!("/{step}"));
     }
+    let path = served_path(spec, pattern, path);
     let body = body_of(cell.op, cell.who, cell.state, w)?;
     Ok(Request {
         op: cell.op,
@@ -824,6 +825,32 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         body,
         params,
     })
+}
+
+/// The path a web client sends for `spec`, whose registry route `pattern`
+/// filled in is `path`. The `/p` router serves the programme page at
+/// `/p/{slug}/` and the feed at `/p/{slug}/feed.json` (M4 design section
+/// 3.10, "Routes"), where the registry names `/p/{slug}` and
+/// `/p/{slug}/feed`. Every other path is sent as filled in.
+fn served_path(spec: &fstp_access::OpSpec, pattern: &str, mut path: String) -> String {
+    if matches!(spec.kind, fstp_access::OpKind::Public(_)) {
+        match pattern {
+            "/p/{slug}" => path.push('/'),
+            "/p/{slug}/feed" => path.push_str(".json"),
+            _ => {}
+        }
+    }
+    path
+}
+
+/// Decodes a web request as `fstp-web`'s router does: a `GET` under `/p/`
+/// through the public page decoder, any other through the API routes.
+fn decode_web(method: ApiMethod, path: &str, body: &[u8]) -> Result<fstp_api_core::Op, ApiError> {
+    if method == ApiMethod::Get && path.starts_with("/p/") {
+        decode_public_page(path)
+    } else {
+        decode_route(method, path, body)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1812,13 +1839,18 @@ fn fresh_cell(
 /// The creator decides every draft command with its full validation, so
 /// building P takes long. Every world of one policy row and variant
 /// shares the same start, so it is built once and replayed: a world opens
-/// a fresh cell over a copy of the start's ledger. The API core's memory
+/// a fresh cell over a copy of the start's ledger and texts. The P-09
+/// wording of the draft is a public text the ledger names by reference, so
+/// without the texts no open call would be public. The API core's memory
 /// of the start is not carried over. It holds only the data protection
 /// contact of the Organisation step, which no cell of a programme state
 /// reads.
 #[derive(Clone)]
 struct Start {
     store: MemStore<Record>,
+    /// The texts stored during the start, under the references its ledger
+    /// names.
+    texts: crate::fake::FakeTexts,
     admins: BTreeSet<AccountId>,
     programme: ProgrammeId,
     now: i64,
@@ -1919,8 +1951,11 @@ fn build_start(key: StartKey) -> Result<Start, String> {
         other_programme(&mut seed)?;
     }
     let store = seed.ports.engine.store_copy();
+    let texts = crate::fake::FakeTexts::default();
+    texts.copy_from(&seed.ports.texts);
     Ok(Start {
         store,
+        texts,
         admins,
         programme: p,
         now: seed.now,
@@ -1969,6 +2004,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         let activated = !sole && depth(key.state) >= 1;
         let start = start_of((sole, activated, key.policy))?;
         let (ports, core) = fresh_cell(start.store.clone(), &start.admins, start.now)?;
+        ports.texts.copy_from(&start.texts);
         for _ in 0..start.drawn {
             let _ = fstp_api_core::port::Ids::fresh(&ports.ids);
         }
@@ -3213,7 +3249,7 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
                 Ok(Reply::Direct(Box::new(r)))
             }
             (Transport::Direct, false) => {
-                let r = match decode_route(req.method, &req.path, &req.body_bytes()) {
+                let r = match decode_web(req.method, &req.path, &req.body_bytes()) {
                     Ok(op) => block_on(w.core.dispatch(cred.clone(), &RequestHead::new(), op)),
                     Err(e) => Err(e),
                 };
@@ -3616,5 +3652,110 @@ mod tests {
         assert_eq!(day_of(0), "1970-01-01");
         assert_eq!(day_of(31 * DAY), "1970-02-01");
         assert_eq!(day_of(MILESTONE_START), "1970-01-21");
+    }
+
+    /// I-87, R-PB-04, M4 design section 3.10 "Routes": the web channels
+    /// send a public page as the `/p` router serves it, and decode it as
+    /// that router does. The page and feed operations of the reference
+    /// decode to themselves. The tool-only public operations have no page.
+    #[test]
+    fn i87_r_pb_04_harness_sends_public_pages_as_served() {
+        let fill = |pattern: &str| {
+            pattern
+                .replace("{slug}", "synthetic")
+                .replace("{call}", "7")
+        };
+        let mut pages = 0usize;
+        for r in crate::reference::authz::REFERENCE_OPS
+            .iter()
+            .filter(|r| r.public)
+        {
+            let spec = fstp_access::op(r.name).unwrap();
+            let (_, pattern) = spec.route.unwrap();
+            let path = served_path(spec, pattern, fill(pattern));
+            let got = decode_web(ApiMethod::Get, &path, &[]);
+            if r.page {
+                pages += 1;
+                assert_eq!(got.map(|op| op.name()).ok(), Some(r.name), "{path}");
+            } else {
+                assert!(
+                    matches!(&got, Err(ApiError::Refused { code, .. }) if code.as_str() == "not_found"),
+                    "{path}: {got:?}"
+                );
+            }
+        }
+        assert_eq!(pages, 6);
+        let api = served_path(
+            fstp_access::op("call.publish").unwrap(),
+            "/x",
+            "/x".to_owned(),
+        );
+        assert_eq!(api, "/x");
+    }
+
+    /// I-87, R-PB-04, review H-01: through the direct channel an anonymous
+    /// web read of a public page reaches the system. No page is public
+    /// while the programme is a draft. Once it is active its pages are
+    /// served. Once the call is open its call page is served too (lane
+    /// mpubfin2). The Guide page still answers not found: the Guide is an
+    /// M4 seam that fails closed (`fstp-api-core` `dispatch/public.rs`,
+    /// "Seams"). It is pinned here, so this test fails once the seam lands.
+    #[test]
+    fn i87_r_pb_04_direct_public_pages_are_served_once_active() {
+        let m = crate::matrix::matrix().unwrap();
+        let mut channel = harness().unwrap().direct();
+        let programme = [
+            "public.programme",
+            "public.funded",
+            "public.finished",
+            "public.feed",
+        ];
+        let cases: Vec<(StateProfile, &str, Observed)> = programme
+            .iter()
+            .map(|op| {
+                (
+                    StateProfile::ProgrammeDraft,
+                    *op,
+                    Observed::NotFound("Input".to_owned()),
+                )
+            })
+            .chain(
+                programme
+                    .iter()
+                    .map(|op| (StateProfile::ProgrammeActive, *op, Observed::Completed)),
+            )
+            .chain(
+                programme
+                    .iter()
+                    .map(|op| (StateProfile::CallOpen, *op, Observed::Completed)),
+            )
+            .chain(
+                [
+                    ("public.call", Observed::Completed),
+                    ("public.guide", Observed::NotFound("Input".to_owned())),
+                ]
+                .into_iter()
+                .map(|(op, want)| (StateProfile::CallOpen, op, want)),
+            )
+            .collect();
+        for (state, op, want) in cases {
+            let cell = m
+                .cells()
+                .find(|c| {
+                    c.op == op
+                        && c.state == state
+                        && c.who == Who::Anonymous
+                        && c.session.channel == Via2::Web
+                })
+                .unwrap_or_else(|| panic!("no anonymous web cell of {op} in {state:?}"));
+            assert_eq!(
+                m.reference().expected(&cell),
+                Some(crate::reference::authz::Expected::Allow)
+            );
+            let got = channel
+                .observe(&cell)
+                .unwrap_or_else(|e| panic!("{op} {state:?}: {e:?}"));
+            assert_eq!(got, want, "{op} in {state:?}");
+        }
     }
 }

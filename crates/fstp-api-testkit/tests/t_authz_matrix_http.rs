@@ -165,6 +165,8 @@ fn t_authz_matrix_http() {
         "OPS entries the reference does not judge: {:?}",
         m.unknown_to_reference()
     );
+    let ops = matrix::OpFilter::from_env().unwrap_or_else(|e| panic!("{e}"));
+    let m = m.narrowed(&ops).unwrap_or_else(|e| panic!("{e}"));
     let shard = matrix::Shard::from_env().unwrap_or_else(|e| panic!("{e}"));
     let c = matrix::compare_grouped(&m, &matrix::http_channel, matrix::threads_from_env(), shard)
         .unwrap_or_else(|e| panic!("{e}"));
