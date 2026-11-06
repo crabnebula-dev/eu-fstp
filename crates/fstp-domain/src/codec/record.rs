@@ -319,6 +319,7 @@ tagged_enum! {
         PolicyVersionRecorded { version, author },
         CallApproved { call, decision, approver },
         CallPublished { call, policy, seq, config, by },
+        GuidePublished { call, version, digest, canonical, page },
         VaultEpochProcessed { epoch },
         BindingEndScheduled { binding, at },
         ProposalCreated { proposal, call, lead, minor },

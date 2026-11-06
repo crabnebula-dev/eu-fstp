@@ -1588,6 +1588,12 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let p = proposal_param(call, op)?;
             ReadModel::Diary(journey::diary(call, p, clearance.rule())?)
         }
+        // R-GA-01, I-53: the stored Guide, never one bound per request.
+        ReadKind::GetGuide => ReadModel::Guide(
+            public::calls_guide(call, op)
+                .await
+                .map_err(|e| call.refuse(e))?,
+        ),
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",

@@ -50,6 +50,7 @@ mod control;
 mod demo;
 mod demo_signin;
 mod onboarding;
+mod precheck;
 mod scenario;
 mod wire;
 
@@ -185,6 +186,11 @@ impl Inner {
         }
         seams.settings = Arc::new(settings);
         let ports = FakePorts::new(world, seams).map_err(|e| e.to_string())?;
+        // R-GA-01: the scenarios create their SuperSAFE programme through
+        // core commands, with no complete creator draft, so its Guide reads the
+        // artefacts of the SuperSAFE fixture.
+        let fixture = fstp_programme::supersafe_fixture().map_err(|e| format!("{e:?}"))?;
+        ports.engine.set_guide_spec(fixture.spec);
         let core = Arc::new(api_core(ports.clone()));
         let origin = parse_origin_header(site.origin.as_bytes()).map_err(|e| e.to_string())?;
         let web = fstp_web::router(

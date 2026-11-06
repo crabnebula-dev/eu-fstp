@@ -14,6 +14,10 @@
 //!   its reference in the values (design 3.7 step 1).
 //! - Each `tenant.set_*` takes `{value}`, the setting in the codec form of
 //!   its parameter.
+//! - `tenant.set_guide_notice` takes `{privacy_statement_url, summary}`,
+//!   the tenant's override of the Guide's data protection texts
+//!   (R-GA-01). Dispatch stores the summary as a public text only once
+//!   the command is admitted, as it stores the data protection contact.
 //! - `tenant.invite_admin` takes `{email}`.
 //! - `tenant.complete` and `admin.approve_self_grant` take no member.
 //! - `tenant.grant_signatory` takes `{account, role}`. A body that names
@@ -147,6 +151,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
             TenantKind::SetSetting(_) => {
                 if exactly(spec, request, &["value"]) {
                     setting_request(request, kind).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
+            TenantKind::SetGuideNotice => {
+                if exactly(spec, request, &["privacy_statement_url", "summary"]) {
+                    notice_request(request).map(|_| ())
                 } else {
                     Err(bad())
                 }
@@ -300,6 +311,51 @@ pub(crate) fn invite_email(request: &Object) -> Result<String, ApiError> {
     } else {
         Err(bad())
     }
+}
+
+/// The longest privacy statement address a request may carry, in bytes.
+/// The tenant core checks the address itself (`fstp_tenant::decide`).
+pub(crate) const ADDRESS_LIMIT: usize = 2_048;
+
+/// A decoded `tenant.set_guide_notice` request (R-GA-01).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoticeRequest {
+    /// The data protection summary as the tenant typed it.
+    pub(crate) summary: String,
+    /// The privacy statement address. Only its length is checked here,
+    /// so a non-`https:` address reaches the tenant core, which refuses
+    /// it naming R-GA-01.
+    pub(crate) privacy_statement_url: String,
+}
+
+impl NoticeRequest {
+    /// The command, with the summary referenced by `summary`.
+    pub(crate) fn command(&self, summary: TextRef) -> TenantCommand {
+        TenantCommand::SetGuideNotice {
+            notice: Some(fstp_tenant::GuideNoticeOverride {
+                summary,
+                privacy_statement_url: self.privacy_statement_url.clone(),
+            }),
+        }
+    }
+}
+
+/// Decodes a `tenant.set_guide_notice` request: `{privacy_statement_url,
+/// summary}`, both strings. The summary follows the rule of a data
+/// protection contact ([`CONTACT_LIMIT`]).
+pub(crate) fn notice_request(request: &Object) -> Result<NoticeRequest, ApiError> {
+    let (Some(Value::String(summary)), Some(Value::String(url))) =
+        (request.get("summary"), request.get("privacy_statement_url"))
+    else {
+        return Err(bad());
+    };
+    if !contact_ok(summary) || url.is_empty() || url.len() > ADDRESS_LIMIT {
+        return Err(bad());
+    }
+    Ok(NoticeRequest {
+        summary: summary.clone(),
+        privacy_statement_url: url.clone(),
+    })
 }
 
 // ---------------------------------------------------------------------------

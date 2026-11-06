@@ -45,6 +45,35 @@ use fstp_html::{
 use crate::PublicError;
 use crate::view::{GrantStatus, PublicCall, PublicGrant, PublicView};
 
+/// The bytes of one rendered public page: a page of the view, written by
+/// the escaping writer of `fstp-html`, or the stored Guide page with its
+/// corrigenda, which nothing here binds again (I-53).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicDocument(String);
+
+impl PublicDocument {
+    /// The page bytes, UTF-8.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// The page text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The page bytes, by value.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.into_bytes()
+    }
+}
+
+impl From<HtmlDocument> for PublicDocument {
+    fn from(d: HtmlDocument) -> PublicDocument {
+        PublicDocument(d.as_str().to_owned())
+    }
+}
+
 /// One public page.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PublicPage {
@@ -528,7 +557,7 @@ fn grants_page(heading: &str, none: &str, grants: &[PublicGrant]) -> Element {
 /// What one page renders: the published Guide as it is, or a page of the
 /// view.
 enum Built<'v> {
-    Guide(&'v HtmlDocument),
+    Guide(&'v str),
     Page(Document),
 }
 
@@ -600,10 +629,13 @@ pub fn render_html(
     view: &PublicView,
     page: &PublicPage,
     chrome: &Chrome,
-) -> Result<HtmlDocument, PublicError> {
+) -> Result<PublicDocument, PublicError> {
     match build(view, page, chrome)? {
-        Built::Guide(doc) => Ok(doc.clone()),
-        Built::Page(doc) => doc.render(catalogues()?).map_err(|e| html_err(&e)),
+        Built::Guide(doc) => Ok(PublicDocument(doc.to_owned())),
+        Built::Page(doc) => doc
+            .render(catalogues()?)
+            .map(PublicDocument::from)
+            .map_err(|e| html_err(&e)),
     }
 }
 
@@ -615,10 +647,13 @@ pub fn render_traced(
     view: &PublicView,
     page: &PublicPage,
     chrome: &Chrome,
-) -> Result<(HtmlDocument, Vec<TraceEvent>), PublicError> {
+) -> Result<(PublicDocument, Vec<TraceEvent>), PublicError> {
     match build(view, page, chrome)? {
         Built::Guide(_) => Err(PublicError::NotFound),
-        Built::Page(doc) => doc.render_traced(catalogues()?).map_err(|e| html_err(&e)),
+        Built::Page(doc) => doc
+            .render_traced(catalogues()?)
+            .map(|(d, t)| (PublicDocument::from(d), t))
+            .map_err(|e| html_err(&e)),
     }
 }
 

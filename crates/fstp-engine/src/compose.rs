@@ -60,9 +60,14 @@
 //!
 //! # Publication
 //!
-//! [`publication`] fails closed. The `GuidePublished` record comes from
-//! the Guide renderer of lane W2c, which is not built, so no publication
-//! is composed here yet.
+//! A core `PublishCall` decided with the shell's [`GuideFacts`] carries
+//! its `GuidePublished` in the same entry ([`with_guide`], R-GA-01, I-52).
+//! The engine binds and renders the Guide over the state with the
+//! publication folded, and refuses the publication with I-52 when the
+//! Guide lacks a required section or a placeholder does not resolve. The
+//! entry stores the canonical document, its SHA-256 digest and the page
+//! (I-53). [`publication`] still fails closed, since a call's
+//! publication arrives as a core command.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -90,6 +95,15 @@ pub trait CreatorEnvironment {
     /// parts it owns (module documentation).
     fn creator_inputs(&self, state: &EngineState, cmd: &CreatorCommand, ctx: &Ctx)
     -> CreatorInputs;
+
+    /// The facts of the Guide of `call` at its publication in `state`
+    /// ([`GuideFacts`]), or `None` when the shell supplies none. The
+    /// default supplies none, so the publication carries no Guide (the
+    /// seam of [`with_guide`]).
+    fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
+        let _ = (state, call);
+        None
+    }
 }
 
 impl<E: CreatorEnvironment + ?Sized> CreatorEnvironment for &E {
@@ -100,6 +114,10 @@ impl<E: CreatorEnvironment + ?Sized> CreatorEnvironment for &E {
         ctx: &Ctx,
     ) -> CreatorInputs {
         (**self).creator_inputs(state, cmd, ctx)
+    }
+
+    fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
+        (**self).guide_facts(state, call)
     }
 }
 
@@ -603,6 +621,138 @@ pub fn publication(state: &EngineState, call: CallId) -> Result<Command, Compose
         return Err(ComposeError::AlreadyPublished);
     }
     Err(ComposeError::NoCleanReport)
+}
+
+// ---------------------------------------------------------------------------
+// The Guide at publication (R-GA-01, I-52, I-53, design section 3.10).
+// ---------------------------------------------------------------------------
+
+/// The facts the shell supplies for the Guide of a call at its
+/// publication (R-GA-01, I-52, design section 3.10).
+///
+/// The engine binds and renders the Guide itself over the state with the
+/// publication folded, so the completeness check runs in the publication
+/// entry (I-52). The shell supplies only what the core state does not
+/// hold, and the digest function: `fstp-crypto` is outside the engine's
+/// dependencies (M2 layering rule 1).
+#[derive(Clone, Debug)]
+pub struct GuideFacts {
+    /// The parsed Guide template of the programme's funder profile, from
+    /// the cell's profile source.
+    pub template: fstp_guide::Template,
+    /// The programme's compiled spec. `None` compiles the creator draft of
+    /// the programme ([`draft_compiled`]).
+    pub compiled: Option<fstp_programme::Compiled>,
+    /// The call's public identifier.
+    pub identifier: String,
+    /// The `https:` address applicants create an account on.
+    pub platform_url: String,
+    /// The data protection summary: the tenant's override or the
+    /// platform default (`fstp_tenant::TenantSettings::guide_notice`).
+    pub data_protection_summary: String,
+    /// The privacy statement address, from the same source.
+    pub privacy_statement_url: String,
+    /// The stored texts the Guide may read, by text id.
+    pub texts: BTreeMap<fstp_domain::id::TextId, String>,
+    /// SHA-256 through `fstp-crypto`, which the shell passes in.
+    pub digest: fn(&[u8]) -> [u8; 32],
+}
+
+/// The stored texts of [`GuideFacts`].
+struct FactTexts<'a>(&'a BTreeMap<fstp_domain::id::TextId, String>);
+
+impl fstp_guide::StoredTexts for FactTexts<'_> {
+    fn text(&self, text: fstp_domain::id::TextRef) -> Option<&str> {
+        self.0.get(&text.id()).map(String::as_str)
+    }
+}
+
+/// The compiled spec of the creator draft of `programme`, under its
+/// funder profile and the head policy's ids, or `None` without a draft or
+/// when it does not compile. The public pages compile it the same way.
+pub fn draft_compiled(
+    state: &EngineState,
+    programme: ProgrammeId,
+) -> Option<fstp_programme::Compiled> {
+    let draft = state.creator.draft(programme)?;
+    let view = fstp_creator::draft_view(&state.core, &state.creator, programme)?;
+    let head = fstp_domain::policy::head(&state.core, programme)?;
+    let profile = fstp_programme::FunderProfile::for_policy_ref(draft.profile())?;
+    let spec = fstp_programme::decode_spec(view.spec.to_compact().as_bytes()).ok()?;
+    fstp_programme::compile(
+        &spec,
+        &profile,
+        fstp_programme::CompileIds::new(programme, head.id, head.parent),
+    )
+    .ok()
+}
+
+/// The refusal of a publication whose Guide does not bind (I-52).
+const fn no_guide() -> Refusal {
+    Refusal::new(RuleRef::I52, RefusalReason::GuardFailed)
+}
+
+/// The records of a decided core command, with the Guide of a
+/// publication after them (R-GA-01, I-52, D2e).
+///
+/// For a `PublishCall` whose shell supplies [`GuideFacts`], the engine
+/// folds the decided records into a copy of the core state, binds the
+/// Guide over it and appends `GuidePublished` with the canonical document,
+/// its digest and the page. A Guide that lacks a required section, or a
+/// placeholder that does not resolve, refuses the publication with I-52,
+/// so nothing is appended. Every other command keeps its records.
+///
+/// Seam: a shell that supplies no facts publishes as before, with no
+/// Guide. The strict fold of D2e, which refuses a `CallPublished` without
+/// its `GuidePublished`, is lane m4d2e-cont's.
+pub(crate) fn with_guide(
+    state: &EngineState,
+    cmd: &fstp_domain::Command,
+    at: fstp_domain::time::Timestamp,
+    mut records: Vec<Record>,
+    env: &dyn CreatorEnvironment,
+) -> Result<Vec<Record>, Refusal> {
+    let fstp_domain::Command::PublishCall { call, .. } = cmd else {
+        return Ok(records);
+    };
+    let Some(facts) = env.guide_facts(state, *call) else {
+        return Ok(records);
+    };
+    let mut post = state.core.clone();
+    for r in &records {
+        if let Record::Core(c) = r {
+            fstp_domain::apply(&mut post, Seq::from_raw(u64::MAX), at, c)
+                .map_err(|_| no_guide())?;
+        }
+    }
+    let programme = fstp_domain::programme::call(&post, *call)
+        .ok_or_else(no_guide)?
+        .programme();
+    let compiled = match facts.compiled {
+        Some(c) => c,
+        None => draft_compiled(state, programme).ok_or_else(no_guide)?,
+    };
+    let texts = FactTexts(&facts.texts);
+    let source = fstp_guide::GuideSource {
+        template: &facts.template,
+        compiled: &compiled,
+        identifier: &facts.identifier,
+        platform_url: &facts.platform_url,
+        data_protection_summary: Some(&facts.data_protection_summary),
+        privacy_statement_url: Some(&facts.privacy_statement_url),
+        texts: &texts,
+    };
+    let rendered = fstp_guide::publication_guide(&post, *call, &source).map_err(|_| no_guide())?;
+    let canonical = String::from_utf8(rendered.canonical().to_vec()).map_err(|_| no_guide())?;
+    let digest = fstp_domain::id::ContentDigest::from_bytes((facts.digest)(canonical.as_bytes()));
+    records.push(Record::Core(fstp_domain::Record::GuidePublished {
+        call: *call,
+        version: fstp_domain::programme::GUIDE_VERSION,
+        digest,
+        canonical,
+        page: rendered.html().as_str().to_owned(),
+    }));
+    Ok(records)
 }
 
 #[cfg(test)]

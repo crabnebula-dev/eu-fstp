@@ -289,6 +289,8 @@ pub fn tenant_refusal(r: TenantRefusal) -> Refusal {
         TenantRefusal::InvitationMismatch => (RuleRef::Input, Why::WrongActor),
         TenantRefusal::InvalidInstant => (RuleRef::Ledger, Why::InvalidValue),
         TenantRefusal::Inconsistent => (RuleRef::Ledger, Why::GuardFailed),
+        // R-GA-01 has no domain rule reference, so the API core names it.
+        TenantRefusal::InvalidAddress => (RuleRef::Input, Why::InvalidValue),
         TenantRefusal::StaleRevision
         | TenantRefusal::StepLocked
         | TenantRefusal::StepSkipped

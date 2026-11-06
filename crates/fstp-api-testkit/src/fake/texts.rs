@@ -47,6 +47,20 @@ impl FakeTexts {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Every public text that is UTF-8, by id: what a published Guide may
+    /// read (R-GA-01). No confidential text is ever included.
+    pub fn public_texts(&self) -> BTreeMap<fstp_domain::id::TextId, String> {
+        lock(&self.state)
+            .rows
+            .iter()
+            .filter(|(_, (class, _, _))| *class == TextClass::Public)
+            .filter_map(|(id, (_, _, b))| {
+                let s = String::from_utf8(b.clone()).ok()?;
+                Some((fstp_domain::id::TextId::from_raw(*id), s))
+            })
+            .collect()
+    }
 }
 
 impl FakeTexts {

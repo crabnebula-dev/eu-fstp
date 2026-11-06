@@ -91,6 +91,9 @@ pub enum TenantRefusal {
     ActivationNotOpen,
     /// The approver requested the activation (SoD-18).
     SelfActivationApproval,
+    /// The Guide's privacy statement address is not an `https:` address
+    /// (R-GA-01).
+    InvalidAddress,
     /// A record contradicts the state it folds into.
     Inconsistent,
 }
@@ -135,6 +138,7 @@ impl TenantRefusal {
             TenantRefusal::AlreadyActive => "already_active",
             TenantRefusal::ActivationNotOpen => "activation_not_open",
             TenantRefusal::SelfActivationApproval => "self_activation_approval",
+            TenantRefusal::InvalidAddress => "invalid_address",
             TenantRefusal::Inconsistent => "inconsistent",
         }
     }

@@ -624,6 +624,16 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "tenant.set_mcp" => obj(vec![("value", mcp_value(P74::AllRoles))]),
         "tenant.set_payment_mode" => obj(vec![("value", s("record_only"))]),
         "tenant.set_template_licence" => obj(vec![("value", s("MIT"))]),
+        "tenant.set_guide_notice" => obj(vec![
+            (
+                "privacy_statement_url",
+                s("https://privacy.matrix.example/statement"),
+            ),
+            (
+                "summary",
+                s("Synthetic data protection summary, matrix cell."),
+            ),
+        ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),

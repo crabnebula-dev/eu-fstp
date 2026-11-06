@@ -525,6 +525,11 @@ pub enum RecordView {
         /// The admin who changed it.
         by: AccountId,
     },
+    /// `GuideNoticeSet`. The machine issues no such command.
+    GuideNoticeSet {
+        /// The admin who set it.
+        by: AccountId,
+    },
     /// `InferenceConfigRecorded`.
     InferenceConfigRecorded {
         /// The configuration.

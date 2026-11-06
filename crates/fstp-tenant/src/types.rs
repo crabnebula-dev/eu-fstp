@@ -775,3 +775,19 @@ pub enum Activation {
         approved_by: AccountId,
     },
 }
+
+/// A tenant's override of the Guide's data protection texts (R-GA-01,
+/// `{{gdpr.notice_summary}}` and `{{funder.privacy_statement_url}}`;
+/// Daniel's answer of 2026-11-06 in section 15.0 of the M4 design).
+///
+/// It is approved text that a tenant admin sets, never text from the
+/// applicant side. The summary is a text reference, since free text lives
+/// outside ledger bodies (ADR-007). The address is an `https:` address
+/// that [`crate::rules::https_address`] accepts.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GuideNoticeOverride {
+    /// The data protection summary.
+    pub summary: TextRef,
+    /// The privacy statement address.
+    pub privacy_statement_url: String,
+}

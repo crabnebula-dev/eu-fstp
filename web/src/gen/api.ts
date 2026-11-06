@@ -74,6 +74,7 @@ export type OpName =
   | "tenant.set_mcp"
   | "tenant.set_payment_mode"
   | "tenant.set_template_licence"
+  | "tenant.set_guide_notice"
   | "admin.approvals"
   | "admin.approve_self_grant"
   | "admin.approve_recovery"
@@ -243,6 +244,7 @@ export interface OpParams {
   readonly "tenant.set_mcp": Readonly<Record<never, string>>;
   readonly "tenant.set_payment_mode": Readonly<Record<never, string>>;
   readonly "tenant.set_template_licence": Readonly<Record<never, string>>;
+  readonly "tenant.set_guide_notice": Readonly<Record<never, string>>;
   readonly "admin.approvals": Readonly<Record<never, string>>;
   readonly "admin.approve_self_grant": { readonly "approval": string };
   readonly "admin.approve_recovery": { readonly "recovery": string };
@@ -385,6 +387,7 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.set_mcp",
   "tenant.set_payment_mode",
   "tenant.set_template_licence",
+  "tenant.set_guide_notice",
   "admin.approvals",
   "admin.approve_self_grant",
   "admin.approve_recovery",
@@ -779,6 +782,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/admin/settings/template-licence",
     base: "api",
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "template-licence" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.set_guide_notice",
+    method: "PUT",
+    path: "/admin/settings/guide-notice",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "guide-notice" }],
     params: [],
     body: true,
     highRisk: true,
@@ -2585,6 +2602,15 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "grant_min": { schema: { kind: "amount" }, optional: true },
       "grant_max": { schema: { kind: "amount" }, optional: true },
       "recipient_max": { schema: { kind: "amount" }, optional: true },
+    },
+  },
+  "calls.guide": {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "version": { schema: { kind: "int" }, optional: false },
+      "digest": { schema: { kind: "string" }, optional: false },
+      "html": { schema: { kind: "string" }, optional: false },
     },
   },
   "proposal.list_own": { kind: "array", items: {

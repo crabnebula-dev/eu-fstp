@@ -30,21 +30,20 @@
 //!
 //! # Seams, each failing closed
 //!
-//! - The Guide page needs the data protection summary and the privacy
-//!   statement address, which no port supplies yet, and the compiled spec
-//!   of the programme, which only a creator draft holds. So no call page
-//!   links a Guide in M4, and the Guide route answers not found.
+//! - The Guide page serves the Guide its publication stored, with its
+//!   corrigenda (I-53). A cell whose engine supplies no Guide facts at
+//!   publication stores no Guide, so its Guide route answers not found.
 //! - The public stylesheet: no asset of `/p` exists yet, so the pages
 //!   carry no stylesheet.
 
 use std::collections::BTreeMap;
 
 use fstp_access::PublicKind;
-use fstp_domain::id::{ProgrammeId, TextId};
+use fstp_domain::id::{CallId, ProgrammeId, TextId};
 use fstp_domain::programme::{ProgrammeStatus, programme_status};
 use fstp_public::{
-    Chrome, ProgrammeIdentity, PublicError, PublicPage, PublicPart, PublicQuery, PublicTexts,
-    PublicView,
+    Chrome, ProgrammeIdentity, PublicError, PublicGuide, PublicPage, PublicPart, PublicQuery,
+    PublicTexts, PublicView,
 };
 
 use super::*;
@@ -144,7 +143,90 @@ async fn texts_of<P: Seams>(
     for (id, t) in &found {
         texts.insert(*id, t);
     }
+    // I-53: the Guide of an open call is the one its publication stored,
+    // with its corrigenda after it. A Guide that cannot be served with
+    // its corrigenda is left out, so its page answers not found (I-51).
+    for (id, v) in call.state.core.calls().iter() {
+        if v.programme() != programme || !v.is_open_at(call.now) {
+            continue;
+        }
+        if let Ok(g) = stored_guide(call, id).await {
+            texts.insert_guide(id, g);
+        }
+    }
     texts
+}
+
+/// Public texts read for the corrigenda, by text id.
+struct GuideTexts(BTreeMap<TextId, String>);
+
+impl fstp_guide::StoredTexts for GuideTexts {
+    fn text(&self, text: fstp_domain::id::TextRef) -> Option<&str> {
+        self.0.get(&text.id()).map(String::as_str)
+    }
+}
+
+/// The Guide of the published call `id` as its publication stored it,
+/// followed by its corrigenda (I-51, I-53, Q37 C). Nothing is bound again.
+/// The corrigenda are worded from the creator draft's compiled spec, so a
+/// call with corrigenda and no draft has no Guide to serve, never one
+/// without them.
+pub(super) async fn stored_guide<P: Seams>(
+    call: &Call<'_, P>,
+    id: CallId,
+) -> Result<PublicGuide, PublicError> {
+    let core = &call.state.core;
+    let pending = fstp_domain::programme::effective_limits(core, id)
+        .is_some_and(|l| !l.tightenings().is_empty());
+    if !pending {
+        return fstp_public::served_guide(core, id, None);
+    }
+    let programme = core
+        .calls()
+        .get(id)
+        .map(|v| v.programme())
+        .ok_or(PublicError::NotFound)?;
+    let compiled = fstp_engine::compose::draft_compiled(&call.state, programme)
+        .ok_or(PublicError::NotFound)?;
+    let mut found = BTreeMap::new();
+    for r in fstp_public::guide::corrigenda_text_refs(&compiled) {
+        if let Some(t) = public_text(call, r.id()).await {
+            let _ = found.insert(r.id(), t);
+        }
+    }
+    let texts = GuideTexts(found);
+    let source = fstp_public::CorrigendaSource {
+        compiled: &compiled,
+        texts: &texts,
+    };
+    fstp_public::served_guide(core, id, Some(&source))
+}
+
+/// `calls.guide` (R-GA-01, I-53): the stored Guide of a published call,
+/// with its corrigenda, its version and its digest. It answers not found
+/// for a call with no stored Guide.
+pub(super) async fn calls_guide<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+) -> Result<crate::model::StoredGuideView, ApiError> {
+    let id = forms::id_param(&op.request, "call")
+        .map(CallId::from_raw)
+        .ok_or_else(not_public)?;
+    let stored =
+        fstp_domain::programme::stored_guide(&call.state.core, id).ok_or_else(not_public)?;
+    let digest: String = stored
+        .digest()
+        .bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let g = stored_guide(call, id).await.map_err(|_| not_public())?;
+    Ok(crate::model::StoredGuideView {
+        call: id,
+        version: g.version,
+        digest,
+        html: g.document,
+    })
 }
 
 /// The `call` path parameter, as the view names a call.

@@ -235,7 +235,8 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::CallDrafted { .. }
         | Record::CallEdited { .. }
         | Record::CallApproved { .. }
-        | Record::CallPublished { .. } => Lane::Programme,
+        | Record::CallPublished { .. }
+        | Record::GuidePublished { .. } => Lane::Programme,
         Record::BindingGranted(_)
         | Record::BindingEnded(_)
         | Record::BindingSuspended(_)

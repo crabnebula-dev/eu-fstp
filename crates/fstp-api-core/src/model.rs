@@ -111,9 +111,37 @@ pub enum ReadModel {
     /// `proposal.diary`: the diary entries the caller may see (lane j2,
     /// I-93, I-97).
     Diary(crate::dispatch::journey::DiaryView),
+    /// `calls.guide`: the Guide its publication stored (R-GA-01, I-53).
+    Guide(StoredGuideView),
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
+}
+
+/// The Guide of a published call as its publication stored it, with its
+/// corrigenda after the page (R-GA-01, I-51, I-53). Nothing is bound
+/// again per request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredGuideView {
+    /// The call.
+    pub call: CallId,
+    /// The Guide version.
+    pub version: u32,
+    /// The SHA-256 of the canonical document, in lower-case hex.
+    pub digest: String,
+    /// The stored page with its corrigenda.
+    pub html: String,
+}
+
+impl ToJson for StoredGuideView {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("call", dec(self.call.raw()));
+        let _ = o.insert("version", Value::from(self.version));
+        let _ = o.insert("digest", Value::from(self.digest.as_str()));
+        let _ = o.insert("html", Value::from(self.html.as_str()));
+        Value::Object(o)
+    }
 }
 
 /// The answer to a public operation (design section 3.10).
@@ -221,6 +249,7 @@ impl ToJson for ReadModel {
             ReadModel::MyRoles(r) => r.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
+            ReadModel::Guide(g) => g.to_json(),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -1570,6 +1599,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
+            ReadModel::Guide(_) => &["calls.guide"],
             ReadModel::Public(_) => &[],
         }
     }
@@ -1844,6 +1874,12 @@ pub(crate) mod reply_shape_tests {
                     text: "SuperSAFE".to_owned(),
                 }],
             }),
+            ReadModel::Guide(StoredGuideView {
+                call: CallId::from_raw(1),
+                version: 1,
+                digest: "00".repeat(32),
+                html: "<!DOCTYPE html>".to_owned(),
+            }),
             ReadModel::Public(PublicReply::Json(Value::Object(Object::new()))),
             ReadModel::Public(PublicReply::Page("<!DOCTYPE html>".to_owned())),
         ]
@@ -1918,7 +1954,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 33;
+    const VARIANTS: usize = 34;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1958,6 +1994,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(_) => 30,
             ReadModel::Diary(_) => 31,
             ReadModel::Public(_) => 32,
+            ReadModel::Guide(_) => 33,
         }
     }
 

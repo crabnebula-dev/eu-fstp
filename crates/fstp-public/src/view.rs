@@ -48,7 +48,6 @@ use fstp_domain::roles::BindingScope;
 use fstp_domain::rules::{ParamId, StateTag};
 use fstp_domain::time::Timestamp;
 use fstp_domain::view::{proposal_minor_flagged, proposal_state};
-use fstp_html::HtmlDocument;
 use fstp_money::Amount;
 
 use crate::PublicError;
@@ -174,8 +173,9 @@ pub struct ProgrammeIdentity {
 pub struct PublicGuide {
     /// The Guide version, from 1.
     pub version: u32,
-    /// The Guide page, as `fstp-guide` renders it.
-    pub document: HtmlDocument,
+    /// The Guide page as its publication stored it, followed by its
+    /// corrigenda when it has any (I-53).
+    pub document: String,
 }
 
 /// The texts a public view may show: only `TextClass::Public` texts

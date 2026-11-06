@@ -169,6 +169,16 @@ impl FakeEngine {
         lock(&self.inner).dry_runs.clone()
     }
 
+    /// Reads the Guide artefacts of a programme with no creator draft from
+    /// `spec` (R-GA-01, `CellEnvironment::set_guide_spec`).
+    pub fn set_guide_spec(&self, spec: fstp_programme::ProgrammeSpec) {
+        lock(&self.inner)
+            .engine
+            .decider_mut()
+            .0
+            .set_guide_spec(spec);
+    }
+
     /// The ledger head.
     pub fn head(&self) -> Seq {
         lock(&self.inner).engine.head()

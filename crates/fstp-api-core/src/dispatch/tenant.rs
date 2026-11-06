@@ -211,6 +211,9 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         TenantRefusal::SelfActivationApproval => "SoD-18",
         TenantRefusal::ActivationPending | TenantRefusal::AlreadyActive => "R-TN-01",
         TenantRefusal::ActivationNotOpen => "Input",
+        // R-GA-01: only an https privacy statement address stands in
+        // the Guide.
+        TenantRefusal::InvalidAddress => "R-GA-01",
     };
     ApiError::refused(ErrorCode::Refused, rule)
 }
@@ -307,6 +310,12 @@ fn build<P: Seams>(
             None,
         )),
         TenantKind::ApproveSelfGrant => Err(unknown_self_grant(&call.state, op)),
+        // The summary holds a placeholder reference with id 0 and the
+        // text's digest until dispatch stores it ([`stored_notice`]).
+        TenantKind::SetGuideNotice => {
+            let n = crate::tenant::notice_request(&op.request)?;
+            Ok((n.command(crate::forms::text_ref(0, &n.summary)), None))
+        }
         // Recorded with a validated Inference save (design 3.5), never
         // through a route of its own.
         TenantKind::RecordInferenceConfig => Err(ApiError::refused(ErrorCode::NotFound, "route")),
@@ -372,6 +381,21 @@ async fn stored_contact<P: Seams>(call: &Call<'_, P>, s: &str) -> Result<TextRef
     let r = crate::forms::text_ref(r.0, s);
     lock(&call.st.content).remember(r, s);
     Ok(r)
+}
+
+/// The `SetGuideNotice` of `op` with its summary stored in the cell's
+/// text store, as a public text of the tenant, since the published Guide
+/// shows it (R-GA-01). It runs only once the command is admitted, so a
+/// refused call stores no text.
+async fn stored_notice<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<TenantCommand, ApiError> {
+    let n = crate::tenant::notice_request(&op.request)?;
+    let r = call
+        .ports
+        .texts()
+        .put(TextClass::Public, TextOwner::Tenant, n.summary.as_bytes())
+        .await
+        .map_err(|e| port_failed(e, "text"))?;
+    Ok(n.command(crate::forms::text_ref(r.0, &n.summary)))
 }
 
 /// The values of `save` with its data protection contact stored.
@@ -456,6 +480,13 @@ pub(super) async fn command<P: Seams>(
             Command::Tenant(r)
         }
         (c, _) => c,
+    };
+    let cmd = match cmd {
+        Command::Tenant(mut r) if kind == TenantKind::SetGuideNotice => {
+            r.command = stored_notice(call, op).await.map_err(|e| call.refuse(e))?;
+            Command::Tenant(r)
+        }
+        c => c,
     };
     let meta = ExecMeta {
         via: Via::Web,

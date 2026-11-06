@@ -300,6 +300,9 @@ impl RefCheck {
             | RefCheck::InviteeWithoutAccount
             | RefCheck::RosterShort
             | RefCheck::ProximityListMissing
+            // Q38 C (Daniel, 2026-11-06): a missing pre-check provider
+            // needs an acknowledgement and never blocks on its own.
+            | RefCheck::PrecheckUnavailable
             | RefCheck::AiActReassessment
             | RefCheck::InferenceUnreachable => RefSeverity::Warning,
             _ => RefSeverity::Failure,

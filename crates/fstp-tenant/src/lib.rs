@@ -49,13 +49,13 @@ pub use decide::{ProbeOutcome, TenantAnswers, TenantQuery, decide, queries};
 pub use refusal::{DecodeError, FoldError, TenantError, TenantRefusal};
 pub use rules::ProbeKind;
 pub use state::{
-    AdminInvitation, InferenceConfig, SelfGrantApproval, TenantDefaults, TenantSettings,
-    TenantState,
+    AdminInvitation, GuideNotice, InferenceConfig, PLATFORM_DATA_PROTECTION_SUMMARY,
+    PLATFORM_PRIVACY_STATEMENT_URL, SelfGrantApproval, TenantDefaults, TenantSettings, TenantState,
 };
 pub use types::{
     Activation, ActivationRequestId, AgreementVersions, ApprovalId, BankInterface, BrandingPackage,
-    CellKind, DomainName, GrantRef, InferenceDefault, InvitationId, LoginMethod, McpSettings,
-    Milestone, ModelRef, OnboardingStep, PaymentMode, ProviderRef, RpMode, SettingValue,
-    SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues, TenantParam, TenantRevision,
-    Token, TokenDigest, VerifyMethod,
+    CellKind, DomainName, GrantRef, GuideNoticeOverride, InferenceDefault, InvitationId,
+    LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode, ProviderRef,
+    RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues,
+    TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
 };
