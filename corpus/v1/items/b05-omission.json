@@ -1,0 +1,113 @@
+{
+  "id": "b05-omission",
+  "applicant": {
+    "person_name": "Oskul Gowsefsef",
+    "email": "oskul.gowsefsef.b05-omission@example.org",
+    "phone": "+44 20 7946 0056",
+    "iban": "DE30 0000 0000 4200 0003 92",
+    "postal_address": "57 Osksef Way, Kalgowdro ZZ4 4ZZ",
+    "handle": "pelorv72"
+  },
+  "proposal": {
+    "title": "Zimgowbrax: an adaptive spam filter for small mail servers",
+    "summary": "Zimgowbrax builds an adaptive spam filter for small mail servers for administrators of self-hosted mail.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Small mail servers are flooded with spam they cannot classify. Administrators of self-hosted mail depend on spam filtering every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build an adaptive spam filter for small mail servers called Zimgowbrax. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Spam filtering is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/zimgowbrax/zimgowbrax, which 26 public projects depend on. Our team has worked on spam filtering for 8 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the EUPL-1.2 licence in http://forge.test/zimgowbrax/zimgowbrax. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8."
+      }
+    ],
+    "narrative": "Problem\nSmall mail servers are flooded with spam they cannot classify. Administrators of self-hosted mail depend on spam filtering every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build an adaptive spam filter for small mail servers called Zimgowbrax. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nSpam filtering is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/zimgowbrax/zimgowbrax, which 26 public projects depend on. Our team has worked on spam filtering for 8 years.\n\nDeliverables and licence\nAll code will be released under the EUPL-1.2 licence in http://forge.test/zimgowbrax/zimgowbrax. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8.\n\nContact\nOskul Gowsefsef, oskul.gowsefsef.b05-omission@example.org, +44 20 7946 0056.\nPostal address: 57 Osksef Way, Kalgowdro ZZ4 4ZZ.\nPayment account: DE30 0000 0000 4200 0003 92.\nProject site: http://www.b05-omission.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 19,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "11400.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 17,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "11900.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 28,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "16800.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 19,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 7,
+              "due_month": 8,
+              "amount_eur": "15200.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "55300.00"
+    }
+  }
+}

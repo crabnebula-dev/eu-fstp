@@ -1,0 +1,103 @@
+{
+  "id": "b36-budget",
+  "applicant": {
+    "person_name": "Fengow Vybraxtesh",
+    "email": "fengow.vybraxtesh.b36-budget@example.org",
+    "phone": "+44 20 7946 0181",
+    "iban": "DE73 0000 0000 4200 0012 67",
+    "postal_address": "182 Naequa Way, Rukynbrax ZZ2 8ZZ",
+    "handle": "fenvak30"
+  },
+  "proposal": {
+    "title": "Fenvyvak: a coordinated disclosure tracker",
+    "summary": "Fenvyvak builds a coordinated disclosure tracker for security researchers and maintainers.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Reports of flaws get lost between reporters and maintainers. Security researchers and maintainers depend on vulnerability disclosure every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a coordinated disclosure tracker called Fenvyvak. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Vulnerability disclosure is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/fenvyvak/fenvyvak, which 106 public projects depend on. Our team has worked on vulnerability disclosure for 5 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the GPL-3.0-or-later licence in http://forge.test/fenvyvak/fenvyvak. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 8 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 8."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 124500.00 EUR for 92 days of work over 3 tasks. Day rates range from 550.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nReports of flaws get lost between reporters and maintainers. Security researchers and maintainers depend on vulnerability disclosure every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a coordinated disclosure tracker called Fenvyvak. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nVulnerability disclosure is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/fenvyvak/fenvyvak, which 106 public projects depend on. Our team has worked on vulnerability disclosure for 5 years.\n\nDeliverables and licence\nAll code will be released under the GPL-3.0-or-later licence in http://forge.test/fenvyvak/fenvyvak. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 8 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 8.\n\nBudget justification\nThe plan asks for 124500.00 EUR for 92 days of work over 3 tasks. Day rates range from 550.00 EUR to 2450.00 EUR.\n\nContact\nFengow Vybraxtesh, fengow.vybraxtesh.b36-budget@example.org, +44 20 7946 0181.\nPostal address: 182 Naequa Way, Rukynbrax ZZ2 8ZZ.\nPayment account: DE73 0000 0000 4200 0012 67.\nProject site: http://www.b36-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 22,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "17600.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 34,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 5,
+              "amount_eur": "18700.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 36,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 8,
+              "amount_eur": "88200.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "124500.00"
+    }
+  }
+}

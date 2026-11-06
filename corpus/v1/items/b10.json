@@ -1,0 +1,118 @@
+{
+  "id": "b10",
+  "applicant": {
+    "person_name": "Gowyn Vypelorv",
+    "email": "gowyn.vypelorv.b10@example.org",
+    "phone": "+44 20 7946 0009",
+    "iban": "DE86 0000 0000 4200 0000 63",
+    "postal_address": "10 Orvilo Way, Rukorvmib ZZ3 7ZZ",
+    "handle": "drofen73"
+  },
+  "proposal": {
+    "title": "Droquasef: a translation workflow for free software",
+    "summary": "Droquasef builds a translation workflow for free software for translators and their communities.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Free software stays untranslated because translation tooling is fragmented. Translators and their communities depend on localisation every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a translation workflow for free software called Droquasef. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Localisation is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/droquasef/droquasef, which 392 public projects depend on. Our team has worked on localisation for 4 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the Apache-2.0 licence in http://forge.test/droquasef/droquasef. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 11 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 8. Documentation and release ends in month 11."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 53000.00 EUR for 79 days of work over 4 tasks. Day rates range from 600.00 EUR to 750.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nFree software stays untranslated because translation tooling is fragmented. Translators and their communities depend on localisation every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a translation workflow for free software called Droquasef. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nLocalisation is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/droquasef/droquasef, which 392 public projects depend on. Our team has worked on localisation for 4 years.\n\nDeliverables and licence\nAll code will be released under the Apache-2.0 licence in http://forge.test/droquasef/droquasef. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 11 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 8. Documentation and release ends in month 11.\n\nBudget justification\nThe plan asks for 53000.00 EUR for 79 days of work over 4 tasks. Day rates range from 600.00 EUR to 750.00 EUR.\n\nContact\nGowyn Vypelorv, gowyn.vypelorv.b10@example.org, +44 20 7946 0009.\nPostal address: 10 Orvilo Way, Rukorvmib ZZ3 7ZZ.\nPayment account: DE86 0000 0000 4200 0000 63.\nProject site: http://www.b10.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 27,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "18900.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 15,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 5,
+              "amount_eur": "11250.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 24,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 8,
+              "amount_eur": "14400.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 13,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 9,
+              "due_month": 11,
+              "amount_eur": "8450.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "53000.00"
+    }
+  }
+}

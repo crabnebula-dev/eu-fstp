@@ -1,0 +1,103 @@
+{
+  "id": "b01-inflated",
+  "applicant": {
+    "person_name": "Naefen Sefsefvy",
+    "email": "naefen.sefsefvy.b01-inflated@example.org",
+    "phone": "+44 20 7946 0041",
+    "iban": "DE52 0000 0000 4200 0002 87",
+    "postal_address": "42 Vaktesh Way, Gowquelorv ZZ4 9ZZ",
+    "handle": "quasef82"
+  },
+  "proposal": {
+    "title": "Vynaezor: a framework for signed and rollback-proof updates",
+    "summary": "Vynaezor builds a framework for signed and rollback-proof updates for vendors of small appliances.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Update channels are a common way to compromise many devices at once. Vendors of small appliances depend on software update security every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a framework for signed and rollback-proof updates called Vynaezor. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Software update security is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We are the lead maintainers of http://forge.test/commons/kalnae, which 59588 public projects depend on. Our team has worked on software update security for 10 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the Apache-2.0 licence in http://forge.test/vynaezor/vynaezor. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 6 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 48900.00 EUR for 73 days of work over 3 tasks. Day rates range from 500.00 EUR to 750.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nUpdate channels are a common way to compromise many devices at once. Vendors of small appliances depend on software update security every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a framework for signed and rollback-proof updates called Vynaezor. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nSoftware update security is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe are the lead maintainers of http://forge.test/commons/kalnae, which 59588 public projects depend on. Our team has worked on software update security for 10 years.\n\nDeliverables and licence\nAll code will be released under the Apache-2.0 licence in http://forge.test/vynaezor/vynaezor. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 6 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6.\n\nBudget justification\nThe plan asks for 48900.00 EUR for 73 days of work over 3 tasks. Day rates range from 500.00 EUR to 750.00 EUR.\n\nContact\nNaefen Sefsefvy, naefen.sefsefvy.b01-inflated@example.org, +44 20 7946 0041.\nPostal address: 42 Vaktesh Way, Gowquelorv ZZ4 9ZZ.\nPayment account: DE52 0000 0000 4200 0002 87.\nProject site: http://www.b01-inflated.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 17,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "8500.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 24,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "18000.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 32,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "22400.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "48900.00"
+    }
+  }
+}

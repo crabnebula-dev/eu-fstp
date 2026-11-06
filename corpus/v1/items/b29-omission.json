@@ -1,0 +1,98 @@
+{
+  "id": "b29-omission",
+  "applicant": {
+    "person_name": "Kalquel Miborvnae",
+    "email": "kalquel.miborvnae.b29-omission@example.org",
+    "phone": "+44 20 7946 0152",
+    "iban": "DE25 0000 0000 4200 0010 64",
+    "postal_address": "153 Braxvy Way, Rukzorilo ZZ9 8ZZ",
+    "handle": "naemib34"
+  },
+  "proposal": {
+    "title": "Teshteshbrax: a generator of accurate dependency inventories",
+    "summary": "Teshteshbrax builds a generator of accurate dependency inventories for teams that ship embedded firmware.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Dependency inventories are often incomplete, so known flaws stay hidden. Teams that ship embedded firmware depend on software bills of materials every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a generator of accurate dependency inventories called Teshteshbrax. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/teshteshbrax/teshteshbrax, which 181 public projects depend on. Our team has worked on software bills of materials for 3 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MPL-2.0 licence in http://forge.test/teshteshbrax/teshteshbrax. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 9 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 9."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 44900.00 EUR for 82 days of work over 3 tasks. Day rates range from 450.00 EUR to 700.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nDependency inventories are often incomplete, so known flaws stay hidden. Teams that ship embedded firmware depend on software bills of materials every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a generator of accurate dependency inventories called Teshteshbrax. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nTeam and experience\nWe maintain http://forge.test/teshteshbrax/teshteshbrax, which 181 public projects depend on. Our team has worked on software bills of materials for 3 years.\n\nDeliverables and licence\nAll code will be released under the MPL-2.0 licence in http://forge.test/teshteshbrax/teshteshbrax. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 9 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 9.\n\nBudget justification\nThe plan asks for 44900.00 EUR for 82 days of work over 3 tasks. Day rates range from 450.00 EUR to 700.00 EUR.\n\nContact\nKalquel Miborvnae, kalquel.miborvnae.b29-omission@example.org, +44 20 7946 0152.\nPostal address: 153 Braxvy Way, Rukzorilo ZZ9 8ZZ.\nPayment account: DE25 0000 0000 4200 0010 64.\nProject site: http://www.b29-omission.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 32,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "22400.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 15,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 6,
+              "amount_eur": "6750.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 35,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 7,
+              "due_month": 9,
+              "amount_eur": "15750.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "44900.00"
+    }
+  }
+}

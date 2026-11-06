@@ -1,0 +1,103 @@
+{
+  "id": "b19-inflated",
+  "applicant": {
+    "person_name": "Mibthra Ynzorkal",
+    "email": "mibthra.ynzorkal.b19-inflated@example.org",
+    "phone": "+44 20 7946 0113",
+    "iban": "DE24 0000 0000 4200 0007 91",
+    "postal_address": "114 Oskbrax Way, Drozorvy ZZ3 4ZZ",
+    "handle": "mibmib66"
+  },
+  "proposal": {
+    "title": "Braxteshosk: a small certificate authority for private networks",
+    "summary": "Braxteshosk builds a small certificate authority for private networks for operators of internal services.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Private networks reuse self-signed certificates that nobody can revoke. Operators of internal services depend on public key infrastructure every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a small certificate authority for private networks called Braxteshosk. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Public key infrastructure is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/braxteshosk/braxteshosk, which 17245 public projects depend on. Our team has worked on public key infrastructure for 9 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the GPL-3.0-or-later licence in http://forge.test/braxteshosk/braxteshosk. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 8 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 8."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 35800.00 EUR for 54 days of work over 3 tasks. Day rates range from 450.00 EUR to 800.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nPrivate networks reuse self-signed certificates that nobody can revoke. Operators of internal services depend on public key infrastructure every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a small certificate authority for private networks called Braxteshosk. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nPublic key infrastructure is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/braxteshosk/braxteshosk, which 17245 public projects depend on. Our team has worked on public key infrastructure for 9 years.\n\nDeliverables and licence\nAll code will be released under the GPL-3.0-or-later licence in http://forge.test/braxteshosk/braxteshosk. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 8 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 8.\n\nBudget justification\nThe plan asks for 35800.00 EUR for 54 days of work over 3 tasks. Day rates range from 450.00 EUR to 800.00 EUR.\n\nContact\nMibthra Ynzorkal, mibthra.ynzorkal.b19-inflated@example.org, +44 20 7946 0113.\nPostal address: 114 Oskbrax Way, Drozorvy ZZ3 4ZZ.\nPayment account: DE24 0000 0000 4200 0007 91.\nProject site: http://www.b19-inflated.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 26,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "20800.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 12,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 6,
+              "amount_eur": "7800.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 16,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 7,
+              "due_month": 8,
+              "amount_eur": "7200.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "35800.00"
+    }
+  }
+}

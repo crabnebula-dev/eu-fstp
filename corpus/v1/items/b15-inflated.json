@@ -1,0 +1,103 @@
+{
+  "id": "b15-inflated",
+  "applicant": {
+    "person_name": "Kalsef Vakvakzim",
+    "email": "kalsef.vakvakzim.b15-inflated@example.org",
+    "phone": "+44 20 7946 0097",
+    "iban": "DE41 0000 0000 4200 0006 79",
+    "postal_address": "98 Naekal Way, Quavytesh ZZ3 6ZZ",
+    "handle": "braxzor9"
+  },
+  "proposal": {
+    "title": "Pelquelquel: a conformance test suite for TLS 1.3 servers",
+    "summary": "Pelquelquel builds a conformance test suite for TLS 1.3 servers for operators of small web services.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Small servers often ship TLS stacks that nobody tests against the full handshake state machine. Operators of small web services depend on transport security every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a conformance test suite for TLS 1.3 servers called Pelquelquel. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Transport security is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/pelquelquel/pelquelquel, which 16246 public projects depend on. Our team has worked on transport security for 5 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the EUPL-1.2 licence in http://forge.test/pelquelquel/pelquelquel. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 6 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 55350.00 EUR for 85 days of work over 3 tasks. Day rates range from 600.00 EUR to 750.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nSmall servers often ship TLS stacks that nobody tests against the full handshake state machine. Operators of small web services depend on transport security every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a conformance test suite for TLS 1.3 servers called Pelquelquel. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nTransport security is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/pelquelquel/pelquelquel, which 16246 public projects depend on. Our team has worked on transport security for 5 years.\n\nDeliverables and licence\nAll code will be released under the EUPL-1.2 licence in http://forge.test/pelquelquel/pelquelquel. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 6 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6.\n\nBudget justification\nThe plan asks for 55350.00 EUR for 85 days of work over 3 tasks. Day rates range from 600.00 EUR to 750.00 EUR.\n\nContact\nKalsef Vakvakzim, kalsef.vakvakzim.b15-inflated@example.org, +44 20 7946 0097.\nPostal address: 98 Naekal Way, Quavytesh ZZ3 6ZZ.\nPayment account: DE41 0000 0000 4200 0006 79.\nProject site: http://www.b15-inflated.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 29,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "21750.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 34,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "20400.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 22,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "13200.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "55350.00"
+    }
+  }
+}

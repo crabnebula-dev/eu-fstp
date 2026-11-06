@@ -1,0 +1,118 @@
+{
+  "id": "b28-budget",
+  "applicant": {
+    "person_name": "Quathra Pelbraxruk",
+    "email": "quathra.pelbraxruk.b28-budget@example.org",
+    "phone": "+44 20 7946 0149",
+    "iban": "DE10 0000 0000 4200 0010 43",
+    "postal_address": "150 Fenthra Way, Ulkalzor ZZ4 7ZZ",
+    "handle": "zorzor89"
+  },
+  "proposal": {
+    "title": "Rukosktesh: a stub resolver with encrypted transport",
+    "summary": "Rukosktesh builds a stub resolver with encrypted transport for users of public wireless networks.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Many devices still send name lookups in clear text over shared networks. Users of public wireless networks depend on DNS resolution every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a stub resolver with encrypted transport called Rukosktesh. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "DNS resolution is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/rukosktesh/rukosktesh, which 105 public projects depend on. Our team has worked on DNS resolution for 4 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MPL-2.0 licence in http://forge.test/rukosktesh/rukosktesh. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 12 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 9. Documentation and release ends in month 12."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 103900.00 EUR for 104 days of work over 4 tasks. Day rates range from 550.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nMany devices still send name lookups in clear text over shared networks. Users of public wireless networks depend on DNS resolution every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a stub resolver with encrypted transport called Rukosktesh. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nDNS resolution is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/rukosktesh/rukosktesh, which 105 public projects depend on. Our team has worked on DNS resolution for 4 years.\n\nDeliverables and licence\nAll code will be released under the MPL-2.0 licence in http://forge.test/rukosktesh/rukosktesh. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 12 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 9. Documentation and release ends in month 12.\n\nBudget justification\nThe plan asks for 103900.00 EUR for 104 days of work over 4 tasks. Day rates range from 550.00 EUR to 2450.00 EUR.\n\nContact\nQuathra Pelbraxruk, quathra.pelbraxruk.b28-budget@example.org, +44 20 7946 0149.\nPostal address: 150 Fenthra Way, Ulkalzor ZZ4 7ZZ.\nPayment account: DE10 0000 0000 4200 0010 43.\nProject site: http://www.b28-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 16,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "12800.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 36,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 6,
+              "amount_eur": "19800.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 34,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 7,
+              "due_month": 9,
+              "amount_eur": "27200.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 18,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 10,
+              "due_month": 12,
+              "amount_eur": "44100.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "103900.00"
+    }
+  }
+}

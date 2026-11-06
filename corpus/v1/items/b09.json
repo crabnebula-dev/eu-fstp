@@ -1,0 +1,103 @@
+{
+  "id": "b09",
+  "applicant": {
+    "person_name": "Ulkal Thrapelvak",
+    "email": "ulkal.thrapelvak.b09@example.org",
+    "phone": "+44 20 7946 0008",
+    "iban": "DE81 0000 0000 4200 0000 56",
+    "postal_address": "9 Ynthra Way, Iloilosef ZZ9 9ZZ",
+    "handle": "zorbrax81"
+  },
+  "proposal": {
+    "title": "Oskiloyn: a library for aggregate statistics without raw data",
+    "summary": "Oskiloyn builds a library for aggregate statistics without raw data for maintainers of public web services.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Usage statistics are often collected as raw personal data when aggregates would do. Maintainers of public web services depend on privacy-preserving measurement every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a library for aggregate statistics without raw data called Oskiloyn. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Privacy-preserving measurement is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/oskiloyn/oskiloyn, which 189 public projects depend on. Our team has worked on privacy-preserving measurement for 7 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MPL-2.0 licence in http://forge.test/oskiloyn/oskiloyn. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 6 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 27100.00 EUR for 42 days of work over 3 tasks. Day rates range from 450.00 EUR to 800.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nUsage statistics are often collected as raw personal data when aggregates would do. Maintainers of public web services depend on privacy-preserving measurement every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a library for aggregate statistics without raw data called Oskiloyn. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nPrivacy-preserving measurement is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/oskiloyn/oskiloyn, which 189 public projects depend on. Our team has worked on privacy-preserving measurement for 7 years.\n\nDeliverables and licence\nAll code will be released under the MPL-2.0 licence in http://forge.test/oskiloyn/oskiloyn. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 6 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6.\n\nBudget justification\nThe plan asks for 27100.00 EUR for 42 days of work over 3 tasks. Day rates range from 450.00 EUR to 800.00 EUR.\n\nContact\nUlkal Thrapelvak, ulkal.thrapelvak.b09@example.org, +44 20 7946 0008.\nPostal address: 9 Ynthra Way, Iloilosef ZZ9 9ZZ.\nPayment account: DE81 0000 0000 4200 0000 56.\nProject site: http://www.b09.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 10,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "4500.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 17,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "13600.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 15,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "9000.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "27100.00"
+    }
+  }
+}
