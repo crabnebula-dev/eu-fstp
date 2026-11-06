@@ -66,6 +66,7 @@ import {
 import { type MyRoles, type OwnProposal, type Work, type WorkItem, workOf } from "./model.js";
 import { homeLabel } from "./nav.js";
 import { myRoles } from "./session.js";
+import { activityNav, journeyNav } from "../journey/links.js";
 
 /** The path of one onboarding step (`onboarding/routes.ts`). */
 function ONBOARDING_STEP(step: "organisation" | "administrators"): string {
@@ -308,7 +309,7 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
     out.push({
       id: `home-proposal-${id}`,
       title: p !== undefined && p.title.trim() !== "" ? p.title : homeLabel("home.proposal", { id }),
-      body: p === undefined ? [] : [stateChip(p)],
+      body: p === undefined ? [journeyNav(id)] : [stateChip(p), journeyNav(id)],
       items: [i],
     });
   }
@@ -318,7 +319,14 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
   }
   const guardian = of((x) => x.group === "guardian");
   if (guardian.length > 0) {
-    out.push({ id: "home-guardian", title: homeLabel("home.group.guardian"), body: [], items: guardian });
+    // O-60: the guardian reaches the activity log, which holds their own
+    // consent steps, by clicking from the home page.
+    out.push({
+      id: "home-guardian",
+      title: homeLabel("home.group.guardian"),
+      body: guardian.map((i) => activityNav(i.href.split("/")[3] ?? "")),
+      items: guardian,
+    });
   }
 
   // J5: the coordinator.

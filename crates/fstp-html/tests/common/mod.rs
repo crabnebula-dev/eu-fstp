@@ -19,6 +19,8 @@
 //!   the design does not name yet.
 //! - `cases`: fixed documents on both sides of the subset's boundary.
 //! - `corpus`: the reader of the shared corpora in `testdata/`.
+//! - `route`: the route map of the voyager design as a reference, with
+//!   route generators (lane j3, ADR-015).
 
 #![allow(dead_code)]
 
@@ -29,5 +31,6 @@ pub(crate) mod corpus;
 pub(crate) mod lang;
 pub(crate) mod message;
 pub(crate) mod reference;
+pub(crate) mod route;
 pub(crate) mod serial;
 pub(crate) mod spec;

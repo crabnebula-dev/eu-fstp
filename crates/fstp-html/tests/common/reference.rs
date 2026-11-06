@@ -26,12 +26,38 @@
 //! - the parent, child and ancestor rules under which the HTML tree
 //!   builder would move or close an element (for example a `div` inside
 //!   a `p`, a `tr` directly in a `table`, or nested `a` elements);
-//! - safe URLs (see `chars::is_safe_url`) in `href`, `src` and `action`.
+//! - safe URLs (see `chars::is_safe_url`) in `href`, `src` and `action`;
+//! - inside `svg`, only the closed SVG subset of [`SVG_ELEMENTS`] (lane j3,
+//!   ADR-015). See "The SVG subset" below.
 //!
 //! The parse result is the decoded tree. Character references are decoded,
 //! the line feed the HTML parser drops after `<pre>` and `<textarea>` is
 //! dropped, and whitespace-only text inside container elements, which the
 //! subset allows for layout, is removed.
+//!
+//! # The SVG subset (lane j3, test author)
+//!
+//! Interim reading, pending Daniel. ADR-015 puts the route SVG renderer in
+//! `fstp-html` and asks the checker to accept the closed SVG subset the
+//! renderer emits, and nothing else. An `svg` element may stand where the
+//! body rules allow phrasing content, but never inside `a` or `button`.
+//! Inside it:
+//!
+//! - only the elements of [`SVG_ELEMENTS`], each with the parents of
+//!   `svg_placement`. No script, style, foreign object, image, `use`,
+//!   animation element or HTML element, since an HTML start tag would
+//!   break out of foreign content;
+//! - `title`, `desc` and `tspan` hold text only, and `text` holds text and
+//!   `tspan`. `title` is an SVG element there, not RCDATA. Every other SVG
+//!   element holds only layout whitespace, which is removed;
+//! - lower-case attribute names from the allowlist of `svg_attrs`, which
+//!   the HTML parser adjusts (`viewbox` becomes `viewBox`), plus `id`,
+//!   `class`, `role`, `tabindex`, `lang`, `dir` and `aria-` names. No
+//!   `on` handler, no `style` and no namespaced name;
+//! - `href` is a safe URL, `marker-start` and `marker-end` are
+//!   `url(#name)`, and `fill` is `currentColor` or `none`, so no attribute
+//!   reaches another resource or carries a colour outside the tokens;
+//! - explicit end tags, as for every non-void element, and no nested `a`.
 
 use std::collections::BTreeMap;
 
@@ -193,6 +219,105 @@ const GLOBAL_ATTRS: &[&str] = &[
 /// Attributes whose value is a URL.
 pub(crate) const URL_ATTRS: &[&str] = &["href", "src", "action"];
 
+/// The elements of the closed SVG subset (lane j3, ADR-015). `svg` opens
+/// it, and every other one stands only inside `svg`.
+pub(crate) const SVG_ELEMENTS: &[&str] = &[
+    "svg", "title", "desc", "defs", "marker", "g", "a", "path", "line", "rect", "circle", "text",
+    "tspan",
+];
+
+/// SVG elements that hold only layout whitespace and elements.
+const SVG_CONTAINERS: &[&str] = &[
+    "svg", "defs", "marker", "g", "a", "path", "line", "rect", "circle",
+];
+
+/// Attributes allowed on every element of the SVG subset. `aria-` names
+/// are allowed too.
+const SVG_GLOBAL_ATTRS: &[&str] = &["id", "class", "role", "tabindex", "lang", "dir"];
+
+/// Attributes allowed on one SVG element, beyond the global ones. Names
+/// are lower case; the HTML parser adjusts them to their SVG spelling.
+fn svg_attrs(el: &str) -> &'static [&'static str] {
+    match el {
+        "svg" => &["viewbox"],
+        "a" => &["href"],
+        "marker" => &[
+            "viewbox",
+            "refx",
+            "refy",
+            "markerwidth",
+            "markerheight",
+            "orient",
+        ],
+        "path" => &["d", "marker-start", "marker-end", "fill"],
+        "line" => &["x1", "y1", "x2", "y2", "marker-start", "marker-end"],
+        "rect" => &["x", "y", "width", "height", "rx", "ry"],
+        "circle" => &["cx", "cy", "r"],
+        "text" => &["x", "y", "dx", "dy", "text-anchor"],
+        "tspan" => &["x", "y", "dx", "dy"],
+        _ => &[],
+    }
+}
+
+fn svg_attr_allowed(el: &str, attr: &str) -> bool {
+    if SVG_GLOBAL_ATTRS.contains(&attr) || svg_attrs(el).contains(&attr) {
+        return true;
+    }
+    attr.strip_prefix("aria-")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_lowercase()))
+}
+
+/// Whether `value` is `url(#name)` with a name of ASCII letters, digits,
+/// `-` and `_`: a reference inside the same document only.
+fn is_local_url_ref(value: &str) -> bool {
+    value
+        .strip_prefix("url(#")
+        .and_then(|r| r.strip_suffix(')'))
+        .is_some_and(|n| {
+            !n.is_empty()
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+
+/// The value rules of the SVG subset beyond the safe URL rule.
+fn svg_value_ok(attr: &str, value: &str) -> bool {
+    match attr {
+        "marker-start" | "marker-end" => is_local_url_ref(value),
+        "fill" => value == "currentColor" || value == "none",
+        _ => true,
+    }
+}
+
+/// Checks where an element may open inside `svg`. `svg_anc` holds the
+/// open ancestors from the `svg` element down.
+fn svg_placement(name: &str, parent: &str, svg_anc: &[&str]) -> Result<(), String> {
+    let allowed: &[&str] = match parent {
+        "svg" => &[
+            "title", "desc", "defs", "g", "a", "path", "line", "rect", "circle", "text",
+        ],
+        "g" => &[
+            "title", "desc", "g", "a", "path", "line", "rect", "circle", "text",
+        ],
+        "a" => &[
+            "title", "desc", "g", "path", "line", "rect", "circle", "text",
+        ],
+        "defs" => &["marker"],
+        "marker" => &["path"],
+        "text" => &["tspan"],
+        _ => &[],
+    };
+    if !allowed.contains(&name) {
+        return Err(format!(
+            "<{parent}> inside svg may not hold it (closed SVG subset)"
+        ));
+    }
+    if name == "a" && svg_anc.contains(&"a") {
+        return Err("an SVG a inside an SVG a".to_owned());
+    }
+    Ok(())
+}
+
 /// Attributes allowed on one element, beyond the global ones.
 fn element_attrs(el: &str) -> &'static [&'static str] {
     match el {
@@ -333,7 +458,7 @@ impl Parser<'_> {
         let start = self.i;
         while let Some(c) = self.peek() {
             let ok = c.is_ascii_lowercase()
-                || (self.i > start && ((c == '-' && !digits) || (c.is_ascii_digit() && digits)));
+                || (self.i > start && ((c == '-' && !digits) || c.is_ascii_digit()));
             if !ok {
                 break;
             }
@@ -429,6 +554,8 @@ impl Parser<'_> {
         placement(&name, anc).map_err(|e| format!("<{name}> at byte {at}: {e}"))?;
         let mut el = REl::new(&name);
         let void = VOID.contains(&name.as_str());
+        // Inside `svg`, or the `svg` element itself: the SVG subset rules.
+        let in_svg = anc.contains(&"svg") || name == "svg";
         loop {
             let ws = self.skip_ws();
             if self.eat(">") {
@@ -447,7 +574,12 @@ impl Parser<'_> {
                 return Err(format!("no whitespace before an attribute of <{name}>"));
             }
             let attr = self.name(false)?;
-            if !attr_allowed(&name, &attr) {
+            let allowed = if in_svg {
+                svg_attr_allowed(&name, &attr)
+            } else {
+                attr_allowed(&name, &attr)
+            };
+            if !allowed {
                 return Err(format!("attribute {attr} is not allowed on <{name}>"));
             }
             let value = if self.eat("=") {
@@ -462,6 +594,11 @@ impl Parser<'_> {
             } else {
                 String::new()
             };
+            if in_svg && !svg_value_ok(&attr, &value) {
+                return Err(format!(
+                    "{attr}={value:?} on <{name}> is outside the SVG subset"
+                ));
+            }
             if URL_ATTRS.contains(&attr.as_str()) && !is_safe_url(&value) {
                 return Err(format!("{attr}={value:?} on <{name}> is not a safe URL"));
             }
@@ -476,7 +613,7 @@ impl Parser<'_> {
         inner.push(&name);
         let end = format!("</{name}>");
         let mut first = true;
-        if RCDATA.contains(&name.as_str()) {
+        if RCDATA.contains(&name.as_str()) && !in_svg {
             let mut text = self.chars('<', Ctx::Text)?;
             if !self.eat(&end) {
                 return Err(format!("<{name}> holds markup or is not closed"));
@@ -517,7 +654,12 @@ impl Parser<'_> {
                 if first && DROPS_LEADING_LF.contains(&name.as_str()) && text.starts_with('\n') {
                     text.remove(0);
                 }
-                if CONTAINERS.contains(&name.as_str()) {
+                let container = if in_svg {
+                    SVG_CONTAINERS.contains(&name.as_str())
+                } else {
+                    CONTAINERS.contains(&name.as_str())
+                };
+                if container {
                     if !text.chars().all(|c| c == ' ' || c == '\t' || c == '\n') {
                         return Err(format!("text directly inside <{name}>"));
                     }
@@ -558,7 +700,17 @@ fn placement(name: &str, anc: &[&str]) -> Result<(), String> {
         }
         Some(_) => {}
     }
-    if !BODY_ELEMENTS.contains(&name) {
+    if let Some(at) = anc.iter().position(|a| *a == "svg") {
+        return svg_placement(name, parent.unwrap_or(""), anc.get(at..).unwrap_or(&[]));
+    }
+    if name == "svg" {
+        if anc.iter().any(|a| matches!(*a, "a" | "button")) {
+            return Err("svg inside an interactive element".to_owned());
+        }
+    } else if SVG_ELEMENTS.contains(&name) && !BODY_ELEMENTS.contains(&name) {
+        return Err("an SVG element outside svg".to_owned());
+    }
+    if name != "svg" && !BODY_ELEMENTS.contains(&name) {
         return Err("the element is not in the allowlist below body".to_owned());
     }
     let parent = parent.unwrap_or("");

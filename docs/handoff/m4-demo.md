@@ -126,6 +126,16 @@ The identity page and the onboarding steps load, but their operations are not se
 6. Choose the applicant scene `NEGOTIATION` and open the lead's link. The home page lists "Your proposal: Synthetic open sensor kit". Choose it, then the negotiation link: the lead reads the data protection notice and acknowledges it (R-NG-06).
 7. In the applicant scene `IRC_REVIEW_MINOR`, the guardian's home page lists "Guardian consent for Synthetic school data vault", which opens the guardian page.
 
+## Progress map and activity log (2026-11-05, lane j3)
+
+- **Applicant.** On the front door, choose the scene `/demo/applicant?at=STAGE2` and "Sign in as" the lead of x. On the home page, the card of "Synthetic open sensor kit" now holds "Progress" and "Activity". The proposal page holds the same two links.
+- **Progress** (`/app/proposals/1001/progress`, "Application progress"). The map draws sixteen nodes, each a link named by its plain label, its formal state and its status. DRAFT, SUBMITTED and STAGE1 show as completed and STAGE2 as current, with a ring that stops under reduced motion. "Progress as a list" holds the same nodes in the same order. A node or list link opens that stage's help panel in place. With no link chosen, the STAGE2 panel shows its 14-day window from the overlay.
+- **Activity** (`/app/proposals/1001/activity`, "Activity log"). Newest first: the two reviewer questions, the move into STAGE2, the move into STAGE1, then the submission receipt with "Anchor pending". A filter narrows the log by kind.
+- **Reviewer.** In `/demo/review?stage=stage2`, R1's assignment page shows the "Proposal status" strip with STAGE2 current. An IRC member's pages show no strip (O-58). Whether a reviewer who has not declared yet sees the strip is the read's decision alone. Opened by URL, the progress page shows a reviewer the strip and a refusal, with no map and no withdrawal.
+- **Guardian.** In `/demo/applicant?at=IRC_REVIEW_MINOR`, the guardian's home card and the guardian page hold "Activity". The log shows their guardian step (O-60).
+- No new seed: every scene runs from genesis through production commands, so the ledger already holds each route.
+- `e2e/journey/voyager.spec.ts` runs with `tools/demo/run.sh e2e journey/`. Four of its five tests pass. The applicant test expects the move into STAGE2 as the newest entry, but the STAGE2 scene records two reviewer questions after that move, so "Question received" is newest.
+
 ## Results of the Playwright journeys
 
 Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4disp) with Chromium 1248 and the virtual authenticator, `retries: 0`.
