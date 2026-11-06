@@ -23,6 +23,7 @@ use crate::python;
 use crate::repo::{self, ProjectDir};
 use crate::report::{self, ContextSummary, Finding, Report};
 use crate::runtime;
+use crate::sbom;
 use crate::tier_b;
 use crate::web_scan;
 
@@ -66,6 +67,8 @@ struct Options {
     json: Option<PathBuf>,
     print_allowlist: bool,
     release: bool,
+    /// `sbom`: where to write the SBOM, with the pinned build hosts.
+    sbom: Option<(PathBuf, sbom::HostTools)>,
 }
 
 const USAGE: &str = "\
@@ -77,7 +80,23 @@ Usage: deps-check [--root <dir>] [--offline] [--json <file>] [--print-allowlist]
   --print-allowlist    print an allowlist generated from the current graph
   --release            release build: a shipped Tier B version without a
                        confirmation fails (I-74, ADR-001 A5)
+
+       deps-check sbom [--root <dir>] [--offline] --out <file>
+                       --node-version <v> --node-sha256 <hex> --npm-version <v>
+
+  sbom                 write the CycloneDX 1.6 SBOM of the resolved trees
+                       instead of running the gates (R-NF-07, ADR-003)
 ";
+
+/// The UTF-8 value that follows `flag`.
+fn value(
+    args: &mut impl Iterator<Item = std::ffi::OsString>,
+    flag: &str,
+) -> Result<String, String> {
+    args.next()
+        .and_then(|v| v.into_string().ok())
+        .ok_or_else(|| format!("{flag} needs a value"))
+}
 
 fn parse_args() -> Result<Options, String> {
     let mut opts = Options {
@@ -86,8 +105,14 @@ fn parse_args() -> Result<Options, String> {
         json: None,
         print_allowlist: false,
         release: false,
+        sbom: None,
     };
-    let mut args = std::env::args_os().skip(1);
+    let mut args = std::env::args_os().skip(1).peekable();
+    let sbom_mode = args.peek().and_then(|a| a.to_str()) == Some("sbom");
+    if sbom_mode {
+        args.next();
+    }
+    let (mut out, mut node, mut sha, mut npm) = (None, None, None, None);
     while let Some(a) = args.next() {
         match a.to_str() {
             Some("--root") => {
@@ -99,8 +124,31 @@ fn parse_args() -> Result<Options, String> {
             Some("--offline") => opts.offline = true,
             Some("--print-allowlist") => opts.print_allowlist = true,
             Some("--release") => opts.release = true,
+            Some("--out") if sbom_mode => out = Some(PathBuf::from(value(&mut args, "--out")?)),
+            Some("--node-version") if sbom_mode => node = Some(value(&mut args, "--node-version")?),
+            Some("--node-sha256") if sbom_mode => sha = Some(value(&mut args, "--node-sha256")?),
+            Some("--npm-version") if sbom_mode => npm = Some(value(&mut args, "--npm-version")?),
             Some("-h" | "--help") => return Err(String::new()),
             _ => return Err(format!("unknown argument {}", a.to_string_lossy())),
+        }
+    }
+    if sbom_mode {
+        match (out, node, sha, npm) {
+            (Some(out), Some(node_version), Some(node_sha256), Some(npm_version)) => {
+                opts.sbom = Some((
+                    out,
+                    sbom::HostTools {
+                        node_version,
+                        node_sha256,
+                        npm_version,
+                    },
+                ));
+            }
+            _ => {
+                return Err(
+                    "sbom needs --out, --node-version, --node-sha256 and --npm-version".to_owned(),
+                );
+            }
         }
     }
     Ok(opts)
@@ -263,6 +311,96 @@ fn read_locks(
         .collect()
 }
 
+/// `deps-check sbom`: writes the CycloneDX SBOM of the resolved trees
+/// (R-NF-07). It refuses when resolving the trees reported an error, so
+/// an SBOM never describes a tree the gates could not read.
+#[allow(clippy::too_many_arguments, reason = "the pieces of one resolve run")]
+fn write_sbom(
+    root: &Path,
+    out: &Path,
+    host: &sbom::HostTools,
+    findings: &[Finding],
+    agg: &graph::Aggregate,
+    checksums: &BTreeMap<graph::PkgKey, String>,
+    entries: &[Entry],
+    contexts: &[Context<'_>],
+) -> ExitCode {
+    let mut errors: Vec<String> = findings
+        .iter()
+        .filter(|f| f.severity == report::Severity::Error)
+        .map(|f| format!("{}: {}", f.code, f.message))
+        .collect();
+    let tier = fs::read_to_string(root.join(tier_b::MIRROR))
+        .map_err(|e| format!("cannot read {}: {e}", tier_b::MIRROR))
+        .and_then(|t| {
+            tier_b::parse(&t).map_err(|errs| {
+                let errs: Vec<String> = errs.iter().map(ToString::to_string).collect();
+                format!("{} {}", tier_b::MIRROR, errs.join("; "))
+            })
+        })
+        .unwrap_or_else(|e| {
+            errors.push(e);
+            tier_b::TierB::default()
+        });
+    // The licence each third-party crate declares in its manifest.
+    let mut licences = BTreeMap::new();
+    for c in contexts {
+        for p in c.meta.packages.iter().filter(|p| !p.is_path()) {
+            let key = (p.name.clone(), p.version.clone());
+            if agg.usage.contains_key(&key)
+                && !licences.contains_key(&key)
+                && let Some(l) = layering_m4::manifest_licence(Path::new(&p.manifest_path))
+            {
+                licences.insert(key, l);
+            }
+        }
+    }
+    let mut npm_locks = Vec::new();
+    for dir in npm::PROJECT_DIRS {
+        let path = root.join(dir).join("package-lock.json");
+        if !path.exists() {
+            continue;
+        }
+        match fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| npm::parse_lock(&b))
+        {
+            Ok(lock) => npm_locks.push((dir.to_owned(), lock)),
+            Err(e) => errors.push(format!("{dir}/package-lock.json: {e}")),
+        }
+    }
+    let inputs = sbom::Inputs {
+        agg,
+        checksums,
+        entries,
+        tier: &tier,
+        licences: &licences,
+        npm: &npm_locks,
+        host,
+        version: env!("CARGO_PKG_VERSION"),
+    };
+    let text = match sbom::build(&inputs) {
+        Ok(t) if errors.is_empty() => t,
+        Ok(_) => String::new(),
+        Err(e) => {
+            errors.extend(e);
+            String::new()
+        }
+    };
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("deps-check sbom: {e}");
+        }
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = fs::write(out, text) {
+        eprintln!("deps-check sbom: cannot write {}: {e}", out.display());
+        return ExitCode::from(2);
+    }
+    println!("deps-check sbom: wrote {}", out.display());
+    ExitCode::SUCCESS
+}
+
 /// Runs every gate and prints the report. Returns success only when no
 /// gate reports an error.
 pub fn run() -> ExitCode {
@@ -315,10 +453,14 @@ pub fn run() -> ExitCode {
 
     // One walk serves project discovery, the repository checks and the Python scan.
     let walk = repo::walk(&root, &repo::target_dir_inside(&root));
-    findings.extend(walk.findings.iter().cloned());
-    findings.extend(repo::check_cargo_config(&root, &walk));
-    findings.extend(repo::check_symlinks(&root, &walk));
-    findings.extend(repo::check_manifest_overrides(&root, &walk));
+    // The SBOM reads the resolved trees only. The repository checks stay
+    // with the gate, which CI runs before the sbom job.
+    if opts.sbom.is_none() {
+        findings.extend(walk.findings.iter().cloned());
+        findings.extend(repo::check_cargo_config(&root, &walk));
+        findings.extend(repo::check_symlinks(&root, &walk));
+        findings.extend(repo::check_manifest_overrides(&root, &walk));
+    }
     let (projects, project_findings) = repo::projects(&walk);
     findings.extend(project_findings);
     let locks = read_locks(&root, &projects, &mut findings);
@@ -381,6 +523,13 @@ pub fn run() -> ExitCode {
         })
         .collect();
     let checksums = provenance::lock_checksums(&project_locks);
+
+    if let Some((out, host)) = &opts.sbom {
+        findings.extend(agg.findings.iter().cloned());
+        return write_sbom(
+            &root, out, host, &findings, &agg, &checksums, &entries, &contexts,
+        );
+    }
 
     if opts.print_allowlist {
         let errors: Vec<&Finding> = findings

@@ -188,7 +188,7 @@ pub(crate) fn parse(text: &str) -> Result<TierB, Vec<LineError>> {
 
 /// The source hash a confirmation must carry for an allowlisted package:
 /// the `.crate` SHA-256, or the commit of a git source string.
-fn expected_hash(entries: &[Entry], name: &str, version: &str) -> Option<String> {
+pub(crate) fn expected_hash(entries: &[Entry], name: &str, version: &str) -> Option<String> {
     let entry = entries
         .iter()
         .find(|e| e.name == name && e.version == version)?;

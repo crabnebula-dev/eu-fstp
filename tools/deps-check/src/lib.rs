@@ -70,6 +70,7 @@ mod repo;
 mod report;
 mod run;
 mod runtime;
+mod sbom;
 mod tier_b;
 mod web_scan;
 

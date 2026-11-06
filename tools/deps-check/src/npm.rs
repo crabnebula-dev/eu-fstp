@@ -40,7 +40,7 @@ use crate::report::Finding;
 /// The npm allowlist.
 pub(crate) const NPM_ALLOWLIST: &str = "deps/npm-allowlist.txt";
 /// The directories that may hold an npm project.
-const PROJECT_DIRS: [&str; 2] = ["web", "e2e"];
+pub(crate) const PROJECT_DIRS: [&str; 2] = ["web", "e2e"];
 /// The only direct packages.
 const DIRECT: [&str; 2] = ["typescript", "@playwright/test"];
 /// The public npm registry.
@@ -141,6 +141,8 @@ pub(crate) struct LockPackage {
     pub(crate) link: bool,
     /// Whether `hasInstallScript` is true.
     pub(crate) install_script: bool,
+    /// The `license` member when it is a string, for the SBOM (R-NF-07).
+    pub(crate) license: Option<String>,
 }
 
 /// A parsed lockfile.
@@ -345,6 +347,7 @@ pub(crate) fn parse_lock(bytes: &[u8]) -> Result<NpmLock, String> {
             integrity: opt_string(o, "integrity", &what)?,
             link: flag(o, "link", &what)?,
             install_script: flag(o, "hasInstallScript", &what)?,
+            license: o.get("license").and_then(Value::as_str).map(str::to_owned),
         });
     }
     Ok(out)

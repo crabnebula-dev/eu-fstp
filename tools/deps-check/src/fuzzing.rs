@@ -432,3 +432,24 @@ pub fn ts_token_scan(data: &[u8]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The npm integrity decoder of the SBOM (R-NF-07): an accepted value is a
+/// valid `sha512` integrity value and decodes to 128 lowercase hex digits.
+pub fn sbom_integrity(data: &[u8]) -> Result<(), String> {
+    let text = String::from_utf8_lossy(data);
+    if let Some(hex) = crate::sbom::integrity_hex(&text) {
+        if !crate::npm::valid_integrity(&text) {
+            return Err(format!("decoded an invalid integrity value: {text:?}"));
+        }
+        if hex.len() != 128
+            || !hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(format!(
+                "decoded to something other than 128 hex digits: {hex}"
+            ));
+        }
+    }
+    Ok(())
+}
