@@ -469,6 +469,8 @@ version = "0.1.0"
 dependencies = [
  "fstp-domain",
  "fstp-html",
+ "fstp-json",
+ "fstp-pdf",
  "fstp-programme",
  "fstp-prop",
 ]
@@ -716,6 +718,20 @@ dependencies = [
  "fstp-prop",
  "fstp-release",
  "fstp-tls",
+]
+
+[[package]]
+name = "fstp-report"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-pdf",
+ "fstp-prop",
 ]
 
 [[package]]

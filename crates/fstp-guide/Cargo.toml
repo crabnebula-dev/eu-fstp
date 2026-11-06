@@ -11,6 +11,9 @@ publish.workspace = true
 fstp-domain.workspace = true
 fstp-programme.workspace = true
 fstp-html.workspace = true
+fstp-json.workspace = true
+# M5 design section 3.3: the Guide PDF (R-GA-02).
+fstp-pdf.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

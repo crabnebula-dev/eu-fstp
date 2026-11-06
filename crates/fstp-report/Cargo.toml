@@ -1,0 +1,23 @@
+[package]
+name = "fstp-report"
+description = "Funder reporting: the Report ledger envelope and the five Horizon Europe outputs (M5 design lane L-RPT, R-RP-01 to R-RP-04, I-44)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-domain.workspace = true
+fstp-guide.workspace = true
+fstp-json.workspace = true
+fstp-ledger.workspace = true
+fstp-money.workspace = true
+fstp-pdf.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
