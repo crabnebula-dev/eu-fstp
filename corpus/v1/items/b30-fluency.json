@@ -1,0 +1,118 @@
+{
+  "id": "b30-fluency",
+  "applicant": {
+    "person_name": "Seffen Rukkalgow",
+    "email": "seffen.rukkalgow.b30-fluency@example.org",
+    "phone": "+44 20 7946 0159",
+    "iban": "DE60 0000 0000 4200 0011 13",
+    "postal_address": "160 Naezor Way, Teshulzor ZZ4 4ZZ",
+    "handle": "quelpel2"
+  },
+  "proposal": {
+    "title": "Zorthrazor: a test runner for protocol specifications",
+    "summary": "Zorthrazor builds a test runner for protocol specifications for authors of protocol libraries.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Protocol specifications change faster than their implementations are tested. Authors of protocol libraries are depending from open standards testing every day, yet tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We are going to build a test runner for protocol specifications called Zorthrazor. The work starts from a written threat model and ends with a reproducible release. Every component gets tests and a fuzz target before merging of it."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Open standards testing belongs into Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We are maintaining http://forge.test/zorthrazor/zorthrazor, which 269 public projects depend on. Our team is working on open standards testing for 3 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under MIT licence in http://forge.test/zorthrazor/zorthrazor. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 83400.00 EUR for 142 days of work over 4 tasks. Day rates range from 550.00 EUR to 650.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nProtocol specifications change faster than their implementations are tested. Authors of protocol libraries are depending from open standards testing every day, yet tools they have are hard to audit and slow to update.\n\nApproach\nWe are going to build a test runner for protocol specifications called Zorthrazor. The work starts from a written threat model and ends with a reproducible release. Every component gets tests and a fuzz target before merging of it.\n\nRelevance to the Open Internet Stack\nOpen standards testing belongs into Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe are maintaining http://forge.test/zorthrazor/zorthrazor, which 269 public projects depend on. Our team is working on open standards testing for 3 years.\n\nDeliverables and licence\nAll code will be released under MIT licence in http://forge.test/zorthrazor/zorthrazor. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8.\n\nBudget justification\nThe plan asks for 83400.00 EUR for 142 days of work over 4 tasks. Day rates range from 550.00 EUR to 650.00 EUR.\n\nContact\nSeffen Rukkalgow, seffen.rukkalgow.b30-fluency@example.org, +44 20 7946 0159.\nPostal address: 160 Naezor Way, Teshulzor ZZ4 4ZZ.\nPayment account: DE60 0000 0000 4200 0011 13.\nProject site: http://www.b30-fluency.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 36,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "19800.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 32,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "19200.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 37,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "20350.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 37,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 7,
+              "due_month": 8,
+              "amount_eur": "24050.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "83400.00"
+    }
+  }
+}

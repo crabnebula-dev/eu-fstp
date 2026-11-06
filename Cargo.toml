@@ -63,6 +63,8 @@ members = [
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
+    # M7, docs/handoff/m7-design.md section 5, lane L-CORPUS.
+    "tools/corpus",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
 exclude = ["crates/*/fuzz", "tools/*/fuzz"]

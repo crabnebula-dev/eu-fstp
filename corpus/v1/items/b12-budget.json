@@ -1,0 +1,118 @@
+{
+  "id": "b12-budget",
+  "applicant": {
+    "person_name": "Ulzim Quabraxkal",
+    "email": "ulzim.quabraxkal.b12-budget@example.org",
+    "phone": "+44 20 7946 0085",
+    "iban": "DE78 0000 0000 4200 0005 95",
+    "postal_address": "86 Fendro Way, Thrazorbrax ZZ3 9ZZ",
+    "handle": "zorqua81"
+  },
+  "proposal": {
+    "title": "Zimkalquel: a verifiable key directory",
+    "summary": "Zimkalquel builds a verifiable key directory for users of encrypted messaging.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Users cannot see whether a server swapped the key of a contact. Users of encrypted messaging depend on key transparency every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a verifiable key directory called Zimkalquel. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Key transparency is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/zimkalquel/zimkalquel, which 128 public projects depend on. Our team has worked on key transparency for 8 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MIT licence in http://forge.test/zimkalquel/zimkalquel. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 10 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 7. Documentation and release ends in month 10."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 141850.00 EUR for 105 days of work over 4 tasks. Day rates range from 650.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nUsers cannot see whether a server swapped the key of a contact. Users of encrypted messaging depend on key transparency every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a verifiable key directory called Zimkalquel. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nKey transparency is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/zimkalquel/zimkalquel, which 128 public projects depend on. Our team has worked on key transparency for 8 years.\n\nDeliverables and licence\nAll code will be released under the MIT licence in http://forge.test/zimkalquel/zimkalquel. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 10 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 7. Documentation and release ends in month 10.\n\nBudget justification\nThe plan asks for 141850.00 EUR for 105 days of work over 4 tasks. Day rates range from 650.00 EUR to 2450.00 EUR.\n\nContact\nUlzim Quabraxkal, ulzim.quabraxkal.b12-budget@example.org, +44 20 7946 0085.\nPostal address: 86 Fendro Way, Thrazorbrax ZZ3 9ZZ.\nPayment account: DE78 0000 0000 4200 0005 95.\nProject site: http://www.b12-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 33,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "21450.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 14,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 5,
+              "amount_eur": "9800.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 18,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 7,
+              "amount_eur": "12600.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 40,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 8,
+              "due_month": 10,
+              "amount_eur": "98000.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "141850.00"
+    }
+  }
+}

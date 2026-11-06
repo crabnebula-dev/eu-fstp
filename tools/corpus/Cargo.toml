@@ -1,0 +1,14 @@
+[package]
+name = "corpus"
+description = "Build tool: writes the synthetic corpus corpus/v1 from templates and a seed, and checks it with --check (M7 design section 5). Never ships."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+fstp-json.workspace = true
+
+[lints]
+workspace = true

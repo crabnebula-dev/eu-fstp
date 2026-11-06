@@ -1,0 +1,113 @@
+{
+  "id": "b38-omission",
+  "applicant": {
+    "person_name": "Mibvy Peloskzim",
+    "email": "mibvy.peloskzim.b38-omission@example.org",
+    "phone": "+44 20 7946 0188",
+    "iban": "DE11 0000 0000 4200 0013 16",
+    "postal_address": "189 Fenzorruk Way, Linorvosk ZZ6 5ZZ",
+    "handle": "gowkal17"
+  },
+  "proposal": {
+    "title": "Ulynmib: a routing daemon for community mesh networks",
+    "summary": "Ulynmib builds a routing daemon for community mesh networks for community network groups.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Mesh networks lose routes when nodes move or fail. Community network groups depend on mesh networking every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a routing daemon for community mesh networks called Ulynmib. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Mesh networking is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/ulynmib/ulynmib, which 175 public projects depend on. Our team has worked on mesh networking for 5 years."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 9 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 7. Documentation and release ends in month 9."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 33650.00 EUR for 50 days of work over 4 tasks. Day rates range from 500.00 EUR to 800.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nMesh networks lose routes when nodes move or fail. Community network groups depend on mesh networking every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a routing daemon for community mesh networks called Ulynmib. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nMesh networking is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/ulynmib/ulynmib, which 175 public projects depend on. Our team has worked on mesh networking for 5 years.\n\nMilestones\nThe work runs over 9 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 7. Documentation and release ends in month 9.\n\nBudget justification\nThe plan asks for 33650.00 EUR for 50 days of work over 4 tasks. Day rates range from 500.00 EUR to 800.00 EUR.\n\nContact\nMibvy Peloskzim, mibvy.peloskzim.b38-omission@example.org, +44 20 7946 0188.\nPostal address: 189 Fenzorruk Way, Linorvosk ZZ6 5ZZ.\nPayment account: DE11 0000 0000 4200 0013 16.\nProject site: http://www.b38-omission.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 12,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "6000.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 15,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "12000.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 12,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 7,
+              "amount_eur": "9600.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 11,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 8,
+              "due_month": 9,
+              "amount_eur": "6050.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "33650.00"
+    }
+  }
+}

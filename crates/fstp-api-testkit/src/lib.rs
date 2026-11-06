@@ -14,6 +14,7 @@
 
 pub mod canary;
 pub mod fake;
+pub mod fixture_web;
 pub mod harness;
 pub mod matrix;
 pub mod mc;

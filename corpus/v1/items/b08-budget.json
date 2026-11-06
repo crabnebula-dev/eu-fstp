@@ -1,0 +1,118 @@
+{
+  "id": "b08-budget",
+  "applicant": {
+    "person_name": "Mibsef Drovyqua",
+    "email": "mibsef.drovyqua.b08-budget@example.org",
+    "phone": "+44 20 7946 0069",
+    "iban": "DE95 0000 0000 4200 0004 83",
+    "postal_address": "70 Oskzor Way, Gowrukbrax ZZ8 4ZZ",
+    "handle": "rukzor43"
+  },
+  "proposal": {
+    "title": "Quelfensef: an authenticated time client",
+    "summary": "Quelfensef builds an authenticated time client for makers of connected devices.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Devices trust unauthenticated time sources, which breaks certificate checks. Makers of connected devices depend on network time every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build an authenticated time client called Quelfensef. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Network time is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/quelfensef/quelfensef, which 136 public projects depend on. Our team has worked on network time for 9 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the EUPL-1.2 licence in http://forge.test/quelfensef/quelfensef. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 10 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 7. Documentation and release ends in month 10."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 107000.00 EUR for 93 days of work over 4 tasks. Day rates range from 500.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nDevices trust unauthenticated time sources, which breaks certificate checks. Makers of connected devices depend on network time every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build an authenticated time client called Quelfensef. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nNetwork time is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/quelfensef/quelfensef, which 136 public projects depend on. Our team has worked on network time for 9 years.\n\nDeliverables and licence\nAll code will be released under the EUPL-1.2 licence in http://forge.test/quelfensef/quelfensef. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 10 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 7. Documentation and release ends in month 10.\n\nBudget justification\nThe plan asks for 107000.00 EUR for 93 days of work over 4 tasks. Day rates range from 500.00 EUR to 2450.00 EUR.\n\nContact\nMibsef Drovyqua, mibsef.drovyqua.b08-budget@example.org, +44 20 7946 0069.\nPostal address: 70 Oskzor Way, Gowrukbrax ZZ8 4ZZ.\nPayment account: DE95 0000 0000 4200 0004 83.\nProject site: http://www.b08-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 17,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "10200.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 34,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 5,
+              "amount_eur": "17000.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 14,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 7,
+              "amount_eur": "11200.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 28,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 8,
+              "due_month": 10,
+              "amount_eur": "68600.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "107000.00"
+    }
+  }
+}

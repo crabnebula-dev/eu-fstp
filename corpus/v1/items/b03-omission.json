@@ -1,0 +1,113 @@
+{
+  "id": "b03-omission",
+  "applicant": {
+    "person_name": "Ynbrax Gowquaorv",
+    "email": "ynbrax.gowquaorv.b03-omission@example.org",
+    "phone": "+44 20 7946 0048",
+    "iban": "DE87 0000 0000 4200 0003 36",
+    "postal_address": "49 Quelmib Way, Zordrosef ZZ1 6ZZ",
+    "handle": "mibtesh70"
+  },
+  "proposal": {
+    "title": "Pelnaetesh: a checker for confusable domain names",
+    "summary": "Pelnaetesh builds a checker for confusable domain names for registries and browser makers.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Lookalike names in other scripts are used to deceive users. Registries and browser makers depend on internationalised domain names every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a checker for confusable domain names called Pelnaetesh. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Internationalised domain names is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/pelnaetesh/pelnaetesh, which 122 public projects depend on. Our team has worked on internationalised domain names for 10 years."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 12 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 9. Documentation and release ends in month 12."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 56050.00 EUR for 97 days of work over 4 tasks. Day rates range from 450.00 EUR to 750.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nLookalike names in other scripts are used to deceive users. Registries and browser makers depend on internationalised domain names every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a checker for confusable domain names called Pelnaetesh. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nInternationalised domain names is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/pelnaetesh/pelnaetesh, which 122 public projects depend on. Our team has worked on internationalised domain names for 10 years.\n\nMilestones\nThe work runs over 12 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 9. Documentation and release ends in month 12.\n\nBudget justification\nThe plan asks for 56050.00 EUR for 97 days of work over 4 tasks. Day rates range from 450.00 EUR to 750.00 EUR.\n\nContact\nYnbrax Gowquaorv, ynbrax.gowquaorv.b03-omission@example.org, +44 20 7946 0048.\nPostal address: 49 Quelmib Way, Zordrosef ZZ1 6ZZ.\nPayment account: DE87 0000 0000 4200 0003 36.\nProject site: http://www.b03-omission.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 24,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "12000.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 35,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 6,
+              "amount_eur": "22750.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 24,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 7,
+              "due_month": 9,
+              "amount_eur": "10800.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 14,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 10,
+              "due_month": 12,
+              "amount_eur": "10500.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "56050.00"
+    }
+  }
+}

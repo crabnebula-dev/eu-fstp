@@ -1,0 +1,118 @@
+{
+  "id": "b31-inflated",
+  "applicant": {
+    "person_name": "Ulqua Braxrukyn",
+    "email": "ulqua.braxrukyn.b31-inflated@example.org",
+    "phone": "+44 20 7946 0161",
+    "iban": "DE70 0000 0000 4200 0011 27",
+    "postal_address": "162 Vakul Way, Gowkalgow ZZ3 3ZZ",
+    "handle": "sefvak26"
+  },
+  "proposal": {
+    "title": "Vybraxqua: a shared fuzzing service for small projects",
+    "summary": "Vybraxqua builds a shared fuzzing service for small projects for maintainers of parsers and codecs.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Small projects cannot afford continuous fuzzing. Maintainers of parsers and codecs depend on fuzzing infrastructure every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a shared fuzzing service for small projects called Vybraxqua. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Fuzzing infrastructure is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/vybraxqua/vybraxqua, which 26502 public projects depend on. Our team has worked on fuzzing infrastructure for 12 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the Apache-2.0 licence in http://forge.test/vybraxqua/vybraxqua. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 51800.00 EUR for 81 days of work over 4 tasks. Day rates range from 550.00 EUR to 800.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nSmall projects cannot afford continuous fuzzing. Maintainers of parsers and codecs depend on fuzzing infrastructure every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a shared fuzzing service for small projects called Vybraxqua. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nFuzzing infrastructure is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/vybraxqua/vybraxqua, which 26502 public projects depend on. Our team has worked on fuzzing infrastructure for 12 years.\n\nDeliverables and licence\nAll code will be released under the Apache-2.0 licence in http://forge.test/vybraxqua/vybraxqua. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8.\n\nBudget justification\nThe plan asks for 51800.00 EUR for 81 days of work over 4 tasks. Day rates range from 550.00 EUR to 800.00 EUR.\n\nContact\nUlqua Braxrukyn, ulqua.braxrukyn.b31-inflated@example.org, +44 20 7946 0161.\nPostal address: 162 Vakul Way, Gowkalgow ZZ3 3ZZ.\nPayment account: DE70 0000 0000 4200 0011 27.\nProject site: http://www.b31-inflated.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 22,
+          "rate_eur": "700.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "15400.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 20,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "11000.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 10,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "8000.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 29,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 7,
+              "due_month": 8,
+              "amount_eur": "17400.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "51800.00"
+    }
+  }
+}

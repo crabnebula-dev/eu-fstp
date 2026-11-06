@@ -1,0 +1,113 @@
+{
+  "id": "b30-omission",
+  "applicant": {
+    "person_name": "Braxgow Sefquelgow",
+    "email": "braxgow.sefquelgow.b30-omission@example.org",
+    "phone": "+44 20 7946 0156",
+    "iban": "DE45 0000 0000 4200 0010 92",
+    "postal_address": "157 Sefpel Way, Quelrukmib ZZ3 9ZZ",
+    "handle": "quelpel2"
+  },
+  "proposal": {
+    "title": "Zorthrazor: a test runner for protocol specifications",
+    "summary": "Zorthrazor builds a test runner for protocol specifications for authors of protocol libraries.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Protocol specifications change faster than their implementations are tested. Authors of protocol libraries depend on open standards testing every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a test runner for protocol specifications called Zorthrazor. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Open standards testing is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MIT licence in http://forge.test/zorthrazor/zorthrazor. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 83400.00 EUR for 142 days of work over 4 tasks. Day rates range from 550.00 EUR to 650.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nProtocol specifications change faster than their implementations are tested. Authors of protocol libraries depend on open standards testing every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a test runner for protocol specifications called Zorthrazor. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nOpen standards testing is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nDeliverables and licence\nAll code will be released under the MIT licence in http://forge.test/zorthrazor/zorthrazor. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 8 months in 4 milestones. Design and threat model ends in month 2. Core implementation ends in month 4. Testing and fuzzing ends in month 6. Documentation and release ends in month 8.\n\nBudget justification\nThe plan asks for 83400.00 EUR for 142 days of work over 4 tasks. Day rates range from 550.00 EUR to 650.00 EUR.\n\nContact\nBraxgow Sefquelgow, braxgow.sefquelgow.b30-omission@example.org, +44 20 7946 0156.\nPostal address: 157 Sefpel Way, Quelrukmib ZZ3 9ZZ.\nPayment account: DE45 0000 0000 4200 0010 92.\nProject site: http://www.b30-omission.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 36,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "19800.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 32,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 4,
+              "amount_eur": "19200.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 37,
+          "rate_eur": "550.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 5,
+              "due_month": 6,
+              "amount_eur": "20350.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 37,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 7,
+              "due_month": 8,
+              "amount_eur": "24050.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "83400.00"
+    }
+  }
+}

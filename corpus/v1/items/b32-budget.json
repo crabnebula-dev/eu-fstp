@@ -1,0 +1,103 @@
+{
+  "id": "b32-budget",
+  "applicant": {
+    "person_name": "Kalzim Gowvypel",
+    "email": "kalzim.gowvypel.b32-budget@example.org",
+    "phone": "+44 20 7946 0165",
+    "iban": "DE90 0000 0000 4200 0011 55",
+    "postal_address": "166 Drovak Way, Naeulorv ZZ6 6ZZ",
+    "handle": "kalruk14"
+  },
+  "proposal": {
+    "title": "Braxiloosk: an export and import tool for social media archives",
+    "summary": "Braxiloosk builds an export and import tool for social media archives for users of social platforms.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "People cannot move their posts and contacts between services. Users of social platforms depend on data portability every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build an export and import tool for social media archives called Braxiloosk. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Data portability is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/braxiloosk/braxiloosk, which 172 public projects depend on. Our team has worked on data portability for 11 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MIT licence in http://forge.test/braxiloosk/braxiloosk. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 7 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 7."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 90800.00 EUR for 81 days of work over 3 tasks. Day rates range from 450.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nPeople cannot move their posts and contacts between services. Users of social platforms depend on data portability every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build an export and import tool for social media archives called Braxiloosk. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nData portability is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/braxiloosk/braxiloosk, which 172 public projects depend on. Our team has worked on data portability for 11 years.\n\nDeliverables and licence\nAll code will be released under the MIT licence in http://forge.test/braxiloosk/braxiloosk. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 7 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 7.\n\nBudget justification\nThe plan asks for 90800.00 EUR for 81 days of work over 3 tasks. Day rates range from 450.00 EUR to 2450.00 EUR.\n\nContact\nKalzim Gowvypel, kalzim.gowvypel.b32-budget@example.org, +44 20 7946 0165.\nPostal address: 166 Drovak Way, Naeulorv ZZ6 6ZZ.\nPayment account: DE90 0000 0000 4200 0011 55.\nProject site: http://www.b32-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 29,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "17400.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 25,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 5,
+              "amount_eur": "61250.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 27,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 7,
+              "amount_eur": "12150.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "90800.00"
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "id": "b22-budget",
+  "applicant": {
+    "person_name": "Teshorv Drodroquel",
+    "email": "teshorv.drodroquel.b22-budget@example.org",
+    "phone": "+44 20 7946 0125",
+    "iban": "DE84 0000 0000 4200 0008 75",
+    "postal_address": "126 Gowvy Way, Linrukzor ZZ8 6ZZ",
+    "handle": "quaul20"
+  },
+  "proposal": {
+    "title": "Ynthranae: a lightweight log monitor",
+    "summary": "Ynthranae builds a lightweight log monitor for operators of public services.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Domain owners rarely notice certificates issued for their names by mistake. Operators of public services depend on certificate transparency every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a lightweight log monitor called Ynthranae. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Certificate transparency is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/ynthranae/ynthranae, which 188 public projects depend on. Our team has worked on certificate transparency for 9 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the MPL-2.0 licence in http://forge.test/ynthranae/ynthranae. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 11 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 8. Documentation and release ends in month 11."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 102300.00 EUR for 114 days of work over 4 tasks. Day rates range from 450.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nDomain owners rarely notice certificates issued for their names by mistake. Operators of public services depend on certificate transparency every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a lightweight log monitor called Ynthranae. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nCertificate transparency is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/ynthranae/ynthranae, which 188 public projects depend on. Our team has worked on certificate transparency for 9 years.\n\nDeliverables and licence\nAll code will be released under the MPL-2.0 licence in http://forge.test/ynthranae/ynthranae. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 11 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 6. Testing and fuzzing ends in month 8. Documentation and release ends in month 11.\n\nBudget justification\nThe plan asks for 102300.00 EUR for 114 days of work over 4 tasks. Day rates range from 450.00 EUR to 2450.00 EUR.\n\nContact\nTeshorv Drodroquel, teshorv.drodroquel.b22-budget@example.org, +44 20 7946 0125.\nPostal address: 126 Gowvy Way, Linrukzor ZZ8 6ZZ.\nPayment account: DE84 0000 0000 4200 0008 75.\nProject site: http://www.b22-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 30,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "22500.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 21,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 6,
+              "amount_eur": "51450.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 40,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 7,
+              "due_month": 8,
+              "amount_eur": "18000.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 23,
+          "rate_eur": "450.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 9,
+              "due_month": 11,
+              "amount_eur": "10350.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "102300.00"
+    }
+  }
+}

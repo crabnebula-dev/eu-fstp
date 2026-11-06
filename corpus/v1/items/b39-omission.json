@@ -1,0 +1,98 @@
+{
+  "id": "b39-omission",
+  "applicant": {
+    "person_name": "Naezoryn Teshzimvak",
+    "email": "naezoryn.teshzimvak.b39-omission@example.org",
+    "phone": "+44 20 7946 0192",
+    "iban": "DE31 0000 0000 4200 0013 44",
+    "postal_address": "193 Kalnaevak Way, Ullingow ZZ6 4ZZ",
+    "handle": "vyyn91"
+  },
+  "proposal": {
+    "title": "Linpelmib: a content-addressed storage gateway",
+    "summary": "Linpelmib builds a content-addressed storage gateway for archives and libraries.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Content-addressed data is hard to serve to ordinary web browsers. Archives and libraries depend on decentralised storage every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a content-addressed storage gateway called Linpelmib. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Decentralised storage is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/linpelmib/linpelmib, which 165 public projects depend on. Our team has worked on decentralised storage for 12 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the Apache-2.0 licence in http://forge.test/linpelmib/linpelmib. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 39550.00 EUR for 54 days of work over 3 tasks. Day rates range from 600.00 EUR to 800.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nContent-addressed data is hard to serve to ordinary web browsers. Archives and libraries depend on decentralised storage every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a content-addressed storage gateway called Linpelmib. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nDecentralised storage is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/linpelmib/linpelmib, which 165 public projects depend on. Our team has worked on decentralised storage for 12 years.\n\nDeliverables and licence\nAll code will be released under the Apache-2.0 licence in http://forge.test/linpelmib/linpelmib. Documentation will be published under CC BY 4.0.\n\nBudget justification\nThe plan asks for 39550.00 EUR for 54 days of work over 3 tasks. Day rates range from 600.00 EUR to 800.00 EUR.\n\nContact\nNaezoryn Teshzimvak, naezoryn.teshzimvak.b39-omission@example.org, +44 20 7946 0192.\nPostal address: 193 Kalnaevak Way, Ullingow ZZ6 4ZZ.\nPayment account: DE31 0000 0000 4200 0013 44.\nProject site: http://www.b39-omission.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 29,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "21750.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 14,
+          "rate_eur": "800.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 6,
+              "amount_eur": "11200.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 11,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 7,
+              "due_month": 9,
+              "amount_eur": "6600.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "39550.00"
+    }
+  }
+}

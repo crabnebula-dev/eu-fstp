@@ -1,0 +1,118 @@
+{
+  "id": "b40-fluency",
+  "applicant": {
+    "person_name": "Zimmibosk Quathravy",
+    "email": "zimmibosk.quathravy.b40-fluency@example.org",
+    "phone": "+44 20 7946 0199",
+    "iban": "DE66 0000 0000 4200 0013 93",
+    "postal_address": "200 Braxdrofen Way, Quelzimdro ZZ5 9ZZ",
+    "handle": "vyzor52"
+  },
+  "proposal": {
+    "title": "Ilonaevak: a validator for mail authentication records",
+    "summary": "Ilonaevak builds a validator for mail authentication records for administrators of self-hosted mail.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Mail servers reject legitimate mail because authentication records are hard to get right. Administrators of self-hosted mail are depending from email authentication every day, yet tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We are going to build a validator for mail authentication records called Ilonaevak. The work starts from a written threat model and ends with a reproducible release. Every component gets tests and a fuzz target before merging of it."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Email authentication belongs into Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We are maintaining http://forge.test/ilonaevak/ilonaevak, which 235 public projects depend on. Our team is working on email authentication for 5 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under GPL-3.0-or-later licence in http://forge.test/ilonaevak/ilonaevak. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 10 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 8. Documentation and release ends in month 10."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 74550.00 EUR for 117 days of work over 4 tasks. Day rates range from 500.00 EUR to 750.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nMail servers reject legitimate mail because authentication records are hard to get right. Administrators of self-hosted mail are depending from email authentication every day, yet tools they have are hard to audit and slow to update.\n\nApproach\nWe are going to build a validator for mail authentication records called Ilonaevak. The work starts from a written threat model and ends with a reproducible release. Every component gets tests and a fuzz target before merging of it.\n\nRelevance to the Open Internet Stack\nEmail authentication belongs into Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe are maintaining http://forge.test/ilonaevak/ilonaevak, which 235 public projects depend on. Our team is working on email authentication for 5 years.\n\nDeliverables and licence\nAll code will be released under GPL-3.0-or-later licence in http://forge.test/ilonaevak/ilonaevak. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 10 months in 4 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 8. Documentation and release ends in month 10.\n\nBudget justification\nThe plan asks for 74550.00 EUR for 117 days of work over 4 tasks. Day rates range from 500.00 EUR to 750.00 EUR.\n\nContact\nZimmibosk Quathravy, zimmibosk.quathravy.b40-fluency@example.org, +44 20 7946 0199.\nPostal address: 200 Braxdrofen Way, Quelzimdro ZZ5 9ZZ.\nPayment account: DE66 0000 0000 4200 0013 93.\nProject site: http://www.b40-fluency.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 23,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "11500.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 37,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 5,
+              "amount_eur": "27750.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 22,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 8,
+              "amount_eur": "14300.00"
+            }
+          ]
+        },
+        {
+          "id": "T4",
+          "title": "Documentation and release",
+          "effort_days": 35,
+          "rate_eur": "600.00",
+          "milestones": [
+            {
+              "id": "T4-M1",
+              "title": "Documentation and release complete",
+              "start_month": 9,
+              "due_month": 10,
+              "amount_eur": "21000.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "74550.00"
+    }
+  }
+}

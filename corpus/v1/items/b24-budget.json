@@ -1,0 +1,103 @@
+{
+  "id": "b24-budget",
+  "applicant": {
+    "person_name": "Rukyn Oskiloquel",
+    "email": "rukyn.oskiloquel.b24-budget@example.org",
+    "phone": "+44 20 7946 0133",
+    "iban": "DE27 0000 0000 4200 0009 31",
+    "postal_address": "134 Teshgow Way, Gowvyfen ZZ4 9ZZ",
+    "handle": "sefgow87"
+  },
+  "proposal": {
+    "title": "Linquaqua: a passkey server library",
+    "summary": "Linquaqua builds a passkey server library for developers of small web applications.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Small sites keep using passwords because passkey support is hard to add. Developers of small web applications depend on web authentication every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a passkey server library called Linquaqua. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Web authentication is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We maintain http://forge.test/linquaqua/linquaqua, which 39 public projects depend on. Our team has worked on web authentication for 5 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the Apache-2.0 licence in http://forge.test/linquaqua/linquaqua. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 7 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 7."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 97900.00 EUR for 65 days of work over 3 tasks. Day rates range from 500.00 EUR to 2450.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nSmall sites keep using passwords because passkey support is hard to add. Developers of small web applications depend on web authentication every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a passkey server library called Linquaqua. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nWeb authentication is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe maintain http://forge.test/linquaqua/linquaqua, which 39 public projects depend on. Our team has worked on web authentication for 5 years.\n\nDeliverables and licence\nAll code will be released under the Apache-2.0 licence in http://forge.test/linquaqua/linquaqua. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 7 months in 3 milestones. Design and threat model ends in month 3. Core implementation ends in month 5. Testing and fuzzing ends in month 7.\n\nBudget justification\nThe plan asks for 97900.00 EUR for 65 days of work over 3 tasks. Day rates range from 500.00 EUR to 2450.00 EUR.\n\nContact\nRukyn Oskiloquel, rukyn.oskiloquel.b24-budget@example.org, +44 20 7946 0133.\nPostal address: 134 Teshgow Way, Gowvyfen ZZ4 9ZZ.\nPayment account: DE27 0000 0000 4200 0009 31.\nProject site: http://www.b24-budget.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 20,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 3,
+              "amount_eur": "13000.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 13,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 4,
+              "due_month": 5,
+              "amount_eur": "6500.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 32,
+          "rate_eur": "2450.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 7,
+              "amount_eur": "78400.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "97900.00"
+    }
+  }
+}

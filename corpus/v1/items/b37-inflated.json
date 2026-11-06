@@ -1,0 +1,103 @@
+{
+  "id": "b37-inflated",
+  "applicant": {
+    "person_name": "Braxzimpel Drosefsef",
+    "email": "braxzimpel.drosefsef.b37-inflated@example.org",
+    "phone": "+44 20 7946 0185",
+    "iban": "DE93 0000 0000 4200 0012 95",
+    "postal_address": "186 Rukiloul Way, Orvyngow ZZ4 4ZZ",
+    "handle": "droqua96"
+  },
+  "proposal": {
+    "title": "Kalsefvak: a provenance attestation verifier",
+    "summary": "Kalsefvak builds a provenance attestation verifier for users of package managers.",
+    "sections": [
+      {
+        "element": "problem",
+        "heading": "Problem",
+        "text": "Build provenance exists but almost no installer checks it. Users of package managers depend on supply chain provenance every day, yet the tools they have are hard to audit and slow to update."
+      },
+      {
+        "element": "approach",
+        "heading": "Approach",
+        "text": "We will build a provenance attestation verifier called Kalsefvak. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged."
+      },
+      {
+        "element": "ois_relevance",
+        "heading": "Relevance to the Open Internet Stack",
+        "text": "Supply chain provenance is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission."
+      },
+      {
+        "element": "team_experience",
+        "heading": "Team and experience",
+        "text": "We are the lead maintainers of http://forge.test/commons/rukgow, which 28238 public projects depend on. Our team has worked on supply chain provenance for 7 years."
+      },
+      {
+        "element": "deliverables_licence",
+        "heading": "Deliverables and licence",
+        "text": "All code will be released under the EUPL-1.2 licence in http://forge.test/kalsefvak/kalsefvak. Documentation will be published under CC BY 4.0."
+      },
+      {
+        "element": "milestones",
+        "heading": "Milestones",
+        "text": "The work runs over 7 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 7."
+      },
+      {
+        "element": "budget_justification",
+        "heading": "Budget justification",
+        "text": "The plan asks for 52200.00 EUR for 83 days of work over 3 tasks. Day rates range from 500.00 EUR to 750.00 EUR."
+      }
+    ],
+    "narrative": "Problem\nBuild provenance exists but almost no installer checks it. Users of package managers depend on supply chain provenance every day, yet the tools they have are hard to audit and slow to update.\n\nApproach\nWe will build a provenance attestation verifier called Kalsefvak. The work starts from a written threat model and ends with a reproducible release. Each component gets tests and a fuzz target before it is merged.\n\nRelevance to the Open Internet Stack\nSupply chain provenance is part of the Open Internet Stack. An open implementation lets anyone inspect, reuse and improve it without asking a vendor for permission.\n\nTeam and experience\nWe are the lead maintainers of http://forge.test/commons/rukgow, which 28238 public projects depend on. Our team has worked on supply chain provenance for 7 years.\n\nDeliverables and licence\nAll code will be released under the EUPL-1.2 licence in http://forge.test/kalsefvak/kalsefvak. Documentation will be published under CC BY 4.0.\n\nMilestones\nThe work runs over 7 months in 3 milestones. Design and threat model ends in month 2. Core implementation ends in month 5. Testing and fuzzing ends in month 7.\n\nBudget justification\nThe plan asks for 52200.00 EUR for 83 days of work over 3 tasks. Day rates range from 500.00 EUR to 750.00 EUR.\n\nContact\nBraxzimpel Drosefsef, braxzimpel.drosefsef.b37-inflated@example.org, +44 20 7946 0185.\nPostal address: 186 Rukiloul Way, Orvyngow ZZ4 4ZZ.\nPayment account: DE93 0000 0000 4200 0012 95.\nProject site: http://www.b37-inflated.test/",
+    "plan": {
+      "tasks": [
+        {
+          "id": "T1",
+          "title": "Design and threat model",
+          "effort_days": 29,
+          "rate_eur": "500.00",
+          "milestones": [
+            {
+              "id": "T1-M1",
+              "title": "Design and threat model complete",
+              "start_month": 1,
+              "due_month": 2,
+              "amount_eur": "14500.00"
+            }
+          ]
+        },
+        {
+          "id": "T2",
+          "title": "Core implementation",
+          "effort_days": 26,
+          "rate_eur": "750.00",
+          "milestones": [
+            {
+              "id": "T2-M1",
+              "title": "Core implementation complete",
+              "start_month": 3,
+              "due_month": 5,
+              "amount_eur": "19500.00"
+            }
+          ]
+        },
+        {
+          "id": "T3",
+          "title": "Testing and fuzzing",
+          "effort_days": 28,
+          "rate_eur": "650.00",
+          "milestones": [
+            {
+              "id": "T3-M1",
+              "title": "Testing and fuzzing complete",
+              "start_month": 6,
+              "due_month": 7,
+              "amount_eur": "18200.00"
+            }
+          ]
+        }
+      ],
+      "total_eur": "52200.00"
+    }
+  }
+}
