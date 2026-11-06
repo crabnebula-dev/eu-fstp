@@ -569,6 +569,21 @@ pub fn http_channel() -> Result<Box<dyn Channel>, NotImplemented> {
     Ok(Box::new(crate::harness::harness()?.http()))
 }
 
+/// The MCP channel (I-84, design section 8.3): every MCP cell through the
+/// MCP JSON-RPC handler of `fstp-mcp` over `fstp_rt::duplex`, with the
+/// cell's bearer token, and every web cell through the HTTP routes of
+/// `fstp-web`, as [`http_channel`] runs them.
+///
+/// Status: lane W3c. The harness sends an MCP cell to `ApiCore::dispatch`
+/// directly, through `decode_tool`, and holds its worlds privately. So
+/// this channel refuses until the harness gives it a transport through
+/// `fstp_mcp::McpServer` (a seam of `harness.rs`, which the lead holds).
+pub fn mcp_channel() -> Result<Box<dyn Channel>, NotImplemented> {
+    Err(NotImplemented::new(
+        "fstp_api_testkit::matrix::mcp_channel: the harness has no transport through fstp_mcp yet",
+    ))
+}
+
 impl Matrix {
     /// The groups of cells one world serves: one per state and policy
     /// row, in a fixed order. Together they hold every cell of
