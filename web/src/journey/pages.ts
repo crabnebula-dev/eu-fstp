@@ -453,10 +453,16 @@ async function proposalOf(path: string): Promise<string | null> {
       continue;
     }
     const row = a as Readonly<Record<string, unknown>>;
-    // The row only names the proposal of the page. Whether its reader
-    // gets a strip, before or after a declaration, is the journey read's
-    // decision alone (I-93, section 8.3).
-    if (row["assignment"] === id) {
+    // An assignment still awaiting its declaration, or no longer active,
+    // reads no route (R-CF-02): the journey read refuses it, so the page
+    // asks for none. Review J3-R3 was refuted by the skeptic on this
+    // ground, and the site crawl caught the refused reads it caused.
+    if (
+      row["assignment"] === id &&
+      row["kind"] === "reviewer" &&
+      row["active"] === true &&
+      row["awaiting_declaration"] === false
+    ) {
       const p = row["proposal"];
       return typeof p === "string" ? p : null;
     }
