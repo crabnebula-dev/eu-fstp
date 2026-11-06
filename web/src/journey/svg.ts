@@ -16,20 +16,19 @@
 //
 // The builder takes only the closed SVG subset of the renderer and the
 // checker: no script, no style, no event attribute, no foreign object,
-// no colour of its own (`fill` is `currentColor`), and links through
-// `safeUrl` only.
+// no colour of its own (`fill` and `stroke` are `currentColor` or
+// `none`, `font-size` a whole number), and links through `safeUrl` only.
 //
 // Interim, pending Daniel: the map is built in the browser from the
 // `proposal.journey` read and the proposal definition below, with the
 // renderer's layout, since no read returns the renderer's tree.
 
 import { safeUrl } from "../core/dom.js";
+import { ARIA, CAMEL, GLOBAL, SMALL_WHOLE, SUBSET, SVG_NS, isPlain } from "./tree.js";
 import { type Journey, type Msg, type NodeStatus, type StateName, PROPOSAL_EDGES, ROUTE_ORDER, kindOf, nodeHref, nodeKey, say, statusOf } from "./model.js";
 
 export { PROPOSAL_EDGES } from "./model.js";
-
-/** The SVG namespace. */
-const SVG_NS = "http://www.w3.org/2000/svg";
+export { type RouteTree, type RouteTreeAttr, type RouteTreeEl, type RouteTreeText, buildRouteTree, readRouteTree } from "./tree.js";
 
 /** One element of the map tree. Attribute names are the renderer's lower-case spelling. */
 export interface SvgEl {
@@ -354,17 +353,6 @@ export function mapTree(j: Journey, page: string, subject: string): SvgEl {
 // Serialising (the renderer's escaping) and building
 // ---------------------------------------------------------------------------
 
-/** Whether code point `c` is plain (`fstp_html` subset): tab, LF, or no control or noncharacter. */
-function isPlain(c: number): boolean {
-  if (c === 0x09 || c === 0x0a) {
-    return true;
-  }
-  if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
-    return false;
-  }
-  return !((c >= 0xfdd0 && c <= 0xfdef) || (c & 0xfffe) === 0xfffe);
-}
-
 function escape(s: string): string {
   let out = "";
   for (const ch of s) {
@@ -393,35 +381,6 @@ export function serialise(t: SvgEl): string {
   return `<${t.tag}${attrs}>${kids}</${t.tag}>`;
 }
 
-/** The closed SVG subset: each element with the attributes it may carry. */
-const SUBSET: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  svg: ["viewbox"],
-  title: [],
-  desc: [],
-  defs: [],
-  marker: ["viewbox", "refx", "refy", "markerwidth", "markerheight", "orient"],
-  g: [],
-  a: ["href"],
-  path: ["d", "marker-start", "marker-end", "fill"],
-  line: ["x1", "y1", "x2", "y2", "marker-start", "marker-end"],
-  rect: ["x", "y", "width", "height", "rx", "ry"],
-  circle: ["cx", "cy", "r"],
-  text: ["x", "y", "dx", "dy", "text-anchor"],
-  tspan: ["x", "y", "dx", "dy"],
-});
-
-const GLOBAL = new Set(["id", "class", "role", "tabindex", "lang", "dir"]);
-const ARIA = /^aria-[a-z]+$/;
-
-/** The SVG spelling of the attributes the HTML parser would adjust. */
-const CAMEL: Readonly<Record<string, string>> = Object.freeze({
-  viewbox: "viewBox",
-  refx: "refX",
-  refy: "refY",
-  markerwidth: "markerWidth",
-  markerheight: "markerHeight",
-});
-
 /** Why `toDom` refused a tree. */
 export class SvgRefusal extends Error {
   constructor(message: string) {
@@ -431,8 +390,11 @@ export class SvgRefusal extends Error {
 }
 
 function valueAllowed(k: string, v: string): boolean {
-  if (k === "fill") {
+  if (k === "fill" || k === "stroke") {
     return v === "currentColor" || v === "none";
+  }
+  if (k === "font-size") {
+    return SMALL_WHOLE.test(v);
   }
   if (k === "marker-start" || k === "marker-end") {
     return /^url\(#[A-Za-z0-9_-]+\)$/.test(v);

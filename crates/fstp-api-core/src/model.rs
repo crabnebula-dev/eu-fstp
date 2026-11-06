@@ -1609,6 +1609,8 @@ pub(crate) mod reply_shape_tests {
                 Vec::new()
             },
             strip: full,
+            map: full,
+            withdraw: !full,
             overlay: full.then(|| Overlay {
                 policy: fstp_domain::id::PolicyVersionId::from_raw(3),
                 stage2_window: fstp_domain::time::Days::new(14),

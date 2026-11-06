@@ -83,6 +83,13 @@ pub struct JourneyView {
     pub legs: Vec<LegRow>,
     /// Whether the caller's role gets the route strip (section 8.3, O-58).
     pub strip: bool,
+    /// Whether the caller gets the full map, its list and its help panels:
+    /// an active Receiving binding on the proposal's team (section 8.1,
+    /// review J3-R2).
+    pub map: bool,
+    /// Whether the caller sees the withdrawal control: the proposal's lead,
+    /// in a state withdrawal is open from (NOTE 10).
+    pub withdraw: bool,
     /// The overlay of the original call's frozen policy (R-JV-07, NOTE 8),
     /// `None` before that call is published.
     pub overlay: Option<Overlay>,
@@ -106,6 +113,8 @@ impl ToJson for JourneyView {
         let _ = o.insert("seq", dec(self.position.source_seq));
         let _ = o.insert("legs", Value::Array(legs));
         let _ = o.insert("strip", Value::Bool(self.strip));
+        let _ = o.insert("map", Value::Bool(self.map));
+        let _ = o.insert("withdraw", Value::Bool(self.withdraw));
         let _ = o.insert(
             "overlay",
             self.overlay.as_ref().map_or(Value::Null, overlay_json),
@@ -495,6 +504,15 @@ pub(super) fn journey<P: Seams>(
         position,
         legs,
         strip: scene.roles.iter().any(|r| visibility::route_strip(*r)),
+        // Section 8.1: the full map is the team's, by the relation the
+        // visibility function reads (I-93). The page never decides it.
+        map: scene.base.team,
+        // NOTE 10: only the lead withdraws (registry LEAD on
+        // `proposal.withdraw`), and only from a non-terminal state before
+        // GRANTED.
+        withdraw: scene.base.team
+            && scene.roles.contains(&Role::Applicant)
+            && position.node.is_withdrawable(),
         overlay,
     })
 }

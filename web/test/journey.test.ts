@@ -170,6 +170,8 @@ function journeyBody(
     seq: String(legs.length + 10),
     legs: legs.map(([from, to], i) => ({ from, to, at: String(1793750400000000 + i * 60_000_000), seq: String(i + 11) })),
     strip,
+    map: false,
+    withdraw: false,
     overlay,
   };
 }

@@ -3192,6 +3192,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         },
       } }, optional: false },
       "strip": { schema: { kind: "bool" }, optional: false },
+      "map": { schema: { kind: "bool" }, optional: false },
+      "withdraw": { schema: { kind: "bool" }, optional: false },
       "overlay": { schema: { kind: "nullable", inner: {
         kind: "object",
         fields: {

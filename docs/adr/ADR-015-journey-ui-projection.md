@@ -51,6 +51,15 @@ Status: Accepted 2026-11-01 (Daniel Thompson-Yvetot).
 - Every node is keyboard operable and names the formal state. A text-only ordered list of the route is always available as the accessible alternative (R-JV-05).
 - Public call pages show the route as static SVG with no script (R-JV-06).
 
+#### Amendment (Daniel, 2026-11-06)
+
+- `fstp-html` lays out and renders the map on the server. No client layout code.
+- `/p` serves the map as static SVG markup, with no script and no viewer position, under the `/p` CSP.
+- `/p` links no stylesheet, so the public map paints itself inside the closed subset. Shapes and edges stroke in `currentColor` with no fill, and texts fill in `currentColor` at a whole `font-size`. A linked token sheet still overrides this paint (review J4-REV-1, I-70).
+- In `/app/` the read returns the renderer's checked element tree as data. The server renders the tree through the escaping writer and the well-formedness checker accepts it before it is sent.
+- The browser builds that tree with `createElementNS` against the same closed SVG subset, because the `/app/` CSP admits no markup strings. It refuses the whole tree when any part leaves the subset, and then draws nothing.
+- The browser's tree reader is an in-house parser of wire data, so it has a fuzz target.
+
 ### Rendering home and zones (decided 2026-11-01)
 
 - The route SVG renderer is a module of `fstp-html`, which already holds the escaping writer and the well-formedness checker. Its fuzz targets cover the renderer.

@@ -10,6 +10,10 @@
 //! bytes.
 //!
 //! - [`svg`] builds the `svg` element of the map.
+//! - [`tree`] gives the same map as checked data for the `/app/` read, and
+//!   [`statuses`] the status of each node (ADR-015 amendment 2026-11-06).
+//! - [`public_svg`] builds the map of a reader with no position, for the
+//!   public call page (R-JV-06).
 //! - [`list`] builds the `ol` text alternative of the same route
 //!   (R-JV-05).
 //! - [`CATALOGUE_EN`] holds the English plain-pack entries both read.
@@ -24,12 +28,14 @@
 //! - Node links are `{page}#node-STATE`, since [`SafeUrl`] refuses a
 //!   fragment-only URL such as the design's `#node-STATE`.
 //! - Attribute names are lower case (`viewbox`); the HTML parser gives
-//!   them their SVG spelling. `fill` is only `currentColor` or `none`, so
-//!   every colour comes from the tenant tokens (I-70).
+//!   them their SVG spelling. `fill` and `stroke` are only `currentColor`
+//!   or `none`, so every colour comes from the tenant tokens (I-70). The
+//!   public map paints its shapes and texts with them, since `/p` links
+//!   no stylesheet (review J4-REV-1).
 //! - A node label wraps at spaces into at most three lines of about 17
 //!   characters ([`Lines`]), after the catalogue resolves it, so a
-//!   terminology override wraps too. The web app's builder
-//!   (`web/src/journey/svg.ts`) wraps the same way.
+//!   terminology override wraps too. The browser lays out nothing: it
+//!   builds the tree of [`tree`].
 //! - The overlay does not change the drawing. The help panels of the
 //!   page read it (R-JV-07).
 
@@ -168,6 +174,14 @@ pub const CATALOGUE_EN: &[EntrySource<'static>] = &[
         "journey.route.status.negative_end",
         "Possible final outcome",
     ),
+    label(
+        "journey.route.public_title",
+        "The route of a proposal in this call",
+    ),
+    label(
+        "journey.route.public_desc",
+        "Every stage a proposal can pass, from draft to its final outcome.",
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -191,6 +205,47 @@ const BRACKET_Y: i32 = 118;
 const LABEL_WIDTH: usize = 17;
 const LABEL_LINES: usize = 3;
 const LABEL_STEP: i32 = 12;
+
+// ---------------------------------------------------------------------------
+// Paint (review J4-REV-1, I-70)
+// ---------------------------------------------------------------------------
+//
+// The `/app/` map takes its paint from the token classes of the page's
+// stylesheet. `/p` links no stylesheet, and an SVG shape or text with no
+// paint fills black, so the public map paints itself inside the closed
+// subset: shapes and edges stroke in `currentColor` with no fill, and
+// texts fill in `currentColor` at the token sheet's sizes, rounded down
+// to whole numbers. A stylesheet rule overrides a presentation
+// attribute, so a page that links the token sheet still paints the map
+// with its tokens.
+
+/// Which map is drawn: the `/app/` map, or the public map of `/p`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Map {
+    /// The `/app/` map: arrow heads, and paint from the token classes.
+    App,
+    /// The public map: no arrow head (R-PB-04), and paint of its own.
+    Public,
+}
+
+/// The paint of a node shape on the public map.
+const SHAPE_PAINT: &[(&str, &str)] = &[("fill", "none"), ("stroke", "currentColor")];
+/// The paint of an edge drawn as a `line` on the public map.
+const LINE_PAINT: &[(&str, &str)] = &[("stroke", "currentColor")];
+/// The paint of the glyph of a node on the public map.
+const GLYPH_PAINT: &[(&str, &str)] = &[("fill", "currentColor"), ("font-size", "11")];
+/// The paint of a node label on the public map.
+const LABEL_PAINT: &[(&str, &str)] = &[("fill", "currentColor"), ("font-size", "10")];
+/// The paint of a formal state name and a route note on the public map.
+const FORMAL_PAINT: &[(&str, &str)] = &[("fill", "currentColor"), ("font-size", "9")];
+
+/// `el` with `paint` when `map` is the public map, unchanged otherwise.
+fn painted(el: Element, map: Map, paint: &[(&'static str, &str)]) -> Element {
+    match map {
+        Map::App => el,
+        Map::Public => paint.iter().fold(el, |e, (k, v)| e.attr(k, v)),
+    }
+}
 
 /// The kind of a node in the styling table, before position and legs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -407,17 +462,8 @@ struct Drawn<'a> {
     status: Status,
 }
 
-/// The nodes of `def` in route order, with their status for `view`.
-/// Refuses a node the layout does not place, a position or a leg that
-/// names a state outside the definition, and a state given twice.
-fn drawn<'a>(def: &'a RouteDef, view: &RouteView) -> Result<Vec<Drawn<'a>>, HtmlError> {
-    let known = |s: &str| def.nodes.iter().any(|n| n.state == s);
-    if !known(&view.position) {
-        return Err(refuse("the position is not a state of the definition"));
-    }
-    if view.legs.iter().any(|l| !known(&l.from) || !known(&l.to)) {
-        return Err(refuse("a leg names a state outside the definition"));
-    }
+/// Refuses a node the layout does not place and a state given twice.
+fn check_nodes(def: &RouteDef) -> Result<(), HtmlError> {
     for (i, n) in def.nodes.iter().enumerate() {
         if place(&n.state).is_none() {
             return Err(refuse("the layout has no place for a state"));
@@ -431,6 +477,49 @@ fn drawn<'a>(def: &'a RouteDef, view: &RouteView) -> Result<Vec<Drawn<'a>>, Html
             return Err(refuse("the definition names a state twice"));
         }
     }
+    Ok(())
+}
+
+/// The status of a node of `kind` for a reader with no position.
+fn route_status(kind: Kind) -> Status {
+    match kind {
+        Kind::Stage => Status::Upcoming,
+        Kind::Pause => Status::Pause,
+        Kind::PositiveEnd => Status::PositiveEnd,
+        Kind::NegativeEnd => Status::NegativeEnd,
+    }
+}
+
+/// The nodes of `def` in route order, each with the status of its kind:
+/// the route of a reader with no position, such as a public visitor
+/// (R-JV-06, section 8.5).
+fn drawn_public(def: &RouteDef) -> Result<Vec<Drawn<'_>>, HtmlError> {
+    check_nodes(def)?;
+    let mut out = Vec::new();
+    for p in &PLACES {
+        if let Some(node) = def.nodes.iter().find(|n| n.state == p.state) {
+            out.push(Drawn {
+                node,
+                place: p,
+                status: route_status(p.kind),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// The nodes of `def` in route order, with their status for `view`.
+/// Refuses a node the layout does not place, a position or a leg that
+/// names a state outside the definition, and a state given twice.
+fn drawn<'a>(def: &'a RouteDef, view: &RouteView) -> Result<Vec<Drawn<'a>>, HtmlError> {
+    let known = |s: &str| def.nodes.iter().any(|n| n.state == s);
+    if !known(&view.position) {
+        return Err(refuse("the position is not a state of the definition"));
+    }
+    if view.legs.iter().any(|l| !known(&l.from) || !known(&l.to)) {
+        return Err(refuse("a leg names a state outside the definition"));
+    }
+    check_nodes(def)?;
     // The legs stay as the read gave them. A stage that every route to a
     // point shown passes is completed too (J3-R4).
     let mut out = Vec::new();
@@ -447,12 +536,7 @@ fn drawn<'a>(def: &'a RouteDef, view: &RouteView) -> Result<Vec<Drawn<'a>>, Html
         } else if on_leg || (p.kind == Kind::Stage && passed(def, view, &node.state)) {
             Status::Completed
         } else {
-            match p.kind {
-                Kind::Stage => Status::Upcoming,
-                Kind::Pause => Status::Pause,
-                Kind::PositiveEnd => Status::PositiveEnd,
-                Kind::NegativeEnd => Status::NegativeEnd,
-            }
+            route_status(p.kind)
         };
         out.push(Drawn {
             node,
@@ -636,7 +720,7 @@ fn edge_shape(from: &Place, to: &Place) -> Shape {
 
 /// The edges of `def`, each once with its definition id (I-95). An edge
 /// into the "leave the route" target is the bracket's, not drawn here.
-fn edges_svg(def: &RouteDef, view: &RouteView) -> Result<Vec<Element>, HtmlError> {
+fn edges_svg(def: &RouteDef, legs: &[RouteLeg], map: Map) -> Result<Vec<Element>, HtmlError> {
     let mut out = Vec::new();
     for (i, e) in def.edges.iter().enumerate() {
         if def.withdraw.as_deref() == Some(e.to.as_str()) {
@@ -653,7 +737,7 @@ fn edges_svg(def: &RouteDef, view: &RouteView) -> Result<Vec<Element>, HtmlError
             return Err(refuse("an edge names a state outside the definition"));
         }
         let mut class = String::from("edge");
-        if view.legs.iter().any(|l| l.from == e.from && l.to == e.to) {
+        if legs.iter().any(|l| l.from == e.from && l.to == e.to) {
             class.push_str(" edge--done");
         }
         if to.kind == Kind::NegativeEnd {
@@ -670,23 +754,38 @@ fn edges_svg(def: &RouteDef, view: &RouteView) -> Result<Vec<Element>, HtmlError
         };
         let id = format!("edge-{}", e.id);
         let el = match edge_shape(from, to) {
-            Shape::Line(x1, y1, x2, y2) => Element::new("line")
-                .attr("id", &id)
-                .attr("class", &class)
-                .attr("x1", &num(x1))
-                .attr("y1", &num(y1))
-                .attr("x2", &num(x2))
-                .attr("y2", &num(y2))
-                .attr("marker-end", marker),
-            Shape::Path(d) => Element::new("path")
-                .attr("id", &id)
-                .attr("class", &class)
-                .attr("d", &d)
-                .attr("marker-end", marker),
+            Shape::Line(x1, y1, x2, y2) => painted(
+                Element::new("line")
+                    .attr("id", &id)
+                    .attr("class", &class)
+                    .attr("x1", &num(x1))
+                    .attr("y1", &num(y1))
+                    .attr("x2", &num(x2))
+                    .attr("y2", &num(y2)),
+                map,
+                LINE_PAINT,
+            ),
+            Shape::Path(d) => painted(
+                Element::new("path")
+                    .attr("id", &id)
+                    .attr("class", &class)
+                    .attr("d", &d),
+                map,
+                SHAPE_PAINT,
+            ),
         };
-        out.push(el);
+        out.push(with_marker(el, (map == Map::App).then_some(marker)));
     }
     Ok(out)
+}
+
+/// `el` with the arrow head `marker` at its end, if any. The public map
+/// draws none, since its page holds no `url(` reference (R-PB-04).
+fn with_marker(el: Element, marker: Option<&str>) -> Element {
+    match marker {
+        Some(m) => el.attr("marker-end", m),
+        None => el,
+    }
 }
 
 fn marker(id: &str) -> Element {
@@ -709,15 +808,14 @@ fn marker(id: &str) -> Element {
 /// The bracket of the "leave the route" rule (NOTE 10): one bracket over
 /// the states it covers, one arrow up to its target, one text. Never one
 /// arrow per state.
-fn bracket_svg(def: &RouteDef, view: &RouteView) -> Option<Element> {
+fn bracket_svg(def: &RouteDef, legs: &[RouteLeg], map: Map) -> Option<Element> {
     let target = place(def.withdraw.as_deref()?)?;
     let first = place("DRAFT")?;
     let last = place("NEGOTIATION")?;
     let left = first.x;
     let right = last.right();
     let mut class = String::from("edge edge--leave");
-    if view
-        .legs
+    if legs
         .iter()
         .any(|l| Some(l.to.as_str()) == def.withdraw.as_deref())
     {
@@ -726,18 +824,21 @@ fn bracket_svg(def: &RouteDef, view: &RouteView) -> Option<Element> {
     Some(
         Element::new("g")
             .attr("class", "leave")
-            .child(Element::new("path").attr("class", &class).attr(
-                "d",
-                &format!(
-                    "M{left} {} L{left} {BRACKET_Y} L{right} {BRACKET_Y} L{right} {}",
-                    MAIN_Y.saturating_sub(9),
-                    MAIN_Y.saturating_sub(9)
+            .child(painted(
+                Element::new("path").attr("class", &class).attr(
+                    "d",
+                    &format!(
+                        "M{left} {} L{left} {BRACKET_Y} L{right} {BRACKET_Y} L{right} {}",
+                        MAIN_Y.saturating_sub(9),
+                        MAIN_Y.saturating_sub(9)
+                    ),
                 ),
+                map,
+                SHAPE_PAINT,
             ))
-            .child(
-                Element::new("path")
-                    .attr("class", &class)
-                    .attr(
+            .child(with_marker(
+                painted(
+                    Element::new("path").attr("class", &class).attr(
                         "d",
                         &format!(
                             "M{} {BRACKET_Y} L{} {}",
@@ -745,15 +846,22 @@ fn bracket_svg(def: &RouteDef, view: &RouteView) -> Option<Element> {
                             target.cx(),
                             target.bottom()
                         ),
-                    )
-                    .attr("marker-end", "url(#arrow)"),
-            )
+                    ),
+                    map,
+                    SHAPE_PAINT,
+                ),
+                (map == Map::App).then_some("url(#arrow)"),
+            ))
             .child(
-                Element::new("text")
-                    .attr("class", "node-formal")
-                    .attr("x", &num(left.saturating_add(4)))
-                    .attr("y", &num(BRACKET_Y.saturating_sub(6)))
-                    .label(&Label::new("journey.route.leave_label"), &[]),
+                painted(
+                    Element::new("text")
+                        .attr("class", "node-formal")
+                        .attr("x", &num(left.saturating_add(4)))
+                        .attr("y", &num(BRACKET_Y.saturating_sub(6))),
+                    map,
+                    FORMAL_PAINT,
+                )
+                .label(&Label::new("journey.route.leave_label"), &[]),
             ),
     )
 }
@@ -792,26 +900,43 @@ pub fn svg(def: &RouteDef, view: &RouteView) -> Result<Element, HtmlError> {
                 .child(marker("arrow"))
                 .child(marker("arrow-loop")),
         );
-    for e in edges_svg(def, view)? {
+    for e in route_lines(def, &nodes, &view.legs, Map::App)? {
         svg = svg.child(e);
-    }
-    if let Some(pause) = nodes.iter().find(|d| d.place.kind == Kind::Pause) {
-        svg = svg.child(
-            Element::new("text")
-                .attr("class", "node-formal")
-                .attr("x", &num(pause.place.cx()))
-                .attr("y", &num(pause.place.bottom().saturating_add(17)))
-                .attr("text-anchor", "middle")
-                .label(&Label::new("journey.route.reenter_label"), &[]),
-        );
-    }
-    if let Some(b) = bracket_svg(def, view) {
-        svg = svg.child(b);
     }
     for d in &nodes {
         svg = svg.child(node_svg(d, view)?);
     }
     Ok(svg)
+}
+
+/// The edges, the re-entry label of the pause and the bracket of the
+/// "leave the route" rule: with the arrow heads on the `/app/` map, and
+/// with paint of its own on the public map.
+fn route_lines(
+    def: &RouteDef,
+    nodes: &[Drawn<'_>],
+    legs: &[RouteLeg],
+    map: Map,
+) -> Result<Vec<Element>, HtmlError> {
+    let mut out = edges_svg(def, legs, map)?;
+    if let Some(pause) = nodes.iter().find(|d| d.place.kind == Kind::Pause) {
+        out.push(
+            painted(
+                Element::new("text")
+                    .attr("class", "node-formal")
+                    .attr("x", &num(pause.place.cx()))
+                    .attr("y", &num(pause.place.bottom().saturating_add(17)))
+                    .attr("text-anchor", "middle"),
+                map,
+                FORMAL_PAINT,
+            )
+            .label(&Label::new("journey.route.reenter_label"), &[]),
+        );
+    }
+    if let Some(b) = bracket_svg(def, legs, map) {
+        out.push(b);
+    }
+    Ok(out)
 }
 
 /// The `ol` text alternative of the map of `view` over `def` (R-JV-05):
@@ -844,4 +969,329 @@ pub fn list(def: &RouteDef, view: &RouteView) -> Result<Element, HtmlError> {
         ol = ol.child(li);
     }
     Ok(ol)
+}
+
+// ---------------------------------------------------------------------------
+// The public map (R-JV-06, section 8.5)
+// ---------------------------------------------------------------------------
+
+/// The accessible name of a node of the public map: "{plain label}
+/// ({STATE}), {status words}". The formal name comes from the layout
+/// table, a code constant, so the public page writes no dynamic text
+/// that is not a leaf of its view (I-87).
+fn public_name(d: &Drawn<'_>) -> Vec<Node> {
+    vec![
+        Node::label(&d.node.label, &[]),
+        Node::fixed(" ("),
+        Node::fixed(d.place.state),
+        Node::fixed("), "),
+        Node::label(
+            &Label::new(&format!("journey.route.name.{}", d.status.key())),
+            &[],
+        ),
+    ]
+}
+
+/// The node `d` of the public map: a named image of its shape, glyph,
+/// label lines and formal name. It links nowhere, since the public page
+/// holds no help panel.
+fn node_public(d: &Drawn<'_>) -> Element {
+    let p = d.place;
+    Element::new("g")
+        .attr("class", d.status.svg_class())
+        .attr("role", "img")
+        .attr_parts("aria-label", public_name(d))
+        .child(Element::new("title").children(public_name(d)))
+        .child(painted(
+            rect("node-shape", p.x, p.y, NODE_W, NODE_H, d.status.rx()),
+            Map::Public,
+            SHAPE_PAINT,
+        ))
+        .child(
+            painted(
+                Element::new("text")
+                    .attr("class", "node-glyph")
+                    .attr("x", &num(p.x.saturating_add(9)))
+                    .attr("y", &num(p.y.saturating_add(13)))
+                    .attr("aria-hidden", "true"),
+                Map::Public,
+                GLYPH_PAINT,
+            )
+            .child(Node::fixed(d.status.glyph())),
+        )
+        .child(
+            painted(
+                Element::new("text")
+                    .attr("class", "node-label")
+                    .attr("text-anchor", "middle"),
+                Map::Public,
+                LABEL_PAINT,
+            )
+            .child(Node::label_lines(
+                &d.node.label,
+                &[],
+                Lines {
+                    x: p.cx(),
+                    y: p.y.saturating_add(30),
+                    step: LABEL_STEP,
+                    width: LABEL_WIDTH,
+                    max: LABEL_LINES,
+                },
+            )),
+        )
+        .child(
+            painted(
+                Element::new("text")
+                    .attr("class", "node-formal")
+                    .attr("x", &num(p.cx()))
+                    .attr("y", &num(p.y.saturating_add(56)))
+                    .attr("text-anchor", "middle"),
+                Map::Public,
+                FORMAL_PAINT,
+            )
+            .child(Node::fixed(p.state)),
+        )
+}
+
+/// The `svg` element of the route of `def` for a reader with no position,
+/// as the public call page shows it (R-JV-06, section 8.5): the same
+/// layout as [`svg`], every node with the words of its kind, no current
+/// stage, no completed leg and no node link.
+///
+/// Interim reading, pending Daniel: the public map carries no arrow head,
+/// since the public pages hold no `url(` reference (R-PB-04).
+pub fn public_svg(def: &RouteDef) -> Result<Element, HtmlError> {
+    let nodes = drawn_public(def)?;
+    let mut svg = Element::new("svg")
+        .attr("class", "route-svg")
+        .attr("viewbox", VIEWBOX)
+        .attr("role", "group")
+        .attr("aria-labelledby", "route-title route-desc")
+        .child(
+            Element::new("title")
+                .attr("id", "route-title")
+                .label(&Label::new("journey.route.public_title"), &[]),
+        )
+        .child(
+            Element::new("desc")
+                .attr("id", "route-desc")
+                .label(&Label::new("journey.route.public_desc"), &[]),
+        );
+    for e in route_lines(def, &nodes, &[], Map::Public)? {
+        svg = svg.child(e);
+    }
+    for d in &nodes {
+        svg = svg.child(node_public(d));
+    }
+    Ok(svg)
+}
+
+// ---------------------------------------------------------------------------
+// The checked map tree as data (ADR-015 amendment, Daniel 2026-11-06)
+// ---------------------------------------------------------------------------
+//
+// In `/app/` the read returns the map as data, since the CSP admits no
+// markup strings: the element tree of [`svg`], resolved by the writer and
+// checked on the server. The browser only validates it against the
+// closed SVG subset and builds it with `createElementNS`.
+//
+// The wire shape of a tree, as `ToJson` spells it:
+//
+// - an element is `{"tag": NAME, "attrs": [{"name": N, "value": V}, ...],
+//   "children": [NODE, ...]}`, attributes in the writer's order;
+// - a text node is `{"text": CHARS}`, the characters before escaping. No
+//   text is empty and no two stand side by side.
+
+/// One node of the checked map tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SvgNode {
+    /// An element of the closed SVG subset.
+    Element(SvgElement),
+    /// A text node, before escaping.
+    Text(String),
+}
+
+/// One element of the checked map tree. Only the writer builds one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SvgElement {
+    tag: String,
+    attrs: Vec<(String, String)>,
+    children: Vec<SvgNode>,
+}
+
+impl SvgElement {
+    pub(crate) fn new(tag: &str, attrs: Vec<(String, String)>, children: Vec<SvgNode>) -> Self {
+        SvgElement {
+            tag: tag.to_owned(),
+            attrs,
+            children,
+        }
+    }
+
+    /// The element name.
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    /// The attributes in the writer's order, values before escaping.
+    pub fn attrs(&self) -> &[(String, String)] {
+        &self.attrs
+    }
+
+    /// The value of attribute `name`.
+    pub fn attr(&self, name: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The children, in order.
+    pub fn children(&self) -> &[SvgNode] {
+        &self.children
+    }
+}
+
+/// The map of one view as data: the `svg` element [`svg`] builds, with
+/// every label resolved, accepted by the well-formedness checker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SvgTree {
+    root: SvgElement,
+}
+
+/// The writer's escaping inside `svg`, for text and attribute values
+/// alike.
+fn push_escaped(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+}
+
+fn push_element(out: &mut String, e: &SvgElement) {
+    out.push('<');
+    out.push_str(&e.tag);
+    for (n, v) in &e.attrs {
+        out.push(' ');
+        out.push_str(n);
+        out.push_str("=\"");
+        push_escaped(out, v);
+        out.push('"');
+    }
+    out.push('>');
+    for c in &e.children {
+        match c {
+            SvgNode::Element(x) => push_element(out, x),
+            SvgNode::Text(t) => push_escaped(out, t),
+        }
+    }
+    out.push_str("</");
+    out.push_str(&e.tag);
+    out.push('>');
+}
+
+fn element_json(e: &SvgElement) -> fstp_json::Value {
+    use fstp_json::{Array, Object, Value};
+    let mut attrs = Array::new();
+    for (n, v) in &e.attrs {
+        let mut a = Object::new();
+        let _ = a.insert("name", Value::from(n.as_str()));
+        let _ = a.insert("value", Value::from(v.as_str()));
+        attrs.push(Value::Object(a));
+    }
+    let mut children = Array::new();
+    for c in &e.children {
+        children.push(match c {
+            SvgNode::Element(x) => element_json(x),
+            SvgNode::Text(t) => {
+                let mut o = Object::new();
+                let _ = o.insert("text", Value::from(t.as_str()));
+                Value::Object(o)
+            }
+        });
+    }
+    let mut o = Object::new();
+    let _ = o.insert("tag", Value::from(e.tag.as_str()));
+    let _ = o.insert("attrs", Value::Array(attrs));
+    let _ = o.insert("children", Value::Array(children));
+    Value::Object(o)
+}
+
+impl SvgTree {
+    /// The `svg` element.
+    pub fn root(&self) -> &SvgElement {
+        &self.root
+    }
+
+    /// The tree as the writer spells it: equal to the bytes of [`svg`]
+    /// rendered in a page.
+    pub fn markup(&self) -> String {
+        let mut out = String::new();
+        push_element(&mut out, &self.root);
+        out
+    }
+}
+
+impl fstp_json::ToJson for SvgTree {
+    fn to_json(&self) -> fstp_json::Value {
+        element_json(&self.root)
+    }
+}
+
+/// The skeleton around the map in the page [`tree`] renders to check it.
+const CHECK_BEFORE: &str = "<body><main>";
+const CHECK_AFTER: &str = "</main></body></html>";
+
+/// The map of `view` over `def` as checked data, its labels resolved in
+/// the default locale of `cats` (ADR-015 amendment 2026-11-06).
+///
+/// The writer renders the map in a page, with every rule of its subset,
+/// and the page passes [`crate::check_wellformed`]. The tree is the same
+/// element resolved as data, and its [`SvgTree::markup`] must equal the
+/// rendered bytes, or the tree is refused. Refuses what [`svg`] refuses.
+pub fn tree(
+    def: &RouteDef,
+    view: &RouteView,
+    cats: &crate::Catalogues,
+) -> Result<SvgTree, HtmlError> {
+    let el = svg(def, view)?;
+    let locale = cats.default_locale();
+    let page = crate::Document::new(locale)
+        .title(Node::fixed("map"))
+        .body(Element::new("main").child(el.clone()))
+        .render(cats)?;
+    crate::check_wellformed(page.as_bytes())?;
+    let rendered = page
+        .as_str()
+        .split_once(CHECK_BEFORE)
+        .and_then(|(_, rest)| rest.strip_suffix(CHECK_AFTER))
+        .ok_or_else(|| refuse("the checked page holds no map"))?;
+    let t = SvgTree {
+        root: el.resolve(cats.locale(locale)?)?,
+    };
+    if t.markup() != rendered {
+        return Err(refuse("the tree differs from the rendered map"));
+    }
+    Ok(t)
+}
+
+/// The status of every node of the map of `view` over `def`, in route
+/// order: the formal state and one of `completed`, `current`,
+/// `upcoming`, `pause`, `positive_end` and `negative_end`, as the map
+/// draws it. The list and the help panels of the web page read these,
+/// never a layout of their own (R-JV-05).
+pub fn statuses(
+    def: &RouteDef,
+    view: &RouteView,
+) -> Result<Vec<(String, &'static str)>, HtmlError> {
+    Ok(drawn(def, view)?
+        .into_iter()
+        .map(|d| (d.node.state.clone(), d.status.key()))
+        .collect())
 }

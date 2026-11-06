@@ -249,11 +249,19 @@ fn svg_attrs(el: &str) -> &'static [&'static str] {
             "markerheight",
             "orient",
         ],
-        "path" => &["d", "marker-start", "marker-end", "fill"],
-        "line" => &["x1", "y1", "x2", "y2", "marker-start", "marker-end"],
-        "rect" => &["x", "y", "width", "height", "rx", "ry"],
-        "circle" => &["cx", "cy", "r"],
-        "text" => &["x", "y", "dx", "dy", "text-anchor"],
+        "path" => &["d", "marker-start", "marker-end", "fill", "stroke"],
+        "line" => &[
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "marker-start",
+            "marker-end",
+            "stroke",
+        ],
+        "rect" => &["x", "y", "width", "height", "rx", "ry", "fill", "stroke"],
+        "circle" => &["cx", "cy", "r", "fill", "stroke"],
+        "text" => &["x", "y", "dx", "dy", "text-anchor", "fill", "font-size"],
         "tspan" => &["x", "y", "dx", "dy"],
         _ => &[],
     }
@@ -284,7 +292,13 @@ fn is_local_url_ref(value: &str) -> bool {
 fn svg_value_ok(attr: &str, value: &str) -> bool {
     match attr {
         "marker-start" | "marker-end" => is_local_url_ref(value),
-        "fill" => value == "currentColor" || value == "none",
+        "fill" | "stroke" => matches!(value, "currentColor" | "none"),
+        // A whole number from 1 to 99 with no sign, unit or leading zero.
+        "font-size" => {
+            !value.starts_with('0')
+                && value.bytes().all(|b| b.is_ascii_digit())
+                && value.parse::<u32>().is_ok_and(|n| (1..=99).contains(&n))
+        }
         _ => true,
     }
 }

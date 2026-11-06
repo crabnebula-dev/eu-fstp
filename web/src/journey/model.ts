@@ -24,6 +24,7 @@
 import { createI18n, type I18n, type Label } from "../core/i18n.js";
 import { VALIDATORS } from "../gen/api.js";
 import { JOURNEY_LABELS } from "./messages.en.js";
+import { type RouteTree, readRouteTree } from "./tree.js";
 
 /** A formal state name of the proposal state machine (I-96). */
 export type StateName =
@@ -76,6 +77,10 @@ export interface Journey {
   readonly legs: readonly Leg[];
   /** Whether the caller's role gets the route strip (section 8.3, O-58). */
   readonly strip: boolean;
+  /** Whether the caller gets the full map, its list and help panels: the team only (section 8.1, review J3-R2). */
+  readonly map: boolean;
+  /** Whether the caller sees the withdrawal control: the lead, in a NOTE 10 state. */
+  readonly withdraw: boolean;
   readonly overlay: JourneyOverlay | null;
 }
 
@@ -410,6 +415,8 @@ export function readJourney(v: unknown): Journey | null {
     seq: str(v, "seq"),
     legs: Object.freeze(legs),
     strip: v["strip"] === true,
+    map: v["map"] === true,
+    withdraw: v["withdraw"] === true,
     overlay,
   });
 }
@@ -816,4 +823,85 @@ export function label(m: Msg): Label {
 /** The English text of `m` from the journey catalogue. */
 export function say(m: Msg): string {
   return label(m);
+}
+
+// ---------------------------------------------------------------------------
+// The route map read (ADR-015 amendment, Daniel 2026-11-06)
+// ---------------------------------------------------------------------------
+
+/** One node status of the `proposal.route_map` reply, in route order. */
+export interface MapNode {
+  readonly state: StateName;
+  readonly status: NodeStatus;
+}
+
+/** The `proposal.route_map` reply, read: the server's checked tree and the node statuses it draws. */
+export interface RouteMap {
+  readonly proposal: string;
+  readonly tree: RouteTree;
+  readonly nodes: readonly MapNode[];
+}
+
+const NODE_STATUSES: ReadonlySet<string> = new Set<string>(["completed", "current", "upcoming", "pause", "positive_end", "negative_end"]);
+
+function isNodeStatus(v: unknown): v is NodeStatus {
+  return typeof v === "string" && NODE_STATUSES.has(v);
+}
+
+/** Whether `o` has exactly the own members `keys`. */
+function exactKeys(o: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
+  const k = Object.keys(o);
+  return k.length === keys.length && keys.every((x) => Object.prototype.hasOwnProperty.call(o, x));
+}
+
+/**
+ * Reads a `proposal.route_map` reply for the progress page `page`, or
+ * null when it is outside its shape: exactly `proposal`, `tree` and
+ * `nodes`, a tree inside the closed SVG subset (`readRouteTree`), and
+ * one node status per state in route order. It never throws.
+ */
+export function readRouteMap(v: unknown, page: string): RouteMap | null {
+  if (!isRecord(v) || !exactKeys(v, ["proposal", "tree", "nodes"])) {
+    return null;
+  }
+  const proposal = v["proposal"];
+  const nodesIn = v["nodes"];
+  if (typeof proposal !== "string" || !/^[0-9]+$/.test(proposal) || !Array.isArray(nodesIn) || nodesIn.length !== ROUTE_ORDER.length) {
+    return null;
+  }
+  const nodes: MapNode[] = [];
+  for (const [i, n] of (nodesIn as readonly unknown[]).entries()) {
+    if (!isRecord(n) || !exactKeys(n, ["state", "status"])) {
+      return null;
+    }
+    const state = n["state"];
+    const status = n["status"];
+    if (state !== ROUTE_ORDER[i] || !isState(state) || !isNodeStatus(status)) {
+      return null;
+    }
+    nodes.push(Object.freeze({ state, status }));
+  }
+  const tree = readRouteTree(v["tree"], page);
+  if (tree === null) {
+    return null;
+  }
+  return Object.freeze({ proposal, tree, nodes: Object.freeze(nodes) });
+}
+
+/**
+ * "Progress as a list" from the server's node statuses, verbatim, never
+ * from a layout of the browser's own (R-JV-05).
+ */
+export function mapItems(m: RouteMap, page: string): readonly RouteItem[] {
+  return Object.freeze(
+    m.nodes.map((n) =>
+      Object.freeze({
+        state: n.state,
+        status: n.status,
+        label: msg(nodeKey(n.state)),
+        statusWords: msg(`journey.route.status.${n.status}`),
+        href: nodeHref(page, n.state),
+      }),
+    ),
+  );
 }

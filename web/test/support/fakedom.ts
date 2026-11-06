@@ -184,6 +184,8 @@ const REFLECTED_BOOL: readonly string[] = ["disabled", "required", "hidden", "ch
 /** An element. Attribute names are stored as given, lower-cased. */
 export class FakeElement extends FakeNode {
   readonly localName: string;
+  /** The namespace `createElementNS` gave, or the HTML one. */
+  namespaceURI = "http://www.w3.org/1999/xhtml";
   readonly attributes = new Map<string, string>();
   /** The live `value` of a form control, separate from its attribute. */
   private liveValue: string | null = null;
@@ -367,6 +369,14 @@ class FakeDocument extends FakeNode {
   createElement(tag: string): FakeElement {
     createdElements += 1;
     return new FakeElement(String(tag));
+  }
+
+  /** An element in namespace `ns`, as the SVG builder makes them (lane j4). */
+  createElementNS(ns: string, tag: string): FakeElement {
+    createdElements += 1;
+    const e = new FakeElement(String(tag));
+    e.namespaceURI = String(ns);
+    return e;
   }
 
   createTextNode(data: string): FakeText {
