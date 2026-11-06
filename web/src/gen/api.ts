@@ -141,6 +141,7 @@ export type OpName =
   | "proposal.withdraw"
   | "proposal.journey"
   | "proposal.diary"
+  | "proposal.route_map"
   | "guardian.begin_consent"
   | "negotiation.view"
   | "negotiation.acknowledge_notice"
@@ -310,6 +311,7 @@ export interface OpParams {
   readonly "proposal.withdraw": { readonly "proposal": string };
   readonly "proposal.journey": { readonly "proposal": string };
   readonly "proposal.diary": { readonly "proposal": string };
+  readonly "proposal.route_map": { readonly "proposal": string };
   readonly "guardian.begin_consent": { readonly "proposal": string };
   readonly "negotiation.view": { readonly "proposal": string };
   readonly "negotiation.acknowledge_notice": { readonly "proposal": string };
@@ -452,6 +454,7 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.withdraw",
   "proposal.journey",
   "proposal.diary",
+  "proposal.route_map",
   "guardian.begin_consent",
   "negotiation.view",
   "negotiation.acknowledge_notice",
@@ -1717,6 +1720,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/proposals/{proposal}/diary",
     base: "api",
     segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "diary" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "proposal.route_map",
+    method: "GET",
+    path: "/proposals/{proposal}/route-map",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "route-map" }],
     params: ["proposal"],
     body: false,
     highRisk: false,
@@ -3198,6 +3215,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         },
       } }, optional: false },
       "strip": { schema: { kind: "bool" }, optional: false },
+      "map": { schema: { kind: "bool" }, optional: false },
+      "withdraw": { schema: { kind: "bool" }, optional: false },
       "overlay": { schema: { kind: "nullable", inner: {
         kind: "object",
         fields: {

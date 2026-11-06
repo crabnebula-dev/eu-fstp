@@ -21,6 +21,8 @@
 //! - `corpus`: the reader of the shared corpora in `testdata/`.
 //! - `route`: the route map of the voyager design as a reference, with
 //!   route generators (lane j3, ADR-015).
+//! - `tree`: the checked map tree as data, its wire shape and the closed
+//!   SVG subset (lane j4, ADR-015 amendment 2026-11-06).
 
 #![allow(dead_code)]
 
@@ -34,3 +36,4 @@ pub(crate) mod reference;
 pub(crate) mod route;
 pub(crate) mod serial;
 pub(crate) mod spec;
+pub(crate) mod tree;

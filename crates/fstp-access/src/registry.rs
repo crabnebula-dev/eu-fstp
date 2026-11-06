@@ -1355,6 +1355,15 @@ pub const OPS: &[OpSpec] = &[
         "/proposals/{proposal}/diary",
     )
     .acting(JOURNEY),
+    // Lane j4, ADR-015 amendment of 2026-11-06: the renderer's checked map
+    // tree and node statuses of one proposal, for its team (section 8.1,
+    // O-58). Web only, as the journey reads are.
+    OpSpec::read(
+        "proposal.route_map",
+        RK::GetRouteMap,
+        "/proposals/{proposal}/route-map",
+    )
+    .acting(TEAM),
     OpSpec::new(
         "guardian.begin_consent",
         OpKind::M3Port(PortKind::BeginGuardianConsent),

@@ -22,6 +22,7 @@ pub mod guide;
 pub mod html;
 pub mod preview;
 pub mod query;
+mod route;
 pub mod slug;
 pub mod tools;
 pub mod view;
