@@ -564,6 +564,7 @@ fn record_view(r: &TenantRecord) -> RecordView {
             param: value.param().param_id(),
             by: *by,
         },
+        TenantRecord::GuideNoticeSet { by, .. } => RecordView::GuideNoticeSet { by: *by },
         TenantRecord::InferenceConfigRecorded { config, by, .. } => {
             RecordView::InferenceConfigRecorded {
                 config: *config,

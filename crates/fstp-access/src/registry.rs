@@ -256,6 +256,9 @@ pub enum TenantKind {
     ApproveSelfGrant,
     /// `TenantCommand::SetSetting`, one operation per parameter.
     SetSetting(TenantParam),
+    /// `TenantCommand::SetGuideNotice`: the tenant's override of the
+    /// Guide's data protection texts (R-GA-01).
+    SetGuideNotice,
     /// `TenantCommand::RecordInferenceConfig`, saved with the Inference
     /// onboarding step.
     RecordInferenceConfig,
@@ -825,6 +828,17 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Tenant(TenantKind::SetSetting(TenantParam::P69)),
         Put,
         "/admin/settings/template-licence",
+    )
+    .hr()
+    .acting(ADMIN),
+    // R-GA-01, section 15.0 of the M4 design (2026-11-06): the tenant's
+    // override of the Guide's data protection texts. High-risk by the
+    // strict reading of settings, so web only (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.set_guide_notice",
+        OpKind::Tenant(TenantKind::SetGuideNotice),
+        Put,
+        "/admin/settings/guide-notice",
     )
     .hr()
     .acting(ADMIN),
@@ -1744,6 +1758,9 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P74)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P20)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P69)),
+    // R-GA-01, section 15.0 of the M4 design (2026-11-06): the Guide's
+    // data protection texts are a tenant setting too.
+    OpKind::Tenant(TenantKind::SetGuideNotice),
 ];
 
 /// Kinds that never arrive from a person. In M4 cells, the D13 sweep

@@ -46,7 +46,10 @@
 //!   resolution and account, and the import store holds that proposal
 //!   for the saved programme and field;
 //! - a confirming or editing `ProposalResolved` whose entry saves no such
-//!   field.
+//!   field;
+//! - a `GuidePublished` whose entry holds no earlier `CallPublished` of
+//!   the same call (R-GA-01, I-52). The domain fold refuses a second
+//!   `GuidePublished` for a call (I-53).
 //!
 //! The driver refuses every core `ActivateProgramme` that arrives through
 //! `execute` with `RuleRef::I66`, drafted or not. Only the creator's
@@ -68,9 +71,10 @@
 //!
 //! # Seams
 //!
-//! - Publication (I-52): `compose::publication` fails closed until the
-//!   Guide renderer of lane W2c yields `GuidePublished`. So `execute`
-//!   still accepts a core `PublishCall`, and the fold its `CallPublished`.
+//! - Publication (I-52): a core `PublishCall` carries its `GuidePublished`
+//!   when the shell supplies `compose::GuideFacts`. Without them `execute`
+//!   still accepts it alone, and the fold its `CallPublished` (lane
+//!   m4d2e-cont makes that pairing strict).
 //! - L-CODEC: a `fstp_ledger::Canonical` impl for [`Record`], and the
 //!   switch of the testkit's `harness::prop::append_only` to
 //!   `fstp_ledger::verify_append_only`.
@@ -191,6 +195,9 @@ struct OpenEntry {
     /// Confirming or editing resolutions still waiting for their
     /// `FieldsSaved`.
     resolutions: Vec<OwedSave>,
+    /// The calls this entry published so far. A `GuidePublished` folds
+    /// only after the `CallPublished` of its call in the same entry.
+    published: Vec<fstp_domain::id::CallId>,
 }
 
 /// The save a confirming or editing `ProposalResolved` owes its entry:
@@ -218,6 +225,7 @@ impl OpenEntry {
             approvals: Vec::new(),
             openings: Vec::new(),
             resolutions: Vec::new(),
+            published: Vec::new(),
         }
     }
 
@@ -580,6 +588,15 @@ fn apply_core(
                 .position(|a| compose::pairs_with(a, pa))
                 .ok_or(FoldError::Inconsistent)?;
             open.approvals.remove(i);
+        }
+        fstp_domain::Record::CallPublished { call, .. } => {
+            open_entry(state)?.published.push(*call);
+        }
+        // R-GA-01, I-52, D2e: a Guide folds only in its publication entry.
+        fstp_domain::Record::GuidePublished { call, .. } => {
+            if !open_entry(state)?.published.contains(call) {
+                return Err(FoldError::Inconsistent);
+            }
         }
         fstp_domain::Record::ProgrammeCreated { programme, by, .. } => {
             let open = open_entry(state)?;

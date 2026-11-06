@@ -24,9 +24,10 @@
 //! function is the Guide at publication only: its bytes are stored with
 //! `GuidePublished { digest }` (design section 3.10) and the public pages
 //! serve that stored [`PublicGuide`] through `PublicTexts::insert_guide`.
-//! No public path binds a Guide per request. Storing the bytes in the
-//! publication entry is the engine's publication seam (`fstp-engine`
-//! `compose`), still a stub, so no cell serves a Guide in M4.
+//! No public path binds a Guide per request. The engine stores the
+//! canonical document and the page in the publication entry
+//! (`fstp_engine::compose`), and [`served_guide`] serves that page with
+//! the call's corrigenda after it (Q37 C).
 //!
 //! It refuses, before binding, a template that lacks a required section,
 //! with [`PublicError::GuideSectionMissing`] naming the first one in the
@@ -35,79 +36,131 @@
 
 use fstp_domain::State;
 use fstp_domain::id::CallId;
-use fstp_domain::programme::CallStatus;
-use fstp_guide::{GuideCall, GuideInputs, StoredTexts, Template};
+use fstp_domain::policy::LiveSnapshot;
+use fstp_guide::{Corrigendum, PublicationError, RenderedGuide, StoredTexts};
 use fstp_programme::Compiled;
 
 use crate::PublicError;
 use crate::view::PublicGuide;
 
-/// What the Guide of a published call is bound from, besides the core
-/// state.
-#[derive(Clone, Copy)]
-pub struct GuideSource<'a> {
-    /// The parsed template of the programme's funder profile.
-    pub template: &'a Template,
-    /// The programme's compiled spec, as the creator holds it. Only its
-    /// artefacts are read: its frozen and live values give way to the
-    /// core state.
-    pub compiled: &'a Compiled,
-    /// The call's public identifier.
-    pub identifier: &'a str,
-    /// The `https:` address applicants create an account on.
-    pub platform_url: &'a str,
-    /// The data protection summary, `{{gdpr.notice_summary}}`.
-    pub data_protection_summary: Option<&'a str>,
-    /// The funder's privacy statement address.
-    pub privacy_statement_url: Option<&'a str>,
-    /// The stored narrative texts.
-    pub texts: &'a dyn StoredTexts,
+pub use fstp_guide::GuideSource;
+
+/// The Guide version of every published call in M4. A corrigendum is a
+/// numbered entry of the call's effective-limits record (Q37 C), so the
+/// first Guide is the only one.
+pub const GUIDE_VERSION: u32 = fstp_domain::programme::GUIDE_VERSION;
+
+/// The Guide of the published call `call`, rendered (module
+/// documentation). The engine takes its canonical document and page at
+/// publication, in the publication entry, and stores both with their
+/// digest. A call the state does not hold as published is
+/// [`PublicError::NotFound`].
+pub fn publication_guide(
+    core: &State,
+    call: CallId,
+    source: &GuideSource<'_>,
+) -> Result<RenderedGuide, PublicError> {
+    fstp_guide::publication_guide(core, call, source).map_err(|e| match e {
+        PublicationError::NotPublished => PublicError::NotFound,
+        PublicationError::SectionMissing(s) => PublicError::GuideSectionMissing(s),
+        PublicationError::Guide(g) => PublicError::Guide(g),
+    })
 }
 
-/// The Guide version of every published call in M4. A corrigendum is its
-/// own record kind (Q37), so the first Guide is the only one.
-pub const GUIDE_VERSION: u32 = 1;
-
-/// The Guide of the published call `call` (module documentation). A call
-/// the state does not hold as published is [`PublicError::NotFound`].
+/// The Guide of the published call `call` at publication, as a
+/// [`PublicGuide`] (module documentation).
 pub fn published_guide(
     core: &State,
     call: CallId,
     source: &GuideSource<'_>,
 ) -> Result<PublicGuide, PublicError> {
-    let view = fstp_domain::programme::call(core, call).ok_or(PublicError::NotFound)?;
-    if view.status() != CallStatus::Published {
-        return Err(PublicError::NotFound);
-    }
-    let frozen = view.frozen().ok_or(PublicError::NotFound)?;
-    // I-52: the completeness is recomputed when the Guide is generated.
-    if let Some(first) = fstp_guide::missing_sections(source.template).first() {
-        return Err(PublicError::GuideSectionMissing(first));
-    }
-    // R-GA-01, I-12: the frozen values of the call stand in for the
-    // spec's frozen parameters, so a later draft edit never reaches it.
-    // I-51: the live values come from the core head, never the caller's
-    // spec (module documentation).
-    let head = fstp_domain::policy::head(core, view.programme()).ok_or(PublicError::NotFound)?;
-    let mut compiled = source.compiled.clone();
-    compiled.policy.frozen = frozen.values().clone();
-    compiled.policy.live = head.live.clone();
-    let record = GuideCall::from_view(source.identifier, view);
-    let inputs = GuideInputs {
-        compiled: &compiled,
-        // NOTE 7: P-05 and P-13 from the publication snapshot.
-        publication: Some(frozen.snapshot()),
-        call: &record,
-        guide_version: GUIDE_VERSION,
-        platform_url: source.platform_url,
-        data_protection_summary: source.data_protection_summary,
-        privacy_statement_url: source.privacy_statement_url,
-        texts: source.texts,
-    };
-    let bound = fstp_guide::bind(source.template, &inputs).map_err(PublicError::Guide)?;
-    let rendered = fstp_guide::render(&bound).map_err(PublicError::Guide)?;
+    let rendered = publication_guide(core, call, source)?;
     Ok(PublicGuide {
         version: GUIDE_VERSION,
-        document: rendered.html().clone(),
+        document: rendered.html().as_str().to_owned(),
     })
+}
+
+/// What the corrigenda of a published call are worded from: the
+/// programme's compiled spec, for the descriptions of the P-13 classes,
+/// and the stored texts it names.
+#[derive(Clone, Copy)]
+pub struct CorrigendaSource<'a> {
+    /// The compiled spec, as the creator holds it now.
+    pub compiled: &'a Compiled,
+    /// The stored narrative texts.
+    pub texts: &'a dyn StoredTexts,
+}
+
+/// The corrigenda of the published call `call`, numbered from 1: one per
+/// entry of its effective-limits record after publication, each stating
+/// both limits in full (I-51, NOTE 7, O-52, Q37 C). A call with no record
+/// is [`PublicError::NotFound`].
+pub fn corrigenda(
+    core: &State,
+    call: CallId,
+    source: &CorrigendaSource<'_>,
+) -> Result<Vec<Corrigendum>, PublicError> {
+    let limits =
+        fstp_domain::programme::effective_limits(core, call).ok_or(PublicError::NotFound)?;
+    limits
+        .tightenings()
+        .iter()
+        .map(|t| {
+            let snapshot = LiveSnapshot {
+                p05: t.p05,
+                p13: t.p13.clone(),
+            };
+            fstp_guide::corrigendum(source.compiled, source.texts, t.corrigendum, &snapshot)
+                .map_err(PublicError::Guide)
+        })
+        .collect()
+}
+
+/// The Guide page of the published call `call` as its publication stored
+/// it, followed by its corrigenda (I-51, I-53). Nothing is bound again:
+/// the stored page is served byte for byte, and with corrigenda it stays
+/// the prefix of the page.
+///
+/// A call with no stored Guide is [`PublicError::NotFound`]. A call with
+/// corrigenda needs `source` to word them, and without it the page is
+/// refused, never served without its corrigenda (I-51).
+pub fn served_guide(
+    core: &State,
+    call: CallId,
+    source: Option<&CorrigendaSource<'_>>,
+) -> Result<PublicGuide, PublicError> {
+    let stored = fstp_domain::programme::stored_guide(core, call).ok_or(PublicError::NotFound)?;
+    let pending = fstp_domain::programme::effective_limits(core, call)
+        .is_some_and(|l| !l.tightenings().is_empty());
+    let list = match (pending, source) {
+        (false, _) => Vec::new(),
+        (true, Some(s)) => corrigenda(core, call, s)?,
+        (true, None) => {
+            return Err(PublicError::Guide(fstp_guide::GuideError::Html(
+                "the corrigenda need the compiled spec",
+            )));
+        }
+    };
+    let document =
+        fstp_guide::page_with_corrigenda(stored.page(), &list).map_err(PublicError::Guide)?;
+    Ok(PublicGuide {
+        version: stored.version(),
+        document,
+    })
+}
+
+/// The stored texts the corrigenda of a call may read from `compiled`:
+/// the descriptions of the P-13 classes that are stored outside the
+/// ledger (ADR-007). The caller reads each one as a public text.
+pub fn corrigenda_text_refs(compiled: &Compiled) -> Vec<fstp_domain::id::TextRef> {
+    compiled
+        .artefacts
+        .class_descriptions()
+        .iter()
+        .filter_map(|(_, n)| match n {
+            fstp_programme::Narrative::Stored(s) => Some(s.text_ref()),
+            fstp_programme::Narrative::Inline(_) => None,
+        })
+        .collect()
 }

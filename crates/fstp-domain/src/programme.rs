@@ -45,7 +45,8 @@ use fstp_money::NonNegAmount;
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
 use crate::id::{
-    AccountId, CallId, CallSeq, DecisionId, LlmConfigId, PolicyVersionId, ProgrammeId, TextRef,
+    AccountId, CallId, CallSeq, ContentDigest, DecisionId, LlmConfigId, PolicyVersionId,
+    ProgrammeId, TextRef,
 };
 use crate::oracle::{Answers, Query};
 use crate::policy::{
@@ -142,6 +143,45 @@ impl EffectiveLimits {
     }
 }
 
+/// The Guide version of a call's publication (R-GA-01). A correction
+/// after publication is a numbered corrigendum of the effective-limits
+/// record, never a new version (I-53, NOTE 7, Q37 C).
+pub const GUIDE_VERSION: u32 = 1;
+
+/// The Guide for Applicants of a published call, as its publication
+/// stored it (R-GA-01, I-52, I-53). It never changes afterwards: the fold
+/// refuses a second `GuidePublished` for the call. Its corrigenda are the
+/// numbered entries of the call's [`EffectiveLimits`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StoredGuide {
+    version: u32,
+    digest: ContentDigest,
+    canonical: String,
+    page: String,
+}
+
+impl StoredGuide {
+    /// The Guide version, 1 at publication.
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// SHA-256 of [`StoredGuide::canonical`], through `fstp-crypto`.
+    pub fn digest(&self) -> ContentDigest {
+        self.digest
+    }
+
+    /// The canonical document the digest is taken over.
+    pub fn canonical(&self) -> &str {
+        &self.canonical
+    }
+
+    /// The HTML page the public pages and `calls.guide` serve.
+    pub fn page(&self) -> &str {
+        &self.page
+    }
+}
+
 /// The call states (`SPEC/02-domain/state-machine.md` Call states).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CallStatus {
@@ -183,6 +223,8 @@ pub struct CallView {
     drafters_at_publication: Option<BTreeSet<AccountId>>,
     /// The effective-limits record, from publication on (D12).
     limits: Option<EffectiveLimits>,
+    /// The Guide stored at publication (R-GA-01, I-53).
+    guide: Option<StoredGuide>,
 }
 
 impl CallView {
@@ -244,6 +286,11 @@ impl CallView {
     /// The frozen policy, once published (I-12, R-PC-02).
     pub fn frozen(&self) -> Option<&FrozenPolicy> {
         self.frozen.as_ref()
+    }
+
+    /// The Guide stored at publication, if any (R-GA-01, I-53).
+    pub fn guide(&self) -> Option<&StoredGuide> {
+        self.guide.as_ref()
     }
 
     /// The pinned LLM configuration, once published (I-11, R-LA-05).
@@ -349,6 +396,12 @@ pub(crate) fn builders(state: &State, programme: ProgrammeId) -> Option<&BTreeSe
 /// or `None` while it is unpublished or unknown.
 pub fn effective_limits(state: &State, call: CallId) -> Option<&EffectiveLimits> {
     state.calls.get(call).and_then(|c| c.limits.as_ref())
+}
+
+/// The Guide stored at the publication of `call` (R-GA-01, I-53), or
+/// `None` while it has none.
+pub fn stored_guide(state: &State, call: CallId) -> Option<&StoredGuide> {
+    state.calls.get(call).and_then(CallView::guide)
 }
 
 /// The refusal of a command on a draft programme (D3).
@@ -742,6 +795,7 @@ pub(crate) fn apply(
                     llm_config: None,
                     drafters_at_publication: None,
                     limits: None,
+                    guide: None,
                 },
             );
             Ok(())
@@ -798,6 +852,32 @@ pub(crate) fn apply(
             view.approval = Some(Approval {
                 decision: *decision,
                 approver: *approver,
+            });
+            Ok(())
+        }
+        Record::GuidePublished {
+            call,
+            version,
+            digest,
+            canonical,
+            page,
+        } => {
+            let view = state
+                .calls
+                .calls
+                .get_mut(call)
+                .ok_or(FoldError::UnknownEntity)?;
+            if view.guide.is_some() {
+                return Err(FoldError::DuplicateId);
+            }
+            if view.status != CallStatus::Published || *version != GUIDE_VERSION {
+                return Err(FoldError::Inconsistent);
+            }
+            view.guide = Some(StoredGuide {
+                version: *version,
+                digest: *digest,
+                canonical: canonical.clone(),
+                page: page.clone(),
             });
             Ok(())
         }

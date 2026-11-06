@@ -24,7 +24,7 @@
 
 use std::collections::BTreeSet;
 
-use fstp_html::{CatalogueSource, Catalogues, Document, Element, HtmlDocument, Node};
+use fstp_html::{CatalogueSource, Catalogues, Document, Element, Node};
 use fstp_json::Value;
 use fstp_prop::Gen;
 use fstp_public::{
@@ -40,7 +40,7 @@ pub(crate) fn chrome() -> Chrome {
 }
 
 /// A Guide document with the text `marker`, rendered by `fstp-html`.
-pub(crate) fn guide_document(marker: &str) -> HtmlDocument {
+pub(crate) fn guide_document(marker: &str) -> String {
     let cats = Catalogues::new(
         &CatalogueSource {
             locale: "en",
@@ -58,6 +58,8 @@ pub(crate) fn guide_document(marker: &str) -> HtmlDocument {
         )
         .render(&cats)
         .expect("the synthetic Guide renders")
+        .as_str()
+        .to_owned()
 }
 
 /// One synthetic open call with leaves prefixed by `tag`.

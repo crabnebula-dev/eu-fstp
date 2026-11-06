@@ -418,6 +418,17 @@ pub const REPLIES: &[(&str, Shape)] = &[
         ])),
     ),
     ("calls.get", CALL),
+    // R-GA-01, I-53: the Guide the publication stored, with its
+    // corrigenda, its version and the hex SHA-256 of its canonical form.
+    (
+        "calls.guide",
+        Shape::Object(&[
+            m("call", Shape::Id),
+            m("version", Shape::Int),
+            m("digest", Shape::String),
+            m("html", Shape::String),
+        ]),
+    ),
     // I-17: "Proposal" plus its id, never a name.
     ("proposal.list_own", Shape::Array(&OWN_PROPOSAL)),
     ("proposal.view", OWN_PROPOSAL),

@@ -465,10 +465,15 @@ fn i66_public_validate_fails_closed_without_sources() {
         CheckId::GuideSectionMissing,
         CheckId::GuideBindingUnresolved,
         CheckId::FlowDownMissing,
-        CheckId::PrecheckUnavailable,
     ] {
         assert!(failures.contains(&c), "{}", c.name());
     }
+    // Q38 C (2026-11-06): the pre-check row is a warning, so it still
+    // needs an acknowledgement, beside the failures above.
+    assert!(r.shows_warning(&crate::check::WarningKey {
+        check: CheckId::PrecheckUnavailable,
+        subject: crate::check::CheckSubject::Draft,
+    }));
 }
 
 /// SoD-01 to SoD-13 (R-CF-03): a refused or unchecked preview is a

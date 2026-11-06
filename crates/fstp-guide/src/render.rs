@@ -29,6 +29,12 @@ pub const GUIDE_TITLE: &str = "Guide for Applicants";
 /// The language of every rendered Guide: that of the template.
 pub const GUIDE_LOCALE: &str = "en";
 
+/// The fixed note after the pre-check description (Q38 C, Daniel's
+/// answer of 2026-11-06): the Guide keeps its pre-check section and says
+/// that the pre-check is not yet available. The pre-check arrives in M7.
+pub const PRECHECK_NOTE: &str =
+    "Note: the pre-submission check is not yet available on this platform.";
+
 /// The version line of the canonical document.
 const CANONICAL_VERSION: &str = "[\"fstp.guide\",1]";
 
@@ -420,6 +426,13 @@ impl Writer<'_> {
     }
 }
 
+/// Whether `b` holds a P-23 placeholder, so it describes the pre-check.
+fn describes_precheck(b: &Block) -> bool {
+    crate::markdown::slots(std::slice::from_ref(b))
+        .iter()
+        .any(|k| k.resolver().param == Some(ParamId::P23))
+}
+
 /// Renders a bound template (module documentation).
 pub(crate) fn render(template: &Template) -> Result<RenderedGuide, GuideError> {
     let mut w = Writer {
@@ -436,6 +449,18 @@ pub(crate) fn render(template: &Template) -> Result<RenderedGuide, GuideError> {
         .child(Element::new("h1").text(GUIDE_TITLE));
     for b in template.body() {
         w.block(b, &mut main)?;
+        // Q38 C: the block that describes the pre-check is followed by the
+        // fixed note, in the page and in the canonical document.
+        if describes_precheck(b) {
+            w.canon.push_str("[\"note\",");
+            json_str(&mut w.canon, PRECHECK_NOTE);
+            w.canon.push_str("]\n");
+            main.push_child(
+                Element::new("p")
+                    .attr("class", "guide-note")
+                    .text(PRECHECK_NOTE),
+            );
+        }
     }
     let cats = Catalogues::new(
         &CatalogueSource {

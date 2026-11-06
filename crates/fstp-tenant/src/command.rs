@@ -5,8 +5,9 @@ use fstp_domain::id::{AccountId, LlmConfigId};
 use fstp_domain::time::Timestamp;
 
 use crate::types::{
-    ActivationRequestId, ApprovalId, GrantRef, InvitationId, ModelRef, OnboardingStep,
-    SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam, TenantRevision, TokenDigest,
+    ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, ModelRef,
+    OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
+    TenantRevision, TokenDigest,
 };
 
 /// The context of one tenant command, supplied by the shell.
@@ -78,6 +79,14 @@ pub enum TenantCommand {
         /// The new value, which names its parameter.
         value: SettingValue,
     },
+    /// Set or clear the tenant's override of the Guide's data protection
+    /// texts (R-GA-01; section 15.0 of the M4 design, 2026-11-06). `None`
+    /// brings back the platform default. High-risk by the strict reading
+    /// of settings, so web only (interim, pending Daniel).
+    SetGuideNotice {
+        /// The override, or `None` for the platform default.
+        notice: Option<GuideNoticeOverride>,
+    },
     /// Record the inference configuration that `call.publish` uses. It
     /// records the models of the validated Inference step (design 3.5:
     /// "The Inference step also records an `InferenceConfigRecorded`
@@ -139,6 +148,8 @@ pub enum TenantKind {
     UseSelfGrantApproval,
     /// One `tenant.set_*` operation per parameter.
     SetSetting(TenantParam),
+    /// `tenant.set_guide_notice` (R-GA-01).
+    SetGuideNotice,
     /// `tenant.record_inference_config`.
     RecordInferenceConfig,
     /// `tenant.complete`.
@@ -155,7 +166,7 @@ pub enum TenantKind {
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 17] = [
+    pub const ALL: [TenantKind; 18] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -167,6 +178,7 @@ impl TenantKind {
         TenantKind::SetSetting(TenantParam::P71),
         TenantKind::SetSetting(TenantParam::P72),
         TenantKind::SetSetting(TenantParam::P74),
+        TenantKind::SetGuideNotice,
         TenantKind::RecordInferenceConfig,
         TenantKind::Complete,
         TenantKind::GrantSignatory,
@@ -192,6 +204,7 @@ impl TenantKind {
             TenantKind::InviteAdmin
                 | TenantKind::ApproveSelfGrant
                 | TenantKind::SetSetting(_)
+                | TenantKind::SetGuideNotice
                 | TenantKind::GrantSignatory
                 | TenantKind::EndSignatory
         )
@@ -229,6 +242,7 @@ impl TenantCommand {
             TenantCommand::ApproveSelfGrant { .. } => TenantKind::ApproveSelfGrant,
             TenantCommand::UseSelfGrantApproval { .. } => TenantKind::UseSelfGrantApproval,
             TenantCommand::SetSetting { value } => TenantKind::SetSetting(value.param()),
+            TenantCommand::SetGuideNotice { .. } => TenantKind::SetGuideNotice,
             TenantCommand::RecordInferenceConfig { .. } => TenantKind::RecordInferenceConfig,
             TenantCommand::Complete => TenantKind::Complete,
             TenantCommand::GrantSignatory { .. } => TenantKind::GrantSignatory,
@@ -312,6 +326,14 @@ pub enum TenantRecord {
         /// The new value, which names its parameter.
         value: SettingValue,
         /// The admin who changed it.
+        by: AccountId,
+    },
+    /// The tenant's override of the Guide's data protection texts was
+    /// set, or cleared with `None`.
+    GuideNoticeSet {
+        /// The override, or `None` for the platform default.
+        notice: Option<GuideNoticeOverride>,
+        /// The admin who set it.
         by: AccountId,
     },
     /// An inference configuration was recorded.

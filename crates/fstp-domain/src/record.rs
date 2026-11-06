@@ -442,6 +442,27 @@ pub enum Record {
         /// The publisher.
         by: AccountId,
     },
+    /// The Guide for Applicants of a call, generated at its publication in
+    /// the entry of its `CallPublished` (R-GA-01, I-52, I-53, M4 design
+    /// section 3.10). The fold refuses a second one for a call.
+    ///
+    /// It holds the Guide itself: the canonical document, whose SHA-256
+    /// through `fstp-crypto` is `digest`, and the page the public pages
+    /// serve. The Guide is a document the platform generates, not free
+    /// text a person wrote, and I-53 makes it immutable, so it is kept in
+    /// the ledger with its digest (interim, pending Daniel).
+    GuidePublished {
+        /// The call.
+        call: CallId,
+        /// The Guide version, 1 at publication.
+        version: u32,
+        /// SHA-256 of `canonical`.
+        digest: ContentDigest,
+        /// The canonical document the digest is taken over.
+        canonical: String,
+        /// The HTML page of the Guide.
+        page: String,
+    },
     /// A binding was granted.
     BindingGranted(BindingGranted),
     /// A binding ended.

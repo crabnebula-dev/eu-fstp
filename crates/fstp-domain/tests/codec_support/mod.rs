@@ -738,12 +738,13 @@ pub(crate) enum RecordTag {
     VoteDelegated,
     // J2, lane inv.
     TermsAccepted,
+    GuidePublished,
 }
 
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
-    /// tags of M4 changes D2 and D5.
-    pub(crate) const ALL: [RecordTag; 65] = [
+    /// tags of M4 changes D2 and D5, then the Guide record of R-GA-01.
+    pub(crate) const ALL: [RecordTag; 66] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -809,6 +810,7 @@ impl RecordTag {
         RecordTag::BallotCast,
         RecordTag::VoteDelegated,
         RecordTag::TermsAccepted,
+        RecordTag::GuidePublished,
     ];
 
     /// The payloads that only a witness or a core guard builds: the four of
@@ -914,6 +916,7 @@ impl RecordTag {
             Record::BallotCast { .. } => RecordTag::BallotCast,
             Record::VoteDelegated { .. } => RecordTag::VoteDelegated,
             Record::TermsAccepted { .. } => RecordTag::TermsAccepted,
+            Record::GuidePublished { .. } => RecordTag::GuidePublished,
         }
     }
 
@@ -2268,6 +2271,13 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             round: id(g, d, DecisionId::from_raw),
             from: id(g, d, AccountId::from_raw),
             to: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::GuidePublished => Record::GuidePublished {
+            call: id(g, d, CallId::from_raw),
+            version: g.u32(),
+            digest: digest(g),
+            canonical: g.string(0..=64),
+            page: g.string(0..=64),
         },
         RecordTag::Stage1Closed
         | RecordTag::EffectiveScoreSet

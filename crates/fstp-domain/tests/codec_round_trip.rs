@@ -147,6 +147,7 @@ record_round_trip! {
     r_ev_09_codec_round_trip_record_cut_off_round_opened => CutOffRoundOpened,
     r_ev_09_codec_round_trip_record_ballot_cast => BallotCast,
     r_ev_09_codec_round_trip_record_vote_delegated => VoteDelegated,
+    r_ga_01_codec_round_trip_record_guide_published => GuidePublished,
 }
 
 witness_round_trip! {
