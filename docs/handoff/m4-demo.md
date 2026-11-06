@@ -136,6 +136,15 @@ The identity page and the onboarding steps load, but their operations are not se
 - No new seed: every scene runs from genesis through production commands, so the ledger already holds each route.
 - `e2e/journey/voyager.spec.ts` runs with `tools/demo/run.sh e2e journey/`. Four of its five tests pass. The applicant test expects the move into STAGE2 as the newest entry, but the STAGE2 scene records two reviewer questions after that move, so "Question received" is newest.
 
+## Programme set-up (2026-11-06, lane studio)
+
+- **Programme manager.** On the front door, choose `/demo/review?stage=stage1` and "Sign in as" Programme manager M1. On the home page, choose "Programme set-up of programme 1".
+- **Programme set-up** (`/app/programmes/1/studio`). The 11 creator steps sit under five plain headings, each with its studio name below it. Each step shows the state of the creator's validation report. A step opens only once every step before it has no failure. A locked step has no link and says what it waits for.
+- **A step.** Choose an open step. Its page shows the same grouped steps, "Step n of 11", and "Next step" only once the step validated. On the active programme, the P-01 and P-09 fields say that a saved change returns each approved call to DRAFT.
+- **Approval and publication.** From the set-up page, choose "Open approval and publication". It shows the gate of the final report (I-66), the approver rule (I-67), the published calls with their state, and the return-to-DRAFT note. "Guide for Applicants preview" on the set-up page opens the Guide preview.
+- "List the affected calls" runs `creator.impact` on request. The cell answers 501 for a programme with calls, so programme 1 shows that it cannot list them yet.
+- No read lists a call in DRAFT or APPROVED yet, so the approval takes a call number. `e2e/studio/studio.spec.ts` runs with `tools/demo/run.sh e2e studio/`.
+
 ## Results of the Playwright journeys
 
 Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4disp) with Chromium 1248 and the virtual authenticator, `retries: 0`.

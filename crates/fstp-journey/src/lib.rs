@@ -21,11 +21,14 @@
 //!   viewer (I-93, O-54, O-57, O-58, O-60).
 //! - [`diary`] builds diary items at read time from rows and the ledger
 //!   (I-97, I-27).
+//! - [`vocab`] parses the plain and Voyage vocabulary packs and looks
+//!   labels up for one tenant (O-55, I-72, I-96).
 //! - [`summary`] holds the catalogue keys of diary sentences, and
 //!   [`zones`] the shipped deadline zone table (ADR-015).
 //!
 //! The crate holds no authority, does no I/O and never reads a clock. The
-//! definition parser has a fuzz target in `fuzz/` (ADR-003).
+//! definition and vocabulary pack parsers have fuzz targets in `fuzz/`
+//! (ADR-003).
 
 #![deny(
     clippy::float_arithmetic,
@@ -41,6 +44,7 @@ pub mod overlay;
 pub mod projector;
 pub mod summary;
 pub mod visibility;
+pub mod vocab;
 pub mod zones;
 
 use definition::{Definition, DefinitionError};

@@ -224,6 +224,7 @@ export type WorkKind =
   | "guardian"
   | "onboarding"
   | "creator"
+  | "studio"
   | "approvals"
   | "people"
   | "open-calls";
@@ -297,6 +298,7 @@ export const WORK_PATHS = Object.freeze({
   creatorNew: "/app/creator/new",
   approvals: "/app/admin/approvals",
   creator: (p: string): string => `/app/programmes/${p}/creator/review`,
+  studio: (p: string): string => `/app/programmes/${p}/studio`,
   people: (p: string): string => `/app/programmes/${p}/people`,
   board: (c: string): string => `/app/calls/${c}/board`,
   intake: (c: string): string => `/app/calls/${c}/intake`,
@@ -407,6 +409,8 @@ export function workOf(
   // the programme's creator draft, so they are linked only for a
   // programme that holds one (review finding U1).
   for (const p of programmes(holds("programme_manager")).filter((x) => r.drafts.has(x))) {
+    // The Planning Studio first: it groups the creator steps (section 8.2).
+    add("programme", "studio", WORK_PATHS.studio(p), text("home.work.studio", { programme: p }));
     add("programme", "creator", WORK_PATHS.creator(p), text("home.work.creator", { programme: p }));
     add("programme", "people", WORK_PATHS.people(p), text("home.work.people", { programme: p }));
   }

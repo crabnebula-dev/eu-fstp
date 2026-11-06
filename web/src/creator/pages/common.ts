@@ -1,12 +1,18 @@
 // What the creator pages share: the step navigation, the paths of the
 // creator pages, and the draft and report reads.
+//
+// The step navigation is the Planning Studio's (`studio/view.ts`): the
+// 11 steps grouped under the five studios of `SPEC/12-journey-ui.md`
+// section 8.2, each with the state the creator's report gives it.
 
 import { h, safeUrl } from "../../core/dom.js";
 import type { Label } from "../../core/i18n.js";
 import { fieldLabel } from "../editor.js";
 import { labelOr, t } from "../i18n.js";
-import { CREATOR_STEPS, readDraft, readReport, type CreatorStep, type Draft, type Report } from "../model.js";
+import { readDraft, readReport, type CreatorStep, type Draft, type Report } from "../model.js";
 import { call, report } from "../ops.js";
+import { stepStates, type StepId } from "../../studio/model.js";
+import { studioNav } from "../../studio/view.js";
 
 /** The page paths of the creator (e2e contract `APP`, interim). */
 export const PATHS = {
@@ -33,18 +39,12 @@ export function link(path: string, text: Label, attrs: Readonly<Record<string, s
 }
 
 /**
- * The step navigation `#creator-steps`: one `li[data-step]` per step,
- * the current one marked for assistive technology.
+ * The step navigation `#creator-steps` for `report`: one
+ * `li[data-step]` per step, the current one marked for assistive
+ * technology. A step opens only once every step before it validated.
  */
-export function stepNav(p: string, current: string): HTMLElement {
-  const items = CREATOR_STEPS.map((s) => {
-    const attrs: Record<string, string> = {};
-    if (s.id === current) {
-      attrs["aria-current"] = "page";
-    }
-    return h("li", { "data-step": s.id }, [link(PATHS.step(p, s.id), stepTitle(s), attrs)]);
-  });
-  return h("nav", { id: "creator-steps", "aria-label": t.label("creator.steps.nav") }, [h("ol", {}, items)]);
+export function stepNav(p: string, current: StepId, r: Report | null): HTMLElement {
+  return studioNav(p, stepStates(r), current);
 }
 
 /** Reads the draft of `p`, or shows why not in `alert`. */
