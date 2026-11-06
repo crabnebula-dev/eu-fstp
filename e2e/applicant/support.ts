@@ -104,6 +104,8 @@ export const API = {
   guardian: (p: string): string => `/api/v1/proposals/${p}/guardian`,
   country: (p: string): string => `/api/v1/proposals/${p}/vault/country`,
   affiliations: (p: string): string => `/api/v1/proposals/${p}/vault/affiliations`,
+  /** Q23 B: the lead's date of birth, to the vault only. */
+  birthDate: (p: string): string => `/api/v1/proposals/${p}/vault/birth_date`,
   submission: (p: string): string => `/api/v1/proposals/${p}/submission`,
   copy: (p: string): string => `/api/v1/proposals/${p}/copy`,
   withdrawal: (p: string): string => `/api/v1/proposals/${p}/withdrawal`,
@@ -187,6 +189,10 @@ export const AUI = {
     confirm: '#submit-confirm',
     /** The error summary, `role="alert"`, with a link to each field. */
     errors: '#submit-errors',
+    /** Q23 B: the vault-only date of birth, its own form beside the submission. */
+    birthDate: '#submit-birth-date',
+    birthDateSave: '#submit-birth-date-save',
+    birthDateStatus: '#submit-birth-date-status',
   },
   stage2: {
     /** One `li` per question, each with `data-handle` and a `time[datetime]`. */
@@ -702,6 +708,13 @@ const DOB_WORDS = /\b(date of birth|birth ?date|birthday|dob|born|age)\b/i;
  * and `stage2-plan`: `<prefix>-t<task>-m<milestone>-{start,due}`.
  */
 const MILESTONE_DAY_ID = /^(plan|stage2-plan)-t\d+-m\d+-(start|due)$/;
+/**
+ * The one date of birth control an applicant form may hold: the
+ * vault-only field of the submit page (Q23 B, design section 15.0,
+ * 2026-11-06), a date control with exactly this id. It sends to the vault
+ * route alone, which `i86_date_of_birth_reaches_only_the_vault` checks.
+ */
+const VAULT_BIRTH_DATE_ID = 'submit-birth-date';
 const IDENTITY_WORDS = /\b(passport|identity (card|document|number)|id (card|document|number)|national id|social security|tax id)\b/i;
 const PAYMENT_WORDS = /\b(iban|bic|swift|bank|card number|cvv|cvc|payment|account number|sort code|routing number)\b/i;
 
@@ -710,8 +723,9 @@ const PAYMENT_WORDS = /\b(iban|bic|swift|bank|card number|cvv|cvc|payment|accoun
  * null when it may be. R-SB-01: "no submission form contains identity
  * document, date of birth or payment fields". Q24 (interim, pending
  * Daniel): no attachments in M4, so a file input is refused too. Under
- * the Q23 answer (M3 Q13 A), age is an over-18 attestation on the vault
- * origin, never a field here.
+ * the Q23 answer B (design section 15.0, 2026-11-06), the one exception
+ * is the vault-only date of birth of the submit page: a date control
+ * with the id `submit-birth-date`. Any other date of birth is refused.
  */
 export function forbiddenField(c: ControlFacts): string | null {
   const words = `${c.id} ${c.name} ${c.label}`.replace(/[-_]/g, ' ');
@@ -721,10 +735,12 @@ export function forbiddenField(c: ControlFacts): string | null {
   // which RecordPlanVersion needs. Every other date control counts as a
   // date of birth, and DOB words flag even a plan editor control.
   const milestoneDay = c.tag === 'input' && c.type === 'date' && MILESTONE_DAY_ID.test(c.id);
+  const vaultBirthDate = c.tag === 'input' && c.type === 'date' && c.id === VAULT_BIRTH_DATE_ID;
   if (
-    ac.some((t) => t.startsWith('bday')) ||
-    (c.tag === 'input' && c.type === 'date' && !milestoneDay) ||
-    DOB_WORDS.test(words)
+    !vaultBirthDate &&
+    (ac.some((t) => t.startsWith('bday')) ||
+      (c.tag === 'input' && c.type === 'date' && !milestoneDay) ||
+      DOB_WORDS.test(words))
   ) {
     return 'date of birth';
   }

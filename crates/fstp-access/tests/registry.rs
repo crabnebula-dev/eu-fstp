@@ -878,6 +878,7 @@ fn i86_vault_reads_and_statements_have_no_tool() {
         "audit.vault_outcomes",
         "proposal.state_country",
         "proposal.declare_affiliations",
+        "proposal.state_birth_date",
     ]) {
         assert!(o.tool.is_none(), "{} has a tool", o.name);
     }

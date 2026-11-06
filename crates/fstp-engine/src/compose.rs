@@ -486,6 +486,45 @@ fn decide_composed(
     Ok(records)
 }
 
+/// The vault questions of a stage 2 revision (R-EV-05): those of its
+/// plan, then those of its submission on the state after the plan. The
+/// submission's questions are predicted only when the plan asks none, so
+/// its records are known without an answer. A composed command whose
+/// questions were not asked is refused with `FactsIncomplete`.
+pub(crate) fn revision_queries(
+    state: &EngineState,
+    r: &crate::Stage2Revision,
+    ctx: &Ctx,
+) -> Result<Vec<Query>, Refusal> {
+    let [plan, submit] = r.commands();
+    let mut out = fstp_domain::queries(&state.core, &plan, ctx)?;
+    if out.is_empty() {
+        let mut scratch = state.core.clone();
+        if decide_composed(&mut scratch, &plan, ctx, &Answers::new(), false).is_ok() {
+            out.extend(fstp_domain::queries(&scratch, &submit, ctx)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Decides a stage 2 revision in one entry (R-EV-05, NOTE 1): the plan's
+/// records, then the submission's, each decided on the state after the
+/// earlier ones. Nothing is recorded on a failure.
+pub(crate) fn decide_revision(
+    state: &EngineState,
+    r: &crate::Stage2Revision,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<Vec<Record>, Refusal> {
+    let mut scratch = state.core.clone();
+    let mut out = Vec::new();
+    for c in r.commands() {
+        let records = decide_composed(&mut scratch, &c, ctx, answers, false)?;
+        out.extend(records.into_iter().map(Record::Core));
+    }
+    Ok(out)
+}
+
 /// Decides a creator command in one entry (module documentation). Nothing
 /// is recorded on a failure.
 pub fn decide_creator_command(

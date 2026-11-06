@@ -176,6 +176,11 @@ pub(crate) enum Derive {
     /// [`name_plans`] named before the digest. A codec form passes
     /// unchanged.
     PlanForm,
+    /// A stage 2 revision from the plan page form (R-EV-05): as
+    /// [`Derive::PlanForm`] with the origin "stage 2 revision", and the
+    /// plan is composed with its submission into one engine command
+    /// (`fstp_engine::Stage2Revision`).
+    RevisionForm,
     /// A submission names the plan that [`name_plans`] put in the request
     /// before the digest. Without one it is refused, and nothing is
     /// derived here, so a confirmation never picks a later plan (I-85).
@@ -438,6 +443,30 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
     Some(f)
 }
 
+/// The form of a stage 2 revision sent as the plan page form (R-EV-05):
+/// the plan's members, and the plan id the server draws.
+const REVISION_PAGE_FORM: CmdForm = CmdForm {
+    kind: CommandKind::RecordPlanVersion,
+    params: &[("proposal", Some("proposal"))],
+    required: &["description", "tasks"],
+    optional: &["supersedes"],
+    drawn: &["plan"],
+    texts: &["description"],
+    derive: Derive::RevisionForm,
+};
+
+/// The form of `spec` for `request`. A `stage2.revise` that carries
+/// `tasks` is the plan page form of the stage 2 revision page, which
+/// records the plan and submits it in one entry (R-EV-05). Every other
+/// request takes [`op_form`].
+pub(crate) fn request_form(spec: &OpSpec, request: &Object) -> Option<CmdForm> {
+    let f = op_form(spec)?;
+    if f.kind == CommandKind::SubmitRevision && request.contains_key("tasks") {
+        return Some(REVISION_PAGE_FORM);
+    }
+    Some(f)
+}
+
 /// The form of a command operation, with the declaration subject set
 /// from the route the operation is on.
 pub(crate) fn op_form(spec: &OpSpec) -> Option<CmdForm> {
@@ -500,11 +529,16 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::M3Port(PortKind::StateCountry) => BodyRule::Exactly(&["country"]),
         // `review.mark_finding`: the reviewer's mark, `Agreed` or `Disputed`.
         OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
+        OpKind::M3Port(PortKind::DeclareAffiliations) => BodyRule::Exactly(&["affiliations"]),
+        OpKind::M3Port(PortKind::StateBirthDate) => BodyRule::Exactly(&["date_of_birth"]),
         OpKind::M3Port(PortKind::AcknowledgeNegotiationNotice) => {
             BodyRule::Exactly(&["notice_version"])
         }
         OpKind::M3Port(
-            PortKind::ApproveRecovery | PortKind::EndSession | PortKind::BeginVerification,
+            PortKind::ApproveRecovery
+            | PortKind::EndSession
+            | PortKind::BeginVerification
+            | PortKind::BeginGuardianConsent,
         ) => BodyRule::Empty,
         _ => BodyRule::Unjudged,
     }
@@ -552,7 +586,7 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
         return r.map(|_| ());
     }
     let body = request.keys().filter(|k| !params.contains(k));
-    if let Some(f) = op_form(spec) {
+    if let Some(f) = request_form(spec, request) {
         return check_command(&f, request, body.collect());
     }
     if matches!(spec.kind, OpKind::Command(_)) {
@@ -746,7 +780,7 @@ pub(crate) fn name_plans(form: &CmdForm, request: &mut Object, latest: LatestPla
                 let _ = request.insert("plan", dec(p.raw()));
             }
         }
-        Derive::PlanForm => {
+        Derive::PlanForm | Derive::RevisionForm => {
             let page_form = request.contains_key("description") && !request.contains_key("content");
             if page_form && !request.contains_key("supersedes") {
                 let v = latest.map_or(Value::Null, |p| dec(p.raw()));
@@ -924,7 +958,8 @@ pub(crate) fn build(
             };
             let _ = o.insert("handle", handle);
         }
-        Derive::PlanForm => plan_form(&mut o, request, cx, draw)?,
+        Derive::PlanForm => plan_form(&mut o, request, cx, draw, false)?,
+        Derive::RevisionForm => plan_form(&mut o, request, cx, draw, true)?,
         Derive::LatestPlan => {
             if o.get("plan").is_none_or(Value::is_null) {
                 // Dispatch named the latest plan before the digest
@@ -944,6 +979,11 @@ pub(crate) fn build(
     if cmd.kind() != f.kind {
         return Err(bad());
     }
+    if f.derive == Derive::RevisionForm {
+        return fstp_engine::Stage2Revision::new(cmd)
+            .map(Command::Stage2Revision)
+            .ok_or_else(bad);
+    }
     Ok(Command::Core(cmd))
 }
 
@@ -962,6 +1002,7 @@ fn plan_form(
     request: &Object,
     cx: &BuildCtx<'_>,
     draw: &mut dyn FnMut() -> Result<u128, ApiError>,
+    revision: bool,
 ) -> Result<(), ApiError> {
     let bad = || ApiError::bad_request(REQUEST_RULE);
     let description = o.remove("description");
@@ -984,7 +1025,7 @@ fn plan_form(
             fstp_domain::view::proposal_state(&cx.state.core, ProposalId::from_raw(p))
                 == Some(fstp_domain::StateTag::Stage2)
         });
-    let origin = if in_stage2 {
+    let origin = if revision || in_stage2 {
         "Stage2Revision"
     } else {
         "Submitted"

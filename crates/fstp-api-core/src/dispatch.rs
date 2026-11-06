@@ -75,10 +75,10 @@
 //! - The caller's own list of proposals keeps a proposal that reached a
 //!   terminal state, since the domain ends the team's Receiving bindings
 //!   there. `proposal.view` keeps the `Team` rule of the access crate.
-//! - `stage2.revise` is the domain's `SubmitRevision` of a plan the lead
-//!   recorded first through `proposal.record_plan`. The engine port
-//!   executes one command per call, so the two do not run atomically in
-//!   one entry (design section 2.2 J4, a seam for the lead).
+//! - `stage2.revise` with a plan page form records the plan and submits
+//!   it in one entry, as the engine's composed `Stage2Revision` (R-EV-05,
+//!   lane mapp). With a `plan` member it is the domain's `SubmitRevision`
+//!   of a plan the lead recorded first through `proposal.record_plan`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -621,7 +621,7 @@ pub(crate) async fn run<P: Seams>(
     // so the digest, a pending action and its confirmation carry the
     // same plan (I-85, design section 3.7 step 6).
     if let (Some(form), Some(p)) = (
-        forms::op_form(spec),
+        forms::request_form(spec, &op.request),
         forms::id_param(&op.request, "proposal"),
     ) {
         let latest = latest_plan(st, ProposalId::from_raw(p));
@@ -787,7 +787,8 @@ fn needs_p77(spec: &OpSpec) -> bool {
 /// The governing P-77 of a binding command: "draft only" exactly when the
 /// domain's own `Via::Mcp` check refuses it with P-77 (R-MC-05).
 fn governing_p77<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<McpBindingActions, ApiError> {
-    let (Some(form), Some(account)) = (forms::op_form(call.spec), call.account()) else {
+    let (Some(form), Some(account)) = (forms::request_form(call.spec, &op.request), call.account())
+    else {
         return Ok(McpBindingActions::DraftOnly);
     };
     let cmd = build(call, &form, op, &BTreeMap::new(), &mut Vec::new())?;
@@ -1045,7 +1046,7 @@ async fn command<P: Seams>(
     let Some(account) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
-    let Some(form) = forms::op_form(call.spec) else {
+    let Some(form) = forms::request_form(call.spec, &op.request) else {
         return Err(call.refuse(ApiError::NotImplemented(
             "a command operation with no request form",
         )));
@@ -1324,7 +1325,10 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let stored = decode_pending_request(a.request.as_bytes())
         .map_err(|e| call.refuse(e))?
         .into_op();
-    let (Some(form), OpKind::Command(_)) = (forms::op_form(stored.spec), stored.spec.kind) else {
+    let (Some(form), OpKind::Command(_)) = (
+        forms::request_form(stored.spec, &stored.request),
+        stored.spec.kind,
+    ) else {
         return Err(call.refuse(ApiError::NotImplemented(
             "a pending action of an operation that is not a command",
         )));
@@ -1924,6 +1928,12 @@ enum PortCall {
     SaveWorkspace(ProposalId, Workspace),
     /// The lead states the country, to the vault only (R-NG-01).
     StateCountry(ProposalId, [u8; 2]),
+    /// The lead declares affiliations, to the vault only (R-NG-01).
+    DeclareAffiliations(ProposalId, crate::port::Affiliations),
+    /// The lead states a date of birth, to the vault only (Q23 B, I-86).
+    StateBirthDate(ProposalId, crate::port::BirthDate),
+    /// The guardian starts the consent on the vault origin (I-18).
+    BeginGuardianConsent(ProposalId),
     /// A team member acknowledges the negotiation notice (R-NG-06).
     AcknowledgeNotice(ProposalId),
     /// The user adds a passkey (`authentication.md`, high-risk).
@@ -2011,6 +2021,39 @@ async fn m3_port<P: Seams>(
             }
             PortCall::StateCountry(p, code)
         }
+        PortKind::DeclareAffiliations => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            let d = op
+                .request
+                .get("affiliations")
+                .and_then(Value::as_str)
+                .and_then(crate::port::Affiliations::new)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            if !drafting_team(&call.state, account, p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
+            }
+            PortCall::DeclareAffiliations(p, d)
+        }
+        PortKind::StateBirthDate => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            let d = op
+                .request
+                .get("date_of_birth")
+                .and_then(Value::as_str)
+                .and_then(crate::port::BirthDate::parse)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            if !drafting_team(&call.state, account, p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
+            }
+            PortCall::StateBirthDate(p, d)
+        }
+        PortKind::BeginGuardianConsent => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            if !consenting_guardian(&call.state, account, p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-18")));
+            }
+            PortCall::BeginGuardianConsent(p)
+        }
         PortKind::AcknowledgeNegotiationNotice => {
             let p = ProposalId::from_raw(id("proposal")?);
             let negotiating = fstp_domain::view::proposal_state(&call.state.core, p)
@@ -2085,6 +2128,37 @@ async fn m3_port<P: Seams>(
             let fact = crate::port::VaultBound::new(crate::port::CountryCode(code));
             match call.ports.vault().state_country(account, p, fact).await {
                 Ok(_) => done(Ok(()), "R-NG-01"),
+                Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
+            }
+        }
+        PortCall::DeclareAffiliations(p, d) => {
+            let fact = crate::port::VaultBound::new(d);
+            match call
+                .ports
+                .vault()
+                .declare_affiliations(account, p, fact)
+                .await
+            {
+                Ok(_) => done(Ok(()), "R-NG-01"),
+                Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
+            }
+        }
+        PortCall::StateBirthDate(p, d) => {
+            let fact = crate::port::VaultBound::new(d);
+            match call.ports.vault().state_birth_date(account, p, fact).await {
+                Ok(_) => done(Ok(()), "I-86"),
+                Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
+            }
+        }
+        PortCall::BeginGuardianConsent(p) => {
+            let purpose = VerificationPurpose::GuardianConsent(p);
+            match call
+                .ports
+                .vault()
+                .begin_verification(purpose, account)
+                .await
+            {
+                Ok(to) => call.accept(ReadModel::Redirect(to.0)),
                 Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
             }
         }
@@ -3067,6 +3141,28 @@ fn drafting_team(
             == Some(fstp_domain::StateTag::Draft)
 }
 
+/// Whether `account` is the guardian of `proposal` while its consent is
+/// open: an active Guardian binding on it, in IRC_REVIEW or NEGOTIATION
+/// (state-machine NOTE 14, R-NG-01 NOTE). The vault decides the rest.
+fn consenting_guardian(
+    state: &EngineState,
+    account: AccountId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> bool {
+    let guardian = state.core.roster().bindings().any(|(_, b)| {
+        b.account == account
+            && b.active_at(now)
+            && b.role == Role::Guardian
+            && matches!(b.scope, BindingScope::Proposal { proposal: x, .. } if x == proposal)
+    });
+    guardian
+        && matches!(
+            fstp_domain::view::proposal_state(&state.core, proposal),
+            Some(fstp_domain::StateTag::IrcReview | fstp_domain::StateTag::Negotiation)
+        )
+}
+
 /// A country code of the vault intake: two upper-case ASCII letters
 /// (ISO 3166-1 alpha-2 spelling; the vault judges the code itself).
 fn country_code(s: &str) -> Option<[u8; 2]> {
@@ -3165,8 +3261,16 @@ fn notices<P: Seams>(
 /// (ADR-006, design section 3.9). `None` for any other command, or a
 /// total that does not fit.
 fn plan_saved(cmd: &Command) -> Option<ReadModel> {
-    let Command::Core(fstp_domain::command::Command::RecordPlanVersion { plan, tasks, .. }) = cmd
-    else {
+    let core = match cmd {
+        Command::Core(c) => c.clone(),
+        // R-EV-05: a stage 2 revision answers with the plan it recorded.
+        Command::Stage2Revision(r) => {
+            let [plan, _] = r.commands();
+            plan
+        }
+        _ => return None,
+    };
+    let fstp_domain::command::Command::RecordPlanVersion { plan, tasks, .. } = &core else {
         return None;
     };
     let mut total: Option<fstp_money::Amount> = None;

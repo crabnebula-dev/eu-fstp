@@ -703,7 +703,8 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             obj(vec![("account", dec(AccountId::from_raw(990).raw()))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
-        "proposal.declare_affiliations" => obj(vec![("lists", Value::Array(Array::new()))]),
+        "proposal.declare_affiliations" => obj(vec![("affiliations", s("SYNTHETIC AFFILIATIONS"))]),
+        "proposal.state_birth_date" => obj(vec![("date_of_birth", s("1990-01-01"))]),
         "proposal.submit" => obj(vec![("ethics", s("none")), ("notice_version", s("1"))]),
         "stage2.answer" => obj(vec![("text", s("SYNTHETIC ANSWERS"))]),
         "stage2.revise" => obj(vec![("plan", dec(t.plan.unwrap_or(1)))]),

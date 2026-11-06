@@ -46,6 +46,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "birth_date_parse"
+path = "fuzz_targets/birth_date_parse.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

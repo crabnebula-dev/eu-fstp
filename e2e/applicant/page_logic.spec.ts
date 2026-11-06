@@ -502,7 +502,8 @@ test.describe('R-SB-01 predicate', () => {
   /**
    * R-SB-01: the predicate the field scan uses flags date of birth,
    * identity document, payment and file controls, and spares the
-   * applicant's own form controls. Teeth for `forbiddenFieldsOn`.
+   * applicant's own form controls, with the vault-only date of birth of
+   * Q23 B as the one date of birth control. Teeth for `forbiddenFieldsOn`.
    */
   test('r_sb_01_predicate_flags_forbidden_fields_and_spares_the_form', () => {
     const flagged = [
@@ -522,6 +523,13 @@ test.describe('R-SB-01 predicate', () => {
       c({ type: 'date', id: 'due', name: 'due' }),
       c({ type: 'date', id: 'plan-start', label: 'Start day' }),
       c({ type: 'date', id: 'plan-t1-m1-start', label: 'Date of birth' }),
+      // Q23 B: only the vault-only date control of the submit page is
+      // spared, by its exact id and type.
+      c({ type: 'date', id: 'submit-birth-date-2', label: 'Date of birth' }),
+      c({ type: 'date', id: 'birth-date', label: 'Date of birth' }),
+      c({ type: 'text', id: 'submit-birth-date', label: 'Date of birth' }),
+      c({ tag: 'select', id: 'submit-birth-date', label: 'Date of birth' }),
+      c({ type: 'date', id: 'Submit-Birth-Date', label: 'Date of birth' }),
     ];
     expect(flagged.filter((x) => forbiddenField(x) === null)).toEqual([]);
     const spared = [
@@ -537,6 +545,7 @@ test.describe('R-SB-01 predicate', () => {
       c({ tag: 'textarea', id: 'stage2-answer', label: 'Your answer' }),
       c({ type: 'date', id: 'plan-t1-m1-start', label: 'Start day' }),
       c({ type: 'date', id: 'stage2-plan-t2-m3-due', label: 'Due day' }),
+      c({ type: 'date', id: 'submit-birth-date', name: 'submit-birth-date', label: 'Date of birth' }),
     ];
     expect(spared.filter((x) => forbiddenField(x) !== null).map((x) => x.id)).toEqual([]);
   });
