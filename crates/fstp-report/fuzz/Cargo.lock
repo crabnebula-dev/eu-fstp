@@ -156,13 +156,21 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-pdf",
+ "fstp-report-core",
+]
+
+[[package]]
+name = "fstp-report-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]
 name = "fstp-report-fuzz"
 version = "0.0.0"
 dependencies = [
- "fstp-json",
  "fstp-report",
  "libfuzzer-sys",
 ]

@@ -211,6 +211,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-report",
  "fstp-webauthn",
 ]
 
@@ -323,6 +324,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-programme",
+ "fstp-report-core",
  "fstp-tenant",
 ]
 
@@ -424,6 +426,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-pdf"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+]
+
+[[package]]
 name = "fstp-pgstore"
 version = "0.1.0"
 dependencies = [
@@ -475,6 +484,28 @@ dependencies = [
  "fstp-http",
  "fstp-json",
  "fstp-tls",
+]
+
+[[package]]
+name = "fstp-report"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-pdf",
+ "fstp-report-core",
+]
+
+[[package]]
+name = "fstp-report-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]

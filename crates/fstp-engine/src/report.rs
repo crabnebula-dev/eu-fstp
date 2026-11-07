@@ -5,7 +5,7 @@
 //! `fstp_report::generate` and submits its `ReportGenerated` record as the
 //! command. The engine checks that the generator is the actor and holds
 //! the programme manager role of the output's programme. `ReportApproved`
-//! goes to `fstp_report::approve`: only a Financial signatory of the
+//! goes to `fstp_report_core::approve`: only a Financial signatory of the
 //! tenant fold who did not generate the document approves it (R-RP-03,
 //! Q3). The fold refuses a self-approval too (`ReportStore::apply`).
 
@@ -14,11 +14,11 @@ use fstp_domain::engine::FoldError;
 use fstp_domain::id::{AccountId, ProgrammeId};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::{BindingScope, Role};
-use fstp_report::{ApprovalRefusal, ReportFoldError, ReportRecord, Scope};
+use fstp_report_core::{ApprovalRefusal, ReportFoldError, ReportRecord, Scope};
 
 use crate::{EngineState, Record};
 
-pub use fstp_report::ReportStore;
+pub use fstp_report_core::ReportStore;
 
 fn actor_refusal() -> Refusal {
     Refusal::new(RuleRef::Actor, RefusalReason::WrongActor)
@@ -80,7 +80,7 @@ pub(crate) fn decide_report(
             if *approver != actor {
                 return Err(actor_refusal());
             }
-            fstp_report::approve(
+            fstp_report_core::approve(
                 &state.reports,
                 *report,
                 actor,

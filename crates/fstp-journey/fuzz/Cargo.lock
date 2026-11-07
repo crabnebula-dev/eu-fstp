@@ -136,6 +136,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-programme",
+ "fstp-report-core",
  "fstp-tenant",
 ]
 
@@ -222,6 +223,14 @@ dependencies = [
  "fstp-domain",
  "fstp-json",
  "fstp-money",
+]
+
+[[package]]
+name = "fstp-report-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]

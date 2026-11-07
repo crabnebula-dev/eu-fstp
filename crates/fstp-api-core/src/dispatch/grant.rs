@@ -701,7 +701,7 @@ async fn propose_change<P: Seams>(
         contract,
         version,
         clause,
-        diff: Digest::of(text.as_bytes()),
+        diff: fstp_contract::digest::sha256(text.as_bytes()),
         proposer,
     };
     let seq = execute(call, account, Command::Contract(cmd)).await?;
@@ -908,7 +908,7 @@ async fn approve_advanced<P: Seams>(
         contract,
         version,
         party,
-        reason: Digest::of(reason.as_bytes()),
+        reason: fstp_contract::digest::sha256(reason.as_bytes()),
     };
     let seq = execute(call, account, Command::Contract(cmd)).await?;
     Ok(done(seq, ReadModel::Accepted))
@@ -949,7 +949,7 @@ async fn decline<P: Seams>(
         .map_err(|_| ApiError::refused(ErrorCode::Refused, "I-30"))?;
     let cmd = ContractCommand::Terminate {
         contract,
-        reason: Digest::of(reason.as_bytes()),
+        reason: fstp_contract::digest::sha256(reason.as_bytes()),
         sealed_draft: Some(sealed),
     };
     let _ = execute(call, account, Command::Contract(cmd)).await?;

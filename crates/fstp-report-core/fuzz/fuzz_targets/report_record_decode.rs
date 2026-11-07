@@ -1,4 +1,4 @@
-//! Fuzz target `report_record_decode` of `fstp-report` (TH-26, I-23).
+//! Fuzz target `report_record_decode` of `fstp-report-core` (TH-26, I-23).
 //!
 //! Over arbitrary bytes taken as a stored `Report` envelope record:
 //!
@@ -9,7 +9,7 @@
 #![no_main]
 
 use fstp_json::{FromJson, ToJson};
-use fstp_report::ReportRecord;
+use fstp_report_core::ReportRecord;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

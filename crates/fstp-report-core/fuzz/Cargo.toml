@@ -1,0 +1,25 @@
+[package]
+name = "fstp-report-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-report-core = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "report_record_decode"
+path = "fuzz_targets/report_record_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

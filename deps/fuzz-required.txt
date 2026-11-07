@@ -70,9 +70,11 @@ fstp-infer
 # decoder, which lives in the pure core that fstp-engine reaches.
 fstp-sigval
 fstp-contract-core
-# M5 lane L-RPT: the report record decoder and the stored Guide reader
+# M5 lane L-RPT: the stored Guide reader
 # behind the Guide PDF, which moved here from fstp-guide.
 fstp-report
+# The report record decoder, in the pure core that fstp-engine reaches.
+fstp-report-core
 # M5 wave 2, lane L-CHK: SPDX expressions, deliverable URLs, licence tags.
 fstp-checks
 # M6, docs/handoff/m6-design.md section 5.3 (lane L6-MAIL): MIME parser and DKIM tag lists.

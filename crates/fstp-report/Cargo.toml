@@ -15,6 +15,7 @@ fstp-json.workspace = true
 fstp-ledger.workspace = true
 fstp-money.workspace = true
 fstp-pdf.workspace = true
+fstp-report-core.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

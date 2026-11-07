@@ -26,7 +26,7 @@ fstp-guide.workspace = true
 # rendering, the SignaturePort and signing stay in fstp-contract (shell).
 fstp-contract-core.workspace = true
 # M5 lane L-API: the Report envelope (M5 design section 4.3).
-fstp-report.workspace = true
+fstp-report-core.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

@@ -33,14 +33,13 @@ mod snapshot;
 mod time;
 
 pub use books::Mismatch;
+pub use fstp_report_core::{
+    ApprovalRefusal, ENVELOPE, ReportFoldError, ReportId, ReportKind, ReportRecord, ReportStore,
+    Scope, StoredReport, approve, is_financial_signatory,
+};
 pub use guide::{GuideContent, GuidePdfError, guide_pdf, read_canonical, rendered_guide_pdf};
-pub use output::{
-    Content, Output, PROFILE, PackageInputs, Period, ReportKind, Request, Scope, generate,
-};
-pub use record::{
-    ApprovalRefusal, ENVELOPE, ReportFoldError, ReportId, ReportRecord, ReportStore, StoredReport,
-    approve, generated, is_financial_signatory,
-};
+pub use output::{Content, Output, PROFILE, PackageInputs, Period, Request, generate};
+pub use record::generated;
 pub use snapshot::{Entry, Snapshot};
 
 /// Why an output was not generated.

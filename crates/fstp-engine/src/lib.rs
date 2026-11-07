@@ -357,7 +357,7 @@ pub enum Command {
     /// A report record the shell generated or an approval, decided by
     /// `report::decide_report` over the report store (M5 design section
     /// 4.3, R-RP-03).
-    Report(fstp_report::ReportRecord),
+    Report(fstp_report_core::ReportRecord),
 }
 
 /// A stage 2 revision (R-EV-05, NOTE 1, M4 design section 2.2 J4): the
@@ -468,7 +468,7 @@ pub enum Record {
     /// A contract record, folded into the contract store.
     Contract(fstp_contract_core::ContractRecord),
     /// A report record, folded into the report store.
-    Report(fstp_report::ReportRecord),
+    Report(fstp_report_core::ReportRecord),
 }
 
 /// The identity vault as the engine sees it (design section 3.1).
@@ -877,7 +877,7 @@ impl EnvelopeKind {
             EnvelopeKind::Import => "import",
             EnvelopeKind::Tenant => "onboarding",
             EnvelopeKind::Contract => "contract",
-            EnvelopeKind::Report => fstp_report::ENVELOPE,
+            EnvelopeKind::Report => fstp_report_core::ENVELOPE,
         }
     }
 
@@ -967,7 +967,7 @@ impl FromJson for Record {
             EnvelopeKind::Contract => fstp_contract_core::ContractRecord::from_json(inner)
                 .map(Record::Contract)
                 .map_err(at),
-            EnvelopeKind::Report => fstp_report::ReportRecord::from_json(inner)
+            EnvelopeKind::Report => fstp_report_core::ReportRecord::from_json(inner)
                 .map(Record::Report)
                 .map_err(at),
         }
