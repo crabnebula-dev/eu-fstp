@@ -11,7 +11,9 @@
 use std::time::Duration;
 
 use fstp_cell_core::timeline::OUTBOX_KIND_EMAIL;
-use fstp_dispatch::{LoadError, Outcome, Prepared, Source, Store, Transport, Worker, prepare};
+use fstp_dispatch::{
+    DigestKey, LoadError, Outcome, Prepared, Source, Store, Transport, Worker, prepare,
+};
 use fstp_pgstore::{DeliveryLog, OutboxReader};
 use fstp_rt::future::{Either, race};
 use fstp_rt::{Runtime, ShutdownSignal};
@@ -26,6 +28,22 @@ pub const BATCH: u16 = 64;
 
 /// Most steps of one tick: five steps for each message of a batch.
 const MAX_STEPS: usize = 5 * BATCH as usize;
+
+/// The fixed HKDF label of the delivery body digest key (m4-design
+/// section 15.0 row "Delivery body digest key", ADR-004 "Chains").
+pub const DIGEST_KEY_LABEL: &[u8] = b"fstp delivery body digest v1";
+
+/// The delivery body digest key of the App chain `Lookup` key `lookup`:
+/// `fstp_crypto::kdf::hkdf_sha256` with an empty salt and
+/// [`DIGEST_KEY_LABEL`] (Daniel, 2026-11-07). A new `Lookup` key after an
+/// erasure gives a new digest key, so `ops.delivery.body_digest` is
+/// rotated by erasure. The cell passes the result to `Worker::new` once it
+/// holds its `Lookup` key. The key bytes are never logged.
+pub fn digest_key(lookup: &[u8; 32]) -> Result<DigestKey, fstp_crypto::CryptoError> {
+    let mut out = [0u8; 32];
+    fstp_crypto::kdf::hkdf_sha256(&[], lookup, DIGEST_KEY_LABEL, &mut out)?;
+    Ok(DigestKey::new(out))
+}
 
 /// S2 over `ops.outbox`: opens the stored message and reads its envelope,
 /// event and template version.
@@ -153,6 +171,37 @@ mod tests {
     }
 
     const T: i64 = 1_794_050_000_000_000;
+
+    /// I-27, m4-design section 15.0 row "Delivery body digest key"
+    /// (Daniel, 2026-11-07): one Lookup key gives one body digest key, two
+    /// Lookup keys give two, and the derived key is never the Lookup key.
+    #[test]
+    fn i27_digest_key_is_derived_from_the_lookup_key() {
+        let a = [0x11; 32];
+        let b = [0x22; 32];
+        let ka = digest_key(&a).unwrap();
+        assert_eq!(ka, digest_key(&a).unwrap(), "deterministic");
+        assert_ne!(ka, digest_key(&b).unwrap(), "two Lookup keys");
+        assert_ne!(ka, fstp_dispatch::DigestKey::new(a), "not the Lookup key");
+        assert_eq!(
+            format!("{ka:?}"),
+            "DigestKey(..)",
+            "no key bytes in a print"
+        );
+    }
+
+    /// I-27, I-81, ADR-004 "Keyed-digest key replacement": after an
+    /// erasure replaces the Lookup key, one body digests to a new value,
+    /// so the KeyedDigest class of `ops.delivery.body_digest` is rotated
+    /// by erasure.
+    #[test]
+    fn i81_body_digest_rotates_with_the_lookup_key() {
+        let body = b"Subject: s\r\n\r\nb\r\n";
+        let old = fstp_dispatch::body_digest(&digest_key(&[0x11; 32]).unwrap(), body);
+        let new = fstp_dispatch::body_digest(&digest_key(&[0x22; 32]).unwrap(), body);
+        assert_ne!(old, new);
+        assert_ne!(old, fstp_crypto::hmac_sha256(&[0x11; 32], body));
+    }
 
     /// I-26, M6 design section 5.1: a tick sends each message once, and a
     /// lost reply leaves it COMMITTING until recovery records IN_DOUBT and

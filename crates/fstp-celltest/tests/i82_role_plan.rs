@@ -239,6 +239,48 @@ fn i82_role_plan_matches_design_section_4_1() {
     });
 }
 
+/// I-82, I-26, design section 4.1 (Daniel, 2026-11-07, m4-design section
+/// 15.0 row "ops.delivery role grant"): the reference gives `app` exactly
+/// SELECT and INSERT on `ops.delivery`, as migration 0006 reads, and no
+/// other role anything. The application grant comparison of
+/// `i82_role_plan_matches_design_section_4_1` holds for the plan as is,
+/// and fails once UPDATE on `ops.delivery` joins the plan.
+#[test]
+fn i82_i26_ops_delivery_grant_is_select_insert_for_app_only() {
+    let delivery: Vec<(RoleName, Vec<Privilege>)> = app_grants()
+        .into_iter()
+        .filter(|(_, o, _)| *o == "ops.delivery")
+        .map(|(r, _, p)| (r, p))
+        .collect();
+    assert_eq!(
+        delivery,
+        vec![(RoleName::App, vec![Privilege::Select, Privilege::Insert])],
+        "the reference rows of ops.delivery"
+    );
+    let p = plan(CellId([0x0d; 16])).unwrap();
+    let mut want: BTreeSet<(RoleName, &str, Vec<Privilege>)> = app_grants().into_iter().collect();
+    want.insert(placement_grant(CellDatabase::App));
+    let app = |widen: bool| -> BTreeSet<(RoleName, &str, Vec<Privilege>)> {
+        p.grants
+            .iter()
+            .filter(|g| g.database == CellDatabase::App)
+            .map(|g| {
+                let mut privs = g.privileges.clone();
+                if widen && g.object == "ops.delivery" {
+                    privs.push(Privilege::Update);
+                }
+                (g.role, g.object, privs)
+            })
+            .collect()
+    };
+    assert_eq!(app(false), want, "the plan's application grants");
+    assert_ne!(
+        app(true),
+        want,
+        "UPDATE on ops.delivery must break the comparison"
+    );
+}
+
 /// I-82, design section 4.1: every name a plan renders is the cell's
 /// database or one of its role names, so it carries only the random cell
 /// id and fixed words. Production's DDL identifier renderer quotes exactly
