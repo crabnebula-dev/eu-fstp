@@ -30,7 +30,7 @@ use fstp_vault_core::fact::kind as fk;
 use fstp_vault_core::ticket::fact_kinds_of;
 use fstp_vault_core::{
     AckMsg, Ask, CoreError, Fact, Person, Route, TicketRefusal, VaultEvent, VaultState,
-    VerificationRecord, check_ticket, decode_fact, origin_binding, release_guard,
+    VerificationRecord, check_ticket, decode_fact, origin_binding, origin_fact, release_guard,
 };
 use fstp_vault_proto::{
     TicketClaims, TicketKind, VaultRefusal, VaultRequest, VaultResponse, WireAccount,
@@ -112,13 +112,18 @@ impl From<TicketRefusal> for OriginRefusal {
 pub const fn body_limit(kind: WriteKind) -> usize {
     match kind {
         WriteKind::ProximityListDeclared | WriteKind::ReviewerDeclaration => 64 << 10,
+        WriteKind::HardshipEvidence => 32 << 10,
         WriteKind::DocumentUpload
         | WriteKind::CountryStated
         | WriteKind::AffiliationDeclared
         | WriteKind::AdultAttestation
         | WriteKind::GuardianConsent
         | WriteKind::VerificationRecorded
-        | WriteKind::PartnerStaffDeclared => 1 << 10,
+        | WriteKind::PartnerStaffDeclared
+        | WriteKind::BankDetails
+        | WriteKind::BankVerification
+        | WriteKind::BankDispute
+        | WriteKind::HardshipVerification => 1 << 10,
     }
 }
 
@@ -176,6 +181,9 @@ pub struct Written {
     pub epoch: Option<u64>,
     /// The ticket id the write used.
     pub nonce: [u8; 16],
+    /// The reference of the hardship evidence the write submitted, if it
+    /// did (R-PR-04). The lead copies it into the hardship request.
+    pub evidence: Option<u128>,
 }
 
 /// One HTTP reply of the vault.
@@ -617,11 +625,28 @@ impl Vault {
         if w.body.len() > body_limit(kind) {
             return Err(OriginRefusal::TooLarge);
         }
-        let fact = fact_for(kind, &w.body).ok_or(OriginRefusal::Malformed)?;
+        let fact = fact_for(kind, &w.body, now, c.nonce, self.state.latest())
+            .ok_or(OriginRefusal::Malformed)?;
         let binding = origin_binding(self.state.latest(), &fact).ok_or(OriginRefusal::WrongKind)?;
         if !binding.admits(&c) {
             return Err(OriginRefusal::WrongKind);
         }
+        // I-33: a verification counts for a bank detail version written
+        // before its ticket was issued, so a change made while the
+        // verifier checks never inherits the verification.
+        if let Fact::BankVerified { grant, .. } = &fact
+            && self
+                .state
+                .latest()
+                .bank_of(*grant)
+                .is_none_or(|b| b.written_at >= c.issued_at)
+        {
+            return Err(OriginRefusal::WrongKind);
+        }
+        let evidence = match &fact {
+            Fact::HardshipEvidence { evidence, .. } => Some(evidence.0),
+            _ => None,
+        };
         let events = self.write_journaled(fact, now).map_err(|e| match e {
             CoreError::Refused(VaultRefusal::Malformed) => OriginRefusal::Malformed,
             _ => OriginRefusal::Unavailable,
@@ -633,6 +658,7 @@ impl Vault {
                 VaultEvent::Effective { .. } => None,
             }),
             nonce: c.nonce,
+            evidence,
         })
     }
 
@@ -645,12 +671,21 @@ impl Vault {
     /// first, then the negotiation fact.
     pub fn post_release(&mut self, ticket: &[u8], now: i64) -> Result<Reply, OriginRefusal> {
         let c = self.checked(ticket, Route::Release, now)?;
-        release_guard(&self.state, &c)?;
+        let body = if c.kind == TicketKind::BankView {
+            // M5 design reading 6: the bank details of the grant the
+            // ticket names, for a verifier or a releaser. The cell decides
+            // who gets the ticket, after a step-up (I-78).
+            let grant = c.proposal.ok_or(OriginRefusal::WrongKind)?;
+            bank_document(&self.state, grant)
+        } else {
+            release_guard(&self.state, &c)?;
+            release_document(&self.state, &c)
+        };
         self.use_ticket(c.nonce, now);
         Ok(Reply {
             status: 200,
             headers: origin_headers("text/html; charset=utf-8"),
-            body: release_document(&self.state, &c),
+            body,
         })
     }
 
@@ -661,6 +696,14 @@ impl Vault {
         let known = ORIGIN_ROUTES.iter().any(|r| r.path == path);
         match (method, path) {
             ("POST", "/w") => match self.post_write(body, now) {
+                // The hardship reference is the one value a write returns.
+                Ok(Written {
+                    evidence: Some(e), ..
+                }) => Reply {
+                    status: 200,
+                    headers: origin_headers("application/json"),
+                    body: format!("{{\"evidence\":\"{e}\"}}").into_bytes(),
+                },
                 Ok(_) => Reply {
                     status: 204,
                     headers: origin_headers("text/plain; charset=utf-8"),
@@ -844,10 +887,16 @@ impl Vault {
 /// A verification body (kind 6) is never decoded here, under any ticket.
 /// Its identity and verifier must not come from a browser body (design
 /// section 6.4, Q17, ADR-008), so it is malformed on this route.
-fn fact_for(kind: WriteKind, body: &[u8]) -> Option<Fact> {
+fn fact_for(
+    kind: WriteKind,
+    body: &[u8],
+    now: i64,
+    nonce: [u8; 16],
+    latest: &fstp_vault_core::Facts,
+) -> Option<Fact> {
     let own = fact_kinds_of(kind)
         .iter()
-        .find_map(|code| decode_fact(*code, body).ok());
+        .find_map(|code| origin_fact(*code, body, now, nonce, latest).ok());
     if own.is_some() {
         return own;
     }
@@ -905,6 +954,34 @@ fn release_document(s: &VaultState, c: &TicketClaims) -> Vec<u8> {
     }
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Identity release</title></head><body><h1>Identity release</h1><table>{rows}</table></body></html>"
+    )
+    .into_bytes()
+}
+
+/// The bank details of `grant`, rendered server-side with no script (M5
+/// design reading 6, I-86). It shows the latest version, when it was
+/// written, whether it is verified and whether a dispute is open.
+fn bank_document(s: &VaultState, grant: WireProposal) -> Vec<u8> {
+    let facts = s.latest();
+    let mut rows = String::new();
+    rows.push_str(&row("Grant", &grant.0.to_string()));
+    match facts.bank_of(grant) {
+        Some(b) => {
+            rows.push_str(&row("Account holder", &b.holder));
+            rows.push_str(&row("IBAN", &b.iban));
+            rows.push_str(&row("Version", &b.version.to_string()));
+            rows.push_str(&row(
+                "Written at (UTC microseconds)",
+                &b.written_at.to_string(),
+            ));
+            rows.push_str(&row("Verified", if b.verified { "yes" } else { "no" }));
+        }
+        None => rows.push_str(&row("Bank details", "none entered")),
+    }
+    let disputed = facts.bank_disputed(grant);
+    rows.push_str(&row("Dispute open", if disputed { "yes" } else { "no" }));
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Bank details</title></head><body><h1>Bank details</h1><table>{rows}</table></body></html>"
     )
     .into_bytes()
 }

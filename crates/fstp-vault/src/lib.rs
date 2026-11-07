@@ -44,6 +44,7 @@ pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written};
 ///    function after the migration commits. A test ties the file to the
 ///    two constants.
 /// 3. `vault`: the schemas, tables and triggers of design section 4.3.
+/// 4. `bank`: the bank and hardship fact kinds of M5 (I-33, R-PR-04).
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(1, "meta", include_str!("../migrations/vault/0001_meta.sql")),
     fstp_migrate::Migration::new(
@@ -56,6 +57,7 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         "vault",
         include_str!("../migrations/vault/0003_vault.sql"),
     ),
+    fstp_migrate::Migration::new(4, "bank", include_str!("../migrations/vault/0004_bank.sql")),
 ];
 
 /// Why a vault operation failed. No variant holds tenant data (R-NF-02).

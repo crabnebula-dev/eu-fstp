@@ -4,7 +4,7 @@
 //! Design checks: no panic. For every input:
 //!
 //! - `decode_fact_body` never panics and is deterministic.
-//! - An accepted body has a kind of W1c's proposal (1 to 13) and
+//! - An accepted body has a kind of W1c's proposal or M5 (1 to 18) and
 //!   re-encodes as `{"fields":<fields>,"kind":<kind>}` to the input byte
 //!   for byte.
 //!
@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
         "decode is not deterministic"
     );
     if let Ok(b) = got {
-        assert!((1..=13).contains(&b.kind), "unknown kind {}", b.kind);
+        assert!((1..=18).contains(&b.kind), "unknown kind {}", b.kind);
         let again = format!(
             "{{\"fields\":{},\"kind\":{}}}",
             String::from_utf8_lossy(&b.fields),

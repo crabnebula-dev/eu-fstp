@@ -17,7 +17,9 @@
 //! - A query is `{"args":<canonical args>,"kind":<code>}` ([`query`]).
 //!
 //! Every answer is one bit, except `ChangedSince`, which lists account
-//! ids and nothing else (NOTE 5). A decoder cannot see which query an
+//! ids and nothing else (NOTE 5). The two M5 queries, `BankReleasable`
+//! and `HardshipEvidenceVerified` (codes 11 and 12, M5 design 12.1),
+//! answer one bit and name no account. A decoder cannot see which query an
 //! answer belongs to, so [`decode_response`] enforces what the bytes show:
 //! a set is ascending, and the bit says whether it is non-empty.
 //! [`answers_for`] then pairs the answers with their queries and refuses a
@@ -63,6 +65,11 @@ pub struct WireClass(pub u128);
 /// A P-38 proximity list, by id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WireList(pub u128);
+
+/// Hardship evidence held in the vault, by the opaque reference the cell
+/// holds (R-PR-04).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WireEvidence(pub u128);
 
 /// A query of the oracle, encoded.
 #[derive(Clone, Debug, PartialEq, Eq)]

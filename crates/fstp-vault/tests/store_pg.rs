@@ -486,3 +486,67 @@ fn i20_identities_survive_a_restart() {
         l
     });
 }
+
+/// I-33, I-86, M5 design 4.3: bank details persist sealed (migration 4
+/// takes kinds 14 to 18), never in plain text, and reload to the same
+/// state, so a restart keeps the hold and the verification.
+#[test]
+fn i33_i86_bank_details_persist_sealed_and_reload() {
+    let mut db = fresh();
+    block_on(store::migrate(&mut db)).unwrap();
+    let key = Signer::new(1);
+    let mut v = Vault::new(CELL, &[key.public()]).unwrap();
+    let iban = "DE89370400440532013000";
+    let t = |kind: &str, account: u128, nonce: u8| RTicket {
+        kind: kind.to_owned(),
+        cell: CELL,
+        account,
+        proposal: Some(77),
+        scope: String::new(),
+        issued_at: ISSUED,
+        expires_at: ISSUED + 300_000_000,
+        nonce: [nonce; 16],
+    };
+    let bank = format!(
+        "{{\"account\":\"{APPLICANT}\",\"grant\":\"77\",\"holder\":\"Synthetic Holder\",\"iban\":\"{iban}\"}}"
+    );
+    // The details are written before the verifier's ticket is issued, as
+    // the origin requires (I-33).
+    let w = v
+        .post_write(
+            &origin_write(&key.sign(&t("write:bank_details", APPLICANT, 2)), &bank),
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(w.epoch, Some(1));
+    persist(&mut db, &mut v).unwrap();
+    let acked = internal(
+        &mut v,
+        &VaultRequest::Ack {
+            epoch: 1,
+            ledger_seq: 1,
+            link: [1; 32],
+        },
+    );
+    assert_eq!(acked, VaultResponse::Acked);
+    persist(&mut db, &mut v).unwrap();
+    let mut verify = t("write:bank_verification", 9, 3);
+    verify.issued_at = NOW + 1;
+    verify.expires_at = NOW + 200_000_000;
+    let body = "{\"checks\":[\"iban_matches\"],\"grant\":\"77\",\"method\":\"bank_letter\",\"verifier\":\"9\"}";
+    v.post_write(&origin_write(&key.sign(&verify), body), NOW + 2)
+        .unwrap();
+    persist(&mut db, &mut v).unwrap();
+
+    let rows = block_on(db.query("SELECT body FROM vault.fact", &[])).unwrap();
+    assert_eq!(rows.len(), 2);
+    for r in &rows {
+        let b: Vec<u8> = r.get(0).unwrap();
+        assert!(
+            !b.windows(iban.len()).any(|w| w == iban.as_bytes()),
+            "I-86: a stored fact body holds the IBAN in plain text"
+        );
+    }
+    let loaded = reload(&mut db, &key).unwrap();
+    assert_eq!(loaded.state(), v.state());
+}

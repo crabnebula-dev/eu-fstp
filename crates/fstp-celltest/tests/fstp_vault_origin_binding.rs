@@ -146,7 +146,14 @@ fn lawful(
         )),
         RefWrite::VerificationRecorded { .. }
         | RefWrite::ProximityListDeclared { .. }
-        | RefWrite::Relationship { .. } => None,
+        | RefWrite::Relationship { .. }
+        // The M5 bank and hardship writes are never generated here.
+        // `i33_bank_reference` checks their bindings against the core.
+        | RefWrite::BankDetails { .. }
+        | RefWrite::BankVerified { .. }
+        | RefWrite::BankDispute { .. }
+        | RefWrite::HardshipEvidence { .. }
+        | RefWrite::HardshipVerified { .. } => None,
     }
 }
 

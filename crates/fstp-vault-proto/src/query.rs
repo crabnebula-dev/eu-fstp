@@ -1,7 +1,7 @@
 //! The typed queries of the vault (design section 6.2, `overview.md`
 //! query table).
 //!
-//! [`Query`] mirrors the eleven `fstp_domain::oracle::Query` kinds. The
+//! [`Query`] mirrors the thirteen `fstp_domain::oracle::Query` kinds. The
 //! kind code of a [`WireQuery`] is the index of its kind in
 //! `fstp_domain::oracle::QueryKind::ALL`, as lane W1c proposed. The
 //! arguments are canonical JSON with W1c's member names. `fstp-cell`
@@ -14,7 +14,10 @@ use fstp_json::Value;
 use fstp_money::Amount;
 
 use crate::json::{self, limits, parse_canonical};
-use crate::{ProtoError, WireAccount, WireClass, WireList, WireProgramme, WireProposal, WireQuery};
+use crate::{
+    ProtoError, WireAccount, WireClass, WireEvidence, WireList, WireProgramme, WireProposal,
+    WireQuery,
+};
 
 /// The kind of a query. The discriminant is its wire code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -41,11 +44,15 @@ pub enum QueryKind {
     MeetsTieBreakCountry = 9,
     /// `ChangedSince`.
     ChangedSince = 10,
+    /// `BankReleasable` (I-33, M5 design 12.1).
+    BankReleasable = 11,
+    /// `HardshipEvidenceVerified` (R-PR-04, M5 design 12.1).
+    HardshipEvidenceVerified = 12,
 }
 
 impl QueryKind {
     /// Every kind, in code order.
-    pub const ALL: [QueryKind; 11] = [
+    pub const ALL: [QueryKind; 13] = [
         QueryKind::IsVerified,
         QueryKind::SameIdentityAsAny,
         QueryKind::HasConflict,
@@ -57,6 +64,8 @@ impl QueryKind {
         QueryKind::DeclaresAffiliationOnList,
         QueryKind::MeetsTieBreakCountry,
         QueryKind::ChangedSince,
+        QueryKind::BankReleasable,
+        QueryKind::HardshipEvidenceVerified,
     ];
 
     /// The wire code.
@@ -158,6 +167,25 @@ pub enum Query {
         /// The epoch.
         epoch: u64,
     },
+    /// The latest bank detail write of the grant, the first included, has
+    /// an effective verification, `hold` days (P-36) have passed since it
+    /// at `at`, and no dispute is open (I-33).
+    BankReleasable {
+        /// The grant.
+        grant: WireProposal,
+        /// The instant of the release, in UTC microseconds.
+        at: i64,
+        /// The P-36 hold, in days.
+        hold: u16,
+    },
+    /// The evidence was submitted for the grant and verified by another
+    /// account (R-PR-04).
+    HardshipEvidenceVerified {
+        /// The grant.
+        grant: WireProposal,
+        /// The evidence.
+        evidence: WireEvidence,
+    },
 }
 
 const ARGS: &str = "query arguments";
@@ -177,6 +205,8 @@ impl Query {
             Query::DeclaresAffiliationOnList { .. } => QueryKind::DeclaresAffiliationOnList,
             Query::MeetsTieBreakCountry { .. } => QueryKind::MeetsTieBreakCountry,
             Query::ChangedSince { .. } => QueryKind::ChangedSince,
+            Query::BankReleasable { .. } => QueryKind::BankReleasable,
+            Query::HardshipEvidenceVerified { .. } => QueryKind::HardshipEvidenceVerified,
         }
     }
 
@@ -239,6 +269,15 @@ impl Query {
                 ("programme", id_json(programme.0)),
             ]),
             Query::ChangedSince { epoch } => obj(vec![("epoch", uint_json(*epoch, ARGS)?)]),
+            Query::BankReleasable { grant, at, hold } => obj(vec![
+                ("at", int_json(*at, ARGS)?),
+                ("grant", id_json(grant.0)),
+                ("hold", uint_json(u64::from(*hold), ARGS)?),
+            ]),
+            Query::HardshipEvidenceVerified { grant, evidence } => obj(vec![
+                ("evidence", id_json(evidence.0)),
+                ("grant", id_json(grant.0)),
+            ]),
         }
     }
 
@@ -261,7 +300,7 @@ impl Query {
 ///
 /// [`ProtoError::Shape`] when the members are not those of `kind`.
 pub fn query_from_value(kind: QueryKind, v: &Value) -> Result<Query, ProtoError> {
-    use json::{amount, amount_map, id, id_set, int, object, uint};
+    use json::{amount, amount_map, id, id_set, int, object, small, uint};
     let account = WireAccount;
     Ok(match kind {
         QueryKind::IsVerified => {
@@ -339,6 +378,21 @@ pub fn query_from_value(kind: QueryKind, v: &Value) -> Result<Query, ProtoError>
             let o = object(v, &["epoch"], ARGS)?;
             Query::ChangedSince {
                 epoch: uint(o, "epoch", ARGS)?,
+            }
+        }
+        QueryKind::BankReleasable => {
+            let o = object(v, &["at", "grant", "hold"], ARGS)?;
+            Query::BankReleasable {
+                grant: WireProposal(id(o, "grant", ARGS)?),
+                at: int(o, "at", ARGS)?,
+                hold: small(o, "hold", ARGS)?,
+            }
+        }
+        QueryKind::HardshipEvidenceVerified => {
+            let o = object(v, &["evidence", "grant"], ARGS)?;
+            Query::HardshipEvidenceVerified {
+                grant: WireProposal(id(o, "grant", ARGS)?),
+                evidence: WireEvidence(id(o, "evidence", ARGS)?),
             }
         }
     })

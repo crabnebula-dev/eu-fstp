@@ -31,7 +31,9 @@ use std::collections::BTreeSet;
 
 use fstp_json::Value;
 use fstp_vault_proto::json::{self, limits, parse_canonical};
-use fstp_vault_proto::{ProtoError, WireAccount, WireClass, WireList, WireProgramme, WireProposal};
+use fstp_vault_proto::{
+    ProtoError, WireAccount, WireClass, WireEvidence, WireList, WireProgramme, WireProposal,
+};
 
 /// A person: the vault's identity id, which `fstp-vault` resolves from
 /// the identity match key before the write (design section 6.4, Q17).
@@ -175,6 +177,127 @@ fn checks_of(v: &Value) -> Result<BTreeSet<Check>, ProtoError> {
     Ok(out)
 }
 
+/// How a bank detail verification was carried out (I-33, R-PR-05).
+///
+/// Reading, reported to Daniel: no source lists the methods, so this
+/// closed set is interim. The record holds no document number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BankMethod {
+    /// A letter from the bank confirming the account holder.
+    BankLetter,
+    /// A recent bank statement.
+    BankStatement,
+}
+
+impl BankMethod {
+    /// Every method, in label order.
+    pub const ALL: [BankMethod; 2] = [BankMethod::BankLetter, BankMethod::BankStatement];
+
+    /// The wire spelling.
+    pub const fn label(self) -> &'static str {
+        match self {
+            BankMethod::BankLetter => "bank_letter",
+            BankMethod::BankStatement => "bank_statement",
+        }
+    }
+}
+
+/// One check of a bank detail verification. Interim closed set, as for
+/// [`BankMethod`]. Labels sort in the order of the variants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BankCheck {
+    /// The holder on the document matches the grantee.
+    HolderMatches,
+    /// The IBAN on the document matches the entered one.
+    IbanMatches,
+}
+
+impl BankCheck {
+    /// Every check, in label order.
+    pub const ALL: [BankCheck; 2] = [BankCheck::HolderMatches, BankCheck::IbanMatches];
+
+    /// The wire spelling.
+    pub const fn label(self) -> &'static str {
+        match self {
+            BankCheck::HolderMatches => "holder_matches",
+            BankCheck::IbanMatches => "iban_matches",
+        }
+    }
+}
+
+/// The longest account holder name, in characters. Interim, no P- id.
+pub const MAX_HOLDER_CHARS: usize = 140;
+
+/// The longest hardship statement, in characters. Interim, no P- id.
+pub const MAX_STATEMENT_CHARS: usize = 4000;
+
+/// Whether `s` is a holder name: 1 to [`MAX_HOLDER_CHARS`] characters, no
+/// control character, and no leading or trailing space.
+pub fn holder_ok(s: &str) -> bool {
+    let n = s.chars().count();
+    (1..=MAX_HOLDER_CHARS).contains(&n) && s.trim() == s && !s.chars().any(char::is_control)
+}
+
+/// Whether `s` is a hardship statement: 1 to [`MAX_STATEMENT_CHARS`]
+/// characters, with no control character but a line feed.
+pub fn statement_ok(s: &str) -> bool {
+    let n = s.chars().count();
+    (1..=MAX_STATEMENT_CHARS).contains(&n)
+        && !s.trim().is_empty()
+        && !s.chars().any(|c| c.is_control() && c != '\n')
+}
+
+/// Whether `s` is an IBAN in its electronic form (ISO 13616): two capital
+/// letters, two check digits, then 11 to 30 capitals or digits, 15 to 34
+/// characters in all, whose MOD 97-10 remainder is 1. Fuzzed through the
+/// fact body decoders. The country lengths are not checked (interim).
+pub fn iban_ok(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() < 15 || b.len() > 34 {
+        return false;
+    }
+    let (head, rest) = b.split_at(4);
+    let shape = matches!(head, [a, c, d, e] if a.is_ascii_uppercase() && c.is_ascii_uppercase() && d.is_ascii_digit() && e.is_ascii_digit())
+        && rest
+            .iter()
+            .all(|x| x.is_ascii_uppercase() || x.is_ascii_digit());
+    if !shape {
+        return false;
+    }
+    let mut rem: u32 = 0;
+    for x in rest.iter().chain(head) {
+        // A digit is its value, a capital A to Z is 10 to 35. Each step
+        // stays below 97 * 100 + 35, far inside u32.
+        let v = u32::from(x.wrapping_sub(if x.is_ascii_digit() { b'0' } else { 55 }));
+        let scale = if v >= 10 { 100 } else { 10 };
+        rem = rem.wrapping_mul(scale).wrapping_add(v).wrapping_rem(97);
+    }
+    rem == 1
+}
+
+fn labels_of<T: Copy + Ord>(
+    v: &Value,
+    all: &[T],
+    label: fn(T) -> &'static str,
+) -> Result<BTreeSet<T>, ProtoError> {
+    let a = v.as_array().ok_or(ProtoError::Shape(BODY))?;
+    let mut out = BTreeSet::new();
+    let mut last: Option<T> = None;
+    for item in a.iter() {
+        let s = item.as_str().ok_or(ProtoError::Shape(BODY))?;
+        let c = label_of(all, label, s)?;
+        if last.is_some_and(|l| l >= c) {
+            return Err(ProtoError::Shape(BODY));
+        }
+        last = Some(c);
+        out.insert(c);
+    }
+    if out.is_empty() {
+        return Err(ProtoError::Shape(BODY));
+    }
+    Ok(out)
+}
+
 /// The fact kind codes.
 pub mod kind {
     /// `CountryStated` (P-17, NOTE 6).
@@ -203,6 +326,16 @@ pub mod kind {
     pub const ATTESTATION_WITHDRAWN: u16 = 12;
     /// An ended affiliation.
     pub const AFFILIATION_ENDED: u16 = 13;
+    /// `BankDetails`: the payee bank details of a grant (I-33, I-86).
+    pub const BANK_DETAILS: u16 = 14;
+    /// `BankVerified`: a verification of one bank detail version.
+    pub const BANK_VERIFIED: u16 = 15;
+    /// `BankDispute`: a dispute opened or resolved.
+    pub const BANK_DISPUTE: u16 = 16;
+    /// `HardshipEvidence` (R-PR-04).
+    pub const HARDSHIP_EVIDENCE: u16 = 17;
+    /// `HardshipVerified` (R-PR-04).
+    pub const HARDSHIP_VERIFIED: u16 = 18;
 }
 
 /// One fact write, typed. A withdrawal is a write too.
@@ -296,9 +429,132 @@ pub enum Fact {
         /// The organisation.
         org: Org,
     },
+    /// A new version of the payee bank details of a grant. Every write,
+    /// the first included, starts the I-33 hold. The details never leave
+    /// the vault origin (I-86).
+    BankDetails {
+        /// The grant.
+        grant: WireProposal,
+        /// The writer, the grant's lead.
+        account: WireAccount,
+        /// When the vault took the write, in UTC microseconds. The vault
+        /// sets it, never the browser.
+        at: i64,
+        /// The account holder name.
+        holder: String,
+        /// The IBAN, electronic form.
+        iban: String,
+    },
+    /// A verification of one bank detail version (I-33, R-PR-05).
+    BankVerified {
+        /// The grant.
+        grant: WireProposal,
+        /// The version verified: the count of bank writes of the grant.
+        version: u64,
+        /// The verifier, never the writer.
+        verifier: WireAccount,
+        /// When the vault took it, in UTC microseconds.
+        at: i64,
+        /// The method.
+        method: BankMethod,
+        /// The checks performed. At least one.
+        checks: BTreeSet<BankCheck>,
+    },
+    /// A dispute of the bank details of a grant, opened or resolved.
+    BankDispute {
+        /// The grant.
+        grant: WireProposal,
+        /// The lead who opens it, or the verifier who resolves it.
+        account: WireAccount,
+        /// Whether it opens (true) or resolves (false) the dispute.
+        open: bool,
+    },
+    /// Hardship evidence for a grant (R-PR-04).
+    HardshipEvidence {
+        /// The grant.
+        grant: WireProposal,
+        /// The opaque reference. The vault sets it from the ticket id.
+        evidence: WireEvidence,
+        /// The submitter.
+        account: WireAccount,
+        /// The statement of hardship.
+        statement: String,
+    },
+    /// A verification of hardship evidence (R-PR-04).
+    HardshipVerified {
+        /// The grant.
+        grant: WireProposal,
+        /// The evidence.
+        evidence: WireEvidence,
+        /// The verifier, never the submitter.
+        verifier: WireAccount,
+        /// When the vault took it, in UTC microseconds.
+        at: i64,
+    },
 }
 
 const BODY: &str = "fact body";
+
+/// The grant a bank or hardship fact is about, if it is one.
+pub fn grant_of(f: &Fact) -> Option<WireProposal> {
+    match f {
+        Fact::BankDetails { grant, .. }
+        | Fact::BankVerified { grant, .. }
+        | Fact::BankDispute { grant, .. }
+        | Fact::HardshipEvidence { grant, .. }
+        | Fact::HardshipVerified { grant, .. } => Some(*grant),
+        _ => None,
+    }
+}
+
+/// The fact an origin write of kind `code` carries in `body`, received at
+/// `now` under the ticket id `ticket_id`.
+///
+/// The vault sets the members the browser must not choose: `at` of a bank
+/// write or verification and of a hardship verification, `version` of a
+/// bank verification, which is the latest version in `latest`, and
+/// `evidence` of a hardship submission, which is the ticket id. A body that names
+/// one of them itself is refused, so no browser back-dates a write.
+/// Every other kind decodes as [`decode_fact`] does.
+///
+/// # Errors
+///
+/// As [`decode_fact`].
+pub fn origin_fact(
+    code: u16,
+    body: &[u8],
+    now: i64,
+    ticket_id: [u8; 16],
+    latest: &crate::eval::Facts,
+) -> Result<Fact, ProtoError> {
+    let at = || json::int_json(now, BODY);
+    let mut v = parse_canonical(body, &limits())?;
+    let Value::Object(o) = &mut v else {
+        return Err(ProtoError::Shape(BODY));
+    };
+    let stamped: Vec<(&str, Value)> = match code {
+        kind::BANK_DETAILS | kind::HARDSHIP_VERIFIED => vec![("at", at()?)],
+        kind::BANK_VERIFIED => {
+            let grant = WireProposal(json::id(o, "grant", BODY)?);
+            let version = latest
+                .bank_of(grant)
+                .map(|b| b.version)
+                .ok_or(ProtoError::Shape(BODY))?;
+            vec![("at", at()?), ("version", json::uint_json(version, BODY)?)]
+        }
+        kind::HARDSHIP_EVIDENCE => {
+            vec![("evidence", json::id_json(u128::from_be_bytes(ticket_id)))]
+        }
+        _ => return decode_fact(code, body),
+    };
+    for (name, value) in stamped {
+        if o.get(name).is_some() {
+            return Err(ProtoError::Shape(BODY));
+        }
+        o.insert(name, value);
+    }
+    fact_from_value(code, &v)
+}
 
 impl Fact {
     /// The kind code.
@@ -322,6 +578,11 @@ impl Fact {
             Fact::ConsentWithdrawn { .. } => kind::CONSENT_WITHDRAWN,
             Fact::AttestationWithdrawn { .. } => kind::ATTESTATION_WITHDRAWN,
             Fact::AffiliationEnded { .. } => kind::AFFILIATION_ENDED,
+            Fact::BankDetails { .. } => kind::BANK_DETAILS,
+            Fact::BankVerified { .. } => kind::BANK_VERIFIED,
+            Fact::BankDispute { .. } => kind::BANK_DISPUTE,
+            Fact::HardshipEvidence { .. } => kind::HARDSHIP_EVIDENCE,
+            Fact::HardshipVerified { .. } => kind::HARDSHIP_VERIFIED,
         }
     }
 
@@ -335,7 +596,13 @@ impl Fact {
             | Fact::AdultAttestation { account, .. }
             | Fact::VerificationRecorded { account, .. }
             | Fact::AttestationWithdrawn { account }
-            | Fact::AffiliationEnded { account, .. } => Some(*account),
+            | Fact::AffiliationEnded { account, .. }
+            | Fact::BankDetails { account, .. }
+            | Fact::BankDispute { account, .. }
+            | Fact::HardshipEvidence { account, .. } => Some(*account),
+            Fact::BankVerified { verifier, .. } | Fact::HardshipVerified { verifier, .. } => {
+                Some(*verifier)
+            }
             Fact::GuardianConsent { guardian, .. } => Some(*guardian),
             Fact::ReviewerDeclaration { reviewer, .. } => Some(*reviewer),
             Fact::Relationship { a, .. } => Some(*a),
@@ -432,6 +699,84 @@ impl Fact {
             Fact::AffiliationEnded { account, org } => obj(vec![
                 ("account", id_json(account.0)),
                 ("org", id_json(org.0)),
+            ]),
+            Fact::BankDetails {
+                grant,
+                account,
+                at,
+                holder,
+                iban,
+            } => {
+                if !holder_ok(holder) || !iban_ok(iban) {
+                    return Err(ProtoError::Shape(BODY));
+                }
+                obj(vec![
+                    ("account", id_json(account.0)),
+                    ("at", int_json(*at, BODY)?),
+                    ("grant", id_json(grant.0)),
+                    ("holder", Value::String(holder.clone())),
+                    ("iban", Value::String(iban.clone())),
+                ])
+            }
+            Fact::BankVerified {
+                grant,
+                version,
+                verifier,
+                at,
+                method,
+                checks,
+            } => {
+                if checks.is_empty() {
+                    return Err(ProtoError::Shape(BODY));
+                }
+                let checks = checks
+                    .iter()
+                    .map(|c| Value::String(c.label().to_owned()))
+                    .collect();
+                obj(vec![
+                    ("at", int_json(*at, BODY)?),
+                    ("checks", Value::Array(checks)),
+                    ("grant", id_json(grant.0)),
+                    ("method", Value::String(method.label().to_owned())),
+                    ("verifier", id_json(verifier.0)),
+                    ("version", uint_json(*version, BODY)?),
+                ])
+            }
+            Fact::BankDispute {
+                grant,
+                account,
+                open,
+            } => obj(vec![
+                ("account", id_json(account.0)),
+                ("grant", id_json(grant.0)),
+                ("open", Value::Bool(*open)),
+            ]),
+            Fact::HardshipEvidence {
+                grant,
+                evidence,
+                account,
+                statement,
+            } => {
+                if !statement_ok(statement) {
+                    return Err(ProtoError::Shape(BODY));
+                }
+                obj(vec![
+                    ("account", id_json(account.0)),
+                    ("evidence", id_json(evidence.0)),
+                    ("grant", id_json(grant.0)),
+                    ("statement", Value::String(statement.clone())),
+                ])
+            }
+            Fact::HardshipVerified {
+                grant,
+                evidence,
+                verifier,
+                at,
+            } => obj(vec![
+                ("at", int_json(*at, BODY)?),
+                ("evidence", id_json(evidence.0)),
+                ("grant", id_json(grant.0)),
+                ("verifier", id_json(verifier.0)),
             ]),
         }
     }
@@ -566,6 +911,74 @@ pub fn fact_from_value(code: u16, v: &Value) -> Result<Fact, ProtoError> {
             Fact::AffiliationEnded {
                 account: account(o, "account")?,
                 org: Org(id(o, "org", BODY)?),
+            }
+        }
+        kind::BANK_DETAILS => {
+            let o = object(v, &["account", "at", "grant", "holder", "iban"], BODY)?;
+            let holder = json::string(o, "holder", BODY)?;
+            let iban = json::string(o, "iban", BODY)?;
+            if !holder_ok(holder) || !iban_ok(iban) {
+                return Err(ProtoError::Shape(BODY));
+            }
+            Fact::BankDetails {
+                grant: WireProposal(id(o, "grant", BODY)?),
+                account: account(o, "account")?,
+                at: int(o, "at", BODY)?,
+                holder: holder.to_owned(),
+                iban: iban.to_owned(),
+            }
+        }
+        kind::BANK_VERIFIED => {
+            let o = object(
+                v,
+                &["at", "checks", "grant", "method", "verifier", "version"],
+                BODY,
+            )?;
+            Fact::BankVerified {
+                grant: WireProposal(id(o, "grant", BODY)?),
+                version: json::uint(o, "version", BODY)?,
+                verifier: account(o, "verifier")?,
+                at: int(o, "at", BODY)?,
+                method: label_of(
+                    &BankMethod::ALL,
+                    BankMethod::label,
+                    json::string(o, "method", BODY)?,
+                )?,
+                checks: labels_of(
+                    json::member(o, "checks", BODY)?,
+                    &BankCheck::ALL,
+                    BankCheck::label,
+                )?,
+            }
+        }
+        kind::BANK_DISPUTE => {
+            let o = object(v, &["account", "grant", "open"], BODY)?;
+            Fact::BankDispute {
+                grant: WireProposal(id(o, "grant", BODY)?),
+                account: account(o, "account")?,
+                open: json::boolean(o, "open", BODY)?,
+            }
+        }
+        kind::HARDSHIP_EVIDENCE => {
+            let o = object(v, &["account", "evidence", "grant", "statement"], BODY)?;
+            let statement = json::string(o, "statement", BODY)?;
+            if !statement_ok(statement) {
+                return Err(ProtoError::Shape(BODY));
+            }
+            Fact::HardshipEvidence {
+                grant: WireProposal(id(o, "grant", BODY)?),
+                evidence: WireEvidence(id(o, "evidence", BODY)?),
+                account: account(o, "account")?,
+                statement: statement.to_owned(),
+            }
+        }
+        kind::HARDSHIP_VERIFIED => {
+            let o = object(v, &["at", "evidence", "grant", "verifier"], BODY)?;
+            Fact::HardshipVerified {
+                grant: WireProposal(id(o, "grant", BODY)?),
+                evidence: WireEvidence(id(o, "evidence", BODY)?),
+                verifier: account(o, "verifier")?,
+                at: int(o, "at", BODY)?,
             }
         }
         _ => return Err(ProtoError::Shape("fact kind")),

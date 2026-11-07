@@ -32,9 +32,10 @@ use fstp_vault_proto::{
     decode_query,
 };
 
-pub use eval::Facts;
+pub use eval::{BankRecord, Facts, HardshipRecord};
 pub use fact::{
-    Check, DocumentType, Fact, Org, Person, VerificationMethod, VerificationRecord, decode_fact,
+    BankCheck, BankMethod, Check, DocumentType, Fact, Org, Person, VerificationMethod,
+    VerificationRecord, decode_fact, origin_fact,
 };
 pub use ticket::{
     MAX_PINNED_KEYS, OriginBinding, Route, TicketRefusal, check_ticket, origin_binding,

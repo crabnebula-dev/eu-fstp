@@ -12,9 +12,41 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_money::Amount;
-use fstp_vault_proto::{Query, WireAccount, WireClass, WireList, WireProgramme, WireProposal};
+use fstp_vault_proto::{
+    Query, WireAccount, WireClass, WireEvidence, WireList, WireProgramme, WireProposal,
+};
 
-use crate::fact::{Fact, Org, Person};
+use crate::fact::{Fact, Org, Person, grant_of};
+
+/// One day in microseconds, for the P-36 hold.
+const DAY_US: i64 = 86_400_000_000;
+
+/// The bank details of a grant in one view: the latest write and its
+/// verification (I-33). Only the vault origin shows the holder and IBAN.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BankRecord {
+    /// The count of writes so far: the version of the latest one.
+    pub version: u64,
+    /// The writer of the latest version.
+    pub writer: WireAccount,
+    /// When the latest version was written, in UTC microseconds.
+    pub written_at: i64,
+    /// Whether a verification of the latest version is in the view.
+    pub verified: bool,
+    /// The account holder name.
+    pub holder: String,
+    /// The IBAN.
+    pub iban: String,
+}
+
+/// One hardship evidence record in a view (R-PR-04).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HardshipRecord {
+    /// The submitter.
+    pub submitter: WireAccount,
+    /// Whether another account verified it.
+    pub verified: bool,
+}
 
 /// The facts of one view.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -27,6 +59,9 @@ pub struct Facts {
     declarations: BTreeMap<WireAccount, (Option<Org>, BTreeSet<Person>)>,
     relationships: BTreeSet<(WireAccount, WireAccount)>,
     country: BTreeMap<(WireAccount, WireProgramme), u16>,
+    bank: BTreeMap<WireProposal, BankRecord>,
+    disputed: BTreeSet<WireProposal>,
+    hardship: BTreeMap<(WireProposal, WireEvidence), HardshipRecord>,
 }
 
 /// The two accounts of a relationship, smaller first.
@@ -90,6 +125,64 @@ impl Facts {
             } => {
                 self.country.insert((*account, *programme), *country);
             }
+            Fact::BankDetails {
+                grant,
+                account,
+                at,
+                holder,
+                iban,
+            } => {
+                let version = self
+                    .bank
+                    .get(grant)
+                    .map_or(1, |b| b.version.saturating_add(1));
+                self.bank.insert(
+                    *grant,
+                    BankRecord {
+                        version,
+                        writer: *account,
+                        written_at: *at,
+                        verified: false,
+                        holder: holder.clone(),
+                        iban: iban.clone(),
+                    },
+                );
+            }
+            Fact::BankVerified { grant, version, .. } => {
+                if let Some(b) = self.bank.get_mut(grant)
+                    && b.version == *version
+                {
+                    b.verified = true;
+                }
+            }
+            Fact::BankDispute { grant, open, .. } => {
+                if *open {
+                    self.disputed.insert(*grant);
+                } else {
+                    self.disputed.remove(grant);
+                }
+            }
+            Fact::HardshipEvidence {
+                grant,
+                evidence,
+                account,
+                ..
+            } => {
+                self.hardship.insert(
+                    (*grant, *evidence),
+                    HardshipRecord {
+                        submitter: *account,
+                        verified: false,
+                    },
+                );
+            }
+            Fact::HardshipVerified {
+                grant, evidence, ..
+            } => {
+                if let Some(h) = self.hardship.get_mut(&(*grant, *evidence)) {
+                    h.verified = true;
+                }
+            }
         }
     }
 
@@ -98,6 +191,40 @@ impl Facts {
         let mut out = self.clone();
         out.apply(f);
         out
+    }
+
+    /// The bank details of `grant` in this view, if any write exists.
+    pub fn bank_of(&self, grant: WireProposal) -> Option<&BankRecord> {
+        self.bank.get(&grant)
+    }
+
+    /// Whether a dispute of the bank details of `grant` is open in this view.
+    pub fn bank_disputed(&self, grant: WireProposal) -> bool {
+        self.disputed.contains(&grant)
+    }
+
+    /// The hardship evidence `evidence` of `grant` in this view, if any.
+    pub fn hardship_of(
+        &self,
+        grant: WireProposal,
+        evidence: WireEvidence,
+    ) -> Option<&HardshipRecord> {
+        self.hardship.get(&(grant, evidence))
+    }
+
+    /// Whether a payment of `grant` may be released at `at` under a hold of
+    /// `hold` days (I-33): the latest write, the first included, is
+    /// verified, `hold` days have passed since it, and no dispute is open.
+    /// An overflow answers no.
+    pub fn bank_releasable(&self, grant: WireProposal, at: i64, hold: u16) -> bool {
+        !self.disputed.contains(&grant)
+            && self.bank.get(&grant).is_some_and(|b| {
+                b.verified
+                    && i64::from(hold)
+                        .checked_mul(DAY_US)
+                        .and_then(|h| b.written_at.checked_add(h))
+                        .is_some_and(|end| end <= at)
+            })
     }
 
     /// The person of `account`, once a verification of it is in the view.
@@ -244,6 +371,13 @@ impl Facts {
             | Fact::AffiliationDeclared { account, .. }
             | Fact::AffiliationEnded { account, .. }
             | Fact::CountryStated { account, .. } => both(&BTreeSet::from([*account])),
+            // Bank and hardship facts are about a grant and name no account
+            // a query is about. The pending rule reaches them by grant.
+            Fact::BankDetails { .. }
+            | Fact::BankVerified { .. }
+            | Fact::BankDispute { .. }
+            | Fact::HardshipEvidence { .. }
+            | Fact::HardshipVerified { .. } => BTreeSet::new(),
             Fact::GuardianConsent { proposal, guardian } => {
                 let mut base = BTreeSet::from([*guardian]);
                 if let Some(old) = self.consent.get(proposal) {
@@ -455,6 +589,11 @@ impl Facts {
                 }
             }
             Query::ChangedSince { .. } => false,
+            Query::BankReleasable { grant, at, hold } => self.bank_releasable(*grant, *at, *hold),
+            Query::HardshipEvidenceVerified { grant, evidence } => self
+                .hardship
+                .get(&(*grant, *evidence))
+                .is_some_and(|h| h.verified),
         }
     }
 }
@@ -494,15 +633,20 @@ pub fn named(q: &Query) -> (BTreeSet<WireAccount>, Option<WireProposal>) {
         Query::DeclaresAffiliationOnList { team, .. } => (team.clone(), None),
         Query::HasGuardianConsent { proposal } => (BTreeSet::new(), Some(*proposal)),
         Query::ChangedSince { .. } => (BTreeSet::new(), None),
+        Query::BankReleasable { grant, .. } | Query::HardshipEvidenceVerified { grant, .. } => {
+            (BTreeSet::new(), Some(*grant))
+        }
     }
 }
 
-/// The proposal whose consent `f` writes, if any.
+/// The proposal whose consent `f` writes, or the grant a bank or
+/// hardship fact is about, if any. A query that names it is pending while
+/// `f` is provisional (NOTE 4), so the I-33 and R-PR-04 guards fail closed.
 pub fn consent_proposal(f: &Fact) -> Option<WireProposal> {
     match f {
         Fact::GuardianConsent { proposal, .. } | Fact::ConsentWithdrawn { proposal } => {
             Some(*proposal)
         }
-        _ => None,
+        other => grant_of(other),
     }
 }
