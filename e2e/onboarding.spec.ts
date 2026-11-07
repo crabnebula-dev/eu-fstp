@@ -348,6 +348,45 @@ test.describe('R-TN-01 onboarding', () => {
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL((u) => u.pathname === APP.onboarding('agreements'));
   });
+
+  /**
+   * P-32, B-03, B-05 (design section 15.0, "Roles lane questions",
+   * 2026-11-06): the Channels step shows Matrix and WhatsApp, both
+   * disabled and marked as coming later. Its save sends no value for
+   * either and still validates.
+   */
+  test('p32_b03_b05_channels_step_shows_matrix_and_whatsapp_disabled_and_sends_no_value', async ({
+    person,
+    request,
+  }) => {
+    const control = cellA(request);
+    const origin = control.cell.origin;
+    const { a1 } = await firstAdmin(person, control);
+    const page = a1.page;
+    for (const step of ONBOARDING_STEPS) {
+      if (step === 'channels') break;
+      await page.goto(`${origin}${APP.onboarding(step)}`);
+      await fillOnboardingStep(page, step);
+      await saveOnboardingStep(page, 'validated');
+    }
+    await page.goto(`${origin}${APP.onboarding('channels')}`);
+    const form = page.locator(ONBOARDING_UI.form);
+    for (const name of ['matrix_homeserver', 'whatsapp']) {
+      const field = form.locator(`input[name="${name}"]`);
+      await expect(field, `${name} is shown`).toBeVisible();
+      await expect(field, `${name} is disabled`).toBeDisabled();
+    }
+    await expect(page.locator('main label', { hasText: /matrix/i }), 'Matrix is labelled').toHaveCount(1);
+    await expect(page.locator('main label', { hasText: /whatsapp/i }), 'WhatsApp is labelled').toHaveCount(1);
+    await expect(page.locator('#ob-channels-later-note'), 'the note says coming later').toContainText(/coming later/i);
+
+    const sent = page.waitForRequest(
+      (r) => r.method() === 'PUT' && new URL(r.url()).pathname === API.onboardingStep('channels'),
+    );
+    await saveOnboardingStep(page, 'validated');
+    const body = (await sent).postDataJSON() as { values?: unknown };
+    expect(body.values, 'no Matrix or WhatsApp value goes out').toEqual({ matrix_homeserver: null, whatsapp: false });
+  });
 });
 
 /**

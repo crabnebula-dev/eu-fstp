@@ -45,7 +45,8 @@ use fstp_money::NonNegAmount;
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
 use crate::id::{
-    AccountId, CallId, CallSeq, DecisionId, LlmConfigId, PolicyVersionId, ProgrammeId, TextRef,
+    AccountId, CallId, CallSeq, ContentDigest, DecisionId, LlmConfigId, PolicyVersionId,
+    ProgrammeId, TextRef,
 };
 use crate::oracle::{Answers, Query};
 use crate::policy::{
@@ -142,6 +143,45 @@ impl EffectiveLimits {
     }
 }
 
+/// The Guide version of a call's publication (R-GA-01). A correction
+/// after publication is a numbered corrigendum of the effective-limits
+/// record, never a new version (I-53, NOTE 7, Q37 C).
+pub const GUIDE_VERSION: u32 = 1;
+
+/// The Guide for Applicants of a published call, as its publication
+/// stored it (R-GA-01, I-52, I-53). It never changes afterwards: the fold
+/// refuses a second `GuidePublished` for the call. Its corrigenda are the
+/// numbered entries of the call's [`EffectiveLimits`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StoredGuide {
+    version: u32,
+    digest: ContentDigest,
+    canonical: String,
+    page: String,
+}
+
+impl StoredGuide {
+    /// The Guide version, 1 at publication.
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// SHA-256 of [`StoredGuide::canonical`], through `fstp-crypto`.
+    pub fn digest(&self) -> ContentDigest {
+        self.digest
+    }
+
+    /// The canonical document the digest is taken over.
+    pub fn canonical(&self) -> &str {
+        &self.canonical
+    }
+
+    /// The HTML page the public pages and `calls.guide` serve.
+    pub fn page(&self) -> &str {
+        &self.page
+    }
+}
+
 /// The call states (`SPEC/02-domain/state-machine.md` Call states).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CallStatus {
@@ -183,6 +223,8 @@ pub struct CallView {
     drafters_at_publication: Option<BTreeSet<AccountId>>,
     /// The effective-limits record, from publication on (D12).
     limits: Option<EffectiveLimits>,
+    /// The Guide stored at publication (R-GA-01, I-53).
+    guide: Option<StoredGuide>,
 }
 
 impl CallView {
@@ -244,6 +286,11 @@ impl CallView {
     /// The frozen policy, once published (I-12, R-PC-02).
     pub fn frozen(&self) -> Option<&FrozenPolicy> {
         self.frozen.as_ref()
+    }
+
+    /// The Guide stored at publication, if any (R-GA-01, I-53).
+    pub fn guide(&self) -> Option<&StoredGuide> {
+        self.guide.as_ref()
     }
 
     /// The pinned LLM configuration, once published (I-11, R-LA-05).
@@ -349,6 +396,12 @@ pub(crate) fn builders(state: &State, programme: ProgrammeId) -> Option<&BTreeSe
 /// or `None` while it is unpublished or unknown.
 pub fn effective_limits(state: &State, call: CallId) -> Option<&EffectiveLimits> {
     state.calls.get(call).and_then(|c| c.limits.as_ref())
+}
+
+/// The Guide stored at the publication of `call` (R-GA-01, I-53), or
+/// `None` while it has none.
+pub fn stored_guide(state: &State, call: CallId) -> Option<&StoredGuide> {
+    state.calls.get(call).and_then(CallView::guide)
 }
 
 /// The refusal of a command on a draft programme (D3).
@@ -567,8 +620,8 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             if crate::policy::head(state, *programme).is_none() {
                 return Err(unknown());
             }
-            draft_gate(state, *programme, DraftGate::Enforce)?;
             require_holder(state, actor, *programme, &WRITERS, ctx.now)?;
+            draft_gate(state, *programme, DraftGate::Enforce)?;
             if state.used_ids.contains(UsedId::Call(*call)) || state.calls.get(*call).is_some() {
                 return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
             }
@@ -592,9 +645,12 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             budget,
             text,
         } => {
+            // The actor before the call's state (test plan, authorisation
+            // matrix row): a denied actor is denied in every state.
+            let view = state.calls.get(*call).ok_or_else(unknown)?;
+            require_holder(state, actor, view.programme, &WRITERS, ctx.now)?;
             let view = unpublished(state, *call)?;
             draft_gate(state, view.programme, DraftGate::Enforce)?;
-            require_holder(state, actor, view.programme, &WRITERS, ctx.now)?;
             check_call_fields(state, view.programme, *opens, *deadline, *budget)?;
             Ok(vec![Record::CallEdited {
                 call: *call,
@@ -607,18 +663,23 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             }])
         }
         Command::ApproveCallPublication { call, decision } => {
-            let view = unpublished(state, *call)?;
-            draft_gate(state, view.programme, DraftGate::Enforce)?;
+            // The actor and the R-PC-03 drafter rule before the call's
+            // state (test plan, authorisation matrix row).
+            let view = state.calls.get(*call).ok_or_else(unknown)?;
             require_holder(state, actor, view.programme, &MANAGER, ctx.now)?;
-            if state.used_ids.contains(UsedId::Decision(*decision)) {
-                return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
-            }
             let drafters = drafters(state, *call).ok_or_else(unknown)?;
             if drafters.contains(&actor) {
                 return Err(rpc03());
             }
+            let view = unpublished(state, *call)?;
+            draft_gate(state, view.programme, DraftGate::Enforce)?;
+            if state.used_ids.contains(UsedId::Decision(*decision)) {
+                return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
+            }
+            // A call already approved has no row to approval: a state
+            // guard, never the R-PC-03 actor rule.
             if view.status != CallStatus::Draft {
-                return Err(Refusal::new(RuleRef::Rpc03, RefusalReason::WrongState));
+                return Err(Refusal::new(RuleRef::Row, RefusalReason::WrongState));
             }
             Ok(vec![Record::CallApproved {
                 call: *call,
@@ -631,9 +692,10 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             config,
             config_model,
         } => {
+            let view = state.calls.get(*call).ok_or_else(unknown)?;
+            require_holder(state, actor, view.programme, &MANAGER, ctx.now)?;
             let view = unpublished(state, *call)?;
             draft_gate(state, view.programme, DraftGate::Enforce)?;
-            require_holder(state, actor, view.programme, &MANAGER, ctx.now)?;
             let drafters = drafters(state, *call).ok_or_else(unknown)?;
             match view.approval {
                 Some(a)
@@ -733,6 +795,7 @@ pub(crate) fn apply(
                     llm_config: None,
                     drafters_at_publication: None,
                     limits: None,
+                    guide: None,
                 },
             );
             Ok(())
@@ -789,6 +852,32 @@ pub(crate) fn apply(
             view.approval = Some(Approval {
                 decision: *decision,
                 approver: *approver,
+            });
+            Ok(())
+        }
+        Record::GuidePublished {
+            call,
+            version,
+            digest,
+            canonical,
+            page,
+        } => {
+            let view = state
+                .calls
+                .calls
+                .get_mut(call)
+                .ok_or(FoldError::UnknownEntity)?;
+            if view.guide.is_some() {
+                return Err(FoldError::DuplicateId);
+            }
+            if view.status != CallStatus::Published || *version != GUIDE_VERSION {
+                return Err(FoldError::Inconsistent);
+            }
+            view.guide = Some(StoredGuide {
+                version: *version,
+                digest: *digest,
+                canonical: canonical.clone(),
+                page: page.clone(),
             });
             Ok(())
         }

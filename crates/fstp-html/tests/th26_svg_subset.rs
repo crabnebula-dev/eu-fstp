@@ -320,6 +320,11 @@ const ATTRS: &[(&str, &str)] = &[
     ("onload", "x"),
     ("style", "fill:red"),
     ("stroke", "red"),
+    ("stroke", "currentColor"),
+    ("fill", "none"),
+    ("font-size", "10"),
+    ("font-size", "010"),
+    ("font-size", "10px"),
     ("tabindex", "0"),
 ];
 
@@ -376,4 +381,60 @@ fn th26_svg_checker_matches_the_reference() {
         );
         Ok(())
     });
+}
+
+/// I-70, TH-26, ADR-015, review J4-REV-1: the paint the public map sets
+/// on itself. `fill` and `stroke` take only `currentColor` or `none` on
+/// the shapes and texts that carry them, and `font-size` only a whole
+/// number from 1 to 99 on `text`. Every other colour, unit, reference or
+/// placement is refused. The reference agrees on each case.
+#[test]
+fn i70_svg_paint_attributes_take_only_the_text_colour() {
+    let accept = [
+        "<rect x=\"0\" y=\"0\" width=\"1\" height=\"1\" fill=\"none\" stroke=\"currentColor\"></rect>",
+        "<line x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\" stroke=\"currentColor\"></line>",
+        "<path d=\"M0 0\" fill=\"none\" stroke=\"currentColor\"></path>",
+        "<circle cx=\"1\" cy=\"1\" r=\"1\" fill=\"currentColor\" stroke=\"none\"></circle>",
+        "<text x=\"1\" y=\"1\" fill=\"currentColor\" font-size=\"9\">STAGE2</text>",
+        "<text x=\"1\" y=\"1\" font-size=\"99\">STAGE2</text>",
+    ];
+    let refuse = [
+        "<rect fill=\"red\"></rect>",
+        "<rect stroke=\"#000\"></rect>",
+        "<rect stroke=\"url(#g)\"></rect>",
+        "<line stroke=\"currentcolor\"></line>",
+        "<line fill=\"none\"></line>",
+        "<path stroke=\"black\"></path>",
+        "<text fill=\"white\">x</text>",
+        "<text stroke=\"currentColor\">x</text>",
+        "<text font-size=\"0\">x</text>",
+        "<text font-size=\"010\">x</text>",
+        "<text font-size=\"100\">x</text>",
+        "<text font-size=\"10px\">x</text>",
+        "<text font-size=\"1e1\">x</text>",
+        "<text font-size=\"-1\">x</text>",
+        "<text font-size=\"\">x</text>",
+        "<rect font-size=\"10\"></rect>",
+        "<text><tspan fill=\"currentColor\">x</tspan></text>",
+    ];
+    let mut failures = Vec::new();
+    for inner in accept {
+        let d = doc(inner);
+        if !reference::accepts(&d) {
+            failures.push(format!("reference refuses {inner}"));
+        }
+        if let Err(e) = check_wellformed(&d) {
+            failures.push(format!("checker refuses {inner}: {e}"));
+        }
+    }
+    for inner in refuse {
+        let d = doc(inner);
+        if reference::accepts(&d) {
+            failures.push(format!("reference accepts {inner}"));
+        }
+        if check_wellformed(&d).is_ok() {
+            failures.push(format!("checker accepts {inner}"));
+        }
+    }
+    assert_eq!(failures, Vec::<String>::new());
 }

@@ -39,6 +39,12 @@
 //!   No port lists the pending self-grant approvals yet, so the reply
 //!   names them as `unlisted` (`creator.rs`, `UNLISTED_APPROVALS`), and
 //!   the inbox says so instead of reading as complete.
+//! - `creator.invite` draws a 32-byte link token through `fstp-crypto`.
+//!   The invitation id is the token's labelled digest
+//!   (`creator::link_invitation`), so the ledger never holds the token.
+//!   Once the invitation is appended, the token and the email go to M3
+//!   through the accounts port, and to no one else (J2, I-86, ADR-007,
+//!   lane inv).
 //! - An invitation reads `granted` once the core holds a binding of its
 //!   account in its role on the programme, `verified` once the vault
 //!   verifies the account that accepted it, and `accepted` before that.
@@ -52,9 +58,9 @@
 //! - `creator.preview` answers the Guide and the public page previews
 //!   from `fstp-guide` and `fstp-public`. The contract placeholder
 //!   preview stays a seam until a contract renderer exists (M8).
-//! - `creator.impact` answers the empty list for a programme with no
-//!   call, which is every draft (change D3). A programme with calls needs
-//!   `fstp_programme::impact` (an `fstp-programme` edge, the lead).
+//! - `creator.impact` lists the calls a change reaches, through
+//!   `fstp_creator::affected_calls` over `fstp_programme::impact`
+//!   (R-PG-04). A draft has no call (change D3), so its list is empty.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -200,9 +206,22 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
             "an import operation that only the system issues",
         )));
     };
+    // J2, ADR-007: the link token of an invitation is drawn once, so the
+    // dry run and the execution name the invitation its digest names.
+    let link = if form == Form::Invite {
+        Some(
+            fstp_crypto::random_array::<32>()
+                .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "ids")))?,
+        )
+    } else {
+        None
+    };
     let mut ids = Vec::new();
-    let cmd = build(call, form, op, &Supplied::placeholder(account), &mut ids)
-        .map_err(|e| call.refuse(e))?;
+    let placeholder = Supplied {
+        link,
+        ..Supplied::placeholder(account)
+    };
+    let cmd = build(call, form, op, &placeholder, &mut ids).map_err(|e| call.refuse(e))?;
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
     // Step 5.
@@ -228,9 +247,10 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
         None
     };
     // Step 8.
-    let stored = store(call, form, op, account)
+    let mut stored = store(call, form, op, account)
         .await
         .map_err(|e| call.refuse(e))?;
+    stored.supplied.link = link;
     let cmd = build(call, form, op, &stored.supplied, &mut ids).map_err(|e| call.refuse(e))?;
     let meta = ExecMeta {
         via: call.caller.via(),
@@ -246,6 +266,11 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
     match call.ports.engine().execute(cmd, ctx, meta).await {
         Ok(seq) => {
             remember(call, &appended, stored.text);
+            if let Some(t) = link {
+                mail_invitation(call, op, &appended, t)
+                    .await
+                    .map_err(|e| call.refuse(e))?;
+            }
             Ok(OpResult::Done {
                 body: reply(&appended),
                 seq: Some(seq),
@@ -253,6 +278,51 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
         }
         Err(e) => Err(call.refuse(exec_failed(e))),
     }
+}
+
+/// Hands the link token and the email of an appended invitation to M3
+/// through the accounts port, which mails the link and binds the address
+/// to the account that enrols (J2, I-86, ADR-007, lane inv). Nothing else
+/// receives the token: the reply, the ledger and the audit log name only
+/// its digest, the invitation id.
+///
+/// Interim, pending Daniel: the port is called once the invitation is
+/// appended, so a refused call mails nothing. A port failure refuses the
+/// call with the invitation recorded and no link mailed. The admin then
+/// withdraws it and invites again.
+async fn mail_invitation<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    cmd: &Command,
+    token: [u8; 32],
+) -> Result<(), ApiError> {
+    let Command::Creator(CreatorCommand::Invite {
+        programme,
+        invitation,
+        role,
+        ..
+    }) = cmd
+    else {
+        return Ok(());
+    };
+    let email = op
+        .request
+        .get("email")
+        .and_then(Value::as_str)
+        .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+    let kind = crate::port::InviteKind::ProgrammeRole {
+        programme: *programme,
+        invitation: *invitation,
+        role: *role,
+        email: email.to_owned(),
+        token: crate::port::LinkToken::from_bytes(token),
+    };
+    call.ports
+        .accounts()
+        .invite(kind)
+        .await
+        .map(|_| ())
+        .map_err(|e| port_failed(e, "accounts"))
 }
 
 /// Remembers what an appended command leaves for the reads of this core.
@@ -439,19 +509,23 @@ async fn programme_read<P: Seams>(
         if state.core.policy().programme(p).is_none() {
             return Err(call.refuse(no_draft()));
         }
-        let calls: Vec<ImpactRow> = state
+        let calls: Vec<fstp_domain::id::CallId> = state
             .core
             .calls()
             .iter()
             .filter(|(_, v)| v.programme() == p)
-            .map(|(call, _)| ImpactRow { call })
+            .map(|(c, _)| c)
             .collect();
-        if !calls.is_empty() {
-            return Err(call.refuse(ApiError::NotImplemented(
-                "the impact of a change on a programme's calls: fstp_programme::impact (an fstp-programme edge of fstp-api-core, the lead)",
-            )));
-        }
-        return Ok(CreatorModel::Impact(calls));
+        // A published call whose limits do not read fails closed: leaving
+        // it out would under-report the change (R-PG-04).
+        let affected = fstp_creator::affected_calls(&state.core, p, &calls)
+            .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-PG-04")))?;
+        return Ok(CreatorModel::Impact(
+            affected
+                .into_iter()
+                .map(|call| ImpactRow { call })
+                .collect(),
+        ));
     }
     let d = state
         .creator

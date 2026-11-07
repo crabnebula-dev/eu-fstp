@@ -18,6 +18,11 @@
 //!   occurrence. Parameter-bound text is never editable (I-51).
 //! - [`missing_sections`] names the required sections a template lacks
 //!   (I-52), and [`preview`] gathers everything the creator reports.
+//! - [`corrigendum`] words one numbered entry of a published call's
+//!   effective-limits record, and [`page_with_corrigenda`] serves the
+//!   stored Guide page with its corrigenda after it (I-51, I-53, Q37 C).
+//! - The renderer follows the block that describes the pre-check with
+//!   the fixed [`PRECHECK_NOTE`] (Q38 C).
 //! - [`preview_text`] shows a draft's Guide as text blocks, with a marker
 //!   naming each placeholder that has no value yet.
 //!
@@ -35,10 +40,12 @@
     clippy::arithmetic_side_effects
 )]
 
+mod corrigendum;
 mod markdown;
 pub mod pdf;
 mod preview;
 mod profile;
+mod publication;
 mod render;
 mod resolve;
 mod sections;
@@ -46,12 +53,14 @@ mod sections;
 use std::collections::BTreeMap;
 
 pub use pdf::{GuideContent, GuidePdfError, guide_pdf, read_canonical};
+pub use corrigendum::{Corrigendum, corrigendum, page_with_corrigenda};
 pub use preview::{PreviewBlock, PreviewKind, preview_text};
 pub use profile::{
     FunderProfile, HORIZON_EUROPE, LEGAL_MARKER, LEGAL_SECTIONS, LegalSection, MAX_GUIDE_BYTES,
     ProfileError, ProfileFiles, ProfileSource, ShippedProfiles, WordingStatus,
 };
-pub use render::{BoundText, GUIDE_LOCALE, GUIDE_TITLE, RenderedGuide};
+pub use publication::{GuideSource, PublicationError, publication_guide};
+pub use render::{BoundText, GUIDE_LOCALE, GUIDE_TITLE, PRECHECK_NOTE, RenderedGuide};
 pub use resolve::{
     GuideCall, GuideInputs, NoStoredTexts, RESOLVERS, Resolver, Shape, Source, StoredTexts,
 };

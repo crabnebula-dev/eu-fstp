@@ -28,8 +28,10 @@
 //! - The body limit is 1 MiB on every surface. A longer body gets 413.
 //! - A non-empty `/api/v1` body needs one `Content-Type` of
 //!   `application/json`, or it gets 415.
-//! - `/mcp`, `/mcp/public`, `/oauth/**` and the two OAuth `/.well-known`
-//!   documents wait for ADR-013. Each method gets 501 with
+//! - Over the core, `/mcp` and `/mcp/public` serve `fstp_mcp::McpServer`,
+//!   and the two OAuth `/.well-known` documents serve the `fstp-oauth`
+//!   metadata (lane W3c). `/oauth/**`, and every one of these surfaces of
+//!   the stub dispatch, get 501 with
 //!   `{"code":"not_available","rule":"ADR-013"}`.
 //! - `/app/` and every `/app/` path outside `/app/assets/` serve the
 //!   shell. Every response but a served asset carries
@@ -50,6 +52,7 @@
 
 mod api;
 mod headers;
+mod mcp;
 mod origin;
 mod reply;
 mod router;
@@ -86,6 +89,9 @@ pub enum WebError {
     Route(&'static str),
     /// The asset set of the stub configuration was refused.
     Assets(AssetError),
+    /// The MCP server or the OAuth metadata refused the tenant origin,
+    /// for the fixed reason given.
+    Mcp(&'static str),
 }
 
 impl std::fmt::Display for WebError {
@@ -97,6 +103,7 @@ impl std::fmt::Display for WebError {
             WebError::TrailingBytes => f.write_str("bytes follow the request"),
             WebError::Route(why) => write!(f, "invalid route: {why}"),
             WebError::Assets(e) => write!(f, "invalid stub assets: {e}"),
+            WebError::Mcp(why) => write!(f, "invalid MCP configuration: {why}"),
         }
     }
 }

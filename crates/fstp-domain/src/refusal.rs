@@ -64,6 +64,9 @@ pub enum RuleRef {
     I36,
     /// I-50: P-05 never exceeds P-58.
     I50,
+    /// I-52: a Guide is generated only when every required section is
+    /// present, so a call is published only with its complete Guide.
+    I52,
     /// I-64: committed amounts drop to the paid total at closure.
     I64,
     /// I-65: every imported value is confirmed or edited by a named
@@ -186,7 +189,7 @@ pub enum RuleRef {
 impl RuleRef {
     /// Every variant except `Param`, in declaration order.
     /// `Param` variants are covered by `crate::rules::CATALOGUE`.
-    pub const ALL_FIXED: [RuleRef; 81] = [
+    pub const ALL_FIXED: [RuleRef; 82] = [
         RuleRef::I01,
         RuleRef::I02,
         RuleRef::I03,
@@ -211,6 +214,7 @@ impl RuleRef {
         RuleRef::I35,
         RuleRef::I36,
         RuleRef::I50,
+        RuleRef::I52,
         RuleRef::I64,
         RuleRef::I65,
         RuleRef::I66,
@@ -298,6 +302,7 @@ impl RuleRef {
             RuleRef::I35 => "I-35",
             RuleRef::I36 => "I-36",
             RuleRef::I50 => "I-50",
+            RuleRef::I52 => "I-52",
             RuleRef::I64 => "I-64",
             RuleRef::I65 => "I-65",
             RuleRef::I66 => "I-66",

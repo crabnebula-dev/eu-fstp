@@ -164,9 +164,25 @@ impl FakeEngine {
             .collect()
     }
 
+    /// A copy of the ledger, so a test opens a fresh cell over it, as a
+    /// restarted core replays its ledger (lane inv).
+    pub fn store_copy(&self) -> MemStore<Record> {
+        lock(&self.inner).engine.store().clone()
+    }
+
     /// Every `dry_run` call, in order.
     pub fn dry_runs(&self) -> Vec<DryRun> {
         lock(&self.inner).dry_runs.clone()
+    }
+
+    /// Reads the Guide artefacts of a programme with no creator draft from
+    /// `spec` (R-GA-01, `CellEnvironment::set_guide_spec`).
+    pub fn set_guide_spec(&self, spec: fstp_programme::ProgrammeSpec) {
+        lock(&self.inner)
+            .engine
+            .decider_mut()
+            .0
+            .set_guide_spec(spec);
     }
 
     /// The ledger head.

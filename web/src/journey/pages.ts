@@ -10,8 +10,9 @@
 // (O-57), and a reply whose `strip` is false gives no strip (O-58). The
 // kind filter of the log only narrows what the read already gave.
 //
-// Every element is built with `h`, and the map with `createElementNS`
-// (`svg.ts`), so no string reaches an HTML parser (ADR-014).
+// Every element is built with `h`, and the map is the server's checked
+// tree of `proposal.route_map`, built with `createElementNS` (`tree.ts`),
+// so no string reaches an HTML parser (ADR-014).
 
 import { createApi, type ApiClient, type ApiOutcome } from "../core/api.js";
 import { h } from "../core/dom.js";
@@ -19,25 +20,25 @@ import { navigate } from "../core/router.js";
 import { OPERATIONS } from "../gen/api.js";
 import { frame, showFailure, run, type Frame } from "../applicant/ui.js";
 import type { Failure } from "../applicant/client.js";
-import { type ProposalInfo, decodeOwnProposals } from "../applicant/wire.js";
 import {
   type Diary,
   type EntryKind,
   type Journey,
   type LogEntry,
   type Msg,
+  type RouteMap,
   activityLog,
-  canWithdraw,
   entryClass,
   helpPanels,
   isoOf,
   label,
   readDiary,
   readJourney,
-  routeItems,
+  readRouteMap,
+  mapItems,
   stripOf,
 } from "./model.js";
-import { mapTree, toDom } from "./svg.js";
+import { buildRouteTree } from "./svg.js";
 
 /** The paths of the voyager pages of proposal `p`. */
 export const JOURNEY_PAGE = Object.freeze({
@@ -72,7 +73,7 @@ function failureOf(o: ApiOutcome): Failure {
 }
 
 /** Calls the read `name` of proposal `p` and decodes its reply. It never throws. */
-async function read<T>(name: "proposal.journey" | "proposal.diary" | "proposal.list_own" | "me.assignments", params: Readonly<Record<string, string>>, decode: (v: unknown) => T | null): Promise<Read<T>> {
+async function read<T>(name: "proposal.journey" | "proposal.diary" | "proposal.route_map" | "me.assignments", params: Readonly<Record<string, string>>, decode: (v: unknown) => T | null): Promise<Read<T>> {
   const op = OPERATIONS.find((o) => o.name === name);
   if (op === undefined || op.base === "page") {
     return { ok: false, failure: { kind: "unavailable" } };
@@ -163,12 +164,14 @@ function nodeTarget(a: Element, page: string): string | null {
   return /^node-[A-Z0-9_]+$/.test(id) ? id : null;
 }
 
-function progressBody(f: Frame, j: Journey, page: string, lead: boolean): void {
-  const map = toDom(mapTree(j, page, j.proposal));
+function progressBody(f: Frame, j: Journey, m: RouteMap, page: string): void {
+  // The server's checked tree and node statuses: the page lays out
+  // nothing of its own (ADR-015 amendment of 2026-11-06, R-JV-05).
+  const map = buildRouteTree(m.tree);
   const list = h(
     "ol",
     { class: "journey-list" },
-    routeItems(j, page).map((i) => {
+    mapItems(m, page).map((i) => {
       const cls = {
         completed: "journey-node--complete",
         current: "journey-node--current",
@@ -188,8 +191,9 @@ function progressBody(f: Frame, j: Journey, page: string, lead: boolean): void {
     }),
   );
   const all = panels(j);
-  // Only the lead withdraws (registry LEAD on `proposal.withdraw`).
-  const withdraw = lead && canWithdraw(j)
+  // The read says whether the caller sees the withdrawal: the lead, in a
+  // state NOTE 10 leaves open (registry LEAD on `proposal.withdraw`).
+  const withdraw = j.withdraw
     ? [
         h("section", { id: "journey-withdraw", "aria-labelledby": "journey-withdraw-heading" }, [
           h("h2", { id: "journey-withdraw-heading" }, [k("journey.withdraw.title")]),
@@ -254,18 +258,23 @@ export function mountProgress(p: string): void {
       f.main.append(h("p", {}, [k("journey.route.unavailable")]));
       return;
     }
-    // The full map is the Receiving group's (section 8.3,
-    // `visibility::route_strip`; O-58). The team read `proposal.list_own`
-    // names the caller's own proposals with their role there, so the
-    // cell, not this page, says who is on the team.
-    const own = await read("proposal.list_own", {}, decodeOwnProposals);
-    const mine: ProposalInfo | undefined = own.ok ? own.value.find((x) => x.proposal === p) : undefined;
-    if (mine === undefined || mine.role === undefined) {
+    // The full map, its list and its help panels are the team's (section
+    // 8.1, review J3-R2). The read says so in `map`: the cell decides,
+    // never this page. Judging roles keep the strip (section 8.3), and IRC
+    // members get neither (O-58).
+    if (!r.value.map) {
       const strip = stripElement(r.value);
       f.main.append(...(strip === null ? [] : [strip]), h("p", {}, [k("journey.route.unavailable")]));
       return;
     }
-    progressBody(f, r.value, JOURNEY_PAGE.progress(p), mine.role === "lead");
+    const page = JOURNEY_PAGE.progress(p);
+    const m = await read("proposal.route_map", { proposal: p }, (v) => readRouteMap(v, page));
+    if (!m.ok) {
+      showFailure(f, m.failure);
+      f.main.append(h("p", {}, [k("journey.route.unavailable")]));
+      return;
+    }
+    progressBody(f, r.value, m.value, page);
   });
 }
 

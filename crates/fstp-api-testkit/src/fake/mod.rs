@@ -33,6 +33,7 @@ pub mod engine;
 pub mod fixture;
 pub mod ids;
 pub mod misc;
+pub mod people_requests;
 mod reads;
 pub mod requests;
 pub mod sessions;
@@ -259,7 +260,8 @@ impl FakePorts {
             prober.clone(),
             tenant.admin_set(),
             vault_audit.clone(),
-        );
+        )
+        .with_texts(texts.clone());
         let imports = shell::ImportShell::new(blobs.clone(), texts.clone());
         let engine = FakeEngine::open_with(world, vault.oracle(), env, Some(imports))
             .map_err(|_| NotImplemented::new("fstp_api_testkit::fake::FakePorts::new: engine"))?;

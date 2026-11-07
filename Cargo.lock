@@ -172,6 +172,7 @@ dependencies = [
  "fstp-engine",
  "fstp-findings",
  "fstp-guide",
+ "fstp-html",
  "fstp-import",
  "fstp-journey",
  "fstp-json",

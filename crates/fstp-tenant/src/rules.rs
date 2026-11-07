@@ -253,3 +253,21 @@ pub fn p74_default() -> McpSettings {
         public_tools: true,
     }
 }
+
+/// The longest privacy statement address a tenant may set, in bytes.
+pub const MAX_ADDRESS_BYTES: usize = 2048;
+
+/// Whether `s` may stand as the Guide's privacy statement address: an
+/// `https://` address of at most [`MAX_ADDRESS_BYTES`] bytes, with a non-empty
+/// host, made of visible ASCII with no quote, angle bracket, backslash or
+/// backtick (R-GA-01). Interim, pending Daniel: the check is syntactic.
+pub fn https_address(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("https://") else {
+        return false;
+    };
+    let host_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    s.len() <= MAX_ADDRESS_BYTES
+        && host_len > 0
+        && s.bytes()
+            .all(|b| b.is_ascii_graphic() && !matches!(b, b'"' | b'<' | b'>' | b'\\' | b'`'))
+}

@@ -74,6 +74,7 @@ export type OpName =
   | "tenant.set_mcp"
   | "tenant.set_payment_mode"
   | "tenant.set_template_licence"
+  | "tenant.set_guide_notice"
   | "admin.approvals"
   | "admin.approve_self_grant"
   | "admin.approve_recovery"
@@ -110,6 +111,7 @@ export type OpName =
   | "call.approve"
   | "call.publish"
   | "call.board"
+  | "call.list"
   | "public.programme"
   | "public.list_open_calls"
   | "public.call"
@@ -132,6 +134,7 @@ export type OpName =
   | "proposal.add_guardian"
   | "proposal.state_country"
   | "proposal.declare_affiliations"
+  | "proposal.state_birth_date"
   | "proposal.submit"
   | "proposal.request_copy"
   | "me.notices"
@@ -141,6 +144,7 @@ export type OpName =
   | "proposal.withdraw"
   | "proposal.journey"
   | "proposal.diary"
+  | "proposal.route_map"
   | "guardian.begin_consent"
   | "negotiation.view"
   | "negotiation.acknowledge_notice"
@@ -243,6 +247,7 @@ export interface OpParams {
   readonly "tenant.set_mcp": Readonly<Record<never, string>>;
   readonly "tenant.set_payment_mode": Readonly<Record<never, string>>;
   readonly "tenant.set_template_licence": Readonly<Record<never, string>>;
+  readonly "tenant.set_guide_notice": Readonly<Record<never, string>>;
   readonly "admin.approvals": Readonly<Record<never, string>>;
   readonly "admin.approve_self_grant": { readonly "approval": string };
   readonly "admin.approve_recovery": { readonly "recovery": string };
@@ -279,6 +284,7 @@ export interface OpParams {
   readonly "call.approve": { readonly "call": string };
   readonly "call.publish": { readonly "call": string };
   readonly "call.board": { readonly "call": string };
+  readonly "call.list": { readonly "programme": string };
   readonly "public.programme": { readonly "slug": string };
   readonly "public.list_open_calls": { readonly "slug": string };
   readonly "public.call": { readonly "slug": string; readonly "call": string };
@@ -301,6 +307,7 @@ export interface OpParams {
   readonly "proposal.add_guardian": { readonly "proposal": string };
   readonly "proposal.state_country": { readonly "proposal": string };
   readonly "proposal.declare_affiliations": { readonly "proposal": string };
+  readonly "proposal.state_birth_date": { readonly "proposal": string };
   readonly "proposal.submit": { readonly "proposal": string };
   readonly "proposal.request_copy": { readonly "proposal": string };
   readonly "me.notices": Readonly<Record<never, string>>;
@@ -310,6 +317,7 @@ export interface OpParams {
   readonly "proposal.withdraw": { readonly "proposal": string };
   readonly "proposal.journey": { readonly "proposal": string };
   readonly "proposal.diary": { readonly "proposal": string };
+  readonly "proposal.route_map": { readonly "proposal": string };
   readonly "guardian.begin_consent": { readonly "proposal": string };
   readonly "negotiation.view": { readonly "proposal": string };
   readonly "negotiation.acknowledge_notice": { readonly "proposal": string };
@@ -385,6 +393,7 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.set_mcp",
   "tenant.set_payment_mode",
   "tenant.set_template_licence",
+  "tenant.set_guide_notice",
   "admin.approvals",
   "admin.approve_self_grant",
   "admin.approve_recovery",
@@ -421,6 +430,7 @@ export const OP_NAMES: readonly OpName[] = [
   "call.approve",
   "call.publish",
   "call.board",
+  "call.list",
   "public.programme",
   "public.list_open_calls",
   "public.call",
@@ -443,6 +453,7 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.add_guardian",
   "proposal.state_country",
   "proposal.declare_affiliations",
+  "proposal.state_birth_date",
   "proposal.submit",
   "proposal.request_copy",
   "me.notices",
@@ -452,6 +463,7 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.withdraw",
   "proposal.journey",
   "proposal.diary",
+  "proposal.route_map",
   "guardian.begin_consent",
   "negotiation.view",
   "negotiation.acknowledge_notice",
@@ -779,6 +791,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/admin/settings/template-licence",
     base: "api",
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "template-licence" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.set_guide_notice",
+    method: "PUT",
+    path: "/admin/settings/guide-notice",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "guide-notice" }],
     params: [],
     body: true,
     highRisk: true,
@@ -1292,6 +1318,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: { name: "fstp_get_call_board", scope: "calls:read", prepareOnly: false },
   },
   {
+    name: "call.list",
+    method: "GET",
+    path: "/programmes/{programme}/calls",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "calls" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "public.programme",
     method: "GET",
     path: "/p/{slug}",
@@ -1600,6 +1640,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "proposal.state_birth_date",
+    method: "PUT",
+    path: "/proposals/{proposal}/vault/birth_date",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "vault" }, { kind: "literal", text: "birth_date" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "proposal.submit",
     method: "POST",
     path: "/proposals/{proposal}/submission",
@@ -1717,6 +1771,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/proposals/{proposal}/diary",
     base: "api",
     segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "diary" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "proposal.route_map",
+    method: "GET",
+    path: "/proposals/{proposal}/route-map",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "route-map" }],
     params: ["proposal"],
     body: false,
     highRisk: false,
@@ -2569,6 +2637,21 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "recipient_max": { schema: { kind: "amount" }, optional: true },
     },
   } },
+  "call.draft": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "call.list": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["draft", "approved", "published"] }, optional: false },
+      "may_approve": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
   "calls.get": {
     kind: "object",
     fields: {
@@ -2585,6 +2668,15 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "grant_min": { schema: { kind: "amount" }, optional: true },
       "grant_max": { schema: { kind: "amount" }, optional: true },
       "recipient_max": { schema: { kind: "amount" }, optional: true },
+    },
+  },
+  "calls.guide": {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "version": { schema: { kind: "int" }, optional: false },
+      "digest": { schema: { kind: "string" }, optional: false },
+      "html": { schema: { kind: "string" }, optional: false },
     },
   },
   "proposal.list_own": { kind: "array", items: {
@@ -2647,6 +2739,14 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     },
   },
   "proposal.record_plan": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "plan": { schema: { kind: "id" }, optional: true },
+      "total": { schema: { kind: "amount" }, optional: true },
+    },
+  },
+  "stage2.revise": {
     kind: "object",
     fields: {
       "accepted": { schema: { kind: "bool" }, optional: false },
@@ -2764,6 +2864,17 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "review.findings": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "finding": { schema: { kind: "id" }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["Completeness", "Quality", "Accuracy", "Integrity"] }, optional: false },
+      "severity": { schema: { kind: "enum", values: ["Info", "Minor", "Major"] }, optional: false },
+      "confidence": { schema: { kind: "int" }, optional: false },
+      "statement": { schema: { kind: "string" }, optional: false },
+      "mark": { schema: { kind: "nullable", inner: { kind: "enum", values: ["Agreed", "Disputed"] } }, optional: false },
+    },
+  } },
   "review.stage2_thread": {
     kind: "object",
     fields: {
@@ -2815,6 +2926,12 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "redirect": { schema: { kind: "string" }, optional: false },
     },
   },
+  "guardian.begin_consent": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
   "me.roles": {
     kind: "object",
     fields: {
@@ -2843,6 +2960,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         },
       } }, optional: false },
       "drafts": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
+      "signatories": { schema: { kind: "array", items: { kind: "enum", values: ["financial_signatory", "legal_signatory"] } }, optional: false },
     },
   },
   "tenant.list_admins": {
@@ -3098,6 +3216,12 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "people.begin_verification": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
   "people.get_invitation": {
     kind: "object",
     fields: {
@@ -3192,6 +3316,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         },
       } }, optional: false },
       "strip": { schema: { kind: "bool" }, optional: false },
+      "map": { schema: { kind: "bool" }, optional: false },
+      "withdraw": { schema: { kind: "bool" }, optional: false },
       "overlay": { schema: { kind: "nullable", inner: {
         kind: "object",
         fields: {

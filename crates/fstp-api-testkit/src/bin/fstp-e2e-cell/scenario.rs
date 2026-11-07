@@ -1732,4 +1732,152 @@ mod tests {
         let (_, open) = block_on(build_applicant(&info(), At::OpenCall)).unwrap();
         assert!(open.get("proposal").is_some_and(Value::is_null));
     }
+
+    /// The seeded proposal of an applicant scene.
+    fn seeded_proposal(v: &Value) -> ProposalId {
+        let p = v
+            .get("proposal")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<u128>().ok())
+            .unwrap_or_else(|| panic!("no proposal in {}", v.to_compact()));
+        ProposalId::from_raw(p)
+    }
+
+    /// The lead of the seeded proposal `p`.
+    fn lead_of(inner: &Inner, p: ProposalId) -> AccountId {
+        inner
+            .ports
+            .engine
+            .state()
+            .core
+            .roster()
+            .bindings()
+            .map(|(_, b)| *b)
+            .find(|b| b.role == Role::Applicant && b.proposal() == Some(p))
+            .map(|b| b.account)
+            .unwrap_or_else(|| panic!("no lead of {p:?}"))
+    }
+
+    /// A seeding run over `inner`, resumed at the cell clock.
+    fn seeder(inner: &Inner) -> Seeder<'_> {
+        Seeder {
+            inner,
+            now: inner.ports.clock.read().micros(),
+            command: 1_000,
+            cookies: BTreeMap::new(),
+        }
+    }
+
+    /// R-EV-05, NOTE 1 (design section 2.2 J4): in stage 2 the lead
+    /// submits a revised plan through one call. The page form records the
+    /// plan version of origin "stage 2 revision" and submits it as the
+    /// revision in one ledger entry: both records carry the same command
+    /// id, and nothing else is in that entry. The reply names the plan and
+    /// its total, and the proposal stays in STAGE2.
+    #[test]
+    fn r_ev_05_stage2_revision_is_one_entry() {
+        use fstp_api_core::port::AsyncEngine;
+        use fstp_domain::record::Record as CoreRecord;
+        let (inner, v) = block_on(build_applicant(&info(), At::Stage2)).unwrap();
+        let p = seeded_proposal(&v);
+        let lead = lead_of(&inner, p);
+        let milestone = obj(vec![
+            ("amount", "1800.00".into()),
+            ("start", "2027-03-01".into()),
+            ("due", "2027-06-30".into()),
+        ]);
+        let task = obj(vec![(
+            "milestones",
+            Value::Array(vec![milestone].into_iter().collect::<Array>()),
+        )]);
+        let form = obj(vec![
+            ("description", "A synthetic revised work plan.".into()),
+            (
+                "tasks",
+                Value::Array(vec![task].into_iter().collect::<Array>()),
+            ),
+        ]);
+        let mut seed = seeder(&inner);
+        let reply = block_on(seed.api(
+            lead,
+            ApiMethod::Post,
+            &format!("/proposals/{}/stage2/revision", p.raw()),
+            &form,
+        ))
+        .unwrap_or_else(|e| panic!("the revision: {e}"));
+        assert_eq!(
+            reply.get("total").and_then(Value::as_str),
+            Some("1800.00"),
+            "{}",
+            reply.to_compact()
+        );
+        let plan = reply
+            .get("plan")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<u128>().ok())
+            .map(PlanVersionId::from_raw)
+            .unwrap_or_else(|| panic!("no plan in {}", reply.to_compact()));
+        let ledger = inner.ports.engine.ledger().unwrap();
+        let core = |r: &fstp_engine::Record| match r {
+            fstp_engine::Record::Core(c) => Some(c.clone()),
+            _ => None,
+        };
+        let submitted = ledger
+            .iter()
+            .find(|e| {
+                matches!(core(&e.record), Some(CoreRecord::RevisionSubmitted { plan: x, proposal })
+                    if x == plan && proposal == p)
+            })
+            .unwrap_or_else(|| panic!("no RevisionSubmitted of {plan:?}"));
+        let entry: Vec<_> = ledger
+            .iter()
+            .filter(|e| e.command == submitted.command)
+            .collect();
+        assert_eq!(entry.len(), 2, "one entry of two records: {entry:?}");
+        assert!(
+            matches!(core(&entry[0].record), Some(CoreRecord::PlanVersionRecorded(r))
+                if r.plan == plan && r.proposal == p && r.origin == PlanOrigin::Stage2Revision),
+            "the plan comes first: {entry:?}"
+        );
+        assert_eq!(entry[1].seq, submitted.seq);
+        let state = fstp_domain::view::proposal_state(&inner.ports.engine.state().core, p);
+        assert_eq!(state.map(|t| t.spec_name()), Some("STAGE2"));
+    }
+
+    /// I-18, R-NG-01 NOTE and state-machine NOTE 14: the guardian of a
+    /// minor-flagged proposal in IRC_REVIEW starts the consent on the
+    /// vault origin. The reply is the vault's write page on
+    /// `id.<cell host>`, with a ticket in the fragment and no query. The
+    /// vault starts a guardian consent verification of that proposal. The
+    /// lead cannot start it, and the proposal waits in IRC_REVIEW.
+    #[test]
+    fn i18_guardian_consent_runs_on_the_vault_origin_and_the_proposal_waits() {
+        use fstp_api_core::port::VerificationPurpose;
+        let (inner, v) = block_on(build_applicant(&info(), At::IrcReviewMinor)).unwrap();
+        let p = seeded_proposal(&v);
+        let lead = lead_of(&inner, p);
+        let mut seed = seeder(&inner);
+        let path = format!("/proposals/{}/guardian/consent", p.raw());
+        let refused = block_on(seed.api(lead, ApiMethod::Post, &path, &obj(vec![])));
+        assert!(refused.is_err(), "the lead starts no consent: {refused:?}");
+        let reply = block_on(seed.api(GUARDIAN, ApiMethod::Post, &path, &obj(vec![])))
+            .unwrap_or_else(|e| panic!("the guardian: {e}"));
+        let to = reply
+            .get("redirect")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("no redirect in {}", reply.to_compact()));
+        let ticket = to
+            .strip_prefix("http://id.a.fstp.localhost:8640/w#")
+            .unwrap_or_else(|| panic!("not the vault write page: {to}"));
+        assert!(
+            !ticket.is_empty() && !ticket.contains(['?', '#', '/']),
+            "{to}"
+        );
+        assert_eq!(
+            inner.ports.vault.verifications(),
+            vec![(VerificationPurpose::GuardianConsent(p), GUARDIAN)]
+        );
+        let state = fstp_domain::view::proposal_state(&inner.ports.engine.state().core, p);
+        assert_eq!(state.map(|t| t.spec_name()), Some("IRC_REVIEW"));
+    }
 }

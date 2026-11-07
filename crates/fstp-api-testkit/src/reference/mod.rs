@@ -4,4 +4,5 @@
 
 pub mod authz;
 pub mod creator;
+pub mod invitations;
 pub mod public;

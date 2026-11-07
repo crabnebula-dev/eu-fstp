@@ -8,8 +8,9 @@
  *   it links shows the call title as its h1 and the call's content. No
  *   public page holds a script element.
  * - p32_onboarding_email_only (P-32; WhatsApp B-03 and Matrix B-05
- *   deferred): the onboarding Channels step offers email and no WhatsApp
- *   or Matrix control, and it still saves as validated.
+ *   deferred): the onboarding Channels step offers email as the one
+ *   usable channel. It shows WhatsApp and Matrix disabled, and it still
+ *   saves as validated.
  *
  * Every person, call and text is synthetic.
  */
@@ -97,15 +98,18 @@ test.describe('P-32 onboarding channels', () => {
       Array.from(m.querySelectorAll('input, select, textarea, button, [role="switch"], [role="checkbox"]')).map((c) => {
         const id = c.getAttribute('id') ?? '';
         const label = id === '' ? '' : (document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent ?? '');
-        return [id, c.getAttribute('name') ?? '', c.getAttribute('aria-label') ?? '', label, c.closest('label')?.textContent ?? ''].join(' ');
+        const text = [id, c.getAttribute('name') ?? '', c.getAttribute('aria-label') ?? '', label, c.closest('label')?.textContent ?? ''].join(' ');
+        return { text, disabled: c.matches(':disabled') };
       }),
     );
+    // Design section 15.0 (2026-11-06): Matrix and WhatsApp show, disabled
+    // and marked as coming later, so email stays the one usable channel.
+    const later = controls.filter((c) => /whatsapp|matrix/i.test(c.text));
+    expect(later.length, 'P-32: the Channels step shows Matrix and WhatsApp').toBe(2);
     expect(
-      controls.filter((c) => /whatsapp|matrix/i.test(c)),
-      'P-32: no WhatsApp or Matrix control on the Channels step',
+      later.filter((c) => !c.disabled).map((c) => c.text),
+      'P-32: no usable WhatsApp or Matrix control on the Channels step',
     ).toEqual([]);
-    const labels = await page.locator('main label').allInnerTexts();
-    expect(labels.filter((l) => /whatsapp|matrix/i.test(l)), 'P-32: no WhatsApp or Matrix label').toEqual([]);
 
     await saveOnboardingStep(page, 'validated');
   });

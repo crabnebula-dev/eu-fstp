@@ -161,6 +161,9 @@ impl CheckId {
             | CheckId::InviteeWithoutAccount
             | CheckId::RosterShort
             | CheckId::ProximityListMissing
+            // Q38 C (Daniel, 2026-11-06): a missing pre-check provider
+            // needs an acknowledgement and never blocks on its own.
+            | CheckId::PrecheckUnavailable
             | CheckId::AiActReassessment
             | CheckId::InferenceUnreachable => Severity::Warning,
             CheckId::PolicyInvalid
@@ -176,7 +179,6 @@ impl CheckId {
             | CheckId::TooFewTenantAdmins
             | CheckId::BuilderUnverified
             | CheckId::ExclusionClassUnknown
-            | CheckId::PrecheckUnavailable
             | CheckId::ChannelUnreachable
             | CheckId::SendingDomainUnverified
             | CheckId::MandatoryElementMissing
@@ -302,8 +304,8 @@ pub const CHECKS: &[CheckSpec] = &[
     ),
     row(
         CheckId::PrecheckUnavailable,
-        "P-23 enabled while no pre-check provider exists (Q38, interim, pending Daniel)",
-        "Pure over the Precheck port's presence; fails closed until fstp-programme lands (W1a)",
+        "P-23 enabled while no pre-check provider exists (Q38 C: a warning, and the Guide notes the pre-check is not yet available)",
+        "Pure over the Precheck port's presence; the M7 provider turns it off",
     ),
     row(
         CheckId::AiActReassessment,

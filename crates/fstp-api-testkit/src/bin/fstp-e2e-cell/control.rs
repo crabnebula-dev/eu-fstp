@@ -17,6 +17,8 @@
 //!   `POST /test/scenario/review {stage}`: a fresh cell seeded through
 //!   production commands ([`crate::scenario`]).
 //!
+//! - `POST /test/precheck`: one run of the fake pre-check provider
+//!   ([`crate::precheck`], Q38 C).
 //! - `GET /demo` and its links: the demo page for a person ([`crate::demo`]).
 //!
 //! A request that carries `Origin`, or a `Sec-Fetch-Site` other than
@@ -149,6 +151,7 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
         (false, "/test/vault/verify") => verify(site, &req),
         (false, "/test/scenario/applicant") => scenario::applicant(site, &req).await,
         (false, "/test/scenario/review") => scenario::review(site, &req).await,
+        (false, "/test/precheck") => crate::precheck::handle(),
         _ => wire::not_found(),
     }
 }

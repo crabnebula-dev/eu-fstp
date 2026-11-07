@@ -137,6 +137,9 @@ pub(crate) struct AuthState {
     demo_tokens: BTreeMap<String, (AccountId, i64)>,
     /// The sessions a demo sign-in opened.
     demo_sessions: BTreeSet<u128>,
+    /// How many programme role invitations of the accounts port the cell
+    /// mailed (J2, `crate::people`).
+    mailed_invitations: usize,
 }
 
 impl AuthState {
@@ -158,6 +161,7 @@ impl AuthState {
             admin_invitations: BTreeMap::new(),
             demo_tokens: BTreeMap::new(),
             demo_sessions: BTreeSet::new(),
+            mailed_invitations: 0,
         }
     }
 
@@ -219,6 +223,41 @@ impl AuthState {
         let token = hex(&wire::random::<16>()?);
         self.invites.insert(token.clone(), Invite { account });
         Ok(format!("{}/auth/invite#{token}", self.origin))
+    }
+
+    /// The programme role invitations of the accounts port not mailed yet,
+    /// marked as mailed (J2, `crate::people`).
+    pub(crate) fn take_unmailed(
+        &mut self,
+        all: Vec<fstp_api_core::port::InviteKind>,
+    ) -> Vec<fstp_api_core::port::InviteKind> {
+        let fresh: Vec<_> = all.into_iter().skip(self.mailed_invitations).collect();
+        self.mailed_invitations = self.mailed_invitations.saturating_add(fresh.len());
+        fresh
+    }
+
+    /// M3's part of a programme role invitation (J2): the account of
+    /// `email`, or a new one, takes the one-time enrolment token `token`,
+    /// the link token the API core drew, and the address is bound to it.
+    /// Returns the account and whether it is new.
+    pub(crate) fn invite_programme_role(&mut self, email: &str, token: &str) -> (AccountId, bool) {
+        let (account, new) = match self.account(email) {
+            Some(a) => (a, false),
+            None => {
+                let a = AccountId::from_raw(self.next_signup);
+                self.next_signup = self.next_signup.saturating_add(1);
+                (a, true)
+            }
+        };
+        self.person(email, account);
+        self.invites.insert(token.to_owned(), Invite { account });
+        (account, new)
+    }
+
+    /// The landing link of a programme role invitation:
+    /// `<origin>/app/invitation#<token>`.
+    pub(crate) fn invitation_link(&self, token: &str) -> String {
+        format!("{}/app/invitation#{token}", self.origin)
     }
 
     /// Records that `account` was invited as a tenant admin under

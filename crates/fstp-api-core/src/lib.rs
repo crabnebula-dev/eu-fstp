@@ -428,6 +428,37 @@ pub trait McpSafe: fstp_json::ToJson {}
 /// The future that a dispatch returns.
 type DispatchFuture<'a> = Pin<Box<dyn Future<Output = Result<OpResult, ApiError>> + Send + 'a>>;
 
+/// The future that [`ApiCore::tool_rights`] returns.
+type RightsFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolRights, ApiError>> + Send + 'a>>;
+
+/// What a bearer token admits now, resolved without an operation (TH-63,
+/// lane W3c): the roles the account holds at the instant and the grant's
+/// scopes. Opaque, so no adapter reads the principal (rule A2b).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolRights {
+    principal: fstp_access::Principal,
+}
+
+impl ToolRights {
+    /// Whether an MCP client with these rights is shown `tool`: a public
+    /// tool, or one whose scope the token holds and whose operation one of
+    /// the account's roles may perform. Dispatch still judges every call.
+    pub fn admits(&self, tool: &meta::ToolDef) -> bool {
+        let Some(op) = fstp_access::OPS
+            .iter()
+            .find(|o| o.tool.is_some_and(|t| t.name == tool.name))
+        else {
+            return false;
+        };
+        matches!(op.kind, fstp_access::OpKind::Public(_))
+            || (self.principal.scopes().contains(tool.scope)
+                && op
+                    .acting
+                    .iter()
+                    .any(|r| self.principal.roles().contains(*r)))
+    }
+}
+
 /// The opaque API core. It holds the cell's ports behind a private trait
 /// object and offers no accessor for them.
 pub struct ApiCore {
@@ -449,6 +480,16 @@ impl ApiCore {
         op: Op,
     ) -> Result<OpResult, ApiError> {
         self.inner.dispatch(cred, head, op).await
+    }
+
+    /// The rights of a bearer token at this instant, without dispatching
+    /// an operation (TH-63): the MCP server filters `tools/list` by them
+    /// and refuses an unknown token at `initialize`. A credential that is
+    /// no bearer token, or a token that resolves to no grant, is refused
+    /// with `Unauthenticated`. Nothing is recorded, since no operation
+    /// runs.
+    pub async fn tool_rights(&self, cred: Credential) -> Result<ToolRights, ApiError> {
+        self.inner.tool_rights(cred).await
     }
 }
 

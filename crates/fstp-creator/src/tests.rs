@@ -33,7 +33,7 @@ use fstp_ledger::Seq;
 use fstp_money::{Amount, AmountRange, Currency, NonNegAmount, Percent};
 
 use crate::check::{CHECKS, CheckDetail, CheckId, CheckSubject, Severity, WarningKey};
-use crate::decide::{CreatorRefusal, decide_creator, decide_with};
+use crate::decide::{CreatorDecision, CreatorRefusal, decide_creator, decide_with};
 use crate::ids::{InvitationId, TemplateId};
 use crate::inputs::{
     CreatorInputs, PortPresence, PreviewOutcome, SodPreview, VaultChecks, preview_targets,
@@ -465,10 +465,15 @@ fn i66_public_validate_fails_closed_without_sources() {
         CheckId::GuideSectionMissing,
         CheckId::GuideBindingUnresolved,
         CheckId::FlowDownMissing,
-        CheckId::PrecheckUnavailable,
     ] {
         assert!(failures.contains(&c), "{}", c.name());
     }
+    // Q38 C (2026-11-06): the pre-check row is a warning, so it still
+    // needs an acknowledgement, beside the failures above.
+    assert!(r.shows_warning(&crate::check::WarningKey {
+        check: CheckId::PrecheckUnavailable,
+        subject: crate::check::CheckSubject::Draft,
+    }));
 }
 
 /// SoD-01 to SoD-13 (R-CF-03): a refused or unchecked preview is a
@@ -1347,4 +1352,111 @@ fn codec_from_json_matches_decode() {
         by: M1,
     };
     assert_eq!(CreatorRecord::from_json(&r.to_json()).unwrap(), r);
+}
+
+// ---------------------------------------------------------------------------
+// The actor before the state (`07-test-plan/test-plan.md`, authorisation
+// matrix row)
+// ---------------------------------------------------------------------------
+
+/// An account that holds no role in the cell.
+const OUTSIDER: AccountId = AccountId::from_raw(0xD1);
+
+/// Every draft command on `P`, at `revision`.
+fn draft_commands(revision: DraftRevision) -> Vec<CreatorCommand> {
+    vec![
+        CreatorCommand::ApplyStart {
+            programme: P,
+            base: revision,
+            start: StartingPoint::Clone {
+                source: ProgrammeId::from_raw(55),
+            },
+        },
+        CreatorCommand::SaveFields {
+            programme: P,
+            base: revision,
+            fields: Vec::new(),
+        },
+        CreatorCommand::AcceptNarrative {
+            programme: P,
+            base: revision,
+            field: fstp_programme::FieldId::P01,
+        },
+        CreatorCommand::Invite {
+            programme: P,
+            invitation: InvitationId::from_raw(1),
+            role: Role::Applicant,
+            invitee: Invitee::Account(M2),
+            organisation: None,
+        },
+        CreatorCommand::WithdrawInvitation {
+            programme: P,
+            invitation: InvitationId::from_raw(9),
+        },
+        CreatorCommand::AcknowledgeWarning {
+            programme: P,
+            revision,
+            warning: WarningKey {
+                check: CheckId::FieldUnset,
+                subject: CheckSubject::Draft,
+            },
+        },
+        CreatorCommand::RequestActivation {
+            programme: P,
+            revision,
+        },
+        CreatorCommand::ApproveActivation {
+            programme: P,
+            revision,
+            decision: DecisionId::from_raw(98),
+        },
+        CreatorCommand::SaveAsTenantTemplate {
+            programme: P,
+            template: TemplateId::from_raw(77),
+        },
+    ]
+}
+
+/// Whether `r` is an actor denial.
+fn actor_denial(r: &Result<CreatorDecision, CreatorRefusal>) -> bool {
+    matches!(
+        r,
+        Err(CreatorRefusal::NotProgrammeManager | CreatorRefusal::NotTenantAdmin)
+    )
+}
+
+/// Test plan, authorisation matrix row, I-67, R-PG-02: an outsider's
+/// creator command gets an actor denial before any input or I-66
+/// refusal, at a stale revision, on an unknown programme and once the
+/// programme is active. A permitted actor gets the state refusal instead.
+#[test]
+fn t_authz_i67_outsider_creator_command_is_an_actor_denial_in_every_state() {
+    let mut w = opened();
+    let inputs = passing();
+    let stale = w.head();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    let decide = |w: &World, cmd: &CreatorCommand, a| {
+        decide_creator(&w.core, &w.creator, cmd, &ctx(a), &inputs)
+    };
+    for cmd in draft_commands(stale) {
+        let r = decide(&w, &cmd, OUTSIDER);
+        assert!(actor_denial(&r), "stale {cmd:?}: {r:?}");
+    }
+    let mut unknown = opened();
+    unknown.creator = CreatorState::genesis();
+    for cmd in draft_commands(stale) {
+        let r = decide(&unknown, &cmd, OUTSIDER);
+        assert!(actor_denial(&r), "unknown {cmd:?}: {r:?}");
+    }
+    w.request(M1, &inputs).unwrap();
+    w.approve(TB, &inputs).unwrap();
+    let head = w.head();
+    for cmd in draft_commands(head) {
+        let r = decide(&w, &cmd, OUTSIDER);
+        assert!(actor_denial(&r), "active {cmd:?}: {r:?}");
+    }
+    let r = decide(&w, &draft_commands(head)[1], M1);
+    assert_eq!(r, Err(CreatorRefusal::AlreadyActive));
+    let r = decide(&w, &draft_commands(head)[7], TA);
+    assert_eq!(r, Err(CreatorRefusal::ApproverIsBuilder));
 }

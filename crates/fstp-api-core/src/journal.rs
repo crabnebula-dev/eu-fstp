@@ -203,12 +203,23 @@ impl Journal {
     /// Folds a command that appended at `now`, read against the state
     /// before it (`before`), which names the proposal of an assignment.
     pub(crate) fn fold(&mut self, cmd: &Command, before: &EngineState, now: Timestamp) {
+        match cmd {
+            Command::Core(c) => self.fold_core(c, before, now),
+            // R-EV-05: the plan, then its submission, as the entry holds them.
+            Command::Stage2Revision(r) => {
+                for c in r.commands() {
+                    self.fold_core(&c, before, now);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Folds one core command of an appended entry.
+    fn fold_core(&mut self, c: &Core, before: &EngineState, now: Timestamp) {
         if self.saturated {
             return;
         }
-        let Command::Core(c) = cmd else {
-            return;
-        };
         let Some(p) = proposal_of(c, before) else {
             return;
         };

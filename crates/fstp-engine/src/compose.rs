@@ -60,9 +60,14 @@
 //!
 //! # Publication
 //!
-//! [`publication`] fails closed. The `GuidePublished` record comes from
-//! the Guide renderer of lane W2c, which is not built, so no publication
-//! is composed here yet.
+//! A core `PublishCall` decided with the shell's [`GuideFacts`] carries
+//! its `GuidePublished` in the same entry ([`with_guide`], R-GA-01, I-52).
+//! The engine binds and renders the Guide over the state with the
+//! publication folded, and refuses the publication with I-52 when the
+//! Guide lacks a required section or a placeholder does not resolve. The
+//! entry stores the canonical document, its SHA-256 digest and the page
+//! (I-53). [`publication`] still fails closed, since a call's
+//! publication arrives as a core command.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -90,6 +95,15 @@ pub trait CreatorEnvironment {
     /// parts it owns (module documentation).
     fn creator_inputs(&self, state: &EngineState, cmd: &CreatorCommand, ctx: &Ctx)
     -> CreatorInputs;
+
+    /// The facts of the Guide of `call` at its publication in `state`
+    /// ([`GuideFacts`]), or `None` when the shell supplies none. The
+    /// default supplies none, so the publication carries no Guide (the
+    /// seam of [`with_guide`]).
+    fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
+        let _ = (state, call);
+        None
+    }
 }
 
 impl<E: CreatorEnvironment + ?Sized> CreatorEnvironment for &E {
@@ -100,6 +114,10 @@ impl<E: CreatorEnvironment + ?Sized> CreatorEnvironment for &E {
         ctx: &Ctx,
     ) -> CreatorInputs {
         (**self).creator_inputs(state, cmd, ctx)
+    }
+
+    fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
+        (**self).guide_facts(state, call)
     }
 }
 
@@ -143,6 +161,7 @@ pub(crate) fn creator_kind(cmd: &CreatorCommand) -> u8 {
         CreatorCommand::RequestActivation { .. } => 7,
         CreatorCommand::ApproveActivation { .. } => 8,
         CreatorCommand::SaveAsTenantTemplate { .. } => 9,
+        CreatorCommand::AcceptInvitation { .. } => 10,
     }
 }
 
@@ -181,8 +200,11 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
         C::DraftExists | C::InvitationExists | C::TemplateExists => {
             (RuleRef::Ledger, Why::IdReused)
         }
-        C::AlreadyActive | C::NoLiveRequest => (RuleRef::I66, Why::WrongState),
-        C::StaleRevision => (RuleRef::Input, Why::WrongState),
+        // A draft command on an active programme is a state guard: the
+        // transition row, never I-66, which only a draft programme names.
+        C::AlreadyActive => (RuleRef::Row, Why::WrongState),
+        C::NoLiveRequest => (RuleRef::I66, Why::WrongState),
+        C::StaleRevision | C::AlreadyAccepted => (RuleRef::Input, Why::WrongState),
         C::NotAnAccount | C::NotTenantAdmin => (RuleRef::Actor, Why::WrongActor),
         C::NotProgrammeManager => (RuleRef::Actor, Why::BindingInactive),
         C::NothingToSave | C::RoleNotInvitable => (RuleRef::Input, Why::InvalidValue),
@@ -464,6 +486,45 @@ fn decide_composed(
     Ok(records)
 }
 
+/// The vault questions of a stage 2 revision (R-EV-05): those of its
+/// plan, then those of its submission on the state after the plan. The
+/// submission's questions are predicted only when the plan asks none, so
+/// its records are known without an answer. A composed command whose
+/// questions were not asked is refused with `FactsIncomplete`.
+pub(crate) fn revision_queries(
+    state: &EngineState,
+    r: &crate::Stage2Revision,
+    ctx: &Ctx,
+) -> Result<Vec<Query>, Refusal> {
+    let [plan, submit] = r.commands();
+    let mut out = fstp_domain::queries(&state.core, &plan, ctx)?;
+    if out.is_empty() {
+        let mut scratch = state.core.clone();
+        if decide_composed(&mut scratch, &plan, ctx, &Answers::new(), false).is_ok() {
+            out.extend(fstp_domain::queries(&scratch, &submit, ctx)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Decides a stage 2 revision in one entry (R-EV-05, NOTE 1): the plan's
+/// records, then the submission's, each decided on the state after the
+/// earlier ones. Nothing is recorded on a failure.
+pub(crate) fn decide_revision(
+    state: &EngineState,
+    r: &crate::Stage2Revision,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<Vec<Record>, Refusal> {
+    let mut scratch = state.core.clone();
+    let mut out = Vec::new();
+    for c in r.commands() {
+        let records = decide_composed(&mut scratch, &c, ctx, answers, false)?;
+        out.extend(records.into_iter().map(Record::Core));
+    }
+    Ok(out)
+}
+
 /// Decides a creator command in one entry (module documentation). Nothing
 /// is recorded on a failure.
 pub fn decide_creator_command(
@@ -509,8 +570,64 @@ pub fn decide_creator_command(
             .map_err(CreatorFailure::Core)?;
         out.extend(records.into_iter().map(Record::Core));
     }
+    if let Some(r) = terms_record(state, cmd, ctx) {
+        out.push(Record::Core(r));
+    }
     out.extend(tail);
     Ok(out)
+}
+
+/// The core `TermsAccepted` of an accepted invitation (J2, lane inv): the
+/// actor's account, the invited role and the terms the shell showed.
+/// `None` for every other command. The creator decided the acceptance
+/// before, so the invitation is live and open here.
+fn terms_record(state: &EngineState, cmd: &CreatorCommand, ctx: &Ctx) -> Option<CoreRecord> {
+    let CreatorCommand::AcceptInvitation {
+        programme,
+        invitation,
+        version,
+        terms,
+    } = cmd
+    else {
+        return None;
+    };
+    let role = state
+        .creator
+        .draft(*programme)?
+        .invitations()
+        .get(invitation)?
+        .role;
+    Some(CoreRecord::TermsAccepted {
+        account: actor_account(ctx)?,
+        programme: *programme,
+        role,
+        invitation: fstp_domain::id::RoleInvitationId::from_raw(invitation.raw()),
+        version: *version,
+        terms: *terms,
+    })
+}
+
+/// The accepted confidentiality terms that a grant of `role` to `account`
+/// on `programme` is composed from (J2, "Confidentiality on binding",
+/// lane inv): the version and the stored text of the `TermsAccepted` of a
+/// live invitation of that role, accepted by that account. `None` when no
+/// such record exists, and then no grant of the role is composed.
+///
+/// Interim, pending Daniel: the shell composes the grant through this
+/// lookup. The driver does not refuse a core `GrantRole` without it, since
+/// the M2 world and its test setups grant roles with no invitation.
+pub fn terms_accepted(
+    state: &EngineState,
+    account: AccountId,
+    programme: ProgrammeId,
+    role: fstp_domain::roles::Role,
+) -> Option<(u32, fstp_domain::id::TextRef)> {
+    state
+        .creator
+        .draft(programme)?
+        .live_invitations()
+        .find(|(_, i)| i.role == role && i.accepted == Some(account))
+        .and_then(|(_, i)| i.terms)
 }
 
 /// The `IsVerified` answers an approval read, in account order.
@@ -605,6 +722,138 @@ pub fn publication(state: &EngineState, call: CallId) -> Result<Command, Compose
     Err(ComposeError::NoCleanReport)
 }
 
+// ---------------------------------------------------------------------------
+// The Guide at publication (R-GA-01, I-52, I-53, design section 3.10).
+// ---------------------------------------------------------------------------
+
+/// The facts the shell supplies for the Guide of a call at its
+/// publication (R-GA-01, I-52, design section 3.10).
+///
+/// The engine binds and renders the Guide itself over the state with the
+/// publication folded, so the completeness check runs in the publication
+/// entry (I-52). The shell supplies only what the core state does not
+/// hold, and the digest function: `fstp-crypto` is outside the engine's
+/// dependencies (M2 layering rule 1).
+#[derive(Clone, Debug)]
+pub struct GuideFacts {
+    /// The parsed Guide template of the programme's funder profile, from
+    /// the cell's profile source.
+    pub template: fstp_guide::Template,
+    /// The programme's compiled spec. `None` compiles the creator draft of
+    /// the programme ([`draft_compiled`]).
+    pub compiled: Option<fstp_programme::Compiled>,
+    /// The call's public identifier.
+    pub identifier: String,
+    /// The `https:` address applicants create an account on.
+    pub platform_url: String,
+    /// The data protection summary: the tenant's override or the
+    /// platform default (`fstp_tenant::TenantSettings::guide_notice`).
+    pub data_protection_summary: String,
+    /// The privacy statement address, from the same source.
+    pub privacy_statement_url: String,
+    /// The stored texts the Guide may read, by text id.
+    pub texts: BTreeMap<fstp_domain::id::TextId, String>,
+    /// SHA-256 through `fstp-crypto`, which the shell passes in.
+    pub digest: fn(&[u8]) -> [u8; 32],
+}
+
+/// The stored texts of [`GuideFacts`].
+struct FactTexts<'a>(&'a BTreeMap<fstp_domain::id::TextId, String>);
+
+impl fstp_guide::StoredTexts for FactTexts<'_> {
+    fn text(&self, text: fstp_domain::id::TextRef) -> Option<&str> {
+        self.0.get(&text.id()).map(String::as_str)
+    }
+}
+
+/// The compiled spec of the creator draft of `programme`, under its
+/// funder profile and the head policy's ids, or `None` without a draft or
+/// when it does not compile. The public pages compile it the same way.
+pub fn draft_compiled(
+    state: &EngineState,
+    programme: ProgrammeId,
+) -> Option<fstp_programme::Compiled> {
+    let draft = state.creator.draft(programme)?;
+    let view = fstp_creator::draft_view(&state.core, &state.creator, programme)?;
+    let head = fstp_domain::policy::head(&state.core, programme)?;
+    let profile = fstp_programme::FunderProfile::for_policy_ref(draft.profile())?;
+    let spec = fstp_programme::decode_spec(view.spec.to_compact().as_bytes()).ok()?;
+    fstp_programme::compile(
+        &spec,
+        &profile,
+        fstp_programme::CompileIds::new(programme, head.id, head.parent),
+    )
+    .ok()
+}
+
+/// The refusal of a publication whose Guide does not bind (I-52).
+const fn no_guide() -> Refusal {
+    Refusal::new(RuleRef::I52, RefusalReason::GuardFailed)
+}
+
+/// The records of a decided core command, with the Guide of a
+/// publication after them (R-GA-01, I-52, D2e).
+///
+/// For a `PublishCall` whose shell supplies [`GuideFacts`], the engine
+/// folds the decided records into a copy of the core state, binds the
+/// Guide over it and appends `GuidePublished` with the canonical document,
+/// its digest and the page. A Guide that lacks a required section, or a
+/// placeholder that does not resolve, refuses the publication with I-52,
+/// so nothing is appended. Every other command keeps its records.
+///
+/// Seam: a shell that supplies no facts publishes as before, with no
+/// Guide. The strict fold of D2e, which refuses a `CallPublished` without
+/// its `GuidePublished`, is lane m4d2e-cont's.
+pub(crate) fn with_guide(
+    state: &EngineState,
+    cmd: &fstp_domain::Command,
+    at: fstp_domain::time::Timestamp,
+    mut records: Vec<Record>,
+    env: &dyn CreatorEnvironment,
+) -> Result<Vec<Record>, Refusal> {
+    let fstp_domain::Command::PublishCall { call, .. } = cmd else {
+        return Ok(records);
+    };
+    let Some(facts) = env.guide_facts(state, *call) else {
+        return Ok(records);
+    };
+    let mut post = state.core.clone();
+    for r in &records {
+        if let Record::Core(c) = r {
+            fstp_domain::apply(&mut post, Seq::from_raw(u64::MAX), at, c)
+                .map_err(|_| no_guide())?;
+        }
+    }
+    let programme = fstp_domain::programme::call(&post, *call)
+        .ok_or_else(no_guide)?
+        .programme();
+    let compiled = match facts.compiled {
+        Some(c) => c,
+        None => draft_compiled(state, programme).ok_or_else(no_guide)?,
+    };
+    let texts = FactTexts(&facts.texts);
+    let source = fstp_guide::GuideSource {
+        template: &facts.template,
+        compiled: &compiled,
+        identifier: &facts.identifier,
+        platform_url: &facts.platform_url,
+        data_protection_summary: Some(&facts.data_protection_summary),
+        privacy_statement_url: Some(&facts.privacy_statement_url),
+        texts: &texts,
+    };
+    let rendered = fstp_guide::publication_guide(&post, *call, &source).map_err(|_| no_guide())?;
+    let canonical = String::from_utf8(rendered.canonical().to_vec()).map_err(|_| no_guide())?;
+    let digest = fstp_domain::id::ContentDigest::from_bytes((facts.digest)(canonical.as_bytes()));
+    records.push(Record::Core(fstp_domain::Record::GuidePublished {
+        call: *call,
+        version: fstp_domain::programme::GUIDE_VERSION,
+        digest,
+        canonical,
+        page: rendered.html().as_str().to_owned(),
+    }));
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,5 +894,16 @@ mod tests {
         ] {
             assert_eq!(creator_refusal(c).rule, rule, "{c:?}");
         }
+    }
+
+    /// I-66, test plan authorisation matrix row: a creator command on an
+    /// active programme is a state guard, so it names no I-66 refusal,
+    /// which the matrix reads as a draft programme.
+    #[test]
+    fn i66_creator_command_on_an_active_programme_is_a_state_guard() {
+        let r = creator_refusal(CreatorRefusal::AlreadyActive);
+        assert_ne!(r.rule, RuleRef::I66);
+        assert_eq!(r.rule, RuleRef::Row);
+        assert_eq!(r.reason, RefusalReason::WrongState);
     }
 }

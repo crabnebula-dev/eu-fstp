@@ -179,6 +179,9 @@ pub(crate) struct Supplied {
     /// The stored upload: its blob address and the salted digest of its
     /// normalised text.
     pub(crate) upload: Option<(BlobAddress, TextDigest)>,
+    /// The link token of an invitation, drawn once per call so the dry
+    /// run and the execution name the same invitation (J2, lane inv).
+    pub(crate) link: Option<[u8; 32]>,
 }
 
 impl Supplied {
@@ -189,6 +192,7 @@ impl Supplied {
             actor,
             contact: None,
             upload: None,
+            link: None,
         }
     }
 }
@@ -546,11 +550,37 @@ fn invite(
         .unwrap_or_else(|| crate::forms::text_ref(0, email));
     Ok(CreatorCommand::Invite {
         programme,
-        invitation: InvitationId::from_raw(draw()?),
+        invitation: match supplied.link {
+            Some(t) => link_invitation(&crate::action::hex(&t)),
+            None => InvitationId::from_raw(draw()?),
+        },
         role,
         invitee: Invitee::Pending { contact },
         organisation,
     })
+}
+
+/// The label of the link token digest (ADR-007 `SecretDigest`, J2).
+const LINK_LABEL: &[u8] = b"fstp:j2:invitation-link:v1:";
+
+/// The invitation a link token names (J2, ADR-007, lane inv): the first
+/// 16 bytes of the labelled SHA-256 of the token in its link spelling.
+///
+/// Interim, pending Daniel: the invitation id is the token's digest, so
+/// the ledger holds the digest of the drawn token and never the token.
+/// No record shape changes, and a restarted core finds the invitation by
+/// its token. A token is 256 random bits, so the 128-bit digest names no
+/// other invitation, and the id, which the admin pages show, does not
+/// give the token back.
+pub(crate) fn link_invitation(token: &str) -> InvitationId {
+    let mut text = LINK_LABEL.to_vec();
+    text.extend_from_slice(token.as_bytes());
+    let digest = fstp_crypto::sha256(&text);
+    let mut head = [0u8; 16];
+    for (slot, b) in head.iter_mut().zip(digest.iter()) {
+        *slot = *b;
+    }
+    InvitationId::from_raw(u128::from_be_bytes(head))
 }
 
 /// The media type of an upload.

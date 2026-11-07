@@ -227,6 +227,10 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             crate::tenant::tenant_queries(state, t, ctx)
         }
+        Command::Stage2Revision(r) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::revision_queries(state, r, ctx)
+        }
     }
 }
 
@@ -242,8 +246,12 @@ fn route_decide(
         Command::Core(c) => {
             crate::ledger_clock(state, ctx)?;
             outside_activation(c, ctx)?;
-            fstp_domain::decide(&state.core, c, ctx, answers)
-                .map(|records| records.into_iter().map(Record::Core).collect())
+            let records = fstp_domain::decide(&state.core, c, ctx, answers)?
+                .into_iter()
+                .map(Record::Core)
+                .collect();
+            // R-GA-01, I-52: a publication carries its Guide.
+            crate::compose::with_guide(state, c, ctx.now, records, env)
         }
         Command::Finding(f) => crate::decide_finding(state, f, ctx, answers),
         Command::Creator(c) => {
@@ -262,6 +270,10 @@ fn route_decide(
         Command::Tenant(t) => {
             crate::ledger_clock(state, ctx)?;
             crate::tenant::decide_tenant(state, t, ctx, answers)
+        }
+        Command::Stage2Revision(r) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::decide_revision(state, r, ctx, answers)
         }
     }
 }

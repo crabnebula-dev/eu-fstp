@@ -230,6 +230,19 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetGuideNotice { notice } => {
+            // R-GA-01: only an https address stands in the Guide.
+            if notice
+                .as_ref()
+                .is_some_and(|n| !crate::rules::https_address(&n.privacy_statement_url))
+            {
+                return Err(TenantRefusal::InvalidAddress);
+            }
+            Ok(vec![TenantRecord::GuideNoticeSet {
+                notice: notice.clone(),
+                by,
+            }])
+        }
         TenantCommand::RecordInferenceConfig {
             config,
             primary,

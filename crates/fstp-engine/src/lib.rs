@@ -46,7 +46,10 @@
 //!   resolution and account, and the import store holds that proposal
 //!   for the saved programme and field;
 //! - a confirming or editing `ProposalResolved` whose entry saves no such
-//!   field.
+//!   field;
+//! - a `GuidePublished` whose entry holds no earlier `CallPublished` of
+//!   the same call (R-GA-01, I-52). The domain fold refuses a second
+//!   `GuidePublished` for a call (I-53).
 //!
 //! The driver refuses every core `ActivateProgramme` that arrives through
 //! `execute` with `RuleRef::I66`, drafted or not. Only the creator's
@@ -68,9 +71,10 @@
 //!
 //! # Seams
 //!
-//! - Publication (I-52): `compose::publication` fails closed until the
-//!   Guide renderer of lane W2c yields `GuidePublished`. So `execute`
-//!   still accepts a core `PublishCall`, and the fold its `CallPublished`.
+//! - Publication (I-52): a core `PublishCall` carries its `GuidePublished`
+//!   when the shell supplies `compose::GuideFacts`. Without them `execute`
+//!   still accepts it alone, and the fold its `CallPublished` (lane
+//!   m4d2e-cont makes that pairing strict).
 //! - L-CODEC: a `fstp_ledger::Canonical` impl for [`Record`], and the
 //!   switch of the testkit's `harness::prop::append_only` to
 //!   `fstp_ledger::verify_append_only`.
@@ -120,7 +124,9 @@ pub use tenant::{Provisioning, TenantEntry, TenantFacts, TenantPart, TenantReque
 // the functions below route to `findings` (lane L-FIND-B).
 // ---------------------------------------------------------------------------
 
-pub use fstp_findings::{FindingCommand, FindingRecord, FindingStore};
+pub use fstp_findings::{
+    Finding, FindingCommand, FindingId, FindingKind, FindingRecord, FindingStore, Mark, Severity,
+};
 
 /// The vault questions a finding command needs. Only a `Mark` asks one,
 /// `HasConflict` for the marking reviewer (I-03). A finding command never
@@ -189,6 +195,9 @@ struct OpenEntry {
     /// Confirming or editing resolutions still waiting for their
     /// `FieldsSaved`.
     resolutions: Vec<OwedSave>,
+    /// The calls this entry published so far. A `GuidePublished` folds
+    /// only after the `CallPublished` of its call in the same entry.
+    published: Vec<fstp_domain::id::CallId>,
 }
 
 /// The save a confirming or editing `ProposalResolved` owes its entry:
@@ -216,6 +225,7 @@ impl OpenEntry {
             approvals: Vec::new(),
             openings: Vec::new(),
             resolutions: Vec::new(),
+            published: Vec::new(),
         }
     }
 
@@ -324,6 +334,50 @@ pub enum Command {
     /// A tenant command with the shell's facts, decided by
     /// `fstp_tenant::decide` over the tenant part (design section 3.5).
     Tenant(TenantRequest),
+    /// A stage 2 revision, decided by `compose::decide_revision` in one
+    /// entry (R-EV-05).
+    Stage2Revision(Stage2Revision),
+}
+
+/// A stage 2 revision (R-EV-05, NOTE 1, M4 design section 2.2 J4): the
+/// core `RecordPlanVersion` of origin "stage 2 revision" and the core
+/// `SubmitRevision` of that plan, decided in that order in one entry, as
+/// the creator's approval composes its core activation. Only
+/// [`Stage2Revision::new`] builds it, so the two always name the same plan
+/// and proposal.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Stage2Revision {
+    plan: fstp_domain::Command,
+}
+
+impl Stage2Revision {
+    /// The revision that records `plan` and submits it, or `None` unless
+    /// `plan` is a `RecordPlanVersion` of origin "stage 2 revision".
+    pub fn new(plan: fstp_domain::Command) -> Option<Stage2Revision> {
+        matches!(
+            plan,
+            fstp_domain::Command::RecordPlanVersion {
+                origin: fstp_domain::proposal::PlanOrigin::Stage2Revision,
+                ..
+            }
+        )
+        .then_some(Stage2Revision { plan })
+    }
+
+    /// The core commands, in the order they are decided: the plan, then
+    /// its submission.
+    pub fn commands(&self) -> [fstp_domain::Command; 2] {
+        let submit = match &self.plan {
+            fstp_domain::Command::RecordPlanVersion { plan, proposal, .. } => {
+                fstp_domain::Command::SubmitRevision {
+                    proposal: *proposal,
+                    plan: *plan,
+                }
+            }
+            other => other.clone(),
+        };
+        [self.plan.clone(), submit]
+    }
 }
 
 /// Hashes the side and the inner command. A creator command hashes its
@@ -356,6 +410,10 @@ impl core::hash::Hash for Command {
             Command::Tenant(t) => {
                 5u8.hash(state);
                 t.command.kind().hash(state);
+            }
+            Command::Stage2Revision(r) => {
+                6u8.hash(state);
+                r.hash(state);
             }
         }
     }
@@ -578,6 +636,15 @@ fn apply_core(
                 .position(|a| compose::pairs_with(a, pa))
                 .ok_or(FoldError::Inconsistent)?;
             open.approvals.remove(i);
+        }
+        fstp_domain::Record::CallPublished { call, .. } => {
+            open_entry(state)?.published.push(*call);
+        }
+        // R-GA-01, I-52, D2e: a Guide folds only in its publication entry.
+        fstp_domain::Record::GuidePublished { call, .. } => {
+            if !open_entry(state)?.published.contains(call) {
+                return Err(FoldError::Inconsistent);
+            }
         }
         fstp_domain::Record::ProgrammeCreated { programme, by, .. } => {
             let open = open_entry(state)?;

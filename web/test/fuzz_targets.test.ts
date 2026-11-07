@@ -8,6 +8,7 @@ import * as message from "../fuzz/message_format.fuzz.js";
 import * as money from "../fuzz/money_parse.fuzz.js";
 import * as returnPath from "../fuzz/return_path.fuzz.js";
 import * as router from "../fuzz/router_match.fuzz.js";
+import * as routeTree from "../fuzz/route_tree.fuzz.js";
 import { TARGETS } from "../fuzz/targets.js";
 import * as safe from "../fuzz/safe_url.fuzz.js";
 import * as validators from "../fuzz/validators.fuzz.js";
@@ -66,6 +67,7 @@ test("th26_every_typescript_parser_has_a_fuzz_target", () => {
       "pdf_token",
       "pdf_xref",
       "return_path",
+      "route_tree",
       "router_match",
       "safe_url",
       "validators",
@@ -284,4 +286,50 @@ test("th26_return_path_teeth_encoded_dot_is_caught", async () => {
       }),
     ),
   );
+});
+
+/**
+ * TH-26, I-68 (lane j4): the reference reading of the closed SVG subset
+ * in `route_tree.fuzz.ts` gives every verdict of its corpus, and accepts
+ * the server's tree of the prototype state. A reference self-test.
+ */
+test("th26_route_tree_reference_gives_the_corpus_verdicts", () => {
+  for (const e of readExpectations("route_tree")) {
+    const want = e.verdict === "accept";
+    assert(e.verdict === "accept" || e.verdict === "refuse", `line ${e.line}: verdict ${e.verdict}`);
+    eq(routeTree.refAccepts(routeTree.wireOf(e.input), routeTree.PAGE), want, `line ${e.line}: ${show(e.input.slice(0, 120))}`);
+  }
+  const seeds = routeTree.target.seeds();
+  const server = seeds[seeds.length - 1] ?? "";
+  eq(routeTree.refAccepts(routeTree.wireOf(server), routeTree.PAGE), true, "the server's tree");
+});
+
+/** TH-26, I-68, ADR-015 amendment: `route_tree` holds on a seeded run over web/src/journey/svg.ts. */
+test("th26_route_tree_target_holds", async () => {
+  await holds(routeTree.target);
+});
+
+/**
+ * TH-26, I-68 teeth: `route_tree` passes a reference-backed reader and
+ * catches a reader that lets a style attribute through, and one that
+ * checks only the root.
+ */
+test("th26_route_tree_teeth_lenient_readers_are_caught", async () => {
+  const ref = (v: unknown, page: string): unknown => (routeTree.refAccepts(v, page) ? v : null);
+  await passes(over(routeTree.target, () => routeTree.checkerFor(ref)));
+  const styled = (v: unknown, page: string): unknown => {
+    const text = JSON.stringify(v) ?? "";
+    const clean = text.replace(/\{"name":"style","value":"[^"]*"\},?/g, "").replace(/,\]/g, "]");
+    let w: unknown = null;
+    try {
+      w = JSON.parse(clean) as unknown;
+    } catch {
+      return null;
+    }
+    return routeTree.refAccepts(w, page) ? v : null;
+  };
+  await caught(over(routeTree.target, () => routeTree.checkerFor(styled), ['{"tag":"svg","attrs":[{"name":"style","value":"x"}],"children":[]}']));
+  const rootOnly = (v: unknown): unknown =>
+    typeof v === "object" && v !== null && (v as Record<string, unknown>)["tag"] === "svg" ? v : null;
+  await caught(over(routeTree.target, () => routeTree.checkerFor(rootOnly)));
 });

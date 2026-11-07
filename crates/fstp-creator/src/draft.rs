@@ -379,3 +379,26 @@ fn narrative_text(value: &FieldValue) -> String {
         _ => canonical,
     }
 }
+
+/// R-PG-04: the calls of `programme` among `calls` that a change of any
+/// policy field to its value in the head policy reaches, in call order.
+/// The creator's impact read names no change, so it answers for every
+/// policy field (interim, pending Daniel). An unpublished call takes
+/// every change. A published call takes a live change, or a P-05 or P-13
+/// tightening with its corrigendum (I-12, P-05 and P-13 NOTE 7). A
+/// programme with no head policy has no affected call.
+pub fn affected_calls(
+    state: &State,
+    programme: ProgrammeId,
+    calls: &[fstp_domain::id::CallId],
+) -> Result<Vec<fstp_domain::id::CallId>, fstp_programme::ImpactError> {
+    let Some(head) = state.policy().head(programme) else {
+        return Ok(Vec::new());
+    };
+    let changed: BTreeSet<FieldId> = FIELDS
+        .iter()
+        .filter(|f| f.kind == FieldKind::Policy)
+        .map(|f| f.id)
+        .collect();
+    fstp_programme::affected_calls(state, programme, calls, &changed, head)
+}

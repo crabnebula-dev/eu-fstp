@@ -29,9 +29,9 @@ use crate::command::{TenantCommand, TenantRecord};
 use crate::refusal::{DecodeError, TenantError};
 use crate::types::{
     ActivationRequestId, ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef,
-    InferenceDefault, InvitationId, LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep,
-    PaymentMode, RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepValues,
-    TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
+    GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, McpSettings, Milestone,
+    ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, SignatoryRole, StepFailure,
+    StepOutcome, StepValues, TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
 };
 
 /// The record schema versions this build decodes. Version 1 is the only
@@ -168,6 +168,15 @@ fn text_ref(t: &TextRef) -> Value {
         ("digest", s(&hex(&t.digest().bytes()))),
         ("id", dec(t.id().raw())),
     ])
+}
+
+fn guide_notice(n: &Option<GuideNoticeOverride>) -> Value {
+    n.as_ref().map_or(Value::Null, |n| {
+        object(vec![
+            ("privacy_statement_url", s(&n.privacy_statement_url)),
+            ("summary", text_ref(&n.summary)),
+        ])
+    })
 }
 
 fn token_digest(d: TokenDigest) -> Value {
@@ -345,6 +354,9 @@ fn command_value(cmd: &TenantCommand) -> Value {
                 ("value", setting(value)),
             ],
         ),
+        TenantCommand::SetGuideNotice { notice } => {
+            tagged("SetGuideNotice", vec![("notice", guide_notice(notice))])
+        }
         TenantCommand::RecordInferenceConfig {
             config,
             primary,
@@ -447,6 +459,10 @@ fn record_value(rec: &TenantRecord) -> Value {
                 ("param", s(param_name(value.param()))),
                 ("value", setting(value)),
             ],
+        ),
+        TenantRecord::GuideNoticeSet { notice, by } => tagged(
+            "GuideNoticeSet",
+            vec![("by", dec(by.raw())), ("notice", guide_notice(notice))],
         ),
         TenantRecord::InferenceConfigRecorded {
             config,
@@ -711,6 +727,24 @@ fn take_text_ref(v: &Value) -> R<TextRef> {
     Ok(TextRef::new(id, digest))
 }
 
+/// The Guide notice override, or `None` for `null`. The address must be
+/// an https address (`crate::rules::https_address`), as a domain name
+/// must be a host name.
+fn take_guide_notice(v: &Value) -> R<Option<GuideNoticeOverride>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let f = Fields::of(v, &["privacy_statement_url", "summary"])?;
+    let url = str_of(f.get("privacy_statement_url")?)?;
+    if !crate::rules::https_address(url) {
+        return Err(err("not an https address"));
+    }
+    Ok(Some(GuideNoticeOverride {
+        summary: take_text_ref(f.get("summary")?)?,
+        privacy_statement_url: url.to_owned(),
+    }))
+}
+
 fn take_grant(v: &Value) -> R<GrantRef> {
     let f = Fields::of(v, &["grantee", "programme", "role"])?;
     Ok(GrantRef {
@@ -898,6 +932,12 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 value: take_setting(param, f.get("value")?)?,
             }
         }
+        "SetGuideNotice" => {
+            let f = Fields::of(v, &["kind", "notice"])?;
+            TenantCommand::SetGuideNotice {
+                notice: take_guide_notice(f.get("notice")?)?,
+            }
+        }
         "RecordInferenceConfig" => {
             let f = Fields::of(v, &["config", "fallbacks", "kind", "primary"])?;
             TenantCommand::RecordInferenceConfig {
@@ -996,6 +1036,13 @@ fn take_record(v: &Value) -> R<TenantRecord> {
             let param = take_param(f.get("param")?)?;
             TenantRecord::SettingChanged {
                 value: take_setting(param, f.get("value")?)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
+        "GuideNoticeSet" => {
+            let f = Fields::of(v, &["by", "kind", "notice"])?;
+            TenantRecord::GuideNoticeSet {
+                notice: take_guide_notice(f.get("notice")?)?,
                 by: take_account(f.get("by")?)?,
             }
         }

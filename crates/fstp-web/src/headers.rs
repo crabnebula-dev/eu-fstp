@@ -33,8 +33,7 @@ pub(crate) enum Surface {
     Api,
     /// `/p` and below: public pages.
     Public,
-    /// `/mcp`, `/oauth` and the OAuth `/.well-known` documents, which wait
-    /// for ADR-013.
+    /// `/mcp`, `/oauth` and the OAuth `/.well-known` documents (ADR-013).
     Adr013,
     /// Any other path.
     Other,

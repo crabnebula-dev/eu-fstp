@@ -29,7 +29,8 @@ use crate::grant::{GrantDecided, IneligibleCost};
 use crate::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ContentDigest, ContractId,
     DecisionId, DeliverableId, Handle, LineId, LlmConfigId, MilestoneId, OrganisationId,
-    PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, TextRef, VaultEpoch,
+    PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, RoleInvitationId, TextRef,
+    VaultEpoch,
 };
 use crate::oracle::QueryKind;
 use crate::payment::{CheckPhase, CheckResult, PaymentKind, PaymentLine, PaymentReleased};
@@ -441,6 +442,27 @@ pub enum Record {
         /// The publisher.
         by: AccountId,
     },
+    /// The Guide for Applicants of a call, generated at its publication in
+    /// the entry of its `CallPublished` (R-GA-01, I-52, I-53, M4 design
+    /// section 3.10). The fold refuses a second one for a call.
+    ///
+    /// It holds the Guide itself: the canonical document, whose SHA-256
+    /// through `fstp-crypto` is `digest`, and the page the public pages
+    /// serve. The Guide is a document the platform generates, not free
+    /// text a person wrote, and I-53 makes it immutable, so it is kept in
+    /// the ledger with its digest (interim, pending Daniel).
+    GuidePublished {
+        /// The call.
+        call: CallId,
+        /// The Guide version, 1 at publication.
+        version: u32,
+        /// SHA-256 of `canonical`.
+        digest: ContentDigest,
+        /// The canonical document the digest is taken over.
+        canonical: String,
+        /// The HTML page of the Guide.
+        page: String,
+    },
     /// A binding was granted.
     BindingGranted(BindingGranted),
     /// A binding ended.
@@ -728,6 +750,29 @@ pub enum Record {
         holds: bool,
         /// The vault epoch.
         epoch: VaultEpoch,
+    },
+    /// An invitee accepted the confidentiality terms of a programme role
+    /// ("Confidentiality on binding", M4 design section 2.2 J2, lane inv).
+    ///
+    /// The engine appends it for an accepted creator invitation. It names
+    /// no contact address and no link token (I-86, ADR-007). The core
+    /// projection keeps nothing of it. The creator projection folds it
+    /// into the invitation, and the grant of the role is composed only
+    /// from it (`fstp_engine::compose::terms_accepted`).
+    TermsAccepted {
+        /// The accepting account.
+        account: AccountId,
+        /// The programme.
+        programme: ProgrammeId,
+        /// The invited role.
+        role: Role,
+        /// The creator invitation accepted.
+        invitation: RoleInvitationId,
+        /// The version of the confidentiality terms the invitee was shown.
+        version: u32,
+        /// The terms as accepted, with the programme's P-75 and P-77
+        /// choices bound, as a confidential text of the programme.
+        terms: TextRef,
     },
     /// A notification or group event was enqueued.
     OutboxEnqueued(OutboxEvent),

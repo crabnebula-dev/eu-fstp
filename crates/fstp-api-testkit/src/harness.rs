@@ -1,6 +1,7 @@
 //! The channel harness of the authorisation matrix (M4 design section
-//! 8.3): every cell through `ApiCore::dispatch` directly, and through the
-//! HTTP routes of `fstp-web` over `fstp_rt::duplex`.
+//! 8.3): every cell through `ApiCore::dispatch` directly, through the
+//! HTTP routes of `fstp-web` over `fstp_rt::duplex`, and every MCP cell
+//! through the `tools/call` handler of `fstp_mcp::McpServer` (lane W3c).
 //!
 //! # Worlds
 //!
@@ -51,7 +52,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use fstp_api_core::decode::{Method as ApiMethod, decode_route, decode_tool};
+use fstp_api_core::decode::{Method as ApiMethod, decode_public_page, decode_route, decode_tool};
 use fstp_api_core::meta::Scope;
 use fstp_api_core::port::{AgentClientId, LoginMethod, PendingId, api_core};
 use fstp_api_core::{ApiCore, ApiError, Credential, OpResult, RequestHead};
@@ -624,6 +625,16 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "tenant.set_mcp" => obj(vec![("value", mcp_value(P74::AllRoles))]),
         "tenant.set_payment_mode" => obj(vec![("value", s("record_only"))]),
         "tenant.set_template_licence" => obj(vec![("value", s("MIT"))]),
+        "tenant.set_guide_notice" => obj(vec![
+            (
+                "privacy_statement_url",
+                s("https://privacy.matrix.example/statement"),
+            ),
+            (
+                "summary",
+                s("Synthetic data protection summary, matrix cell."),
+            ),
+        ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),
@@ -692,7 +703,8 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             obj(vec![("account", dec(AccountId::from_raw(990).raw()))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
-        "proposal.declare_affiliations" => obj(vec![("lists", Value::Array(Array::new()))]),
+        "proposal.declare_affiliations" => obj(vec![("affiliations", s("SYNTHETIC AFFILIATIONS"))]),
+        "proposal.state_birth_date" => obj(vec![("date_of_birth", s("1990-01-01"))]),
         "proposal.submit" => obj(vec![("ethics", s("none")), ("notice_version", s("1"))]),
         "stage2.answer" => obj(vec![("text", s("SYNTHETIC ANSWERS"))]),
         "stage2.revise" => obj(vec![("plan", dec(t.plan.unwrap_or(1)))]),
@@ -741,6 +753,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ])
         }
         "committee.cast" => obj(vec![("vote", s("For"))]),
+        "review.mark_finding" => obj(vec![("mark", s("Agreed"))]),
         "committee.delegate" => obj(vec![("to", dec(MEMBER.raw()))]),
         "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
         "agents.consent" => obj(vec![]),
@@ -815,6 +828,7 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         let step = v.as_str().unwrap_or("organisation").to_owned();
         path = path.replace("/organisation", &format!("/{step}"));
     }
+    let path = served_path(spec, pattern, path);
     let body = body_of(cell.op, cell.who, cell.state, w)?;
     Ok(Request {
         op: cell.op,
@@ -823,6 +837,32 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         body,
         params,
     })
+}
+
+/// The path a web client sends for `spec`, whose registry route `pattern`
+/// filled in is `path`. The `/p` router serves the programme page at
+/// `/p/{slug}/` and the feed at `/p/{slug}/feed.json` (M4 design section
+/// 3.10, "Routes"), where the registry names `/p/{slug}` and
+/// `/p/{slug}/feed`. Every other path is sent as filled in.
+fn served_path(spec: &fstp_access::OpSpec, pattern: &str, mut path: String) -> String {
+    if matches!(spec.kind, fstp_access::OpKind::Public(_)) {
+        match pattern {
+            "/p/{slug}" => path.push('/'),
+            "/p/{slug}/feed" => path.push_str(".json"),
+            _ => {}
+        }
+    }
+    path
+}
+
+/// Decodes a web request as `fstp-web`'s router does: a `GET` under `/p/`
+/// through the public page decoder, any other through the API routes.
+fn decode_web(method: ApiMethod, path: &str, body: &[u8]) -> Result<fstp_api_core::Op, ApiError> {
+    if method == ApiMethod::Get && path.starts_with("/p/") {
+        decode_public_page(path)
+    } else {
+        decode_route(method, path, body)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,6 +1179,8 @@ pub struct Built {
     ports: WorldPorts,
     core: Arc<ApiCore>,
     router: Option<fstp_web::WebRouter>,
+    /// The MCP server of the MCP channel, built on first use.
+    mcp: Option<fstp_mcp::McpServer>,
     targets: Targets,
     /// The cell clock.
     now: i64,
@@ -1240,6 +1282,36 @@ impl Seeder {
             .environment(Command::Core(cmd), ctx)
             .map(|_| ())
             .map_err(|e| format!("{kind:?} by the system: {e}"))
+    }
+
+    /// Records finding 1 on `x` of `call` through the assessor's system
+    /// path under the call's pin (I-10, I-11). `review.mark_finding` and
+    /// `review.findings` address it.
+    fn finding(&mut self, call: CallId, x: ProposalId) -> Result<(), String> {
+        let state = self.ports.engine.state();
+        let config = state
+            .core
+            .calls()
+            .get(call)
+            .and_then(|v| v.llm_config())
+            .ok_or("the call has no assessor pin")?;
+        let f = fstp_domain_testkit::r#gen::findings::finding(
+            1,
+            call,
+            x,
+            config,
+            fstp_engine::FindingKind::Completeness,
+            "SYNTHETIC FINDING",
+        );
+        let ctx = self.ctx(Actor::System(SystemCause::Timeline));
+        self.ports
+            .engine
+            .environment(
+                Command::Finding(fstp_engine::FindingCommand::Record(f)),
+                ctx,
+            )
+            .map(|_| ())
+            .map_err(|e| format!("a finding by the assessor: {e}"))
     }
 
     /// The passkey session of `account`.
@@ -1757,6 +1829,113 @@ fn activate(seed: &mut Seeder, p: ProgrammeId, approver: AccountId) -> Result<()
     Ok(())
 }
 
+/// Acknowledges every warning of the draft P that has no live
+/// acknowledgement, then requests its activation as its manager, so the
+/// request is live at the head revision. The clock moves with each call,
+/// so a binding end scheduled meanwhile can raise a fresh warning: the
+/// report is read again until it shows none unacknowledged.
+fn request_live(seed: &mut Seeder, p: ProgrammeId) -> Result<(), String> {
+    for _ in 0..3 {
+        let report = seed.api(
+            PM,
+            ApiMethod::Get,
+            &format!("/programmes/{}/draft/report", p.raw()),
+            &Value::Null,
+        )?;
+        let open: Vec<String> = report_rows(&report)
+            .into_iter()
+            .filter(|(_, severity, ack, _)| severity == "warning" && !ack)
+            .map(|(_, _, _, key)| key)
+            .collect();
+        if open.is_empty() {
+            break;
+        }
+        for key in open {
+            let rev = draft_revision(seed, PM, p)?;
+            seed.api(
+                PM,
+                ApiMethod::Post,
+                &format!("/programmes/{}/draft/acknowledgements", p.raw()),
+                &obj(vec![("revision", s(&rev)), ("warning", s(&key))]),
+            )?;
+        }
+    }
+    // A report that does not clear refuses the request with I-66, and the
+    // world keeps no live request, as before this step.
+    let rev = draft_revision(seed, PM, p)?;
+    let _ = seed.api(
+        PM,
+        ApiMethod::Post,
+        &format!("/programmes/{}/activation-request", p.raw()),
+        &obj(vec![("revision", s(&rev))]),
+    );
+    Ok(())
+}
+
+/// The pending actions of the call authors of the active programme P
+/// (I-85, R-MC-05): under a P-77 "draft only" row each drafts a call
+/// through MCP, which waits for a web confirmation, keyed by account with
+/// its digest. MCP prepares no operation of another account without a
+/// step-up, so the `pending.*` cells of the others name no action. The
+/// calls run at the world's instant, so no action has expired.
+fn pending_actions(
+    seed: &mut Seeder,
+    p: ProgrammeId,
+) -> Result<BTreeMap<AccountId, (PendingId, String)>, String> {
+    let mut out = BTreeMap::new();
+    let args = obj(vec![
+        ("programme", s(&p.raw().to_string())),
+        ("opens", dec(u128::try_from(OPENS).unwrap_or(0))),
+        ("deadline", dec(u128::try_from(DEADLINE).unwrap_or(0))),
+        ("deadline_zone", s("Europe/Brussels")),
+        ("currency", s("EUR")),
+        ("budget", s("400000.00")),
+        ("text", s("SYNTHETIC PENDING CALL TEXT")),
+    ])
+    .to_compact()
+    .into_bytes();
+    for a in [PM, PM_DRAFTER, DRAFTER] {
+        let token = seed
+            .ports
+            .tokens
+            .issue(a, agent_of(a), Scope::ALL, LoginMethod::Passkey);
+        let r = decode_tool("fstp_draft_call", &args).and_then(|op| {
+            block_on(
+                seed.core
+                    .dispatch(Credential::Bearer(token), &RequestHead::new(), op),
+            )
+        });
+        let Ok(OpResult::Pending(receipt)) = r else {
+            continue;
+        };
+        let cookie = seed.login(a).cookie;
+        let list = decode_route(ApiMethod::Get, "/me/pending-actions", &[])
+            .and_then(|op| {
+                block_on(seed.core.dispatch(
+                    Credential::SessionCookie(cookie),
+                    &RequestHead::new(),
+                    op,
+                ))
+            })
+            .map_err(|e| format!("pending.list: {}", e.to_json().to_compact()))?;
+        let OpResult::Done { body, .. } = list else {
+            return Err("pending.list did not complete".to_owned());
+        };
+        let id = receipt.id.raw().to_string();
+        let digest = body
+            .to_json()
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|r| str_member(r, "id").as_deref() == Some(id.as_str()))
+                    .and_then(|r| str_member(r, "digest"))
+            })
+            .ok_or_else(|| format!("pending.list does not show the action {id}"))?;
+        out.insert(a, (receipt.id, digest));
+    }
+    Ok(out)
+}
+
 /// What a world's lifecycle reached, for the targets.
 #[derive(Default)]
 struct Reached {
@@ -1809,13 +1988,18 @@ fn fresh_cell(
 /// The creator decides every draft command with its full validation, so
 /// building P takes long. Every world of one policy row and variant
 /// shares the same start, so it is built once and replayed: a world opens
-/// a fresh cell over a copy of the start's ledger. The API core's memory
+/// a fresh cell over a copy of the start's ledger and texts. The P-09
+/// wording of the draft is a public text the ledger names by reference, so
+/// without the texts no open call would be public. The API core's memory
 /// of the start is not carried over. It holds only the data protection
 /// contact of the Organisation step, which no cell of a programme state
 /// reads.
 #[derive(Clone)]
 struct Start {
     store: MemStore<Record>,
+    /// The texts stored during the start, under the references its ledger
+    /// names.
+    texts: crate::fake::FakeTexts,
     admins: BTreeSet<AccountId>,
     programme: ProgrammeId,
     now: i64,
@@ -1916,8 +2100,11 @@ fn build_start(key: StartKey) -> Result<Start, String> {
         other_programme(&mut seed)?;
     }
     let store = seed.ports.engine.store_copy();
+    let texts = crate::fake::FakeTexts::default();
+    texts.copy_from(&seed.ports.texts);
     Ok(Start {
         store,
+        texts,
         admins,
         programme: p,
         now: seed.now,
@@ -1966,6 +2153,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         let activated = !sole && depth(key.state) >= 1;
         let start = start_of((sole, activated, key.policy))?;
         let (ports, core) = fresh_cell(start.store.clone(), &start.admins, start.now)?;
+        ports.texts.copy_from(&start.texts);
         for _ in 0..start.drawn {
             let _ = fstp_api_core::port::Ids::fresh(&ports.ids);
         }
@@ -1986,10 +2174,16 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         if activated {
             staff(&mut seed, p, &mut reached)?;
             lifecycle(&mut seed, p, key, &mut reached)?;
-        } else {
-            revision = Some(draft_revision(&mut seed, PM, p)?);
         }
         end_binding_of(&mut seed, p, PM_ENDED, key)?;
+        // The end of a binding on the draft is an edit, so the creator
+        // cells name the revision after it, and an approval cell meets a
+        // live request there (design 3.7 step 5). The report of a
+        // sole-admin draft fails, so no request is admitted.
+        if !activated && !sole {
+            request_live(&mut seed, p)?;
+        }
+        revision = Some(draft_revision(&mut seed, PM, p)?);
         seed
     };
     let now = match key.state {
@@ -2011,6 +2205,12 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         ));
     }
     seed.at(now);
+    let pending = match programme {
+        Some(p) if !sole && depth(key.state) >= 1 && key.policy.p77_draft_only => {
+            pending_actions(&mut seed, p)?
+        }
+        _ => BTreeMap::new(),
+    };
     let tenant_revision = {
         let v = seed.api(
             first_admin,
@@ -2045,7 +2245,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         binding_end: reached.binding_end,
         narrative,
         warning,
-        pending: BTreeMap::new(),
+        pending,
         p71: seed.ports.step_up.p71(),
     };
     let head = seed.ports.engine.head();
@@ -2053,6 +2253,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         ports: seed.ports,
         core: seed.core,
         router: None,
+        mcp: None,
         targets,
         now,
         tenant_revision,
@@ -2474,6 +2675,15 @@ fn proposal_to(
         DeclarationSubject::Proposal(x),
         true,
     )?;
+    // Under P-10 "all committee members" every committee member declares
+    // per proposal (`roles-and-sod.md` Conflict declarations, R-CF-02).
+    if key.policy.p10 == P10::AllCommittee {
+        for m in [MEMBER, REVIEWER_RELEASED] {
+            declare(seed, m, DeclarationSubject::Proposal(x), false)?;
+        }
+    }
+    // The assessor's finding on X, which the reviewers read and mark.
+    seed.finding(c, x)?;
     if target == S::Ineligible {
         let outcomes = kos
             .iter()
@@ -3036,13 +3246,19 @@ enum Transport {
     Direct,
     /// The HTTP routes of `fstp-web` over `fstp_rt::duplex`.
     Http,
+    /// MCP cells through `fstp_mcp::McpServer::call_tool`, and web cells
+    /// as [`Transport::Http`] sends them.
+    Mcp,
 }
 
-/// The reply of one call: the dispatch result directly, or an HTTP
-/// status and body.
+/// The reply of one call: the dispatch result directly, an HTTP status
+/// and body, or an MCP `tools/call` result.
 enum Reply {
     Direct(Box<Result<OpResult, ApiError>>),
     Http(u16, Vec<u8>),
+    /// The `CallToolResult`, or the JSON-RPC error, and whether the
+    /// operation has a tool.
+    Mcp(Result<Value, fstp_mcp::RpcError>, bool),
 }
 
 impl Reply {
@@ -3064,6 +3280,7 @@ impl Reply {
                 let hex = str_member(challenge, "digest")?;
                 fstp_api_core::ActionDigest::from_hex(&hex)
             }
+            Reply::Mcp(..) => None,
         }
     }
 }
@@ -3181,6 +3398,8 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
     }
     let send = |w: &mut Built| -> Result<Reply, ChannelFault> {
         match (transport, mcp) {
+            (Transport::Mcp, true) => mcp_call(w, cell.op, &req, &cred),
+            (Transport::Mcp, false) => http_call(w, &req, &cred),
             (_, true) => {
                 let tool = fstp_access::op(cell.op)
                     .and_then(|o| o.tool)
@@ -3200,7 +3419,7 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
                 Ok(Reply::Direct(Box::new(r)))
             }
             (Transport::Direct, false) => {
-                let r = match decode_route(req.method, &req.path, &req.body_bytes()) {
+                let r = match decode_web(req.method, &req.path, &req.body_bytes()) {
                     Ok(op) => block_on(w.core.dispatch(cred.clone(), &RequestHead::new(), op)),
                     Err(e) => Err(e),
                 };
@@ -3234,7 +3453,93 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
     match reply {
         Reply::Direct(r) => observed_of_result(&r),
         Reply::Http(status, body) => observed_of_http(status, &body),
+        Reply::Mcp(r, tool) => observed_of_mcp(&r, tool),
     }
+}
+
+/// The observed outcome of a `tools/call` result (lane W3c). A completed
+/// call carries its read model in `structuredContent.data`, and a refusal
+/// is `isError` with the API refusal body `{"code","rule"}`. A name the
+/// server does not list is refused before any operation: for an
+/// operation with no tool, that is `NotExposed` (I-84).
+pub fn observed_of_mcp(
+    r: &Result<Value, fstp_mcp::RpcError>,
+    tool: bool,
+) -> Result<Observed, ChannelFault> {
+    let v = match r {
+        Ok(v) => v,
+        Err(e) if !tool && *e == fstp_mcp::RpcError::UNKNOWN_TOOL => {
+            return Ok(Observed::ChannelDenied(Denial::NotExposed));
+        }
+        Err(e) => {
+            return Err(ChannelFault::NotImplemented(format!(
+                "JSON-RPC error {}: {}",
+                e.code, e.message
+            )));
+        }
+    };
+    let o = v.as_object();
+    let sc = o
+        .and_then(|o| o.get("structuredContent"))
+        .ok_or_else(|| ChannelFault::Setup(format!("no structuredContent: {}", v.to_compact())))?;
+    let error = o
+        .and_then(|o| o.get("isError"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if error {
+        let Some(code) = str_member(sc, "code") else {
+            return Err(ChannelFault::Setup(format!(
+                "an error result without a code: {}",
+                v.to_compact()
+            )));
+        };
+        return match code.as_str() {
+            "step_up_required" => Ok(Observed::StepUpRequired),
+            "strong_method_required" => Ok(Observed::StrongMethodRequired),
+            other => observed_of(other, str_member(sc, "rule").as_deref()),
+        };
+    }
+    let data = sc.as_object().and_then(|s| s.get("data"));
+    if data.and_then(|d| str_member(d, "status")).as_deref() == Some("awaiting_confirmation") {
+        return Ok(Observed::Pending);
+    }
+    Ok(Observed::Completed)
+}
+
+/// Sends the MCP cell of `op` as a `tools/call` of its tool through the
+/// world's MCP server, on `/mcp` with the cell's credential. An operation
+/// with no tool is called by its operation name, which the server lists
+/// under no tool.
+fn mcp_call(
+    w: &mut Built,
+    op: &str,
+    req: &Request,
+    cred: &Credential,
+) -> Result<Reply, ChannelFault> {
+    if w.mcp.is_none() {
+        let server = fstp_mcp::McpServer::new(
+            Arc::clone(&w.core),
+            fstp_mcp::McpConfig {
+                tenant_origins: vec![ORIGIN.to_owned()],
+                verified_domain: "tenant.fstp.test".to_owned(),
+                resource_metadata_url: format!("{ORIGIN}{}", fstp_oauth::RESOURCE_METADATA_PATH),
+            },
+        )
+        .map_err(|e| ChannelFault::Setup(format!("MCP server: {e}")))?;
+        w.mcp = Some(server);
+    }
+    let server = w
+        .mcp
+        .as_ref()
+        .ok_or_else(|| ChannelFault::Setup("no MCP server".to_owned()))?;
+    let tool = fstp_access::op(op).and_then(|o| o.tool).map(|t| t.name);
+    let r = block_on(server.call_tool(
+        fstp_mcp::Surface::Mcp,
+        cred.clone(),
+        tool.unwrap_or(op),
+        &req.tool_args(),
+    ));
+    Ok(Reply::Mcp(r, tool.is_some()))
 }
 
 /// The observed outcome of an HTTP reply.
@@ -3399,6 +3704,29 @@ pub struct HttpChannel {
     runner: Runner,
 }
 
+/// The MCP channel: every MCP cell through the `tools/call` handler of
+/// `fstp_mcp::McpServer`, and every web cell through the routes of
+/// `fstp-web`, as the HTTP channel sends it (I-84, lane W3c).
+pub struct McpChannel {
+    runner: Runner,
+}
+
+impl std::fmt::Debug for McpChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("McpChannel")
+    }
+}
+
+impl Channel for McpChannel {
+    fn name(&self) -> &'static str {
+        "mcp"
+    }
+
+    fn observe(&mut self, cell: &Cell) -> Result<Observed, ChannelFault> {
+        observe_with(&mut self.runner, cell)
+    }
+}
+
 impl std::fmt::Debug for DirectChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("DirectChannel")
@@ -3467,6 +3795,13 @@ impl Harness {
             runner: Runner::new(Transport::Http),
         }
     }
+
+    /// A fresh MCP channel, with its own world cache.
+    pub fn mcp(&self) -> McpChannel {
+        McpChannel {
+            runner: Runner::new(Transport::Mcp),
+        }
+    }
 }
 
 /// Builds the `Harness`.
@@ -3487,5 +3822,110 @@ mod tests {
         assert_eq!(day_of(0), "1970-01-01");
         assert_eq!(day_of(31 * DAY), "1970-02-01");
         assert_eq!(day_of(MILESTONE_START), "1970-01-21");
+    }
+
+    /// I-87, R-PB-04, M4 design section 3.10 "Routes": the web channels
+    /// send a public page as the `/p` router serves it, and decode it as
+    /// that router does. The page and feed operations of the reference
+    /// decode to themselves. The tool-only public operations have no page.
+    #[test]
+    fn i87_r_pb_04_harness_sends_public_pages_as_served() {
+        let fill = |pattern: &str| {
+            pattern
+                .replace("{slug}", "synthetic")
+                .replace("{call}", "7")
+        };
+        let mut pages = 0usize;
+        for r in crate::reference::authz::REFERENCE_OPS
+            .iter()
+            .filter(|r| r.public)
+        {
+            let spec = fstp_access::op(r.name).unwrap();
+            let (_, pattern) = spec.route.unwrap();
+            let path = served_path(spec, pattern, fill(pattern));
+            let got = decode_web(ApiMethod::Get, &path, &[]);
+            if r.page {
+                pages += 1;
+                assert_eq!(got.map(|op| op.name()).ok(), Some(r.name), "{path}");
+            } else {
+                assert!(
+                    matches!(&got, Err(ApiError::Refused { code, .. }) if code.as_str() == "not_found"),
+                    "{path}: {got:?}"
+                );
+            }
+        }
+        assert_eq!(pages, 6);
+        let api = served_path(
+            fstp_access::op("call.publish").unwrap(),
+            "/x",
+            "/x".to_owned(),
+        );
+        assert_eq!(api, "/x");
+    }
+
+    /// I-87, R-PB-04, review H-01: through the direct channel an anonymous
+    /// web read of a public page reaches the system. No page is public
+    /// while the programme is a draft. Once it is active its pages are
+    /// served. Once the call is open its call page is served too (lane
+    /// mpubfin2). The Guide page still answers not found: the Guide is an
+    /// M4 seam that fails closed (`fstp-api-core` `dispatch/public.rs`,
+    /// "Seams"). It is pinned here, so this test fails once the seam lands.
+    #[test]
+    fn i87_r_pb_04_direct_public_pages_are_served_once_active() {
+        let m = crate::matrix::matrix().unwrap();
+        let mut channel = harness().unwrap().direct();
+        let programme = [
+            "public.programme",
+            "public.funded",
+            "public.finished",
+            "public.feed",
+        ];
+        let cases: Vec<(StateProfile, &str, Observed)> = programme
+            .iter()
+            .map(|op| {
+                (
+                    StateProfile::ProgrammeDraft,
+                    *op,
+                    Observed::NotFound("Input".to_owned()),
+                )
+            })
+            .chain(
+                programme
+                    .iter()
+                    .map(|op| (StateProfile::ProgrammeActive, *op, Observed::Completed)),
+            )
+            .chain(
+                programme
+                    .iter()
+                    .map(|op| (StateProfile::CallOpen, *op, Observed::Completed)),
+            )
+            .chain(
+                [
+                    ("public.call", Observed::Completed),
+                    ("public.guide", Observed::NotFound("Input".to_owned())),
+                ]
+                .into_iter()
+                .map(|(op, want)| (StateProfile::CallOpen, op, want)),
+            )
+            .collect();
+        for (state, op, want) in cases {
+            let cell = m
+                .cells()
+                .find(|c| {
+                    c.op == op
+                        && c.state == state
+                        && c.who == Who::Anonymous
+                        && c.session.channel == Via2::Web
+                })
+                .unwrap_or_else(|| panic!("no anonymous web cell of {op} in {state:?}"));
+            assert_eq!(
+                m.reference().expected(&cell),
+                Some(crate::reference::authz::Expected::Allow)
+            );
+            let got = channel
+                .observe(&cell)
+                .unwrap_or_else(|e| panic!("{op} {state:?}: {e:?}"));
+            assert_eq!(got, want, "{op} in {state:?}");
+        }
     }
 }

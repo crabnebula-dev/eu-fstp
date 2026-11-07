@@ -122,10 +122,12 @@ pub enum Who {
     /// An assigned reviewer whose committee binding the vault's identity
     /// discovery suspended as a conflict of interest (`roles-and-sod.md`
     /// Identity discovery): the account shares the identity of the call
-    /// drafter.
+    /// drafter. It scored stage 1 wherever stage 1 closed, so from the
+    /// close on its scores carry a notifiable conflict (R-CF-04).
     SuspendedReviewer,
     /// A committee member recused from C's cut-off vote by a conflict on
-    /// another ranked proposal of C.
+    /// another ranked proposal of C. Once the cut-off is recorded no
+    /// proposal of C is RANKED, so it is recused no longer.
     RecusedCommitteeMember,
     /// A committee member who delegated their vote in the round.
     DelegatingCommitteeMember,
@@ -305,6 +307,25 @@ impl Who {
                 | Who::AssignedReviewerConflicted
                 | Who::IrcAssigneeConflicted
         )
+    }
+
+    /// A declared or detected conflict on X in state `x` (I-03). Besides
+    /// the declared ones, the suspended reviewer's scores get a notifiable
+    /// conflict once it scored, from the stage 1 close on
+    /// (`roles-and-sod.md` Identity discovery, R-CF-04).
+    fn conflicted_in(self, x: Option<StateTag>) -> bool {
+        self.conflicted()
+            || (self == Who::SuspendedReviewer
+                && x.is_some_and(|s| {
+                    among(s, &ASSIGNED) && !matches!(s, StateTag::Submitted | StateTag::Stage1)
+                }))
+    }
+
+    /// An active committee member binding in P, the chair aside: the
+    /// members who declare per proposal under P-10 "all committee
+    /// members". The chair holds another role.
+    const fn committee_member(self) -> bool {
+        self.committee() && !matches!(self, Who::CommitteeChair)
     }
 }
 
@@ -747,6 +768,10 @@ pub enum Rule {
     /// The FSTP coordinator of P, declared and free of conflict: the
     /// knock-out check (`roles-and-sod.md` Conflict declarations).
     CoordinatorDeclared,
+    /// The FSTP coordinator of P, and under P-10 "all committee members"
+    /// every committee member of P: both declare per proposal before
+    /// reading full content (`roles-and-sod.md` Conflict declarations).
+    ProposalDeclarant,
     /// The FSTP coordinator of P, in every state of X from SUBMITTED on,
     /// except INELIGIBLE. Reading: the assignment view of one proposal
     /// serves `review.assign` and `review.unassign` (J5). A draft is the
@@ -772,6 +797,10 @@ pub enum Rule {
     Assignee,
     /// The declared, conflict-free assignee: every assigned-reviewer act.
     ReviewerAct,
+    /// The declared, conflict-free reviewer or IRC assignee of X in the
+    /// finding's call: a mark on a finding (I-03, I-10). The engine's
+    /// `Mark` rule admits both assignment kinds (lane L-FIND-B).
+    FindingMarker,
     /// The declared, conflict-free assignee, in STAGE1 and STAGE2.
     /// Reading: the score sheet is read while scoring.
     ScoreSheet,
@@ -806,7 +835,15 @@ pub enum Rule {
     /// 5). Interim, fail closed, design section 15.0 (lane j2).
     /// Which entries show is the visibility function's per request
     /// (I-93), not an authorisation rule, so it is not judged here.
+    /// Daniel, 2026-11-06: the lead and the team member read in every
+    /// state, a terminal one included, after their bindings end there.
+    /// The guardian's binding ends there too, and the decision names no
+    /// guardian, so the guardian reads only while X is under way.
     Journey,
+    /// The route map of X (ADR-015 amendment of 2026-11-06, section 8.1,
+    /// O-58): the lead and the team member in every state, a terminal one
+    /// included (Daniel, 2026-11-06). The guardian gets no map.
+    RouteMap,
 }
 
 impl Rule {
@@ -855,6 +892,7 @@ impl Rule {
             Rule::Coordinator | Rule::CoordinatorDeclared | Rule::AssignmentBoard => {
                 &[Some(Role::FstpCoordinator)]
             }
+            Rule::ProposalDeclarant => &[Some(Role::FstpCoordinator), Some(Role::CommitteeMember)],
             Rule::NewApplicant => &[
                 None,
                 Some(Role::Applicant),
@@ -862,13 +900,16 @@ impl Rule {
                 Some(Role::Guardian),
             ],
             Rule::Lead => &[Some(Role::Applicant)],
-            Rule::Team | Rule::NegotiationTeam => &TEAM,
+            // The registry names the team for the route map. The guardian is
+            // then refused by the rule itself (section 8.1).
+            Rule::Team | Rule::NegotiationTeam | Rule::RouteMap => &TEAM,
             Rule::Guardian => &[Some(Role::Guardian)],
             Rule::Assignee
             | Rule::ReviewerAct
             | Rule::ScoreSheet
             | Rule::Stage2Thread
             | Rule::Findings => &[Some(Role::CommitteeMember)],
+            Rule::FindingMarker => &[Some(Role::CommitteeMember), Some(Role::IrcMember)],
             Rule::Content => &[
                 Some(Role::Applicant),
                 Some(Role::ApplicantTeamMember),
@@ -929,6 +970,11 @@ pub struct RefOp {
     pub read: bool,
     /// A public page or tool: no account, no session rule.
     pub public: bool,
+    /// A public operation the web serves as a page or the feed under `/p`
+    /// (M4 design section 3.10, "Routes"). A public operation without one
+    /// is a public research tool only (`mcp-server.md`), so the matrix gives
+    /// it no web cell. False for every other operation.
+    pub page: bool,
     /// High-risk by the table of `authentication.md` or by the strict
     /// reading of Q10.
     pub high_risk: bool,
@@ -950,6 +996,7 @@ impl RefOp {
             rule,
             read: false,
             public: false,
+            page: false,
             high_risk: false,
             binding: false,
             draft_gate: false,
@@ -974,8 +1021,18 @@ impl RefOp {
         };
         RefOp {
             public: true,
+            page: true,
             tool,
             ..RefOp::read(name, target, Rule::Anyone)
+        }
+    }
+
+    /// A public research tool with no page under `/p` (M4 design section
+    /// 3.10, "Routes").
+    const fn tool_only(self) -> RefOp {
+        RefOp {
+            page: false,
+            ..self
         }
     }
 
@@ -1028,6 +1085,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("tenant.set_mcp", T::None, R::TenantAdmin).hr(),
     RefOp::act("tenant.set_payment_mode", T::None, R::TenantAdmin).hr(),
     RefOp::act("tenant.set_template_licence", T::None, R::TenantAdmin).hr(),
+    // R-GA-01 (2026-11-06): the tenant's override of the Guide's data
+    // protection texts, high-risk by the strict reading of settings.
+    RefOp::act("tenant.set_guide_notice", T::None, R::TenantAdmin).hr(),
     RefOp::read("admin.approvals", T::None, R::TenantAdmin),
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),
@@ -1126,6 +1186,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .hr()
         .tool("fstp_prepare_call_publication"),
     RefOp::read("call.board", T::Call, R::CallStaff).tool("fstp_get_call_board"),
+    // Lane mcreator: the Studio list of the programme's calls. Reading: the
+    // staff who read a call's board read the list of its calls.
+    RefOp::read("call.list", T::Programme, R::CallStaff),
     // J4: public pages, open calls and applicants.
     RefOp::public(
         "public.programme",
@@ -1136,7 +1199,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         "public.list_open_calls",
         T::Programme,
         Some("fstp_public_list_open_calls"),
-    ),
+    )
+    .tool_only(),
     RefOp::public(
         "public.call",
         T::PublishedCall,
@@ -1151,12 +1215,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         "public.deadlines",
         T::Programme,
         Some("fstp_public_get_deadlines"),
-    ),
+    )
+    .tool_only(),
     RefOp::public(
         "public.eligibility",
         T::Programme,
         Some("fstp_public_get_eligibility"),
-    ),
+    )
+    .tool_only(),
     RefOp::public(
         "public.funded",
         T::Programme,
@@ -1181,6 +1247,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("proposal.add_guardian", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.state_country", T::Proposal, R::Lead),
     RefOp::act("proposal.declare_affiliations", T::Proposal, R::Lead),
+    RefOp::act("proposal.state_birth_date", T::Proposal, R::Lead),
     RefOp::act("proposal.submit", T::Proposal, R::Lead)
         .binding()
         .tool("fstp_submit_proposal"),
@@ -1197,13 +1264,17 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane j2, `SPEC/12-journey-ui.md` section 10: web only.
     RefOp::read("proposal.journey", T::Proposal, R::Journey),
     RefOp::read("proposal.diary", T::Proposal, R::Journey),
+    // Lane j4, ADR-015 amendment of 2026-11-06: the map is the team's
+    // (section 8.1, O-58), and stays the former team's (Daniel,
+    // 2026-11-06). Web only.
+    RefOp::read("proposal.route_map", T::Proposal, R::RouteMap),
     RefOp::act("guardian.begin_consent", T::Proposal, R::Guardian),
     RefOp::read("negotiation.view", T::Proposal, R::NegotiationTeam),
     RefOp::act("negotiation.acknowledge_notice", T::Proposal, R::Lead),
     // J5: the FSTP coordinator.
     RefOp::read("intake.queue", T::PublishedCall, R::Coordinator),
     RefOp::read("review.declaration_view", T::Proposal, R::DeclarationView),
-    RefOp::act("review.declare_proposal", T::Proposal, R::Coordinator).binding(),
+    RefOp::act("review.declare_proposal", T::Proposal, R::ProposalDeclarant).binding(),
     RefOp::read("review.read_content", T::Proposal, R::Content).tool("fstp_get_proposal_content"),
     RefOp::act("review.knock_out", T::Proposal, R::CoordinatorDeclared).binding(),
     // Lane m4reg: one proposal's assignments, candidates and the P-39 and
@@ -1236,7 +1307,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("stage2.no_questions", T::Assignment, R::ReviewerAct).binding(),
     RefOp::act("review.rank", T::Assignment, R::ReviewerAct).binding(),
     RefOp::read("review.findings", T::Assignment, R::Findings).tool("fstp_get_findings"),
-    RefOp::act("review.mark_finding", T::Finding, R::ReviewerAct).binding(),
+    RefOp::act("review.mark_finding", T::Finding, R::FindingMarker).binding(),
     // J7: the committee.
     RefOp::read("committee.ranking", T::PublishedCall, R::Committee).tool("fstp_get_ranking_view"),
     RefOp::read("committee.round", T::Round, R::Committee),
@@ -1320,6 +1391,16 @@ fn admit(
         Rule::CallApprover => open(who == Who::ProgrammeManager),
         Rule::CallStaff => open(who.manager() || who == Who::CallDrafter || who.coordinator()),
         Rule::Coordinator => open(who.coordinator()),
+        Rule::ProposalDeclarant => {
+            open(who.coordinator() || (who.committee_member() && policy.p10 == P10::AllCommittee))?;
+            // A declared conflict is final (Daniel, 2026-11-06): a second
+            // declaration is refused under I-03.
+            if who.conflicted() {
+                Err(Conflict)
+            } else {
+                Ok(())
+            }
+        }
         Rule::AssignmentBoard => open(who.coordinator() && x.is_some_and(|s| among(s, &ASSIGNED))),
         Rule::CoordinatorDeclared => assignee(
             Who::Coordinator,
@@ -1331,21 +1412,39 @@ fn admit(
             Who::Unbound | Who::Lead | Who::TeamMember | Who::Guardian | Who::OtherProgrammeManager
         )),
         Rule::Lead => open(who == Who::Lead),
+        // Daniel, 2026-11-06: in a terminal state the former lead and team
+        // member keep a read-only view. The guardian, whom the decision
+        // does not name, reads only while X is under way.
+        Rule::Team if op.read => open(former_team_reads(who, x)),
         Rule::Team => open(who.team()),
         Rule::Guardian => open(who == Who::Guardian),
         Rule::NegotiationTeam => open(who.team() && x == Some(StateTag::Negotiation)),
+        // A declared conflict is final (Daniel, 2026-11-06): the conflicted
+        // assignee's second declaration is refused under I-03.
+        Rule::Assignee if who == Who::AssignedReviewerConflicted => Err(Conflict),
         Rule::Assignee => open(matches!(
             who,
-            Who::AssignedReviewer
-                | Who::AssignedReviewerUndeclared
-                | Who::AssignedReviewerConflicted
+            Who::AssignedReviewer | Who::AssignedReviewerUndeclared
         )),
+        Rule::FindingMarker => match who {
+            Who::AssignedReviewer | Who::IrcAssignee => Ok(()),
+            Who::AssignedReviewerUndeclared
+            | Who::AssignedReviewerConflicted
+            | Who::IrcAssigneeUndeclared
+            | Who::IrcAssigneeConflicted => Err(Conflict),
+            _ => Err(outsider),
+        },
         Rule::ReviewerAct => assignee(
             Who::AssignedReviewer,
             Who::AssignedReviewerUndeclared,
             Who::AssignedReviewerConflicted,
         ),
         Rule::ScoreSheet | Rule::Stage2Thread | Rule::Findings => {
+            // I-03: the suspended reviewer's notifiable conflict bars the
+            // reads of its own assignment before anything else.
+            if who == Who::SuspendedReviewer && who.conflicted_in(x) {
+                return Err(Conflict);
+            }
             assignee(
                 Who::AssignedReviewer,
                 Who::AssignedReviewerUndeclared,
@@ -1365,21 +1464,24 @@ fn admit(
         Rule::DeclarationView => declaration_view(who, x, policy),
         Rule::Committee => open(who.committee()),
         Rule::CommitteeVoter => {
-            // A conflict on a ranked proposal of C recuses the member. X is
-            // ranked in the states reached through a round.
-            let ranked = x.is_some_and(|s| among(s, &ROUND));
-            if who == Who::RecusedCommitteeMember
-                || (who == Who::AssignedReviewerConflicted && ranked)
+            // A conflict on a ranked proposal of C recuses the member from
+            // C's cut-off vote (Conflict declarations). Once the cut-off is
+            // recorded no proposal of C is RANKED, so nobody is recused and
+            // the recorded round refuses by its state.
+            let ranked = x == Some(StateTag::Ranked);
+            if ranked
+                && matches!(
+                    who,
+                    Who::RecusedCommitteeMember | Who::AssignedReviewerConflicted
+                )
             {
                 Err(Conflict)
             } else {
                 open(who.committee())
             }
         }
-        Rule::IrcAssignee => open(matches!(
-            who,
-            Who::IrcAssignee | Who::IrcAssigneeUndeclared | Who::IrcAssigneeConflicted
-        )),
+        Rule::IrcAssignee if who == Who::IrcAssigneeConflicted => Err(Conflict),
+        Rule::IrcAssignee => open(matches!(who, Who::IrcAssignee | Who::IrcAssigneeUndeclared)),
         Rule::IrcAct => assignee(
             Who::IrcAssignee,
             Who::IrcAssigneeUndeclared,
@@ -1409,9 +1511,24 @@ fn admit(
                         | Who::ContractSignatory
                         | Who::Auditor
                 );
-            open(who.team() || (staff && x.is_some_and(|s| s != StateTag::Draft)))
+            // The guardian's binding ends at a terminal state (Daniel,
+            // 2026-11-06), the lead's and the member's give a read-only view.
+            let team = matches!(who, Who::Lead | Who::TeamMember)
+                || (who == Who::Guardian && !x.is_some_and(StateTag::is_terminal));
+            open(team || (staff && x.is_some_and(|s| s != StateTag::Draft)))
         }
+        Rule::RouteMap => open(matches!(who, Who::Lead | Who::TeamMember)),
     }
+}
+
+/// Whether the team reads its own X in state `x`: the lead and the team
+/// member in every state, a terminal one included, where their Receiving
+/// bindings end but a read-only view stays (Daniel, 2026-11-06). The
+/// guardian reads only while X is not terminal, since the decision names
+/// no guardian. No command follows from this view.
+fn former_team_reads(who: Who, x: Option<StateTag>) -> bool {
+    matches!(who, Who::Lead | Who::TeamMember)
+        || (who == Who::Guardian && !x.is_some_and(StateTag::is_terminal))
 }
 
 /// Full content of X (R-AC-01, P-10 NOTE 1, I-03, R-CF-02, I-21, D6, Q39).
@@ -1432,10 +1549,10 @@ fn admit(
 /// Through MCP, a reader outside the team is refused unless P-75 is on.
 fn content(who: Who, x: Option<StateTag>, policy: &Policy, mcp: bool) -> Result<(), AuthClass> {
     use AuthClass::{Conflict, Visibility};
-    if who.team() {
+    if former_team_reads(who, x) {
         return Ok(());
     }
-    if who.conflicted() {
+    if who.conflicted_in(x) {
         return Err(Conflict);
     }
     let coordinator = || match who {
@@ -1484,7 +1601,7 @@ fn content(who: Who, x: Option<StateTag>, policy: &Policy, mcp: bool) -> Result<
 /// no state list, so this is the strict one.
 fn declaration_view(who: Who, x: Option<StateTag>, policy: &Policy) -> Result<(), AuthClass> {
     use AuthClass::{Conflict, Visibility};
-    if who.conflicted() {
+    if who.conflicted_in(x) {
         return Err(Conflict);
     }
     let Some(s) = x else {

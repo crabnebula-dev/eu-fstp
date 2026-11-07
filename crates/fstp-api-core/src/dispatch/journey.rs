@@ -83,6 +83,14 @@ pub struct JourneyView {
     pub legs: Vec<LegRow>,
     /// Whether the caller's role gets the route strip (section 8.3, O-58).
     pub strip: bool,
+    /// Whether the caller gets the full map, its list and its help panels:
+    /// an active Receiving binding on the proposal's team (section 8.1,
+    /// review J3-R2), or one that ended at its terminal state (Daniel,
+    /// 2026-11-06).
+    pub map: bool,
+    /// Whether the caller sees the withdrawal control: the proposal's lead,
+    /// in a state withdrawal is open from (NOTE 10).
+    pub withdraw: bool,
     /// The overlay of the original call's frozen policy (R-JV-07, NOTE 8),
     /// `None` before that call is published.
     pub overlay: Option<Overlay>,
@@ -106,6 +114,8 @@ impl ToJson for JourneyView {
         let _ = o.insert("seq", dec(self.position.source_seq));
         let _ = o.insert("legs", Value::Array(legs));
         let _ = o.insert("strip", Value::Bool(self.strip));
+        let _ = o.insert("map", Value::Bool(self.map));
+        let _ = o.insert("withdraw", Value::Bool(self.withdraw));
         let _ = o.insert(
             "overlay",
             self.overlay.as_ref().map_or(Value::Null, overlay_json),
@@ -391,8 +401,11 @@ fn scene<P: Seams>(
     let Some(state) = fstp_domain::view::proposal_state(core, p) else {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
     };
+    // Daniel, 2026-11-06: a former lead or team member reads the route of
+    // the terminal proposal as the team, read-only.
+    let team_read = matches!(admitted, ReadRule::Team | ReadRule::FormerTeam);
     // I-21: drafts are the team's alone.
-    if state == StateTag::Draft && admitted != ReadRule::Team {
+    if state == StateTag::Draft && !team_read {
         return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-21")));
     }
     let ledger = call
@@ -404,7 +417,7 @@ fn scene<P: Seams>(
         .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "journey")))?;
     // I-21 on the route, not only the current state: a draft withdrawn
     // before submission never left the team, so its route stays theirs.
-    if admitted != ReadRule::Team && !rows.path(p).contains(&StateTag::Submitted) {
+    if !team_read && !rows.path(p).contains(&StateTag::Submitted) {
         return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-21")));
     }
     let current = super::call_of(&call.state, p);
@@ -415,13 +428,22 @@ fn scene<P: Seams>(
         .map(|v| v.programme())
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
     let calls = current.into_iter().chain(first).collect();
+    let mut roles = roles_of(call, account, p, programme);
+    let mut base = base_relation(call, account, p);
+    // The former team sees what it saw while bound (O-54 included). The
+    // roles come from the ended bindings, and no command reads them.
+    if admitted == ReadRule::FormerTeam {
+        let former = super::former_team_roles(&call.state, account, p);
+        base.team = !former.is_empty();
+        roles.extend(former);
+    }
     Ok(Scene {
         proposal: p,
         programme,
         calls,
         p10: p10_of(call, current),
-        roles: roles_of(call, account, p, programme),
-        base: base_relation(call, account, p),
+        roles,
+        base,
         ledger,
         rows,
     })
@@ -495,6 +517,15 @@ pub(super) fn journey<P: Seams>(
         position,
         legs,
         strip: scene.roles.iter().any(|r| visibility::route_strip(*r)),
+        // Section 8.1: the full map is the team's, by the relation the
+        // visibility function reads (I-93). The page never decides it.
+        map: scene.base.team,
+        // NOTE 10: only the lead withdraws (registry LEAD on
+        // `proposal.withdraw`), and only from a non-terminal state before
+        // GRANTED.
+        withdraw: scene.base.team
+            && scene.roles.contains(&Role::Applicant)
+            && position.node.is_withdrawable(),
         overlay,
     })
 }
@@ -579,6 +610,117 @@ pub(super) fn diary<P: Seams>(
         proposal: p,
         entries,
     })
+}
+
+/// The `proposal.route_map` reply (ADR-015 amendment of 2026-11-06): the
+/// renderer's checked map tree of one viewer's projection, and the status
+/// of every node in route order. The tree holds catalogue labels, formal
+/// state names and the proposal id, never text of the proposal (I-97).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteMapView {
+    proposal: ProposalId,
+    tree: fstp_html::route::SvgTree,
+    nodes: Vec<(String, &'static str)>,
+}
+
+impl ToJson for RouteMapView {
+    fn to_json(&self) -> Value {
+        let mut nodes = Array::new();
+        for (state, status) in &self.nodes {
+            let mut n = Object::new();
+            let _ = n.insert("state", Value::from(state.as_str()));
+            let _ = n.insert("status", Value::from(*status));
+            nodes.push(Value::Object(n));
+        }
+        let mut o = Object::new();
+        let _ = o.insert("proposal", dec(self.proposal.raw()));
+        let _ = o.insert("tree", self.tree.to_json());
+        let _ = o.insert("nodes", Value::Array(nodes));
+        Value::Object(o)
+    }
+}
+
+/// The proposal route as the renderer reads it: the nodes and edges of the
+/// shipped definition in file order, and its "leave the route" rule.
+fn route_def() -> Option<fstp_html::route::RouteDef> {
+    use fstp_html::route::{RouteDef, RouteEdge, RouteNode};
+    let def = fstp_journey::load_proposal_v1().ok()?;
+    Some(RouteDef {
+        nodes: def
+            .nodes()
+            .iter()
+            .map(|n| RouteNode {
+                state: n.id.clone(),
+                label: fstp_html::Label::new(&n.label_key),
+            })
+            .collect(),
+        edges: def
+            .edges()
+            .iter()
+            .map(|e| RouteEdge {
+                id: e.id.clone(),
+                from: e.from.clone(),
+                to: e.to.clone(),
+            })
+            .collect(),
+        withdraw: def
+            .any_nonterminal_before_granted()
+            .first()
+            .map(|r| r.to.clone()),
+    })
+}
+
+/// The map of proposal `p` at `node` with the visible `legs`, for the
+/// progress page of the web app, in the English plain pack.
+pub(crate) fn route_map_of(p: ProposalId, node: StateTag, legs: &[LegRow]) -> Option<RouteMapView> {
+    use fstp_html::route::{RouteLeg, RouteView};
+    let def = route_def()?;
+    let view = RouteView {
+        subject: p.raw().to_string(),
+        page: fstp_html::SafeUrl::new(&format!("/app/proposals/{}/progress", p.raw())).ok()?,
+        position: node.spec_name().to_owned(),
+        legs: legs
+            .iter()
+            .map(|l| RouteLeg {
+                from: l.from.spec_name().to_owned(),
+                to: l.to.spec_name().to_owned(),
+            })
+            .collect(),
+        overlay: None,
+    };
+    let cats = fstp_html::Catalogues::new(
+        &fstp_html::CatalogueSource {
+            locale: "en",
+            entries: fstp_html::route::CATALOGUE_EN,
+        },
+        &[],
+    )
+    .ok()?;
+    Some(RouteMapView {
+        proposal: p,
+        tree: fstp_html::route::tree(&def, &view, &cats).ok()?,
+        nodes: fstp_html::route::statuses(&def, &view).ok()?,
+    })
+}
+
+/// `proposal.route_map` (ADR-015 amendment of 2026-11-06): the map of
+/// the caller's own projection, the position and legs `proposal.journey`
+/// gives them. Only a caller whose journey `map` is set reads it: the
+/// team, by an active Receiving binding (section 8.1), or the former lead
+/// and team members of a terminal proposal (Daniel, 2026-11-06). Judging
+/// roles keep
+/// the strip, and IRC members get neither (O-58).
+pub(super) fn route_map<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    admitted: ReadRule,
+) -> Result<RouteMapView, ApiError> {
+    let j = journey(call, p, admitted)?;
+    if !j.map {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")));
+    }
+    route_map_of(p, j.position.node, &j.legs)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "journey")))
 }
 
 #[cfg(test)]

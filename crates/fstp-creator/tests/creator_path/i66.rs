@@ -403,3 +403,39 @@ fn i66_edit_after_request_voids_it() {
     );
     assert_eq!(cell.entries.len(), entries);
 }
+
+/// I-66, R-GA-01, Q38 C (Daniel, 2026-11-06): P-23 enabled in a cell with
+/// no pre-check provider shows `PrecheckUnavailable` as a warning, never
+/// a failure. Left unacknowledged it blocks the approval. Once a builder
+/// acknowledges it, the second admin's approval activates the programme.
+#[test]
+fn i66_q38_missing_precheck_provider_is_a_warning_that_needs_acknowledgement() {
+    let mut cell = valid_draft();
+    cell.env.ports.precheck = false;
+    let report = cell.report(Some(TB));
+    assert!(
+        report
+            .warnings()
+            .any(|r| r.check == CheckId::PrecheckUnavailable),
+        "{:?}",
+        report.results()
+    );
+    let failures: BTreeSet<CheckId> = report.failures().map(|r| r.check).collect();
+    assert!(failures.is_empty(), "{failures:?}");
+    cell.request(M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let entries = cell.entries.len();
+    assert_eq!(
+        cell.approve(TB, 905).err(),
+        Some(Fail::Creator(CreatorRefusal::Uncleared(
+            Uncleared::Unacknowledged(CheckId::PrecheckUnavailable)
+        )))
+    );
+    assert_eq!(cell.entries.len(), entries);
+    assert_eq!(cell.status(), Some(ProgrammeStatus::Draft));
+    cell.acknowledge(M1, CheckId::PrecheckUnavailable)
+        .unwrap_or_else(|f| panic!("{f:?}"));
+    cell.request(M1).unwrap_or_else(|f| panic!("{f:?}"));
+    cell.approve(TB, 906)
+        .unwrap_or_else(|f| panic!("the acknowledged approval is refused: {f:?}"));
+    assert_eq!(cell.status(), Some(ProgrammeStatus::Active));
+}

@@ -402,7 +402,33 @@ pub const REPLIES: &[(&str, Shape)] = &[
         ])),
     ),
     ("calls.list_open", Shape::Array(&CALL)),
+    // Lane mcreator: the drafted call the Studio opens next.
+    (
+        "call.draft",
+        Shape::Object(&[m("accepted", Shape::Bool), m("call", Shape::Id)]),
+    ),
+    // Lane mcreator, R-PC-03: each call of the programme, its state, and
+    // whether the caller may approve it now.
+    (
+        "call.list",
+        Shape::Array(&Shape::Object(&[
+            m("call", Shape::Id),
+            m("status", Shape::Enum(&["draft", "approved", "published"])),
+            m("may_approve", Shape::Bool),
+        ])),
+    ),
     ("calls.get", CALL),
+    // R-GA-01, I-53: the Guide the publication stored, with its
+    // corrigenda, its version and the hex SHA-256 of its canonical form.
+    (
+        "calls.guide",
+        Shape::Object(&[
+            m("call", Shape::Id),
+            m("version", Shape::Int),
+            m("digest", Shape::String),
+            m("html", Shape::String),
+        ]),
+    ),
     // I-17: "Proposal" plus its id, never a name.
     ("proposal.list_own", Shape::Array(&OWN_PROPOSAL)),
     ("proposal.view", OWN_PROPOSAL),
@@ -431,6 +457,18 @@ pub const REPLIES: &[(&str, Shape)] = &[
     // milestone has neither, and the reply is `{"accepted": true}`.
     (
         "proposal.record_plan",
+        Shape::Object(&[
+            m("accepted", Shape::Bool),
+            opt("plan", Shape::Id),
+            opt("total", Shape::Amount),
+        ]),
+    ),
+    // R-EV-05 (lane mapp): the page form of a stage 2 revision records
+    // the plan and submits it in one entry, and answers as a recorded
+    // plan does. The form that names a recorded plan answers
+    // `{"accepted": true}`.
+    (
+        "stage2.revise",
         Shape::Object(&[
             m("accepted", Shape::Bool),
             opt("plan", Shape::Id),
@@ -538,6 +576,26 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ),
         ]),
     ),
+    // I-10, I-17, TH-01: the assessor's findings on the reviewer's
+    // proposal, each with the reader's own mark. The statement is
+    // untrusted data, shown as text only. No member names an account.
+    (
+        "review.findings",
+        Shape::Array(&Shape::Object(&[
+            m("finding", Shape::Id),
+            m(
+                "kind",
+                Shape::Enum(&["Completeness", "Quality", "Accuracy", "Integrity"]),
+            ),
+            m("severity", Shape::Enum(&["Info", "Minor", "Major"])),
+            m("confidence", Shape::Int),
+            m("statement", Shape::String),
+            m(
+                "mark",
+                Shape::Nullable(&Shape::Enum(&["Agreed", "Disputed"])),
+            ),
+        ])),
+    ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
     (
         "review.stage2_thread",
@@ -600,12 +658,19 @@ pub const REPLIES: &[(&str, Shape)] = &[
         "me.begin_verification",
         Shape::Object(&[m("redirect", Shape::String)]),
     ),
+    // I-18 (lane mapp): the vault's write page, where the guardian gives
+    // consent.
+    (
+        "guardian.begin_consent",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
     // I-86, design section 15.0 (2026-10-31): the caller's own active
     // bindings by role, programme, proposal and published call, the
     // title of each call they name, and the open cut-off rounds of the
     // caller's committee calls, and the caller's programme manager
     // programmes that hold a creator draft. No name, no email and no
-    // other account.
+    // other account. NOTE 5 (design section 15.0, 2026-11-06): the
+    // tenant-wide signatory roles the caller holds, Financial first.
     // A call title is the published call text, which anyone may read.
     (
         "me.roles",
@@ -635,6 +700,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 ])),
             ),
             m("drafts", Shape::Array(&Shape::Id)),
+            m(
+                "signatories",
+                Shape::Array(&Shape::Enum(&["financial_signatory", "legal_signatory"])),
+            ),
         ]),
     ),
     // Lane m4reg. SoD-07: each admin by account and pseudonymous handle,
@@ -828,6 +897,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
             Shape::Array(&Shape::Object(&[m("call", Shape::Id)])),
         )]),
     ),
+    // SoD-09, J2 (lane inv): where the acceptor goes to verify identity,
+    // as for `me.begin_verification`.
+    (
+        "people.begin_verification",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
     // SoD-09, J2: the role, the terms version, the programme's P-75 and
     // P-77 choices for the terms of a Judging role, and the state.
     (
@@ -924,8 +999,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ),
     // Lane j2, `SPEC/12-journey-ui.md` section 10, R-JV-01, R-JV-07: the
     // current node with its formal state name, the completed legs, whether
-    // the caller's role gets the route strip (O-58), and the overlay of the
-    // proposal's original call, null before that call is published.
+    // the caller's role gets the route strip (O-58), whether the caller gets
+    // the full map (the team, section 8.1) and the withdrawal control (the
+    // lead, NOTE 10; lane j4), and the overlay of the proposal's original
+    // call, null before that call is published.
     // I-97: ids, states, times and codes only, never text.
     ("proposal.journey", JOURNEY_REPLY),
     // Lane j2, section 10, I-93, I-97: the diary entries the visibility
@@ -982,6 +1059,8 @@ const JOURNEY_REPLY: Shape = Shape::Object(&[
     m("seq", Shape::Id),
     m("legs", Shape::Array(&LEG)),
     m("strip", Shape::Bool),
+    m("map", Shape::Bool),
+    m("withdraw", Shape::Bool),
     m("overlay", Shape::Nullable(&OVERLAY)),
 ]);
 

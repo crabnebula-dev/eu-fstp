@@ -132,6 +132,7 @@ record_round_trip! {
     i23_codec_round_trip_record_termination_recorded => TerminationRecorded,
     i23_codec_round_trip_record_transitioned => Transitioned,
     i23_codec_round_trip_record_vault_outcome => VaultOutcome,
+    i23_codec_round_trip_record_terms_accepted => TermsAccepted,
     i23_codec_round_trip_record_outbox_enqueued => OutboxEnqueued,
     i23_codec_round_trip_record_payment_requested => PaymentRequested,
     i23_codec_round_trip_record_line_accepted => LineAccepted,
@@ -147,6 +148,7 @@ record_round_trip! {
     r_ev_09_codec_round_trip_record_cut_off_round_opened => CutOffRoundOpened,
     r_ev_09_codec_round_trip_record_ballot_cast => BallotCast,
     r_ev_09_codec_round_trip_record_vote_delegated => VoteDelegated,
+    r_ga_01_codec_round_trip_record_guide_published => GuidePublished,
 }
 
 witness_round_trip! {

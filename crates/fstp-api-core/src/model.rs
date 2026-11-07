@@ -111,9 +111,50 @@ pub enum ReadModel {
     /// `proposal.diary`: the diary entries the caller may see (lane j2,
     /// I-93, I-97).
     Diary(crate::dispatch::journey::DiaryView),
+    /// `proposal.route_map`: the renderer's checked map tree and the node
+    /// statuses of the caller's projection (lane j4, ADR-015 amendment of
+    /// 2026-11-06).
+    RouteMap(crate::dispatch::journey::RouteMapView),
+    /// `review.findings`: the assessor's findings on the reviewer's
+    /// proposal, with the reader's own marks (lane mrev, I-10).
+    Findings(Vec<crate::views::FindingRow>),
+    /// `call.list`: the calls of a programme for the Planning Studio
+    /// (lane mcreator, R-PC-03).
+    Calls(Vec<StaffCallRow>),
+    /// `calls.guide`: the Guide its publication stored (R-GA-01, I-53).
+    Guide(StoredGuideView),
     /// A public page, the feed or a public tool answer, from
     /// `fstp-public` only (I-87, design section 3.10).
     Public(PublicReply),
+    /// `people.get_invitation`: the invitation landing (SoD-09, J2, lane
+    /// inv). It names no account, no inviter and no address.
+    Invitation(InvitationLanding),
+}
+
+/// The Guide of a published call as its publication stored it, with its
+/// corrigenda after the page (R-GA-01, I-51, I-53). Nothing is bound
+/// again per request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredGuideView {
+    /// The call.
+    pub call: CallId,
+    /// The Guide version.
+    pub version: u32,
+    /// The SHA-256 of the canonical document, in lower-case hex.
+    pub digest: String,
+    /// The stored page with its corrigenda.
+    pub html: String,
+}
+
+impl ToJson for StoredGuideView {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("call", dec(self.call.raw()));
+        let _ = o.insert("version", Value::from(self.version));
+        let _ = o.insert("digest", Value::from(self.digest.as_str()));
+        let _ = o.insert("html", Value::from(self.html.as_str()));
+        Value::Object(o)
+    }
 }
 
 /// The answer to a public operation (design section 3.10).
@@ -221,6 +262,11 @@ impl ToJson for ReadModel {
             ReadModel::MyRoles(r) => r.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
+            ReadModel::Invitation(v) => v.to_json(),
+            ReadModel::RouteMap(v) => v.to_json(),
+            ReadModel::Findings(rows) => array(rows),
+            ReadModel::Calls(rows) => array(rows),
+            ReadModel::Guide(g) => g.to_json(),
             ReadModel::Public(PublicReply::Json(v)) => v.clone(),
             ReadModel::Public(PublicReply::Page(html)) => {
                 let mut o = Object::new();
@@ -335,6 +381,29 @@ impl ToJson for CallSummary {
         if let Some(r) = &self.recipient_max {
             let _ = o.insert("recipient_max", Value::from(r.as_str()));
         }
+        Value::Object(o)
+    }
+}
+
+/// One call of a programme as the Planning Studio lists it to its staff
+/// (lane mcreator). It names no author or approver (I-17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaffCallRow {
+    /// The call.
+    pub call: CallId,
+    /// Its state.
+    pub status: CallStatus,
+    /// R-PC-03: whether the caller may approve the call now: a programme
+    /// manager outside its drafters, while the call is a draft.
+    pub may_approve: bool,
+}
+
+impl ToJson for StaffCallRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("call", dec(self.call.raw()));
+        let _ = o.insert("status", Value::from(call_status(self.status)));
+        let _ = o.insert("may_approve", Value::Bool(self.may_approve));
         Value::Object(o)
     }
 }
@@ -792,15 +861,16 @@ impl ToJson for InvitationLanding {
             Some(McpBindingActions::Allowed) => Value::from("allowed"),
             None => Value::Null,
         };
+        // In key order, as the canonical text has it (J2, lane inv).
         object(vec![
+            ("p75", p75),
+            ("p77", p77),
             (
                 "role",
                 Value::from(invited_role(self.role).unwrap_or_default()),
             ),
-            ("terms_version", Value::from(self.terms_version.get())),
-            ("p75", p75),
-            ("p77", p77),
             ("state", Value::from(self.state.as_str())),
+            ("terms_version", Value::from(self.terms_version.get())),
         ])
     }
 }
@@ -1353,6 +1423,17 @@ pub(crate) mod reply_shape_tests {
         row
     }
 
+    fn finding_row(mark: Option<&'static str>) -> crate::views::FindingRow {
+        crate::views::FindingRow {
+            finding: 1,
+            kind: "Completeness",
+            severity: "Major",
+            confidence: 1000,
+            statement: "SYNTHETIC FINDING".to_owned(),
+            mark,
+        }
+    }
+
     fn thread() -> crate::views::Stage2Thread {
         crate::views::Stage2Thread {
             state: "STAGE2",
@@ -1509,6 +1590,11 @@ pub(crate) mod reply_shape_tests {
     /// import value (lane m4wire). Their members are checked by the
     /// tests of `creator.rs` and the readers of
     /// `web/src/creator/model.ts`.
+    ///
+    /// The route map (lane j4) carries a tree, which no shape kind states
+    /// either. `fstp_html::route::tree` checks it on the server, and
+    /// `readRouteMap` in `web/src/journey/model.ts` reads it, under the
+    /// fuzz target `route_tree`.
     fn unshaped(m: &ReadModel) -> bool {
         matches!(
             m,
@@ -1517,6 +1603,7 @@ pub(crate) mod reply_shape_tests {
                     | crate::creator::CreatorModel::Proposals(_)
                     | crate::creator::CreatorModel::Preview { .. }
             ) | ReadModel::Public(_)
+                | ReadModel::RouteMap(_)
         )
     }
 
@@ -1527,6 +1614,9 @@ pub(crate) mod reply_shape_tests {
         match m {
             // A command's `{"accepted": true}`: no data, and no entry.
             ReadModel::Accepted => &[],
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "call") => {
+                &["call.draft"]
+            }
             ReadModel::Created(_) => &["proposal.create"],
             ReadModel::PendingActions(_) => &["pending.list"],
             ReadModel::OpenCalls(_) => &["calls.list_open"],
@@ -1534,7 +1624,11 @@ pub(crate) mod reply_shape_tests {
             ReadModel::OwnProposals(_) => &["proposal.list_own"],
             ReadModel::Assignments(_) => &["me.assignments", "me.irc_cases"],
             ReadModel::Sessions(_) => &["me.sessions"],
-            ReadModel::Redirect(_) => &["me.begin_verification"],
+            ReadModel::Redirect(_) => &[
+                "me.begin_verification",
+                "people.begin_verification",
+                "guardian.begin_consent",
+            ],
             ReadModel::IntakeQueue(_) => &["intake.queue"],
             ReadModel::Board(_) => &["call.board"],
             ReadModel::DeclarationView(_) => &["review.declaration_view"],
@@ -1545,7 +1639,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Ranking(_) => &["committee.ranking"],
             ReadModel::Notifiable(_) => &["review.notifiable_conflicts"],
             ReadModel::Workspace(_) => &["proposal.get_workspace"],
-            ReadModel::PlanSaved { .. } => &["proposal.record_plan"],
+            ReadModel::PlanSaved { .. } => &["proposal.record_plan", "stage2.revise"],
             ReadModel::OwnProposal(_) => &["proposal.view"],
             ReadModel::Stage2Questions(_) => &["stage2.view"],
             ReadModel::Notices(_) => &["me.notices"],
@@ -1569,7 +1663,13 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => &["me.roles"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
+            ReadModel::Invitation(_) => &["people.get_invitation"],
+            // Unshaped, see [`unshaped`]: no shape kind states a tree.
+            ReadModel::RouteMap(_) => &[],
+            ReadModel::Findings(_) => &["review.findings"],
+            ReadModel::Calls(_) => &["call.list"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
+            ReadModel::Guide(_) => &["calls.guide"],
             ReadModel::Public(_) => &[],
         }
     }
@@ -1609,6 +1709,8 @@ pub(crate) mod reply_shape_tests {
                 Vec::new()
             },
             strip: full,
+            map: full,
+            withdraw: !full,
             overlay: full.then(|| Overlay {
                 policy: fstp_domain::id::PolicyVersionId::from_raw(3),
                 stage2_window: fstp_domain::time::Days::new(14),
@@ -1623,6 +1725,32 @@ pub(crate) mod reply_shape_tests {
                 .collect(),
             }),
         }
+    }
+
+    /// A `proposal.route_map` reply (lane j4): the stage 2 map of the
+    /// design's prototype state.
+    fn route_map_view() -> crate::dispatch::journey::RouteMapView {
+        use fstp_domain::StateTag;
+        use fstp_journey::projector::LegRow;
+        let p = ProposalId::from_raw(1001);
+        let legs: Vec<LegRow> = [
+            (StateTag::Draft, StateTag::Submitted),
+            (StateTag::Submitted, StateTag::Stage1),
+            (StateTag::Stage1, StateTag::Stage2),
+        ]
+        .iter()
+        .zip(0u32..)
+        .map(|((from, to), ord)| LegRow {
+            proposal: p,
+            ord,
+            from: *from,
+            to: *to,
+            at: 1_793_750_400_000_000,
+            source_seq: u64::from(ord) + 11,
+        })
+        .collect();
+        crate::dispatch::journey::route_map_of(p, StateTag::Stage2, &legs)
+            .unwrap_or_else(|| panic!("the route map of the prototype state"))
     }
 
     /// A `proposal.diary` reply (lane j2): one entry with every optional
@@ -1683,6 +1811,7 @@ pub(crate) mod reply_shape_tests {
                 calls: Vec::new(),
                 rounds: Vec::new(),
                 drafts: Vec::new(),
+                signatories: Vec::new(),
             };
         }
         MyRoles {
@@ -1716,6 +1845,7 @@ pub(crate) mod reply_shape_tests {
                 call: CallId::from_raw(1),
             }],
             drafts: vec![ProgrammeId::from_raw(1)],
+            signatories: vec![Role::FinancialSignatory, Role::LegalSignatory],
         }
     }
 
@@ -1724,6 +1854,19 @@ pub(crate) mod reply_shape_tests {
         vec![
             ReadModel::Accepted,
             ReadModel::Created(vec![("proposal", 1001)]),
+            ReadModel::Created(vec![("call", 2001)]),
+            ReadModel::Calls(vec![
+                StaffCallRow {
+                    call: CallId::from_raw(1),
+                    status: CallStatus::Approved,
+                    may_approve: false,
+                },
+                StaffCallRow {
+                    call: CallId::from_raw(2),
+                    status: CallStatus::Draft,
+                    may_approve: true,
+                },
+            ]),
             ReadModel::PendingActions(vec![pending()]),
             ReadModel::OpenCalls(vec![call()]),
             ReadModel::Call(call()),
@@ -1837,6 +1980,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(journey_view(false)),
             ReadModel::Diary(diary_view(true)),
             ReadModel::Diary(diary_view(false)),
+            ReadModel::RouteMap(route_map_view()),
+            ReadModel::Findings(Vec::new()),
+            ReadModel::Findings(vec![finding_row(Some("Agreed")), finding_row(None)]),
             ReadModel::Creator(crate::creator::CreatorModel::Preview {
                 kind: "public",
                 blocks: vec![fstp_guide::PreviewBlock {
@@ -1844,8 +1990,24 @@ pub(crate) mod reply_shape_tests {
                     text: "SuperSAFE".to_owned(),
                 }],
             }),
+            ReadModel::Guide(StoredGuideView {
+                call: CallId::from_raw(1),
+                version: 1,
+                digest: "00".repeat(32),
+                html: "<!DOCTYPE html>".to_owned(),
+            }),
             ReadModel::Public(PublicReply::Json(Value::Object(Object::new()))),
             ReadModel::Public(PublicReply::Page("<!DOCTYPE html>".to_owned())),
+            ReadModel::Invitation(
+                InvitationLanding::new(
+                    Role::CommitteeMember,
+                    std::num::NonZeroU32::MIN,
+                    Some(true),
+                    Some(McpBindingActions::Allowed),
+                    InvitationState::Accepted,
+                )
+                .unwrap(),
+            ),
         ]
         .into_iter()
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
@@ -1918,7 +2080,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 33;
+    const VARIANTS: usize = 38;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -1957,7 +2119,12 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => 29,
             ReadModel::Journey(_) => 30,
             ReadModel::Diary(_) => 31,
-            ReadModel::Public(_) => 32,
+            ReadModel::RouteMap(_) => 32,
+            ReadModel::Findings(_) => 33,
+            ReadModel::Calls(_) => 34,
+            ReadModel::Guide(_) => 35,
+            ReadModel::Public(_) => 36,
+            ReadModel::Invitation(_) => 37,
         }
     }
 

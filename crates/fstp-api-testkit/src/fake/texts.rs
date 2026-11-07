@@ -47,6 +47,43 @@ impl FakeTexts {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// The bytes of every stored text, for a test that scans the store
+    /// for a secret (lane inv, the link token).
+    pub fn all(&self) -> Vec<Vec<u8>> {
+        lock(&self.state)
+            .rows
+            .values()
+            .map(|(_, _, b)| b.clone())
+            .collect()
+    }
+
+    /// Replaces the texts with a copy of those of `from`, each under its
+    /// reference, so a ledger copied from `from`'s cell resolves every
+    /// text it names. Every clone of `self` sees the copy.
+    pub fn copy_from(&self, from: &FakeTexts) {
+        let (rows, next) = {
+            let s = lock(&from.state);
+            (s.rows.clone(), s.next)
+        };
+        let mut s = lock(&self.state);
+        s.rows = rows;
+        s.next = next;
+    }
+
+    /// Every public text that is UTF-8, by id: what a published Guide may
+    /// read (R-GA-01). No confidential text is ever included.
+    pub fn public_texts(&self) -> BTreeMap<fstp_domain::id::TextId, String> {
+        lock(&self.state)
+            .rows
+            .iter()
+            .filter(|(_, (class, _, _))| *class == TextClass::Public)
+            .filter_map(|(id, (_, _, b))| {
+                let s = String::from_utf8(b.clone()).ok()?;
+                Some((fstp_domain::id::TextId::from_raw(*id), s))
+            })
+            .collect()
+    }
 }
 
 impl FakeTexts {

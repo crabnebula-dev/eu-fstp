@@ -19,14 +19,14 @@ use fstp_domain::time::Timestamp;
 use crate::command::TenantRecord;
 use crate::refusal::{FoldError, TenantRefusal};
 use crate::rules::{
-    P69_DEFAULT, P71_DEFAULT_US, P72_ABSOLUTE_DEFAULT_US, P72_IDLE_DEFAULT_US, models_valid,
-    p74_default, prober_milestone, setting_valid, values_check,
+    P69_DEFAULT, P71_DEFAULT_US, P72_ABSOLUTE_DEFAULT_US, P72_IDLE_DEFAULT_US, https_address,
+    models_valid, p74_default, prober_milestone, setting_valid, values_check,
 };
 use crate::types::{
-    Activation, ActivationRequestId, ApprovalId, CellKind, GrantRef, InferenceDefault,
-    InvitationId, LoginMethod, McpSettings, ModelRef, OnboardingStep, PaymentMode, RpMode,
-    SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues, TenantRevision,
-    TokenDigest, VerifyMethod,
+    Activation, ActivationRequestId, ApprovalId, CellKind, GrantRef, GuideNoticeOverride,
+    InferenceDefault, InvitationId, LoginMethod, McpSettings, ModelRef, OnboardingStep,
+    PaymentMode, RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus,
+    StepValues, TenantRevision, TokenDigest, VerifyMethod,
 };
 
 /// The tenant settings, as the projection shows them.
@@ -47,6 +47,9 @@ pub struct TenantSettings {
     pub p72_absolute_us: i64,
     /// P-74.
     pub p74: McpSettings,
+    /// The tenant's override of the Guide's data protection texts, or
+    /// `None` for the platform default ([`TenantSettings::guide_notice`]).
+    pub guide_notice: Option<GuideNoticeOverride>,
 }
 
 impl TenantSettings {
@@ -60,6 +63,17 @@ impl TenantSettings {
             p72_idle_us: P72_IDLE_DEFAULT_US,
             p72_absolute_us: P72_ABSOLUTE_DEFAULT_US,
             p74: p74_default(),
+            guide_notice: None,
+        }
+    }
+
+    /// The Guide's data protection texts: the tenant's override, or the
+    /// platform default (R-GA-01; section 15.0 of the M4 design,
+    /// 2026-11-06).
+    pub fn guide_notice(&self) -> GuideNotice<'_> {
+        match &self.guide_notice {
+            Some(o) => GuideNotice::Tenant(o),
+            None => GuideNotice::Platform,
         }
     }
 
@@ -79,6 +93,29 @@ impl TenantSettings {
             SettingValue::P74(m) => self.p74 = m.clone(),
         }
     }
+}
+
+/// The platform default of the Guide's data protection summary,
+/// `{{gdpr.notice_summary}}` (R-GA-01; Daniel's answer of 2026-11-06).
+/// Daniel supplies the approved wording. Until then it says so, and no
+/// legal text is made up here.
+pub const PLATFORM_DATA_PROTECTION_SUMMARY: &str =
+    "TODO(legal): the platform data protection summary awaits approved wording from Daniel.";
+
+/// The platform default of the Guide's privacy statement address,
+/// `{{funder.privacy_statement_url}}`. TODO(legal): Daniel supplies the
+/// address. Until then it is a reserved name that resolves nowhere
+/// (RFC 2606).
+pub const PLATFORM_PRIVACY_STATEMENT_URL: &str = "https://privacy-statement.invalid/todo-legal";
+
+/// Where the Guide's data protection texts come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuideNotice<'a> {
+    /// The platform default: [`PLATFORM_DATA_PROTECTION_SUMMARY`] and
+    /// [`PLATFORM_PRIVACY_STATEMENT_URL`].
+    Platform,
+    /// The tenant's override.
+    Tenant(&'a GuideNoticeOverride),
 }
 
 /// The tenant defaults that prefill new drafts. They are never parameters
@@ -318,6 +355,16 @@ impl TenantState {
                 if let Some(a) = self.approvals.get_mut(approval) {
                     a.used = true;
                 }
+            }
+            TenantRecord::GuideNoticeSet { notice, by } => {
+                self.need_admin(*by)?;
+                if notice
+                    .as_ref()
+                    .is_some_and(|n| !https_address(&n.privacy_statement_url))
+                {
+                    return refuse(TenantRefusal::Inconsistent);
+                }
+                self.settings.guide_notice.clone_from(notice);
             }
             TenantRecord::SettingChanged { value, by } => {
                 self.need_admin(*by)?;

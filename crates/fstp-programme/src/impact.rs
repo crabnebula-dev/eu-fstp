@@ -246,6 +246,44 @@ pub fn impact_on(
     out
 }
 
+impl ImpactEffect {
+    /// Whether the change reaches the call: the call freezes the new value
+    /// at publication, reads it at its next decision, or needs a
+    /// corrigendum. A refused change reaches no call.
+    pub fn reaches_call(&self) -> bool {
+        matches!(
+            self,
+            ImpactEffect::AppliesToDraftCall
+                | ImpactEffect::AppliesLive
+                | ImpactEffect::TightensPublished { .. }
+        )
+    }
+}
+
+/// R-PG-04: the calls among `impacts` that some change reaches, each once,
+/// in call order.
+pub fn affected(impacts: &[CallImpact]) -> Vec<CallId> {
+    impacts
+        .iter()
+        .filter(|i| i.effect.reaches_call())
+        .map(|i| i.call)
+        .collect::<BTreeSet<CallId>>()
+        .into_iter()
+        .collect()
+}
+
+/// R-PG-04: the calls of `programme` among `calls` that a change of the
+/// fields in `changed` to their values in `next` reaches, in call order.
+pub fn affected_calls(
+    state: &State,
+    programme: ProgrammeId,
+    calls: &[CallId],
+    changed: &BTreeSet<FieldId>,
+    next: &PolicyVersion,
+) -> Result<Vec<CallId>, ImpactError> {
+    Ok(affected(&impact(state, programme, calls, changed, next)?))
+}
+
 /// The effect of a change of `field` to its value in `next` on one call.
 fn effect_on(
     published: Option<&PublishedLimits>,
@@ -496,6 +534,33 @@ mod tests {
         );
     }
 
+    /// R-PG-04: the affected calls are those a change reaches. A frozen
+    /// change reaches only a call not yet published (I-12), and a P-05
+    /// drop reaches a published call too (NOTE 7).
+    #[test]
+    fn r_pg_04_affected_calls_are_the_calls_a_change_reaches() {
+        let v = head();
+        let live = published(&v);
+        let draft = CallFacts {
+            call: CallId::from_raw(11),
+            published: None,
+        };
+        let facts = [live.clone(), draft];
+        let frozen = impact_on(&facts, &BTreeSet::from([FieldId::P01]), &v);
+        assert_eq!(affected(&frozen), vec![CallId::from_raw(11)]);
+        let mut lower = v.clone();
+        lower.live.p05 = eur(30_000_000);
+        let cap = impact_on(
+            &facts,
+            &BTreeSet::from([FieldId::P01, FieldId::P05]),
+            &lower,
+        );
+        assert_eq!(
+            affected(&cap),
+            vec![CallId::from_raw(10), CallId::from_raw(11)]
+        );
+        assert_eq!(affected(&[]), Vec::<CallId>::new());
+    }
     /// R-PG-04, I-50: a version with P-05 above P-58 is refused for every call.
     #[test]
     fn i50_r_pg_04_cap_above_ceiling_is_refused() {

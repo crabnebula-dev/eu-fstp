@@ -7,6 +7,12 @@
 // form shows an error summary as an alert, with a link to each field in
 // error, and sends nothing (WCAG 2.2 SC 3.3.1). The form holds no
 // identity, birth date, payment or file field, and asks for no guardian.
+//
+// Q23 B (design section 15.0, 2026-11-06): beside the submission form,
+// and never inside it, the lead may state a date of birth. It has its
+// own form and goes to the vault route alone
+// (`proposal.state_birth_date`), as the country does (R-NG-01). The page
+// keeps no copy of it. TODO(legal): L-02.
 
 import { linkError, clearError } from "../core/a11y.js";
 import { h } from "../core/dom.js";
@@ -170,6 +176,63 @@ function form(f: Frame, id: string, done: (ethics: "none" | "declared") => void)
   return el;
 }
 
+/** The id of the vault-only date of birth control (Q23 B, R-SB-01). */
+export const BIRTH_DATE_ID = "submit-birth-date";
+
+/**
+ * The vault-only date of birth (Q23 B, I-86): its own form, sent to the
+ * vault route alone. The control is cleared once the vault holds it.
+ */
+function birthDateForm(f: Frame, id: string): HTMLElement {
+  const status = statusRegion("submit-birth-date-status");
+  const input = h("input", {
+    id: BIRTH_DATE_ID,
+    name: BIRTH_DATE_ID,
+    type: "date",
+    autocomplete: "off",
+    "aria-describedby": "submit-birth-date-intro",
+  });
+  if (!(input instanceof HTMLInputElement)) {
+    throw new TypeError("the document did not create an input");
+  }
+  const error = h("p", { id: "submit-birth-date-error", class: "fstp-error", hidden: true });
+  const save = button("submit-birth-date-save", t("submit.dob_save"), "submit");
+  const form = h("form", { novalidate: true, "aria-label": t("submit.dob") }, [
+    h("div", { class: "fstp-field" }, [h("label", { for: BIRTH_DATE_ID }, [t("submit.dob")]), error, input]),
+    h("p", {}, [save]),
+  ]);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    clearAlert(f);
+    const day = input.value;
+    if (day === "") {
+      fieldError(input, error, t("submit.dob_required"));
+      input.focus();
+      return;
+    }
+    fieldError(input, error, null);
+    save.disabled = true;
+    setStatus(status, "saving", "");
+    run(f, async () => {
+      const r = await call("proposal.state_birth_date", { proposal: id }, { date_of_birth: day }, decodeAccepted);
+      save.disabled = false;
+      if (!r.ok) {
+        setStatus(status, "failed", "");
+        showFailure(f, r.failure);
+        return;
+      }
+      input.value = "";
+      setStatus(status, "saved", t("submit.dob_saved"));
+    });
+  });
+  return h("section", { "aria-labelledby": "submit-birth-date-heading" }, [
+    h("h2", { id: "submit-birth-date-heading" }, [t("submit.dob.heading")]),
+    h("p", { id: "submit-birth-date-intro" }, [t("submit.dob.intro")]),
+    form,
+    status,
+  ]);
+}
+
 /** What the receipt shows of a submission the cell accepted. */
 interface Receipt {
   readonly title: string;
@@ -250,6 +313,7 @@ export function mountSubmit(id: string, done?: Receipt): void {
     }
     f.main.append(
       notice(),
+      birthDateForm(f, id),
       form(f, id, (ethics) => {
         mountSubmit(id, { title: p.title, ethics });
       }),

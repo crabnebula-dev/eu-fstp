@@ -256,6 +256,9 @@ pub enum TenantKind {
     ApproveSelfGrant,
     /// `TenantCommand::SetSetting`, one operation per parameter.
     SetSetting(TenantParam),
+    /// `TenantCommand::SetGuideNotice`: the tenant's override of the
+    /// Guide's data protection texts (R-GA-01).
+    SetGuideNotice,
     /// `TenantCommand::RecordInferenceConfig`, saved with the Inference
     /// onboarding step.
     RecordInferenceConfig,
@@ -345,6 +348,8 @@ pub enum PortKind {
     StateCountry,
     /// The declared affiliations, to the vault only.
     DeclareAffiliations,
+    /// The lead's date of birth, to the vault only (Q23 B).
+    StateBirthDate,
     /// An autosave to the private workspace (I-21).
     SaveWorkspace,
     /// A request for a copy of the application (R-SB-04).
@@ -491,6 +496,7 @@ const TEAM: &[RoleOrApplicant] = &[
 ];
 const GUARDIAN: &[RoleOrApplicant] = &[R(Role::Guardian)];
 const REVIEWER: &[RoleOrApplicant] = &[R(Role::CommitteeMember)];
+const FINDING_MARKER: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::IrcMember)];
 const CONTENT: &[RoleOrApplicant] = &[
     R(Role::Applicant),
     R(Role::ApplicantTeamMember),
@@ -504,6 +510,8 @@ const DECLARANT: &[RoleOrApplicant] = &[
     R(Role::CommitteeMember),
     R(Role::IrcMember),
 ];
+const PROPOSAL_DECLARANT: &[RoleOrApplicant] =
+    &[R(Role::FstpCoordinator), R(Role::CommitteeMember)];
 const COMMITTEE: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::CommitteeChair)];
 const IRC: &[RoleOrApplicant] = &[R(Role::IrcMember)];
 const AUDITOR: &[RoleOrApplicant] = &[R(Role::Auditor)];
@@ -825,6 +833,17 @@ pub const OPS: &[OpSpec] = &[
     )
     .hr()
     .acting(ADMIN),
+    // R-GA-01, section 15.0 of the M4 design (2026-11-06): the tenant's
+    // override of the Guide's data protection texts. High-risk by the
+    // strict reading of settings, so web only (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.set_guide_notice",
+        OpKind::Tenant(TenantKind::SetGuideNotice),
+        Put,
+        "/admin/settings/guide-notice",
+    )
+    .hr()
+    .acting(ADMIN),
     OpSpec::read("admin.approvals", RK::ListApprovals, "/admin/approvals").acting(ADMIN),
     OpSpec::new(
         "admin.approve_self_grant",
@@ -1102,6 +1121,9 @@ pub const OPS: &[OpSpec] = &[
             &IN_CALL,
             Scope::CallsRead,
         ),
+    // Lane mcreator: the Planning Studio's list of a programme's calls,
+    // each with its state and whether the caller may approve it (R-PC-03).
+    OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_STAFF),
     // J4: public pages, open calls and applicants.
     OpSpec::public("public.programme", PublicKind::Programme, "/p/{slug}").tool(
         "fstp_public_get_programme",
@@ -1267,6 +1289,16 @@ pub const OPS: &[OpSpec] = &[
     )
     .acting(LEAD)
     .class(Personal),
+    // Q23 B (design section 15.0, 2026-11-06): the lead states a date of
+    // birth at submission, to the vault only. No tool (I-86).
+    OpSpec::new(
+        "proposal.state_birth_date",
+        OpKind::M3Port(PortKind::StateBirthDate),
+        Put,
+        "/proposals/{proposal}/vault/birth_date",
+    )
+    .acting(LEAD)
+    .class(Personal),
     OpSpec::command(
         "proposal.submit",
         CK::Submit,
@@ -1355,6 +1387,15 @@ pub const OPS: &[OpSpec] = &[
         "/proposals/{proposal}/diary",
     )
     .acting(JOURNEY),
+    // Lane j4, ADR-015 amendment of 2026-11-06: the renderer's checked map
+    // tree and node statuses of one proposal, for its team (section 8.1,
+    // O-58). Web only, as the journey reads are.
+    OpSpec::read(
+        "proposal.route_map",
+        RK::GetRouteMap,
+        "/proposals/{proposal}/route-map",
+    )
+    .acting(TEAM),
     OpSpec::new(
         "guardian.begin_consent",
         OpKind::M3Port(PortKind::BeginGuardianConsent),
@@ -1390,7 +1431,9 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/proposals/{proposal}/coordinator-declaration",
     )
-    .acting(COORDINATOR),
+    // Under P-10 "all committee members" every committee member declares
+    // per proposal too (`roles-and-sod.md` Conflict declarations).
+    .acting(PROPOSAL_DECLARANT),
     OpSpec::read(
         "review.read_content",
         RK::GetContent,
@@ -1562,7 +1605,8 @@ pub const OPS: &[OpSpec] = &[
         "/findings/{finding}/mark",
     )
     .binding()
-    .acting(REVIEWER),
+    // The engine's `Mark` rule admits a reviewer or an IRC assignee.
+    .acting(FINDING_MARKER),
     // J7: the committee and the cut-off rounds of change D5.
     OpSpec::read("committee.ranking", RK::GetRankingView, "/calls/{call}/ranking")
         .acting(COMMITTEE)
@@ -1726,6 +1770,9 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P74)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P20)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P69)),
+    // R-GA-01, section 15.0 of the M4 design (2026-11-06): the Guide's
+    // data protection texts are a tenant setting too.
+    OpKind::Tenant(TenantKind::SetGuideNotice),
 ];
 
 /// Kinds that never arrive from a person. In M4 cells, the D13 sweep

@@ -104,12 +104,18 @@ export function mountNegotiation(id: string): void {
 const VAULT_WRITE = "/w";
 
 /**
- * Whether `to` is the vault write page of this cell: `https:`, the host
+ * Whether `to` is the vault write page of this cell: the cell page's own
+ * scheme, which is `https:` on every deployed cell, the host
  * `id.<cell host>` on the cell's port, the path `/w`, no query, no
  * credentials, and a ticket in the fragment. Anything else is refused,
- * so a reply can never send the guardian elsewhere.
+ * so a reply can never send the guardian elsewhere. The loopback e2e
+ * cell is plain `http:` under `.localhost` (lane mapp), so the scheme is
+ * the page's, never a downgrade from it.
  */
-export function isVaultWrite(to: string, here: { readonly hostname: string; readonly port: string }): boolean {
+export function isVaultWrite(
+  to: string,
+  here: { readonly protocol: string; readonly hostname: string; readonly port: string },
+): boolean {
   let u: URL;
   try {
     u = new URL(to);
@@ -117,7 +123,8 @@ export function isVaultWrite(to: string, here: { readonly hostname: string; read
     return false;
   }
   return (
-    u.protocol === "https:" &&
+    (here.protocol === "https:" || here.protocol === "http:") &&
+    u.protocol === here.protocol &&
     u.username === "" &&
     u.password === "" &&
     u.hostname === `id.${here.hostname}` &&

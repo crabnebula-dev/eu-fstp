@@ -300,6 +300,9 @@ impl RefCheck {
             | RefCheck::InviteeWithoutAccount
             | RefCheck::RosterShort
             | RefCheck::ProximityListMissing
+            // Q38 C (Daniel, 2026-11-06): a missing pre-check provider
+            // needs an acknowledgement and never blocks on its own.
+            | RefCheck::PrecheckUnavailable
             | RefCheck::AiActReassessment
             | RefCheck::InferenceUnreachable => RefSeverity::Warning,
             _ => RefSeverity::Failure,
@@ -1048,7 +1051,10 @@ impl RefSystem {
     }
 
     /// Decides `cmd`: the records it appends, or why it is refused.
-    /// Environment commands append nothing and are never refused.
+    /// Environment commands append nothing and are never refused. A
+    /// draft command judges its actor before the draft's state and
+    /// revision, so a denied actor is denied in every state
+    /// (`07-test-plan/test-plan.md`, authorisation matrix row).
     pub fn decide(&self, cmd: &RefCommand) -> Result<Vec<RefEvent>, RefRefusal> {
         let d = &self.draft;
         let s = &self.stat;
@@ -1107,18 +1113,18 @@ impl RefSystem {
                 effect,
                 base,
             } => {
-                draft_open(d)?;
                 // `Invite` and `WithdrawInvitation` name no revision
                 // (design 3.2), so only the other edits can be stale.
                 let invitation =
                     matches!(kind, EditKind::Invitation | EditKind::InvitationWithdrawal);
-                if !invitation {
-                    at_head(base)?;
-                }
                 // Reading R9: a tenant admin may invite and withdraw.
                 let admin_may = invitation && s.admins.contains(&by);
                 if !(d.managers.contains(&by) || admin_may) {
                     return Err(RefRefusal::NotProgrammeManager);
+                }
+                draft_open(d)?;
+                if !invitation {
+                    at_head(base)?;
                 }
                 if let RefEdit::Seed(c) | RefEdit::Fix(c) = effect
                     && c.feed() != CheckFeed::Content
@@ -1128,11 +1134,11 @@ impl RefSystem {
                 Ok(vec![RefEvent::Edited { by, kind, effect }])
             }
             RefCommand::Acknowledge { by, warning, base } => {
-                draft_open(d)?;
-                let revision = at_head(base)?;
                 if !(d.managers.contains(&by) || s.admins.contains(&by)) {
                     return Err(RefRefusal::NotProgrammeManager);
                 }
+                draft_open(d)?;
+                let revision = at_head(base)?;
                 if warning.severity() != RefSeverity::Warning
                     || !self.report().contains_key(&warning)
                 {
@@ -1145,22 +1151,25 @@ impl RefSystem {
                 }])
             }
             RefCommand::Request { by, base } => {
-                draft_open(d)?;
-                let revision = at_head(base)?;
                 if !(d.managers.contains(&by) || s.admins.contains(&by)) {
                     return Err(RefRefusal::NotProgrammeManager);
                 }
+                draft_open(d)?;
+                let revision = at_head(base)?;
                 Ok(vec![RefEvent::Requested { by, revision }])
             }
             RefCommand::Approve { by, base } => {
-                draft_open(d)?;
-                let revision = at_head(base)?;
                 if !s.admins.contains(&by) {
                     return Err(RefRefusal::NotTenantAdmin);
+                }
+                if !d.opened {
+                    return Err(RefRefusal::Opening);
                 }
                 if d.builders.contains(&by) {
                     return Err(RefRefusal::ApproverIsBuilder);
                 }
+                draft_open(d)?;
+                let revision = at_head(base)?;
                 if !s.vault.is_verified(by) {
                     return Err(RefRefusal::ApproverUnverified);
                 }

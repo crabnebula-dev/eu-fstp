@@ -26,6 +26,9 @@ fstp-rt.workspace = true
 # The journey projector, visibility function and diary read (ADR-015,
 # lane j2): pure, with no I/O.
 fstp-journey.workspace = true
+# The route renderer of the server-built map (ADR-015 amendment of
+# 2026-11-06, lane j4).
+fstp-html.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

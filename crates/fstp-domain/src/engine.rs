@@ -236,7 +236,8 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::CallDrafted { .. }
         | Record::CallEdited { .. }
         | Record::CallApproved { .. }
-        | Record::CallPublished { .. } => Lane::Programme,
+        | Record::CallPublished { .. }
+        | Record::GuidePublished { .. } => Lane::Programme,
         Record::BindingGranted(_)
         | Record::BindingEnded(_)
         | Record::BindingSuspended(_)
@@ -293,7 +294,10 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         Record::AmendmentProposed { .. }
         | Record::AmendmentRouted { .. }
         | Record::AmendmentActivated { .. } => Lane::Amendment,
-        Record::VaultOutcome { .. } | Record::OutboxEnqueued(_) => return None,
+        // J2, lane inv: the engine and the creator fold `TermsAccepted`.
+        Record::VaultOutcome { .. } | Record::OutboxEnqueued(_) | Record::TermsAccepted { .. } => {
+            return None;
+        }
     };
     Some(lane)
 }

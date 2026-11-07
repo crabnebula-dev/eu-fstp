@@ -15,6 +15,7 @@ import {
   type MyRoles,
   ROLE_NAMES,
   type RoleName,
+  SIGNATORY_NAMES,
   chipRoles,
   isPublicPage,
   navLinksOf,
@@ -36,9 +37,10 @@ const FULL = {
   calls: [{ call: "1", title: "Synthetic open call 2026" }, { call: "2" }],
   rounds: [{ round: "7", call: "1" }],
   drafts: [],
+  signatories: [],
 };
 
-const EMPTY = { tenant_admin: false, roles: [], calls: [], rounds: [], drafts: [] };
+const EMPTY = { tenant_admin: false, roles: [], calls: [], rounds: [], drafts: [], signatories: [] };
 
 function roles(v: unknown): MyRoles {
   const r = readMyRoles(v);
@@ -66,6 +68,9 @@ test("i86_home_reader_takes_the_generated_me_roles_shape", () => {
     { tenant_admin: false, roles: [], rounds: [], drafts: [] },
     { tenant_admin: false, roles: [], calls: [], rounds: [] },
     { ...EMPTY, drafts: [1] },
+    { tenant_admin: false, roles: [], calls: [], rounds: [], drafts: [] },
+    { ...EMPTY, signatories: ["contract_signatory"] },
+    { ...EMPTY, signatories: "financial_signatory" },
     { ...EMPTY, roles: [{ role: "applicant", programme: 1, calls: [] }] },
   ];
   for (const v of extra) {
@@ -136,6 +141,7 @@ test("r_nf_03_home_guardian_and_irc_member_reach_their_pages", () => {
     calls: [{ call: "1" }],
     rounds: [{ round: "8", call: "1" }],
     drafts: [],
+    signatories: [],
   });
   const w = workOf(r, null, name, untitled);
   const kinds = w.items.map((i) => `${i.kind} ${i.href}`);
@@ -171,6 +177,7 @@ function randomRoles(r: Rng): unknown {
     calls: [],
     rounds: [{ round: String(r.below(9)), call: "1" }],
     drafts: r.bool() ? [String(1 + r.below(3))] : [],
+    signatories: r.bool() ? [r.pick(SIGNATORY_NAMES)] : [],
   };
 }
 
@@ -244,6 +251,7 @@ test("r_nf_03_home_programme_manager_links_creator_only_with_a_draft", () => {
       calls: [{ call: "1", title: "Synthetic open call 2026" }],
       rounds: [],
       drafts,
+      signatories: [],
     });
   const none = workOf(pm([]), null, name, untitled).items.map((i) => i.href);
   assert(!none.some((h) => h.includes("/creator") || h.endsWith("/people")), show(none));
@@ -257,6 +265,30 @@ test("r_nf_03_home_programme_manager_links_creator_only_with_a_draft", () => {
 test("r_nf_03_role_chip_names_each_role_once", () => {
   eq(chipRoles(roles(FULL)), ["fstp_coordinator", "committee_member", "tenant_admin", "applicant"], "chip roles");
   eq(chipRoles(roles(EMPTY)), [], "no role");
+});
+
+/**
+ * NOTE 5, I-86, R-NF-03 (design section 15.0, "Roles lane questions",
+ * 2026-11-06): a holder of a signatory role and nothing else has a role.
+ * The home page names each held signatory role, and the role chip shows
+ * it. A caller without one sees none.
+ */
+test("r_nf_03_note5_home_names_the_callers_signatory_roles", () => {
+  const both = roles({ ...EMPTY, signatories: ["financial_signatory", "legal_signatory"] });
+  const w = workOf(both, [], name, untitled);
+  eq(w.noRole, false, "a signatory holder has a role");
+  eq(w.signatories, ["financial_signatory", "legal_signatory"], "both roles named");
+  eq(chipRoles(both), ["financial_signatory", "legal_signatory"], "the chip names both");
+  const legal = workOf(roles({ ...EMPTY, signatories: ["legal_signatory"] }), [], name, untitled);
+  eq(legal.signatories, ["legal_signatory"], "only the held role");
+  eq(workOf(roles(FULL), [], name, untitled).signatories, [], "no signatory role for others");
+  for (const s of SIGNATORY_NAMES) {
+    assert((ROLE_NAMES as readonly string[]).includes(s), `${s} is a role name`);
+    assert(typeof HOME_LABELS[`role.${s}`] === "string", `${s} has a role label`);
+  }
+  for (const k of ["home.signatory.title", "home.signatory.item", "home.signatory.later"]) {
+    assert(typeof HOME_LABELS[k] === "string" && HOME_LABELS[k] !== "", `${k} is in the catalogue`);
+  }
 });
 
 /**

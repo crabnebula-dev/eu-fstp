@@ -100,7 +100,17 @@ pub(crate) fn read_basis(
                 .active_receiving(account, *r, proposal, now)
                 .is_some()
         });
-    if team {
+    // Daniel, 2026-11-06: in a terminal state the former lead and team
+    // member keep a read-only view. Their ended bindings stay ended.
+    let former = current.is_terminal()
+        && state.roster.ended().any(|(_, e)| {
+            let b = &e.binding;
+            b.account == account
+                && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+                && b.proposal() == Some(proposal)
+                && matches!(b.status, crate::roles::BindingStatus::Active)
+        });
+    if team || former {
         return Ok(ReadBasis::Team);
     }
     if state.review().conflict_fact(account, proposal) {

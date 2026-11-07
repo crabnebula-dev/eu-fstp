@@ -22,12 +22,15 @@ pub mod guide;
 pub mod html;
 pub mod preview;
 pub mod query;
+mod route;
 pub mod slug;
 pub mod tools;
 pub mod view;
 
-pub use guide::{GuideSource, published_guide};
-pub use html::{Chrome, PublicPage, render_html, render_traced};
+pub use guide::{
+    CorrigendaSource, GuideSource, corrigenda, publication_guide, published_guide, served_guide,
+};
+pub use html::{Chrome, PublicDocument, PublicPage, render_html, render_traced};
 pub use preview::{draft_guide_preview, draft_public_preview};
 pub use query::{PublicPart, PublicQuery, parse_public_query};
 pub use slug::{public_slugs, resolve_slug};

@@ -12,6 +12,7 @@ import { target as pdfToken } from "./pdf_token.fuzz.js";
 import { target as pdfXref } from "./pdf_xref.fuzz.js";
 import { target as routerMatch } from "./router_match.fuzz.js";
 import { target as returnPath } from "./return_path.fuzz.js";
+import { target as routeTree } from "./route_tree.fuzz.js";
 import { target as safeUrl } from "./safe_url.fuzz.js";
 import { target as validators } from "./validators.fuzz.js";
 
@@ -28,4 +29,5 @@ export const TARGETS: readonly FuzzTarget[] = [
   pdfDocument,
   pdfPrepare,
   pdfPrepareDifferential,
+  routeTree,
 ];

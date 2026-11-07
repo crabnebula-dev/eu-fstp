@@ -19,7 +19,10 @@
 // - a committee member to the assignments list, and every committee
 //   member and the chair to the ranking of each published call and to
 //   each open cut-off round (J6, J7);
-// - an IRC member to the IRC cases (J8).
+// - an IRC member to the IRC cases (J8);
+// - a Financial or Legal signatory to a card that names the role. What
+//   they approve has no page until M5 (NOTE 5; design section 15.0,
+//   2026-11-06).
 //
 // Every person also gets the open calls. A role with no page in this
 // release is named in a separate list, without a link.
@@ -54,6 +57,12 @@ export const ROLE_NAMES = [
 /** One role name. */
 export type RoleName = (typeof ROLE_NAMES)[number];
 
+/** The tenant-wide signatory roles, as the wire spells them (NOTE 5). */
+export const SIGNATORY_NAMES = ["financial_signatory", "legal_signatory"] as const;
+
+/** One signatory role name. */
+export type SignatoryName = (typeof SIGNATORY_NAMES)[number];
+
 /** One active binding of the caller. */
 export interface RoleBinding {
   readonly role: RoleName;
@@ -87,6 +96,11 @@ export interface MyRoles {
    * home page links them only for these (review finding U1).
    */
   readonly drafts: ReadonlySet<string>;
+  /**
+   * The tenant-wide signatory roles the caller holds, Financial first
+   * (NOTE 5; design section 15.0, "Roles lane questions", 2026-11-06).
+   */
+  readonly signatories: readonly SignatoryName[];
 }
 
 type Rec = Readonly<Record<string, unknown>>;
@@ -171,12 +185,12 @@ function round(v: unknown): OpenRound | null {
 
 /**
  * The `me.roles` reply, or null when `v` does not fit its shape: a closed
- * object `{tenant_admin, roles, calls, rounds, drafts}`, the shape of
+ * object `{tenant_admin, roles, calls, rounds, drafts, signatories}`, the shape of
  * `fstp_access::REPLIES` that `gen/api.ts` `SCHEMAS` holds.
  */
 export function readMyRoles(v: unknown): MyRoles | null {
   const o = rec(v);
-  if (o === null || !closed(o, ["tenant_admin", "roles", "calls", "rounds", "drafts"])) {
+  if (o === null || !closed(o, ["tenant_admin", "roles", "calls", "rounds", "drafts", "signatories"])) {
     return null;
   }
   const tenantAdmin = o["tenant_admin"];
@@ -184,12 +198,16 @@ export function readMyRoles(v: unknown): MyRoles | null {
   const calls = each(o["calls"], callTitle);
   const rounds = each(o["rounds"], round);
   const drafts = each(o["drafts"], (x) => (isId(x) ? x : null));
+  const signatories = each(o["signatories"], (x) =>
+    typeof x === "string" && (SIGNATORY_NAMES as readonly string[]).includes(x) ? (x as SignatoryName) : null,
+  );
   if (
     typeof tenantAdmin !== "boolean" ||
     roles === null ||
     calls === null ||
     rounds === null ||
-    drafts === null
+    drafts === null ||
+    signatories === null
   ) {
     return null;
   }
@@ -199,7 +217,7 @@ export function readMyRoles(v: unknown): MyRoles | null {
       titles.set(c, title);
     }
   }
-  return Object.freeze({ tenantAdmin, roles, titles, rounds, drafts: new Set(drafts) });
+  return Object.freeze({ tenantAdmin, roles, titles, rounds, drafts: new Set(drafts), signatories });
 }
 
 // ---------------------------------------------------------------------------
@@ -279,8 +297,15 @@ export interface Work {
   readonly items: readonly WorkItem[];
   readonly other: readonly OtherRole[];
   /**
+   * The tenant-wide signatory roles the caller holds (NOTE 5). What they
+   * approve has no page in this release, so the home page names each
+   * role without a link.
+   */
+  readonly signatories: readonly SignatoryName[];
+  /**
    * Whether the caller holds no role at all: no binding, no own
-   * proposal and not a tenant admin. The open calls are still listed.
+   * proposal, no signatory role and not a tenant admin. The open calls
+   * are still listed.
    */
   readonly noRole: boolean;
 }
@@ -455,8 +480,13 @@ export function workOf(
       other.push(Object.freeze({ role: b.role, programme: b.programme }));
     }
   }
-  const noRole = !r.tenantAdmin && r.roles.length === 0 && proposals.size === 0;
-  return Object.freeze({ items: Object.freeze(items), other: Object.freeze(other), noRole });
+  const noRole = !r.tenantAdmin && r.roles.length === 0 && r.signatories.length === 0 && proposals.size === 0;
+  return Object.freeze({
+    items: Object.freeze(items),
+    other: Object.freeze(other),
+    signatories: Object.freeze([...r.signatories]),
+    noRole,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +580,7 @@ const CHIP_ORDER: readonly RoleName[] = [
  * for a person with no role.
  */
 export function chipRoles(r: MyRoles): readonly RoleName[] {
-  const held = new Set<RoleName>(r.roles.map((b) => b.role));
+  const held = new Set<RoleName>([...r.roles.map((b) => b.role), ...r.signatories]);
   if (r.tenantAdmin) {
     held.add("tenant_admin");
   }

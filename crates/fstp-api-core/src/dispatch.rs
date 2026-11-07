@@ -75,10 +75,10 @@
 //! - The caller's own list of proposals keeps a proposal that reached a
 //!   terminal state, since the domain ends the team's Receiving bindings
 //!   there. `proposal.view` keeps the `Team` rule of the access crate.
-//! - `stage2.revise` is the domain's `SubmitRevision` of a plan the lead
-//!   recorded first through `proposal.record_plan`. The engine port
-//!   executes one command per call, so the two do not run atomically in
-//!   one entry (design section 2.2 J4, a seam for the lead).
+//! - `stage2.revise` with a plan page form records the plan and submits
+//!   it in one entry, as the engine's composed `Stage2Revision` (R-EV-05,
+//!   lane mapp). With a `plan` member it is the domain's `SubmitRevision`
+//!   of a plan the lead recorded first through `proposal.record_plan`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -121,10 +121,15 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
-/// `proposal.journey` and `proposal.diary` (lane j2, ADR-015).
+/// `proposal.journey` and `proposal.diary` (lane j2, ADR-015), and
+/// `proposal.route_map` (lane j4).
 pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
+/// The people operations of journey J2 (lane inv). The file sits beside
+/// `creator.rs`, as the lane's file plan names it.
+#[path = "people.rs"]
+pub(crate) mod people;
 /// The public pages, the feed and the public tools (lane W2c).
 mod public;
 /// The tenant operations (lane m4tenant).
@@ -430,6 +435,33 @@ async fn resolve<P: Seams>(
     }
 }
 
+/// The rights of a bearer token now, with no operation (TH-63, lane
+/// W3c): the MCP principal of its grant, with roles evaluated at the
+/// instant as step 0 evaluates them. Unlike step 0, a credential that is
+/// no bearer token, or a token with no grant, is refused with
+/// `Unauthenticated` rather than made anonymous. Nothing is recorded.
+pub(crate) async fn tool_rights<P: Seams>(
+    ports: &P,
+    cred: &Credential,
+) -> Result<crate::ToolRights, ApiError> {
+    let unknown = || ApiError::refused(ErrorCode::Unauthenticated, "actor");
+    let Credential::Bearer(token) = cred else {
+        return Err(unknown());
+    };
+    let now = ports.clock().now();
+    let g = match ports.grant(token, now).await {
+        Ok(g) => g,
+        Err(PortError::Unavailable) => {
+            return Err(ApiError::refused(ErrorCode::Unavailable, "token"));
+        }
+        Err(PortError::Refused) => return Err(unknown()),
+    };
+    let state = ports.engine().snapshot();
+    let principal = Principal::mcp(&g, &admins_of(ports, &state, g.account), &state, now)
+        .map_err(|_| unknown())?;
+    Ok(crate::ToolRights { principal })
+}
+
 /// The target object of a request: its path parameters.
 fn target(spec: &OpSpec, request: &Object) -> Object {
     let mut t = Object::new();
@@ -589,7 +621,7 @@ pub(crate) async fn run<P: Seams>(
     // so the digest, a pending action and its confirmation carry the
     // same plan (I-85, design section 3.7 step 6).
     if let (Some(form), Some(p)) = (
-        forms::op_form(spec),
+        forms::request_form(spec, &op.request),
         forms::id_param(&op.request, "proposal"),
     ) {
         let latest = latest_plan(st, ProposalId::from_raw(p));
@@ -680,10 +712,56 @@ pub(crate) async fn run<P: Seams>(
             creator_ops::command(&call, &op).await
         }
         OpKind::Tenant(kind) => tenant::command(&call, &op, kind).await,
+        OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(&call, &op).await,
+        // `Record` and `Regenerate` are the assessor's, through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
-            "finding marks: the finding request form (lane W3b, after M4 W5)",
+            "a finding command that only the assessor issues",
         ))),
         OpKind::Public(kind) => public::read(&call, &op, kind).await,
+    }
+}
+
+/// `review.mark_finding`: the acting reviewer's mark on a finding, run
+/// as `FindingCommand::Mark` (I-03, I-10). The engine judges who may
+/// mark. It is web only, so it is never prepared.
+async fn finding_mark<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
+    let Some(account) = call.account() else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+    };
+    let bad = || call.refuse(ApiError::bad_request(forms::REQUEST_RULE));
+    let finding = forms::id_param(&op.request, "finding").ok_or_else(bad)?;
+    let mark = op
+        .request
+        .get("mark")
+        .and_then(Value::as_str)
+        .and_then(forms::finding_mark)
+        .ok_or_else(bad)?;
+    let cmd = Command::Finding(fstp_engine::FindingCommand::Mark {
+        finding: fstp_engine::FindingId::from_raw(finding),
+        mark,
+    });
+    let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+    let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
+    // Step 5.
+    dry_run(call, account, &cmd, ctx)
+        .await
+        .map_err(|e| call.refuse(e))?;
+    let meta = ExecMeta {
+        via: call.caller.via(),
+        session: call.caller.session,
+        agent: call.caller.agent,
+        op: OpName(call.spec.name),
+        request: call.digest,
+        step_up: None,
+        pending: None,
+        second_tenant_admin: None,
+    };
+    match call.ports.engine().execute(cmd, ctx, meta).await {
+        Ok(seq) => Ok(OpResult::Done {
+            body: ReadModel::Accepted,
+            seq: Some(seq),
+        }),
+        Err(e) => Err(call.refuse(exec_failed(e))),
     }
 }
 
@@ -709,7 +787,8 @@ fn needs_p77(spec: &OpSpec) -> bool {
 /// The governing P-77 of a binding command: "draft only" exactly when the
 /// domain's own `Via::Mcp` check refuses it with P-77 (R-MC-05).
 fn governing_p77<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<McpBindingActions, ApiError> {
-    let (Some(form), Some(account)) = (forms::op_form(call.spec), call.account()) else {
+    let (Some(form), Some(account)) = (forms::request_form(call.spec, &op.request), call.account())
+    else {
         return Ok(McpBindingActions::DraftOnly);
     };
     let cmd = build(call, &form, op, &BTreeMap::new(), &mut Vec::new())?;
@@ -967,7 +1046,7 @@ async fn command<P: Seams>(
     let Some(account) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
-    let Some(form) = forms::op_form(call.spec) else {
+    let Some(form) = forms::request_form(call.spec, &op.request) else {
         return Err(call.refuse(ApiError::NotImplemented(
             "a command operation with no request form",
         )));
@@ -975,11 +1054,25 @@ async fn command<P: Seams>(
     if !check_target(&call.state, &op.request) {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
     }
+    // Lane inv, J2: a grant by invitation stands for the grant of the
+    // accepting account in the invited role, with the accepted terms as
+    // its confidentiality text (`people`). The digest stays the one of the
+    // request the admin sent.
+    let composed = people::grant_request(&call.state, op, call.now).map_err(|e| call.refuse(e))?;
+    let (op, mut preset) = match &composed {
+        Some((rewritten, texts)) => (rewritten, texts.clone()),
+        None => (op, BTreeMap::new()),
+    };
     let second = second_admin(call, &op.request)
         .await
         .map_err(|e| call.refuse(e))?;
     let mut ids = Vec::new();
-    let cmd = build(call, &form, op, &BTreeMap::new(), &mut ids).map_err(|e| call.refuse(e))?;
+    let cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
+    // J2: a Drafting or Judging grant is composed only from accepted terms,
+    // and binds exactly them.
+    if let Some(terms) = people::grant_terms(&call.state, op, &cmd).map_err(|e| call.refuse(e))? {
+        preset.insert("confidentiality", terms);
+    }
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = Ctx {
         second_tenant_admin: second,
@@ -1009,9 +1102,10 @@ async fn command<P: Seams>(
         None
     };
     // Step 8.
-    let texts = store_texts(call, &form, op)
+    let mut texts = store_texts(call, &form, op)
         .await
         .map_err(|e| call.refuse(e))?;
+    texts.extend(preset);
     let cmd = build(call, &form, op, &texts, &mut ids).map_err(|e| call.refuse(e))?;
     let meta = ExecMeta {
         via: call.caller.via(),
@@ -1060,7 +1154,8 @@ fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
 /// The body of an executed command: `{"accepted": true}`, and for a
 /// command that creates an object the client opens next, the drawn id
 /// that names it. Interim, pending Daniel: only `CreateDraft` names its
-/// new proposal (`proposal.create`, design section 2.2 J4). Other drawn
+/// new proposal (`proposal.create`, design section 2.2 J4), and
+/// `DraftCall` its new call (`call.draft`, lane mcreator). Other drawn
 /// ids, such as bindings and decisions, stay with the server.
 ///
 /// `OpenCutOffRound` answers `{"round": id}` with the drawn round alone,
@@ -1082,8 +1177,11 @@ fn accepted(form: &CmdForm, ids: &[u128]) -> ReadModel {
             });
         }
     }
-    const NAMED: &[(fstp_domain::CommandKind, &str)] =
-        &[(fstp_domain::CommandKind::CreateDraft, "proposal")];
+    // Lane mcreator: a drafted call names its id, which the Studio opens.
+    const NAMED: &[(fstp_domain::CommandKind, &str)] = &[
+        (fstp_domain::CommandKind::CreateDraft, "proposal"),
+        (fstp_domain::CommandKind::DraftCall, "call"),
+    ];
     let Some((_, name)) = NAMED.iter().find(|(k, _)| *k == form.kind) else {
         return ReadModel::Accepted;
     };
@@ -1227,7 +1325,10 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let stored = decode_pending_request(a.request.as_bytes())
         .map_err(|e| call.refuse(e))?
         .into_op();
-    let (Some(form), OpKind::Command(_)) = (forms::op_form(stored.spec), stored.spec.kind) else {
+    let (Some(form), OpKind::Command(_)) = (
+        forms::request_form(stored.spec, &stored.request),
+        stored.spec.kind,
+    ) else {
         return Err(call.refuse(ApiError::NotImplemented(
             "a pending action of an operation that is not a command",
         )));
@@ -1245,6 +1346,9 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let mut ids = Vec::new();
     let cmd =
         build(call, &form, &stored, &BTreeMap::new(), &mut ids).map_err(|e| call.refuse(e))?;
+    // J2 (lane inv): a confirmed grant needs accepted terms too, and binds
+    // exactly them.
+    let preset = people::grant_terms(&call.state, &stored, &cmd).map_err(|e| call.refuse(e))?;
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, Via::Web, command_id);
     dry_run(call, account, &cmd, ctx)
@@ -1261,9 +1365,12 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     } else {
         None
     };
-    let texts = store_texts(call, &form, &stored)
+    let mut texts = store_texts(call, &form, &stored)
         .await
         .map_err(|e| call.refuse(e))?;
+    if let Some(terms) = preset {
+        texts.insert("confidentiality", terms);
+    }
     let cmd = build(call, &form, &stored, &texts, &mut ids).map_err(|e| call.refuse(e))?;
     let meta = ExecMeta {
         via: Via::Web,
@@ -1411,14 +1518,22 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let p = proposal_param(call, op)?;
-            let Some(mut mine) = own_proposals(&call.state, a, call.now, Ended::Excluded)
+            // The read rule admitted the caller, the former team included
+            // in a terminal state (Daniel, 2026-11-06).
+            let Some(mut mine) = own_proposals(&call.state, a, call.now, Ended::Final)
                 .into_iter()
                 .find(|x| x.proposal == p)
             else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
             };
             mine.title = lock(&call.st.content).title_of(p);
-            ReadModel::OwnProposal(mine)
+            // R-AU-01, I-84: the team's read of its own proposal appends a
+            // `ContentRead` through every channel (design section 3.8).
+            let seq = append_content_read(call, p).await?;
+            return Ok(OpResult::Done {
+                body: ReadModel::OwnProposal(mine),
+                seq: Some(seq),
+            });
         }
         ReadKind::GetOwnStage2Thread => {
             let p = proposal_param(call, op)?;
@@ -1529,6 +1644,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let a = assignment_param(call, op, "assignment")?;
             ReadModel::ScoreSheet(score_sheet(call, a)?)
         }
+        ReadKind::GetFindings => {
+            let Some(viewer) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            let a = assignment_param(call, op, "assignment")?;
+            ReadModel::Findings(findings(call, a, viewer)?)
+        }
         ReadKind::GetStage2Thread => {
             let a = assignment_param(call, op, "assignment")?;
             ReadModel::Stage2Thread(stage2_thread(call, a)?)
@@ -1588,6 +1710,29 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let p = proposal_param(call, op)?;
             ReadModel::Diary(journey::diary(call, p, clearance.rule())?)
         }
+        // Lane inv, J2: the invitation landing, by its link token only.
+        ReadKind::GetInvitation => ReadModel::Invitation(people::landing(call, op).await?),
+        // Lane j4, ADR-015 amendment of 2026-11-06 (section 8.1, O-58, I-97).
+        ReadKind::GetRouteMap => {
+            let p = proposal_param(call, op)?;
+            ReadModel::RouteMap(journey::route_map(call, p, clearance.rule())?)
+        }
+        // Lane mcreator: the Studio's calls of the programme (R-PC-03).
+        ReadKind::ListCalls => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            ReadModel::Calls(staff_calls(&call.state.core, p, a, call.now))
+        }
+        // R-GA-01, I-53: the stored Guide, never one bound per request.
+        ReadKind::GetGuide => ReadModel::Guide(
+            public::calls_guide(call, op)
+                .await
+                .map_err(|e| call.refuse(e))?,
+        ),
         _ => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "this read model: the domain or lane it reads from (see the W3b report)",
@@ -1619,6 +1764,33 @@ enum Ended {
 /// even where it still counts as held, and a voided one never counts.
 fn gives_final_read(b: &Binding) -> bool {
     matches!(b.status, BindingStatus::Active)
+}
+
+/// The roles through which a former lead or team member reads the route
+/// of `proposal` in a terminal state (Daniel, 2026-11-06): each ended
+/// Receiving binding of lead or team member that gives the final-state
+/// read. It is empty while the proposal is under way. The read rule
+/// `ReadRule::FormerTeam` admits the same callers, and no binding is
+/// revived, so every command stays refused.
+fn former_team_roles(state: &EngineState, account: AccountId, proposal: ProposalId) -> Vec<Role> {
+    let terminal = fstp_domain::view::proposal_state(&state.core, proposal)
+        .is_some_and(fstp_domain::StateTag::is_terminal);
+    if !terminal {
+        return Vec::new();
+    }
+    state
+        .core
+        .roster()
+        .ended()
+        .map(|(_, e)| e.binding)
+        .filter(|b| {
+            b.account == account
+                && b.proposal() == Some(proposal)
+                && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+                && gives_final_read(b)
+        })
+        .map(|b| b.role)
+        .collect()
 }
 
 /// The caller's proposals: one per Receiving binding active at `now`,
@@ -1756,8 +1928,16 @@ enum PortCall {
     SaveWorkspace(ProposalId, Workspace),
     /// The lead states the country, to the vault only (R-NG-01).
     StateCountry(ProposalId, [u8; 2]),
+    /// The lead declares affiliations, to the vault only (R-NG-01).
+    DeclareAffiliations(ProposalId, crate::port::Affiliations),
+    /// The lead states a date of birth, to the vault only (Q23 B, I-86).
+    StateBirthDate(ProposalId, crate::port::BirthDate),
+    /// The guardian starts the consent on the vault origin (I-18).
+    BeginGuardianConsent(ProposalId),
     /// A team member acknowledges the negotiation notice (R-NG-06).
     AcknowledgeNotice(ProposalId),
+    /// The user adds a passkey (`authentication.md`, high-risk).
+    AddPasskey,
 }
 
 /// An operation an M3 port serves.
@@ -1774,6 +1954,15 @@ async fn m3_port<P: Seams>(
         // (`roles-and-sod.md` roles table). R-AC-01 governs proposal
         // reads under P-10 only.
         return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
+    }
+    // Lane inv, J2: the invitation acceptance and its verification name
+    // the invitation by its link token (`people`).
+    match kind {
+        PortKind::AcceptInvitation => return people::accept(call, op, account).await,
+        PortKind::BeginInvitationVerification => {
+            return people::begin_verification(call, op, account).await;
+        }
+        _ => {}
     }
     let id = |name: &str| {
         forms::id_param(&op.request, name)
@@ -1794,6 +1983,10 @@ async fn m3_port<P: Seams>(
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
             PortCall::ApproveBreakGlass(b, approve)
         }
+        // Adding a passkey is high-risk (`authentication.md`). Its channel
+        // and step-up checks run before the seam, as the cell's
+        // `/auth/passkeys` route runs them before its 501.
+        PortKind::AddPasskey if call.spec.high_risk => PortCall::AddPasskey,
         PortKind::EndSession => PortCall::EndSession(SessionId::from_raw(id("session")?)),
         PortKind::BeginVerification => PortCall::BeginVerification,
         PortKind::SaveWorkspace => {
@@ -1827,6 +2020,39 @@ async fn m3_port<P: Seams>(
                 return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
             }
             PortCall::StateCountry(p, code)
+        }
+        PortKind::DeclareAffiliations => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            let d = op
+                .request
+                .get("affiliations")
+                .and_then(Value::as_str)
+                .and_then(crate::port::Affiliations::new)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            if !drafting_team(&call.state, account, p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
+            }
+            PortCall::DeclareAffiliations(p, d)
+        }
+        PortKind::StateBirthDate => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            let d = op
+                .request
+                .get("date_of_birth")
+                .and_then(Value::as_str)
+                .and_then(crate::port::BirthDate::parse)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            if !drafting_team(&call.state, account, p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
+            }
+            PortCall::StateBirthDate(p, d)
+        }
+        PortKind::BeginGuardianConsent => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            if !consenting_guardian(&call.state, account, p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-18")));
+            }
+            PortCall::BeginGuardianConsent(p)
         }
         PortKind::AcknowledgeNegotiationNotice => {
             let p = ProposalId::from_raw(id("proposal")?);
@@ -1878,6 +2104,9 @@ async fn m3_port<P: Seams>(
         Err(e) => Err(call.refuse(port_failed(e, rule))),
     };
     match port_call {
+        PortCall::AddPasskey => Err(call.refuse(ApiError::NotImplemented(
+            "adding a passkey: no port registers a credential yet, and the cell's /auth/passkeys route answers 501",
+        ))),
         PortCall::ApproveRecovery(r) => done(
             call.ports
                 .recovery()
@@ -1899,6 +2128,37 @@ async fn m3_port<P: Seams>(
             let fact = crate::port::VaultBound::new(crate::port::CountryCode(code));
             match call.ports.vault().state_country(account, p, fact).await {
                 Ok(_) => done(Ok(()), "R-NG-01"),
+                Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
+            }
+        }
+        PortCall::DeclareAffiliations(p, d) => {
+            let fact = crate::port::VaultBound::new(d);
+            match call
+                .ports
+                .vault()
+                .declare_affiliations(account, p, fact)
+                .await
+            {
+                Ok(_) => done(Ok(()), "R-NG-01"),
+                Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
+            }
+        }
+        PortCall::StateBirthDate(p, d) => {
+            let fact = crate::port::VaultBound::new(d);
+            match call.ports.vault().state_birth_date(account, p, fact).await {
+                Ok(_) => done(Ok(()), "I-86"),
+                Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
+            }
+        }
+        PortCall::BeginGuardianConsent(p) => {
+            let purpose = VerificationPurpose::GuardianConsent(p);
+            match call
+                .ports
+                .vault()
+                .begin_verification(purpose, account)
+                .await
+            {
+                Ok(to) => call.accept(ReadModel::Redirect(to.0)),
                 Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
             }
         }
@@ -2033,10 +2293,47 @@ async fn content_read<P: Seams>(
     p: ProposalId,
     outcome: Option<&'static str>,
 ) -> Result<OpResult, ApiError> {
+    if call.account().is_none() {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+    }
+    // A draft has no submitted content. Only its team reads it (I-21), as
+    // `authorize_read` and the domain's `ReadContent` both check, and the
+    // team reads its latest workspace (R-AC-01).
+    let draft = fstp_domain::view::proposal_state(&call.state.core, p)
+        == Some(fstp_domain::StateTag::Draft);
+    let content = if draft {
+        lock(&call.st.content)
+            .workspace(p)
+            .ok_or_else(|| call.refuse(content_unknown()))?
+    } else {
+        submitted_content(call, p)?
+    };
+    let seq = append_content_read(call, p).await?;
+    let view = crate::views::ContentView {
+        proposal: p.raw(),
+        call: call_of(&call.state, p).map_or(0, CallId::raw),
+        state: state_name(&call.state, p),
+        title: content.title,
+        text: content.narrative,
+        outcome,
+    };
+    Ok(OpResult::Done {
+        body: ReadModel::Content(view),
+        seq: Some(seq),
+    })
+}
+
+/// Runs the domain `ReadContent` of `p` by the caller, through the
+/// caller's channel: it re-runs every read guard and appends one
+/// `ContentRead` (R-AU-01, I-03). The append carries the call's one audit
+/// entry.
+async fn append_content_read<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+) -> Result<fstp_ledger::Seq, ApiError> {
     let Some(account) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
-    let content = submitted_content(call, p)?;
     let cmd = Command::Core(fstp_domain::command::Command::ReadContent { proposal: p });
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
@@ -2050,24 +2347,11 @@ async fn content_read<P: Seams>(
         pending: None,
         second_tenant_admin: None,
     };
-    let seq = call
-        .ports
+    call.ports
         .engine()
         .execute(cmd, ctx, meta)
         .await
-        .map_err(|e| call.refuse(exec_failed(e)))?;
-    let view = crate::views::ContentView {
-        proposal: p.raw(),
-        call: call_of(&call.state, p).map_or(0, CallId::raw),
-        state: state_name(&call.state, p),
-        title: content.title,
-        text: content.narrative,
-        outcome,
-    };
-    Ok(OpResult::Done {
-        body: ReadModel::Content(view),
-        seq: Some(seq),
-    })
+        .map_err(|e| call.refuse(exec_failed(e)))
 }
 
 /// The text behind `r`: one this core stored, else a public text of the
@@ -2156,6 +2440,52 @@ fn proposal_rows<P: Seams>(
 /// state yet (lane W2e), so the label names the criterion by number.
 fn criterion_label(id: u128) -> String {
     format!("Criterion {id}")
+}
+
+/// The findings on the proposal of assignment `a` from the assignment's
+/// call, which keeps them (Q15), with the viewer's own marks (I-10).
+fn findings<P: Seams>(
+    call: &Call<'_, P>,
+    a: AssignmentId,
+    viewer: AccountId,
+) -> Result<Vec<crate::views::FindingRow>, ApiError> {
+    use fstp_engine::{FindingKind, Mark, Severity};
+    let assignment = call
+        .state
+        .core
+        .review()
+        .get(a)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    let store = &call.state.findings;
+    Ok(store
+        .findings_of(assignment.call)
+        .into_iter()
+        .filter(|f| f.proposal == assignment.proposal)
+        .map(|f| crate::views::FindingRow {
+            finding: f.id.raw(),
+            kind: match f.kind {
+                FindingKind::Completeness => "Completeness",
+                FindingKind::Quality => "Quality",
+                FindingKind::Accuracy => "Accuracy",
+                FindingKind::Integrity => "Integrity",
+            },
+            severity: match f.severity {
+                Severity::Info => "Info",
+                Severity::Minor => "Minor",
+                Severity::Major => "Major",
+            },
+            confidence: f.confidence.permille(),
+            statement: f.statement.as_data().to_owned(),
+            mark: store
+                .marks_of(f.id)
+                .filter(|(by, _)| *by == viewer)
+                .last()
+                .map(|(_, m)| match m {
+                    Mark::Agreed => "Agreed",
+                    Mark::Disputed => "Disputed",
+                }),
+        })
+        .collect())
 }
 
 /// The score sheet of reviewer assignment `a`: the stage of its proposal,
@@ -2416,6 +2746,40 @@ fn absent_call(state: &EngineState) -> CallId {
         .map(CallId::from_raw)
         .find(|c| calls.get(*c).is_none())
         .unwrap_or(CallId::from_raw(u128::MAX))
+}
+
+/// The calls of programme `p` in call order, each with its state and
+/// whether `viewer` may approve it at `now` (R-PC-03): a draft call, and
+/// an active programme manager binding of `viewer` on `p` outside the
+/// call's drafters. The domain guard decides an approval again.
+fn staff_calls(
+    core: &fstp_domain::State,
+    p: ProgrammeId,
+    viewer: AccountId,
+    now: Timestamp,
+) -> Vec<crate::model::StaffCallRow> {
+    let manager = core.roster().bindings().any(|(_, b)| {
+        b.account == viewer
+            && b.programme == p
+            && b.role == Role::ProgrammeManager
+            && b.active_at(now)
+    });
+    core.calls()
+        .iter()
+        .filter(|(_, v)| v.programme() == p)
+        .map(|(c, v)| {
+            let status = v.status();
+            let drafter =
+                fstp_domain::programme::drafters(core, c).is_none_or(|d| d.contains(&viewer));
+            crate::model::StaffCallRow {
+                call: c,
+                status,
+                may_approve: manager
+                    && !drafter
+                    && status == fstp_domain::programme::CallStatus::Draft,
+            }
+        })
+        .collect()
 }
 
 /// Admits one read that asks the vault, under the per-account limit of
@@ -2777,6 +3141,28 @@ fn drafting_team(
             == Some(fstp_domain::StateTag::Draft)
 }
 
+/// Whether `account` is the guardian of `proposal` while its consent is
+/// open: an active Guardian binding on it, in IRC_REVIEW or NEGOTIATION
+/// (state-machine NOTE 14, R-NG-01 NOTE). The vault decides the rest.
+fn consenting_guardian(
+    state: &EngineState,
+    account: AccountId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> bool {
+    let guardian = state.core.roster().bindings().any(|(_, b)| {
+        b.account == account
+            && b.active_at(now)
+            && b.role == Role::Guardian
+            && matches!(b.scope, BindingScope::Proposal { proposal: x, .. } if x == proposal)
+    });
+    guardian
+        && matches!(
+            fstp_domain::view::proposal_state(&state.core, proposal),
+            Some(fstp_domain::StateTag::IrcReview | fstp_domain::StateTag::Negotiation)
+        )
+}
+
 /// A country code of the vault intake: two upper-case ASCII letters
 /// (ISO 3166-1 alpha-2 spelling; the vault judges the code itself).
 fn country_code(s: &str) -> Option<[u8; 2]> {
@@ -2875,8 +3261,16 @@ fn notices<P: Seams>(
 /// (ADR-006, design section 3.9). `None` for any other command, or a
 /// total that does not fit.
 fn plan_saved(cmd: &Command) -> Option<ReadModel> {
-    let Command::Core(fstp_domain::command::Command::RecordPlanVersion { plan, tasks, .. }) = cmd
-    else {
+    let core = match cmd {
+        Command::Core(c) => c.clone(),
+        // R-EV-05: a stage 2 revision answers with the plan it recorded.
+        Command::Stage2Revision(r) => {
+            let [plan, _] = r.commands();
+            plan
+        }
+        _ => return None,
+    };
+    let fstp_domain::command::Command::RecordPlanVersion { plan, tasks, .. } = &core else {
         return None;
     };
     let mut total: Option<fstp_money::Amount> = None;

@@ -80,6 +80,10 @@ id!(
     /// Hardship evidence held in the identity vault. The cell holds only
     /// this opaque reference (R-PR-04).
     HardshipEvidenceId,
+    /// A creator invitation to a programme role (J2, lane inv), by the
+    /// creator's id, so a core `TermsAccepted` names the invitation it
+    /// accepts.
+    RoleInvitationId,
 );
 
 /// Idempotency key of one command, from the shell.

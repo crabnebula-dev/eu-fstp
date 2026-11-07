@@ -273,6 +273,40 @@ impl ToJson for Stage2Thread {
 
 impl McpSafe for Stage2Thread {}
 
+/// One finding of the assessor on the reviewer's proposal
+/// (`review.findings`, design section 2.13). The statement is untrusted
+/// data, shown as text only (TH-01). It names no account (I-17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FindingRow {
+    /// The finding, which `review.mark_finding` names.
+    pub finding: u128,
+    /// `Completeness`, `Quality`, `Accuracy` or `Integrity`.
+    pub kind: &'static str,
+    /// `Info`, `Minor` or `Major`.
+    pub severity: &'static str,
+    /// The model-reported confidence in permille.
+    pub confidence: u16,
+    /// The plain-language observation.
+    pub statement: String,
+    /// The reader's own mark, `Agreed` or `Disputed`, if any (I-10).
+    pub mark: Option<&'static str>,
+}
+
+impl ToJson for FindingRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("finding", dec(self.finding)),
+            ("kind", Value::from(self.kind)),
+            ("severity", Value::from(self.severity)),
+            ("confidence", int(u64::from(self.confidence))),
+            ("statement", Value::from(self.statement.as_str())),
+            ("mark", self.mark.map_or(Value::Null, Value::from)),
+        ])
+    }
+}
+
+impl McpSafe for FindingRow {}
+
 /// One weighted criterion score of a ranking row (D9).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CriterionScore {

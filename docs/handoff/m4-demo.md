@@ -145,6 +145,17 @@ The identity page and the onboarding steps load, but their operations are not se
 - "List the affected calls" runs `creator.impact` on request. The cell answers 501 for a programme with calls, so programme 1 shows that it cannot list them yet.
 - No read lists a call in DRAFT or APPROVED yet, so the approval takes a call number. `e2e/studio/studio.spec.ts` runs with `tools/demo/run.sh e2e studio/`.
 
+## The MCP server (2026-11-06, lane W3c)
+
+The cell serves `/mcp` and `/mcp/public` at the ADR-013 floor revision, 2025-06-18. One command opens a public session and prints its `Mcp-Session-Id`:
+
+```sh
+curl -si http://a.fstp.localhost:8640/mcp/public -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"demo","version":"0"}}}'
+```
+
+- Send that id back as `Mcp-Session-Id`, with `MCP-Protocol-Version: 2025-06-18`, then `notifications/initialized`, `tools/list` and `tools/call`. `/mcp/public` lists the eight public tools only.
+- `/mcp` without a token gets 401 with a Bearer challenge naming `/.well-known/oauth-protected-resource`. The demo cell is a test cell, so its two metadata documents name its `http` origin as the issuer. No route issues a token yet.
+
 ## Results of the Playwright journeys
 
 Run against the cell on 2026-10-30 at m4/int-b 33d6a30 (after lanes m4eng and m4disp) with Chromium 1248 and the virtual authenticator, `retries: 0`.
@@ -172,7 +183,7 @@ Run against the cell on 2026-10-31 at m4/int-b 9c32f1a plus lane m4/home (the ho
 | `e2e/review/*` and `e2e/review/unit/*` | 63 of 63 | |
 | `e2e/applicant/*` | 48 of 54 | The six known failures: the Guide, affiliations, the stage 2 revision, guardian consent, the copy request and the review decoders' fuzz check |
 | `e2e/onboarding.spec.ts`, `e2e/onboarding_logic.spec.ts` | 17 of 17 | |
-| `e2e/creator/*` | 23 of 37 | The import, second-person and SuperSAFE journeys (14) wait for the programme invitation mail: the e2e cell sends admin invitations only |
+| `e2e/creator/*` | 23 of 37 | The import, second-person and SuperSAFE journeys (14). Since lane inv (2026-11-06) the cell mails each programme invitation as kind `invitation` with `/app/invitation#<token>`, and the invitee enrols, accepts the terms and verifies. The journeys now stop at the grant on the people admin page: its body `{invitation}` fails the strict `roles.grant` decoder of `fstp-api-core/src/forms.rs`, outside the lane |
 
 ## What does not run, and why
 

@@ -34,8 +34,11 @@
 //!   secure context in Chromium (RFC 6761), so WebAuthn and the `__Host-`
 //!   cookie work without TLS. The manifest therefore names `http:`
 //!   origins and no SPKI pin.
-//! - The vault origin `id.<cell host>` is listed in the manifest but not
-//!   served. No M4 journey reaches it.
+//! - The vault origin `id.<cell host>` shares the cell's listener. It
+//!   serves the vault's write page `/w` alone, a static page that runs no
+//!   script, keeps no cookie and writes nothing, where a guardian's
+//!   consent journey lands (I-18, lane mapp). Every other path on it
+//!   answers 404. The vault's own pages are M3's, in `fstp-vault`.
 //! - The M3 ceremonies of [`auth`] check the ceremony type, the challenge,
 //!   the origin, the RP id hash, user presence and user verification, the
 //!   credential id and the sign count. They also verify each assertion's
@@ -50,6 +53,8 @@ mod control;
 mod demo;
 mod demo_signin;
 mod onboarding;
+mod people;
+mod precheck;
 mod scenario;
 mod wire;
 
@@ -185,11 +190,19 @@ impl Inner {
         }
         seams.settings = Arc::new(settings);
         let ports = FakePorts::new(world, seams).map_err(|e| e.to_string())?;
+        // R-GA-01: the scenarios create their SuperSAFE programme through
+        // core commands, with no complete creator draft, so its Guide reads the
+        // artefacts of the SuperSAFE fixture.
+        let fixture = fstp_programme::supersafe_fixture().map_err(|e| format!("{e:?}"))?;
+        ports.engine.set_guide_spec(fixture.spec);
+        ports.vault.set_origin(&vault_origin(site));
         let core = Arc::new(api_core(ports.clone()));
         let origin = parse_origin_header(site.origin.as_bytes()).map_err(|e| e.to_string())?;
         let web = fstp_web::router(
             Arc::clone(&core),
-            WebConfig::new(origin, site.assets.clone()),
+            // The cell origin is plain `http` under `.localhost`, so its
+            // OAuth metadata names it as a test cell (lane W3c).
+            WebConfig::new(origin, site.assets.clone()).test_cell(),
         )
         .map_err(|e| e.to_string())?;
         Ok(Inner {
@@ -248,6 +261,46 @@ impl Site {
     }
 }
 
+/// The vault origin of a cell: `id.<cell host>` on the cell's port.
+pub(crate) fn vault_origin(info: &SiteInfo) -> String {
+    let port = info.origin.rsplit(':').next().unwrap_or("0");
+    format!("http://id.{}:{port}", info.host)
+}
+
+/// Whether `req` names the vault host `id.<cell host>`, with or without
+/// the port.
+fn for_vault(info: &SiteInfo, req: &Request) -> bool {
+    let Some(host) = req.headers.get("host") else {
+        return false;
+    };
+    let want = format!("id.{}", info.host);
+    let host = host.as_bytes();
+    let name = host.split(|b| *b == b':').next().unwrap_or(host);
+    name.eq_ignore_ascii_case(want.as_bytes())
+}
+
+/// The vault origin's write page (I-18, M3 design section 6.5): a static
+/// synthetic page that reads no ticket and runs no script.
+fn vault_page(req: &Request) -> Response {
+    if req.method != Method::GET || req.target.path() != "/w" {
+        return Response::new(StatusCode::NOT_FOUND);
+    }
+    let body = "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Identity vault</title></head>\n<body><main><h1>Identity vault</h1>\n<p>Synthetic test vault of the e2e cell. The consent of a guardian is given here, on the vault's own site.</p>\n</main></body></html>\n";
+    let mut r = Response::with_body(
+        StatusCode::OK,
+        "text/html; charset=utf-8",
+        body.as_bytes().to_vec(),
+    );
+    let _ = r.headers.try_insert("cache-control", "no-store");
+    let _ = r.headers.try_insert(
+        "content-security-policy",
+        "default-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
+    );
+    let _ = r.headers.try_insert("x-content-type-options", "nosniff");
+    let _ = r.headers.try_insert("referrer-policy", "no-referrer");
+    r
+}
+
 /// The handler of a cell origin listener.
 struct CellOrigin(Arc<Site>);
 
@@ -255,6 +308,9 @@ impl Handler for CellOrigin {
     fn handle(&self, req: Request) -> impl Future<Output = Response> + Send {
         let site = Arc::clone(&self.0);
         async move {
+            if for_vault(&site.info, &req) {
+                return vault_page(&req);
+            }
             let path = req.target.path().to_owned();
             if path == "/" && req.method == Method::GET {
                 let mut r = Response::new(StatusCode::SEE_OTHER);
@@ -289,7 +345,7 @@ impl Handler for CellOrigin {
             if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
                 return onboarding::invite_admin(&inner, req).await;
             }
-            let r = inner.web.serve(req).await;
+            let r = people::serve(&inner, req).await;
             match demo {
                 Some(m) => demo_signin::mark_shell(r, m),
                 None => r,
@@ -403,15 +459,11 @@ fn start(cfg: &Config) -> Result<Running, String> {
 fn manifest(r: &Running) -> fstp_json::Value {
     let mut cells = fstp_json::Object::new();
     for s in &r.sites {
-        let port = s.info.origin.rsplit(':').next().unwrap_or("0");
         let _ = cells.insert(
             s.info.name,
             wire::obj(vec![
                 ("origin", s.info.origin.as_str().into()),
-                (
-                    "vault_origin",
-                    format!("http://id.{}:{port}", s.info.host).into(),
-                ),
+                ("vault_origin", vault_origin(&s.info).into()),
                 ("control", s.info.control.as_str().into()),
             ]),
         );
@@ -518,6 +570,44 @@ mod tests {
             on_control.contains("first_admin"),
             "the reply: {on_control}"
         );
+    }
+
+    /// I-18, I-17 (M3 design section 6.5): the vault origin `id.<cell
+    /// host>` serves the vault's write page `/w` and nothing of the cell.
+    /// The page runs no script, keeps no cookie and is never cached. The
+    /// cell's own routes answer 404 on the vault host.
+    #[test]
+    fn i18_vault_origin_serves_the_write_page_only() {
+        let running = start(&Config::loopback()).unwrap_or_else(|e| panic!("{e}"));
+        let site = &running.sites[0];
+        let ask = |path: &str| {
+            exchange(
+                &cell_addr(site),
+                &format!(
+                    "GET {path} HTTP/1.1\r\nHost: id.a.fstp.localhost\r\nConnection: close\r\n\r\n"
+                ),
+            )
+        };
+        let page = ask("/w");
+        assert!(page.starts_with("HTTP/1.1 200"), "the reply: {page}");
+        let (head, _) = page.split_once("\r\n\r\n").unwrap_or((&page, ""));
+        let head = head.to_ascii_lowercase();
+        assert!(
+            head.contains("content-security-policy: default-src 'none'"),
+            "{head}"
+        );
+        assert!(head.contains("cache-control: no-store"), "{head}");
+        assert!(!head.contains("set-cookie"), "{head}");
+        for path in ["/app/", "/api/v1/calls", "/auth/login", "/w/x"] {
+            let r = ask(path);
+            assert!(r.starts_with("HTTP/1.1 404"), "{path}: {r}");
+        }
+        assert!(running.sites.iter().all(|s| vault_origin(&s.info)
+            == format!(
+                "http://id.{}:{}",
+                s.info.host,
+                s.info.origin.rsplit(':').next().unwrap()
+            )));
     }
 
     /// The arguments: a port, the web directory and the manifest file.

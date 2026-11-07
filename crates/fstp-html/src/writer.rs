@@ -23,13 +23,15 @@
 //! sink. The trace holds every dynamic value as the caller passed it,
 //! once per time it is written, and every message by id, in document
 //! order. Attributes come in the order the caller gave them, before the
-//! element's children. The locale and the fixed skeleton are not traced.
+//! element's children. The locale, the fixed skeleton and each
+//! [`Node::fixed`] code constant are not traced.
 
 use crate::HtmlError;
 use crate::catalogue::{
     ApprovedText, Catalogues, Label, LocaleCatalogue, MessageKind, message_err,
 };
 use crate::message::{Part, arg};
+use crate::route::{SvgElement, SvgNode};
 use crate::subset::{
     BOOLEAN_ATTRS, DROPS_LEADING_LF, Open, URL_ATTRS, VOID, attr_allowed_in, holds_no_text,
     is_lang_tag, is_plain, is_rcdata, svg_value_ok, svg_value_ruled,
@@ -143,6 +145,8 @@ impl Msg {
 enum Repr {
     El(Element),
     Text(String),
+    /// A code constant: escaped where it is written, never traced.
+    Fixed(&'static str),
     Msg(Msg),
     Lines(Msg, Lines),
 }
@@ -155,6 +159,14 @@ impl Node {
     /// A dynamic text, escaped where it is written.
     pub fn text(value: &str) -> Node {
         Node(Repr::Text(value.to_owned()))
+    }
+
+    /// A code constant, such as a formal state name of a fixed table or a
+    /// status glyph. It is escaped where it is written like a dynamic text,
+    /// but the trace leaves it out, as it leaves out the fixed skeleton: a
+    /// `&'static str` is never view data (I-87).
+    pub fn fixed(value: &'static str) -> Node {
+        Node(Repr::Fixed(value))
     }
 
     /// An interface string of the catalogue, with its arguments.
@@ -555,6 +567,7 @@ fn render<S: Sink>(
     for n in &doc.title {
         match &n.0 {
             Repr::Text(t) => w.text(t),
+            Repr::Fixed(t) => push_text(&mut w.out, t),
             Repr::Msg(m) => w.message(m, &TracePlace::Text)?,
             Repr::El(_) | Repr::Lines(..) => {
                 return Err(page_err("title", "the title holds only text and messages"));
@@ -644,13 +657,18 @@ impl<S: Sink> Writer<'_, '_, S> {
                 }
                 self.element(e)
             }
-            Repr::Text(_) | Repr::Msg(_) | Repr::Lines(..)
+            Repr::Text(_) | Repr::Fixed(_) | Repr::Msg(_) | Repr::Lines(..)
                 if holds_no_text(self.open.in_svg(), parent) =>
             {
                 Err(page_err(parent, "the element holds no text"))
             }
             Repr::Text(t) => {
                 self.text(t);
+                Ok(())
+            }
+            Repr::Fixed(t) => {
+                let escape = self.text_escape();
+                escape(&mut self.out, t);
                 Ok(())
             }
             Repr::Msg(m) => self.message(m, &TracePlace::Text),
@@ -787,6 +805,7 @@ impl<S: Sink> Writer<'_, '_, S> {
                             self.sink.dynamic(&TracePlace::Attr(name), t);
                             push_attr(&mut self.out, t);
                         }
+                        Repr::Fixed(t) => push_attr(&mut self.out, t),
                         Repr::Msg(m) => self.message(m, &TracePlace::Attr(name))?,
                         Repr::El(_) | Repr::Lines(..) => {
                             return Err(attr_err(tag, name, "an attribute holds only text"));
@@ -798,5 +817,109 @@ impl<S: Sink> Writer<'_, '_, S> {
         }
         self.out.push('"');
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// An SVG element as data (ADR-015 amendment, Daniel 2026-11-06)
+// ---------------------------------------------------------------------------
+
+/// `s` as the writer writes it, before escaping: every character that is
+/// not plain becomes U+FFFD.
+fn plain(s: &str) -> String {
+    s.chars()
+        .map(|c| if is_plain(c) { c } else { '\u{FFFD}' })
+        .collect()
+}
+
+/// The text of message `m` in `cat` as the writer writes it, before
+/// escaping.
+fn message_text(cat: &LocaleCatalogue, m: &Msg) -> Result<String, HtmlError> {
+    let format = cat.get(m.kind, &m.id)?;
+    format
+        .format(&m.args)
+        .map(|t| plain(&t))
+        .map_err(|rule| message_err(&m.id, rule))
+}
+
+/// Appends the text `t`, merged into a text just before it, as a parser
+/// of the markup reads it. An empty text is no node.
+fn push_tree_text(out: &mut Vec<SvgNode>, t: &str) {
+    if t.is_empty() {
+        return;
+    }
+    if let Some(SvgNode::Text(last)) = out.last_mut() {
+        last.push_str(t);
+    } else {
+        out.push(SvgNode::Text(t.to_owned()));
+    }
+}
+
+impl Element {
+    /// The element as the data the writer writes for it, its messages
+    /// resolved in `cat`: each attribute value and text before escaping,
+    /// with U+FFFD for a character that is not plain, label lines as
+    /// their `tspan` elements, adjacent texts merged and empty ones left
+    /// out. It checks no placement rule: [`crate::route::tree`] renders
+    /// the same element through the writer and compares the bytes.
+    pub(crate) fn resolve(&self, cat: &LocaleCatalogue) -> Result<SvgElement, HtmlError> {
+        let mut attrs = Vec::with_capacity(self.attrs.len());
+        for (name, value) in &self.attrs {
+            let v = match value {
+                AttrValue::Text(t) => plain(t),
+                AttrValue::Url(u) => plain(u.as_str()),
+                AttrValue::Flag => {
+                    return Err(attr_err(
+                        self.tag,
+                        name,
+                        "the tree holds no boolean attribute",
+                    ));
+                }
+                AttrValue::Msg(m) => message_text(cat, m)?,
+                AttrValue::Parts(parts) => {
+                    let mut s = String::new();
+                    for p in parts {
+                        match &p.0 {
+                            Repr::Text(t) => s.push_str(&plain(t)),
+                            Repr::Fixed(t) => s.push_str(&plain(t)),
+                            Repr::Msg(m) => s.push_str(&message_text(cat, m)?),
+                            Repr::El(_) | Repr::Lines(..) => {
+                                return Err(attr_err(
+                                    self.tag,
+                                    name,
+                                    "an attribute holds only text",
+                                ));
+                            }
+                        }
+                    }
+                    s
+                }
+            };
+            attrs.push(((*name).to_owned(), v));
+        }
+        let mut children = Vec::with_capacity(self.children.len());
+        for c in &self.children {
+            match &c.0 {
+                Repr::El(e) => children.push(SvgNode::Element(e.resolve(cat)?)),
+                Repr::Text(t) => push_tree_text(&mut children, &plain(t)),
+                Repr::Fixed(t) => push_tree_text(&mut children, &plain(t)),
+                Repr::Msg(m) => push_tree_text(&mut children, &message_text(cat, m)?),
+                Repr::Lines(m, lines) => {
+                    let wrapped = lines.wrap(&message_text(cat, m)?);
+                    let n = wrapped.len();
+                    for (i, line) in wrapped.into_iter().enumerate() {
+                        children.push(SvgNode::Element(SvgElement::new(
+                            "tspan",
+                            vec![
+                                ("x".to_owned(), lines.x.to_string()),
+                                ("y".to_owned(), lines.y_of(i, n).to_string()),
+                            ],
+                            vec![SvgNode::Text(line)],
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(SvgElement::new(self.tag, attrs, children))
     }
 }

@@ -525,13 +525,15 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
 ];
 
 /// The tenant settings that are high-risk by the strict reading only
-/// (design section 3.5, Q10 interim): every setting other than P-70.
-const STRICT_EXTRA: [&str; 5] = [
+/// (design section 3.5, Q10 interim): every setting other than P-70, and the
+/// Guide data protection texts (R-GA-01, section 15.0, 2026-11-06).
+const STRICT_EXTRA: [&str; 6] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
     "tenant.set_payment_mode",
     "tenant.set_template_licence",
+    "tenant.set_guide_notice",
 ];
 
 /// R-LG-03, I-78, design section 3.6
@@ -579,7 +581,8 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
     for o in &extra {
         assert!(o.high_risk, "{} is high-risk (strict reading)", o.name);
         assert!(
-            matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70),
+            matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70)
+                || o.kind == OpKind::Tenant(TenantKind::SetGuideNotice),
             "{} is a tenant setting other than P-70",
             o.name
         );
@@ -882,6 +885,7 @@ fn i86_vault_reads_and_statements_have_no_tool() {
         "audit.vault_outcomes",
         "proposal.state_country",
         "proposal.declare_affiliations",
+        "proposal.state_birth_date",
     ]) {
         assert!(o.tool.is_none(), "{} has a tool", o.name);
     }
@@ -935,7 +939,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 49] = [
+const READ_NAMES: [&str; 51] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -986,6 +990,10 @@ const READ_NAMES: [&str; 49] = [
     // Lane j2, `SPEC/12-journey-ui.md` section 10.
     "GetJourney",
     "GetDiary",
+    // Lane j4, ADR-015 amendment of 2026-11-06.
+    "GetRouteMap",
+    // Lane mcreator: the Studio list of a programme's calls.
+    "ListCalls",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

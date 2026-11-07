@@ -37,6 +37,15 @@
 //!   through [`CellEnvironment::with_theme`] (design 3.2 and 8.4).
 //! - The cell has a pre-check provider (`FakePrecheck`) and no score
 //!   tools.
+//! - The Guide facts of a publication (R-GA-01, I-52): the template of
+//!   the programme's P-53 profile, and the artefacts of its complete
+//!   creator draft (every field set) or else of the spec the cell sets
+//!   ([`CellEnvironment::set_guide_spec`]). Then the public texts of the
+//!   fake text store, the synthetic [`GUIDE_PLATFORM_URL`], and the
+//!   tenant's data protection override or else the platform default
+//!   (`fstp_tenant::GuideNotice`). An environment with no text store, or
+//!   a programme with neither a complete draft nor a set spec, supplies
+//!   none, so its publication carries no Guide, as before.
 //! - The proposer is the fixture-driven `fstp_import::FakeProposer` over
 //!   the entries of [`annex_entries`] whose evidence the document holds.
 //!   The proposal ids derive from the document id. The blob holds the
@@ -61,10 +70,11 @@ use fstp_creator::{
 };
 use fstp_domain::command::{Actor, Ctx, SystemCause, Via};
 use fstp_domain::id::{
-    AccountId, BindingId, CommandId, ContentDigest, OrganisationId, TextId, TextRef,
+    AccountId, BindingId, CallId, CommandId, ContentDigest, OrganisationId, TextId, TextRef,
 };
 use fstp_domain::oracle::{Answers, OracleDown, Query};
 use fstp_domain::policy::FunderProfileRef;
+use fstp_engine::compose::GuideFacts;
 use fstp_engine::{CreatorEnvironment, EngineState, IdentityOracle};
 use fstp_guide::{FunderProfile, ProfileSource};
 use fstp_import::{
@@ -72,7 +82,8 @@ use fstp_import::{
     ImportDocument, ImportLimits, ImportProposalId, Proposer, SaltedDigest, UntrustedValue,
     ValueTextId, ValueTextRef,
 };
-use fstp_programme::FieldId;
+use fstp_programme::{FieldId, ProgrammeSpec};
+use fstp_tenant::{GuideNotice, PLATFORM_DATA_PROTECTION_SUMMARY, PLATFORM_PRIVACY_STATEMENT_URL};
 
 use super::{CellOracle, FakeBlobs, FakeProber, FakeTexts, FakeVault, FakeVaultAudit, lock};
 use crate::profiles::SyntheticProfiles;
@@ -102,6 +113,13 @@ pub struct CellEnvironment {
     /// Whether the decisions are dry runs, which peek at the probes and
     /// never run them (design 3.2 "Fresh probes").
     dry: bool,
+    /// The text store a published Guide reads, or `None`, so no
+    /// publication carries a Guide (R-GA-01, [`CellEnvironment::with_texts`]).
+    texts: Option<FakeTexts>,
+    /// The spec whose artefacts the Guide of a programme with no complete
+    /// creator draft reads, or `None`, so such a publication carries no Guide
+    /// ([`CellEnvironment::set_guide_spec`]).
+    guide_spec: Option<ProgrammeSpec>,
 }
 
 impl CellEnvironment {
@@ -127,6 +145,8 @@ impl CellEnvironment {
                 score_tools: false,
             },
             dry: false,
+            texts: None,
+            guide_spec: None,
         }
     }
 
@@ -149,6 +169,8 @@ impl CellEnvironment {
                 score_tools: false,
             },
             dry: false,
+            texts: None,
+            guide_spec: None,
         }
     }
 
@@ -172,6 +194,20 @@ impl CellEnvironment {
     pub fn with_ports(mut self, ports: PortPresence) -> CellEnvironment {
         self.ports = ports;
         self
+    }
+
+    /// The same environment reading the published Guide's texts from
+    /// `texts`, so a publication carries its Guide (R-GA-01, I-52).
+    pub fn with_texts(mut self, texts: FakeTexts) -> CellEnvironment {
+        self.texts = Some(texts);
+        self
+    }
+
+    /// Reads the artefacts of the Guide of a programme whose creator draft
+    /// is not complete from `spec`, as the e2e cell does for the programmes its
+    /// scenarios create through core commands (R-GA-01).
+    pub fn set_guide_spec(&mut self, spec: ProgrammeSpec) {
+        self.guide_spec = Some(spec);
     }
 
     /// Marks the decisions of this environment as dry runs, or not. A dry
@@ -325,11 +361,29 @@ impl CellEnvironment {
             CreatorCommand::OpenDraft { profile, .. } => profile.clone(),
             other => state.creator.draft(other.programme())?.profile().clone(),
         };
-        let name = profile_name(&reference)?;
+        self.profile_of(&reference)
+    }
+
+    /// The funder profile a P-53 reference names, from the shipped
+    /// profiles or the synthetic ones.
+    fn profile_of(&self, reference: &FunderProfileRef) -> Option<FunderProfile> {
+        let name = profile_name(reference)?;
         if self.shipped {
             return fstp_guide::ShippedProfiles.profile(&name).ok();
         }
         self.profiles.profile(&name).ok()
+    }
+
+    /// The tenant's own data protection summary, read from `texts`. A
+    /// text the store does not hold, or whose digest differs, gives the
+    /// empty text, which no Guide binds, so the publication is refused
+    /// (I-52). It never falls back to the platform default.
+    fn tenant_summary(texts: &FakeTexts, r: TextRef) -> String {
+        texts
+            .peek(fstp_api_core::port::TextRef(r.id().raw()))
+            .and_then(|b| String::from_utf8(b).ok())
+            .filter(|s| ContentDigest::from_bytes(fstp_crypto::sha256(s.as_bytes())) == r.digest())
+            .unwrap_or_default()
     }
 }
 
@@ -365,7 +419,87 @@ impl CreatorEnvironment for CellEnvironment {
             profile: self.profile(state, cmd),
         }
     }
+
+    /// The Guide facts of `call` at its publication (R-GA-01, I-52,
+    /// module documentation). `None` without a text store, or for a
+    /// programme with neither a complete creator draft nor a Guide spec, so such a
+    /// publication carries no Guide, as before.
+    fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
+        let texts = self.texts.as_ref()?;
+        let programme = fstp_domain::programme::call(&state.core, call)?.programme();
+        let head = fstp_domain::policy::head(&state.core, programme)?;
+        let complete = fstp_engine::compose::draft_compiled(state, programme)
+            .is_some_and(|c| c.unset.is_empty());
+        let compiled = if complete {
+            // The engine compiles the creator draft again.
+            None
+        } else {
+            let spec = self.guide_spec.as_ref()?;
+            // A spec that does not compile leaves `None`, and with no
+            // complete draft the engine refuses the publication with I-52.
+            spec_compiled(spec, programme, head)
+        };
+        // A profile this cell does not know, or a template that does not
+        // parse, gives the empty template, which lacks every required
+        // section, so the publication is refused with I-52.
+        let template = self
+            .profile_of(&head.frozen.p53)
+            .and_then(|p| fstp_guide::parse_template(p.guide_template().as_bytes()).ok())
+            .or_else(|| fstp_guide::parse_template(b"").ok())?;
+        let (summary, privacy) = match state.tenant.state().map(|ts| ts.settings().guide_notice()) {
+            Some(GuideNotice::Tenant(o)) => (
+                CellEnvironment::tenant_summary(texts, o.summary),
+                o.privacy_statement_url.clone(),
+            ),
+            Some(GuideNotice::Platform) | None => (
+                PLATFORM_DATA_PROTECTION_SUMMARY.to_owned(),
+                PLATFORM_PRIVACY_STATEMENT_URL.to_owned(),
+            ),
+        };
+        Some(GuideFacts {
+            template,
+            compiled,
+            identifier: call.raw().to_string(),
+            platform_url: GUIDE_PLATFORM_URL.to_owned(),
+            data_protection_summary: summary,
+            privacy_statement_url: privacy,
+            texts: texts.public_texts(),
+            digest: fstp_crypto::sha256,
+        })
+    }
 }
+
+/// `spec` compiled for `programme` under the profile of its `head`
+/// policy, as the Guide reads its artefacts. The P-09 wording is a stored
+/// text the policy names (ADR-007). So when the policy names other texts
+/// than `spec` does, P-09 is read from `head`, and the Guide reads its
+/// wording from the text store. `None` when it does not compile.
+fn spec_compiled(
+    spec: &ProgrammeSpec,
+    programme: fstp_domain::id::ProgrammeId,
+    head: &fstp_domain::policy::PolicyVersion,
+) -> Option<fstp_programme::Compiled> {
+    let profile = fstp_programme::FunderProfile::for_policy_ref(&head.frozen.p53)?;
+    let ids = fstp_programme::CompileIds::new(programme, head.id, head.parent);
+    let compiled = fstp_programme::compile(spec, &profile, ids).ok()?;
+    if compiled.policy.frozen.p09 == head.frozen.p09 {
+        return Some(compiled);
+    }
+    let mut spec = spec.clone();
+    if let Some(v) = fstp_programme::policy_spec(head)
+        .get(FieldId::P09)
+        .as_set()
+        .cloned()
+    {
+        spec.set(v);
+    }
+    fstp_programme::compile(&spec, &profile, ids).ok()
+}
+
+/// The synthetic `https:` platform address the fake cell's Guide names
+/// (`{{platform.url}}`). The loopback cells are plain HTTP, which the
+/// Guide refuses, so it names no real origin.
+pub const GUIDE_PLATFORM_URL: &str = "https://platform.fstp.test/";
 
 // ---------------------------------------------------------------------------
 // The import shell
