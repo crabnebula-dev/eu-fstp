@@ -67,8 +67,8 @@ mod text;
 pub use catalogue::CATALOGUE;
 pub use checkpoint::{Checkpoint, Checkpoints, MAX_CHECKPOINT_LEN};
 pub use delivery::{
-    CommitFacts, DELIVERY_LEASE_US, DeliveryLog, DeliveryRow, MAX_ATTEMPTS, Next, Phase,
-    backoff_us, may_commit, may_record, next_step,
+    CommitFacts, DELIVERY_LEASE_US, DeliveryLog, DeliveryRow, MAX_ATTEMPTS, Next, OutboxReader,
+    Phase, backoff_us, may_commit, may_record, next_step,
 };
 pub use error::{AppendFault, DbFault, DecodeError, StoreFault};
 pub use migrations::MIGRATIONS;

@@ -40,6 +40,8 @@ fstp-crypto.workspace = true
 # lock (design sections 4.2 and 7.2).
 fstp-pgwire.workspace = true
 fstp-witness.workspace = true
+# M6 lane L6-DISP: the dispatch worker of the dispatcher task.
+fstp-dispatch.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

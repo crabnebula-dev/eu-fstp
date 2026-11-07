@@ -35,3 +35,7 @@ pub const M_LICENCE: usize = 1425;
 pub const fn tripwire(measured: usize) -> usize {
     measured.saturating_mul(2)
 }
+
+/// M-DISPATCH (I-25, I-26), M6 design section 7 (T2). Measured by lane
+/// L6-DISP on 2026-11-07.
+pub const M_DISPATCH: usize = 51358;

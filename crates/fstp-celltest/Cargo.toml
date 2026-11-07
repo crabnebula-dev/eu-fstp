@@ -44,6 +44,8 @@ fstp-pgtest.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true
 fstp-domain-testkit.workspace = true
+# M6 T2: the dispatch worker the M-DISPATCH model drives.
+fstp-dispatch.workspace = true
 # In-house edges of lane int5: the world logs its cell, vault and witness
 # roles in over fstp-pgwire, and reaches the cells through fstp-tls and
 # fstp-http.
