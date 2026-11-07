@@ -24,4 +24,7 @@ pub mod worker;
 
 pub use prepare::{Envelope, PrepareError, Prepared, prepare};
 pub use smtp::SmtpTransport;
-pub use worker::{EndOfData, LoadError, Outcome, Refused, Source, Step, Store, Transport, Worker};
+pub use worker::{
+    DigestKey, EndOfData, LoadError, Outcome, Refused, Source, Step, Store, Transport, Worker,
+    body_digest,
+};

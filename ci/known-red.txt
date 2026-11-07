@@ -65,7 +65,6 @@ r_id_03_documents::r_id_03_document_unrecoverable_after_verification | seam name
 r_lg_04_sessions_and_devices::r_lg_04_sessions_and_devices_listed_and_ended | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 r_nf_m3::r_nf_05_self_hosted_install_has_no_default_credentials | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_nf_m3::r_nf_08_aborted_append_never_reuses_a_nonce | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-r_nf_m3::r_nf_08_catalogue_has_no_clear_content_column | Q-A built (F-CAT); two rules meet pinned shapes: the content-name rule flags the runner ledger column fstp_migrate.schema_migrations.name (app, vault), and ledger.command is pinned LedgerRecord with no sealed column | Daniel question from F-CAT
 r_nf_m3::r_nf_09_every_internal_link_is_mutually_authenticated | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_sw_02_cell_erasure::r_sw_02_cell_erasure_kills_every_backup | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_d2e_publication::review_i52_execute_core_publish_call_appends_no_unpaired_call_published | strict D2e and GuidePublished pairing | m4d2e-cont

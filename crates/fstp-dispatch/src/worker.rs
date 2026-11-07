@@ -318,18 +318,47 @@ fn storable(code: Option<u16>) -> Option<u16> {
     code.filter(|c| (200..=599).contains(c))
 }
 
+/// The cell key of the body digest (m4-design section 15.0, row
+/// "ops.delivery body digest", 2026-11-07). The caller hands it in from
+/// the cell's keys. It never shows in a debug print.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct DigestKey([u8; 32]);
+
+impl DigestKey {
+    /// The key `key`.
+    pub fn new(key: [u8; 32]) -> DigestKey {
+        DigestKey(key)
+    }
+}
+
+impl std::fmt::Debug for DigestKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DigestKey(..)")
+    }
+}
+
+/// The digest of `body` that a COMMITTING row records: HMAC-SHA256 under
+/// the cell key `key`, so a guessed body cannot be confirmed from the
+/// digest without the key (I-27).
+pub fn body_digest(key: &DigestKey, body: &[u8]) -> [u8; 32] {
+    fstp_crypto::hmac_sha256(&key.0, body)
+}
+
 /// One dispatch worker, holding at most one attempt.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Worker<S> {
     id: [u8; 16],
+    key: DigestKey,
     state: State<S>,
 }
 
 impl<S: Send> Worker<S> {
-    /// A worker with id `id` and no attempt, as at start or after a crash.
-    pub fn new(id: [u8; 16]) -> Worker<S> {
+    /// A worker with id `id`, the body digest key `key` and no attempt, as
+    /// at start or after a crash.
+    pub fn new(id: [u8; 16], key: DigestKey) -> Worker<S> {
         Worker {
             id,
+            key,
             state: State::Idle,
         }
     }
@@ -410,7 +439,7 @@ impl<S: Send> Worker<S> {
             }
             State::Claimed { outbox, attempt } => match source.load(outbox).await {
                 Ok(prepared) => {
-                    let digest = fstp_crypto::sha256(&prepared.body);
+                    let digest = body_digest(&self.key, &prepared.body);
                     self.state = State::Rendered {
                         outbox,
                         attempt,
