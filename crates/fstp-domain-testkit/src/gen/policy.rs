@@ -903,7 +903,8 @@ pub fn core_records(entries: &[Entry<EngineRecord>]) -> Vec<Record> {
             EngineRecord::Finding(_)
             | EngineRecord::Creator(_)
             | EngineRecord::Import(_)
-            | EngineRecord::Tenant(_) => None,
+            | EngineRecord::Tenant(_)
+            | EngineRecord::Contract(_) => None,
         })
         .collect()
 }

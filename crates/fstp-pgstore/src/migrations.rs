@@ -16,6 +16,8 @@ use fstp_migrate::Migration;
 /// 3. `app`: the schemas, tables and triggers of design section 4.2.
 /// 4. `journey`: the journey read model of ADR-015 and
 ///    `SPEC/12-journey-ui.md` section 11, in its own schema (I-83).
+/// 5. `doc`: write-once document storage of M5 design section 4.3
+///    (I-30), sealed like `blob.text`.
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -29,6 +31,7 @@ pub const MIGRATIONS: &[Migration] = &[
         "journey",
         include_str!("../migrations/app/0004_journey.sql"),
     ),
+    Migration::new(5, "doc", include_str!("../migrations/app/0005_doc.sql")),
 ];
 
 #[cfg(test)]

@@ -370,4 +370,18 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("source_seq", Sequence),
         ],
     ),
+    // M5 design section 4.3, I-30: write-once documents, sealed content
+    // keyed by the public SHA-256 the ledger records.
+    table(
+        "doc",
+        "blob",
+        TableClass::SealedContent,
+        &[
+            col("digest", PublicDigest),
+            col("kind", Enum),
+            col("dek", RandomId),
+            col("envelope", Sealed),
+            col("stored_at", Time),
+        ],
+    ),
 ];

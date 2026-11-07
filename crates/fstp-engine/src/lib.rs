@@ -87,6 +87,7 @@
 
 pub mod bridge;
 pub mod compose;
+pub mod contract;
 pub mod driver;
 pub mod findings;
 pub mod sweep;
@@ -189,6 +190,9 @@ struct OpenEntry {
     /// Confirming or editing resolutions still waiting for their
     /// `FieldsSaved`.
     resolutions: Vec<OwedSave>,
+    /// The contracts whose core `ContractFactRecorded` the entry holds,
+    /// which a `ContractEffective` of the entry needs (lane L-CON).
+    contract_facts: Vec<fstp_domain::id::ContractId>,
 }
 
 /// The save a confirming or editing `ProposalResolved` owes its entry:
@@ -216,6 +220,7 @@ impl OpenEntry {
             approvals: Vec::new(),
             openings: Vec::new(),
             resolutions: Vec::new(),
+            contract_facts: Vec::new(),
         }
     }
 
@@ -248,6 +253,9 @@ pub struct EngineState {
     /// tenant admin set (Q31 A). Neither the core, the creator nor the
     /// import store reads it.
     pub tenant: TenantPart,
+    /// The contract store: every contract and version, folded from the
+    /// `Contract` envelope (M5 design section 4.1). The core never reads it.
+    pub contracts: contract::ContractStore,
     /// The time of the latest creator, import or tenant entry, or the Unix
     /// epoch before the first.
     pub envelope_floor: Timestamp,
@@ -273,6 +281,7 @@ impl EngineState {
             creator: CreatorState::genesis(),
             import: ImportStore::genesis(),
             tenant: TenantPart::default(),
+            contracts: contract::ContractStore::default(),
             envelope_floor: Timestamp::from_micros(0),
             open: None,
         }
@@ -324,6 +333,9 @@ pub enum Command {
     /// A tenant command with the shell's facts, decided by
     /// `fstp_tenant::decide` over the tenant part (design section 3.5).
     Tenant(TenantRequest),
+    /// A contract command, decided by `contract::decide_contract` over
+    /// the contract store (M5 design section 4.1).
+    Contract(fstp_contract::ContractCommand),
 }
 
 /// Hashes the side and the inner command. A creator command hashes its
@@ -357,6 +369,10 @@ impl core::hash::Hash for Command {
                 5u8.hash(state);
                 t.command.kind().hash(state);
             }
+            Command::Contract(c) => {
+                6u8.hash(state);
+                c.hash(state);
+            }
         }
     }
 }
@@ -378,6 +394,8 @@ pub enum Record {
     Import(ImportRecord),
     /// A tenant record, folded into the tenant part.
     Tenant(TenantEntry),
+    /// A contract record, folded into the contract store.
+    Contract(fstp_contract::ContractRecord),
 }
 
 /// The identity vault as the engine sees it (design section 3.1).
@@ -551,6 +569,15 @@ fn fold_in(
             tenant::apply_tenant(&mut state.tenant, t)?;
             state.envelope_floor = at;
         }
+        Record::Contract(c) => {
+            let facts = state
+                .open
+                .as_ref()
+                .map(|o| o.contract_facts.clone())
+                .unwrap_or_default();
+            contract::apply_contract(state, &facts, c)?;
+            state.envelope_floor = at;
+        }
     }
     Ok(())
 }
@@ -588,6 +615,9 @@ fn apply_core(
             {
                 open.openings.remove(i);
             }
+        }
+        fstp_domain::Record::ContractFactRecorded { contract, .. } => {
+            open_entry(state)?.contract_facts.push(*contract);
         }
         _ => {}
     }
@@ -734,16 +764,19 @@ pub enum EnvelopeKind {
     /// A tenant record, stored under the member `onboarding`. M3's cell
     /// envelope already stores its own tenant records under `tenant`.
     Tenant,
+    /// A contract record, stored under the member `contract`.
+    Contract,
 }
 
 impl EnvelopeKind {
     /// Every side, in member order.
-    pub const ALL: [EnvelopeKind; 5] = [
+    pub const ALL: [EnvelopeKind; 6] = [
         EnvelopeKind::Core,
         EnvelopeKind::Finding,
         EnvelopeKind::Creator,
         EnvelopeKind::Import,
         EnvelopeKind::Tenant,
+        EnvelopeKind::Contract,
     ];
 
     /// The member name of this side in the stored form.
@@ -754,6 +787,7 @@ impl EnvelopeKind {
             EnvelopeKind::Creator => "creator",
             EnvelopeKind::Import => "import",
             EnvelopeKind::Tenant => "onboarding",
+            EnvelopeKind::Contract => "contract",
         }
     }
 
@@ -765,6 +799,7 @@ impl EnvelopeKind {
             Record::Creator(_) => EnvelopeKind::Creator,
             Record::Import(_) => EnvelopeKind::Import,
             Record::Tenant(_) => EnvelopeKind::Tenant,
+            Record::Contract(_) => EnvelopeKind::Contract,
         }
     }
 }
@@ -808,6 +843,7 @@ impl ToJson for Record {
             Record::Creator(c) => c.to_json(),
             Record::Import(i) => i.to_json(),
             Record::Tenant(t) => tenant::entry_to_json(t),
+            Record::Contract(c) => c.to_json(),
         };
         envelope_to_json(kind, inner)
     }
@@ -835,6 +871,9 @@ impl FromJson for Record {
                 .map_err(at),
             EnvelopeKind::Tenant => tenant::entry_from_json(inner)
                 .map(Record::Tenant)
+                .map_err(at),
+            EnvelopeKind::Contract => fstp_contract::ContractRecord::from_json(inner)
+                .map(Record::Contract)
                 .map_err(at),
         }
     }

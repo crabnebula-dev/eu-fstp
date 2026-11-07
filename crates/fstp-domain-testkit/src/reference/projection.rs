@@ -96,10 +96,11 @@ fn decode_record(schema: u16, value: &Value) -> Result<Record, String> {
             .map(Record::Core)
             .map_err(|e| format!("the core record does not decode: {e:?}")),
         EnvelopeKind::Finding => Err("the testkit has no finding decoder".to_owned()),
-        EnvelopeKind::Creator | EnvelopeKind::Import | EnvelopeKind::Tenant => {
-            fstp_engine::record_from_json_at(schema, value)
-                .map_err(|e| format!("the engine record does not decode: {e:?}"))
-        }
+        EnvelopeKind::Creator
+        | EnvelopeKind::Import
+        | EnvelopeKind::Tenant
+        | EnvelopeKind::Contract => fstp_engine::record_from_json_at(schema, value)
+            .map_err(|e| format!("the engine record does not decode: {e:?}")),
     }
 }
 
@@ -135,7 +136,11 @@ pub fn stored_copy(entries: &[Entry<Record>]) -> Result<Vec<Entry<Record>>, Stri
 pub fn core(e: &Entry<Record>) -> Option<&CoreRecord> {
     match &e.record {
         Record::Core(r) => Some(r),
-        Record::Finding(_) | Record::Creator(_) | Record::Import(_) | Record::Tenant(_) => None,
+        Record::Finding(_)
+        | Record::Creator(_)
+        | Record::Import(_)
+        | Record::Tenant(_)
+        | Record::Contract(_) => None,
     }
 }
 

@@ -227,7 +227,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 /// The tables of the application database (design section 4.2, and the
 /// journey read model of ADR-015 "Storage and roles"), in the order of
 /// the migration set.
-pub const APP_TABLES: [&str; 24] = [
+pub const APP_TABLES: [&str; 25] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -252,6 +252,8 @@ pub const APP_TABLES: [&str; 24] = [
     "journey.leg",
     "journey.route_start",
     "journey.assignment",
+    // M5 design section 4.3: write-once documents (I-30).
+    "doc.blob",
 ];
 
 /// The tables of the vault database (design section 4.3, with the
@@ -320,6 +322,8 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // ADR-015: the projector runs as `app` and writes append-only
             // rows, so INSERT and SELECT only.
             "journey" => SI,
+            // M5 design section 4.3, I-30: write-once documents.
+            "doc" => SI,
             // The I-83 start check of `fstp-cell` (design section 9.2).
             "fstp_meta" if object == PLACEMENT_TABLE => S,
             _ => &[],

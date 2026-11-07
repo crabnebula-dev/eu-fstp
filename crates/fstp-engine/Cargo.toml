@@ -19,6 +19,8 @@ fstp-import.workspace = true
 fstp-creator.workspace = true
 fstp-programme.workspace = true
 fstp-tenant.workspace = true
+# M5 lane L-CON: the Contract envelope.
+fstp-contract.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

@@ -227,6 +227,7 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             crate::tenant::tenant_queries(state, t, ctx)
         }
+        Command::Contract(c) => crate::contract::contract_queries(state, c, ctx),
     }
 }
 
@@ -263,6 +264,7 @@ fn route_decide(
             crate::ledger_clock(state, ctx)?;
             crate::tenant::decide_tenant(state, t, ctx, answers)
         }
+        Command::Contract(c) => crate::contract::decide_contract(state, c, ctx, answers),
     }
 }
 

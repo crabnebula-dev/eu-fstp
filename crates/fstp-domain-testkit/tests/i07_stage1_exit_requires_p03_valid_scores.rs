@@ -141,7 +141,8 @@ fn scenario_records(entries: &[Entry<EngineRecord>]) -> Vec<(Record, Timestamp)>
             EngineRecord::Finding(_)
             | EngineRecord::Creator(_)
             | EngineRecord::Import(_)
-            | EngineRecord::Tenant(_) => None,
+            | EngineRecord::Tenant(_)
+            | EngineRecord::Contract(_) => None,
         })
         .collect()
 }

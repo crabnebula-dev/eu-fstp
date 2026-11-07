@@ -1,0 +1,24 @@
+[package]
+name = "fstp-sigval"
+description = "In-house validation of contract signatures over a verified PDF increment: CMS, chain to a trusted list, revocation and level (M5 design section 3.1 step 7)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-pdf.workspace = true
+fstp-pki.workspace = true
+# ADR-001 Tier B, record of 2026-11-06 (M5 lane L-CON): certificates are
+# parsed through the formats crates; the validation procedure is in-house
+# (`contracts.md` Signature). Release-gated (I-74).
+der.workspace = true
+x509-cert.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

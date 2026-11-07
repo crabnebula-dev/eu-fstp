@@ -265,6 +265,10 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
         "import" => fstp_engine::Record::from_json(value)
             .map(CellRecord::Engine)
             .map_err(body("import")),
+        // The engine's contract side (M5 lane L-CON).
+        "contract" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("contract")),
         "auth" => auth_record(inner).map(CellRecord::Auth),
         "tenant" => tenant_record(inner)
             .map(CellRecord::Tenant)
@@ -624,6 +628,9 @@ impl ToJson for CellCommand {
             CellCommand::Engine(fstp_engine::Command::Tenant(c)) => {
                 wrap("onboarding", fstp_engine::tenant::request_json(c))
             }
+            // M5 lane L-CON. The decoder does not read it back yet; the
+            // L-API lane adds it with the contract routes.
+            CellCommand::Engine(fstp_engine::Command::Contract(c)) => wrap("contract", c.to_json()),
             CellCommand::Auth(c) => wrap("auth", auth_command_json(c)),
             CellCommand::Tenant(c) => wrap("tenant", tenant_command_json(c)),
             CellCommand::Text(c) => wrap("text", text_command_json(c)),
