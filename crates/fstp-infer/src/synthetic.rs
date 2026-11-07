@@ -1,7 +1,7 @@
 //! The synthetic model (M7 design section 7).
 //!
-//! Deterministic code that reads a request body in the wire format and
-//! answers in it, in memory. It finds missing rubric elements by keyword,
+//! Deterministic code that reads a request body in either wire format and
+//! answers in the same one, in memory. It finds missing rubric elements by keyword,
 //! flags hidden characters and text addressed to an assessor, and gives
 //! one info quality finding per criterion. It is never reported as an LLM
 //! result: its `config_id` names provider `synthetic`.
@@ -184,8 +184,32 @@ fn findings(p: &Params, parts: &[(String, String)]) -> Vec<Value> {
     out
 }
 
+/// The findings reply to one instruction and data text, as canonical JSON.
+fn reply_text(instruction: &str, data_text: &str) -> Result<String, TransportError> {
+    let data = fstp_json::parse_str(data_text).map_err(|_| TransportError::Refused)?;
+    let parts: Vec<(String, String)> = data
+        .get("parts")
+        .and_then(Value::as_array)
+        .ok_or(TransportError::Refused)?
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p.get("label")?.as_str()?.to_owned(),
+                p.get("text")?.as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    let mut out = Object::new();
+    out.insert(
+        "findings",
+        Value::Array(findings(&params(instruction), &parts).into_iter().collect()),
+    );
+    fstp_json::to_canonical(&Value::Object(out)).map_err(|_| TransportError::Refused)
+}
+
 impl SyntheticModel {
-    /// Answers one request body with a chat-completions response body.
+    /// Answers one chat-completions request body with a chat-completions
+    /// response body.
     ///
     /// # Errors
     ///
@@ -208,29 +232,7 @@ impl SyntheticModel {
                 .and_then(Value::as_str)
                 .ok_or(TransportError::Refused)
         };
-        let instruction = content(0, "system")?;
-        let data =
-            fstp_json::parse_str(content(1, "user")?).map_err(|_| TransportError::Refused)?;
-        let parts: Vec<(String, String)> = data
-            .get("parts")
-            .and_then(Value::as_array)
-            .ok_or(TransportError::Refused)?
-            .iter()
-            .filter_map(|p| {
-                Some((
-                    p.get("label")?.as_str()?.to_owned(),
-                    p.get("text")?.as_str()?.to_owned(),
-                ))
-            })
-            .collect();
-
-        let mut out = Object::new();
-        out.insert(
-            "findings",
-            Value::Array(findings(&params(instruction), &parts).into_iter().collect()),
-        );
-        let reply =
-            fstp_json::to_canonical(&Value::Object(out)).map_err(|_| TransportError::Refused)?;
+        let reply = reply_text(content(0, "system")?, content(1, "user")?)?;
 
         let mut message = Object::new();
         message.insert("role", Value::from("assistant"));
@@ -263,6 +265,72 @@ impl SyntheticModel {
             .map(String::into_bytes)
             .map_err(|_| TransportError::Refused)
     }
+
+    /// Answers one Anthropic Messages request body with a `Message`
+    /// response body: one text block, `end_turn`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportError::Refused`] for a body it cannot read.
+    pub fn answer_anthropic(&self, body: &[u8]) -> Result<Vec<u8>, TransportError> {
+        let req = fstp_json::parse(body).map_err(|_| TransportError::Refused)?;
+        let model = req
+            .get("model")
+            .and_then(Value::as_str)
+            .ok_or(TransportError::Refused)?;
+        let instruction = req
+            .get("system")
+            .and_then(Value::as_str)
+            .ok_or(TransportError::Refused)?;
+        let messages = req
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or(TransportError::Refused)?;
+        let [user] = messages.as_slice() else {
+            return Err(TransportError::Refused);
+        };
+        if user.get("role").and_then(Value::as_str) != Some("user") {
+            return Err(TransportError::Refused);
+        }
+        let blocks = user
+            .get("content")
+            .and_then(Value::as_array)
+            .ok_or(TransportError::Refused)?;
+        let [block] = blocks.as_slice() else {
+            return Err(TransportError::Refused);
+        };
+        if block.get("type").and_then(Value::as_str) != Some("text") {
+            return Err(TransportError::Refused);
+        }
+        let data_text = block
+            .get("text")
+            .and_then(Value::as_str)
+            .ok_or(TransportError::Refused)?;
+        let reply = reply_text(instruction, data_text)?;
+
+        let mut text = Object::new();
+        text.insert("type", Value::from("text"));
+        text.insert("text", Value::String(reply.clone()));
+        let mut usage = Object::new();
+        usage.insert("input_tokens", Value::from(count(body.len() / 4)));
+        usage.insert("output_tokens", Value::from(count(reply.len() / 4)));
+        let digest = crate::encode::hex(&fstp_crypto::sha256(body));
+        let mut top = Object::new();
+        top.insert(
+            "id",
+            Value::String(format!("msg_synthetic_{}", digest.get(..16).unwrap_or(""))),
+        );
+        top.insert("type", Value::from("message"));
+        top.insert("role", Value::from("assistant"));
+        top.insert("model", Value::from(model));
+        top.insert("content", Value::Array(vec![Value::Object(text)].into()));
+        top.insert("stop_reason", Value::from("end_turn"));
+        top.insert("stop_sequence", Value::Null);
+        top.insert("usage", Value::Object(usage));
+        fstp_json::to_canonical(&Value::Object(top))
+            .map(String::into_bytes)
+            .map_err(|_| TransportError::Refused)
+    }
 }
 
 /// A count as a JSON number.
@@ -272,6 +340,10 @@ fn count(n: usize) -> fstp_json::Number {
 
 impl Transport for SyntheticModel {
     async fn exchange(&self, req: &EncodedRequest) -> Result<Vec<u8>, TransportError> {
-        self.answer(req.body())
+        // No body reads as both protocols: an Anthropic body has one user
+        // message, a chat body a system message first. So the reply takes
+        // the protocol of the request.
+        self.answer_anthropic(req.body())
+            .or_else(|_| self.answer(req.body()))
     }
 }

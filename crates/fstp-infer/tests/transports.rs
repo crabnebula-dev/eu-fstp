@@ -12,8 +12,8 @@ use fstp_findings::UntrustedText;
 use fstp_http::{Request, Response, Server, ServerConfig, StatusCode, handler_fn};
 use fstp_infer::{
     DataLabel, DataPart, Decoding, ElementTag, HttpTransport, InferError, InferRequest,
-    Instruction, ModelName, OutputSchema, Prompt, Record, Replay, SyntheticModel, Transport,
-    TransportError, encode, infer,
+    Instruction, ModelName, OutputSchema, Prompt, Protocol, Record, Replay, SyntheticModel,
+    Transport, TransportError, encode, infer,
 };
 use fstp_json::Value;
 use fstp_rt::future::block_on;
@@ -32,6 +32,7 @@ fn fresh_dir(name: &str) -> PathBuf {
 
 fn request(prompt: Prompt, elements: &[ElementTag], text: &str) -> InferRequest {
     InferRequest {
+        protocol: Protocol::ChatCompletions,
         model: ModelName::new("synthetic").unwrap(),
         decoding: Decoding {
             max_tokens: 1024,

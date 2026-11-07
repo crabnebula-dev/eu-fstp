@@ -80,9 +80,40 @@ impl OutputSchema {
     }
 }
 
+/// The wire protocol of a request (ADR-019). Anthropic Messages is the
+/// default, chat-completions the secondary path (section 15.0 of
+/// `docs/handoff/m4-design.md`, 2026-11-06).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Protocol {
+    /// The Anthropic Messages API, `POST /v1/messages`, version
+    /// [`ANTHROPIC_VERSION`], non-streaming.
+    #[default]
+    Anthropic,
+    /// The chat-completions JSON shape, non-streaming, for an open-weight
+    /// EU-hosted or local model.
+    ChatCompletions,
+}
+
+impl Protocol {
+    /// The stable name, as configuration and the `config_id` spell it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Protocol::Anthropic => "anthropic",
+            Protocol::ChatCompletions => "chat_completions",
+        }
+    }
+}
+
+/// The `anthropic-version` header value this encoder and decoder follow.
+/// Version 2026-10-21 refuses `temperature`, `top_p` and `top_k`
+/// (<https://platform.claude.com/docs/en/api/versioning>).
+pub const ANTHROPIC_VERSION: &str = "2026-10-21";
+
 /// One inference request before encoding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferRequest {
+    /// The wire protocol.
+    pub protocol: Protocol,
     /// The model.
     pub model: ModelName,
     /// The decoding parameters.
@@ -170,7 +201,13 @@ impl fmt::Display for EncodeError {
 
 impl std::error::Error for EncodeError {}
 
-/// Encodes `req` as one chat-completions request body.
+/// Encodes `req` as one request body of its protocol.
+///
+/// Both protocols carry the same two parts. The rendered instruction is
+/// the only instruction text: the Anthropic `system` member, or the
+/// chat-completions system message. The data is one canonical JSON
+/// object `{"parts": [{"label", "text"}]}`, carried as the text of the
+/// one user message, so every part is a JSON string value (TH-01).
 ///
 /// # Errors
 ///
@@ -200,6 +237,92 @@ pub fn encode(req: &InferRequest) -> Result<EncodedRequest, EncodeError> {
     data.insert("parts", Value::Array(parts));
     let data_text = canonical(&Value::Object(data))?;
 
+    let body = match req.protocol {
+        Protocol::Anthropic => anthropic_body(req, data_text)?,
+        Protocol::ChatCompletions => chat_body(req, data_text)?,
+    };
+    let text = canonical(&Value::Object(body))?;
+    if text.len() > MAX_REQUEST_BYTES {
+        return Err(EncodeError::TooLarge);
+    }
+    Ok(EncodedRequest {
+        body: text.into_bytes(),
+    })
+}
+
+/// The Anthropic Messages body (ADR-019, verified against
+/// <https://platform.claude.com/docs/en/api/messages/create>).
+///
+/// No `temperature`, `top_p` or `top_k`: API version
+/// [`ANTHROPIC_VERSION`] refuses them, and the Messages API has no seed.
+/// No `thinking`: current models then think adaptively.
+fn anthropic_body(req: &InferRequest, data_text: String) -> Result<Object, EncodeError> {
+    let mut block = Object::new();
+    block.insert("type", Value::from("text"));
+    block.insert("text", Value::String(data_text));
+    let mut user = Object::new();
+    user.insert("role", Value::from("user"));
+    user.insert(
+        "content",
+        Value::Array(Array::from(vec![Value::Object(block)])),
+    );
+
+    let mut body = Object::new();
+    body.insert("model", Value::from(req.model.as_str()));
+    body.insert("max_tokens", integer(u64::from(req.decoding.max_tokens))?);
+    body.insert("system", Value::String(req.instruction.rendered()));
+    body.insert(
+        "messages",
+        Value::Array(Array::from(vec![Value::Object(user)])),
+    );
+    body.insert("stream", Value::Bool(false));
+    if let Some(schema) = req.schema {
+        let mut parsed = fstp_json::parse_str(schema.text()).map_err(|_| EncodeError::Canonical)?;
+        strip_unsupported(&mut parsed);
+        let mut format = Object::new();
+        format.insert("type", Value::from("json_schema"));
+        format.insert("schema", parsed);
+        let mut config = Object::new();
+        config.insert("format", Value::Object(format));
+        body.insert("output_config", Value::Object(config));
+    }
+    Ok(body)
+}
+
+/// Schema keywords the Anthropic structured outputs refuse with a 400
+/// (<https://platform.claude.com/docs/en/build-with-claude/structured-outputs>).
+/// The local output decoder still enforces them. The schema is compiled
+/// in, and none of its property names is one of these words.
+const UNSUPPORTED_SCHEMA_KEYWORDS: [&str; 6] = [
+    "maxLength",
+    "minLength",
+    "maxItems",
+    "minimum",
+    "maximum",
+    "multipleOf",
+];
+
+fn strip_unsupported(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            for k in UNSUPPORTED_SCHEMA_KEYWORDS {
+                o.remove(k);
+            }
+            for (_, x) in o.iter_mut() {
+                strip_unsupported(x);
+            }
+        }
+        Value::Array(a) => {
+            for x in a.iter_mut() {
+                strip_unsupported(x);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The chat-completions body, the secondary protocol.
+fn chat_body(req: &InferRequest, data_text: String) -> Result<Object, EncodeError> {
     let mut system = Object::new();
     system.insert("role", Value::from("system"));
     system.insert("content", Value::String(req.instruction.rendered()));
@@ -237,13 +360,7 @@ pub fn encode(req: &InferRequest) -> Result<EncodedRequest, EncodeError> {
         rf.insert("json_schema", Value::Object(js));
         body.insert("response_format", Value::Object(rf));
     }
-    let text = canonical(&Value::Object(body))?;
-    if text.len() > MAX_REQUEST_BYTES {
-        return Err(EncodeError::TooLarge);
-    }
-    Ok(EncodedRequest {
-        body: text.into_bytes(),
-    })
+    Ok(body)
 }
 
 fn canonical(v: &Value) -> Result<String, EncodeError> {

@@ -365,13 +365,19 @@ pub struct InferenceRecord {
     pub endpoint: Option<InferenceEndpoint>,
 }
 
-/// The wire protocol of an inference endpoint (ADR-019, Proposed, Q1).
+/// The wire protocol of an inference endpoint (ADR-019). Daniel decided
+/// on 2026-11-06 that the Anthropic Messages API is the default and the
+/// chat-completions shape the secondary path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InferenceProvider {
     /// The in-memory synthetic model of the demo cell. Its findings say
     /// "Synthetic assessor (demo)", and it is never an LLM result.
     Synthetic,
-    /// One endpoint speaking the chat-completions JSON shape, non-streaming.
+    /// The Anthropic Messages API, non-streaming. The default for a
+    /// hosted model. The tenant picks the model (P-21).
+    Anthropic,
+    /// One endpoint speaking the chat-completions JSON shape, non-streaming,
+    /// for an open-weight EU-hosted or local model.
     ChatCompletions,
 }
 

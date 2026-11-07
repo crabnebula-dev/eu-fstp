@@ -1,0 +1,1 @@
+{"id":"msg_02","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"x"}],"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":null},"usage":{"input_tokens":1,"output_tokens":1}}

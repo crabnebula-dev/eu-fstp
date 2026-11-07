@@ -20,6 +20,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "anthropic_response_decode"
+path = "fuzz_targets/anthropic_response_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "synthetic_answer"
 path = "fuzz_targets/synthetic_answer.rs"
 test = false

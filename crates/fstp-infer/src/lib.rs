@@ -10,9 +10,11 @@
 //!   encoder writes every part as a JSON string value inside a separate
 //!   data message, and never into the instruction message.
 //!
-//! [`encode`] builds the one request body of the chat-completions JSON
-//! shape (ADR-019, Proposed). [`decode_response`] accepts a closed member
-//! set and refuses everything else. A [`Transport`] carries the bytes:
+//! [`encode`] builds the one request body of the request's [`Protocol`]
+//! (ADR-019): the Anthropic Messages API by default, or the
+//! chat-completions shape for an open-weight EU-hosted or local model.
+//! [`decode_anthropic_response`] and [`decode_response`] accept closed
+//! member sets and refuse everything else. A [`Transport`] carries the bytes:
 //! [`HttpTransport`] for a real endpoint, [`Record`] and [`Replay`] for
 //! the evaluation harness, and [`SyntheticModel`] for the demo cell.
 //!
@@ -30,10 +32,13 @@
 //!
 //! ```
 //! use fstp_findings::UntrustedText;
-//! use fstp_infer::{DataLabel, DataPart, Decoding, InferRequest, Instruction, ModelName, Prompt};
+//! use fstp_infer::{
+//!     DataLabel, DataPart, Decoding, InferRequest, Instruction, ModelName, Prompt, Protocol,
+//! };
 //!
 //! let req = InferRequest {
-//!     model: ModelName::new("synthetic")?,
+//!     protocol: Protocol::Anthropic,
+//!     model: ModelName::new("claude-opus-5-5")?,
 //!     decoding: Decoding { max_tokens: 512, temperature_milli: 0, seed: 1 },
 //!     instruction: Instruction::new(Prompt::Integrity),
 //!     data: vec![DataPart::new(DataLabel::Narrative, UntrustedText::new("A plan.".into()))],
@@ -44,6 +49,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod anthropic;
 mod data;
 mod decode;
 mod encode;
@@ -55,17 +61,18 @@ mod transport;
 
 use core::fmt;
 
+pub use anthropic::decode_anthropic_response;
 pub use data::{DataLabel, DataPart};
 pub use decode::{
-    DecodeError, FinishReason, MAX_CONTENT_BYTES, MAX_RESPONSE_BYTES, ModelReply, Usage,
-    decode_response,
+    DecodeError, FinishReason, MAX_CONTENT_BYTES, MAX_RESPONSE_BYTES, ModelReply, StopReason,
+    Usage, decode_response,
 };
 pub use encode::{
-    Decoding, EncodeError, EncodedRequest, InferRequest, MAX_REQUEST_BYTES, ModelName,
-    OutputSchema, encode,
+    ANTHROPIC_VERSION, Decoding, EncodeError, EncodedRequest, InferRequest, MAX_REQUEST_BYTES,
+    ModelName, OutputSchema, Protocol, encode,
 };
 pub use fstp_findings::UntrustedText;
-pub use http::HttpTransport;
+pub use http::{ApiKey, HttpTransport};
 pub use instruction::{ElementTag, Instruction};
 pub use prompt::{PROMPT_SET_VERSION, Prompt, prompt_set_digest};
 pub use synthetic::SyntheticModel;
@@ -103,5 +110,17 @@ impl std::error::Error for InferError {}
 pub async fn infer<T: Transport>(t: &T, req: &InferRequest) -> Result<ModelReply, InferError> {
     let encoded = encode(req).map_err(InferError::Encode)?;
     let bytes = t.exchange(&encoded).await.map_err(InferError::Transport)?;
-    decode_response(&bytes).map_err(InferError::Decode)
+    decode(req.protocol, &bytes).map_err(InferError::Decode)
+}
+
+/// Decodes one response body of `protocol`.
+///
+/// # Errors
+///
+/// Returns a [`DecodeError`] for anything outside the closed shape.
+pub fn decode(protocol: Protocol, body: &[u8]) -> Result<ModelReply, DecodeError> {
+    match protocol {
+        Protocol::Anthropic => decode_anthropic_response(body),
+        Protocol::ChatCompletions => decode_response(body),
+    }
 }
