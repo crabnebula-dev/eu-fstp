@@ -172,12 +172,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-brand"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-json",
+]
+
+[[package]]
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
  "fstp-auth",
  "fstp-cell-core",
+ "fstp-checks",
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
@@ -261,6 +270,26 @@ version = "0.0.0"
 dependencies = [
  "fstp-celltest",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "fstp-checks"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+]
+
+[[package]]
+name = "fstp-contract"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-json",
+ "fstp-pdf",
+ "fstp-pki",
+ "fstp-sigval",
 ]
 
 [[package]]
@@ -359,9 +388,11 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-guide",
  "fstp-import",
  "fstp-json",
  "fstp-ledger",
@@ -386,6 +417,8 @@ version = "0.1.0"
 dependencies = [
  "fstp-domain",
  "fstp-html",
+ "fstp-json",
+ "fstp-pdf",
  "fstp-programme",
 ]
 
@@ -470,6 +503,13 @@ name = "fstp-obs"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+]
+
+[[package]]
+name = "fstp-pdf"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
 ]
 
 [[package]]
@@ -558,9 +598,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-sigval"
+version = "0.1.0"
+dependencies = [
+ "der",
+ "fstp-crypto",
+ "fstp-pdf",
+ "fstp-pki",
+ "x509-cert",
+]
+
+[[package]]
 name = "fstp-tenant"
 version = "0.1.0"
 dependencies = [
+ "fstp-brand",
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",
