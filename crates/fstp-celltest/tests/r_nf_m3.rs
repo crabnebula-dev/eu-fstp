@@ -307,10 +307,16 @@ const CONTENT_NAMES: [&str; 8] = [
     "body", "envelope", "text", "name", "email", "address", "title", "note",
 ];
 
+/// The migration runner's ledger: tooling metadata, not content. The
+/// content-name rule exempts it by exact schema and table name only
+/// (Daniel, 2026-11-07, m4-design section 15.0).
+const MIGRATION_LEDGER: (&str, &str) = ("fstp_migrate", "schema_migrations");
+
 /// The R-NF-08 breaches of one catalogue, one line each.
 fn clear_content(set: &str, cat: &[TableSpec]) -> Vec<String> {
     let mut out = Vec::new();
     for t in cat {
+        let ledger = (t.schema, t.name) == MIGRATION_LEDGER;
         for c in t.columns {
             match c.class {
                 None => out.push(format!(
@@ -321,7 +327,7 @@ fn clear_content(set: &str, cat: &[TableSpec]) -> Vec<String> {
                     let content = CONTENT_NAMES
                         .iter()
                         .any(|n| c.name == *n || c.name.ends_with(&format!("_{n}")));
-                    if content && class != ColumnClass::Sealed {
+                    if content && !ledger && class != ColumnClass::Sealed {
                         out.push(format!(
                             "{set}: {}.{}.{} holds content as {class:?}",
                             t.schema, t.name, c.name
@@ -399,6 +405,54 @@ fn r_nf_08_teeth_clear_content_column_is_caught() {
         3,
         "{:?}",
         clear_content("teeth", BAD)
+    );
+}
+
+/// R-NF-08 teeth, m4-design section 15.0 (row "R-NF-08 catalogue rule",
+/// 2026-11-07): the content-name rule exempts the runner's ledger
+/// `fstp_migrate.schema_migrations` by exact schema and table name only.
+/// A content-named clear column anywhere else is still reported, even in
+/// a table whose schema or name is close to the ledger's.
+#[test]
+fn r_nf_08_teeth_ledger_exemption_is_exact() {
+    use fstp_migrate::catalogue::ColumnSpec;
+    const NAME: &[ColumnSpec] = &[ColumnSpec {
+        name: "name",
+        class: Some(ColumnClass::Enum),
+    }];
+    let at = |schema: &'static str, name: &'static str| TableSpec {
+        schema,
+        name,
+        class: TableClass::Migration,
+        columns: NAME,
+    };
+    let ledger = [at("fstp_migrate", "schema_migrations")];
+    assert!(
+        clear_content("teeth", &ledger).is_empty(),
+        "{:?}",
+        clear_content("teeth", &ledger)
+    );
+    let near = [
+        at("public", "schema_migrations"),
+        at("fstp_migrate", "schema_migration"),
+        at("fstp_migrate", "other"),
+        at("ops", "outbox"),
+    ];
+    let found = clear_content("teeth", &near);
+    assert_eq!(found.len(), near.len(), "{found:#?}");
+    let unclassed = [TableSpec {
+        schema: "fstp_migrate",
+        name: "schema_migrations",
+        class: TableClass::Migration,
+        columns: &[ColumnSpec {
+            name: "name",
+            class: None,
+        }],
+    }];
+    assert_eq!(
+        clear_content("teeth", &unclassed).len(),
+        1,
+        "R-NF-08: the exemption never covers an unclassed column"
     );
 }
 

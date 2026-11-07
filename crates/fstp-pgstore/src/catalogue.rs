@@ -10,8 +10,10 @@
 //! (m4-design section 15.0) settles the columns ADR-007 left open:
 //!
 //! - chain links, stored-row hashes, `auth.challenge.action_digest`, the
-//!   digests `ops.delivery.event` and `ops.delivery.body_digest`, and the
-//!   migration ledger's `checksum` are `PublicDigest`;
+//!   digest `ops.delivery.event`, and the migration ledger's `checksum`
+//!   are `PublicDigest`;
+//! - `ops.delivery.body_digest` is an HMAC-SHA256 under a cell key, so it
+//!   is a `KeyedDigest` (Daniel, 2026-11-07, section 15.0);
 //! - both `receipt` columns are `Signature`, and
 //!   `keystore.group_key.public_key` is `PublicKeyMaterial`;
 //! - `keystore.root.handle` and `ops.outbox.idem` are `OpaqueReference`.
@@ -74,10 +76,12 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("statement_count", Count),
         ],
     ),
+    // `ledger.command` holds command envelopes, not submission text, so
+    // it is operational (Daniel, 2026-11-07, m4-design section 15.0).
     table(
         "ledger",
         "command",
-        TableClass::LedgerRecord,
+        TableClass::Operational,
         &[
             col("command", RandomId),
             col("first_seq", Sequence),
@@ -376,8 +380,9 @@ pub const CATALOGUE: &[TableSpec] = &[
         ],
     ),
     // M6 design section 3.2: the delivery log of the dispatcher. `event`
-    // and `body_digest` are SHA-256 digests over public inputs and over a
-    // rendered body, so they take the digest class (Q-A).
+    // is a SHA-256 digest over public inputs, so it takes the digest class
+    // (Q-A). `body_digest` is an HMAC-SHA256 of the rendered body under a
+    // cell key (Daniel, 2026-11-07, m4-design section 15.0).
     table(
         "ops",
         "delivery",
@@ -391,7 +396,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("lease_until", Time),
             col("event", PublicDigest),
             col("template_version", Enum),
-            col("body_digest", PublicDigest),
+            col("body_digest", KeyedDigest),
             col("reply_code", Enum),
         ],
     ),

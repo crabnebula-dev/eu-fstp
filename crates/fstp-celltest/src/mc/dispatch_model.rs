@@ -17,8 +17,8 @@
 
 use fstp_dispatch::store::{CommitFacts, Fault, MemDelivery, Next, Phase, StoreError};
 use fstp_dispatch::{
-    EndOfData, Envelope, LoadError, Outcome, Prepared, Refused, Source, Step, Store, Transport,
-    Worker,
+    DigestKey, EndOfData, Envelope, LoadError, Outcome, Prepared, Refused, Source, Step, Store,
+    Transport, Worker, body_digest,
 };
 use fstp_mc::{Model, Property};
 
@@ -288,7 +288,7 @@ impl Model for DispatchModel {
 
     fn init(&self) -> Vec<DispatchState> {
         vec![DispatchState {
-            workers: [Worker::new(wid(0)), Worker::new(wid(1))],
+            workers: [Worker::new(wid(0), key()), Worker::new(wid(1), key())],
             store: MemDelivery::new([OUTBOX]),
             staged: [false; 2],
             ends: 0,
@@ -342,7 +342,7 @@ impl Model for DispatchModel {
             }
             Action::Crash { w } => {
                 t.left.crashes = t.left.crashes.checked_sub(1)?;
-                *t.workers.get_mut(usize::from(w))? = Worker::new(wid(w));
+                *t.workers.get_mut(usize::from(w))? = Worker::new(wid(w), key());
                 *t.staged.get_mut(usize::from(w))? = false;
             }
             Action::Step { w, store, sink } => {
@@ -434,7 +434,7 @@ fn has_committing(s: &DispatchState) -> bool {
             && r.commit.is_some_and(|c| {
                 c.event == [3; 32]
                     && c.template_version == 1
-                    && c.body_digest == fstp_crypto::sha256(&prepared().body)
+                    && c.body_digest == body_digest(&key(), &prepared().body)
             })
     })
 }
@@ -472,6 +472,11 @@ pub fn properties<'a>() -> Vec<Property<'a, DispatchModel>> {
         }),
         Property::reachable(ids::W_FENCED, |s: &DispatchState| s.fenced),
     ]
+}
+
+/// The synthetic cell key of the body digest (m4-design section 15.0).
+fn key() -> DigestKey {
+    DigestKey::new([0x5a; 32])
 }
 
 #[cfg(test)]

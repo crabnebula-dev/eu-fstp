@@ -161,7 +161,7 @@ mod tests {
     fn i26_tick_sends_once_and_alerts_in_doubt() {
         let ids = [[1; 16], [2; 16]];
         let mut log = MemDelivery::new(ids);
-        let mut w = Worker::new([9; 16]);
+        let mut w = Worker::new([9; 16], fstp_dispatch::DigestKey::new([0x5a; 32]));
         let mut sink = Sink(Some(250), 0);
         let a = fstp_rt::future::block_on(tick(&mut w, &mut log, &mut One, &mut sink, &ids, T));
         assert!(a.is_empty());

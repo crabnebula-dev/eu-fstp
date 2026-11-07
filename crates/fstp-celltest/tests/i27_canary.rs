@@ -31,7 +31,9 @@ use fstp_api_testkit::smtp_sink::{SinkConfig, SmtpSink};
 use fstp_celltest::canary::{Canary, CanaryKind};
 use fstp_celltest::scan::{StoreSet, scan};
 use fstp_dispatch::store::MemDelivery;
-use fstp_dispatch::{LoadError, Outcome, Prepared, SmtpTransport, Source, Worker, prepare};
+use fstp_dispatch::{
+    DigestKey, LoadError, Outcome, Prepared, SmtpTransport, Source, Worker, prepare,
+};
 use fstp_domain::StateTag;
 use fstp_domain::id::{CallId, ContractId, MilestoneId, ProposalId, RequestId};
 use fstp_domain::time::Timestamp;
@@ -219,7 +221,7 @@ fn i27_dispatched_mail_holds_no_canary() {
     let ids: Vec<[u8; 16]> = stored.iter().map(|s| s.outbox).collect();
     let mut log = MemDelivery::new(ids.iter().copied());
     let mut source = StoredSource(stored.iter().map(|s| (s.outbox, s.raw.clone())).collect());
-    let mut worker = Worker::new([9; 16]);
+    let mut worker = Worker::new([9; 16], DigestKey::new([0x5a; 32]));
     for _ in 0..(5 * ids.len() + 5) {
         let _: Outcome = rt().block_on(worker.step(&mut log, &mut source, &mut tx, &ids, AT));
     }

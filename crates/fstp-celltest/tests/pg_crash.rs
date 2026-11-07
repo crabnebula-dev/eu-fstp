@@ -29,7 +29,10 @@ use std::collections::BTreeMap;
 
 use common::{CellDb, block_on, bytea, fresh16, must, rt, uuid_text};
 use fstp_api_testkit::smtp_sink::{SinkConfig, SmtpSink};
-use fstp_dispatch::{Envelope, LoadError, Outcome, Prepared, SmtpTransport, Source, Step, Worker};
+use fstp_dispatch::{
+    DigestKey, Envelope, LoadError, Outcome, Prepared, SmtpTransport, Source, Step, Worker,
+    body_digest,
+};
 use fstp_pgstore::{DELIVERY_LEASE_US, DeliveryLog, Phase, Pool, Role};
 use fstp_rt::tokio::TokioRuntime;
 use fstp_smtp::client::Staged;
@@ -217,7 +220,7 @@ fn check(w: &World, msgs: &[Msg], label: &str) {
             "liveness ({label}): {rows:?}"
         );
         if !hits.is_empty() {
-            let digest = fstp_crypto::sha256(&m.prepared.body);
+            let digest = body_digest(&key(), &m.prepared.body);
             assert!(
                 rows.iter().any(|r| r.phase == Phase::Committing
                     && r.commit.is_some_and(|c| c.body_digest == digest
@@ -230,7 +233,7 @@ fn check(w: &World, msgs: &[Msg], label: &str) {
 }
 
 fn workers() -> [W; 2] {
-    [Worker::new([1; 16]), Worker::new([2; 16])]
+    [Worker::new([1; 16], key()), Worker::new([2; 16], key())]
 }
 
 /// I-25, I-26, M6 design section 7 (T3): with the pgwire connection
@@ -336,4 +339,9 @@ fn i26_pg_stalled_worker_is_fenced_at_the_commit_point() {
     );
     assert_eq!(w.sink.messages().len(), 1, "I-26: one delivery");
     check(&w, &msgs, "stall");
+}
+
+/// The synthetic cell key of the body digest (m4-design section 15.0).
+fn key() -> DigestKey {
+    DigestKey::new([0x5a; 32])
 }

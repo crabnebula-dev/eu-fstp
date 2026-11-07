@@ -200,7 +200,9 @@ fn r_nf_08_app_lookup_columns_are_digests() {
 #[test]
 fn r_nf_08_app_table_classes_follow_the_design() {
     let pins = [
-        ("ledger", "command", TableClass::LedgerRecord),
+        // Daniel, 2026-11-07, m4-design section 15.0: command envelopes,
+        // not submission text.
+        ("ledger", "command", TableClass::Operational),
         ("ledger", "entry", TableClass::LedgerRecord),
         ("audit", "chain", TableClass::AuditEvent),
         ("audit", "anchor", TableClass::AuditEvent),

@@ -13,7 +13,9 @@ use fstp_celltest::mc::place_model::db;
 use fstp_celltest::world::ClusterHandle;
 use fstp_migrate::catalogue::{ColumnClass, TableSpec};
 
-use ColumnClass::{Infrastructure, OpaqueReference, PublicDigest, PublicKeyMaterial, Signature};
+use ColumnClass::{
+    Infrastructure, KeyedDigest, OpaqueReference, PublicDigest, PublicKeyMaterial, Signature,
+};
 
 fn class_of(cat: &[TableSpec], schema: &str, table: &str, column: &str) -> Option<ColumnClass> {
     cat.iter()
@@ -53,7 +55,8 @@ fn r_nf_08_q_a_columns_take_daniels_classes() {
         (vault, "vault", "epoch", "ack_link", PublicDigest),
         (app, "auth", "challenge", "action_digest", PublicDigest),
         (app, "ops", "delivery", "event", PublicDigest),
-        (app, "ops", "delivery", "body_digest", PublicDigest),
+        // Daniel, 2026-11-07, section 15.0: an HMAC under a cell key.
+        (app, "ops", "delivery", "body_digest", KeyedDigest),
         (app, "audit", "anchor", "receipt", Signature),
         (app, "keystore", "root", "receipt", Signature),
         (vault, "vault_audit", "anchor", "receipt", Signature),

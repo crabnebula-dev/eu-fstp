@@ -25,7 +25,10 @@
 use std::collections::BTreeMap;
 
 use fstp_dispatch::store::{CommitFacts, Fault, MemDelivery, Next, Phase};
-use fstp_dispatch::{EndOfData, Envelope, LoadError, Prepared, Refused, Source, Transport, Worker};
+use fstp_dispatch::{
+    DigestKey, EndOfData, Envelope, LoadError, Prepared, Refused, Source, Transport, Worker,
+    body_digest,
+};
 use fstp_prop::{Gen, prop_assert};
 
 const T0: i64 = 1_794_000_000_000_000;
@@ -166,7 +169,7 @@ fn reference_step(world: &mut World, w: usize, f: StepFaults) -> Result<(), Stri
         WState::Claimed { m, attempt } => WState::Rendered {
             m,
             attempt,
-            digest: fstp_crypto::sha256(&world.msgs[m].body),
+            digest: body_digest(&key(), &world.msgs[m].body),
         },
         // S3: stage the body without the final dot.
         WState::Rendered { m, attempt, digest } => {
@@ -231,7 +234,7 @@ fn reference_step(world: &mut World, w: usize, f: StepFaults) -> Result<(), Stri
 /// in-memory delivery log and the sink (lane L6-DISP).
 fn dispatcher_step(world: &mut World, w: usize, f: StepFaults) -> Result<(), String> {
     if f.crash {
-        world.dispatchers[w] = Worker::new(worker_id(w));
+        world.dispatchers[w] = Worker::new(worker_id(w), key());
         world.sink.quit(w);
         return Ok(());
     }
@@ -314,7 +317,7 @@ impl Transport for SinkTransport<'_> {
             .ok_or(Refused::Permanent(None))?;
         self.sink
             .staged
-            .insert(self.w, (m.idem, fstp_crypto::sha256(body)));
+            .insert(self.w, (m.idem, body_digest(&key(), body)));
         Ok(self.w)
     }
 
@@ -375,7 +378,9 @@ fn run_case(g: &mut Gen, step: Step) -> Result<(), String> {
         sink: Sink::default(),
         now: T0,
         workers: vec![WState::Idle; n_workers],
-        dispatchers: (0..n_workers).map(|w| Worker::new(worker_id(w))).collect(),
+        dispatchers: (0..n_workers)
+            .map(|w| Worker::new(worker_id(w), key()))
+            .collect(),
     };
     // The faulty phase: a random schedule with faults and stalls.
     let steps = g.usize_in(0..=150);
@@ -460,4 +465,9 @@ fn i25_i26_dispatcher_sends_at_most_once_under_crashes() {
         "i25_i26_dispatcher_sends_at_most_once_under_crashes",
         |g: &mut Gen| run_case(g, dispatcher_step),
     );
+}
+
+/// The synthetic cell key of the body digest (m4-design section 15.0).
+fn key() -> DigestKey {
+    DigestKey::new([0x5a; 32])
 }

@@ -96,7 +96,8 @@ pub struct CommitFacts {
     pub event: [u8; 32],
     /// The template version.
     pub template_version: u16,
-    /// The SHA-256 of the rendered body.
+    /// The HMAC-SHA256 of the rendered body under a cell key (m4-design
+    /// section 15.0, 2026-11-07).
     pub body_digest: [u8; 32],
 }
 
