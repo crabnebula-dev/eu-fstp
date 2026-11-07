@@ -60,6 +60,8 @@ members = [
     "crates/fstp-journey",
     # M5, docs/handoff/m5-design.md section 10, lane L-PDF.
     "crates/fstp-pdf",
+    # M7, docs/handoff/m7-design.md section 10, lane L-RETR.
+    "crates/fstp-retrieve",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -152,6 +154,8 @@ fstp-api-core = { path = "crates/fstp-api-core" }
 fstp-journey = { path = "crates/fstp-journey" }
 # M5, docs/handoff/m5-design.md section 10.
 fstp-pdf = { path = "crates/fstp-pdf" }
+# M7, docs/handoff/m7-design.md section 10.
+fstp-retrieve = { path = "crates/fstp-retrieve" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }

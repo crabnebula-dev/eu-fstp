@@ -1,0 +1,20 @@
+[package]
+name = "fstp-retrieve"
+description = "GET-only retrieval proxy for claim verification: destination policy, limits, HTML-to-text and source classing (M7 design section 3.2, TH-12)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-findings.workspace = true
+fstp-http.workspace = true
+fstp-json.workspace = true
+fstp-rt.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
