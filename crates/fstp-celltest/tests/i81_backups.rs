@@ -9,8 +9,9 @@
 //! passes on a missing part.
 //!
 //! The file custody tests make their key volumes under the directory that
-//! `FSTP_KEY_VOLUME_DIR` names, which must be on ext4 or XFS. Without it
-//! they fail with a named seam.
+//! `FSTP_KEY_VOLUME_DIR` names, which the Linux CI job mounts as ext4.
+//! Without it they use the temporary directory at reduced assurance
+//! (I-81 NOTE of 2026-11-01, Q-F interim).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -285,17 +286,33 @@ fn i81_teeth_live_identity_match_digest_is_recomputed() {
 /// filesystem, for the key volumes of the file custody tests.
 const KEY_VOLUME_ENV: &str = "FSTP_KEY_VOLUME_DIR";
 
-/// The seam of [`key_volume_root`]: `fstp-keyd` accepts only an ext4 or
-/// XFS key volume. `std::env::temp_dir()` is APFS on macOS and often
-/// tmpfs on Linux, so a correct `fstp-keyd` refuses it. The CI isolation
-/// job (lane W4) sets the variable to an ext4 or XFS mount.
-const KEY_VOLUME_SEAM: &str = "FSTP_KEY_VOLUME_DIR is unset: the file custody tests need a directory on an ext4 or XFS mount, which the CI isolation job provides (design section 3.3, lane W4)";
-
-/// The directory under which the file custody tests make key volumes.
-fn key_volume_root() -> Result<PathBuf, String> {
+/// The directory under which the file custody tests make key volumes:
+/// the one `FSTP_KEY_VOLUME_DIR` names, or else the system temporary
+/// directory. Q-F, interim pending Daniel (m3-finish section 5 step 4):
+/// without the variable every assertion still runs, on a volume of
+/// reduced assurance. The Linux CI test job sets it to an ext4 mount,
+/// and the `fstp-keyd` guard `i81_note_linux_ci_key_volume_reports_full`
+/// fails there without it.
+fn key_volume_root() -> PathBuf {
     match std::env::var_os(KEY_VOLUME_ENV) {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
-        _ => Err(KEY_VOLUME_SEAM.to_owned()),
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => std::env::temp_dir(),
+    }
+}
+
+/// I-81 NOTE (2026-11-01), Q-F: a volume under `FSTP_KEY_VOLUME_DIR` on
+/// Linux reports full assurance, and no volume off Linux does. Elsewhere
+/// the test asserts `Full` only where the volume reports it.
+fn check_volume_assurance(volume: &Path) {
+    use fstp_obs::assurance::Assurance;
+    let named = std::env::var_os(KEY_VOLUME_ENV).is_some_and(|d| !d.is_empty());
+    let a = fstp_keyd::check_key_volume(volume);
+    if cfg!(target_os = "linux") {
+        if named {
+            assert_eq!(a, Assurance::Full, "FSTP_KEY_VOLUME_DIR is not full");
+        }
+    } else {
+        assert!(matches!(a, Assurance::Reduced(_)), "full off Linux: {a:?}");
     }
 }
 
@@ -311,13 +328,14 @@ struct Scratch {
 impl Scratch {
     fn new(name: &str) -> Scratch {
         let leaf = format!("fstp-w1d-{name}-{}", std::process::id());
-        let root = key_volume_root().unwrap_or_else(|e| panic!("{e}"));
+        let root = key_volume_root();
         let socket_dir = std::env::temp_dir().join(&leaf);
         let volume = root.join(&leaf);
         for dir in [&socket_dir, &volume] {
             let _ = fs::remove_dir_all(dir);
             fs::create_dir_all(dir).unwrap();
         }
+        check_volume_assurance(&volume);
         Scratch {
             socket: socket_dir.join("keyd.sock"),
             socket_dir,
@@ -449,11 +467,14 @@ struct KeyTableEntry {
 /// `fstp_keyd::open_key_table` (lane W2f). The key table is sealed under
 /// a passphrase-derived key (ADR-004 part 2). `serve` reads the
 /// passphrase from the systemd credential `fstp-keyd-passphrase` in
-/// `$CREDENTIALS_DIRECTORY`, and this helper reads the same one. A keyd
+/// `$CREDENTIALS_DIRECTORY`, and this helper reads the same one. In
+/// development mode without that credential, both use the ephemeral
+/// passphrase of the process. A keyd
 /// that only marks an epoch destroyed but keeps `K(e)` passes every
 /// other check here, so this one is needed.
 fn key_table_entries(volume: &Path) -> Result<Vec<KeyTableEntry>, String> {
     let passphrase = fstp_keyd::Passphrase::from_credentials()
+        .or_else(|_| fstp_keyd::Passphrase::development())
         .map_err(|e| format!("fstp_keyd::Passphrase::from_credentials: {e}"))?;
     let table = fstp_keyd::open_key_table(volume, &passphrase)
         .map_err(|e| format!("fstp_keyd::open_key_table: {e}"))?;

@@ -39,6 +39,20 @@ impl Drop for Scratch {
     }
 }
 
+/// Waits until `fstp-keyd` has bound `socket`: it opens the key table
+/// before it binds, so a client that connects earlier is refused.
+fn wait_for_socket(socket: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !socket.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fstp-keyd bound no socket at {}",
+            socket.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn label(epoch: u64) -> RootLabel {
     RootLabel {
         cell: Some(CellId([9; 16])),
@@ -80,6 +94,7 @@ fn review_keyd_destroy_overwrites_the_key_table_in_place() {
             let _ = fstp_keyd::serve(&socket, &volume);
         })
     };
+    wait_for_socket(&socket);
     let client = KeydCustody::new(&socket)
         .unwrap_or_else(|e| panic!("KeydCustody::new: {e} (NotImplemented)"));
     let aad = Aad(b"review in place".to_vec());

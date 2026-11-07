@@ -4,10 +4,9 @@
 //!   refuses everything with `NotImplemented`. A refusal test passes only
 //!   on [`Fail::Refused`].
 //! - [`impls!`] reads `true` exactly when a bound holds, at compile time.
-//! - [`Keyd`] starts `fstp-keyd` on a fresh socket and key volume. The
-//!   key volume must be ext4 or XFS (design section 3.3, Q32 A), so it
-//!   lives under `FSTP_KEY_VOLUME_DIR`. Without that variable the server
-//!   tests are red and say why, as on a macOS host.
+//! - [`start`] runs `fstp-keyd` on a fresh socket and key volume. The key
+//!   volume lives under `FSTP_KEY_VOLUME_DIR`, or else in the temporary
+//!   directory at reduced assurance (I-81 NOTE, Q-F interim).
 
 #![allow(
     dead_code,
@@ -26,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use fstp_custody::KeydCustody;
+use fstp_obs::assurance::Assurance;
 
 /// Why a call did not succeed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,16 +112,41 @@ pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 /// The variable that names a directory on an ext4 or XFS mount.
 pub const KEY_VOLUME_ENV: &str = "FSTP_KEY_VOLUME_DIR";
 
-/// Why a server test cannot run: `fstp-keyd` accepts only an ext4 or XFS
-/// key volume, and `std::env::temp_dir()` is APFS on macOS and often
-/// tmpfs on Linux. The CI isolation job (lane W4) sets the variable.
-pub const KEY_VOLUME_SEAM: &str = "FSTP_KEY_VOLUME_DIR is unset: the fstp-keyd server tests need a directory on an ext4 or XFS mount, which the CI isolation job provides (design section 3.3, lane W4)";
-
-/// The directory under which the server tests make key volumes.
-pub fn key_volume_root() -> Result<PathBuf, String> {
+/// The directory under which the server tests make key volumes: the one
+/// `FSTP_KEY_VOLUME_DIR` names, or else the system temporary directory.
+/// Q-F, interim pending Daniel (m3-finish section 5 step 4): without the
+/// variable every test still runs, on a volume of reduced assurance. The
+/// Linux CI test job sets it to an ext4 mount, and the guard
+/// `i81_note_linux_ci_key_volume_reports_full` fails there without it.
+pub fn key_volume_root() -> PathBuf {
     match std::env::var_os(KEY_VOLUME_ENV) {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
-        _ => Err(KEY_VOLUME_SEAM.to_owned()),
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => std::env::temp_dir(),
+    }
+}
+
+/// Whether `FSTP_KEY_VOLUME_DIR` names a directory.
+pub fn key_volume_named() -> bool {
+    std::env::var_os(KEY_VOLUME_ENV).is_some_and(|d| !d.is_empty())
+}
+
+/// Checks the I-81 assurance of `volume` (I-81 NOTE of 2026-11-01, Q-F).
+/// A volume under `FSTP_KEY_VOLUME_DIR` on Linux must report `Full`.
+/// Off Linux every volume reports `Reduced` with a reason. Elsewhere the
+/// test asserts `Full` only where the volume reports it.
+pub fn check_volume_assurance(volume: &Path) -> Result<Assurance, String> {
+    let a = fstp_keyd::check_key_volume(volume);
+    let linux = cfg!(target_os = "linux");
+    match a {
+        Assurance::Full if !linux => Err(format!(
+            "{} reports full assurance off Linux",
+            volume.display()
+        )),
+        Assurance::Reduced(r) if linux && key_volume_named() => Err(format!(
+            "FSTP_KEY_VOLUME_DIR names a volume of reduced assurance: {}",
+            r.as_str()
+        )),
+        _ => Ok(a),
     }
 }
 
@@ -136,13 +161,14 @@ impl Scratch {
     /// A scratch set for the test `name`.
     pub fn new(name: &str) -> Result<Scratch, String> {
         let leaf = format!("fstp-keyd-crate-{name}-{}", std::process::id());
-        let root = key_volume_root()?;
+        let root = key_volume_root();
         let socket_dir = std::env::temp_dir().join(&leaf);
         let volume = root.join(&leaf);
         for dir in [&socket_dir, &volume] {
             let _ = fs::remove_dir_all(dir);
             fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
+        check_volume_assurance(&volume)?;
         Ok(Scratch {
             socket: socket_dir.join("keyd.sock"),
             socket_dir,

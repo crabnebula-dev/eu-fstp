@@ -1914,6 +1914,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | M3 Q-B, self-hosted tests (2026-11-07) | Deferred with B-06 | The self-hosted tests (I-38, I-39 services down, I-83 self-hosted, R-NF-05) leave M3 and return with self-hosted packaging (B-06). Lane F-SELF is not built |
 | M3 Q-C, vault chain coverage (2026-11-07) | Facts and releases | Each fact batch and each identity release or read is a vault chain row; key operations stay events only |
 | M3 Q-D, witness receipt key (2026-11-07) | Own keyd entry | The witness receipt signing key has its own fstp-keyd custody entry with its own credential |
+| Key-volume tests on hosts without ext4, lane F-KEYD (Q-F, 2026-11-07) | Not yet answered. Interim, pending Daniel, as `m3-finish.md` section 5 step 4 recommends | `fstp-keyd` starts on any volume and logs `KeyCustodyStarted` with its I-81 assurance. Without `FSTP_KEY_VOLUME_DIR` the tests use the temporary directory and assert `Reduced` off Linux. Linux CI mounts an ext4 volume, and a guard test fails there without it. Development mode makes a temporary volume, socket directory or ephemeral passphrase and warns. The `test-needles` feature, for `fstp-celltest` only, records root bytes for the I-80 scan |
 
 ### 15.1 These block the milestone
 
