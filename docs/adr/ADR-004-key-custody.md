@@ -129,7 +129,7 @@ sealed  = header | E 32 | ct_M 1088 | nonce 12 | wrapped 48         1210 bytes
 ```
 
 - Integers are big-endian. `kem = 1` names this combiner. `aead = 1` names AES-256-GCM.
-- Chain codes: App 1, Vault 2, CellBackup 3, ClusterBackup 4, ControlPlane 5. Purpose codes come from `fstp_keys::Purpose`. Record at first use: the purpose code table, which is frozen once written.
+- Chain codes: App 1, Vault 2, CellBackup 3, ClusterBackup 4, ControlPlane 5. Purpose codes come from `fstp_keys::Purpose`. The purpose code table below records them (accepted by Daniel on 2026-11-07), and it is frozen.
 - `owner` is the `CellId`. For the ClusterBackup chain it is the `ClusterId`, and for the ControlPlane chain the environment id.
 - `object` is the data key id. `ctx` is not stored, because the caller supplies it from the row that names the key.
 - `open_key` compares the header's chain, group and generation with `ctx` before any decapsulation. A sealed key moved to another object, group, generation, chain or cell fails to open.
@@ -137,6 +137,30 @@ sealed  = header | E 32 | ct_M 1088 | nonce 12 | wrapped 48         1210 bytes
 - Each `kek` seals once. The nonce is still drawn at random, under the rule below, so the rule has no exception.
 
 Sealed blobs (texts, ledger bodies, chain events, checkpoints, outbox rows, keystore secrets and backup chunks) use AES-256-GCM under their data key. Their AAD binds each blob to its owner and its position, so a blob moved to another cell, row or object fails to open. The exact AAD and layout belong to the ADR that owns the table: ADR-007 for ledger and chain rows, and ADR-012 for backup containers (M3 design, section 18).
+
+### Purpose code table
+
+Status: Accepted by Daniel Thompson-Yvetot on 2026-11-07 (m3-finish Q-E). The table is frozen.
+
+The `purpose u8` of `ctx` takes one code per `fstp_keys::Purpose` variant, in declaration order. Code 0 names no purpose. A code is never reused or renumbered, and a new purpose takes the next free code.
+
+| Code | `Purpose` | What it seals or keys |
+| --- | --- | --- |
+| 1 | `Ledger` | A ledger entry |
+| 2 | `Text` | A text of the text store |
+| 3 | `AuditEvent` | An audit event body |
+| 4 | `Checkpoint` | A checkpoint of the projections |
+| 5 | `Backup` | A backup chunk |
+| 6 | `Lookup` | The HMAC key of the login email index (App chain) |
+| 7 | `CredLookup` | The HMAC key of the credential id index (App chain) |
+| 8 | `Ticket` | The vault ticket key (App chain, Ed25519) |
+| 9 | `Anchor` | A chain's composite anchor key |
+| 10 | `Attribute` | An identity attribute (Vault chain) |
+| 11 | `Document` | An identity document (Vault chain) |
+| 12 | `Fact` | A vault fact (Vault chain) |
+| 13 | `Match` | The identity match key (Vault chain) |
+
+`fstp_keys::Purpose::code` implements this table, and `fstp_celltest::reference::keys::purpose_code` copies it. The code binds through the AAD of the wrapped data key, since `ctx` is not stored.
 
 ### Nonce rule
 
@@ -458,6 +482,7 @@ W2f also checks these items on the host side.
 
 ### Open points for Daniel
 
+- The purpose code table above is Proposed (m3-finish Q-E). Daniel accepts it, or names other codes, before the F-CRYPTO lane merges.
 - Self-hosted physical cluster backups need a ClusterBackup chain entry, which M3 design section 9.5 does not list. Proposed: `fstp-install` creates one per local cluster, usable only through the root-only console socket.
 - The self-hosted witness needs custody for its receipt key, which section 9.5 also omits. Proposed: a `fstp-keyd` ControlPlane entry with its own socket for the `fstp-witness` OS user.
 - ADR-001 lists the aws-lc-rs functions in use. The ADR-001 amendment of 2026-10-28 adds PBKDF2-HMAC-SHA-256 for the file custody key table and AES-256-GCM-SIV as a conditional fallback (ADR-001 A8). Daniel accepted A8 with that amendment on 2026-10-28, so the file custody KDF is no longer blocked on it.

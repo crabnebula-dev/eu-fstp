@@ -126,18 +126,11 @@ fn i75_mldsa_never_used_without_ed25519() {
     });
 }
 
-/// The seam of [`composite_public_key`], a test-side seam: a composite
-/// signing key gives no public key yet. `fstp_crypto::composite` has
-/// `CompositePublicKey::to_bytes`, but `CompositeSigningKey` has no call
-/// that returns its `CompositePublicKey`. Lane dsa adds that accessor with
-/// the ML-DSA-65 wiring. This helper then returns
-/// `key.<accessor>().to_bytes().to_vec()`, and this test file needs that
-/// one edit before the test becomes a real check.
-const COMPOSITE_PK_SEAM: &str = "test-side seam: fstp_crypto::composite::CompositeSigningKey has no accessor for its CompositePublicKey yet (lane dsa); edit composite_public_key in tests/i75_hybrids.rs once it lands";
-
+/// The composite public key `mldsaPK || tradPK` of `key`, through
+/// `CompositeSigningKey::public_key` (lane F-CRYPTO closed the former
+/// test-side seam).
 fn composite_public_key(key: &composite::CompositeSigningKey) -> Result<Vec<u8>, String> {
-    let _ = key;
-    Err(COMPOSITE_PK_SEAM.to_owned())
+    Ok(key.public_key().to_bytes().to_vec())
 }
 
 /// `fstp_keys::envelope::seal_key` (design section 3.2, lane W2f), as the

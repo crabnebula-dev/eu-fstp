@@ -578,15 +578,26 @@ pub const fn chain_code(chain: Chain) -> u8 {
 
 /// The ADR-004 purpose code of `purpose`.
 ///
-/// ADR-004 says "Purpose codes come from `fstp_keys::Purpose`. Record at
-/// first use: the purpose code table, which is frozen once written." The
-/// table is not recorded yet, so the reference knows no code and answers
-/// `None`. Every check that needs a code then fails with the missing
-/// record, never with a guessed value. The lane that records the table
-/// copies it here.
+/// A copy of the ADR-004 "Purpose code table", written out here rather
+/// than read from `fstp_keys::Purpose::code`, so a production change
+/// shows as a mismatch. The table is Proposed (m3-finish Q-E). Interim,
+/// pending Daniel.
 pub const fn purpose_code(purpose: Purpose) -> Option<u8> {
-    let _ = purpose;
-    None
+    Some(match purpose {
+        Purpose::Ledger => 1,
+        Purpose::Text => 2,
+        Purpose::AuditEvent => 3,
+        Purpose::Checkpoint => 4,
+        Purpose::Backup => 5,
+        Purpose::Lookup => 6,
+        Purpose::CredLookup => 7,
+        Purpose::Ticket => 8,
+        Purpose::Anchor => 9,
+        Purpose::Attribute => 10,
+        Purpose::Document => 11,
+        Purpose::Fact => 12,
+        Purpose::Match => 13,
+    })
 }
 
 /// The header of a sealed key.
