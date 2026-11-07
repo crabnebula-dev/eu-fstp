@@ -94,6 +94,9 @@ pub enum TenantRefusal {
     /// The Guide's privacy statement address is not an `https:` address
     /// (R-GA-01).
     InvalidAddress,
+    /// The brand tokens fail I-70: these pairs of the table miss WCAG 2.2
+    /// AA contrast. The set names pairs only, never a colour.
+    BrandingContrast(fstp_brand::PairSet),
     /// A record contradicts the state it folds into.
     Inconsistent,
 }
@@ -139,6 +142,7 @@ impl TenantRefusal {
             TenantRefusal::ActivationNotOpen => "activation_not_open",
             TenantRefusal::SelfActivationApproval => "self_activation_approval",
             TenantRefusal::InvalidAddress => "invalid_address",
+            TenantRefusal::BrandingContrast(_) => "branding_contrast",
             TenantRefusal::Inconsistent => "inconsistent",
         }
     }

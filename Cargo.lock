@@ -166,6 +166,7 @@ name = "fstp-api-core"
 version = "0.1.0"
 dependencies = [
  "fstp-access",
+ "fstp-brand",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
@@ -190,6 +191,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-access",
  "fstp-api-core",
+ "fstp-brand",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
@@ -251,6 +253,15 @@ dependencies = [
  "fstp-obs",
  "fstp-prop",
  "fstp-tls",
+]
+
+[[package]]
+name = "fstp-brand"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-json",
+ "fstp-prop",
 ]
 
 [[package]]
@@ -864,6 +875,7 @@ dependencies = [
 name = "fstp-tenant"
 version = "0.1.0"
 dependencies = [
+ "fstp-brand",
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",

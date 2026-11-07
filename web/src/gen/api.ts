@@ -67,6 +67,8 @@ export type OpName =
   | "tenant.get_activation"
   | "tenant.request_activation"
   | "tenant.approve_activation"
+  | "tenant.branding.check"
+  | "tenant.branding.set"
   | "me.get_verification"
   | "tenant.set_login_methods"
   | "tenant.set_step_up_freshness"
@@ -240,6 +242,8 @@ export interface OpParams {
   readonly "tenant.get_activation": Readonly<Record<never, string>>;
   readonly "tenant.request_activation": Readonly<Record<never, string>>;
   readonly "tenant.approve_activation": Readonly<Record<never, string>>;
+  readonly "tenant.branding.check": Readonly<Record<never, string>>;
+  readonly "tenant.branding.set": Readonly<Record<never, string>>;
   readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
   readonly "tenant.set_step_up_freshness": Readonly<Record<never, string>>;
@@ -386,6 +390,8 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.get_activation",
   "tenant.request_activation",
   "tenant.approve_activation",
+  "tenant.branding.check",
+  "tenant.branding.set",
   "me.get_verification",
   "tenant.set_login_methods",
   "tenant.set_step_up_freshness",
@@ -698,6 +704,34 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: false,
     binding: false,
     session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.branding.check",
+    method: "POST",
+    path: "/admin/branding/check",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "branding" }, { kind: "literal", text: "check" }],
+    params: [],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.branding.set",
+    method: "PUT",
+    path: "/admin/branding",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "branding" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
     classification: "confidential",
     tool: null,
   },
@@ -2996,6 +3030,13 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "request": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
       "requested_by": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
       "approved_by": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+    },
+  },
+  "tenant.branding.check": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "failing": { schema: { kind: "array", items: { kind: "enum", values: ["light.brand-text/surface-0", "light.brand-text/surface-1", "light.on-brand/brand", "light.on-brand/brand-hover", "light.focus/surface-0", "dark.brand-text/surface-0", "dark.brand-text/surface-1", "dark.on-brand/brand", "dark.on-brand/brand-hover", "dark.focus/surface-0"] } }, optional: false },
     },
   },
   "tenant.get_step": {

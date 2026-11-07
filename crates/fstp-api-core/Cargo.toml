@@ -17,6 +17,7 @@ fstp-import.workspace = true
 fstp-public.workspace = true
 fstp-guide.workspace = true
 fstp-tenant.workspace = true
+fstp-brand.workspace = true
 fstp-json.workspace = true
 fstp-money.workspace = true
 fstp-crypto.workspace = true

@@ -38,6 +38,7 @@ fstp-prop.workspace = true
 fstp-mc.workspace = true
 fstp-tls.workspace = true
 fstp-smtp.workspace = true
+fstp-brand.workspace = true
 
 [lints]
 workspace = true

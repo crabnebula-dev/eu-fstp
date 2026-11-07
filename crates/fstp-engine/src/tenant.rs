@@ -310,6 +310,8 @@ pub fn tenant_refusal(r: TenantRefusal) -> Refusal {
         | TenantRefusal::ActivationNotOpen => (RuleRef::Input, Why::WrongState),
         // SoD-18 holds by analogy with I-67.
         TenantRefusal::SelfActivationApproval => (RuleRef::I67, Why::GuardFailed),
+        // I-70 has no domain rule reference. The API core names I-70.
+        TenantRefusal::BrandingContrast(_) => (RuleRef::Input, Why::InvalidValue),
     };
     Refusal::new(rule, why)
 }

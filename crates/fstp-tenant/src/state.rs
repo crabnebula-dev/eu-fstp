@@ -189,6 +189,7 @@ pub struct TenantState {
     signatories: BTreeSet<(SignatoryRole, AccountId)>,
     /// The activation of the organisation (SoD-18).
     activation: Activation,
+    branding: Option<(fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)>,
 }
 
 /// The instant `t`, or [`TenantRefusal::InvalidInstant`] when it lies
@@ -221,6 +222,7 @@ impl TenantState {
             completed: false,
             signatories: BTreeSet::new(),
             activation: Activation::NotRequested,
+            branding: None,
         }
     }
 
@@ -439,6 +441,11 @@ impl TenantState {
                     requested_by,
                     approved_by: *by,
                 };
+            }
+            TenantRecord::BrandingSet { tokens, digest, by } => {
+                self.need_admin(*by)?;
+                crate::decide::check_branding(tokens).map_err(FoldError)?;
+                self.branding = Some((tokens.clone(), *digest));
             }
         }
         self.revision = self.revision.next();
@@ -747,6 +754,12 @@ impl TenantState {
     /// The activation of the organisation (SoD-18).
     pub fn activation(&self) -> Activation {
         self.activation
+    }
+
+    /// The latest brand tokens and their digest, or `None` while the
+    /// tenant shows the platform brand (M9 design section 2.1).
+    pub fn branding(&self) -> Option<(&fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)> {
+        self.branding.as_ref().map(|(t, d)| (t, *d))
     }
 
     /// Whether a second tenant admin approved the activation, so the

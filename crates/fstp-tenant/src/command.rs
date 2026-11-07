@@ -1,7 +1,8 @@
 //! Tenant commands, records and the command context (design section 3.5).
 
+use fstp_brand::BrandTokens;
 use fstp_domain::Via;
-use fstp_domain::id::{AccountId, LlmConfigId};
+use fstp_domain::id::{AccountId, ContentDigest, LlmConfigId};
 use fstp_domain::time::Timestamp;
 
 use crate::types::{
@@ -131,6 +132,15 @@ pub enum TenantCommand {
         /// The request approved, which must be the open one.
         request: ActivationRequestId,
     },
+    /// Set the tenant brand tokens (`tenant.branding.set`, M9 lane B1).
+    /// High-risk. Refused with the failing pairs listed when any pair of
+    /// the I-70 table fails.
+    SetBranding {
+        /// The typed tokens (I-68).
+        tokens: BrandTokens,
+        /// The digest of their canonical text, computed by the shell.
+        digest: ContentDigest,
+    },
 }
 
 /// The kind of a tenant command, as the operation registry names it.
@@ -162,11 +172,13 @@ pub enum TenantKind {
     RequestActivation,
     /// `tenant.approve_activation`.
     ApproveActivation,
+    /// `tenant.branding.set`.
+    SetBranding,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 18] = [
+    pub const ALL: [TenantKind; 19] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -185,6 +197,7 @@ impl TenantKind {
         TenantKind::EndSignatory,
         TenantKind::RequestActivation,
         TenantKind::ApproveActivation,
+        TenantKind::SetBranding,
     ];
 
     /// Whether the kind is high-risk and needs a fresh step-up (R-LG-03).
@@ -198,6 +211,8 @@ impl TenantKind {
     /// - Not the request or the approval of the organisation's activation:
     ///   the high-risk table names programme activation only (interim,
     ///   pending Daniel).
+    /// - Setting the brand tokens changes what every interface shows
+    ///   (M9 design section 2.2).
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
@@ -207,6 +222,7 @@ impl TenantKind {
                 | TenantKind::SetGuideNotice
                 | TenantKind::GrantSignatory
                 | TenantKind::EndSignatory
+                | TenantKind::SetBranding
         )
     }
 
@@ -249,6 +265,7 @@ impl TenantCommand {
             TenantCommand::EndSignatory { .. } => TenantKind::EndSignatory,
             TenantCommand::RequestActivation { .. } => TenantKind::RequestActivation,
             TenantCommand::ApproveActivation { .. } => TenantKind::ApproveActivation,
+            TenantCommand::SetBranding { .. } => TenantKind::SetBranding,
         }
     }
 
@@ -393,5 +410,15 @@ pub enum TenantRecord {
         by: AccountId,
         /// The instant of the approval.
         at: Timestamp,
+    },
+    /// A tenant admin set the brand tokens (M9 design section 2.1). Every
+    /// pair of the I-70 table passes.
+    BrandingSet {
+        /// The typed tokens.
+        tokens: BrandTokens,
+        /// The digest of their canonical text.
+        digest: ContentDigest,
+        /// The setting admin.
+        by: AccountId,
     },
 }

@@ -305,6 +305,14 @@ pub fn decide(
                 at: ctx.at,
             }])
         }
+        TenantCommand::SetBranding { tokens, digest } => {
+            check_branding(tokens)?;
+            Ok(vec![TenantRecord::BrandingSet {
+                tokens: tokens.clone(),
+                digest: *digest,
+                by,
+            }])
+        }
     }
 }
 
@@ -345,4 +353,15 @@ fn step_check(
         }
     }
     Ok(())
+}
+
+/// I-70: every pair of the table meets AA in both modes. A refusal lists
+/// the failing pairs (M9 design section 2.2).
+pub(crate) fn check_branding(tokens: &fstp_brand::BrandTokens) -> Result<(), TenantRefusal> {
+    let failing = fstp_brand::failing_pairs(tokens);
+    if failing.is_empty() {
+        Ok(())
+    } else {
+        Err(TenantRefusal::BrandingContrast(failing))
+    }
 }
