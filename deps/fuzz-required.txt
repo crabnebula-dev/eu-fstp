@@ -71,3 +71,5 @@ fstp-sigval
 fstp-contract
 # M5 wave 2, lane L-CHK: SPDX expressions, deliverable URLs, licence tags.
 fstp-checks
+# M6, docs/handoff/m6-design.md section 5.3 (lane L6-MAIL): MIME parser and DKIM tag lists.
+fstp-mail

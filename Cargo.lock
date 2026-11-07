@@ -621,6 +621,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-mail"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-money",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-mc"
 version = "0.1.0"
 dependencies = [

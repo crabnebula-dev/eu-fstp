@@ -1,0 +1,16 @@
+From: <noreply@tenant-a.example>
+Subject: =?UTF-8?B?w4TDtsO8?=
+Content-Type: multipart/alternative; boundary="=_b"
+
+--=_b
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Proposal 42 =
+changed.=0A
+--=_b
+Content-Type: application/pdf; name="notice.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjc=
+--=_b--

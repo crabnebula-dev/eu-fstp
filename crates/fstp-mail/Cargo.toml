@@ -1,0 +1,19 @@
+[package]
+name = "fstp-mail"
+description = "In-house MIME builder and parser, versioned email templates with a closed placeholder enum (I-27), and DKIM signing through aws-lc-rs (M6 design section 5.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-crypto.workspace = true
+fstp-domain.workspace = true
+fstp-money.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
