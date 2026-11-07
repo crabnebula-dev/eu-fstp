@@ -426,7 +426,13 @@ impl CreatorEnvironment for CellEnvironment {
                 exclusion_classes_known,
                 proximity_lists_declared,
             },
-            tenant_admins: lock(&self.admins).clone(),
+            // Q31 A, as API core reads it (`dispatch/tenant.rs`, `is_admin`):
+            // once the ledger holds the tenant part, its admin set alone
+            // answers, so an admin who took an invitation counts.
+            tenant_admins: match state.tenant.state() {
+                Some(ts) => ts.admins().clone(),
+                None => lock(&self.admins).clone(),
+            },
             ports: self.ports,
             theme: self.theme.clone(),
             profile: self.profile(state, cmd),

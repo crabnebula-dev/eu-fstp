@@ -720,6 +720,20 @@ export async function applySuperSafeTemplate(m1: Person, origin: string, p: stri
 }
 
 /**
+ * Moves the test clock of the cell at `origin` past one H-07 window
+ * (`rate.rs`, `DRY_RUN_VAULT_PER_ACCOUNT`, interim: 30 vault reads per
+ * account per minute). The test clock moves only on request, so without
+ * this a walk of every step reads the report more than 30 times in one
+ * instant. No assertion depends on the instant.
+ */
+async function nextMinute(page: Page, origin: string): Promise<void> {
+  const cell = Object.values(stack().cells).find((c) => c.origin === origin);
+  if (cell === undefined) throw new Error(`no cell of the stack serves ${origin}`);
+  const r = await page.request.post(`${cell.control}/test/clock/advance`, { data: { micros: String(61_000_000) } });
+  expect(r.ok(), `the test clock advances: ${r.status()}`).toBe(true);
+}
+
+/**
  * M1 walks steps 1 to 10. On each step M1 accepts the template narrative,
  * enters every synthetic field from the fixture, saves, and expects no
  * failure among the step's checks. Returns the warnings seen per step.
@@ -733,6 +747,7 @@ export async function walkCreatorSteps(
 ): Promise<Record<string, string[]>> {
   const warnings: Record<string, string[]> = {};
   for (const step of CREATOR_STEPS) {
+    await nextMinute(m1.page, origin);
     await m1.page.goto(`${origin}${APP.creatorStep(p, step)}`);
     // The step renders its fields and narratives after the draft read, so
     // the walk waits for it before it counts the narratives to accept.
@@ -759,6 +774,7 @@ export async function walkCreatorSteps(
  */
 export async function reviewAndRequest(m1: Person, origin: string, p: string): Promise<string[]> {
   const page = m1.page;
+  await nextMinute(page, origin);
   await page.goto(`${origin}${APP.creatorStep(p, 'review')}`);
   const report = page.locator(CREATOR_UI.report);
   await expect(report).toBeVisible();
