@@ -714,6 +714,19 @@ impl DriverCore {
                 _ => None,
             })
             .collect();
+        // M6 design section 4 step 2: a firing carries the bodies of the
+        // outbox rows its `EventFired` lists. The decider checked them.
+        if matches!(
+            c,
+            CellCommand::Timeline(crate::timeline::TimelineCommand::Fire { .. })
+        ) {
+            side.outbox = self
+                .admitted
+                .inputs()
+                .outbox()
+                .map(<[_]>::to_vec)
+                .unwrap_or_default();
+        }
         self.append(state, batch, self.command, Pending::Command, side)
     }
 

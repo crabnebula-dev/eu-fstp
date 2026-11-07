@@ -88,6 +88,7 @@ use crate::release::{ReleaseCommand, ReleaseRecord};
 use crate::state::TextStatus;
 use crate::tenant::{TenantCommand, TenantLoginPolicy, TenantRecord};
 use crate::text::{TextCommand, TextRecord};
+use crate::timeline::{EventStatus, TimelineCommand, TimelineRecord};
 use crate::{
     Attestation, CellCommand, CellRecord, CellRefusal, CellState, KeyCommand, KeyRecord, SystemTask,
 };
@@ -373,6 +374,7 @@ fn system_only(c: &CellCommand) -> bool {
         c,
         CellCommand::Key(_)
             | CellCommand::Release(ReleaseCommand::RecordRelationship { .. })
+            | CellCommand::Timeline(_)
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
@@ -449,6 +451,15 @@ pub(crate) fn queries_with(
             return match c {
                 CellCommand::Engine(cmd) => {
                     let cmd = due_engine_command(s, task, cmd, now)?;
+                    fstp_engine::DomainDecider
+                        .queries(s.engine(), cmd, &system_ctx(now, command))
+                        .map_err(CellRefusal::Domain)
+                }
+                CellCommand::Timeline(TimelineCommand::Fire {
+                    then: Some(core), ..
+                }) => {
+                    let wrapped = fstp_engine::Command::Core((**core).clone());
+                    let cmd = due_engine_command(s, task, &wrapped, now)?;
                     fstp_engine::DomainDecider
                         .queries(s.engine(), cmd, &system_ctx(now, command))
                         .map_err(CellRefusal::Domain)
@@ -639,7 +650,7 @@ fn decide_unchecked(
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
         CellCommand::Ops(cmd) => decide_ops(s, cmd, actor),
         // `system_only` refused these above.
-        CellCommand::Key(_) => Err(wrong_actor()),
+        CellCommand::Key(_) | CellCommand::Timeline(_) => Err(wrong_actor()),
     }
 }
 
@@ -675,6 +686,9 @@ fn decide_system(
             SystemTask::Timeline,
             CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }),
         ) => end_sessions_at_binding_end(s, *account, now, inputs),
+        (SystemTask::Timeline, CellCommand::Timeline(cmd)) => {
+            decide_timeline(s, cmd, now, command, inputs, answers)
+        }
         // No relationship form and no operator ticket form is defined yet,
         // so both are refused (fail closed).
         (
@@ -683,6 +697,87 @@ fn decide_system(
             | CellCommand::Ops(OpsCommand::ApplyOperatorTicket { .. }),
         ) => Err(invalid()),
         _ => Err(wrong_actor()),
+    }
+}
+
+/// Decides a timeline command (M6 design section 4).
+///
+/// - `Plan` carries `EventScheduled` and `EventCancelled` records only,
+///   at most [`crate::timeline::MAX_MESSAGES`], and no bodies.
+/// - `Fire` names a scheduled event that is due at `now`. Its templates
+///   are `TemplateVersionRecorded` records, and the task's bodies name
+///   exactly its messages, in order. Its System command, if any, must be
+///   due, and its records join the same batch as `EventFired`, so the
+///   command and the messages commit together or not at all.
+///
+/// The fold checks the rest: a second firing, a cancelled event, an
+/// unrecorded template version and a repeated key are all refused.
+fn decide_timeline(
+    s: &CellState,
+    cmd: &TimelineCommand,
+    now: Timestamp,
+    command: Option<[u8; 16]>,
+    inputs: &RouteInputs,
+    answers: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let bodies = inputs.outbox().unwrap_or(&[]);
+    match cmd {
+        TimelineCommand::Plan { records } => {
+            let only_plan = records.iter().all(|r| {
+                matches!(
+                    r,
+                    TimelineRecord::EventScheduled { .. } | TimelineRecord::EventCancelled { .. }
+                )
+            });
+            if records.is_empty()
+                || records.len() > crate::timeline::MAX_MESSAGES
+                || !only_plan
+                || !bodies.is_empty()
+            {
+                return Err(invalid());
+            }
+            Ok(records.iter().cloned().map(CellRecord::Timeline).collect())
+        }
+        TimelineCommand::Fire {
+            event,
+            templates,
+            messages,
+            then,
+        } => {
+            let e = s.timeline().event(event).ok_or_else(unknown)?;
+            if e.status != EventStatus::Scheduled || e.due > now.micros() {
+                return Err(refuse(RuleRef::Ledger, RefusalReason::WrongState));
+            }
+            let only_templates = templates
+                .iter()
+                .all(|r| matches!(r, TimelineRecord::TemplateVersionRecorded { .. }));
+            let same = bodies.len() == messages.len()
+                && bodies
+                    .iter()
+                    .zip(messages)
+                    .all(|(b, m)| b.outbox == m.outbox);
+            if !only_templates || !same {
+                return Err(invalid());
+            }
+            let mut batch: Vec<CellRecord> = templates
+                .iter()
+                .cloned()
+                .map(CellRecord::Timeline)
+                .collect();
+            if let Some(core) = then {
+                let wrapped = fstp_engine::Command::Core((**core).clone());
+                let cmd = due_engine_command(s, SystemTask::Timeline, &wrapped, now)?;
+                let records = fstp_engine::DomainDecider
+                    .decide(s.engine(), cmd, &system_ctx(now, command), answers)
+                    .map_err(CellRefusal::Domain)?;
+                batch.extend(records.into_iter().map(CellRecord::Engine));
+            }
+            batch.push(CellRecord::Timeline(TimelineRecord::EventFired {
+                event: *event,
+                messages: messages.clone(),
+            }));
+            Ok(batch)
+        }
     }
 }
 

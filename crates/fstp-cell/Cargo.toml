@@ -28,6 +28,8 @@ fstp-auth.workspace = true
 fstp-webauthn.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
+# M6 lane L6-TL: the timeline engine the timeline task runs.
+fstp-timeline.workspace = true
 fstp-ledger.workspace = true
 fstp-audit.workspace = true
 fstp-keys.workspace = true

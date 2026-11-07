@@ -1,0 +1,27 @@
+[package]
+name = "fstp-timeline"
+description = "The M6 timeline engine: derives events from the cell state, schedules, cancels and fires them (M6 design section 4, I-25, R-NT-01)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# In-house: the cell state and the timeline records, the engine sweep, the
+# domain types, the templates, SHA-256 and the canonical JSON of the
+# message body.
+fstp-cell-core.workspace = true
+fstp-engine.workspace = true
+fstp-domain.workspace = true
+fstp-mail.workspace = true
+fstp-crypto.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-ledger.workspace = true
+fstp-domain-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -80,6 +80,7 @@ pub struct RouteInputs {
     mode: Option<Deployment>,
     credential: Option<NewCredential>,
     ticket: Option<VerifiedTicket>,
+    outbox: Option<Vec<crate::timeline::MessageBody>>,
 }
 
 impl RouteInputs {
@@ -136,5 +137,19 @@ impl RouteInputs {
     /// The verified operator ticket, if given.
     pub fn ticket(&self) -> Option<&VerifiedTicket> {
         self.ticket.as_ref()
+    }
+
+    /// The same inputs with the message bodies of a timeline firing, in
+    /// message order (M6 design section 4 step 2). Bodies are data: the
+    /// decider checks they name exactly the fired messages.
+    #[must_use]
+    pub fn with_outbox(mut self, bodies: Vec<crate::timeline::MessageBody>) -> RouteInputs {
+        self.outbox = Some(bodies);
+        self
+    }
+
+    /// The message bodies, if given.
+    pub fn outbox(&self) -> Option<&[crate::timeline::MessageBody]> {
+        self.outbox.as_deref()
     }
 }
