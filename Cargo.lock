@@ -390,6 +390,7 @@ dependencies = [
 name = "fstp-contract"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract-core",
  "fstp-crypto",
  "fstp-domain",
  "fstp-json",
@@ -397,6 +398,14 @@ dependencies = [
  "fstp-pki",
  "fstp-prop",
  "fstp-sigval",
+]
+
+[[package]]
+name = "fstp-contract-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]
@@ -515,7 +524,7 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
- "fstp-contract",
+ "fstp-contract-core",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
@@ -547,7 +556,6 @@ dependencies = [
  "fstp-domain",
  "fstp-html",
  "fstp-json",
- "fstp-pdf",
  "fstp-programme",
  "fstp-prop",
 ]
@@ -831,6 +839,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-pdf",
+ "fstp-programme",
  "fstp-prop",
 ]
 

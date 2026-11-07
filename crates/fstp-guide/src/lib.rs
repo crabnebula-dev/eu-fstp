@@ -42,7 +42,6 @@
 
 mod corrigendum;
 mod markdown;
-pub mod pdf;
 mod preview;
 mod profile;
 mod publication;
@@ -53,7 +52,6 @@ mod sections;
 use std::collections::BTreeMap;
 
 pub use corrigendum::{Corrigendum, corrigendum, page_with_corrigenda};
-pub use pdf::{GuideContent, GuidePdfError, guide_pdf, read_canonical};
 pub use preview::{PreviewBlock, PreviewKind, preview_text};
 pub use profile::{
     FunderProfile, HORIZON_EUROPE, LEGAL_MARKER, LEGAL_SECTIONS, LegalSection, MAX_GUIDE_BYTES,

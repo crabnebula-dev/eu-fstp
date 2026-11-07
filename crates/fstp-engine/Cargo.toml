@@ -22,8 +22,9 @@ fstp-tenant.workspace = true
 # The Guide at publication (R-GA-01, I-52, M4 design section 3.10). It is
 # pure and takes no third-party crate.
 fstp-guide.workspace = true
-# M5 lane L-CON: the Contract envelope.
-fstp-contract.workspace = true
+# M5 lane L-CON: the Contract envelope, through its pure core only. The
+# rendering, the SignaturePort and signing stay in fstp-contract (shell).
+fstp-contract-core.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

@@ -17,7 +17,9 @@ use std::sync::Mutex;
 use fstp_assess::{Job, Pipeline, SubmissionPart, SyntheticNameMask};
 use fstp_domain::id::{ContentDigest, CriterionId, ProposalId, TextId, TextRef};
 use fstp_findings::UntrustedText;
-use fstp_infer::{DataLabel, Decoding, EncodedRequest, ModelName, Transport, TransportError};
+use fstp_infer::{
+    DataLabel, Decoding, EncodedRequest, ModelName, Protocol, Transport, TransportError,
+};
 use fstp_json::{Object, Value};
 
 /// One corpus item, as the pipeline tests read it.
@@ -162,6 +164,8 @@ pub fn pipeline<'a, T: Transport, M: fstp_assess::NameMask>(
     Pipeline {
         transport,
         mask,
+        // ADR-019: the configured protocol, Anthropic by default.
+        protocol: Protocol::default(),
         model: ModelName::new("synthetic").unwrap(),
         decoding: Decoding {
             max_tokens: 2048,
@@ -202,6 +206,13 @@ impl<T: Transport> Transport for Capture<T> {
 /// Answers every request with the same reply content.
 pub struct Scripted(pub String);
 
+/// Whether an encoded request body is an Anthropic Messages body (ADR-019):
+/// it carries the instruction as a top-level `system` member.
+pub fn is_anthropic(body: &[u8]) -> bool {
+    let v = fstp_json::parse(body).unwrap();
+    v.get("system").and_then(Value::as_str).is_some()
+}
+
 /// A chat-completions response body carrying `content`.
 pub fn envelope(content: &str) -> Vec<u8> {
     let mut message = Object::new();
@@ -219,15 +230,39 @@ pub fn envelope(content: &str) -> Vec<u8> {
         .into_bytes()
 }
 
+/// An Anthropic Messages response body carrying `content` (ADR-019).
+pub fn anthropic_envelope(content: &str) -> Vec<u8> {
+    let mut text = Object::new();
+    text.insert("type", Value::from("text"));
+    text.insert("text", Value::from(content));
+    let mut top = Object::new();
+    top.insert("type", Value::from("message"));
+    top.insert("role", Value::from("assistant"));
+    top.insert("content", Value::Array(vec![Value::Object(text)].into()));
+    top.insert("stop_reason", Value::from("end_turn"));
+    fstp_json::to_canonical(&Value::Object(top))
+        .unwrap()
+        .into_bytes()
+}
+
 impl Transport for Scripted {
-    async fn exchange(&self, _req: &EncodedRequest) -> Result<Vec<u8>, TransportError> {
-        Ok(envelope(&self.0))
+    async fn exchange(&self, req: &EncodedRequest) -> Result<Vec<u8>, TransportError> {
+        // The reply follows the protocol of the request.
+        if is_anthropic(req.body()) {
+            Ok(anthropic_envelope(&self.0))
+        } else {
+            Ok(envelope(&self.0))
+        }
     }
 }
 
-/// The instruction (first) message of an encoded request body.
+/// The instruction of an encoded request body: the Anthropic `system`
+/// member, or the first (system) message of a chat-completions body.
 pub fn instruction_of(body: &[u8]) -> String {
     let v = fstp_json::parse(body).unwrap();
+    if let Some(system) = v.get("system").and_then(Value::as_str) {
+        return system.to_owned();
+    }
     let msgs = v.get("messages").unwrap().as_array().unwrap();
     let first = msgs.iter().next().unwrap();
     assert_eq!(first.get("role").and_then(Value::as_str), Some("system"));

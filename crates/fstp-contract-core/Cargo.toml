@@ -1,0 +1,15 @@
+[package]
+name = "fstp-contract-core"
+description = "The pure part of contracts: the Contract envelope records, their stored JSON form, the commands under I-30 and the fold. No I/O, no cryptography and no third-party crate (M5 design section 4.1, lane L-CON)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-domain.workspace = true
+fstp-json.workspace = true
+
+[lints]
+workspace = true

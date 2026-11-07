@@ -2,7 +2,7 @@
 //! 3.3).
 //!
 //! The PDF is rendered from the stored canonical document of
-//! [`crate::RenderedGuide::canonical`], never from a new binding. So a
+//! [`fstp_guide::RenderedGuide::canonical`], never from a new binding. So a
 //! call published in M4 gets its PDF from the bytes its `GuidePublished`
 //! digest covers, and re-rendering the same canonical document gives the
 //! same bytes (I-53). The writer is `fstp-pdf`, which tags the structure.
@@ -19,13 +19,18 @@
 //! - a table is one paragraph per row, cells joined by ` | `;
 //! - a link shows its text and then its address in brackets;
 //! - a thematic break is dropped.
+//!
+//! The module lives here, on the shell side, and not in `fstp-guide`:
+//! `fstp-pdf` hashes through `fstp-crypto` (aws-lc-rs), and `fstp-engine`
+//! reaches `fstp-guide`, so the Guide crate stays free of both (M2
+//! layering rule 1, M4 design section 1.3 rule A10).
 
 use std::collections::BTreeMap;
 
 use fstp_json::Value;
 use fstp_pdf::{Block, BlockKind, Document, WriteError};
 
-use crate::{GUIDE_LOCALE, MAX_GUIDE_BYTES, RenderedGuide};
+use fstp_guide::{GUIDE_LOCALE, MAX_GUIDE_BYTES, RenderedGuide};
 
 /// The version line every canonical document starts with.
 const VERSION_LINE: &str = "[\"fstp.guide\",1]";
@@ -410,10 +415,12 @@ pub fn guide_pdf(canonical: &[u8]) -> Result<Vec<u8>, GuidePdfError> {
     fstp_pdf::write(&content.document()).map_err(GuidePdfError::Pdf)
 }
 
-impl RenderedGuide {
-    /// The PDF of this Guide, rendered from its canonical document
-    /// ([`guide_pdf`]).
-    pub fn pdf(&self) -> Result<Vec<u8>, GuidePdfError> {
-        guide_pdf(self.canonical())
-    }
+/// The PDF of a rendered Guide, from its canonical document
+/// ([`guide_pdf`]).
+///
+/// # Errors
+///
+/// As [`guide_pdf`].
+pub fn rendered_guide_pdf(guide: &RenderedGuide) -> Result<Vec<u8>, GuidePdfError> {
+    guide_pdf(guide.canonical())
 }

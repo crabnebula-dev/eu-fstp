@@ -32,13 +32,6 @@ test = false
 doc = false
 bench = false
 
-[[bin]]
-name = "guide_pdf"
-path = "fuzz_targets/guide_pdf.rs"
-test = false
-doc = false
-bench = false
-
 [workspace]
 
 [lints.rust]

@@ -84,17 +84,6 @@ pub enum Route {
     Advanced,
 }
 
-impl Route {
-    /// The level the route must reach.
-    #[must_use]
-    pub const fn required_level(self) -> fstp_sigval::Level {
-        match self {
-            Route::WalletQes | Route::QtspRemoteQes => fstp_sigval::Level::Qualified,
-            Route::Advanced => fstp_sigval::Level::Advanced,
-        }
-    }
-}
-
 /// The state of one version (`contracts.md` States).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VersionState {

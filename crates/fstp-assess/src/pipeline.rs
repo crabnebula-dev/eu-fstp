@@ -14,7 +14,7 @@ use fstp_domain::id::{CriterionId, ProposalId, TextRef};
 use fstp_findings::{EvidenceRef, FindingKind, Severity, UntrustedText};
 use fstp_infer::{
     DataLabel, DataPart, Decoding, ElementTag, InferError, InferRequest, Instruction, ModelName,
-    OutputSchema, Transport,
+    OutputSchema, Protocol, Transport,
 };
 
 use crate::extract::{Mark, extract_text};
@@ -344,6 +344,9 @@ pub struct Pipeline<'a, T, M> {
     pub transport: &'a T,
     /// The name-mask port.
     pub mask: &'a M,
+    /// The wire protocol of the pinned configuration (ADR-019). The
+    /// configuration chooses it; [`Protocol::default`] is Anthropic.
+    pub protocol: Protocol,
     /// The model of the pinned configuration.
     pub model: ModelName,
     /// The decoding parameters of the pinned configuration.
@@ -364,6 +367,7 @@ impl<T: Transport, M: NameMask> Pipeline<'_, T, M> {
         out: &mut Assessment,
     ) -> Result<(), AssessError> {
         let req = InferRequest {
+            protocol: self.protocol,
             model: self.model.clone(),
             decoding: self.decoding,
             instruction,

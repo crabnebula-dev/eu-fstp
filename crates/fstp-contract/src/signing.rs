@@ -16,6 +16,15 @@ use crate::digest::Digest;
 use crate::model::Route;
 use crate::port::{SignatureError, SignaturePort, SignerRef};
 
+/// The level a route must reach (`contracts.md` Signature).
+#[must_use]
+pub const fn required_level(route: Route) -> Level {
+    match route {
+        Route::WalletQes | Route::QtspRemoteQes => Level::Qualified,
+        Route::Advanced => Level::Advanced,
+    }
+}
+
 /// Why a signature could not be applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SigningError {
@@ -93,11 +102,11 @@ pub fn sign_increment(
     let cms = signed_data(&attrs, &value, &refs).map_err(SigningError::Cms)?;
     let revision =
         embed_signature(base, increment, &verified, &cms).map_err(SigningError::Increment)?;
-    let report = verify_signed_revision(base, &revision, party, at, route.required_level(), trust)
+    let report = verify_signed_revision(base, &revision, party, at, required_level(route), trust)
         .map_err(SigningError::Validation)?;
     Ok(Signed {
-        revision_digest: Digest::of(&revision),
-        signer_certificate: Digest::of(signer_cert),
+        revision_digest: crate::digest::sha256(&revision),
+        signer_certificate: crate::digest::sha256(signer_cert),
         report_digest: Digest::from_bytes(report.digest()),
         report,
         revision,

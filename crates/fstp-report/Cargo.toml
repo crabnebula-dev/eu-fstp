@@ -18,6 +18,8 @@ fstp-pdf.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# The Guide fixtures of fstp-guide, included by path in r_ga_02_guide_pdf.
+fstp-programme.workspace = true
 
 [lints]
 workspace = true

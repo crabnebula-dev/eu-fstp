@@ -9,7 +9,7 @@
     clippy::arithmetic_side_effects
 )]
 
-use fstp_contract::{ContractCommand, ContractRecord, Digest, Party, PartyRole};
+use fstp_contract_core::{ContractCommand, ContractRecord, Digest, Party, PartyRole};
 use fstp_domain::command::{Actor, ContractEvent, Ctx, SystemCause, Via};
 use fstp_domain::engine::FoldError;
 use fstp_domain::id::{
@@ -123,7 +123,7 @@ fn i30_send_needs_the_grant_preconditions() {
 #[test]
 fn i30_effective_without_core_fact_is_refused_by_the_fold() {
     let mut state = EngineState::genesis();
-    let records = fstp_contract::decide(&state.contracts, &draft(), Some(PM)).unwrap();
+    let records = fstp_contract_core::decide(&state.contracts, &draft(), Some(PM)).unwrap();
     for r in &records {
         apply_in(
             &mut state,
