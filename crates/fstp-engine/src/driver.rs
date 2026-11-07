@@ -231,6 +231,7 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             crate::compose::revision_queries(state, r, ctx)
         }
+        Command::Contract(c) => crate::contract::contract_queries(state, c, ctx),
     }
 }
 
@@ -275,6 +276,7 @@ fn route_decide(
             crate::ledger_clock(state, ctx)?;
             crate::compose::decide_revision(state, r, ctx, answers)
         }
+        Command::Contract(c) => crate::contract::decide_contract(state, c, ctx, answers),
     }
 }
 

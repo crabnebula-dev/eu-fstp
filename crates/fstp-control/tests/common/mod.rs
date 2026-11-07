@@ -78,6 +78,8 @@ pub fn schemas_of(db: CellDatabase) -> &'static [&'static str] {
             "fstp_meta",
             // ADR-015 "Storage and roles": the journey read model.
             "journey",
+            // M5 design section 4.3: write-once documents (I-30).
+            "doc",
         ],
         CellDatabase::Vault => &["vault", "keystore", "vault_audit", "fstp_meta"],
     }

@@ -123,9 +123,9 @@ Exact versions and resolved trees at first use. `deps/allowlist.txt` ties each c
 | rustls-webpki | A | 0.103.16 (through rustls) | `alloc`, `aws-lc-rs`, `std` | 2026-10-24, M1, through rustls |
 | zeroize | A tree, root since A1 | 1.9.1 (`=1.9.1`) | Default features, which enable `alloc`. Resolved: `alloc`, `default`. `derive` is refused | 2026-10-28, M3 lane W0: direct dependency of `fstp-crypto`, `fstp-keys`, `fstp-custody` and `fstp-keyd` |
 | moduletto | B | 0.1.0, git commit `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` (moved 2026-10-29 from `46754f2fccb0a501be278fb2fab63b670101a33d`, A2 pin move record) | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
-| der | B | 0.7.10 (`=0.7.10`) | `alloc` and `oid`, with default features off. cms and x509-cert add `derive` and `pem`. Resolved: `alloc`, `derive`, `flagset`, `oid`, `pem`, `zeroize` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
+| der | B | 0.7.10 (`=0.7.10`) | `alloc` and `oid`, with default features off. cms and x509-cert add `derive` and `pem`. Resolved: `alloc`, `derive`, `flagset`, `oid`, `pem`, `zeroize` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms`; 2026-11-06, M5 lane L-CON: `fstp-sigval` |
 | spki | B | 0.7.3 (`=0.7.3`) | `alloc`, with default features off. x509-cert adds `pem`. Resolved: `alloc`, `pem` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
-| x509-cert | B | 0.2.5 (`=0.2.5`) | Default features off. cms adds `pem`. Resolved: `pem`. `std`, `builder`, `hazmat`, `sct` and `arbitrary` are refused | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
+| x509-cert | B | 0.2.5 (`=0.2.5`) | Default features off. cms adds `pem`. Resolved: `pem`. `std`, `builder`, `hazmat`, `sct` and `arbitrary` are refused | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms`; 2026-11-06, M5 lane L-CON: `fstp-sigval` |
 | cms | B | 0.2.3 (`=0.2.3`) | Default features off; cms has no default features. Resolved: none. `builder`, `std` and `pem` are refused, since `builder` would bring the not-allowed `rsa` crate | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
 
 Resolved tree. The runtime and build rows were recorded 2026-10-24 for x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu, and are the same on both. The platform row, added 2026-10-25, covers every other target.
@@ -195,6 +195,13 @@ M5 first-use record, 2026-11-06 (lane L-PDF, M5 design sections 3.1 and 9):
 - Checksums are in `deps/allowlist.txt`. `deps/adr-roots.txt` gains the four roots with the resolved features above. `deps/tier-b-confirmations.txt` already names all four, and holds no confirmation, so `deps-check --release` fails on them (I-74).
 - Every binary that links `fstp-pki`, such as `fstp-control` and `fstp-cell`, now ships these Tier B crates. The release gate applies to each of them.
 - Fuzz: `cms_signed_data_decode` in `crates/fstp-pki/fuzz` covers the decoder, as Verification asks of every Tier B parser. The five fuzz lockfiles that reach `fstp-pki` gain the same thirteen entries and nothing else.
+
+M5 first-use record, 2026-11-06 (lane L-CON, M5 design section 3.1 step 7):
+
+- `fstp-sigval` takes `der 0.7.10` and `x509-cert 0.2.5` as direct dependencies. It parses signer, intermediate and anchor certificates through them and runs the chain validation in-house (`contracts.md` Signature). Issuer signatures verify through `fstp-crypto` (aws-lc-rs).
+- No new package, version or feature: both crates and their trees are the ones the L-PDF record above lists. `fstp-contract` reaches them only through `fstp-pki` and `fstp-sigval`.
+- The I-74 release gate covers every binary that links `fstp-sigval`.
+- Fuzz: `signed_revision_verify` in `crates/fstp-sigval/fuzz` feeds attacker bytes to the `/Contents` locator, the DER length reader, the CMS decoder and the chain validation.
 
 ## Amendment of 2026-10-28: M3 dependencies
 

@@ -110,7 +110,8 @@ pub fn finding_record(r: &fstp_engine::Record) -> Option<&FindingRecord> {
         fstp_engine::Record::Core(_)
         | fstp_engine::Record::Creator(_)
         | fstp_engine::Record::Import(_)
-        | fstp_engine::Record::Tenant(_) => None,
+        | fstp_engine::Record::Tenant(_)
+        | fstp_engine::Record::Contract(_) => None,
     }
 }
 
@@ -777,7 +778,8 @@ pub fn engine_core<D: Decider>(
             }
             other @ (fstp_engine::Record::Creator(_)
             | fstp_engine::Record::Import(_)
-            | fstp_engine::Record::Tenant(_)) => {
+            | fstp_engine::Record::Tenant(_)
+            | fstp_engine::Record::Contract(_)) => {
                 return Err(format!(
                     "the core command {:?} emitted the non-core record {other:?}",
                     step.cmd.kind()

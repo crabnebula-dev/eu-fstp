@@ -50,6 +50,7 @@ pub(crate) fn member_of(r: &CellRecord) -> &'static str {
         // The engine's tenant side (lane m4tenant). M3's own tenant
         // records keep `tenant`.
         CellRecord::Engine(fstp_engine::Record::Tenant(_)) => "onboarding",
+        CellRecord::Engine(fstp_engine::Record::Contract(_)) => "contract",
         CellRecord::Auth(_) => "auth",
         CellRecord::Tenant(_) => "tenant",
         CellRecord::Text(_) => "text",

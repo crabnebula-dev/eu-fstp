@@ -351,6 +351,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-contract"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-json",
+ "fstp-pdf",
+ "fstp-pki",
+ "fstp-prop",
+ "fstp-sigval",
+]
+
+[[package]]
 name = "fstp-control"
 version = "0.1.0"
 dependencies = [
@@ -457,6 +470,7 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
@@ -782,6 +796,18 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-sigval"
+version = "0.1.0"
+dependencies = [
+ "der",
+ "fstp-crypto",
+ "fstp-pdf",
+ "fstp-pki",
+ "fstp-prop",
+ "x509-cert",
 ]
 
 [[package]]

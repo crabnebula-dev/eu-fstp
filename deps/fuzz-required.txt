@@ -66,3 +66,6 @@ fstp-calib
 fstp-smtp
 # M7, docs/handoff/m7-design.md section 8 (lane L-WIRE).
 fstp-infer
+# M5 lane L-CON: the increment re-validation and the contract record decoder.
+fstp-sigval
+fstp-contract

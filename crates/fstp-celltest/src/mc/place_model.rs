@@ -99,7 +99,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 
 /// The tables of the application database, from design section 4.2, and
 /// the journey read model of ADR-015 "Storage and roles".
-pub const APP_TABLES: [&str; 24] = [
+pub const APP_TABLES: [&str; 25] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -124,6 +124,8 @@ pub const APP_TABLES: [&str; 24] = [
     "journey.leg",
     "journey.route_start",
     "journey.assignment",
+    // M5 design section 4.3: write-once documents (I-30).
+    "doc.blob",
 ];
 
 const SI: &[Privilege] = &[Privilege::Select, Privilege::Insert];
@@ -172,6 +174,8 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // ADR-015 "Storage and roles": the projector writes
             // append-only journey rows as `app`, INSERT and SELECT only.
             "journey" => SI,
+            // M5 design section 4.3, I-30: write-once documents.
+            "doc" => SI,
             _ => &[],
         },
         RoleName::Keys => match schema {
