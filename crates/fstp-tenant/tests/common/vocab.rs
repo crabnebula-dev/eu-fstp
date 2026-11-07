@@ -565,6 +565,11 @@ pub enum RecordView {
         /// The approving admin.
         by: AccountId,
     },
+    /// A branding set (M9 lane B1).
+    BrandingSet {
+        /// The setting admin.
+        by: AccountId,
+    },
 }
 
 /// The defaults of `SPEC/02-domain/policy-parameters.md` for the settable

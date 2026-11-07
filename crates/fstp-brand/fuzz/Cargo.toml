@@ -1,0 +1,25 @@
+[package]
+name = "fstp-brand-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-brand = { path = ".." }
+fstp-creator = { path = "../../fstp-creator" }
+
+[[bin]]
+name = "branding_parse"
+path = "fuzz_targets/branding_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

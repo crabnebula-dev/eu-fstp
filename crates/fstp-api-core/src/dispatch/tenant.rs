@@ -68,7 +68,7 @@
 use fstp_access::{McpSettings, RoleOrApplicant};
 use fstp_access::{ReadKind, TenantKind};
 use fstp_domain::command::Via;
-use fstp_domain::id::{AccountId, CommandId, LlmConfigId, TextRef};
+use fstp_domain::id::{AccountId, CommandId, ContentDigest, LlmConfigId, TextRef};
 use fstp_domain::oracle::Query;
 use fstp_domain::policy::ModelRef;
 use fstp_domain::roles::Role;
@@ -211,6 +211,8 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         TenantRefusal::SelfActivationApproval => "SoD-18",
         TenantRefusal::ActivationPending | TenantRefusal::AlreadyActive => "R-TN-01",
         TenantRefusal::ActivationNotOpen => "Input",
+        // M9 lane B1: the failing pairs are listed by `tenant.branding.check`.
+        TenantRefusal::BrandingContrast(_) => "I-70",
     };
     ApiError::refused(ErrorCode::Refused, rule)
 }
@@ -307,6 +309,14 @@ fn build<P: Seams>(
             None,
         )),
         TenantKind::ApproveSelfGrant => Err(unknown_self_grant(&call.state, op)),
+        TenantKind::SetBranding => {
+            let tokens = crate::tenant::branding_request(&op.request)?;
+            let text = fstp_brand::canonical(&tokens);
+            let digest = ContentDigest::from_bytes(fstp_crypto::sha256(text.as_bytes()));
+            Ok((TenantCommand::SetBranding { tokens, digest }, None))
+        }
+        // Answered by [`command`] before any command is built.
+        TenantKind::CheckBranding => Err(ApiError::refused(ErrorCode::NotFound, "route")),
         // Recorded with a validated Inference save (design 3.5), never
         // through a route of its own.
         TenantKind::RecordInferenceConfig => Err(ApiError::refused(ErrorCode::NotFound, "route")),
@@ -408,6 +418,16 @@ pub(super) async fn command<P: Seams>(
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
     let (account, ts) = admin(call)?;
+    if kind == TenantKind::CheckBranding {
+        // I-70: the failing pairs, and nothing is saved (M9 lane B1).
+        let tokens = crate::tenant::branding_request(&op.request).map_err(|e| call.refuse(e))?;
+        return Ok(OpResult::Done {
+            body: ReadModel::Tenant(TenantView::BrandingCheck(fstp_brand::failing_pairs(
+                &tokens,
+            ))),
+            seq: None,
+        });
+    }
     let (tenant_cmd, save) = build(call, op, kind).map_err(|e| call.refuse(e))?;
     let mut req = with_facts(call, ts, tenant_cmd).await;
     if matches!(

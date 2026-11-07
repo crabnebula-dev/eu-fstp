@@ -249,7 +249,7 @@ const MAX_PROFILE_FILES: usize = 10_000;
 const MAX_PROFILE_FILE: u64 = 16 << 20;
 
 /// Rule A10.
-const PURE_M4: [&str; 9] = [
+const PURE_M4: [&str; 10] = [
     "fstp-programme",
     CREATOR,
     IMPORT,
@@ -259,6 +259,8 @@ const PURE_M4: [&str; 9] = [
     "fstp-access",
     "fstp-signup",
     "fstp-html",
+    // M9 lane B1.
+    "fstp-brand",
 ];
 const IO_CRATES: [&str; 10] = [
     "fstp-rt",

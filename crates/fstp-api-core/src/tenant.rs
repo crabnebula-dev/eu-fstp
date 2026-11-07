@@ -23,6 +23,9 @@
 //! - `tenant.request_activation` takes no member. Dispatch draws the
 //!   request id. `tenant.approve_activation` takes `{request}`, the id the
 //!   activation read shows (SoD-18).
+//! - `tenant.branding.check` and `tenant.branding.set` take `{tokens}`,
+//!   the token text of `fstp_brand::parse` (M9 lane B1, I-68). The check
+//!   replies with the failing pairs of I-70 and saves nothing.
 //!
 //! Each body is checked by building the `fstp-tenant` codec text of its
 //! command and decoding it with `fstp_tenant::decode_command`. So the
@@ -151,6 +154,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
+            TenantKind::SetBranding | TenantKind::CheckBranding => {
+                if exactly(spec, request, &["tokens"]) {
+                    branding_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
             // No operation of the registry has this kind: the inference
             // record has no route (design 3.5).
             TenantKind::RecordInferenceConfig => Err(bad()),
@@ -272,6 +282,13 @@ pub(crate) fn signatory_request(request: &Object) -> Result<(SignatoryRole, Acco
 
 /// The request id of a `tenant.approve_activation` body, decoded with the
 /// tenant codec (SoD-18).
+/// The brand tokens of a `tenant.branding.*` body, by the strict rules of
+/// `fstp_brand::from_value` (I-68). Errors name no request content.
+pub(crate) fn branding_request(request: &Object) -> Result<fstp_brand::BrandTokens, ApiError> {
+    let tokens = request.get("tokens").ok_or_else(bad)?;
+    fstp_brand::from_value(tokens).map_err(|_| bad())
+}
+
 pub(crate) fn activation_request(request: &Object) -> Result<ActivationRequestId, ApiError> {
     let id = request.get("request").cloned().ok_or_else(bad)?;
     let mut cmd = Object::new();
@@ -319,6 +336,8 @@ pub enum TenantView {
     Signatories(SignatoryList),
     /// `tenant.get_activation` (SoD-18).
     Activation(ActivationView),
+    /// `tenant.branding.check` (M9 lane B1, I-70): the failing pairs.
+    BrandingCheck(fstp_brand::PairSet),
 }
 
 /// One signatory binding as the onboarding pages read it: the account,
@@ -563,6 +582,11 @@ impl fstp_json::ToJson for TenantView {
                 let _ = o.insert("signatories", Value::from(rows));
             }
             TenantView::Activation(ActivationView(a)) => activation_json(*a, &mut o),
+            TenantView::BrandingCheck(failing) => {
+                let names: Vec<Value> = failing.iter().map(|p| Value::String(p.name())).collect();
+                let _ = o.insert("accepted", Value::Bool(failing.is_empty()));
+                let _ = o.insert("failing", Value::from(names));
+            }
         }
         Value::Object(o)
     }
@@ -741,6 +765,12 @@ pub(crate) fn samples() -> Vec<TenantView> {
     ] {
         out.push(TenantView::Activation(ActivationView(activation)));
     }
+    out.push(TenantView::BrandingCheck(fstp_brand::PairSet::EMPTY));
+    out.push(TenantView::BrandingCheck(
+        fstp_brand::Pair::ALL
+            .into_iter()
+            .fold(fstp_brand::PairSet::EMPTY, fstp_brand::PairSet::with),
+    ));
     out
 }
 

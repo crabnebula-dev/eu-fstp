@@ -525,13 +525,15 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
 ];
 
 /// The tenant settings that are high-risk by the strict reading only
-/// (design section 3.5, Q10 interim): every setting other than P-70.
-const STRICT_EXTRA: [&str; 5] = [
+/// (design section 3.5, Q10 interim): every setting other than P-70, and
+/// the brand tokens (M9 lane B1, interim).
+const STRICT_EXTRA: [&str; 6] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
     "tenant.set_payment_mode",
     "tenant.set_template_licence",
+    "tenant.branding.set",
 ];
 
 /// R-LG-03, I-78, design section 3.6
@@ -579,8 +581,9 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
     for o in &extra {
         assert!(o.high_risk, "{} is high-risk (strict reading)", o.name);
         assert!(
-            matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70),
-            "{} is a tenant setting other than P-70",
+            matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70)
+                || o.kind == OpKind::Tenant(TenantKind::SetBranding),
+            "{} is a tenant setting other than P-70, or the brand tokens",
             o.name
         );
         named.insert(o.name);

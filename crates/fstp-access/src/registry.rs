@@ -267,6 +267,11 @@ pub enum TenantKind {
     RequestActivation,
     /// `TenantCommand::ApproveActivation` (SoD-18).
     ApproveActivation,
+    /// `TenantCommand::SetBranding` (M9 lane B1, I-70). High-risk.
+    SetBranding,
+    /// The I-70 check of brand tokens. It returns the failing pairs and
+    /// records nothing (M9 lane B1).
+    CheckBranding,
 }
 
 /// A finding operation kind, one per `FindingCommand` variant.
@@ -769,6 +774,24 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/admin/activation/approval",
     )
+    .acting(ADMIN),
+    // M9 lane B1: brand tokens (I-68, I-70). The check lists the failing
+    // pairs and saves nothing. The set changes what every interface shows,
+    // so it is high-risk by the strict reading (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.branding.check",
+        OpKind::Tenant(TenantKind::CheckBranding),
+        Post,
+        "/admin/branding/check",
+    )
+    .acting(ADMIN),
+    OpSpec::new(
+        "tenant.branding.set",
+        OpKind::Tenant(TenantKind::SetBranding),
+        Put,
+        "/admin/branding",
+    )
+    .hr()
     .acting(ADMIN),
     // I-86: the caller's own verification state, never through MCP.
     OpSpec::read(
@@ -1719,13 +1742,15 @@ pub const OPS: &[OpSpec] = &[
 ];
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:
-/// the tenant settings other than P-70 (design section 3.5, Q10 interim).
+/// the tenant settings other than P-70 (design section 3.5, Q10 interim),
+/// and the brand tokens (M9 lane B1, interim).
 pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P71)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P72)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P74)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P20)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P69)),
+    OpKind::Tenant(TenantKind::SetBranding),
 ];
 
 /// Kinds that never arrive from a person. In M4 cells, the D13 sweep

@@ -681,6 +681,15 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("approved_by", Shape::Nullable(&Shape::Id)),
         ]),
     ),
+    // M9 lane B1, I-70: whether the tokens pass, and the failing pairs of
+    // the table by name (`fstp_brand::Pair::name`), never a colour.
+    (
+        "tenant.branding.check",
+        Shape::Object(&[
+            m("accepted", Shape::Bool),
+            m("failing", Shape::Array(&Shape::Enum(BRAND_PAIR_NAMES))),
+        ]),
+    ),
     // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its
     // save. The values are those of `fstp-tenant`'s codec, with the data
     // protection contact as its text.
@@ -1027,6 +1036,21 @@ const DIARY_REPLY: Shape = Shape::Object(&[
     m("proposal", Shape::Id),
     m("entries", Shape::Array(&DIARY_ENTRY)),
 ]);
+
+/// The pair names of the I-70 table of `fstp_brand`, in table order
+/// (M9 lane B1). The API core tests them against `fstp_brand::Pair`.
+pub const BRAND_PAIR_NAMES: &[&str] = &[
+    "light.brand-text/surface-0",
+    "light.brand-text/surface-1",
+    "light.on-brand/brand",
+    "light.on-brand/brand-hover",
+    "light.focus/surface-0",
+    "dark.brand-text/surface-0",
+    "dark.brand-text/surface-1",
+    "dark.on-brand/brand",
+    "dark.on-brand/brand-hover",
+    "dark.focus/surface-0",
+];
 
 /// The reply shape of the operation named `name`.
 pub fn reply(name: &str) -> Option<&'static Shape> {

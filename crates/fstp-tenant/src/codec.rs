@@ -13,6 +13,9 @@
 //!   a text reference. Names are [`Token`]s and domains are
 //!   [`DomainName`]s. Only a command's P-69 value is an arbitrary short
 //!   string, and only a valid one reaches a record.
+//! - The brand tokens of `BrandingSet` hold the tenant name, a short text
+//!   checked by `fstp_brand` (no markup, no control character), and
+//!   `#rrggbb` colours (I-68).
 //! - Decoding is structural and never runs a tenant rule. Errors carry a
 //!   fixed message only (R-NF-02). No decode path panics (TH-26, H-05).
 
@@ -372,6 +375,13 @@ fn command_value(cmd: &TenantCommand) -> Value {
         TenantCommand::ApproveActivation { request } => {
             tagged("ApproveActivation", vec![("request", dec(request.raw()))])
         }
+        TenantCommand::SetBranding { tokens, digest } => tagged(
+            "SetBranding",
+            vec![
+                ("digest", s(&hex(&digest.bytes()))),
+                ("tokens", fstp_brand::to_value(tokens)),
+            ],
+        ),
     }
 }
 
@@ -509,6 +519,14 @@ fn record_value(rec: &TenantRecord) -> Value {
                 ("request", dec(request.raw())),
             ],
         ),
+        TenantRecord::BrandingSet { tokens, digest, by } => tagged(
+            "BrandingSet",
+            vec![
+                ("by", dec(by.raw())),
+                ("digest", s(&hex(&digest.bytes()))),
+                ("tokens", fstp_brand::to_value(tokens)),
+            ],
+        ),
     }
 }
 
@@ -591,6 +609,11 @@ fn take_i64(v: &Value) -> R<i64> {
     }
     digits(body)?;
     s.parse::<i64>().map_err(|_| err("decimal out of range"))
+}
+
+/// Brand tokens, by the strict rules of `fstp_brand::from_value` (I-68).
+fn take_brand(v: &Value) -> R<fstp_brand::BrandTokens> {
+    fstp_brand::from_value(v).map_err(|e| err(e.0))
 }
 
 fn take_account(v: &Value) -> R<AccountId> {
@@ -936,6 +959,13 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 request: take_request(f.get("request")?)?,
             }
         }
+        "SetBranding" => {
+            let f = Fields::of(v, &["digest", "kind", "tokens"])?;
+            TenantCommand::SetBranding {
+                tokens: take_brand(f.get("tokens")?)?,
+                digest: ContentDigest::from_bytes(take_digest(f.get("digest")?)?),
+            }
+        }
         _ => return Err(err("unknown command kind")),
     })
 }
@@ -1048,6 +1078,14 @@ fn take_record(v: &Value) -> R<TenantRecord> {
                 at: take_instant(f.get("at")?)?,
             }
         }
+        "BrandingSet" => {
+            let f = Fields::of(v, &["by", "digest", "kind", "tokens"])?;
+            TenantRecord::BrandingSet {
+                tokens: take_brand(f.get("tokens")?)?,
+                digest: ContentDigest::from_bytes(take_digest(f.get("digest")?)?),
+                by: take_account(f.get("by")?)?,
+            }
+        }
         _ => return Err(err("unknown record kind")),
     })
 }
@@ -1078,7 +1116,7 @@ mod tests {
         let seeds = seeds!("tenant_command_decode": "save_identity", "save_organisation",
             "save_payments", "invite_admin", "accept_admin_invitation", "approve_self_grant",
             "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
-            "grant_signatory", "end_signatory", "request_activation", "approve_activation");
+            "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding");
         for (name, bytes) in seeds {
             let c = decode_command(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_command(&c).as_deref(), Ok(bytes), "{name}");
@@ -1093,7 +1131,7 @@ mod tests {
             "step_saved_payments", "step_saved_agreements", "step_validated", "admin_invited",
             "admin_added", "self_grant_approved", "self_grant_approval_used", "setting_p70",
             "inference_recorded", "completed", "signatory_granted", "signatory_ended",
-            "activation_requested", "activation_approved");
+            "activation_requested", "activation_approved", "branding_set");
         for (name, bytes) in seeds {
             let r = decode_record(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_record(&r).as_deref(), Ok(bytes), "{name}");

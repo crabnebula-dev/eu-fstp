@@ -36,6 +36,7 @@ fstp-crypto.workspace = true
 fstp-webauthn.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true
+fstp-brand.workspace = true
 
 [lints]
 workspace = true

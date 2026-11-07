@@ -1052,6 +1052,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("tenant.get_activation", T::None, R::TenantAdmin),
     RefOp::act("tenant.request_activation", T::None, R::TenantAdmin),
     RefOp::act("tenant.approve_activation", T::None, R::TenantAdmin),
+    // M9 lane B1: a tenant admin checks and sets the brand tokens. The
+    // set is high-risk by the strict reading (I-78, interim).
+    RefOp::act("tenant.branding.check", T::None, R::TenantAdmin),
+    RefOp::act("tenant.branding.set", T::None, R::TenantAdmin).hr(),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.

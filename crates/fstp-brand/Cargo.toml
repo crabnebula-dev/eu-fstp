@@ -1,0 +1,18 @@
+[package]
+name = "fstp-brand"
+description = "Tenant brand tokens: the strict parser, the I-70 contrast check and the canonical form (M9 design lane B1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-creator.workspace = true
+fstp-json.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

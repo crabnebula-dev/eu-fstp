@@ -1565,6 +1565,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Tenant(crate::tenant::TenantView::Activation(_)) => {
                 &["tenant.get_activation"]
             }
+            ReadModel::Tenant(crate::tenant::TenantView::BrandingCheck(_)) => {
+                &["tenant.branding.check"]
+            }
             ReadModel::Creator(c) => creator_served_as(c),
             ReadModel::MyRoles(_) => &["me.roles"],
             ReadModel::Journey(_) => &["proposal.journey"],

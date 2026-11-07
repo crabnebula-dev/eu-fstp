@@ -91,6 +91,9 @@ pub enum TenantRefusal {
     ActivationNotOpen,
     /// The approver requested the activation (SoD-18).
     SelfActivationApproval,
+    /// The brand tokens fail I-70: these pairs of the table miss WCAG 2.2
+    /// AA contrast. The set names pairs only, never a colour.
+    BrandingContrast(fstp_brand::PairSet),
     /// A record contradicts the state it folds into.
     Inconsistent,
 }
@@ -135,6 +138,7 @@ impl TenantRefusal {
             TenantRefusal::AlreadyActive => "already_active",
             TenantRefusal::ActivationNotOpen => "activation_not_open",
             TenantRefusal::SelfActivationApproval => "self_activation_approval",
+            TenantRefusal::BrandingContrast(_) => "branding_contrast",
             TenantRefusal::Inconsistent => "inconsistent",
         }
     }
