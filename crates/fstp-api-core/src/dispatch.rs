@@ -1938,6 +1938,8 @@ enum PortCall {
     AcknowledgeNotice(ProposalId),
     /// The user adds a passkey (`authentication.md`, high-risk).
     AddPasskey,
+    /// The lead asks for a copy of the application at an address (R-SB-04).
+    RequestCopy(ProposalId, String),
 }
 
 /// An operation an M3 port serves.
@@ -2054,6 +2056,24 @@ async fn m3_port<P: Seams>(
             }
             PortCall::BeginGuardianConsent(p)
         }
+        PortKind::RequestCopy => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            // An actor refusal: the registry admits the lead only. A
+            // former lead of a proposal in a final state is refused by a
+            // guard on the target, since no binding is revived for a
+            // command (Daniel, 2026-11-06).
+            match proposal_lead(&call.state, account, p, call.now) {
+                Lead::Active => {}
+                Lead::Former => {
+                    return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "Input")));
+                }
+                Lead::Not => {
+                    return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
+                }
+            }
+            let email = crate::tenant::invite_email(&op.request).map_err(|e| call.refuse(e))?;
+            PortCall::RequestCopy(p, email)
+        }
         PortKind::AcknowledgeNegotiationNotice => {
             let p = ProposalId::from_raw(id("proposal")?);
             let negotiating = fstp_domain::view::proposal_state(&call.state.core, p)
@@ -2169,6 +2189,46 @@ async fn m3_port<P: Seams>(
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-NG-06")));
             }
             done(Ok(()), "R-NG-06")
+        }
+        PortCall::RequestCopy(p, email) => {
+            if !lock(&call.st.content).copy_allowed(p, call.now) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "TH-21")));
+            }
+            // ADR-007: the address is a sealed text under its own key, and
+            // the request keeps ids and times only (M6 design reading 4).
+            let salt = crate::salted::draw().map_err(|e| call.refuse(e))?;
+            let stored = call
+                .ports
+                .texts()
+                .put(
+                    TextClass::Confidential,
+                    TextOwner::Proposal(p),
+                    &crate::salted::stored(&salt, email.as_bytes()),
+                )
+                .await
+                .map_err(|e| call.refuse(port_failed(e, "text")))?;
+            let address = fstp_domain::id::TextRef::new(
+                fstp_domain::id::TextId::from_raw(stored.0),
+                fstp_domain::id::ContentDigest::from_bytes(crate::salted::digest(
+                    &salt,
+                    email.as_bytes(),
+                )),
+            );
+            let req = crate::content::CopyRequest {
+                proposal: p,
+                address,
+                at: call.now,
+            };
+            let outcome = lock(&call.st.content).request_copy(req);
+            match outcome {
+                crate::content::CopyOutcome::Recorded => done(Ok(()), "R-SB-04"),
+                crate::content::CopyOutcome::Limited => {
+                    Err(call.refuse(ApiError::refused(ErrorCode::Refused, "TH-21")))
+                }
+                crate::content::CopyOutcome::Full => {
+                    Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-SB-04")))
+                }
+            }
         }
         PortCall::SaveWorkspace(p, w) => {
             let saved = lock(&call.st.content).save(p, w);
@@ -3118,6 +3178,39 @@ async fn round_view<P: Seams>(
         },
         delegates,
     })
+}
+
+/// How `account` leads a proposal (R-SB-04, the copy request).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lead {
+    /// An active lead binding.
+    Active,
+    /// A lead binding that ended when the proposal reached a final state.
+    Former,
+    /// No lead binding.
+    Not,
+}
+
+/// How `account` leads `proposal` at `now`. R-SB-04: the copy request
+/// is the lead's, as the registry admits it.
+fn proposal_lead(
+    state: &EngineState,
+    account: AccountId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Lead {
+    let lead = |ended| {
+        own_proposals(state, account, now, ended)
+            .iter()
+            .any(|x| x.proposal == proposal && x.role == "lead")
+    };
+    if lead(Ended::Excluded) {
+        Lead::Active
+    } else if lead(Ended::Final) {
+        Lead::Former
+    } else {
+        Lead::Not
+    }
 }
 
 /// Whether `account` holds an active Receiving binding of the lead or a

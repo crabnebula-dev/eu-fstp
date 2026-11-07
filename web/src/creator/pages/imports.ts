@@ -6,7 +6,9 @@
 // confirms or edits it, one proposal at a time. There is no bulk action
 // (Q30, interim). A proposal that conflicts with the funder profile is
 // flagged, never adjusted, and confirming it needs an explicit
-// acknowledgement. The document is untrusted data: nothing from it is
+// acknowledgement. A proposed P-05 while the draft holds no P-58 is
+// flagged too: no ceiling exists to check it against (I-50, L-10), and
+// the page compares no amounts itself (ADR-014 "Money"). The document is untrusted data: nothing from it is
 // parsed as markup or followed as a link.
 
 import { h } from "../../core/dom.js";
@@ -14,7 +16,7 @@ import { clearProblems, fieldEditor, fieldLabel, firstControl, showProblems } fr
 import { fieldOf } from "../fields.js";
 import { frame, hush, ready, warn } from "../frame.js";
 import { t } from "../i18n.js";
-import { canonicalJson, proposalOrder, readProposals, type ProposalRow } from "../model.js";
+import { canonicalJson, draftValue, proposalOrder, readProposals, type ProposalRow } from "../model.js";
 import { anyObject, call, report } from "../ops.js";
 import { PATHS, link, loadDraft, queue } from "./common.js";
 
@@ -51,10 +53,16 @@ export function mount(p: string): void {
     });
   };
 
-  const item = (row: ProposalRow): HTMLElement => {
+  /**
+   * Why a proposal is flagged: the server found a conflict with the
+   * funder profile, or it proposes P-05 while no P-58 is saved.
+   */
+  type Flag = "profile" | "unset" | null;
+
+  const item = (row: ProposalRow, flag: Flag): HTMLElement => {
     const def = fieldOf(row.field);
     const shown = typeof row.value === "string" ? row.value : (canonicalJson(row.value) ?? "");
-    const li = h("li", { "data-proposal": row.id, "data-field": row.field, "data-flagged": row.flagged ? "true" : "false" }, [
+    const li = h("li", { "data-proposal": row.id, "data-field": row.field, "data-flagged": flag !== null ? "true" : "false" }, [
       h("h3", {}, [fieldLabel(row.field)]),
       h("p", {}, [
         t.label("creator.imports.proposed"),
@@ -83,17 +91,17 @@ export function mount(p: string): void {
       return li;
     }
     let ack: HTMLElement | null = null;
-    if (row.flagged) {
+    if (flag !== null) {
       const id = `ack.${row.id}`;
       ack = h("input", { id, type: "checkbox", "data-role": "conflict-ack" });
       li.append(
-        h("p", { class: "fstp-note" }, [t.label("creator.imports.flagged")]),
+        h("p", { class: "fstp-note" }, [t.label(flag === "unset" ? "creator.imports.flagged_unset" : "creator.imports.flagged")]),
         h("div", { class: "fstp-check" }, [ack, h("label", { for: id }, [t.label("creator.imports.conflict_ack")])]),
       );
     }
     const acknowledged = (): boolean => ack instanceof HTMLInputElement && ack.checked;
     const needsAck = (): boolean => {
-      if (row.flagged && !acknowledged()) {
+      if (flag !== null && !acknowledged()) {
         warn(alert, t.label("creator.imports.ack_needed"));
         if (ack !== null) ack.focus();
         return true;
@@ -155,7 +163,12 @@ export function mount(p: string): void {
     const o = await call("import.list", [p], undefined, (v) => readProposals(v) !== null);
     if (report(alert, o) || o.kind !== "done") return;
     const rows = proposalOrder(readProposals(o.body) ?? []);
-    list.replaceChildren(...rows.map(item));
+    const d = await loadDraft(p, alert);
+    if (d === null) return;
+    const ceilingUnset = draftValue(d, "funder.p58_recipient_ceiling") === null;
+    const flagOf = (row: ProposalRow): Flag =>
+      row.flagged ? "profile" : row.field === "money.p05_recipient_cap" && ceilingUnset ? "unset" : null;
+    list.replaceChildren(...rows.map((r) => item(r, flagOf(r))));
     if (rows.length === 0) {
       list.append(h("li", {}, [t.label("creator.imports.none")]));
     }

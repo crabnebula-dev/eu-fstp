@@ -734,6 +734,9 @@ export async function walkCreatorSteps(
   const warnings: Record<string, string[]> = {};
   for (const step of CREATOR_STEPS) {
     await m1.page.goto(`${origin}${APP.creatorStep(p, step)}`);
+    // The step renders its fields and narratives after the draft read, so
+    // the walk waits for it before it counts the narratives to accept.
+    await expect(m1.page.locator('main[data-ready="true"]')).toBeVisible();
     await acceptNarratives(m1.page);
     for (const key of stepFields(f, step)) {
       if (f.synthetic.includes(key)) {
@@ -955,6 +958,8 @@ export async function pageProblems(page: Page, label: string, tenantAdmin: boole
 
 /** Presses Tab until `selector` has focus, and checks that the focus is visible there. */
 export async function tabTo(page: Page, selector: string, max = 80): Promise<void> {
+  // A page renders after its reads, so the target must exist before Tab can reach it.
+  await page.locator(selector).first().waitFor({ state: 'attached' });
   for (let i = 0; i < max; i++) {
     const at = await page.evaluate((s) => {
       const a = document.activeElement;

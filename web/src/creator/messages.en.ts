@@ -437,6 +437,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.imports.proposed": "Proposed value:",
   "creator.imports.no_evidence": "The document gave no evidence for this value.",
   "creator.imports.flagged": "This value conflicts with the funder profile. It is shown as proposed, never adjusted.",
+  "creator.imports.flagged_unset":
+    "This cap cannot be checked against the funder ceiling (P-58), since none is saved yet. It is shown as proposed, never adjusted.",
   "creator.imports.conflict_ack": "I have read the conflict with the funder profile",
   "creator.imports.ack_needed": "Confirm that you have read the conflict with the funder profile first.",
   "creator.imports.confirm": "Confirm this value",
