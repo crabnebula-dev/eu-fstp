@@ -43,7 +43,7 @@ pub enum StoreError {
 }
 
 /// The in-memory `ops.delivery` of one cell.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MemDelivery {
     rows: BTreeMap<[u8; 16], Vec<DeliveryRow>>,
     faults: VecDeque<Fault>,

@@ -16,9 +16,8 @@
 //!
 //! Two drivers run the same harness. The reference driver follows the
 //! attempt protocol of design section 5.1 step by step, so the store rules
-//! are checked now. The dispatcher driver is the seam lane L6-DISP fills
-//! with the real worker. Until then its test is red, and the panic names
-//! the seam.
+//! are checked now. The dispatcher driver runs the real
+//! `fstp-dispatch` worker (lane L6-DISP).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -26,6 +25,7 @@
 use std::collections::BTreeMap;
 
 use fstp_dispatch::store::{CommitFacts, Fault, MemDelivery, Next, Phase};
+use fstp_dispatch::{EndOfData, Envelope, LoadError, Prepared, Refused, Source, Transport, Worker};
 use fstp_prop::{Gen, prop_assert};
 
 const T0: i64 = 1_794_000_000_000_000;
@@ -119,6 +119,7 @@ struct World {
     sink: Sink,
     now: i64,
     workers: Vec<WState>,
+    dispatchers: Vec<Worker<usize>>,
 }
 
 /// The faults drawn for one step.
@@ -226,9 +227,107 @@ fn reference_step(world: &mut World, w: usize, f: StepFaults) -> Result<(), Stri
     Ok(())
 }
 
-/// The dispatcher driver: the seam of lane L6-DISP.
-fn dispatcher_step(_world: &mut World, _w: usize, _f: StepFaults) -> Result<(), String> {
-    Err("seam: the fstp-dispatch worker over MemDelivery and the sink (lane L6-DISP)".to_owned())
+/// The dispatcher driver: one step of the `fstp-dispatch` worker over the
+/// in-memory delivery log and the sink (lane L6-DISP).
+fn dispatcher_step(world: &mut World, w: usize, f: StepFaults) -> Result<(), String> {
+    if f.crash {
+        world.dispatchers[w] = Worker::new(worker_id(w));
+        world.sink.quit(w);
+        return Ok(());
+    }
+    if let Some(fault) = f.store {
+        world.store.inject(fault);
+    }
+    let n = world.msgs.len();
+    let candidates: Vec<[u8; 16]> = (0..n)
+        .map(|i| world.msgs[(i + w * 7) % n].outbox)
+        .filter(|o| !world.store.is_settled(o))
+        .collect();
+    let World {
+        msgs,
+        store,
+        sink,
+        now,
+        dispatchers,
+        ..
+    } = world;
+    let mut source = MsgSource { msgs };
+    let mut transport = SinkTransport {
+        sink,
+        msgs,
+        w,
+        fault: f.sink,
+    };
+    fstp_rt::future::block_on(dispatchers[w].step(
+        store,
+        &mut source,
+        &mut transport,
+        &candidates,
+        *now,
+    ));
+    Ok(())
+}
+
+/// S2 over the run's messages.
+struct MsgSource<'a> {
+    msgs: &'a [Msg],
+}
+
+impl Source for MsgSource<'_> {
+    async fn load(&mut self, outbox: [u8; 16]) -> Result<Prepared, LoadError> {
+        let m = self
+            .msgs
+            .iter()
+            .find(|m| m.outbox == outbox)
+            .ok_or(LoadError::Unusable)?;
+        Ok(Prepared {
+            envelope: Envelope {
+                from: "noreply@fund.test".to_owned(),
+                to: "lead@example.test".to_owned(),
+            },
+            body: m.body.clone(),
+            event: m.event,
+            template_version: m.template_version,
+        })
+    }
+}
+
+/// The sink as worker `w` reaches it, with the step's sink fault.
+struct SinkTransport<'a> {
+    sink: &'a mut Sink,
+    msgs: &'a [Msg],
+    w: usize,
+    fault: Option<SinkFault>,
+}
+
+impl Transport for SinkTransport<'_> {
+    type Staged = usize;
+
+    async fn stage(&mut self, _envelope: &Envelope, body: &[u8]) -> Result<usize, Refused> {
+        if self.fault == Some(SinkFault::Drop) {
+            return Err(Refused::Transient(None));
+        }
+        let m = self
+            .msgs
+            .iter()
+            .find(|m| m.body == body)
+            .ok_or(Refused::Permanent(None))?;
+        self.sink
+            .staged
+            .insert(self.w, (m.idem, fstp_crypto::sha256(body)));
+        Ok(self.w)
+    }
+
+    async fn end_of_data(&mut self, staged: usize) -> EndOfData {
+        match self.sink.end_of_data(staged, self.fault) {
+            Some(code) => EndOfData::Reply(code),
+            None => EndOfData::Unknown,
+        }
+    }
+
+    async fn abandon(&mut self, staged: usize) {
+        self.sink.quit(staged);
+    }
 }
 
 type Step = fn(&mut World, usize, StepFaults) -> Result<(), String>;
@@ -276,6 +375,7 @@ fn run_case(g: &mut Gen, step: Step) -> Result<(), String> {
         sink: Sink::default(),
         now: T0,
         workers: vec![WState::Idle; n_workers],
+        dispatchers: (0..n_workers).map(|w| Worker::new(worker_id(w))).collect(),
     };
     // The faulty phase: a random schedule with faults and stalls.
     let steps = g.usize_in(0..=150);
@@ -353,8 +453,7 @@ fn i25_i26_reference_protocol_sends_at_most_once_under_crashes() {
 }
 
 /// I-25, I-26, M6 design section 7 (T1): the same property over the
-/// dispatcher's worker. Red until lane L6-DISP lands the worker behind
-/// `dispatcher_step`.
+/// `fstp-dispatch` worker, driven by `dispatcher_step`.
 #[test]
 fn i25_i26_dispatcher_sends_at_most_once_under_crashes() {
     fstp_prop::check(

@@ -283,6 +283,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-domain-testkit",
  "fstp-edge",
@@ -335,6 +336,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-domain-testkit",
  "fstp-edge",
@@ -457,9 +459,23 @@ dependencies = [
 name = "fstp-dispatch"
 version = "0.1.0"
 dependencies = [
+ "fstp-api-testkit",
+ "fstp-audit",
+ "fstp-celltest",
  "fstp-crypto",
+ "fstp-domain",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-mail",
+ "fstp-migrate",
+ "fstp-money",
  "fstp-pgstore",
+ "fstp-pgtest",
+ "fstp-pgwire",
  "fstp-prop",
+ "fstp-rt",
+ "fstp-smtp",
+ "fstp-tls",
 ]
 
 [[package]]

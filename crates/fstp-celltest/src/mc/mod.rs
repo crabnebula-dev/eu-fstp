@@ -4,6 +4,7 @@
 
 pub mod audit_model;
 pub mod auth_model;
+pub mod dispatch_model;
 pub mod driver_model;
 pub mod licence_model;
 pub mod place_model;
