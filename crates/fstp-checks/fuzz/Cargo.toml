@@ -1,0 +1,38 @@
+[package]
+name = "fstp-checks-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-checks = { path = ".." }
+
+[[bin]]
+name = "spdx_expression"
+path = "fuzz_targets/spdx_expression.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deliverable_url"
+path = "fuzz_targets/deliverable_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "licence_detect"
+path = "fuzz_targets/licence_detect.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

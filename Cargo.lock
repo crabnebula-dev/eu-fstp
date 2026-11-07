@@ -268,6 +268,7 @@ dependencies = [
  "fstp-auth",
  "fstp-cell",
  "fstp-cell-core",
+ "fstp-checks",
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
@@ -348,6 +349,17 @@ dependencies = [
  "fstp-vault-proto",
  "fstp-webauthn",
  "fstp-witness",
+]
+
+[[package]]
+name = "fstp-checks"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-prop",
+ "fstp-rt",
 ]
 
 [[package]]

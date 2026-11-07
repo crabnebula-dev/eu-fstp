@@ -1,0 +1,20 @@
+[package]
+name = "fstp-checks"
+description = "Automated payment request checks, SPDX licence detection and evidence snapshots (M5 design lane L-CHK, I-32, R-PR-02, R-PR-03)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-domain.workspace = true
+fstp-crypto.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-rt.workspace = true
+fstp-domain-testkit.workspace = true
+
+[lints]
+workspace = true

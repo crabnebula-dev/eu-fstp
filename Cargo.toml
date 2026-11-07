@@ -71,6 +71,8 @@ members = [
     # M5 lane L-CON.
     "crates/fstp-sigval",
     "crates/fstp-contract",
+    # M5 wave 2, lane L-CHK.
+    "crates/fstp-checks",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -176,6 +178,7 @@ fstp-smtp = { path = "crates/fstp-smtp" }
 fstp-infer = { path = "crates/fstp-infer" }
 fstp-sigval = { path = "crates/fstp-sigval" }
 fstp-contract = { path = "crates/fstp-contract" }
+fstp-checks = { path = "crates/fstp-checks" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }

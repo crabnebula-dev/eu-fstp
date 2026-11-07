@@ -69,3 +69,5 @@ fstp-infer
 # M5 lane L-CON: the increment re-validation and the contract record decoder.
 fstp-sigval
 fstp-contract
+# M5 wave 2, lane L-CHK: SPDX expressions, deliverable URLs, licence tags.
+fstp-checks
