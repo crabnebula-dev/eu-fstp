@@ -33,8 +33,8 @@
 //! - The Guide page serves the Guide its publication stored, with its
 //!   corrigenda (I-53). A cell whose engine supplies no Guide facts at
 //!   publication stores no Guide, so its Guide route answers not found.
-//! - The public stylesheet: no asset of `/p` exists yet, so the pages
-//!   carry no stylesheet.
+//! - The public stylesheet: only the tenant brand sheet (M9 lane B2),
+//!   linked once the tenant set a brand. Otherwise the pages carry none.
 
 use std::collections::BTreeMap;
 
@@ -276,12 +276,13 @@ fn answer(
     kind: PublicKind,
     call: Option<String>,
     web: bool,
+    stylesheet: Option<String>,
 ) -> Result<PublicReply, PublicError> {
     if kind == PublicKind::Feed {
         return fstp_public::feed::feed(view).map(PublicReply::Json);
     }
     if web && let Some(page) = page_of(kind, call.clone()) {
-        let chrome = Chrome { stylesheet: None };
+        let chrome = Chrome { stylesheet };
         let doc = fstp_public::render_html(view, &page, &chrome)?;
         return Ok(PublicReply::Page(doc.as_str().to_owned()));
     }
@@ -306,6 +307,8 @@ pub(super) async fn read<P: Seams>(
     let view = fstp_public::public_view(&call.state.core, programme, &texts, call.now)
         .map_err(|e| call.refuse(refused(e)))?;
     let web = call.caller.via() == Via::Web && !op.from_tool;
-    let reply = answer(&view, kind, call_param(op), web).map_err(|e| call.refuse(refused(e)))?;
+    let sheet = super::brand_of(&call.state).map(|b| format!("/brand/{}.css", b.digest));
+    let reply =
+        answer(&view, kind, call_param(op), web, sheet).map_err(|e| call.refuse(refused(e)))?;
     call.accept(ReadModel::Public(reply))
 }

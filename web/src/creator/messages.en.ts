@@ -498,6 +498,8 @@ const APPROVED: Readonly<Record<string, string>> = {
   "footer.accessibility_statement": "Accessibility statement: the approved wording is pending.",
   "footer.data_act_information": "Data Act information for tenants: the approved wording is pending.",
   "footer.platform_attribution": "Runs on the FSTP platform.",
+  "footer.funder_visibility": "Funder visibility: the approved wording is pending.",
+  "footer.ai_disclosure": "AI disclosure: the approved wording is pending.",
 };
 
 /** The English catalogue of the creator pages and the page frame. */

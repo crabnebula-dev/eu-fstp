@@ -120,7 +120,7 @@ pub fn router(core: Arc<ApiCore>, config: WebConfig) -> Result<WebRouter, WebErr
 
 /// The router over `backend`.
 pub(crate) fn build(backend: Backend, config: WebConfig) -> Result<WebRouter, WebError> {
-    let shell = shell::render(&config.assets);
+    let shell = shell::render(&config.assets, None);
     let mcp = match &backend {
         Backend::Core(core) => Some(crate::mcp::Mcp::new(
             Arc::clone(core),
@@ -187,7 +187,12 @@ fn app_fallback(s: &Shared, req: &Request) -> Response {
     if req.method != Method::GET && req.method != Method::HEAD {
         return reply::get_only();
     }
-    Response::with_body(StatusCode::OK, "text/html; charset=utf-8", s.shell.clone())
+    // M9 lane B2: a tenant that set a brand gets its stylesheet linked.
+    let body = match s.backend.brand() {
+        Some(b) => shell::render(&s.assets, Some(&b.digest)),
+        None => s.shell.clone(),
+    };
+    Response::with_body(StatusCode::OK, "text/html; charset=utf-8", body)
 }
 
 /// The public pages (design section 3.10, R-PB-04, TH-37). Only `GET` and
@@ -268,6 +273,7 @@ impl WebRouter {
                 self.api.handle(req).await
             }
             Surface::Public => public(&self.shared.backend, &req).await,
+            Surface::Brand => crate::brand::answer(self.shared.backend.brand(), &req),
             Surface::Adr013 => match &self.shared.mcp {
                 Some(m) => m.answer(req).await,
                 None => reply::adr013(),
