@@ -1,0 +1,3 @@
+Task: completeness.
+
+For each element listed in the parameters below, decide whether the proposal addresses it. For each element that is missing or addressed only in name, give one finding of kind "completeness" with that element tag. Severity is "major" when the element is absent and "minor" when it is present but too thin to assess. Do not report elements that are addressed.

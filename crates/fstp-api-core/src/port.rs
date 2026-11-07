@@ -64,6 +64,8 @@ port_id!(
     ApprovalId,
     /// A tenant, in the control plane.
     TenantId,
+    /// A pre-check run (M7 design section 4).
+    PrecheckRunId,
 );
 
 /// A port that could not answer. Every caller fails closed on it.
@@ -357,6 +359,44 @@ pub struct InferenceRecord {
     pub config: fstp_domain::id::LlmConfigId,
     /// The primary model, which must equal the programme's P-21 primary.
     pub model: fstp_domain::policy::ModelRef,
+    /// The endpoint and decoding inputs of the `config_id` derivation (M7
+    /// design section 2, reading 2). `None` before onboarding records
+    /// them, and then no assessment or pre-check runs.
+    pub endpoint: Option<InferenceEndpoint>,
+}
+
+/// The wire protocol of an inference endpoint (ADR-019, Proposed, Q1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InferenceProvider {
+    /// The in-memory synthetic model of the demo cell. Its findings say
+    /// "Synthetic assessor (demo)", and it is never an LLM result.
+    Synthetic,
+    /// One endpoint speaking the chat-completions JSON shape, non-streaming.
+    ChatCompletions,
+}
+
+/// The endpoint part of a tenant's inference record (M7 design sections
+/// 2 and 9, R-LA-04). With the prompt set digest, the rubric digest and
+/// the call's P-01, it is the input of the `config_id` derivation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InferenceEndpoint {
+    /// The wire protocol.
+    pub provider: InferenceProvider,
+    /// The endpoint URL. `None` for [`InferenceProvider::Synthetic`].
+    pub url: Option<String>,
+    /// The most tokens of a reply.
+    pub max_tokens: u32,
+    /// The temperature in thousandths, 0 to 2000. No floats.
+    pub temperature_milli: u16,
+    /// The sampling seed.
+    pub seed: u32,
+    /// The P-21 fallback models in order. Each gets its own `config_id`
+    /// at publication (M7 design section 2, reading 3).
+    pub fallbacks: Vec<fstp_domain::policy::ModelRef>,
+    /// Pinned trust anchors (PEM) for the endpoint's TLS certificate.
+    /// Interim, pending Daniel (Q2): no allowlisted crate holds a public
+    /// root store, so a hosted endpoint is reachable only through these.
+    pub trust_anchors_pem: Vec<u8>,
 }
 
 /// A recorded second tenant admin approval (SoD-07).
@@ -637,10 +677,146 @@ pub trait BlobStore: Send + Sync {
     ) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send;
 }
 
-/// The pre-check provider (M7). M7 defines its methods. M4 production
-/// cells have none, so `PrecheckUnavailable` fails validation there
-/// (Q38). The e2e cell supplies a fake.
-pub trait Precheck: Send + Sync {}
+/// One section of a pre-check snapshot (M7 design section 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PrecheckSection {
+    /// The title.
+    Title,
+    /// The neutral summary.
+    Summary,
+    /// The narrative.
+    Narrative,
+}
+
+/// The draft a pre-check run reads: the workspace as it stood when the
+/// applicant asked. Every text is untrusted data. The port passes it to
+/// a model only as a data part (`fstp-infer`, TH-01).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckSnapshot {
+    /// The title.
+    pub title: fstp_findings::UntrustedText,
+    /// The neutral summary.
+    pub summary: fstp_findings::UntrustedText,
+    /// The narrative.
+    pub narrative: fstp_findings::UntrustedText,
+}
+
+/// A quote that supports a pre-check finding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckEvidence {
+    /// The section it quotes.
+    pub section: PrecheckSection,
+    /// The quoted text, as data.
+    pub quote: fstp_findings::UntrustedText,
+}
+
+/// One pre-check finding. It carries no confidence and no number, so no
+/// score or band is derivable from it (R-LA-06, TH-02, T-LLM-ORACLE).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckFinding {
+    /// Completeness, quality, accuracy or integrity.
+    pub kind: fstp_findings::FindingKind,
+    /// The P-01 criterion, where one applies.
+    pub criterion: Option<fstp_domain::id::CriterionId>,
+    /// Info, minor or major.
+    pub severity: fstp_findings::Severity,
+    /// The observation, as data.
+    pub statement: fstp_findings::UntrustedText,
+    /// Quotes from the snapshot.
+    pub evidence: Vec<PrecheckEvidence>,
+}
+
+/// Where a pre-check run stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrecheckRunState {
+    /// The run is queued or running.
+    Pending,
+    /// The run finished with findings, possibly none.
+    Done,
+    /// The provider was unavailable. The run still counts (P-23).
+    Unavailable,
+}
+
+/// One pre-check run, stored in the applicant workspace beside the draft
+/// and never in the `FindingStore` (I-21).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckRun {
+    /// The run.
+    pub run: PrecheckRunId,
+    /// When it was requested, which is when it was counted (P-23).
+    pub requested: Timestamp,
+    /// The call's pinned configuration (I-11).
+    pub config: fstp_domain::id::LlmConfigId,
+    /// Where it stands.
+    pub state: PrecheckRunState,
+    /// Its findings, empty until it is done.
+    pub findings: Vec<PrecheckFinding>,
+}
+
+/// The remaining P-23 checks of one applicant on one draft. These counts
+/// are the only numbers a pre-check reply shows (M7 design section 2,
+/// reading 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrecheckQuota {
+    /// Runs left today on this proposal.
+    pub proposal_today: u32,
+    /// Runs left in this call on this proposal.
+    pub proposal_call: u32,
+    /// Runs left for this account across its drafts in this call (TH-29).
+    pub account_call: u32,
+    /// When the next run becomes available, if none is left now.
+    pub next: Option<Timestamp>,
+}
+
+/// Why a pre-check request was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrecheckRefusal {
+    /// The port failed or is not built yet. Fails closed.
+    Port(PortError),
+    /// A P-23 limit is reached.
+    QuotaExhausted(PrecheckQuota),
+    /// The draft's call is not published, so it has no pinned config.
+    CallNotPublished,
+}
+
+/// The pre-check provider (M7 design section 4, R-LA-06, I-21). M4
+/// production cells have none, so `PrecheckUnavailable` fails validation
+/// there (Q38). The e2e cell supplies a fake.
+///
+/// L-SEAM stub: every method has a default that fails closed with
+/// [`PortError::Unavailable`], so the ops answer "unavailable" until lane
+/// L-PRE implements the port over `fstp-infer`.
+pub trait Precheck: Send + Sync {
+    /// Requests one run on `snapshot` for `account`, counted at once
+    /// against every P-23 limit (TH-29).
+    fn request(
+        &self,
+        proposal: ProposalId,
+        account: AccountId,
+        snapshot: PrecheckSnapshot,
+    ) -> impl Future<Output = Result<PrecheckRunId, PrecheckRefusal>> + Send {
+        let _ = (proposal, account);
+        drop(snapshot);
+        std::future::ready(Err(PrecheckRefusal::Port(PortError::Unavailable)))
+    }
+    /// The runs of a proposal, newest first. Only its team reads them.
+    fn runs(
+        &self,
+        proposal: ProposalId,
+    ) -> impl Future<Output = Result<Vec<PrecheckRun>, PortError>> + Send {
+        let _ = proposal;
+        std::future::ready(Err(PortError::Unavailable))
+    }
+    /// The remaining checks of `account` on `proposal`.
+    fn quota(
+        &self,
+        proposal: ProposalId,
+        account: AccountId,
+    ) -> impl Future<Output = Result<PrecheckQuota, PortError>> + Send {
+        let _ = (proposal, account);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+}
 
 /// Sealing under ADR-004 level 3 keys, hybrid-wrapped in M3 (ADR-001).
 pub trait Sealer: Send + Sync {
@@ -921,5 +1097,34 @@ pub fn api_core<P: CellPorts>(ports: P) -> ApiCore {
             ports,
             state: crate::dispatch::State::default(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fstp_rt::future::block_on;
+
+    struct Stub;
+    impl Precheck for Stub {}
+
+    /// R-LA-06, Q38: a pre-check port whose methods are not built yet
+    /// fails closed on every method.
+    #[test]
+    fn r_la_06_precheck_stub_fails_closed() {
+        let p = ProposalId::from_raw(1);
+        let a = AccountId::from_raw(2);
+        let empty = || fstp_findings::UntrustedText::new(String::new());
+        let snapshot = PrecheckSnapshot {
+            title: empty(),
+            summary: empty(),
+            narrative: empty(),
+        };
+        assert_eq!(
+            block_on(Stub.request(p, a, snapshot)),
+            Err(PrecheckRefusal::Port(PortError::Unavailable))
+        );
+        assert_eq!(block_on(Stub.runs(p)), Err(PortError::Unavailable));
+        assert_eq!(block_on(Stub.quota(p, a)), Err(PortError::Unavailable));
     }
 }

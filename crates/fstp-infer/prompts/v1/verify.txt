@@ -1,0 +1,3 @@
+Task: claim verification.
+
+The data holds one claim from the proposal and the sources retrieved for it. Each source part is labelled as applicant-controlled or independent. Decide whether the independent sources support the claim. A claim supported only by applicant-controlled sources is not verified. Give one finding of kind "accuracy". Severity is "info" when supported, "minor" when not verifiable and "major" when contradicted. The statement says which kind of source it relied on.

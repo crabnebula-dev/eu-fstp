@@ -1,0 +1,32 @@
+[package]
+name = "fstp-infer-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-infer = { path = ".." }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "infer_response_decode"
+path = "fuzz_targets/infer_response_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "synthetic_answer"
+path = "fuzz_targets/synthetic_answer.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,3 @@
+Task: claim extraction.
+
+List the factual claims the proposal makes about maintainership, user numbers, upstream support and prior work. Give one finding of kind "accuracy" with severity "info" per claim. The statement names the kind of claim and its subject. The evidence quotes the claim exactly. Do not judge whether a claim is true.
