@@ -791,3 +791,22 @@ pub struct GuideNoticeOverride {
     /// The privacy statement address.
     pub privacy_statement_url: String,
 }
+
+/// The tenant's mail submission relay (M6 lane L6-EGR, ADR-018 proposed).
+///
+/// The cell submits mail to `host` on port 465 only, with implicit TLS
+/// verified against the public roots plus the pinned CA when one is
+/// named. No port is stored, so none can be chosen. The credential is
+/// never in a record: `credential` names the cell secret that holds it.
+/// The pinned CA is public PEM text in the text store, referenced like
+/// every free text outside ledger bodies (ADR-007).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MailRelay {
+    /// The relay host, a fully qualified host name and never a CrabNebula
+    /// host ([`crate::rules::mail_relay_valid`]).
+    pub host: DomainName,
+    /// The name of the cell secret that holds the submission credential.
+    pub credential: Token,
+    /// The pinned CA certificate as PEM text, if any.
+    pub ca: Option<TextRef>,
+}

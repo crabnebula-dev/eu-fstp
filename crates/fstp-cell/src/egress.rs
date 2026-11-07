@@ -22,6 +22,14 @@
 //! verifies each server certificate against the public root store and the
 //! host name ([`service_tls`], ADR-001 amendment of 2026-11-06). Q34 is
 //! still open (design section 10.1), so no cell process builds it yet.
+//!
+//! # Mail submission (ADR-018, proposed)
+//!
+//! [`Destination::MailSubmission`] reaches the tenant's submission relay,
+//! on port 465 only, with implicit TLS verified against the public roots
+//! plus the tenant's optional pinned CA ([`mail_tls`]). A CrabNebula host
+//! is never a relay (I-38). [`MailEgress`] is the only way the cell opens
+//! it, and `fstp_smtp` speaks SMTP over the stream it opens.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -34,11 +42,12 @@ use fstp_release::egress::{
     CnCall, EgressResponse, LICENCE_HOST, MAX_BODY_LEN, MAX_HEAD_LEN, UPDATE_HOST, decode_response,
 };
 use fstp_rt::{Connection, IoExt, Runtime, timeout};
+use fstp_smtp::client::{Credentials, Envelope, SUBMISSION_PORT, SmtpClient, SmtpError, Staged};
 
 use crate::config::Mode;
 
 /// Where a cell may open a connection. Closed and exhaustive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Destination {
     /// `c_<cell>` on its application cluster, one pool per role.
     AppDatabase,
@@ -57,6 +66,13 @@ pub enum Destination {
     /// The `<cell>/keystore/` object storage prefix only. Proposed by
     /// ADR-012 and pending Daniel, so no connector builds it yet.
     KeystoreSnapshots,
+    /// The tenant's mail submission relay, port 465 only, with implicit
+    /// TLS (ADR-018, proposed). The host comes from the tenant's mail
+    /// settings and is never a CrabNebula host (I-38).
+    MailSubmission {
+        /// The relay host.
+        host: MailHost,
+    },
 }
 
 /// Why the connector refused a destination.
@@ -81,6 +97,61 @@ pub enum EgressRefusal {
     /// A deliverable host at a private, loopback, link-local or other
     /// non-public address.
     ForgeAddress,
+    /// A mail submission on a port other than 465 (ADR-018).
+    MailPort,
+    /// A mail relay host that is not a DNS host name, or a connection to
+    /// a host other than the configured relay (ADR-018).
+    MailHost,
+    /// A mail relay that resolves to a private, loopback, link-local or
+    /// other non-public address (ADR-018).
+    MailAddress,
+}
+
+/// A mail relay host: a DNS host name in lowercase, without a trailing
+/// dot, and never a CrabNebula host (ADR-018, I-38).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MailHost(String);
+
+impl MailHost {
+    /// The longest host name in bytes.
+    pub const MAX_LEN: usize = 253;
+
+    /// The relay host `host`.
+    ///
+    /// # Errors
+    ///
+    /// [`EgressRefusal::CrabNebulaHost`] for a CrabNebula host, and
+    /// [`EgressRefusal::MailHost`] for anything but a host name of letters,
+    /// digits and hyphens in dot-separated labels of 1 to 63 bytes. An
+    /// address literal, a port or a path is refused, and so is a name whose
+    /// last label is all digits.
+    pub fn parse(host: &str) -> Result<MailHost, EgressRefusal> {
+        let h = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+        let label_ok = |l: &str| {
+            (1..=63).contains(&l.len())
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        };
+        let ok = (1..=MailHost::MAX_LEN).contains(&h.len())
+            && h.split('.').all(label_ok)
+            && h.rsplit('.')
+                .next()
+                .is_some_and(|l| !l.bytes().all(|b| b.is_ascii_digit()));
+        if !ok {
+            return Err(EgressRefusal::MailHost);
+        }
+        if is_crabnebula_host(&h) {
+            return Err(EgressRefusal::CrabNebulaHost);
+        }
+        Ok(MailHost(h))
+    }
+
+    /// The host name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Whether `host` is a CrabNebula service host, compared without case
@@ -112,6 +183,19 @@ pub fn check_host(to: &Destination, host: &str) -> Result<(), EgressRefusal> {
             }
         }
         Destination::KeystoreSnapshots => Err(EgressRefusal::PendingDecision),
+        Destination::MailSubmission { host: relay } => {
+            if is_crabnebula_host(host) {
+                Err(EgressRefusal::CrabNebulaHost)
+            } else if host
+                .strip_suffix('.')
+                .unwrap_or(host)
+                .eq_ignore_ascii_case(relay.as_str())
+            {
+                Ok(())
+            } else {
+                Err(EgressRefusal::MailHost)
+            }
+        }
         Destination::AppDatabase
         | Destination::Vault
         | Destination::Custody
@@ -123,6 +207,22 @@ pub fn check_host(to: &Destination, host: &str) -> Result<(), EgressRefusal> {
                 Ok(())
             }
         }
+    }
+}
+
+/// Checks that the connector may open `to` on `port`. Mail submission
+/// uses port 465 only, implicit TLS (ADR-018, RFC 8314). The other
+/// destinations take their ports from their own configuration.
+///
+/// # Errors
+///
+/// [`EgressRefusal::MailPort`] for a mail submission on any other port.
+pub fn check_port(to: &Destination, port: u16) -> Result<(), EgressRefusal> {
+    match to {
+        Destination::MailSubmission { .. } if port != SUBMISSION_PORT => {
+            Err(EgressRefusal::MailPort)
+        }
+        _ => Ok(()),
     }
 }
 
@@ -155,6 +255,7 @@ pub fn check_mode(mode: Mode, to: &Destination) -> Result<(), EgressRefusal> {
 pub fn connect(to: &Destination) -> Result<(), crate::CellError> {
     match to {
         Destination::CrabNebula(call) => check_host(to, call.host()),
+        Destination::MailSubmission { host } => check_host(to, host.as_str()),
         Destination::KeystoreSnapshots => Err(EgressRefusal::PendingDecision),
         Destination::AppDatabase
         | Destination::Vault
@@ -377,6 +478,195 @@ pub async fn exchange_over<S: Connection>(
         }
     }
     Ok(answer)
+}
+
+// ---------------------------------------------------------------------------
+// Mail submission (ADR-018, proposed; M6 design section 5.4).
+
+/// How long opening the TCP link to the relay may take, from the name
+/// lookup to the connected socket. The SMTP client's own deadlines start
+/// with the TLS handshake.
+pub const MAIL_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Why a mail submission gave no staged message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MailFault {
+    /// The connector refused the relay, the port or an address before
+    /// any byte was written.
+    Refused(EgressRefusal),
+    /// The pinned CA is not valid PEM, so no TLS configuration exists.
+    /// Verification is never turned off instead.
+    Config,
+    /// The name lookup or the TCP connection failed or timed out.
+    Unreachable,
+    /// The TLS handshake or the SMTP session failed. An unknown CA or a
+    /// host name mismatch is `SmtpError::Tls`.
+    Smtp(SmtpError),
+}
+
+/// The TLS client configuration for a mail relay: the public root store
+/// with the host name check (ADR-001 amendment of 2026-11-06), plus the
+/// tenant's pinned CA when it names one. Verification is never disabled.
+///
+/// # Errors
+///
+/// The configuration error of `fstp-tls`, for a pinned CA that is not
+/// valid PEM.
+pub fn mail_tls(ca_pem: Option<&[u8]>) -> Result<fstp_tls::ClientConfig, fstp_tls::TlsError> {
+    match ca_pem {
+        None => fstp_tls::ClientConfig::public_roots(),
+        Some(pem) => fstp_tls::ClientConfig::public_roots_builder()
+            .also_trust_pem(pem)
+            .build(),
+    }
+}
+
+/// The byte link to a mail relay, below TLS.
+pub trait MailTransport: Send + Sync + 'static {
+    /// The connection it opens.
+    type Conn: Connection;
+
+    /// Opens a connection to `host` on `port`.
+    fn open(
+        &self,
+        host: &MailHost,
+        port: u16,
+    ) -> impl Future<Output = Result<Self::Conn, MailFault>> + Send;
+}
+
+/// The TCP transport to a mail relay over a runtime. It opens port 465
+/// only, resolves the host, and refuses the relay when any resolved
+/// address is not a public unicast address.
+#[derive(Clone, Debug)]
+pub struct TcpMailTransport<R> {
+    rt: R,
+}
+
+impl<R: Runtime> TcpMailTransport<R> {
+    /// A transport on `rt`.
+    pub fn new(rt: R) -> TcpMailTransport<R> {
+        TcpMailTransport { rt }
+    }
+}
+
+impl<R: Runtime> MailTransport for TcpMailTransport<R> {
+    type Conn = R::Tcp;
+
+    fn open(
+        &self,
+        host: &MailHost,
+        port: u16,
+    ) -> impl Future<Output = Result<R::Tcp, MailFault>> + Send {
+        let rt = self.rt.clone();
+        let host = host.clone();
+        async move {
+            if port != SUBMISSION_PORT {
+                return Err(MailFault::Refused(EgressRefusal::MailPort));
+            }
+            let run = async {
+                let addrs = rt
+                    .resolve(host.as_str(), port)
+                    .await
+                    .map_err(|_| MailFault::Unreachable)?;
+                if addrs.iter().any(|a| !public_ip(a.ip())) {
+                    return Err(MailFault::Refused(EgressRefusal::MailAddress));
+                }
+                let addr = addrs.first().copied().ok_or(MailFault::Unreachable)?;
+                rt.connect_tcp(addr)
+                    .await
+                    .map_err(|_| MailFault::Unreachable)
+            };
+            timeout(&rt, MAIL_CONNECT_TIMEOUT, run)
+                .await
+                .map_err(|_| MailFault::Unreachable)?
+        }
+    }
+}
+
+/// The cell's only way to its mail relay: the connector policy of
+/// [`Destination::MailSubmission`] over a [`MailTransport`], and the
+/// `fstp_smtp` client over the stream it opens.
+#[derive(Debug)]
+pub struct MailEgress<R, T> {
+    rt: R,
+    transport: T,
+    to: Destination,
+    host: MailHost,
+    client: SmtpClient,
+}
+
+impl<R: Runtime, T: MailTransport> MailEgress<R, T> {
+    /// The egress of a cell in `mode` to the relay `host`, trusting the
+    /// public roots plus `ca_pem` when given, introducing itself as `helo`
+    /// and authenticating with `credentials`.
+    ///
+    /// # Errors
+    ///
+    /// [`MailFault::Refused`] for a host that is not a host name or is a
+    /// CrabNebula host, and [`MailFault::Config`] for an invalid pinned CA.
+    pub fn new(
+        mode: Mode,
+        rt: R,
+        transport: T,
+        host: &str,
+        ca_pem: Option<&[u8]>,
+        helo: &str,
+        credentials: Credentials,
+    ) -> Result<MailEgress<R, T>, MailFault> {
+        let host = MailHost::parse(host).map_err(MailFault::Refused)?;
+        let to = Destination::MailSubmission { host: host.clone() };
+        check_mode(mode, &to)
+            .and_then(|()| check_host(&to, host.as_str()))
+            .map_err(MailFault::Refused)?;
+        let tls = mail_tls(ca_pem).map_err(|_| MailFault::Config)?;
+        let client = SmtpClient::new(tls, host.as_str(), helo, credentials);
+        Ok(MailEgress {
+            rt,
+            transport,
+            to,
+            host,
+            client,
+        })
+    }
+
+    /// The same egress with other SMTP deadlines.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: fstp_smtp::client::Timeouts) -> Self {
+        self.client = self.client.with_timeouts(timeouts);
+        self
+    }
+
+    /// The relay host.
+    pub fn host(&self) -> &MailHost {
+        &self.host
+    }
+
+    /// The transport.
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    /// Opens the relay on port 465 and stages `body` for `envelope`: the
+    /// whole session except the final dot (`fstp_smtp`, I-26). The TLS
+    /// handshake verifies the relay against [`mail_tls`] and its host
+    /// name, so an unknown CA ends the session before any SMTP byte.
+    ///
+    /// # Errors
+    ///
+    /// [`MailFault`] for a refusal, an unreachable relay, or a failed
+    /// handshake or session. None of them is in doubt.
+    pub async fn stage(
+        &self,
+        envelope: &Envelope,
+        body: &[u8],
+    ) -> Result<Staged<R, T::Conn>, MailFault> {
+        check_port(&self.to, SUBMISSION_PORT).map_err(MailFault::Refused)?;
+        let io = self.transport.open(&self.host, SUBMISSION_PORT).await?;
+        self.client
+            .stage(&self.rt, io, envelope, body)
+            .await
+            .map_err(MailFault::Smtp)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -713,6 +1003,120 @@ mod tests {
         assert_eq!(
             server.unwrap(),
             b"GET /v1/updates/stable/0.3.0 HTTP/1.1\r\nHost: x\r\n\r\n"
+        );
+    }
+
+    fn relay() -> Destination {
+        Destination::MailSubmission {
+            host: MailHost::parse("smtp.relay.example").unwrap(),
+        }
+    }
+
+    /// ADR-018, B4: the mail submission destination opens port 465 only.
+    /// Every other port, the other submission and relay ports among them,
+    /// is refused before any connection.
+    #[test]
+    fn adr018_mail_submission_refuses_every_port_but_465() {
+        let to = relay();
+        assert_eq!(check_port(&to, 465), Ok(()));
+        for port in [0, 25, 443, 464, 466, 587, 2525, u16::MAX] {
+            assert_eq!(
+                check_port(&to, port),
+                Err(EgressRefusal::MailPort),
+                "{port}"
+            );
+        }
+    }
+
+    /// ADR-018, I-38: no mail relay is a CrabNebula host. The host is
+    /// refused when parsed, and the connector refuses a CrabNebula host or
+    /// any host other than the configured one, in both modes.
+    #[test]
+    fn i38_mail_submission_refuses_crabnebula_hosts() {
+        for h in [
+            LICENCE_HOST,
+            UPDATE_HOST,
+            "smtp.crabnebula.dev",
+            "CrabNebula.dev.",
+            "mx.fstp.CRABNEBULA.dev",
+        ] {
+            assert_eq!(
+                MailHost::parse(h),
+                Err(EgressRefusal::CrabNebulaHost),
+                "{h}"
+            );
+        }
+        let to = relay();
+        for mode in [Mode::Saas, Mode::SelfHosted] {
+            assert_eq!(check_mode(mode, &to), Ok(()));
+        }
+        assert_eq!(check_host(&to, "smtp.relay.example"), Ok(()));
+        assert_eq!(check_host(&to, "SMTP.relay.example."), Ok(()));
+        assert_eq!(
+            check_host(&to, UPDATE_HOST),
+            Err(EgressRefusal::CrabNebulaHost)
+        );
+        assert_eq!(
+            check_host(&to, "other.relay.example"),
+            Err(EgressRefusal::MailHost)
+        );
+        assert_eq!(connect(&to), Ok(()));
+    }
+
+    /// ADR-018: a relay is a DNS host name. An address literal, a port,
+    /// a path, an empty label or an over-long name is refused.
+    #[test]
+    fn adr018_mail_host_is_a_host_name() {
+        assert_eq!(
+            MailHost::parse("Smtp.Relay.Example.").map(|h| h.as_str().to_owned()),
+            Ok("smtp.relay.example".to_owned())
+        );
+        assert!(MailHost::parse("localhost").is_ok());
+        let long = format!("{}.example", "a".repeat(250));
+        for bad in [
+            "",
+            ".",
+            "10.0.0.1",
+            "[::1]",
+            "::1",
+            "smtp.relay.example:587",
+            "smtp.relay.example/x",
+            "smtp..relay.example",
+            "-smtp.relay.example",
+            "smtp-.relay.example",
+            "smtp relay.example",
+            "smtp_relay.example",
+            long.as_str(),
+        ] {
+            assert_eq!(MailHost::parse(bad), Err(EgressRefusal::MailHost), "{bad}");
+        }
+    }
+
+    /// ADR-018, R-NF-09: the mail TLS configuration trusts the public
+    /// roots, with a pinned CA on top when the tenant names one. Invalid
+    /// PEM is a configuration fault, never a fallback to no verification.
+    #[test]
+    fn adr018_mail_tls_is_public_roots_plus_optional_pin() {
+        let plain = mail_tls(None).unwrap();
+        assert!(format!("{plain:?}").contains("public_roots: true"));
+        let pinned = mail_tls(Some(TEST_CA)).unwrap();
+        assert!(format!("{pinned:?}").contains("public_roots: true"));
+        assert!(mail_tls(Some(b"-----BEGIN CERTIFICATE-----\nnope\n")).is_err());
+    }
+
+    /// I-16, ADR-018: the transport opens port 465 only and refuses a
+    /// relay that resolves to a non-public address, before any byte.
+    #[test]
+    fn adr018_tcp_mail_transport_refuses_other_ports_and_private_addresses() {
+        let rt = TokioRuntime::new_current_thread().unwrap();
+        let t = TcpMailTransport::new(rt.clone());
+        let host = MailHost::parse("localhost").unwrap();
+        let r = rt.block_on(t.open(&host, 587));
+        assert_eq!(r.err(), Some(MailFault::Refused(EgressRefusal::MailPort)));
+        let r = rt.block_on(t.open(&host, SUBMISSION_PORT));
+        assert_eq!(
+            r.err(),
+            Some(MailFault::Refused(EgressRefusal::MailAddress))
         );
     }
 

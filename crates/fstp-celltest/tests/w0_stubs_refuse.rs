@@ -87,6 +87,9 @@ fn adr009_cell_egress_connect_builds_the_closed_set_only() {
         Destination::CrabNebula(calls[0]),
         Destination::CrabNebula(calls[1]),
         Destination::KeystoreSnapshots,
+        Destination::MailSubmission {
+            host: fstp_cell::egress::MailHost::parse("smtp.relay.example").unwrap(),
+        },
     ] {
         let want = match d {
             Destination::AppDatabase
@@ -94,7 +97,8 @@ fn adr009_cell_egress_connect_builds_the_closed_set_only() {
             | Destination::Custody
             | Destination::ControlPlane
             | Destination::Witness
-            | Destination::CrabNebula(_) => Ok(()),
+            | Destination::CrabNebula(_)
+            | Destination::MailSubmission { .. } => Ok(()),
             Destination::KeystoreSnapshots => {
                 Err(fstp_cell::CellError::Egress(EgressRefusal::PendingDecision))
             }

@@ -313,6 +313,18 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetMailRelay { relay } => {
+            if relay
+                .as_ref()
+                .is_some_and(|r| !crate::rules::mail_relay_valid(r))
+            {
+                return Err(TenantRefusal::InvalidMailRelay);
+            }
+            Ok(vec![TenantRecord::MailRelaySet {
+                relay: relay.clone(),
+                by,
+            }])
+        }
     }
 }
 

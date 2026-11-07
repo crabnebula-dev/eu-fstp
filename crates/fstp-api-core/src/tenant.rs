@@ -30,6 +30,12 @@
 //! - `tenant.branding.check` and `tenant.branding.set` take `{tokens}`,
 //!   the token text of `fstp_brand::parse` (M9 lane B1, I-68). The check
 //!   replies with the failing pairs of I-70 and saves nothing.
+//! - `tenant.set_mail_relay` takes `{host, credential, ca_pem}` (M6 lane
+//!   L6-EGR, ADR-018). `host` is the relay host in lowercase, `credential`
+//!   the name of the cell secret that holds the submission credential, and
+//!   `ca_pem` a pinned CA as PEM text or the empty string for none.
+//!   Dispatch stores the PEM as a public text only once the command is
+//!   admitted. No port is taken: the relay is reached on port 465 only.
 //!
 //! Each body is checked by building the `fstp-tenant` codec text of its
 //! command and decoding it with `fstp_tenant::decode_command`. So the
@@ -161,6 +167,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
             TenantKind::SetGuideNotice => {
                 if exactly(spec, request, &["privacy_statement_url", "summary"]) {
                     notice_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
+            TenantKind::SetMailRelay => {
+                if exactly(spec, request, &["ca_pem", "credential", "host"]) {
+                    mail_relay_request(request).map(|_| ())
                 } else {
                     Err(bad())
                 }
@@ -372,6 +385,74 @@ pub(crate) fn notice_request(request: &Object) -> Result<NoticeRequest, ApiError
     Ok(NoticeRequest {
         summary: summary.clone(),
         privacy_statement_url: url.clone(),
+    })
+}
+
+/// The longest pinned CA a `tenant.set_mail_relay` request may carry, in
+/// bytes (interim, pending Daniel).
+pub(crate) const CA_PEM_LIMIT: usize = 16 * 1024;
+
+/// A decoded `tenant.set_mail_relay` request (ADR-018).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MailRelayRequest {
+    /// The relay host. The tenant core checks that it is a fully
+    /// qualified host name and not a CrabNebula host.
+    pub(crate) host: fstp_tenant::DomainName,
+    /// The name of the cell secret that holds the credential.
+    pub(crate) credential: fstp_tenant::Token,
+    /// The pinned CA as PEM text, if any.
+    pub(crate) ca_pem: Option<String>,
+}
+
+impl MailRelayRequest {
+    /// The command, with the pinned CA referenced by `ca`.
+    pub(crate) fn command(&self, ca: Option<TextRef>) -> TenantCommand {
+        TenantCommand::SetMailRelay {
+            relay: Some(fstp_tenant::MailRelay {
+                host: self.host.clone(),
+                credential: self.credential.clone(),
+                ca,
+            }),
+        }
+    }
+}
+
+/// Whether `pem` looks like PEM certificate text: within
+/// [`CA_PEM_LIMIT`], printable ASCII and line breaks, starting with a
+/// certificate header. `fstp-tls` parses it when the cell connects.
+fn ca_pem_ok(pem: &str) -> bool {
+    pem.len() <= CA_PEM_LIMIT
+        && pem.starts_with("-----BEGIN CERTIFICATE-----")
+        && pem
+            .bytes()
+            .all(|b| b.is_ascii_graphic() || matches!(b, b' ' | b'\r' | b'\n'))
+}
+
+/// Decodes a `tenant.set_mail_relay` request: `{host, credential,
+/// ca_pem}`, all strings. An empty `ca_pem` pins no CA.
+pub(crate) fn mail_relay_request(request: &Object) -> Result<MailRelayRequest, ApiError> {
+    let (Some(Value::String(host)), Some(Value::String(credential)), Some(Value::String(pem))) = (
+        request.get("host"),
+        request.get("credential"),
+        request.get("ca_pem"),
+    ) else {
+        return Err(bad());
+    };
+    let host = fstp_tenant::DomainName::new(host).ok_or_else(bad)?;
+    let credential = fstp_tenant::Token::new(credential)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(bad)?;
+    let ca_pem = if pem.is_empty() {
+        None
+    } else if ca_pem_ok(pem) {
+        Some(pem.clone())
+    } else {
+        return Err(bad());
+    };
+    Ok(MailRelayRequest {
+        host,
+        credential,
+        ca_pem,
     })
 }
 

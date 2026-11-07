@@ -32,9 +32,10 @@ use crate::command::{TenantCommand, TenantRecord};
 use crate::refusal::{DecodeError, TenantError};
 use crate::types::{
     ActivationRequestId, ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef,
-    GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, McpSettings, Milestone,
-    ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, SignatoryRole, StepFailure,
-    StepOutcome, StepValues, TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
+    GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, MailRelay, McpSettings,
+    Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, SignatoryRole,
+    StepFailure, StepOutcome, StepValues, TenantParam, TenantRevision, Token, TokenDigest,
+    VerifyMethod,
 };
 
 /// The record schema versions this build decodes. Version 1 is the only
@@ -178,6 +179,18 @@ fn guide_notice(n: &Option<GuideNoticeOverride>) -> Value {
         object(vec![
             ("privacy_statement_url", s(&n.privacy_statement_url)),
             ("summary", text_ref(&n.summary)),
+        ])
+    })
+}
+
+/// The mail relay, or `null` when none is set. The pinned CA is a text
+/// reference or `null`.
+fn mail_relay(r: &Option<MailRelay>) -> Value {
+    r.as_ref().map_or(Value::Null, |r| {
+        object(vec![
+            ("ca", r.ca.as_ref().map_or(Value::Null, text_ref)),
+            ("credential", s(r.credential.as_str())),
+            ("host", s(r.host.as_str())),
         ])
     })
 }
@@ -394,6 +407,9 @@ fn command_value(cmd: &TenantCommand) -> Value {
                 ("tokens", fstp_brand::to_value(tokens)),
             ],
         ),
+        TenantCommand::SetMailRelay { relay } => {
+            tagged("SetMailRelay", vec![("relay", mail_relay(relay))])
+        }
     }
 }
 
@@ -542,6 +558,10 @@ fn record_value(rec: &TenantRecord) -> Value {
                 ("digest", s(&hex(&digest.bytes()))),
                 ("tokens", fstp_brand::to_value(tokens)),
             ],
+        ),
+        TenantRecord::MailRelaySet { relay, by } => tagged(
+            "MailRelaySet",
+            vec![("by", dec(by.raw())), ("relay", mail_relay(relay))],
         ),
     }
 }
@@ -765,6 +785,25 @@ fn take_guide_notice(v: &Value) -> R<Option<GuideNoticeOverride>> {
     Ok(Some(GuideNoticeOverride {
         summary: take_text_ref(f.get("summary")?)?,
         privacy_statement_url: url.to_owned(),
+    }))
+}
+
+/// The mail relay, or `None` for `null`. Structural only: the host is a
+/// [`DomainName`] and the secret name a [`Token`].
+fn take_mail_relay(v: &Value) -> R<Option<MailRelay>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let f = Fields::of(v, &["ca", "credential", "host"])?;
+    let ca = f.get("ca")?;
+    Ok(Some(MailRelay {
+        host: take_domain(f.get("host")?)?,
+        credential: take_token(f.get("credential")?)?,
+        ca: if ca.is_null() {
+            None
+        } else {
+            Some(take_text_ref(ca)?)
+        },
     }))
 }
 
@@ -1006,6 +1045,12 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 digest: ContentDigest::from_bytes(take_digest(f.get("digest")?)?),
             }
         }
+        "SetMailRelay" => {
+            let f = Fields::of(v, &["kind", "relay"])?;
+            TenantCommand::SetMailRelay {
+                relay: take_mail_relay(f.get("relay")?)?,
+            }
+        }
         _ => return Err(err("unknown command kind")),
     })
 }
@@ -1133,6 +1178,13 @@ fn take_record(v: &Value) -> R<TenantRecord> {
                 by: take_account(f.get("by")?)?,
             }
         }
+        "MailRelaySet" => {
+            let f = Fields::of(v, &["by", "kind", "relay"])?;
+            TenantRecord::MailRelaySet {
+                relay: take_mail_relay(f.get("relay")?)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
         _ => return Err(err("unknown record kind")),
     })
 }
@@ -1163,7 +1215,8 @@ mod tests {
         let seeds = seeds!("tenant_command_decode": "save_identity", "save_organisation",
             "save_payments", "invite_admin", "accept_admin_invitation", "approve_self_grant",
             "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
-            "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding");
+            "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding",
+            "set_mail_relay");
         for (name, bytes) in seeds {
             let c = decode_command(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_command(&c).as_deref(), Ok(bytes), "{name}");
@@ -1178,7 +1231,8 @@ mod tests {
             "step_saved_payments", "step_saved_agreements", "step_validated", "admin_invited",
             "admin_added", "self_grant_approved", "self_grant_approval_used", "setting_p70",
             "inference_recorded", "completed", "signatory_granted", "signatory_ended",
-            "activation_requested", "activation_approved", "branding_set");
+            "activation_requested", "activation_approved", "branding_set",
+            "mail_relay_set");
         for (name, bytes) in seeds {
             let r = decode_record(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_record(&r).as_deref(), Ok(bytes), "{name}");

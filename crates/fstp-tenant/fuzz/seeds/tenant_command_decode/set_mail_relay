@@ -1,0 +1,1 @@
+{"kind":"SetMailRelay","relay":{"ca":{"digest":"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a","id":"41"},"credential":"mail-relay","host":"smtp.relay.example"}}
