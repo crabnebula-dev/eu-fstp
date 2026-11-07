@@ -29,9 +29,15 @@ fuzz_target!(|data: &[u8]| {
         if let Some(ct) = field {
             let lower = String::from_utf8_lossy(ct).to_ascii_lowercase();
             assert!(
-                ["text/html", "application/xhtml+xml", "text/plain", "text/markdown", "text/x-markdown"]
-                    .iter()
-                    .any(|m| lower.contains(m)),
+                [
+                    "text/html",
+                    "application/xhtml+xml",
+                    "text/plain",
+                    "text/markdown",
+                    "text/x-markdown"
+                ]
+                .iter()
+                .any(|m| lower.contains(m)),
                 "accepted another media type"
             );
         }

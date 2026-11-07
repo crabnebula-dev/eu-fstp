@@ -27,7 +27,10 @@ fuzz_target!(|data: &[u8]| {
 
     let wide = html_to_text(&html, 1 << 20);
     if !wide.truncated {
-        assert!(wide.text.starts_with(&out.text), "the limit changed the text");
+        assert!(
+            wide.text.starts_with(&out.text),
+            "the limit changed the text"
+        );
         let canary = "QZXCANARYQZX";
         if !html.contains("QZX") && !html.to_ascii_lowercase().contains("<script") {
             for wrapped in [

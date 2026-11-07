@@ -47,7 +47,9 @@ fuzz_target!(|data: &[u8]| {
     let message = choice.and_then(|c| c.get("message"));
     only(message, &MESSAGE);
     assert_eq!(
-        message.and_then(|m| m.get("content")).and_then(Value::as_str),
+        message
+            .and_then(|m| m.get("content"))
+            .and_then(Value::as_str),
         Some(reply.content.as_data()),
         "the content is kept byte for byte"
     );

@@ -54,7 +54,10 @@ fuzz_target!(|data: &[u8]| {
     only(v.get("usage"), &USAGE);
     assert_eq!(v.get("type").and_then(Value::as_str), Some("message"));
     assert_eq!(v.get("role").and_then(Value::as_str), Some("assistant"));
-    assert_eq!(v.get("stop_reason").and_then(Value::as_str), Some("end_turn"));
+    assert_eq!(
+        v.get("stop_reason").and_then(Value::as_str),
+        Some("end_turn")
+    );
     let blocks = v.get("content").and_then(Value::as_array).expect("content");
     let mut texts = Vec::new();
     for b in blocks {
@@ -68,5 +71,9 @@ fuzz_target!(|data: &[u8]| {
             _ => panic!("accepted another block type"),
         }
     }
-    assert_eq!(texts, [reply.content.as_data()], "one text, kept byte for byte");
+    assert_eq!(
+        texts,
+        [reply.content.as_data()],
+        "one text, kept byte for byte"
+    );
 });

@@ -41,8 +41,9 @@ use fstp_domain::decision::{IrcVerdict, Vote};
 use fstp_domain::grant::IneligibleCost;
 use fstp_domain::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CommandId, ContentDigest, ContractId,
-    DecisionId, DeliverableId, Handle, HardshipEvidenceId, KnockOutCriterionId, LineId, LlmConfigId, MilestoneId,
-    OrganisationId, PlanVersionId, ProgrammeId, ProposalId, RequestId, TextId, TextRef, VaultEpoch,
+    DecisionId, DeliverableId, Handle, HardshipEvidenceId, KnockOutCriterionId, LineId,
+    LlmConfigId, MilestoneId, OrganisationId, PlanVersionId, ProgrammeId, ProposalId, RequestId,
+    TextId, TextRef, VaultEpoch,
 };
 use fstp_domain::oracle::{Answer, Answers, OracleDown, Query, QueryKind};
 use fstp_domain::payment::{

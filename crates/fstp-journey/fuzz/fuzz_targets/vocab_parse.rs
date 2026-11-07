@@ -23,8 +23,14 @@ fuzz_target!(|data: &[u8]| {
     };
     for (key, text) in pack.labels() {
         assert!(LABEL_KEYS.contains(&key), "I-72: a key outside the list");
-        assert!(!text.is_empty() && text.len() <= MAX_LABEL_BYTES, "text length");
-        assert!(!text.contains(['{', '}', '<', '>']), "placeholder or markup");
+        assert!(
+            !text.is_empty() && text.len() <= MAX_LABEL_BYTES,
+            "text length"
+        );
+        assert!(
+            !text.contains(['{', '}', '<', '>']),
+            "placeholder or markup"
+        );
         if let Some(f) = FIXED.iter().find(|f| f.key == key) {
             let want = match pack.kind() {
                 PackKind::Plain => f.plain,
