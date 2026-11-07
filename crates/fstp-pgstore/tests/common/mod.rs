@@ -109,7 +109,7 @@ pub fn must<T>(r: Result<T, Gap>) -> T {
 use fstp_audit::anchor::{Anchor, anchor_message};
 use fstp_ledger::AsyncRecordStore;
 use fstp_pgstore::{
-    AnchorSigner, Checkpoints, KeyFuture, LedgerKey, LedgerKeys, OutboxKey, OutboxKeys,
+    AnchorSigner, Checkpoints, KeyFuture, LedgerKey, LedgerKeys, OutboxKey, OutboxKeys, OutboxRow,
     PgRecordStore, Pool, Role, SessionEnd, SideEffects, StepUpUse, TextKey, TextKeys, TextLookup,
     TextRef, TextStore,
 };
@@ -1138,6 +1138,17 @@ impl CellDb {
         db
     }
 
+    /// As [`CellDb::provision`], with no grant applied. The M3 tests of
+    /// `fstp-celltest` then apply the production plan of `fstp-control`
+    /// (lane F-STORE).
+    pub fn provision_ungranted() -> Result<CellDb, Gap> {
+        let migrations = app_migrations()?;
+        let db = CellDb::bare();
+        db.migrate(migrations);
+        db.place();
+        Ok(db)
+    }
+
     /// The roles and the database, with nothing migrated.
     fn bare() -> CellDb {
         let server = app_server();
@@ -1887,6 +1898,155 @@ pub fn schema_grants(db: &CellDb) -> BTreeSet<(String, String, String)> {
             (f[0].to_owned(), f[1].to_owned(), f[2].to_owned())
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Crash points (I-24, design sections 5.3 and 14.4).
+//
+// Moved here from `store_faults.rs` so the M3 tests of `fstp-celltest`
+// crash a production append after each of its statements (lane F-STORE).
+
+/// The last microsecond a fresh step-up may commit in the injected append.
+pub const FRESH: i64 = fstp_ledger::MAX_AT;
+
+/// An outbox row of kind `kind` with a fresh id and idem.
+pub fn outbox_row(kind: u16, body: &[u8]) -> OutboxRow {
+    let mut idem = [0u8; 32];
+    idem[..16].copy_from_slice(&fresh16());
+    idem[16..].copy_from_slice(&fresh16());
+    OutboxRow {
+        id: fresh16(),
+        kind,
+        idem,
+        body: body.to_vec(),
+    }
+}
+
+/// The rows an append writes, by table. Outbox rows of kind 1 are alerts
+/// of the in-doubt rule, not rows of an append, so they are left out.
+pub fn append_rows(db: &CellDb) -> BTreeMap<&'static str, u64> {
+    let mut out = BTreeMap::new();
+    for (t, sql) in [
+        ("ledger.command", "SELECT count(*) FROM ledger.command;"),
+        ("ledger.entry", "SELECT count(*) FROM ledger.entry;"),
+        ("audit.chain", "SELECT count(*) FROM audit.chain;"),
+        ("audit.anchor", "SELECT count(*) FROM audit.anchor;"),
+        (
+            "auth_log.stepup_consumed",
+            "SELECT count(*) FROM auth_log.stepup_consumed;",
+        ),
+        (
+            "auth_log.session_end",
+            "SELECT count(*) FROM auth_log.session_end;",
+        ),
+        (
+            "ops.outbox",
+            "SELECT count(*) FROM ops.outbox WHERE kind <> 1;",
+        ),
+    ] {
+        out.insert(t, db.count(sql));
+    }
+    out
+}
+
+/// Superuser SQL that counts the rows an append inserts, across every
+/// table it writes, and fails or ends the session after the row that
+/// `fstp_test.fault.target` names. `at_commit` fails or ends the session
+/// at COMMIT instead. Mode 1 raises an error, mode 2 terminates the
+/// backend, as a crash or a lost connection does.
+pub const FAULTS: &str = "\
+CREATE SCHEMA fstp_test;
+CREATE TABLE fstp_test.fault (target bigint NOT NULL, mode smallint NOT NULL, at_commit smallint NOT NULL);
+INSERT INTO fstp_test.fault VALUES (0, 0, 0);
+CREATE SEQUENCE fstp_test.calls;
+CREATE FUNCTION fstp_test.end_here(mode smallint) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+  IF mode = 1 THEN RAISE EXCEPTION 'injected failure'; END IF;
+  PERFORM pg_terminate_backend(pg_backend_pid());
+  PERFORM pg_sleep(10);
+END $$;
+CREATE FUNCTION fstp_test.after_row() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE f fstp_test.fault%ROWTYPE;
+BEGIN
+  SELECT * INTO f FROM fstp_test.fault;
+  IF f.target > 0 AND nextval('fstp_test.calls') = f.target THEN
+    PERFORM fstp_test.end_here(f.mode);
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE FUNCTION fstp_test.at_commit() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE f fstp_test.fault%ROWTYPE;
+BEGIN
+  SELECT * INTO f FROM fstp_test.fault;
+  IF f.at_commit > 0 THEN PERFORM fstp_test.end_here(f.at_commit); END IF;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER zz_fault AFTER INSERT ON ledger.command FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE TRIGGER zz_fault AFTER INSERT ON ledger.entry FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE TRIGGER zz_fault AFTER INSERT ON audit.chain FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE TRIGGER zz_fault AFTER INSERT ON auth_log.stepup_consumed FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE TRIGGER zz_fault AFTER INSERT ON auth_log.session_end FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE TRIGGER zz_fault AFTER INSERT ON ops.outbox FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE TRIGGER zz_fault AFTER INSERT ON audit.anchor FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
+CREATE CONSTRAINT TRIGGER zz_fault_commit AFTER INSERT ON audit.anchor
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fstp_test.at_commit();";
+
+/// The rows the injected append inserts: one command row, two entries,
+/// two chain rows, one step-up row, one session end, one outbox row and
+/// one anchor row.
+pub const INJECTED_ROWS: u64 = 9;
+
+/// Arms the fault and restarts the row count.
+pub fn arm(db: &CellDb, target: u64, mode: u8, at_commit: u8) {
+    db.psql(&format!(
+        "UPDATE fstp_test.fault SET target = {target}, mode = {mode}, at_commit = {at_commit};\n\
+         SELECT pg_catalog.setval('fstp_test.calls', 1, false);"
+    ))
+    .unwrap_or_else(|e| panic!("arm: {e:?}"));
+}
+
+/// The side effects of one injected append, with fresh ids.
+pub fn injected_side() -> SideEffects {
+    SideEffects {
+        stepup_consumed: Some(StepUpUse {
+            challenge: fresh16(),
+            record: 1,
+        }),
+        stepup_fresh_until: Some(FRESH),
+        sessions_ended: vec![SessionEnd {
+            session: fresh16(),
+            record: 1,
+        }],
+        outbox: vec![outbox_row(2, b"recovery mail")],
+    }
+}
+
+/// `fstp_audit::verify` over the stored chain, ledger and anchor rows,
+/// the witness log, and the store's and the witness's keys.
+pub fn verify_production(
+    db: &CellDb,
+    w: &FakeWitness,
+    s: &Store,
+) -> Result<fstp_audit::verify::Verified, fstp_audit::AuditError> {
+    let rows = db.chain_rows();
+    let ledger = db.ledger_rows();
+    let anchors = db.audit_anchor_rows();
+    let witness = w.witness_log();
+    let anchor_keys = [s.anchor_key()];
+    let witness_keys = [w.public_key()];
+    fstp_audit::verify::verify(&fstp_audit::verify::ChainView {
+        cell: db.cell_id(),
+        chain: ChainId::App,
+        rows: &rows,
+        ledger: &ledger,
+        anchors: &anchors,
+        witness: &witness,
+        anchor_keys: &anchor_keys,
+        witness_keys: &witness_keys,
+    })
 }
 
 // ---------------------------------------------------------------------------

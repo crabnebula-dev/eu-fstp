@@ -41,6 +41,8 @@ use fstp_mc::{Config, Verdict, check, explore};
 use fstp_prop::Gen;
 use fstp_rt::future::block_on;
 
+mod pg_store;
+
 // ---------------------------------------------------------------------------
 // Helpers.
 
@@ -1412,20 +1414,182 @@ fn catalogue_lists(schema: &str, name: &str) {
     );
 }
 
+/// A time inside the bound, in UTC microseconds (2026-10-29).
+const PG_AT: i64 = 1_793_232_000_000_000;
+
+/// The reference form of a stored chain row's kind.
+fn ref_kind(kind: &fstp_audit::chain::RowKind) -> RefRowKind {
+    match kind {
+        fstp_audit::chain::RowKind::Ledger { seq } => RefRowKind::Ledger { seq: *seq },
+        fstp_audit::chain::RowKind::Event { body } => RefRowKind::Event { body: body.clone() },
+    }
+}
+
+/// The `fstp-audit` form of a reference row's kind.
+fn audit_kind(kind: &RefRowKind) -> fstp_audit::chain::RowKind {
+    match kind {
+        RefRowKind::Ledger { seq } => fstp_audit::chain::RowKind::Ledger { seq: *seq },
+        RefRowKind::Event { body } => fstp_audit::chain::RowKind::Event { body: body.clone() },
+    }
+}
+
+/// The reference form of a stored ledger entry.
+fn ref_entry(e: &fstp_audit::chain::StoredEntry) -> RefLedgerEntry {
+    RefLedgerEntry {
+        seq: e.seq,
+        at: e.at,
+        command: e.command,
+        schema: e.schema,
+        key_ix: e.key_ix,
+        body: e.body.clone(),
+    }
+}
+
+/// Whether the stored rows of `db` equal the reference recomputation:
+/// each stored hash from the row and its ledger entry, each link from the
+/// previous one, from the App genesis of the database's cell.
+fn rows_match_reference(db: &pg_store::CellDb) -> Result<(), String> {
+    let ledger = db.ledger_rows();
+    let mut prev = r::genesis(db.cell, RefChain::App);
+    for row in db.chain_rows() {
+        let kind = ref_kind(&row.row.kind);
+        let entry = match &kind {
+            RefRowKind::Ledger { seq } => Some(ref_entry(
+                ledger
+                    .iter()
+                    .find(|e| e.seq == *seq)
+                    .ok_or(format!("row {} names no entry {seq}", row.row.n))?,
+            )),
+            RefRowKind::Event { .. } => None,
+        };
+        let sh = r::stored_hash(row.row.at, &kind, entry.as_ref())
+            .ok_or(format!("row {} has no reference stored hash", row.row.n))?;
+        if sh != row.row.stored_hash {
+            return Err(format!("row {}: the stored hash differs", row.row.n));
+        }
+        let link = r::link(&prev, db.cell, RefChain::App, row.row.n, &sh);
+        if link != row.link.0 {
+            return Err(format!("row {}: the link differs", row.row.n));
+        }
+        prev = link;
+    }
+    Ok(())
+}
+
+/// The SQL that inserts the reference chain `s` as the writer: each
+/// ledger entry under its own command, then each row with its reference
+/// stored hash and link.
+fn reference_chain_sql(s: &SymChain) -> String {
+    let mut sql = String::new();
+    for e in &s.store.ledger {
+        let entry = fstp_audit::chain::StoredEntry {
+            seq: e.seq,
+            at: e.at,
+            command: e.command,
+            schema: e.schema,
+            key_ix: e.key_ix,
+            body: e.body.clone(),
+        };
+        sql.push_str(&pg_store::insert_entries_sql(
+            &e.command,
+            e.at,
+            std::slice::from_ref(&entry),
+        ));
+    }
+    for row in &s.store.rows {
+        sql.push_str(&pg_store::insert_chain_sql(
+            &fstp_audit::chain::ChainRow {
+                n: row.n,
+                at: row.at,
+                kind: audit_kind(&row.kind),
+                stored_hash: row.stored_hash,
+            },
+            &fstp_audit::chain::Link(row.link),
+        ));
+    }
+    sql
+}
+
+/// A reference chain of `cell`'s App chain: three committed batches of
+/// both row kinds, with sealed bodies of at least 28 bytes.
+fn pg_reference_chain(cell: CellBytes) -> SymChain {
+    let mut s = SymChain::genesis(cell, RefChain::App);
+    s.append(
+        &[ledger_spec(100, 1, &[0xB1; 32]), event_spec(101, b"login")],
+        102,
+    )
+    .unwrap();
+    s.append(&[ledger_spec(110, 2, &[0xB2; 40])], 112).unwrap();
+    s.append(
+        &[
+            event_spec(120, b"step-up"),
+            ledger_spec(121, 3, &[0xB3; 28]),
+        ],
+        122,
+    )
+    .unwrap();
+    s
+}
+
+/// A production store over a cell database granted the production plan,
+/// after `n` appends of one record each.
+fn pg_store_after(n: u64) -> (pg_store::CellDb, pg_store::FakeWitness, pg_store::Store) {
+    let db = pg_store::prod_db();
+    let w = pg_store::FakeWitness::new(db.cell_id());
+    let mut s = pg_store::must(pg_store::Store::open(&db, &w));
+    for i in 0..n {
+        let got = pg_store::must(s.append(
+            fstp_ledger::Seq::from_raw(i),
+            PG_AT,
+            pg_store::fresh16(),
+            vec![pg_store::Rec::new(1, "synthetic record")],
+        ));
+        assert_eq!(got, Ok(fstp_ledger::Seq::from_raw(i + 1)), "append {i}");
+    }
+    (db, w, s)
+}
+
 /// I-24, ADR-010: the `audit.check_link` trigger, `fstp-audit` and the
 /// reference compute the same stored hash and link bytes.
 ///
-/// Gap: `fstp-pgstore` exposes no cell migrations, so no row can be
-/// inserted through the trigger yet (lane W2e). The reference vectors
-/// are checked against PostgreSQL's own `sha256()` by
-/// `i24_reference_link_matches_postgres_sha256`.
+/// A reference chain of both row kinds goes through the trigger as the
+/// writer and is stored as the reference computed it. The rows the
+/// production store writes then recompute under the reference and
+/// under `fstp-audit` (lane F-STORE). PostgreSQL's own `sha256()`
+/// vectors are `i24_reference_link_matches_postgres_sha256`.
 #[test]
 fn i24_pg_chain_equals_reference_chain() {
     catalogue_lists("audit", "chain");
     catalogue_lists("audit", "anchor");
-    panic!(
-        "fstp-pgstore exposes no cell migrations to insert chain rows through audit.check_link (lane W2e, W1e gap)"
+
+    let db = pg_store::prod_db();
+    let s = pg_reference_chain(db.cell);
+    db.psql_as("writer", &reference_chain_sql(&s))
+        .unwrap_or_else(|e| panic!("I-24: the trigger refused the reference chain: {e:?}"));
+    let stored = db.chain_rows();
+    assert_eq!(stored.len(), s.store.rows.len(), "I-24: the stored rows");
+    for (got, want) in stored.iter().zip(&s.store.rows) {
+        assert_eq!(got.row.n, want.n, "I-24: row number");
+        assert_eq!(
+            got.row.stored_hash, want.stored_hash,
+            "I-24: stored hash of row {}",
+            want.n
+        );
+        assert_eq!(got.link.0, want.link, "I-24: link of row {}", want.n);
+    }
+    pg_store::recompute_chain(db.cell_id(), &stored, &db.ledger_rows())
+        .unwrap_or_else(|e| panic!("I-24: fstp-audit over the reference rows: {e}"));
+
+    let (db, _w, _s) = pg_store_after(3);
+    assert_eq!(
+        db.chain_rows().len(),
+        3,
+        "I-24: one row per committed entry"
     );
+    rows_match_reference(&db)
+        .unwrap_or_else(|e| panic!("I-24: the reference over production rows: {e}"));
+    pg_store::recompute_chain(db.cell_id(), &db.chain_rows(), &db.ledger_rows())
+        .unwrap_or_else(|e| panic!("I-24: fstp-audit over production rows: {e}"));
 }
 
 /// I-24, ADR-010 "Database link trigger": a wrong link is refused by the
@@ -1433,27 +1597,201 @@ fn i24_pg_chain_equals_reference_chain() {
 /// TRUNCATE, the owner gets the trigger's exception, and a superuser's
 /// edit is then detected by the verifier.
 ///
-/// Gap: as above, the migrations and roles wait for lane W2e.
+/// Over a cell database granted the production plan, after three
+/// production appends (lane F-STORE).
 #[test]
 fn i24_database_refuses_bad_link_and_mutation() {
     catalogue_lists("audit", "chain");
     catalogue_lists("audit", "anchor");
-    panic!(
-        "fstp-pgstore exposes no cell migrations, writer role or owner role to test (lane W2e, W1e gap)"
+    let (db, w, s) = pg_store_after(3);
+    let rows = db.chain_rows();
+    let head = rows.last().unwrap();
+
+    // A next row: the right link, a wrong link, a wrong stored hash.
+    let kind = fstp_audit::chain::RowKind::Event {
+        body: vec![0xE7; 32],
+    };
+    let sh = fstp_audit::chain::stored_hash(PG_AT, &kind, None).unwrap();
+    let row = fstp_audit::chain::ChainRow {
+        n: 4,
+        at: PG_AT,
+        kind,
+        stored_hash: sh,
+    };
+    let link = fstp_audit::chain::link_of(
+        &head.link,
+        db.cell_id(),
+        fstp_audit::chain::ChainId::App,
+        4,
+        &sh,
+    );
+    let right = pg_store::insert_chain_sql(&row, &link);
+    assert_eq!(
+        db.state_as("writer", &format!("BEGIN;\n{right}ROLLBACK;")),
+        None,
+        "I-24: the trigger refused the right link"
+    );
+    let mut bad = link;
+    bad.0[0] ^= 1;
+    assert_eq!(
+        db.state_as("writer", &pg_store::insert_chain_sql(&row, &bad))
+            .as_deref(),
+        Some("23514"),
+        "I-24: a wrong link"
+    );
+    let mut wrong_hash = row.clone();
+    wrong_hash.stored_hash[0] ^= 1;
+    let relinked = fstp_audit::chain::link_of(
+        &head.link,
+        db.cell_id(),
+        fstp_audit::chain::ChainId::App,
+        4,
+        &wrong_hash.stored_hash,
+    );
+    assert_eq!(
+        db.state_as(
+            "writer",
+            &pg_store::insert_chain_sql(&wrong_hash, &relinked)
+        )
+        .as_deref(),
+        Some("23514"),
+        "I-24: a stored hash its row does not recompute"
+    );
+
+    // No role mutates a stored row.
+    let before = db.row_counts();
+    for (table, key) in [
+        ("audit.chain", "n"),
+        ("audit.anchor", "n"),
+        ("ledger.entry", "seq"),
+        ("ledger.command", "command"),
+    ] {
+        for stmt in [
+            format!("UPDATE {table} SET {key} = {key};"),
+            format!("DELETE FROM {table};"),
+            format!("TRUNCATE {table} CASCADE;"),
+        ] {
+            assert_eq!(
+                db.state_as("writer", &stmt).as_deref(),
+                Some("42501"),
+                "I-24: the writer ran {stmt}"
+            );
+            let owner = db.psql_as("migrator", &stmt).err();
+            assert!(
+                owner.as_ref().is_some_and(
+                    |e| e.state.as_deref() == Some("42501") && e.text.contains("append-only")
+                ),
+                "I-24: the owner ran {stmt}, or failed outside the trigger: {owner:?}"
+            );
+        }
+    }
+    assert_eq!(db.row_counts(), before, "I-24: a stored row changed");
+    assert!(
+        pg_store::verify_production(&db, &w, &s).is_ok(),
+        "I-24: the verifier flagged untouched rows"
+    );
+
+    // A superuser edit, triggers bypassed, is found by the verifier.
+    db.psql(
+        "SET session_replication_role = replica;\nUPDATE ledger.entry e SET body = o.body \
+         FROM ledger.entry o WHERE (e.seq = 1 AND o.seq = 2) OR (e.seq = 2 AND o.seq = 1);",
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        pg_store::verify_production(&db, &w, &s),
+        Err(fstp_audit::AuditError::Tamper(
+            fstp_audit::verify::Tamper::StoredHashMismatch { seq: 1 }
+        )),
+        "I-24: a superuser's body swap"
     );
 }
 
 /// I-24, design section 5.3: the ledger entries and their chain rows
 /// commit together, under a crash after every statement of the append.
 ///
-/// Gap: `PgRecordStore` has no pool constructor and no append yet (lane
-/// W2e).
+/// The crash points of the shared store harness fail, or end the
+/// session, after each row an append inserts and at COMMIT. Each such
+/// append leaves no row in any table, and the store settles. An append
+/// without a fault then commits every row together, and the chain
+/// recomputes and verifies (lane F-STORE).
 #[test]
 fn i24_ledger_and_chain_commit_together() {
     catalogue_lists("ledger", "entry");
     catalogue_lists("audit", "chain");
-    panic!(
-        "fstp-pgstore exposes no pool constructor or append to crash after each statement (lane W2e, W1e gap)"
+    let (db, w, mut s) = pg_store_after(1);
+    db.psql(pg_store::FAULTS)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let mut cases: Vec<(u64, u8, u8)> = Vec::new();
+    for target in 1..=pg_store::INJECTED_ROWS {
+        for mode in [1, 2] {
+            cases.push((target, mode, 0));
+        }
+    }
+    cases.push((0, 0, 1));
+    cases.push((0, 0, 2));
+    let recs = |text: &str| vec![pg_store::Rec::new(1, text), pg_store::Rec::new(2, text)];
+    for (target, mode, at_commit) in cases {
+        let before = pg_store::append_rows(&db);
+        pg_store::arm(&db, target, mode, at_commit);
+        let got = s.append_effects(
+            fstp_ledger::Seq::from_raw(1),
+            PG_AT,
+            pg_store::fresh16(),
+            recs("injected"),
+            &pg_store::injected_side(),
+        );
+        pg_store::arm(&db, 0, 0, 0);
+        assert!(
+            got.is_err(),
+            "I-24: a crash after row {target} (mode {mode}, commit {at_commit}) committed"
+        );
+        assert_eq!(
+            pg_store::append_rows(&db),
+            before,
+            "I-24: rows of an append that crashed after row {target} (mode {mode}, commit {at_commit})"
+        );
+        let settled = s.settle();
+        assert!(settled.is_ok(), "the store did not settle: {settled:?}");
+        assert!(s.idle(), "an unfinished step after row {target}");
+        assert_eq!(
+            pg_store::append_rows(&db),
+            before,
+            "I-24: rows after the settle"
+        );
+    }
+    let before = pg_store::append_rows(&db);
+    assert_eq!(
+        s.append_effects(
+            fstp_ledger::Seq::from_raw(1),
+            PG_AT,
+            pg_store::fresh16(),
+            recs("whole"),
+            &pg_store::injected_side(),
+        ),
+        Ok(fstp_ledger::Seq::from_raw(3))
+    );
+    let after = pg_store::append_rows(&db);
+    for (table, grew) in [
+        ("ledger.command", 1),
+        ("ledger.entry", 2),
+        ("audit.chain", 2),
+        ("audit.anchor", 1),
+        ("auth_log.stepup_consumed", 1),
+        ("auth_log.session_end", 1),
+        ("ops.outbox", 1),
+    ] {
+        assert_eq!(
+            after[table] - before[table],
+            grew,
+            "I-24: the rows of one append in {table}"
+        );
+    }
+    pg_store::recompute_chain(db.cell_id(), &db.chain_rows(), &db.ledger_rows())
+        .unwrap_or_else(|e| panic!("I-24: {e}"));
+    rows_match_reference(&db).unwrap_or_else(|e| panic!("I-24: {e}"));
+    assert!(
+        pg_store::verify_production(&db, &w, &s).is_ok(),
+        "I-24: the verifier flagged the rows after the crashes"
     );
 }
 

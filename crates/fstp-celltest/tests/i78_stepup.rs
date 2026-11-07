@@ -49,6 +49,8 @@ use fstp_domain_testkit::harness::teeth::{expect_unreachable, expect_violation};
 use fstp_mc::{Config, check, explore};
 use fstp_prop::{Gen, prop_assert_eq};
 
+mod pg_store;
+
 // ---------------------------------------------------------------------------
 // Helpers.
 
@@ -896,9 +898,9 @@ fn i78_p71_may_only_shorten() {
 /// I-78, design section 4.2: the database refuses a second consumption of
 /// a step-up through the primary key of `auth_log.stepup_consumed`.
 ///
-/// Gap: `fstp-pgstore` exposes no cell migrations yet, so the insert twice
-/// over a real database waits for lane W2e. The catalogue must list the
-/// table first.
+/// The writer of a cell database granted the production plan inserts one
+/// consumption, then the same challenge again. The second insert fails
+/// with SQLSTATE 23505 and the table keeps one row (lane F-STORE).
 #[test]
 fn i78_database_refuses_a_second_step_up_consumption() {
     let t = fstp_pgstore::CATALOGUE
@@ -915,15 +917,47 @@ fn i78_database_refuses_a_second_step_up_consumption() {
         t.schema,
         t.name
     );
-    panic!(
-        "fstp-pgstore exposes no cell migrations to insert a consumption twice (lane W2e, W1b gap)"
+    let db = pg_store::prod_db();
+    let command = pg_store::fresh16();
+    let entry = fstp_audit::chain::StoredEntry {
+        seq: 1,
+        at: 1_000,
+        command,
+        schema: 1,
+        key_ix: 0,
+        body: vec![0xA5; 40],
+    };
+    let seed = pg_store::insert_entries_sql(&command, 1_000, std::slice::from_ref(&entry));
+    db.psql_as("writer", &seed)
+        .unwrap_or_else(|e| panic!("the writer's ledger row: {e:?}"));
+    let insert = format!(
+        "INSERT INTO auth_log.stepup_consumed (challenge_id, ledger_seq) VALUES ('{}', 1);",
+        pg_store::uuid_text(&pg_store::fresh16())
+    );
+    assert_eq!(
+        db.state_as("writer", &insert),
+        None,
+        "I-78: the first consumption"
+    );
+    assert_eq!(
+        db.state_as("writer", &insert).as_deref(),
+        Some("23505"),
+        "I-78: a second consumption of one challenge"
+    );
+    assert_eq!(
+        db.count("SELECT count(*) FROM auth_log.stepup_consumed;"),
+        1,
+        "I-78: the rows of one challenge"
     );
 }
 
 /// I-78, ADR-007: the ledger-writing role holds INSERT and SELECT only on
 /// the `auth_log` tables, so no update can undo a consumption.
 ///
-/// Gap: as above, the role grants wait for the cell migrations of lane W2e.
+/// The cell database is granted the production plan. The writer holds
+/// exactly SELECT and INSERT on each `auth_log` table, no column grant,
+/// and no privilege beyond SELECT and INSERT on any table. Its UPDATE,
+/// DELETE and TRUNCATE fail with SQLSTATE 42501 (lane F-STORE).
 #[test]
 fn i78_writer_role_holds_insert_and_select_only() {
     let tables: BTreeSet<&str> = fstp_pgstore::CATALOGUE
@@ -936,7 +970,58 @@ fn i78_writer_role_holds_insert_and_select_only() {
         BTreeSet::from(["stepup_consumed", "session_end"]),
         "fstp_pgstore::CATALOGUE must list both auth_log tables (lane W2e)"
     );
-    panic!("fstp-pgstore exposes no cell migrations or writer role to inspect (lane W2e, W1b gap)");
+    let db = pg_store::prod_db();
+    let writer = db.role("writer");
+    let grants: Vec<(String, String)> = pg_store::table_grants(&db)
+        .into_iter()
+        .filter(|(r, _, _)| *r == writer)
+        .map(|(_, o, p)| (o, p))
+        .collect();
+    for table in &tables {
+        let object = format!("auth_log.{table}");
+        let held: BTreeSet<&str> = grants
+            .iter()
+            .filter(|(o, _)| *o == object)
+            .map(|(_, p)| p.as_str())
+            .collect();
+        assert_eq!(
+            held,
+            BTreeSet::from(["INSERT", "SELECT"]),
+            "I-78: the writer's privileges on {object}"
+        );
+    }
+    let beyond: Vec<&(String, String)> = grants
+        .iter()
+        .filter(|(_, p)| p != "SELECT" && p != "INSERT")
+        .collect();
+    assert!(
+        beyond.is_empty(),
+        "I-78: the writer holds more than INSERT and SELECT: {beyond:?}"
+    );
+    let columns: Vec<_> = pg_store::column_grants(&db)
+        .into_iter()
+        .filter(|(r, _, _)| *r == writer)
+        .collect();
+    assert!(
+        columns.is_empty(),
+        "I-78: the writer holds column grants: {columns:?}"
+    );
+    for (table, key) in [
+        ("auth_log.stepup_consumed", "challenge_id"),
+        ("auth_log.session_end", "session_id"),
+    ] {
+        for stmt in [
+            format!("UPDATE {table} SET {key} = {key};"),
+            format!("DELETE FROM {table};"),
+            format!("TRUNCATE {table};"),
+        ] {
+            assert_eq!(
+                db.state_as("writer", &stmt).as_deref(),
+                Some("42501"),
+                "I-78: the writer ran {stmt}"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

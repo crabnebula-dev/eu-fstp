@@ -31,23 +31,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::{
-    CellDb, FakeWitness, Mode, Rec, Recorded, Store, canary, fresh16, holds_canary, must,
-    recompute_chain,
+    CellDb, FAULTS, FRESH, FakeWitness, INJECTED_ROWS, Mode, Rec, Recorded, Store, append_rows,
+    arm, canary, fresh16, holds_canary, injected_side, must, outbox_row, recompute_chain,
+    verify_production,
 };
 use fstp_audit::AuditError;
 use fstp_audit::anchorer::Resolution;
-use fstp_audit::chain::{ChainId, Link};
-use fstp_audit::verify::{ChainView, Tamper, verify};
-use fstp_ledger::{AppendError, MAX_AT, Seq};
+use fstp_audit::chain::Link;
+use fstp_audit::verify::Tamper;
+use fstp_ledger::{AppendError, Seq};
 use fstp_pgstore::{
     AppendFault, MAX_OUTBOX_BODY, OutboxRow, SessionEnd, SideEffects, StepUpUse, StoreFault,
 };
 
 /// A time inside the bound, in UTC microseconds (2026-10-29).
 const AT: i64 = 1_793_232_000_000_000;
-
-/// The last microsecond a fresh step-up may commit in these tests.
-const FRESH: i64 = MAX_AT;
 
 /// Superuser SQL that holds `pg_advisory_xact_lock(1)` for four seconds,
 /// as an open append or a reader view under the ADR-010 rule does.
@@ -94,46 +92,6 @@ fn wait_for_advisory_lock(db: &CellDb) {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-/// An outbox row of kind `kind` with a fresh id and idem.
-fn outbox_row(kind: u16, body: &[u8]) -> OutboxRow {
-    let mut idem = [0u8; 32];
-    idem[..16].copy_from_slice(&fresh16());
-    idem[16..].copy_from_slice(&fresh16());
-    OutboxRow {
-        id: fresh16(),
-        kind,
-        idem,
-        body: body.to_vec(),
-    }
-}
-
-/// The rows an append writes, by table. Outbox rows of kind 1 are alerts
-/// of the in-doubt rule, not rows of an append, so they are left out.
-fn append_rows(db: &CellDb) -> BTreeMap<&'static str, u64> {
-    let mut out = BTreeMap::new();
-    for (t, sql) in [
-        ("ledger.command", "SELECT count(*) FROM ledger.command;"),
-        ("ledger.entry", "SELECT count(*) FROM ledger.entry;"),
-        ("audit.chain", "SELECT count(*) FROM audit.chain;"),
-        ("audit.anchor", "SELECT count(*) FROM audit.anchor;"),
-        (
-            "auth_log.stepup_consumed",
-            "SELECT count(*) FROM auth_log.stepup_consumed;",
-        ),
-        (
-            "auth_log.session_end",
-            "SELECT count(*) FROM auth_log.session_end;",
-        ),
-        (
-            "ops.outbox",
-            "SELECT count(*) FROM ops.outbox WHERE kind <> 1;",
-        ),
-    ] {
-        out.insert(t, db.count(sql));
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -387,81 +345,6 @@ fn i78_side_rows_name_the_entry_of_their_own_record() {
 // ---------------------------------------------------------------------------
 // Crash injection (I-24, design section 14.4).
 
-/// Superuser SQL that counts the rows an append inserts, across every
-/// table it writes, and fails or ends the session after the row that
-/// `fstp_test.fault.target` names. `at_commit` fails or ends the session
-/// at COMMIT instead. Mode 1 raises an error, mode 2 terminates the
-/// backend, as a crash or a lost connection does.
-const FAULTS: &str = "\
-CREATE SCHEMA fstp_test;
-CREATE TABLE fstp_test.fault (target bigint NOT NULL, mode smallint NOT NULL, at_commit smallint NOT NULL);
-INSERT INTO fstp_test.fault VALUES (0, 0, 0);
-CREATE SEQUENCE fstp_test.calls;
-CREATE FUNCTION fstp_test.end_here(mode smallint) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog AS $$
-BEGIN
-  IF mode = 1 THEN RAISE EXCEPTION 'injected failure'; END IF;
-  PERFORM pg_terminate_backend(pg_backend_pid());
-  PERFORM pg_sleep(10);
-END $$;
-CREATE FUNCTION fstp_test.after_row() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog AS $$
-DECLARE f fstp_test.fault%ROWTYPE;
-BEGIN
-  SELECT * INTO f FROM fstp_test.fault;
-  IF f.target > 0 AND nextval('fstp_test.calls') = f.target THEN
-    PERFORM fstp_test.end_here(f.mode);
-  END IF;
-  RETURN NULL;
-END $$;
-CREATE FUNCTION fstp_test.at_commit() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog AS $$
-DECLARE f fstp_test.fault%ROWTYPE;
-BEGIN
-  SELECT * INTO f FROM fstp_test.fault;
-  IF f.at_commit > 0 THEN PERFORM fstp_test.end_here(f.at_commit); END IF;
-  RETURN NULL;
-END $$;
-CREATE TRIGGER zz_fault AFTER INSERT ON ledger.command FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE TRIGGER zz_fault AFTER INSERT ON ledger.entry FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE TRIGGER zz_fault AFTER INSERT ON audit.chain FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE TRIGGER zz_fault AFTER INSERT ON auth_log.stepup_consumed FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE TRIGGER zz_fault AFTER INSERT ON auth_log.session_end FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE TRIGGER zz_fault AFTER INSERT ON ops.outbox FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE TRIGGER zz_fault AFTER INSERT ON audit.anchor FOR EACH ROW EXECUTE FUNCTION fstp_test.after_row();
-CREATE CONSTRAINT TRIGGER zz_fault_commit AFTER INSERT ON audit.anchor
-  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fstp_test.at_commit();";
-
-/// The rows the injected append inserts: one command row, two entries,
-/// two chain rows, one step-up row, one session end, one outbox row and
-/// one anchor row.
-const INJECTED_ROWS: u64 = 9;
-
-/// Arms the fault and restarts the row count.
-fn arm(db: &CellDb, target: u64, mode: u8, at_commit: u8) {
-    db.psql(&format!(
-        "UPDATE fstp_test.fault SET target = {target}, mode = {mode}, at_commit = {at_commit};\n\
-         SELECT pg_catalog.setval('fstp_test.calls', 1, false);"
-    ))
-    .unwrap_or_else(|e| panic!("arm: {e:?}"));
-}
-
-/// The side effects of one injected append, with fresh ids.
-fn injected_side() -> SideEffects {
-    SideEffects {
-        stepup_consumed: Some(StepUpUse {
-            challenge: fresh16(),
-            record: 1,
-        }),
-        stepup_fresh_until: Some(FRESH),
-        sessions_ended: vec![SessionEnd {
-            session: fresh16(),
-            record: 1,
-        }],
-        outbox: vec![outbox_row(2, b"recovery mail")],
-    }
-}
-
 /// I-24, ADR-007, design sections 5.3 and 14.4
 /// (`i24_ledger_and_chain_commit_together`): a failure or a lost
 /// connection after each statement of an append, from the command row
@@ -540,31 +423,6 @@ fn i24_append_rows_commit_together_under_crash_injection() {
 
 // ---------------------------------------------------------------------------
 // The verifier over production rows (I-24, design section 14.4).
-
-/// `fstp_audit::verify` over the stored chain, ledger and anchor rows,
-/// the witness log, and the store's and the witness's keys.
-fn verify_production(
-    db: &CellDb,
-    w: &FakeWitness,
-    s: &Store,
-) -> Result<fstp_audit::verify::Verified, AuditError> {
-    let rows = db.chain_rows();
-    let ledger = db.ledger_rows();
-    let anchors = db.audit_anchor_rows();
-    let witness = w.witness_log();
-    let anchor_keys = [s.anchor_key()];
-    let witness_keys = [w.public_key()];
-    verify(&ChainView {
-        cell: db.cell_id(),
-        chain: ChainId::App,
-        rows: &rows,
-        ledger: &ledger,
-        anchors: &anchors,
-        witness: &witness,
-        anchor_keys: &anchor_keys,
-        witness_keys: &witness_keys,
-    })
-}
 
 /// The verifier found no change, signatures included.
 fn assert_no_tamper(got: &Result<fstp_audit::verify::Verified, AuditError>, when: &str) {
