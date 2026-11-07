@@ -1,0 +1,38 @@
+[package]
+name = "fstp-retrieve-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-retrieve = { path = ".." }
+
+[[bin]]
+name = "retrieve_html_text"
+path = "fuzz_targets/retrieve_html_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "retrieve_http_body"
+path = "fuzz_targets/retrieve_http_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "retrieve_url"
+path = "fuzz_targets/retrieve_url.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

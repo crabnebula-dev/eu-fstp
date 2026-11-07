@@ -811,6 +811,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-retrieve"
+version = "0.1.0"
+dependencies = [
+ "fstp-findings",
+ "fstp-http",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-rt",
+]
+
+[[package]]
 name = "fstp-rt"
 version = "0.1.0"
 dependencies = [
