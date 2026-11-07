@@ -1,6 +1,6 @@
 //! CI gate for the dependency policy in CLAUDE.md.
 //!
-//! deps-check runs six gates over the repository and fails on any error:
+//! deps-check runs seven gates over the repository and fails on any error:
 //!
 //! 1. Dependency allowlist (TH-15, H-10). It finds every cargo project in
 //!    the repository: the main workspace, the cargo-fuzz projects and any
@@ -41,6 +41,10 @@
 //!    `layering_m4` holds layering rules A1 to A10 with A2b and A9b, and
 //!    `web_scan` is the TypeScript source scan of `web/src` (ADR-014).
 //!
+//! 7. The M9 rule I-75 (`docs/handoff/m9-design.md` section 3). `pq_hybrid`
+//!    is a source scan: only `fstp-crypto` names moduletto, `mldsa` or
+//!    `mlkem`, and inside it only the hybrid's own files do.
+//!
 //! Run it from the repository root with `cargo run -p deps-check --locked`.
 //! `--print-allowlist` prints an allowlist generated from the current graph,
 //! keeping existing notes, for review before it replaces the file.
@@ -64,6 +68,7 @@ mod layering_m4;
 mod lockfile;
 mod metadata;
 mod npm;
+mod pq_hybrid;
 mod provenance;
 mod python;
 mod repo;

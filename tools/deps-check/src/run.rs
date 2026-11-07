@@ -18,6 +18,7 @@ use crate::layering_m4;
 use crate::lockfile::{self, Lockfile};
 use crate::metadata::{self, Metadata};
 use crate::npm;
+use crate::pq_hybrid;
 use crate::provenance::{self, ProjectLock};
 use crate::python;
 use crate::repo::{self, ProjectDir};
@@ -625,6 +626,7 @@ pub fn run() -> ExitCode {
         let sources = layering_m3::member_sources(meta, &mut findings);
         findings.extend(layering_m3::scan(&sources));
         findings.extend(layering_m4::scan(&sources, meta));
+        findings.extend(pq_hybrid::scan(&sources));
         let allowed = match fs::read_to_string(root.join(funds::FUNDS_ALLOWED)) {
             Ok(t) => funds::parse_funds_allowed(&t).unwrap_or_else(|e| {
                 line_errors("policy-syntax", funds::FUNDS_ALLOWED, e, &mut findings);
