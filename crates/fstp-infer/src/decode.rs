@@ -50,8 +50,63 @@ pub enum DecodeError {
     UnknownMember,
     /// A member is missing or has the wrong type or value.
     Shape(&'static str),
-    /// The model stopped at the token limit.
+    /// The model stopped at the token limit or the context window.
     Truncated,
+    /// The model declined to answer (Anthropic `refusal`).
+    Refused,
+    /// The model stopped for a reason this client never asks for.
+    Unexpected(StopReason),
+}
+
+/// An Anthropic `stop_reason`, as documented at
+/// <https://platform.claude.com/docs/en/api/messages/create>.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StopReason {
+    /// `end_turn`: a natural stop. The only one that gives a reply.
+    EndTurn,
+    /// `max_tokens`: truncated.
+    MaxTokens,
+    /// `stop_sequence`: no stop sequence is ever sent.
+    StopSequence,
+    /// `tool_use`: no tool is ever offered.
+    ToolUse,
+    /// `pause_turn`: a server-tool loop paused. No server tool is offered.
+    PauseTurn,
+    /// `refusal`: the model declined.
+    Refusal,
+    /// `model_context_window_exceeded`: truncated.
+    ModelContextWindowExceeded,
+}
+
+impl StopReason {
+    /// Every documented stop reason.
+    pub const ALL: [StopReason; 7] = [
+        StopReason::EndTurn,
+        StopReason::MaxTokens,
+        StopReason::StopSequence,
+        StopReason::ToolUse,
+        StopReason::PauseTurn,
+        StopReason::Refusal,
+        StopReason::ModelContextWindowExceeded,
+    ];
+
+    /// The wire spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            StopReason::EndTurn => "end_turn",
+            StopReason::MaxTokens => "max_tokens",
+            StopReason::StopSequence => "stop_sequence",
+            StopReason::ToolUse => "tool_use",
+            StopReason::PauseTurn => "pause_turn",
+            StopReason::Refusal => "refusal",
+            StopReason::ModelContextWindowExceeded => "model_context_window_exceeded",
+        }
+    }
+
+    /// The stop reason with this spelling.
+    pub fn parse(s: &str) -> Option<StopReason> {
+        StopReason::ALL.into_iter().find(|r| r.as_str() == s)
+    }
 }
 
 impl fmt::Display for DecodeError {
@@ -62,6 +117,8 @@ impl fmt::Display for DecodeError {
             DecodeError::UnknownMember => f.write_str("unknown member"),
             DecodeError::Shape(what) => write!(f, "bad shape: {what}"),
             DecodeError::Truncated => f.write_str("reply truncated"),
+            DecodeError::Refused => f.write_str("model refused"),
+            DecodeError::Unexpected(r) => write!(f, "unexpected stop reason {}", r.as_str()),
         }
     }
 }
@@ -91,7 +148,7 @@ const MESSAGE: [&str; 4] = ["role", "content", "refusal", "tool_calls"];
 /// The members a usage object may hold.
 const USAGE: [&str; 3] = ["prompt_tokens", "completion_tokens", "total_tokens"];
 
-fn limits() -> ParseLimits {
+pub(crate) fn limits() -> ParseLimits {
     ParseLimits {
         max_input_bytes: MAX_RESPONSE_BYTES,
         max_depth: 16,
@@ -103,7 +160,7 @@ fn limits() -> ParseLimits {
 }
 
 /// Refuses any member of `o` outside `allowed`.
-fn closed(o: &Object, allowed: &[&str]) -> Result<(), DecodeError> {
+pub(crate) fn closed(o: &Object, allowed: &[&str]) -> Result<(), DecodeError> {
     if o.keys().all(|k| allowed.contains(&k)) {
         Ok(())
     } else {
@@ -111,16 +168,19 @@ fn closed(o: &Object, allowed: &[&str]) -> Result<(), DecodeError> {
     }
 }
 
-fn object<'a>(v: Option<&'a Value>, what: &'static str) -> Result<&'a Object, DecodeError> {
+pub(crate) fn object<'a>(
+    v: Option<&'a Value>,
+    what: &'static str,
+) -> Result<&'a Object, DecodeError> {
     v.and_then(Value::as_object).ok_or(DecodeError::Shape(what))
 }
 
-fn string<'a>(v: Option<&'a Value>, what: &'static str) -> Result<&'a str, DecodeError> {
+pub(crate) fn string<'a>(v: Option<&'a Value>, what: &'static str) -> Result<&'a str, DecodeError> {
     v.and_then(Value::as_str).ok_or(DecodeError::Shape(what))
 }
 
 /// An optional member that must be a string or null when present.
-fn opt_string(o: &Object, key: &'static str) -> Result<(), DecodeError> {
+pub(crate) fn opt_string(o: &Object, key: &'static str) -> Result<(), DecodeError> {
     match o.get(key) {
         None | Some(Value::Null | Value::String(_)) => Ok(()),
         Some(_) => Err(DecodeError::Shape(key)),
@@ -128,7 +188,7 @@ fn opt_string(o: &Object, key: &'static str) -> Result<(), DecodeError> {
 }
 
 /// An optional member that must be a non-negative integer when present.
-fn opt_count(o: &Object, key: &'static str) -> Result<u64, DecodeError> {
+pub(crate) fn opt_count(o: &Object, key: &'static str) -> Result<u64, DecodeError> {
     match o.get(key) {
         None => Ok(0),
         Some(v) => v.as_u64().ok_or(DecodeError::Shape(key)),

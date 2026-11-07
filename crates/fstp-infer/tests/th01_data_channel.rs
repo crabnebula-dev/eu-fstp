@@ -13,7 +13,7 @@ use fstp_domain::id::CriterionId;
 use fstp_findings::UntrustedText;
 use fstp_infer::{
     DataLabel, DataPart, Decoding, ElementTag, InferRequest, Instruction, ModelName, OutputSchema,
-    Prompt, encode,
+    Prompt, Protocol, encode,
 };
 use fstp_json::Value;
 use fstp_prop::{Gen, check, prop_assert, prop_assert_eq};
@@ -68,6 +68,7 @@ fn request(g: &mut Gen, canary: &str) -> (InferRequest, Vec<(DataLabel, String)>
         .map(|(l, t)| (*l, t.as_data().to_owned()))
         .collect();
     let req = InferRequest {
+        protocol: Protocol::ChatCompletions,
         model: ModelName::new("synthetic-model-1").unwrap(),
         decoding: Decoding {
             max_tokens: 2048,
