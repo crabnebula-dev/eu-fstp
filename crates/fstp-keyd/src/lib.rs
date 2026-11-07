@@ -10,8 +10,10 @@
 //!
 //! # The key volume
 //!
-//! Every file lives on a dedicated key volume, which must be ext4 or XFS
-//! ([`key_volume_accepted`]) and is never backed up or snapshotted.
+//! Every file lives on a dedicated key volume, which is never backed up
+//! or snapshotted. Full I-81 assurance needs a Linux ext4 or XFS volume
+//! ([`key_volume_accepted`]). Any other volume runs at reduced assurance
+//! with a reason ([`check_key_volume`], I-81 NOTE of 2026-11-01).
 //!
 //! - `epoch-<chain>-<e>.key`: the 32 root bytes of one epoch, sealed with
 //!   AES-256-GCM under a per-epoch random key `K(e)` ([`epoch`]).
@@ -34,7 +36,9 @@
 //! There is no default passphrase (R-NF-05). [`serve`] reads it from the
 //! systemd credential [`PASSPHRASE_CREDENTIAL`] in `$CREDENTIALS_DIRECTORY`
 //! (`LoadCredentialEncrypted=`), which systemd can bind to the host's
-//! TPM 2.0. Without that credential `serve` refuses to start. The
+//! TPM 2.0. Without that credential `serve` refuses to start. In
+//! development mode it uses the ephemeral passphrase of the process
+//! instead ([`Passphrase::development`]) and warns. The
 //! `fstp-keyd` binary asks the operator through `systemd-ask-password`
 //! instead, on a host without a TPM ([`PassphraseSource::CredentialOrAsk`]),
 //! and waits for the answer.
@@ -51,6 +55,14 @@ pub mod volume;
 mod server;
 mod usage;
 
+#[cfg(feature = "test-needles")]
+pub mod test_needles;
+
+#[cfg(all(feature = "test-needles", not(debug_assertions)))]
+compile_error!(
+    "the test-needles feature exposes root bytes; it is for debug test builds only (I-80)"
+);
+
 #[cfg(test)]
 mod review_tests;
 
@@ -58,14 +70,14 @@ pub use access::{ClientRole, ClientSocket, SignKeyClass};
 pub use fstp_custody::keyd::Request as KeydRequest;
 pub use receipt::{DestroyStep, Receipt, decode_receipt};
 pub use request::{decode_request, encode_response};
-pub use server::{PassphraseSource, serve, serve_sockets, stop};
+pub use server::{PassphraseSource, VolumeOrigin, serve, serve_sockets, serve_sockets_from, stop};
 pub use table::{
     EpochKey, KeyTable, KeyTableEntry, MIN_ITERATIONS, decode_key_table_body, encode_key_table,
     open_key_table,
 };
 pub use volume::{
-    ACCEPTED_VOLUMES, EXT4_SUPER_MAGIC, MountEntry, XFS_SUPER_MAGIC, check_key_volume,
-    decode_mountinfo, key_volume_accepted, type_magic,
+    ACCEPTED_VOLUMES, EXT4_SUPER_MAGIC, MountEntry, XFS_SUPER_MAGIC, assurance_of_mount,
+    check_key_volume, decode_mountinfo, key_volume_accepted, type_magic,
 };
 
 /// The systemd credential that holds the passphrase.
@@ -211,6 +223,33 @@ impl Passphrase {
         }
     }
 
+    /// The ephemeral passphrase of this process, in development mode only
+    /// (I-81 NOTE of 2026-11-01, [`fstp_obs::assurance::HostCheck::PassphraseEphemeral`]).
+    /// It is 32 random bytes made on first use and kept until the process
+    /// ends, so a key table made under it reopens within the process and
+    /// never after. `fstp-keyd` falls back to it when no passphrase
+    /// source answers in development mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KeydError::NoPassphrase`] outside development mode, and
+    /// [`KeydError::Crypto`] when the system generator fails.
+    pub fn development() -> Result<Passphrase, KeydError> {
+        use fstp_obs::assurance::{DeploymentMode, deployment_mode_from_env};
+        static EPHEMERAL: std::sync::OnceLock<Zeroizing<[u8; 32]>> = std::sync::OnceLock::new();
+        match deployment_mode_from_env() {
+            Ok(c) if c.mode == DeploymentMode::Development => {}
+            _ => return Err(KeydError::NoPassphrase),
+        }
+        if EPHEMERAL.get().is_none() {
+            let mut bytes = Zeroizing::new([0u8; 32]);
+            fstp_crypto::random_bytes(&mut bytes[..]).map_err(KeydError::Crypto)?;
+            let _ = EPHEMERAL.set(bytes);
+        }
+        let bytes = EPHEMERAL.get().ok_or(KeydError::NoPassphrase)?;
+        Passphrase::from_bytes(&bytes[..])
+    }
+
     fn ask() -> Result<Passphrase, KeydError> {
         use std::io::Read as _;
         use std::process::{Command, Stdio};
@@ -277,6 +316,8 @@ pub enum KeydError {
     NotRunning,
     /// The crypto layer refused.
     Crypto(fstp_crypto::CryptoError),
+    /// The deployment mode is unset in a release build, or misspelt.
+    Mode(fstp_obs::assurance::ModeError),
 }
 
 impl std::fmt::Display for KeydError {
@@ -292,6 +333,7 @@ impl std::fmt::Display for KeydError {
             KeydError::AlreadyRunning => f.write_str("another fstp-keyd serves this socket"),
             KeydError::NotRunning => f.write_str("no fstp-keyd of this process serves this socket"),
             KeydError::Crypto(e) => write!(f, "keyd crypto: {e}"),
+            KeydError::Mode(e) => write!(f, "keyd deployment mode: {e}"),
         }
     }
 }

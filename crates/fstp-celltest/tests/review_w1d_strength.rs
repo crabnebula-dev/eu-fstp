@@ -223,15 +223,49 @@ impl Drop for Scratch {
     }
 }
 
+/// A server started by [`keyd`]. `serve` runs until it is stopped, so
+/// [`KeydServer::join`] stops it through `fstp_keyd::stop` and then joins
+/// its thread. The next start then reloads the volume from disk.
+struct KeydServer {
+    socket: std::path::PathBuf,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl KeydServer {
+    fn join(self) -> std::thread::Result<()> {
+        fstp_keyd::stop(&self.socket).unwrap_or_else(|e| panic!("fstp_keyd::stop: {e}"));
+        self.thread.join()
+    }
+}
+
+/// Waits until `fstp-keyd` has bound `socket`: it opens the key table
+/// before it binds, so a client that connects earlier is refused.
+fn wait_for_socket(socket: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !socket.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fstp-keyd bound no socket at {}",
+            socket.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn keyd(
     socket: &std::path::Path,
     volume: &std::path::Path,
-) -> (fstp_custody::KeydCustody, std::thread::JoinHandle<()>) {
-    let server = {
+) -> (fstp_custody::KeydCustody, KeydServer) {
+    let thread = {
         let (socket, volume) = (socket.to_path_buf(), volume.to_path_buf());
         std::thread::spawn(move || {
             let _ = fstp_keyd::serve(&socket, &volume);
         })
+    };
+    wait_for_socket(socket);
+    let server = KeydServer {
+        socket: socket.to_path_buf(),
+        thread,
     };
     let client = fstp_custody::KeydCustody::new(socket)
         .unwrap_or_else(|e| panic!("KeydCustody::new: {e} (NotImplemented)"));

@@ -21,8 +21,10 @@
 //!
 //! The crate has no parser, so it has no fuzz project (design section 15).
 
+pub mod assurance;
 mod encode;
 
+use crate::assurance::{Assurance, DeploymentMode, HostCheck};
 pub use crate::encode::{
     MAX_ROUTE_LEN, MAX_RULE_LEN, UNROUTED, encode_log, encode_metric, log_to_stderr,
     metric_to_stdout, write_log, write_metric,
@@ -154,6 +156,19 @@ pub enum LogEvent {
         /// The response status code.
         status: u16,
     },
+    /// Key custody started, at this assurance for I-81 (I-81 NOTE of
+    /// 2026-11-01, ADR-004 part 2).
+    KeyCustodyStarted {
+        /// The deployment mode.
+        mode: DeploymentMode,
+        /// The I-81 assurance of the key volume.
+        assurance: Assurance,
+    },
+    /// A host or platform check warned instead of stopping a start.
+    HostCheckWarned {
+        /// Which check.
+        check: HostCheck,
+    },
 }
 
 impl fmt::Debug for LogEvent {
@@ -197,6 +212,15 @@ impl fmt::Debug for LogEvent {
                 .field("route", &encode::shown_route(route))
                 .field("rule", &encode::shown_rule(rule))
                 .field("status", &status)
+                .finish(),
+            Self::KeyCustodyStarted { mode, assurance } => f
+                .debug_struct("KeyCustodyStarted")
+                .field("mode", &mode)
+                .field("assurance", &assurance)
+                .finish(),
+            Self::HostCheckWarned { check } => f
+                .debug_struct("HostCheckWarned")
+                .field("check", &check)
                 .finish(),
         }
     }

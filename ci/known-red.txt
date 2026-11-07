@@ -72,16 +72,12 @@ i78_stepup::sod_07_self_grant_needs_second_admin_approval_of_the_same_digest | s
 i79_recovery::i79_completion_revokes_every_credential_and_ends_every_session | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_non_receiving_never_recovered_by_email_alone | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_sole_admin_needs_operator_ticket_shown_to_tenant | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i80_custody::i80_file_custody_root_confined_to_keyd | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i80_custody::i80_memory_scan_runs_in_linux_ci | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i80_custody::i80_root_canary_absent_from_logs_dumps_and_backups | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_erased_email_digest_cannot_be_recomputed_from_backups | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_erased_identity_match_key_cannot_be_recomputed_from_backups | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_erased_text_unrecoverable_from_every_backup | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i81_backups::i81_file_custody_destroy_leaves_no_openable_epoch_on_the_key_volume | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_teeth_live_email_digest_is_recomputed | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_teeth_live_identity_match_digest_is_recomputed | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i81_backups::i81_teeth_restored_epoch_file_opens_without_destroy | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_text_salt_never_stored_in_clear | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i82_role_plan::i82_pool_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i83_placement::i83_self_hosted_layout_runs_two_instances | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -104,9 +100,6 @@ review_d2e_publication::review_i52_execute_core_publish_call_appends_no_unpaired
 review_m4w1b_activate_programme_gate::review_i78_activate_programme_is_classified_by_the_gate | cell high-risk table and core activation path | m4d2e-cont
 review_seams1_fidelity::review_i78_m_stepup_production_commits_release_payment | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_seams1_fidelity::review_i78_register_passkey_refuses_a_second_passkey | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-review_w1d_fidelity::review_file_custody_remnant_epoch_file_does_not_open_after_destroy | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-review_w1d_keyd_inplace::review_keyd_destroy_overwrites_the_key_table_in_place | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-review_w1d_strength::review_keyd_pre_destroy_epoch_file_copy_never_opens | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 schema::r_nf_08_app_catalogue_classes_every_column | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 seam_driver_core::seam_driver_core_matches_reference_engine | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 seam_driver_core::seam_note2_every_vault_fault_fails_closed_and_appends_nothing | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -122,16 +115,6 @@ seam_world::seam_m2_i15_suite_over_pg | M3 test world run_cycle, self-hosted wit
 seam_world::seam_m2_i23_suite_over_pg | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 seam_world::seam_m2_i35_suite_over_pg | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 seam_world::seam_note6_country_reaches_only_the_vault | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-serve::adr004_keyd_keeps_one_epoch_file_per_root_epoch | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-serve::adr004_keyd_socket_admits_only_its_owner | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-serve::adr004_keyd_unwrap_refuses_another_aad | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-serve::adr004_keyd_unwrap_refuses_another_root | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-serve::adr004_keyd_usage_log_records_operations_without_key_bytes | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-serve::i80_keyd_never_stores_or_returns_a_seal_key_in_clear | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-serve::i80_keyd_wraps_and_unwraps_a_seal_key | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-serve::i81_keyd_destroyed_root_never_unwraps | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-serve::i81_keyd_second_destroy_returns_the_same_receipt | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-serve::r_nf_08_keyd_sockets_keep_cell_and_vault_chains_apart | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 sod_07_self_grant::sod_07_approval_is_bound_to_the_command_id | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 sod_07_self_grant::sod_07_self_grant_matches_the_reference_rule | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 sod_08_break_glass::sod_08_break_glass_needs_tenant_approval_and_logs_every_read | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
