@@ -13,10 +13,10 @@ use fstp_json::{FromJson, ToJson, parse};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    if let Ok(s) = std::str::from_utf8(data) {
-        if let Some(d) = Digest::from_hex(s) {
-            assert_eq!(d.hex(), s);
-        }
+    if let Ok(s) = std::str::from_utf8(data)
+        && let Some(d) = Digest::from_hex(s)
+    {
+        assert_eq!(d.hex(), s);
     }
     let Ok(value) = parse(data) else {
         return;
