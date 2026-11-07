@@ -10,7 +10,6 @@
 
 adr007_store_and_erasure::adr007_erased_textref_resolves_to_its_log_entry | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 adr007_store_and_erasure::adr007_erasure_log_visible_to_auditor_and_tenant_admin_only | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-adr007_store_and_erasure::adr007_pg_store_matches_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 engine_mem::seam_cell_engine_matches_reference_engine_over_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 fstp_api_testkit::fake::creator_wire_tests::r_pg_01_previews_read_as_text | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
@@ -30,10 +29,7 @@ i19_boundary::i19_session_of_one_cell_is_refused_by_another | M3 test world run_
 i20_tenants::i20_control_plane_and_witness_hold_no_account_id | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_vault_match_keys_differ_across_cells | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_custody_ops_reconcile_with_key_records | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_audit_chain::i24_database_refuses_bad_link_and_mutation | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_erasure_entries_are_chained | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_audit_chain::i24_ledger_and_chain_commit_together | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_audit_chain::i24_pg_chain_equals_reference_chain | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_captures_match_the_templates | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_cell_sends_no_canary_to_crabnebula_hosts | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_witness_never_targets_crabnebula | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -56,7 +52,6 @@ i77_login::i77_scheduled_end_ends_sessions_at_its_instant | seam named in the pa
 i77_login::i77_suspended_binding_still_holds_at_the_gate | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i77_login::i77_suspended_holder_magic_link_login_is_refused | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_gate_high_risk::i78_high_risk_of_marks_every_domain_kind_as_the_table_does | cell high-risk table and core activation path | m4d2e-cont
-i78_stepup::i78_database_refuses_a_second_step_up_consumption | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_stepup::i78_every_high_risk_route_and_command_needs_a_fresh_step_up | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_stepup::i78_m_stepup | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_stepup::i78_p71_may_only_shorten | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -67,7 +62,6 @@ i78_stepup::i78_teeth_magic_link_session_adds_passkey_is_caught | seam named in 
 i78_stepup::i78_teeth_stale_step_up_accepted_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_stepup::i78_teeth_step_up_exactly_p71_old_refused_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_stepup::i78_tenant_p71_above_the_default_is_refused | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_writer_role_holds_insert_and_select_only | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i78_stepup::sod_07_self_grant_needs_second_admin_approval_of_the_same_digest | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_completion_revokes_every_credential_and_ends_every_session | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_non_receiving_never_recovered_by_email_alone | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -85,7 +79,6 @@ i81_backups::i81_teeth_restored_epoch_file_opens_without_destroy | M3 test world
 i81_backups::i81_text_salt_never_stored_in_clear | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i82_role_plan::i82_pool_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i83_placement::i83_self_hosted_layout_runs_two_instances | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-m3_records::w0_new_crate_stubs_refuse_without_panicking_macros | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 main_startup::i24_cell_start_raises_possible_deletion_for_a_missing_in_doubt_row | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_cr_01_at_rest::r_cr_01_backup_container_decoder_matches_reference | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_cr_01_at_rest::r_cr_01_backup_container_decoder_refuses_a_key_not_sealed_through_the_hybrid_kem | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane

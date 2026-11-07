@@ -20,7 +20,10 @@ use fstp_domain::roles::Role;
 use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::r#gen::roster::{A, ADMIN, B, C, P1, STAFF_PM, T0, grant};
 use fstp_domain_testkit::harness::teeth::expect_prop_failure;
+use fstp_ledger::{AppendError, StoreError};
 use fstp_prop::{Gen, prop_assert_eq};
+
+mod pg_store;
 
 // ---------------------------------------------------------------------------
 // The record store (ADR-007 "Decision").
@@ -100,19 +103,51 @@ fn req(g: &mut Gen, head: u64) -> Req {
     }
 }
 
-/// The seam of the PostgreSQL side. Lane W2e landed `fstp_pgstore::Pool`
-/// and `PgRecordStore`, which implements `fstp_ledger::AsyncRecordStore`.
-/// This seam takes one request and no store, so it cannot hold one
-/// `PgRecordStore` over a fresh database across the appends of one
-/// property case. It stays a refusal until the seam carries a store per
-/// case. `fstp-pgstore`'s `adr007_pg_store_matches_fstp_ledger_mem_store`
-/// runs this property over PostgreSQL against `fstp_ledger::MemStore`.
-const PG_STORE_SEAM: &str = "pg_append takes no store, so it cannot keep one PgRecordStore across the appends of a property case (lane W2e landed the store; the seam needs a store per case)";
+/// The PostgreSQL side of one property case: a `PgRecordStore` over a
+/// fresh cell database granted the production plan, held across the
+/// appends of the case (lane F-STORE). `fstp-pgstore`'s
+/// `adr007_pg_store_matches_fstp_ledger_mem_store` runs the same property
+/// against `fstp_ledger::MemStore`.
+struct PgCase {
+    store: pg_store::Store,
+    _witness: pg_store::FakeWitness,
+    _db: pg_store::CellDb,
+}
 
-/// The PostgreSQL store's answer to `r`.
-fn pg_append(r: Req) -> Result<Result<u64, Refused>, NotImplemented> {
-    let _ = r;
-    Err(NotImplemented::new(PG_STORE_SEAM))
+impl PgCase {
+    fn open() -> PgCase {
+        let db = pg_store::prod_db();
+        let witness = pg_store::FakeWitness::new(db.cell_id());
+        let store = pg_store::must(pg_store::Store::open(&db, &witness));
+        PgCase {
+            store,
+            _witness: witness,
+            _db: db,
+        }
+    }
+
+    /// The PostgreSQL store's answer to `r`, with `r.n` synthetic records.
+    fn append(&mut self, r: Req) -> Result<Result<u64, Refused>, String> {
+        let batch = (0..r.n)
+            .map(|i| pg_store::Rec::new(u8::try_from(i % 4).unwrap(), "synthetic"))
+            .collect();
+        let got = pg_store::must(self.store.append(
+            fstp_ledger::Seq::from_raw(r.expected),
+            r.at,
+            r.command,
+            batch,
+        ));
+        match got {
+            Ok(head) => Ok(Ok(head.raw())),
+            Err(AppendError::DuplicateCommand { .. }) => Ok(Err(Refused::DuplicateCommand)),
+            Err(AppendError::StaleHead { head }) => {
+                Ok(Err(Refused::StaleHead { head: head.raw() }))
+            }
+            Err(AppendError::Store(StoreError::TimeOutOfRange)) => Ok(Err(Refused::TimeOutOfRange)),
+            Err(AppendError::Store(StoreError::EmptyBatch)) => Ok(Err(Refused::EmptyBatch)),
+            Err(e) => Err(format!("ADR-007: the store failed: {e}")),
+        }
+    }
 }
 
 /// ADR-007, design section 14.6: `PgRecordStore` gives the same results
@@ -122,15 +157,17 @@ fn pg_append(r: Req) -> Result<Result<u64, Refused>, NotImplemented> {
 ///
 /// Gap: `fstp_ledger::MemStore` cannot be named here (no `fstp-ledger`
 /// dependency, see `mc::driver_model::LEDGER_SEAM`), so the in-memory side
-/// is this file's reference store, written from the same contract.
+/// is this file's reference store, written from the same contract. Each
+/// case opens its own store over a fresh cell database (lane F-STORE).
 #[test]
 fn adr007_pg_store_matches_mem_store() {
     fstp_prop::check("adr007_pg_store_matches_mem_store", |g: &mut Gen| {
         let mut mem = RefStore::default();
+        let mut pg = PgCase::open();
         for _ in 0..g.usize_in(1..=8) {
             let r = req(g, mem.head());
             let want = mem.append(r.expected, r.at, r.command, r.n);
-            let got = pg_append(r).map_err(|e| format!("{e} (NotImplemented)"))?;
+            let got = pg.append(r)?;
             prop_assert_eq!(got, want, "ADR-007: {r:?}");
         }
         Ok(())

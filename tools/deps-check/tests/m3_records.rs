@@ -429,9 +429,16 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The new crates whose W0 stubs have all landed, so no refusal is left
+/// to name. Lane W2e replaced every stub of `fstp-pgstore` (lane F-STORE
+/// records it). A crate listed here must hold no `NotImplemented` at all,
+/// so a stub that is still in place cannot hide behind the list.
+const STUBS_LANDED: [&str; 1] = ["fstp-pgstore"];
+
 /// Lane W0 rule: the stubs refuse with a typed `NotImplemented` error. No
 /// new crate's `src/` holds `todo!` or `unimplemented!`, and each one
-/// defines or returns `NotImplemented`.
+/// defines or returns `NotImplemented`, unless all its stubs have landed
+/// ([`STUBS_LANDED`]).
 #[test]
 fn w0_new_crate_stubs_refuse_without_panicking_macros() {
     let mut problems = Vec::new();
@@ -455,7 +462,13 @@ fn w0_new_crate_stubs_refuse_without_panicking_macros() {
             }
             refuses |= text.contains("NotImplemented");
         }
-        if !refuses {
+        let landed = STUBS_LANDED.contains(&krate);
+        if landed && refuses {
+            problems.push(format!(
+                "{krate} is listed as landed but still holds NotImplemented"
+            ));
+        }
+        if !landed && !refuses {
             problems.push(format!("{krate} has no NotImplemented refusal"));
         }
     }
