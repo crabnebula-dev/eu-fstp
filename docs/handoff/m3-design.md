@@ -600,7 +600,7 @@ Shared-cluster backups still hold the cell's rows until their retention ends. Ev
 | --- | --- | --- | --- |
 | `application` | `c_<cell>` | `c_<cell>_migrator` | Owns every schema. Certificate issued only for a deploy window |
 | | | `c_<cell>_writer` | `ledger.*`, `audit.chain`, `audit.anchor`, `auth_log.*`, `ops.outbox`: INSERT and SELECT only. No UPDATE or DELETE anywhere (ADR-007: "holds INSERT and SELECT only") |
-| | | `c_<cell>_app` | SELECT on `ledger`, `audit` and `auth_log`. Full rights on `auth` and on `ops` except `ops.outbox` (SELECT only); INSERT and SELECT on `blob` |
+| | | `c_<cell>_app` | SELECT on `ledger`, `audit` and `auth_log`. Full rights on `auth` and on `ops` except `ops.outbox` (SELECT only) and `ops.delivery` (INSERT and SELECT only, no UPDATE or DELETE; Daniel, 2026-11-07); INSERT and SELECT on `blob` |
 | | | `c_<cell>_keys` | Full rights on `keystore` only. DELETE on `blob` rows of completed erasures |
 | | | `c_<cell>_auditor` | SELECT on `audit.*` and the stored ledger rows only |
 | `vault` | `v_<cell>` | `v_<cell>_migrator`, `v_<cell>_vault`, `v_<cell>_keys` | Same pattern. `vault_audit.*` is INSERT and SELECT only |

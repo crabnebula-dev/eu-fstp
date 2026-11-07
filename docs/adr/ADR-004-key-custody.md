@@ -255,6 +255,7 @@ Epoch seal keys and I-80 (decided by Daniel on 2026-10-28):
 - Groups that hold data keys hold at most 256 of them. A `Document` group holds one. That bound keeps the re-seal cost of each affected group at 255 hybrid seals or fewer.
 - The `Ledger` group never takes part in an erasure, because the ledger holds no free text (ADR-007). Its data keys are replaced under the part 1 seal-count rule.
 - `Lookup`, `CredLookup` and `Match` hold no data keys. Each erasure that removes one of their subjects replaces them (below).
+- The delivery body digest key of `ops.delivery.body_digest` is derived from the App chain `Lookup` key through HKDF-SHA256 with the fixed label `fstp delivery body digest v1`, so a new `Lookup` key gives a new digest key (Daniel, 2026-11-07).
 
 ### Epochs
 
