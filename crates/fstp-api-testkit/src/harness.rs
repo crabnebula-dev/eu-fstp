@@ -635,6 +635,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
                 s("Synthetic data protection summary, matrix cell."),
             ),
         ]),
+        // M9 lane T1: one tenant label and the Voyage switch (I-72).
+        "tenant.terminology.set" => obj(vec![
+            ("labels", obj(vec![("vocab.call", s("Subgrant call"))])),
+            ("voyage_on", Value::Bool(true)),
+        ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),

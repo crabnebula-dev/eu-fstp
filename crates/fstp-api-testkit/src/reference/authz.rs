@@ -1116,6 +1116,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // set is high-risk by the strict reading (I-78, interim).
     RefOp::act("tenant.branding.check", T::None, R::TenantAdmin),
     RefOp::act("tenant.branding.set", T::None, R::TenantAdmin).hr(),
+    // M9 lane T1: interface labels and the Voyage switch (I-72, interim).
+    RefOp::act("tenant.terminology.set", T::None, R::TenantAdmin).hr(),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.

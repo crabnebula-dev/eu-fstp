@@ -29,6 +29,7 @@ fuzz_target!(|data: &[u8]| {
             let want = match pack.kind() {
                 PackKind::Plain => f.plain,
                 PackKind::Voyage => f.voyage,
+                PackKind::Tenant => f.plain,
             };
             assert_eq!(text, want, "fixed wording changed");
         }

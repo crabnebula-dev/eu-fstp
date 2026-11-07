@@ -216,6 +216,7 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         TenantRefusal::InvalidAddress => "R-GA-01",
         // M9 lane B1: the failing pairs are listed by `tenant.branding.check`.
         TenantRefusal::BrandingContrast(_) => "I-70",
+        TenantRefusal::TerminologyInvalid => "I-72",
     };
     ApiError::refused(ErrorCode::Refused, rule)
 }
@@ -323,6 +324,10 @@ fn build<P: Seams>(
             let text = fstp_brand::canonical(&tokens);
             let digest = ContentDigest::from_bytes(fstp_crypto::sha256(text.as_bytes()));
             Ok((TenantCommand::SetBranding { tokens, digest }, None))
+        }
+        TenantKind::SetTerminology => {
+            let terminology = crate::tenant::terminology_request(&op.request)?;
+            Ok((TenantCommand::SetTerminology { terminology }, None))
         }
         // Answered by [`command`] before any command is built.
         TenantKind::CheckBranding => Err(ApiError::refused(ErrorCode::NotFound, "route")),

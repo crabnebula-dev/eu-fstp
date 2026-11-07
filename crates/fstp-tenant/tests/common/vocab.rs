@@ -575,6 +575,11 @@ pub enum RecordView {
         /// The setting admin.
         by: AccountId,
     },
+    /// A terminology set (M9 lane T1).
+    TerminologySet {
+        /// The setting admin.
+        by: AccountId,
+    },
 }
 
 /// The defaults of `SPEC/02-domain/policy-parameters.md` for the settable

@@ -543,8 +543,8 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
 /// The tenant settings that are high-risk by the strict reading only
 /// (design section 3.5, Q10 interim): every setting other than P-70, the
 /// Guide data protection texts (R-GA-01, section 15.0, 2026-11-06), and
-/// the brand tokens (M9 lane B1, interim).
-const STRICT_EXTRA: [&str; 7] = [
+/// the brand tokens (M9 lane B1, interim) and the terminology (M9 lane T1, interim).
+const STRICT_EXTRA: [&str; 8] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
@@ -552,6 +552,7 @@ const STRICT_EXTRA: [&str; 7] = [
     "tenant.set_template_licence",
     "tenant.set_guide_notice",
     "tenant.branding.set",
+    "tenant.terminology.set",
 ];
 
 /// R-LG-03, I-78, design section 3.6
@@ -601,8 +602,9 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
         assert!(
             matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70)
                 || o.kind == OpKind::Tenant(TenantKind::SetGuideNotice)
-                || o.kind == OpKind::Tenant(TenantKind::SetBranding),
-            "{} is a tenant setting other than P-70, the Guide notice, or the brand tokens",
+                || o.kind == OpKind::Tenant(TenantKind::SetBranding)
+                || o.kind == OpKind::Tenant(TenantKind::SetTerminology),
+            "{} is a tenant setting other than P-70, the Guide notice, the brand tokens, or the terminology",
             o.name
         );
         named.insert(o.name);

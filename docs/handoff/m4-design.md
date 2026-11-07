@@ -1914,6 +1914,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | M3 Q-B, self-hosted tests (2026-11-07) | Deferred with B-06 | The self-hosted tests (I-38, I-39 services down, I-83 self-hosted, R-NF-05) leave M3 and return with self-hosted packaging (B-06). Lane F-SELF is not built |
 | M3 Q-C, vault chain coverage (2026-11-07) | Facts and releases | Each fact batch and each identity release or read is a vault chain row; key operations stay events only |
 | M3 Q-D, witness receipt key (2026-11-07) | Own keyd entry | The witness receipt signing key has its own fstp-keyd custody entry with its own credential |
+| Tenant terminology and the Voyage switch, M9 lane T1 (2026-11-07) | Not yet answered. Interim, pending Daniel | `tenant.terminology.set` (tenant admin, web only, high-risk with step-up) takes `{labels, voyage_on}`. `fstp_journey::vocab::Pack::new` with the new `tenant` kind refuses any key outside `LABEL_KEYS` and any change to `FIXED` wording (I-72), and the labels pass the same shape bounds again in `fstp-tenant`. One record `TerminologySet` holds the labels and the switch, so a switch change resends the labels. `Vocabulary::with_tenant` looks up tenant then plain. `terminologyOptions` in `web/src/vocab` applies it; no read returns it yet, so pages still use `vocabOptions("plain")` |
 
 ### 15.1 These block the milestone
 

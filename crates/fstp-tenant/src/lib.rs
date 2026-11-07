@@ -57,5 +57,5 @@ pub use types::{
     CellKind, DomainName, GrantRef, GuideNoticeOverride, InferenceDefault, InvitationId,
     LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode, ProviderRef,
     RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues,
-    TenantParam, TenantRevision, Token, TokenDigest, VerifyMethod,
+    TenantParam, TenantRevision, Terminology, Token, TokenDigest, VerifyMethod,
 };

@@ -30,6 +30,8 @@
 //! - `tenant.branding.check` and `tenant.branding.set` take `{tokens}`,
 //!   the token text of `fstp_brand::parse` (M9 lane B1, I-68). The check
 //!   replies with the failing pairs of I-70 and saves nothing.
+//! - `tenant.terminology.set` takes `{labels, voyage_on}` (M9 lane T1,
+//!   I-72, O-55): the tenant pack labels and the Voyage switch.
 //!
 //! Each body is checked by building the `fstp-tenant` codec text of its
 //! command and decoding it with `fstp_tenant::decode_command`. So the
@@ -172,6 +174,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
+            TenantKind::SetTerminology => {
+                if exactly(spec, request, &["labels", "voyage_on"]) {
+                    terminology_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
             // No operation of the registry has this kind: the inference
             // record has no route (design 3.5).
             TenantKind::RecordInferenceConfig => Err(bad()),
@@ -298,6 +307,39 @@ pub(crate) fn signatory_request(request: &Object) -> Result<(SignatoryRole, Acco
 pub(crate) fn branding_request(request: &Object) -> Result<fstp_brand::BrandTokens, ApiError> {
     let tokens = request.get("tokens").ok_or_else(bad)?;
     fstp_brand::from_value(tokens).map_err(|_| bad())
+}
+
+/// The terminology of a `tenant.terminology.set` body: `{labels, voyage_on}`.
+/// The labels pass `fstp_journey::vocab::Pack::new` with the tenant kind, so
+/// a key outside the closed list or changed fixed wording is refused (I-72).
+/// The digest is that of the pack's canonical file text.
+pub(crate) fn terminology_request(request: &Object) -> Result<fstp_tenant::Terminology, ApiError> {
+    use fstp_journey::vocab::{Pack, PackKind};
+    let Some(Value::Object(raw)) = request.get("labels") else {
+        return Err(bad());
+    };
+    let Some(Value::Bool(voyage_on)) = request.get("voyage_on") else {
+        return Err(bad());
+    };
+    let mut labels = std::collections::BTreeMap::new();
+    for (k, v) in raw.iter() {
+        let Value::String(text) = v else {
+            return Err(bad());
+        };
+        let _ = labels.insert(k.to_owned(), text.clone());
+    }
+    let pack = Pack::new(PackKind::Tenant, labels).map_err(|_| bad())?;
+    let digest =
+        fstp_domain::id::ContentDigest::from_bytes(fstp_crypto::sha256(pack.encode().as_bytes()));
+    let labels = pack
+        .labels()
+        .map(|(k, t)| (k.to_owned(), t.to_owned()))
+        .collect();
+    Ok(fstp_tenant::Terminology {
+        labels,
+        voyage_on: *voyage_on,
+        digest,
+    })
 }
 
 pub(crate) fn activation_request(request: &Object) -> Result<ActivationRequestId, ApiError> {

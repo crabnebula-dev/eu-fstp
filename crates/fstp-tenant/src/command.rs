@@ -8,7 +8,7 @@ use fstp_domain::time::Timestamp;
 use crate::types::{
     ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, ModelRef,
     OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
-    TenantRevision, TokenDigest,
+    TenantRevision, Terminology, TokenDigest,
 };
 
 /// The context of one tenant command, supplied by the shell.
@@ -141,6 +141,12 @@ pub enum TenantCommand {
         /// The digest of their canonical text, computed by the shell.
         digest: ContentDigest,
     },
+    /// Set the tenant terminology and the Voyage switch
+    /// (`tenant.terminology.set`, M9 lane T1). High-risk.
+    SetTerminology {
+        /// The labels and the switch.
+        terminology: Terminology,
+    },
 }
 
 /// The kind of a tenant command, as the operation registry names it.
@@ -174,11 +180,13 @@ pub enum TenantKind {
     ApproveActivation,
     /// `tenant.branding.set`.
     SetBranding,
+    /// `tenant.terminology.set`.
+    SetTerminology,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 19] = [
+    pub const ALL: [TenantKind; 20] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -198,6 +206,7 @@ impl TenantKind {
         TenantKind::RequestActivation,
         TenantKind::ApproveActivation,
         TenantKind::SetBranding,
+        TenantKind::SetTerminology,
     ];
 
     /// Whether the kind is high-risk and needs a fresh step-up (R-LG-03).
@@ -212,7 +221,8 @@ impl TenantKind {
     ///   the high-risk table names programme activation only (interim,
     ///   pending Daniel).
     /// - Setting the brand tokens changes what every interface shows
-    ///   (M9 design section 2.2).
+    ///   (M9 design section 2.2). Setting the terminology changes
+    ///   every label the same way.
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
@@ -223,6 +233,7 @@ impl TenantKind {
                 | TenantKind::GrantSignatory
                 | TenantKind::EndSignatory
                 | TenantKind::SetBranding
+                | TenantKind::SetTerminology
         )
     }
 
@@ -266,6 +277,7 @@ impl TenantCommand {
             TenantCommand::RequestActivation { .. } => TenantKind::RequestActivation,
             TenantCommand::ApproveActivation { .. } => TenantKind::ApproveActivation,
             TenantCommand::SetBranding { .. } => TenantKind::SetBranding,
+            TenantCommand::SetTerminology { .. } => TenantKind::SetTerminology,
         }
     }
 
@@ -418,6 +430,13 @@ pub enum TenantRecord {
         tokens: BrandTokens,
         /// The digest of their canonical text.
         digest: ContentDigest,
+        /// The setting admin.
+        by: AccountId,
+    },
+    /// A tenant admin set the terminology (M9 lane T1).
+    TerminologySet {
+        /// The labels and the switch.
+        terminology: Terminology,
         /// The setting admin.
         by: AccountId,
     },
