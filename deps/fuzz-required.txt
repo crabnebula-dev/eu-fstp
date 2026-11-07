@@ -83,3 +83,5 @@ fstp-retrieve
 fstp-brand
 # M7, docs/handoff/m7-design.md section 8 (lane L-PIPE).
 fstp-assess
+# M7, docs/handoff/m7-design.md section 8 (lane L-PROC): the job queue decoder.
+fstp-assessor

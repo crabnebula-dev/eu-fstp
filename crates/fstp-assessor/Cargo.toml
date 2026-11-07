@@ -1,0 +1,30 @@
+[package]
+name = "fstp-assessor"
+description = "The assessor process: NDJSON job queue on stdin and stdout, egress only through AssessorDestination, pipeline stage calls and the retrieval client (M7 design section 3.1, lane L-PROC)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fstp-assessor"
+path = "src/main.rs"
+
+[dependencies]
+fstp-assess.workspace = true
+fstp-crypto.workspace = true
+fstp-domain.workspace = true
+fstp-findings.workspace = true
+fstp-http.workspace = true
+fstp-infer.workspace = true
+fstp-json.workspace = true
+fstp-retrieve.workspace = true
+fstp-rt.workspace = true
+fstp-tls.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
