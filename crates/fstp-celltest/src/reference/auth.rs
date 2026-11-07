@@ -607,7 +607,7 @@ pub fn high_risk_of(name: &str) -> Option<RefHighRisk> {
         "ChangeBankDetails" => H::ChangeBankDetails,
         "ApprovePayment" => H::ApprovePayment,
         "ReleasePayment" => H::ReleasePayment,
-        "CreateProgramme" => H::ActivateProgramme,
+        "CreateProgramme" | "ActivateProgramme" => H::ActivateProgramme,
         "PublishCall" => H::PublishCall,
         "PublishTemplate" => H::PublishTemplate,
         "ApproveBreakGlass" => H::ApproveBreakGlass,
@@ -618,7 +618,7 @@ pub fn high_risk_of(name: &str) -> Option<RefHighRisk> {
 }
 
 /// Every command or action name that [`high_risk_of`] classifies.
-pub const HIGH_RISK_NAMES: [&str; 25] = [
+pub const HIGH_RISK_NAMES: [&str; 26] = [
     "GrantRole",
     "EndRole",
     "ReinstateBinding",
@@ -640,6 +640,7 @@ pub const HIGH_RISK_NAMES: [&str; 25] = [
     "ApprovePayment",
     "ReleasePayment",
     "CreateProgramme",
+    "ActivateProgramme",
     "PublishCall",
     "PublishTemplate",
     "ApproveBreakGlass",

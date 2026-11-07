@@ -8,8 +8,7 @@
 # PROVISIONAL (2026-10-31 evening): built from the local runs of the day.
 # It is corrected from the full CI run of PR #5 before that PR merges.
 
-adr007_store_and_erasure::adr007_erased_textref_resolves_to_its_log_entry | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-adr007_store_and_erasure::adr007_erasure_log_visible_to_auditor_and_tenant_admin_only | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
+adr007_store_and_erasure::adr007_erased_textref_resolves_to_its_log_entry | set-up passes under strict D2e (F-D2E); the interim erasure rule refuses causes 3 and 4 to an account (WrongActor), and the property draws all four causes | F-ERASE
 adr007_store_and_erasure::adr007_pg_store_matches_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 engine_mem::seam_cell_engine_matches_reference_engine_over_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -19,7 +18,7 @@ i16_funds::i16_schemas_have_no_fund_class | seam named in the panic message (pro
 i17_identity_release::i17_app_database_holds_no_identity_attribute | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i17_identity_release::i17_canary_attributes_never_reach_judging_responses | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i17_identity_release::i17_logs_and_metrics_hold_no_attribute | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i17_identity_release::i17_release_ticket_only_for_operations_in_negotiation | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
+i17_identity_release::i17_release_ticket_only_for_operations_in_negotiation | set-up passes under strict D2e (F-D2E); production records IdentityReleaseIssued, the test reads ReleaseRecord::TicketIssued, so a tenant admin in NEGOTIATION reads as refused | F-VAULTP
 i18_guardian_consent::i18_cell_asks_adult_attestation_before_guardian_ticket | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i18_guardian_consent::i18_no_minor_flagged_proposal_reaches_granted_without_consent | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i18_guardian_consent::i18_r_ng_01_irc_actor_is_never_shown_the_vault_outcomes | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -31,7 +30,7 @@ i20_tenants::i20_control_plane_and_witness_hold_no_account_id | M3 test world ru
 i20_tenants::i20_vault_match_keys_differ_across_cells | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_custody_ops_reconcile_with_key_records | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_database_refuses_bad_link_and_mutation | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_audit_chain::i24_erasure_entries_are_chained | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
+i24_audit_chain::i24_erasure_entries_are_chained | set-up passes under strict D2e (F-D2E); RecordEpochDestroyed by an account is refused (WrongActor), so it waits on the erasure runner's key records | F-KEYOP
 i24_audit_chain::i24_ledger_and_chain_commit_together | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i24_audit_chain::i24_pg_chain_equals_reference_chain | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_captures_match_the_templates | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -51,24 +50,13 @@ i67_sybil_builder_and_approver_refused::i67_sybil_builder_and_approver_refused |
 i75_hybrids::i75_mldsa_never_used_without_ed25519 | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i77_login::i77_m_auth | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i77_login::i77_management_login_requires_phishing_resistant_method_over_http | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i77_login::i77_role_grant_ends_weak_sessions_in_the_same_batch | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i77_login::i77_scheduled_end_ends_sessions_at_its_instant | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i77_login::i77_suspended_binding_still_holds_at_the_gate | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i77_login::i77_suspended_holder_magic_link_login_is_refused | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_gate_high_risk::i78_high_risk_of_marks_every_domain_kind_as_the_table_does | cell high-risk table and core activation path | m4d2e-cont
+i77_login::i77_role_grant_ends_weak_sessions_in_the_same_batch | set-up passes under strict D2e (F-D2E); ProdCell::open_session waits on decide seeing session rows (SESSIONS_SEAM, W2c) | F-AUTHP
+i77_login::i77_suspended_binding_still_holds_at_the_gate | set-up passes under strict D2e (F-D2E); ProdCell::suspend_for_conflict waits on a system actor for the VaultChanged reaction (W2c, W2d) | F-AUTHP
+i77_login::i77_suspended_holder_magic_link_login_is_refused | set-up passes under strict D2e (F-D2E); ProdCell::suspend_for_conflict waits on a system actor for the VaultChanged reaction (W2c, W2d) | F-AUTHP
 i78_stepup::i78_database_refuses_a_second_step_up_consumption | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_every_high_risk_route_and_command_needs_a_fresh_step_up | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_m_stepup | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_p71_may_only_shorten | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_stepup_logged_with_action_digest | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_teeth_consumption_dropped_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_teeth_digest_compared_by_kind_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_teeth_magic_link_session_adds_passkey_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_teeth_stale_step_up_accepted_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_teeth_step_up_exactly_p71_old_refused_is_caught | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::i78_tenant_p71_above_the_default_is_refused | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
+i78_stepup::i78_every_high_risk_route_and_command_needs_a_fresh_step_up | set-up passes under strict D2e (F-D2E) and the gate checks the digest through admit_command; the gate now admits only a step-up the ledger granted (StepUpGranted), and the test's StepUpView is never granted in the cell (ProdCell::grant_stepup) | lead to assign
+i78_stepup::i78_p71_may_only_shorten | set-up passes under strict D2e (F-D2E) and the gate checks the digest through admit_command; the gate now admits only a step-up the ledger granted (StepUpGranted), and the test's StepUpView is never granted in the cell (ProdCell::grant_stepup) | lead to assign
 i78_stepup::i78_writer_role_holds_insert_and_select_only | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i78_stepup::sod_07_self_grant_needs_second_admin_approval_of_the_same_digest | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_completion_revokes_every_credential_and_ends_every_session | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_non_receiving_never_recovered_by_email_alone | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i79_recovery::i79_sole_admin_needs_operator_ticket_shown_to_tenant | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -101,16 +89,11 @@ r_nf_m3::r_nf_08_catalogue_has_no_clear_content_column | M3 test world run_cycle
 r_nf_m3::r_nf_09_every_internal_link_is_mutually_authenticated | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_sw_02_cell_erasure::r_sw_02_cell_erasure_kills_every_backup | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_d2e_publication::review_i52_execute_core_publish_call_appends_no_unpaired_call_published | strict D2e and GuidePublished pairing | m4d2e-cont
-review_m4w1b_activate_programme_gate::review_i78_activate_programme_is_classified_by_the_gate | cell high-risk table and core activation path | m4d2e-cont
-review_seams1_fidelity::review_i78_m_stepup_production_commits_release_payment | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-review_seams1_fidelity::review_i78_register_passkey_refuses_a_second_passkey | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_w1d_fidelity::review_file_custody_remnant_epoch_file_does_not_open_after_destroy | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_w1d_keyd_inplace::review_keyd_destroy_overwrites_the_key_table_in_place | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 review_w1d_strength::review_keyd_pre_destroy_epoch_file_copy_never_opens | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 schema::r_nf_08_app_catalogue_classes_every_column | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-seam_driver_core::seam_driver_core_matches_reference_engine | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-seam_driver_core::seam_note2_every_vault_fault_fails_closed_and_appends_nothing | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-seam_driver_core::seam_note3_stale_epoch_processes_the_change_first | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
+seam_driver_core::seam_driver_core_matches_reference_engine | set-up runs the creator path (F-D2E); the composed ProgrammeActivated names its own ledger's draft revision (entry 7 in the cell, 3 in the M2 ledger), so the record comparison needs a reading of ledger positions | lead to assign (reading for Daniel)
 seam_m_driver::seam_m_driver_i23 | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 seam_world::seam_async_engine_matches_reference_over_pg_and_real_vault | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 seam_world::seam_m2_i03_suite_over_pg | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -132,14 +115,10 @@ serve::i80_keyd_wraps_and_unwraps_a_seal_key | M3 test world run_cycle, self-hos
 serve::i81_keyd_destroyed_root_never_unwraps | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 serve::i81_keyd_second_destroy_returns_the_same_receipt | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 serve::r_nf_08_keyd_sockets_keep_cell_and_vault_chains_apart | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-sod_07_self_grant::sod_07_approval_is_bound_to_the_command_id | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-sod_07_self_grant::sod_07_self_grant_matches_the_reference_rule | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-sod_08_break_glass::sod_08_break_glass_needs_tenant_approval_and_logs_every_read | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-system_tasks::i23_cell_timeline_commits_each_scheduled_end_once_across_restarts | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-system_tasks::i77_cell_timeline_ends_sessions_at_a_scheduled_binding_end | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
+sod_08_break_glass::sod_08_break_glass_needs_tenant_approval_and_logs_every_read | set-up passes under strict D2e (F-D2E); waits on the gate's staff assertion path and OpsRecord::BreakGlassRead (W2c gap raised by W1f) | lead to assign
+system_tasks::i23_cell_timeline_commits_each_scheduled_end_once_across_restarts | set-up passes under strict D2e (F-D2E); the timeline issues EndScheduledRole but no EndSessionsAtBindingEnd for the scheduled end | lead to assign (fstp-cell tasks/timeline.rs)
+system_tasks::i77_cell_timeline_ends_sessions_at_a_scheduled_binding_end | set-up passes under strict D2e (F-D2E); the timeline issues EndScheduledRole but no EndSessionsAtBindingEnd for the scheduled end | lead to assign (fstp-cell tasks/timeline.rs)
 t_authz_matrix_http::t_authz_matrix_http | authorisation matrix harness | m4access (W3a)
 t_iso_i19::t_iso_i19_no_canary_crosses_a_cell_boundary | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 t_iso_i19::t_iso_i19_no_canary_crosses_a_cell_boundary_dedicated | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 t_iso_i20::t_iso_i20_no_shared_identifier_across_tenants | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-w0_high_risk_table::i78_domain_high_risk_kinds_match_the_m2_base | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-w0_high_risk_table::i78_high_risk_table_holds_every_domain_high_risk_kind | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
