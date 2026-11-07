@@ -31,6 +31,7 @@ fn th26_tenant_fuzz_seeds_decode_to_their_operations() {
         ("tenant_request_activation", "tenant.request_activation"),
         ("tenant_approve_activation", "tenant.approve_activation"),
         ("tenant_set_guide_notice", "tenant.set_guide_notice"),
+        ("tenant_set_mail_relay", "tenant.set_mail_relay"),
     ];
     for (file, op) in want {
         let bytes = std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));

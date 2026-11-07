@@ -20,11 +20,11 @@ use crate::command::TenantRecord;
 use crate::refusal::{FoldError, TenantRefusal};
 use crate::rules::{
     P69_DEFAULT, P71_DEFAULT_US, P72_ABSOLUTE_DEFAULT_US, P72_IDLE_DEFAULT_US, https_address,
-    models_valid, p74_default, prober_milestone, setting_valid, values_check,
+    mail_relay_valid, models_valid, p74_default, prober_milestone, setting_valid, values_check,
 };
 use crate::types::{
     Activation, ActivationRequestId, ApprovalId, CellKind, GrantRef, GuideNoticeOverride,
-    InferenceDefault, InvitationId, LoginMethod, McpSettings, ModelRef, OnboardingStep,
+    InferenceDefault, InvitationId, LoginMethod, MailRelay, McpSettings, ModelRef, OnboardingStep,
     PaymentMode, RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus,
     StepValues, TenantRevision, TokenDigest, VerifyMethod,
 };
@@ -190,6 +190,8 @@ pub struct TenantState {
     /// The activation of the organisation (SoD-18).
     activation: Activation,
     branding: Option<(fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)>,
+    /// The mail submission relay (ADR-018, proposed).
+    mail_relay: Option<MailRelay>,
 }
 
 /// The instant `t`, or [`TenantRefusal::InvalidInstant`] when it lies
@@ -223,6 +225,7 @@ impl TenantState {
             signatories: BTreeSet::new(),
             activation: Activation::NotRequested,
             branding: None,
+            mail_relay: None,
         }
     }
 
@@ -446,6 +449,13 @@ impl TenantState {
                 self.need_admin(*by)?;
                 crate::decide::check_branding(tokens).map_err(FoldError)?;
                 self.branding = Some((tokens.clone(), *digest));
+            }
+            TenantRecord::MailRelaySet { relay, by } => {
+                self.need_admin(*by)?;
+                if relay.as_ref().is_some_and(|r| !mail_relay_valid(r)) {
+                    return refuse(TenantRefusal::Inconsistent);
+                }
+                self.mail_relay.clone_from(relay);
             }
         }
         self.revision = self.revision.next();
@@ -891,6 +901,11 @@ impl TenantState {
     /// id is recorded once.
     pub fn inference_config_taken(&self, config: LlmConfigId) -> bool {
         self.configs.contains(&config)
+    }
+
+    /// The mail submission relay, or `None` while none is set (ADR-018).
+    pub fn mail_relay(&self) -> Option<&MailRelay> {
+        self.mail_relay.as_ref()
     }
 
     /// The latest inference configuration record.

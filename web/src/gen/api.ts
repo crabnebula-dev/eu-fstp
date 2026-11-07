@@ -69,6 +69,7 @@ export type OpName =
   | "tenant.approve_activation"
   | "tenant.branding.check"
   | "tenant.branding.set"
+  | "tenant.set_mail_relay"
   | "me.get_verification"
   | "tenant.set_login_methods"
   | "tenant.set_step_up_freshness"
@@ -244,6 +245,7 @@ export interface OpParams {
   readonly "tenant.approve_activation": Readonly<Record<never, string>>;
   readonly "tenant.branding.check": Readonly<Record<never, string>>;
   readonly "tenant.branding.set": Readonly<Record<never, string>>;
+  readonly "tenant.set_mail_relay": Readonly<Record<never, string>>;
   readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
   readonly "tenant.set_step_up_freshness": Readonly<Record<never, string>>;
@@ -392,6 +394,7 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.approve_activation",
   "tenant.branding.check",
   "tenant.branding.set",
+  "tenant.set_mail_relay",
   "me.get_verification",
   "tenant.set_login_methods",
   "tenant.set_step_up_freshness",
@@ -727,6 +730,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/admin/branding",
     base: "api",
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "branding" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.set_mail_relay",
+    method: "PUT",
+    path: "/admin/settings/mail-relay",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "mail-relay" }],
     params: [],
     body: true,
     highRisk: true,

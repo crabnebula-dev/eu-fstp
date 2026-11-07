@@ -635,6 +635,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
                 s("Synthetic data protection summary, matrix cell."),
             ),
         ]),
+        "tenant.set_mail_relay" => obj(vec![
+            ("ca_pem", s("")),
+            ("credential", s("mail-relay")),
+            ("host", s("smtp.relay.example")),
+        ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),

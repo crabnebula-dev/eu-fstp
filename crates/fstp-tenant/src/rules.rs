@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use crate::state::TenantState;
 use crate::types::{
     AgreementVersions, BankInterface, BrandingPackage, CellKind, DomainName, LoginMethod,
-    McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue,
+    MailRelay, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue,
     StepFailure, StepValues,
 };
 
@@ -113,6 +113,17 @@ pub fn is_host_name(d: &DomainName) -> bool {
         && labels
             .last()
             .is_some_and(|l| !l.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether `relay` may be the tenant's mail relay (ADR-018, I-38): a
+/// fully qualified host name that is not a CrabNebula host, and a
+/// non-empty secret name. The cell's egress checks the host again.
+pub fn mail_relay_valid(relay: &MailRelay) -> bool {
+    let h = relay.host.as_str();
+    is_host_name(&relay.host)
+        && h != "crabnebula.dev"
+        && !h.ends_with(".crabnebula.dev")
+        && !relay.credential.is_empty()
 }
 
 /// The check that runs through the prober for a step's values (Q5).

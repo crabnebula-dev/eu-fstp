@@ -606,7 +606,8 @@ fn other_destinations() -> Vec<Destination> {
         | Destination::Custody
         | Destination::ControlPlane
         | Destination::Witness
-        | Destination::KeystoreSnapshots => true,
+        | Destination::KeystoreSnapshots
+        | Destination::MailSubmission { .. } => true,
         Destination::CrabNebula(_) => false,
     };
     [
@@ -616,6 +617,10 @@ fn other_destinations() -> Vec<Destination> {
         Destination::ControlPlane,
         Destination::Witness,
         Destination::KeystoreSnapshots,
+        // ADR-018: the tenant's mail relay is never a CrabNebula host.
+        Destination::MailSubmission {
+            host: fstp_cell::egress::MailHost::parse("smtp.relay.example").unwrap(),
+        },
     ]
     .into_iter()
     .filter(is_other)

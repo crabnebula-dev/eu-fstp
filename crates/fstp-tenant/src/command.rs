@@ -6,8 +6,8 @@ use fstp_domain::id::{AccountId, ContentDigest, LlmConfigId};
 use fstp_domain::time::Timestamp;
 
 use crate::types::{
-    ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, ModelRef,
-    OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
+    ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, MailRelay,
+    ModelRef, OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
     TenantRevision, TokenDigest,
 };
 
@@ -141,6 +141,13 @@ pub enum TenantCommand {
         /// The digest of their canonical text, computed by the shell.
         digest: ContentDigest,
     },
+    /// Set or clear the tenant's mail submission relay
+    /// (`tenant.set_mail_relay`, M6 lane L6-EGR, ADR-018 proposed).
+    /// High-risk: it decides where every message of the tenant goes.
+    SetMailRelay {
+        /// The relay, or `None` to stop sending mail.
+        relay: Option<MailRelay>,
+    },
 }
 
 /// The kind of a tenant command, as the operation registry names it.
@@ -174,11 +181,13 @@ pub enum TenantKind {
     ApproveActivation,
     /// `tenant.branding.set`.
     SetBranding,
+    /// `tenant.set_mail_relay`.
+    SetMailRelay,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 19] = [
+    pub const ALL: [TenantKind; 20] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -198,6 +207,7 @@ impl TenantKind {
         TenantKind::RequestActivation,
         TenantKind::ApproveActivation,
         TenantKind::SetBranding,
+        TenantKind::SetMailRelay,
     ];
 
     /// Whether the kind is high-risk and needs a fresh step-up (R-LG-03).
@@ -213,6 +223,8 @@ impl TenantKind {
     ///   pending Daniel).
     /// - Setting the brand tokens changes what every interface shows
     ///   (M9 design section 2.2).
+    /// - Setting the mail relay decides where every message of the tenant
+    ///   goes (ADR-018, interim, pending Daniel).
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
@@ -223,6 +235,7 @@ impl TenantKind {
                 | TenantKind::GrantSignatory
                 | TenantKind::EndSignatory
                 | TenantKind::SetBranding
+                | TenantKind::SetMailRelay
         )
     }
 
@@ -266,6 +279,7 @@ impl TenantCommand {
             TenantCommand::RequestActivation { .. } => TenantKind::RequestActivation,
             TenantCommand::ApproveActivation { .. } => TenantKind::ApproveActivation,
             TenantCommand::SetBranding { .. } => TenantKind::SetBranding,
+            TenantCommand::SetMailRelay { .. } => TenantKind::SetMailRelay,
         }
     }
 
@@ -418,6 +432,14 @@ pub enum TenantRecord {
         tokens: BrandTokens,
         /// The digest of their canonical text.
         digest: ContentDigest,
+        /// The setting admin.
+        by: AccountId,
+    },
+    /// A tenant admin set or cleared the mail submission relay (ADR-018,
+    /// proposed). A set relay passes [`crate::rules::mail_relay_valid`].
+    MailRelaySet {
+        /// The relay, or `None` when cleared.
+        relay: Option<MailRelay>,
         /// The setting admin.
         by: AccountId,
     },
