@@ -224,6 +224,114 @@ fn adr007_inline_p09_wording_is_refused() {
         .unwrap_or_else(|f| panic!("{f:?}"));
 }
 
+/// A synthetic digest for the tests: the bytes summed into each position.
+fn synthetic_sha(b: &[u8]) -> [u8; 32] {
+    let mut out = [0_u8; 32];
+    for (i, x) in b.iter().enumerate() {
+        out[i % 32] = out[i % 32].wrapping_add(*x);
+    }
+    out
+}
+
+/// R-PG-02, TH-49 and ADR-007, Daniel's answer of 2026-11-07 (M4 design
+/// section 15.0, "P-09 knock-out wording"): the template's P-09 wording
+/// waits for acceptance like other narrative. Its acceptance names each
+/// text by the reference the shell stored it under, with template
+/// provenance. The ledger body then holds text references only, never the
+/// inline wording, and the draft holds the references. Inline wording, too
+/// few references and a second acceptance are refused or offered nothing.
+#[test]
+fn r_pg_02_adr007_p09_template_wording_is_accepted_as_stored_texts() {
+    let mut cell = forged();
+    let start = CreatorCommand::ApplyStart {
+        programme: P,
+        base: cell.head(),
+        start: supersafe_start(),
+    };
+    cell.run(&start, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let key = FieldId::P09.key();
+    let view = fstp_creator::draft_view(&cell.core, &cell.creator, P).unwrap();
+    assert!(
+        view.pending_narratives.contains_key(&key),
+        "P-09 wording waits"
+    );
+
+    let wording = fstp_creator::pending_wording(&cell.creator, P)
+        .unwrap_or_else(|| panic!("no P-09 wording waits for acceptance"));
+    let template = fstp_programme::shipped_templates().unwrap().remove(0);
+    let inline = value_of(&template.spec, FieldId::P09);
+    let want: Vec<String> = match &inline {
+        fstp_programme::FieldValue::P09(k) => k
+            .items()
+            .iter()
+            .map(|x| match &x.text {
+                fstp_programme::Narrative::Inline(s) => s.clone(),
+                other => panic!("the template wording is {other:?}"),
+            })
+            .collect(),
+        other => panic!("the template P-09 is {other:?}"),
+    };
+    assert_eq!(wording.texts(), want);
+    let refs: Vec<TextRef> = (0..want.len())
+        .map(|i| {
+            let n = u8::try_from(i).unwrap();
+            TextRef::new(
+                TextId::from_raw(500 + u128::from(n)),
+                ContentDigest::from_bytes([n + 1; 32]),
+            )
+        })
+        .collect();
+    assert!(wording.accept(&refs[..1], synthetic_sha).is_none());
+    let accepted = wording
+        .accept(&refs, synthetic_sha)
+        .unwrap_or_else(|| panic!("the wording is not accepted"));
+    assert_eq!(accepted.field, FieldId::P09);
+    assert_eq!(
+        accepted.provenance,
+        Provenance::Template {
+            template: TemplateId::from_raw(SUPERSAFE_TEMPLATE.raw()),
+            version: 1,
+        }
+    );
+
+    let entries = cell.entries.len();
+    let inline_edit = fstp_creator::FieldEdit {
+        value: inline,
+        ..accepted.clone()
+    };
+    assert!(cell.save(M1, vec![inline_edit]).is_err(), "inline wording");
+    assert_eq!(cell.entries.len(), entries);
+
+    let recs = cell
+        .save(M1, vec![accepted.clone()])
+        .unwrap_or_else(|f| panic!("the acceptance is refused: {f:?}"));
+    assert!(recs.iter().any(|r| matches!(
+        r,
+        Rec::Creator(CreatorRecord::FieldsSaved { fields, .. })
+            if fields == &vec![(FieldId::P09, accepted.digest, accepted.provenance.clone())]
+    )));
+    let texts: Vec<TextRef> = cell.policy().frozen.p09.0.iter().map(|k| k.text).collect();
+    assert_eq!(
+        texts, refs,
+        "ADR-007: the ledger body names the stored texts"
+    );
+
+    let view = fstp_creator::draft_view(&cell.core, &cell.creator, P).unwrap();
+    assert!(!view.pending_narratives.contains_key(&key));
+    let spec = fstp_programme::decode_spec(view.spec.to_canonical().unwrap().as_bytes()).unwrap();
+    assert_eq!(spec.get(FieldId::P09).as_set(), Some(&accepted.value));
+    assert!(fstp_creator::pending_wording(&cell.creator, P).is_none());
+    let again = CreatorCommand::AcceptNarrative {
+        programme: P,
+        base: cell.head(),
+        field: FieldId::P09,
+    };
+    assert_eq!(
+        refusal(&mut cell, &again, M1),
+        Some(Fail::Creator(CreatorRefusal::NothingToSave))
+    );
+}
+
 /// R-PG-05 (Q17): a tenant-private template is recorded with a reference
 /// to the draft revision it was saved at. It cannot take the id of a
 /// shipped template. A start from it refuses with the named template

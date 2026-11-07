@@ -235,7 +235,7 @@ pub(crate) fn parse_revision(s: &str) -> Option<DraftRevision> {
 }
 
 /// The revision at member `name`.
-fn revision_at(request: &Object, name: &str) -> Result<DraftRevision, ApiError> {
+pub(crate) fn revision_at(request: &Object, name: &str) -> Result<DraftRevision, ApiError> {
     request
         .get(name)
         .and_then(Value::as_str)

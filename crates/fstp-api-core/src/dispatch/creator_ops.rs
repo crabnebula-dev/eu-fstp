@@ -86,15 +86,71 @@ fn programme_param<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<ProgrammeId,
         .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))
 }
 
+/// The template P-09 wording that `op` accepts, when `op` is
+/// `creator.accept_narrative` of P-09 and the wording waits (Daniel's
+/// answer of 2026-11-07, M4 design section 15.0).
+fn pending_wording<P: Seams>(
+    call: &Call<'_, P>,
+    form: Form,
+    op: &Op,
+) -> Option<fstp_creator::PendingWording> {
+    if form != Form::AcceptNarrative {
+        return None;
+    }
+    let p = ProgrammeId::from_raw(forms::id_param(&op.request, "programme")?);
+    let w = fstp_creator::pending_wording(&call.state.creator, p)?;
+    (op.request.get("field").and_then(Value::as_str) == Some(w.field_key().as_str())).then_some(w)
+}
+
+/// The `SaveFields` that accepts the template P-09 wording `w`, with each
+/// text named by `refs`. The dry run names each text by a stand-in
+/// reference, since a refused call stores nothing.
+fn accept_wording(
+    w: &fstp_creator::PendingWording,
+    op: &Op,
+    refs: Option<&[TextRef]>,
+) -> Result<Command, ApiError> {
+    let stand_in: Vec<TextRef>;
+    let refs = match refs {
+        Some(r) => r,
+        None => {
+            stand_in = w
+                .texts()
+                .iter()
+                .zip(1_u128..)
+                .map(|(t, i)| forms::text_ref(i, t))
+                .collect();
+            &stand_in
+        }
+    };
+    let edit = w
+        .accept(refs, fstp_crypto::sha256)
+        .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+    let programme = forms::id_param(&op.request, "programme")
+        .map(ProgrammeId::from_raw)
+        .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+    Ok(Command::Creator(CreatorCommand::SaveFields {
+        programme,
+        base: crate::creator::revision_at(&op.request, "base")?,
+        fields: vec![edit],
+    }))
+}
+
 /// Builds the command of `op`. `ids` replays the ids an earlier build
-/// drew, and records each new draw, as the parent's `build` does.
+/// drew, and records each new draw, as the parent's `build` does. The
+/// acceptance of template P-09 wording builds the `SaveFields` of
+/// [`accept_wording`], with `wording` once its texts are stored.
 fn build<P: Seams>(
     call: &Call<'_, P>,
     form: Form,
     op: &Op,
     supplied: &Supplied,
+    wording: Option<&[TextRef]>,
     ids: &mut Vec<u128>,
 ) -> Result<Command, ApiError> {
+    if let Some(w) = pending_wording(call, form, op) {
+        return accept_wording(&w, op, wording);
+    }
     let mut next = 0usize;
     let mut draw = || -> Result<u128, ApiError> {
         let id = match ids.get(next) {
@@ -117,6 +173,8 @@ fn build<P: Seams>(
 struct Stored {
     supplied: Supplied,
     text: Option<fstp_import::ExtractedText>,
+    /// The stored texts of accepted P-09 wording, in criterion order.
+    wording: Option<Vec<TextRef>>,
 }
 
 /// Step 8, before the execution: stores the invitation's email in the
@@ -129,6 +187,31 @@ async fn store<P: Seams>(
 ) -> Result<Stored, ApiError> {
     let mut supplied = Supplied::placeholder(account);
     let mut text = None;
+    // Daniel's answer of 2026-11-07: each text of accepted P-09 wording
+    // is stored as a public text (ADR-007), and the save names it by
+    // reference.
+    if let Some(w) = pending_wording(call, form, op) {
+        let p = forms::id_param(&op.request, "programme")
+            .map(ProgrammeId::from_raw)
+            .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+        let mut refs = Vec::new();
+        for s in w.texts() {
+            let r = call
+                .ports
+                .texts()
+                .put(TextClass::Public, TextOwner::Programme(p), s.as_bytes())
+                .await
+                .map_err(|e| port_failed(e, "text"))?;
+            let r = forms::text_ref(r.0, &s);
+            lock(&call.st.content).remember(r, &s);
+            refs.push(r);
+        }
+        return Ok(Stored {
+            supplied,
+            text,
+            wording: Some(refs),
+        });
+    }
     match form {
         Form::Invite => {
             let p = forms::id_param(&op.request, "programme")
@@ -192,7 +275,11 @@ async fn store<P: Seams>(
         }
         _ => {}
     }
-    Ok(Stored { supplied, text })
+    Ok(Stored {
+        supplied,
+        text,
+        wording: None,
+    })
 }
 
 /// A creator, bridge or import command: steps 5 to 9 of design section
@@ -221,7 +308,7 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
         link,
         ..Supplied::placeholder(account)
     };
-    let cmd = build(call, form, op, &placeholder, &mut ids).map_err(|e| call.refuse(e))?;
+    let cmd = build(call, form, op, &placeholder, None, &mut ids).map_err(|e| call.refuse(e))?;
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
     // Step 5.
@@ -251,7 +338,15 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
         .await
         .map_err(|e| call.refuse(e))?;
     stored.supplied.link = link;
-    let cmd = build(call, form, op, &stored.supplied, &mut ids).map_err(|e| call.refuse(e))?;
+    let cmd = build(
+        call,
+        form,
+        op,
+        &stored.supplied,
+        stored.wording.as_deref(),
+        &mut ids,
+    )
+    .map_err(|e| call.refuse(e))?;
     let meta = ExecMeta {
         via: call.caller.via(),
         session: call.caller.session,
@@ -533,8 +628,9 @@ async fn programme_read<P: Seams>(
         .ok_or_else(|| call.refuse(no_draft()))?;
     match kind {
         ReadKind::GetDraft => {
-            let view = fstp_creator::draft_view(&state.core, &state.creator, p)
+            let mut view = fstp_creator::draft_view(&state.core, &state.creator, p)
                 .ok_or_else(|| call.refuse(no_draft()))?;
+            view.show_wording(&wording_texts(call, &view.wording_refs()).await);
             Ok(CreatorModel::Draft {
                 spec: view.spec,
                 revision: d.head(),
@@ -575,6 +671,30 @@ impl fstp_guide::StoredTexts for PreviewTexts {
     fn text(&self, text: fstp_domain::id::TextRef) -> Option<&str> {
         self.0.get(&text.id().raw()).map(String::as_str)
     }
+}
+
+/// The stored P-09 texts of `refs` that this core or the text store holds
+/// and whose digest matches (Daniel's answer of 2026-11-07). A text
+/// neither holds stays a reference in the draft view.
+async fn wording_texts<P: Seams>(call: &Call<'_, P>, refs: &[TextRef]) -> PreviewTexts {
+    let mut texts = BTreeMap::new();
+    for r in refs {
+        let held = lock(&call.st.content).text(*r).map(str::to_owned);
+        let text = match held {
+            Some(t) => Some(t),
+            None => call
+                .ports
+                .texts()
+                .get_public(crate::port::PublicTextRef(r.id().raw()))
+                .await
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok()),
+        };
+        if let Some(t) = text.filter(|t| forms::text_digest(t) == r.digest()) {
+            let _ = texts.insert(r.id().raw(), t);
+        }
+    }
+    PreviewTexts(texts)
 }
 
 /// `creator.preview` (R-PG-01, I-51; design sections 2.2 J1 and 3.2):

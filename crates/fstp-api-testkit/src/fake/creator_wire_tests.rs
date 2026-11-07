@@ -1111,6 +1111,71 @@ fn i84_save_fields_through_mcp_runs_with_via_mcp() {
     assert_eq!(meta.agent, Some(AGENT));
 }
 
+/// R-PG-02, TH-49 and ADR-007, Daniel's answer of 2026-11-07 (M4 design
+/// section 15.0, "P-09 knock-out wording"): the template's P-09 wording
+/// is accepted like a narrative. API core stores each text as a public
+/// text, and the engine port appends a `SaveFields` with template
+/// provenance whose value names each text by reference, never inline.
+/// The draft read then shows the stored texts, and nothing is pending.
+#[test]
+fn r_pg_02_adr007_p09_wording_is_accepted_as_public_text_references() {
+    let c = cell();
+    let d = opened(&c).unwrap_or_else(|e| panic!("{e}"));
+    start_supersafe(&c, &d).unwrap_or_else(|e| panic!("{e}"));
+    let key = fstp_programme::FieldId::P09.key();
+    let draft = draft_of(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    assert!(pending_narratives(&draft).contains(&key), "P-09 waits");
+    let base = str_of(&draft, "revision").unwrap_or_else(|e| panic!("{e}"));
+    let public_before = c.ports.texts.public_texts().len();
+    done(
+        c.web(&d.owner, rq::accept_narrative(d.p, &key, &base)),
+        "creator.accept_narrative",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let (cmd, ..) = last_creator(&c).unwrap_or_else(|e| panic!("{e}"));
+    let CreatorCommand::SaveFields { fields, .. } = cmd else {
+        panic!("the acceptance appended {cmd:?}");
+    };
+    let [edit] = fields.as_slice() else {
+        panic!("the acceptance saved {fields:?}");
+    };
+    assert_eq!(edit.field, fstp_programme::FieldId::P09);
+    assert!(matches!(edit.provenance, Provenance::Template { .. }));
+    let fstp_programme::FieldValue::P09(k) = &edit.value else {
+        panic!("the acceptance saved {:?}", edit.value);
+    };
+    let public = c.ports.texts.public_texts();
+    assert_eq!(public.len(), public_before + k.items().len());
+    let mut shown = Vec::new();
+    for x in k.items() {
+        let fstp_programme::Narrative::Stored(r) = &x.text else {
+            panic!("ADR-007: inline P-09 wording reached the save");
+        };
+        let text = public
+            .get(&r.text_ref().id())
+            .unwrap_or_else(|| panic!("the text is not a public text"));
+        shown.push(text.clone());
+    }
+    let after = draft_of(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!pending_narratives(&after).contains(&key));
+    let items = after
+        .get("spec")
+        .and_then(|s| s.get("evaluation"))
+        .and_then(|s| s.get("p09_knock_outs"))
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("the draft shows no P-09"));
+    let texts: Vec<String> = items
+        .iter()
+        .map(|i| {
+            i.get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("the draft shows {i:?}, not the stored text"))
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(texts, shown);
+}
+
 /// TH-49, R-PG-02, design section 3.2 `AcceptNarrative`: template text is
 /// never applied silently. After the SuperSAFE start the draft read lists
 /// pending narratives. M1 accepts one, and the engine port appends
@@ -1122,10 +1187,14 @@ fn th49_accept_narrative_builds_accept_narrative() {
     let d = opened(&c).unwrap_or_else(|e| panic!("{e}"));
     start_supersafe(&c, &d).unwrap_or_else(|e| panic!("{e}"));
     let draft = draft_of(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    // P-09 wording is accepted as a save of stored texts (Daniel,
+    // 2026-11-07), tested in
+    // `r_pg_02_adr007_p09_wording_is_accepted_as_public_text_references`.
+    let p09 = fstp_programme::FieldId::P09.key();
     let keys = pending_narratives(&draft);
     let key = keys
-        .first()
-        .cloned()
+        .into_iter()
+        .find(|k| *k != p09)
         .unwrap_or_else(|| panic!("no pending narrative after the template start"));
     let base = str_of(&draft, "revision").unwrap_or_else(|e| panic!("{e}"));
     let before = head(&c, d.p).unwrap_or_else(|| panic!("no draft head"));

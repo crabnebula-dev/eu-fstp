@@ -251,7 +251,10 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             if fields.is_empty() {
                 return Err(CreatorRefusal::NothingToSave);
             }
-            if fields.iter().any(|f| f.provenance != Provenance::Manual) {
+            if fields
+                .iter()
+                .any(|f| f.provenance != Provenance::Manual && !draft::accepts_wording(d, f))
+            {
                 return Err(CreatorRefusal::ProvenanceNotManual);
             }
             let edits: Vec<Edit<'_>> = fields
@@ -576,11 +579,15 @@ fn cap_within_ceiling(policy: &fstp_domain::policy::PolicyVersion) -> Result<(),
 /// accept: the latest start is a shipped template whose value of `field`
 /// waits for acceptance, and no save or acceptance of the field followed.
 ///
-/// Only artefact narrative can be accepted. P-09 wording from a template
-/// is inline text, which no ledger body may hold (ADR-007), so the
-/// programme manager saves it as stored text instead. Interim, pending
-/// Daniel.
+/// Only artefact narrative is accepted this way. P-09 wording from a
+/// template is inline text, which no ledger body may hold (ADR-007). So
+/// its acceptance is a `SaveFields` with template provenance that names
+/// each text by its stored reference (`draft::accepts_wording`; Daniel's
+/// answer of 2026-11-07, M4 design section 15.0).
 fn accept_narrative(d: &Draft, field: FieldId) -> Result<(), CreatorRefusal> {
+    if draft::kind(field) != Some(FieldKind::Artefact) {
+        return Err(CreatorRefusal::NothingToSave);
+    }
     match draft::pending_narrative(d, field) {
         Some(_) => Ok(()),
         None => Err(CreatorRefusal::NothingToSave),

@@ -32,7 +32,7 @@
 import { h } from "../../core/dom.js";
 import { inviteSection } from "../../people/invite.js";
 import { clearProblems, fieldEditor, showProblems, type FieldEditor, type Problem } from "../editor.js";
-import { fieldsOf } from "../fields.js";
+import { fieldsOf, type FieldDef } from "../fields.js";
 import { busy, frame, hush, ready, statusRegion, warn } from "../frame.js";
 import { labelOr, t } from "../i18n.js";
 import { CREATOR_STEPS, canonicalJson, draftValue, readReport, stepOfResult, type Draft, type Report } from "../model.js";
@@ -47,6 +47,20 @@ interface Shown {
   readonly editor: FieldEditor;
   /** Whether the draft holds template narrative for it that awaits acceptance. */
   pending: boolean;
+}
+
+/**
+ * The value a pending narrative shows: its text for a text field, else the
+ * value its canonical JSON text spells, such as the P-09 criteria (Daniel,
+ * 2026-11-07). Text that does not parse shows as an empty value.
+ */
+function pendingValue(f: FieldDef, text: string): unknown {
+  if (f.shape.t === "text") return text;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /** Mounts step page `step` of programme `p`. */
@@ -91,7 +105,7 @@ export function mount(p: string, step: string): void {
     clearProblems(fieldsBox);
     shown = fieldsOf(step).map((f) => {
       const pendingText = Object.hasOwn(d.pendingNarratives, f.key) ? d.pendingNarratives[f.key] : undefined;
-      const value = pendingText ?? draftValue(d, f.key);
+      const value = pendingText === undefined ? draftValue(d, f.key) : pendingValue(f, pendingText);
       const editor = fieldEditor(f, value, { mark: true, prefix: `f.${f.key}` });
       const note = afterApprovalNote(f.key, d.status);
       if (note !== null) {

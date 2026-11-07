@@ -123,9 +123,11 @@ test.describe('SuperSAFE in the creator', () => {
   });
 
   /**
-   * I-50 and I-66, R-PG-01 AC: a per-recipient cap above the funder
-   * ceiling fails the step and the report, the report names both values,
-   * and activation cannot be requested until it is fixed.
+   * I-50 and I-66, R-PG-01 AC, with I-50 timing (Daniel, 2026-10-31; M4
+   * design section 15.0, "I-50 e2e journey" of 2026-11-07): a save that
+   * puts the per-recipient cap above the funder ceiling is refused under
+   * I-50. The page names both values, no draft holds the cap, and
+   * activation cannot be requested. A cap at the ceiling then saves.
    */
   test('i50_cap_above_ceiling_names_both_values_and_blocks_the_activation_request', async ({ person, request }) => {
     const f = superSafe();
@@ -137,23 +139,46 @@ test.describe('SuperSAFE in the creator', () => {
     await m1.page.goto(`${origin}${APP.creatorStep(p, 'funder')}`);
     await setFieldValue(m1.page, 'funder.p58_recipient_ceiling', ceiling);
     await saveStep(m1.page);
+    expect(draftValue(await readDraft(m1.page, origin, p), 'funder.p58_recipient_ceiling')).toBe(ceiling);
+    const before = await readDraft(m1.page, origin, p);
 
     await m1.page.goto(`${origin}${APP.creatorStep(p, 'money')}`);
     await setFieldValue(m1.page, 'money.p05_recipient_cap', '400000.01');
-    const money = await saveStep(m1.page);
-    expect(money.failures).toContain('CapAboveCeiling');
+    const answered = m1.page.waitForResponse(
+      (r) => r.request().method() !== 'GET' && new URL(r.url()).pathname === `${API.draft(p)}/fields`,
+    );
+    await m1.page.locator(CREATOR_UI.stepSave).click();
+    const refusal = await answered;
+    expect(refusal.status(), 'the save is refused').toBeGreaterThanOrEqual(400);
+    expect(refusal.status(), 'the save is refused').toBeLessThan(500);
+    const body = (await refusal.json()) as { rule?: unknown; values?: unknown };
+    expect(body.rule).toBe('I-50');
+    expect(body.values).toEqual({ 'P-05': '400000.01', 'P-58': ceiling });
+    await expect(m1.page.locator(CREATOR_UI.stepStatus)).toHaveAttribute('data-state', 'refused');
+    const alert = m1.page.locator('main [role="alert"][data-rule="I-50"]');
+    await expect(alert).toHaveCount(1);
+    await expect(alert).toContainText('400000.01');
+    await expect(alert).toContainText('400000.00');
+
+    const after = await readDraft(m1.page, origin, p);
+    expect(after.revision, 'the refused save appends nothing').toBe(before.revision);
+    expect(draftValue(after, 'money.p05_recipient_cap'), 'no draft holds the cap').not.toBe('400000.01');
+    expect(canon(after.spec)).toBe(canon(before.spec));
+    expect((await readReport(m1.page, origin, p)).map((r) => r.check)).not.toContain('CapAboveCeiling');
 
     await m1.page.goto(`${origin}${APP.creatorStep(p, REVIEW_STEP)}`);
-    const item = m1.page.locator(`${CREATOR_UI.report} li[data-check="CapAboveCeiling"][data-severity="failure"]`);
-    await expect(item).toHaveCount(1);
-    await expect(item).toContainText('400000.01');
-    await expect(item).toContainText('400000.00');
+    await expect(m1.page.locator(CREATOR_UI.report)).toBeVisible();
     await expect(m1.page.locator(CREATOR_UI.requestActivation)).toBeDisabled();
-    expect((await readReport(m1.page, origin, p)).map((r) => r.check)).toContain('CapAboveCeiling');
+    const asked = await call(m1.page, origin, 'POST', `/api/v1/programmes/${p}/activation-request`, {
+      revision: after.revision,
+    });
+    expect(asked.status, asked.body).toBeGreaterThanOrEqual(400);
+    expect((await readDraft(m1.page, origin, p)).revision, 'no activation request is recorded').toBe(after.revision);
 
     await m1.page.goto(`${origin}${APP.creatorStep(p, 'money')}`);
     await setFieldValue(m1.page, 'money.p05_recipient_cap', ceiling);
     expect((await saveStep(m1.page)).failures).not.toContain('CapAboveCeiling');
+    expect(draftValue(await readDraft(m1.page, origin, p), 'money.p05_recipient_cap')).toBe(ceiling);
     expect((await readReport(m1.page, origin, p)).map((r) => r.check)).not.toContain('CapAboveCeiling');
   });
 
@@ -169,6 +194,8 @@ test.describe('SuperSAFE in the creator', () => {
       if (step === 'people') await invite(m1.page, origin, p, syntheticEmail('c1'), 'fstp_coordinator');
     });
     await m1.page.goto(`${origin}${APP.creatorStep(p, REVIEW_STEP)}`);
+    // The report renders after its read, so the counts wait for the page.
+    await expect(m1.page.locator('main[data-ready="true"]')).toBeVisible();
     const report = m1.page.locator(CREATOR_UI.report);
     await expect(report.locator('li[data-severity="failure"]')).toHaveCount(0);
     const pending = report.locator('li[data-severity="warning"][data-acknowledged="false"]');

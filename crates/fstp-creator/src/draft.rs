@@ -24,17 +24,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::command::Ctx;
-use fstp_domain::id::{ContentDigest, PolicyVersionId, ProgrammeId};
+use fstp_domain::id::{ContentDigest, PolicyVersionId, ProgrammeId, TextRef};
 use fstp_domain::policy::PolicyVersion;
 use fstp_domain::state::{State, UsedId};
+use fstp_guide::StoredTexts;
+use fstp_programme::kinds::{Keyed, KnockOut};
 use fstp_programme::{
     CompileIds, FIELDS, Field, FieldId, FieldKind, FieldValue, FunderProfile, Narrative,
-    ProgrammeSpec, Template, compile,
+    ProgrammeSpec, StoredText, Template, compile,
 };
 
 use crate::decide::CreatorRefusal;
 use crate::ids::TemplateId;
-use crate::model::{DraftRevision, StartingPoint};
+use crate::model::{DraftRevision, FieldEdit, Provenance, StartingPoint, ValueDigest};
 use crate::state::{CreatorState, Draft};
 
 /// A draft whose P-53 names no shipped funder profile cannot compile.
@@ -297,13 +299,14 @@ pub(crate) fn spec_ref(programme: ProgrammeId, revision: DraftRevision) -> Conte
 }
 
 /// The template value of `field` that waits for `AcceptNarrative` on
-/// `draft` (TH-49): an artefact field whose shipped template value needs
-/// acceptance, which no save has replaced and no one has accepted yet.
+/// `draft` (TH-49): an artefact field, or P-09 (Daniel, 2026-11-07), whose
+/// shipped template value needs acceptance, which no save has replaced and
+/// no one has accepted yet.
 pub(crate) fn pending_narrative(draft: &Draft, field: FieldId) -> Option<FieldValue> {
     let Some(StartingPoint::Template { template, version }) = draft.start() else {
         return None;
     };
-    if kind(field) != Some(FieldKind::Artefact)
+    if !takes_acceptance(field)
         || draft.fields().contains_key(&field)
         || draft.narratives().contains(&field)
     {
@@ -401,4 +404,188 @@ pub fn affected_calls(
         .map(|f| f.id)
         .collect();
     fstp_programme::affected_calls(state, programme, calls, &changed, head)
+}
+
+/// Whether `field` takes template narrative through acceptance: an
+/// artefact field, or P-09 (Daniel's answer of 2026-11-07, M4 design
+/// section 15.0, "P-09 knock-out wording").
+fn takes_acceptance(field: FieldId) -> bool {
+    field == FieldId::P09 || kind(field) == Some(FieldKind::Artefact)
+}
+
+/// The template P-09 wording of a draft that waits for acceptance
+/// ([`pending_wording`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingWording {
+    items: Vec<KnockOut>,
+    provenance: Provenance,
+}
+
+/// The template P-09 wording of the draft of `programme` that waits for
+/// acceptance, or `None` when none waits (Daniel's answer of 2026-11-07,
+/// M4 design section 15.0).
+///
+/// The wording is accepted like other narrative. The shell stores each
+/// inline text as a public text (ADR-007) and saves the criteria with each
+/// text named by its reference, through [`PendingWording::accept`]. The
+/// ledger body never holds the wording.
+pub fn pending_wording(creator: &CreatorState, programme: ProgrammeId) -> Option<PendingWording> {
+    let draft = creator.draft(programme)?;
+    let Some(StartingPoint::Template { template, version }) = draft.start() else {
+        return None;
+    };
+    match pending_narrative(draft, FieldId::P09)? {
+        FieldValue::P09(k) => Some(PendingWording {
+            items: k.items().to_vec(),
+            provenance: Provenance::Template {
+                template: *template,
+                version: *version,
+            },
+        }),
+        _ => None,
+    }
+}
+
+impl PendingWording {
+    /// The key of P-09, as `creator.accept_narrative` names it.
+    pub fn field_key(&self) -> String {
+        FieldId::P09.key()
+    }
+
+    /// The inline texts of the wording, in criterion order.
+    pub fn texts(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|x| match &x.text {
+                Narrative::Inline(s) => Some(s.clone()),
+                Narrative::Stored(_) => None,
+            })
+            .collect()
+    }
+
+    /// The edit that accepts the wording, with the inline texts stored
+    /// under `refs` in the order of [`PendingWording::texts`]. `sha256`
+    /// digests the value's canonical text, as the shell digests a save.
+    /// `None` when `refs` does not name one stored text per inline text.
+    pub fn accept(&self, refs: &[TextRef], sha256: fn(&[u8]) -> [u8; 32]) -> Option<FieldEdit> {
+        let mut refs_left = refs.iter();
+        let mut items = Vec::with_capacity(self.items.len());
+        for x in &self.items {
+            let text = match &x.text {
+                Narrative::Inline(_) => Narrative::Stored(StoredText::new(*refs_left.next()?)?),
+                stored @ Narrative::Stored(_) => stored.clone(),
+            };
+            items.push(KnockOut { id: x.id, text });
+        }
+        if refs_left.next().is_some() {
+            return None;
+        }
+        let value = FieldValue::P09(Keyed::new(items)?);
+        let canonical = fstp_programme::encode_field_value(&value);
+        Some(FieldEdit {
+            field: FieldId::P09,
+            digest: ValueDigest::new(ContentDigest::from_bytes(sha256(canonical.as_bytes()))),
+            value,
+            provenance: self.provenance.clone(),
+        })
+    }
+}
+
+/// Whether `edit` accepts the template P-09 wording of `draft` as stored
+/// texts: the latest start is the template its provenance names, the
+/// wording waits, and the edit keeps every criterion, naming each inline
+/// text by a stored reference. The shell vouches that each reference
+/// holds the template's text, as it does for every stored text.
+pub(crate) fn accepts_wording(draft: &Draft, edit: &FieldEdit) -> bool {
+    let Some(StartingPoint::Template { template, version }) = draft.start() else {
+        return false;
+    };
+    let named = Provenance::Template {
+        template: *template,
+        version: *version,
+    };
+    if edit.field != FieldId::P09 || edit.provenance != named {
+        return false;
+    }
+    match (pending_narrative(draft, FieldId::P09), &edit.value) {
+        (Some(FieldValue::P09(t)), FieldValue::P09(s)) => {
+            t.items().len() == s.items().len()
+                && t.items().iter().zip(s.items()).all(|(a, b)| {
+                    a.id == b.id
+                        && match (&a.text, &b.text) {
+                            (Narrative::Inline(_), Narrative::Stored(_)) => true,
+                            (x, y) => x == y,
+                        }
+                })
+        }
+        _ => false,
+    }
+}
+
+impl DraftView {
+    /// The stored P-09 texts the spec names, in criterion order.
+    pub fn wording_refs(&self) -> Vec<TextRef> {
+        match self.wording() {
+            Some(FieldValue::P09(k)) => k
+                .items()
+                .iter()
+                .filter_map(|x| match &x.text {
+                    Narrative::Stored(r) => Some(r.text_ref()),
+                    Narrative::Inline(_) => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Shows each stored P-09 text of the spec that `texts` holds as its
+    /// text (Daniel's answer of 2026-11-07). A text `texts` does not hold
+    /// stays a reference, so the view never shows a made-up wording.
+    pub fn show_wording(&mut self, texts: &dyn StoredTexts) {
+        let Some(FieldValue::P09(k)) = self.wording() else {
+            return;
+        };
+        let items: Vec<KnockOut> = k
+            .items()
+            .iter()
+            .map(|x| KnockOut {
+                id: x.id,
+                text: match &x.text {
+                    Narrative::Stored(r) => match texts.text(r.text_ref()) {
+                        Some(t) => Narrative::Inline(t.to_owned()),
+                        None => x.text.clone(),
+                    },
+                    Narrative::Inline(_) => x.text.clone(),
+                },
+            })
+            .collect();
+        let Some(shown) = Keyed::new(items) else {
+            return;
+        };
+        let json = fstp_programme::encode_field_value(&FieldValue::P09(shown));
+        let Ok(v) = fstp_json::parse(json.as_bytes()) else {
+            return;
+        };
+        let key = FieldId::P09.key();
+        let Some((step, member)) = key.split_once('.') else {
+            return;
+        };
+        if let Some(o) = self
+            .spec
+            .as_object_mut()
+            .and_then(|s| s.get_mut(step))
+            .and_then(fstp_json::Value::as_object_mut)
+        {
+            let _ = o.insert(member, v);
+        }
+    }
+
+    /// The P-09 value of the spec, if it decodes.
+    fn wording(&self) -> Option<FieldValue> {
+        let key = FieldId::P09.key();
+        let (step, member) = key.split_once('.')?;
+        let v = self.spec.as_object()?.get(step)?.as_object()?.get(member)?;
+        let text = fstp_json::to_canonical(v).ok()?;
+        fstp_programme::decode_field_value(FieldId::P09, text.as_bytes()).ok()
+    }
 }
