@@ -1624,6 +1624,30 @@ impl ShellVault {
     }
 }
 
+/// The shell's vault as the oracle of a composed setup entry
+/// ([`Shell::execute_composed`]). A failed ask is the vault being down.
+struct ComposeOracle<'a>(&'a ShellVault);
+
+impl fstp_engine::IdentityOracle for ComposeOracle<'_> {
+    fn ask(&self, q: &Query) -> Result<Answer, fstp_domain::oracle::OracleDown> {
+        let answers = self
+            .0
+            .ask(None, std::slice::from_ref(q))
+            .ok_or(fstp_domain::oracle::OracleDown)?;
+        domain_answers(std::slice::from_ref(q), &answers)
+            .get(q)
+            .cloned()
+            .ok_or(fstp_domain::oracle::OracleDown)
+    }
+
+    fn epoch(&self) -> Result<VaultEpoch, fstp_domain::oracle::OracleDown> {
+        self.0
+            .epoch()
+            .map(VaultEpoch::from_raw)
+            .ok_or(fstp_domain::oracle::OracleDown)
+    }
+}
+
 /// One batch the driver appended through the shell, as it was handed over.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellEntry {
@@ -1792,6 +1816,91 @@ impl Shell {
         Err(ShellError::Protocol(
             "the driver did not finish in 256 steps".to_owned(),
         ))
+    }
+
+    /// Runs a setup `CreateProgramme` or `ActivateProgramme` of an M2 step
+    /// at `at` under `command` through the creator path, since strict D2e
+    /// refuses both as core commands (M4 design section 15.0, as `52cdc5c`
+    /// did for the M4 setups). The entry is the one
+    /// `fstp_domain_testkit::activation::run_core` composes, decided on the
+    /// shell's state with its vault's answers, and it is appended as a
+    /// driver batch. The cell's tenant fold or the step's own flag attests
+    /// a tenant admin, as `ProdCell::exec_step` reads it. The inner `Err`
+    /// is the domain refusal.
+    ///
+    /// # Errors
+    ///
+    /// A system step, a vault whose epoch is ahead of the state's (the
+    /// setups process it at the bootstrap), or a batch the store refuses.
+    pub fn execute_composed(
+        &mut self,
+        step: &fstp_domain_testkit::r#gen::roster::Step,
+        at: Timestamp,
+        command: [u8; 16],
+    ) -> Result<Result<(), fstp_domain::refusal::Refusal>, ShellError> {
+        use fstp_domain_testkit::activation::{activation_records, open_records};
+        let protocol = |why: String| ShellError::Protocol(why);
+        let fstp_domain::command::Actor::Account(actor) = step.actor else {
+            return Err(protocol("a composed step names no account".to_owned()));
+        };
+        let epoch = self.vault.epoch();
+        if epoch.is_some_and(|e| e > self.state.engine().epoch().raw()) {
+            return Err(protocol(
+                "the vault is ahead of the state before a composed step".to_owned(),
+            ));
+        }
+        let engine_cmd = fstp_engine::Command::Core(step.cmd.clone());
+        let a = fstp_cell_core::attest_at(&self.state, actor, &engine_cmd, command, at);
+        let ctx = fstp_domain::command::Ctx {
+            now: at,
+            actor: step.actor,
+            command: fstp_domain::id::CommandId::from_bytes(command),
+            via: fstp_domain::command::Via::Web,
+            tenant_admin: a.tenant_admin || step.flags.tenant_admin,
+            second_tenant_admin: None,
+            binds_tenant_admin: a.binds_tenant_admin,
+        };
+        let oracle = ComposeOracle(&self.vault);
+        let engine = self.state.engine();
+        let records = match &step.cmd {
+            fstp_domain::Command::CreateProgramme { policy } => {
+                open_records(engine, &oracle, policy, &ctx)
+            }
+            cmd => activation_records(engine, &oracle, cmd, &ctx),
+        };
+        let records = match records {
+            Ok(r) => r,
+            Err(fstp_engine::ExecError::Refused(r)) => return Ok(Err(r)),
+            Err(e) => return Err(protocol(format!("composed step: {e:?}"))),
+        };
+        let batch: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
+        let expected = self.state.head();
+        let mut store = self.store.clone();
+        let head = store
+            .append(expected, at.micros(), command, batch.clone())
+            .map_err(|e| protocol(format!("composed append: {e}")))?;
+        let mut entries = Vec::with_capacity(batch.len());
+        store
+            .read(
+                Seq::from_raw(expected.raw().saturating_add(1)),
+                batch.len(),
+                &mut entries,
+            )
+            .map_err(|e| protocol(format!("composed read: {e}")))?;
+        let mut next = self.state.clone();
+        for e in &entries {
+            fstp_cell_core::apply(&mut next, e)
+                .map_err(|e| protocol(format!("composed fold: {e:?}")))?;
+        }
+        self.store = store;
+        self.state = next;
+        self.ledger.push(ShellEntry {
+            seq: head.raw(),
+            at: at.micros(),
+            command,
+            batch,
+        });
+        Ok(Ok(()))
     }
 
     /// Appends the route entries of the step-up `u` that the gate admitted

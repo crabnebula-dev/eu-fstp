@@ -88,6 +88,18 @@ fn shell(truth: GroundTruth) -> Result<Shell, String> {
     }
 }
 
+/// Whether `cmd` reaches the engine only through a creator composition
+/// since strict D2e: the creator's `OpenDraft` composes a
+/// `CreateProgramme` and its `ApproveActivation` an `ActivateProgramme`
+/// (M4 design sections 3.4 and 15.0).
+fn composed(cmd: &fstp_domain::Command) -> bool {
+    matches!(
+        cmd,
+        fstp_domain::Command::CreateProgramme { .. }
+            | fstp_domain::Command::ActivateProgramme { .. }
+    )
+}
+
 /// The M2 core records of `entries`, in order.
 fn core_records(entries: &[ShellEntry]) -> Vec<fstp_domain::Record> {
     entries
@@ -132,9 +144,43 @@ fn seam_driver_core_matches_reference_engine() {
             let truth = paths::truth(adult);
             let mut engine = Scenario::new(truth.clone()).map_err(|e| format!("open: {e:?}"))?;
             let mut cell = shell(truth)?;
+            // The cell's tenant admin bootstrap processes the vault change
+            // first (NOTE 3), and the composed steps ask at the state's
+            // epoch. So the reference processes it before the path too.
+            let ctx = engine.ctx(T0, Actor::Account(ADMIN));
+            engine
+                .change_vault(|_| {}, ctx)
+                .map_err(|e| format!("the reference vault change: {e:?}"))?;
             for (i, p) in path.iter().enumerate() {
                 let want = run_records(&mut engine, &p.step, p.at)?;
                 let before = cell.ledger().len();
+                if composed(&p.step.cmd) {
+                    // Strict D2e: both sides append the creator path's entry.
+                    let id = [u8::try_from(i % 170).unwrap(); 16];
+                    let got = cell
+                        .execute_composed(&p.step, p.at, id)
+                        .map_err(shell_err)?;
+                    match (want, got) {
+                        (Ok(records), Ok(())) => {
+                            prop_assert_eq!(
+                                core_records(&cell.ledger()[before..]),
+                                records,
+                                "step {i} {:?}",
+                                p.step.cmd.kind()
+                            );
+                        }
+                        (Err(r), Err(c)) => {
+                            prop_assert_eq!(c, r, "step {i} {:?}", p.step.cmd.kind());
+                        }
+                        (w, c) => {
+                            return Err(format!(
+                                "step {i} {:?}: the engine gave {w:?}, the composed entry gave {c:?}",
+                                p.step.cmd.kind()
+                            ));
+                        }
+                    }
+                    continue;
+                }
                 // Ids stay below 0xB0, the bootstrap's command id.
                 let admitted =
                     try_admit_step(&cell, &p.step, p.at, u8::try_from(i % 170).unwrap())?;
@@ -177,12 +223,15 @@ fn seam_driver_core_matches_reference_engine() {
 }
 
 /// The first step of the NEGOTIATION path whose M2 queries are not
-/// empty, by index, from the engine's own state before it.
+/// empty, by index, from the engine's own state before it. A composed
+/// set-up step never runs through `DriverCore` (strict D2e), so it is
+/// skipped.
 fn first_asking_step(path: &[paths::PathStep], truth: &GroundTruth) -> Result<usize, String> {
     let mut engine = Scenario::new(truth.clone()).map_err(|e| format!("open: {e:?}"))?;
     for (i, p) in path.iter().enumerate() {
         let ctx = p.step.ctx(p.at, CommandId::from_bytes([0xAA; 16]));
-        if let Ok(q) = fstp_domain::queries(&engine.state().core, &p.step.cmd, &ctx)
+        if !composed(&p.step.cmd)
+            && let Ok(q) = fstp_domain::queries(&engine.state().core, &p.step.cmd, &ctx)
             && !q.is_empty()
         {
             return Ok(i);
@@ -202,6 +251,16 @@ fn shell_before(
 ) -> Result<Shell, String> {
     let mut cell = shell(truth)?;
     for (i, p) in path[..upto].iter().enumerate() {
+        if composed(&p.step.cmd) {
+            let id = [u8::try_from(i % 200).unwrap(); 16];
+            if let Err(e) = cell
+                .execute_composed(&p.step, p.at, id)
+                .map_err(shell_err)?
+            {
+                return Err(format!("setup step {i} failed: {e:?}"));
+            }
+            continue;
+        }
         let a = admit_step(&cell, &p.step, p.at, u8::try_from(i % 200).unwrap())?;
         if let Err(e) = cell.execute(a).map_err(shell_err)? {
             return Err(format!("setup step {i} failed: {e:?}"));

@@ -184,14 +184,10 @@ async fn as_admin(
 }
 
 /// The commands of the timeline scenario, each with its command id
-/// byte: the tenant admin, a programme, and A's Drafting binding with its
-/// end scheduled for [`END_AT`].
+/// byte: the tenant admin and A's Drafting binding with its end
+/// scheduled for [`END_AT`]. The programme is written by
+/// [`write_programme`] first.
 fn setup_commands() -> Result<Vec<(CellCommand, u8)>, String> {
-    let create = SodSetup::one(1, &[])
-        .steps()?
-        .into_iter()
-        .next()
-        .ok_or("no programme step")?;
     let mut g = grant(
         BINDING_A,
         A,
@@ -208,23 +204,92 @@ fn setup_commands() -> Result<Vec<(CellCommand, u8)>, String> {
             CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
             0xA0,
         ),
-        (
-            CellCommand::Engine(fstp_engine::Command::Core(create.cmd)),
-            0xA1,
-        ),
         (CellCommand::Engine(fstp_engine::Command::Core(g)), 0xA2),
     ])
+}
+
+/// The corpus vault answered at the state's epoch, for the composed
+/// programme entries.
+struct AtEpoch<'a> {
+    truth: &'a GroundTruth,
+    epoch: VaultEpoch,
+}
+
+impl fstp_engine::IdentityOracle for AtEpoch<'_> {
+    fn ask(
+        &self,
+        q: &Query,
+    ) -> Result<fstp_domain::oracle::Answer, fstp_domain::oracle::OracleDown> {
+        let mut a = self.truth.answer(q);
+        a.epoch = self.epoch;
+        Ok(a)
+    }
+
+    fn epoch(&self) -> Result<VaultEpoch, fstp_domain::oracle::OracleDown> {
+        Ok(self.epoch)
+    }
+}
+
+/// Writes programme `P1` straight into `mem` at `SETUP_AT`: the entries
+/// the creator path appends for the setup's `CreateProgramme` (by
+/// `ADMIN`) and `ActivateProgramme` (by the second tenant admin). Strict
+/// D2e refuses both as core commands (M4 design section 15.0), so they
+/// are composed as `fstp_domain_testkit::activation::run_core` composes
+/// them, as `52cdc5c` did.
+fn write_programme(mem: &mut MemStore<fstp_cell_core::CellRecord>) -> Result<(), String> {
+    use fstp_domain_testkit::activation::{activation_records, open_records};
+    use fstp_ledger::RecordStore;
+    let steps = SodSetup::one(1, &[]).steps()?;
+    let truth = sod_truth();
+    for (step, id) in steps.iter().take(2).zip([0xB1u8, 0xB2]) {
+        let mut entries = Vec::new();
+        mem.read(Seq::ZERO, usize::MAX, &mut entries)
+            .map_err(|e| format!("the store did not read: {e:?}"))?;
+        let state = fstp_cell_core::replay(&entries)
+            .map_err(|e| format!("the stored ledger does not fold: {e:?}"))?;
+        let engine = state.engine();
+        let ctx = fstp_domain::command::Ctx {
+            now: Timestamp::from_micros(SETUP_AT),
+            actor: step.actor,
+            command: fstp_domain::id::CommandId::from_bytes([id; 16]),
+            via: fstp_domain::command::Via::Web,
+            tenant_admin: true,
+            second_tenant_admin: None,
+            binds_tenant_admin: false,
+        };
+        let vault = AtEpoch {
+            truth: &truth,
+            epoch: engine.epoch(),
+        };
+        let records = match &step.cmd {
+            fstp_domain::Command::CreateProgramme { policy } => {
+                open_records(engine, &vault, policy, &ctx)
+            }
+            cmd => activation_records(engine, &vault, cmd, &ctx),
+        }
+        .map_err(|e| format!("the programme step was refused: {e:?}"))?;
+        let batch = records
+            .into_iter()
+            .map(fstp_cell_core::CellRecord::Engine)
+            .collect();
+        let head = RecordStore::head(mem);
+        RecordStore::append(mem, head, SETUP_AT, [id; 16], batch)
+            .map_err(|e| format!("the programme step did not append: {e:?}"))?;
+    }
+    Ok(())
 }
 
 /// The setup commands, each with its command id byte and the step-up the
 /// ledger granted for it.
 type Setup = Vec<(CellCommand, u8, Option<[u8; 16]>)>;
 
-/// An empty store that holds, granted at `SETUP_AT`, the step-up of each
+/// A store that holds programme `P1` ([`write_programme`]) and, granted at
+/// `SETUP_AT`, the step-up of each
 /// high-risk setup command (`stepup_common`), and the setup commands with
 /// their step-ups.
 fn setup_store() -> Result<(MemStore<fstp_cell_core::CellRecord>, Setup), String> {
     let mut mem = MemStore::new();
+    write_programme(&mut mem)?;
     let mut setup = Vec::new();
     for (cmd, id) in setup_commands()? {
         let high =

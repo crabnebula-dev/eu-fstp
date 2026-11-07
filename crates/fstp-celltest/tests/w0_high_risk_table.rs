@@ -45,7 +45,7 @@ const RECOVERY_ROW: &str = "Approving an account recovery";
 /// `SetLoginPolicy` are cell commands (design section 5.1). The export,
 /// device, email, bank, template and break-glass entries name actions of
 /// later milestones or of `fstp-auth`, by their variant names.
-const DESIGN_TABLE: [(&str, &str, &str); 25] = [
+const DESIGN_TABLE: [(&str, &str, &str); 26] = [
     ("ManagementRoleChange", "GrantRole", ROLE_ROW),
     ("ManagementRoleChange", "EndRole", ROLE_ROW),
     ("ManagementRoleChange", "ReinstateBinding", ROLE_ROW),
@@ -67,6 +67,8 @@ const DESIGN_TABLE: [(&str, &str, &str); 25] = [
     ("ApprovePayment", "ApprovePayment", PAYMENT_ROW),
     ("ReleasePayment", "ReleasePayment", PAYMENT_ROW),
     ("ActivateProgramme", "CreateProgramme", PUBLIC_ROW),
+    // M4 addition (D2, m4-design Q10): the activation step itself.
+    ("ActivateProgramme", "ActivateProgramme", PUBLIC_ROW),
     ("PublishCall", "PublishCall", PUBLIC_ROW),
     ("PublishTemplate", "PublishTemplate", TEMPLATE_ROW),
     ("ApproveBreakGlass", "ApproveBreakGlass", BREAK_GLASS_ROW),
@@ -167,12 +169,20 @@ fn i78_spec_high_risk_table_matches_the_transcription() {
     assert_eq!(spec_rows(), expected);
 }
 
-/// I-78, section 0.5: the domain's high-risk kinds at the M2 base commit
-/// are the seven the design re-derived. A change in `fstp-domain` must be
-/// re-reviewed against the table.
+/// The kinds M4 added to `CommandKind::high_risk()`: the activation step
+/// (D2, m4-design Q10). The table holds it as its own entry.
+const M4_HIGH_RISK_ADDITIONS: [&str; 1] = ["ActivateProgramme"];
+
+/// I-78, section 0.5: the domain's high-risk kinds are the seven the
+/// design re-derived at the M2 base commit, plus the M4 additions. A
+/// change in `fstp-domain` must be re-reviewed against the table.
 #[test]
 fn i78_domain_high_risk_kinds_match_the_m2_base() {
-    let expected: BTreeSet<String> = M2_BASE_HIGH_RISK.iter().map(|s| (*s).to_owned()).collect();
+    let expected: BTreeSet<String> = M2_BASE_HIGH_RISK
+        .iter()
+        .chain(M4_HIGH_RISK_ADDITIONS.iter())
+        .map(|s| (*s).to_owned())
+        .collect();
     assert_eq!(domain_high_risk(), expected);
 }
 

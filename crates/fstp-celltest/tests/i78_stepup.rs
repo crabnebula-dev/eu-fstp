@@ -184,6 +184,7 @@ fn m3_command(name: &str) -> Option<CellCommand> {
             record_file: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
         }),
         "CreateProgramme" => core(setup.first()?.cmd.clone()),
+        "ActivateProgramme" => core(setup.get(1)?.cmd.clone()),
         "PublishCall" => core(publish(call(1)).cmd),
         "ApproveBreakGlass" => CellCommand::Ops(OpsCommand::ApproveBreakGlass {
             request: [0x42; 16],
@@ -359,11 +360,10 @@ fn i78_m_stepup_tripwire_records_the_measured_count() {
 /// from a magic-link session. Each refusal must be the step-up refusal
 /// for that fault. A fresh valid step-up passes the gate.
 ///
-/// Gap: the step-up digest is production's own
+/// The step-up digest is production's own
 /// `SHA-256(canonical(command) || command_id)`, through
-/// `prod_action_digest`. That refuses with `DIGEST_SEAM` until
-/// `fstp-cell-core` exposes its canonical encoding and the gate takes the
-/// command id.
+/// `prod_action_digest`, and the gate checks it under the command id
+/// through `gate::admit_command`.
 #[test]
 fn i78_every_high_risk_route_and_command_needs_a_fresh_step_up() {
     let names: BTreeSet<&str> = HIGH_RISK_TABLE.iter().map(|e| e.command).collect();
@@ -397,10 +397,11 @@ fn i78_every_high_risk_route_and_command_needs_a_fresh_step_up() {
         let digest = prod_action_digest(&cmd, command_id).unwrap_or_else(|e| panic!("{e}"));
         let other = r::action_digest(b"another command", command_id);
         for (fault, s, u, expect) in faulty(digest, other, p71) {
-            let got = gate::admit(
+            let got = gate::admit_command(
                 cell.state(),
                 &prod_session(&s),
                 Action::Command(cmd.clone()),
+                command_id,
                 u.as_ref(),
                 NOW,
                 &policy(p71),
@@ -422,10 +423,11 @@ fn i78_every_high_risk_route_and_command_needs_a_fresh_step_up() {
             strong: true,
             consumed: false,
         };
-        let got = gate::admit(
+        let got = gate::admit_command(
             cell.state(),
             &prod_session(&admin_session()),
             Action::Command(cmd.clone()),
+            command_id,
             Some(&fresh),
             NOW,
             &policy(p71),
@@ -875,10 +877,11 @@ fn i78_p71_may_only_shorten() {
             strong: true,
             consumed: false,
         };
-        let got = gate::admit(
+        let got = gate::admit_command(
             cell.state(),
             &prod_session(&admin_session()),
             Action::Command(cmd.clone()),
+            [0xC0; 16],
             Some(&u),
             NOW,
             &policy(tenant),

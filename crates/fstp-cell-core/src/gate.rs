@@ -327,6 +327,13 @@ pub const HIGH_RISK_TABLE: &[HighRiskEntry] = &[
         "CreateProgramme",
         PUBLIC_ROW,
     ),
+    // M4 addition (D2, m4-design Q10): the activation step is high risk in
+    // the domain, so it needs its own step-up.
+    entry(
+        HighRiskAction::ActivateProgramme,
+        "ActivateProgramme",
+        PUBLIC_ROW,
+    ),
     entry(HighRiskAction::PublishCall, "PublishCall", PUBLIC_ROW),
     entry(
         HighRiskAction::PublishTemplate,

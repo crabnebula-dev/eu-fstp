@@ -442,6 +442,23 @@ pub fn verified_passkey(
         .map_err(|e| ProdError::Refused(format!("passkey verification: {e:?}")))
 }
 
+/// The synthetic vault as the oracle of a composed setup entry. The cell
+/// processes the vault change first, so the truth's epoch is the state's.
+struct TruthOracle<'a>(&'a GroundTruth);
+
+impl fstp_engine::IdentityOracle for TruthOracle<'_> {
+    fn ask(
+        &self,
+        q: &fstp_domain::oracle::Query,
+    ) -> Result<fstp_domain::oracle::Answer, fstp_domain::oracle::OracleDown> {
+        Ok(self.0.answer(q))
+    }
+
+    fn epoch(&self) -> Result<fstp_domain::id::VaultEpoch, fstp_domain::oracle::OracleDown> {
+        Ok(self.0.epoch())
+    }
+}
+
 /// Whether the decided batch `batch` holds only records the store reads
 /// back unchanged, as `decide` checks for its own batches (I-23).
 fn storable(batch: &[CellRecord]) -> bool {
@@ -1039,8 +1056,64 @@ impl ProdCell {
                 ));
             }
         };
+        if matches!(
+            s.cmd,
+            fstp_domain::Command::CreateProgramme { .. }
+                | fstp_domain::Command::ActivateProgramme { .. }
+        ) {
+            return self.exec_composed(s, actor, at);
+        }
         let cmd = CellCommand::Engine(fstp_engine::Command::Core(s.cmd.clone()));
         self.exec(cmd, actor, at)
+    }
+
+    /// Runs a setup `CreateProgramme` or `ActivateProgramme` through the
+    /// creator path, since strict D2e refuses both as core commands (M4
+    /// design section 15.0, as `52cdc5c` did for the M4 setups). The
+    /// entry is the one `fstp_domain_testkit::activation::run_core`
+    /// composes: a creator `OpenDraft` for a `CreateProgramme`, a creator
+    /// `ApproveActivation` for an `ActivateProgramme`. The vault change is
+    /// processed first. The cell attests what its tenant fold holds, and the
+    /// step's own tenant admin flag stands for the shell attestation of a
+    /// setup approver, as `activation_step` reads it.
+    fn exec_composed(
+        &mut self,
+        s: &Step,
+        actor: AccountId,
+        at: Timestamp,
+    ) -> Result<Vec<CellRecord>, ProdError> {
+        use fstp_domain_testkit::activation::{activation_records, open_records};
+        let command = self.draw();
+        self.react(at)?;
+        let cmd = &s.cmd;
+        let engine_cmd = fstp_engine::Command::Core(cmd.clone());
+        let a = fstp_cell_core::attest_at(&self.state, actor, &engine_cmd, command, at);
+        let ctx = fstp_domain::command::Ctx {
+            now: at,
+            actor: Actor::Account(actor),
+            command: fstp_domain::id::CommandId::from_bytes(command),
+            via: fstp_domain::command::Via::Web,
+            tenant_admin: a.tenant_admin || s.flags.tenant_admin,
+            second_tenant_admin: None,
+            binds_tenant_admin: a.binds_tenant_admin,
+        };
+        let oracle = TruthOracle(&self.truth);
+        let engine = self.state.engine();
+        let records = match cmd {
+            fstp_domain::Command::CreateProgramme { policy } => {
+                open_records(engine, &oracle, policy, &ctx)
+            }
+            _ => activation_records(engine, &oracle, cmd, &ctx),
+        }
+        .map_err(|e| ProdError::Refused(format!("{:?} refused: {e:?}", cmd.kind())))?;
+        let batch: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
+        if !storable(&batch) {
+            return Err(ProdError::Refused(
+                "the composed batch does not read back from the store".to_owned(),
+            ));
+        }
+        self.fold(at, command, &batch)?;
+        Ok(batch)
     }
 
     /// Runs an M2 step of `fstp-domain-testkit` at `at`, by an account
