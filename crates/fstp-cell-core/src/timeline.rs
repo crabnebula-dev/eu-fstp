@@ -25,6 +25,7 @@ use std::fmt;
 
 use fstp_domain::FoldError as DomainFold;
 use fstp_domain::id::AccountId;
+use fstp_domain::record::OutboxEvent;
 
 use crate::FoldError;
 
@@ -206,6 +207,7 @@ pub struct TimelineState {
     events: BTreeMap<EventId, ScheduledEvent>,
     idems: BTreeMap<Idem, EventId>,
     outbox: BTreeSet<[u8; 16]>,
+    enqueued: BTreeMap<u64, (i64, OutboxEvent)>,
 }
 
 impl fmt::Debug for TimelineState {
@@ -214,6 +216,7 @@ impl fmt::Debug for TimelineState {
             .field("templates", &self.templates.len())
             .field("events", &self.events.len())
             .field("messages", &self.idems.len())
+            .field("enqueued", &self.enqueued.len())
             .finish()
     }
 }
@@ -245,6 +248,17 @@ impl TimelineState {
     /// The event whose fired message holds `idem`.
     pub fn fired_idem(&self, idem: &Idem) -> Option<&EventId> {
         self.idems.get(idem)
+    }
+
+    /// Every `OutboxEnqueued` record of the ledger, by its sequence, with
+    /// its entry time (M6 design section 4, kind `Immediate`).
+    pub fn enqueued(&self) -> impl Iterator<Item = (u64, i64, &OutboxEvent)> {
+        self.enqueued.iter().map(|(seq, (at, e))| (*seq, *at, e))
+    }
+
+    /// Keeps an `OutboxEnqueued` record folded at `seq` and `at`.
+    pub(crate) fn enqueue(&mut self, seq: u64, at: i64, event: OutboxEvent) {
+        self.enqueued.insert(seq, (at, event));
     }
 
     /// Folds one timeline record (M6 design section 3.1). A refused
@@ -386,4 +400,32 @@ impl fmt::Debug for MessageBody {
             .field("body_len", &self.body.len())
             .finish()
     }
+}
+
+/// A command of the timeline task (M6 design section 4). Only
+/// `SystemTask::Timeline` issues it, so no account schedules, cancels or
+/// fires an event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimelineCommand {
+    /// Schedule and cancel events: `EventScheduled` and `EventCancelled`
+    /// records only (R-NT-01).
+    Plan {
+        /// The records, at most [`MAX_MESSAGES`].
+        records: Vec<TimelineRecord>,
+    },
+    /// Fire one scheduled event that is due: its first-use template
+    /// versions, the records of its System command, and `EventFired`, in
+    /// one entry with the outbox rows of its messages (M6 design section
+    /// 4 step 2). The bodies come from the task's inputs, in message order.
+    Fire {
+        /// The event.
+        event: EventId,
+        /// `TemplateVersionRecorded` records for versions not recorded
+        /// yet.
+        templates: Vec<TimelineRecord>,
+        /// The messages.
+        messages: Vec<FiredMessage>,
+        /// The System command the event issues, if any. It must be due.
+        then: Option<Box<fstp_domain::Command>>,
+    },
 }

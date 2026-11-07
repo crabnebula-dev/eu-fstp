@@ -49,7 +49,7 @@ use crate::release::{ReleaseCommand, ReleaseRecord};
 use crate::tenant::{TenantCommand, TenantRecord};
 use crate::text::{TextCommand, TextRecord};
 use crate::timeline::{
-    FiredMessage, MAX_MESSAGES, MAX_OFFSET_MINUTES, MAX_SOURCE_LEN, TimelineRecord,
+    FiredMessage, MAX_MESSAGES, MAX_OFFSET_MINUTES, MAX_SOURCE_LEN, TimelineCommand, TimelineRecord,
 };
 use crate::{CellCommand, CellRecord, KeyCommand, KeyRecord};
 
@@ -746,6 +746,87 @@ fn fired_message(v: &Value) -> Result<FiredMessage, FromJsonError> {
     })
 }
 
+/// The timeline command form (M6 design section 4): `Plan` holds its
+/// records in the timeline record form. `Fire` holds the event, the
+/// template records, the messages and the System command or null.
+fn timeline_command_json(c: &TimelineCommand) -> Value {
+    let records = |rs: &[TimelineRecord]| {
+        Value::Array(rs.iter().map(timeline_record_json).collect::<Array>())
+    };
+    match c {
+        TimelineCommand::Plan { records: rs } => tagged("Plan", vec![("records", records(rs))]),
+        TimelineCommand::Fire {
+            event,
+            templates,
+            messages,
+            then,
+        } => tagged(
+            "Fire",
+            vec![
+                ("event", hex(event)),
+                (
+                    "messages",
+                    Value::Array(messages.iter().map(fired_message_json).collect::<Array>()),
+                ),
+                ("templates", records(templates)),
+                ("then", then.as_ref().map_or(Value::Null, |c| c.to_json())),
+            ],
+        ),
+    }
+}
+
+fn timeline_records(o: &Object, name: &'static str) -> Result<Vec<TimelineRecord>, FromJsonError> {
+    let list = member(o, name)?
+        .as_array()
+        .ok_or_else(|| FromJsonError::invalid("not a list").at_field(name))?;
+    if list.len() > MAX_MESSAGES {
+        return Err(FromJsonError::invalid("too many records").at_field(name));
+    }
+    let mut out = Vec::with_capacity(list.len());
+    for (i, r) in list.iter().enumerate() {
+        out.push(timeline_record(r).map_err(|e| e.at_index(i).at_field(name))?);
+    }
+    Ok(out)
+}
+
+fn timeline_command(v: &Value) -> Result<TimelineCommand, FromJsonError> {
+    let (tag, o) = variant(v)?;
+    match tag {
+        "Plan" => {
+            fields(o, &["records"])?;
+            Ok(TimelineCommand::Plan {
+                records: timeline_records(o, "records")?,
+            })
+        }
+        "Fire" => {
+            fields(o, &["event", "messages", "templates", "then"])?;
+            let list = member(o, "messages")?
+                .as_array()
+                .ok_or_else(|| FromJsonError::invalid("not a list").at_field("messages"))?;
+            if list.len() > MAX_MESSAGES {
+                return Err(FromJsonError::invalid("too many messages").at_field("messages"));
+            }
+            let mut messages = Vec::with_capacity(list.len());
+            for (i, m) in list.iter().enumerate() {
+                messages.push(fired_message(m).map_err(|e| e.at_index(i).at_field("messages"))?);
+            }
+            let then = match member(o, "then")? {
+                Value::Null => None,
+                c => Some(Box::new(
+                    fstp_domain::Command::from_json(c).map_err(|e| e.at_field("then"))?,
+                )),
+            };
+            Ok(TimelineCommand::Fire {
+                event: array_from(o, "event")?,
+                templates: timeline_records(o, "templates")?,
+                messages,
+                then,
+            })
+        }
+        _ => Err(unknown_variant()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Commands.
 
@@ -777,6 +858,9 @@ fn command_from_value(value: &Value) -> Result<CellCommand, DecodeError> {
         "ops" => ops_command(inner)
             .map(CellCommand::Ops)
             .map_err(body("ops")),
+        "timeline" => timeline_command(inner)
+            .map(CellCommand::Timeline)
+            .map_err(body("timeline")),
         _ => Err(DecodeError::NotAnEnvelope),
     }
 }
@@ -817,6 +901,7 @@ impl ToJson for CellCommand {
             CellCommand::Key(c) => wrap("key", key_command_json(c)),
             CellCommand::Release(c) => wrap("release", release_command_json(c)),
             CellCommand::Ops(c) => wrap("ops", ops_command_json(c)),
+            CellCommand::Timeline(c) => wrap("timeline", timeline_command_json(c)),
         }
     }
 }

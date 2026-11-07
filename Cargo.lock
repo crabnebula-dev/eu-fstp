@@ -297,6 +297,7 @@ dependencies = [
  "fstp-prop",
  "fstp-release",
  "fstp-rt",
+ "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
  "fstp-webauthn",
@@ -879,6 +880,21 @@ dependencies = [
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-timeline"
+version = "0.1.0"
+dependencies = [
+ "fstp-cell-core",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-engine",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-mail",
  "fstp-prop",
 ]
 

@@ -10,6 +10,12 @@
 //!    section 5.4 step 2). The record makes the end visible.
 //! 2. The M2 System commands that `fstp_domain::due` lists at the tick,
 //!    such as `EndScheduledRole`.
+//!    The four sweep kinds are left to step 3.
+//! 3. The timeline engine (`fstp_timeline`, M6 design section 4): the plan
+//!    that schedules and cancels events, then one entry per due event,
+//!    with its `EventFired` record, its outbox rows and its System
+//!    command. A firing is bound to its event id, so a repeat is a
+//!    duplicate.
 //!
 //! Each command runs under a system command id bound to its occurrence
 //! (I-23, ADR-007):
@@ -36,6 +42,7 @@ use std::time::Duration;
 use fstp_cell_core::driver::Done;
 use fstp_cell_core::gate::{self, Action, Deny};
 use fstp_cell_core::ops::OpsCommand;
+use fstp_cell_core::timeline::{MessageBody, TimelineCommand};
 use fstp_cell_core::{CellCommand, CellState, SystemTask, system_command_id};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
@@ -130,23 +137,67 @@ pub struct TickItem {
     pub result: Issued,
 }
 
-/// Runs one tick at `now`: issues every due command in order.
+/// Runs one tick at `now`: issues every due command in order, then the
+/// timeline step ([`timeline_step`]).
+///
+/// The four sweep kinds of `fstp_engine::sweep` are left out of the first
+/// pass. The timeline fires each in one entry with its `EventFired`
+/// record (M6 design section 4, D13), so the cell has one issuer of them.
 pub async fn tick(engine: &CellEngine, now: Timestamp) -> Vec<TickItem> {
     let due = due_commands(&engine.state(), now);
     let mut out = Vec::with_capacity(due.len());
     for (command, id) in due {
-        let state = engine.state();
-        let admitted = gate::admit_system(
-            &state,
-            Action::Command(command.clone()),
-            SystemTask::Timeline,
+        if is_sweep(&command) {
+            continue;
+        }
+        let result = issue(engine, command.clone(), id, Vec::new(), now).await;
+        out.push(TickItem {
+            command,
             id,
-            now,
-        );
-        let result = match admitted {
-            Err(d) => Issued::Denied(d),
-            Ok(a) => Issued::Ran(engine.execute(a).await),
+            result,
+        });
+    }
+    out.extend(timeline_step(engine, now).await);
+    out
+}
+
+/// Whether `c` is one of the four sweep kinds.
+fn is_sweep(c: &CellCommand) -> bool {
+    matches!(
+        c,
+        CellCommand::Engine(fstp_engine::Command::Core(core))
+            if fstp_engine::sweep::kind_of(core).is_some()
+    )
+}
+
+/// The timeline step of a tick (M6 design section 4): append the plan
+/// that brings the scheduled set to the derived set, then fire each due
+/// event in its own entry, with the bodies of its outbox rows. A firing
+/// that is refused stays scheduled and is tried again at the next tick.
+pub async fn timeline_step(engine: &CellEngine, now: Timestamp) -> Vec<TickItem> {
+    let mut out = Vec::new();
+    let plan = fstp_timeline::plan(&engine.state(), now);
+    for chunk in plan.chunks(fstp_timeline::PLAN_CHUNK) {
+        let cmd = TimelineCommand::Plan {
+            records: chunk.to_vec(),
         };
+        let id = fstp_timeline::command_id(&cmd);
+        let command = CellCommand::Timeline(cmd);
+        let result = issue(engine, command.clone(), id, Vec::new(), now).await;
+        out.push(TickItem {
+            command,
+            id,
+            result,
+        });
+    }
+    let state = engine.state();
+    for event in fstp_timeline::due_events(state.timeline(), now) {
+        let Some(f) = fstp_timeline::firing(&engine.state(), &event, now) else {
+            continue;
+        };
+        let id = fstp_timeline::command_id(&f.command);
+        let command = CellCommand::Timeline(f.command);
+        let result = issue(engine, command.clone(), id, f.bodies, now).await;
         out.push(TickItem {
             command,
             id,
@@ -154,6 +205,30 @@ pub async fn tick(engine: &CellEngine, now: Timestamp) -> Vec<TickItem> {
         });
     }
     out
+}
+
+/// Admits `command` for the timeline task and runs it under `id`, with
+/// the outbox bodies of a firing.
+async fn issue(
+    engine: &CellEngine,
+    command: CellCommand,
+    id: [u8; 16],
+    bodies: Vec<MessageBody>,
+    now: Timestamp,
+) -> Issued {
+    let state = engine.state();
+    let admitted = gate::admit_system(
+        &state,
+        Action::Command(command),
+        SystemTask::Timeline,
+        id,
+        now,
+    );
+    match admitted {
+        Err(d) => Issued::Denied(d),
+        Ok(a) if bodies.is_empty() => Issued::Ran(engine.execute(a).await),
+        Ok(a) => Issued::Ran(engine.execute(a.with_outbox(bodies)).await),
+    }
 }
 
 /// Runs the timeline every [`TICK`] until `stop` is triggered.

@@ -77,6 +77,7 @@ members = [
     "crates/fstp-dispatch",
     # M6, docs/handoff/m6-design.md section 10, lane L6-MAIL.
     "crates/fstp-mail",
+    "crates/fstp-timeline",
     # M7, docs/handoff/m7-design.md section 10, lane L-RETR.
     "crates/fstp-retrieve",
     # M9, docs/handoff/m9-design.md lane B1.
@@ -191,6 +192,7 @@ fstp-checks = { path = "crates/fstp-checks" }
 fstp-dispatch = { path = "crates/fstp-dispatch" }
 # M6, docs/handoff/m6-design.md section 10.
 fstp-mail = { path = "crates/fstp-mail" }
+fstp-timeline = { path = "crates/fstp-timeline" }
 # M7, docs/handoff/m7-design.md section 10.
 fstp-retrieve = { path = "crates/fstp-retrieve" }
 fstp-brand = { path = "crates/fstp-brand" }

@@ -1914,6 +1914,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | M3 Q-B, self-hosted tests (2026-11-07) | Deferred with B-06 | The self-hosted tests (I-38, I-39 services down, I-83 self-hosted, R-NF-05) leave M3 and return with self-hosted packaging (B-06). Lane F-SELF is not built |
 | M3 Q-C, vault chain coverage (2026-11-07) | Facts and releases | Each fact batch and each identity release or read is a vault chain row; key operations stay events only |
 | M3 Q-D, witness receipt key (2026-11-07) | Own keyd entry | The witness receipt signing key has its own fstp-keyd custody entry with its own credential |
+| M6 lane L6-TL, timeline engine (2026-11-07) | Interim, pending Daniel | `fstp-timeline` derives events from the cell state: every `OutboxEnqueued` record, the four sweep kinds and each corrigendum. The timeline task plans, then fires each due event in one entry with its System command and outbox rows, through the new `CellCommand::Timeline`. A sweep or corrigendum event is due when first derived. Milestone, notice and copy kinds have reserved codes and no source yet. The Guide resolver is unchanged, so published Guides keep their bytes. The engine sits below the timeline crate, so the timeline is built over `sweep::due`, not the reverse |
 
 ### 15.1 These block the milestone
 

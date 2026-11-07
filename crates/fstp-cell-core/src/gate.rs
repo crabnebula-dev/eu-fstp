@@ -533,6 +533,15 @@ impl Admitted {
         self.inputs = self.inputs.with_sessions(rows);
         self
     }
+
+    /// The same admission with the message bodies of a timeline firing
+    /// (M6 design section 4 step 2). Only the timeline task calls it. The
+    /// decider refuses bodies that do not name exactly the fired messages.
+    #[must_use]
+    pub fn with_outbox(mut self, bodies: Vec<crate::timeline::MessageBody>) -> Admitted {
+        self.inputs = self.inputs.with_outbox(bodies);
+        self
+    }
 }
 
 /// Why the gate refused.
@@ -1254,6 +1263,7 @@ pub fn admit_system(
         (SystemTask::Timeline, CellCommand::Engine(fstp_engine::Command::Core(core))) => {
             !matches!(core, fstp_domain::Command::VaultChanged { .. })
         }
+        (SystemTask::Timeline, CellCommand::Timeline(_)) => true,
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),
