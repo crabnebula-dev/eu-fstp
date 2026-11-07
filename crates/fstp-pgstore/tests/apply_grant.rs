@@ -470,10 +470,11 @@ fn i16_table_class_has_no_fund_class() {
 }
 
 /// R-NF-08, ADR-007 "Clear column classes", design section 4.5: the column
-/// classes are `Sealed`, the seven clear classes of ADR-007 and the three
-/// public classes Daniel added on 2026-10-30 (design section 21.0), no
-/// more. Adding one needs a decision, and this exhaustive match fails to
-/// compile until it is reviewed.
+/// classes are `Sealed`, the seven clear classes of ADR-007, the three
+/// public classes Daniel added on 2026-10-30 (design section 21.0), and
+/// `Infrastructure` and `OpaqueReference` of his Q-A answer of 2026-11-07
+/// (m4-design section 15.0), no more. Adding one needs a decision, and
+/// this exhaustive match fails to compile until it is reviewed.
 #[test]
 fn r_nf_08_column_classes_are_the_adr007_set() {
     let all = [
@@ -488,6 +489,8 @@ fn r_nf_08_column_classes_are_the_adr007_set() {
         ColumnClass::PublicDigest,
         ColumnClass::Signature,
         ColumnClass::PublicKeyMaterial,
+        ColumnClass::Infrastructure,
+        ColumnClass::OpaqueReference,
     ];
     let clear = all
         .iter()
@@ -502,11 +505,13 @@ fn r_nf_08_column_classes_are_the_adr007_set() {
             | ColumnClass::Count
             | ColumnClass::PublicDigest
             | ColumnClass::Signature
-            | ColumnClass::PublicKeyMaterial => true,
+            | ColumnClass::PublicKeyMaterial
+            | ColumnClass::Infrastructure
+            | ColumnClass::OpaqueReference => true,
         })
         .count();
     assert_eq!(
-        clear, 10,
+        clear, 12,
         "R-NF-08: the clear classes of ADR-007 and design section 4.5"
     );
 }

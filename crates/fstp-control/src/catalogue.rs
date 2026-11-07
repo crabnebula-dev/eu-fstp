@@ -1,10 +1,11 @@
 //! The `cp` schema catalogue: the column map of design section 4.4.
 //!
-//! W0 transcribed every table and column of design section 4.4. A column
-//! whose class the closed list of section 4.5 does not cover carries
-//! `None`: `endpoint`, `host`, `server_spki`, `cose_key`, `org_ref`,
-//! `key_ref` and `case_ref`. That is an open question for Daniel, and the
-//! R-NF-08 catalogue test refuses such a column until it is decided.
+//! W0 transcribed every table and column of design section 4.4. Daniel's
+//! Q-A answer of 2026-11-07 (m4-design section 15.0) classes the columns
+//! section 4.5 left open: `server_spki` and `cose_key` are
+//! `PublicKeyMaterial`, `endpoint` and `host` the ADR-009
+//! `Infrastructure` class, and `org_ref`, `key_ref` and `case_ref`
+//! `OpaqueReference`. Migration 2 adds their checks.
 //! ADR-005 and ADR-012 also place base backup records in `cp`; section 4.4
 //! does not list them yet, so they are not here.
 
@@ -17,11 +18,9 @@ const fn col(name: &'static str, class: ColumnClass) -> ColumnSpec {
     }
 }
 
-const fn open(name: &'static str) -> ColumnSpec {
-    ColumnSpec { name, class: None }
-}
-
-use ColumnClass::{Count, Enum, RandomId, Time};
+use ColumnClass::{
+    Count, Enum, Infrastructure, OpaqueReference, PublicKeyMaterial, RandomId, Time,
+};
 
 /// The tables of the control-plane database (design section 4.4).
 pub const CATALOGUE: &[TableSpec] = &[
@@ -33,8 +32,8 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("cluster_id", RandomId),
             col("kind", Enum),
             col("region", Enum),
-            open("endpoint"),
-            open("server_spki"),
+            col("endpoint", Infrastructure),
+            col("server_spki", PublicKeyMaterial),
             col("created_at", Time),
         ],
     },
@@ -50,7 +49,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("vault_cluster", RandomId),
             col("app_backend", Enum),
             col("vault_backend", Enum),
-            open("org_ref"),
+            col("org_ref", OpaqueReference),
             col("created_at", Time),
             col("erased_at", Time),
         ],
@@ -60,7 +59,7 @@ pub const CATALOGUE: &[TableSpec] = &[
         name: "route",
         class: TableClass::Placement,
         columns: &[
-            open("host"),
+            col("host", Infrastructure),
             col("cell_id", RandomId),
             col("kind", Enum),
             col("verified_at", Time),
@@ -74,7 +73,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("cell_id", RandomId),
             col("chain", Enum),
             col("backend", Enum),
-            open("key_ref"),
+            col("key_ref", OpaqueReference),
         ],
     },
     TableSpec {
@@ -101,7 +100,7 @@ pub const CATALOGUE: &[TableSpec] = &[
         columns: &[
             col("cred_id", RandomId),
             col("staff_id", RandomId),
-            open("cose_key"),
+            col("cose_key", PublicKeyMaterial),
         ],
     },
     TableSpec {
@@ -112,7 +111,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("id", RandomId),
             col("cell_id", RandomId),
             col("kind", Enum),
-            open("case_ref"),
+            col("case_ref", OpaqueReference),
             col("approved_by", RandomId),
             col("issued_at", Time),
         ],

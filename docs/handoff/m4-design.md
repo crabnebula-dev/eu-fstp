@@ -1914,6 +1914,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | M3 Q-B, self-hosted tests (2026-11-07) | Deferred with B-06 | The self-hosted tests (I-38, I-39 services down, I-83 self-hosted, R-NF-05) leave M3 and return with self-hosted packaging (B-06). Lane F-SELF is not built |
 | M3 Q-C, vault chain coverage (2026-11-07) | Facts and releases | Each fact batch and each identity release or read is a vault chain row; key operations stay events only |
 | M3 Q-D, witness receipt key (2026-11-07) | Own keyd entry | The witness receipt signing key has its own fstp-keyd custody entry with its own credential |
+| M3 Q-A built, lane F-CAT (2026-11-07) | Built as answered. Interim readings, pending Daniel | `ColumnClass` gains `Infrastructure` (a text with a grammar CHECK) and `OpaqueReference` (a bytea of 1 to 64 bytes). Every catalogued column has a class, and new migrations add the length or grammar checks. The migration ledger's `checksum`, `ops.delivery.event` and `body_digest` are digests; its `name` is an `Enum`. The app and vault sets create `fstp_migrate.schema_migrations` in the runner's shape, which changes nothing under the runner. The licence set holds one table, `licence.registration`, with holder name and contact address sealed. Open: the R-NF-08 content-name rule flags the ledger `name` column, and `ledger.command` is `LedgerRecord` with no sealed column |
 
 ### 15.1 These block the milestone
 
