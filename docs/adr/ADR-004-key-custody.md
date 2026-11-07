@@ -129,7 +129,7 @@ sealed  = header | E 32 | ct_M 1088 | nonce 12 | wrapped 48         1210 bytes
 ```
 
 - Integers are big-endian. `kem = 1` names this combiner. `aead = 1` names AES-256-GCM.
-- Chain codes: App 1, Vault 2, CellBackup 3, ClusterBackup 4, ControlPlane 5. Purpose codes come from `fstp_keys::Purpose`. The purpose code table below records them (Proposed, pending Daniel), and it is frozen once accepted.
+- Chain codes: App 1, Vault 2, CellBackup 3, ClusterBackup 4, ControlPlane 5. Purpose codes come from `fstp_keys::Purpose`. The purpose code table below records them (accepted by Daniel on 2026-11-07), and it is frozen.
 - `owner` is the `CellId`. For the ClusterBackup chain it is the `ClusterId`, and for the ControlPlane chain the environment id.
 - `object` is the data key id. `ctx` is not stored, because the caller supplies it from the row that names the key.
 - `open_key` compares the header's chain, group and generation with `ctx` before any decapsulation. A sealed key moved to another object, group, generation, chain or cell fails to open.
@@ -140,7 +140,7 @@ Sealed blobs (texts, ledger bodies, chain events, checkpoints, outbox rows, keys
 
 ### Purpose code table
 
-Status: Proposed on 2026-11-07 by lane F-CRYPTO (m3-finish Q-E). Interim, pending Daniel. The table is frozen once Daniel accepts it.
+Status: Accepted by Daniel Thompson-Yvetot on 2026-11-07 (m3-finish Q-E). The table is frozen.
 
 The `purpose u8` of `ctx` takes one code per `fstp_keys::Purpose` variant, in declaration order. Code 0 names no purpose. A code is never reused or renumbered, and a new purpose takes the next free code.
 
