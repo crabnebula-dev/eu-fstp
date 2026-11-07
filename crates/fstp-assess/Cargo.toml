@@ -1,0 +1,22 @@
+[package]
+name = "fstp-assess"
+description = "The assessment pipeline: text extraction, PII stripping, rubric v1, stage calls through fstp-infer, output validation and config_id derivation (M7 design sections 2, 3.2 and 3.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-domain.workspace = true
+fstp-findings.workspace = true
+fstp-infer.workspace = true
+fstp-json.workspace = true
+fstp-crypto.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-rt.workspace = true
+
+[lints]
+workspace = true

@@ -77,3 +77,5 @@ fstp-mail
 fstp-retrieve
 # M9, docs/handoff/m9-design.md lane B1.
 fstp-brand
+# M7, docs/handoff/m7-design.md section 8 (lane L-PIPE).
+fstp-assess

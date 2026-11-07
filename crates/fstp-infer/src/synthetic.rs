@@ -135,13 +135,28 @@ fn findings(p: &Params, parts: &[(String, String)]) -> Vec<Value> {
         }
         "quality" => {
             if let Some(c) = &p.criterion {
+                // Every finding carries evidence (R-LA-02): the opening of
+                // the first non-empty part, cut at a character boundary.
+                let evidence = parts
+                    .iter()
+                    .find(|(_, t)| !t.is_empty())
+                    .map(|(label, text)| {
+                        let mut end = text.len().min(120);
+                        while !text.is_char_boundary(end) {
+                            end = end.saturating_sub(1);
+                        }
+                        (label.clone(), text.get(..end).unwrap_or("").to_owned())
+                    })
+                    .filter(|(_, q)| !q.is_empty())
+                    .into_iter()
+                    .collect();
                 out.push(finding(
                     "quality",
                     Some(c),
                     None,
                     "info",
                     "Synthetic assessor (demo): no quality judgement is made.",
-                    Vec::new(),
+                    evidence,
                 ));
             }
         }
