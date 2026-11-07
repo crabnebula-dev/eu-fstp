@@ -1223,6 +1223,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // M6 lane L6-EGR, ADR-018: the mail relay, high-risk by the strict
     // reading of settings.
     RefOp::act("tenant.set_mail_relay", T::None, R::TenantAdmin).hr(),
+    // M6 lane L6-API, M6 design section 6: web only.
+    RefOp::read("tenant.get_mail_relay", T::None, R::TenantAdmin),
+    RefOp::act("tenant.clear_mail_relay", T::None, R::TenantAdmin).hr(),
+    RefOp::read("tenant.deliveries", T::None, R::TenantAdmin),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.
@@ -1300,6 +1304,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane mcreator: the Studio list of the programme's calls. Reading: the
     // staff who read a call's board read the list of its calls.
     RefOp::read("call.list", T::Programme, R::CallStaff),
+    // M6 lane L6-API, M6 design section 6: the programme manager, web only.
+    RefOp::read("programme.timeline", T::Programme, R::ProgrammeManager),
     // J4: public pages, open calls and applicants.
     RefOp::public(
         "public.programme",

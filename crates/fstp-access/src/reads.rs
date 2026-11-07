@@ -160,11 +160,17 @@ pub enum ReadKind {
     GetPaymentStatus,
     ListMyPaymentQueue,
     ListReports,
+    // M6 lane L6-API (M6 design section 6): the tenant's delivery log,
+    // never a body or an address, the mail relay setting, never its
+    // credential, and a programme's timeline events.
+    ListDeliveries,
+    GetMailRelay,
+    GetProgrammeTimeline,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 56] = [
+    pub const ALL: [ReadKind; 59] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -221,6 +227,9 @@ impl ReadKind {
         ReadKind::GetPaymentStatus,
         ReadKind::ListMyPaymentQueue,
         ReadKind::ListReports,
+        ReadKind::ListDeliveries,
+        ReadKind::GetMailRelay,
+        ReadKind::GetProgrammeTimeline,
     ];
 }
 
@@ -502,6 +511,15 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     (
         ReadKind::ListReports,
         ReadRule::AnyOf(&[ReadRule::Holder(Role::ProgrammeManager), ReadRule::Auditor]),
+        OPEN_ALWAYS,
+    ),
+    // M6 lane L6-API, M6 design section 6: the delivery log and the mail
+    // relay are the tenant admin's, the timeline the programme manager's.
+    (ReadKind::ListDeliveries, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    (ReadKind::GetMailRelay, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    (
+        ReadKind::GetProgrammeTimeline,
+        ReadRule::Holder(Role::ProgrammeManager),
         OPEN_ALWAYS,
     ),
 ];

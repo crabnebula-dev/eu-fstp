@@ -200,7 +200,8 @@ const fn command_lane(kind: CommandKind) -> Lane {
         | K::ExpireStage2
         | K::DeclineAfterConcern
         | K::ReEnter
-        | K::Withdraw => Lane::Proposal,
+        | K::Withdraw
+        | K::RequestCopy => Lane::Proposal,
         K::RecordKnockOut
         | K::AdmitToStage1
         | K::CloseStage1
@@ -677,6 +678,7 @@ pub fn apply(state: &mut State, seq: Seq, at: Timestamp, record: &Record) -> Res
         None => {
             crate::proposal::on_vault_outcome(state, record);
             crate::calibration::on_outbox(state, seq, record);
+            crate::proposal::copy::on_outbox(state, at, record);
         }
     }
     state.now_floor = at;

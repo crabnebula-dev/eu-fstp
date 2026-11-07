@@ -1243,6 +1243,8 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::ContractFact, ActorRule::System),
     (K::DeclineNegotiation, PM),
     (K::Withdraw, ActorRule::Lead),
+    // M6 lane L6-API (R-SB-04, TH-21): the lead asks for a copy.
+    (K::RequestCopy, ActorRule::Lead),
     (K::StartExecution, ActorRule::System),
     (K::Complete, ActorRule::System),
     (K::Terminate, PM),

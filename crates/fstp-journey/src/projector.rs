@@ -737,7 +737,11 @@ impl Projector {
                 OutboxEvent::IrcConcern { proposal, concern } => {
                     Derived::new(p(*proposal), K::NoticeSent, S::IrcConcernNotice).texts([*concern])
                 }
-                OutboxEvent::NotifiableConflict { .. } | OutboxEvent::BindingEnded { .. } => {
+                // A copy request is the applicant's own, with no diary entry
+                // (M6 lane L6-API).
+                OutboxEvent::NotifiableConflict { .. }
+                | OutboxEvent::BindingEnded { .. }
+                | OutboxEvent::CopyRequested { .. } => {
                     return None;
                 }
             },

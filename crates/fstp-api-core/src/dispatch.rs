@@ -1783,6 +1783,23 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         | ReadKind::ListMyPaymentQueue => {
             ReadModel::Grant(grant::read(call, op, kind).map_err(|e| call.refuse(e))?)
         }
+        // M6 lane L6-API, M6 design section 6: the tenant admin's mail
+        // relay and delivery log.
+        ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
+        // M6 lane L6-API: the programme manager's timeline of a programme.
+        ReadKind::GetProgrammeTimeline => {
+            use crate::port::Outbox as _;
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            let rows = call
+                .ports
+                .outbox()
+                .timeline(p)
+                .await
+                .map_err(|e| call.refuse(port_failed(e, "R-NT-01")))?;
+            ReadModel::Timeline(rows)
+        }
         // R-GA-01, I-53: the stored Guide, never one bound per request.
         ReadKind::GetGuide => ReadModel::Guide(
             public::calls_guide(call, op)
@@ -2247,7 +2264,7 @@ async fn m3_port<P: Seams>(
             done(Ok(()), "R-NG-06")
         }
         PortCall::RequestCopy(p, email) => {
-            if !lock(&call.st.content).copy_allowed(p, call.now) {
+            if !fstp_domain::proposal::copy::copy_allowed(&call.state.core, p, call.now) {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "TH-21")));
             }
             // ADR-007: the address is a sealed text under its own key, and
@@ -2270,20 +2287,35 @@ async fn m3_port<P: Seams>(
                     email.as_bytes(),
                 )),
             );
-            let req = crate::content::CopyRequest {
+            // M6 lane L6-API: the request is the domain `RequestCopy`, which
+            // appends one `OutboxEnqueued(CopyRequested)` (TH-21 checked
+            // again there). The append carries the call's audit entry.
+            let cmd = Command::Core(fstp_domain::command::Command::RequestCopy {
                 proposal: p,
                 address,
-                at: call.now,
+            });
+            let command_id =
+                CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+            let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
+            let meta = ExecMeta {
+                via: call.caller.via(),
+                session: call.caller.session,
+                agent: call.caller.agent,
+                op: OpName(call.spec.name),
+                request: call.digest,
+                step_up: None,
+                pending: None,
+                second_tenant_admin: None,
             };
-            let outcome = lock(&call.st.content).request_copy(req);
-            match outcome {
-                crate::content::CopyOutcome::Recorded => done(Ok(()), "R-SB-04"),
-                crate::content::CopyOutcome::Limited => {
+            match call.ports.engine().execute(cmd, ctx, meta).await {
+                Ok(seq) => Ok(OpResult::Done {
+                    body: ReadModel::Accepted,
+                    seq: Some(seq),
+                }),
+                Err(ExecError::Refused(r)) if r.rule == fstp_domain::refusal::RuleRef::Rsb04 => {
                     Err(call.refuse(ApiError::refused(ErrorCode::Refused, "TH-21")))
                 }
-                crate::content::CopyOutcome::Full => {
-                    Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-SB-04")))
-                }
+                Err(e) => Err(call.refuse(exec_failed(e))),
             }
         }
         PortCall::SaveWorkspace(p, w) => {

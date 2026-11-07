@@ -558,6 +558,15 @@ pub enum Command {
         /// The proposal.
         proposal: ProposalId,
     },
+    /// The lead asks for a copy of the submission record at an address
+    /// (R-SB-04). The address is a sealed text of the text store. At most
+    /// three a day per proposal (TH-21, M6 design reading 4).
+    RequestCopy {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The sealed address text.
+        address: TextRef,
+    },
     /// Start execution at the earliest milestone start date (NOTE 11).
     StartExecution {
         /// The proposal.
@@ -824,6 +833,8 @@ pub enum CommandKind {
     DeclineNegotiation,
     /// [`Command::Withdraw`].
     Withdraw,
+    /// [`Command::RequestCopy`].
+    RequestCopy,
     /// [`Command::StartExecution`].
     StartExecution,
     /// [`Command::Complete`].
@@ -868,7 +879,7 @@ pub enum CommandKind {
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 66] = [
+    pub const ALL: [CommandKind; 67] = [
         CommandKind::CreateProgramme,
         CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
@@ -915,6 +926,7 @@ impl CommandKind {
         CommandKind::ContractFact,
         CommandKind::DeclineNegotiation,
         CommandKind::Withdraw,
+        CommandKind::RequestCopy,
         CommandKind::StartExecution,
         CommandKind::Complete,
         CommandKind::Terminate,
@@ -976,6 +988,7 @@ impl CommandKind {
             CommandKind::CreateDraft
                 | CommandKind::RecordPlanVersion
                 | CommandKind::ReadContent
+                | CommandKind::RequestCopy
                 | CommandKind::VaultChanged
                 | CommandKind::EndScheduledRole
                 | CommandKind::ExpireStage2
@@ -1040,6 +1053,7 @@ impl Command {
             Command::ContractFact { .. } => CommandKind::ContractFact,
             Command::DeclineNegotiation { .. } => CommandKind::DeclineNegotiation,
             Command::Withdraw { .. } => CommandKind::Withdraw,
+            Command::RequestCopy { .. } => CommandKind::RequestCopy,
             Command::StartExecution { .. } => CommandKind::StartExecution,
             Command::Complete { .. } => CommandKind::Complete,
             Command::Terminate { .. } => CommandKind::Terminate,

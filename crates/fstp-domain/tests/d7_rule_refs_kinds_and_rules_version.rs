@@ -37,9 +37,10 @@ fn d7_rule_refs_name_i65_i66_i67() {
 /// kinds among them, and `ACTOR_RULES` gives each an actor rule. M4 has
 /// 62 kinds. M5 adds the System command `RecordChecks` (I-32), so 63. M12
 /// lane L12-I37 adds the three calibration consent commands (I-37), so 66.
+/// M6 lane L6-API adds `RequestCopy` (R-SB-04), so 67.
 #[test]
 fn d7_command_kinds_grow_by_the_m4_kinds() {
-    assert_eq!(CommandKind::ALL.len(), 66);
+    assert_eq!(CommandKind::ALL.len(), 67);
     assert!(CommandKind::ALL.contains(&CommandKind::RecordChecks));
     for k in [
         CommandKind::RequestCalibrationConsent,

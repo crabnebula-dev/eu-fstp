@@ -291,4 +291,25 @@ impl Outbox for FakeOutbox {
     fn notices(&self, a: AccountId, page: Page) -> NoticePage {
         (self.notices)(a, page)
     }
+
+    /// The fake cell has no delivery log yet (M6 lane L6-DEMO wires the
+    /// sink), so the log is empty.
+    fn deliveries(
+        &self,
+        _page: Page,
+    ) -> impl std::future::Future<
+        Output = Result<Vec<fstp_api_core::views::DeliveryRow>, fstp_api_core::port::PortError>,
+    > + Send {
+        std::future::ready(Ok(Vec::new()))
+    }
+
+    /// The fake cell runs no timeline yet (lane L6-DEMO), so it is empty.
+    fn timeline(
+        &self,
+        _programme: fstp_domain::id::ProgrammeId,
+    ) -> impl std::future::Future<
+        Output = Result<Vec<fstp_api_core::views::TimelineRow>, fstp_api_core::port::PortError>,
+    > + Send {
+        std::future::ready(Ok(Vec::new()))
+    }
 }

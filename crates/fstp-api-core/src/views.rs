@@ -464,6 +464,168 @@ pub(crate) fn two_decimals(num: u64, den: u64, scale: u64) -> Option<String> {
     Some(format!("{whole}.{frac:02}"))
 }
 
+/// Lowercase hexadecimal of `bytes`.
+fn hex(bytes: &[u8]) -> Value {
+    let mut s = String::with_capacity(bytes.len().saturating_mul(2));
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    Value::String(s)
+}
+
+/// Where one message of the delivery log stands: the phase of its head
+/// row in `ops.delivery` (M6 design section 3.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeliveryPhase {
+    /// A worker claimed it.
+    Claimed,
+    /// A worker passed the commit point.
+    Committing,
+    /// The server accepted it (250).
+    Sent,
+    /// A 4xx reply. It is retried.
+    Transient,
+    /// A 5xx reply, or the retries ran out.
+    Permanent,
+    /// The outcome is unknown. It is never sent again (I-26).
+    InDoubt,
+}
+
+impl DeliveryPhase {
+    /// The wire name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            DeliveryPhase::Claimed => "claimed",
+            DeliveryPhase::Committing => "committing",
+            DeliveryPhase::Sent => "sent",
+            DeliveryPhase::Transient => "transient",
+            DeliveryPhase::Permanent => "permanent",
+            DeliveryPhase::InDoubt => "in_doubt",
+        }
+    }
+}
+
+/// One message of the tenant's delivery log, `tenant.deliveries` (M6
+/// design section 6, I-27). The type has no member for a body, an
+/// address or a recipient, so the read can never show one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeliveryRow {
+    /// The `ops.outbox` row id.
+    pub outbox: [u8; 16],
+    /// The template code, which names the kind of message.
+    pub template: &'static str,
+    /// The timeline event.
+    pub event: [u8; 32],
+    /// The template version.
+    pub template_version: u16,
+    /// The phase of its head row.
+    pub phase: DeliveryPhase,
+    /// The attempts so far.
+    pub attempts: u32,
+    /// The last SMTP reply code, when one was read.
+    pub reply_code: Option<u16>,
+}
+
+impl ToJson for DeliveryRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("outbox", hex(&self.outbox)),
+            ("template", Value::from(self.template)),
+            ("event", hex(&self.event)),
+            ("template_version", dec(self.template_version)),
+            ("phase", Value::from(self.phase.name())),
+            ("attempts", int(u64::from(self.attempts))),
+            (
+                "reply_code",
+                self.reply_code.map_or(Value::Null, |c| int(u64::from(c))),
+            ),
+        ])
+    }
+}
+
+/// Where one timeline event stands (R-NT-01).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventState {
+    /// Scheduled, not fired yet.
+    Scheduled,
+    /// Cancelled, never deleted (R-NT-01 AC).
+    Cancelled,
+    /// Fired.
+    Fired,
+}
+
+/// One event of a programme's timeline, `programme.timeline` (M6 design
+/// section 6): its id, kind, due instant and state. No message content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimelineRow {
+    /// The event id.
+    pub event: [u8; 32],
+    /// The kind code of `fstp_timeline::kind`.
+    pub kind: u16,
+    /// When it is due, UTC microseconds.
+    pub due: i64,
+    /// Where it stands.
+    pub state: EventState,
+}
+
+/// The wire name of a timeline kind code, as `fstp_timeline::kind`
+/// numbers them. An unknown code reads as `immediate`, which no source
+/// derives beyond those codes.
+const fn kind_name(kind: u16) -> &'static str {
+    match kind {
+        2 => "stage2_expiry",
+        3 => "re_enter",
+        4 => "start_execution",
+        5 => "complete",
+        6 => "milestone_reminder",
+        7 => "milestone_overdue",
+        8 => "corrigendum",
+        9 => "notice_issued",
+        10 => "copy_requested",
+        _ => "immediate",
+    }
+}
+
+impl ToJson for TimelineRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("event", hex(&self.event)),
+            ("kind", Value::from(kind_name(self.kind))),
+            ("due", dec(self.due)),
+            (
+                "status",
+                Value::from(match self.state {
+                    EventState::Scheduled => "scheduled",
+                    EventState::Cancelled => "cancelled",
+                    EventState::Fired => "fired",
+                }),
+            ),
+        ])
+    }
+}
+
+/// The tenant's mail relay as `tenant.get_mail_relay` shows it (ADR-018):
+/// the host and whether a CA is pinned. The name of the credential's cell
+/// secret is never shown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailRelayView {
+    /// The relay, when one is set.
+    pub relay: Option<(String, bool)>,
+}
+
+impl ToJson for MailRelayView {
+    fn to_json(&self) -> Value {
+        let relay = match &self.relay {
+            None => Value::Null,
+            Some((host, pinned)) => object(vec![
+                ("host", Value::from(host.as_str())),
+                ("ca_pinned", Value::Bool(*pinned)),
+            ]),
+        };
+        object(vec![("relay", relay)])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

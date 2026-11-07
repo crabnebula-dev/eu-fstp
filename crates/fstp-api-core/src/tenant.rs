@@ -120,6 +120,8 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
         ("tenant.get_step", _) => {
             Some(step_param(request).and_then(|_| ok(exactly(spec, request, &[]))))
         }
+        // M6 lane L6-API: clearing the mail relay takes no member.
+        (CLEAR_MAIL_RELAY, _) => Some(ok(exactly(spec, request, &[]))),
         (_, OpKind::Tenant(kind)) => Some(match kind {
             TenantKind::SaveStep => {
                 if exactly(spec, request, &["base", "values"]) {
@@ -429,6 +431,11 @@ pub(crate) fn notice_request(request: &Object) -> Result<NoticeRequest, ApiError
         privacy_statement_url: url.clone(),
     })
 }
+
+/// The operation that clears the mail relay (M6 lane L6-API). It shares
+/// the kind of `tenant.set_mail_relay`, with no body, and records the
+/// relay as unset.
+pub(crate) const CLEAR_MAIL_RELAY: &str = "tenant.clear_mail_relay";
 
 /// The longest pinned CA a `tenant.set_mail_relay` request may carry, in
 /// bytes (interim, pending Daniel).

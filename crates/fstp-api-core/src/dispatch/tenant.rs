@@ -333,6 +333,9 @@ fn build<P: Seams>(
         }
         // The pinned CA holds a placeholder reference with id 0 and the
         // text's digest until dispatch stores it ([`stored_mail_relay`]).
+        TenantKind::SetMailRelay if call.spec.name == crate::tenant::CLEAR_MAIL_RELAY => {
+            Ok((TenantCommand::SetMailRelay { relay: None }, None))
+        }
         TenantKind::SetMailRelay => {
             let m = crate::tenant::mail_relay_request(&op.request)?;
             let ca = m.ca_pem.as_deref().map(|p| crate::forms::text_ref(0, p));
@@ -543,7 +546,10 @@ pub(super) async fn command<P: Seams>(
             r.command = stored_notice(call, op).await.map_err(|e| call.refuse(e))?;
             Command::Tenant(r)
         }
-        Command::Tenant(mut r) if kind == TenantKind::SetMailRelay => {
+        Command::Tenant(mut r)
+            if kind == TenantKind::SetMailRelay
+                && call.spec.name != crate::tenant::CLEAR_MAIL_RELAY =>
+        {
             r.command = stored_mail_relay(call, op)
                 .await
                 .map_err(|e| call.refuse(e))?;
@@ -632,6 +638,39 @@ fn step_view<P: Seams>(
         ts.saved_outcome(step),
         accepted,
     ))
+}
+
+/// The most delivery rows one `tenant.deliveries` read shows.
+const DELIVERY_PAGE: u32 = 200;
+
+/// M6 lane L6-API, M6 design section 6: `tenant.get_mail_relay` and
+/// `tenant.deliveries`, tenant admin reads as the settings are. The relay
+/// shows its host and whether a CA is pinned, never the name of the
+/// credential's secret. A delivery row has no body and no address
+/// (I-27).
+pub(super) async fn mail_read<P: Seams>(
+    call: &Call<'_, P>,
+    kind: ReadKind,
+) -> Result<ReadModel, ApiError> {
+    use crate::port::Outbox as _;
+    let (_, ts) = admin(call)?;
+    if kind == ReadKind::GetMailRelay {
+        let relay = ts
+            .mail_relay()
+            .map(|r| (r.host.as_str().to_owned(), r.ca.is_some()));
+        return Ok(ReadModel::MailRelay(crate::views::MailRelayView { relay }));
+    }
+    let page = crate::port::Page {
+        offset: 0,
+        limit: DELIVERY_PAGE,
+    };
+    let rows = call
+        .ports
+        .outbox()
+        .deliveries(page)
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "I-26")))?;
+    Ok(ReadModel::Deliveries(rows))
 }
 
 /// A tenant read: `tenant.get_step`, `tenant.settings`,

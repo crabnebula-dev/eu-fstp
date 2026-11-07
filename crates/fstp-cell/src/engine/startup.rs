@@ -607,6 +607,11 @@ where
             drop(signal);
         }));
     }
+    // M6 lane L6-API: the dispatcher starts only once the tenant set a mail
+    // relay and the cell holds its App chain `Lookup` key
+    // (`crate::tasks::dispatch::start_plan`). Seam: the cell holds no
+    // `Lookup` key yet, nor the app pool and cell secret store that its
+    // delivery log, outbox source and mail egress need, so none starts.
     // The erasure task (design section 3.5).
     let (erasure, erasure_task) =
         erasure::task(runner, SystemClock::new(rt.clone()), shutdown.signal());

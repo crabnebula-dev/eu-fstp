@@ -1128,6 +1128,30 @@ pub trait TenantConfig: Send + Sync {
 pub trait Outbox: Send + Sync {
     /// One page of an account's notices.
     fn notices(&self, a: AccountId, page: Page) -> NoticePage;
+
+    /// One page of the tenant's delivery log, newest first (M6 design
+    /// section 6, lane L6-API): the head of each message in
+    /// `ops.delivery`. A row holds no body and no address (I-27). The
+    /// default is the seam of a cell that has no delivery log: it fails
+    /// closed.
+    fn deliveries(
+        &self,
+        page: Page,
+    ) -> impl Future<Output = Result<Vec<crate::views::DeliveryRow>, PortError>> + Send {
+        let _ = page;
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// The scheduled, cancelled and fired events of `programme`, by due
+    /// instant (M6 design section 6, R-NT-01). The default is the seam of
+    /// a cell that has no timeline: it fails closed.
+    fn timeline(
+        &self,
+        programme: fstp_domain::id::ProgrammeId,
+    ) -> impl Future<Output = Result<Vec<crate::views::TimelineRow>, PortError>> + Send {
+        let _ = programme;
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// Probes for channels, the sending domain and inference (Q5).
