@@ -85,6 +85,8 @@ members = [
     "crates/fstp-brand",
     # M7, docs/handoff/m7-design.md section 10, lane L-PIPE.
     "crates/fstp-assess",
+    # M7, docs/handoff/m7-design.md section 10, lane L-PROC.
+    "crates/fstp-assessor",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -201,6 +203,7 @@ fstp-timeline = { path = "crates/fstp-timeline" }
 fstp-retrieve = { path = "crates/fstp-retrieve" }
 fstp-brand = { path = "crates/fstp-brand" }
 fstp-assess = { path = "crates/fstp-assess" }
+fstp-assessor = { path = "crates/fstp-assessor" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }

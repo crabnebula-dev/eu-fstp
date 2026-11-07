@@ -234,6 +234,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-assessor"
+version = "0.1.0"
+dependencies = [
+ "fstp-assess",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-http",
+ "fstp-infer",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-retrieve",
+ "fstp-rt",
+ "fstp-tls",
+]
+
+[[package]]
 name = "fstp-audit"
 version = "0.1.0"
 dependencies = [
