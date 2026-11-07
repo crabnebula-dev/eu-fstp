@@ -125,6 +125,8 @@ pub struct State {
     pub(crate) money: MoneyState,
     /// Lane L-MONEY: payment requests.
     pub(crate) payments: PaymentState,
+    /// Lane L12-I37: calibration consent (I-37).
+    pub(crate) calibration: crate::calibration::ConsentState,
     /// Text ids and digests.
     pub(crate) texts: TextIndex,
 }
@@ -145,6 +147,7 @@ impl State {
             proposals: ProposalStore::genesis(),
             money: MoneyState::genesis(),
             payments: PaymentState::genesis(),
+            calibration: crate::calibration::ConsentState::genesis(),
             texts: TextIndex {
                 digests: BTreeMap::new(),
             },
@@ -199,6 +202,11 @@ impl State {
     /// The payment part.
     pub fn payments(&self) -> &PaymentState {
         &self.payments
+    }
+
+    /// The calibration consent part.
+    pub fn calibration(&self) -> &crate::calibration::ConsentState {
+        &self.calibration
     }
 
     /// The text index.

@@ -192,6 +192,8 @@ pub enum Milestone {
     M8,
     /// M9: exports, white labelling and the directory.
     M9,
+    /// M12: calibration with consented proposals (I-37).
+    M12,
 }
 
 /// A creator operation kind (design section 3.2).
@@ -1761,7 +1763,8 @@ pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
 pub const COMPOSED_ONLY: &[CommandKind] = &[CK::ActivateProgramme];
 
 /// Kinds whose operations arrive in a later milestone: the grant,
-/// contract, payment and amendment kinds of M5.
+/// contract, payment and amendment kinds of M5, and the calibration
+/// consent kinds of M12.
 pub const LATER: &[(CommandKind, Milestone)] = &[
     (CK::DetermineAmount, Milestone::M5),
     (CK::AcceptGrant, Milestone::M5),
@@ -1778,6 +1781,10 @@ pub const LATER: &[(CommandKind, Milestone)] = &[
     (CK::RouteAmendment, Milestone::M5),
     (CK::CloseMilestone, Milestone::M5),
     (CK::ClosePaymentRequest, Milestone::M5),
+    // Lane L12-I37 builds the consent commands. Lane L12-UI routes them.
+    (CK::RequestCalibrationConsent, Milestone::M12),
+    (CK::GiveCalibrationConsent, Milestone::M12),
+    (CK::RevokeCalibrationConsent, Milestone::M12),
 ];
 
 /// The operation named `name`.

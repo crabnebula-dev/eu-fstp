@@ -365,6 +365,9 @@ tagged_enum! {
         MilestoneClosed { proposal, milestone, by, reason },
         PaymentRequestClosed { request, by, reason },
         ChecksRecorded { request, phase, results, snapshot },
+        CalibrationConsentRequested { proposal, notice, by },
+        CalibrationConsentGiven { proposal, wording, by },
+        CalibrationConsentRevoked { proposal, by },
     }
     money {
         CallDrafted { call, programme, opens, deadline, deadline_zone, budget, text, author },

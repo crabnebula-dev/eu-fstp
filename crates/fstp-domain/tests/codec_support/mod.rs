@@ -735,6 +735,10 @@ pub(crate) enum RecordTag {
     AmendmentActivated,
     MilestoneClosed,
     PaymentRequestClosed,
+    // M12 lane L12-I37.
+    CalibrationConsentRequested,
+    CalibrationConsentGiven,
+    CalibrationConsentRevoked,
     // M4 changes D2 and D5.
     ProgrammeActivated,
     CutOffRoundOpened,
@@ -745,7 +749,7 @@ pub(crate) enum RecordTag {
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
     /// tags of M4 changes D2 and D5.
-    pub(crate) const ALL: [RecordTag; 65] = [
+    pub(crate) const ALL: [RecordTag; 68] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -807,6 +811,9 @@ impl RecordTag {
         RecordTag::AmendmentActivated,
         RecordTag::MilestoneClosed,
         RecordTag::PaymentRequestClosed,
+        RecordTag::CalibrationConsentRequested,
+        RecordTag::CalibrationConsentGiven,
+        RecordTag::CalibrationConsentRevoked,
         RecordTag::ProgrammeActivated,
         RecordTag::CutOffRoundOpened,
         RecordTag::BallotCast,
@@ -912,6 +919,9 @@ impl RecordTag {
             Record::AmendmentActivated { .. } => RecordTag::AmendmentActivated,
             Record::MilestoneClosed { .. } => RecordTag::MilestoneClosed,
             Record::PaymentRequestClosed { .. } => RecordTag::PaymentRequestClosed,
+            Record::CalibrationConsentRequested { .. } => RecordTag::CalibrationConsentRequested,
+            Record::CalibrationConsentGiven { .. } => RecordTag::CalibrationConsentGiven,
+            Record::CalibrationConsentRevoked { .. } => RecordTag::CalibrationConsentRevoked,
             Record::ProgrammeActivated(_) => RecordTag::ProgrammeActivated,
             Record::CutOffRoundOpened { .. } => RecordTag::CutOffRoundOpened,
             Record::BallotCast { .. } => RecordTag::BallotCast,
@@ -1924,6 +1934,16 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
             request: id(g, d, RequestId::from_raw),
             reason: text(g, d),
         },
+        CommandKind::RequestCalibrationConsent => Command::RequestCalibrationConsent {
+            proposal: id(g, d, ProposalId::from_raw),
+        },
+        CommandKind::GiveCalibrationConsent => Command::GiveCalibrationConsent {
+            proposal: id(g, d, ProposalId::from_raw),
+            wording: text(g, d),
+        },
+        CommandKind::RevokeCalibrationConsent => Command::RevokeCalibrationConsent {
+            proposal: id(g, d, ProposalId::from_raw),
+        },
     })
 }
 
@@ -2299,6 +2319,20 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             request: id(g, d, RequestId::from_raw),
             by: id(g, d, AccountId::from_raw),
             reason: text(g, d),
+        },
+        RecordTag::CalibrationConsentRequested => Record::CalibrationConsentRequested {
+            proposal: id(g, d, ProposalId::from_raw),
+            notice: seq(g, d),
+            by: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::CalibrationConsentGiven => Record::CalibrationConsentGiven {
+            proposal: id(g, d, ProposalId::from_raw),
+            wording: text(g, d),
+            by: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::CalibrationConsentRevoked => Record::CalibrationConsentRevoked {
+            proposal: id(g, d, ProposalId::from_raw),
+            by: id(g, d, AccountId::from_raw),
         },
         RecordTag::CutOffRoundOpened => Record::CutOffRoundOpened {
             round: id(g, d, DecisionId::from_raw),
