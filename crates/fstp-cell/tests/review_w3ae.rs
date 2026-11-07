@@ -224,6 +224,7 @@ fn stepup_append(expected: u64, at: i64, id: u8, fresh_until: i64) -> AppendRequ
             stepup_consumed: Some([id; 16]),
             stepup_fresh_until: Some(fresh_until),
             sessions_ended: Vec::new(),
+            outbox: Vec::new(),
         },
     }
 }

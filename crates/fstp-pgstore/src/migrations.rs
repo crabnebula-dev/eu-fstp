@@ -18,6 +18,8 @@ use fstp_migrate::Migration;
 ///    `SPEC/12-journey-ui.md` section 11, in its own schema (I-83).
 /// 5. `doc`: write-once document storage of M5 design section 4.3
 ///    (I-30), sealed like `blob.text`.
+/// 6. `delivery`: the insert-only delivery log `ops.delivery` of the M6
+///    dispatcher (M6 design section 3.2).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -32,6 +34,11 @@ pub const MIGRATIONS: &[Migration] = &[
         include_str!("../migrations/app/0004_journey.sql"),
     ),
     Migration::new(5, "doc", include_str!("../migrations/app/0005_doc.sql")),
+    Migration::new(
+        6,
+        "delivery",
+        include_str!("../migrations/app/0006_delivery.sql"),
+    ),
 ];
 
 #[cfg(test)]

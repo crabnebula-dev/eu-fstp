@@ -1,0 +1,20 @@
+[package]
+name = "fstp-dispatch"
+description = "The M6 dispatcher over ops.outbox and the delivery log ops.delivery (M6 design section 5.1, I-25, I-26)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# In-house: the delivery rules of ops.delivery, shared with the store over
+# PostgreSQL (M6 design section 3.2).
+fstp-pgstore.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+fstp-crypto.workspace = true
+
+[lints]
+workspace = true

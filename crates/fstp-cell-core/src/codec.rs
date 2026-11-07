@@ -48,6 +48,9 @@ use crate::ops::{OpsCommand, OpsRecord};
 use crate::release::{ReleaseCommand, ReleaseRecord};
 use crate::tenant::{TenantCommand, TenantRecord};
 use crate::text::{TextCommand, TextRecord};
+use crate::timeline::{
+    FiredMessage, MAX_MESSAGES, MAX_OFFSET_MINUTES, MAX_SOURCE_LEN, TimelineRecord,
+};
 use crate::{CellCommand, CellRecord, KeyCommand, KeyRecord};
 
 /// The schema versions of cell records that this build decodes. Version 1
@@ -281,6 +284,9 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
             .map(CellRecord::Release)
             .map_err(body("release")),
         "ops" => ops_record(inner).map(CellRecord::Ops).map_err(body("ops")),
+        "timeline" => timeline_record(inner)
+            .map(CellRecord::Timeline)
+            .map_err(body("timeline")),
         _ => Err(DecodeError::NotAnEnvelope),
     }
 }
@@ -295,6 +301,7 @@ impl ToJson for CellRecord {
             CellRecord::Key(r) => wrap("key", key_record_json(r)),
             CellRecord::Release(r) => wrap("release", release_record_json(r)),
             CellRecord::Ops(r) => wrap("ops", ops_record_json(r)),
+            CellRecord::Timeline(r) => wrap("timeline", timeline_record_json(r)),
         }
     }
 }
@@ -571,6 +578,172 @@ fn ops_record(v: &Value) -> Result<OpsRecord, FromJsonError> {
         }
         _ => Err(unknown_variant()),
     }
+}
+
+// ---------------------------------------------------------------------------
+// The timeline member (M6 design section 3.1). Template ids, versions and
+// kinds are JSON integers. Times, leads, offsets and source versions are
+// decimal strings. Ids, digests and source references are hexadecimal.
+
+fn timeline_record_json(r: &TimelineRecord) -> Value {
+    match r {
+        TimelineRecord::TemplateVersionRecorded {
+            template,
+            version,
+            locale,
+            digest,
+        } => tagged(
+            "TemplateVersionRecorded",
+            vec![
+                ("digest", hex(digest)),
+                ("locale", Value::String(locale.clone())),
+                ("template", Value::Number(Number::from(*template))),
+                ("version", Value::Number(Number::from(*version))),
+            ],
+        ),
+        TimelineRecord::EventScheduled {
+            event,
+            kind,
+            lead,
+            source,
+            source_version,
+            due,
+            offset_minutes,
+        } => tagged(
+            "EventScheduled",
+            vec![
+                ("due", Value::String(due.to_string())),
+                ("event", hex(event)),
+                ("kind", Value::Number(Number::from(*kind))),
+                ("lead", Value::String(lead.to_string())),
+                ("offset_minutes", Value::String(offset_minutes.to_string())),
+                ("source", hex(source)),
+                ("source_version", Value::String(source_version.to_string())),
+            ],
+        ),
+        TimelineRecord::EventCancelled {
+            event,
+            superseded_by,
+        } => tagged(
+            "EventCancelled",
+            vec![
+                ("event", hex(event)),
+                (
+                    "superseded_by",
+                    superseded_by.as_ref().map_or(Value::Null, |e| hex(e)),
+                ),
+            ],
+        ),
+        TimelineRecord::EventFired { event, messages } => tagged(
+            "EventFired",
+            vec![
+                ("event", hex(event)),
+                (
+                    "messages",
+                    Value::Array(messages.iter().map(fired_message_json).collect::<Array>()),
+                ),
+            ],
+        ),
+    }
+}
+
+fn fired_message_json(m: &FiredMessage) -> Value {
+    let mut o = Object::with_capacity(4);
+    o.insert("idem", hex(&m.idem));
+    o.insert("outbox", hex(&m.outbox));
+    o.insert("template", Value::Number(Number::from(m.template)));
+    o.insert("version", Value::Number(Number::from(m.version)));
+    Value::Object(o)
+}
+
+fn timeline_record(v: &Value) -> Result<TimelineRecord, FromJsonError> {
+    let (tag, o) = variant(v)?;
+    match tag {
+        "TemplateVersionRecorded" => {
+            fields(o, &["digest", "locale", "template", "version"])?;
+            let locale = str_of(o, "locale")?;
+            if !crate::timeline::is_locale(locale) {
+                return Err(FromJsonError::invalid("not a locale tag").at_field("locale"));
+            }
+            Ok(TimelineRecord::TemplateVersionRecorded {
+                template: u16_from(o, "template")?,
+                version: u16_from(o, "version")?,
+                locale: locale.to_owned(),
+                digest: array_from(o, "digest")?,
+            })
+        }
+        "EventScheduled" => {
+            fields(
+                o,
+                &[
+                    "due",
+                    "event",
+                    "kind",
+                    "lead",
+                    "offset_minutes",
+                    "source",
+                    "source_version",
+                ],
+            )?;
+            let offset = i64_from(o, "offset_minutes")?;
+            let offset_minutes = i16::try_from(offset)
+                .ok()
+                .filter(|m| m.unsigned_abs() <= MAX_OFFSET_MINUTES.unsigned_abs())
+                .ok_or_else(|| {
+                    FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "offset" })
+                        .at_field("offset_minutes")
+                })?;
+            Ok(TimelineRecord::EventScheduled {
+                event: array_from(o, "event")?,
+                kind: u16_from(o, "kind")?,
+                lead: i64_from(o, "lead")?,
+                source: bytes_from(o, "source", MAX_SOURCE_LEN)?,
+                source_version: u64_from(o, "source_version")?,
+                due: i64_from(o, "due")?,
+                offset_minutes,
+            })
+        }
+        "EventCancelled" => {
+            fields(o, &["event", "superseded_by"])?;
+            let superseded_by = match member(o, "superseded_by")? {
+                Value::Null => None,
+                _ => Some(array_from(o, "superseded_by")?),
+            };
+            Ok(TimelineRecord::EventCancelled {
+                event: array_from(o, "event")?,
+                superseded_by,
+            })
+        }
+        "EventFired" => {
+            fields(o, &["event", "messages"])?;
+            let list = member(o, "messages")?
+                .as_array()
+                .ok_or_else(|| FromJsonError::invalid("not a list").at_field("messages"))?;
+            if list.len() > MAX_MESSAGES {
+                return Err(FromJsonError::invalid("too many messages").at_field("messages"));
+            }
+            let mut messages = Vec::with_capacity(list.len());
+            for (i, m) in list.iter().enumerate() {
+                messages.push(fired_message(m).map_err(|e| e.at_index(i).at_field("messages"))?);
+            }
+            Ok(TimelineRecord::EventFired {
+                event: array_from(o, "event")?,
+                messages,
+            })
+        }
+        _ => Err(unknown_variant()),
+    }
+}
+
+fn fired_message(v: &Value) -> Result<FiredMessage, FromJsonError> {
+    let o = expect_object(v)?;
+    reject_unknown(o, &["idem", "outbox", "template", "version"])?;
+    Ok(FiredMessage {
+        outbox: array_from(o, "outbox")?,
+        idem: array_from(o, "idem")?,
+        template: u16_from(o, "template")?,
+        version: u16_from(o, "version")?,
+    })
 }
 
 // ---------------------------------------------------------------------------

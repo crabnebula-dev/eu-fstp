@@ -45,6 +45,7 @@ pub mod release;
 pub mod state;
 pub mod tenant;
 pub mod text;
+pub mod timeline;
 
 use fstp_domain::id::AccountId;
 use fstp_domain::oracle::{Answers, Query};
@@ -111,6 +112,8 @@ pub enum CellRecord {
     Release(release::ReleaseRecord),
     /// An ops record.
     Ops(ops::OpsRecord),
+    /// A timeline record (M6 design section 3.1).
+    Timeline(timeline::TimelineRecord),
 }
 
 /// A key operation from the erasure runner.

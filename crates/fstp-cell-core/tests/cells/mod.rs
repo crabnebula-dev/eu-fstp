@@ -20,6 +20,7 @@ use fstp_cell_core::ops::{OpsCommand, OpsRecord};
 use fstp_cell_core::release::{ReleaseCommand, ReleaseRecord};
 use fstp_cell_core::tenant::{TenantCommand, TenantRecord};
 use fstp_cell_core::text::{TextCommand, TextRecord};
+use fstp_cell_core::timeline::{FiredMessage, TimelineRecord};
 use fstp_cell_core::{CellCommand, CellRecord, KeyCommand, KeyRecord};
 use fstp_domain::command::CommandKind;
 use fstp_domain::id::AccountId;
@@ -28,7 +29,7 @@ use fstp_prop::Gen;
 use crate::codec_support::{Draw, RecordTag, command, record};
 
 /// The stored member names of the cell envelope (design section 5.1).
-pub(crate) const MEMBERS: [&str; 9] = [
+pub(crate) const MEMBERS: [&str; 10] = [
     "core",
     "finding",
     "onboarding",
@@ -38,6 +39,7 @@ pub(crate) const MEMBERS: [&str; 9] = [
     "key",
     "release",
     "ops",
+    "timeline",
 ];
 
 /// The member a cell record is stored under.
@@ -57,6 +59,7 @@ pub(crate) fn member_of(r: &CellRecord) -> &'static str {
         CellRecord::Key(_) => "key",
         CellRecord::Release(_) => "release",
         CellRecord::Ops(_) => "ops",
+        CellRecord::Timeline(_) => "timeline",
     }
 }
 
@@ -309,6 +312,22 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
             OpsRecord::BreakGlassApproved { grant: id16(g) }
         } else {
             OpsRecord::BreakGlassEnded { grant: id16(g) }
+        }),
+        "timeline" => CellRecord::Timeline(if g.bool() {
+            TimelineRecord::EventCancelled {
+                event: id32(g),
+                superseded_by: g.option(id32),
+            }
+        } else {
+            TimelineRecord::EventFired {
+                event: id32(g),
+                messages: g.vec(0..=2, |g| FiredMessage {
+                    outbox: id16(g),
+                    idem: id32(g),
+                    template: g.u16(),
+                    version: g.u16(),
+                }),
+            }
         }),
         other => return Err(format!("no member {other}")),
     })
