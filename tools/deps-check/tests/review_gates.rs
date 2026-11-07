@@ -236,7 +236,8 @@ fn ci_workflow() -> String {
 }
 
 /// Review finding ci-cancel-in-progress-main: a push to the main branches
-/// never cancels the CI run of the commit before it.
+/// never cancels the CI run of the commit before it. Pull requests and
+/// batch/ branches may cancel superseded runs (Daniel, 2026-11-07).
 #[test]
 fn review_ci_cancel_in_progress_main() {
     let text = ci_workflow();
@@ -246,7 +247,9 @@ fn review_ci_cancel_in_progress_main() {
         .collect();
     assert_eq!(
         lines,
-        vec!["  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"]
+        vec![
+            "  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/batch/') }}"
+        ]
     );
 }
 

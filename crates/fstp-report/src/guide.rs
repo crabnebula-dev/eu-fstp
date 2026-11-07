@@ -298,6 +298,15 @@ impl Reader {
                 self.push(BlockKind::Paragraph, lines.join(" "));
             }
             "hr" => {}
+            // The fixed pre-check note (Q38 C) is a plain paragraph, as on the
+            // web page (Daniel, 2026-11-07). Its text starts with "Note:".
+            "note" => {
+                let text = rest
+                    .first()
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| at.err("a note is not a string"))?;
+                self.push(BlockKind::Paragraph, text.to_owned());
+            }
             "ul" | "ol" => {
                 let items = arr(
                     rest.first().unwrap_or(&Value::Null),
