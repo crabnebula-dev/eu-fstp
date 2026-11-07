@@ -6,33 +6,26 @@
 //! declaration order: the design tables, `fstp_meta.placement` and the
 //! migration ledger `fstp_migrate.schema_migrations`.
 //!
-//! A column whose class ADR-007 does not settle carries `None`, as lanes
-//! W0 and W2d did. Each is reported to Daniel:
+//! Every column carries a class. Daniel's Q-A answer of 2026-11-07
+//! (m4-design section 15.0) settles the columns ADR-007 left open:
 //!
-//! - chain links and stored-row hashes in `audit.chain`, anchor receipts,
-//!   and the keystore's custody handles, destroy receipts and public
-//!   keys;
-//! - `auth.challenge.action_digest`, a SHA-256 over a command, which is
-//!   neither a digest of a random secret nor keyed;
-//! - `ops.outbox.idem`, now SHA-256 over the event, the recipient and the
-//!   channel (M6 design section 3.1), and the digests `ops.delivery.event`
-//!   and `ops.delivery.body_digest`;
-//! - the migration ledger's `name` and `checksum`, which describe the
-//!   binary's own migrations.
+//! - chain links, stored-row hashes, `auth.challenge.action_digest`, the
+//!   digests `ops.delivery.event` and `ops.delivery.body_digest`, and the
+//!   migration ledger's `checksum` are `PublicDigest`;
+//! - both `receipt` columns are `Signature`, and
+//!   `keystore.group_key.public_key` is `PublicKeyMaterial`;
+//! - `keystore.root.handle` and `ops.outbox.idem` are `OpaqueReference`.
 //!
-//! The `audit.anchor` link is a `PublicDigest` and its signature a
-//! `Signature`, the classes Daniel added to design section 4.5 on
-//! 2026-10-30 for the witness columns of the same kind. The receipt
-//! column holds a whole encoded receipt, fields and signature together,
-//! so no single class covers it.
+//! Migrations 7 and 8 add the length checks of those classes.
 //!
 //! Readings, interim, pending Daniel: `schema` is an `Enum` (a published
-//! schema version), and `key_ix` and `generation` are `Sequence` (a
-//! generation number).
+//! schema version), `key_ix` and `generation` are `Sequence` (a
+//! generation number), and the migration ledger's `name` is an `Enum` (a
+//! name from the binary's own migration list).
 
 use fstp_migrate::catalogue::ColumnClass::{
-    Count, Enum, KeyedDigest, PublicDigest, RandomId, Sealed, SecretDigest, Sequence, Signature,
-    Time,
+    Count, Enum, KeyedDigest, OpaqueReference, PublicDigest, PublicKeyMaterial, RandomId, Sealed,
+    SecretDigest, Sequence, Signature, Time,
 };
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
@@ -41,10 +34,6 @@ const fn col(name: &'static str, class: ColumnClass) -> ColumnSpec {
         name,
         class: Some(class),
     }
-}
-
-const fn open(name: &'static str) -> ColumnSpec {
-    ColumnSpec { name, class: None }
 }
 
 const fn table(
@@ -79,8 +68,8 @@ pub const CATALOGUE: &[TableSpec] = &[
         TableClass::Migration,
         &[
             col("version", Sequence),
-            open("name"),
-            open("checksum"),
+            col("name", Enum),
+            col("checksum", PublicDigest),
             col("applied_at", Time),
             col("statement_count", Count),
         ],
@@ -118,9 +107,9 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("at", Time),
             col("kind", Enum),
             col("ledger_seq", Sequence),
-            open("stored_hash"),
+            col("stored_hash", PublicDigest),
             col("body", Sealed),
-            open("link"),
+            col("link", PublicDigest),
         ],
     ),
     table(
@@ -133,7 +122,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("at", Time),
             col("signature", Signature),
             col("witness_seq", Sequence),
-            open("receipt"),
+            col("receipt", Signature),
         ],
     ),
     table(
@@ -154,12 +143,12 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("chain", Enum),
             col("epoch", Sequence),
             col("backend", Enum),
-            open("handle"),
+            col("handle", OpaqueReference),
             col("wrapped_seal_key", Sealed),
             col("state", Enum),
             col("created_at", Time),
             col("destroyed_at", Time),
-            open("receipt"),
+            col("receipt", Signature),
         ],
     ),
     table(
@@ -171,7 +160,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("purpose", Enum),
             col("group_id", RandomId),
             col("generation", Sequence),
-            open("public_key"),
+            col("public_key", PublicKeyMaterial),
             col("sealed_secret", Sealed),
             col("epoch", Sequence),
             col("state", Enum),
@@ -223,7 +212,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("id", RandomId),
             col("session_id", RandomId),
             col("purpose", Enum),
-            open("action_digest"),
+            col("action_digest", PublicDigest),
             col("challenge", RandomId),
             col("issued_at", Time),
         ],
@@ -274,7 +263,7 @@ pub const CATALOGUE: &[TableSpec] = &[
         &[
             col("id", RandomId),
             col("kind", Enum),
-            open("idem"),
+            col("idem", OpaqueReference),
             col("dek", RandomId),
             col("body", Sealed),
             col("created_at", Time),
@@ -388,8 +377,7 @@ pub const CATALOGUE: &[TableSpec] = &[
     ),
     // M6 design section 3.2: the delivery log of the dispatcher. `event`
     // and `body_digest` are SHA-256 digests over public inputs and over a
-    // rendered body. Neither is keyed nor a digest of a random secret, so
-    // their class is left open for Daniel, as `ops.outbox.idem` is.
+    // rendered body, so they take the digest class (Q-A).
     table(
         "ops",
         "delivery",
@@ -401,9 +389,9 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("at", Time),
             col("worker", RandomId),
             col("lease_until", Time),
-            open("event"),
+            col("event", PublicDigest),
             col("template_version", Enum),
-            open("body_digest"),
+            col("body_digest", PublicDigest),
             col("reply_code", Enum),
         ],
     ),

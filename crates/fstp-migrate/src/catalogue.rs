@@ -118,8 +118,9 @@ pub enum ColumnClass {
     /// A count.
     Count,
     /// A public digest: a SHA-256 link hash over a chain head, which
-    /// commits to stored rows but discloses none. A `bytea` of exactly 32
-    /// bytes.
+    /// commits to stored rows but discloses none, or another unkeyed
+    /// SHA-256 such as a stored-row hash, an action digest or a migration
+    /// checksum (Daniel, Q-A, 2026-11-07). A `bytea` of exactly 32 bytes.
     PublicDigest,
     /// A composite signature (ADR-010 "Composite encoding"). A `bytea` of
     /// exactly the composite signature length.
@@ -129,7 +130,22 @@ pub enum ColumnClass {
     /// key, and of a bounded length for a certificate, whose DER encoding
     /// has no fixed length.
     PublicKeyMaterial,
+    /// An infrastructure field of the ADR-009 register: a host name or a
+    /// cluster endpoint of the platform's own infrastructure. Interim
+    /// class of ADR-009 (Daniel, Q-A, 2026-11-07). A `text` column checked
+    /// by a closed grammar.
+    Infrastructure,
+    /// An opaque reference: bytes the platform chooses to name a record
+    /// outside the table, such as a custody handle, an accounting or case
+    /// reference, or an idempotency key. It is never derived from content
+    /// or personal data (Daniel, Q-A, 2026-11-07). A `bytea` of 1 to
+    /// [`OPAQUE_REFERENCE_MAX_LEN`] bytes, checked by length.
+    OpaqueReference,
 }
+
+/// The longest opaque reference, in bytes: the longest custody handle
+/// (`fstp_custody::keyd::MAX_HANDLE_LEN`).
+pub const OPAQUE_REFERENCE_MAX_LEN: usize = 64;
 
 /// One column of a catalogued table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

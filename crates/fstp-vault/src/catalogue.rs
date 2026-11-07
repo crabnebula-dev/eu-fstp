@@ -11,21 +11,22 @@
 //!
 //! Readings, reported to Daniel:
 //!
-//! - A column whose class section 4.5 has not settled carries `None`:
-//!   the chain's links and stored-row digests, receipts, custody handles
-//!   and public keys. The `vault_audit.anchor` link is a `PublicDigest`
-//!   and its signature a `Signature`, the classes Daniel added on
-//!   2026-10-30 for the witness columns of the same kind.
+//! - Every column carries a class. Daniel's Q-A answer of 2026-11-07
+//!   (m4-design section 15.0) gives the chain's links, stored-row digests
+//!   and `ack_link` the `PublicDigest` class, receipts the `Signature`
+//!   class, public keys the `PublicKeyMaterial` class and custody handles
+//!   the `OpaqueReference` class. Migration 5 adds their length checks.
 //! - `vault_audit.chain` has no ledger, so its `epoch` column takes the
 //!   place of `ledger_seq` in `audit.chain`: a kind 1 row records a vault
 //!   epoch, a kind 2 row an event such as a ticket use.
 //! - The migration ledger `fstp_migrate.schema_migrations`, which the
 //!   `fstp-migrate` runner creates, has the shape and classes of
-//!   `fstp_pgstore::CATALOGUE`. Its `name` and `checksum` describe the
-//!   binary's own migrations and carry `None`.
+//!   `fstp_pgstore::CATALOGUE`. Migration 6 creates it for a set applied
+//!   without the runner.
 
 use fstp_migrate::catalogue::ColumnClass::{
-    Count, Enum, KeyedDigest, PublicDigest, RandomId, Sealed, Sequence, Signature, Time,
+    Count, Enum, KeyedDigest, OpaqueReference, PublicDigest, PublicKeyMaterial, RandomId, Sealed,
+    Sequence, Signature, Time,
 };
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
@@ -34,10 +35,6 @@ const fn col(name: &'static str, class: ColumnClass) -> ColumnSpec {
         name,
         class: Some(class),
     }
-}
-
-const fn open(name: &'static str) -> ColumnSpec {
-    ColumnSpec { name, class: None }
 }
 
 /// The tables of the vault database (`v_<cell>`).
@@ -58,8 +55,8 @@ pub const CATALOGUE: &[TableSpec] = &[
         class: TableClass::Migration,
         columns: &[
             col("version", Sequence),
-            open("name"),
-            open("checksum"),
+            col("name", Enum),
+            col("checksum", PublicDigest),
             col("applied_at", Time),
             col("statement_count", Count),
         ],
@@ -74,7 +71,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("created_at", Time),
             col("affected", Sealed),
             col("ack_seq", Sequence),
-            open("ack_link"),
+            col("ack_link", PublicDigest),
             col("acked_at", Time),
         ],
     },
@@ -165,9 +162,9 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("at", Time),
             col("kind", Enum),
             col("epoch", Sequence),
-            open("stored_hash"),
+            col("stored_hash", PublicDigest),
             col("body", Sealed),
-            open("link"),
+            col("link", PublicDigest),
         ],
     },
     TableSpec {
@@ -180,7 +177,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("at", Time),
             col("signature", Signature),
             col("witness_seq", Sequence),
-            open("receipt"),
+            col("receipt", Signature),
         ],
     },
     TableSpec {
@@ -191,12 +188,12 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("chain", Enum),
             col("epoch", Sequence),
             col("backend", Enum),
-            open("handle"),
+            col("handle", OpaqueReference),
             col("wrapped_seal_key", Sealed),
             col("state", Enum),
             col("created_at", Time),
             col("destroyed_at", Time),
-            open("receipt"),
+            col("receipt", Signature),
         ],
     },
     TableSpec {
@@ -208,7 +205,7 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("purpose", Enum),
             col("group_id", RandomId),
             col("generation", Sequence),
-            open("public_key"),
+            col("public_key", PublicKeyMaterial),
             col("sealed_secret", Sealed),
             col("epoch", Sequence),
             col("state", Enum),

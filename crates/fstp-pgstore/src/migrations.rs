@@ -20,6 +20,11 @@ use fstp_migrate::Migration;
 ///    (I-30), sealed like `blob.text`.
 /// 6. `delivery`: the insert-only delivery log `ops.delivery` of the M6
 ///    dispatcher (M6 design section 3.2).
+/// 7. `migration_ledger`: `fstp_migrate.schema_migrations` in the runner's
+///    own shape, for a set applied without the runner (I-16). Under the
+///    runner it changes nothing.
+/// 8. `column_classes`: the length checks of the column classes of
+///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -38,6 +43,16 @@ pub const MIGRATIONS: &[Migration] = &[
         6,
         "delivery",
         include_str!("../migrations/app/0006_delivery.sql"),
+    ),
+    Migration::new(
+        7,
+        "migration_ledger",
+        include_str!("../migrations/app/0007_migration_ledger.sql"),
+    ),
+    Migration::new(
+        8,
+        "column_classes",
+        include_str!("../migrations/app/0008_column_classes.sql"),
     ),
 ];
 

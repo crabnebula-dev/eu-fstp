@@ -17,14 +17,22 @@
 //! control-plane custody (ADR-004), which layering rule 7 keeps out of
 //! this crate's reach. The lead routes that key and the listeners.
 
-use fstp_migrate::catalogue::TableSpec;
 use fstp_release::ReleaseError;
 use fstp_release::egress::{self, Channel, LicenceRefresh, ProductVersion, UpdateCheck};
 use fstp_release::licence::{self, Ed25519SigningKey, LicenceId, LicenceKind, VerifiedToken};
 
-/// The tables of the licence database. Empty until the licence registry
-/// gets its migrations.
-pub const CATALOGUE: &[TableSpec] = &[];
+pub mod catalogue;
+
+pub use catalogue::CATALOGUE;
+
+/// The licence registry migrations, in order (design section 4.6):
+///
+/// 1. `licence`: the registry table of [`CATALOGUE`].
+pub const MIGRATIONS: &[fstp_migrate::Migration] = &[fstp_migrate::Migration::new(
+    1,
+    "licence",
+    include_str!("../migrations/licence/0001_licence.sql"),
+)];
 
 /// The longest request either decoder reads, in bytes. The longest
 /// template is under 256 bytes.
