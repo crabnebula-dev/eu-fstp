@@ -5,10 +5,7 @@
 
 #![no_main]
 
-#[path = "../../src/prepare.rs"]
-#[allow(dead_code)]
-mod prepare;
-
+use fstp_dispatch::prepare;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
