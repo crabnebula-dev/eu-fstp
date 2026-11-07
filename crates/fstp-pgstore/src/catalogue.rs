@@ -14,7 +14,9 @@
 //!   keys;
 //! - `auth.challenge.action_digest`, a SHA-256 over a command, which is
 //!   neither a digest of a random secret nor keyed;
-//! - `ops.outbox.idem`, whose form the M6 dispatcher fixes;
+//! - `ops.outbox.idem`, now SHA-256 over the event, the recipient and the
+//!   channel (M6 design section 3.1), and the digests `ops.delivery.event`
+//!   and `ops.delivery.body_digest`;
 //! - the migration ledger's `name` and `checksum`, which describe the
 //!   binary's own migrations.
 //!
@@ -368,6 +370,27 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("assignment_id", RandomId),
             col("proposal_id", RandomId),
             col("source_seq", Sequence),
+        ],
+    ),
+    // M6 design section 3.2: the delivery log of the dispatcher. `event`
+    // and `body_digest` are SHA-256 digests over public inputs and over a
+    // rendered body. Neither is keyed nor a digest of a random secret, so
+    // their class is left open for Daniel, as `ops.outbox.idem` is.
+    table(
+        "ops",
+        "delivery",
+        TableClass::Operational,
+        &[
+            col("outbox_id", RandomId),
+            col("attempt", Count),
+            col("phase", Enum),
+            col("at", Time),
+            col("worker", RandomId),
+            col("lease_until", Time),
+            open("event"),
+            col("template_version", Enum),
+            open("body_digest"),
+            col("reply_code", Enum),
         ],
     ),
 ];

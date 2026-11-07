@@ -225,9 +225,9 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 }
 
 /// The tables of the application database (design section 4.2, and the
-/// journey read model of ADR-015 "Storage and roles"), in the order of
-/// the migration set.
-pub const APP_TABLES: [&str; 24] = [
+/// journey read model of ADR-015 "Storage and roles", and the delivery
+/// log of the M6 design section 3.2), in the order of the migration set.
+pub const APP_TABLES: [&str; 25] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -252,6 +252,7 @@ pub const APP_TABLES: [&str; 24] = [
     "journey.leg",
     "journey.route_start",
     "journey.assignment",
+    "ops.delivery",
 ];
 
 /// The tables of the vault database (design section 4.3, with the
@@ -315,6 +316,9 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "ledger" | "audit" | "auth_log" => S,
             "auth" => FULL,
             "ops" if object == "ops.outbox" => S,
+            // M6 design section 3.2: the dispatcher inserts delivery rows
+            // and never changes one.
+            "ops" if object == "ops.delivery" => SI,
             "ops" => FULL,
             "blob" => SI,
             // ADR-015: the projector runs as `app` and writes append-only

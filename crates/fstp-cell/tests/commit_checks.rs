@@ -249,6 +249,7 @@ fn i78_anchored_store_refuses_a_step_up_stale_at_its_commit_instant() {
             stepup_consumed: Some([0x02; 16]),
             stepup_fresh_until: Some(now - 5 * MINUTE_US),
             sessions_ended: Vec::new(),
+            outbox: Vec::new(),
         },
     };
     let r = fstp_rt::future::block_on(async {

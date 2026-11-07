@@ -400,6 +400,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-dispatch"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-pgstore",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-domain"
 version = "0.1.0"
 dependencies = [

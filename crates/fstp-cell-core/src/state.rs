@@ -494,6 +494,7 @@ pub struct CellState {
     pub(crate) destroyed_epochs: BTreeSet<u64>,
     pub(crate) tickets: BTreeSet<[u8; 16]>,
     pub(crate) break_glass: BTreeMap<[u8; 16], bool>,
+    pub(crate) timeline: crate::timeline::TimelineState,
     bindings: BTreeMap<BindingId, BindingFacts>,
     proposals: BTreeMap<ProposalId, (CallId, AccountId)>,
     reactions: BTreeMap<u64, Seq>,
@@ -518,6 +519,7 @@ impl CellState {
             destroyed_epochs: BTreeSet::new(),
             tickets: BTreeSet::new(),
             break_glass: BTreeMap::new(),
+            timeline: crate::timeline::TimelineState::default(),
             bindings: BTreeMap::new(),
             proposals: BTreeMap::new(),
             reactions: BTreeMap::new(),
@@ -539,6 +541,11 @@ impl CellState {
     /// The latest recorded time of any member (design section 2.2).
     pub fn now_floor(&self) -> Timestamp {
         self.floor
+    }
+
+    /// The timeline part (M6 design section 3.1).
+    pub fn timeline(&self) -> &crate::timeline::TimelineState {
+        &self.timeline
     }
 
     /// The auth part.
@@ -704,6 +711,7 @@ pub(crate) fn fold(
         CellRecord::Key(r) => fold_key(s, r)?,
         CellRecord::Release(r) => fold_release(&mut s.tickets, r)?,
         CellRecord::Ops(r) => fold_ops(&mut s.break_glass, r)?,
+        CellRecord::Timeline(r) => s.timeline.fold(r)?,
     }
     if let Some(epoch) = reaction_epoch(command) {
         s.reactions.insert(epoch, seq);

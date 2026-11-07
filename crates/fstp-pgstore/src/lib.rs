@@ -12,6 +12,8 @@
 //! - [`TextStore`]: sealed free text behind a [`TextRef`] (ADR-007).
 //! - [`Checkpoints`]: sealed fold checkpoints in `ops.checkpoint`.
 //! - [`OutboxRow`]: a sealed `ops.outbox` row of an append's side effects.
+//! - [`DeliveryLog`]: the insert-only delivery log `ops.delivery` of the M6
+//!   dispatcher, with the head rules it shares with the dispatcher's model.
 //! - [`decode_stored_entry`]: the one byte layout of a stored ledger row.
 //!   The read path decodes every row through it. Fuzzed
 //!   (`stored_entry_decode`).
@@ -52,6 +54,7 @@
 
 mod catalogue;
 mod checkpoint;
+mod delivery;
 mod error;
 mod migrations;
 mod outbox;
@@ -63,6 +66,10 @@ mod text;
 
 pub use catalogue::CATALOGUE;
 pub use checkpoint::{Checkpoint, Checkpoints, MAX_CHECKPOINT_LEN};
+pub use delivery::{
+    CommitFacts, DELIVERY_LEASE_US, DeliveryLog, DeliveryRow, MAX_ATTEMPTS, Next, Phase,
+    backoff_us, may_commit, may_record, next_step,
+};
 pub use error::{AppendFault, DbFault, DecodeError, StoreFault};
 pub use migrations::MIGRATIONS;
 pub use outbox::{KeyFuture, MAX_OUTBOX_BODY, MAX_OUTBOX_ROWS, OutboxKey, OutboxKeys, OutboxRow};

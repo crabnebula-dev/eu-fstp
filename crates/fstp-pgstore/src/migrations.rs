@@ -16,6 +16,8 @@ use fstp_migrate::Migration;
 /// 3. `app`: the schemas, tables and triggers of design section 4.2.
 /// 4. `journey`: the journey read model of ADR-015 and
 ///    `SPEC/12-journey-ui.md` section 11, in its own schema (I-83).
+/// 5. `delivery`: the insert-only delivery log `ops.delivery` of the M6
+///    dispatcher (M6 design section 3.2).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -28,6 +30,11 @@ pub const MIGRATIONS: &[Migration] = &[
         4,
         "journey",
         include_str!("../migrations/app/0004_journey.sql"),
+    ),
+    Migration::new(
+        5,
+        "delivery",
+        include_str!("../migrations/app/0005_delivery.sql"),
     ),
 ];
 

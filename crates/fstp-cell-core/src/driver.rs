@@ -84,6 +84,9 @@ pub struct SideEffects {
     pub stepup_fresh_until: Option<i64>,
     /// Ended sessions.
     pub sessions_ended: Vec<[u8; 16]>,
+    /// The bodies of the messages the batch's `EventFired` records list,
+    /// in their order (M6 design section 3.1).
+    pub outbox: Vec<crate::timeline::MessageBody>,
 }
 
 /// What the driver needs from the shell.

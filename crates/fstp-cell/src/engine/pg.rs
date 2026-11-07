@@ -16,6 +16,8 @@
 //!   entry of the batch's `StepUpConsumed` record.
 //! - Each ended session is one `auth_log.session_end` row, which names the
 //!   entry of its `SessionEnded` record.
+//! - Each message an `EventFired` record lists is one sealed `ops.outbox`
+//!   row, with the body the driver rendered for it (M6 design section 3.1).
 //!
 //! A replayed step-up or a second end of one session violates a primary
 //! key, and the whole append aborts. A stale step-up at the commit instant
@@ -166,12 +168,39 @@ pub fn side_effects(req: &AppendRequest) -> Result<fstp_pgstore::SideEffects, Ce
     if named != req.side.sessions_ended {
         return Err(refuse());
     }
+    let outbox = outbox_rows(req).ok_or_else(refuse)?;
     Ok(fstp_pgstore::SideEffects {
         stepup_consumed,
         stepup_fresh_until: req.side.stepup_fresh_until,
         sessions_ended,
-        outbox: Vec::new(),
+        outbox,
     })
+}
+
+/// The `ops.outbox` rows of `req` (M6 design section 3.1): one per
+/// message its `EventFired` records list, in batch order, each with the
+/// listed id and idempotency key and the body the driver rendered for it.
+/// `None` unless the bodies name exactly those messages in that order, so
+/// no outbox row commits without the `EventFired` that traces it (I-25)
+/// and no fired message lacks its row.
+fn outbox_rows(req: &AppendRequest) -> Option<Vec<fstp_pgstore::OutboxRow>> {
+    use fstp_cell_core::timeline::{OUTBOX_KIND_EMAIL, TimelineRecord};
+    let messages = req.batch.iter().flat_map(|r| match r {
+        CellRecord::Timeline(TimelineRecord::EventFired { messages, .. }) => messages.as_slice(),
+        _ => &[],
+    });
+    let mut bodies = req.side.outbox.iter();
+    let mut rows = Vec::with_capacity(req.side.outbox.len());
+    for m in messages {
+        let b = bodies.next().filter(|b| b.outbox == m.outbox)?;
+        rows.push(fstp_pgstore::OutboxRow {
+            id: m.outbox,
+            kind: OUTBOX_KIND_EMAIL,
+            idem: m.idem,
+            body: b.body.clone(),
+        });
+    }
+    bodies.next().is_none().then_some(rows)
 }
 
 /// The engine's error of a refused append.
@@ -284,6 +313,84 @@ mod tests {
         }
     }
 
+    fn fired(event: u8, outboxes: &[u8]) -> CellRecord {
+        use fstp_cell_core::timeline::{FiredMessage, TimelineRecord};
+        CellRecord::Timeline(TimelineRecord::EventFired {
+            event: [event; 32],
+            messages: outboxes
+                .iter()
+                .map(|o| FiredMessage {
+                    outbox: [*o; 16],
+                    idem: [o.wrapping_add(100); 32],
+                    template: 1,
+                    version: 1,
+                })
+                .collect(),
+        })
+    }
+
+    fn bodies(outboxes: &[u8]) -> fstp_cell_core::driver::SideEffects {
+        fstp_cell_core::driver::SideEffects {
+            outbox: outboxes
+                .iter()
+                .map(|o| fstp_cell_core::timeline::MessageBody {
+                    outbox: [*o; 16],
+                    body: vec![*o; 3],
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// I-25, I-26, M6 design section 3.1: the outbox rows of an append are
+    /// exactly the messages its `EventFired` records list, in order, each
+    /// with its listed id and idempotency key and its rendered body.
+    #[test]
+    fn i26_outbox_rows_are_the_fired_messages() {
+        let batch = vec![
+            fired(1, &[1, 2]),
+            CellRecord::Text(TextRecord::TextPut { id: [9; 16] }),
+            fired(2, &[3]),
+        ];
+        let got = side_effects(&request(batch, bodies(&[1, 2, 3]))).unwrap();
+        type Row = ([u8; 16], u16, [u8; 32], Vec<u8>);
+        let rows: Vec<Row> = got
+            .outbox
+            .iter()
+            .map(|r| (r.id, r.kind, r.idem, r.body.clone()))
+            .collect();
+        let kind = fstp_cell_core::timeline::OUTBOX_KIND_EMAIL;
+        assert_eq!(
+            rows,
+            vec![
+                ([1; 16], kind, [101; 32], vec![1; 3]),
+                ([2; 16], kind, [102; 32], vec![2; 3]),
+                ([3; 16], kind, [103; 32], vec![3; 3]),
+            ]
+        );
+    }
+
+    /// I-25, M6 design section 3.1: a body with no fired message, a fired
+    /// message with no body, or a body under another id is refused before
+    /// any row is written. So no outbox row exists without the
+    /// `EventFired` that traces it, and no fired message lacks its row.
+    #[test]
+    fn i25_outbox_bodies_without_their_fired_messages_are_refused() {
+        let refused = Err(CellAppendError::Ledger(AppendError::Store(
+            StoreError::Unavailable,
+        )));
+        for (batch, side) in [
+            (Vec::new(), bodies(&[1])),
+            (vec![fired(1, &[1, 2])], bodies(&[1])),
+            (vec![fired(1, &[1])], bodies(&[])),
+            (vec![fired(1, &[1, 2])], bodies(&[2, 1])),
+            (vec![fired(1, &[1])], bodies(&[4])),
+        ] {
+            assert_eq!(side_effects(&request(batch, side)), refused);
+        }
+        assert!(side_effects(&request(vec![fired(1, &[])], bodies(&[]))).is_ok());
+    }
+
     /// I-77, I-78, design section 5.3 step 6: each `auth_log` row names
     /// the record of the batch it belongs to. The step-up row is keyed by
     /// the step-up id, the challenge id end to end, and names its
@@ -302,6 +409,7 @@ mod tests {
             stepup_consumed: Some(id),
             stepup_fresh_until: Some(7),
             sessions_ended: vec![[2; 16], [3; 16]],
+            outbox: Vec::new(),
         };
         let got = side_effects(&request(batch, side)).unwrap();
         assert_eq!(
@@ -342,6 +450,7 @@ mod tests {
                 stepup_consumed: stepup,
                 stepup_fresh_until: None,
                 sessions_ended: sessions,
+                outbox: Vec::new(),
             }
         };
         assert_eq!(
@@ -377,6 +486,7 @@ mod tests {
             stepup_consumed: stepup,
             stepup_fresh_until: None,
             sessions_ended: Vec::new(),
+            outbox: Vec::new(),
         };
         assert_eq!(
             side_effects(&request(vec![consumed([1; 16])], side(None))),
