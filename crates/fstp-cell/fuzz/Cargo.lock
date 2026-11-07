@@ -178,6 +178,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-edge",
  "fstp-engine",
@@ -190,6 +191,8 @@ dependencies = [
  "fstp-pgwire",
  "fstp-release",
  "fstp-rt",
+ "fstp-smtp",
+ "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
  "fstp-webauthn",
@@ -277,6 +280,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-dispatch"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-mail",
+ "fstp-pgstore",
+ "fstp-rt",
+ "fstp-smtp",
+]
+
+[[package]]
 name = "fstp-domain"
 version = "0.1.0"
 dependencies = [
@@ -329,7 +343,6 @@ dependencies = [
  "fstp-domain",
  "fstp-html",
  "fstp-json",
- "fstp-pdf",
  "fstp-programme",
 ]
 
@@ -379,6 +392,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-mail"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-money",
+]
+
+[[package]]
 name = "fstp-migrate"
 version = "0.1.0"
 dependencies = [
@@ -399,13 +421,6 @@ name = "fstp-obs"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
-]
-
-[[package]]
-name = "fstp-pdf"
-version = "0.1.0"
-dependencies = [
- "fstp-crypto",
 ]
 
 [[package]]
@@ -470,6 +485,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-smtp"
+version = "0.1.0"
+dependencies = [
+ "fstp-rt",
+ "fstp-tls",
+]
+
+[[package]]
 name = "fstp-tenant"
 version = "0.1.0"
 dependencies = [
@@ -477,6 +500,18 @@ dependencies = [
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",
+]
+
+[[package]]
+name = "fstp-timeline"
+version = "0.1.0"
+dependencies = [
+ "fstp-cell-core",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-json",
+ "fstp-mail",
 ]
 
 [[package]]
