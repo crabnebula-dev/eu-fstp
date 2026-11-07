@@ -74,7 +74,10 @@ use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::rules::{ActorRule, ParamId, actor_rule};
 use crate::state::State;
 use crate::time::Timestamp;
-use crate::{amendment, assignment, decision, grant, payment, policy, programme, proposal, roles};
+use crate::{
+    amendment, assignment, calibration, decision, grant, payment, policy, programme, proposal,
+    roles,
+};
 
 /// Why the fold refused a record. Each variant names a log the engine
 /// could not have produced.
@@ -129,10 +132,12 @@ enum Lane {
     Payment,
     /// L-MONEY, `amendment.rs`.
     Amendment,
+    /// L12-I37, `calibration.rs`.
+    Calibration,
 }
 
 /// Every lane, in the order the dispatcher asks for contributions.
-const LANES: [Lane; 9] = [
+const LANES: [Lane; 10] = [
     Lane::Policy,
     Lane::Programme,
     Lane::Roles,
@@ -142,6 +147,7 @@ const LANES: [Lane; 9] = [
     Lane::Grant,
     Lane::Payment,
     Lane::Amendment,
+    Lane::Calibration,
 ];
 
 /// The policy version whose P-77 governs a binding action through MCP (R-MC-05).
@@ -224,6 +230,9 @@ const fn command_lane(kind: CommandKind) -> Lane {
         | K::RecordChecks
         | K::ClosePaymentRequest => Lane::Payment,
         K::ProposeAmendment | K::RouteAmendment | K::ActivateAmendment => Lane::Amendment,
+        K::RequestCalibrationConsent | K::GiveCalibrationConsent | K::RevokeCalibrationConsent => {
+            Lane::Calibration
+        }
     }
 }
 
@@ -298,6 +307,9 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         Record::VaultOutcome { .. } | Record::OutboxEnqueued(_) | Record::TermsAccepted { .. } => {
             return None;
         }
+        Record::CalibrationConsentRequested { .. }
+        | Record::CalibrationConsentGiven { .. }
+        | Record::CalibrationConsentRevoked { .. } => Lane::Calibration,
     };
     Some(lane)
 }
@@ -418,6 +430,7 @@ fn lane_queries(
         Lane::Grant => grant::queries(state, cmd, ctx),
         Lane::Payment => payment::queries(state, cmd, ctx),
         Lane::Amendment => amendment::queries(state, cmd, ctx),
+        Lane::Calibration => calibration::queries(state, cmd, ctx),
     }
 }
 
@@ -438,6 +451,7 @@ fn lane_contribute_queries(
         Lane::Grant => grant::contribute_queries(state, cmd, ctx),
         Lane::Payment => payment::contribute_queries(state, cmd, ctx),
         Lane::Amendment => amendment::contribute_queries(state, cmd, ctx),
+        Lane::Calibration => calibration::contribute_queries(state, cmd, ctx),
     }
 }
 
@@ -460,6 +474,7 @@ fn lane_decide(
         Lane::Grant => grant::decide(state, cmd, ctx, answers),
         Lane::Payment => payment::decide(state, cmd, ctx, answers),
         Lane::Amendment => amendment::decide(state, cmd, ctx, answers),
+        Lane::Calibration => calibration::decide(state, cmd, ctx, answers),
     }
 }
 
@@ -482,6 +497,7 @@ fn lane_contribute(
         Lane::Grant => grant::contribute(state, cmd, ctx, answers, batch),
         Lane::Payment => payment::contribute(state, cmd, ctx, answers, batch),
         Lane::Amendment => amendment::contribute(state, cmd, ctx, answers, batch),
+        Lane::Calibration => calibration::contribute(state, cmd, ctx, answers, batch),
     }
 }
 
@@ -497,6 +513,7 @@ fn lane_governing_policy(lane: Lane, state: &State, cmd: &Command) -> Result<Pol
         Lane::Grant => grant::governing_policy(state, cmd),
         Lane::Payment => payment::governing_policy(state, cmd),
         Lane::Amendment => amendment::governing_policy(state, cmd),
+        Lane::Calibration => calibration::governing_policy(state, cmd),
     }
 }
 
@@ -656,7 +673,11 @@ pub fn apply(state: &mut State, seq: Seq, at: Timestamp, record: &Record) -> Res
         Some(Lane::Grant) => grant::apply(state, seq, at, record)?,
         Some(Lane::Payment) => payment::apply(state, seq, at, record)?,
         Some(Lane::Amendment) => amendment::apply(state, seq, at, record)?,
-        None => crate::proposal::on_vault_outcome(state, record),
+        Some(Lane::Calibration) => calibration::apply(state, seq, at, record)?,
+        None => {
+            crate::proposal::on_vault_outcome(state, record);
+            crate::calibration::on_outbox(state, seq, record);
+        }
     }
     state.now_floor = at;
     Ok(())

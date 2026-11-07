@@ -706,6 +706,27 @@ pub enum Command {
         /// The recorded reason.
         reason: TextRef,
     },
+    /// Ask the lead for consent to pseudonymised calibration use within the
+    /// tenant (R-LA-09, P-42). Refused before the proposal's outcome notice
+    /// record is committed (I-37). Lane M12 L12-I37, `crate::calibration`.
+    RequestCalibrationConsent {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// The lead gives calibration consent to the wording shown (R-LA-09, I-37).
+    GiveCalibrationConsent {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The consent wording shown. TODO(legal): the consent text and the
+        /// legal basis for pseudonymised use.
+        wording: TextRef,
+    },
+    /// The lead revokes calibration consent. The proposal leaves every later
+    /// calibration run (R-LA-10, I-37).
+    RevokeCalibrationConsent {
+        /// The proposal.
+        proposal: ProposalId,
+    },
 }
 
 /// The fieldless tag of a [`Command`].
@@ -837,11 +858,17 @@ pub enum CommandKind {
     CloseMilestone,
     /// [`Command::ClosePaymentRequest`].
     ClosePaymentRequest,
+    /// [`Command::RequestCalibrationConsent`].
+    RequestCalibrationConsent,
+    /// [`Command::GiveCalibrationConsent`].
+    GiveCalibrationConsent,
+    /// [`Command::RevokeCalibrationConsent`].
+    RevokeCalibrationConsent,
 }
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 63] = [
+    pub const ALL: [CommandKind; 66] = [
         CommandKind::CreateProgramme,
         CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
@@ -905,6 +932,9 @@ impl CommandKind {
         CommandKind::ActivateAmendment,
         CommandKind::CloseMilestone,
         CommandKind::ClosePaymentRequest,
+        CommandKind::RequestCalibrationConsent,
+        CommandKind::GiveCalibrationConsent,
+        CommandKind::RevokeCalibrationConsent,
     ];
 
     /// Whether the kind is a high-risk action from the list in
@@ -1027,6 +1057,9 @@ impl Command {
             Command::ActivateAmendment { .. } => CommandKind::ActivateAmendment,
             Command::CloseMilestone { .. } => CommandKind::CloseMilestone,
             Command::ClosePaymentRequest { .. } => CommandKind::ClosePaymentRequest,
+            Command::RequestCalibrationConsent { .. } => CommandKind::RequestCalibrationConsent,
+            Command::GiveCalibrationConsent { .. } => CommandKind::GiveCalibrationConsent,
+            Command::RevokeCalibrationConsent { .. } => CommandKind::RevokeCalibrationConsent,
         }
     }
 

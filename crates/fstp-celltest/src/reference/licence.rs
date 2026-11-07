@@ -1095,7 +1095,12 @@ pub const fn class_of(kind: CommandKind) -> RefClass {
         | CommandKind::ClosePaymentRequest => RefClass::Payments,
         // M4 changes D2 and D5: the activation and the round commands are
         // not Q18 option B commands, so the strict reading protects them.
-        CommandKind::ActivateProgramme
+        // Lane L12-I37: the calibration consent commands follow the strict
+        // reading too.
+        CommandKind::RequestCalibrationConsent
+        | CommandKind::GiveCalibrationConsent
+        | CommandKind::RevokeCalibrationConsent
+        | CommandKind::ActivateProgramme
         | CommandKind::OpenCutOffRound
         | CommandKind::CastBallot
         | CommandKind::DelegateVote

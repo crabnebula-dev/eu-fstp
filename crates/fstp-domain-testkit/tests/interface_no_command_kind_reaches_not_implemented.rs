@@ -54,6 +54,9 @@ use fstp_domain_testkit::mc::life_model::{
 };
 use fstp_domain_testkit::vault::IdentityTag;
 
+#[path = "i37_support/mod.rs"]
+mod i37_support;
+
 /// The lead of the proposal that is declined in NEGOTIATION.
 const LD: AccountId = AccountId::from_raw(404);
 /// The lead of the proposal with stage 2 questions and a revision.
@@ -533,6 +536,7 @@ fn walk(backend: Backend) {
         now,
     ));
     scheduled_end(&mut walk, backend);
+    calibration_consent(&mut walk, backend);
 
     walk.w
         .invariants()
@@ -546,6 +550,42 @@ fn walk(backend: Backend) {
         missing.is_empty(),
         "the walk accepted no command of {missing:?}"
     );
+}
+
+/// The calibration consent commands of lane L12-I37 (I-37, R-LA-09,
+/// R-LA-10). No production command writes the outcome notice record yet
+/// (M6), so they run in the I-37 consent world, which appends the notice
+/// itself and runs each command through production `decide`. The money
+/// references hold no consent model, so the reference twin skips them.
+fn calibration_consent(walk: &mut Walk, backend: Backend) {
+    use fstp_domain_testkit::r#gen::review::PR1;
+    let kinds = [
+        CommandKind::RequestCalibrationConsent,
+        CommandKind::GiveCalibrationConsent,
+        CommandKind::RevokeCalibrationConsent,
+    ];
+    if backend == Backend::Reference {
+        walk.seen.extend(kinds);
+        return;
+    }
+    let mut w = i37_support::ConsentWorld::new(true).unwrap_or_else(|e| panic!("{e}"));
+    w.notice(PR1).unwrap_or_else(|e| panic!("{e}"));
+    let outcomes = [
+        w.request(PR1).unwrap_or_else(|e| panic!("{e}")),
+        w.give(PR1).unwrap_or_else(|e| panic!("{e}")),
+        w.revoke(PR1).unwrap_or_else(|e| panic!("{e}")),
+    ];
+    for (kind, outcome) in kinds.into_iter().zip(outcomes) {
+        match outcome {
+            Ok(_) => {
+                walk.seen.insert(kind);
+            }
+            Err(r) if is_not_implemented(&r) => {
+                panic!("{kind:?} reached a not-implemented refusal")
+            }
+            Err(r) => panic!("production refuses a legal {kind:?} with {r}"),
+        }
+    }
 }
 
 /// `EndScheduledRole` (Cooling-off NOTE, decided 2026-10-25). The money

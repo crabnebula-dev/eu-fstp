@@ -1173,5 +1173,11 @@ fn sample(kind: CommandKind) -> Command {
             request,
             reason: text_ref(22),
         },
+        K::RequestCalibrationConsent => Command::RequestCalibrationConsent { proposal },
+        K::GiveCalibrationConsent => Command::GiveCalibrationConsent {
+            proposal,
+            wording: text_ref(23),
+        },
+        K::RevokeCalibrationConsent => Command::RevokeCalibrationConsent { proposal },
     }
 }

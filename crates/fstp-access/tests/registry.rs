@@ -135,6 +135,14 @@ const EXPECTED_LATER_M5: [&str; 15] = [
     "ClosePaymentRequest",
 ];
 
+/// The calibration consent kinds of lane L12-I37, whose operations arrive
+/// with lane L12-UI (I-37).
+const EXPECTED_LATER_M12: [&str; 3] = [
+    "RequestCalibrationConsent",
+    "GiveCalibrationConsent",
+    "RevokeCalibrationConsent",
+];
+
 /// The kinds that changes D2 and D5 add to `CommandKind::ALL`.
 const NEW_IN_M4: [&str; 4] = [
     "ActivateProgramme",
@@ -184,13 +192,21 @@ fn ops_cover_every_command_kind_once() {
         BTreeSet::from(["ActivateProgramme".to_string()]),
         "COMPOSED_ONLY"
     );
-    let expected_later: BTreeSet<String> =
-        EXPECTED_LATER_M5.iter().map(|s| s.to_string()).collect();
+    let expected_later: BTreeSet<String> = EXPECTED_LATER_M5
+        .iter()
+        .chain(EXPECTED_LATER_M12.iter())
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(later, expected_later, "LATER");
-    assert!(
-        LATER.iter().all(|(_, m)| *m == Milestone::M5),
-        "every later kind arrives with M5: {LATER:?}"
-    );
+    for (k, m) in LATER {
+        let name = kind_name(*k);
+        let want = if EXPECTED_LATER_M12.contains(&name.as_str()) {
+            Milestone::M12
+        } else {
+            Milestone::M5
+        };
+        assert_eq!(*m, want, "{name} arrives with {want:?}");
+    }
     assert_eq!(
         SYSTEM_ONLY.len(),
         system.len(),
@@ -231,8 +247,8 @@ fn ops_cover_every_command_kind_once() {
     assert_eq!(routed.len(), 37, "routed command kinds");
     assert_eq!(
         all.len(),
-        63,
-        "CommandKind::ALL in M4, with RecordChecks of M5"
+        66,
+        "CommandKind::ALL in M4, with RecordChecks of M5 and the three consent kinds of M12"
     );
 }
 

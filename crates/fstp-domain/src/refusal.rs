@@ -62,6 +62,8 @@ pub enum RuleRef {
     I35,
     /// I-36: a former reviewer holds no Receiving role in a call evaluating that proposal.
     I36,
+    /// I-37: calibration use needs a recorded, unrevoked consent, requested after the outcome notice.
+    I37,
     /// I-50: P-05 never exceeds P-58.
     I50,
     /// I-52: a Guide is generated only when every required section is
@@ -189,7 +191,7 @@ pub enum RuleRef {
 impl RuleRef {
     /// Every variant except `Param`, in declaration order.
     /// `Param` variants are covered by `crate::rules::CATALOGUE`.
-    pub const ALL_FIXED: [RuleRef; 82] = [
+    pub const ALL_FIXED: [RuleRef; 83] = [
         RuleRef::I01,
         RuleRef::I02,
         RuleRef::I03,
@@ -213,6 +215,7 @@ impl RuleRef {
         RuleRef::I34,
         RuleRef::I35,
         RuleRef::I36,
+        RuleRef::I37,
         RuleRef::I50,
         RuleRef::I52,
         RuleRef::I64,
@@ -301,6 +304,7 @@ impl RuleRef {
             RuleRef::I34 => "I-34",
             RuleRef::I35 => "I-35",
             RuleRef::I36 => "I-36",
+            RuleRef::I37 => "I-37",
             RuleRef::I50 => "I-50",
             RuleRef::I52 => "I-52",
             RuleRef::I64 => "I-64",

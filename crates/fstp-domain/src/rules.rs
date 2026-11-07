@@ -1266,6 +1266,13 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::ActivateAmendment, ActorRule::System),
     (K::CloseMilestone, PM),
     (K::ClosePaymentRequest, PM),
+    // Lane L12-I37 (R-LA-09, R-LA-10, I-37). The programme manager requests
+    // consent after the outcome notice. The lead gives or revokes it. The
+    // calibration lane checks the lead by account, since a terminal state
+    // may have ended the Applicant binding (interim, pending Daniel).
+    (K::RequestCalibrationConsent, PM),
+    (K::GiveCalibrationConsent, ActorRule::Lead),
+    (K::RevokeCalibrationConsent, ActorRule::Lead),
 ];
 
 /// The actor rule of `kind`, from [`ACTOR_RULES`].

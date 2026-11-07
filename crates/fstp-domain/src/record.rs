@@ -897,4 +897,31 @@ pub enum Record {
         /// The recorded reason.
         reason: TextRef,
     },
+    /// Calibration consent was requested after the outcome notice (R-LA-09,
+    /// I-37). The fold refuses it unless `notice` is the sequence number of
+    /// the proposal's committed outcome notice record, strictly below its own.
+    CalibrationConsentRequested {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The sequence number of the outcome notice record.
+        notice: Seq,
+        /// The requesting programme manager.
+        by: AccountId,
+    },
+    /// The lead gave calibration consent (R-LA-09, I-37).
+    CalibrationConsentGiven {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The consent wording shown. TODO(legal): consent text.
+        wording: TextRef,
+        /// The lead.
+        by: AccountId,
+    },
+    /// The lead revoked calibration consent (R-LA-10, I-37).
+    CalibrationConsentRevoked {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The lead.
+        by: AccountId,
+    },
 }

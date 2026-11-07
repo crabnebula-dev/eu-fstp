@@ -78,6 +78,9 @@ tagged_enum! {
         ActivateAmendment { amendment, contract },
         CloseMilestone { proposal, milestone, reason },
         ClosePaymentRequest { request, reason },
+        RequestCalibrationConsent { proposal },
+        GiveCalibrationConsent { proposal, wording },
+        RevokeCalibrationConsent { proposal },
     }
     money {
         DraftCall { call, programme, opens, deadline, deadline_zone, budget, text },
