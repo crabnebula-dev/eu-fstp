@@ -216,6 +216,7 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         TenantRefusal::InvalidAddress => "R-GA-01",
         // M9 lane B1: the failing pairs are listed by `tenant.branding.check`.
         TenantRefusal::BrandingContrast(_) => "I-70",
+        TenantRefusal::TerminologyInvalid => "I-72",
         // ADR-018: a relay is a host name and never a CrabNebula host.
         TenantRefusal::InvalidMailRelay => "I-38",
     };
@@ -325,6 +326,10 @@ fn build<P: Seams>(
             let text = fstp_brand::canonical(&tokens);
             let digest = ContentDigest::from_bytes(fstp_crypto::sha256(text.as_bytes()));
             Ok((TenantCommand::SetBranding { tokens, digest }, None))
+        }
+        TenantKind::SetTerminology => {
+            let terminology = crate::tenant::terminology_request(&op.request)?;
+            Ok((TenantCommand::SetTerminology { terminology }, None))
         }
         // The pinned CA holds a placeholder reference with id 0 and the
         // text's digest until dispatch stores it ([`stored_mail_relay`]).

@@ -190,6 +190,7 @@ pub struct TenantState {
     /// The activation of the organisation (SoD-18).
     activation: Activation,
     branding: Option<(fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)>,
+    terminology: Option<crate::types::Terminology>,
     /// The mail submission relay (ADR-018, proposed).
     mail_relay: Option<MailRelay>,
 }
@@ -225,6 +226,7 @@ impl TenantState {
             signatories: BTreeSet::new(),
             activation: Activation::NotRequested,
             branding: None,
+            terminology: None,
             mail_relay: None,
         }
     }
@@ -449,6 +451,11 @@ impl TenantState {
                 self.need_admin(*by)?;
                 crate::decide::check_branding(tokens).map_err(FoldError)?;
                 self.branding = Some((tokens.clone(), *digest));
+            }
+            TenantRecord::TerminologySet { terminology, by } => {
+                self.need_admin(*by)?;
+                crate::decide::check_terminology(terminology).map_err(FoldError)?;
+                self.terminology = Some(terminology.clone());
             }
             TenantRecord::MailRelaySet { relay, by } => {
                 self.need_admin(*by)?;
@@ -770,6 +777,12 @@ impl TenantState {
     /// tenant shows the platform brand (M9 design section 2.1).
     pub fn branding(&self) -> Option<(&fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)> {
         self.branding.as_ref().map(|(t, d)| (t, *d))
+    }
+
+    /// The latest terminology and Voyage switch, or `None` while the tenant
+    /// shows the plain pack without overrides (M9 lane T1).
+    pub fn terminology(&self) -> Option<&crate::types::Terminology> {
+        self.terminology.as_ref()
     }
 
     /// Whether a second tenant admin approved the activation, so the

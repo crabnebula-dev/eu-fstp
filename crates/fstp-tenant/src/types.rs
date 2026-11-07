@@ -792,6 +792,51 @@ pub struct GuideNoticeOverride {
     pub privacy_statement_url: String,
 }
 
+/// The most labels a tenant terminology holds (M9 lane T1).
+const MAX_TERMINOLOGY_LABELS: usize = 128;
+/// The longest key of a terminology label, in bytes.
+const MAX_TERMINOLOGY_KEY_BYTES: usize = 64;
+/// The longest text of a terminology label, in bytes.
+const MAX_TERMINOLOGY_TEXT_BYTES: usize = 200;
+
+/// A tenant's terminology: interface label overrides and the Voyage switch
+/// (O-55, I-72). The keys are checked against the closed label list by the
+/// vocabulary parser (`fstp_journey::vocab`) before a command is built. This
+/// crate keeps the shape bounds, so a ledger never holds markup.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Terminology {
+    /// Label key to label text.
+    pub labels: std::collections::BTreeMap<String, String>,
+    /// Whether the Voyage pack shows as a secondary line.
+    pub voyage_on: bool,
+    /// The digest of the canonical pack text, computed by the shell.
+    pub digest: fstp_domain::id::ContentDigest,
+}
+
+impl Terminology {
+    /// Whether the labels keep the shape bounds: at most
+    /// [`MAX_TERMINOLOGY_LABELS`] entries, keys of 1 to
+    /// [`MAX_TERMINOLOGY_KEY_BYTES`] bytes of ASCII letters, digits, dots
+    /// and underscores, texts of 1 to [`MAX_TERMINOLOGY_TEXT_BYTES`] bytes
+    /// with no control character, brace or angle bracket and no space at
+    /// either end (I-68, I-72).
+    pub fn well_formed(&self) -> bool {
+        self.labels.len() <= MAX_TERMINOLOGY_LABELS
+            && self.labels.iter().all(|(k, t)| {
+                !k.is_empty()
+                    && k.len() <= MAX_TERMINOLOGY_KEY_BYTES
+                    && k.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
+                    && !t.is_empty()
+                    && t.len() <= MAX_TERMINOLOGY_TEXT_BYTES
+                    && t.trim() == t
+                    && !t
+                        .chars()
+                        .any(|c| c.is_control() || matches!(c, '{' | '}' | '<' | '>'))
+            })
+    }
+}
+
 /// The tenant's mail submission relay (M6 lane L6-EGR, ADR-018 proposed).
 ///
 /// The cell submits mail to `host` on port 465 only, with implicit TLS

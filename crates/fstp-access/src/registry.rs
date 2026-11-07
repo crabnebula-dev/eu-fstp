@@ -277,6 +277,8 @@ pub enum TenantKind {
     /// The I-70 check of brand tokens. It returns the failing pairs and
     /// records nothing (M9 lane B1).
     CheckBranding,
+    /// `TenantCommand::SetTerminology` (M9 lane T1, I-72). High-risk.
+    SetTerminology,
     /// `TenantCommand::SetMailRelay` (M6 lane L6-EGR, ADR-018). High-risk.
     SetMailRelay,
 }
@@ -802,6 +804,17 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Tenant(TenantKind::SetBranding),
         Put,
         "/admin/branding",
+    )
+    .hr()
+    .acting(ADMIN),
+    // M9 lane T1: interface label overrides and the Voyage switch (I-72,
+    // O-55). It changes what every interface shows, so it is high-risk by
+    // the strict reading, as the brand tokens are (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.terminology.set",
+        OpKind::Tenant(TenantKind::SetTerminology),
+        Put,
+        "/admin/terminology",
     )
     .hr()
     .acting(ADMIN),
@@ -1814,6 +1827,7 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     // data protection texts are a tenant setting too.
     OpKind::Tenant(TenantKind::SetGuideNotice),
     OpKind::Tenant(TenantKind::SetBranding),
+    OpKind::Tenant(TenantKind::SetTerminology),
     OpKind::Tenant(TenantKind::SetMailRelay),
 ];
 

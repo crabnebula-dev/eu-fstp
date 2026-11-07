@@ -15,7 +15,7 @@ import { createI18n, I18nError } from "../src/core/i18n.js";
 import { HOME_LABELS } from "../src/home/messages.en.js";
 import { JOURNEY_LABELS } from "../src/journey/messages.en.js";
 import { CATALOGUE as PEOPLE } from "../src/people/messages.en.js";
-import { stateWithVoyage, vocabOptions, labelWithVoyage } from "../src/vocab/label.js";
+import { stateWithVoyage, terminologyOptions, vocabOptions, labelWithVoyage } from "../src/vocab/label.js";
 import { VOYAGE_LABELS } from "../src/vocab/voyage.js";
 import { asFake, freshDom } from "./support/fakedom.js";
 import { assert, eq, show, test, thrown } from "./support/harness.js";
@@ -161,4 +161,51 @@ test("r_wl_05_web_label_shows_the_voyage_line_beside_the_plain_label", () => {
   eq(on.children[0]?.textContent, "Programme set-up", "O-55: the plain label leads");
   eq(on.children[on.children.length - 1]?.getAttribute("class"), "voyage-label", "the secondary line");
   eq(on.children[on.children.length - 1]?.textContent, "Planning Studio", "the Voyage label");
+});
+
+// M9 lane T1: the tenant terminology and the Voyage switch (I-72, O-55).
+
+const CANARY = "Zanzibar canary";
+
+test("i72_web_tenant_terminology_reaches_labels_never_approved_text", () => {
+  const labels: Record<string, string> = {};
+  for (const key of [...Object.keys(PLAIN.labels), ...Object.keys(APPROVED)]) {
+    labels[key] = `${CANARY} ${key}`;
+  }
+  const t = createI18n({
+    catalogues: [{ locale: "en", labels: LABELS, approved: APPROVED }],
+    locale: "en",
+    ...terminologyOptions({ voyage: false, labels }, LABELS),
+  });
+  let changed = 0;
+  for (const key of Object.keys(LABELS)) {
+    if (key in labels && !LABELS[key]?.includes("{")) {
+      eq(t.label(key), `${CANARY} ${key}`, `the tenant label of ${key}`);
+      changed += 1;
+    }
+  }
+  assert(changed >= 16, `the check has teeth: ${changed} labels changed`);
+  for (const [id, text] of Object.entries(APPROVED)) {
+    if (text.includes("{")) {
+      continue;
+    }
+    eq(t.approved(id), text, `I-72: approved ${id} keeps its wording`);
+    assert(!text.includes(CANARY), `I-72: approved ${id} holds the canary`);
+  }
+});
+
+test("i72_web_voyage_line_follows_the_tenant_switch_o55", () => {
+  const make = (voyage: boolean) =>
+    createI18n({
+      catalogues: [{ locale: "en", labels: LABELS, approved: {} }],
+      locale: "en",
+      ...terminologyOptions({ voyage, labels: { "nav.my_applications": "My subgrants" } }, LABELS),
+    });
+  const off = make(false);
+  const on = make(true);
+  eq(off.label("nav.my_applications"), "My subgrants", "the tenant label leads");
+  eq(off.secondary("nav.my_applications"), null, "no Voyage line while off");
+  eq(on.label("nav.my_applications"), "My subgrants", "the tenant label leads when on");
+  eq(on.secondary("nav.my_applications"), "My voyages", "the Voyage line when on");
+  eq(on.label("journey.node.stage1"), "Stage 1 evaluation", "an unset label stays plain");
 });

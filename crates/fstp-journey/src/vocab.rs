@@ -12,7 +12,7 @@
 //! | Member | Value |
 //! | --- | --- |
 //! | `vocab_pack_version` | the integer 1 |
-//! | `pack` | `plain` or `voyage` |
+//! | `pack` | `plain`, `voyage` or `tenant` |
 //! | `labels` | an object from label key to label text |
 //!
 //! Rules, each refused with its own [`VocabErrorKind`]:
@@ -27,7 +27,7 @@
 //! - The keys of [`FIXED`] hold fixed respectful wording: the negative
 //!   outcomes and the withdrawal action (design 07 content rules). A pack
 //!   may repeat it and never change it.
-//! - The plain pack names every key. A Voyage pack may leave a key out,
+//! - The plain pack names every key. A Voyage or tenant pack may leave a key out,
 //!   and then shows no secondary line for it.
 //!
 //! Formal state names never come from a pack. [`Vocabulary::state`] takes
@@ -182,17 +182,21 @@ pub enum PackKind {
     Plain,
     /// `voyage`, switched on per tenant (O-55).
     Voyage,
+    /// `tenant`, the terminology a tenant admin sets (I-72, M9 lane T1). It
+    /// may leave keys out and may repeat fixed wording, never change it.
+    Tenant,
 }
 
 impl PackKind {
     /// Every kind.
-    pub const ALL: [PackKind; 2] = [PackKind::Plain, PackKind::Voyage];
+    pub const ALL: [PackKind; 3] = [PackKind::Plain, PackKind::Voyage, PackKind::Tenant];
 
     /// The kind as a pack file spells it.
     pub const fn as_str(self) -> &'static str {
         match self {
             PackKind::Plain => "plain",
             PackKind::Voyage => "voyage",
+            PackKind::Tenant => "tenant",
         }
     }
 }
@@ -304,6 +308,7 @@ impl Pack {
                 let want = match kind {
                     PackKind::Plain => f.plain,
                     PackKind::Voyage => f.voyage,
+                    PackKind::Tenant => f.plain,
                 };
                 if text != want {
                     return Err(VocabError::new(K::FixedWording, at));
@@ -433,12 +438,15 @@ pub struct StateShown<'a> {
     pub secondary: Option<&'a str>,
 }
 
-/// The label lookup of one tenant: the plain pack, and the Voyage pack
-/// when the tenant switched it on (O-55).
+/// The label lookup of one tenant: the plain pack, the tenant's own
+/// terminology pack when it set one (I-72), and the Voyage pack when the
+/// tenant switched it on (O-55). A label is the tenant text, else the
+/// plain text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vocabulary {
     plain: Pack,
     voyage: Option<Pack>,
+    tenant: Option<Pack>,
 }
 
 impl Vocabulary {
@@ -451,7 +459,21 @@ impl Vocabulary {
         if voyage.as_ref().is_some_and(|v| v.kind != PackKind::Voyage) {
             return Err(VocabError::new(VocabErrorKind::InvalidValue, "pack"));
         }
-        Ok(Vocabulary { plain, voyage })
+        Ok(Vocabulary {
+            plain,
+            voyage,
+            tenant: None,
+        })
+    }
+
+    /// The lookup with the tenant terminology `tenant` over the plain pack.
+    /// A pack of another kind is refused.
+    pub fn with_tenant(mut self, tenant: Pack) -> Result<Vocabulary, VocabError> {
+        if tenant.kind != PackKind::Tenant {
+            return Err(VocabError::new(VocabErrorKind::InvalidValue, "pack"));
+        }
+        self.tenant = Some(tenant);
+        Ok(self)
     }
 
     /// The shipped packs, with the Voyage pack when `voyage_on`.
@@ -462,7 +484,12 @@ impl Vocabulary {
 
     /// The label of `key`, or `None` for a key no pack may name.
     pub fn label(&self, key: &str) -> Option<Shown<'_>> {
-        let plain = self.plain.get(key)?;
+        let base = self.plain.get(key)?;
+        let plain = self
+            .tenant
+            .as_ref()
+            .and_then(|t| t.get(key))
+            .unwrap_or(base);
         let secondary = self
             .voyage
             .as_ref()

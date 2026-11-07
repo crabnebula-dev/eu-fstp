@@ -34,8 +34,8 @@ use crate::types::{
     ActivationRequestId, ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef,
     GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, MailRelay, McpSettings,
     Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, SignatoryRole,
-    StepFailure, StepOutcome, StepValues, TenantParam, TenantRevision, Token, TokenDigest,
-    VerifyMethod,
+    StepFailure, StepOutcome, StepValues, TenantParam, TenantRevision, Terminology, Token,
+    TokenDigest, VerifyMethod,
 };
 
 /// The record schema versions this build decodes. Version 1 is the only
@@ -400,6 +400,9 @@ fn command_value(cmd: &TenantCommand) -> Value {
         TenantCommand::ApproveActivation { request } => {
             tagged("ApproveActivation", vec![("request", dec(request.raw()))])
         }
+        TenantCommand::SetTerminology { terminology } => {
+            tagged("SetTerminology", terminology_members(terminology))
+        }
         TenantCommand::SetBranding { tokens, digest } => tagged(
             "SetBranding",
             vec![
@@ -551,6 +554,11 @@ fn record_value(rec: &TenantRecord) -> Value {
                 ("request", dec(request.raw())),
             ],
         ),
+        TenantRecord::TerminologySet { terminology, by } => {
+            let mut members = terminology_members(terminology);
+            members.push(("by", dec(by.raw())));
+            tagged("TerminologySet", members)
+        }
         TenantRecord::BrandingSet { tokens, digest, by } => tagged(
             "BrandingSet",
             vec![
@@ -650,6 +658,33 @@ fn take_i64(v: &Value) -> R<i64> {
 /// Brand tokens, by the strict rules of `fstp_brand::from_value` (I-68).
 fn take_brand(v: &Value) -> R<fstp_brand::BrandTokens> {
     fstp_brand::from_value(v).map_err(|e| err(e.0))
+}
+
+fn terminology_members(t: &Terminology) -> Vec<(&'static str, Value)> {
+    let mut labels = Object::new();
+    for (k, text) in &t.labels {
+        let _ = labels.insert(k.as_str(), s(text));
+    }
+    vec![
+        ("digest", s(&hex(&t.digest.bytes()))),
+        ("labels", Value::Object(labels)),
+        ("voyage_on", Value::Bool(t.voyage_on)),
+    ]
+}
+
+fn take_terminology(f: &Fields<'_>) -> R<Terminology> {
+    let Value::Object(raw) = f.get("labels")? else {
+        return Err(err("labels is not an object"));
+    };
+    let mut labels = std::collections::BTreeMap::new();
+    for (k, v) in raw.iter() {
+        let _ = labels.insert(k.to_owned(), str_of(v)?.to_owned());
+    }
+    Ok(Terminology {
+        labels,
+        voyage_on: bool_of(f.get("voyage_on")?)?,
+        digest: ContentDigest::from_bytes(take_digest(f.get("digest")?)?),
+    })
 }
 
 fn take_account(v: &Value) -> R<AccountId> {
@@ -1038,6 +1073,12 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 request: take_request(f.get("request")?)?,
             }
         }
+        "SetTerminology" => {
+            let f = Fields::of(v, &["digest", "kind", "labels", "voyage_on"])?;
+            TenantCommand::SetTerminology {
+                terminology: take_terminology(&f)?,
+            }
+        }
         "SetBranding" => {
             let f = Fields::of(v, &["digest", "kind", "tokens"])?;
             TenantCommand::SetBranding {
@@ -1170,6 +1211,13 @@ fn take_record(v: &Value) -> R<TenantRecord> {
                 at: take_instant(f.get("at")?)?,
             }
         }
+        "TerminologySet" => {
+            let f = Fields::of(v, &["by", "digest", "kind", "labels", "voyage_on"])?;
+            TenantRecord::TerminologySet {
+                terminology: take_terminology(&f)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
         "BrandingSet" => {
             let f = Fields::of(v, &["by", "digest", "kind", "tokens"])?;
             TenantRecord::BrandingSet {
@@ -1216,7 +1264,7 @@ mod tests {
             "save_payments", "invite_admin", "accept_admin_invitation", "approve_self_grant",
             "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
             "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding",
-            "set_mail_relay");
+            "set_terminology", "set_mail_relay");
         for (name, bytes) in seeds {
             let c = decode_command(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_command(&c).as_deref(), Ok(bytes), "{name}");
@@ -1232,7 +1280,7 @@ mod tests {
             "admin_added", "self_grant_approved", "self_grant_approval_used", "setting_p70",
             "inference_recorded", "completed", "signatory_granted", "signatory_ended",
             "activation_requested", "activation_approved", "branding_set",
-            "mail_relay_set");
+            "terminology_set", "mail_relay_set");
         for (name, bytes) in seeds {
             let r = decode_record(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_record(&r).as_deref(), Ok(bytes), "{name}");

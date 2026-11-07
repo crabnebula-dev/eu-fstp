@@ -6,8 +6,9 @@
 // proposal state also shows its formal name. Approved wording never goes
 // through here: `I18n.approved` has no secondary line.
 //
-// Seam, interim pending Daniel: no read carries the tenant switch yet, so
+// Seam, interim pending Daniel: no read carries the tenant terminology yet, so
 // pages build their catalogue with `vocabOptions("plain")` until one does.
+// `terminologyOptions` takes it once a read does (M9 lane T1).
 
 import { h } from "../core/dom.js";
 import type { I18n, I18nOptions } from "../core/i18n.js";
@@ -47,4 +48,32 @@ export function labelWithVoyage(t: I18n, id: string, args?: Readonly<Record<stri
  */
 export function stateWithVoyage(t: I18n, id: string, formal: string): HTMLElement {
   return build(t, id, undefined, formal);
+}
+
+/** A tenant's terminology as `tenant.terminology.set` records it (I-72, O-55). */
+export interface Terminology {
+  /** Whether the Voyage line shows beside each label. */
+  readonly voyage: boolean;
+  /** Interface label overrides, by label id. */
+  readonly labels: Readonly<Record<string, string>>;
+}
+
+/**
+ * The `createI18n` options for a tenant: its label overrides and the Voyage
+ * switch. An override reaches only an id that `catalogueLabels` holds as a
+ * label without a placeholder, so approved text and ids of other surfaces
+ * are dropped here and never overridden (I-72).
+ */
+export function terminologyOptions(
+  t: Terminology,
+  catalogueLabels: Readonly<Record<string, string>>,
+): Pick<I18nOptions, "secondary" | "overrides"> {
+  const overrides: Record<string, string> = {};
+  for (const [id, text] of Object.entries(t.labels)) {
+    const own = Object.prototype.hasOwnProperty.call(catalogueLabels, id) ? catalogueLabels[id] : undefined;
+    if (own !== undefined && !own.includes("{")) {
+      overrides[id] = text;
+    }
+  }
+  return { ...vocabOptions(t.voyage ? "voyage" : "plain"), overrides };
 }

@@ -313,6 +313,13 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetTerminology { terminology } => {
+            check_terminology(terminology)?;
+            Ok(vec![TenantRecord::TerminologySet {
+                terminology: terminology.clone(),
+                by,
+            }])
+        }
         TenantCommand::SetMailRelay { relay } => {
             if relay
                 .as_ref()
@@ -375,5 +382,15 @@ pub(crate) fn check_branding(tokens: &fstp_brand::BrandTokens) -> Result<(), Ten
         Ok(())
     } else {
         Err(TenantRefusal::BrandingContrast(failing))
+    }
+}
+
+/// I-68, I-72: the labels keep the shape bounds. The closed key list is
+/// checked by the vocabulary parser before the command is built.
+pub(crate) fn check_terminology(t: &crate::types::Terminology) -> Result<(), TenantRefusal> {
+    if t.well_formed() {
+        Ok(())
+    } else {
+        Err(TenantRefusal::TerminologyInvalid)
     }
 }

@@ -156,7 +156,6 @@ dependencies = [
  "fstp-domain",
  "fstp-html",
  "fstp-json",
- "fstp-pdf",
  "fstp-programme",
 ]
 
@@ -214,13 +213,6 @@ name = "fstp-money"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
-]
-
-[[package]]
-name = "fstp-pdf"
-version = "0.1.0"
-dependencies = [
- "fstp-crypto",
 ]
 
 [[package]]

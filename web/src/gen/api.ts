@@ -69,6 +69,7 @@ export type OpName =
   | "tenant.approve_activation"
   | "tenant.branding.check"
   | "tenant.branding.set"
+  | "tenant.terminology.set"
   | "tenant.set_mail_relay"
   | "me.get_verification"
   | "tenant.set_login_methods"
@@ -245,6 +246,7 @@ export interface OpParams {
   readonly "tenant.approve_activation": Readonly<Record<never, string>>;
   readonly "tenant.branding.check": Readonly<Record<never, string>>;
   readonly "tenant.branding.set": Readonly<Record<never, string>>;
+  readonly "tenant.terminology.set": Readonly<Record<never, string>>;
   readonly "tenant.set_mail_relay": Readonly<Record<never, string>>;
   readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
@@ -394,6 +396,7 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.approve_activation",
   "tenant.branding.check",
   "tenant.branding.set",
+  "tenant.terminology.set",
   "tenant.set_mail_relay",
   "me.get_verification",
   "tenant.set_login_methods",
@@ -730,6 +733,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/admin/branding",
     base: "api",
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "branding" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.terminology.set",
+    method: "PUT",
+    path: "/admin/terminology",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "terminology" }],
     params: [],
     body: true,
     highRisk: true,

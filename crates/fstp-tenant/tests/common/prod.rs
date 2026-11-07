@@ -589,6 +589,7 @@ fn record_view(r: &TenantRecord) -> RecordView {
         TenantRecord::ActivationRequested { by, .. } => RecordView::ActivationRequested { by: *by },
         TenantRecord::ActivationApproved { by, .. } => RecordView::ActivationApproved { by: *by },
         TenantRecord::BrandingSet { by, .. } => RecordView::BrandingSet { by: *by },
+        TenantRecord::TerminologySet { by, .. } => RecordView::TerminologySet { by: *by },
         TenantRecord::MailRelaySet { by, .. } => RecordView::MailRelaySet { by: *by },
     }
 }

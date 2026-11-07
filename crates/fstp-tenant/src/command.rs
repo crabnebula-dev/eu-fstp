@@ -8,7 +8,7 @@ use fstp_domain::time::Timestamp;
 use crate::types::{
     ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, MailRelay,
     ModelRef, OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
-    TenantRevision, TokenDigest,
+    TenantRevision, Terminology, TokenDigest,
 };
 
 /// The context of one tenant command, supplied by the shell.
@@ -141,6 +141,12 @@ pub enum TenantCommand {
         /// The digest of their canonical text, computed by the shell.
         digest: ContentDigest,
     },
+    /// Set the tenant terminology and the Voyage switch
+    /// (`tenant.terminology.set`, M9 lane T1). High-risk.
+    SetTerminology {
+        /// The labels and the switch.
+        terminology: Terminology,
+    },
     /// Set or clear the tenant's mail submission relay
     /// (`tenant.set_mail_relay`, M6 lane L6-EGR, ADR-018 proposed).
     /// High-risk: it decides where every message of the tenant goes.
@@ -181,13 +187,15 @@ pub enum TenantKind {
     ApproveActivation,
     /// `tenant.branding.set`.
     SetBranding,
+    /// `tenant.terminology.set`.
+    SetTerminology,
     /// `tenant.set_mail_relay`.
     SetMailRelay,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 20] = [
+    pub const ALL: [TenantKind; 21] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -207,6 +215,7 @@ impl TenantKind {
         TenantKind::RequestActivation,
         TenantKind::ApproveActivation,
         TenantKind::SetBranding,
+        TenantKind::SetTerminology,
         TenantKind::SetMailRelay,
     ];
 
@@ -222,7 +231,8 @@ impl TenantKind {
     ///   the high-risk table names programme activation only (interim,
     ///   pending Daniel).
     /// - Setting the brand tokens changes what every interface shows
-    ///   (M9 design section 2.2).
+    ///   (M9 design section 2.2). Setting the terminology changes
+    ///   every label the same way.
     /// - Setting the mail relay decides where every message of the tenant
     ///   goes (ADR-018, interim, pending Daniel).
     pub const fn high_risk(self) -> bool {
@@ -235,6 +245,7 @@ impl TenantKind {
                 | TenantKind::GrantSignatory
                 | TenantKind::EndSignatory
                 | TenantKind::SetBranding
+                | TenantKind::SetTerminology
                 | TenantKind::SetMailRelay
         )
     }
@@ -279,6 +290,7 @@ impl TenantCommand {
             TenantCommand::RequestActivation { .. } => TenantKind::RequestActivation,
             TenantCommand::ApproveActivation { .. } => TenantKind::ApproveActivation,
             TenantCommand::SetBranding { .. } => TenantKind::SetBranding,
+            TenantCommand::SetTerminology { .. } => TenantKind::SetTerminology,
             TenantCommand::SetMailRelay { .. } => TenantKind::SetMailRelay,
         }
     }
@@ -432,6 +444,13 @@ pub enum TenantRecord {
         tokens: BrandTokens,
         /// The digest of their canonical text.
         digest: ContentDigest,
+        /// The setting admin.
+        by: AccountId,
+    },
+    /// A tenant admin set the terminology (M9 lane T1).
+    TerminologySet {
+        /// The labels and the switch.
+        terminology: Terminology,
         /// The setting admin.
         by: AccountId,
     },
