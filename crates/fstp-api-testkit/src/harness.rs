@@ -580,7 +580,6 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         | "call.publish"
         | "proposal.create"
         | "proposal.withdraw"
-        | "proposal.request_copy"
         | "guardian.begin_consent"
         | "review.admit"
         | "review.close_stage1"
@@ -605,6 +604,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ])
         }
         "tenant.invite_admin" => obj(vec![("email", s("new-admin@matrix.invalid"))]),
+        "proposal.request_copy" => obj(vec![("email", s("copy@matrix.invalid"))]),
         "tenant.grant_signatory" => obj(vec![
             ("account", dec(SIGNATORY_GRANTEE.raw())),
             ("role", s("legal_signatory")),

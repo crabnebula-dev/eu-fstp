@@ -4,6 +4,7 @@
 // module and catches a mutant of it.
 
 import { type Checker, type FuzzTarget, readExpectations, runTarget } from "../fuzz/harness.js";
+import * as applicantWire from "../fuzz/applicant_wire.fuzz.js";
 import * as message from "../fuzz/message_format.fuzz.js";
 import * as money from "../fuzz/money_parse.fuzz.js";
 import * as returnPath from "../fuzz/return_path.fuzz.js";
@@ -59,6 +60,7 @@ test("th26_every_typescript_parser_has_a_fuzz_target", () => {
   eq(
     TARGETS.map((t) => t.name).sort(),
     [
+      "applicant_wire",
       "message_format",
       "money_parse",
       "pdf_document",
@@ -77,6 +79,16 @@ test("th26_every_typescript_parser_has_a_fuzz_target", () => {
   for (const t of TARGETS) {
     assert(t.seeds().length > 0, `${t.name} has seeds`);
     assert(readExpectations(t.name).length > 0, `${t.name} has an expect.tsv corpus`);
+  }
+});
+
+/** TH-26, ADR-014, R-GA-01: `applicant_wire` holds on a seeded run over web/src/applicant/wire.ts, and its corpus verdicts hold. */
+test("th26_applicant_wire_target_holds", async () => {
+  await holds(applicantWire.target);
+  const wire = await import("../src/applicant/wire.js");
+  for (const e of readExpectations("applicant_wire")) {
+    const got = wire.parseGuideHtml(e.input) === null ? "refused" : "guide";
+    eq(got, e.verdict, `applicant_wire line ${e.line}`);
   }
 });
 

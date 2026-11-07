@@ -1,0 +1,12 @@
+# applicant_wire corpus: stored Guide pages and server bodies of the
+# applicant pages (web/src/applicant/wire.ts). Each line is
+# <verdict><TAB><JSON string>. The verdict is `guide` when parseGuideHtml
+# accepts the input as a page, and `refused` when it does not.
+guide	"<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Guide for Applicants</title></head><body><main class=\"guide\"><h1>Guide for Applicants</h1><h2>Call at a glance</h2><p>Deadline: <span class=\"slot-call-deadline\">2026-12-01</span></p><ul><li>One</li><li>Two &amp; three</li></ul><table><thead><tr><th>Item</th></tr></thead><tbody><tr><td>x</td></tr></tbody></table><p class=\"guide-note\">The pre-check is not yet available.</p><hr><p><a href=\"https://platform.fstp.test/\">platform</a> <strong>bold</strong> <code>c</code></p><section class=\"guide-corrigenda\" id=\"corrigenda\"><h2>Corrigenda</h2></section></main></body></html>"
+guide	"<main><script>x()</script><p>kept</p></main>"
+guide	"<main><p>&lt;img src=x&gt; stays text</p></main>"
+refused	"<main><p>unclosed"
+refused	"<p>no main</p>"
+refused	"<main><p>&bogus;</p></main>"
+refused	"{\"call\":\"1\",\"version\":1,\"digest\":\"x\",\"html\":\"\"}"
+refused	"[{\"call\":\"1\",\"title\":\"t\",\"deadline\":\"1\",\"zone\":\"Europe/Brussels\"}]"

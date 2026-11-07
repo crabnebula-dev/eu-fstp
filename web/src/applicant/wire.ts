@@ -269,73 +269,296 @@ export function decodeCall(v: unknown): CallDetail | null {
   return Object.freeze({ call, title, deadline, zone, currency: "EUR", amounts: Object.freeze(amounts), open });
 }
 
-/** One block of a Guide section. */
-export type GuideBlock =
-  | { readonly kind: "paragraph"; readonly text: string }
-  | { readonly kind: "list"; readonly items: readonly string[] }
-  | { readonly kind: "table"; readonly head: readonly string[]; readonly rows: readonly (readonly string[])[] };
+/**
+ * One node of a stored Guide page: a text, or an element of the Guide
+ * subset with its children. Only `a` keeps an attribute, its `href`,
+ * which the page still passes through `safeUrl`.
+ */
+export type GuideNode = string | GuideElement;
 
-/** One Guide section: a heading and its blocks. */
-export interface GuideSection {
-  readonly heading: string;
-  readonly blocks: readonly GuideBlock[];
+/** An element of the Guide subset. */
+export interface GuideElement {
+  readonly tag: GuideTag;
+  readonly href: string | null;
+  readonly children: readonly GuideNode[];
 }
 
-/** The Guide for Applicants of a call, `calls.guide`. */
+/**
+ * The elements the Guide page keeps (`fstp-guide` `render.rs` and the
+ * corrigenda of `corrigendum.rs`). Every other element is dropped with
+ * its content, so the browser never builds an element the Guide writer
+ * does not emit.
+ */
+export const GUIDE_TAGS = [
+  "section", "div", "h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "li", "table", "thead",
+  "tbody", "tr", "th", "td", "strong", "em", "b", "i", "code", "span", "a", "hr", "br",
+] as const;
+
+/** One tag of [`GUIDE_TAGS`]. */
+export type GuideTag = (typeof GUIDE_TAGS)[number];
+
+const GUIDE_TAG_SET: ReadonlySet<string> = new Set(GUIDE_TAGS);
+const VOID_TAGS: ReadonlySet<string> = new Set(["br", "hr", "wbr", "img", "input", "meta", "link"]);
+
+/** The longest stored page the browser parses, in UTF-16 code units. */
+export const GUIDE_MAX_HTML = 2_000_000;
+/** The deepest element nesting kept. A deeper page is refused. */
+export const GUIDE_MAX_DEPTH = 64;
+
+/** The Guide for Applicants of a call, `calls.guide` (R-GA-01, I-53). */
 export interface Guide {
-  readonly sections: readonly GuideSection[];
+  readonly call: string;
+  readonly version: number;
+  readonly digest: string;
+  /** The content of the stored page's `main` element. */
+  readonly nodes: readonly GuideNode[];
 }
 
-function strings(v: unknown): readonly string[] | null {
-  return list(v, (x) => (typeof x === "string" ? x : null));
+const DIGEST = /^[0-9a-f]{64}$/;
+const TAG_NAME = /^[A-Za-z][A-Za-z0-9]*$/;
+
+/** Decodes the character references the `fstp-html` writer emits, and numeric ones. */
+function unescapeHtml(s: string): string | null {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const amp = s.indexOf("&", i);
+    if (amp < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, amp);
+    const semi = s.indexOf(";", amp);
+    if (semi < 0 || semi - amp > 10) {
+      return null;
+    }
+    const name = s.slice(amp + 1, semi);
+    let ch: string | null = null;
+    if (name === "amp") ch = "&";
+    else if (name === "lt") ch = "<";
+    else if (name === "gt") ch = ">";
+    else if (name === "quot") ch = '"';
+    else if (name === "apos") ch = "'";
+    else if (name === "nbsp") ch = " ";
+    else if (/^#[0-9]{1,7}$/.test(name) || /^#[xX][0-9A-Fa-f]{1,6}$/.test(name)) {
+      const cp = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+      ch = cp > 0 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff) ? String.fromCodePoint(cp) : null;
+    }
+    if (ch === null) {
+      return null;
+    }
+    out += ch;
+    i = semi + 1;
+  }
+  return out;
 }
 
-function guideBlock(v: unknown): GuideBlock | null {
-  const o = rec(v);
-  if (o === null) {
+/** A mutable element while the tree is built. */
+interface Open {
+  readonly tag: string;
+  readonly href: string | null;
+  readonly children: GuideNode[];
+}
+
+/**
+ * Parses a stored Guide page into the nodes of its `main` element, or
+ * null when the page is not of the writer's subset: an unclosed tag or
+ * comment, a malformed attribute or reference, too deep, or no `main`.
+ * It builds values only and touches no DOM, so no string reaches an HTML
+ * parser (ADR-014). Elements outside [`GUIDE_TAGS`] are dropped with
+ * their content.
+ */
+export function parseGuideHtml(html: string): readonly GuideNode[] | null {
+  if (html.length > GUIDE_MAX_HTML) {
     return null;
   }
-  switch (member(o, "kind")) {
-    case "paragraph": {
-      const t = text(o, "text");
-      return t === null ? null : Object.freeze({ kind: "paragraph", text: t });
+  const root: Open = { tag: "#root", href: null, children: [] };
+  const stack: Open[] = [root];
+  // Depth inside a dropped element; its content is dropped too.
+  let dropped = 0;
+  const dropStack: string[] = [];
+  let main: Open | null = null;
+  let mainClosed = false;
+  let i = 0;
+  const top = (): Open => stack[stack.length - 1] ?? root;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    const end = lt < 0 ? html.length : lt;
+    if (end > i) {
+      const t = unescapeHtml(html.slice(i, end));
+      if (t === null) {
+        return null;
+      }
+      if (dropped === 0 && main !== null && !mainClosed) {
+        top().children.push(t);
+      }
     }
-    case "list": {
-      const items = strings(member(o, "items"));
-      return items === null ? null : Object.freeze({ kind: "list", items });
+    if (lt < 0) {
+      break;
     }
-    case "table": {
-      const head = strings(member(o, "head"));
-      const rows = list(member(o, "rows"), strings);
-      return head === null || rows === null ? null : Object.freeze({ kind: "table", head, rows });
+    if (html.startsWith("<!--", lt)) {
+      const close = html.indexOf("-->", lt + 4);
+      if (close < 0) {
+        return null;
+      }
+      i = close + 3;
+      continue;
     }
-    default:
+    const gt = html.indexOf(">", lt);
+    if (gt < 0) {
       return null;
+    }
+    const raw = html.slice(lt + 1, gt);
+    i = gt + 1;
+    if (raw.startsWith("!")) {
+      continue;
+    }
+    if (raw.startsWith("/")) {
+      const name = raw.slice(1).trim().toLowerCase();
+      if (!TAG_NAME.test(name)) {
+        return null;
+      }
+      if (dropped > 0) {
+        if (dropStack[dropStack.length - 1] === name) {
+          dropStack.pop();
+          dropped--;
+        }
+        continue;
+      }
+      if (name === "main" && main !== null && !mainClosed) {
+        while (stack.length > 0 && top() !== main) stack.pop();
+        mainClosed = true;
+        continue;
+      }
+      if (main === null || mainClosed) {
+        continue;
+      }
+      for (let k = stack.length - 1; k >= 0; k--) {
+        const o = stack[k];
+        if (o === main) break;
+        if (o !== undefined && o.tag === name) {
+          stack.length = k;
+          break;
+        }
+      }
+      continue;
+    }
+    const tag = parseTag(raw);
+    if (tag === null) {
+      return null;
+    }
+    const selfClosing = raw.endsWith("/") || VOID_TAGS.has(tag.name);
+    if (dropped > 0) {
+      if (!selfClosing) {
+        dropStack.push(tag.name);
+        dropped++;
+      }
+      continue;
+    }
+    if (tag.name === "main") {
+      if (main !== null) {
+        return null;
+      }
+      main = { tag: "main", href: null, children: [] };
+      stack.length = 1;
+      stack.push(main);
+      continue;
+    }
+    if (main === null || mainClosed) {
+      continue;
+    }
+    if (!GUIDE_TAG_SET.has(tag.name)) {
+      if (!selfClosing) {
+        dropStack.push(tag.name);
+        dropped++;
+      }
+      continue;
+    }
+    const el: Open = { tag: tag.name, href: tag.name === "a" ? tag.href : null, children: [] };
+    top().children.push(el as unknown as GuideElement);
+    if (!selfClosing) {
+      if (stack.length > GUIDE_MAX_DEPTH) {
+        return null;
+      }
+      stack.push(el);
+    }
+  }
+  if (main === null || !mainClosed) {
+    return null;
+  }
+  return freeze(main.children);
+}
+
+function freeze(nodes: readonly GuideNode[]): readonly GuideNode[] {
+  return Object.freeze(
+    nodes.map((n) =>
+      typeof n === "string"
+        ? n
+        : Object.freeze({ tag: n.tag, href: n.href, children: freeze(n.children) }),
+    ),
+  );
+}
+
+/** The name and the `href` of a start tag's text, without its `<` and `>`. */
+function parseTag(raw: string): { readonly name: string; readonly href: string | null } | null {
+  const m = /^([A-Za-z][A-Za-z0-9]*)/.exec(raw);
+  if (m === null || m[1] === undefined) {
+    return null;
+  }
+  const name = m[1].toLowerCase();
+  let rest = raw.slice(m[1].length);
+  if (rest.endsWith("/")) {
+    rest = rest.slice(0, -1);
+  }
+  let href: string | null = null;
+  const attr = /^\s+([A-Za-z_:][A-Za-z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/;
+  for (;;) {
+    if (/^\s*$/.test(rest)) {
+      return { name, href };
+    }
+    const a = attr.exec(rest);
+    if (a === null || a[1] === undefined) {
+      return null;
+    }
+    const value = a[2] ?? a[3] ?? a[4] ?? "";
+    const text = unescapeHtml(value);
+    if (text === null) {
+      return null;
+    }
+    if (a[1].toLowerCase() === "href") {
+      href = text;
+    }
+    rest = rest.slice(a[0].length);
   }
 }
 
 /**
- * `calls.guide`: `{sections: [{heading, blocks: [block]}]}`, where a
- * block is `{kind: "paragraph", text}`, `{kind: "list", items}` or
- * `{kind: "table", head, rows}`. Interim, pending lanes W2c and W3b:
- * the cell sends the Guide as structured text, so the browser parses no
- * Markdown and builds every element itself.
+ * `calls.guide`: `{call, version, digest, html}` (M4 design 15.0, lane
+ * mguide). `html` is the page its publication stored, with its
+ * corrigenda. The page keeps the nodes of its `main` element only.
  */
 export function decodeGuide(v: unknown): Guide | null {
   const o = rec(v);
   if (o === null) {
     return null;
   }
-  const sections = list(member(o, "sections"), (x) => {
-    const s = rec(x);
-    if (s === null) {
-      return null;
-    }
-    const heading = text(s, "heading");
-    const blocks = list(member(s, "blocks"), guideBlock);
-    return heading === null || blocks === null ? null : Object.freeze({ heading, blocks });
-  });
-  return sections === null ? null : Object.freeze({ sections });
+  const call = id(o, "call");
+  const version = member(o, "version");
+  const digest = text(o, "digest");
+  const html = text(o, "html");
+  if (
+    call === null ||
+    typeof version !== "number" ||
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    digest === null ||
+    !DIGEST.test(digest) ||
+    html === null
+  ) {
+    return null;
+  }
+  const nodes = parseGuideHtml(html);
+  return nodes === null ? null : Object.freeze({ call, version, digest, nodes });
 }
 
 // ---------------------------------------------------------------------------

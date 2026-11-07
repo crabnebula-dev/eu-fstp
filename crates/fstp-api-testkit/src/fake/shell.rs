@@ -272,6 +272,19 @@ impl CellEnvironment {
             ..*ctx
         };
         for t in fstp_creator::preview_targets(&state.creator, programme) {
+            // A granted invitation passed its SoD guards at the grant. A
+            // second grant of the held binding is refused as a duplicate
+            // (M4 design 15.0, 2026-10-31), which is no SoD outcome.
+            let held = state.core.roster().bindings().any(|(_, b)| {
+                b.account == t.account
+                    && b.programme == programme
+                    && b.role == t.role
+                    && b.status == fstp_domain::roles::BindingStatus::Active
+            });
+            if held {
+                let _ = out.outcomes.insert(t.invitation, PreviewOutcome::Admitted);
+                continue;
+            }
             let grant = fstp_domain::Command::GrantRole {
                 binding: BindingId::from_raw(0),
                 account: t.account,

@@ -3,6 +3,7 @@
 // them, and web/test checks the list.
 
 import type { FuzzTarget } from "./harness.js";
+import { target as applicantWire } from "./applicant_wire.fuzz.js";
 import { target as messageFormat } from "./message_format.fuzz.js";
 import { target as moneyParse } from "./money_parse.fuzz.js";
 import { target as pdfDocument } from "./pdf_document.fuzz.js";
@@ -30,4 +31,5 @@ export const TARGETS: readonly FuzzTarget[] = [
   pdfPrepare,
   pdfPrepareDifferential,
   routeTree,
+  applicantWire,
 ];
