@@ -357,7 +357,7 @@ ADR-004's drafts of 2026-10-28 use two aws-lc-rs functions that the Tier A row a
 
 ## Amendment of 2026-11-06: public TLS root store
 
-Status: Accepted by Daniel in principle on 2026-11-06, as relayed by the lead for lane tlsroots. The exact version, licence notice and tree below await his review.
+Status: Accepted by Daniel Thompson-Yvetot on 2026-11-06 and confirmed on 2026-11-07, with the exact version and tree below. The licence notice obligation stays `TODO(legal)`.
 
 Context: production SMTP relays (M6, `m6-design.md` Q1) and inference endpoints (M7, `m7-design.md` Q2, the Anthropic Messages API by default) present certificates under public CAs. No crate of this ADR shipped public roots, so `fstp-tls` could trust only PEM roots that a caller supplied.
 

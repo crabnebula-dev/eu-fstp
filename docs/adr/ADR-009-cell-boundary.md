@@ -151,9 +151,9 @@ pub enum VaultDestination {
 - A new variant needs an amendment of this ADR. Email in M6 and payment adapters in M5 each add theirs that way.
 - **Vault documents.** Design sections 4.3 and 4.8 keep sealed identity documents in object storage, and `vault.document` holds a sealed object reference. B4a gives the vault no object storage connection. This conflict is an open point. Strict interim: no `VaultDestination` variant is added, and the vault stores sealed document bytes in its own database.
 
-### Proposed amendment: assessor egress (M7, pending Daniel)
+### Amendment: assessor egress (M7, accepted by Daniel on 2026-11-07)
 
-Drafted 2026-11-06 by lane L-SEAM of `docs/handoff/m7-design.md` (section 3.1, Q1 and Q2), with ADR-019 (Proposed). Nothing here is accepted. No connector builds these members before Daniel accepts them.
+Drafted 2026-11-06 by lane L-SEAM of `docs/handoff/m7-design.md` (section 3.1, Q1 and Q2), with ADR-019. Daniel accepted this amendment and ADR-019 on 2026-11-07, so connectors may build these members.
 
 The assessor is a separate process, `fstp-assessor`, spawned by the cell. It has no database credential and no ledger access. It opens connections only through its own closed enum:
 
@@ -300,7 +300,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 - **Root on hosts.** Settled by Daniel on 2026-10-28 (Q35 A). Confidential computing stays an L-15 evaluation item.
 - **Legal markers.** Two `TODO(legal)` markers in this ADR have no L- number: rate limiting on client addresses, and storing reviewers' relatives. Both are listed in `SPEC/10-open-questions.md` for Daniel to number.
 - **Keystore snapshot destinations.** The two `KeystoreSnapshots` members proposed by ADR-012, and `fstp-control` as a witness client for restore declarations. Both wait for Daniel with ADR-012.
-- **Assessor egress.** The `AssessorDestination` members proposed with ADR-019 for M7. They wait for Daniel with Q1 and Q2.
+- **Assessor egress.** The `AssessorDestination` members of ADR-019 for M7. Accepted by Daniel on 2026-11-07.
 - **Q34 wording.** A wording proposal for R-NF-09 is with Daniel (Q28).
 - **OVHcloud verify items.** Whether OKMS REST accepts an access certificate as mutual TLS. Whether the Public Cloud Load Balancer's TCP listener forwards the ClientHello unchanged and can pass the client address. Whether OVHcloud offers confidential computing for cell and vault hosts. None of these is assumed here.
 
