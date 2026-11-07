@@ -40,10 +40,6 @@ fstp-tls.workspace = true
 fstp-smtp.workspace = true
 fstp-brand.workspace = true
 
-[dev-dependencies]
-# M6 lane L6-EGR: the mail submission egress of the cell, driven against the
-# test SMTP sink (ADR-018). A dev-dependency only: rule A9 bars the reverse.
-fstp-cell.workspace = true
 
 [lints]
 workspace = true

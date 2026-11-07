@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-mail = { path = "../../fstp-mail" }
+fstp-dispatch = { path = ".." }
 
 [[bin]]
 name = "dispatch_prepare"

@@ -192,7 +192,6 @@ dependencies = [
  "fstp-access",
  "fstp-api-core",
  "fstp-brand",
- "fstp-cell",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
@@ -343,6 +342,8 @@ name = "fstp-celltest"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "fstp-api-core",
+ "fstp-api-testkit",
  "fstp-audit",
  "fstp-auth",
  "fstp-backup",
@@ -358,11 +359,14 @@ dependencies = [
  "fstp-edge",
  "fstp-engine",
  "fstp-http",
+ "fstp-json",
  "fstp-keyd",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-mail",
  "fstp-mc",
  "fstp-migrate",
+ "fstp-money",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgtest",
@@ -372,6 +376,7 @@ dependencies = [
  "fstp-release",
  "fstp-release-svc",
  "fstp-rt",
+ "fstp-smtp",
  "fstp-tls",
  "fstp-vault",
  "fstp-vault-core",
@@ -484,9 +489,7 @@ dependencies = [
 name = "fstp-dispatch"
 version = "0.1.0"
 dependencies = [
- "fstp-api-testkit",
  "fstp-audit",
- "fstp-celltest",
  "fstp-crypto",
  "fstp-domain",
  "fstp-keys",

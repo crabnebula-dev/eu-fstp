@@ -21,10 +21,6 @@ fstp-rt.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
-# Test only: the loopback SMTP sink (T3, T5) and the canaries and scanner
-# (T5). Dev edges only, as layering rule 9 allows.
-fstp-api-testkit = { path = "../fstp-api-testkit" }
-fstp-celltest = { path = "../fstp-celltest" }
 fstp-tls.workspace = true
 # The fstp-pgstore test harness (T3), shared by path.
 fstp-pgtest.workspace = true
