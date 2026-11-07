@@ -360,6 +360,16 @@ pub enum OutboxEvent {
         /// The binding.
         binding: BindingId,
     },
+    /// The lead asked for a copy of the submission record (R-SB-04, M6
+    /// design reading 4). It holds ids only: the address is a sealed text
+    /// of the text store, named by its reference (ADR-007). The entry
+    /// time is the request time, which the TH-21 limit counts.
+    CopyRequested {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The sealed address text.
+        address: TextRef,
+    },
 }
 
 /// A core ledger record.

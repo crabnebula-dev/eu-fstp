@@ -47,38 +47,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::id::{AccountId, ProposalId, TextRef};
-use fstp_domain::time::Timestamp;
-
-/// The most copies of one proposal a lead may ask for in a day (M6
-/// design reading 4, TH-21).
-pub(crate) const COPIES_PER_DAY: usize = 3;
-
-/// A day in microseconds.
-const DAY_MICROS: i64 = 86_400_000_000;
-
-/// A request for a copy of the application (R-SB-04): ids and times only.
-/// The address is the sealed text `address` names (ADR-007), never a
-/// member here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CopyRequest {
-    /// The proposal.
-    pub(crate) proposal: ProposalId,
-    /// The stored address.
-    pub(crate) address: TextRef,
-    /// When it was asked for.
-    pub(crate) at: Timestamp,
-}
-
-/// The outcome of `ContentStore::request_copy`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CopyOutcome {
-    /// The request is recorded.
-    Recorded,
-    /// The proposal had its copies of the last day (TH-21).
-    Limited,
-    /// The store is full.
-    Full,
-}
 
 /// The longest title, in bytes (interim, pending Daniel).
 pub(crate) const TITLE_LIMIT: usize = 300;
@@ -120,7 +88,6 @@ pub(crate) struct ContentStore {
     submitted: BTreeMap<ProposalId, Workspace>,
     texts: BTreeMap<u128, String>,
     acknowledged: BTreeSet<(AccountId, ProposalId)>,
-    copies: Vec<CopyRequest>,
 }
 
 impl ContentStore {
@@ -206,34 +173,6 @@ impl ContentStore {
         self.acknowledged.contains(&(account, proposal))
     }
 
-    /// Whether `proposal` may have one more copy at `now`: fewer than
-    /// [`COPIES_PER_DAY`] requests in the day before it (TH-21).
-    pub(crate) fn copy_allowed(&self, proposal: ProposalId, now: Timestamp) -> bool {
-        let since = now.micros().saturating_sub(DAY_MICROS);
-        self.copies
-            .iter()
-            .filter(|c| c.proposal == proposal && c.at.micros() > since)
-            .count()
-            < COPIES_PER_DAY
-    }
-
-    /// Records a copy request, within the limit of `copy_allowed`.
-    ///
-    /// Interim, pending the lead and the M6 lanes: the request belongs in
-    /// an `OutboxEnqueued(CopyRequested)` ledger record that the M6
-    /// timeline fires as an immediate event (M6 design section 6). No
-    /// domain command appends one yet, so it is kept here.
-    pub(crate) fn request_copy(&mut self, req: CopyRequest) -> CopyOutcome {
-        if !self.copy_allowed(req.proposal, req.at) {
-            return CopyOutcome::Limited;
-        }
-        if self.copies.len() >= MAX_TEXTS {
-            return CopyOutcome::Full;
-        }
-        self.copies.push(req);
-        CopyOutcome::Recorded
-    }
-
     /// Remembers the text stored under `r`.
     pub(crate) fn remember(&mut self, r: TextRef, text: &str) {
         if self.texts.contains_key(&r.id().raw()) || self.texts.len() < MAX_TEXTS {
@@ -295,38 +234,5 @@ mod tests {
         assert_eq!(s.title_of(p), None);
         s.freeze(p);
         assert_eq!(s.submitted(p), None);
-    }
-
-    /// R-SB-04 and TH-21 (M6 design reading 4): a proposal gets at most
-    /// three copies a day. A fourth in the same day is limited, another
-    /// proposal is not affected, and a day later the lead may ask again.
-    #[test]
-    fn th21_r_sb_04_copy_requests_are_limited_per_proposal_per_day() {
-        let mut s = ContentStore::default();
-        let p = ProposalId::from_raw(1);
-        let q = ProposalId::from_raw(2);
-        let r = TextRef::new(
-            fstp_domain::id::TextId::from_raw(9),
-            fstp_domain::id::ContentDigest::from_bytes([0; 32]),
-        );
-        let at = |m: i64| CopyRequest {
-            proposal: p,
-            address: r,
-            at: Timestamp::from_micros(m),
-        };
-        let day = DAY_MICROS;
-        for i in 0..3 {
-            assert_eq!(s.request_copy(at(day + i)), CopyOutcome::Recorded);
-        }
-        assert_eq!(s.request_copy(at(day + 10)), CopyOutcome::Limited);
-        assert_eq!(
-            s.request_copy(CopyRequest {
-                proposal: q,
-                ..at(day + 10)
-            }),
-            CopyOutcome::Recorded
-        );
-        assert!(!s.copy_allowed(p, Timestamp::from_micros(2 * day - 1)));
-        assert_eq!(s.request_copy(at(2 * day + 1)), CopyOutcome::Recorded);
     }
 }

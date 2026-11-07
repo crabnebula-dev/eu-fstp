@@ -1090,6 +1090,10 @@ fn sample(kind: CommandKind) -> Command {
         },
         K::DeclineNegotiation => Command::DeclineNegotiation { proposal },
         K::Withdraw => Command::Withdraw { proposal },
+        K::RequestCopy => Command::RequestCopy {
+            proposal,
+            address: text_ref(17),
+        },
         K::StartExecution => Command::StartExecution { proposal },
         K::Complete => Command::Complete { proposal },
         K::Terminate => Command::Terminate {

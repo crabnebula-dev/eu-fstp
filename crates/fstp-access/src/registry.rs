@@ -829,6 +829,25 @@ pub const OPS: &[OpSpec] = &[
     )
     .hr()
     .acting(ADMIN),
+    // M6 lane L6-API: the relay setting as the admin reads it (host and
+    // whether a CA is pinned, never the credential), its clearing, which
+    // is high-risk as setting it is, and the delivery log (M6 design
+    // section 6). Web only.
+    OpSpec::read(
+        "tenant.get_mail_relay",
+        RK::GetMailRelay,
+        "/admin/settings/mail-relay",
+    )
+    .acting(ADMIN),
+    OpSpec::new(
+        "tenant.clear_mail_relay",
+        OpKind::Tenant(TenantKind::SetMailRelay),
+        Delete,
+        "/admin/settings/mail-relay",
+    )
+    .hr()
+    .acting(ADMIN),
+    OpSpec::read("tenant.deliveries", RK::ListDeliveries, "/admin/deliveries").acting(ADMIN),
     // I-86: the caller's own verification state, never through MCP.
     OpSpec::read(
         "me.get_verification",
@@ -1175,6 +1194,14 @@ pub const OPS: &[OpSpec] = &[
     // Lane mcreator: the Planning Studio's list of a programme's calls,
     // each with its state and whether the caller may approve it (R-PC-03).
     OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_STAFF),
+    // M6 lane L6-API: the scheduled, cancelled and fired events of a
+    // programme (M6 design section 6). Web only.
+    OpSpec::read(
+        "programme.timeline",
+        RK::GetProgrammeTimeline,
+        "/programmes/{programme}/timeline",
+    )
+    .acting(MANAGER),
     // J4: public pages, open calls and applicants.
     OpSpec::public("public.programme", PublicKind::Programme, "/p/{slug}").tool(
         "fstp_public_get_programme",

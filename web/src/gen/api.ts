@@ -71,6 +71,9 @@ export type OpName =
   | "tenant.branding.set"
   | "tenant.terminology.set"
   | "tenant.set_mail_relay"
+  | "tenant.get_mail_relay"
+  | "tenant.clear_mail_relay"
+  | "tenant.deliveries"
   | "me.get_verification"
   | "tenant.set_login_methods"
   | "tenant.set_step_up_freshness"
@@ -116,6 +119,7 @@ export type OpName =
   | "call.publish"
   | "call.board"
   | "call.list"
+  | "programme.timeline"
   | "public.programme"
   | "public.list_open_calls"
   | "public.call"
@@ -248,6 +252,9 @@ export interface OpParams {
   readonly "tenant.branding.set": Readonly<Record<never, string>>;
   readonly "tenant.terminology.set": Readonly<Record<never, string>>;
   readonly "tenant.set_mail_relay": Readonly<Record<never, string>>;
+  readonly "tenant.get_mail_relay": Readonly<Record<never, string>>;
+  readonly "tenant.clear_mail_relay": Readonly<Record<never, string>>;
+  readonly "tenant.deliveries": Readonly<Record<never, string>>;
   readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
   readonly "tenant.set_step_up_freshness": Readonly<Record<never, string>>;
@@ -293,6 +300,7 @@ export interface OpParams {
   readonly "call.publish": { readonly "call": string };
   readonly "call.board": { readonly "call": string };
   readonly "call.list": { readonly "programme": string };
+  readonly "programme.timeline": { readonly "programme": string };
   readonly "public.programme": { readonly "slug": string };
   readonly "public.list_open_calls": { readonly "slug": string };
   readonly "public.call": { readonly "slug": string; readonly "call": string };
@@ -398,6 +406,9 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.branding.set",
   "tenant.terminology.set",
   "tenant.set_mail_relay",
+  "tenant.get_mail_relay",
+  "tenant.clear_mail_relay",
+  "tenant.deliveries",
   "me.get_verification",
   "tenant.set_login_methods",
   "tenant.set_step_up_freshness",
@@ -443,6 +454,7 @@ export const OP_NAMES: readonly OpName[] = [
   "call.publish",
   "call.board",
   "call.list",
+  "programme.timeline",
   "public.programme",
   "public.list_open_calls",
   "public.call",
@@ -766,6 +778,48 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: true,
     binding: false,
     session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.get_mail_relay",
+    method: "GET",
+    path: "/admin/settings/mail-relay",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "mail-relay" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.clear_mail_relay",
+    method: "DELETE",
+    path: "/admin/settings/mail-relay",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "mail-relay" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.deliveries",
+    method: "GET",
+    path: "/admin/deliveries",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "deliveries" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
     classification: "confidential",
     tool: null,
   },
@@ -1391,6 +1445,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/programmes/{programme}/calls",
     base: "api",
     segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "calls" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "programme.timeline",
+    method: "GET",
+    path: "/programmes/{programme}/timeline",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "timeline" }],
     params: ["programme"],
     body: false,
     highRisk: false,
@@ -3173,6 +3241,39 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       }, optional: false },
     },
   },
+  "tenant.get_mail_relay": {
+    kind: "object",
+    fields: {
+      "relay": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "host": { schema: { kind: "string" }, optional: false },
+          "ca_pinned": { schema: { kind: "bool" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "tenant.deliveries": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "outbox": { schema: { kind: "string" }, optional: false },
+      "template": { schema: { kind: "string" }, optional: false },
+      "event": { schema: { kind: "string" }, optional: false },
+      "template_version": { schema: { kind: "id" }, optional: false },
+      "phase": { schema: { kind: "enum", values: ["claimed", "committing", "sent", "transient", "permanent", "in_doubt"] }, optional: false },
+      "attempts": { schema: { kind: "int" }, optional: false },
+      "reply_code": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
+    },
+  } },
+  "programme.timeline": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "event": { schema: { kind: "string" }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested"] }, optional: false },
+      "due": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["scheduled", "cancelled", "fired"] }, optional: false },
+    },
+  } },
   "me.get_verification": {
     kind: "object",
     fields: {

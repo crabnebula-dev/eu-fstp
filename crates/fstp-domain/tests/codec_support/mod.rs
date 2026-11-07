@@ -1602,7 +1602,7 @@ fn rules(g: &mut Gen) -> RulesVersion {
 }
 
 fn outbox(g: &mut Gen, d: &mut Draw) -> OutboxEvent {
-    match g.u8_in(0..=3) {
+    match g.u8_in(0..=4) {
         0 => OutboxEvent::ProposalOutcome {
             proposal: id(g, d, ProposalId::from_raw),
             state: state_tag(g),
@@ -1613,6 +1613,10 @@ fn outbox(g: &mut Gen, d: &mut Draw) -> OutboxEvent {
         },
         2 => OutboxEvent::NotifiableConflict {
             proposal: id(g, d, ProposalId::from_raw),
+        },
+        3 => OutboxEvent::CopyRequested {
+            proposal: id(g, d, ProposalId::from_raw),
+            address: text(g, d),
         },
         _ => OutboxEvent::BindingEnded {
             binding: id(g, d, BindingId::from_raw),
@@ -1857,6 +1861,10 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         },
         CommandKind::Withdraw => Command::Withdraw {
             proposal: id(g, d, ProposalId::from_raw),
+        },
+        CommandKind::RequestCopy => Command::RequestCopy {
+            proposal: id(g, d, ProposalId::from_raw),
+            address: text(g, d),
         },
         CommandKind::StartExecution => Command::StartExecution {
             proposal: id(g, d, ProposalId::from_raw),

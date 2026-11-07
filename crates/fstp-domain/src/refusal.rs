@@ -118,6 +118,8 @@ pub enum RuleRef {
     Rsb02,
     /// R-SB-03: withdrawal before contract signature.
     Rsb03,
+    /// R-SB-04: a copy of the application at an address the applicant gives.
+    Rsb04,
     /// R-SB-05: ethics self-declaration.
     Rsb05,
     /// R-EV-01: a failed knock-out ends review.
@@ -191,7 +193,7 @@ pub enum RuleRef {
 impl RuleRef {
     /// Every variant except `Param`, in declaration order.
     /// `Param` variants are covered by `crate::rules::CATALOGUE`.
-    pub const ALL_FIXED: [RuleRef; 83] = [
+    pub const ALL_FIXED: [RuleRef; 84] = [
         RuleRef::I01,
         RuleRef::I02,
         RuleRef::I03,
@@ -242,6 +244,7 @@ impl RuleRef {
         RuleRef::Rsb01,
         RuleRef::Rsb02,
         RuleRef::Rsb03,
+        RuleRef::Rsb04,
         RuleRef::Rsb05,
         RuleRef::Rev01,
         RuleRef::Rev02,
@@ -331,6 +334,7 @@ impl RuleRef {
             RuleRef::Rsb01 => "R-SB-01",
             RuleRef::Rsb02 => "R-SB-02",
             RuleRef::Rsb03 => "R-SB-03",
+            RuleRef::Rsb04 => "R-SB-04",
             RuleRef::Rsb05 => "R-SB-05",
             RuleRef::Rev01 => "R-EV-01",
             RuleRef::Rev02 => "R-EV-02",

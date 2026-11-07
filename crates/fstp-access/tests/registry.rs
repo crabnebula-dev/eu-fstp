@@ -93,6 +93,8 @@ fn carried(kind: OpKind) -> &'static [CommandKind] {
         OpKind::Read(ReadKind::GetContent)
         | OpKind::Read(ReadKind::GetOwnProposal)
         | OpKind::Read(ReadKind::GetOwnStage2Thread) => &[CommandKind::ReadContent],
+        // M6 lane L6-API: the copy request port appends `RequestCopy` (R-SB-04).
+        OpKind::M3Port(fstp_access::PortKind::RequestCopy) => &[CommandKind::RequestCopy],
         _ => &[],
     }
 }
@@ -157,7 +159,8 @@ const NEW_IN_M4: [&str; 4] = [
 /// operation of kind `OpKind::Command`, or one that carries the kind as
 /// design sections 3.2 and 3.6 state. In M4 that gives 37 routed, 9
 /// system-only, 1 composed and 15 later kinds, 62 in all. M5 adds the
-/// system-only `RecordChecks`, so 63.
+/// system-only `RecordChecks`, so 63. M6 lane L6-API routes `RequestCopy`
+/// through the copy request port.
 #[test]
 fn ops_cover_every_command_kind_once() {
     let all: BTreeSet<String> = names(&CommandKind::ALL);
@@ -244,11 +247,11 @@ fn ops_cover_every_command_kind_once() {
     );
     let stray: Vec<&String> = routed.keys().filter(|k| !all.contains(*k)).collect();
     assert!(stray.is_empty(), "routed kinds outside ALL: {stray:?}");
-    assert_eq!(routed.len(), 37, "routed command kinds");
+    assert_eq!(routed.len(), 38, "routed command kinds");
     assert_eq!(
         all.len(),
-        66,
-        "CommandKind::ALL in M4, with RecordChecks of M5 and the three consent kinds of M12"
+        67,
+        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12 and RequestCopy of M6"
     );
 }
 
@@ -545,7 +548,7 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
 /// Guide data protection texts (R-GA-01, section 15.0, 2026-11-06), the
 /// brand tokens (M9 lane B1, interim), the terminology (M9 lane T1,
 /// interim), and the mail relay (M6 lane L6-EGR, ADR-018, interim).
-const STRICT_EXTRA: [&str; 9] = [
+const STRICT_EXTRA: [&str; 10] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
@@ -555,6 +558,7 @@ const STRICT_EXTRA: [&str; 9] = [
     "tenant.branding.set",
     "tenant.terminology.set",
     "tenant.set_mail_relay",
+    "tenant.clear_mail_relay",
 ];
 
 /// R-LG-03, I-78, design section 3.6
@@ -963,7 +967,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 51] = [
+const READ_NAMES: [&str; 54] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1018,6 +1022,10 @@ const READ_NAMES: [&str; 51] = [
     "GetRouteMap",
     // Lane mcreator: the Studio list of a programme's calls.
     "ListCalls",
+    // M6 lane L6-API: the delivery log, the mail relay and the timeline.
+    "ListDeliveries",
+    "GetMailRelay",
+    "GetProgrammeTimeline",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

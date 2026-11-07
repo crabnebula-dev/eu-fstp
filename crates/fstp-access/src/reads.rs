@@ -152,11 +152,17 @@ pub enum ReadKind {
     // Lane mcreator: the calls of a programme for the Planning Studio,
     // each with its state and whether the caller may approve it (R-PC-03).
     ListCalls,
+    // M6 lane L6-API (M6 design section 6): the tenant's delivery log,
+    // never a body or an address, the mail relay setting, never its
+    // credential, and a programme's timeline events.
+    ListDeliveries,
+    GetMailRelay,
+    GetProgrammeTimeline,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 51] = [
+    pub const ALL: [ReadKind; 54] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -208,6 +214,9 @@ impl ReadKind {
         ReadKind::GetDiary,
         ReadKind::GetRouteMap,
         ReadKind::ListCalls,
+        ReadKind::ListDeliveries,
+        ReadKind::GetMailRelay,
+        ReadKind::GetProgrammeTimeline,
     ];
 }
 
@@ -471,6 +480,15 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
             ReadRule::Holder(Role::CallDrafter),
             ReadRule::Holder(Role::FstpCoordinator),
         ]),
+        OPEN_ALWAYS,
+    ),
+    // M6 lane L6-API, M6 design section 6: the delivery log and the mail
+    // relay are the tenant admin's, the timeline the programme manager's.
+    (ReadKind::ListDeliveries, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    (ReadKind::GetMailRelay, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    (
+        ReadKind::GetProgrammeTimeline,
+        ReadRule::Holder(Role::ProgrammeManager),
         OPEN_ALWAYS,
     ),
 ];

@@ -658,7 +658,7 @@ every! {
         I01, I02, I03, I04, I05, I06, I07, I08, I09, I10, I11, I12, I13, I14, I15, I18,
         I23, I31, I32, I33, I34, I35, I36, I37, I50, I52, I64, I65, I66, I67, I78, I84, I85,
         Sod01, Sod02, Sod03, Sod04, Sod05, Sod06, Sod07, Sod09, Sod10, Sod11, Sod12,
-        Rpc01, Rpc02, Rpc03, Rsb01, Rsb02, Rsb03, Rsb05,
+        Rpc01, Rpc02, Rpc03, Rsb01, Rsb02, Rsb03, Rsb04, Rsb05,
         Rev01, Rev02, Rev03, Rev05, Rev06, Rev07, Rev08, Rev09, Rir01, Rir02, Rir04,
         Rng02, Rng03, Rng05, Rng06, Rcf02, Rcf04, Rac01, Ran01, Rla03, Rla05, Rex04, Rpr04, Rmc05,
         Row, Actor, FactsIncomplete, StaleFacts, OracleDown, Ledger, Input, NotImplemented,
@@ -798,6 +798,7 @@ const fn rule_name(r: RuleRef) -> &'static str {
         | RuleRef::Rsb01
         | RuleRef::Rsb02
         | RuleRef::Rsb03
+        | RuleRef::Rsb04
         | RuleRef::Rsb05
         | RuleRef::Rev01
         | RuleRef::Rev02
@@ -922,6 +923,7 @@ tagged_enum! {
         IrcConcern { proposal, concern },
         NotifiableConflict { proposal },
         BindingEnded { binding },
+        CopyRequested { proposal, address },
     }
     money {}
     tuple {}

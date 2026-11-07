@@ -797,6 +797,67 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ),
         ]),
     ),
+    // M6 lane L6-API (ADR-018): the relay host and whether a CA is pinned.
+    // The credential's secret name is never shown.
+    (
+        "tenant.get_mail_relay",
+        Shape::Object(&[m(
+            "relay",
+            Shape::Nullable(&Shape::Object(&[
+                m("host", Shape::String),
+                m("ca_pinned", Shape::Bool),
+            ])),
+        )]),
+    ),
+    // M6 lane L6-API, M6 design section 6, I-27: per message its template,
+    // event, version, phase, attempts and reply code. No body, no address.
+    (
+        "tenant.deliveries",
+        Shape::Array(&Shape::Object(&[
+            m("outbox", Shape::String),
+            m("template", Shape::String),
+            m("event", Shape::String),
+            m("template_version", Shape::Id),
+            m(
+                "phase",
+                Shape::Enum(&[
+                    "claimed",
+                    "committing",
+                    "sent",
+                    "transient",
+                    "permanent",
+                    "in_doubt",
+                ]),
+            ),
+            m("attempts", Shape::Int),
+            m("reply_code", Shape::Nullable(&Shape::Int)),
+        ])),
+    ),
+    // M6 lane L6-API, M6 design section 6, R-NT-01: the events of a
+    // programme, with their due instant and where each stands.
+    (
+        "programme.timeline",
+        Shape::Array(&Shape::Object(&[
+            m("event", Shape::String),
+            m(
+                "kind",
+                Shape::Enum(&[
+                    "immediate",
+                    "stage2_expiry",
+                    "re_enter",
+                    "start_execution",
+                    "complete",
+                    "milestone_reminder",
+                    "milestone_overdue",
+                    "corrigendum",
+                    "notice_issued",
+                    "copy_requested",
+                ]),
+            ),
+            m("due", Shape::Id),
+            m("status", Shape::Enum(&["scheduled", "cancelled", "fired"])),
+        ])),
+    ),
     // I-86: the state only, and no other vault fact.
     (
         "me.get_verification",

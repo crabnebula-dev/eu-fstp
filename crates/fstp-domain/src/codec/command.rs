@@ -61,6 +61,7 @@ tagged_enum! {
         ContractFact { proposal, contract, event },
         DeclineNegotiation { proposal },
         Withdraw { proposal },
+        RequestCopy { proposal, address },
         StartExecution { proposal },
         Complete { proposal },
         Terminate { decision, proposal, reason },

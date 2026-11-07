@@ -206,6 +206,7 @@ command_round_trip! {
     th26_codec_round_trip_command_contract_fact => ContractFact,
     th26_codec_round_trip_command_decline_negotiation => DeclineNegotiation,
     th26_codec_round_trip_command_withdraw => Withdraw,
+    r_sb_04_codec_round_trip_command_request_copy => RequestCopy,
     th26_codec_round_trip_command_start_execution => StartExecution,
     th26_codec_round_trip_command_complete => Complete,
     th26_codec_round_trip_command_terminate => Terminate,

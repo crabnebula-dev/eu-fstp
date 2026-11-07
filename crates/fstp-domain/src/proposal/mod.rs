@@ -15,6 +15,7 @@
 //!   after a concern, and lists the System commands that are due.
 //! - The decisions of the lifecycle are in [`crate::decision`].
 
+pub mod copy;
 pub(crate) mod deferral;
 pub(crate) mod draft;
 pub(crate) mod intake;
@@ -112,6 +113,8 @@ pub struct ProposalStore {
     intake: intake::Intake,
     /// Scores, stage results, rounds and deferrals, from `life` (lane L-LIFE, step W4b).
     life: life::Lives,
+    /// Copy requests and submission instants, from `copy` (M6 lane L6-API).
+    copies: copy::Copies,
 }
 
 impl ProposalStore {
@@ -121,6 +124,7 @@ impl ProposalStore {
             drafts: draft::Drafts::genesis(),
             intake: intake::Intake::genesis(),
             life: life::Lives::genesis(),
+            copies: copy::Copies::genesis(),
         }
     }
 }
@@ -149,6 +153,9 @@ pub(crate) fn queries(
     }
     if deferral::is_deferral_command(cmd) {
         return deferral::queries(state, cmd, ctx);
+    }
+    if copy::is_copy_command(cmd) {
+        return Ok(Vec::new());
     }
     // The dispatcher sends no other command here.
     Err(life::wrong_state())
@@ -186,6 +193,9 @@ pub(crate) fn decide(
     if deferral::is_deferral_command(cmd) {
         return deferral::decide(state, cmd, ctx);
     }
+    if copy::is_copy_command(cmd) {
+        return copy::decide(state, cmd, ctx);
+    }
     // The dispatcher sends no other command here.
     Err(life::wrong_state())
 }
@@ -204,6 +214,7 @@ pub(crate) fn apply(
         Record::Transitioned(t) => {
             intake::apply(state, record)?;
             life::on_transition(state, t, at)?;
+            copy::on_transition(state, t, at);
             draft::on_transition(state, t);
             Ok(())
         }
@@ -285,7 +296,8 @@ pub(crate) fn governing_policy(
         | Command::SubmitRevision { proposal, .. }
         | Command::ExpireStage2 { proposal }
         | Command::ReEnter { proposal, .. }
-        | Command::DeclineAfterConcern { proposal } => *proposal,
+        | Command::DeclineAfterConcern { proposal }
+        | Command::RequestCopy { proposal, .. } => *proposal,
         // The dispatcher sends no other command here.
         _ => return Err(life::wrong_state()),
     };

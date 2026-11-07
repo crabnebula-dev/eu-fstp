@@ -15,7 +15,8 @@
 //! - [`kind::IMMEDIATE`]: every `OutboxEnqueued` record, due at its entry
 //!   time. `ProposalOutcome` and `IrcConcern` go to the lead,
 //!   `NotifiableConflict` to the programme's FSTP coordinators, and
-//!   `BindingEnded` has no email (group removal is M8).
+//!   `BindingEnded` has no email (group removal is M8). A
+//!   `CopyRequested` goes to the given address (R-SB-04, lane L6-API).
 //! - The four sweep kinds of `fstp_engine::sweep`, due when the domain
 //!   lists the command. The event carries the command, and no email.
 //! - [`kind::CORRIGENDUM`]: each numbered change of a call's effective
@@ -24,8 +25,8 @@
 //!
 //! The other kinds of design section 4 have their codes reserved here,
 //! but no source yet: milestone reminders need a milestone due date that
-//! the plan does not hold, the notice event needs the M5 notice record,
-//! and the copy request needs its outbox variant (lane L6-API).
+//! the plan does not hold, and the notice event needs the M5 notice record.
+//! A copy request is an immediate event, so its reserved kind stays unused.
 
 #![deny(
     clippy::float_arithmetic,
@@ -294,7 +295,7 @@ pub struct Firing {
 
 /// One message before it has a key: recipient, template and values.
 struct Draft {
-    to: AccountId,
+    to: Recipient,
     template: TemplateId,
     bindings: Bindings,
 }
@@ -322,7 +323,7 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
             receiving(s, call, now)
                 .into_iter()
                 .map(|to| Draft {
-                    to,
+                    to: Recipient::Account(to),
                     template: TemplateId::Corrigendum,
                     bindings: Bindings::new()
                         .with(Slot::Call, Value::Call(call))
@@ -367,7 +368,7 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
                 digest: template.digest(),
             });
         }
-        let to = Recipient::Account(d.to);
+        let to = d.to;
         let idem = message_idem(event, to, CHANNEL_EMAIL);
         let outbox = outbox_id(&idem);
         let body = MessageSpec {
@@ -412,7 +413,7 @@ fn immediate(s: &CellState, ev: &OutboxEvent, when: Value, now: Timestamp) -> Ve
     match *ev {
         OutboxEvent::ProposalOutcome { proposal, state } => lead(proposal)
             .map(|to| Draft {
-                to,
+                to: Recipient::Account(to),
                 template: TemplateId::ProposalOutcome,
                 bindings: Bindings::new()
                     .with(Slot::Proposal, Value::Proposal(proposal))
@@ -426,7 +427,7 @@ fn immediate(s: &CellState, ev: &OutboxEvent, when: Value, now: Timestamp) -> Ve
         // is waiting (reading 3, I-27).
         OutboxEvent::IrcConcern { proposal, .. } => lead(proposal)
             .map(|to| Draft {
-                to,
+                to: Recipient::Account(to),
                 template: TemplateId::IrcConcern,
                 bindings: Bindings::new()
                     .with(Slot::Proposal, Value::Proposal(proposal))
@@ -441,7 +442,7 @@ fn immediate(s: &CellState, ev: &OutboxEvent, when: Value, now: Timestamp) -> Ve
             coordinators(s, call, now)
                 .into_iter()
                 .map(|to| Draft {
-                    to,
+                    to: Recipient::Account(to),
                     template: TemplateId::NotifiableConflict,
                     bindings: Bindings::new()
                         .with(Slot::Call, Value::Call(call))
@@ -455,6 +456,23 @@ fn immediate(s: &CellState, ev: &OutboxEvent, when: Value, now: Timestamp) -> Ve
         }
         // Group membership removal is M8. No email.
         OutboxEvent::BindingEnded { .. } => Vec::new(),
+        // R-SB-04, reading 4: one copy to the given address, ids and times
+        // only. The recipient is the digest of the sealed address text, which
+        // the dispatcher resolves. The instant is the first submission, or
+        // the request time before one.
+        OutboxEvent::CopyRequested { proposal, address } => {
+            let submitted = fstp_domain::proposal::copy::submitted_at(&s.engine().core, proposal)
+                .and_then(|t| Moment::new(t, 0).ok())
+                .map_or(when, Value::Moment);
+            vec![Draft {
+                to: Recipient::Address(address.digest().bytes()),
+                template: TemplateId::SubmissionCopy,
+                bindings: Bindings::new()
+                    .with(Slot::Proposal, Value::Proposal(proposal))
+                    .with(Slot::When, submitted)
+                    .with(Slot::Link, Value::Link(LinkTarget::Proposal(proposal))),
+            }]
+        }
     }
 }
 

@@ -129,6 +129,14 @@ pub enum ReadModel {
     /// `people.get_invitation`: the invitation landing (SoD-09, J2, lane
     /// inv). It names no account, no inviter and no address.
     Invitation(InvitationLanding),
+    /// `tenant.deliveries`: the delivery log, with no body and no address
+    /// (M6 lane L6-API, I-27).
+    Deliveries(Vec<crate::views::DeliveryRow>),
+    /// `programme.timeline`: a programme's events (M6 lane L6-API).
+    Timeline(Vec<crate::views::TimelineRow>),
+    /// `tenant.get_mail_relay`: the relay host and whether a CA is pinned
+    /// (M6 lane L6-API, ADR-018).
+    MailRelay(crate::views::MailRelayView),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -263,6 +271,9 @@ impl ToJson for ReadModel {
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
             ReadModel::Invitation(v) => v.to_json(),
+            ReadModel::Deliveries(rows) => array(rows),
+            ReadModel::Timeline(rows) => array(rows),
+            ReadModel::MailRelay(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1667,6 +1678,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
             ReadModel::Invitation(_) => &["people.get_invitation"],
+            ReadModel::Deliveries(_) => &["tenant.deliveries"],
+            ReadModel::Timeline(_) => &["programme.timeline"],
+            ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
@@ -2011,6 +2025,36 @@ pub(crate) mod reply_shape_tests {
                 )
                 .unwrap(),
             ),
+            ReadModel::Deliveries(vec![
+                crate::views::DeliveryRow {
+                    outbox: [1; 16],
+                    template: "submission-copy",
+                    event: [2; 32],
+                    template_version: 1,
+                    phase: crate::views::DeliveryPhase::Sent,
+                    attempts: 1,
+                    reply_code: Some(250),
+                },
+                crate::views::DeliveryRow {
+                    outbox: [3; 16],
+                    template: "corrigendum",
+                    event: [4; 32],
+                    template_version: 1,
+                    phase: crate::views::DeliveryPhase::InDoubt,
+                    attempts: 2,
+                    reply_code: None,
+                },
+            ]),
+            ReadModel::Timeline(vec![crate::views::TimelineRow {
+                event: [5; 32],
+                kind: 8,
+                due: 1_794_050_000_000_000,
+                state: crate::views::EventState::Fired,
+            }]),
+            ReadModel::MailRelay(crate::views::MailRelayView { relay: None }),
+            ReadModel::MailRelay(crate::views::MailRelayView {
+                relay: Some(("relay.fund.test".to_owned(), true)),
+            }),
         ]
         .into_iter()
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
@@ -2083,7 +2127,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 38;
+    const VARIANTS: usize = 41;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2128,6 +2172,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Guide(_) => 35,
             ReadModel::Public(_) => 36,
             ReadModel::Invitation(_) => 37,
+            ReadModel::Deliveries(_) => 38,
+            ReadModel::Timeline(_) => 39,
+            ReadModel::MailRelay(_) => 40,
         }
     }
 
@@ -2300,6 +2347,66 @@ pub(crate) mod reply_shape_tests {
             n("IrcConcern", Some("2026-10-30")),
         ]);
         assert_fits("me.notices", &m);
+    }
+
+    /// I-27, R-NT-04, M6 design section 6: a delivery row shows its
+    /// template, event, version, phase, attempts and reply code, and no
+    /// other member. So the delivery read never returns a body, an address
+    /// or a recipient, whatever the outbox holds.
+    #[test]
+    fn i27_delivery_status_reads_never_return_a_body() {
+        let row = crate::views::DeliveryRow {
+            outbox: [7; 16],
+            template: "submission-copy",
+            event: [8; 32],
+            template_version: 1,
+            phase: crate::views::DeliveryPhase::Transient,
+            attempts: 3,
+            reply_code: Some(451),
+        };
+        let m = ReadModel::Deliveries(vec![row]);
+        assert_fits("tenant.deliveries", &m);
+        let v = m.to_json();
+        let Some(Value::Object(o)) = v.as_array().and_then(|a| a.first()) else {
+            panic!("one row: {v:?}");
+        };
+        let mut members: Vec<&str> = o.keys().collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            [
+                "attempts",
+                "event",
+                "outbox",
+                "phase",
+                "reply_code",
+                "template",
+                "template_version"
+            ]
+        );
+        let text = fstp_json::to_canonical(&v).unwrap();
+        for banned in ["body", "address", "to", "@", "Subject"] {
+            assert!(
+                !text.contains(&format!("\"{banned}\"")),
+                "{banned} in {text}"
+            );
+        }
+        assert!(!text.contains('@'), "{text}");
+    }
+
+    /// ADR-018, M6 lane L6-API: the mail relay read shows the host and
+    /// whether a CA is pinned, and never the credential's secret name.
+    #[test]
+    fn adr_018_mail_relay_read_names_no_credential() {
+        let m = ReadModel::MailRelay(crate::views::MailRelayView {
+            relay: Some(("relay.fund.test".to_owned(), false)),
+        });
+        assert_fits("tenant.get_mail_relay", &m);
+        let text = fstp_json::to_canonical(&m.to_json()).unwrap();
+        assert_eq!(
+            text,
+            r#"{"relay":{"ca_pinned":false,"host":"relay.fund.test"}}"#
+        );
     }
 
     /// R-NG-06, TH-26: the negotiation landing fits its shape.

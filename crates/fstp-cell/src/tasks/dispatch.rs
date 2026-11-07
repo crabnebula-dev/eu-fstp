@@ -45,6 +45,59 @@ pub fn digest_key(lookup: &[u8; 32]) -> Result<DigestKey, fstp_crypto::CryptoErr
     Ok(DigestKey::new(out))
 }
 
+/// What the cell starts the dispatcher with (M6 lane L6-API): the tenant's
+/// relay and the body digest key.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DispatchStart {
+    /// The relay host, reached on port 465 only (ADR-018).
+    pub host: String,
+    /// The name of the cell secret that holds the submission credential.
+    pub credential: String,
+    /// Whether the relay names a pinned CA.
+    pub ca_pinned: bool,
+    /// The body digest key, from [`digest_key`].
+    pub key: DigestKey,
+}
+
+/// Why the cell does not start the dispatcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotStarted {
+    /// The tenant set no mail relay, so no message can leave the cell.
+    NoRelay,
+    /// Seam: the cell holds no App chain `Lookup` key yet, so it has no
+    /// body digest key (m4-design section 15.0, lane m6key).
+    NoLookupKey,
+    /// The digest key did not derive.
+    Key,
+}
+
+/// Whether the cell starts the dispatcher over `state`: only when the
+/// tenant set a mail relay, and only with the digest key of the App chain
+/// `Lookup` key `lookup` (M6 lane L6-API, ADR-018).
+///
+/// # Errors
+///
+/// [`NotStarted`] names what is missing.
+pub fn start_plan(
+    state: &fstp_cell_core::CellState,
+    lookup: Option<&[u8; 32]>,
+) -> Result<DispatchStart, NotStarted> {
+    let relay = state
+        .engine()
+        .tenant
+        .state()
+        .and_then(|t| t.mail_relay())
+        .ok_or(NotStarted::NoRelay)?;
+    let lookup = lookup.ok_or(NotStarted::NoLookupKey)?;
+    let key = digest_key(lookup).map_err(|_| NotStarted::Key)?;
+    Ok(DispatchStart {
+        host: relay.host.as_str().to_owned(),
+        credential: relay.credential.as_str().to_owned(),
+        ca_pinned: relay.ca.is_some(),
+        key,
+    })
+}
+
 /// S2 over `ops.outbox`: opens the stored message and reads its envelope,
 /// event and template version.
 pub struct OutboxSource<R: Runtime> {
@@ -187,6 +240,19 @@ mod tests {
             format!("{ka:?}"),
             "DigestKey(..)",
             "no key bytes in a print"
+        );
+    }
+
+    /// ADR-018, I-25, M6 lane L6-API: a cell whose tenant set no mail
+    /// relay starts no dispatcher, with or without a Lookup key, so no
+    /// message leaves the cell.
+    #[test]
+    fn i25_no_dispatcher_without_a_mail_relay() {
+        let s = fstp_cell_core::CellState::genesis();
+        assert_eq!(start_plan(&s, None).err(), Some(NotStarted::NoRelay));
+        assert_eq!(
+            start_plan(&s, Some(&[0x11; 32])).err(),
+            Some(NotStarted::NoRelay)
         );
     }
 

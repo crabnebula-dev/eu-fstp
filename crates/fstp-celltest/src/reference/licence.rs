@@ -1093,6 +1093,8 @@ pub const fn class_of(kind: CommandKind) -> RefClass {
         | CommandKind::RequestPaymentChanges
         | CommandKind::RecordChecks
         | CommandKind::ClosePaymentRequest => RefClass::Payments,
+        // M6 lane L6-API: a copy request is a notification (R-SB-04).
+        CommandKind::RequestCopy => RefClass::Notifications,
         // M4 changes D2 and D5: the activation and the round commands are
         // not Q18 option B commands, so the strict reading protects them.
         // Lane L12-I37: the calibration consent commands follow the strict
