@@ -27,9 +27,34 @@
 //   (design section 6.4, Q17).
 //
 // For these the page says so, and posts nothing.
+//
+// The M5 bank and hardship kinds (I-33, I-86, R-PR-04, `./bank.ts`):
+//
+// - `write:bank_details`: holder and IBAN, by the lead, for the grant
+//   the ticket names. Every write starts the hold.
+// - `write:bank_verification`: method and checks of the latest version,
+//   or the resolution of an open dispute.
+// - `write:bank_dispute`: the lead freezes payments.
+// - `write:hardship_evidence`: a statement. The reply names the evidence
+//   reference, which the page shows once.
+// - `write:hardship_verification`: the reference and a confirmation.
 
 import { h } from '../auth/dom.js';
 import { canonical, type Json } from '../auth/encoding.js';
+import {
+  BANK_CHECKS,
+  BANK_METHODS,
+  bankDetailsBody,
+  bankDisputeBody,
+  bankVerifiedBody,
+  evidenceOf,
+  hardshipBody,
+  hardshipVerifiedBody,
+  holderOk,
+  ibanOk,
+  normaliseIban,
+  statementOk,
+} from './bank.js';
 import { claimsView, frame, isId, t, takeTicket, type ClaimsView, type Frame } from './page.js';
 import type { VaultMessageId } from './messages.en.js';
 
@@ -133,19 +158,164 @@ function adultForm(c: ClaimsView): KindForm {
   };
 }
 
+/** A labelled text field with its error line. */
+function textField(
+  id: string,
+  label: VaultMessageId,
+  attrs: Readonly<Record<string, string | boolean>>,
+  multiline = false,
+): { readonly row: HTMLElement; readonly input: HTMLInputElement; readonly error: HTMLElement } {
+  const input = h(multiline ? 'textarea' : 'input', { id, required: true, ...attrs }) as HTMLInputElement;
+  const error = h('p', { id: `${id}-error`, class: 'field-error' });
+  const row = h('div', { class: 'field' }, [h('label', { for: id }, [t(label)]), input, error]);
+  return { row, input, error };
+}
+
+function bankForm(c: ClaimsView, grant: string): KindForm {
+  const holder = textField('bank-holder', 'bank.holder', { type: 'text', autocomplete: 'name', maxlength: '140' });
+  const iban = textField('bank-iban', 'bank.iban', { type: 'text', autocomplete: 'off', spellcheck: false });
+  return {
+    fields: h('fieldset', {}, [
+      h('legend', {}, [t('bank.legend')]),
+      h('p', {}, [t('bank.hold')]),
+      holder.row,
+      iban.row,
+    ]),
+    body(): Json | null {
+      const name = holder.input.value.trim();
+      const number = normaliseIban(iban.input.value);
+      const nameOk = fieldError(holder.input, holder.error, holderOk(name) ? null : 'bank.holder.missing');
+      const numberOk = fieldError(iban.input, iban.error, ibanOk(number) ? null : 'bank.iban.invalid');
+      if (!nameOk) {
+        holder.input.focus();
+        return null;
+      }
+      if (!numberOk) {
+        iban.input.focus();
+        return null;
+      }
+      return bankDetailsBody(c.account, grant, name, number);
+    },
+  };
+}
+
+function bankVerifyForm(c: ClaimsView, grant: string): KindForm {
+  const method = h(
+    'select',
+    { id: 'bank-method', required: true },
+    BANK_METHODS.map((m) => h('option', { value: m }, [t(`bank.method.${m}`)])),
+  ) as HTMLSelectElement;
+  const checks = BANK_CHECKS.map((k) => ({ key: k, box: checkbox(`bank-check-${k}`, `bank.check.${k}`) }));
+  for (const k of checks) k.box.input.required = false;
+  const resolve = checkbox('bank-resolve', 'bank.verify.resolve');
+  resolve.input.required = false;
+  const first = checks[0];
+  return {
+    fields: h('fieldset', {}, [
+      h('legend', {}, [t('bank.verify.legend')]),
+      h('div', { class: 'field' }, [h('label', { for: 'bank-method' }, [t('bank.verify.method')]), method]),
+      ...checks.map((k) => k.box.row),
+      resolve.row,
+    ]),
+    body(): Json | null {
+      if (resolve.input.checked) return bankDisputeBody(c.account, grant, false);
+      const picked = checks.filter((k) => k.box.input.checked).map((k) => k.key);
+      if (first !== undefined && !fieldError(first.box.input, first.box.error, picked.length > 0 ? null : 'bank.verify.missing')) {
+        first.box.input.focus();
+        return null;
+      }
+      const m = BANK_METHODS.find((x) => x === method.value) ?? 'bank_statement';
+      return bankVerifiedBody(c.account, grant, m, picked);
+    },
+  };
+}
+
+function bankDisputeForm(c: ClaimsView, grant: string): KindForm {
+  const confirm = checkbox('bank-dispute', 'bank.dispute.confirm');
+  return {
+    fields: h('fieldset', {}, [h('legend', {}, [t('bank.dispute.legend')]), confirm.row]),
+    body(): Json | null {
+      if (!fieldError(confirm.input, confirm.error, confirm.input.checked ? null : 'bank.dispute.missing')) {
+        confirm.input.focus();
+        return null;
+      }
+      return bankDisputeBody(c.account, grant, true);
+    },
+  };
+}
+
+function hardshipForm(c: ClaimsView, grant: string): KindForm {
+  const statement = textField('hardship-statement', 'hardship.statement', { maxlength: '4000', rows: '8' }, true);
+  return {
+    fields: h('fieldset', {}, [h('legend', {}, [t('hardship.legend')]), statement.row]),
+    body(): Json | null {
+      const text = statement.input.value.replace(/\r\n?/g, '\n');
+      if (!fieldError(statement.input, statement.error, statementOk(text) ? null : 'hardship.statement.missing')) {
+        statement.input.focus();
+        return null;
+      }
+      return hardshipBody(c.account, grant, text);
+    },
+  };
+}
+
+function hardshipVerifyForm(c: ClaimsView, grant: string): KindForm {
+  const evidence = textField('hardship-evidence', 'hardship.verify.evidence', { type: 'text', inputmode: 'numeric', autocomplete: 'off' });
+  const confirm = checkbox('hardship-confirm', 'hardship.verify.confirm');
+  return {
+    fields: h('fieldset', {}, [h('legend', {}, [t('hardship.verify.legend')]), evidence.row, confirm.row]),
+    body(): Json | null {
+      const ref = evidence.input.value.trim();
+      const refOk = fieldError(evidence.input, evidence.error, isId(ref) ? null : 'hardship.verify.evidence.missing');
+      const confirmOk = fieldError(
+        confirm.input,
+        confirm.error,
+        confirm.input.checked ? null : 'hardship.verify.confirm.missing',
+      );
+      if (!refOk) {
+        evidence.input.focus();
+        return null;
+      }
+      if (!confirmOk) {
+        confirm.input.focus();
+        return null;
+      }
+      return hardshipVerifiedBody(c.account, grant, ref);
+    },
+  };
+}
+
 function formOf(c: ClaimsView): KindForm | null {
   if (!isId(c.account)) return null;
+  const grant = c.proposal;
   switch (c.kind) {
     case 'write:guardian_consent':
       return guardianForm(c);
     case 'write:adult_attestation':
       return adultForm(c);
+    case 'write:bank_details':
+      return grant === null ? null : bankForm(c, grant);
+    case 'write:bank_verification':
+      return grant === null ? null : bankVerifyForm(c, grant);
+    case 'write:bank_dispute':
+      return grant === null ? null : bankDisputeForm(c, grant);
+    case 'write:hardship_evidence':
+      return grant === null ? null : hardshipForm(c, grant);
+    case 'write:hardship_verification':
+      return grant === null ? null : hardshipVerifyForm(c, grant);
     default:
       return null;
   }
 }
 
-async function send(ticket: string, body: Json): Promise<number> {
+
+/** The status and text of a write reply. Status 0 is a network failure. */
+interface Sent {
+  readonly status: number;
+  readonly text: string;
+}
+
+async function send(ticket: string, body: Json): Promise<Sent> {
   try {
     const r = await fetch('/w', {
       method: 'POST',
@@ -155,9 +325,9 @@ async function send(ticket: string, body: Json): Promise<number> {
       headers: { 'content-type': 'application/json' },
       body: canonical({ body, ticket }),
     });
-    return r.status;
+    return { status: r.status, text: r.status === 200 ? await r.text() : '' };
   } catch {
-    return 0;
+    return { status: 0, text: '' };
   }
 }
 
@@ -179,13 +349,14 @@ function mountForm(f: Frame, ticket: string, k: KindForm): void {
     pending = true;
     submit.setAttribute('aria-disabled', 'true');
     submit.setAttribute('aria-busy', 'true');
-    send(ticket, body).then((status) => {
+    send(ticket, body).then(({ status, text }) => {
       pending = false;
       submit.removeAttribute('aria-disabled');
       submit.removeAttribute('aria-busy');
       if (status >= 200 && status < 300) {
         form.remove();
-        f.status.textContent = t('write.saved');
+        const ref = evidenceOf(text);
+        f.status.textContent = ref === null ? t('write.saved') : t('hardship.saved', { ref });
         // The form and its focused button are gone: focus the outcome.
         f.status.tabIndex = -1;
         f.status.focus();

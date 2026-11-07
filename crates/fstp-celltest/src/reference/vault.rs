@@ -33,10 +33,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use fstp_domain::id::{AccountId, ClassId, ProgrammeId, ProposalId, ProximityListId};
+use fstp_domain::id::{
+    AccountId, ClassId, HardshipEvidenceId, ProgrammeId, ProposalId, ProximityListId,
+};
 use fstp_domain::oracle::Query;
 use fstp_domain::rules::StateTag;
-use fstp_domain::time::Timestamp;
+use fstp_domain::time::{Days, Timestamp};
 
 // ---------------------------------------------------------------------------
 // Constants.
@@ -174,7 +176,57 @@ pub enum RefWrite {
         /// The country, as a code the vault alone holds.
         country: u16,
     },
+    /// A bank detail write for the payee of a grant (I-33, M5 design
+    /// 12.1). Every write, the first included, starts the hold.
+    BankDetails {
+        /// The grant.
+        grant: ProposalId,
+        /// The writer.
+        account: AccountId,
+        /// When the vault took it.
+        at: Timestamp,
+    },
+    /// A verification of bank detail version `version` of a grant.
+    BankVerified {
+        /// The grant.
+        grant: ProposalId,
+        /// The version: the count of writes of the grant.
+        version: u64,
+        /// The verifier.
+        verifier: AccountId,
+    },
+    /// A dispute opened by the lead, or resolved by a verifier.
+    BankDispute {
+        /// The grant.
+        grant: ProposalId,
+        /// The writer.
+        account: AccountId,
+        /// Open or resolve.
+        open: bool,
+    },
+    /// Hardship evidence for a grant (R-PR-04).
+    HardshipEvidence {
+        /// The grant.
+        grant: ProposalId,
+        /// The reference.
+        evidence: HardshipEvidenceId,
+        /// The submitter.
+        account: AccountId,
+    },
+    /// A verification of hardship evidence (R-PR-04).
+    HardshipVerified {
+        /// The grant.
+        grant: ProposalId,
+        /// The reference.
+        evidence: HardshipEvidenceId,
+        /// The verifier.
+        verifier: AccountId,
+    },
 }
+
+/// The bank facts of one grant: version, writer, write instant and whether
+/// the latest version is verified.
+pub type RefBank = (u64, AccountId, Timestamp, bool);
 
 /// The facts of one view: the effective facts, or the effective facts with
 /// the provisional one for a reaction (NOTE 4).
@@ -189,6 +241,9 @@ pub struct Facts {
     relationships: BTreeSet<(AccountId, AccountId)>,
     country: BTreeMap<(AccountId, ProgrammeId), u16>,
     p17: BTreeMap<ProgrammeId, BTreeSet<u16>>,
+    bank: BTreeMap<ProposalId, RefBank>,
+    disputed: BTreeSet<ProposalId>,
+    hardship: BTreeMap<(ProposalId, HardshipEvidenceId), (AccountId, bool)>,
 }
 
 /// The two accounts of a relationship, smaller first.
@@ -260,6 +315,38 @@ impl Facts {
                 country,
             } => {
                 self.country.insert((*account, *programme), *country);
+            }
+            RefWrite::BankDetails { grant, account, at } => {
+                let version = self.bank.get(grant).map_or(1, |b| b.0.saturating_add(1));
+                self.bank.insert(*grant, (version, *account, *at, false));
+            }
+            RefWrite::BankVerified { grant, version, .. } => {
+                if let Some(b) = self.bank.get_mut(grant)
+                    && b.0 == *version
+                {
+                    b.3 = true;
+                }
+            }
+            RefWrite::BankDispute { grant, open, .. } => {
+                if *open {
+                    self.disputed.insert(*grant);
+                } else {
+                    self.disputed.remove(grant);
+                }
+            }
+            RefWrite::HardshipEvidence {
+                grant,
+                evidence,
+                account,
+            } => {
+                self.hardship.insert((*grant, *evidence), (*account, false));
+            }
+            RefWrite::HardshipVerified {
+                grant, evidence, ..
+            } => {
+                if let Some(h) = self.hardship.get_mut(&(*grant, *evidence)) {
+                    h.1 = true;
+                }
             }
         }
     }
@@ -426,16 +513,42 @@ impl Facts {
                 both(&base)
             }
             RefWrite::Relationship { a, b } => both(&BTreeSet::from([*a, *b])),
+            // Reading (M5): bank and hardship writes are about a grant and
+            // touch no account. The pending rule reaches them by grant.
+            RefWrite::BankDetails { .. }
+            | RefWrite::BankVerified { .. }
+            | RefWrite::BankDispute { .. }
+            | RefWrite::HardshipEvidence { .. }
+            | RefWrite::HardshipVerified { .. } => BTreeSet::new(),
         }
     }
 
-    /// The proposal whose consent `w` writes, if any.
+    /// The proposal whose consent `w` writes, or the grant a bank or
+    /// hardship write is about, if any.
     pub fn consent_proposal(w: &RefWrite) -> Option<ProposalId> {
         match w {
             RefWrite::GuardianConsent { proposal, .. }
             | RefWrite::ConsentWithdrawn { proposal } => Some(*proposal),
+            RefWrite::BankDetails { grant, .. }
+            | RefWrite::BankVerified { grant, .. }
+            | RefWrite::BankDispute { grant, .. }
+            | RefWrite::HardshipEvidence { grant, .. }
+            | RefWrite::HardshipVerified { grant, .. } => Some(*grant),
             _ => None,
         }
+    }
+
+    /// Whether a payment of `grant` may be released at `at` under a hold
+    /// of `hold` days (I-33): the latest write is verified, the hold has
+    /// passed since it, and no dispute is open.
+    pub fn bank_releasable(&self, grant: ProposalId, at: Timestamp, hold: Days) -> bool {
+        !self.disputed.contains(&grant)
+            && self
+                .bank
+                .get(&grant)
+                .is_some_and(|(_, _, written, verified)| {
+                    *verified && written.checked_add_days(hold).is_some_and(|end| end <= at)
+                })
     }
 
     /// Whether `reviewer` and `member` are in conflict (I-03, I-54, Q31).
@@ -582,9 +695,10 @@ impl Facts {
                 }
             }
             Query::ChangedSince { .. } => false,
-            // The bank and hardship queries of M5 (Q1 A) have no facts in
-            // this twin yet, so they fail closed (I-33, R-PR-04).
-            Query::BankReleasable { .. } | Query::HardshipEvidenceVerified { .. } => false,
+            Query::BankReleasable { grant, at, hold } => self.bank_releasable(*grant, *at, *hold),
+            Query::HardshipEvidenceVerified { grant, evidence } => {
+                self.hardship.get(&(*grant, *evidence)).is_some_and(|h| h.1)
+            }
         }
     }
 
@@ -647,8 +761,8 @@ pub fn named(q: &Query) -> (BTreeSet<AccountId>, Option<ProposalId>) {
         Query::DeclaresAffiliationOnList { team, .. } => (team.clone(), None),
         Query::HasGuardianConsent { proposal } => (BTreeSet::new(), Some(*proposal)),
         Query::ChangedSince { .. } => (BTreeSet::new(), None),
-        Query::BankReleasable { .. } | Query::HardshipEvidenceVerified { .. } => {
-            (BTreeSet::new(), None)
+        Query::BankReleasable { grant, .. } | Query::HardshipEvidenceVerified { grant, .. } => {
+            (BTreeSet::new(), Some(*grant))
         }
     }
 }
@@ -1074,11 +1188,21 @@ pub enum WriteKind {
     ReviewerDeclaration,
     /// A partner staff declaration.
     PartnerStaffDeclared,
+    /// Bank details (M5).
+    BankDetails,
+    /// A bank verification or dispute resolution (M5).
+    BankVerification,
+    /// A bank dispute (M5).
+    BankDispute,
+    /// Hardship evidence (M5).
+    HardshipEvidence,
+    /// A hardship verification (M5).
+    HardshipVerification,
 }
 
 impl WriteKind {
     /// Every kind.
-    pub const ALL: [WriteKind; 9] = [
+    pub const ALL: [WriteKind; 14] = [
         WriteKind::CountryStated,
         WriteKind::AffiliationDeclared,
         WriteKind::AdultAttestation,
@@ -1088,6 +1212,11 @@ impl WriteKind {
         WriteKind::ProximityListDeclared,
         WriteKind::ReviewerDeclaration,
         WriteKind::PartnerStaffDeclared,
+        WriteKind::BankDetails,
+        WriteKind::BankVerification,
+        WriteKind::BankDispute,
+        WriteKind::HardshipEvidence,
+        WriteKind::HardshipVerification,
     ];
 
     /// The ticket spelling of the kind.
@@ -1102,6 +1231,11 @@ impl WriteKind {
             WriteKind::ProximityListDeclared => "proximity_list_declared",
             WriteKind::ReviewerDeclaration => "reviewer_declaration",
             WriteKind::PartnerStaffDeclared => "partner_staff_declared",
+            WriteKind::BankDetails => "bank_details",
+            WriteKind::BankVerification => "bank_verification",
+            WriteKind::BankDispute => "bank_dispute",
+            WriteKind::HardshipEvidence => "hardship_evidence",
+            WriteKind::HardshipVerification => "hardship_verification",
         }
     }
 
@@ -1118,6 +1252,11 @@ impl WriteKind {
             WriteKind::ProximityListDeclared => 7,
             WriteKind::ReviewerDeclaration => 8,
             WriteKind::PartnerStaffDeclared => 9,
+            WriteKind::BankDetails => 14,
+            WriteKind::BankVerification => 15,
+            WriteKind::BankDispute => 16,
+            WriteKind::HardshipEvidence => 17,
+            WriteKind::HardshipVerification => 18,
         }
     }
 }
@@ -1234,6 +1373,64 @@ pub fn origin_binding(facts: &Facts, w: &RefWrite) -> Option<OriginBinding> {
         RefWrite::VerificationRecorded { .. }
         | RefWrite::ProximityListDeclared { .. }
         | RefWrite::Relationship { .. } => None,
+        // Reading (M5 design 12.1): the lead writes and disputes. Another
+        // account verifies the latest version and resolves a dispute.
+        RefWrite::BankDetails { grant, account, .. } => Some(OriginBinding {
+            proposal: Some(*grant),
+            ..plain(WriteKind::BankDetails, *account)
+        }),
+        RefWrite::BankVerified {
+            grant,
+            version,
+            verifier,
+        } => facts
+            .bank
+            .get(grant)
+            .filter(|b| b.0 == *version && b.1 != *verifier)
+            .map(|_| OriginBinding {
+                proposal: Some(*grant),
+                ..plain(WriteKind::BankVerification, *verifier)
+            }),
+        RefWrite::BankDispute {
+            grant,
+            account,
+            open,
+        } => {
+            if *open {
+                Some(OriginBinding {
+                    proposal: Some(*grant),
+                    ..plain(WriteKind::BankDispute, *account)
+                })
+            } else {
+                let writer = facts.bank.get(grant).map(|b| b.1);
+                (facts.disputed.contains(grant) && writer != Some(*account)).then(|| {
+                    OriginBinding {
+                        proposal: Some(*grant),
+                        ..plain(WriteKind::BankVerification, *account)
+                    }
+                })
+            }
+        }
+        RefWrite::HardshipEvidence {
+            grant,
+            evidence,
+            account,
+        } => (!facts.hardship.contains_key(&(*grant, *evidence))).then(|| OriginBinding {
+            proposal: Some(*grant),
+            ..plain(WriteKind::HardshipEvidence, *account)
+        }),
+        RefWrite::HardshipVerified {
+            grant,
+            evidence,
+            verifier,
+        } => facts
+            .hardship
+            .get(&(*grant, *evidence))
+            .filter(|h| h.0 != *verifier)
+            .map(|_| OriginBinding {
+                proposal: Some(*grant),
+                ..plain(WriteKind::HardshipVerification, *verifier)
+            }),
     }
 }
 
@@ -1728,6 +1925,10 @@ pub mod wire {
     pub const KIND_ATTESTATION_WITHDRAWN: u16 = 12;
     /// The fact kind of an ended affiliation.
     pub const KIND_AFFILIATION_ENDED: u16 = 13;
+    /// The fact kind of a bank dispute (M5).
+    pub const KIND_BANK_DISPUTE: u16 = 16;
+    /// The fact kind of a hardship verification (M5).
+    pub const KIND_HARDSHIP_VERIFIED: u16 = 18;
 
     fn ids<T: Copy>(set: &BTreeSet<T>, raw: impl Fn(T) -> String) -> String {
         let mut s = String::from("[");
@@ -1910,7 +2111,71 @@ pub mod wire {
                     programme.raw()
                 ),
             ),
+            // Synthetic details only: a fixed holder and a valid example
+            // IBAN stand in, since the reference keeps no attribute.
+            RefWrite::BankDetails { grant, account, at } => (
+                WriteKind::BankDetails.code(),
+                format!(
+                    "{{\"account\":\"{}\",\"at\":{},\"grant\":\"{}\",\"holder\":\"Synthetic Holder\",\"iban\":\"DE89370400440532013000\"}}",
+                    account.raw(),
+                    at.micros(),
+                    grant.raw()
+                ),
+            ),
+            RefWrite::BankVerified {
+                grant,
+                version,
+                verifier,
+            } => (
+                WriteKind::BankVerification.code(),
+                format!(
+                    "{{\"at\":0,\"checks\":[\"holder_matches\",\"iban_matches\"],\"grant\":\"{}\",\"method\":\"bank_letter\",\"verifier\":\"{}\",\"version\":{}}}",
+                    grant.raw(),
+                    verifier.raw(),
+                    version
+                ),
+            ),
+            RefWrite::BankDispute {
+                grant,
+                account,
+                open,
+            } => (
+                KIND_BANK_DISPUTE,
+                format!(
+                    "{{\"account\":\"{}\",\"grant\":\"{}\",\"open\":{}}}",
+                    account.raw(),
+                    grant.raw(),
+                    open
+                ),
+            ),
+            RefWrite::HardshipEvidence {
+                grant,
+                evidence,
+                account,
+            } => (
+                WriteKind::HardshipEvidence.code(),
+                format!(
+                    "{{\"account\":\"{}\",\"evidence\":\"{}\",\"grant\":\"{}\",\"statement\":\"Synthetic statement\"}}",
+                    account.raw(),
+                    evidence.raw(),
+                    grant.raw()
+                ),
+            ),
+            RefWrite::HardshipVerified {
+                grant,
+                evidence,
+                verifier,
+            } => (
+                KIND_HARDSHIP_VERIFIED,
+                format!(
+                    "{{\"at\":0,\"evidence\":\"{}\",\"grant\":\"{}\",\"verifier\":\"{}\"}}",
+                    evidence.raw(),
+                    grant.raw(),
+                    verifier.raw()
+                ),
+            ),
         };
+
         FactWrite {
             kind,
             body: body.into_bytes(),

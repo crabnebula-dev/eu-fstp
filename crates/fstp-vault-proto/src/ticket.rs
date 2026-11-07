@@ -87,11 +87,22 @@ pub enum WriteKind {
     ReviewerDeclaration,
     /// A partner staff declaration.
     PartnerStaffDeclared,
+    /// The payee bank details of a grant (I-33, I-86).
+    BankDetails,
+    /// A verification of the latest bank details, or the resolution of a
+    /// dispute (I-33).
+    BankVerification,
+    /// A dispute of the bank details by the lead (I-33).
+    BankDispute,
+    /// Hardship evidence for a grant (R-PR-04).
+    HardshipEvidence,
+    /// A verification of hardship evidence (R-PR-04).
+    HardshipVerification,
 }
 
 impl WriteKind {
     /// Every kind.
-    pub const ALL: [WriteKind; 9] = [
+    pub const ALL: [WriteKind; 14] = [
         WriteKind::CountryStated,
         WriteKind::AffiliationDeclared,
         WriteKind::AdultAttestation,
@@ -101,6 +112,11 @@ impl WriteKind {
         WriteKind::ProximityListDeclared,
         WriteKind::ReviewerDeclaration,
         WriteKind::PartnerStaffDeclared,
+        WriteKind::BankDetails,
+        WriteKind::BankVerification,
+        WriteKind::BankDispute,
+        WriteKind::HardshipEvidence,
+        WriteKind::HardshipVerification,
     ];
 
     /// The ticket spelling of the kind.
@@ -115,6 +131,11 @@ impl WriteKind {
             WriteKind::ProximityListDeclared => "proximity_list_declared",
             WriteKind::ReviewerDeclaration => "reviewer_declaration",
             WriteKind::PartnerStaffDeclared => "partner_staff_declared",
+            WriteKind::BankDetails => "bank_details",
+            WriteKind::BankVerification => "bank_verification",
+            WriteKind::BankDispute => "bank_dispute",
+            WriteKind::HardshipEvidence => "hardship_evidence",
+            WriteKind::HardshipVerification => "hardship_verification",
         }
     }
 
@@ -130,6 +151,11 @@ impl WriteKind {
             WriteKind::ProximityListDeclared => 7,
             WriteKind::ReviewerDeclaration => 8,
             WriteKind::PartnerStaffDeclared => 9,
+            WriteKind::BankDetails => 14,
+            WriteKind::BankVerification => 15,
+            WriteKind::BankDispute => 16,
+            WriteKind::HardshipEvidence => 17,
+            WriteKind::HardshipVerification => 18,
         }
     }
 }
@@ -139,15 +165,21 @@ impl WriteKind {
 pub enum TicketKind {
     /// A release of identity attributes (`POST /r`).
     Release,
+    /// A view of the bank details of the grant the ticket names, on the
+    /// release route (`POST /r`). The finance approver reads them to
+    /// verify, and the payment releaser for one released request (M5
+    /// design reading 6). Nothing else ever shows them (I-86).
+    BankView,
     /// One write of one kind (`POST /w`).
     Write(WriteKind),
 }
 
 impl TicketKind {
-    /// The ticket spelling: `release`, or `write:<kind label>`.
+    /// The ticket spelling: `release`, `view:bank`, or `write:<kind label>`.
     pub fn label(self) -> String {
         match self {
             TicketKind::Release => "release".to_owned(),
+            TicketKind::BankView => "view:bank".to_owned(),
             TicketKind::Write(k) => format!("write:{}", k.label()),
         }
     }
@@ -156,6 +188,9 @@ impl TicketKind {
     pub fn from_label(s: &str) -> Option<TicketKind> {
         if s == "release" {
             return Some(TicketKind::Release);
+        }
+        if s == "view:bank" {
+            return Some(TicketKind::BankView);
         }
         let k = s.strip_prefix("write:")?;
         WriteKind::ALL

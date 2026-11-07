@@ -35,6 +35,35 @@ const MESSAGES = {
   'adult.birth.missing': 'Enter your date of birth.',
   'adult.confirm': 'I confirm that this date of birth is correct.',
   'adult.confirm.missing': 'Select the box to confirm.',
+
+  'bank.legend': 'Bank details for payments of this grant',
+  'bank.holder': 'Account holder name',
+  'bank.holder.missing': 'Enter the account holder name, up to 140 characters.',
+  'bank.iban': 'IBAN',
+  'bank.iban.invalid': 'Enter a valid IBAN, such as DE89 3704 0044 0532 0130 00.',
+  'bank.hold':
+    'Payments wait until the finance team verifies these details and the hold period has passed. This applies to every change, the first entry included.',
+  'bank.verify.legend': 'Verify the latest bank details',
+  'bank.verify.method': 'Document checked',
+  'bank.method.bank_letter': 'Letter from the bank',
+  'bank.method.bank_statement': 'Bank statement',
+  'bank.check.holder_matches': 'The holder on the document matches the grantee.',
+  'bank.check.iban_matches': 'The IBAN on the document matches the entered IBAN.',
+  'bank.verify.missing': 'Select at least one check you made.',
+  'bank.verify.resolve': 'Resolve the open dispute instead of verifying',
+  'bank.dispute.legend': 'Dispute the bank details',
+  'bank.dispute.confirm': 'The bank details on file are wrong or were changed without my consent. Freeze payments.',
+  'bank.dispute.missing': 'Select the box to open the dispute.',
+
+  'hardship.legend': 'Hardship evidence',
+  'hardship.statement': 'Describe the hardship',
+  'hardship.statement.missing': 'Describe the hardship, up to 4000 characters.',
+  'hardship.saved': 'Saved. Your evidence reference is {ref}. Enter it in your hardship request.',
+  'hardship.verify.legend': 'Verify hardship evidence',
+  'hardship.verify.evidence': 'Evidence reference',
+  'hardship.verify.evidence.missing': 'Enter the evidence reference from the request.',
+  'hardship.verify.confirm': 'I checked this evidence and it supports the hardship request.',
+  'hardship.verify.confirm.missing': 'Select the box to confirm.',
 } as const;
 
 /** The English catalogue. */

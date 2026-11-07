@@ -87,7 +87,8 @@ pub fn check_ticket(
     }
     let route_ok = matches!(
         (route, c.kind),
-        (Route::Release, TicketKind::Release) | (Route::Write, TicketKind::Write(_))
+        (Route::Release, TicketKind::Release | TicketKind::BankView)
+            | (Route::Write, TicketKind::Write(_))
     );
     if !route_ok {
         return Err(TicketRefusal::WrongKind);
@@ -225,6 +226,68 @@ pub fn origin_binding(facts: &Facts, f: &Fact) -> Option<OriginBinding> {
         Fact::VerificationRecorded { .. }
         | Fact::ProximityListDeclared { .. }
         | Fact::Relationship { .. } => None,
+        // M5 design 12.1: the lead writes the bank details and opens a
+        // dispute. Another account verifies the latest version, never the
+        // writer, and resolves a dispute under the same ticket kind (I-33).
+        Fact::BankDetails { grant, account, .. } => Some(OriginBinding {
+            proposal: Some(*grant),
+            ..plain(WriteKind::BankDetails, *account)
+        }),
+        Fact::BankVerified {
+            grant,
+            version,
+            verifier,
+            ..
+        } => facts
+            .bank_of(*grant)
+            .filter(|b| b.version == *version && b.writer != *verifier)
+            .map(|_| OriginBinding {
+                proposal: Some(*grant),
+                ..plain(WriteKind::BankVerification, *verifier)
+            }),
+        Fact::BankDispute {
+            grant,
+            account,
+            open: true,
+        } => Some(OriginBinding {
+            proposal: Some(*grant),
+            ..plain(WriteKind::BankDispute, *account)
+        }),
+        Fact::BankDispute {
+            grant,
+            account,
+            open: false,
+        } => {
+            let writer = facts.bank_of(*grant).map(|b| b.writer);
+            (facts.bank_disputed(*grant) && writer != Some(*account)).then(|| OriginBinding {
+                proposal: Some(*grant),
+                ..plain(WriteKind::BankVerification, *account)
+            })
+        }
+        Fact::HardshipEvidence {
+            grant,
+            evidence,
+            account,
+            ..
+        } => facts
+            .hardship_of(*grant, *evidence)
+            .is_none()
+            .then(|| OriginBinding {
+                proposal: Some(*grant),
+                ..plain(WriteKind::HardshipEvidence, *account)
+            }),
+        Fact::HardshipVerified {
+            grant,
+            evidence,
+            verifier,
+            ..
+        } => facts
+            .hardship_of(*grant, *evidence)
+            .filter(|h| h.submitter != *verifier)
+            .map(|_| OriginBinding {
+                proposal: Some(*grant),
+                ..plain(WriteKind::HardshipVerification, *verifier)
+            }),
     }
 }
 
@@ -247,5 +310,10 @@ pub fn fact_kinds_of(kind: WriteKind) -> &'static [u16] {
         WriteKind::ProximityListDeclared => &[k::PROXIMITY_LIST_DECLARED],
         WriteKind::ReviewerDeclaration => &[k::REVIEWER_DECLARATION],
         WriteKind::PartnerStaffDeclared => &[k::PARTNER_STAFF_DECLARED, k::AFFILIATION_ENDED],
+        WriteKind::BankDetails => &[k::BANK_DETAILS],
+        WriteKind::BankVerification => &[k::BANK_VERIFIED, k::BANK_DISPUTE],
+        WriteKind::BankDispute => &[k::BANK_DISPUTE],
+        WriteKind::HardshipEvidence => &[k::HARDSHIP_EVIDENCE],
+        WriteKind::HardshipVerification => &[k::HARDSHIP_VERIFIED],
     }
 }
