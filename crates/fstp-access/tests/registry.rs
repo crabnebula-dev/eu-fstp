@@ -116,8 +116,9 @@ const EXPECTED_SYSTEM_ONLY: [&str; 10] = [
 ];
 
 /// The grant, contract, payment and amendment kinds whose operations
-/// arrive with M5 (design sections 0.4 and 3.6).
-const EXPECTED_LATER_M5: [&str; 15] = [
+/// arrived with M5 (design sections 0.4 and 3.6). M5 lane L-API routes
+/// each of them, so `LATER` holds the M12 kinds alone.
+const ROUTED_IN_M5: [&str; 15] = [
     "DetermineAmount",
     "AcceptGrant",
     "ApproveGrant",
@@ -192,12 +193,12 @@ fn ops_cover_every_command_kind_once() {
         BTreeSet::from(["ActivateProgramme".to_string()]),
         "COMPOSED_ONLY"
     );
-    let expected_later: BTreeSet<String> = EXPECTED_LATER_M5
-        .iter()
-        .chain(EXPECTED_LATER_M12.iter())
-        .map(|s| s.to_string())
-        .collect();
+    let expected_later: BTreeSet<String> =
+        EXPECTED_LATER_M12.iter().map(|s| s.to_string()).collect();
     assert_eq!(later, expected_later, "LATER");
+    for k in ROUTED_IN_M5 {
+        assert!(routed.contains_key(k), "{k} is routed since M5 lane L-API");
+    }
     for (k, m) in LATER {
         let name = kind_name(*k);
         let want = if EXPECTED_LATER_M12.contains(&name.as_str()) {
@@ -244,7 +245,8 @@ fn ops_cover_every_command_kind_once() {
     );
     let stray: Vec<&String> = routed.keys().filter(|k| !all.contains(*k)).collect();
     assert!(stray.is_empty(), "routed kinds outside ALL: {stray:?}");
-    assert_eq!(routed.len(), 37, "routed command kinds");
+    // M5 lane L-API routes the 15 M5 kinds: 37 plus 15.
+    assert_eq!(routed.len(), 52, "routed command kinds");
     assert_eq!(
         all.len(),
         66,
@@ -480,7 +482,8 @@ fn ops_high_risk_and_binding_follow_the_domain() {
     // operations (coordinator, reviewer and IRC declarations), so there
     // are 36 command operations. (Lane m4reg corrected the floor here from
     // 37, which counted kinds, not operations.)
-    assert_eq!(kinds.len(), 34, "command kinds of command operations");
+    // M5 lane L-API routes the 15 kinds of M5 that `LATER` held, so 49.
+    assert_eq!(kinds.len(), 49, "command kinds of command operations");
     assert!(checked >= 36, "only {checked} command operations");
 }
 
@@ -516,8 +519,19 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
         &["tenant.set_login_methods"],
         "",
     ),
-    ("Changing bank details", &[], "M5 payments"),
-    ("Approving or releasing a payment", &[], "M5 payments"),
+    // M5 lane L-API: the vault ticket that opens the bank details page.
+    ("Changing bank details", &["vault.bank.set"], ""),
+    // Interim reading of lane L-API: the releaser's view of the payee of
+    // one released request is part of releasing it (M5 design reading 6).
+    (
+        "Approving or releasing a payment",
+        &[
+            "payment.approve",
+            "payment.release",
+            "vault.bank.view_for_release",
+        ],
+        "",
+    ),
     (
         "Activating a programme or publishing a call",
         &[
@@ -663,11 +677,12 @@ fn i85_every_high_risk_tool_is_prepare_only() {
 /// I-84, design section 3.6 `i84_every_tool_has_a_web_route`: no tool
 /// exists that the user's roles could not perform in the interface, so
 /// every operation with a tool has a web route. The capability table of
-/// design section 3.8 holds 35 tools.
+/// design section 3.8 holds 35 tools, and M5 design 12.1 adds three
+/// read-only ones.
 #[test]
 fn i84_every_tool_has_a_web_route() {
     let tools: Vec<&OpSpec> = OPS.iter().filter(|o| o.tool.is_some()).collect();
-    assert_eq!(tools.len(), 35, "operations with a tool");
+    assert_eq!(tools.len(), 38, "operations with a tool");
     let routeless: Vec<&str> = tools
         .iter()
         .filter(|o| o.route.is_none())
@@ -695,7 +710,7 @@ fn i84_every_tool_maps_to_one_op() {
             }
         }
     }
-    assert_eq!(by_tool.len(), 35, "distinct tool names");
+    assert_eq!(by_tool.len(), 38, "distinct tool names");
     let shared: Vec<(&str, Vec<&str>)> = by_tool
         .into_iter()
         .filter(|(_, ops)| ops.len() != 1)
@@ -747,7 +762,12 @@ const CAPABILITY_ROWS: [(&str, &[&str], &str); 7] = [
         ],
         "",
     ),
-    ("Grantee", &[], "M5 grants"),
+    // M5 design 12.1: read-only status tools.
+    (
+        "Grantee",
+        &["fstp_get_contract_status", "fstp_get_payment_status"],
+        "",
+    ),
     (
         "Reviewer and committee",
         &[
@@ -775,7 +795,7 @@ const CAPABILITY_ROWS: [(&str, &[&str], &str); 7] = [
         ],
         "",
     ),
-    ("Finance roles", &[], "M5 payments"),
+    ("Finance roles", &["fstp_get_payment_queue"], ""),
     ("Auditor", &["fstp_audit_list_entries"], ""),
     (
         "Anyone, without an account",
@@ -963,7 +983,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 51] = [
+const READ_NAMES: [&str; 56] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1018,6 +1038,12 @@ const READ_NAMES: [&str; 51] = [
     "GetRouteMap",
     // Lane mcreator: the Studio list of a programme's calls.
     "ListCalls",
+    // M5 lane L-API (M5 design section 5).
+    "GetGrant",
+    "GetContract",
+    "GetPaymentStatus",
+    "ListMyPaymentQueue",
+    "ListReports",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

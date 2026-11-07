@@ -25,6 +25,8 @@ fstp-guide.workspace = true
 # M5 lane L-CON: the Contract envelope, through its pure core only. The
 # rendering, the SignaturePort and signing stay in fstp-contract (shell).
 fstp-contract-core.workspace = true
+# M5 lane L-API: the Report envelope (M5 design section 4.3).
+fstp-report.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

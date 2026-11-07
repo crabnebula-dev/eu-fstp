@@ -1,0 +1,363 @@
+//! The read models of the M5 grant, contract, payment and report reads
+//! (M5 design section 5, lane L-API).
+//!
+//! I-86: no model here holds a bank detail, an identity attribute or a
+//! vault value. A hardship request is marked as such, and its vault
+//! evidence reference never leaves the cell. Parties are named by their
+//! signature field and role, never by account. Amounts are ADR-006
+//! strings the cell formats.
+
+use fstp_domain::id::{
+    CallId, ContractId, LineId, MilestoneId, ProgrammeId, ProposalId, RequestId,
+};
+use fstp_json::{Array, Object, ToJson, Value};
+
+use crate::McpSafe;
+
+fn dec(x: u128) -> Value {
+    Value::String(x.to_string())
+}
+
+fn nullable<T>(x: Option<T>, f: impl FnOnce(T) -> Value) -> Value {
+    x.map_or(Value::Null, f)
+}
+
+fn array<T: ToJson>(items: &[T]) -> Value {
+    let mut a = Array::new();
+    for i in items {
+        a.push(i.to_json());
+    }
+    Value::Array(a)
+}
+
+/// One M5 read model.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GrantModel {
+    /// `grant.overview`.
+    Overview(GrantOverview),
+    /// `contract.view`.
+    Contract(ContractView),
+    /// `payment.status`.
+    Payments(Vec<RequestRow>),
+    /// `payment.queue`.
+    Queue(Vec<QueueRow>),
+    /// `report.list`.
+    Reports(Vec<ReportRow>),
+}
+
+impl ToJson for GrantModel {
+    fn to_json(&self) -> Value {
+        match self {
+            GrantModel::Overview(v) => v.to_json(),
+            GrantModel::Contract(v) => v.to_json(),
+            GrantModel::Payments(rows) => array(rows),
+            GrantModel::Queue(rows) => array(rows),
+            GrantModel::Reports(rows) => array(rows),
+        }
+    }
+}
+
+impl McpSafe for GrantModel {}
+
+/// The overview of one grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantOverview {
+    /// The grant, by its proposal.
+    pub proposal: ProposalId,
+    /// The proposal state, as the state machine names it.
+    pub state: &'static str,
+    /// The current amount determination (R-NG-03).
+    pub determination: Option<u128>,
+    /// The reserved or granted amount.
+    pub amount: Option<String>,
+    /// The paid total (I-64).
+    pub paid: String,
+    /// The effective or latest contract.
+    pub contract: Option<ContractId>,
+    /// The number of payment requests.
+    pub requests: u32,
+}
+
+impl ToJson for GrantOverview {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("proposal", dec(self.proposal.raw()));
+        let _ = o.insert("state", Value::from(self.state));
+        let _ = o.insert("determination", nullable(self.determination, dec));
+        let _ = o.insert("amount", nullable(self.amount.as_deref(), Value::from));
+        let _ = o.insert("paid", Value::from(self.paid.as_str()));
+        let _ = o.insert("contract", nullable(self.contract, |c| dec(c.raw())));
+        let _ = o.insert("requests", Value::from(self.requests));
+        Value::Object(o)
+    }
+}
+
+/// One party of a contract version, by field and role (I-86).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartyRow {
+    /// The signature field.
+    pub field: String,
+    /// `lead`, `team_member`, `guardian` or `signatory`.
+    pub role: &'static str,
+    /// Whether the party signed this version.
+    pub signed: bool,
+    /// Whether the caller is this party.
+    pub mine: bool,
+}
+
+impl ToJson for PartyRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("field", Value::from(self.field.as_str()));
+        let _ = o.insert("role", Value::from(self.role));
+        let _ = o.insert("signed", Value::Bool(self.signed));
+        let _ = o.insert("mine", Value::Bool(self.mine));
+        Value::Object(o)
+    }
+}
+
+/// One version of a contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VersionRow {
+    /// The version number.
+    pub version: u32,
+    /// The version state.
+    pub state: &'static str,
+    /// Its parties.
+    pub parties: Vec<PartyRow>,
+    /// The number of stored revisions (I-30).
+    pub revisions: u32,
+    /// The SHA-256 of the latest revision, lowercase hex.
+    pub digest: Option<String>,
+    /// The clause changes still proposed (R-CT-04).
+    pub open_changes: Vec<u32>,
+}
+
+impl ToJson for VersionRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("version", Value::from(self.version));
+        let _ = o.insert("state", Value::from(self.state));
+        let _ = o.insert("parties", array(&self.parties));
+        let _ = o.insert("revisions", Value::from(self.revisions));
+        let _ = o.insert("digest", nullable(self.digest.as_deref(), Value::from));
+        let _ = o.insert(
+            "open_changes",
+            Value::Array(self.open_changes.iter().map(|c| Value::from(*c)).collect()),
+        );
+        Value::Object(o)
+    }
+}
+
+/// The contract status of one grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractView {
+    /// The grant.
+    pub proposal: ProposalId,
+    /// The contract, once drafted.
+    pub contract: Option<ContractId>,
+    /// The contract status.
+    pub status: Option<&'static str>,
+    /// Every version, oldest first.
+    pub versions: Vec<VersionRow>,
+}
+
+impl ToJson for ContractView {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("proposal", dec(self.proposal.raw()));
+        let _ = o.insert("contract", nullable(self.contract, |c| dec(c.raw())));
+        let _ = o.insert("status", nullable(self.status, Value::from));
+        let _ = o.insert("versions", array(&self.versions));
+        Value::Object(o)
+    }
+}
+
+/// One line of a payment request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineRow {
+    /// The line.
+    pub line: LineId,
+    /// The milestone it claims.
+    pub milestone: MilestoneId,
+    /// The requested amount.
+    pub requested: String,
+    /// The approved amount, once decided.
+    pub approved: Option<String>,
+}
+
+impl ToJson for LineRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("line", dec(self.line.raw()));
+        let _ = o.insert("milestone", dec(self.milestone.raw()));
+        let _ = o.insert("requested", Value::from(self.requested.as_str()));
+        let _ = o.insert("approved", nullable(self.approved.as_deref(), Value::from));
+        Value::Object(o)
+    }
+}
+
+/// One payment request of a grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestRow {
+    /// The request.
+    pub request: RequestId,
+    /// The grant.
+    pub proposal: ProposalId,
+    /// The status, as `payment-requests.md` names it.
+    pub status: &'static str,
+    /// Milestone claim or hardship contribution (R-PR-04).
+    pub kind: &'static str,
+    /// Whether the submission checks passed (I-32).
+    pub submission_checks: bool,
+    /// Whether the acceptance checks passed (I-32).
+    pub acceptance_checks: bool,
+    /// The lines.
+    pub lines: Vec<LineRow>,
+}
+
+impl ToJson for RequestRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("request", dec(self.request.raw()));
+        let _ = o.insert("proposal", dec(self.proposal.raw()));
+        let _ = o.insert("status", Value::from(self.status));
+        let _ = o.insert("kind", Value::from(self.kind));
+        let _ = o.insert("submission_checks", Value::Bool(self.submission_checks));
+        let _ = o.insert("acceptance_checks", Value::Bool(self.acceptance_checks));
+        let _ = o.insert("lines", array(&self.lines));
+        Value::Object(o)
+    }
+}
+
+/// One item of the caller's payment work queue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueueRow {
+    /// What the caller does: `review`, `approve`, `release` or `confirm`.
+    pub task: &'static str,
+    /// The request, with its lines.
+    pub request: RequestRow,
+}
+
+impl ToJson for QueueRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("task", Value::from(self.task));
+        let _ = o.insert("request", self.request.to_json());
+        Value::Object(o)
+    }
+}
+
+/// One funder report of a programme (R-RP-01, R-RP-03).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportRow {
+    /// The report.
+    pub report: u128,
+    /// The output kind.
+    pub kind: &'static str,
+    /// The call it covers, if it covers one call.
+    pub call: Option<CallId>,
+    /// The programme it covers, if it covers the programme.
+    pub programme: Option<ProgrammeId>,
+    /// The SHA-256 of the document, lowercase hex.
+    pub document: String,
+    /// The template version.
+    pub template: String,
+    /// Whether the caller generated it, and so may not approve it.
+    pub generated_by_me: bool,
+    /// Whether it is approved.
+    pub approved: bool,
+}
+
+impl ToJson for ReportRow {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("report", dec(self.report));
+        let _ = o.insert("kind", Value::from(self.kind));
+        let _ = o.insert("call", nullable(self.call, |c| dec(c.raw())));
+        let _ = o.insert("programme", nullable(self.programme, |p| dec(p.raw())));
+        let _ = o.insert("document", Value::from(self.document.as_str()));
+        let _ = o.insert("template", Value::from(self.template.as_str()));
+        let _ = o.insert("generated_by_me", Value::Bool(self.generated_by_me));
+        let _ = o.insert("approved", Value::Bool(self.approved));
+        Value::Object(o)
+    }
+}
+
+/// One sample of each model, filled and empty, for the reply shape tests.
+#[cfg(test)]
+pub(crate) fn samples() -> Vec<GrantModel> {
+    let request = RequestRow {
+        request: RequestId::from_raw(7),
+        proposal: ProposalId::from_raw(3),
+        status: "UNDER_REVIEW",
+        kind: "hardship",
+        submission_checks: true,
+        acceptance_checks: false,
+        lines: vec![LineRow {
+            line: LineId::from_raw(8),
+            milestone: MilestoneId::from_raw(9),
+            requested: "100.00".to_owned(),
+            approved: Some("90.00".to_owned()),
+        }],
+    };
+    vec![
+        GrantModel::Overview(GrantOverview {
+            proposal: ProposalId::from_raw(3),
+            state: "GRANTED",
+            determination: Some(4),
+            amount: Some("1000.00".to_owned()),
+            paid: "0.00".to_owned(),
+            contract: Some(ContractId::from_raw(5)),
+            requests: 1,
+        }),
+        GrantModel::Overview(GrantOverview {
+            proposal: ProposalId::from_raw(3),
+            state: "NEGOTIATION",
+            determination: None,
+            amount: None,
+            paid: "0.00".to_owned(),
+            contract: None,
+            requests: 0,
+        }),
+        GrantModel::Contract(ContractView {
+            proposal: ProposalId::from_raw(3),
+            contract: Some(ContractId::from_raw(5)),
+            status: Some("sent"),
+            versions: vec![VersionRow {
+                version: 1,
+                state: "sent",
+                parties: vec![PartyRow {
+                    field: "lead".to_owned(),
+                    role: "lead",
+                    signed: false,
+                    mine: true,
+                }],
+                revisions: 1,
+                digest: Some("00".repeat(32)),
+                open_changes: vec![2],
+            }],
+        }),
+        GrantModel::Contract(ContractView {
+            proposal: ProposalId::from_raw(3),
+            contract: None,
+            status: None,
+            versions: Vec::new(),
+        }),
+        GrantModel::Payments(vec![request.clone()]),
+        GrantModel::Queue(vec![QueueRow {
+            task: "review",
+            request,
+        }]),
+        GrantModel::Reports(vec![ReportRow {
+            report: 11,
+            kind: "audit_file",
+            call: Some(CallId::from_raw(2)),
+            programme: None,
+            document: "00".repeat(32),
+            template: "horizon-europe/audit_file/1".to_owned(),
+            generated_by_me: false,
+            approved: false,
+        }]),
+    ]
+}

@@ -53,6 +53,7 @@ pub(crate) fn member_of(r: &CellRecord) -> &'static str {
         // records keep `tenant`.
         CellRecord::Engine(fstp_engine::Record::Tenant(_)) => "onboarding",
         CellRecord::Engine(fstp_engine::Record::Contract(_)) => "contract",
+        CellRecord::Engine(fstp_engine::Record::Report(_)) => "report",
         CellRecord::Auth(_) => "auth",
         CellRecord::Tenant(_) => "tenant",
         CellRecord::Text(_) => "text",

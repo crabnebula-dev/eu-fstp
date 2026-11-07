@@ -181,6 +181,16 @@ pub(crate) enum Derive {
     /// plan is composed with its submission into one engine command
     /// (`fstp_engine::Stage2Revision`).
     RevisionForm,
+    /// M5 lane L-API: a payment request. The server draws each line id
+    /// and puts `replaces` as `null` (a new request).
+    PaymentLines,
+    /// M5 lane L-API: a resubmission (reading 4). `replaces` is the route's
+    /// request, `grant` is its grant, and the server draws each line id.
+    Resubmission,
+    /// M5 lane L-API: `ReleasePayment` names the digest of the record-only
+    /// payment record file: the request, its grant and its approved total,
+    /// with no bank detail (reading 6, I-16).
+    RecordFile,
     /// A submission names the plan that [`name_plans`] put in the request
     /// before the digest. Without one it is refused, and nothing is
     /// derived here, so a confirmation never picks a later plan (I-85).
@@ -226,6 +236,7 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
     const PROPOSAL: &[(&str, Option<&str>)] = &[("proposal", Some("proposal"))];
     const CALL: &[(&str, Option<&str>)] = &[("call", Some("call"))];
     const ASSIGNMENT: &[(&str, Option<&str>)] = &[("assignment", Some("assignment"))];
+    const REQUEST: &[(&str, Option<&str>)] = &[("request", Some("request"))];
     let f = match kind {
         K::GrantRole => CmdForm {
             params: &[("programme", Some("programme"))],
@@ -438,6 +449,77 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
             required: &["conflicted", "notifiable"],
             ..form(kind)
         },
+        // M5 lane L-API (M5 design section 5).
+        K::DetermineAmount => CmdForm {
+            params: PROPOSAL,
+            required: &["agreed", "deductions", "currency"],
+            drawn: &["decision"],
+            texts: DEDUCTION_TEXTS,
+            ..form(kind)
+        },
+        K::AcceptGrant | K::ApproveGrant => CmdForm {
+            params: PROPOSAL,
+            required: &["determination"],
+            drawn: &["decision"],
+            ..form(kind)
+        },
+        K::Terminate => CmdForm {
+            params: PROPOSAL,
+            required: &["reason"],
+            drawn: &["decision"],
+            texts: &["reason"],
+            ..form(kind)
+        },
+        K::CloseMilestone => CmdForm {
+            params: &[
+                ("proposal", Some("proposal")),
+                ("milestone", Some("milestone")),
+            ],
+            required: &["reason"],
+            texts: &["reason"],
+            ..form(kind)
+        },
+        K::RequestPayment => CmdForm {
+            params: &[("proposal", Some("grant"))],
+            required: &["kind", "lines", "currency"],
+            drawn: &["request"],
+            texts: LINE_TEXTS,
+            derive: Derive::PaymentLines,
+            ..form(kind)
+        },
+        K::WithdrawPaymentRequest | K::ApprovePayment | K::ConfirmPaid => CmdForm {
+            params: REQUEST,
+            ..form(kind)
+        },
+        K::ReleasePayment => CmdForm {
+            params: REQUEST,
+            derive: Derive::RecordFile,
+            ..form(kind)
+        },
+        K::AcceptLine => CmdForm {
+            params: &[("request", Some("request")), ("line", Some("line"))],
+            required: &["approved", "currency"],
+            optional: &["reason"],
+            texts: &["reason"],
+            ..form(kind)
+        },
+        K::RequestPaymentChanges | K::ClosePaymentRequest => CmdForm {
+            params: REQUEST,
+            required: &["reason"],
+            texts: &["reason"],
+            ..form(kind)
+        },
+        K::ProposeAmendment => CmdForm {
+            params: &[("proposal", Some("grant"))],
+            required: &["plan"],
+            drawn: &["amendment"],
+            ..form(kind)
+        },
+        K::RouteAmendment => CmdForm {
+            params: &[("amendment", Some("amendment"))],
+            required: &["route"],
+            ..form(kind)
+        },
         _ => return None,
     };
     Some(f)
@@ -474,6 +556,17 @@ pub(crate) fn op_form(spec: &OpSpec) -> Option<CmdForm> {
         return None;
     };
     let f = command_form(kind)?;
+    // A resubmission is a `RequestPayment` on the route of the request it
+    // replaces (reading 4).
+    if kind == CommandKind::RequestPayment
+        && route_param_names(spec).first().copied() == Some("request")
+    {
+        return Some(CmdForm {
+            params: &[("request", Some("replaces"))],
+            derive: Derive::Resubmission,
+            ..f
+        });
+    }
     if kind != CommandKind::DeclareConflict {
         return Some(f);
     }
@@ -549,7 +642,12 @@ fn at<'a>(o: &'a Object, path: &str) -> Option<&'a Value> {
     let mut parts = path.split('.');
     let mut v = o.get(parts.next()?)?;
     for p in parts {
-        v = v.as_object()?.get(p)?;
+        // M5 lane L-API: a decimal segment indexes an array, so a payment
+        // line's evidence texts are stored like every other text.
+        v = match p.parse::<usize>() {
+            Ok(i) => v.as_array()?.get(i)?,
+            Err(_) => v.as_object()?.get(p)?,
+        };
     }
     Some(v)
 }
@@ -559,7 +657,10 @@ fn at_mut<'a>(o: &'a mut Object, path: &str) -> Option<&'a mut Value> {
     let mut parts = path.split('.');
     let mut v = o.get_mut(parts.next()?)?;
     for p in parts {
-        v = v.as_object_mut()?.get_mut(p)?;
+        v = match p.parse::<usize>() {
+            Ok(i) => v.as_array_mut()?.get_mut(i)?,
+            Err(_) => v.as_object_mut()?.get_mut(p)?,
+        };
     }
     Some(v)
 }
@@ -652,6 +753,9 @@ fn check_command(f: &CmdForm, request: &Object, members: Vec<&str>) -> Result<()
         match at(request, path) {
             Some(Value::String(s)) if s.len() <= TEXT_LIMIT => {}
             Some(Value::Null) | None if is_optional(f, path) => {}
+            // An indexed path past the end of its array, or a null
+            // evidence member, names no text (M5 lane L-API).
+            Some(Value::Null) | None if indexed(path) => {}
             None if in_other_variant(request, path) => {}
             _ => return Err(bad()),
         }
@@ -694,6 +798,11 @@ fn in_other_variant(request: &Object, path: &str) -> bool {
 }
 
 /// Whether the text at `path` may be absent or `null`.
+/// Whether a text path indexes an array (M5 lane L-API).
+fn indexed(path: &str) -> bool {
+    path.split('.').any(|p| p.parse::<usize>().is_ok())
+}
+
 fn is_optional(f: &CmdForm, path: &str) -> bool {
     let first = path.split('.').next().unwrap_or(path);
     f.optional.contains(&first)
@@ -794,6 +903,85 @@ pub(crate) fn name_plans(form: &CmdForm, request: &mut Object, latest: LatestPla
 /// A decimal string.
 fn dec(x: u128) -> Value {
     Value::String(x.to_string())
+}
+
+/// The text paths of a payment request's lines: the location, the
+/// release and the report of each of the first [`MAX_LINES`] lines.
+/// Interim, pending Daniel: a request holds at most eight lines.
+const LINE_TEXTS: &[&str] = &[
+    "lines.0.evidence.location",
+    "lines.0.evidence.release",
+    "lines.0.evidence.report",
+    "lines.1.evidence.location",
+    "lines.1.evidence.release",
+    "lines.1.evidence.report",
+    "lines.2.evidence.location",
+    "lines.2.evidence.release",
+    "lines.2.evidence.report",
+    "lines.3.evidence.location",
+    "lines.3.evidence.release",
+    "lines.3.evidence.report",
+    "lines.4.evidence.location",
+    "lines.4.evidence.release",
+    "lines.4.evidence.report",
+    "lines.5.evidence.location",
+    "lines.5.evidence.release",
+    "lines.5.evidence.report",
+    "lines.6.evidence.location",
+    "lines.6.evidence.release",
+    "lines.6.evidence.report",
+    "lines.7.evidence.location",
+    "lines.7.evidence.release",
+    "lines.7.evidence.report",
+];
+
+/// The most lines of one payment request, and of deductions of one
+/// amount determination (interim, pending Daniel).
+pub(crate) const MAX_LINES: usize = 8;
+
+/// The reason texts of an amount determination's deductions (R-NG-03).
+const DEDUCTION_TEXTS: &[&str] = &[
+    "deductions.0.reason",
+    "deductions.1.reason",
+    "deductions.2.reason",
+    "deductions.3.reason",
+    "deductions.4.reason",
+    "deductions.5.reason",
+    "deductions.6.reason",
+    "deductions.7.reason",
+];
+
+/// The record-only payment record file of request `r` (reading 6): its
+/// reference, its grant and its approved total, as canonical JSON. It
+/// names no bank detail and no payee value (I-16, I-86).
+pub(crate) fn record_file(state: &EngineState, r: u128) -> String {
+    let rid = fstp_domain::id::RequestId::from_raw(r);
+    let summary = state.core.payments().summaries().find(|s| s.request == rid);
+    let grant = summary.as_ref().map_or(0, |s| s.grant.raw());
+    let total = summary
+        .iter()
+        .flat_map(|s| s.lines.iter())
+        .filter_map(|l| l.decision.map(|(_, a)| a.amount()))
+        .try_fold(None::<fstp_money::Amount>, |acc, a| match acc {
+            None => Some(Some(a)),
+            Some(t) => t.checked_add(a).ok().map(Some),
+        })
+        .flatten()
+        .map_or_else(String::new, |t| t.to_string());
+    format!(
+        "{{\"approved\":\"{total}\",\"grant\":\"{grant}\",\"kind\":\"record_only\",\"request\":\"{r}\"}}"
+    )
+}
+
+/// The lowercase hex SHA-256 of [`record_file`]. A trial build names the
+/// zero digest.
+fn record_file_hex(cx: &BuildCtx<'_>, r: u128) -> String {
+    let bytes = if cx.trial {
+        [0u8; 32]
+    } else {
+        fstp_crypto::sha256(record_file(cx.state, r).as_bytes())
+    };
+    crate::action::hex(&bytes)
 }
 
 /// The id at the request parameter `name`.
@@ -957,6 +1145,41 @@ pub(crate) fn build(
                 Value::Null
             };
             let _ = o.insert("handle", handle);
+        }
+        Derive::PaymentLines | Derive::Resubmission => {
+            if f.derive == Derive::Resubmission {
+                let r = id_param(request, "request").ok_or_else(bad)?;
+                let grant = if cx.trial {
+                    ProposalId::from_raw(1)
+                } else {
+                    cx.state
+                        .core
+                        .payments()
+                        .grant_of(fstp_domain::id::RequestId::from_raw(r))
+                        .ok_or_else(not_found)?
+                };
+                let _ = o.insert("grant", dec(grant.raw()));
+            } else {
+                let _ = o.insert("replaces", Value::Null);
+            }
+            let lines = o
+                .get_mut("lines")
+                .and_then(Value::as_array_mut)
+                .ok_or_else(bad)?;
+            if lines.len() > MAX_LINES {
+                return Err(bad());
+            }
+            for l in lines.iter_mut() {
+                let l = l.as_object_mut().ok_or_else(bad)?;
+                if l.contains_key("line") {
+                    return Err(bad());
+                }
+                let _ = l.insert("line", dec(draw()?));
+            }
+        }
+        Derive::RecordFile => {
+            let r = id_param(request, "request").ok_or_else(bad)?;
+            let _ = o.insert("record_file", Value::String(record_file_hex(cx, r)));
         }
         Derive::PlanForm => plan_form(&mut o, request, cx, draw, false)?,
         Derive::RevisionForm => plan_form(&mut o, request, cx, draw, true)?,

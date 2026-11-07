@@ -155,11 +155,17 @@ pub enum Who {
     ContractSignatory,
     /// An auditor of P.
     Auditor,
+    /// M5 lane L-API: the holder of both tenant-wide signatory roles
+    /// (NOTE 5), who approves funder reports as Financial signatory
+    /// (R-RP-03, Q3). Reading: the roles live in the tenant fold, not the
+    /// roster, so for every rule but the report rules the account acts as
+    /// one with no binding. It is built in GRANTED worlds only.
+    FinancialSignatory,
 }
 
 impl Who {
     /// Every principal of the matrix.
-    pub const ALL: [Who; 34] = [
+    pub const ALL: [Who; 35] = [
         Who::Anonymous,
         Who::Unbound,
         Who::TenantAdmin,
@@ -194,6 +200,7 @@ impl Who {
         Who::PaymentReleaser,
         Who::ContractSignatory,
         Who::Auditor,
+        Who::FinancialSignatory,
     ];
 
     /// Whether the principal has an account.
@@ -210,7 +217,8 @@ impl Who {
             Who::Unbound
             | Who::EndedProgrammeManager
             | Who::SuspendedReviewer
-            | Who::VoidedLead => &[None],
+            | Who::VoidedLead
+            | Who::FinancialSignatory => &[None],
             Who::TenantAdmin | Who::TenantAdminBuilder | Who::SoleTenantAdmin => {
                 &[Some(Role::TenantAdmin)]
             }
@@ -255,6 +263,7 @@ impl Who {
                 | Who::Unbound
                 | Who::EndedProgrammeManager
                 | Who::SuspendedReviewer
+                | Who::FinancialSignatory
                 | Who::Lead
                 | Who::TeamMember
                 | Who::Guardian
@@ -580,6 +589,21 @@ pub enum Target {
     Round,
     /// A finding on X, seeded through the assessor's system path.
     Finding,
+    /// M5 lane L-API: X in NEGOTIATION, where an amount is determined,
+    /// accepted and approved and a contract drafted (R-NG-03).
+    Negotiation,
+    /// X granted or in execution: the grant of payments, amendments,
+    /// milestone closure, termination and the vault tickets.
+    Grant,
+    /// M5 lane L-API: the payment request of X under review, in an
+    /// IN_EXECUTION world.
+    Request,
+    /// The drafted contract of X, in a GRANTED world.
+    Contract,
+    /// The proposed amendment of X, in a GRANTED world.
+    Amendment,
+    /// A funder report of P, in a GRANTED world.
+    Report,
 }
 
 /// The states of X in which reviewer assignments exist: every state an
@@ -630,6 +654,17 @@ const IRC: [StateTag; 9] = [
     StateTag::Terminated,
 ];
 
+/// The states of X in which a grant can be read (M5 lane L-API).
+const GRANT_STATES: [StateTag; 7] = [
+    StateTag::Negotiation,
+    StateTag::Withdrawn,
+    StateTag::Declined,
+    StateTag::Granted,
+    StateTag::InExecution,
+    StateTag::Completed,
+    StateTag::Terminated,
+];
+
 fn among(s: StateTag, set: &[StateTag]) -> bool {
     set.contains(&s)
 }
@@ -653,6 +688,15 @@ pub fn target_exists(target: Target, state: StateProfile) -> bool {
         Target::Finding => state
             .proposal()
             .is_some_and(|s| among(s, &ASSIGNED) && s != StateTag::Submitted),
+        Target::Negotiation => state.proposal() == Some(StateTag::Negotiation),
+        Target::Grant => matches!(
+            state.proposal(),
+            Some(StateTag::Granted | StateTag::InExecution)
+        ),
+        Target::Request => state.proposal() == Some(StateTag::InExecution),
+        Target::Contract | Target::Amendment | Target::Report => {
+            state.proposal() == Some(StateTag::Granted)
+        }
     }
 }
 
@@ -716,6 +760,7 @@ pub fn feasible(who: Who, state: StateProfile) -> bool {
         Who::IrcAssigneeUndeclared => x == Some(StateTag::IrcReview),
         Who::Lead | Who::TeamMember | Who::Guardian => x.is_some(),
         Who::VoidedLead => matches!(x, Some(StateTag::Negotiation | StateTag::Declined)),
+        Who::FinancialSignatory => x == Some(StateTag::Granted),
     }
 }
 
@@ -844,6 +889,36 @@ pub enum Rule {
     /// O-58): the lead and the team member in every state, a terminal one
     /// included (Daniel, 2026-11-06). The guardian gets no map.
     RouteMap,
+    /// M5 lane L-API: the grant, contract and payment status of X (M5
+    /// design section 5). Reading: the team as for its own proposal, and
+    /// the programme manager, finance approver, payment releaser, contract
+    /// signatory and auditor of P, once X reached NEGOTIATION.
+    GrantReader,
+    /// The funder reports of P: its programme manager or auditor, and the
+    /// Financial signatory, who approves them (Q3).
+    ReportReader,
+    /// A finance approver of P.
+    Finance,
+    /// A payment releaser of P.
+    Releaser,
+    /// A Financial signatory of the tenant, who did not generate the
+    /// report (R-RP-03, Q3).
+    FinancialSignatory,
+    /// A party of the contract: the lead, the guardian of a minor and a
+    /// contract signatory of P (M5 lane L-API reading of R-CT-02).
+    ContractParty,
+    /// A side of a clause change (R-CT-04): the lead or a programme
+    /// manager of P.
+    ContractSide,
+    /// `ProposeAmendment`: the lead, or the declared, conflict-free
+    /// assigned reviewer (`ACTOR_RULES`), as [`Rule::GrantReviewer`].
+    Amender,
+    /// The declared, conflict-free assigned reviewer of an M5 grant
+    /// command: the amount determination and the line review. Reading of
+    /// lane L-API, pending the lead: an undeclared or conflicted assignee
+    /// is refused as the actor, not as a conflict, since the M5 commands
+    /// name the assigned reviewer in their actor rule (`ACTOR_RULES`).
+    GrantReviewer,
 }
 
 impl Rule {
@@ -928,6 +1003,33 @@ impl Rule {
             }
             Rule::IrcAssignee | Rule::IrcAct | Rule::IrcCase => &[Some(Role::IrcMember)],
             Rule::Auditor => &[Some(Role::Auditor)],
+            Rule::GrantReader => &[
+                Some(Role::Applicant),
+                Some(Role::ApplicantTeamMember),
+                Some(Role::Guardian),
+                Some(Role::ProgrammeManager),
+                Some(Role::FinanceApprover),
+                Some(Role::PaymentReleaser),
+                Some(Role::ContractSignatory),
+                Some(Role::Auditor),
+            ],
+            Rule::ReportReader => &[
+                Some(Role::ProgrammeManager),
+                Some(Role::Auditor),
+                Some(Role::FinancialSignatory),
+            ],
+            Rule::Finance => &[Some(Role::FinanceApprover)],
+            Rule::Releaser => &[Some(Role::PaymentReleaser)],
+            Rule::FinancialSignatory => &[Some(Role::FinancialSignatory)],
+            Rule::ContractParty => &[
+                Some(Role::Applicant),
+                Some(Role::ApplicantTeamMember),
+                Some(Role::Guardian),
+                Some(Role::ContractSignatory),
+            ],
+            Rule::Amender => &[Some(Role::Applicant), Some(Role::CommitteeMember)],
+            Rule::ContractSide => &[Some(Role::Applicant), Some(Role::ProgrammeManager)],
+            Rule::GrantReviewer => &[Some(Role::CommitteeMember)],
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
@@ -1358,6 +1460,53 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("pending.discard", T::None, R::AnyAccount),
     RefOp::read("audit.entries", T::Programme, R::Auditor).tool("fstp_audit_list_entries"),
     RefOp::read("audit.vault_outcomes", T::Programme, R::Auditor),
+    // M5 lane L-API (M5 design section 5, 12.1). Every command is web only
+    // (reading 9), so MCP refuses it as not exposed. The three status
+    // reads carry read-only tools.
+    RefOp::read("grant.overview", T::Proposal, R::GrantReader),
+    RefOp::read("contract.view", T::Proposal, R::GrantReader).tool("fstp_get_contract_status"),
+    RefOp::read("payment.status", T::Proposal, R::GrantReader).tool("fstp_get_payment_status"),
+    RefOp::read("payment.queue", T::None, R::AnyAccount).tool("fstp_get_payment_queue"),
+    RefOp::act("grant.determine_amount", T::Negotiation, R::GrantReviewer).binding(),
+    RefOp::act("grant.accept", T::Negotiation, R::Lead).binding(),
+    RefOp::act("grant.approve", T::Negotiation, R::ProgrammeManager).binding(),
+    RefOp::act("grant.terminate", T::Grant, R::ProgrammeManager).binding(),
+    RefOp::act("milestone.close", T::Grant, R::ProgrammeManager).binding(),
+    RefOp::act("contract.draft", T::Negotiation, R::ProgrammeManager),
+    RefOp::act("contract.propose_change", T::Contract, R::ContractSide),
+    RefOp::act("contract.decide_change", T::Contract, R::ContractSide),
+    RefOp::act("contract.send", T::Contract, R::ProgrammeManager),
+    RefOp::act("contract.sign", T::Contract, R::ContractParty),
+    RefOp::act(
+        "contract.approve_advanced",
+        T::Contract,
+        R::ProgrammeManager,
+    ),
+    RefOp::act("contract.decline", T::Contract, R::Lead),
+    RefOp::act("payment.submit", T::Grant, R::Lead).binding(),
+    RefOp::act("payment.resubmit", T::Request, R::Lead).binding(),
+    RefOp::act("payment.withdraw", T::Request, R::Lead).binding(),
+    RefOp::act("payment.review_line", T::Request, R::GrantReviewer).binding(),
+    RefOp::act("payment.request_changes", T::Request, R::GrantReviewer).binding(),
+    RefOp::act("payment.approve", T::Request, R::Finance)
+        .hr()
+        .binding(),
+    RefOp::act("payment.release", T::Request, R::Releaser)
+        .hr()
+        .binding(),
+    RefOp::act("payment.confirm_paid", T::Request, R::Finance).binding(),
+    RefOp::act("payment.close", T::Request, R::ProgrammeManager).binding(),
+    RefOp::act("amendment.propose", T::Grant, R::Amender).binding(),
+    RefOp::act("amendment.route", T::Amendment, R::ProgrammeManager).binding(),
+    RefOp::act("vault.bank.set", T::Grant, R::Lead).hr(),
+    RefOp::act("vault.bank.verify", T::Grant, R::Finance),
+    RefOp::act("vault.bank.dispute", T::Grant, R::Lead),
+    RefOp::act("vault.bank.view_for_release", T::Request, R::Releaser).hr(),
+    RefOp::act("vault.hardship.submit", T::Grant, R::Lead),
+    RefOp::act("vault.hardship.verify", T::Grant, R::Finance),
+    RefOp::read("report.list", T::Programme, R::ReportReader),
+    RefOp::act("report.generate", T::Programme, R::ProgrammeManager),
+    RefOp::act("report.approve", T::Report, R::FinancialSignatory),
 ];
 
 /// Whether the rule admits the principal, and the class if not. The
@@ -1527,6 +1676,28 @@ fn admit(
             open(team || (staff && x.is_some_and(|s| s != StateTag::Draft)))
         }
         Rule::RouteMap => open(matches!(who, Who::Lead | Who::TeamMember)),
+        Rule::GrantReader => {
+            let in_grant = x.is_some_and(|s| among(s, &GRANT_STATES));
+            let staff = who.manager()
+                || matches!(
+                    who,
+                    Who::FinanceApprover
+                        | Who::PaymentReleaser
+                        | Who::ContractSignatory
+                        | Who::Auditor
+                );
+            open(in_grant && (former_team_reads(who, x) || staff))
+        }
+        Rule::ReportReader => {
+            open(who.manager() || matches!(who, Who::Auditor | Who::FinancialSignatory))
+        }
+        Rule::Finance => open(who == Who::FinanceApprover),
+        Rule::Releaser => open(who == Who::PaymentReleaser),
+        Rule::FinancialSignatory => open(who == Who::FinancialSignatory),
+        Rule::ContractParty => open(matches!(who, Who::Lead | Who::ContractSignatory)),
+        Rule::ContractSide => open(who == Who::Lead || who.manager()),
+        Rule::Amender => open(matches!(who, Who::Lead | Who::AssignedReviewer)),
+        Rule::GrantReviewer => open(who == Who::AssignedReviewer),
     }
 }
 

@@ -129,6 +129,8 @@ pub enum ReadModel {
     /// `people.get_invitation`: the invitation landing (SoD-09, J2, lane
     /// inv). It names no account, no inviter and no address.
     Invitation(InvitationLanding),
+    /// The M5 grant, contract, payment and report reads (lane L-API).
+    Grant(crate::grant::GrantModel),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -263,6 +265,7 @@ impl ToJson for ReadModel {
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
             ReadModel::Invitation(v) => v.to_json(),
+            ReadModel::Grant(g) => g.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1617,6 +1620,20 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "call") => {
                 &["call.draft"]
             }
+            // M5 lane L-API: the ids a payment request, an amendment, a
+            // contract draft and a report generation draw.
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "request") => {
+                &["payment.submit", "payment.resubmit"]
+            }
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "amendment") => {
+                &["amendment.propose"]
+            }
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "contract") => {
+                &["contract.draft"]
+            }
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "report") => {
+                &["report.generate"]
+            }
             ReadModel::Created(_) => &["proposal.create"],
             ReadModel::PendingActions(_) => &["pending.list"],
             ReadModel::OpenCalls(_) => &["calls.list_open"],
@@ -1628,6 +1645,12 @@ pub(crate) mod reply_shape_tests {
                 "me.begin_verification",
                 "people.begin_verification",
                 "guardian.begin_consent",
+                "vault.bank.set",
+                "vault.bank.verify",
+                "vault.bank.dispute",
+                "vault.bank.view_for_release",
+                "vault.hardship.submit",
+                "vault.hardship.verify",
             ],
             ReadModel::IntakeQueue(_) => &["intake.queue"],
             ReadModel::Board(_) => &["call.board"],
@@ -1674,6 +1697,13 @@ pub(crate) mod reply_shape_tests {
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Guide(_) => &["calls.guide"],
             ReadModel::Public(_) => &[],
+            ReadModel::Grant(g) => match g {
+                crate::grant::GrantModel::Overview(_) => &["grant.overview"],
+                crate::grant::GrantModel::Contract(_) => &["contract.view"],
+                crate::grant::GrantModel::Payments(_) => &["payment.status"],
+                crate::grant::GrantModel::Queue(_) => &["payment.queue"],
+                crate::grant::GrantModel::Reports(_) => &["report.list"],
+            },
         }
     }
 
@@ -2013,6 +2043,13 @@ pub(crate) mod reply_shape_tests {
             ),
         ]
         .into_iter()
+        .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
+        .chain([
+            ReadModel::Created(vec![("request", 7)]),
+            ReadModel::Created(vec![("amendment", 7)]),
+            ReadModel::Created(vec![("contract", 7)]),
+            ReadModel::Created(vec![("report", 7)]),
+        ])
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
         .collect()
     }
@@ -2083,7 +2120,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 38;
+    const VARIANTS: usize = 39;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2128,6 +2165,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Guide(_) => 35,
             ReadModel::Public(_) => 36,
             ReadModel::Invitation(_) => 37,
+            ReadModel::Grant(_) => 38,
         }
     }
 

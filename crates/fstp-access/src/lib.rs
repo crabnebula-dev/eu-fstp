@@ -43,8 +43,8 @@ pub use reads::{
     authorize_read, read_rule,
 };
 pub use registry::{
-    AgentKind, BridgeKind, COMPOSED_ONLY, Classification, CreatorKind, FindingKind, ImportKind,
-    LATER, Method, Milestone, OPS, OpKind, OpSpec, PendingKind, PortKind, PublicKind,
+    AgentKind, BridgeKind, COMPOSED_ONLY, Classification, CreatorKind, FindingKind, GrantKind,
+    ImportKind, LATER, Method, Milestone, OPS, OpKind, OpSpec, PendingKind, PortKind, PublicKind,
     RoleOrApplicant, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER, Schema, Scope,
     SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
 };

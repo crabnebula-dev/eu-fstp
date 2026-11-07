@@ -39,6 +39,8 @@ fstp-mc.workspace = true
 fstp-tls.workspace = true
 fstp-smtp.workspace = true
 fstp-brand.workspace = true
+# M5 lane L-API: the fake wallet, QTSP and trusted list of test cells.
+fstp-contract.workspace = true
 
 
 [lints]

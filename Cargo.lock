@@ -167,6 +167,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-access",
  "fstp-brand",
+ "fstp-contract",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
@@ -179,9 +180,12 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
+ "fstp-pdf",
  "fstp-prop",
  "fstp-public",
+ "fstp-report",
  "fstp-rt",
+ "fstp-sigval",
  "fstp-tenant",
 ]
 
@@ -192,6 +196,7 @@ dependencies = [
  "fstp-access",
  "fstp-api-core",
  "fstp-brand",
+ "fstp-contract",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
@@ -351,6 +356,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-prop",
+ "fstp-report",
  "fstp-webauthn",
 ]
 
@@ -574,6 +580,7 @@ dependencies = [
  "fstp-money",
  "fstp-programme",
  "fstp-prop",
+ "fstp-report",
  "fstp-tenant",
 ]
 

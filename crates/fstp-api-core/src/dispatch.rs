@@ -121,6 +121,9 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod creator_ops;
+/// The M5 contract, report and vault ticket operations and the M5 reads
+/// (lane L-API).
+pub(crate) mod grant;
 /// `proposal.journey` and `proposal.diary` (lane j2, ADR-015), and
 /// `proposal.route_map` (lane j4).
 pub(crate) mod journey;
@@ -196,6 +199,22 @@ pub(crate) struct State {
     /// The tenant templates and uploads this core took (lane m4wire,
     /// `creator.rs`).
     creator: Mutex<crate::creator::CreatorMemory>,
+    /// The contract terms, clause texts and revisions this core rendered
+    /// (M5 lane L-API).
+    grant: Mutex<grant::GrantMemory>,
+    /// The signature services of a test or demo cell. `None` in
+    /// production, where every signature is refused (M5 design 12.1, Q2).
+    signing: grant::SharedSigning,
+}
+
+impl State {
+    /// The state of a core whose signatures go through `signing`.
+    pub(crate) fn with_signing(signing: grant::Signing) -> State {
+        State {
+            signing: Some(std::sync::Arc::new(signing)),
+            ..State::default()
+        }
+    }
 }
 
 /// The most accounts [`Begun`] holds. Past it, a new account's state
@@ -730,6 +749,7 @@ pub(crate) async fn run<P: Seams>(
             "a finding command that only the assessor issues",
         ))),
         OpKind::Public(kind) => public::read(&call, &op, kind).await,
+        OpKind::Grant(kind) => grant::command(&call, &op, kind).await,
     }
 }
 
@@ -934,6 +954,14 @@ fn text_owner(state: &EngineState, request: &Object) -> Option<TextOwner> {
     }
     if let Some(p) = forms::id_param(request, "programme") {
         return Some(TextOwner::Programme(ProgrammeId::from_raw(p)));
+    }
+    // M5 lane L-API: a payment request's texts belong to its grant.
+    if let Some(r) = forms::id_param(request, "request") {
+        return state
+            .core
+            .payments()
+            .grant_of(fstp_domain::id::RequestId::from_raw(r))
+            .map(TextOwner::Proposal);
     }
     // A round id is never read as a call id. No round command has a text.
     if let Some(c) = forms::id_param(request, "call") {
@@ -1193,6 +1221,10 @@ fn accepted(form: &CmdForm, ids: &[u128]) -> ReadModel {
     const NAMED: &[(fstp_domain::CommandKind, &str)] = &[
         (fstp_domain::CommandKind::CreateDraft, "proposal"),
         (fstp_domain::CommandKind::DraftCall, "call"),
+        // M5 lane L-API: a payment request names the request its status
+        // page opens, and an amendment its id.
+        (fstp_domain::CommandKind::RequestPayment, "request"),
+        (fstp_domain::CommandKind::ProposeAmendment, "amendment"),
     ];
     let Some((_, name)) = NAMED.iter().find(|(k, _)| *k == form.kind) else {
         return ReadModel::Accepted;
@@ -1453,6 +1485,11 @@ fn read_denied(rule: DenyRule) -> ApiError {
 
 /// A read: `authorize_read`, then the read model.
 async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<OpResult, ApiError> {
+    // M5 lane L-API: a Financial signatory holds a tenant-wide role
+    // (NOTE 5), so the report list judges it beside `authorize_read`.
+    if kind == ReadKind::ListReports {
+        return grant::list_reports(call, op).await;
+    }
     let target = match kind {
         ReadKind::GetCutOffRound => round_target(call, op)?,
         _ => read_target(op),
@@ -1738,6 +1775,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 .map(ProgrammeId::from_raw)
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
             ReadModel::Calls(staff_calls(&call.state.core, p, a, call.now))
+        }
+        // M5 lane L-API (M5 design section 5).
+        ReadKind::GetGrant
+        | ReadKind::GetContract
+        | ReadKind::GetPaymentStatus
+        | ReadKind::ListMyPaymentQueue => {
+            ReadModel::Grant(grant::read(call, op, kind).map_err(|e| call.refuse(e))?)
         }
         // R-GA-01, I-53: the stored Guide, never one bound per request.
         ReadKind::GetGuide => ReadModel::Guide(

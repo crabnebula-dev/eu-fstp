@@ -101,9 +101,11 @@ pub fn stored_json(record: &Record) -> Option<Value> {
     match record {
         Record::Core(r) => Some(envelope_to_json(EnvelopeKind::Core, r.to_json())),
         Record::Finding(_) => None,
-        Record::Creator(_) | Record::Import(_) | Record::Tenant(_) | Record::Contract(_) => {
-            Some(record.to_json())
-        }
+        Record::Creator(_)
+        | Record::Import(_)
+        | Record::Tenant(_)
+        | Record::Contract(_)
+        | Record::Report(_) => Some(record.to_json()),
     }
 }
 
@@ -162,7 +164,8 @@ fn decode_record(schema: u16, value: &Value) -> Result<Record, String> {
         EnvelopeKind::Creator
         | EnvelopeKind::Import
         | EnvelopeKind::Tenant
-        | EnvelopeKind::Contract => fstp_engine::record_from_json_at(schema, value)
+        | EnvelopeKind::Contract
+        | EnvelopeKind::Report => fstp_engine::record_from_json_at(schema, value)
             .map_err(|e| format!("the engine record does not decode: {e:?}")),
     }
 }
@@ -730,7 +733,8 @@ fn core_of(entries: &[Entry<Record>]) -> Vec<CoreRecord> {
             | Record::Creator(_)
             | Record::Import(_)
             | Record::Tenant(_)
-            | Record::Contract(_) => None,
+            | Record::Contract(_)
+            | Record::Report(_) => None,
         })
         .collect()
 }
@@ -2600,7 +2604,8 @@ fn holds(s: &LedgerState, f: impl Fn(&CoreRecord) -> bool) -> bool {
         | Record::Creator(_)
         | Record::Import(_)
         | Record::Tenant(_)
-        | Record::Contract(_) => false,
+        | Record::Contract(_)
+        | Record::Report(_) => false,
     })
 }
 

@@ -514,6 +514,62 @@ impl PaymentState {
     fn of(&self, grant: ProposalId) -> impl Iterator<Item = &Request> {
         self.requests.values().filter(move |r| r.grant == grant)
     }
+
+    /// A read view of every request, in id order (M5 lane L-API). It
+    /// names a hardship request's kind only, never its vault evidence
+    /// reference (I-86).
+    pub fn summaries(&self) -> impl Iterator<Item = RequestSummary> + '_ {
+        self.requests.iter().map(|(id, r)| RequestSummary {
+            request: *id,
+            grant: r.grant,
+            hardship: matches!(r.kind, PaymentKind::Hardship(_)),
+            status: r.status,
+            submission_passed: r.submission.is_some(),
+            acceptance_passed: r.acceptance.is_some(),
+            lines: r
+                .lines
+                .iter()
+                .map(|(line, l)| LineSummary {
+                    line: *line,
+                    milestone: l.milestone,
+                    requested: l.requested,
+                    decision: l.decision,
+                })
+                .collect(),
+        })
+    }
+}
+
+/// A read view of one payment request (M5 lane L-API).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestSummary {
+    /// The request.
+    pub request: RequestId,
+    /// The grant.
+    pub grant: ProposalId,
+    /// Whether it is a hardship contribution.
+    pub hardship: bool,
+    /// The status.
+    pub status: RequestStatus,
+    /// Whether the submission checks passed (I-32).
+    pub submission_passed: bool,
+    /// Whether the acceptance checks passed (I-32).
+    pub acceptance_passed: bool,
+    /// The lines, in id order.
+    pub lines: Vec<LineSummary>,
+}
+
+/// A read view of one line of a payment request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineSummary {
+    /// The line.
+    pub line: LineId,
+    /// The milestone it claims.
+    pub milestone: MilestoneId,
+    /// The requested amount.
+    pub requested: PosAmount,
+    /// The deciding reviewer and the approved amount, once decided.
+    pub decision: Option<(AccountId, NonNegAmount)>,
 }
 
 // ---------------------------------------------------------------------------

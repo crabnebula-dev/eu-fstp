@@ -199,7 +199,43 @@ export type OpName =
   | "pending.confirm"
   | "pending.discard"
   | "audit.entries"
-  | "audit.vault_outcomes";
+  | "audit.vault_outcomes"
+  | "grant.overview"
+  | "contract.view"
+  | "payment.status"
+  | "payment.queue"
+  | "grant.determine_amount"
+  | "grant.accept"
+  | "grant.approve"
+  | "grant.terminate"
+  | "milestone.close"
+  | "contract.draft"
+  | "contract.propose_change"
+  | "contract.decide_change"
+  | "contract.send"
+  | "contract.sign"
+  | "contract.approve_advanced"
+  | "contract.decline"
+  | "payment.submit"
+  | "payment.resubmit"
+  | "payment.withdraw"
+  | "payment.review_line"
+  | "payment.request_changes"
+  | "payment.approve"
+  | "payment.release"
+  | "payment.confirm_paid"
+  | "payment.close"
+  | "amendment.propose"
+  | "amendment.route"
+  | "vault.bank.set"
+  | "vault.bank.verify"
+  | "vault.bank.dispute"
+  | "vault.bank.view_for_release"
+  | "vault.hardship.submit"
+  | "vault.hardship.verify"
+  | "report.list"
+  | "report.generate"
+  | "report.approve";
 
 /** One segment of a route: fixed text, or a named parameter. */
 export type Segment =
@@ -377,6 +413,42 @@ export interface OpParams {
   readonly "pending.discard": { readonly "pending": string };
   readonly "audit.entries": { readonly "programme": string };
   readonly "audit.vault_outcomes": { readonly "programme": string };
+  readonly "grant.overview": { readonly "proposal": string };
+  readonly "contract.view": { readonly "proposal": string };
+  readonly "payment.status": { readonly "proposal": string };
+  readonly "payment.queue": Readonly<Record<never, string>>;
+  readonly "grant.determine_amount": { readonly "proposal": string };
+  readonly "grant.accept": { readonly "proposal": string };
+  readonly "grant.approve": { readonly "proposal": string };
+  readonly "grant.terminate": { readonly "proposal": string };
+  readonly "milestone.close": { readonly "proposal": string; readonly "milestone": string };
+  readonly "contract.draft": { readonly "proposal": string };
+  readonly "contract.propose_change": { readonly "contract": string };
+  readonly "contract.decide_change": { readonly "contract": string; readonly "clause": string };
+  readonly "contract.send": { readonly "contract": string };
+  readonly "contract.sign": { readonly "contract": string };
+  readonly "contract.approve_advanced": { readonly "contract": string };
+  readonly "contract.decline": { readonly "contract": string };
+  readonly "payment.submit": { readonly "proposal": string };
+  readonly "payment.resubmit": { readonly "request": string };
+  readonly "payment.withdraw": { readonly "request": string };
+  readonly "payment.review_line": { readonly "request": string; readonly "line": string };
+  readonly "payment.request_changes": { readonly "request": string };
+  readonly "payment.approve": { readonly "request": string };
+  readonly "payment.release": { readonly "request": string };
+  readonly "payment.confirm_paid": { readonly "request": string };
+  readonly "payment.close": { readonly "request": string };
+  readonly "amendment.propose": { readonly "proposal": string };
+  readonly "amendment.route": { readonly "amendment": string };
+  readonly "vault.bank.set": { readonly "proposal": string };
+  readonly "vault.bank.verify": { readonly "proposal": string };
+  readonly "vault.bank.dispute": { readonly "proposal": string };
+  readonly "vault.bank.view_for_release": { readonly "request": string };
+  readonly "vault.hardship.submit": { readonly "proposal": string };
+  readonly "vault.hardship.verify": { readonly "proposal": string };
+  readonly "report.list": { readonly "programme": string };
+  readonly "report.generate": { readonly "programme": string };
+  readonly "report.approve": { readonly "report": string };
 }
 
 /** Every operation name, in registry order. */
@@ -527,6 +599,42 @@ export const OP_NAMES: readonly OpName[] = [
   "pending.discard",
   "audit.entries",
   "audit.vault_outcomes",
+  "grant.overview",
+  "contract.view",
+  "payment.status",
+  "payment.queue",
+  "grant.determine_amount",
+  "grant.accept",
+  "grant.approve",
+  "grant.terminate",
+  "milestone.close",
+  "contract.draft",
+  "contract.propose_change",
+  "contract.decide_change",
+  "contract.send",
+  "contract.sign",
+  "contract.approve_advanced",
+  "contract.decline",
+  "payment.submit",
+  "payment.resubmit",
+  "payment.withdraw",
+  "payment.review_line",
+  "payment.request_changes",
+  "payment.approve",
+  "payment.release",
+  "payment.confirm_paid",
+  "payment.close",
+  "amendment.propose",
+  "amendment.route",
+  "vault.bank.set",
+  "vault.bank.verify",
+  "vault.bank.dispute",
+  "vault.bank.view_for_release",
+  "vault.hardship.submit",
+  "vault.hardship.verify",
+  "report.list",
+  "report.generate",
+  "report.approve",
 ];
 
 /** Every operation of the registry, in registry order. */
@@ -2575,6 +2683,510 @@ export const OPERATIONS: readonly Operation[] = [
     classification: "confidential",
     tool: null,
   },
+  {
+    name: "grant.overview",
+    method: "GET",
+    path: "/grants/{proposal}",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.view",
+    method: "GET",
+    path: "/grants/{proposal}/contract",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "contract" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_get_contract_status", scope: "proposals:read", prepareOnly: false },
+  },
+  {
+    name: "payment.status",
+    method: "GET",
+    path: "/grants/{proposal}/payment-requests",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "payment-requests" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_get_payment_status", scope: "proposals:read", prepareOnly: false },
+  },
+  {
+    name: "payment.queue",
+    method: "GET",
+    path: "/me/payment-queue",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "payment-queue" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_get_payment_queue", scope: "proposals:read", prepareOnly: false },
+  },
+  {
+    name: "grant.determine_amount",
+    method: "POST",
+    path: "/grants/{proposal}/amount-determination",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "amount-determination" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "grant.accept",
+    method: "POST",
+    path: "/grants/{proposal}/acceptance",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "acceptance" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "grant.approve",
+    method: "POST",
+    path: "/grants/{proposal}/approval",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "approval" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "grant.terminate",
+    method: "POST",
+    path: "/grants/{proposal}/termination",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "termination" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "milestone.close",
+    method: "POST",
+    path: "/grants/{proposal}/milestones/{milestone}/closure",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "milestones" }, { kind: "param", name: "milestone" }, { kind: "literal", text: "closure" }],
+    params: ["proposal", "milestone"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.draft",
+    method: "POST",
+    path: "/grants/{proposal}/contract",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "contract" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.propose_change",
+    method: "POST",
+    path: "/contracts/{contract}/changes",
+    base: "api",
+    segments: [{ kind: "literal", text: "contracts" }, { kind: "param", name: "contract" }, { kind: "literal", text: "changes" }],
+    params: ["contract"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.decide_change",
+    method: "POST",
+    path: "/contracts/{contract}/changes/{clause}/decision",
+    base: "api",
+    segments: [{ kind: "literal", text: "contracts" }, { kind: "param", name: "contract" }, { kind: "literal", text: "changes" }, { kind: "param", name: "clause" }, { kind: "literal", text: "decision" }],
+    params: ["contract", "clause"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.send",
+    method: "POST",
+    path: "/contracts/{contract}/send",
+    base: "api",
+    segments: [{ kind: "literal", text: "contracts" }, { kind: "param", name: "contract" }, { kind: "literal", text: "send" }],
+    params: ["contract"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.sign",
+    method: "POST",
+    path: "/contracts/{contract}/signature",
+    base: "api",
+    segments: [{ kind: "literal", text: "contracts" }, { kind: "param", name: "contract" }, { kind: "literal", text: "signature" }],
+    params: ["contract"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.approve_advanced",
+    method: "POST",
+    path: "/contracts/{contract}/advanced-approval",
+    base: "api",
+    segments: [{ kind: "literal", text: "contracts" }, { kind: "param", name: "contract" }, { kind: "literal", text: "advanced-approval" }],
+    params: ["contract"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.decline",
+    method: "POST",
+    path: "/contracts/{contract}/decline",
+    base: "api",
+    segments: [{ kind: "literal", text: "contracts" }, { kind: "param", name: "contract" }, { kind: "literal", text: "decline" }],
+    params: ["contract"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.submit",
+    method: "POST",
+    path: "/grants/{proposal}/payment-requests",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "payment-requests" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.resubmit",
+    method: "POST",
+    path: "/payment-requests/{request}/resubmission",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "resubmission" }],
+    params: ["request"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.withdraw",
+    method: "POST",
+    path: "/payment-requests/{request}/withdrawal",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "withdrawal" }],
+    params: ["request"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.review_line",
+    method: "POST",
+    path: "/payment-requests/{request}/lines/{line}/decision",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "lines" }, { kind: "param", name: "line" }, { kind: "literal", text: "decision" }],
+    params: ["request", "line"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.request_changes",
+    method: "POST",
+    path: "/payment-requests/{request}/changes",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "changes" }],
+    params: ["request"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.approve",
+    method: "POST",
+    path: "/payment-requests/{request}/approval",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "approval" }],
+    params: ["request"],
+    body: true,
+    highRisk: true,
+    binding: true,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.release",
+    method: "POST",
+    path: "/payment-requests/{request}/release",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "release" }],
+    params: ["request"],
+    body: true,
+    highRisk: true,
+    binding: true,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.confirm_paid",
+    method: "POST",
+    path: "/payment-requests/{request}/paid",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "paid" }],
+    params: ["request"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "payment.close",
+    method: "POST",
+    path: "/payment-requests/{request}/closure",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "closure" }],
+    params: ["request"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "amendment.propose",
+    method: "POST",
+    path: "/grants/{proposal}/amendments",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "amendments" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "amendment.route",
+    method: "POST",
+    path: "/amendments/{amendment}/route",
+    base: "api",
+    segments: [{ kind: "literal", text: "amendments" }, { kind: "param", name: "amendment" }, { kind: "literal", text: "route" }],
+    params: ["amendment"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "vault.bank.set",
+    method: "POST",
+    path: "/grants/{proposal}/bank-details",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "bank-details" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "vault.bank.verify",
+    method: "POST",
+    path: "/grants/{proposal}/bank-details/verification",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "bank-details" }, { kind: "literal", text: "verification" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "vault.bank.dispute",
+    method: "POST",
+    path: "/grants/{proposal}/bank-details/dispute",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "bank-details" }, { kind: "literal", text: "dispute" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "vault.bank.view_for_release",
+    method: "POST",
+    path: "/payment-requests/{request}/payee",
+    base: "api",
+    segments: [{ kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "payee" }],
+    params: ["request"],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "vault.hardship.submit",
+    method: "POST",
+    path: "/grants/{proposal}/hardship-evidence",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "hardship-evidence" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "vault.hardship.verify",
+    method: "POST",
+    path: "/grants/{proposal}/hardship-evidence/verification",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "hardship-evidence" }, { kind: "literal", text: "verification" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "report.list",
+    method: "GET",
+    path: "/programmes/{programme}/reports",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "reports" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "report.generate",
+    method: "POST",
+    path: "/programmes/{programme}/reports",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "reports" }],
+    params: ["programme"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "report.approve",
+    method: "POST",
+    path: "/reports/{report}/approval",
+    base: "api",
+    segments: [{ kind: "literal", text: "reports" }, { kind: "param", name: "report" }, { kind: "literal", text: "approval" }],
+    params: ["report"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
 ];
 
 /** The operation named `name`. */
@@ -2673,6 +3285,175 @@ export interface SchemaField {
 
 /** The reply shape of each operation whose data the API core serves, by operation name. */
 export const SCHEMAS: Readonly<Record<string, Schema>> = {
+  "grant.overview": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+      "determination": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "amount": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+      "paid": { schema: { kind: "amount" }, optional: false },
+      "contract": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "requests": { schema: { kind: "int" }, optional: false },
+    },
+  },
+  "contract.view": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "contract": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "status": { schema: { kind: "nullable", inner: { kind: "enum", values: ["drafted", "sent", "signed_by_grantee", "effective", "amendment_pending", "superseded", "terminated"] } }, optional: false },
+      "versions": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "version": { schema: { kind: "int" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["drafted", "sent", "signed_by_grantee", "effective", "amendment_pending", "superseded", "terminated"] }, optional: false },
+          "parties": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              "field": { schema: { kind: "string" }, optional: false },
+              "role": { schema: { kind: "enum", values: ["lead", "team_member", "guardian", "signatory"] }, optional: false },
+              "signed": { schema: { kind: "bool" }, optional: false },
+              "mine": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "revisions": { schema: { kind: "int" }, optional: false },
+          "digest": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "open_changes": { schema: { kind: "array", items: { kind: "int" } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "payment.status": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "request": { schema: { kind: "id" }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["SUBMITTED", "CHECKS_FAILED", "UNDER_REVIEW", "CHANGES_REQUESTED", "ACCEPTED", "PAYMENT_APPROVED", "RELEASED", "PAID", "REJECTED", "WITHDRAWN", "CLOSED"] }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["milestone", "hardship"] }, optional: false },
+      "submission_checks": { schema: { kind: "bool" }, optional: false },
+      "acceptance_checks": { schema: { kind: "bool" }, optional: false },
+      "lines": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "line": { schema: { kind: "id" }, optional: false },
+          "milestone": { schema: { kind: "id" }, optional: false },
+          "requested": { schema: { kind: "amount" }, optional: false },
+          "approved": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  } },
+  "payment.queue": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "task": { schema: { kind: "enum", values: ["review", "approve", "release", "confirm"] }, optional: false },
+      "request": { schema: {
+        kind: "object",
+        fields: {
+          "request": { schema: { kind: "id" }, optional: false },
+          "proposal": { schema: { kind: "id" }, optional: false },
+          "status": { schema: { kind: "enum", values: ["SUBMITTED", "CHECKS_FAILED", "UNDER_REVIEW", "CHANGES_REQUESTED", "ACCEPTED", "PAYMENT_APPROVED", "RELEASED", "PAID", "REJECTED", "WITHDRAWN", "CLOSED"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["milestone", "hardship"] }, optional: false },
+          "submission_checks": { schema: { kind: "bool" }, optional: false },
+          "acceptance_checks": { schema: { kind: "bool" }, optional: false },
+          "lines": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              "line": { schema: { kind: "id" }, optional: false },
+              "milestone": { schema: { kind: "id" }, optional: false },
+              "requested": { schema: { kind: "amount" }, optional: false },
+              "approved": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+            },
+          } }, optional: false },
+        },
+      }, optional: false },
+    },
+  } },
+  "report.list": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "report": { schema: { kind: "id" }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["call_publication_record", "open_call_package", "periodic_reporting_data", "audit_file", "deliverable_draft"] }, optional: false },
+      "call": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "programme": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "document": { schema: { kind: "string" }, optional: false },
+      "template": { schema: { kind: "string" }, optional: false },
+      "generated_by_me": { schema: { kind: "bool" }, optional: false },
+      "approved": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
+  "payment.submit": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "request": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "payment.resubmit": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "request": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "amendment.propose": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "amendment": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "contract.draft": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "contract": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "report.generate": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "report": { schema: { kind: "id" }, optional: false },
+    },
+  },
+  "vault.bank.set": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "vault.bank.verify": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "vault.bank.dispute": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "vault.bank.view_for_release": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "vault.hardship.submit": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "vault.hardship.verify": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
   "pending.list": { kind: "array", items: {
     kind: "object",
     fields: {
