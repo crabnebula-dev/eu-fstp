@@ -1,0 +1,40 @@
+[package]
+name = "fstp-assess-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-assess = { path = ".." }
+fstp-domain = { path = "../../fstp-domain" }
+fstp-json = { path = "../../fstp-json" }
+
+[[bin]]
+name = "assess_output_decode"
+path = "fuzz_targets/assess_output_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extract_unicode_marks"
+path = "fuzz_targets/extract_unicode_marks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strip_patterns"
+path = "fuzz_targets/strip_patterns.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
