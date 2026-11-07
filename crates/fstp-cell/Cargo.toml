@@ -19,6 +19,8 @@ fstp-http.workspace = true
 fstp-tls.workspace = true
 fstp-obs.workspace = true
 fstp-rt.workspace = true
+# M5 lane L-CHK: the deliverable fetch port and URL subset of the checks.
+fstp-checks.workspace = true
 # In-house edges of lane W3a: the auth rules, WebAuthn, domain and engine
 # types, the ledger store trait and entries, the audit chain and anchorer
 # core, the erasure planner, and the canonical JSON and crypto calls.
