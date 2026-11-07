@@ -5,19 +5,21 @@
 //!   of possession of design section 1.3 (ADR-005). Signatures are the DER
 //!   `ECDSA-Sig-Value` that X.509 carries, so `fstp_pki::cert::assemble`
 //!   takes them as they are.
-//! - RSA PKCS#1 v1.5 with SHA-256 verify only, for WebAuthn RS256
-//!   (ADR-008). Moduli below 2048 bits are refused.
+//! - RSA PKCS#1 v1.5 with SHA-256: verify for WebAuthn RS256 (ADR-008),
+//!   and sign for DKIM rsa-sha256 (ADR-001, M6 lane L6-MAIL). Moduli
+//!   below 2048 bits are refused.
 //!
 //! Nothing here signs with Ed25519 in place of a composite signature
 //! (I-75, I-90). That rule lives in [`crate::composite`].
 
 use aws_lc_rs::digest::{Digest, SHA256};
-use aws_lc_rs::encoding::AsDer as _;
+use aws_lc_rs::encoding::{AsDer as _, Pkcs8V1Der};
 use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::rsa::KeySize as RsaKeySize;
 use aws_lc_rs::signature::{
     ECDSA_P256_SHA256_ASN1, ECDSA_P256_SHA256_ASN1_SIGNING, ED25519, EcdsaKeyPair, Ed25519KeyPair,
-    KeyPair as _, ParsedPublicKey, RSA_PKCS1_2048_8192_SHA256, RsaPublicKeyComponents,
-    UnparsedPublicKey,
+    KeyPair as _, ParsedPublicKey, RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_SHA256, RsaKeyPair,
+    RsaPublicKeyComponents, UnparsedPublicKey,
 };
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -359,6 +361,83 @@ pub fn ecdsa_p256_sha256_verify_point(
 
 // ------------------------------------------------- RSA PKCS#1 SHA-256
 
+/// An RSA key pair for PKCS#1 v1.5 SHA-256 signatures, the DKIM
+/// `rsa-sha256` algorithm of RFC 6376 (ADR-001, "DKIM"). The private key
+/// lives inside AWS-LC, which cleanses it when the key is freed. Moduli
+/// below 2048 bits are refused.
+pub struct RsaPkcs1Sha256KeyPair {
+    key: RsaKeyPair,
+}
+
+impl ZeroizeOnDrop for RsaPkcs1Sha256KeyPair {}
+
+impl RsaPkcs1Sha256KeyPair {
+    /// A fresh 2048-bit key pair from the system generator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::RandomUnavailable`] when aws-lc-rs cannot
+    /// generate a key.
+    pub fn generate_2048() -> Result<RsaPkcs1Sha256KeyPair, CryptoError> {
+        let key = RsaKeyPair::generate(RsaKeySize::Rsa2048)
+            .map_err(|_| CryptoError::RandomUnavailable)?;
+        Ok(RsaPkcs1Sha256KeyPair { key })
+    }
+
+    /// Imports a PKCS#8 v1 document that holds an RSA key of at least
+    /// 2048 bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::InvalidKey`] when aws-lc-rs refuses the
+    /// document or the modulus is shorter than 2048 bits.
+    pub fn from_pkcs8(pkcs8_der: &[u8]) -> Result<RsaPkcs1Sha256KeyPair, CryptoError> {
+        let key = RsaKeyPair::from_pkcs8(pkcs8_der).map_err(|_| CryptoError::InvalidKey)?;
+        if key.public_modulus_len() < 256 {
+            return Err(CryptoError::InvalidKey);
+        }
+        Ok(RsaPkcs1Sha256KeyPair { key })
+    }
+
+    /// The private key as a PKCS#8 v1 DER document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::Unspecified`] when aws-lc-rs cannot encode it.
+    pub fn pkcs8_der(&self) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        let doc: Pkcs8V1Der<'static> = self.key.as_der().map_err(|_| CryptoError::Unspecified)?;
+        Ok(Zeroizing::new(doc.as_ref().to_vec()))
+    }
+
+    /// The public key as a DER SubjectPublicKeyInfo, the DKIM `p=` value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::Unspecified`] when aws-lc-rs cannot encode it.
+    pub fn spki_der(&self) -> Result<Vec<u8>, CryptoError> {
+        let der = self
+            .key
+            .public_key()
+            .as_der()
+            .map_err(|_| CryptoError::Unspecified)?;
+        Ok(der.as_ref().to_vec())
+    }
+
+    /// An RSA PKCS#1 v1.5 SHA-256 signature over `message`. The scheme is
+    /// deterministic, so equal input gives an equal signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::Unspecified`] when aws-lc-rs fails.
+    pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let mut sig = vec![0u8; self.key.public_modulus_len()];
+        self.key
+            .sign(&RSA_PKCS1_SHA256, &SystemRandom::new(), message, &mut sig)
+            .map_err(|_| CryptoError::Unspecified)?;
+        Ok(sig)
+    }
+}
+
 /// Verifies an RSA PKCS#1 v1.5 SHA-256 `signature` over `message` under
 /// the public key with modulus `n` and exponent `e`, both big-endian.
 /// This is WebAuthn RS256 (ADR-008).
@@ -376,5 +455,24 @@ pub fn rsa_pkcs1_sha256_verify(
 ) -> Result<(), CryptoError> {
     RsaPublicKeyComponents { n, e }
         .verify(&RSA_PKCS1_2048_8192_SHA256, message, signature)
+        .map_err(|_| CryptoError::InvalidSignature)
+}
+
+/// Verifies an RSA PKCS#1 v1.5 SHA-256 `signature` over `message` under
+/// the public key in `spki_der`, a DER SubjectPublicKeyInfo as
+/// [`RsaPkcs1Sha256KeyPair::spki_der`] writes it and a DKIM `p=` tag holds.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::InvalidSignature`] when the key does not parse,
+/// its modulus is shorter than 2048 or longer than 8192 bits, or the
+/// signature does not verify.
+pub fn rsa_pkcs1_sha256_verify_spki(
+    spki_der: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), CryptoError> {
+    UnparsedPublicKey::new(&RSA_PKCS1_2048_8192_SHA256, spki_der)
+        .verify(message, signature)
         .map_err(|_| CryptoError::InvalidSignature)
 }
