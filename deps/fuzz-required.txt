@@ -64,3 +64,5 @@ fstp-pdf
 fstp-calib
 # M6, docs/handoff/m6-design.md section 10 (lane L6-SMTP).
 fstp-smtp
+# M7, docs/handoff/m7-design.md section 8 (lane L-WIRE).
+fstp-infer

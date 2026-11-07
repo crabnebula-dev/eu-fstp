@@ -96,6 +96,7 @@ pub fn port_seams() -> Result<PortSeams, NotImplemented> {
             model: fstp_domain::policy::ModelRef(
                 fstp_domain_testkit::r#gen::policy::MODEL_A.to_owned(),
             ),
+            endpoint: None,
         }),
         tenant: Some(fstp_api_core::port::TenantId::from_raw(0x7e7a_0001)),
     };

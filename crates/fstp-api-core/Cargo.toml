@@ -20,6 +20,8 @@ fstp-tenant.workspace = true
 fstp-json.workspace = true
 fstp-money.workspace = true
 fstp-crypto.workspace = true
+# M7 L-SEAM: `UntrustedText` and finding kinds in the pre-check port types.
+fstp-findings.workspace = true
 fstp-rt.workspace = true
 # The journey projector, visibility function and diary read (ADR-015,
 # lane j2): pure, with no I/O.

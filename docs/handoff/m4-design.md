@@ -1885,6 +1885,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | M7 human labels (2026-11-06) | Daniel and one colleague | They give the blind labels on about 30 corpus items. Until then the report says "not measured" |
 | TLS trust roots (2026-11-06) | Allowlist a root store | webpki-roots, recorded in the ADR-001 amendment of 2026-11-06, verifies public servers (SMTP relays, inference endpoints, service hosts). A per-tenant pinned CA stays possible |
 | Milestone timing (2026-11-06) | M8 December, M10 next week, M11 after approval | The weekend builds M3, M5, M6, M7, M9 and the M12 tooling on synthetic data. Merges go to main when they compile and their own tests pass; CI failures become the cleanup list |
+| M7 inference client, lanes L-SEAM and L-WIRE (2026-11-06) | Not yet answered. Interim, pending Daniel (M7 Q1, Q2) | ADR-019 (Proposed) builds the chat-completions JSON shape, non-streaming, in `fstp-infer`. Instructions come only from prompt files compiled into `fstp-infer`, and submission text only as JSON string data parts. The decoder refuses unknown members. Record, replay, HTTP and synthetic transports exist. `Precheck` gains `request`, `runs` and `quota`, which fail closed until lane L-PRE. The ADR-009 amendment draft proposes `AssessorDestination` |
 
 ### 15.1 These block the milestone
 

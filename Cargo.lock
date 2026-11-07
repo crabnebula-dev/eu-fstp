@@ -170,6 +170,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-domain",
  "fstp-engine",
+ "fstp-findings",
  "fstp-guide",
  "fstp-import",
  "fstp-journey",
@@ -518,6 +519,19 @@ dependencies = [
  "fstp-ledger",
  "fstp-programme",
  "fstp-prop",
+]
+
+[[package]]
+name = "fstp-infer"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-http",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-rt",
 ]
 
 [[package]]

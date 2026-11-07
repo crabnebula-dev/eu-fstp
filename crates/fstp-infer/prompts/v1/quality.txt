@@ -1,0 +1,3 @@
+Task: quality.
+
+Assess the proposal against the one criterion named in the parameters below. Give findings of kind "quality" that name that criterion. Each finding states one observation about substance, with quoted evidence. Severity is "info" for an observation, "minor" for a weakness and "major" for a weakness that a reviewer must weigh.

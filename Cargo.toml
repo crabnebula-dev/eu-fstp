@@ -66,6 +66,8 @@ members = [
     "crates/fstp-report",
     # M6, docs/handoff/m6-design.md section 10, lane L6-SMTP.
     "crates/fstp-smtp",
+    # M7, docs/handoff/m7-design.md section 10, lane L-WIRE.
+    "crates/fstp-infer",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -167,6 +169,8 @@ fstp-pdf = { path = "crates/fstp-pdf" }
 fstp-calib = { path = "crates/fstp-calib" }
 fstp-report = { path = "crates/fstp-report" }
 fstp-smtp = { path = "crates/fstp-smtp" }
+# M7, docs/handoff/m7-design.md section 10.
+fstp-infer = { path = "crates/fstp-infer" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }

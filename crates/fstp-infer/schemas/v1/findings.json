@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "criterion", "element", "severity", "statement", "evidence"],
+        "properties": {
+          "kind": { "enum": ["completeness", "quality", "accuracy", "integrity"] },
+          "criterion": { "type": ["string", "null"], "maxLength": 34 },
+          "element": { "type": ["string", "null"], "maxLength": 32 },
+          "severity": { "enum": ["info", "minor", "major"] },
+          "statement": { "type": "string", "maxLength": 1000 },
+          "evidence": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["part", "quote"],
+              "properties": {
+                "part": { "type": "string", "maxLength": 32 },
+                "quote": { "type": "string", "maxLength": 1000 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
