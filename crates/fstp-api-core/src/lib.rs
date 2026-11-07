@@ -34,6 +34,7 @@ mod creator;
 pub mod decode;
 mod dispatch;
 mod forms;
+pub mod grant;
 pub mod ids;
 mod journal;
 pub mod meta;

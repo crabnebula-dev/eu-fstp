@@ -94,6 +94,7 @@ pub mod compose;
 pub mod contract;
 pub mod driver;
 pub mod findings;
+pub mod report;
 pub mod sweep;
 pub mod tenant;
 
@@ -266,6 +267,9 @@ pub struct EngineState {
     /// The contract store: every contract and version, folded from the
     /// `Contract` envelope (M5 design section 4.1). The core never reads it.
     pub contracts: contract::ContractStore,
+    /// The report store: every funder output and its approval, folded from
+    /// the `Report` envelope (M5 design section 4.3). The core never reads it.
+    pub reports: report::ReportStore,
     /// The time of the latest creator, import or tenant entry, or the Unix
     /// epoch before the first.
     pub envelope_floor: Timestamp,
@@ -292,6 +296,7 @@ impl EngineState {
             import: ImportStore::genesis(),
             tenant: TenantPart::default(),
             contracts: contract::ContractStore::default(),
+            reports: report::ReportStore::default(),
             envelope_floor: Timestamp::from_micros(0),
             open: None,
         }
@@ -349,6 +354,10 @@ pub enum Command {
     /// A contract command, decided by `contract::decide_contract` over
     /// the contract store (M5 design section 4.1).
     Contract(fstp_contract::ContractCommand),
+    /// A report record the shell generated or an approval, decided by
+    /// `report::decide_report` over the report store (M5 design section
+    /// 4.3, R-RP-03).
+    Report(fstp_report::ReportRecord),
 }
 
 /// A stage 2 revision (R-EV-05, NOTE 1, M4 design section 2.2 J4): the
@@ -431,6 +440,10 @@ impl core::hash::Hash for Command {
                 7u8.hash(state);
                 c.hash(state);
             }
+            Command::Report(r) => {
+                8u8.hash(state);
+                r.hash(state);
+            }
         }
     }
 }
@@ -454,6 +467,8 @@ pub enum Record {
     Tenant(TenantEntry),
     /// A contract record, folded into the contract store.
     Contract(fstp_contract::ContractRecord),
+    /// A report record, folded into the report store.
+    Report(fstp_report::ReportRecord),
 }
 
 /// The identity vault as the engine sees it (design section 3.1).
@@ -634,6 +649,10 @@ fn fold_in(
                 .map(|o| o.contract_facts.clone())
                 .unwrap_or_default();
             contract::apply_contract(state, &facts, c)?;
+            state.envelope_floor = at;
+        }
+        Record::Report(r) => {
+            report::apply_report(state, r)?;
             state.envelope_floor = at;
         }
     }
@@ -833,17 +852,20 @@ pub enum EnvelopeKind {
     Tenant,
     /// A contract record, stored under the member `contract`.
     Contract,
+    /// The report envelope (M5 design section 4.3).
+    Report,
 }
 
 impl EnvelopeKind {
     /// Every side, in member order.
-    pub const ALL: [EnvelopeKind; 6] = [
+    pub const ALL: [EnvelopeKind; 7] = [
         EnvelopeKind::Core,
         EnvelopeKind::Finding,
         EnvelopeKind::Creator,
         EnvelopeKind::Import,
         EnvelopeKind::Tenant,
         EnvelopeKind::Contract,
+        EnvelopeKind::Report,
     ];
 
     /// The member name of this side in the stored form.
@@ -855,6 +877,7 @@ impl EnvelopeKind {
             EnvelopeKind::Import => "import",
             EnvelopeKind::Tenant => "onboarding",
             EnvelopeKind::Contract => "contract",
+            EnvelopeKind::Report => fstp_report::ENVELOPE,
         }
     }
 
@@ -867,6 +890,7 @@ impl EnvelopeKind {
             Record::Import(_) => EnvelopeKind::Import,
             Record::Tenant(_) => EnvelopeKind::Tenant,
             Record::Contract(_) => EnvelopeKind::Contract,
+            Record::Report(_) => EnvelopeKind::Report,
         }
     }
 }
@@ -911,6 +935,7 @@ impl ToJson for Record {
             Record::Import(i) => i.to_json(),
             Record::Tenant(t) => tenant::entry_to_json(t),
             Record::Contract(c) => c.to_json(),
+            Record::Report(r) => r.to_json(),
         };
         envelope_to_json(kind, inner)
     }
@@ -941,6 +966,9 @@ impl FromJson for Record {
                 .map_err(at),
             EnvelopeKind::Contract => fstp_contract::ContractRecord::from_json(inner)
                 .map(Record::Contract)
+                .map_err(at),
+            EnvelopeKind::Report => fstp_report::ReportRecord::from_json(inner)
+                .map(Record::Report)
                 .map_err(at),
         }
     }

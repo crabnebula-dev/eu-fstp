@@ -380,9 +380,176 @@ const REPORT_DETAIL: Shape = Shape::Object(&[
     opt("outcome", Shape::String),
 ]);
 
+/// The funder outputs of the Horizon Europe profile (R-RP-04).
+const REPORT_KINDS: &[&str] = &[
+    "call_publication_record",
+    "open_call_package",
+    "periodic_reporting_data",
+    "audit_file",
+    "deliverable_draft",
+];
+
+/// The status of a payment request (`payment-requests.md` States).
+const REQUEST_STATES: &[&str] = &[
+    "SUBMITTED",
+    "CHECKS_FAILED",
+    "UNDER_REVIEW",
+    "CHANGES_REQUESTED",
+    "ACCEPTED",
+    "PAYMENT_APPROVED",
+    "RELEASED",
+    "PAID",
+    "REJECTED",
+    "WITHDRAWN",
+    "CLOSED",
+];
+
+/// One payment request with its lines (M5 lane L-API).
+const PAYMENT_REQUEST: Shape = Shape::Object(&[
+    m("request", Shape::Id),
+    m("proposal", Shape::Id),
+    m("status", Shape::Enum(REQUEST_STATES)),
+    m("kind", Shape::Enum(&["milestone", "hardship"])),
+    m("submission_checks", Shape::Bool),
+    m("acceptance_checks", Shape::Bool),
+    m(
+        "lines",
+        Shape::Array(&Shape::Object(&[
+            m("line", Shape::Id),
+            m("milestone", Shape::Id),
+            m("requested", Shape::Amount),
+            m("approved", Shape::Nullable(&Shape::Amount)),
+        ])),
+    ),
+]);
+
+/// The state of a contract or of one version (`contracts.md` States).
+const CONTRACT_STATES: &[&str] = &[
+    "drafted",
+    "sent",
+    "signed_by_grantee",
+    "effective",
+    "amendment_pending",
+    "superseded",
+    "terminated",
+];
+
+/// The contract status of one grant (M5 lane L-API).
+const CONTRACT_VIEW: Shape = Shape::Object(&[
+    m("proposal", Shape::Id),
+    m("contract", Shape::Nullable(&Shape::Id)),
+    m("status", Shape::Nullable(&Shape::Enum(CONTRACT_STATES))),
+    m(
+        "versions",
+        Shape::Array(&Shape::Object(&[
+            m("version", Shape::Int),
+            m("state", Shape::Enum(CONTRACT_STATES)),
+            m(
+                "parties",
+                Shape::Array(&Shape::Object(&[
+                    m("field", Shape::String),
+                    m(
+                        "role",
+                        Shape::Enum(&["lead", "team_member", "guardian", "signatory"]),
+                    ),
+                    m("signed", Shape::Bool),
+                    m("mine", Shape::Bool),
+                ])),
+            ),
+            m("revisions", Shape::Int),
+            m("digest", Shape::Nullable(&Shape::String)),
+            m("open_changes", Shape::Array(&Shape::Int)),
+        ])),
+    ),
+]);
+
 /// The reply shape of each operation whose `data` the API core serves,
 /// by operation name.
 pub const REPLIES: &[(&str, Shape)] = &[
+    // M5 lane L-API (M5 design section 5). I-86: no bank detail, identity
+    // attribute or vault value; parties by field and role only.
+    (
+        "grant.overview",
+        Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("state", Shape::Enum(STATE_NAMES)),
+            m("determination", Shape::Nullable(&Shape::Id)),
+            m("amount", Shape::Nullable(&Shape::Amount)),
+            m("paid", Shape::Amount),
+            m("contract", Shape::Nullable(&Shape::Id)),
+            m("requests", Shape::Int),
+        ]),
+    ),
+    ("contract.view", CONTRACT_VIEW),
+    ("payment.status", Shape::Array(&PAYMENT_REQUEST)),
+    (
+        "payment.queue",
+        Shape::Array(&Shape::Object(&[
+            m(
+                "task",
+                Shape::Enum(&["review", "approve", "release", "confirm"]),
+            ),
+            m("request", PAYMENT_REQUEST),
+        ])),
+    ),
+    (
+        "report.list",
+        Shape::Array(&Shape::Object(&[
+            m("report", Shape::Id),
+            m("kind", Shape::Enum(REPORT_KINDS)),
+            m("call", Shape::Nullable(&Shape::Id)),
+            m("programme", Shape::Nullable(&Shape::Id)),
+            m("document", Shape::String),
+            m("template", Shape::String),
+            m("generated_by_me", Shape::Bool),
+            m("approved", Shape::Bool),
+        ])),
+    ),
+    (
+        "payment.submit",
+        Shape::Object(&[m("accepted", Shape::Bool), m("request", Shape::Id)]),
+    ),
+    (
+        "payment.resubmit",
+        Shape::Object(&[m("accepted", Shape::Bool), m("request", Shape::Id)]),
+    ),
+    (
+        "amendment.propose",
+        Shape::Object(&[m("accepted", Shape::Bool), m("amendment", Shape::Id)]),
+    ),
+    (
+        "contract.draft",
+        Shape::Object(&[m("accepted", Shape::Bool), m("contract", Shape::Id)]),
+    ),
+    (
+        "report.generate",
+        Shape::Object(&[m("accepted", Shape::Bool), m("report", Shape::Id)]),
+    ),
+    // The vault origin page that opens with a ticket (I-86).
+    (
+        "vault.bank.set",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    (
+        "vault.bank.verify",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    (
+        "vault.bank.dispute",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    (
+        "vault.bank.view_for_release",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    (
+        "vault.hardship.submit",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    (
+        "vault.hardship.verify",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
     // I-85: the caller's own pending actions.
     (
         "pending.list",

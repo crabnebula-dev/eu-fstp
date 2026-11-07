@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 fstp-engine.workspace = true
+# M5 lane L-API: the Report envelope command form.
+fstp-report.workspace = true
 fstp-domain.workspace = true
 fstp-findings.workspace = true
 fstp-auth.workspace = true

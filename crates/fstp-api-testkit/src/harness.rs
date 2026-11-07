@@ -221,6 +221,7 @@ const fn account_of(who: Who) -> Option<AccountId> {
         Who::FinanceApprover => FINANCE,
         Who::PaymentReleaser => RELEASER,
         Who::ContractSignatory => SIGNATORY,
+        Who::FinancialSignatory => ORG_SIGNATORY,
         Who::Auditor => AUDITOR,
     })
 }
@@ -403,6 +404,14 @@ pub struct Targets {
     /// The key of a warning of the draft report of P.
     warning: Option<String>,
     pending: BTreeMap<AccountId, (PendingId, String)>,
+    /// M5 lane L-API: see `Reached`.
+    contract: Option<u128>,
+    accepted: Option<u128>,
+    approved: Option<u128>,
+    amendment: Option<u128>,
+    report: Option<u128>,
+    request: Option<u128>,
+    line: Option<u128>,
     p71: i64,
 }
 
@@ -461,6 +470,15 @@ fn param(name: &str, who: Who, t: &Targets, session: Option<u128>) -> Result<Str
         "break_glass" => "1".to_owned(),
         "invitation" => t.invitation.clone().unwrap_or_else(|| "1".to_owned()),
         "invitation_token" => UNKNOWN_LINK.to_owned(),
+        // M5 lane L-API: no world holds a payment request, contract,
+        // amendment or report yet, and a milestone is named by an id no
+        // plan holds, so its closure meets a guard.
+        "milestone" | "clause" => "1".to_owned(),
+        "request" => t.request.unwrap_or(1).to_string(),
+        "line" => t.line.unwrap_or(1).to_string(),
+        "contract" => t.contract.unwrap_or(1).to_string(),
+        "amendment" => t.amendment.unwrap_or(1).to_string(),
+        "report" => t.report.unwrap_or(1).to_string(),
         "field" => t
             .narrative
             .clone()
@@ -757,6 +775,43 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "committee.delegate" => obj(vec![("to", dec(MEMBER.raw()))]),
         "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
         "agents.consent" => obj(vec![]),
+        "grant.determine_amount" => obj(vec![
+            ("agreed", dec(t.plan.unwrap_or(1))),
+            ("deductions", Value::Array(Array::new())),
+            ("currency", s("EUR")),
+        ]),
+        "grant.accept" | "grant.approve" => obj(vec![("determination", s("1"))]),
+        "grant.terminate" | "milestone.close" => obj(vec![("reason", s("SYNTHETIC REASON"))]),
+        "amendment.propose" => obj(vec![("plan", dec(t.plan.unwrap_or(1)))]),
+        "amendment.route" => obj(vec![("route", s("Irc"))]),
+        "contract.propose_change" => obj(vec![
+            ("clause", int(1)),
+            ("text", s("SYNTHETIC CLAUSE CHANGE")),
+        ]),
+        "contract.decide_change" => obj(vec![("accept", Value::Bool(true))]),
+        "contract.sign" => obj(vec![("route", s("wallet_qes"))]),
+        "contract.approve_advanced" => obj(vec![
+            ("party", s("lead")),
+            ("reason", s("SYNTHETIC REASON")),
+        ]),
+        "contract.decline" | "payment.close" | "payment.request_changes" => {
+            obj(vec![("reason", s("SYNTHETIC REASON"))])
+        }
+        "payment.review_line" => obj(vec![("approved", s("100.00")), ("currency", s("EUR"))]),
+        "payment.resubmit" => obj(vec![
+            ("kind", obj(vec![("type", s("Milestone"))])),
+            ("currency", s("EUR")),
+            ("lines", Value::Array(Array::new())),
+        ]),
+        "payment.submit" => obj(vec![
+            ("kind", obj(vec![("type", s("Milestone"))])),
+            ("currency", s("EUR")),
+            ("lines", Value::Array(Array::new())),
+        ]),
+        "report.generate" => obj(vec![
+            ("kind", s("audit_file")),
+            ("call", dec(t.call.map_or(1, |c| c.raw()))),
+        ]),
         "pending.confirm" => {
             let shown = account_of(who)
                 .and_then(|a| t.pending.get(&a))
@@ -811,7 +866,13 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         }
         match seg.strip_prefix('{').and_then(|x| x.strip_suffix('}')) {
             Some(name) => {
-                let v = param(name, cell.who, &w.targets, session)?;
+                let v = match (name, cell.op) {
+                    // M5 lane L-API: the approval names the ACCEPTED request,
+                    // the release the PAYMENT_APPROVED one.
+                    ("request", "payment.approve") => w.targets.accepted.unwrap_or(1).to_string(),
+                    ("request", "payment.release") => w.targets.approved.unwrap_or(1).to_string(),
+                    _ => param(name, cell.who, &w.targets, session)?,
+                };
                 path.push_str(&v);
                 let v = if name == "step" {
                     s(step_name(cell.state))
@@ -1947,6 +2008,17 @@ struct Reached {
     round: Option<DecisionId>,
     ranked: Vec<ProposalId>,
     binding_end: Option<BindingId>,
+    /// M5 lane L-API: the drafted contract, the proposed amendment and
+    /// the generated report of a GRANTED world, and the payment request
+    /// under review and its line of an IN_EXECUTION world.
+    contract: Option<u128>,
+    amendment: Option<u128>,
+    report: Option<u128>,
+    request: Option<u128>,
+    line: Option<u128>,
+    /// A request whose lines were accepted, and one approved for payment.
+    accepted: Option<u128>,
+    approved: Option<u128>,
 }
 
 /// The lifecycle position of a state: how far C and X go.
@@ -2247,6 +2319,13 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         warning,
         pending,
         p71: seed.ports.step_up.p71(),
+        contract: reached.contract,
+        amendment: reached.amendment,
+        report: reached.report,
+        request: reached.request,
+        line: reached.line,
+        accepted: reached.accepted,
+        approved: reached.approved,
     };
     let head = seed.ports.engine.head();
     Ok(Built {
@@ -2987,6 +3066,12 @@ fn proposal_to(
                 seed.at(MILESTONE_START.saturating_add(SECOND));
                 seed.system(SystemCause::Timeline, Core::StartExecution { proposal: x })?;
             }
+            if target == S::Granted {
+                m5_granted(seed, p, c, x, plan, reached)?;
+            }
+            if target == S::InExecution {
+                m5_executing(seed, x, plan, reached)?;
+            }
             if target == S::Completed {
                 close_milestones(seed, x, plan)?;
                 seed.system(SystemCause::Timeline, Core::Complete { proposal: x })?;
@@ -3038,6 +3123,211 @@ fn rank(
         )?;
     }
     Ok(())
+}
+
+/// The tasks of plan `plan` of `x`, from its ledger record.
+fn plan_tasks(
+    seed: &Seeder,
+    x: ProposalId,
+    plan: u128,
+) -> Result<Vec<fstp_domain::proposal::Task>, String> {
+    let store = seed.ports.engine.store_copy();
+    let mut entries = Vec::new();
+    store
+        .read(fstp_ledger::Seq::ZERO, usize::MAX, &mut entries)
+        .map_err(|e| format!("read the ledger: {e:?}"))?;
+    entries
+        .iter()
+        .find_map(|e| match &e.record {
+            Record::Core(fstp_domain::record::Record::PlanVersionRecorded(r))
+                if r.proposal == x && r.plan.raw() == plan =>
+            {
+                Some(r.tasks.clone())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| format!("no plan {plan} of X"))
+}
+
+/// M5 lane L-API: a GRANTED world holds a drafted contract, a proposed
+/// amendment and a generated funder report, so their operations have
+/// targets (M5 design section 5).
+fn m5_granted(
+    seed: &mut Seeder,
+    p: ProgrammeId,
+    c: CallId,
+    x: ProposalId,
+    plan: u128,
+    reached: &mut Reached,
+) -> Result<(), String> {
+    let v = seed.api(
+        PM,
+        ApiMethod::Post,
+        &format!("/grants/{}/contract", x.raw()),
+        &obj(vec![]),
+    )?;
+    reached.contract = str_member(&v, "contract").and_then(|s| s.parse().ok());
+    let mut tasks = plan_tasks(seed, x, plan)?;
+    for t in &mut tasks {
+        for m in &mut t.milestones {
+            m.id = fstp_domain::id::MilestoneId::from_raw(seed.id());
+        }
+    }
+    let amended = fstp_domain::id::PlanVersionId::from_raw(seed.id());
+    seed.by(
+        LEAD,
+        Core::RecordPlanVersion {
+            plan: amended,
+            proposal: x,
+            origin: fstp_domain::proposal::PlanOrigin::Amendment,
+            supersedes: Some(fstp_domain::id::PlanVersionId::from_raw(plan)),
+            tasks,
+            content: fstp_domain::id::ContentDigest::from_bytes([9; 32]),
+        },
+    )?;
+    let amendment = fstp_domain::id::AmendmentId::from_raw(seed.id());
+    seed.by(
+        LEAD,
+        Core::ProposeAmendment {
+            amendment,
+            grant: x,
+            plan: amended,
+        },
+    )?;
+    reached.amendment = Some(amendment.raw());
+    let v = seed.api(
+        PM,
+        ApiMethod::Post,
+        &format!("/programmes/{}/reports", p.raw()),
+        &obj(vec![("kind", s("audit_file")), ("call", dec(c.raw()))]),
+    )?;
+    reached.report = str_member(&v, "report").and_then(|s| s.parse().ok());
+    Ok(())
+}
+
+/// M5 lane L-API: an IN_EXECUTION world holds three payment requests of
+/// the lead: one under review, one whose line the assigned reviewer
+/// accepted, and one the finance approver approved for payment.
+fn m5_executing(
+    seed: &mut Seeder,
+    x: ProposalId,
+    plan: u128,
+    reached: &mut Reached,
+) -> Result<(), String> {
+    let milestone = plan_tasks(seed, x, plan)?
+        .first()
+        .and_then(|t| t.milestones.first())
+        .map(|m| m.id)
+        .ok_or("the plan has no milestone")?;
+    let (r, line) = m5_request(seed, x, milestone)?;
+    reached.request = Some(r.raw());
+    reached.line = Some(line.raw());
+    for stage in 1..=2u8 {
+        let (r, line) = m5_request(seed, x, milestone)?;
+        m5_checks(seed, r, line, fstp_domain::payment::CheckPhase::Acceptance)?;
+        seed.by(
+            REVIEWER,
+            Core::AcceptLine {
+                request: r,
+                line,
+                approved: fstp_money::NonNegAmount::new(
+                    fstp_money::Amount::parse("100.00", fstp_money::Currency::Eur)
+                        .map_err(|e| format!("{e:?}"))?,
+                )
+                .map_err(|e| format!("{e:?}"))?,
+                reason: None,
+            },
+        )?;
+        if stage == 1 {
+            reached.accepted = Some(r.raw());
+        } else {
+            seed.by(FINANCE, Core::ApprovePayment { request: r })?;
+            reached.approved = Some(r.raw());
+        }
+    }
+    // I-33: verified bank details written before the P-36 hold of 7 days,
+    // so the release meets no bank guard.
+    seed.ports.vault.change(|t| {
+        t.write_bank(x, Timestamp::from_micros(T_SETUP));
+        t.verify_bank(x);
+    });
+    Ok(())
+}
+
+/// A milestone claim of 100.00 EUR by the lead through the API, whose
+/// submission checks passed.
+fn m5_request(
+    seed: &mut Seeder,
+    x: ProposalId,
+    milestone: fstp_domain::id::MilestoneId,
+) -> Result<(fstp_domain::id::RequestId, fstp_domain::id::LineId), String> {
+    let line = obj(vec![
+        ("milestone", dec(milestone.raw())),
+        ("amount", s("100.00")),
+        (
+            "evidence",
+            obj(vec![
+                ("location", s("https://forge.example/synthetic/repo")),
+                ("release", s("v1.0.0")),
+                ("licence", s("MIT")),
+                ("report", s("SYNTHETIC DELIVERY REPORT")),
+            ]),
+        ),
+    ]);
+    let v = seed.api(
+        LEAD,
+        ApiMethod::Post,
+        &format!("/grants/{}/payment-requests", x.raw()),
+        &obj(vec![
+            ("kind", obj(vec![("type", s("Milestone"))])),
+            ("currency", s("EUR")),
+            ("lines", Value::Array(Array::from(vec![line]))),
+        ]),
+    )?;
+    let request = str_member(&v, "request")
+        .and_then(|s| s.parse::<u128>().ok())
+        .map(fstp_domain::id::RequestId::from_raw)
+        .ok_or("no payment request")?;
+    let line = seed
+        .ports
+        .engine
+        .state()
+        .core
+        .payments()
+        .summaries()
+        .filter(|s| s.request == request)
+        .flat_map(|s| s.lines.into_iter().map(|l| l.line))
+        .next()
+        .ok_or("the request has no line")?;
+    m5_checks(
+        seed,
+        request,
+        line,
+        fstp_domain::payment::CheckPhase::Submission,
+    )?;
+    Ok((request, line))
+}
+
+/// A passed run of the checks of one phase over the request's one line.
+fn m5_checks(
+    seed: &mut Seeder,
+    request: fstp_domain::id::RequestId,
+    line: fstp_domain::id::LineId,
+    phase: fstp_domain::payment::CheckPhase,
+) -> Result<(), String> {
+    seed.system(
+        SystemCause::Timeline,
+        Core::RecordChecks {
+            request,
+            phase,
+            results: vec![fstp_domain::payment::CheckResult {
+                line: Some(line),
+                check: fstp_domain::payment::CheckKind::Evidence,
+                failure: None,
+            }],
+            snapshot: fstp_domain::id::ContentDigest::from_bytes([7; 32]),
+        },
+    )
 }
 
 /// Takes X from NEGOTIATION to GRANTED with the commands of M5.
@@ -3927,5 +4217,447 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{op} {state:?}: {e:?}"));
             assert_eq!(got, want, "{op} in {state:?}");
         }
+    }
+}
+
+/// M5 lane L-API: the grant, contract, payment and report operations run
+/// end to end through `ApiCore::dispatch` on a matrix world, and no reply
+/// of a new read holds an identity attribute, a bank detail or a vault
+/// value (I-86).
+#[cfg(test)]
+mod m5_api_tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing
+    )]
+
+    use super::*;
+    use crate::reference::authz::Policy;
+    use fstp_domain::id::{ContentDigest, MilestoneId, RequestId};
+    use fstp_domain::payment::{CheckKind, CheckPhase, CheckResult, RequestStatus};
+
+    const POST: ApiMethod = ApiMethod::Post;
+    const GET: ApiMethod = ApiMethod::Get;
+
+    fn world(state: StateTag) -> Built {
+        build(WorldKey {
+            state: StateProfile::Proposal(state),
+            policy: Policy::SUPERSAFE,
+            variant: Variant::Main,
+        })
+        .unwrap_or_else(|e| panic!("world {state:?}: {e}"))
+    }
+
+    fn seeder(w: Built) -> Seeder {
+        Seeder {
+            ports: w.ports,
+            core: w.core,
+            now: w.now,
+            command: 900_000,
+            cookies: BTreeMap::new(),
+            next_id: 90_000_000,
+            admins: w.admins.iter().copied().collect(),
+        }
+    }
+
+    /// I-86: an IBAN-shaped run, an email, or a member that names vault
+    /// evidence or bank details.
+    fn leaks(json: &str) -> bool {
+        let b = json.as_bytes();
+        let iban = (0..b.len()).any(|i| {
+            b.get(i..i + 4).is_some_and(|h| {
+                h[0].is_ascii_uppercase()
+                    && h[1].is_ascii_uppercase()
+                    && h[2].is_ascii_digit()
+                    && h[3].is_ascii_digit()
+            }) && b.get(i + 4..).is_some_and(|t| {
+                t.iter()
+                    .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                    .count()
+                    >= 11
+            })
+        });
+        iban || json.contains('@')
+            || json.contains("evidence")
+            || json.contains("iban")
+            || json.contains("bank")
+    }
+
+    fn read(seed: &mut Seeder, who: AccountId, path: &str) -> Value {
+        let v = seed
+            .api(who, GET, path, &Value::Null)
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
+        let text = v.to_compact();
+        assert!(!leaks(&text), "I-86: {path} leaks: {text}");
+        v
+    }
+
+    fn milestone_of(seed: &Seeder, x: ProposalId, plan: u128) -> MilestoneId {
+        let store = seed.ports.engine.store_copy();
+        let mut entries = Vec::new();
+        store
+            .read(fstp_ledger::Seq::ZERO, usize::MAX, &mut entries)
+            .unwrap();
+        entries
+            .iter()
+            .find_map(|e| match &e.record {
+                Record::Core(fstp_domain::record::Record::PlanVersionRecorded(r))
+                    if r.proposal == x && r.plan.raw() == plan =>
+                {
+                    r.tasks
+                        .first()
+                        .and_then(|t| t.milestones.first())
+                        .map(|m| m.id)
+                }
+                _ => None,
+            })
+            .expect("a milestone")
+    }
+
+    fn checks(seed: &mut Seeder, r: RequestId, phase: CheckPhase) {
+        let state = seed.ports.engine.state();
+        let s = state
+            .core
+            .payments()
+            .summaries()
+            .find(|s| s.request == r)
+            .expect("the request");
+        let results = s
+            .lines
+            .iter()
+            .map(|l| CheckResult {
+                line: Some(l.line),
+                check: CheckKind::Evidence,
+                failure: None,
+            })
+            .collect();
+        seed.system(
+            SystemCause::Timeline,
+            Core::RecordChecks {
+                request: r,
+                phase,
+                results,
+                snapshot: ContentDigest::from_bytes([7; 32]),
+            },
+        )
+        .unwrap();
+    }
+
+    fn status(seed: &Seeder, r: RequestId) -> Option<RequestStatus> {
+        seed.ports.engine.state().core.payments().status(r)
+    }
+
+    /// R-PR-01, I-05, I-31, I-33, I-86, M5 exit "a call cycle runs through
+    /// to PAID": a milestone claim of the lead runs through the checks,
+    /// line review by the assigned reviewer, approval, release after the
+    /// bank hold and the paid confirmation, each through the API. Every
+    /// new read is scanned for identity and bank values on the way.
+    #[test]
+    fn m5_i86_r_pr_01_payment_cycle_through_the_api_reaches_paid() {
+        let w = world(StateTag::InExecution);
+        let x = w.targets.proposal.expect("X");
+        let plan = w.targets.plan.expect("plan");
+        let mut seed = seeder(w);
+        let milestone = milestone_of(&seed, x, plan);
+        let line = obj(vec![
+            ("milestone", dec(milestone.raw())),
+            ("amount", s("100.00")),
+            (
+                "evidence",
+                obj(vec![
+                    ("location", s("https://forge.example/synthetic/repo")),
+                    ("release", s("v1.0.0")),
+                    ("licence", s("MIT")),
+                    ("report", s("SYNTHETIC DELIVERY REPORT")),
+                ]),
+            ),
+        ]);
+        let body = obj(vec![
+            ("kind", obj(vec![("type", s("Milestone"))])),
+            ("currency", s("EUR")),
+            ("lines", Value::Array(Array::from(vec![line]))),
+        ]);
+        let v = seed
+            .api(
+                LEAD,
+                POST,
+                &format!("/grants/{}/payment-requests", x.raw()),
+                &body,
+            )
+            .unwrap();
+        let r = RequestId::from_raw(str_member(&v, "request").unwrap().parse().unwrap());
+        assert_eq!(status(&seed, r), Some(RequestStatus::Submitted));
+        checks(&mut seed, r, CheckPhase::Submission);
+        checks(&mut seed, r, CheckPhase::Acceptance);
+        let q = read(&mut seed, REVIEWER, "/me/payment-queue");
+        assert!(q.to_compact().contains("\"review\""), "{}", q.to_compact());
+        let state = seed.ports.engine.state();
+        let l = state
+            .core
+            .payments()
+            .summaries()
+            .find(|s| s.request == r)
+            .unwrap()
+            .lines[0]
+            .line;
+        // SoD-12: the lead cannot decide a line of its own request.
+        assert!(
+            seed.api(
+                LEAD,
+                POST,
+                &format!("/payment-requests/{}/lines/{}/decision", r.raw(), l.raw()),
+                &obj(vec![("approved", s("100.00")), ("currency", s("EUR"))]),
+            )
+            .is_err()
+        );
+        seed.api(
+            REVIEWER,
+            POST,
+            &format!("/payment-requests/{}/lines/{}/decision", r.raw(), l.raw()),
+            &obj(vec![("approved", s("100.00")), ("currency", s("EUR"))]),
+        )
+        .unwrap();
+        assert_eq!(status(&seed, r), Some(RequestStatus::Accepted));
+        seed.api(
+            FINANCE,
+            POST,
+            &format!("/payment-requests/{}/approval", r.raw()),
+            &obj(vec![]),
+        )
+        .unwrap();
+        // I-33: a new bank detail write holds every release until it is
+        // verified and P-36 elapsed, the world's earlier write aside.
+        let fresh = Timestamp::from_micros(seed.now);
+        seed.ports.vault.change(|t| t.write_bank(x, fresh));
+        assert!(
+            seed.api(
+                RELEASER,
+                POST,
+                &format!("/payment-requests/{}/release", r.raw()),
+                &obj(vec![])
+            )
+            .is_err()
+        );
+        let v = seed
+            .api(
+                LEAD,
+                POST,
+                &format!("/grants/{}/bank-details", x.raw()),
+                &obj(vec![]),
+            )
+            .unwrap();
+        assert!(str_member(&v, "redirect").is_some(), "{}", v.to_compact());
+        let written = Timestamp::from_micros(seed.now);
+        seed.ports.vault.change(|t| {
+            t.write_bank(x, written);
+            t.verify_bank(x);
+        });
+        seed.at(seed.now.saturating_add(400 * DAY));
+        seed.api(
+            RELEASER,
+            POST,
+            &format!("/payment-requests/{}/release", r.raw()),
+            &obj(vec![]),
+        )
+        .unwrap();
+        assert_eq!(status(&seed, r), Some(RequestStatus::Released));
+        // Reading 6: the releaser of this request opens the payee page.
+        seed.api(
+            RELEASER,
+            POST,
+            &format!("/payment-requests/{}/payee", r.raw()),
+            &obj(vec![]),
+        )
+        .unwrap();
+        seed.api(
+            FINANCE,
+            POST,
+            &format!("/payment-requests/{}/paid", r.raw()),
+            &obj(vec![]),
+        )
+        .unwrap();
+        assert_eq!(status(&seed, r), Some(RequestStatus::Paid));
+        let o = read(&mut seed, PM, &format!("/grants/{}", x.raw()));
+        assert_eq!(str_member(&o, "paid").as_deref(), Some("100.00"));
+        let p = read(
+            &mut seed,
+            LEAD,
+            &format!("/grants/{}/payment-requests", x.raw()),
+        );
+        assert!(p.to_compact().contains("\"PAID\""), "{}", p.to_compact());
+        read(&mut seed, AUDITOR, &format!("/grants/{}/contract", x.raw()));
+        // An outsider of the grant reads nothing.
+        assert!(
+            seed.api(MEMBER, GET, &format!("/grants/{}", x.raw()), &Value::Null)
+                .is_err()
+        );
+    }
+
+    /// I-30, R-CT-01, R-CT-04, R-NG-03, R-RP-03, R-RP-04, I-44: from
+    /// NEGOTIATION, the amount is determined, accepted and approved; the
+    /// contract is drafted, a clause change agreed, sent and signed by
+    /// both parties through the fake wallet and QTSP, and the grant is
+    /// GRANTED. A funder output is generated by the programme manager and
+    /// approved by a Financial signatory, never by its generator.
+    #[test]
+    fn m5_i30_r_rp_03_contract_and_report_through_the_api() {
+        let w = world(StateTag::Negotiation);
+        let x = w.targets.proposal.expect("X");
+        let plan = w.targets.plan.expect("plan");
+        let c = w.targets.call.expect("C");
+        let programme = w.targets.programme.expect("P");
+        let mut seed = seeder(w);
+        // X.509 validity needs a calendar instant: 2027-01-01T00:00:00Z.
+        seed.at(1_798_761_600 * SECOND);
+        let fake = fstp_contract::fake::FakeTrustServices::new(seed.now / SECOND).unwrap();
+        let trust = fake.trusted_list();
+        seed.core = Arc::new(fstp_api_core::port::api_core_with_signing(
+            seed.ports.clone(),
+            Box::new(fake),
+            Box::new(trust),
+        ));
+        seed.api(
+            REVIEWER,
+            POST,
+            &format!("/grants/{}/amount-determination", x.raw()),
+            &obj(vec![
+                ("agreed", dec(plan)),
+                ("deductions", Value::Array(Array::new())),
+                ("currency", s("EUR")),
+            ]),
+        )
+        .unwrap();
+        let o = read(&mut seed, LEAD, &format!("/grants/{}", x.raw()));
+        let d = str_member(&o, "determination").unwrap();
+        let det = obj(vec![("determination", s(&d))]);
+        seed.api(LEAD, POST, &format!("/grants/{}/acceptance", x.raw()), &det)
+            .unwrap();
+        seed.api(PM, POST, &format!("/grants/{}/approval", x.raw()), &det)
+            .unwrap();
+        // Only the programme manager drafts.
+        assert!(
+            seed.api(
+                LEAD,
+                POST,
+                &format!("/grants/{}/contract", x.raw()),
+                &obj(vec![])
+            )
+            .is_err()
+        );
+        let v = seed
+            .api(
+                PM,
+                POST,
+                &format!("/grants/{}/contract", x.raw()),
+                &obj(vec![]),
+            )
+            .unwrap();
+        let k = str_member(&v, "contract").unwrap();
+        seed.api(
+            LEAD,
+            POST,
+            &format!("/contracts/{k}/changes"),
+            &obj(vec![
+                ("clause", int(1)),
+                ("text", s("SYNTHETIC CHANGE: the report is due in English.")),
+            ]),
+        )
+        .unwrap();
+        // R-CT-04: the proposing side does not decide its own change.
+        assert!(
+            seed.api(
+                LEAD,
+                POST,
+                &format!("/contracts/{k}/changes/1/decision"),
+                &obj(vec![("accept", Value::Bool(true))])
+            )
+            .is_err()
+        );
+        seed.api(
+            PM,
+            POST,
+            &format!("/contracts/{k}/changes/1/decision"),
+            &obj(vec![("accept", Value::Bool(true))]),
+        )
+        .unwrap();
+        seed.api(PM, POST, &format!("/contracts/{k}/send"), &obj(vec![]))
+            .unwrap();
+        // Only a party signs.
+        assert!(
+            seed.api(
+                PM,
+                POST,
+                &format!("/contracts/{k}/signature"),
+                &obj(vec![("route", s("wallet_qes"))])
+            )
+            .is_err()
+        );
+        seed.api(
+            LEAD,
+            POST,
+            &format!("/contracts/{k}/signature"),
+            &obj(vec![("route", s("wallet_qes"))]),
+        )
+        .unwrap();
+        let pending = read(&mut seed, LEAD, &format!("/grants/{}/contract", x.raw()));
+        if pending.to_compact().contains("\"guardian\"") {
+            seed.api(
+                GUARDIAN,
+                POST,
+                &format!("/contracts/{k}/signature"),
+                &obj(vec![("route", s("wallet_qes"))]),
+            )
+            .unwrap();
+        }
+        seed.api(
+            SIGNATORY,
+            POST,
+            &format!("/contracts/{k}/signature"),
+            &obj(vec![("route", s("qtsp_remote_qes"))]),
+        )
+        .unwrap();
+        let view = read(&mut seed, LEAD, &format!("/grants/{}/contract", x.raw()));
+        assert_eq!(str_member(&view, "status").as_deref(), Some("effective"));
+        let o = read(&mut seed, PM, &format!("/grants/{}", x.raw()));
+        assert_eq!(str_member(&o, "state").as_deref(), Some("GRANTED"));
+        // R-RP-04, R-RP-03.
+        let v = seed
+            .api(
+                PM,
+                POST,
+                &format!("/programmes/{}/reports", programme.raw()),
+                &obj(vec![("kind", s("audit_file")), ("call", dec(c.raw()))]),
+            )
+            .unwrap();
+        let report = str_member(&v, "report").unwrap();
+        assert!(
+            seed.api(
+                PM,
+                POST,
+                &format!("/reports/{report}/approval"),
+                &obj(vec![])
+            )
+            .is_err()
+        );
+        seed.api(
+            ORG_SIGNATORY,
+            POST,
+            &format!("/reports/{report}/approval"),
+            &obj(vec![]),
+        )
+        .unwrap();
+        let list = read(
+            &mut seed,
+            ORG_SIGNATORY,
+            &format!("/programmes/{}/reports", programme.raw()),
+        );
+        assert!(
+            list.to_compact().contains("\"approved\":true"),
+            "{}",
+            list.to_compact()
+        );
     }
 }

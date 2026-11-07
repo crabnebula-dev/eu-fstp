@@ -30,6 +30,11 @@ fstp-journey.workspace = true
 # The route renderer of the server-built map (ADR-015 amendment of
 # 2026-11-06, lane j4).
 fstp-html.workspace = true
+# M5 lane L-API: the contract, report and signing operations.
+fstp-contract.workspace = true
+fstp-report.workspace = true
+fstp-pdf.workspace = true
+fstp-sigval.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

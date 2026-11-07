@@ -152,11 +152,19 @@ pub enum ReadKind {
     // Lane mcreator: the calls of a programme for the Planning Studio,
     // each with its state and whether the caller may approve it (R-PC-03).
     ListCalls,
+    // M5 lane L-API (M5 design section 5): the grant overview, the
+    // contract and payment status of one grant, the caller's own payment
+    // work queue, and the funder reports of a programme.
+    GetGrant,
+    GetContract,
+    GetPaymentStatus,
+    ListMyPaymentQueue,
+    ListReports,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 51] = [
+    pub const ALL: [ReadKind; 56] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -208,6 +216,11 @@ impl ReadKind {
         ReadKind::GetDiary,
         ReadKind::GetRouteMap,
         ReadKind::ListCalls,
+        ReadKind::GetGrant,
+        ReadKind::GetContract,
+        ReadKind::GetPaymentStatus,
+        ReadKind::ListMyPaymentQueue,
+        ReadKind::ListReports,
     ];
 }
 
@@ -473,6 +486,47 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ]),
         OPEN_ALWAYS,
     ),
+    // M5 lane L-API (M5 design section 5). The grant, its contract and
+    // its payment status: the team or former team, and the programme's
+    // manager, Operations roles and auditor. Interim, pending Daniel:
+    // nobody outside the team reads a grant before NEGOTIATION (I-21).
+    (ReadKind::GetGrant, GRANT_READER, GRANT_STATES),
+    (ReadKind::GetContract, GRANT_READER, GRANT_STATES),
+    (ReadKind::GetPaymentStatus, GRANT_READER, GRANT_STATES),
+    // The caller's own review, approval and release work only.
+    (ReadKind::ListMyPaymentQueue, ReadRule::Own, OPEN_ALWAYS),
+    // The funder reports: the programme manager who generates them, the
+    // auditor, and a Financial signatory, who approves them (Q3). The
+    // signatory holds a tenant-wide role (NOTE 5), so dispatch checks it
+    // in the tenant fold beside this rule.
+    (
+        ReadKind::ListReports,
+        ReadRule::AnyOf(&[ReadRule::Holder(Role::ProgrammeManager), ReadRule::Auditor]),
+        OPEN_ALWAYS,
+    ),
+];
+
+/// The readers of a grant (M5 design section 5).
+const GRANT_READER: ReadRule = ReadRule::AnyOf(&[
+    ReadRule::Team,
+    ReadRule::FormerTeam,
+    ReadRule::Holder(Role::ProgrammeManager),
+    ReadRule::Holder(Role::FinanceApprover),
+    ReadRule::Holder(Role::PaymentReleaser),
+    ReadRule::Holder(Role::ContractSignatory),
+    ReadRule::Auditor,
+]);
+
+/// The proposal states in which a grant can exist: NEGOTIATION and every
+/// state it leads to.
+const GRANT_STATES: &[StateTag] = &[
+    StateTag::Negotiation,
+    StateTag::Withdrawn,
+    StateTag::Declined,
+    StateTag::Granted,
+    StateTag::InExecution,
+    StateTag::Completed,
+    StateTag::Terminated,
 ];
 
 /// The row of `READ_RULES` for `kind`.

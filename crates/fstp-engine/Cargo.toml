@@ -24,6 +24,8 @@ fstp-tenant.workspace = true
 fstp-guide.workspace = true
 # M5 lane L-CON: the Contract envelope.
 fstp-contract.workspace = true
+# M5 lane L-API: the Report envelope (M5 design section 4.3).
+fstp-report.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

@@ -272,6 +272,10 @@ fn record_from_value(value: &Value) -> Result<CellRecord, DecodeError> {
         "contract" => fstp_engine::Record::from_json(value)
             .map(CellRecord::Engine)
             .map_err(body("contract")),
+        // The engine's report side (M5 lane L-API).
+        "report" => fstp_engine::Record::from_json(value)
+            .map(CellRecord::Engine)
+            .map_err(body("report")),
         "auth" => auth_record(inner).map(CellRecord::Auth),
         "tenant" => tenant_record(inner)
             .map(CellRecord::Tenant)
@@ -761,6 +765,10 @@ fn command_from_value(value: &Value) -> Result<CellCommand, DecodeError> {
         "onboarding" => fstp_engine::tenant::request_from_json(inner)
             .map(|c| CellCommand::Engine(fstp_engine::Command::Tenant(c)))
             .map_err(body("onboarding")),
+        // M5 lane L-API: a report record the shell generated, or an approval.
+        "report" => fstp_report::ReportRecord::from_json(inner)
+            .map(|r| CellCommand::Engine(fstp_engine::Command::Report(r)))
+            .map_err(body("report")),
         "auth" => auth_command(inner).map(CellCommand::Auth),
         "tenant" => tenant_command(inner)
             .map(CellCommand::Tenant)
@@ -811,6 +819,7 @@ impl ToJson for CellCommand {
             // M5 lane L-CON. The decoder does not read it back yet; the
             // L-API lane adds it with the contract routes.
             CellCommand::Engine(fstp_engine::Command::Contract(c)) => wrap("contract", c.to_json()),
+            CellCommand::Engine(fstp_engine::Command::Report(r)) => wrap("report", r.to_json()),
             CellCommand::Auth(c) => wrap("auth", auth_command_json(c)),
             CellCommand::Tenant(c) => wrap("tenant", tenant_command_json(c)),
             CellCommand::Text(c) => wrap("text", text_command_json(c)),

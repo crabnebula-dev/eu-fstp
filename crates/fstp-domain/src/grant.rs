@@ -615,6 +615,15 @@ impl MoneyState {
             .and_then(|n| n.determined.map(|d| d.decision))
     }
 
+    /// The agreed plan and the granted amount of the current amount
+    /// determination of `proposal` (R-NG-03). M5 lane L-API drafts the
+    /// contract from them.
+    pub fn determined(&self, proposal: ProposalId) -> Option<(PlanVersionId, NonNegAmount)> {
+        self.negotiations
+            .get(&proposal)
+            .and_then(|n| n.determined.map(|d| (d.agreed, d.granted)))
+    }
+
     /// The granted amount of `proposal`, the amended total after an amendment.
     pub fn granted(&self, proposal: ProposalId) -> Option<NonNegAmount> {
         self.grants.get(&proposal).map(|g| g.granted)

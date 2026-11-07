@@ -48,6 +48,7 @@ fn side(record: &Record) -> EnvelopeKind {
         Record::Import(_) => EnvelopeKind::Import,
         Record::Tenant(_) => EnvelopeKind::Tenant,
         Record::Contract(_) => EnvelopeKind::Contract,
+        Record::Report(_) => EnvelopeKind::Report,
     }
 }
 

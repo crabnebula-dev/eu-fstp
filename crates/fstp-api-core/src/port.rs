@@ -388,6 +388,20 @@ pub enum VerificationPurpose {
     /// The redirect is the vault's write page with the ticket in the
     /// fragment (M3 design section 6.5).
     GuardianConsent(ProposalId),
+    /// M5 lane L-API (I-33, I-86): the lead writes the payee bank details
+    /// of a grant on the vault origin.
+    BankDetails(ProposalId),
+    /// The finance approver verifies the latest bank details (I-33).
+    BankVerification(ProposalId),
+    /// The lead disputes the bank details (I-33).
+    BankDispute(ProposalId),
+    /// The payment releaser views the payee of one released request
+    /// (M5 design reading 6).
+    BankView(fstp_domain::id::RequestId),
+    /// The lead submits hardship evidence (R-PR-04).
+    HardshipEvidence(ProposalId),
+    /// The finance approver verifies hardship evidence (R-PR-04).
+    HardshipVerification(ProposalId),
 }
 
 /// Where the browser goes to verify.
@@ -1317,6 +1331,26 @@ pub fn api_core<P: CellPorts>(ports: P) -> ApiCore {
         inner: Box::new(Core {
             ports,
             state: crate::dispatch::State::default(),
+        }),
+    }
+}
+
+/// An [`ApiCore`] whose contract signatures go through `port`, validated
+/// against `trust` (M5 design section 3.2). Test and demo cells pass the
+/// fake wallet and QTSP of `fstp_contract::fake`. A core built with
+/// [`api_core`] refuses every signature (12.1, Q2).
+pub fn api_core_with_signing<P: CellPorts>(
+    ports: P,
+    port: Box<dyn fstp_contract::SignaturePort + Send + Sync>,
+    trust: Box<dyn fstp_sigval::TrustedList + Send + Sync>,
+) -> ApiCore {
+    ApiCore {
+        inner: Box::new(Core {
+            ports,
+            state: crate::dispatch::State::with_signing(crate::dispatch::grant::Signing {
+                port,
+                trust,
+            }),
         }),
     }
 }

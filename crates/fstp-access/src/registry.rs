@@ -373,6 +373,44 @@ pub enum PortKind {
     ApproveBreakGlass,
 }
 
+/// An M5 operation that is neither a core command nor a read (M5 design
+/// section 5, lane L-API): the contract commands of the `Contract`
+/// envelope, the funder reports of the `Report` envelope, and the vault
+/// tickets for bank details and hardship evidence. Each is web only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GrantKind {
+    /// `ContractDrafted` (I-49, R-CT-01).
+    ContractDraft,
+    /// `ClauseChange` proposed (R-CT-04).
+    ContractProposeChange,
+    /// `ClauseChange` accepted or rejected (R-CT-04).
+    ContractDecideChange,
+    /// `ContractSent`.
+    ContractSend,
+    /// `SignatureApplied`, through the `SignaturePort` (I-30).
+    ContractSign,
+    /// `AdvancedApproved` (P-30 step 3).
+    ContractApproveAdvanced,
+    /// `Withdraw` plus `ContractTerminated` (reading 5, R-NG-04).
+    ContractDecline,
+    /// `ReportGenerated` (R-RP-01, R-RP-04, I-44).
+    ReportGenerate,
+    /// `ReportApproved` by a Financial signatory (R-RP-03, Q3).
+    ReportApprove,
+    /// A vault ticket to write bank details (I-33, I-86).
+    BankDetails,
+    /// A vault ticket to verify bank details (I-33).
+    BankVerify,
+    /// A vault ticket to dispute bank details (I-33).
+    BankDispute,
+    /// A vault ticket to view the payee of one released request (reading 6).
+    BankView,
+    /// A vault ticket to submit hardship evidence (R-PR-04).
+    HardshipEvidence,
+    /// A vault ticket to verify hardship evidence (R-PR-04).
+    HardshipVerify,
+}
+
 /// The kind of an operation (design section 3.6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OpKind {
@@ -398,6 +436,8 @@ pub enum OpKind {
     Public(PublicKind),
     /// An operation served by an M3 port.
     M3Port(PortKind),
+    /// An M5 contract, report or vault ticket operation.
+    Grant(GrantKind),
 }
 
 /// The input schema of a tool. Interim, pending ADR-013: it states the
@@ -522,6 +562,35 @@ const PROPOSAL_DECLARANT: &[RoleOrApplicant] =
 const COMMITTEE: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::CommitteeChair)];
 const IRC: &[RoleOrApplicant] = &[R(Role::IrcMember)];
 const AUDITOR: &[RoleOrApplicant] = &[R(Role::Auditor)];
+const FINANCE: &[RoleOrApplicant] = &[R(Role::FinanceApprover)];
+const RELEASER: &[RoleOrApplicant] = &[R(Role::PaymentReleaser)];
+const FIN_SIGNATORY: &[RoleOrApplicant] = &[R(Role::FinancialSignatory)];
+const LEAD_OR_MANAGER: &[RoleOrApplicant] = &[R(Role::Applicant), R(Role::ProgrammeManager)];
+/// `ProposeAmendment`: the lead or an assigned reviewer (`ACTOR_RULES`).
+const AMENDER: &[RoleOrApplicant] = &[R(Role::Applicant), R(Role::CommitteeMember)];
+/// The parties of a contract (M5 design section 4.1).
+const PARTIES: &[RoleOrApplicant] = &[
+    R(Role::Applicant),
+    R(Role::ApplicantTeamMember),
+    R(Role::Guardian),
+    R(Role::ContractSignatory),
+];
+/// The readers of a grant (M5 design section 5, `READ_RULES`).
+const GRANT_READERS: &[RoleOrApplicant] = &[
+    R(Role::Applicant),
+    R(Role::ApplicantTeamMember),
+    R(Role::Guardian),
+    R(Role::ProgrammeManager),
+    R(Role::FinanceApprover),
+    R(Role::PaymentReleaser),
+    R(Role::ContractSignatory),
+    R(Role::Auditor),
+];
+const REPORT_READERS: &[RoleOrApplicant] = &[
+    R(Role::ProgrammeManager),
+    R(Role::Auditor),
+    R(Role::FinancialSignatory),
+];
 /// The roles of the section 7.2 matrix: every role but call drafter and
 /// tenant admin (lane j2).
 const JOURNEY: &[RoleOrApplicant] = &[
@@ -1785,6 +1854,268 @@ pub const OPS: &[OpSpec] = &[
         "/programmes/{programme}/audit/vault-outcomes",
     )
     .acting(AUDITOR),
+    // M5 lane L-API (M5 design section 5). Every M5 command is web only
+    // and MCP refuses it as not exposed (reading 9, 12.1, I-85). The two
+    // tools are the read-only contract and payment status of 12.1. A grant
+    // is addressed by its proposal id. Interim, pending Daniel: the routes
+    // and names below, and the `proposals:read` scope of the two tools.
+    OpSpec::read("grant.overview", RK::GetGrant, "/grants/{proposal}").acting(GRANT_READERS),
+    OpSpec::read("contract.view", RK::GetContract, "/grants/{proposal}/contract")
+        .acting(GRANT_READERS)
+        .tool(
+            "fstp_get_contract_status",
+            "Read the contract status of one grant: versions, parties and signature states.",
+            &IN_PROPOSAL,
+            Scope::ProposalsRead,
+        ),
+    OpSpec::read(
+        "payment.status",
+        RK::GetPaymentStatus,
+        "/grants/{proposal}/payment-requests",
+    )
+    .acting(GRANT_READERS)
+    .tool(
+        "fstp_get_payment_status",
+        "Read the payment requests of one grant with their status and amounts.",
+        &IN_PROPOSAL,
+        Scope::ProposalsRead,
+    ),
+    OpSpec::read("payment.queue", RK::ListMyPaymentQueue, "/me/payment-queue").tool(
+        "fstp_get_payment_queue",
+        "List the payment requests waiting on the caller's own review, approval or release.",
+        &IN_NONE,
+        Scope::ProposalsRead,
+    ),
+    OpSpec::command(
+        "grant.determine_amount",
+        CK::DetermineAmount,
+        Post,
+        "/grants/{proposal}/amount-determination",
+    )
+    .acting(REVIEWER),
+    OpSpec::command(
+        "grant.accept",
+        CK::AcceptGrant,
+        Post,
+        "/grants/{proposal}/acceptance",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "grant.approve",
+        CK::ApproveGrant,
+        Post,
+        "/grants/{proposal}/approval",
+    )
+    .acting(MANAGER),
+    OpSpec::command(
+        "grant.terminate",
+        CK::Terminate,
+        Post,
+        "/grants/{proposal}/termination",
+    )
+    .acting(MANAGER),
+    OpSpec::command(
+        "milestone.close",
+        CK::CloseMilestone,
+        Post,
+        "/grants/{proposal}/milestones/{milestone}/closure",
+    )
+    .acting(MANAGER),
+    OpSpec::new(
+        "contract.draft",
+        OpKind::Grant(GrantKind::ContractDraft),
+        Post,
+        "/grants/{proposal}/contract",
+    )
+    .acting(MANAGER),
+    OpSpec::new(
+        "contract.propose_change",
+        OpKind::Grant(GrantKind::ContractProposeChange),
+        Post,
+        "/contracts/{contract}/changes",
+    )
+    .acting(LEAD_OR_MANAGER),
+    OpSpec::new(
+        "contract.decide_change",
+        OpKind::Grant(GrantKind::ContractDecideChange),
+        Post,
+        "/contracts/{contract}/changes/{clause}/decision",
+    )
+    .acting(LEAD_OR_MANAGER),
+    OpSpec::new(
+        "contract.send",
+        OpKind::Grant(GrantKind::ContractSend),
+        Post,
+        "/contracts/{contract}/send",
+    )
+    .acting(MANAGER),
+    OpSpec::new(
+        "contract.sign",
+        OpKind::Grant(GrantKind::ContractSign),
+        Post,
+        "/contracts/{contract}/signature",
+    )
+    .acting(PARTIES),
+    OpSpec::new(
+        "contract.approve_advanced",
+        OpKind::Grant(GrantKind::ContractApproveAdvanced),
+        Post,
+        "/contracts/{contract}/advanced-approval",
+    )
+    .acting(MANAGER),
+    OpSpec::new(
+        "contract.decline",
+        OpKind::Grant(GrantKind::ContractDecline),
+        Post,
+        "/contracts/{contract}/decline",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "payment.submit",
+        CK::RequestPayment,
+        Post,
+        "/grants/{proposal}/payment-requests",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "payment.resubmit",
+        CK::RequestPayment,
+        Post,
+        "/payment-requests/{request}/resubmission",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "payment.withdraw",
+        CK::WithdrawPaymentRequest,
+        Post,
+        "/payment-requests/{request}/withdrawal",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "payment.review_line",
+        CK::AcceptLine,
+        Post,
+        "/payment-requests/{request}/lines/{line}/decision",
+    )
+    .acting(REVIEWER),
+    OpSpec::command(
+        "payment.request_changes",
+        CK::RequestPaymentChanges,
+        Post,
+        "/payment-requests/{request}/changes",
+    )
+    .acting(REVIEWER),
+    OpSpec::command(
+        "payment.approve",
+        CK::ApprovePayment,
+        Post,
+        "/payment-requests/{request}/approval",
+    )
+    .acting(FINANCE),
+    OpSpec::command(
+        "payment.release",
+        CK::ReleasePayment,
+        Post,
+        "/payment-requests/{request}/release",
+    )
+    .acting(RELEASER),
+    OpSpec::command(
+        "payment.confirm_paid",
+        CK::ConfirmPaid,
+        Post,
+        "/payment-requests/{request}/paid",
+    )
+    .acting(FINANCE),
+    OpSpec::command(
+        "payment.close",
+        CK::ClosePaymentRequest,
+        Post,
+        "/payment-requests/{request}/closure",
+    )
+    .acting(MANAGER),
+    OpSpec::command(
+        "amendment.propose",
+        CK::ProposeAmendment,
+        Post,
+        "/grants/{proposal}/amendments",
+    )
+    .acting(AMENDER),
+    OpSpec::command(
+        "amendment.route",
+        CK::RouteAmendment,
+        Post,
+        "/amendments/{amendment}/route",
+    )
+    .acting(MANAGER),
+    // The vault origin pages of M5 design section 5 (I-86): the API only
+    // issues the ticket that opens the page. No value passes through it.
+    OpSpec::new(
+        "vault.bank.set",
+        OpKind::Grant(GrantKind::BankDetails),
+        Post,
+        "/grants/{proposal}/bank-details",
+    )
+    .hr()
+    .acting(LEAD)
+    .class(Personal),
+    OpSpec::new(
+        "vault.bank.verify",
+        OpKind::Grant(GrantKind::BankVerify),
+        Post,
+        "/grants/{proposal}/bank-details/verification",
+    )
+    .acting(FINANCE)
+    .class(Personal),
+    OpSpec::new(
+        "vault.bank.dispute",
+        OpKind::Grant(GrantKind::BankDispute),
+        Post,
+        "/grants/{proposal}/bank-details/dispute",
+    )
+    .acting(LEAD)
+    .class(Personal),
+    OpSpec::new(
+        "vault.bank.view_for_release",
+        OpKind::Grant(GrantKind::BankView),
+        Post,
+        "/payment-requests/{request}/payee",
+    )
+    .hr()
+    .acting(RELEASER)
+    .class(Personal),
+    OpSpec::new(
+        "vault.hardship.submit",
+        OpKind::Grant(GrantKind::HardshipEvidence),
+        Post,
+        "/grants/{proposal}/hardship-evidence",
+    )
+    .acting(LEAD)
+    .class(Personal),
+    OpSpec::new(
+        "vault.hardship.verify",
+        OpKind::Grant(GrantKind::HardshipVerify),
+        Post,
+        "/grants/{proposal}/hardship-evidence/verification",
+    )
+    .acting(FINANCE)
+    .class(Personal),
+    // R-RP-04, I-44, R-RP-03 (Q3).
+    OpSpec::read("report.list", RK::ListReports, "/programmes/{programme}/reports")
+        .acting(REPORT_READERS),
+    OpSpec::new(
+        "report.generate",
+        OpKind::Grant(GrantKind::ReportGenerate),
+        Post,
+        "/programmes/{programme}/reports",
+    )
+    .acting(MANAGER),
+    OpSpec::new(
+        "report.approve",
+        OpKind::Grant(GrantKind::ReportApprove),
+        Post,
+        "/reports/{report}/approval",
+    )
+    .acting(FIN_SIGNATORY),
 ];
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:
@@ -1834,25 +2165,9 @@ pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
 /// only `creator.approve_activation` reaches an activation (I-66).
 pub const COMPOSED_ONLY: &[CommandKind] = &[CK::ActivateProgramme];
 
-/// Kinds whose operations arrive in a later milestone: the grant,
-/// contract, payment and amendment kinds of M5, and the calibration
-/// consent kinds of M12.
+/// Kinds whose operations arrive in a later milestone: the calibration
+/// consent kinds of M12. Lane L-API routed every M5 kind.
 pub const LATER: &[(CommandKind, Milestone)] = &[
-    (CK::DetermineAmount, Milestone::M5),
-    (CK::AcceptGrant, Milestone::M5),
-    (CK::ApproveGrant, Milestone::M5),
-    (CK::Terminate, Milestone::M5),
-    (CK::RequestPayment, Milestone::M5),
-    (CK::AcceptLine, Milestone::M5),
-    (CK::ApprovePayment, Milestone::M5),
-    (CK::ReleasePayment, Milestone::M5),
-    (CK::ConfirmPaid, Milestone::M5),
-    (CK::WithdrawPaymentRequest, Milestone::M5),
-    (CK::RequestPaymentChanges, Milestone::M5),
-    (CK::ProposeAmendment, Milestone::M5),
-    (CK::RouteAmendment, Milestone::M5),
-    (CK::CloseMilestone, Milestone::M5),
-    (CK::ClosePaymentRequest, Milestone::M5),
     // Lane L12-I37 builds the consent commands. Lane L12-UI routes them.
     (CK::RequestCalibrationConsent, Milestone::M12),
     (CK::GiveCalibrationConsent, Milestone::M12),

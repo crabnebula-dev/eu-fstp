@@ -1914,7 +1914,7 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 | M3 Q-B, self-hosted tests (2026-11-07) | Deferred with B-06 | The self-hosted tests (I-38, I-39 services down, I-83 self-hosted, R-NF-05) leave M3 and return with self-hosted packaging (B-06). Lane F-SELF is not built |
 | M3 Q-C, vault chain coverage (2026-11-07) | Facts and releases | Each fact batch and each identity release or read is a vault chain row; key operations stay events only |
 | M3 Q-D, witness receipt key (2026-11-07) | Own keyd entry | The witness receipt signing key has its own fstp-keyd custody entry with its own credential |
-
+| M5 lane L-API interim readings (2026-11-07) | Pending Daniel | Grants by proposal id under `/grants/{proposal}`. Three read-only MCP tools (contract status, payment status, payment queue) under `proposals:read`; every M5 command is web only (I-85). Contract parties are the lead, the guardian of a minor and the first Contract signatory. Test cells prepare the signing increment on the server. Terms, clause texts and revisions stay in API core memory until the `doc.blob` adapter. A decline writes two entries, and `grant.terminate` does not yet end the contract. The payee view counts as releasing a payment (I-78). The matrix holds no payment request, contract, amendment or report yet |\n
 ### 15.1 These block the milestone
 
 **Q1. Who approves activation, and who counts as a builder (I-67)?** The spec names no approving role.
