@@ -192,6 +192,7 @@ dependencies = [
  "fstp-access",
  "fstp-api-core",
  "fstp-brand",
+ "fstp-cell",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
@@ -218,6 +219,19 @@ dependencies = [
  "fstp-web",
  "fstp-web-assets",
  "fstp-webauthn",
+]
+
+[[package]]
+name = "fstp-assess"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-infer",
+ "fstp-json",
+ "fstp-prop",
+ "fstp-rt",
 ]
 
 [[package]]
@@ -283,6 +297,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-domain-testkit",
  "fstp-edge",
@@ -297,6 +312,8 @@ dependencies = [
  "fstp-prop",
  "fstp-release",
  "fstp-rt",
+ "fstp-smtp",
+ "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
  "fstp-webauthn",
@@ -335,6 +352,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-domain-testkit",
  "fstp-edge",
@@ -377,6 +395,7 @@ dependencies = [
 name = "fstp-contract"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract-core",
  "fstp-crypto",
  "fstp-domain",
  "fstp-json",
@@ -384,6 +403,14 @@ dependencies = [
  "fstp-pki",
  "fstp-prop",
  "fstp-sigval",
+]
+
+[[package]]
+name = "fstp-contract-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]
@@ -457,9 +484,23 @@ dependencies = [
 name = "fstp-dispatch"
 version = "0.1.0"
 dependencies = [
+ "fstp-api-testkit",
+ "fstp-audit",
+ "fstp-celltest",
  "fstp-crypto",
+ "fstp-domain",
+ "fstp-keys",
+ "fstp-ledger",
+ "fstp-mail",
+ "fstp-migrate",
+ "fstp-money",
  "fstp-pgstore",
+ "fstp-pgtest",
+ "fstp-pgwire",
  "fstp-prop",
+ "fstp-rt",
+ "fstp-smtp",
+ "fstp-tls",
 ]
 
 [[package]]
@@ -502,7 +543,7 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
- "fstp-contract",
+ "fstp-contract-core",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
@@ -534,7 +575,6 @@ dependencies = [
  "fstp-domain",
  "fstp-html",
  "fstp-json",
- "fstp-pdf",
  "fstp-programme",
  "fstp-prop",
 ]
@@ -818,6 +858,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-money",
  "fstp-pdf",
+ "fstp-programme",
  "fstp-prop",
 ]
 
@@ -879,6 +920,21 @@ dependencies = [
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",
+ "fstp-prop",
+]
+
+[[package]]
+name = "fstp-timeline"
+version = "0.1.0"
+dependencies = [
+ "fstp-cell-core",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-domain-testkit",
+ "fstp-engine",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-mail",
  "fstp-prop",
 ]
 

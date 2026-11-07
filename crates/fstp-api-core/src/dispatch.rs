@@ -435,6 +435,18 @@ async fn resolve<P: Seams>(
     }
 }
 
+/// The tenant's current branding in `state` (M9 lane B2): the digest the
+/// `BrandingSet` record holds, in hex, and the stylesheet generated from
+/// the typed tokens (I-68). `None` while the platform brand shows.
+pub(crate) fn brand_of(state: &EngineState) -> Option<crate::Brand> {
+    let (tokens, digest) = state.tenant.state()?.branding()?;
+    let digest: String = digest.bytes().iter().map(|b| format!("{b:02x}")).collect();
+    Some(crate::Brand {
+        digest,
+        css: fstp_brand::css(tokens),
+    })
+}
+
 /// The rights of a bearer token now, with no operation (TH-63, lane
 /// W3c): the MCP principal of its grant, with roles evaluated at the
 /// instant as step 0 evaluates them. Unlike step 0, a credential that is

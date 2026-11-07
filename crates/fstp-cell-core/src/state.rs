@@ -703,7 +703,7 @@ pub(crate) fn fold(
             fstp_engine::apply_entry_record(&mut s.engine, seq, at, command, first, r)
                 .map_err(FoldError::Engine)?;
             s.engine_entry = Some((command, first));
-            index_engine(s, at, r);
+            index_engine(s, seq, at, r);
         }
         CellRecord::Auth(r) => fold_auth(&mut s.auth, &s.tenant, at, r)?,
         CellRecord::Tenant(r) => fold_tenant(&mut s.tenant, at, r)?,
@@ -735,7 +735,7 @@ fn inconsistent() -> FoldError {
 }
 
 /// Indexes the binding ends and proposals of an M2 record that folded.
-fn index_engine(s: &mut CellState, at: Timestamp, r: &fstp_engine::Record) {
+fn index_engine(s: &mut CellState, seq: Seq, at: Timestamp, r: &fstp_engine::Record) {
     use fstp_domain::Record as R;
     let fstp_engine::Record::Core(core) = r else {
         return;
@@ -778,6 +778,9 @@ fn index_engine(s: &mut CellState, at: Timestamp, r: &fstp_engine::Record) {
         } => {
             s.proposals.insert(*proposal, (*call, *lead));
         }
+        // M6 design section 4: every outbox record becomes an immediate
+        // timeline event, sourced by its ledger sequence.
+        R::OutboxEnqueued(event) => s.timeline.enqueue(seq.raw(), at.micros(), *event),
         _ => {}
     }
 }

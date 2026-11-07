@@ -348,7 +348,7 @@ pub enum Command {
     Stage2Revision(Stage2Revision),
     /// A contract command, decided by `contract::decide_contract` over
     /// the contract store (M5 design section 4.1).
-    Contract(fstp_contract::ContractCommand),
+    Contract(fstp_contract_core::ContractCommand),
 }
 
 /// A stage 2 revision (R-EV-05, NOTE 1, M4 design section 2.2 J4): the
@@ -453,7 +453,7 @@ pub enum Record {
     /// A tenant record, folded into the tenant part.
     Tenant(TenantEntry),
     /// A contract record, folded into the contract store.
-    Contract(fstp_contract::ContractRecord),
+    Contract(fstp_contract_core::ContractRecord),
 }
 
 /// The identity vault as the engine sees it (design section 3.1).
@@ -939,7 +939,7 @@ impl FromJson for Record {
             EnvelopeKind::Tenant => tenant::entry_from_json(inner)
                 .map(Record::Tenant)
                 .map_err(at),
-            EnvelopeKind::Contract => fstp_contract::ContractRecord::from_json(inner)
+            EnvelopeKind::Contract => fstp_contract_core::ContractRecord::from_json(inner)
                 .map(Record::Contract)
                 .map_err(at),
         }

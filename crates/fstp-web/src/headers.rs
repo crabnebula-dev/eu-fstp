@@ -33,6 +33,8 @@ pub(crate) enum Surface {
     Api,
     /// `/p` and below: public pages.
     Public,
+    /// `/brand` and below: the tenant brand stylesheet (M9 lane B2).
+    Brand,
     /// `/mcp`, `/oauth` and the OAuth `/.well-known` documents (ADR-013).
     Adr013,
     /// Any other path.
@@ -54,6 +56,8 @@ impl Surface {
             Surface::Api
         } else if under(path, "/p") {
             Surface::Public
+        } else if under(path, "/brand") {
+            Surface::Brand
         } else if under(path, "/mcp")
             || under(path, "/oauth")
             || under(path, "/.well-known/oauth-protected-resource")
@@ -70,7 +74,7 @@ impl Surface {
         match self {
             Surface::App => APP_CSP,
             Surface::Public => PUBLIC_CSP,
-            Surface::Api | Surface::Adr013 | Surface::Other => OTHER_CSP,
+            Surface::Api | Surface::Adr013 | Surface::Brand | Surface::Other => OTHER_CSP,
         }
     }
 }
@@ -78,7 +82,9 @@ impl Surface {
 /// Whether the asset server's own `Cache-Control` stays: a 200 answer to
 /// a path under `/app/assets/`.
 fn keeps_cache_control(surface: Surface, path: &str, status: StatusCode) -> bool {
-    surface == Surface::App && path.starts_with("/app/assets/") && status == StatusCode::OK
+    status == StatusCode::OK
+        && ((surface == Surface::App && path.starts_with("/app/assets/"))
+            || (surface == Surface::Brand && crate::brand::digest_in(path).is_some()))
 }
 
 /// Sets the security headers of `resp`, the answer to a request for the
@@ -135,6 +141,8 @@ mod tests {
         assert_eq!(Surface::of("/api/v1/x"), Surface::Api);
         assert_eq!(Surface::of("/api/v10"), Surface::Other);
         assert_eq!(Surface::of("/p/x/"), Surface::Public);
+        assert_eq!(Surface::of("/brand/x.css"), Surface::Brand);
+        assert_eq!(Surface::of("/brands"), Surface::Other);
         assert_eq!(Surface::of("/mcp/public"), Surface::Adr013);
         assert_eq!(Surface::of("/.well-known/other"), Surface::Other);
         assert_eq!(Surface::of("*"), Surface::Other);

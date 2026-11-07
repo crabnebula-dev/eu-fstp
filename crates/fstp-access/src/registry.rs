@@ -279,6 +279,8 @@ pub enum TenantKind {
     CheckBranding,
     /// `TenantCommand::SetTerminology` (M9 lane T1, I-72). High-risk.
     SetTerminology,
+    /// `TenantCommand::SetMailRelay` (M6 lane L6-EGR, ADR-018). High-risk.
+    SetMailRelay,
 }
 
 /// A finding operation kind, one per `FindingCommand` variant.
@@ -813,6 +815,17 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Tenant(TenantKind::SetTerminology),
         Put,
         "/admin/terminology",
+    )
+    .hr()
+    .acting(ADMIN),
+    // M6 lane L6-EGR, ADR-018 (proposed): the tenant's mail submission
+    // relay. It decides where every message of the tenant goes, so it is
+    // high-risk by the strict reading of settings (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.set_mail_relay",
+        OpKind::Tenant(TenantKind::SetMailRelay),
+        Put,
+        "/admin/settings/mail-relay",
     )
     .hr()
     .acting(ADMIN),
@@ -1802,7 +1815,8 @@ pub const OPS: &[OpSpec] = &[
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:
 /// the tenant settings other than P-70 (design section 3.5, Q10 interim),
-/// and the brand tokens (M9 lane B1, interim).
+/// the brand tokens (M9 lane B1, interim), and the mail relay (M6 lane
+/// L6-EGR, interim).
 pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P71)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P72)),
@@ -1814,6 +1828,7 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetGuideNotice),
     OpKind::Tenant(TenantKind::SetBranding),
     OpKind::Tenant(TenantKind::SetTerminology),
+    OpKind::Tenant(TenantKind::SetMailRelay),
 ];
 
 /// Kinds that never arrive from a person. In M4 cells, the D13 sweep

@@ -217,6 +217,8 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         // M9 lane B1: the failing pairs are listed by `tenant.branding.check`.
         TenantRefusal::BrandingContrast(_) => "I-70",
         TenantRefusal::TerminologyInvalid => "I-72",
+        // ADR-018: a relay is a host name and never a CrabNebula host.
+        TenantRefusal::InvalidMailRelay => "I-38",
     };
     ApiError::refused(ErrorCode::Refused, rule)
 }
@@ -329,6 +331,13 @@ fn build<P: Seams>(
             let terminology = crate::tenant::terminology_request(&op.request)?;
             Ok((TenantCommand::SetTerminology { terminology }, None))
         }
+        // The pinned CA holds a placeholder reference with id 0 and the
+        // text's digest until dispatch stores it ([`stored_mail_relay`]).
+        TenantKind::SetMailRelay => {
+            let m = crate::tenant::mail_relay_request(&op.request)?;
+            let ca = m.ca_pem.as_deref().map(|p| crate::forms::text_ref(0, p));
+            Ok((m.command(ca), None))
+        }
         // Answered by [`command`] before any command is built.
         TenantKind::CheckBranding => Err(ApiError::refused(ErrorCode::NotFound, "route")),
         // Recorded with a validated Inference save (design 3.5), never
@@ -411,6 +420,29 @@ async fn stored_notice<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<TenantCo
         .await
         .map_err(|e| port_failed(e, "text"))?;
     Ok(n.command(crate::forms::text_ref(r.0, &n.summary)))
+}
+
+/// The `SetMailRelay` of `op` with its pinned CA, if any, stored in the
+/// cell's text store as a public text of the tenant: a CA certificate is
+/// public. It runs only once the command is admitted (ADR-018).
+async fn stored_mail_relay<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+) -> Result<TenantCommand, ApiError> {
+    let m = crate::tenant::mail_relay_request(&op.request)?;
+    let ca = match &m.ca_pem {
+        None => None,
+        Some(pem) => {
+            let r = call
+                .ports
+                .texts()
+                .put(TextClass::Public, TextOwner::Tenant, pem.as_bytes())
+                .await
+                .map_err(|e| port_failed(e, "text"))?;
+            Some(crate::forms::text_ref(r.0, pem))
+        }
+    };
+    Ok(m.command(ca))
 }
 
 /// The values of `save` with its data protection contact stored.
@@ -509,6 +541,12 @@ pub(super) async fn command<P: Seams>(
     let cmd = match cmd {
         Command::Tenant(mut r) if kind == TenantKind::SetGuideNotice => {
             r.command = stored_notice(call, op).await.map_err(|e| call.refuse(e))?;
+            Command::Tenant(r)
+        }
+        Command::Tenant(mut r) if kind == TenantKind::SetMailRelay => {
+            r.command = stored_mail_relay(call, op)
+                .await
+                .map_err(|e| call.refuse(e))?;
             Command::Tenant(r)
         }
         c => c,

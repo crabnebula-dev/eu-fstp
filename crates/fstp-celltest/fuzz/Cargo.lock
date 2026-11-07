@@ -172,15 +172,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-brand"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-json",
+]
+
+[[package]]
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
  "fstp-auth",
  "fstp-cell-core",
+ "fstp-checks",
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-edge",
  "fstp-engine",
@@ -193,6 +203,8 @@ dependencies = [
  "fstp-pgwire",
  "fstp-release",
  "fstp-rt",
+ "fstp-smtp",
+ "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
  "fstp-webauthn",
@@ -228,6 +240,7 @@ dependencies = [
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-dispatch",
  "fstp-domain",
  "fstp-domain-testkit",
  "fstp-edge",
@@ -261,6 +274,22 @@ version = "0.0.0"
 dependencies = [
  "fstp-celltest",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "fstp-checks"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+]
+
+[[package]]
+name = "fstp-contract-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]
@@ -322,6 +351,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-dispatch"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-mail",
+ "fstp-pgstore",
+ "fstp-rt",
+ "fstp-smtp",
+]
+
+[[package]]
 name = "fstp-domain"
 version = "0.1.0"
 dependencies = [
@@ -359,9 +399,11 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract-core",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-guide",
  "fstp-import",
  "fstp-json",
  "fstp-ledger",
@@ -386,6 +428,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-domain",
  "fstp-html",
+ "fstp-json",
  "fstp-programme",
 ]
 
@@ -443,6 +486,15 @@ name = "fstp-ledger"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+]
+
+[[package]]
+name = "fstp-mail"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-money",
 ]
 
 [[package]]
@@ -558,12 +610,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-smtp"
+version = "0.1.0"
+dependencies = [
+ "fstp-rt",
+ "fstp-tls",
+]
+
+[[package]]
 name = "fstp-tenant"
 version = "0.1.0"
 dependencies = [
+ "fstp-brand",
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",
+]
+
+[[package]]
+name = "fstp-timeline"
+version = "0.1.0"
+dependencies = [
+ "fstp-cell-core",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-json",
+ "fstp-mail",
 ]
 
 [[package]]

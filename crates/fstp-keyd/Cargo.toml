@@ -15,6 +15,11 @@ fstp-rt.workspace = true
 zeroize.workspace = true
 fstp-obs.workspace = true
 
+[features]
+# Test only: records root bytes for the I-80 scans of fstp-celltest. A
+# build without debug assertions refuses it (src/lib.rs).
+test-needles = []
+
 [dev-dependencies]
 fstp-prop.workspace = true
 

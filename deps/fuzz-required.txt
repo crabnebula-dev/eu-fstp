@@ -66,9 +66,13 @@ fstp-calib
 fstp-smtp
 # M7, docs/handoff/m7-design.md section 8 (lane L-WIRE).
 fstp-infer
-# M5 lane L-CON: the increment re-validation and the contract record decoder.
+# M5 lane L-CON: the increment re-validation, and the contract record
+# decoder, which lives in the pure core that fstp-engine reaches.
 fstp-sigval
-fstp-contract
+fstp-contract-core
+# M5 lane L-RPT: the report record decoder and the stored Guide reader
+# behind the Guide PDF, which moved here from fstp-guide.
+fstp-report
 # M5 wave 2, lane L-CHK: SPDX expressions, deliverable URLs, licence tags.
 fstp-checks
 # M6, docs/handoff/m6-design.md section 5.3 (lane L6-MAIL): MIME parser and DKIM tag lists.
@@ -77,3 +81,5 @@ fstp-mail
 fstp-retrieve
 # M9, docs/handoff/m9-design.md lane B1.
 fstp-brand
+# M7, docs/handoff/m7-design.md section 8 (lane L-PIPE).
+fstp-assess

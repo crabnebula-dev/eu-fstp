@@ -16,10 +16,14 @@
     clippy::arithmetic_side_effects
 )]
 
-mod support;
+// The Guide fixtures of `fstp-guide`, shared rather than copied. The PDF
+// module moved here from `fstp-guide` with this test.
+#[path = "../../fstp-guide/tests/support/mod.rs"]
+mod guide_support;
 
-use fstp_guide::{GUIDE_TITLE, GuidePdfError, guide_pdf, read_canonical};
-use support::{Rendered, guide, required_sections, supersafe_inputs};
+use fstp_guide::GUIDE_TITLE;
+use fstp_report::{GuidePdfError, guide_pdf, read_canonical};
+use guide_support::{Rendered, guide, required_sections, supersafe_inputs};
 
 fn stored() -> Rendered {
     let inputs = supersafe_inputs().unwrap_or_else(|e| panic!("inputs: {e}"));

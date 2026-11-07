@@ -1,7 +1,7 @@
 //! The `Contract` envelope of the engine (M5 design sections 3.1 and 4.1,
 //! lane L-CON).
 //!
-//! A contract command goes to `fstp_contract::decide` over the contract
+//! A contract command goes to `fstp_contract_core::decide` over the contract
 //! store, with the actor's account. The engine adds what the contract
 //! crate cannot see:
 //!
@@ -18,7 +18,7 @@
 //! gains an I-30 reference: frozen and chain faults are `Row`, actor
 //! faults `Actor`, and unknown ids `Input`.
 
-use fstp_contract::{ContractCommand, ContractFoldError, ContractRecord, ContractRefusal};
+use fstp_contract_core::{ContractCommand, ContractFoldError, ContractRecord, ContractRefusal};
 use fstp_domain::command::{Actor, ContractEvent, Ctx, SystemCause};
 use fstp_domain::engine::FoldError;
 use fstp_domain::id::{AccountId, ContractId, ProposalId};
@@ -27,7 +27,7 @@ use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 
 use crate::{EngineState, Record};
 
-pub use fstp_contract::ContractStore;
+pub use fstp_contract_core::ContractStore;
 
 /// The domain refusal of a contract refusal.
 #[must_use]
@@ -71,7 +71,7 @@ fn proposal_of(state: &EngineState, contract: ContractId) -> Result<ProposalId, 
     state
         .contracts
         .contract(contract)
-        .map(fstp_contract::Contract::proposal)
+        .map(fstp_contract_core::Contract::proposal)
         .ok_or_else(|| refusal(ContractRefusal::UnknownContract))
 }
 
@@ -110,7 +110,7 @@ pub(crate) fn contract_queries(
 ) -> Result<Vec<Query>, Refusal> {
     crate::ledger_clock(state, ctx)?;
     let records =
-        fstp_contract::decide(&state.contracts, cmd, actor_account(ctx)).map_err(refusal)?;
+        fstp_contract_core::decide(&state.contracts, cmd, actor_account(ctx)).map_err(refusal)?;
     match cmd {
         ContractCommand::Send { contract, .. } => {
             fstp_domain::grant::grant_preconditions(&state.core, proposal_of(state, *contract)?)
@@ -135,7 +135,7 @@ pub(crate) fn decide_contract(
 ) -> Result<Vec<Record>, Refusal> {
     crate::ledger_clock(state, ctx)?;
     let records =
-        fstp_contract::decide(&state.contracts, cmd, actor_account(ctx)).map_err(refusal)?;
+        fstp_contract_core::decide(&state.contracts, cmd, actor_account(ctx)).map_err(refusal)?;
     if let ContractCommand::Send { contract, .. } = cmd {
         fstp_domain::grant::check_grant_preconditions(
             &state.core,
@@ -179,5 +179,5 @@ pub(crate) fn apply_contract(
     {
         return Err(FoldError::Inconsistent);
     }
-    fstp_contract::apply(&mut state.contracts, r).map_err(contract_fold)
+    fstp_contract_core::apply(&mut state.contracts, r).map_err(contract_fold)
 }

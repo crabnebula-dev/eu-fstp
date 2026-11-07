@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 use fstp_crypto::aead;
 use fstp_custody::keyd::{MAX_USAGE_RECORDS, Request, RequestId, Response, RootHandle};
 use fstp_custody::{Chain, Epoch, Refusal};
+use fstp_obs::LogEvent;
+use fstp_obs::assurance::{
+    Assurance, DeploymentMode, HostCheck, ReducedReason, deployment_mode_from_env,
+};
 use zeroize::Zeroizing;
 
 use crate::access::{ClientRole, ClientSocket};
@@ -185,6 +189,8 @@ impl Server {
         }
         let k = EpochKey::generate().map_err(|_| Refusal::Internal)?;
         let root = RootMaterial::generate().map_err(|_| Refusal::Internal)?;
+        #[cfg(feature = "test-needles")]
+        crate::test_needles::record(&self.volume, root.bytes());
         let sealed = epoch::seal(&k, chain, epoch, &root).map_err(|_| Refusal::Internal)?;
         epoch::write_new(&self.volume, chain, epoch, &sealed).map_err(|_| Refusal::Internal)?;
         self.table
@@ -371,28 +377,111 @@ pub fn serve(socket: &Path, key_volume: &Path) -> Result<(), KeydError> {
 /// serves the chains and keys of its role only (ADR-004 part 2 "Access
 /// to `fstp-keyd`").
 ///
-/// It checks the key volume first ([`crate::check_key_volume`]), then
-/// reads the passphrase from `source`, then opens or creates the key
-/// table.
+/// It is [`serve_sockets_from`] with a named key volume.
 ///
 /// # Errors
 ///
-/// Refuses no socket or two sockets of one path, a key volume on any
-/// filesystem other than ext4 or XFS, a missing passphrase, a key table
-/// that does not open, and a socket that another server serves.
+/// Refuses no socket or two sockets of one path, a missing passphrase
+/// outside development mode, a key table that does not open, and a
+/// socket that another server serves. A key volume outside ext4 and XFS
+/// is not refused: it runs at reduced assurance ([`serve_sockets_from`]).
 pub fn serve_sockets(
     sockets: &[ClientSocket],
     key_volume: &Path,
     source: PassphraseSource,
 ) -> Result<(), KeydError> {
+    serve_sockets_from(sockets, key_volume, VolumeOrigin::Named, source)
+}
+
+/// Where the key volume of a start came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VolumeOrigin {
+    /// The volume the install names.
+    Named,
+    /// A fresh directory under the system temporary directory, made in
+    /// development mode because the named volume is missing
+    /// ([`HostCheck::KeyVolumeTemporary`]).
+    Temporary,
+}
+
+/// The I-81 assurance a start reports: the volume's own for a named
+/// volume, and [`ReducedReason::TemporaryVolume`] for a temporary one,
+/// which only development mode may use (I-81 NOTE of 2026-11-01).
+pub(crate) fn start_assurance(
+    mode: DeploymentMode,
+    origin: VolumeOrigin,
+    volume: Assurance,
+) -> Result<Assurance, KeydError> {
+    match (origin, mode) {
+        (VolumeOrigin::Named, _) => Ok(volume),
+        (VolumeOrigin::Temporary, DeploymentMode::Development) => {
+            Ok(Assurance::Reduced(ReducedReason::TemporaryVolume))
+        }
+        (VolumeOrigin::Temporary, DeploymentMode::Production) => Err(KeydError::Volume(
+            "a temporary key volume needs development mode",
+        )),
+    }
+}
+
+/// Logs a typed event. A log write that fails never stops custody.
+fn log(event: &LogEvent) {
+    let _ = fstp_obs::log_to_stderr(event);
+}
+
+/// As [`serve_sockets`], with the origin of the key volume.
+///
+/// It takes the deployment mode from `FSTP_DEPLOYMENT_MODE`
+/// ([`fstp_obs::assurance::deployment_mode_from_env`]) and the I-81
+/// assurance of the key volume ([`crate::check_key_volume`]). It starts
+/// at reduced assurance as at full, and logs the level and its reason in
+/// [`LogEvent::KeyCustodyStarted`] (I-81 NOTE of 2026-11-01). In
+/// development mode, when no passphrase source answers, it uses the
+/// ephemeral passphrase of the process ([`Passphrase::development`]) and
+/// warns.
+///
+/// # Errors
+///
+/// As [`serve_sockets`], and [`KeydError::Mode`] for an unset mode in a
+/// release build or a misspelt mode.
+pub fn serve_sockets_from(
+    sockets: &[ClientSocket],
+    key_volume: &Path,
+    origin: VolumeOrigin,
+    source: PassphraseSource,
+) -> Result<(), KeydError> {
     check_layout(sockets)?;
-    crate::volume::check_key_volume(key_volume)?;
-    let passphrase = match source {
-        PassphraseSource::Credential => Passphrase::from_credentials()?,
-        PassphraseSource::CredentialOrAsk => Passphrase::from_credentials_or_ask()?,
+    let choice = deployment_mode_from_env().map_err(KeydError::Mode)?;
+    if choice.defaulted {
+        log(&LogEvent::HostCheckWarned {
+            check: HostCheck::DeploymentModeUnset,
+        });
+    }
+    let assurance = start_assurance(
+        choice.mode,
+        origin,
+        crate::volume::check_key_volume(key_volume),
+    )?;
+    let read = match source {
+        PassphraseSource::Credential => Passphrase::from_credentials(),
+        PassphraseSource::CredentialOrAsk => Passphrase::from_credentials_or_ask(),
+    };
+    let passphrase = match read {
+        Ok(p) => p,
+        Err(e) if choice.mode == DeploymentMode::Development => {
+            let p = Passphrase::development().map_err(|_| e)?;
+            log(&LogEvent::HostCheckWarned {
+                check: HostCheck::PassphraseEphemeral,
+            });
+            p
+        }
+        Err(e) => return Err(e),
     };
     let server = Server::open(key_volume, &passphrase)?;
     drop(passphrase);
+    log(&LogEvent::KeyCustodyStarted {
+        mode: choice.mode,
+        assurance,
+    });
     run_sockets(sockets, server)
 }
 
@@ -742,6 +831,30 @@ mod tests {
     use fstp_custody::keyd::RequestId;
 
     const ID: RequestId = RequestId([7; 16]);
+
+    /// I-81 NOTE (2026-11-01): a named volume starts at its own
+    /// assurance in both modes, so a reduced volume never stops a start.
+    /// A temporary volume reports `TemporaryVolume`, never `Full`, and
+    /// only development mode may use one.
+    #[test]
+    fn i81_note_start_assurance_follows_the_volume_and_the_mode() {
+        let reduced = Assurance::Reduced(ReducedReason::Apfs);
+        for mode in [DeploymentMode::Production, DeploymentMode::Development] {
+            for a in [Assurance::Full, reduced] {
+                assert_eq!(start_assurance(mode, VolumeOrigin::Named, a), Ok(a));
+            }
+        }
+        for a in [Assurance::Full, reduced] {
+            assert_eq!(
+                start_assurance(DeploymentMode::Development, VolumeOrigin::Temporary, a),
+                Ok(Assurance::Reduced(ReducedReason::TemporaryVolume))
+            );
+            assert!(matches!(
+                start_assurance(DeploymentMode::Production, VolumeOrigin::Temporary, a),
+                Err(KeydError::Volume(_))
+            ));
+        }
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir =

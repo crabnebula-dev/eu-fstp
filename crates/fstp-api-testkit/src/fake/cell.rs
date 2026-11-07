@@ -94,6 +94,11 @@ impl FakeCell {
         })
     }
 
+    /// The API core, for reads that need no credential (M9 lane B2).
+    pub fn core(&self) -> &ApiCore {
+        &self.core
+    }
+
     /// Logs `account` in through the web with `method`.
     pub fn login(&self, account: AccountId, method: LoginMethod) -> WebLogin {
         self.ports.sessions.login(account, method)

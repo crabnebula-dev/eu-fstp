@@ -55,7 +55,7 @@ pub use state::{
 pub use types::{
     Activation, ActivationRequestId, AgreementVersions, ApprovalId, BankInterface, BrandingPackage,
     CellKind, DomainName, GrantRef, GuideNoticeOverride, InferenceDefault, InvitationId,
-    LoginMethod, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode, ProviderRef,
-    RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus, StepValues,
-    TenantParam, TenantRevision, Terminology, Token, TokenDigest, VerifyMethod,
+    LoginMethod, MailRelay, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode,
+    ProviderRef, RpMode, SettingValue, SignatoryRole, StepFailure, StepOutcome, StepStatus,
+    StepValues, TenantParam, TenantRevision, Terminology, Token, TokenDigest, VerifyMethod,
 };

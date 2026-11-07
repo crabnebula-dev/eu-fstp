@@ -151,7 +151,17 @@ pub(crate) const CONTAINERS: &[&str] = &[
 
 /// Attributes allowed on every element. `aria-` names are allowed too.
 const GLOBAL_ATTRS: &[&str] = &[
-    "id", "class", "lang", "dir", "title", "hidden", "role", "tabindex",
+    "id",
+    "class",
+    "lang",
+    "dir",
+    "title",
+    "hidden",
+    "role",
+    "tabindex",
+    // I-69 (M9 lane B2): the one data attribute, the footer's mandatory
+    // element key. Its value is a platform constant.
+    "data-mandatory",
 ];
 
 /// Attributes whose value is a URL.

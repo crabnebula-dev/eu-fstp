@@ -68,6 +68,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-domain",
  "fstp-html",
+ "fstp-json",
  "fstp-programme",
 ]
 

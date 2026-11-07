@@ -45,6 +45,10 @@ pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written};
 ///    two constants.
 /// 3. `vault`: the schemas, tables and triggers of design section 4.3.
 /// 4. `bank`: the bank and hardship fact kinds of M5 (I-33, R-PR-04).
+/// 5. `migration_ledger`: `fstp_migrate.schema_migrations` in the runner's
+///    own shape, for a set applied without the runner (I-16).
+/// 6. `column_classes`: the length checks of Daniel's Q-A classes
+///    (2026-11-07, design section 4.5, R-NF-08).
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(1, "meta", include_str!("../migrations/vault/0001_meta.sql")),
     fstp_migrate::Migration::new(
@@ -58,6 +62,16 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         include_str!("../migrations/vault/0003_vault.sql"),
     ),
     fstp_migrate::Migration::new(4, "bank", include_str!("../migrations/vault/0004_bank.sql")),
+    fstp_migrate::Migration::new(
+        5,
+        "migration_ledger",
+        include_str!("../migrations/vault/0005_migration_ledger.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        6,
+        "column_classes",
+        include_str!("../migrations/vault/0006_column_classes.sql"),
+    ),
 ];
 
 /// Why a vault operation failed. No variant holds tenant data (R-NF-02).

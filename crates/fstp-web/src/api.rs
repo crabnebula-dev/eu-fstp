@@ -30,6 +30,16 @@ pub(crate) enum Backend {
     Refusing,
 }
 
+impl Backend {
+    /// The tenant's current branding, if it set one (M9 lane B2).
+    pub(crate) fn brand(&self) -> Option<fstp_api_core::Brand> {
+        match self {
+            Backend::Core(core) => core.brand(),
+            Backend::Refusing => None,
+        }
+    }
+}
+
 /// Whether `method` needs the CSRF rule. Interim, pending Daniel: every
 /// method except `GET` and `HEAD`, so `POST`, `PUT`, `PATCH`, `DELETE`
 /// and every other method are covered.

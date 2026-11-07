@@ -1,5 +1,5 @@
 [package]
-name = "fstp-contract-fuzz"
+name = "fstp-contract-core-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
-fstp-contract = { path = ".." }
+fstp-contract-core = { path = ".." }
 fstp-json = { path = "../../fstp-json" }
 
 [[bin]]

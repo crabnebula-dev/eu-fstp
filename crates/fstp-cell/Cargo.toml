@@ -21,6 +21,9 @@ fstp-obs.workspace = true
 fstp-rt.workspace = true
 # M5 lane L-CHK: the deliverable fetch port and URL subset of the checks.
 fstp-checks.workspace = true
+# M6 lane L6-EGR: the SMTP submission client behind `Destination::MailSubmission`
+# (ADR-018).
+fstp-smtp.workspace = true
 # In-house edges of lane W3a: the auth rules, WebAuthn, domain and engine
 # types, the ledger store trait and entries, the audit chain and anchorer
 # core, the erasure planner, and the canonical JSON and crypto calls.
@@ -28,6 +31,8 @@ fstp-auth.workspace = true
 fstp-webauthn.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
+# M6 lane L6-TL: the timeline engine the timeline task runs.
+fstp-timeline.workspace = true
 fstp-ledger.workspace = true
 fstp-audit.workspace = true
 fstp-keys.workspace = true
@@ -38,6 +43,8 @@ fstp-crypto.workspace = true
 # lock (design sections 4.2 and 7.2).
 fstp-pgwire.workspace = true
 fstp-witness.workspace = true
+# M6 lane L6-DISP: the dispatch worker of the dispatcher task.
+fstp-dispatch.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

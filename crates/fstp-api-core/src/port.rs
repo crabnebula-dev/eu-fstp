@@ -1232,6 +1232,8 @@ pub(crate) trait Dispatch: Send + Sync {
     ) -> DispatchFuture<'a>;
     /// The rights of a bearer token, with no operation (TH-63).
     fn tool_rights(&self, cred: Credential) -> RightsFuture<'_>;
+    /// The tenant's current branding (M9 lane B2).
+    fn brand(&self) -> Option<crate::Brand>;
 }
 
 /// The ports of one cell inside an [`ApiCore`], with the dispatch state
@@ -1259,6 +1261,10 @@ impl<P: CellPorts> Dispatch for Core<P> {
 
     fn tool_rights(&self, cred: Credential) -> RightsFuture<'_> {
         Box::pin(async move { crate::dispatch::tool_rights(&self.ports, &cred).await })
+    }
+
+    fn brand(&self) -> Option<crate::Brand> {
+        crate::dispatch::brand_of(&self.ports.engine().snapshot())
     }
 }
 

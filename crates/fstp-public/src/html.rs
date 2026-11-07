@@ -165,13 +165,36 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.status.granted", "Granted"),
     label("public.status.in_execution", "In execution"),
     label("public.status.completed", "Completed"),
-    // TODO(legal): the platform attribution (P-68), the privacy notice,
-    // the accessibility statement and the funder visibility elements.
-    // Daniel supplies the approved wording.
-    label(
-        "public.footer",
-        "FSTP platform. Synthetic placeholder: the legal notices are pending approved wording.",
-    ),
+    // TODO(legal): the privacy notice, the accessibility statement, the
+    // Data Act information and the funder visibility elements (I-69, L-08,
+    // L-09). Daniel supplies the approved wording. The platform
+    // attribution (P-68) is a plain label.
+    EntrySource {
+        id: "public.footer.privacy",
+        kind: MessageKind::Approved,
+        message: "Privacy notice: the approved wording is pending.",
+    },
+    EntrySource {
+        id: "public.footer.accessibility",
+        kind: MessageKind::Approved,
+        message: "Accessibility statement: the approved wording is pending.",
+    },
+    EntrySource {
+        id: "public.footer.data_act",
+        kind: MessageKind::Approved,
+        message: "Data Act information for tenants: the approved wording is pending.",
+    },
+    EntrySource {
+        id: "public.footer.funder",
+        kind: MessageKind::Approved,
+        message: "Funder visibility: the approved wording is pending.",
+    },
+    EntrySource {
+        id: "public.footer.ai",
+        kind: MessageKind::Approved,
+        message: "AI disclosure: the approved wording is pending.",
+    },
+    label("public.footer.attribution", "Runs on the FSTP platform."),
     // TODO(legal): the approved AI disclosure for applicants (R-LA-08, AI
     // Act Article 50). This placeholder states only what the platform
     // does, in the words of the shipped Guide template.
@@ -336,12 +359,38 @@ fn header(view: &PublicView, paths: &Paths, current: Current) -> Result<Element,
     ))
 }
 
-/// The footer of every page.
+/// The footer of every page: one element per mandatory element (I-69).
+/// It is built from platform data after the brand is applied, so no
+/// brand token can name, hide, size or reorder an element (M9 design
+/// section 2.4).
 fn footer() -> Element {
+    let item = |key: &'static str, id: &str, approved: bool| {
+        let span = Element::new("span").attr("data-mandatory", key);
+        let span = if approved {
+            span.approved(&ApprovedText::new(id), &[])
+        } else {
+            span.label(&l(id), &[])
+        };
+        Element::new("li").child(span)
+    };
     Element::new("footer").attr("class", "site-footer").child(
-        Element::new("div")
-            .attr("class", "inner")
-            .child(el("p", "public.footer")),
+        Element::new("div").attr("class", "inner").child(
+            Element::new("ul")
+                .child(item("funder_visibility", "public.footer.funder", true))
+                .child(item("ai_disclosure", "public.footer.ai", true))
+                .child(item("privacy_notice", "public.footer.privacy", true))
+                .child(item(
+                    "accessibility_statement",
+                    "public.footer.accessibility",
+                    true,
+                ))
+                .child(item("data_act_information", "public.footer.data_act", true))
+                .child(item(
+                    "platform_attribution",
+                    "public.footer.attribution",
+                    false,
+                )),
+        ),
     )
 }
 

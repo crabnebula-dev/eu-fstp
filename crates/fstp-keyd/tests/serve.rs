@@ -3,13 +3,15 @@
 //! I-80, I-81).
 //!
 //! Each test starts `fstp_keyd::serve` on a fresh socket and a key volume
-//! under `FSTP_KEY_VOLUME_DIR`, which must be an ext4 or XFS mount. The
+//! under `FSTP_KEY_VOLUME_DIR`, which the Linux CI test job mounts as ext4. The
 //! cross-crate file custody tests (`i81_file_custody_*`, the restart and
 //! remnant checks) live in `fstp-celltest`. These are the crate's own
 //! tests of each custody operation over the socket.
 //!
-//! Without `FSTP_KEY_VOLUME_DIR`, as on macOS, each test is red and says
-//! why: `fstp-keyd` refuses any key volume that is not ext4 or XFS.
+//! Without `FSTP_KEY_VOLUME_DIR`, as on macOS, the key volume is a
+//! temporary directory. `fstp-keyd` serves it at reduced assurance (I-81
+//! NOTE of 2026-11-01), so every test still runs (Q-F, interim pending
+//! Daniel).
 
 #![allow(
     clippy::unwrap_used,
@@ -263,4 +265,49 @@ fn adr004_keyd_socket_admits_only_its_owner() {
         0,
         "socket mode {mode:o} grants group or other access"
     );
+}
+
+/// I-81 NOTE (2026-11-01), Q-F: the full path is never skipped in Linux
+/// CI. There `FSTP_KEY_VOLUME_DIR` must name a directory, and a volume
+/// under it must report full assurance. Elsewhere a volume reports
+/// `Full` only on Linux, and `Reduced` with a reason otherwise.
+#[test]
+fn i81_note_linux_ci_key_volume_reports_full() {
+    use fstp_obs::assurance::Assurance;
+    let in_ci = std::env::var_os("CI").is_some_and(|v| !v.is_empty());
+    if cfg!(target_os = "linux") && in_ci {
+        assert!(
+            common::key_volume_named(),
+            "FSTP_KEY_VOLUME_DIR is unset in Linux CI, so the full I-81 path would be skipped"
+        );
+    }
+    let scratch = Scratch::new("assurance-guard").unwrap_or_else(|e| panic!("{e}"));
+    let a = fstp_keyd::check_key_volume(&scratch.volume);
+    if cfg!(target_os = "linux") && common::key_volume_named() {
+        assert_eq!(a, Assurance::Full, "the named key volume is not full");
+    }
+    if !cfg!(target_os = "linux") {
+        let Assurance::Reduced(r) = a else {
+            panic!("full assurance off Linux");
+        };
+        assert!(!r.as_str().is_empty());
+    }
+}
+
+/// I-81 NOTE (2026-11-01): `fstp-keyd` starts on a key volume of reduced
+/// assurance instead of refusing it, and custody works there. Off Linux
+/// the volume reports `Reduced` with a reason, never `Full`.
+#[test]
+fn i81_note_keyd_serves_a_volume_of_any_assurance() {
+    use fstp_obs::assurance::Assurance;
+    let (scratch, client) = running("any-assurance");
+    let a = common::check_volume_assurance(&scratch.volume).unwrap_or_else(|e| panic!("{e}"));
+    if !cfg!(target_os = "linux") {
+        assert!(matches!(a, Assurance::Reduced(_)), "{a:?}");
+    }
+    let aad = Aad(b"keyd crate any assurance".to_vec());
+    let root = block_on(client.create_root(label(Chain::App, 1))).unwrap();
+    let w = block_on(client.wrap(&root, &SealKey::from_bytes(canary(9)), &aad)).unwrap();
+    let back = block_on(client.unwrap(&root, &w, &aad)).unwrap();
+    assert_eq!(back.expose(), &canary(9));
 }

@@ -89,6 +89,8 @@ pub enum CellCommand {
     Release(release::ReleaseCommand),
     /// Break-glass, operator tickets and scheduled session ends.
     Ops(ops::OpsCommand),
+    /// Timeline schedules, cancels and firings (M6 design section 4).
+    Timeline(timeline::TimelineCommand),
 }
 
 /// A record of a cell.

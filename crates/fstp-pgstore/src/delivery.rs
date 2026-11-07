@@ -19,7 +19,12 @@
 use fstp_pgwire::Uuid;
 use fstp_rt::Runtime;
 
+use std::sync::Arc;
+
+use fstp_keys::{DekId, ObjectId};
+
 use crate::error::StoreFault;
+use crate::outbox::{OutboxKeys, open_outbox_body};
 use crate::pool::{Pool, Role};
 
 /// The lease of a claim, in microseconds: 60 seconds (M6 design section
@@ -519,6 +524,63 @@ impl<R: Runtime> DeliveryLog<R> {
         tx.commit().await?;
         client.release();
         Ok(out)
+    }
+}
+
+const OUTBOX_SQL: &str = "SELECT kind, idem, dek, body FROM ops.outbox WHERE id = $1";
+
+/// The stored messages of `ops.outbox`, opened for the dispatcher (M6
+/// design section 5.1, S2). Lane L6-DISP.
+pub struct OutboxReader<R: Runtime> {
+    pool: Pool<R>,
+    keys: Arc<dyn OutboxKeys>,
+}
+
+impl<R: Runtime> OutboxReader<R> {
+    /// The reader over `pool`, which must serve the app role, opening
+    /// bodies with `keys`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreFault::WrongRole`] for a pool of another role.
+    pub fn new(pool: Pool<R>, keys: Arc<dyn OutboxKeys>) -> Result<OutboxReader<R>, StoreFault> {
+        if pool.role() != Role::App {
+            return Err(StoreFault::WrongRole);
+        }
+        Ok(OutboxReader { pool, keys })
+    }
+
+    /// The opened body of the outbox row `id` of `kind`, or `None` when no
+    /// such row exists or the keystore refuses its key.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault, the key provider's refusal, or a body
+    /// that does not open under its row.
+    pub async fn open(&self, id: [u8; 16], kind: u16) -> Result<Option<Vec<u8>>, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let row = client
+            .query_opt(OUTBOX_SQL, &[&Uuid::from_bytes(id)])
+            .await?;
+        client.release();
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let stored_kind: i16 = row.get(0)?;
+        let idem: Vec<u8> = row.get(1)?;
+        let dek: Uuid = row.get(2)?;
+        let body: Vec<u8> = row.get(3)?;
+        if u16::try_from(stored_kind).ok() != Some(kind) {
+            return Ok(None);
+        }
+        let Some(key) = self.keys.open(DekId(*dek.as_bytes()), ObjectId(id)).await? else {
+            return Ok(None);
+        };
+        if key.dek.0 != *dek.as_bytes() {
+            return Err(StoreFault::OpenFailed);
+        }
+        let plain = open_outbox_body(&self.pool.cell(), &key, &id, kind, &idem, &body)?;
+        Ok(Some(plain.to_vec()))
     }
 }
 

@@ -8,6 +8,8 @@
 //!   draft (R-RP-04). Every output first reconciles the snapshot. Any
 //!   mismatch fails generation and is listed (I-44, R-RP-02). Equal
 //!   snapshots give equal bytes (R-RP-01).
+//! - [`guide_pdf`] renders the stored Guide as a tagged PDF (R-GA-02,
+//!   I-53). It lives here so that `fstp-guide` takes no `fstp-pdf`.
 //! - [`ReportRecord`] is the `Report` ledger envelope: `ReportGenerated`
 //!   and `ReportApproved`. [`approve`] lets only a Financial signatory who
 //!   did not generate a document approve it (R-RP-03, Q3).
@@ -24,12 +26,14 @@
 )]
 
 mod books;
+pub mod guide;
 mod output;
 mod record;
 mod snapshot;
 mod time;
 
 pub use books::Mismatch;
+pub use guide::{GuideContent, GuidePdfError, guide_pdf, read_canonical, rendered_guide_pdf};
 pub use output::{
     Content, Output, PROFILE, PackageInputs, Period, ReportKind, Request, Scope, generate,
 };
@@ -55,7 +59,7 @@ pub enum ReportError {
     /// notice).
     Package(Vec<&'static str>),
     /// The stored Guide could not be read.
-    Guide(fstp_guide::GuidePdfError),
+    Guide(GuidePdfError),
     /// The PDF writer refused the document.
     Pdf(fstp_pdf::WriteError),
     /// A JSON value could not be written canonically.

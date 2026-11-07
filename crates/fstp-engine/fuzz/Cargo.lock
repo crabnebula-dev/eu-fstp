@@ -33,6 +33,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
+name = "fstp-brand"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-json",
+]
+
+[[package]]
+name = "fstp-contract-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
+]
+
+[[package]]
 name = "fstp-creator"
 version = "0.1.0"
 dependencies = [
@@ -57,9 +73,11 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract-core",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-guide",
  "fstp-import",
  "fstp-json",
  "fstp-ledger",
@@ -97,6 +115,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-domain",
  "fstp-html",
+ "fstp-json",
  "fstp-programme",
 ]
 
@@ -148,6 +167,7 @@ dependencies = [
 name = "fstp-tenant"
 version = "0.1.0"
 dependencies = [
+ "fstp-brand",
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",

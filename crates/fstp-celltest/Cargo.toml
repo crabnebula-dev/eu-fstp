@@ -15,7 +15,7 @@ fstp-rt.workspace = true
 fstp-pki.workspace = true
 fstp-keys.workspace = true
 fstp-custody.workspace = true
-fstp-keyd.workspace = true
+fstp-keyd = { workspace = true, features = ["test-needles"] }
 fstp-audit.workspace = true
 fstp-obs.workspace = true
 fstp-pgstore.workspace = true
@@ -44,6 +44,8 @@ fstp-pgtest.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true
 fstp-domain-testkit.workspace = true
+# M6 T2: the dispatch worker the M-DISPATCH model drives.
+fstp-dispatch.workspace = true
 # In-house edges of lane int5: the world logs its cell, vault and witness
 # roles in over fstp-pgwire, and reaches the cells through fstp-tls and
 # fstp-http.

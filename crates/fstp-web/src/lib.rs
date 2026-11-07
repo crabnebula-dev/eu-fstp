@@ -51,6 +51,7 @@
 //!   stub dispatch of [`handle_op_request`] answers them 501.
 
 mod api;
+mod brand;
 mod headers;
 mod mcp;
 mod origin;

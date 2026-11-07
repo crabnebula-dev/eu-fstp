@@ -249,7 +249,7 @@ const MAX_PROFILE_FILES: usize = 10_000;
 const MAX_PROFILE_FILE: u64 = 16 << 20;
 
 /// Rule A10.
-const PURE_M4: [&str; 10] = [
+const PURE_M4: [&str; 11] = [
     "fstp-programme",
     CREATOR,
     IMPORT,
@@ -261,6 +261,8 @@ const PURE_M4: [&str; 10] = [
     "fstp-html",
     // M9 lane B1.
     "fstp-brand",
+    // M5 lane L-CON: the contract core that fstp-engine reaches.
+    "fstp-contract-core",
 ];
 const IO_CRATES: [&str; 10] = [
     "fstp-rt",

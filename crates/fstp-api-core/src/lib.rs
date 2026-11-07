@@ -459,6 +459,17 @@ impl ToolRights {
     }
 }
 
+/// The tenant's current branding as the web adapter serves it (M9 lane
+/// B2, I-68): the digest of the token set and the stylesheet generated
+/// from the typed tokens only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Brand {
+    /// The lower-case hex digest of the canonical tokens: 64 digits.
+    pub digest: String,
+    /// The stylesheet of `fstp_brand::css`.
+    pub css: String,
+}
+
 /// The opaque API core. It holds the cell's ports behind a private trait
 /// object and offers no accessor for them.
 pub struct ApiCore {
@@ -480,6 +491,13 @@ impl ApiCore {
         op: Op,
     ) -> Result<OpResult, ApiError> {
         self.inner.dispatch(cred, head, op).await
+    }
+
+    /// The tenant's current branding, or `None` while the tenant shows
+    /// the platform brand (M9 lane B2). It is public data, read from the
+    /// ledger's tenant part with no credential.
+    pub fn brand(&self) -> Option<Brand> {
+        self.inner.brand()
     }
 
     /// The rights of a bearer token at this instant, without dispatching

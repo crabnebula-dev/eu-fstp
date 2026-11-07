@@ -729,31 +729,56 @@ fn i80_simulator_client_view_holds_no_root_bytes() {
 // ---------------------------------------------------------------------------
 // File custody (design section 3.3, Q32 A).
 
-/// The seam of [`keyd_root_needles`]: `fstp-keyd` gives a test no needle
-/// of its root bytes. Lane W2f adds a test-only hook, as the simulator's
-/// `--needles-out` does, and this helper then reads it.
-const KEYD_NEEDLE_SEAM: &str = "fstp-keyd exposes no test needles of its root bytes (lane W2f; compare fstp-custody-sim --needles-out)";
-
+/// The root bytes `fstp-keyd` created on `volume` in this process, through
+/// its test-only hook `fstp_keyd::test_needles` (feature `test-needles`,
+/// enabled by this crate only), as the simulator's `--needles-out` gives
+/// them. A scan with no needle would pass vacuously, so none is an error.
 fn keyd_root_needles(volume: &Path) -> Result<Vec<Needle>, String> {
-    let _ = volume;
-    Err(KEYD_NEEDLE_SEAM.to_owned())
+    let needles: Vec<Needle> = fstp_keyd::test_needles::root_needles(volume)
+        .into_iter()
+        .enumerate()
+        .map(|(i, bytes)| Needle {
+            label: format!("fstp-keyd root {i}"),
+            bytes: bytes.to_vec(),
+        })
+        .collect();
+    if needles.is_empty() {
+        return Err(format!("fstp-keyd created no root on {}", volume.display()));
+    }
+    Ok(needles)
 }
 
 /// The environment variable that names a directory on an ext4 or XFS
 /// filesystem, for the key volumes of the file custody tests.
 const KEY_VOLUME_ENV: &str = "FSTP_KEY_VOLUME_DIR";
 
-/// The seam of [`key_volume_root`]: `fstp-keyd` accepts only an ext4 or
-/// XFS key volume. `std::env::temp_dir()` is APFS on macOS and often
-/// tmpfs on Linux, so a correct `fstp-keyd` refuses it. The CI isolation
-/// job (lane W4) sets the variable to an ext4 or XFS mount.
-const KEY_VOLUME_SEAM: &str = "FSTP_KEY_VOLUME_DIR is unset: the file custody tests need a directory on an ext4 or XFS mount, which the CI isolation job provides (design section 3.3, lane W4)";
-
-/// The directory under which the file custody tests make key volumes.
-fn key_volume_root() -> Result<PathBuf, String> {
+/// The directory under which the file custody tests make key volumes:
+/// the one `FSTP_KEY_VOLUME_DIR` names, or else the system temporary
+/// directory. Q-F, interim pending Daniel (m3-finish section 5 step 4):
+/// without the variable every assertion still runs, on a volume of
+/// reduced assurance. The Linux CI test job sets it to an ext4 mount,
+/// and the `fstp-keyd` guard `i81_note_linux_ci_key_volume_reports_full`
+/// fails there without it.
+fn key_volume_root() -> PathBuf {
     match std::env::var_os(KEY_VOLUME_ENV) {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
-        _ => Err(KEY_VOLUME_SEAM.to_owned()),
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => std::env::temp_dir(),
+    }
+}
+
+/// I-81 NOTE (2026-11-01), Q-F: a volume under `FSTP_KEY_VOLUME_DIR` on
+/// Linux reports full assurance, and no volume off Linux does. Elsewhere
+/// the test asserts `Full` only where the volume reports it.
+fn check_volume_assurance(volume: &Path) {
+    use fstp_obs::assurance::Assurance;
+    let named = std::env::var_os(KEY_VOLUME_ENV).is_some_and(|d| !d.is_empty());
+    let a = fstp_keyd::check_key_volume(volume);
+    if cfg!(target_os = "linux") {
+        if named {
+            assert_eq!(a, Assurance::Full, "FSTP_KEY_VOLUME_DIR is not full");
+        }
+    } else {
+        assert!(matches!(a, Assurance::Reduced(_)), "full off Linux: {a:?}");
     }
 }
 
@@ -769,13 +794,14 @@ struct Scratch {
 impl Scratch {
     fn new(name: &str) -> Scratch {
         let leaf = format!("fstp-w1d-{name}-{}", std::process::id());
-        let root = key_volume_root().unwrap_or_else(|e| panic!("{e}"));
+        let root = key_volume_root();
         let socket_dir = std::env::temp_dir().join(&leaf);
         let volume = root.join(&leaf);
         for dir in [&socket_dir, &volume] {
             let _ = fs::remove_dir_all(dir);
             fs::create_dir_all(dir).unwrap();
         }
+        check_volume_assurance(&volume);
         Scratch {
             socket: socket_dir.join("keyd.sock"),
             socket_dir,

@@ -206,6 +206,20 @@ pub fn encode_log(event: &LogEvent) -> Result<String, ObsError> {
             .text("route", check_route(route)?)
             .text("rule", check_rule(rule)?)
             .number("status", u64::from(status)),
+        LogEvent::KeyCustodyStarted { mode, assurance } => {
+            let line = Line::new("key_custody_started")
+                .text("mode", mode.as_str())
+                .text("assurance", assurance.level());
+            match assurance.reason() {
+                Some(r) => line
+                    .number("reason_code", u64::from(r.code()))
+                    .text("reason", r.as_str()),
+                None => line,
+            }
+        }
+        LogEvent::HostCheckWarned { check } => {
+            Line::new("host_check_warned").text("check", check.as_str())
+        }
     };
     Ok(line.finish())
 }
@@ -330,6 +344,13 @@ mod tests {
                 route: UNROUTED,
                 rule: "SoD-08",
                 status: 403,
+            },
+            LogEvent::KeyCustodyStarted {
+                mode: crate::assurance::DeploymentMode::Development,
+                assurance: crate::assurance::Assurance::Full,
+            },
+            LogEvent::HostCheckWarned {
+                check: crate::assurance::HostCheck::PassphraseEphemeral,
             },
         ]
     }
@@ -545,6 +566,47 @@ mod tests {
                 && fine_shown.contains("/proposals/{id}")
                 && fine_shown.contains("SoD-08"),
             "{shown} / {fine_shown}"
+        );
+    }
+
+    /// I-81 NOTE (2026-11-01), R-NF-02: the key custody start event names
+    /// the mode, the level and, at reduced assurance, the reason, as one
+    /// JSON line for every reason and every host check.
+    #[test]
+    fn i81_note_start_event_names_the_assurance_and_its_reason() {
+        use crate::assurance::{Assurance, DeploymentMode, HostCheck, ReducedReason};
+        let mut events = vec![LogEvent::KeyCustodyStarted {
+            mode: DeploymentMode::Production,
+            assurance: Assurance::Full,
+        }];
+        for r in ReducedReason::ALL {
+            events.push(LogEvent::KeyCustodyStarted {
+                mode: DeploymentMode::Development,
+                assurance: Assurance::Reduced(r),
+            });
+        }
+        for check in [
+            HostCheck::DeploymentModeUnset,
+            HostCheck::KeyVolumeTemporary,
+            HostCheck::SocketDirTemporary,
+            HostCheck::PassphraseEphemeral,
+        ] {
+            events.push(LogEvent::HostCheckWarned { check });
+        }
+        for e in events {
+            let line = encode_log(&e).unwrap();
+            let body = line.strip_suffix('\n').unwrap();
+            assert!(!body.chars().any(char::is_control), "{line:?}");
+            assert!(fstp_json::parse_str(body).is_ok(), "{line:?}");
+        }
+        let line = encode_log(&LogEvent::KeyCustodyStarted {
+            mode: DeploymentMode::Development,
+            assurance: Assurance::Reduced(ReducedReason::Apfs),
+        })
+        .unwrap();
+        assert_eq!(
+            line,
+            "{\"event\":\"key_custody_started\",\"mode\":\"development\",\"assurance\":\"reduced\",\"reason_code\":1,\"reason\":\"APFS is copy-on-write\"}\n"
         );
     }
 }

@@ -204,6 +204,22 @@ jobs:
           fi
           "$pg_bin/postgres" --version
           echo "FSTP_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
+      # I-81 NOTE (2026-11-01), Q-F: the fstp-keyd and file custody tests
+      # run on a loop-mounted ext4 key volume, so they assert full I-81
+      # assurance here. The guard i81_note_linux_ci_key_volume_reports_full
+      # fails when this variable is unset in Linux CI.
+      - name: ext4 key volume for the file custody tests
+        run: |
+          set -euo pipefail
+          img="$RUNNER_TEMP/keyvol.img"
+          mnt="$RUNNER_TEMP/keyvol"
+          truncate -s 256M "$img"
+          mkfs.ext4 -q -F "$img"
+          mkdir -p "$mnt"
+          sudo mount -o loop "$img" "$mnt"
+          sudo chown "$(id -u):$(id -g)" "$mnt"
+          grep " $mnt " /proc/self/mountinfo
+          echo "FSTP_KEY_VOLUME_DIR=$mnt" >> "$GITHUB_ENV"
       # Some tests are red on purpose: each waits on a seam that a named
       # lane closes, and ci/known-red.txt lists it with that seam and lane.
       # The run itself may fail; test-gate decides. It fails on any red
@@ -223,6 +239,18 @@ jobs:
           echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
           cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
           cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
+      # I-80, Q27: the Linux-only process-memory scans ran in the workspace
+      # run above, on the ext4 key volume. Their outcome is gated by
+      # test-gate. This step fails when either did not run at all.
+      - name: memory scan (I-80, Linux only)
+        if: matrix.part == 'workspace'
+        run: |
+          set -euo pipefail
+          for t in i80_root_canary_absent_from_cell_and_vault_memory \
+                   i80_destroyed_epoch_seal_key_absent_from_process_memory; do
+            grep -E "^test linux::$t \.\.\. " "$RUNNER_TEMP/cargo-test.log" \
+              || { echo "the memory scan $t did not run"; exit 1; }
+          done
       # The SQLSTATE condition-name table must match this PostgreSQL 16.
       - name: SQLSTATE table matches the server
         if: matrix.part == 'workspace'

@@ -44,6 +44,7 @@ import { PEOPLE_ROUTES } from "../people/routes.js";
 import { browserEnv } from "../reviewer/kit.js";
 import { mountJudging } from "../reviewer/judging.js";
 import { mountSite } from "../site/pages.js";
+import { installFooterGuard } from "./brand.js";
 
 /** The creator, onboarding and people routes, checked once when first used. */
 const STAFF_ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES];
@@ -106,6 +107,7 @@ async function run(path: string): Promise<void> {
 }
 
 installTrustedTypesPolicy();
+installFooterGuard();
 void startSession(location.pathname);
 // Every `/app/` page renders in this one document (lane m4/site scope
 // item 1): `core/router.ts` handles in-app links, Back and Forward. The

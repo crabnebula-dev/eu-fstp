@@ -367,7 +367,7 @@ fn open_call_package(
     package: &PackageInputs<'_>,
 ) -> Result<Document, ReportError> {
     published(books, call)?;
-    let guide = fstp_guide::read_canonical(package.guide).map_err(ReportError::Guide)?;
+    let guide = crate::guide::read_canonical(package.guide).map_err(ReportError::Guide)?;
     let mut missing: Vec<&'static str> = I48
         .iter()
         .filter(|(_, keys)| {

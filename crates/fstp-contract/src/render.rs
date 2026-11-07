@@ -92,6 +92,6 @@ pub fn render(terms: &ContractTerms) -> Result<Vec<u8>, RenderError> {
 /// A [`RenderError`] when `fstp-pdf` refuses the document.
 pub fn render_with_digest(terms: &ContractTerms) -> Result<(Vec<u8>, Digest), RenderError> {
     let bytes = render(terms)?;
-    let d = Digest::of(&bytes);
+    let d = crate::digest::sha256(&bytes);
     Ok((bytes, d))
 }

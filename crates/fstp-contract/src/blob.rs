@@ -88,7 +88,7 @@ impl MemBlobStore {
                 Err(BlobError::Conflict)
             };
         }
-        if Digest::of(bytes) != digest {
+        if crate::digest::sha256(bytes) != digest {
             return Err(BlobError::DigestMismatch);
         }
         self.docs.insert(digest, (kind, bytes.to_vec()));
@@ -110,7 +110,7 @@ impl MemBlobStore {
 
 impl BlobStore for MemBlobStore {
     fn put(&mut self, kind: BlobKind, bytes: &[u8]) -> Result<Digest, BlobError> {
-        let d = Digest::of(bytes);
+        let d = crate::digest::sha256(bytes);
         self.insert_raw(d, kind, bytes)?;
         Ok(d)
     }

@@ -313,6 +313,9 @@ pub fn tenant_refusal(r: TenantRefusal) -> Refusal {
         // I-70 has no domain rule reference. The API core names I-70.
         TenantRefusal::BrandingContrast(_) => (RuleRef::Input, Why::InvalidValue),
         TenantRefusal::TerminologyInvalid => (RuleRef::Input, Why::InvalidValue),
+        // ADR-018 and I-38 have no domain rule reference. The API core
+        // names I-38.
+        TenantRefusal::InvalidMailRelay => (RuleRef::Input, Why::InvalidValue),
     };
     Refusal::new(rule, why)
 }

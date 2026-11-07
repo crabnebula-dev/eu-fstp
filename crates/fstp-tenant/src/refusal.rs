@@ -99,6 +99,9 @@ pub enum TenantRefusal {
     BrandingContrast(fstp_brand::PairSet),
     /// The terminology breaks the shape bounds (I-68, I-72).
     TerminologyInvalid,
+    /// The mail relay is not a fully qualified host name, is a CrabNebula
+    /// host, or names no secret (ADR-018, I-38).
+    InvalidMailRelay,
     /// A record contradicts the state it folds into.
     Inconsistent,
 }
@@ -146,6 +149,7 @@ impl TenantRefusal {
             TenantRefusal::InvalidAddress => "invalid_address",
             TenantRefusal::BrandingContrast(_) => "branding_contrast",
             TenantRefusal::TerminologyInvalid => "terminology_invalid",
+            TenantRefusal::InvalidMailRelay => "invalid_mail_relay",
             TenantRefusal::Inconsistent => "inconsistent",
         }
     }

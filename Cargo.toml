@@ -70,6 +70,7 @@ members = [
     "crates/fstp-infer",
     # M5 lane L-CON.
     "crates/fstp-sigval",
+    "crates/fstp-contract-core",
     "crates/fstp-contract",
     # M5 wave 2, lane L-CHK.
     "crates/fstp-checks",
@@ -77,10 +78,13 @@ members = [
     "crates/fstp-dispatch",
     # M6, docs/handoff/m6-design.md section 10, lane L6-MAIL.
     "crates/fstp-mail",
+    "crates/fstp-timeline",
     # M7, docs/handoff/m7-design.md section 10, lane L-RETR.
     "crates/fstp-retrieve",
     # M9, docs/handoff/m9-design.md lane B1.
     "crates/fstp-brand",
+    # M7, docs/handoff/m7-design.md section 10, lane L-PIPE.
+    "crates/fstp-assess",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -185,15 +189,18 @@ fstp-smtp = { path = "crates/fstp-smtp" }
 # M7, docs/handoff/m7-design.md section 10.
 fstp-infer = { path = "crates/fstp-infer" }
 fstp-sigval = { path = "crates/fstp-sigval" }
+fstp-contract-core = { path = "crates/fstp-contract-core" }
 fstp-contract = { path = "crates/fstp-contract" }
 fstp-checks = { path = "crates/fstp-checks" }
 # M6, docs/handoff/m6-design.md section 10.
 fstp-dispatch = { path = "crates/fstp-dispatch" }
 # M6, docs/handoff/m6-design.md section 10.
 fstp-mail = { path = "crates/fstp-mail" }
+fstp-timeline = { path = "crates/fstp-timeline" }
 # M7, docs/handoff/m7-design.md section 10.
 fstp-retrieve = { path = "crates/fstp-retrieve" }
 fstp-brand = { path = "crates/fstp-brand" }
+fstp-assess = { path = "crates/fstp-assess" }
 fstp-oauth = { path = "crates/fstp-oauth" }
 fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }

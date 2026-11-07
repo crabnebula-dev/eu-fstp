@@ -1118,6 +1118,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("tenant.branding.set", T::None, R::TenantAdmin).hr(),
     // M9 lane T1: interface labels and the Voyage switch (I-72, interim).
     RefOp::act("tenant.terminology.set", T::None, R::TenantAdmin).hr(),
+    // M6 lane L6-EGR, ADR-018: the mail relay, high-risk by the strict
+    // reading of settings.
+    RefOp::act("tenant.set_mail_relay", T::None, R::TenantAdmin).hr(),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.

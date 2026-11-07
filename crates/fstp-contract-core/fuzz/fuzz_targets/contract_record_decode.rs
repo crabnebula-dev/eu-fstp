@@ -1,4 +1,4 @@
-//! Fuzz target `contract_record_decode` of `fstp-contract` (TH-26, I-23,
+//! Fuzz target `contract_record_decode` of `fstp-contract-core` (TH-26, I-23,
 //! I-30, R-NF-02).
 //!
 //! The input is read as JSON and decoded as a `Contract` envelope record.
@@ -8,7 +8,7 @@
 
 #![no_main]
 
-use fstp_contract::{ContractRecord, ContractStore, Digest, apply};
+use fstp_contract_core::{ContractRecord, ContractStore, Digest, apply};
 use fstp_json::{FromJson, ToJson, parse};
 use libfuzzer_sys::fuzz_target;
 

@@ -580,6 +580,12 @@ pub enum RecordView {
         /// The setting admin.
         by: AccountId,
     },
+    /// A mail relay set or cleared (M6 lane L6-EGR). The machine issues no
+    /// such command.
+    MailRelaySet {
+        /// The setting admin.
+        by: AccountId,
+    },
 }
 
 /// The defaults of `SPEC/02-domain/policy-parameters.md` for the settable

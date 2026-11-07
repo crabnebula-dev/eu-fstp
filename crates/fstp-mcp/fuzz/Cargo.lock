@@ -102,11 +102,14 @@ name = "fstp-api-core"
 version = "0.1.0"
 dependencies = [
  "fstp-access",
+ "fstp-brand",
  "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
  "fstp-engine",
+ "fstp-findings",
  "fstp-guide",
+ "fstp-html",
  "fstp-import",
  "fstp-journey",
  "fstp-json",
@@ -115,6 +118,22 @@ dependencies = [
  "fstp-public",
  "fstp-rt",
  "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-brand"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-json",
+]
+
+[[package]]
+name = "fstp-contract-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-json",
 ]
 
 [[package]]
@@ -151,9 +170,11 @@ dependencies = [
 name = "fstp-engine"
 version = "0.1.0"
 dependencies = [
+ "fstp-contract-core",
  "fstp-creator",
  "fstp-domain",
  "fstp-findings",
+ "fstp-guide",
  "fstp-import",
  "fstp-json",
  "fstp-ledger",
@@ -178,6 +199,8 @@ version = "0.1.0"
 dependencies = [
  "fstp-domain",
  "fstp-html",
+ "fstp-json",
+ "fstp-pdf",
  "fstp-programme",
 ]
 
@@ -264,6 +287,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-pdf"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+]
+
+[[package]]
 name = "fstp-programme"
 version = "0.1.0"
 dependencies = [
@@ -295,6 +325,7 @@ dependencies = [
 name = "fstp-tenant"
 version = "0.1.0"
 dependencies = [
+ "fstp-brand",
  "fstp-domain",
  "fstp-json",
  "fstp-ledger",
