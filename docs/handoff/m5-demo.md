@@ -68,7 +68,7 @@ R-NG-03, R-CT-01, R-CT-04, R-PR-01 to R-PR-05, R-RP-03, R-RP-04, R-NF-03. I-05, 
 ## Decisions and open questions for Daniel
 
 1. **Speedrun starts at the negotiation.** Rows 1 to 4 already have M4 specs and seeds, and a 40-hour deadline favours a short run. Decision: `NEGOTIATION_READY` is the start. The full-call video would chain the M4 scenes by hand.
-2. **P-36 hold in the demo.** The clock link advances 30 days, which exceeds any P-36 value the fixture can hold. Open: read P-36 from the programme and advance exactly that.
+2. **P-36 hold in the demo.** The clock link advances 30 days, and the speedrun passes with it. I did not read the programme's P-36 value. Open: read P-36 from the programme and advance exactly that.
 3. **Fake forge is not behind the checks runner.** `fstp-checks` needs resolved evidence texts and an egress client. The pump passes the checks and fails them once on request. The location text is `http://a.fstp.localhost/demo/forge/...`, which no code fetches. Open: wire `fstp_checks::runner::run` to the forge when the evidence reads exist.
 4. **Open call package not generated.** The API core answers 501 for it until the stored Guide bytes arrive, so ALL_CLOSED holds four funder outputs, not five.
 5. **Hardship request is not seeded.** The vault page has no hardship page, and the hardship evidence id is drawn by the cell. Open for a later pass.
