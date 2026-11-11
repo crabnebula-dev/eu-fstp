@@ -11,6 +11,7 @@ import { target as pdfPrepare } from "./pdf_prepare.fuzz.js";
 import { target as pdfPrepareDifferential } from "./pdf_prepare_differential.fuzz.js";
 import { target as pdfToken } from "./pdf_token.fuzz.js";
 import { target as pdfXref } from "./pdf_xref.fuzz.js";
+import { target as postgrantWire } from "./postgrant_wire.fuzz.js";
 import { target as routerMatch } from "./router_match.fuzz.js";
 import { target as returnPath } from "./return_path.fuzz.js";
 import { target as routeTree } from "./route_tree.fuzz.js";
@@ -32,4 +33,5 @@ export const TARGETS: readonly FuzzTarget[] = [
   pdfPrepareDifferential,
   routeTree,
   applicantWire,
+  postgrantWire,
 ];

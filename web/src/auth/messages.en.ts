@@ -94,6 +94,8 @@ const MESSAGES = {
   'account.nav.creator': 'Programme set-up',
   'account.nav.approvals': 'Approvals',
   'account.nav.proposals': 'My applications',
+  'account.nav.grants': 'Grants',
+  'account.nav.operations': 'Operations',
   'account.nav.calls': 'Open calls',
   'account.nav.account': 'Account',
   'account.sessions': 'Sessions',

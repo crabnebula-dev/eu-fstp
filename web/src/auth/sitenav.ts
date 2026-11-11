@@ -10,6 +10,9 @@
 // same links for any roles. This module is pure: it reads a value that
 // `JSON.parse` produced and builds plain data.
 
+/** The roles whose work is in the operations queues, as `home/model.ts` names them. */
+const OPERATIONS_ROLES: readonly string[] = ['programme_manager', 'finance_approver', 'payment_releaser', 'contract_signatory', 'auditor'];
+
 /** One link of the navigation: its `data-nav` kind and its path. Its label is `account.nav.<kind>`. */
 export interface SiteLink {
   readonly kind: NavKind;
@@ -24,7 +27,9 @@ export type NavKind =
   | 'onboarding'
   | 'creator'
   | 'approvals'
+  | 'operations'
   | 'proposals'
+  | 'grants'
   | 'calls'
   | 'account';
 
@@ -33,6 +38,8 @@ export interface NavRoles {
   readonly tenantAdmin: boolean;
   /** The roles of the caller's programme bindings, without a proposal. */
   readonly staff: ReadonlySet<string>;
+  /** The tenant-wide signatory roles of the caller. */
+  readonly signatories: readonly string[];
 }
 
 /** The parts of a `me.roles` reply the navigation reads, or null when it does not fit. */
@@ -48,7 +55,9 @@ export function navRolesOf(v: unknown): NavRoles | null {
     if (typeof b['role'] !== 'string') return null;
     if (!Object.hasOwn(b, 'proposal')) staff.add(b['role']);
   }
-  return { tenantAdmin: o['tenant_admin'], staff };
+  const sig = o['signatories'];
+  const signatories = Array.isArray(sig) ? (sig as readonly unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  return { tenantAdmin: o['tenant_admin'], staff, signatories };
 }
 
 /**
@@ -65,6 +74,9 @@ export function siteLinks(roles: NavRoles | null): readonly SiteLink[] {
     if (roles.staff.has('irc_member')) {
       out.push({ kind: 'irc-cases', href: '/app/me/irc-cases' });
     }
+    if (OPERATIONS_ROLES.some((r) => roles.staff.has(r)) || roles.signatories.length > 0) {
+      out.push({ kind: 'operations', href: '/app/operations' });
+    }
     if (roles.tenantAdmin) {
       out.push({ kind: 'onboarding', href: '/app/admin/onboarding/summary' });
       out.push({ kind: 'creator', href: '/app/creator/new' });
@@ -73,6 +85,7 @@ export function siteLinks(roles: NavRoles | null): readonly SiteLink[] {
   }
   out.push(
     { kind: 'proposals', href: '/app/proposals' },
+    { kind: 'grants', href: '/app/grants' },
     { kind: 'calls', href: '/app/calls' },
     { kind: 'account', href: '/auth/account' },
   );

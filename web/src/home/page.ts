@@ -313,10 +313,10 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
       id: `home-proposal-${id}`,
       title: p !== undefined && p.title.trim() !== "" ? p.title : homeLabel("home.proposal", { id }),
       body: p === undefined ? [journeyNav(id)] : [stateChip(p), journeyNav(id)],
-      items: [i],
+      items: [i, ...of((x) => x.kind === "grant" && x.href === `/app/grants/${id}`)],
     });
   }
-  const proposals = of((x) => x.kind === "proposals");
+  const proposals = of((x) => x.kind === "proposals" || (x.kind === "grants" && x.group === "applicant"));
   if (proposals.length > 0) {
     out.push({ id: "home-applications", title: homeLabel("home.group.applicant"), body: [], items: proposals });
   }
@@ -347,7 +347,7 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
   }
 
   // J6: the reviewer's assignments.
-  const assignments = of((x) => x.kind === "assignments");
+  const assignments = of((x) => x.kind === "assignments" || (x.kind === "grants" && x.group === "committee"));
   if (assignments.length > 0) {
     out.push({
       id: "home-reviewer",
@@ -414,6 +414,17 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
   const setup = of((x) => x.group === "tenant_admin" && x.kind !== "onboarding");
   if (setup.length > 0) {
     out.push({ id: "home-programmes", title: homeLabel("home.admin.programmes"), body: [], items: setup });
+  }
+
+  // M5: the Operations queues.
+  const operations = of((x) => x.group === "operations");
+  if (operations.length > 0) {
+    out.push({
+      id: "home-operations",
+      title: homeLabel("home.group.operations"),
+      body: [h("p", {}, [homeLabel("home.operations.intro")])],
+      items: operations,
+    });
   }
 
   // J1, J3: the programme staff.

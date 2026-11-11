@@ -92,8 +92,8 @@ export function mountNegotiation(id: string): void {
         h("ol", {}, [
           h("li", {}, [t("negotiation.next.identity")]),
           h("li", {}, [t("negotiation.next.guardian")]),
-          h("li", {}, [t("negotiation.next.amount")]),
-          h("li", {}, [t("negotiation.next.contract")]),
+          h("li", {}, [t("negotiation.next.amount"), " ", h("a", { id: "negotiation-grant-link", href: `/app/grants/${id}` }, [t("negotiation.next.grant_link")])]),
+          h("li", {}, [t("negotiation.next.contract"), " ", h("a", { id: "negotiation-contract-link", href: `/app/grants/${id}/contract` }, [t("negotiation.next.contract_link")])]),
         ]),
       ]),
     );
