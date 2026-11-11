@@ -165,7 +165,7 @@ export async function findingsStatusSection(env: PageEnv, call: string): Promise
           "tbody",
           {},
           rows.map((r) =>
-            h("tr", { "data-proposal": r.proposal, "data-status": r.status }, [
+            h("tr", { "data-findings-proposal": r.proposal, "data-findings-status": r.status }, [
               h("th", { scope: "row" }, [t.label("coord.findings.proposal", { id: r.proposal })]),
               h("td", {}, [statusText(t, r)]),
             ]),

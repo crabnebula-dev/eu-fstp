@@ -176,8 +176,8 @@ test.describe('M7 AI assessment click-through', () => {
       const status = page.locator('#findings-status');
       await expect(status, 'the assessment status').toBeVisible();
       await expect(status.locator('.ai-disclosure')).toContainText('AI system');
-      const row = status.locator(`tr[data-proposal="${X}"]`);
-      await expect(row).toHaveAttribute('data-status', 'ready');
+      const row = status.locator(`tr[data-findings-proposal="${X}"]`);
+      await expect(row).toHaveAttribute("data-findings-status", "ready");
       await expect(row).toContainText(/\d+ findings?|Findings pending/);
       const text = await status.innerText();
       expect(text.includes('treated as data'), 'I-10: no statement reaches the coordinator').toBe(false);
