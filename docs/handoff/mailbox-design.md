@@ -89,6 +89,7 @@ The pending action page `/app/pending/{id}` had no page on `main` (`pending.rs` 
 | T5 | `fstp-api-core/src/mailbox.rs` unit tests | Each kind maps to one route and one target read, and `open` equals the number of action messages |
 | T6 | `fstp-api-testkit/src/harness/mailbox_tests.rs` | I-85: a prepared action appears as `pending.confirm` for its own account only, and disappears once confirmed or discarded |
 | T7 | `web/test/mailbox.test.ts` | The decoder refuses any member outside the shape; every `MAILBOX_ROUTES` pattern is mounted by the shell or listed as an M5 page; the nav shows the open count |
+| T9 | `e2e/mailbox/mailbox.spec.ts` | I-27, I-86, R-NF-03: on a demo cell, the coordinator, a reviewer, an IRC member and the lead in stage 2 and in negotiation each click from "Sign in as" to the home page, to the mailbox, to their first work page. The top bar count equals the page count |
 | T8 | registry, authz reference, `REPLIES` fit | The read is in the registry, the reference matrix (`R::AnyAccount`, no tool) and the reply shapes, as for every read |
 
 ## 8. Build
