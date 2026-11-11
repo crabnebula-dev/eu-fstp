@@ -151,6 +151,7 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
         (false, "/test/vault/verify") => verify(site, &req),
         (false, "/test/scenario/applicant") => scenario::applicant(site, &req).await,
         (false, "/test/scenario/review") => scenario::review(site, &req).await,
+        (false, "/test/scenario/grant") => scenario::postgrant::control(site, &req).await,
         (false, "/test/precheck") => crate::precheck::handle(),
         _ => wire::not_found(),
     }

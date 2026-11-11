@@ -55,6 +55,7 @@ mod demo_signin;
 mod onboarding;
 mod people;
 mod precheck;
+mod pump;
 mod scenario;
 mod wire;
 
@@ -63,7 +64,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use fstp_api_core::port::api_core;
+use fstp_api_core::port::api_core_with_signing;
 use fstp_api_testkit::fake::fixture::World;
 use fstp_api_testkit::fake::{FakePorts, port_seams};
 use fstp_http::{
@@ -196,7 +197,16 @@ impl Inner {
         let fixture = fstp_programme::supersafe_fixture().map_err(|e| format!("{e:?}"))?;
         ports.engine.set_guide_spec(fixture.spec);
         ports.vault.set_origin(&vault_origin(site));
-        let core = Arc::new(api_core(ports.clone()));
+        // M5 L-DEMO: the fake wallet and QTSP sign the contract (M5 design
+        // section 3.2). Test cell only; a production core builds none.
+        let trust = fstp_contract::fake::FakeTrustServices::new(1_793_350_800)
+            .map_err(|e| format!("fake trust services: {e:?}"))?;
+        let list = trust.trusted_list();
+        let core = Arc::new(api_core_with_signing(
+            ports.clone(),
+            Box::new(trust),
+            Box::new(list),
+        ));
         let origin = parse_origin_header(site.origin.as_bytes()).map_err(|e| e.to_string())?;
         let web = fstp_web::router(
             Arc::clone(&core),
@@ -443,6 +453,7 @@ fn start(cfg: &Config) -> Result<Running, String> {
         );
         sites.push(site);
     }
+    pump::spawn(sites.clone());
     let running = Running {
         sites,
         _servers: servers,

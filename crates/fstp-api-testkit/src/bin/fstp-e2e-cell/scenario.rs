@@ -65,6 +65,8 @@ use crate::control::email;
 use crate::wire::{self, dec, obj};
 use crate::{Inner, Site, SiteInfo};
 
+pub(crate) mod postgrant;
+
 /// The SuperSAFE programme of every seed.
 const PROGRAMME: ProgrammeId = ProgrammeId::from_raw(1);
 /// Its first policy version.
@@ -100,12 +102,12 @@ const CALL_TITLE: &str = "SuperSAFE open call 2026";
 const PRIMARY_MODEL: &str = "placeholder-model";
 
 /// A Judging persona of the review specs (design section 2.1).
-struct Persona {
-    key: &'static str,
-    account: AccountId,
-    role: Role,
-    organisation: Option<OrganisationId>,
-    label: &'static str,
+pub(crate) struct Persona {
+    pub(crate) key: &'static str,
+    pub(crate) account: AccountId,
+    pub(crate) role: Role,
+    pub(crate) organisation: Option<OrganisationId>,
+    pub(crate) label: &'static str,
 }
 
 /// The cast of the review specs. R1 and R4 share organisation O1 (SoD-10).
@@ -178,6 +180,10 @@ const PROGRAMME_MANAGER: (&str, AccountId, &str) = ("m1", STAFF_PM, "Programme m
 
 /// The label of the persona with `key`, such as `Committee member R1`.
 fn label_of_key(key: &str) -> &'static str {
+    let extra = postgrant::label_of_key(key);
+    if !extra.is_empty() {
+        return extra;
+    }
     if key == PROGRAMME_MANAGER.0 {
         return PROGRAMME_MANAGER.2;
     }
@@ -413,11 +419,34 @@ impl Seeder<'_> {
             v => v.to_compact().into_bytes(),
         };
         let op = decode_route(method, path, &bytes).map_err(|e| format!("{path}: {e}"))?;
-        match self
+        let mut first = self
             .inner
             .core
             .dispatch(Credential::SessionCookie(cookie), &RequestHead::new(), op)
-            .await
+            .await;
+        // A high-risk operation asks for a step-up (I-78). The seed plays
+        // the person's confirmation in a fresh session, as the demo
+        // sign-in does, and sends the operation again.
+        if let Ok(OpResult::StepUpRequired(ch)) = &first {
+            let l = self
+                .inner
+                .ports
+                .sessions
+                .login(account, LoginMethod::Passkey);
+            self.inner
+                .ports
+                .step_up
+                .approve(l.session, ch.action)
+                .map_err(|e| format!("{path}: the step-up: {e:?}"))?;
+            self.cookies.insert(account, l.cookie.clone());
+            let op = decode_route(method, path, &bytes).map_err(|e| format!("{path}: {e}"))?;
+            first = self
+                .inner
+                .core
+                .dispatch(Credential::SessionCookie(l.cookie), &RequestHead::new(), op)
+                .await;
+        }
+        match first
         {
             Ok(OpResult::Done { body, .. }) => Ok(fstp_json::ToJson::to_json(&body)),
             Ok(other) => Err(format!(
@@ -510,6 +539,7 @@ fn review_truth() -> GroundTruth {
         t.set_identity(p.account, tag(p.account));
         t.verify(p.account);
     }
+    postgrant::truth(&mut t);
     t.set_identity(GUARDIAN, tag(GUARDIAN));
     t.verify(GUARDIAN);
     t.attest_adult(GUARDIAN, roster::LEAD_ADULT_FROM);
@@ -1008,8 +1038,19 @@ type Person = (&'static str, String, String);
 /// A fresh state for a seed: an empty ledger over the review vault, every
 /// persona and lead with a login email and a display handle.
 fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
+    fresh_review_with(info, false)
+}
+
+/// [`fresh_review`], optionally over a ledger that starts with the tenant's
+/// provisioning record, so tenant routes such as the signatory grants run
+/// (M5 L-DEMO: the Financial signatory approves funder reports).
+fn fresh_review_with(info: &SiteInfo, tenant: bool) -> Result<FreshSeed, String> {
+    let mut store = MemStore::new();
+    if tenant {
+        crate::onboarding::provision(&mut store, ADMIN, T_SETUP)?;
+    }
     let world = World {
-        store: MemStore::new(),
+        store,
         truth: review_truth(),
         start: Timestamp::from_micros(T_SETUP),
         admins: [ADMIN, ADMIN_2].into_iter().collect(),
@@ -1054,6 +1095,9 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
 /// The label of a review persona or of the programme manager, such as
 /// `Committee member R1`.
 pub(crate) fn persona_label(account: AccountId) -> Option<&'static str> {
+    if let Some(l) = postgrant::label(account) {
+        return Some(l);
+    }
     if account == PROGRAMME_MANAGER.1 {
         return Some(PROGRAMME_MANAGER.2);
     }

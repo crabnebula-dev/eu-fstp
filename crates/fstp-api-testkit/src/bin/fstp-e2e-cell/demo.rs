@@ -115,6 +115,16 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
             }
             _ => return wire::bad("at"),
         },
+        "/demo/grant" => match wire::query_param(&req, "at") {
+            Some(a) if scenario::postgrant::SCENES.contains(&a.as_str()) => {
+                scenario::postgrant::demo(site, &a).await
+            }
+            _ => return wire::bad("at"),
+        },
+        "/demo/forge/fail" => {
+            crate::pump::arm_forge_failure();
+            Ok(())
+        }
         "/demo/advance" => {
             match wire::query_param(&req, "minutes").and_then(|m| m.parse::<i64>().ok()) {
                 Some(m) if (1..=10_080).contains(&m) => {
@@ -531,6 +541,10 @@ fn page(site: &Site) -> Response {
         .iter()
         .map(|a| format!("<a href=\"/demo/applicant?at={a}\">{a}</a> "))
         .collect();
+    let grant: String = scenario::postgrant::SCENES
+        .iter()
+        .map(|g| format!("<a href=\"/demo/grant?at={g}\">{g}</a> "))
+        .collect();
     let origin = esc(&site.info.origin);
     let public = public_calls_path(&inner)
         .map(|p| {
@@ -563,6 +577,7 @@ Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refr
 <h2>Messages the cell sent</h2>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\
 <p>Review: {review}</p>\n<p>Applicant: {applicant}</p>\n\
+<p>Grant (post-grant lifecycle): {grant}</p>\n\
 <p><a href=\"/demo/reset\">Reset</a> (an empty cell and its first tenant admin)</p>\n\
 <p>Clock: <a href=\"/demo/advance?minutes=60\">+60 minutes</a> <a href=\"/demo/advance?minutes=1440\">+1 day</a></p>\n\
 </main>\n</body></html>\n",
