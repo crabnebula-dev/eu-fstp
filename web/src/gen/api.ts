@@ -208,6 +208,8 @@ export type OpName =
   | "contract.view"
   | "payment.status"
   | "payment.queue"
+  | "grant.list_mine"
+  | "contract.awaiting_me"
   | "grant.determine_amount"
   | "grant.accept"
   | "grant.approve"
@@ -425,6 +427,8 @@ export interface OpParams {
   readonly "contract.view": { readonly "proposal": string };
   readonly "payment.status": { readonly "proposal": string };
   readonly "payment.queue": Readonly<Record<never, string>>;
+  readonly "grant.list_mine": Readonly<Record<never, string>>;
+  readonly "contract.awaiting_me": Readonly<Record<never, string>>;
   readonly "grant.determine_amount": { readonly "proposal": string };
   readonly "grant.accept": { readonly "proposal": string };
   readonly "grant.approve": { readonly "proposal": string };
@@ -615,6 +619,8 @@ export const OP_NAMES: readonly OpName[] = [
   "contract.view",
   "payment.status",
   "payment.queue",
+  "grant.list_mine",
+  "contract.awaiting_me",
   "grant.determine_amount",
   "grant.accept",
   "grant.approve",
@@ -2808,6 +2814,34 @@ export const OPERATIONS: readonly Operation[] = [
     tool: { name: "fstp_get_payment_queue", scope: "proposals:read", prepareOnly: false },
   },
   {
+    name: "grant.list_mine",
+    method: "GET",
+    path: "/me/grants",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "grants" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "contract.awaiting_me",
+    method: "GET",
+    path: "/me/contracts-awaiting-signature",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "contracts-awaiting-signature" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "grant.determine_amount",
     method: "POST",
     path: "/grants/{proposal}/amount-determination",
@@ -3363,6 +3397,19 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "paid": { schema: { kind: "amount" }, optional: false },
       "contract": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
       "requests": { schema: { kind: "int" }, optional: false },
+      "plan": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "milestones": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "milestone": { schema: { kind: "id" }, optional: false },
+          "amount": { schema: { kind: "amount" }, optional: false },
+          "due": { schema: { kind: "string" }, optional: false },
+          "paid": { schema: { kind: "amount" }, optional: false },
+          "pending": { schema: { kind: "amount" }, optional: false },
+          "available": { schema: { kind: "amount" }, optional: false },
+          "closed": { schema: { kind: "bool" }, optional: false },
+        },
+      } }, optional: false },
     },
   },
   "contract.view": {
@@ -3392,6 +3439,30 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "grant.list_mine": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+      "amount": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+      "paid": { schema: { kind: "amount" }, optional: false },
+      "contract": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "via": { schema: { kind: "enum", values: ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
+    },
+  } },
+  "contract.awaiting_me": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "contract": { schema: { kind: "id" }, optional: false },
+      "version": { schema: { kind: "int" }, optional: false },
+      "field": { schema: { kind: "string" }, optional: false },
+      "role": { schema: { kind: "enum", values: ["lead", "team_member", "guardian", "signatory"] }, optional: false },
+      "state": { schema: { kind: "enum", values: ["sent", "signed_by_grantee"] }, optional: false },
+      "digest": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+    },
+  } },
   "payment.status": { kind: "array", items: {
     kind: "object",
     fields: {

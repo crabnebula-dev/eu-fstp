@@ -14,7 +14,6 @@
 
 import { h, type Child } from "../core/dom.js";
 import type { I18n } from "../core/i18n.js";
-import { isBoard } from "../coordinator/models.js";
 import { frame, guarded, idRoute, readOp, selectEl, type JudgingPage } from "../reviewer/kit.js";
 import {
   GRANT_PATHS,
@@ -34,7 +33,18 @@ import {
   type Frame,
   type PageEnv,
 } from "../grant/kit.js";
-import { decodeDrawn, decodeQueue, decodeReports, isIdText, type QueueRow, type ReportRow } from "../grant/models.js";
+import {
+  decodeDrawn,
+  decodeGrantList,
+  decodeQueue,
+  decodeReports,
+  decodeToSign,
+  isIdText,
+  type GrantRow,
+  type QueueRow,
+  type ReportRow,
+  type ToSignRow,
+} from "../grant/models.js";
 import { statusBadge } from "../payments/pages.js";
 
 const TASKS = ["review", "approve", "release", "confirm"] as const;
@@ -99,26 +109,32 @@ async function mountOperations(env: PageEnv): Promise<void> {
     } else {
       f.problem(q.problem);
     }
-    // Contracts to countersign: the grants on the caller's calls that are in negotiation.
-    if (can(roles, "contract_signatory") || can(roles, "programme_manager")) {
-      const seen = new Set<string>();
-      const rows: HTMLElement[] = [];
-      const calls = roles === null ? [] : [...new Set(roles.roles.filter((b) => b.proposal === null).flatMap((b) => b.calls))];
-      for (const c of calls) {
-        const r = await readOp(env, "call.board", { call: c }, isBoard);
-        if (r.ok) {
-          for (const p of r.data) {
-            if (["NEGOTIATION", "GRANTED", "IN_EXECUTION"].includes(p.state) && !seen.has(p.proposal)) {
-              seen.add(p.proposal);
-              rows.push(h("li", {}, [link(GRANT_PATHS.contract(p.proposal), t.label("ops.contracts.open", { id: p.proposal })), " ", badge(p.state, p.state)]));
-            }
-          }
-        }
-      }
+    // M5 reads follow-up: the contract versions awaiting the caller's own signature. The cell
+    // lists a version for the signatory only once the grantee side signed (P-30).
+    const s = await readOp(env, "contract.awaiting_me", {}, (v): v is readonly ToSignRow[] => decodeToSign(v) !== null);
+    const toSign = s.ok ? (decodeToSign(s.data) ?? []) : [];
+    if (toSign.length > 0 || can(roles, "contract_signatory")) {
+      const rows = toSign.map((r) =>
+        h("li", { "data-contract": r.contract }, [link(GRANT_PATHS.contract(r.proposal), t.label("ops.contracts.open", { id: r.proposal })), " ", badge(r.state, r.state)]),
+      );
       body.push(
         section("ops-contracts", t.label("ops.contracts.heading"), [
           h("p", {}, [t.label("ops.contracts.intro")]),
-          rows.length === 0 ? h("p", { id: "ops-contracts-none" }, [t.label("ops.contracts.none"), " ", link(GRANT_PATHS.hub, t.label("ops.contracts.open", { id: "..." }))]) : h("ul", { class: "fstp-list" }, rows),
+          rows.length === 0 ? h("p", { id: "ops-contracts-none" }, [t.label("ops.contracts.none")]) : h("ul", { class: "fstp-list" }, rows),
+        ]),
+      );
+    }
+    // The grants the caller reads, each linked, so nobody types a proposal number.
+    const g = await readOp(env, "grant.list_mine", {}, (v): v is readonly GrantRow[] => decodeGrantList(v) !== null);
+    const grants = g.ok ? (decodeGrantList(g.data) ?? []) : [];
+    if (grants.length > 0) {
+      body.push(
+        section("ops-grants", t.label("ops.grants.heading"), [
+          h(
+            "ul",
+            { class: "fstp-list" },
+            grants.map((r) => h("li", { "data-grant": r.proposal }, [link(GRANT_PATHS.grant(r.proposal), t.label("ops.grants.row", { id: r.proposal })), " ", badge(r.state, r.state)])),
+          ),
         ]),
       );
     }

@@ -151,9 +151,24 @@ interface LineInputs {
 }
 
 function available(m: MilestoneInfo): string | null {
-  // The cell names `paid` and `amount`. The available amount is the cell's to say: the page
-  // offers "Fill available" only when the milestone is wholly unpaid (ADR-006).
+  // The available amount is the cell's to say (ADR-006, I-58): the page copies the cell's
+  // `available` and computes nothing. A closed milestone offers nothing. An older cell that
+  // names no `available` gets "Fill available" only for a wholly unpaid milestone.
+  if (m.closed) {
+    return null;
+  }
+  if (m.available !== null) {
+    return m.available === "0.00" ? null : m.available;
+  }
   return m.paid === null || m.paid === "0.00" ? m.amount : null;
+}
+
+function optionLabel(t: I18n, m: MilestoneInfo): ReturnType<I18n["label"]> {
+  const args = { id: m.milestone, amount: m.amount, due: m.due ?? "-" };
+  if (m.closed) {
+    return t.label("pay.form.milestone_option_closed", args);
+  }
+  return m.available === null ? t.label("pay.form.milestone_option", args) : t.label("pay.form.milestone_option_available", { ...args, available: m.available });
 }
 
 function lineInputs(t: I18n, n: number, milestones: readonly MilestoneInfo[]): LineInputs {
@@ -163,7 +178,7 @@ function lineInputs(t: I18n, n: number, milestones: readonly MilestoneInfo[]): L
   if (milestones.length > 0) {
     milestone = selectEl(
       { id: `pay-milestone-${k}`, name: "milestone" },
-      milestones.map((m) => h("option", { value: m.milestone }, [t.label("pay.form.milestone_option", { id: m.milestone, amount: m.amount, due: m.due ?? "-" })])),
+      milestones.map((m) => h("option", { value: m.milestone }, [optionLabel(t, m)])),
     );
     mroot = h("div", { class: "fstp-field" }, [h("label", { for: `pay-milestone-${k}` }, [t.label("pay.form.milestone_pick", { n: k })]), milestone]);
   } else {

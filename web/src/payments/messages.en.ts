@@ -49,6 +49,8 @@ export const PAYMENTS_LABELS: Readonly<Record<string, string>> = {
   "pay.form.milestone": "Line {n}: milestone number",
   "pay.form.milestone_pick": "Line {n}: milestone",
   "pay.form.milestone_option": "Milestone {id}, {amount} EUR, due {due}",
+  "pay.form.milestone_option_available": "Milestone {id}, {amount} EUR, due {due}, {available} EUR available",
+  "pay.form.milestone_option_closed": "Milestone {id}, {amount} EUR, due {due}, closed",
   "pay.form.amount": "Line {n}: requested amount in EUR, such as 100.00",
   "pay.form.fill": "Fill available for line {n}",
   "pay.form.location": "Line {n}: evidence address (URL of the deliverable)",
