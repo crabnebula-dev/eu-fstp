@@ -5,6 +5,7 @@
 
 import { type Checker, type FuzzTarget, readExpectations, runTarget } from "../fuzz/harness.js";
 import * as applicantWire from "../fuzz/applicant_wire.fuzz.js";
+import * as postgrantWire from "../fuzz/postgrant_wire.fuzz.js";
 import * as message from "../fuzz/message_format.fuzz.js";
 import * as money from "../fuzz/money_parse.fuzz.js";
 import * as returnPath from "../fuzz/return_path.fuzz.js";
@@ -68,6 +69,7 @@ test("th26_every_typescript_parser_has_a_fuzz_target", () => {
       "pdf_prepare_differential",
       "pdf_token",
       "pdf_xref",
+      "postgrant_wire",
       "return_path",
       "route_tree",
       "router_match",
@@ -89,6 +91,22 @@ test("th26_applicant_wire_target_holds", async () => {
   for (const e of readExpectations("applicant_wire")) {
     const got = wire.parseGuideHtml(e.input) === null ? "refused" : "guide";
     eq(got, e.verdict, `applicant_wire line ${e.line}`);
+  }
+});
+
+/** TH-26, H-05, M5 design section 6: `postgrant_wire` holds on a seeded run over web/src/grant/models.ts, and its corpus verdicts hold. */
+test("th26_postgrant_wire_target_holds", async () => {
+  await holds(postgrantWire.target);
+  const m = await import("../src/grant/models.js");
+  for (const e of readExpectations("postgrant_wire")) {
+    let v: unknown = null;
+    try {
+      v = JSON.parse(e.input);
+    } catch {
+      v = e.input;
+    }
+    const taken = [m.decodeOverview(v), m.decodeContract(v), m.decodePayments(v), m.decodeQueue(v), m.decodeReports(v), m.decodeRedirect(v)].some((x) => x !== null);
+    eq(taken ? "accepted" : "refused", e.verdict, `postgrant_wire line ${e.line}`);
   }
 });
 
