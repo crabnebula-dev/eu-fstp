@@ -106,6 +106,65 @@ const fn opt(name: &'static str, shape: Shape) -> Member {
     }
 }
 
+/// Which assessor produced a finding or a pre-check run (M7 design
+/// section 7): the in-memory synthetic model of a demo cell, or a model.
+const ASSESSOR_NAMES: &[&str] = &["synthetic", "model"];
+
+/// The rubric v1 element tags (M7 design section 2, reading 1).
+const RUBRIC_ELEMENTS: &[&str] = &[
+    "problem",
+    "approach",
+    "ois_relevance",
+    "team_experience",
+    "deliverables_licence",
+    "milestones",
+    "budget_justification",
+];
+
+/// The finding kinds, as the pre-check reply spells them.
+const KIND_NAMES: &[&str] = &["completeness", "quality", "accuracy", "integrity"];
+
+/// The pre-check reply (M7 design section 4, reading 4): kind, criterion,
+/// severity, statement and quoted evidence per finding, and the
+/// remaining P-23 checks. It carries no confidence and no score (TH-02).
+const PRECHECK_VIEW: Shape = Shape::Object(&[
+    m("assessor", Shape::Enum(ASSESSOR_NAMES)),
+    m(
+        "remaining",
+        Shape::Object(&[
+            m("proposal_today", Shape::Int),
+            m("proposal_call", Shape::Int),
+            m("account_call", Shape::Int),
+            m("next", Shape::Nullable(&Shape::Id)),
+        ]),
+    ),
+    m(
+        "runs",
+        Shape::Array(&Shape::Object(&[
+            m("run", Shape::Id),
+            m("requested", Shape::Id),
+            m("state", Shape::Enum(&["pending", "done", "unavailable"])),
+            m(
+                "findings",
+                Shape::Array(&Shape::Object(&[
+                    m("kind", Shape::Enum(KIND_NAMES)),
+                    m("criterion", Shape::Nullable(&Shape::Id)),
+                    m("element", Shape::Nullable(&Shape::Enum(RUBRIC_ELEMENTS))),
+                    m("severity", Shape::Enum(&["info", "minor", "major"])),
+                    m("statement", Shape::String),
+                    m(
+                        "evidence",
+                        Shape::Array(&Shape::Object(&[
+                            m("section", Shape::Enum(&["title", "summary", "narrative"])),
+                            m("quote", Shape::String),
+                        ])),
+                    ),
+                ])),
+            ),
+        ])),
+    ),
+]);
+
 /// Every proposal state, as the state machine names it.
 pub const STATE_NAMES: &[&str] = &[
     "DRAFT",
@@ -688,6 +747,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("narrative", Shape::String),
         ]),
     ),
+    // M7 design section 4, R-LA-06, R-LA-08, TH-02, T-LLM-ORACLE: the
+    // runs of a draft and the remaining P-23 checks. No score, band,
+    // weight or confidence member exists, so none is derivable. The
+    // remaining counts and the next instant are the only numbers.
+    ("proposal.precheck", PRECHECK_VIEW),
+    ("proposal.precheck_runs", PRECHECK_VIEW),
     // ADR-006, design section 3.9: the total the cell summed, and the id
     // the server drew for the plan, which a stage 2 revision names when
     // it is submitted (R-EV-05). The two travel together. A plan with no
@@ -831,6 +896,19 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 "mark",
                 Shape::Nullable(&Shape::Enum(&["Agreed", "Disputed"])),
             ),
+            // M7 design section 7, R-LA-08: which assessor produced it, so
+            // the panel discloses a synthetic demo run as such.
+            m("assessor", Shape::Enum(ASSESSOR_NAMES)),
+        ])),
+    ),
+    // M7 design section 7: per submitted proposal, pending or ready and
+    // a count. No statement, kind or severity (I-10).
+    (
+        "assess.findings_status",
+        Shape::Array(&Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("status", Shape::Enum(&["pending", "ready"])),
+            m("findings", Shape::Int),
         ])),
     ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.

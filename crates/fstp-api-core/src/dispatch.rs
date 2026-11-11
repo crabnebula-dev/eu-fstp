@@ -135,6 +135,8 @@ pub(crate) mod me_roles;
 /// `creator.rs`, as the lane's file plan names it.
 #[path = "people.rs"]
 pub(crate) mod people;
+/// The pre-check of a draft and the findings status of a call (M7).
+mod precheck;
 /// The public pages, the feed and the public tools (lane W2c).
 mod public;
 /// The tenant operations (lane m4tenant).
@@ -1663,6 +1665,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 proposals,
             })
         }
+        ReadKind::GetPrecheckRuns => precheck::runs(call, op, account).await?,
+        ReadKind::GetFindingsStatus => {
+            let c = call_param(call, op)?;
+            ReadModel::FindingsStatus(precheck::findings_status(call, c))
+        }
         ReadKind::GetCallBoard => {
             let c = call_param(call, op)?;
             ReadModel::Board(proposal_rows(call, c, |s| {
@@ -2046,6 +2053,7 @@ async fn m3_port<P: Seams>(
     // the invitation by its link token (`people`).
     match kind {
         PortKind::AcceptInvitation => return people::accept(call, op, account).await,
+        PortKind::RequestPrecheck => return precheck::request(call, op, account).await,
         PortKind::BeginInvitationVerification => {
             return people::begin_verification(call, op, account).await;
         }
@@ -2644,6 +2652,7 @@ fn findings<P: Seams>(
                     Mark::Agreed => "Agreed",
                     Mark::Disputed => "Disputed",
                 }),
+            assessor: precheck::assessor_name(call),
         })
         .collect())
 }

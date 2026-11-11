@@ -365,6 +365,9 @@ pub enum PortKind {
     SaveWorkspace,
     /// A request for a copy of the application (R-SB-04).
     RequestCopy,
+    /// A pre-check run on the team's draft (M7 design section 4,
+    /// R-LA-06, I-21, P-23). Web only.
+    RequestPrecheck,
     /// The acknowledgement of the negotiation notice (R-NG-06).
     AcknowledgeNegotiationNotice,
     /// Ending one of the caller's sessions (R-LG-04).
@@ -1393,6 +1396,22 @@ pub const OPS: &[OpSpec] = &[
         &IN_PROPOSAL_BODY,
         Scope::ProposalsDraft,
     ),
+    // M7 lane L-PRE (slice built by L-DEMO), design section 4: the
+    // pre-check of a draft and its runs, for the team only (I-21, R-LA-06)
+    // and never through MCP. Each run counts against P-23 (TH-29).
+    OpSpec::new(
+        "proposal.precheck",
+        OpKind::M3Port(PortKind::RequestPrecheck),
+        Post,
+        "/proposals/{proposal}/precheck",
+    )
+    .acting(TEAM),
+    OpSpec::read(
+        "proposal.precheck_runs",
+        RK::GetPrecheckRuns,
+        "/proposals/{proposal}/precheck",
+    )
+    .acting(TEAM),
     OpSpec::command(
         "proposal.record_plan",
         CK::RecordPlanVersion,
@@ -1745,6 +1764,15 @@ pub const OPS: &[OpSpec] = &[
         &IN_ASSIGNMENT,
         Scope::FindingsRead,
     ),
+    // M7 lane L-UI (M7 design section 7): per submitted proposal of a
+    // call, whether its findings are pending and how many there are.
+    // Never a statement. Web only.
+    OpSpec::read(
+        "assess.findings_status",
+        RK::GetFindingsStatus,
+        "/calls/{call}/findings-status",
+    )
+    .acting(COORDINATOR),
     OpSpec::new(
         "review.mark_finding",
         OpKind::Finding(FindingKind::Mark),

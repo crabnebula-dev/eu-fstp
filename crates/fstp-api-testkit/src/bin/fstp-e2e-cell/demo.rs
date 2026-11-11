@@ -59,8 +59,10 @@ const REVIEW_STAGES: [&str; 7] = [
 ];
 
 /// The applicant states of [`scenario::At`].
-const APPLICANT_AT: [&str; 7] = [
+const APPLICANT_AT: [&str; 8] = [
     "OPEN_CALL",
+    // M7 lane L-DEMO: a corpus draft for the pre-check.
+    "DRAFT",
     "STAGE2",
     "IRC_REVIEW_MINOR",
     "NEGOTIATION",

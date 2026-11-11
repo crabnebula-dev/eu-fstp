@@ -24,6 +24,8 @@ export type ApplicantOp =
   | "proposal.view"
   | "proposal.get_workspace"
   | "proposal.save_workspace"
+  | "proposal.precheck"
+  | "proposal.precheck_runs"
   | "proposal.record_plan"
   | "proposal.add_member"
   | "proposal.add_guardian"

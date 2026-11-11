@@ -922,12 +922,32 @@ pub enum PrecheckSection {
 /// a model only as a data part (`fstp-infer`, TH-01).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrecheckSnapshot {
+    /// The call's pin the run uses (I-11). Lane L-DEMO added it: the port
+    /// cannot read the engine state, so dispatch passes the pin.
+    pub pin: PrecheckPin,
     /// The title.
     pub title: fstp_findings::UntrustedText,
     /// The neutral summary.
     pub summary: fstp_findings::UntrustedText,
     /// The narrative.
     pub narrative: fstp_findings::UntrustedText,
+}
+
+/// The configuration a pre-check run uses: the call's pinned config and
+/// model, its frozen P-01 criteria, and the tenant's endpoint record
+/// (I-11, M7 design section 4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckPin {
+    /// The draft's call.
+    pub call: fstp_domain::id::CallId,
+    /// The call's pinned configuration (I-11).
+    pub config: fstp_domain::id::LlmConfigId,
+    /// The call's pinned model (P-21).
+    pub model: fstp_domain::policy::ModelRef,
+    /// The call's frozen P-01 criterion ids, in order.
+    pub criteria: Vec<fstp_domain::id::CriterionId>,
+    /// The tenant's endpoint record, `None` before onboarding.
+    pub endpoint: Option<InferenceEndpoint>,
 }
 
 /// A quote that supports a pre-check finding.
@@ -947,6 +967,9 @@ pub struct PrecheckFinding {
     pub kind: fstp_findings::FindingKind,
     /// The P-01 criterion, where one applies.
     pub criterion: Option<fstp_domain::id::CriterionId>,
+    /// The rubric element tag, such as `team_experience`, where one
+    /// applies. The intake admits only the pinned rubric's tags.
+    pub element: Option<String>,
     /// Info, minor or major.
     pub severity: fstp_findings::Severity,
     /// The observation, as data.
@@ -1403,6 +1426,13 @@ mod tests {
         let a = AccountId::from_raw(2);
         let empty = || fstp_findings::UntrustedText::new(String::new());
         let snapshot = PrecheckSnapshot {
+            pin: PrecheckPin {
+                call: fstp_domain::id::CallId::from_raw(1),
+                config: fstp_domain::id::LlmConfigId::from_raw(1),
+                model: fstp_domain::policy::ModelRef("synthetic".to_owned()),
+                criteria: Vec::new(),
+                endpoint: None,
+            },
             title: empty(),
             summary: empty(),
             narrative: empty(),

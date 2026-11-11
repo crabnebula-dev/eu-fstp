@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
     Accounts, ApprovalId, BreakGlass, BreakGlassId, DisplayHandle, InvitationLink, InviteKind,
-    NoticePage, Outbox, Page, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Recovery,
-    RecoveryId, SecondAdminApproval, StepUpProof, StepUpRef, TenantConfig, TenantSettings,
+    NoticePage, Outbox, Page, PortError, ProbeKind, ProbeOutcome, Prober, Recovery, RecoveryId,
+    SecondAdminApproval, StepUpProof, StepUpRef, TenantConfig, TenantSettings,
 };
 use fstp_domain::id::AccountId;
 
@@ -78,12 +78,6 @@ impl Accounts for FakeAccounts {
         Ok(DisplayHandle(format!("person-{:x}", a.raw())))
     }
 }
-
-/// The e2e cell's pre-check provider. M7 defines its methods (Q38).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FakePrecheck;
-
-impl Precheck for FakePrecheck {}
 
 /// Records every recovery approval. Cloning shares them.
 #[derive(Clone, Debug, Default)]

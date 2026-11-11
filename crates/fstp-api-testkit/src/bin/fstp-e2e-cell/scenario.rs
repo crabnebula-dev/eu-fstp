@@ -260,7 +260,7 @@ const PROPOSALS: [Seeded; 5] = [
 
 /// The stages of `POST /test/scenario/review` (`e2e/review/contract.ts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReviewAt {
+pub(crate) enum ReviewAt {
     Submitted,
     Stage1,
     Stage1Scored,
@@ -271,7 +271,7 @@ enum ReviewAt {
 }
 
 impl ReviewAt {
-    fn parse(s: &str) -> Option<ReviewAt> {
+    pub(crate) fn parse(s: &str) -> Option<ReviewAt> {
         Some(match s {
             "submitted" => ReviewAt::Submitted,
             "stage1" => ReviewAt::Stage1,
@@ -321,10 +321,10 @@ fn narrative(s: &Seeded) -> String {
     } else {
         String::new()
     };
-    format!(
-        "{} The work plan has three tasks over twelve months.{canary}",
-        s.summary
-    )
+    // M7 lane L-DEMO: the body is a synthetic corpus item (`crate::assess`).
+    let body = crate::assess::corpus_narrative(s.key)
+        .unwrap_or_else(|| "The work plan has three tasks over twelve months.".to_owned());
+    format!("{}\n\n{body}{canary}", s.summary)
 }
 
 /// A domain text reference to `text` stored under `id`.
@@ -646,6 +646,17 @@ fn publish(c: CallId) -> Core {
 /// production: the draft and plan on the engine, the workspace and the
 /// submission through the API, as the lead.
 async fn submit(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
+    draft(seed, which).await?;
+    seed.at(T_SUBMIT);
+    for s in which {
+        submit_one(seed, s).await?;
+    }
+    Ok(())
+}
+
+/// Drafts, plans and workspaces of `which` (M7 lane L-DEMO split it from
+/// [`submit`] for the `DRAFT` scene).
+async fn draft(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
     seed.at(T_DRAFT);
     for (i, s) in (0u128..).zip(which.iter()) {
         seed.step(&roster::draft(
@@ -700,8 +711,12 @@ async fn submit(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
         )
         .await?;
     }
-    seed.at(T_SUBMIT);
-    for s in which {
+    Ok(())
+}
+
+/// The submission of `s` as its lead, then its assessment.
+async fn submit_one(seed: &mut Seeder<'_>, s: &Seeded) -> Result<(), String> {
+    {
         let id = s.proposal.raw().to_string();
         seed.api(
             s.lead,
@@ -720,6 +735,11 @@ async fn submit(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
             ]),
         )
         .await?;
+        // M7 lane L-DEMO: the submission is assessed at once (I-10, I-11).
+        let t = seed.tick();
+        let n = narrative(s);
+        let texts = [s.title, s.summary, n.as_str()];
+        crate::assess::on_submit(seed.inner, t, CALL, s.proposal, texts).await?;
     }
     Ok(())
 }
@@ -1145,7 +1165,10 @@ pub(crate) async fn review(site: &Site, req: &Request) -> Response {
     }
 }
 
-async fn build_review(info: &SiteInfo, stage: ReviewAt) -> Result<(Inner, Value), String> {
+pub(crate) async fn build_review(
+    info: &SiteInfo,
+    stage: ReviewAt,
+) -> Result<(Inner, Value), String> {
     let (inner, people, canaries) = fresh_review(info)?;
     let mut seed = Seeder {
         inner: &inner,
@@ -1206,6 +1229,9 @@ async fn build_review(info: &SiteInfo, stage: ReviewAt) -> Result<(Inner, Value)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum At {
     OpenCall,
+    /// M7 lane L-DEMO: the open call with z drafted from the corpus, for
+    /// the pre-check (R-LA-06).
+    Draft,
     Stage2,
     IrcReviewMinor,
     Negotiation,
@@ -1218,6 +1244,7 @@ impl At {
     fn parse(s: &str) -> Option<At> {
         Some(match s {
             "OPEN_CALL" => At::OpenCall,
+            "DRAFT" => At::Draft,
             "STAGE2" => At::Stage2,
             "IRC_REVIEW_MINOR" => At::IrcReviewMinor,
             "NEGOTIATION" => At::Negotiation,
@@ -1231,6 +1258,7 @@ impl At {
     fn name(self) -> &'static str {
         match self {
             At::OpenCall => "OPEN_CALL",
+            At::Draft => "DRAFT",
             At::Stage2 => "STAGE2",
             At::IrcReviewMinor => "IRC_REVIEW_MINOR",
             At::Negotiation => "NEGOTIATION",
@@ -1387,7 +1415,7 @@ async fn seed_applicant(
     at: At,
 ) -> Result<(Option<Seeded>, Vec<String>, Held), String> {
     let mut held = Held::default();
-    let deadline = if at == At::OpenCall {
+    let deadline = if matches!(at, At::OpenCall | At::Draft) {
         OPEN_DEADLINE
     } else {
         DEADLINE
@@ -1399,6 +1427,11 @@ async fn seed_applicant(
     let mut handles = Vec::new();
     let seeded = match at {
         At::OpenCall => None,
+        At::Draft => {
+            let z = proposal("z")?;
+            draft(seed, &[z]).await?;
+            Some(z)
+        }
         At::Ineligible => {
             submit(seed, &[x]).await?;
             seed.at(T_EVAL);
@@ -1510,7 +1543,7 @@ async fn build_applicant(info: &SiteInfo, at: At) -> Result<(Inner, Value), Stri
         .ports
         .clock
         .set(Timestamp::from_micros(T_NOW.max(seed.now)));
-    let deadline = if at == At::OpenCall {
+    let deadline = if matches!(at, At::OpenCall | At::Draft) {
         OPEN_DEADLINE
     } else {
         DEADLINE

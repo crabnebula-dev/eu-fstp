@@ -12,6 +12,7 @@ import { mountGuide } from "../calls/guide.js";
 import { mountCallList } from "../calls/list.js";
 import { h } from "../core/dom.js";
 import { createRouter, type RouteDef, type Router } from "../core/router.js";
+import { mountPrecheck } from "../precheck/page.js";
 import { mountEligibility } from "./eligibility.js";
 import { mountNotices, mountProposals } from "./lists.js";
 import { mountGuardian, mountNegotiation } from "./negotiation.js";
@@ -44,6 +45,13 @@ const PAGES: readonly (RouteDef & { readonly mount: (params: Readonly<Record<str
     pattern: "/app/proposals/{proposal}/workspace",
     segments: PROPOSAL,
     mount: (p) => mountWorkspace(p["proposal"] ?? ""),
+  },
+  // M7 lane L-UI: the pre-check of a draft (R-LA-06, R-LA-08).
+  {
+    name: "proposal.precheck",
+    pattern: "/app/proposals/{proposal}/precheck",
+    segments: PROPOSAL,
+    mount: (p) => mountPrecheck(p["proposal"] ?? ""),
   },
   {
     name: "proposal.plan",

@@ -47,6 +47,12 @@ fstp-cell-core.workspace = true
 fstp-timeline.workspace = true
 fstp-dispatch.workspace = true
 fstp-mail.workspace = true
+# M7 lane L-DEMO: the pre-check provider and the demo assessment run the
+# real cell side of the assessor queue (`fstp_assessor::CellJob`, `Link`).
+fstp-assess.workspace = true
+fstp-assessor.workspace = true
+fstp-findings.workspace = true
+fstp-infer.workspace = true
 
 
 [lints]

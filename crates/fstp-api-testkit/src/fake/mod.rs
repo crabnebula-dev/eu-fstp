@@ -34,6 +34,7 @@ pub mod fixture;
 pub mod ids;
 pub mod misc;
 pub mod people_requests;
+pub mod precheck;
 mod reads;
 pub mod requests;
 pub mod sessions;
@@ -55,9 +56,8 @@ pub use cell::FakeCell;
 pub use clock::FakeClock;
 pub use engine::{DryRun, Execution, FakeEngine};
 pub use ids::FakeIds;
-pub use misc::{
-    FakeAccounts, FakeBreakGlass, FakeOutbox, FakePrecheck, FakeProber, FakeRecovery, FakeTenant,
-};
+pub use misc::{FakeAccounts, FakeBreakGlass, FakeOutbox, FakeProber, FakeRecovery, FakeTenant};
+pub use precheck::FakePrecheck;
 pub use sessions::{FakeSessions, WebLogin};
 pub use step_up::FakeStepUp;
 pub use texts::{FakeBlobs, FakeSealer, FakeTexts};
@@ -275,7 +275,7 @@ impl FakePorts {
             audit: FakeAudit::default(),
             texts,
             blobs,
-            precheck: FakePrecheck,
+            precheck: FakePrecheck::new(clock.clone()),
             sealer: FakeSealer::default(),
             vault_audit,
             recovery: FakeRecovery::default(),

@@ -290,6 +290,9 @@ pub struct FindingRow {
     pub statement: String,
     /// The reader's own mark, `Agreed` or `Disputed`, if any (I-10).
     pub mark: Option<&'static str>,
+    /// `synthetic` for the demo cell's synthetic assessor, else `model`
+    /// (M7 design section 7, R-LA-08).
+    pub assessor: &'static str,
 }
 
 impl ToJson for FindingRow {
@@ -301,6 +304,7 @@ impl ToJson for FindingRow {
             ("confidence", int(u64::from(self.confidence))),
             ("statement", Value::from(self.statement.as_str())),
             ("mark", self.mark.map_or(Value::Null, Value::from)),
+            ("assessor", Value::from(self.assessor)),
         ])
     }
 }
@@ -710,3 +714,138 @@ impl ToJson for Notice {
 }
 
 impl McpSafe for Notice {}
+
+/// One quoted piece of evidence of a pre-check finding (M7 design
+/// section 4). The quote is untrusted data, shown as text only (TH-01).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckEvidenceRow {
+    /// `title`, `summary` or `narrative`.
+    pub section: &'static str,
+    /// The quoted text.
+    pub quote: String,
+}
+
+impl ToJson for PrecheckEvidenceRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("section", Value::from(self.section)),
+            ("quote", Value::from(self.quote.as_str())),
+        ])
+    }
+}
+
+/// One pre-check finding: no confidence and no number (TH-02, R-LA-06).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckFindingRow {
+    /// `completeness`, `quality`, `accuracy` or `integrity`.
+    pub kind: &'static str,
+    /// The P-01 criterion, where one applies.
+    pub criterion: Option<u128>,
+    /// The rubric element tag, where one applies.
+    pub element: Option<String>,
+    /// `info`, `minor` or `major`.
+    pub severity: &'static str,
+    /// The observation, untrusted data.
+    pub statement: String,
+    /// Quotes from the draft.
+    pub evidence: Vec<PrecheckEvidenceRow>,
+}
+
+impl ToJson for PrecheckFindingRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("kind", Value::from(self.kind)),
+            ("criterion", self.criterion.map_or(Value::Null, dec)),
+            (
+                "element",
+                self.element.as_deref().map_or(Value::Null, Value::from),
+            ),
+            ("severity", Value::from(self.severity)),
+            ("statement", Value::from(self.statement.as_str())),
+            ("evidence", array(&self.evidence)),
+        ])
+    }
+}
+
+/// One pre-check run of a draft (M7 design section 4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckRunRow {
+    /// The run.
+    pub run: u128,
+    /// When it was requested, UTC microseconds.
+    pub requested: i64,
+    /// `pending`, `done` or `unavailable`.
+    pub state: &'static str,
+    /// Its findings.
+    pub findings: Vec<PrecheckFindingRow>,
+}
+
+impl ToJson for PrecheckRunRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("run", dec(self.run)),
+            ("requested", dec(self.requested)),
+            ("state", Value::from(self.state)),
+            ("findings", array(&self.findings)),
+        ])
+    }
+}
+
+/// `proposal.precheck` and `proposal.precheck_runs`: the runs of a draft
+/// and the remaining P-23 checks, which are the only numbers shown
+/// (M7 design section 2, reading 4; TH-29).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckView {
+    /// `synthetic` for the demo cell's synthetic assessor, else `model`.
+    pub assessor: &'static str,
+    /// Runs left today on this proposal.
+    pub proposal_today: u32,
+    /// Runs left in this call on this proposal.
+    pub proposal_call: u32,
+    /// Runs left for this account across its drafts in this call.
+    pub account_call: u32,
+    /// When the next run becomes available, if none is left now.
+    pub next: Option<i64>,
+    /// The runs, newest first.
+    pub runs: Vec<PrecheckRunRow>,
+}
+
+impl ToJson for PrecheckView {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("assessor", Value::from(self.assessor)),
+            (
+                "remaining",
+                object(vec![
+                    ("proposal_today", int(u64::from(self.proposal_today))),
+                    ("proposal_call", int(u64::from(self.proposal_call))),
+                    ("account_call", int(u64::from(self.account_call))),
+                    ("next", self.next.map_or(Value::Null, dec)),
+                ]),
+            ),
+            ("runs", array(&self.runs)),
+        ])
+    }
+}
+
+/// One row of `assess.findings_status`: counts only, never a statement
+/// (M7 design section 7, I-10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FindingsStatusRow {
+    /// The proposal.
+    pub proposal: u128,
+    /// `pending` while no finding is recorded, else `ready`.
+    pub status: &'static str,
+    /// How many findings are recorded.
+    pub findings: u64,
+}
+
+impl ToJson for FindingsStatusRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("proposal", dec(self.proposal)),
+            ("status", Value::from(self.status)),
+            ("findings", int(self.findings)),
+        ])
+    }
+}

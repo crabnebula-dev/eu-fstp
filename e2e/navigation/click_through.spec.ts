@@ -56,6 +56,8 @@ const CALL_TITLE = 'SuperSAFE open call 2026';
 const PROPOSAL = {
   x: { id: '1001', title: 'Synthetic open sensor kit' },
   v: { id: '1004', title: 'Synthetic school data vault' },
+  // M7 lane L-DEMO: the corpus draft of the DRAFT scene.
+  z: { id: '1002', title: 'Synthetic closed protocol bridge' },
 } as const;
 
 /** J6: an assigned reviewer reaches one of their assignments. */
@@ -210,6 +212,7 @@ const SCENES: readonly Scene[] = [
   review('ranked_tie', { ...R12, ranking: true }),
   review('irc_review', R12_IRC),
   applicant('OPEN_CALL', NONE, {}),
+  applicant('DRAFT', NONE, { 'lead-z': [ownProposal(PROPOSAL.z)] }),
   applicant('STAGE2', R12, { 'lead-x': [ownProposal(PROPOSAL.x)] }),
   applicant('IRC_REVIEW_MINOR', R12_IRC, {
     'lead-v': [ownProposal(PROPOSAL.v)],

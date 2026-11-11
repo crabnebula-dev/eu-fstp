@@ -833,6 +833,9 @@ pub enum Rule {
     Lead,
     /// The applicant team of X: lead, team members and guardian.
     Team,
+    /// The applicant team of X while X is a DRAFT: the pre-check and its
+    /// runs (M7 design section 4, I-21, R-LA-06).
+    DraftingTeam,
     /// The guardian on X.
     Guardian,
     /// The team, and only while X is in NEGOTIATION. Reading: the landing
@@ -982,7 +985,7 @@ impl Rule {
             Rule::Lead => &[Some(Role::Applicant)],
             // The registry names the team for the route map. The guardian is
             // then refused by the rule itself (section 8.1).
-            Rule::Team | Rule::NegotiationTeam | Rule::RouteMap => &TEAM,
+            Rule::Team | Rule::DraftingTeam | Rule::NegotiationTeam | Rule::RouteMap => &TEAM,
             Rule::Guardian => &[Some(Role::Guardian)],
             Rule::Assignee
             | Rule::ReviewerAct
@@ -1364,6 +1367,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("proposal.view", T::Proposal, R::Team).tool("fstp_get_my_proposal"),
     RefOp::read("proposal.get_workspace", T::Proposal, R::Team),
     RefOp::act("proposal.save_workspace", T::Proposal, R::Team).tool("fstp_save_workspace"),
+    // M7 design section 4 (lane L-DEMO's slice of L-PRE): web only, the
+    // drafting team only (I-21).
+    RefOp::act("proposal.precheck", T::Proposal, R::DraftingTeam),
+    RefOp::read("proposal.precheck_runs", T::Proposal, R::DraftingTeam),
     RefOp::act("proposal.record_plan", T::Proposal, R::Lead).tool("fstp_record_plan_version"),
     RefOp::act("proposal.add_member", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.add_guardian", T::Proposal, R::Lead).binding(),
@@ -1429,6 +1436,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("stage2.no_questions", T::Assignment, R::ReviewerAct).binding(),
     RefOp::act("review.rank", T::Assignment, R::ReviewerAct).binding(),
     RefOp::read("review.findings", T::Assignment, R::Findings).tool("fstp_get_findings"),
+    // M7 design section 7: counts per proposal for the coordinator.
+    RefOp::read("assess.findings_status", T::Call, R::Coordinator),
     RefOp::act("review.mark_finding", T::Finding, R::FindingMarker).binding(),
     // J7: the committee.
     RefOp::read("committee.ranking", T::PublishedCall, R::Committee).tool("fstp_get_ranking_view"),
@@ -1592,6 +1601,7 @@ fn admit(
         // does not name, reads only while X is under way.
         Rule::Team if op.read => open(former_team_reads(who, x)),
         Rule::Team => open(who.team()),
+        Rule::DraftingTeam => open(who.team() && x == Some(StateTag::Draft)),
         Rule::Guardian => open(who == Who::Guardian),
         Rule::NegotiationTeam => open(who.team() && x == Some(StateTag::Negotiation)),
         // A declared conflict is final (Daniel, 2026-11-06): the conflicted

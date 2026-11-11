@@ -173,11 +173,16 @@ pub enum ReadKind {
     // M5 reads follow-up (lead, 2026-11-12): the assigned reviewer's view
     // of what an amount determination needs (R-NG-03).
     GetDetermination,
+    // M7 (design sections 4 and 7): the pre-check runs of a draft, for its
+    // team only (I-21), and the findings status of a call for its
+    // coordinator, counts only.
+    GetPrecheckRuns,
+    GetFindingsStatus,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 62] = [
+    pub const ALL: [ReadKind; 64] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -240,6 +245,8 @@ impl ReadKind {
         ReadKind::ListMyGrants,
         ReadKind::ListMyContractsToSign,
         ReadKind::GetDetermination,
+        ReadKind::GetPrecheckRuns,
+        ReadKind::GetFindingsStatus,
     ];
 }
 
@@ -552,6 +559,19 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::ProposalReviewer,
         &[StateTag::Negotiation],
     ),
+    // M7 design section 4, I-21: a draft's pre-check runs are its team's
+    // alone, and only while it is a draft.
+    (
+        ReadKind::GetPrecheckRuns,
+        ReadRule::Team,
+        &[StateTag::Draft],
+    ),
+    // M7 design section 7: the coordinator sees counts, never statements.
+    (
+        ReadKind::GetFindingsStatus,
+        ReadRule::Holder(Role::FstpCoordinator),
+        OPEN_ALWAYS,
+    ),
 ];
 
 /// The readers of a grant (M5 design section 5).
@@ -762,7 +782,9 @@ pub fn authorize_read(
     }
     // Drafts are the team's alone (I-21), so a workspace refusal names it.
     let closed = |d: Denied| match (op.kind, d.rule) {
-        (ReadKind::GetOwnWorkspace, DenyRule::Rac01) => Denied::new(DenyRule::I21),
+        (ReadKind::GetOwnWorkspace | ReadKind::GetPrecheckRuns, DenyRule::Rac01) => {
+            Denied::new(DenyRule::I21)
+        }
         _ => d,
     };
     let ctx = match context(&state.core, op.target) {
