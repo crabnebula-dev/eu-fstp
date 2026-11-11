@@ -84,8 +84,11 @@ pub(crate) const EXTRAS: [Persona; 4] = [
 ];
 
 /// The Financial signatory, who holds no programme role.
-pub(crate) const REPORT_PERSON: (&str, AccountId, &str) =
-    ("rep", REPORT_APPROVER, "Report approver (Financial signatory) F2");
+pub(crate) const REPORT_PERSON: (&str, AccountId, &str) = (
+    "rep",
+    REPORT_APPROVER,
+    "Report approver (Financial signatory) F2",
+);
 
 /// The label of a post-grant person, such as `Finance approver F1`.
 pub(crate) fn label(account: AccountId) -> Option<&'static str> {
@@ -95,7 +98,10 @@ pub(crate) fn label(account: AccountId) -> Option<&'static str> {
     if account == LEAD_X {
         return Some(LEAD_LABEL);
     }
-    EXTRAS.iter().find(|p| p.account == account).map(|p| p.label)
+    EXTRAS
+        .iter()
+        .find(|p| p.account == account)
+        .map(|p| p.label)
 }
 
 /// The label of the post-grant persona with `key`.
@@ -276,7 +282,10 @@ async fn amount(seed: &mut Seeder<'_>, x: ProposalId) -> Result<(), String> {
             &Value::Null,
         )
         .await?;
-    let det = obj(vec![("determination", member(&overview, "determination")?.into())]);
+    let det = obj(vec![(
+        "determination",
+        member(&overview, "determination")?.into(),
+    )]);
     seed.api(
         PROPOSALS[0].lead,
         ApiMethod::Post,
@@ -372,7 +381,10 @@ pub(crate) fn request_body(x: ProposalId, release: &str) -> Value {
                 ("location", crate::pump::FORGE_REPO.into()),
                 ("release", release.into()),
                 ("licence", "MIT".into()),
-                ("report", "Synthetic delivery report: the sensor kit shipped.".into()),
+                (
+                    "report",
+                    "Synthetic delivery report: the sensor kit shipped.".into(),
+                ),
             ]),
         ),
     ]);
@@ -545,18 +557,24 @@ pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value)
     let (inner, _people, _canaries) = fresh_review_with(info, true)?;
     {
         let mut auth = lock_auth(&inner);
-        for p in [("lead-x-self", LEAD_X, LEAD_LABEL)] {
-            let mail = email(p.0)?;
-            auth.person(&mail, p.1);
-            let _ = auth.invite(p.1)?;
-        }
-        for p in EXTRAS.iter().map(|p| (p.key, p.account, p.label)).chain([REPORT_PERSON]) {
+        let mail = email("lead-x-self")?;
+        auth.person(&mail, LEAD_X);
+        let _ = auth.invite(LEAD_X)?;
+        for p in EXTRAS
+            .iter()
+            .map(|p| (p.key, p.account, p.label))
+            .chain([REPORT_PERSON])
+        {
             let mail = email(p.0)?;
             auth.person(&mail, p.1);
             let _ = auth.invite(p.1)?;
         }
     }
-    for p in EXTRAS.iter().map(|p| (p.account, p.label)).chain([(REPORT_PERSON.1, REPORT_PERSON.2)]) {
+    for p in EXTRAS
+        .iter()
+        .map(|p| (p.account, p.label))
+        .chain([(REPORT_PERSON.1, REPORT_PERSON.2)])
+    {
         inner.ports.accounts.name(p.0, p.1);
     }
     let mut seed = Seeder {
@@ -573,7 +591,12 @@ pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value)
     let reports: Vec<Value> = reached
         .reports
         .iter()
-        .map(|(k, id)| obj(vec![("kind", k.as_str().into()), ("report", id.as_str().into())]))
+        .map(|(k, id)| {
+            obj(vec![
+                ("kind", k.as_str().into()),
+                ("report", id.as_str().into()),
+            ])
+        })
         .collect();
     let v = obj(vec![
         ("grant_at", at.name().into()),
@@ -583,8 +606,14 @@ pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value)
         ("title", PROPOSALS[0].title.into()),
         ("plan", dec(plan_of(PROPOSALS[0].proposal).raw())),
         ("milestone", dec(milestone_of(PROPOSALS[0].proposal).raw())),
-        ("contract", reached.contract.as_deref().map_or(Value::Null, Value::from)),
-        ("request", reached.request.as_deref().map_or(Value::Null, Value::from)),
+        (
+            "contract",
+            reached.contract.as_deref().map_or(Value::Null, Value::from),
+        ),
+        (
+            "request",
+            reached.request.as_deref().map_or(Value::Null, Value::from),
+        ),
         ("reports", Value::Array(reports.into_iter().collect())),
     ]);
     Ok((inner, v))
@@ -669,8 +698,15 @@ mod tests {
                 .summaries()
                 .any(|s| s.status == fstp_domain::payment::RequestStatus::Paid);
             assert_eq!(paid, at >= GrantAt::Paid, "{at:?}");
-            let reports = v.get("reports").and_then(Value::as_array).map_or(0, |a| a.len());
-            assert_eq!(reports, if at == GrantAt::AllClosed { 4 } else { 0 }, "{at:?}");
+            let reports = v
+                .get("reports")
+                .and_then(Value::as_array)
+                .map_or(0, |a| a.len());
+            assert_eq!(
+                reports,
+                if at == GrantAt::AllClosed { 4 } else { 0 },
+                "{at:?}"
+            );
         }
     }
 }

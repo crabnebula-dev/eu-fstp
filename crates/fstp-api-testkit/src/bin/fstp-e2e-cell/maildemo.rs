@@ -27,7 +27,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use fstp_api_core::port::AsyncEngine;
 use fstp_api_testkit::smtp_sink::{Fault, SinkConfig, SmtpSink};
@@ -103,12 +103,6 @@ static DEMO: OnceLock<Arc<MailDemo>> = OnceLock::new();
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn wall_micros() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX))
 }
 
 /// Starts the sink and the tick thread over `sites`.
@@ -192,7 +186,8 @@ impl Mail {
                 // as a Guide published from an out-of-band spec. The mirror
                 // follows mail only, so it skips such an entry and says so.
                 if let Err(why) = self.append(e.at, e.command, CellRecord::Engine(e.record)) {
-                    self.skipped.push(format!("entry {} ({shown}): {why}", self.seen));
+                    self.skipped
+                        .push(format!("entry {} ({shown}): {why}", self.seen));
                 }
             }
             self.seen = self.seen.saturating_add(1);
@@ -230,7 +225,10 @@ impl Mail {
     }
 
     /// The plan and every due firing at `now`. Returns the new bodies.
-    fn timeline(&mut self, now: Timestamp) -> Result<Vec<fstp_cell_core::timeline::MessageBody>, String> {
+    fn timeline(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<Vec<fstp_cell_core::timeline::MessageBody>, String> {
         let mut out = Vec::new();
         for chunk in fstp_timeline::plan(&self.state, now).chunks(fstp_timeline::PLAN_CHUNK) {
             self.run(
@@ -301,7 +299,11 @@ impl MailDemo {
                 outbox: b.outbox,
                 to,
                 to_account: account,
-                template: format!("{}/{}", fstp_timeline::template_code(spec.template), spec.version),
+                template: format!(
+                    "{}/{}",
+                    fstp_timeline::template_code(spec.template),
+                    spec.version
+                ),
                 event: spec.event,
             });
             m.raw.insert(b.outbox, raw);
@@ -317,15 +319,13 @@ impl MailDemo {
         }
         let client = self.sink.client().map_err(|e| e.to_string())?;
         let addr = self.sink.addr();
-        let mut transport = SmtpTransport::new(
-            self.rt.clone(),
-            client,
-            &addr.ip().to_string(),
-            addr.port(),
-        );
+        let mut transport =
+            SmtpTransport::new(self.rt.clone(), client, &addr.ip().to_string(), addr.port());
         let raw = m.raw.clone();
         let mut source = Raw(&raw);
-        let now_us = wall_micros();
+        // The dispatcher keeps the cell clock, so a retry after its backoff
+        // comes with the demo page's clock links.
+        let now_us = now.micros();
         let Mail { worker, log, .. } = m;
         self.rt.block_on(async {
             for _ in 0..MAX_STEPS {
@@ -350,9 +350,18 @@ fn esc(s: &str) -> String {
 }
 
 fn phase_of(m: &Mail, o: &[u8; 16]) -> String {
-    m.log
-        .head(o)
-        .map_or_else(|| "QUEUED".to_owned(), |r| format!("{:?}", r.phase).to_uppercase())
+    let Some(r) = m.log.head(o) else {
+        return "QUEUED".to_owned();
+    };
+    // `InDoubt` reads IN_DOUBT, as the delivery list names it.
+    let mut out = String::new();
+    for (i, c) in format!("{:?}", r.phase).chars().enumerate() {
+        if i > 0 && c.is_uppercase() {
+            out.push('_');
+        }
+        out.push(c.to_ascii_uppercase());
+    }
+    out
 }
 
 fn hex(b: &[u8]) -> String {
@@ -360,11 +369,17 @@ fn hex(b: &[u8]) -> String {
 }
 
 /// The sink message of `item`, by its event id and address.
-fn sink_index(demo: &MailDemo, item: &Item) -> Option<usize> {
-    demo.sink.messages().iter().position(|s| {
-        let text = String::from_utf8_lossy(&s.data);
-        text.contains(&hex(&item.event)) && s.to.iter().any(|t| *t == item.to)
-    })
+fn sink_index(demo: &MailDemo, item: &Item, base: usize) -> Option<usize> {
+    demo.sink
+        .messages()
+        .iter()
+        .enumerate()
+        .skip(base)
+        .find(|(_, s)| {
+            let text = String::from_utf8_lossy(&s.data);
+            text.contains(&hex(&item.event)) && s.to.contains(&item.to)
+        })
+        .map(|(n, _)| n)
 }
 
 fn subject_of(data: &[u8]) -> String {
@@ -375,12 +390,16 @@ fn subject_of(data: &[u8]) -> String {
 }
 
 /// The mail rows of the demo page for `email`, or every row when `None`.
-fn rows(email: Option<&str>) -> String {
+fn rows(inner: &Arc<Inner>, email: Option<&str>) -> String {
     let Some(demo) = DEMO.get() else {
         return String::new();
     };
     let guard = lock(&demo.mail);
-    let Some(m) = guard.as_ref() else {
+    // A scene change leaves the mirror of the old state until the next tick.
+    let Some(m) = guard
+        .as_ref()
+        .filter(|m| m.inner == Arc::as_ptr(inner) as usize)
+    else {
         return String::new();
     };
     let mut out = String::new();
@@ -389,13 +408,15 @@ fn rows(email: Option<&str>) -> String {
             continue;
         }
         let phase = phase_of(m, &i.outbox);
-        let (when, link, subject) = match sink_index(demo, i) {
+        let (when, link, subject) = match sink_index(demo, i, m.base) {
             Some(n) => {
                 let s = demo.sink.messages();
                 let msg = s.get(n);
                 (
                     msg.map_or(0, |x| x.at_unix_ms),
-                    format!("<a href=\"/demo/mail/{n}\" target=\"_blank\" rel=\"noopener\">raw message</a>"),
+                    format!(
+                        "<a href=\"/demo/mail/{n}\" target=\"_blank\" rel=\"noopener\">raw message</a>"
+                    ),
                     msg.map(|x| subject_of(&x.data)).unwrap_or_default(),
                 )
             }
@@ -419,8 +440,8 @@ fn rows(email: Option<&str>) -> String {
 }
 
 /// The mail list of one person for the front door.
-pub(crate) fn person_html(email: &str) -> String {
-    let r = rows(Some(email));
+pub(crate) fn person_html(inner: &Arc<Inner>, email: &str) -> String {
+    let r = rows(inner, Some(email));
     if r.is_empty() {
         return String::new();
     }
@@ -428,18 +449,38 @@ pub(crate) fn person_html(email: &str) -> String {
 }
 
 /// The mail section of the front door: every message, and the fault buttons.
-pub(crate) fn section_html() -> String {
-    let all = rows(None);
+pub(crate) fn section_html(inner: &Arc<Inner>) -> String {
+    let all = rows(inner, None);
     let status = DEMO
         .get()
-        .map(|d| lock(&d.mail).as_ref().and_then(|m| m.broken.clone()))
+        .map(|d| {
+            lock(&d.mail)
+                .as_ref()
+                .filter(|m| m.inner == Arc::as_ptr(inner) as usize)
+                .and_then(|m| m.broken.clone())
+        })
         .unwrap_or(None);
     let stats = DEMO
         .get()
-        .and_then(|d| lock(&d.mail).as_ref().map(|m| format!("{} ledger entries followed ({} skipped), {} messages composed", m.seen, m.skipped.len(), m.items.len())))
+        .and_then(|d| {
+            lock(&d.mail)
+                .as_ref()
+                .filter(|m| m.inner == Arc::as_ptr(inner) as usize)
+                .map(|m| {
+                    format!(
+                        "{} ledger entries followed ({} skipped), {} messages composed",
+                        m.seen,
+                        m.skipped.len(),
+                        m.items.len()
+                    )
+                })
+        })
         .unwrap_or_default();
     let note = status.map_or_else(String::new, |e| {
-        format!("<p role=\"alert\">The mail mirror stopped: {}</p>\n", esc(&e))
+        format!(
+            "<p role=\"alert\">The mail mirror stopped: {}</p>\n",
+            esc(&e)
+        )
     });
     let body = if all.is_empty() {
         "<p>No dispatcher mail yet. Outcome notices, copy requests and corrigenda appear here.</p>\n".to_owned()
@@ -480,8 +521,15 @@ pub(crate) fn route(req: &Request) -> Option<Response> {
         from = esc(&msg.from),
         to = esc(&msg.to.join(", ")),
     );
-    let mut r = Response::with_body(StatusCode::OK, "text/html; charset=utf-8", html.into_bytes());
+    let mut r = Response::with_body(
+        StatusCode::OK,
+        "text/html; charset=utf-8",
+        html.into_bytes(),
+    );
     let _ = r.headers.try_insert("cache-control", "no-store");
-    let _ = r.headers.try_insert("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
+    let _ = r.headers.try_insert(
+        "content-security-policy",
+        "default-src 'none'; frame-ancestors 'none'",
+    );
     Some(r)
 }

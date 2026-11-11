@@ -446,8 +446,7 @@ impl Seeder<'_> {
                 .dispatch(Credential::SessionCookie(l.cookie), &RequestHead::new(), op)
                 .await;
         }
-        match first
-        {
+        match first {
             Ok(OpResult::Done { body, .. }) => Ok(fstp_json::ToJson::to_json(&body)),
             Ok(other) => Err(format!(
                 "{path}: {}",

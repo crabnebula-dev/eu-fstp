@@ -80,19 +80,16 @@ fn page(title: &str, body: &str) -> Response {
 /// has no page for it.
 fn action_of(p: &VerificationPurpose) -> Option<(&'static str, &'static str)> {
     Some(match p {
-        VerificationPurpose::BankDetails(_) => (
-            "Enter the bank details",
-            "Submit synthetic bank details",
-        ),
-        VerificationPurpose::BankVerification(_) => (
-            "Verify the bank details",
-            "Verify the bank details",
-        ),
-        VerificationPurpose::BankDispute(_) => (
-            "Dispute the bank details",
-            "Open a dispute",
-        ),
-        VerificationPurpose::BankView(_) => ("Payee of the released payment", "Mark the payee as viewed"),
+        VerificationPurpose::BankDetails(_) => {
+            ("Enter the bank details", "Submit synthetic bank details")
+        }
+        VerificationPurpose::BankVerification(_) => {
+            ("Verify the bank details", "Verify the bank details")
+        }
+        VerificationPurpose::BankDispute(_) => ("Dispute the bank details", "Open a dispute"),
+        VerificationPurpose::BankView(_) => {
+            ("Payee of the released payment", "Mark the payee as viewed")
+        }
         _ => return None,
     })
 }

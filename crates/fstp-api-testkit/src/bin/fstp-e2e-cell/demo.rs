@@ -241,7 +241,10 @@ pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
         );
     }
     if account == scenario::postgrant::REPORT_APPROVER {
-        parts.push("Financial signatory: approve each funder report that the programme manager generated.".to_owned());
+        parts.push(
+            "Financial signatory: approve each funder report that the programme manager generated."
+                .to_owned(),
+        );
     }
     let roster = core.roster();
     let mut staff: BTreeSet<Role> = BTreeSet::new();
@@ -535,7 +538,7 @@ fn page(site: &Site) -> Response {
             e = esc(&email),
             r = esc(&roles_of(&inner, account)),
             n = esc(&short_line(&inner, account)),
-            pmail = crate::maildemo::person_html(&email),
+            pmail = crate::maildemo::person_html(&inner, &email),
         ));
     }
     let auth = lock(&inner.auth);
@@ -574,7 +577,7 @@ fn page(site: &Site) -> Response {
         .iter()
         .map(|(k, t)| format!("<a href=\"/demo/clock?to={k}\">{t}</a> "))
         .collect();
-    let mailbox = crate::maildemo::section_html();
+    let mailbox = crate::maildemo::section_html(&inner);
     let origin = esc(&site.info.origin);
     let public = public_calls_path(&inner)
         .map(|p| {

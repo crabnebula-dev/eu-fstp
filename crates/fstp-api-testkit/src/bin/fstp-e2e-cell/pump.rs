@@ -12,8 +12,8 @@
 //!
 //! Test only: this module lives in `fstp-e2e-cell` and never ships.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use fstp_api_core::port::{TextClass, TextOwner, TextStore};
