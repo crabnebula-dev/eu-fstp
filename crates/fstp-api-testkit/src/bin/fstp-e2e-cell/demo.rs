@@ -92,6 +92,9 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
     if let Some(r) = crate::grantdemo::forge(&req) {
         return r;
     }
+    if let Some(r) = crate::maildemo::route(&req) {
+        return r;
+    }
     let path = req.target.path().to_owned();
     let done = match path.as_str() {
         "/demo" | "/demo/" => return page(site),
@@ -526,12 +529,13 @@ fn page(site: &Site) -> Response {
         people.push_str(&format!(
             "<li class=\"card person\"><p class=\"person-name\"><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small></p>\n\
 <p><span data-demo-does>{n}</span></p>\n\
-<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}</li>\n",
+<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}{pmail}</li>\n",
             u = esc(&url),
             w = esc(&who),
             e = esc(&email),
             r = esc(&roles_of(&inner, account)),
             n = esc(&short_line(&inner, account)),
+            pmail = crate::maildemo::person_html(&email),
         ));
     }
     let auth = lock(&inner.auth);
@@ -570,6 +574,7 @@ fn page(site: &Site) -> Response {
         .iter()
         .map(|(k, t)| format!("<a href=\"/demo/clock?to={k}\">{t}</a> "))
         .collect();
+    let mailbox = crate::maildemo::section_html();
     let origin = esc(&site.info.origin);
     let public = public_calls_path(&inner)
         .map(|p| {
@@ -607,6 +612,7 @@ Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refr
 <p>Clock: <a href=\"/demo/advance?minutes=60\">+60 minutes</a> <a href=\"/demo/advance?minutes=1440\">+1 day</a></p>\n\
 <p>Grant clock: {clocks}</p>\n\
 <p>Fake forge: <a href=\"/demo/forge/synthetic-sensor-kit\">the public repository</a> | <a href=\"/demo/forge/fail\">Make the next checks fail (the forge answers 404 once)</a></p>\n\
+{mailbox}\
 </main>\n</body></html>\n",
         name = esc(site.info.name),
     );

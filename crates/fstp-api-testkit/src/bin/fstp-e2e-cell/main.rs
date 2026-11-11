@@ -53,6 +53,7 @@ mod control;
 mod demo;
 mod demo_signin;
 mod grantdemo;
+mod maildemo;
 mod onboarding;
 mod people;
 mod precheck;
@@ -458,6 +459,7 @@ fn start(cfg: &Config) -> Result<Running, String> {
         sites.push(site);
     }
     pump::spawn(sites.clone());
+    maildemo::start(&rt, sites.iter().take(1).cloned().collect())?;
     let running = Running {
         sites,
         _servers: servers,
