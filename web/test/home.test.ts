@@ -149,11 +149,12 @@ test("r_nf_03_home_guardian_and_irc_member_reach_their_pages", () => {
   assert(kinds.includes("irc-cases /app/me/irc-cases"), show(kinds));
   assert(!kinds.some((k) => k.startsWith("cut-off-round")), "an open round is the committee's only");
   assert(!kinds.some((k) => k.startsWith("proposals ")), "a guardian has no proposal list link");
-  eq(w.other, [{ role: "auditor", programme: "1" }], "a role without pages is named");
+  eq(w.other, [], "the auditor reaches the funder reports through the operations page");
+  assert(w.items.some((i) => i.kind === "operations"), "the operations queues are offered to the auditor");
   eq(
     navLinksOf(r).map((l) => l.kind),
-    ["irc-cases"],
-    "the site navigation links the IRC cases",
+    ["irc-cases", "operations"],
+    "the site navigation links the IRC cases and the auditor operations queue",
   );
 });
 
@@ -234,7 +235,7 @@ test("r_nf_03_nav_links_every_page_without_an_id_and_home_lists_the_rest", () =>
     }
   });
   const before = navOf(null).map((l) => l.kind);
-  eq(before, ["home", "proposals", "calls", "account"], "before the roles are read");
+  eq(before, ["home", "proposals", "grants", "calls", "account"], "before the roles are read");
 });
 
 /**

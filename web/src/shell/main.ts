@@ -36,6 +36,7 @@ import { VISUALLY_HIDDEN_CLASS } from "../core/a11y.js";
 import { createRouter, rerender, startNavigation } from "../core/router.js";
 import { CREATOR_ROUTES, type PageRoute } from "../creator/routes.js";
 import { mountHome } from "../home/page.js";
+import { mountPostGrant } from "../grant/routes.js";
 import { addJudgingStrip } from "../journey/pages.js";
 import { JOURNEY_ROUTES } from "../journey/routes.js";
 import { startSession } from "../home/session.js";
@@ -95,6 +96,10 @@ async function run(path: string): Promise<void> {
     return;
   }
   if (mountSite(path) || mountStaff(path) || mountJourney(path) || mountApplicantPage(path)) {
+    return;
+  }
+  // The M5 post-grant pages: grants, contract, payment requests and operations.
+  if (await mountPostGrant(browserEnv(root()), path)) {
     return;
   }
   if (await mountJudging(browserEnv(root()), path)) {
