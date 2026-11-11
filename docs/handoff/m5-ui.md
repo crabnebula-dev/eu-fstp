@@ -68,3 +68,42 @@ For L-API or the lead:
 - Not run in a browser or Playwright: I added no `e2e/m5ui` spec because the cell was not built in this lane. The web tests cover the pages over the fake DOM only.
 - No amendment screens (`contract-amendment.html`), mentor or public pages. They are not in L-UI1 or L-UI2 rows.
 - No download of the sealed draft, reports or the Guide PDF link on the call page.
+
+## M5 reads follow-up: decisions and open questions for Daniel
+
+Branch `m5/reads`. It answers the three requests above and the lead's reviewer gap of 2026-11-12.
+
+### Reads added
+
+| Op | Route | Rule (d11) | Who gets rows |
+| --- | --- | --- | --- |
+| `grant.overview` (extended) | `GET /grants/{proposal}` | unchanged: `GRANT_READER` in `GRANT_STATES` | as before. New members `plan` and `milestones` (`milestone`, `amount`, `due`, `paid`, `pending`, `available`, `closed`) |
+| `grant.list_mine` | `GET /me/grants` | `Own`, all 16 states | each grant `grant.overview` serves the caller, with `via`: the rule that admitted the caller |
+| `contract.awaiting_me` | `GET /me/contracts-awaiting-signature` | `Own`, all 16 states | each latest, live version that waits on the caller's own signature now, where `contract.view` serves the caller |
+| `grant.determination_view` | `GET /grants/{proposal}/determination` | `ProposalReviewer`, NEGOTIATION only | the declared, conflict-free assigned reviewer of the proposal |
+
+### Decisions
+
+1. **Lists judge each row again.** Both lists are the caller's own reads. The dispatch then runs `authorize_read` for `grant.overview` or `contract.view` on every candidate proposal. A list therefore never widens those reads: same rule, states, programme scope and SoD. The grant list test checks this both ways for the whole cast in four states.
+2. **Candidate proposals come from the roster.** Every proposal holds its lead's Receiving binding from its draft on. Ended bindings count too, so COMPLETED and TERMINATED grants stay listed for their former team and staff.
+3. **The signing list follows P-30.** A grantee party waits once the version is sent. The signatory waits only once the grantee side signed. A signed party, a terminated contract and an older version wait on nobody.
+4. **`available` on the milestones, not `payment.form`.** It is smaller and fits the overview the form already reads. The domain computes it (`fstp_domain::payment::grant_milestones`) the way the I-58 check folds paid plus pending. It is zero on a closed milestone and outside IN_EXECUTION. A property test checks it against the payment reference, and an example test checks that one cent above it is refused.
+5. **The browser computes no money.** "Fill available" copies the cell's `available` string. A closed milestone offers no fill.
+6. **No MCP tool for the new reads.** `grant.overview` and `grant.determine_amount` have none, so the lists and the determination view are web only (I-85).
+7. **Reviewer gap (lead, 2026-11-12, R-NG-03).** `GRANT_READER` stays unchanged. A narrow read, `grant.determination_view`, gives the assigned reviewer the proposal state, the plan the determination starts from (the current agreed plan, else the effective plan), its total, the current determination and its amount. It names no paid sum, contract, request or account. A new `ReadRule::ProposalReviewer` judges the caller's own reviewer assignment of the target proposal. A conflict refuses with I-03 first, an undeclared assignee with R-CF-02, anyone else with R-AC-01. Every state other than NEGOTIATION is a judged refusal (D11). The grant page falls back to this view when the overview is refused, so Home, "Grants you review", grant, determination works by clicking.
+8. **Labels.** "Grants on your calls" became "Grants in your programmes", since the list now holds finance, release, signatory and auditor rows. "Contracts to countersign" became "Contracts awaiting your signature".
+
+### Open questions for Daniel
+
+- Should the assigned reviewer also read the overview after NEGOTIATION, for the line review of payment requests (SoD-12)? Today the reviewer reaches line review from Operations only.
+- Should `contract.awaiting_me` get a read-only MCP tool, as `contract.view` has? It has none for now.
+- `via` names one admitting rule per grant. A person with two roles on a grant sees the first match only.
+
+### Tests
+
+- `crates/fstp-domain-testkit/tests/i58_r_pr_07_milestone_funds_view.rs` (I-58, R-PR-07): property machine and edge cases.
+- `crates/fstp-access/tests/m5reads_d11_list_reads.rs` (D11, I-85, I-86, R-PR-07, R-NG-03).
+- `crates/fstp-api-testkit/src/harness_m5_reads.rs` (R-AC-01, D11, R-CT-01, P-30, R-PR-07, I-58, R-NG-03, I-03, R-CF-02, I-86).
+- The narrowed direct and HTTP authorisation matrices agree with the reference for all four reads (`FSTP_MATRIX_OPS`).
+- `web/test/m5reads.test.ts` (R-AC-01, R-NF-03, R-PR-07, R-NG-03).
+- `e2e/speedrun/speedrun.ui.spec.ts`: the reviewer step now clicks to the determination form. Not run in this lane.
