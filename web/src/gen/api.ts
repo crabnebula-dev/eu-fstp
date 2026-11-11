@@ -3730,6 +3730,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
             fields: {
               ["kind"]: { schema: { kind: "enum", values: ["completeness", "quality", "accuracy", "integrity"] }, optional: false },
               "criterion": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "element": { schema: { kind: "nullable", inner: { kind: "enum", values: ["problem", "approach", "ois_relevance", "team_experience", "deliverables_licence", "milestones", "budget_justification"] } }, optional: false },
               "severity": { schema: { kind: "enum", values: ["info", "minor", "major"] }, optional: false },
               "statement": { schema: { kind: "string" }, optional: false },
               "evidence": { schema: { kind: "array", items: {
@@ -3769,6 +3770,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
             fields: {
               ["kind"]: { schema: { kind: "enum", values: ["completeness", "quality", "accuracy", "integrity"] }, optional: false },
               "criterion": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "element": { schema: { kind: "nullable", inner: { kind: "enum", values: ["problem", "approach", "ois_relevance", "team_experience", "deliverables_licence", "milestones", "budget_justification"] } }, optional: false },
               "severity": { schema: { kind: "enum", values: ["info", "minor", "major"] }, optional: false },
               "statement": { schema: { kind: "string" }, optional: false },
               "evidence": { schema: { kind: "array", items: {

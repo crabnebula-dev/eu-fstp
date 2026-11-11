@@ -967,6 +967,9 @@ pub struct PrecheckFinding {
     pub kind: fstp_findings::FindingKind,
     /// The P-01 criterion, where one applies.
     pub criterion: Option<fstp_domain::id::CriterionId>,
+    /// The rubric element tag, such as `team_experience`, where one
+    /// applies. The intake admits only the pinned rubric's tags.
+    pub element: Option<String>,
     /// Info, minor or major.
     pub severity: fstp_findings::Severity,
     /// The observation, as data.

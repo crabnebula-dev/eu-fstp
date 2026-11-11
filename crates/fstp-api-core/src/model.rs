@@ -2109,6 +2109,7 @@ pub(crate) mod reply_shape_tests {
                     findings: vec![crate::views::PrecheckFindingRow {
                         kind: "completeness",
                         criterion: None,
+                        element: Some("team_experience".to_owned()),
                         severity: "minor",
                         statement: "SYNTHETIC FINDING".to_owned(),
                         evidence: vec![crate::views::PrecheckEvidenceRow {

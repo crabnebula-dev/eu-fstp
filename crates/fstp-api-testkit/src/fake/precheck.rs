@@ -150,6 +150,7 @@ pub async fn run_snapshot(
             .map(|f| PrecheckFinding {
                 kind: f.kind,
                 criterion: f.criterion,
+                element: f.element.map(|e| e.as_str().to_owned()),
                 severity: f.severity,
                 statement: f.statement,
                 evidence: f

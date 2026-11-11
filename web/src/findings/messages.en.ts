@@ -68,5 +68,13 @@ export const FINDINGS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "pre.section.summary": "summary",
   "pre.section.narrative": "narrative",
   "pre.criterion": "Criterion {id}",
+  "pre.element": "Rubric element: {element}",
+  "element.problem": "Problem",
+  "element.approach": "Approach",
+  "element.ois_relevance": "Relevance to the Open Internet Stack",
+  "element.team_experience": "Team and experience",
+  "element.deliverables_licence": "Deliverables and licence",
+  "element.milestones": "Milestones",
+  "element.budget_justification": "Budget justification",
   "pre.team_only": "Only the team of a draft can check it.",
 });

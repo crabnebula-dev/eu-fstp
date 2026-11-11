@@ -95,6 +95,9 @@ function runSection(r: PrecheckRun, first: boolean): HTMLElement {
               h("strong", {}, [l(`kind.${f.kind}`), ", ", l(`severity.${f.severity}`)]),
               ...(f.criterion === null ? [] : [" (", l("pre.criterion", { id: f.criterion }), ")"]),
             ]),
+            ...(f.element === null
+              ? []
+              : [h("p", { class: "precheck-element", "data-element": f.element }, [l("pre.element", { element: l(`element.${f.element}`) })])]),
             h("p", { class: "finding-statement" }, [f.statement]),
             ...f.evidence
               .filter((e) => e.quote.trim() !== "")

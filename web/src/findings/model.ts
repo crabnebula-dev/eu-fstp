@@ -9,6 +9,25 @@ export type FindingKind = "completeness" | "quality" | "accuracy" | "integrity";
 export type Severity = "info" | "minor" | "major";
 export type Assessor = "synthetic" | "model";
 export type Mark = "Agreed" | "Disputed";
+export type Element =
+  | "problem"
+  | "approach"
+  | "ois_relevance"
+  | "team_experience"
+  | "deliverables_licence"
+  | "milestones"
+  | "budget_justification";
+
+/** The rubric v1 element tags (M7 design section 2, reading 1). */
+export const ELEMENTS: readonly Element[] = [
+  "problem",
+  "approach",
+  "ois_relevance",
+  "team_experience",
+  "deliverables_licence",
+  "milestones",
+  "budget_justification",
+];
 
 const ID = /^(0|[1-9][0-9]{0,38})$/;
 
@@ -141,6 +160,7 @@ export interface PrecheckEvidence {
 export interface PrecheckFinding {
   readonly kind: FindingKind;
   readonly criterion: string | null;
+  readonly element: Element | null;
   readonly severity: Severity;
   readonly statement: string;
   readonly evidence: readonly PrecheckEvidence[];
@@ -178,14 +198,16 @@ function decodeEvidence(v: unknown): PrecheckEvidence | null {
 }
 
 function decodePrecheckFinding(v: unknown): PrecheckFinding | null {
-  if (!isObject(v) || !exactly(v, ["kind", "criterion", "severity", "statement", "evidence"])) {
+  if (!isObject(v) || !exactly(v, ["kind", "criterion", "element", "severity", "statement", "evidence"])) {
     return null;
   }
   const kind = oneOf(v["kind"], KINDS);
   const severity = oneOf(v["severity"], SEVERITIES);
   const criterion = v["criterion"];
   const evidence = v["evidence"];
+  const element = v["element"] === null ? null : oneOf(v["element"], ELEMENTS);
   if (
+    (v["element"] !== null && element === null) ||
     kind === null ||
     severity === null ||
     (criterion !== null && !isId(criterion)) ||
@@ -205,6 +227,7 @@ function decodePrecheckFinding(v: unknown): PrecheckFinding | null {
   return Object.freeze({
     kind,
     criterion: criterion === null ? null : (criterion as string),
+    element,
     severity,
     statement: v["statement"],
     evidence: Object.freeze(ev),

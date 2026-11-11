@@ -233,6 +233,7 @@ fn run_row(r: &PrecheckRun) -> PrecheckRunRow {
             .map(|f| PrecheckFindingRow {
                 kind: kind_name(f.kind),
                 criterion: f.criterion.map(|c| c.raw()),
+                element: f.element.clone(),
                 severity: severity_name(f.severity),
                 statement: f.statement.as_data().to_owned(),
                 evidence: f

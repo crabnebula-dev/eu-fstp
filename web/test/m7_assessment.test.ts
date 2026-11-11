@@ -26,6 +26,7 @@ function view(): Record<string, unknown> {
           {
             kind: "completeness",
             criterion: null,
+            element: "team_experience",
             severity: "minor",
             statement: "SYNTHETIC: the team section is missing.",
             evidence: [{ section: "narrative", quote: "Problem" }],

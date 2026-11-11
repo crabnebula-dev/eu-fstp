@@ -741,6 +741,8 @@ pub struct PrecheckFindingRow {
     pub kind: &'static str,
     /// The P-01 criterion, where one applies.
     pub criterion: Option<u128>,
+    /// The rubric element tag, where one applies.
+    pub element: Option<String>,
     /// `info`, `minor` or `major`.
     pub severity: &'static str,
     /// The observation, untrusted data.
@@ -754,6 +756,10 @@ impl ToJson for PrecheckFindingRow {
         object(vec![
             ("kind", Value::from(self.kind)),
             ("criterion", self.criterion.map_or(Value::Null, dec)),
+            (
+                "element",
+                self.element.as_deref().map_or(Value::Null, Value::from),
+            ),
             ("severity", Value::from(self.severity)),
             ("statement", Value::from(self.statement.as_str())),
             ("evidence", array(&self.evidence)),

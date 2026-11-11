@@ -110,6 +110,17 @@ const fn opt(name: &'static str, shape: Shape) -> Member {
 /// section 7): the in-memory synthetic model of a demo cell, or a model.
 const ASSESSOR_NAMES: &[&str] = &["synthetic", "model"];
 
+/// The rubric v1 element tags (M7 design section 2, reading 1).
+const RUBRIC_ELEMENTS: &[&str] = &[
+    "problem",
+    "approach",
+    "ois_relevance",
+    "team_experience",
+    "deliverables_licence",
+    "milestones",
+    "budget_justification",
+];
+
 /// The finding kinds, as the pre-check reply spells them.
 const KIND_NAMES: &[&str] = &["completeness", "quality", "accuracy", "integrity"];
 
@@ -138,6 +149,7 @@ const PRECHECK_VIEW: Shape = Shape::Object(&[
                 Shape::Array(&Shape::Object(&[
                     m("kind", Shape::Enum(KIND_NAMES)),
                     m("criterion", Shape::Nullable(&Shape::Id)),
+                    m("element", Shape::Nullable(&Shape::Enum(RUBRIC_ELEMENTS))),
                     m("severity", Shape::Enum(&["info", "minor", "major"])),
                     m("statement", Shape::String),
                     m(
