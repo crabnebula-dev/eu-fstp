@@ -320,10 +320,10 @@ impl Handler for CellOrigin {
         let site = Arc::clone(&self.0);
         async move {
             if for_vault(&site.info, &req) {
+                if let Some(r) = grantdemo::vault_read(&site.inner(), &req) {
+                    return r;
+                }
                 return vault_page(&req);
-            }
-            if req.target.path().starts_with("/fake-vault/verifications/") {
-                return grantdemo::vault(&site.inner(), req).await;
             }
             let path = req.target.path().to_owned();
             if path == "/" && req.method == Method::GET {

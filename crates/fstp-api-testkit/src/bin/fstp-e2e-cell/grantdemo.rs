@@ -3,8 +3,8 @@
 //! links. Test only: this module lives in `fstp-e2e-cell` (rule A9).
 //!
 //! - **Fake vault.** The fake vault answers a bank detail or hardship
-//!   ticket with `/fake-vault/verifications/{n}` on the cell origin. That
-//!   page shows the one action of the person's latest ticket: the lead
+//!   ticket with `{vault origin}/r#ticket`, the read page the grant pages
+//!   accept. It shows the one action of the person's latest ticket: the lead
 //!   enters synthetic bank details, the finance approver verifies them,
 //!   the releaser views the payee. The action writes the synthetic vault
 //!   as the real vault origin would (I-33, I-86). No bank value is shown
@@ -97,47 +97,75 @@ fn action_of(p: &VerificationPurpose) -> Option<(&'static str, &'static str)> {
     })
 }
 
-/// `/fake-vault/verifications/{n}` on the cell origin: the synthetic
-/// vault's page for the latest ticket of the signed-in person.
-pub(crate) async fn vault(inner: &Inner, req: Request) -> Response {
-    let Some((_, account)) = crate::auth::session(inner, &req).await else {
-        return wire::refuse(StatusCode::UNAUTHORIZED, "session");
+/// The script of the vault's read page: it reads the ticket's action from
+/// the vault, shows its button and posts the action. No bank value passes.
+const R_JS: &str = "(async () => {\n  const t = await (await fetch('/r/ticket')).json();\n  document.querySelector('h1').textContent = t.title;\n  const b = document.querySelector('#vault-action');\n  b.textContent = t.button;\n  b.hidden = false;\n  b.addEventListener('click', async () => {\n    const r = await fetch('/r/act', { method: 'POST' });\n    if (r.ok) {\n      b.hidden = true;\n      const d = document.querySelector('#vault-done');\n      d.hidden = false;\n    }\n  });\n})();\n";
+
+fn vault_response(kind: &str, body: Vec<u8>, script: bool) -> Response {
+    let mut r = Response::with_body(StatusCode::OK, kind, body);
+    let _ = r.headers.try_insert("cache-control", "no-store");
+    let csp = if script {
+        "default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+    } else {
+        "default-src 'none'; frame-ancestors 'none'"
     };
-    let ticket = inner
-        .ports
-        .vault
-        .verifications()
-        .into_iter()
-        .rev()
-        .find(|(_, a)| *a == account);
-    let Some((purpose, _)) = ticket else {
-        return wire::not_found();
+    let _ = r.headers.try_insert("content-security-policy", csp);
+    let _ = r.headers.try_insert("x-content-type-options", "nosniff");
+    let _ = r.headers.try_insert("referrer-policy", "no-referrer");
+    r
+}
+
+/// The vault origin's read page `/r` (M5 design section 7): the synthetic
+/// vault shows the action of its latest bank ticket. The finance
+/// approver verifies bank details here, the lead enters them, the
+/// releaser views the payee. The vault holds facts only (I-33, I-86).
+/// `None` for any other path.
+pub(crate) fn vault_read(inner: &Inner, req: &Request) -> Option<Response> {
+    let path = req.target.path();
+    let ticket = || {
+        inner
+            .ports
+            .vault
+            .verifications()
+            .into_iter()
+            .rev()
+            .find(|(p, _)| action_of(p).is_some())
     };
-    let Some((title, button)) = action_of(&purpose) else {
-        return page(
-            "Synthetic vault",
-            "<p>This ticket has no page in the demo vault.</p>",
-        );
-    };
-    if req.method == Method::POST {
-        let now = inner.ports.clock.read();
-        inner.ports.vault.change(|t| match purpose {
-            VerificationPurpose::BankDetails(g) => t.write_bank(g, now),
-            VerificationPurpose::BankVerification(g) => t.verify_bank(g),
-            VerificationPurpose::BankDispute(g) => t.dispute_bank(g, true),
-            _ => {}
-        });
-        return page(
-            "Synthetic vault",
-            "<p id=\"vault-done\">Done. The vault recorded the fact. No bank value leaves the vault.</p>\n<p><a href=\"/app/\">Back to your home page</a></p>",
-        );
+    match (&req.method, path) {
+        (&Method::GET, "/r") => Some(vault_response(
+            "text/html; charset=utf-8",
+            b"<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Identity vault</title></head>\n<body><main><h1>Identity vault</h1>\n<p>Synthetic test vault of the e2e cell. The vault holds the bank details. The platform never sees them (I-86).</p>\n<button type=\"button\" id=\"vault-action\" hidden>Continue</button>\n<p id=\"vault-done\" hidden>Done. The vault recorded the fact. No bank value leaves the vault.</p>\n<script src=\"/r.js\"></script></main></body></html>\n".to_vec(),
+            true,
+        )),
+        (&Method::GET, "/r.js") => Some(vault_response(
+            "text/javascript; charset=utf-8",
+            R_JS.as_bytes().to_vec(),
+            true,
+        )),
+        (&Method::GET, "/r/ticket") => {
+            let (title, button) = ticket()
+                .and_then(|(p, _)| action_of(&p))
+                .unwrap_or(("No ticket", "Continue"));
+            Some(wire::json(
+                StatusCode::OK,
+                &wire::obj(vec![("title", title.into()), ("button", button.into())]),
+            ))
+        }
+        (&Method::POST, "/r/act") => {
+            let Some((purpose, _)) = ticket() else {
+                return Some(wire::not_found());
+            };
+            let now = inner.ports.clock.read();
+            inner.ports.vault.change(|t| match purpose {
+                VerificationPurpose::BankDetails(g) => t.write_bank(g, now),
+                VerificationPurpose::BankVerification(g) => t.verify_bank(g),
+                VerificationPurpose::BankDispute(g) => t.dispute_bank(g, true),
+                _ => {}
+            });
+            Some(wire::json(StatusCode::OK, &wire::obj(vec![])))
+        }
+        _ => None,
     }
-    page(
-        title,
-        &format!(
-            "<p>Synthetic test vault of the e2e cell. The vault holds the bank details. The platform never sees them (I-86).</p>\n<form method=\"post\"><button type=\"submit\" id=\"vault-action\">{button}</button></form>"
-        ),
-    )
 }
 
 /// `/demo/forge/synthetic-sensor-kit` on the control base: a public

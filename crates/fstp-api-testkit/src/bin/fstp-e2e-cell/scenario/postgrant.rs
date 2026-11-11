@@ -581,6 +581,8 @@ pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value)
         ("call", dec(CALL.raw())),
         ("proposal", dec(PROPOSALS[0].proposal.raw())),
         ("title", PROPOSALS[0].title.into()),
+        ("plan", dec(plan_of(PROPOSALS[0].proposal).raw())),
+        ("milestone", dec(milestone_of(PROPOSALS[0].proposal).raw())),
         ("contract", reached.contract.as_deref().map_or(Value::Null, Value::from)),
         ("request", reached.request.as_deref().map_or(Value::Null, Value::from)),
         ("reports", Value::Array(reports.into_iter().collect())),

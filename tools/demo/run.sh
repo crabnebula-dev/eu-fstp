@@ -84,6 +84,7 @@ show() {
       }
       if (v.grant_at) {
         console.log("Grant scene " + v.grant_at + ": proposal " + v.proposal + ", " + v.title);
+        console.log("  agreed plan " + v.plan + ", milestone " + v.milestone + " (for the determination and payment forms)");
         if (v.contract) console.log("  contract " + v.contract);
         if (v.request) console.log("  payment request " + v.request);
         for (const r of v.reports) console.log("  funder report " + r.report + " (" + r.kind + ")");
