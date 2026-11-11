@@ -124,6 +124,8 @@ mod creator_ops;
 /// The M5 contract, report and vault ticket operations and the M5 reads
 /// (lane L-API).
 pub(crate) mod grant;
+/// The M5 reads follow-up: the caller's grants and contracts to sign.
+mod grant_lists;
 /// `proposal.journey` and `proposal.diary` (lane j2, ADR-015), and
 /// `proposal.route_map` (lane j4).
 pub(crate) mod journey;
@@ -1782,6 +1784,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         | ReadKind::GetPaymentStatus
         | ReadKind::ListMyPaymentQueue => {
             ReadModel::Grant(grant::read(call, op, kind).map_err(|e| call.refuse(e))?)
+        }
+        // M5 reads follow-up: the caller's own lists, each row judged as
+        // `grant.overview` or `contract.view` (R-AC-01, D11).
+        ReadKind::ListMyGrants | ReadKind::ListMyContractsToSign => {
+            ReadModel::Grant(grant_lists::read(call, kind).map_err(|e| call.refuse(e))?)
         }
         // M6 lane L6-API, M6 design section 6: the tenant admin's mail
         // relay and delivery log.

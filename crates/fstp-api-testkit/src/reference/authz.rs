@@ -1473,6 +1473,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("contract.view", T::Proposal, R::GrantReader).tool("fstp_get_contract_status"),
     RefOp::read("payment.status", T::Proposal, R::GrantReader).tool("fstp_get_payment_status"),
     RefOp::read("payment.queue", T::None, R::AnyAccount).tool("fstp_get_payment_queue"),
+    // M5 reads follow-up: the caller's own lists, web only. The dispatch
+    // keeps the grants and contracts the overview and contract reads
+    // serve the caller.
+    RefOp::read("grant.list_mine", T::None, R::AnyAccount),
+    RefOp::read("contract.awaiting_me", T::None, R::AnyAccount),
     RefOp::act("grant.determine_amount", T::Negotiation, R::GrantReviewer).binding(),
     RefOp::act("grant.accept", T::Negotiation, R::Lead).binding(),
     RefOp::act("grant.approve", T::Negotiation, R::ProgrammeManager).binding(),

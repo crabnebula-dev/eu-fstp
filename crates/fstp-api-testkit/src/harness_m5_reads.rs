@@ -1,0 +1,368 @@
+//! The M5 reads follow-up through the API (`docs/handoff/m5-ui.md`):
+//! `grant.list_mine`, `contract.awaiting_me` and the plan and milestones
+//! of `grant.overview`.
+//!
+//! - R-AC-01, D11, SoD: the grant list of every account of the cast holds
+//!   exactly the grants `grant.overview` serves that account. A programme
+//!   manager of another programme, an ended binding and a committee
+//!   member see none.
+//! - R-CT-01, P-30: a contract version waits on the grantee side first and
+//!   on the signatory only once the grantee side signed. It leaves each
+//!   list once its party signed.
+//! - R-PR-07, I-58, ADR-006: the milestones of `grant.overview` carry the
+//!   cell's own paid, pending and available sums, the same strings as the
+//!   domain view, and a new request lowers what is available.
+//! - I-86: no reply names an account, an email or a bank value.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing
+)]
+
+use super::*;
+use crate::reference::authz::Policy;
+use fstp_domain::id::MilestoneId;
+
+const POST: ApiMethod = ApiMethod::Post;
+const GET: ApiMethod = ApiMethod::Get;
+
+fn world(state: StateTag) -> Built {
+    build(WorldKey {
+        state: StateProfile::Proposal(state),
+        policy: Policy::SUPERSAFE,
+        variant: Variant::Main,
+    })
+    .unwrap_or_else(|e| panic!("world {state:?}: {e}"))
+}
+
+fn seeder(w: Built) -> Seeder {
+    Seeder {
+        ports: w.ports,
+        core: w.core,
+        now: w.now,
+        command: 900_000,
+        cookies: BTreeMap::new(),
+        next_id: 90_000_000,
+        admins: w.admins.iter().copied().collect(),
+    }
+}
+
+/// I-86: an email, or a member that names an account, vault evidence or
+/// bank details.
+fn leaks(json: &str) -> bool {
+    json.contains('@')
+        || json.contains("account")
+        || json.contains("evidence")
+        || json.contains("iban")
+        || json.contains("bank")
+}
+
+fn read(seed: &mut Seeder, who: AccountId, path: &str) -> Value {
+    let v = seed
+        .api(who, GET, path, &Value::Null)
+        .unwrap_or_else(|e| panic!("{path} by {who:?}: {e}"));
+    let text = v.to_compact();
+    assert!(!leaks(&text), "I-86: {path} leaks: {text}");
+    v
+}
+
+fn rows(v: &Value) -> Vec<Value> {
+    v.as_array()
+        .unwrap_or_else(|| panic!("not an array: {}", v.to_compact()))
+        .iter()
+        .cloned()
+        .collect()
+}
+
+/// The proposals of `who`'s grant list, with the `via` of each.
+fn grant_list(seed: &mut Seeder, who: AccountId) -> Vec<(String, String)> {
+    rows(&read(seed, who, "/me/grants"))
+        .iter()
+        .map(|r| {
+            (
+                str_member(r, "proposal").expect("proposal"),
+                str_member(r, "via").expect("via"),
+            )
+        })
+        .collect()
+}
+
+/// The `(contract, role, state)` of each row of `who`'s signing list.
+fn to_sign(seed: &mut Seeder, who: AccountId) -> Vec<(String, String, String)> {
+    rows(&read(seed, who, "/me/contracts-awaiting-signature"))
+        .iter()
+        .map(|r| {
+            (
+                str_member(r, "contract").expect("contract"),
+                str_member(r, "role").expect("role"),
+                str_member(r, "state").expect("state"),
+            )
+        })
+        .collect()
+}
+
+/// R-AC-01, D11, SoD: for every account of the cast, the grant list holds
+/// X exactly when `grant.overview` of X serves that account, in each
+/// state a grant can be in that the worlds build.
+#[test]
+fn r_ac_01_d11_grant_list_matches_overview_access_for_every_account() {
+    for state in [
+        StateTag::Negotiation,
+        StateTag::InExecution,
+        StateTag::Completed,
+        StateTag::Stage1,
+    ] {
+        let w = world(state);
+        let x = w.targets.proposal.expect("X").raw().to_string();
+        let mut seed = seeder(w);
+        for who in CAST
+            .into_iter()
+            .filter(|a| ![ADMIN_SOLE.raw(), 990, 991].contains(&a.raw()))
+        {
+            let listed = grant_list(&mut seed, who);
+            let ids: Vec<&str> = listed.iter().map(|(p, _)| p.as_str()).collect();
+            let served = seed
+                .api(who, GET, &format!("/grants/{x}"), &Value::Null)
+                .is_ok();
+            assert_eq!(
+                ids.contains(&x.as_str()),
+                served,
+                "R-AC-01 in {state:?}: {who:?} lists {ids:?}, overview served {served}"
+            );
+            // Every listed grant is one the overview serves.
+            for p in &ids {
+                assert!(
+                    seed.api(who, GET, &format!("/grants/{p}"), &Value::Null)
+                        .is_ok(),
+                    "R-AC-01 in {state:?}: {who:?} lists {p} it may not read"
+                );
+            }
+        }
+    }
+}
+
+/// R-AC-01, SoD: the grant list names why each grant is there, and the
+/// roles outside the grant's programme or bindings see nothing.
+#[test]
+fn r_ac_01_grant_list_names_the_admitting_role() {
+    let w = world(StateTag::InExecution);
+    let x = w.targets.proposal.expect("X").raw().to_string();
+    let mut seed = seeder(w);
+    let via = |seed: &mut Seeder, who| {
+        grant_list(seed, who)
+            .into_iter()
+            .find(|(p, _)| *p == x)
+            .map(|(_, v)| v)
+    };
+    assert_eq!(via(&mut seed, LEAD).as_deref(), Some("team"));
+    assert_eq!(via(&mut seed, PM).as_deref(), Some("programme_manager"));
+    assert_eq!(via(&mut seed, FINANCE).as_deref(), Some("finance_approver"));
+    assert_eq!(
+        via(&mut seed, RELEASER).as_deref(),
+        Some("payment_releaser")
+    );
+    assert_eq!(
+        via(&mut seed, SIGNATORY).as_deref(),
+        Some("contract_signatory")
+    );
+    assert_eq!(via(&mut seed, AUDITOR).as_deref(), Some("auditor"));
+    for outsider in [PM_OTHER, PM_ENDED, MEMBER, UNBOUND, LEAD_Y, REVIEWER] {
+        assert_eq!(via(&mut seed, outsider), None, "{outsider:?} lists X");
+    }
+}
+
+/// R-CT-01, P-30, I-86: the signing list follows the signing order. The
+/// grantee side waits first; the signatory only after it; nobody once the
+/// version is effective. The programme manager is never a party.
+#[test]
+fn r_ct_01_contracts_awaiting_me_follow_the_signing_order() {
+    let w = world(StateTag::Negotiation);
+    let x = w.targets.proposal.expect("X");
+    let plan = w.targets.plan.expect("plan");
+    let mut seed = seeder(w);
+    seed.at(1_798_761_600 * SECOND);
+    let fake = fstp_contract::fake::FakeTrustServices::new(seed.now / SECOND).unwrap();
+    let trust = fake.trusted_list();
+    seed.core = Arc::new(fstp_api_core::port::api_core_with_signing(
+        seed.ports.clone(),
+        Box::new(fake),
+        Box::new(trust),
+    ));
+    seed.api(
+        REVIEWER,
+        POST,
+        &format!("/grants/{}/amount-determination", x.raw()),
+        &obj(vec![
+            ("agreed", dec(plan)),
+            ("deductions", Value::Array(Array::new())),
+            ("currency", s("EUR")),
+        ]),
+    )
+    .unwrap();
+    let o = read(&mut seed, LEAD, &format!("/grants/{}", x.raw()));
+    let det = obj(vec![(
+        "determination",
+        s(&str_member(&o, "determination").unwrap()),
+    )]);
+    seed.api(LEAD, POST, &format!("/grants/{}/acceptance", x.raw()), &det)
+        .unwrap();
+    seed.api(PM, POST, &format!("/grants/{}/approval", x.raw()), &det)
+        .unwrap();
+    let v = seed
+        .api(
+            PM,
+            POST,
+            &format!("/grants/{}/contract", x.raw()),
+            &obj(vec![]),
+        )
+        .unwrap();
+    let k = str_member(&v, "contract").unwrap();
+    // A drafted version waits on nobody.
+    for who in [LEAD, SIGNATORY, PM] {
+        assert!(to_sign(&mut seed, who).is_empty(), "{who:?} before send");
+    }
+    seed.api(PM, POST, &format!("/contracts/{k}/send"), &obj(vec![]))
+        .unwrap();
+    assert_eq!(
+        to_sign(&mut seed, LEAD),
+        vec![(k.clone(), "lead".to_owned(), "sent".to_owned())]
+    );
+    assert!(
+        to_sign(&mut seed, SIGNATORY).is_empty(),
+        "P-30: the signatory countersigns last"
+    );
+    assert!(to_sign(&mut seed, PM).is_empty());
+    seed.api(
+        LEAD,
+        POST,
+        &format!("/contracts/{k}/signature"),
+        &obj(vec![("route", s("wallet_qes"))]),
+    )
+    .unwrap();
+    assert!(to_sign(&mut seed, LEAD).is_empty(), "signed, yet listed");
+    let guardian = to_sign(&mut seed, GUARDIAN);
+    if !guardian.is_empty() {
+        assert_eq!(guardian[0].1, "guardian");
+        assert!(to_sign(&mut seed, SIGNATORY).is_empty());
+        seed.api(
+            GUARDIAN,
+            POST,
+            &format!("/contracts/{k}/signature"),
+            &obj(vec![("route", s("wallet_qes"))]),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        to_sign(&mut seed, SIGNATORY),
+        vec![(
+            k.clone(),
+            "signatory".to_owned(),
+            "signed_by_grantee".to_owned()
+        )]
+    );
+    seed.api(
+        SIGNATORY,
+        POST,
+        &format!("/contracts/{k}/signature"),
+        &obj(vec![("route", s("qtsp_remote_qes"))]),
+    )
+    .unwrap();
+    for who in [LEAD, GUARDIAN, SIGNATORY, PM] {
+        assert!(to_sign(&mut seed, who).is_empty(), "{who:?} after effect");
+    }
+}
+
+/// The member `k` of `v` as an array of objects.
+fn milestones(v: &Value) -> Vec<Value> {
+    rows(v.get("milestones").expect("milestones"))
+}
+
+/// R-PR-07, I-58, ADR-006: the overview's milestones are the domain
+/// view's, as strings the cell formats, and a request lowers what is
+/// available on its milestone by its amount.
+#[test]
+fn r_pr_07_i58_overview_milestones_are_the_cells_sums() {
+    let w = world(StateTag::InExecution);
+    let x = w.targets.proposal.expect("X");
+    let mut seed = seeder(w);
+    let agree = |seed: &mut Seeder| -> Value {
+        let o = read(seed, LEAD, &format!("/grants/{}", x.raw()));
+        let state = seed.ports.engine.state();
+        let view = fstp_domain::payment::grant_milestones(&state.core, x).expect("a view");
+        assert_eq!(
+            str_member(&o, "plan"),
+            Some(view.plan.raw().to_string()),
+            "the plan"
+        );
+        let ms = milestones(&o);
+        assert_eq!(ms.len(), view.milestones.len());
+        for (row, m) in ms.iter().zip(view.milestones.iter()) {
+            let id = m.milestone.raw().to_string();
+            assert_eq!(str_member(row, "milestone"), Some(id.clone()));
+            for (k, want) in [
+                ("amount", m.amount.amount().to_string()),
+                ("paid", m.paid.amount().to_string()),
+                ("pending", m.pending.amount().to_string()),
+                ("available", m.available.amount().to_string()),
+            ] {
+                assert_eq!(str_member(row, k), Some(want), "{k} of {id}");
+            }
+            assert_eq!(
+                str_member(row, "due").map(|d| d.len()),
+                Some(10),
+                "due is a day"
+            );
+        }
+        o
+    };
+    let before = agree(&mut seed);
+    let first = milestones(&before)
+        .into_iter()
+        .find(|m| str_member(m, "available").is_some_and(|a| a != "0.00"))
+        .expect("a milestone with money available");
+    let milestone =
+        MilestoneId::from_raw(str_member(&first, "milestone").unwrap().parse().unwrap());
+    let line = obj(vec![
+        ("milestone", dec(milestone.raw())),
+        ("amount", s("1.00")),
+        (
+            "evidence",
+            obj(vec![
+                ("location", s("https://forge.example/synthetic/repo")),
+                ("release", s("v1.0.0")),
+                ("licence", s("MIT")),
+                ("report", s("SYNTHETIC DELIVERY REPORT")),
+            ]),
+        ),
+    ]);
+    seed.api(
+        LEAD,
+        POST,
+        &format!("/grants/{}/payment-requests", x.raw()),
+        &obj(vec![
+            ("kind", obj(vec![("type", s("Milestone"))])),
+            ("currency", s("EUR")),
+            ("lines", Value::Array(Array::from(vec![line]))),
+        ]),
+    )
+    .unwrap();
+    let after = agree(&mut seed);
+    let row = milestones(&after)
+        .into_iter()
+        .find(|m| str_member(m, "milestone") == Some(milestone.raw().to_string()))
+        .unwrap();
+    assert_ne!(
+        str_member(&row, "available"),
+        str_member(&first, "available"),
+        "I-58: the request held nothing"
+    );
+    assert_ne!(str_member(&row, "pending").as_deref(), Some("0.00"));
+    // The overview stays closed to outsiders, milestones and all.
+    assert!(
+        seed.api(MEMBER, GET, &format!("/grants/{}", x.raw()), &Value::Null)
+            .is_err()
+    );
+}

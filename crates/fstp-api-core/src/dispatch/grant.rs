@@ -168,7 +168,7 @@ fn first_holder(
 }
 
 /// The latest contract of `p`.
-fn contract_of(
+pub(super) fn contract_of(
     state: &EngineState,
     p: ProposalId,
 ) -> Option<(ContractId, &fstp_contract::Contract)> {
@@ -195,7 +195,7 @@ fn request_status(s: RequestStatus) -> &'static str {
     }
 }
 
-fn version_state(s: VersionState) -> &'static str {
+pub(super) fn version_state(s: VersionState) -> &'static str {
     match s {
         VersionState::Drafted => "drafted",
         VersionState::Sent => "sent",
@@ -217,7 +217,7 @@ fn contract_status(s: ContractStatus) -> &'static str {
     }
 }
 
-fn party_role(r: PartyRole) -> &'static str {
+pub(super) fn party_role(r: PartyRole) -> &'static str {
     match r {
         PartyRole::Lead => "lead",
         PartyRole::TeamMember => "team_member",
@@ -249,7 +249,7 @@ fn request_row(s: &RequestSummary) -> RequestRow {
 
 /// The paid total of `p`: the approved amounts of its released and paid
 /// requests (I-64).
-fn paid_total(state: &EngineState, p: ProposalId) -> String {
+pub(super) fn paid_total(state: &EngineState, p: ProposalId) -> String {
     let mut total: Option<fstp_money::Amount> = None;
     for s in state.core.payments().summaries().filter(|s| s.grant == p) {
         if !s.status.paid() {
@@ -287,7 +287,9 @@ pub(super) fn read<P: Seams>(
     Ok(match kind {
         ReadKind::GetGrant => {
             let money = state.core.money();
-            GrantModel::Overview(GrantOverview {
+            // M5 reads follow-up: the plan and its milestones (R-PR-07).
+            let plan = fstp_domain::payment::grant_milestones(&state.core, p);
+            GrantModel::Overview(Box::new(GrantOverview {
                 proposal: p,
                 state: fstp_domain::view::proposal_state(&state.core, p)
                     .map_or("UNKNOWN", fstp_domain::StateTag::spec_name),
@@ -307,7 +309,16 @@ pub(super) fn read<P: Seams>(
                         .count(),
                 )
                 .unwrap_or(u32::MAX),
-            })
+                plan: plan.as_ref().map(|v| v.plan),
+                milestones: plan
+                    .map(|v| {
+                        v.milestones
+                            .iter()
+                            .map(super::grant_lists::milestone_row)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }))
         }
         ReadKind::GetContract => {
             let found = contract_of(state, p);
