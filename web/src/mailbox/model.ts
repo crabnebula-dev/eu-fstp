@@ -228,12 +228,16 @@ export function labelKey(kind: MailKind): string {
   return `mailbox.kind.${kind}`;
 }
 
-/** The catalogue arguments of a message's label: its ids. */
-export function labelArgs(m: MailMessage): Readonly<Record<string, string>> {
+/**
+ * The catalogue arguments of a message's label: the ids that `template`
+ * names as `{name}`, and no other, since the catalogue refuses an
+ * argument its message does not use.
+ */
+export function labelArgs(m: MailMessage, template: string): Readonly<Record<string, string>> {
   const args: Record<string, string> = {};
   for (const k of ID_MEMBERS) {
     const v = m.ids[k];
-    if (v !== undefined) {
+    if (v !== undefined && template.includes(`{${k}}`)) {
       args[k] = v;
     }
   }

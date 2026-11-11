@@ -104,7 +104,7 @@ function item(m: MailMessage): HTMLElement {
     meta.push(mailboxLabel("mailbox.due", { day: due }));
   }
   const kids: HTMLElement[] = [
-    h("p", { class: "mailbox-what" }, [h("a", { href: m.href, "data-mail-link": m.kind }, [mailboxLabel(labelKey(m.kind), labelArgs(m))])]),
+    h("p", { class: "mailbox-what" }, [h("a", { href: m.href, "data-mail-link": m.kind }, [mailboxLabel(labelKey(m.kind), labelArgs(m, MAILBOX_LABELS[labelKey(m.kind)] ?? ""))])]),
   ];
   if (meta.length > 0) {
     kids.push(h("p", { class: "fstp-meta" }, [meta.join(" · ")]));

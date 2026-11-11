@@ -495,7 +495,7 @@ fn page(site: &Site) -> Response {
         people.push_str(&format!(
             "<li class=\"card person\"><p class=\"person-name\"><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small></p>\n\
 <p><span data-demo-does>{n}</span></p>\n\
-<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}<p><a data-demo-mailbox href=\"{o}/app/mailbox\" target=\"_blank\" rel=\"noopener\">Mailbox</a> <small>(after sign-in: the work waiting for this person)</small></p>\n</li>\n",
+<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}<p><a data-demo-mailbox href=\"{o}/app/mailbox\" target=\"_blank\" rel=\"noopener\">Mailbox</a> <span class=\"muted\">(after sign-in: the work waiting for this person)</span></p>\n</li>\n",
             u = esc(&url),
             w = esc(&who),
             e = esc(&email),

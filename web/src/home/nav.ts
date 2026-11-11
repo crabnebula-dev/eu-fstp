@@ -189,7 +189,7 @@ function fillCount(a: Element): void {
  */
 export function showMailboxCount(n: number): void {
   openCount = n;
-  for (const a of Array.from(document.querySelectorAll(`a[="mailbox"]`))) {
+  for (const a of Array.from(document.querySelectorAll(`a[${MAILBOX}="mailbox"]`))) {
     fillCount(a);
   }
 }

@@ -9,8 +9,8 @@ import { SCHEMAS, VALIDATORS } from "../src/gen/api.js";
 import { HOME_LABELS } from "../src/home/messages.en.js";
 import { WORK_PATHS } from "../src/home/model.js";
 import { MAILBOX_LABELS } from "../src/mailbox/messages.en.js";
-import { M5_ROUTES, MAILBOX_PATHS, MAILBOX_ROUTES, MAIL_KINDS, type MailKind, fills, labelKey, readMailbox, split } from "../src/mailbox/model.js";
-import { readPendingList } from "../src/mailbox/pages.js";
+import { M5_ROUTES, MAILBOX_PATHS, MAILBOX_ROUTES, MAIL_KINDS, type MailKind, fills, labelArgs, labelKey, readMailbox, split } from "../src/mailbox/model.js";
+import { mailboxLabel, readPendingList } from "../src/mailbox/pages.js";
 import { MAILBOX_PAGE_ROUTES } from "../src/mailbox/routes.js";
 import { assert, eq, show, test } from "./support/harness.js";
 import { REPO_DIR, WEB_DIR } from "./support/paths.js";
@@ -155,4 +155,21 @@ test("i85_pending_list_reader", () => {
   eq(r[0]?.request, "{\"x\":\"<b>\"}", "the request text as given");
   eq(readPendingList([{ ...ok[0], digest: "zz" }]), null, "a bad digest");
   eq(readPendingList([{ ...ok[0], status: "gone" }]), null, "a bad status");
+});
+
+/**
+ * R-NF-04: every kind's label formats from a message that names every
+ * id, so the page never throws on an id its label does not use, and the
+ * label names each id it shows.
+ */
+test("r_nf_04_mailbox_every_label_formats_with_every_id", () => {
+  for (const k of MAIL_KINDS) {
+    const b = readMailbox(reply([msg(k, !k.startsWith("notice."))]));
+    assert(b !== null, k);
+    const m = b.messages[0];
+    assert(m !== undefined, k);
+    const key = labelKey(k);
+    const text = String(mailboxLabel(key, labelArgs(m, MAILBOX_LABELS[key] ?? "")));
+    assert(!text.includes("{"), `${k}: ${text}`);
+  }
 });
