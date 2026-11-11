@@ -29,6 +29,22 @@ pub fn proposal_minor_flagged(state: &State, proposal: ProposalId) -> bool {
     crate::proposal::draft::minor_flagged(state, proposal)
 }
 
+/// The plan an amount determination of `proposal` starts from, with its
+/// total (R-NG-03, I-13): the agreed plan of the current determination,
+/// else the effective plan (I-09). `None` before submission. The total
+/// is `None` when the plan sum fails (ADR-006). M5 reads follow-up.
+pub fn determination_plan(
+    state: &State,
+    proposal: ProposalId,
+) -> Option<(crate::id::PlanVersionId, Option<fstp_money::NonNegAmount>)> {
+    let plan = state
+        .money()
+        .determined(proposal)
+        .map(|(p, _)| p)
+        .or_else(|| crate::proposal::intake::effective_plan(state, proposal))?;
+    Some((plan, crate::grant::plan_total(state, plan)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

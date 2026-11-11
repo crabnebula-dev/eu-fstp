@@ -13,7 +13,7 @@ use fstp_domain::id::{
 use fstp_json::{Array, Object, ToJson, Value};
 
 use crate::McpSafe;
-use crate::grant_lists::{GrantRow, MilestoneRow, SignRow};
+use crate::grant_lists::{DeterminationView, GrantRow, MilestoneRow, SignRow};
 
 fn dec(x: u128) -> Value {
     Value::String(x.to_string())
@@ -48,6 +48,8 @@ pub enum GrantModel {
     Grants(Vec<GrantRow>),
     /// `contract.awaiting_me` (M5 reads follow-up).
     ToSign(Vec<SignRow>),
+    /// `grant.determination_view` (R-NG-03).
+    Determination(DeterminationView),
 }
 
 impl ToJson for GrantModel {
@@ -60,6 +62,7 @@ impl ToJson for GrantModel {
             GrantModel::Reports(rows) => array(rows),
             GrantModel::Grants(rows) => array(rows),
             GrantModel::ToSign(rows) => array(rows),
+            GrantModel::Determination(v) => v.to_json(),
         }
     }
 }
@@ -414,5 +417,21 @@ pub(crate) fn samples() -> Vec<GrantModel> {
             digest: Some("00".repeat(32)),
         }]),
         GrantModel::ToSign(Vec::new()),
+        GrantModel::Determination(DeterminationView {
+            proposal: ProposalId::from_raw(3),
+            state: "NEGOTIATION",
+            determination: Some(4),
+            plan: Some(fstp_domain::id::PlanVersionId::from_raw(6)),
+            plan_total: Some("1000.00".to_owned()),
+            granted: Some("900.00".to_owned()),
+        }),
+        GrantModel::Determination(DeterminationView {
+            proposal: ProposalId::from_raw(3),
+            state: "NEGOTIATION",
+            determination: None,
+            plan: None,
+            plan_total: None,
+            granted: None,
+        }),
     ]
 }

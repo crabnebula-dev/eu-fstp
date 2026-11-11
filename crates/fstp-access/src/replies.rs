@@ -523,6 +523,19 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("via", Shape::Enum(GRANT_VIA)),
         ])),
     ),
+    // Lead, 2026-11-12: what an amount determination needs, for the
+    // assigned reviewer (R-NG-03). No paid sum, contract or request.
+    (
+        "grant.determination_view",
+        Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("state", Shape::Enum(STATE_NAMES)),
+            m("determination", Shape::Nullable(&Shape::Id)),
+            m("plan", Shape::Nullable(&Shape::Id)),
+            m("plan_total", Shape::Nullable(&Shape::Amount)),
+            m("granted", Shape::Nullable(&Shape::Amount)),
+        ]),
+    ),
     (
         "contract.awaiting_me",
         Shape::Array(&Shape::Object(&[

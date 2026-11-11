@@ -117,3 +117,38 @@ impl ToJson for SignRow {
         Value::Object(o)
     }
 }
+
+/// What an amount determination of one proposal needs, for its assigned
+/// reviewer (R-NG-03). I-86: no paid sum, contract, request or account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeterminationView {
+    /// The proposal.
+    pub proposal: ProposalId,
+    /// The proposal state, as the state machine names it.
+    pub state: &'static str,
+    /// The current amount determination, if any.
+    pub determination: Option<u128>,
+    /// The plan the determination starts from: the agreed plan of the
+    /// current determination, else the effective plan (I-09).
+    pub plan: Option<fstp_domain::id::PlanVersionId>,
+    /// That plan's total (I-13).
+    pub plan_total: Option<String>,
+    /// The granted amount of the current determination.
+    pub granted: Option<String>,
+}
+
+impl ToJson for DeterminationView {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("proposal", dec(self.proposal.raw()));
+        let _ = o.insert("state", Value::from(self.state));
+        let _ = o.insert("determination", nullable(self.determination, dec));
+        let _ = o.insert("plan", nullable(self.plan, |p| dec(p.raw())));
+        let _ = o.insert(
+            "plan_total",
+            nullable(self.plan_total.as_deref(), Value::from),
+        );
+        let _ = o.insert("granted", nullable(self.granted.as_deref(), Value::from));
+        Value::Object(o)
+    }
+}

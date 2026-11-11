@@ -1719,6 +1719,7 @@ pub(crate) mod reply_shape_tests {
                 crate::grant::GrantModel::Reports(_) => &["report.list"],
                 crate::grant::GrantModel::Grants(_) => &["grant.list_mine"],
                 crate::grant::GrantModel::ToSign(_) => &["contract.awaiting_me"],
+                crate::grant::GrantModel::Determination(_) => &["grant.determination_view"],
             },
         }
     }

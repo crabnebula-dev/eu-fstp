@@ -366,3 +366,98 @@ fn r_pr_07_i58_overview_milestones_are_the_cells_sums() {
             .is_err()
     );
 }
+
+/// R-NG-03, R-AC-01, I-03, R-CF-02, I-86: in NEGOTIATION the assigned
+/// reviewer reads the determination view of X. The view names the plan
+/// the determination starts from and nothing about money paid, the
+/// contract or requests. An unassigned committee member, an undeclared
+/// and a conflicted reviewer, the lead and the programme manager are
+/// refused. After the determination the view names it, and the domain
+/// accepts the plan it named.
+#[test]
+fn r_ng_03_assigned_reviewer_reads_the_determination_view() {
+    let w = world(StateTag::Negotiation);
+    let x = w.targets.proposal.expect("X");
+    let plan = w.targets.plan.expect("plan");
+    let mut seed = seeder(w);
+    let path = format!("/grants/{}/determination", x.raw());
+    let v = read(&mut seed, REVIEWER, &path);
+    let keys: Vec<String> = v
+        .as_object()
+        .expect("an object")
+        .iter()
+        .map(|(k, _)| k.to_owned())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "proposal",
+            "state",
+            "determination",
+            "plan",
+            "plan_total",
+            "granted"
+        ],
+        "I-86: only what the determination needs"
+    );
+    assert_eq!(str_member(&v, "state").as_deref(), Some("NEGOTIATION"));
+    assert_eq!(str_member(&v, "plan"), Some(plan.to_string()));
+    assert!(str_member(&v, "plan_total").is_some(), "the plan total");
+    let refused = |seed: &mut Seeder, who: AccountId| -> String {
+        seed.api(who, GET, &path, &Value::Null)
+            .expect_err("refused")
+    };
+    assert!(refused(&mut seed, MEMBER).contains("R-AC-01"), "unassigned");
+    assert!(
+        refused(&mut seed, REVIEWER_UNDECLARED).contains("R-CF-02"),
+        "undeclared"
+    );
+    assert!(
+        refused(&mut seed, REVIEWER_CONFLICTED).contains("I-03"),
+        "conflicted: {}",
+        refused(&mut seed, REVIEWER_CONFLICTED)
+    );
+    for who in [LEAD, PM, REVIEWER_RELEASED, UNBOUND] {
+        assert!(refused(&mut seed, who).contains("R-AC-01"), "{who:?}");
+    }
+    seed.api(
+        REVIEWER,
+        POST,
+        &format!("/grants/{}/amount-determination", x.raw()),
+        &obj(vec![
+            ("agreed", s(&str_member(&v, "plan").unwrap())),
+            ("deductions", Value::Array(Array::new())),
+            ("currency", s("EUR")),
+        ]),
+    )
+    .unwrap();
+    let after = read(&mut seed, REVIEWER, &path);
+    assert!(str_member(&after, "determination").is_some());
+    assert_eq!(
+        str_member(&after, "granted"),
+        str_member(&after, "plan_total")
+    );
+}
+
+/// R-NG-03, D11: outside NEGOTIATION the assigned reviewer reads no
+/// determination view.
+#[test]
+fn r_ng_03_d11_determination_view_is_closed_outside_negotiation() {
+    for state in [StateTag::Stage2, StateTag::InExecution, StateTag::Completed] {
+        let w = world(state);
+        let x = w.targets.proposal.expect("X");
+        let mut seed = seeder(w);
+        let e = seed
+            .api(
+                REVIEWER,
+                GET,
+                &format!("/grants/{}/determination", x.raw()),
+                &Value::Null,
+            )
+            .expect_err("closed");
+        assert!(
+            e.contains("R-AC-01") || e.contains("I-03"),
+            "{state:?}: {e}"
+        );
+    }
+}

@@ -1790,6 +1790,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::ListMyGrants | ReadKind::ListMyContractsToSign => {
             ReadModel::Grant(grant_lists::read(call, kind).map_err(|e| call.refuse(e))?)
         }
+        // Lead, 2026-11-12: the assigned reviewer's determination view (R-NG-03).
+        ReadKind::GetDetermination => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Grant(grant_lists::determination(call, p))
+        }
         // M6 lane L6-API, M6 design section 6: the tenant admin's mail
         // relay and delivery log.
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,

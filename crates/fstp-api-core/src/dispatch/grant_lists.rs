@@ -158,3 +158,22 @@ fn to_sign<P: Seams>(call: &Call<'_, P>, account: AccountId) -> Vec<SignRow> {
     }
     out
 }
+
+/// `grant.determination_view` of `p`, after `authorize_read` cleared it
+/// for the assigned reviewer in NEGOTIATION (R-NG-03).
+pub(super) fn determination<P: Seams>(call: &Call<'_, P>, p: ProposalId) -> GrantModel {
+    let core = &call.state.core;
+    let basis = fstp_domain::view::determination_plan(core, p);
+    GrantModel::Determination(crate::grant_lists::DeterminationView {
+        proposal: p,
+        state: fstp_domain::view::proposal_state(core, p)
+            .map_or("UNKNOWN", fstp_domain::StateTag::spec_name),
+        determination: core.money().determination(p).map(|d| d.raw()),
+        plan: basis.map(|(plan, _)| plan),
+        plan_total: basis.and_then(|(_, t)| t).map(|t| t.amount().to_string()),
+        granted: core
+            .money()
+            .determined(p)
+            .map(|(_, g)| g.amount().to_string()),
+    })
+}

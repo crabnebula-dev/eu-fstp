@@ -210,6 +210,7 @@ export type OpName =
   | "payment.queue"
   | "grant.list_mine"
   | "contract.awaiting_me"
+  | "grant.determination_view"
   | "grant.determine_amount"
   | "grant.accept"
   | "grant.approve"
@@ -429,6 +430,7 @@ export interface OpParams {
   readonly "payment.queue": Readonly<Record<never, string>>;
   readonly "grant.list_mine": Readonly<Record<never, string>>;
   readonly "contract.awaiting_me": Readonly<Record<never, string>>;
+  readonly "grant.determination_view": { readonly "proposal": string };
   readonly "grant.determine_amount": { readonly "proposal": string };
   readonly "grant.accept": { readonly "proposal": string };
   readonly "grant.approve": { readonly "proposal": string };
@@ -621,6 +623,7 @@ export const OP_NAMES: readonly OpName[] = [
   "payment.queue",
   "grant.list_mine",
   "contract.awaiting_me",
+  "grant.determination_view",
   "grant.determine_amount",
   "grant.accept",
   "grant.approve",
@@ -2842,6 +2845,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "grant.determination_view",
+    method: "GET",
+    path: "/grants/{proposal}/determination",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "determination" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "grant.determine_amount",
     method: "POST",
     path: "/grants/{proposal}/amount-determination",
@@ -3451,6 +3468,17 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "via": { schema: { kind: "enum", values: ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
     },
   } },
+  "grant.determination_view": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+      "determination": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "plan": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "plan_total": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+      "granted": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+    },
+  },
   "contract.awaiting_me": { kind: "array", items: {
     kind: "object",
     fields: {

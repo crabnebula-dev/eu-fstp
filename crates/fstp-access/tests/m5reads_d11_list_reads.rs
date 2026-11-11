@@ -87,3 +87,48 @@ fn r_pr_07_overview_reply_names_plan_and_milestones() {
         );
     }
 }
+
+/// R-NG-03, D11, R-AC-01, I-03, R-CF-02: the determination view is the
+/// assigned reviewer's alone, declared free of conflict, and open only in
+/// NEGOTIATION. Every other state is a judged refusal. It is web only,
+/// as `grant.determine_amount` is (I-85), and its reply carries only what
+/// the determination needs.
+#[test]
+fn r_ng_03_d11_determination_view_is_the_assigned_reviewers_in_negotiation() {
+    let (rule, open) = read_rule(ReadKind::GetDetermination).expect("a rule");
+    assert_eq!(rule, ReadRule::ProposalReviewer);
+    assert_eq!(open, &[StateTag::Negotiation]);
+    assert!(ReadKind::ALL.contains(&ReadKind::GetDetermination));
+    let spec = op("grant.determination_view").expect("in the registry");
+    assert_eq!(spec.kind, OpKind::Read(ReadKind::GetDetermination));
+    assert_eq!(
+        spec.route.map(|(_, p)| p),
+        Some("/grants/{proposal}/determination")
+    );
+    assert!(
+        spec.tool.is_none(),
+        "I-85: the determination view has a tool"
+    );
+    let text = format!("{:?}", reply("grant.determination_view").expect("a shape"));
+    for member in [
+        "\"plan\"",
+        "\"plan_total\"",
+        "\"determination\"",
+        "\"granted\"",
+    ] {
+        assert!(text.contains(member), "lacks {member}: {text}");
+    }
+    for leak in [
+        "\"paid\"",
+        "\"contract\"",
+        "\"requests\"",
+        "\"milestones\"",
+        "account",
+        "bank",
+    ] {
+        assert!(
+            !text.contains(leak),
+            "the determination view names {leak}: {text}"
+        );
+    }
+}

@@ -1948,6 +1948,14 @@ pub const OPS: &[OpSpec] = &[
         RK::ListMyContractsToSign,
         "/me/contracts-awaiting-signature",
     ),
+    // Lead, 2026-11-12: the assigned reviewer's determination view (R-NG-03).
+    // Web only, as `grant.determine_amount` is (I-85).
+    OpSpec::read(
+        "grant.determination_view",
+        RK::GetDetermination,
+        "/grants/{proposal}/determination",
+    )
+    .acting(REVIEWER),
     OpSpec::command(
         "grant.determine_amount",
         CK::DetermineAmount,
