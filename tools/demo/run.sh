@@ -7,6 +7,10 @@
 # Usage: tools/demo/run.sh [start]          build, start, seed the default stage
 #        tools/demo/run.sh seed review <stage>
 #        tools/demo/run.sh seed applicant <at>
+#        tools/demo/run.sh seed grant <scene>   the post-grant lifecycle (M5)
+#        tools/demo/run.sh clock <to>           grant clock: milestone_start p36
+#                                               due_minus_14 due due_plus_7
+#        tools/demo/run.sh forge-fail           the fake forge answers 404 once
 #        tools/demo/run.sh reset            a fresh cell with its first admin link
 #        tools/demo/run.sh advance <minutes>
 #        tools/demo/run.sh mail <email>
@@ -16,6 +20,9 @@
 # Review stages:   submitted stage1 stage1_scored stage2 ranked ranked_tie irc_review
 # Applicant states: OPEN_CALL STAGE2 IRC_REVIEW_MINOR NEGOTIATION NOT_SELECTED
 #                   DEFERRED_AFTER_CONCERN INELIGIBLE
+# Grant scenes:    NEGOTIATION_READY SENT EFFECTIVE IN_EXECUTION UNDER_REVIEW PAID
+#                   ALL_CLOSED (x from negotiation to a closed grant with its
+#                   funder reports, through the real operations)
 #
 # Every seed replaces the cell's state and prints one-time enrolment links
 # for its people. Open a link in Chromium or Chrome to enrol a passkey and
@@ -48,7 +55,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
   exit 64
 }
 
@@ -75,6 +82,15 @@ show() {
         }
         return;
       }
+      if (v.grant_at) {
+        console.log("Grant scene " + v.grant_at + ": proposal " + v.proposal + ", " + v.title);
+        console.log("  agreed plan " + v.plan + ", milestone " + v.milestone + " (for the determination and payment forms)");
+        if (v.contract) console.log("  contract " + v.contract);
+        if (v.request) console.log("  payment request " + v.request);
+        for (const r of v.reports) console.log("  funder report " + r.report + " (" + r.kind + ")");
+        console.log("  open " + process.argv[2] + "/demo and choose Sign in as for each person");
+        return;
+      }
       if (v.at) {
         console.log("Call " + v.call.id + ": " + v.call.title + ", deadline " + v.call.deadline);
         if (v.lead) console.log("  lead      " + v.lead.enrol_url);
@@ -82,7 +98,7 @@ show() {
         if (v.proposal) console.log("  proposal " + v.proposal + ": " + v.title);
         if (v.at === "OPEN_CALL") console.log("  applicants sign up at " + process.argv[1] + "/auth/signup");
       }
-    });' "$ORIGIN"
+    });' "$ORIGIN" "$CONTROL"
 }
 
 control() {
@@ -152,6 +168,7 @@ seed() {
   case $kind in
     review) control POST /test/scenario/review "{\"stage\":\"$what\"}" | show ;;
     applicant) control POST /test/scenario/applicant "{\"at\":\"$what\"}" | show ;;
+    grant) control POST /test/scenario/grant "{\"at\":\"$what\"}" | show ;;
     *) usage ;;
   esac
 }
@@ -160,6 +177,15 @@ case ${1:-start} in
   start) start ;;
   seed) shift; seed "$@" ;;
   reset) control POST /test/reset | show ;;
+  clock)
+    [[ -n ${2:-} ]] || usage
+    curl -fsS -o /dev/null "$CONTROL/demo/clock?to=$2"
+    echo "clock moved to $2"
+    ;;
+  forge-fail)
+    curl -fsS -o /dev/null "$CONTROL/demo/forge/fail"
+    echo "the next submission checks fail on the forge 404"
+    ;;
   advance)
     [[ ${2:-} =~ ^[0-9]+$ ]] || usage
     control POST /test/clock/advance "{\"micros\":\"$(($2 * 60 * 1000000))\"}"

@@ -89,6 +89,12 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
     if !allowed(site, &req) {
         return wire::refuse(StatusCode::FORBIDDEN, "control");
     }
+    if let Some(r) = crate::grantdemo::forge(&req) {
+        return r;
+    }
+    if let Some(r) = crate::maildemo::route(&req) {
+        return r;
+    }
     let path = req.target.path().to_owned();
     let done = match path.as_str() {
         "/demo" | "/demo/" => return page(site),
@@ -115,6 +121,20 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
             }
             _ => return wire::bad("at"),
         },
+        "/demo/grant" => match wire::query_param(&req, "at") {
+            Some(a) if scenario::postgrant::SCENES.contains(&a.as_str()) => {
+                scenario::postgrant::demo(site, &a).await
+            }
+            _ => return wire::bad("at"),
+        },
+        "/demo/clock" => match wire::query_param(&req, "to") {
+            Some(t) => crate::grantdemo::clock_to(&site.inner(), &t),
+            None => return wire::bad("to"),
+        },
+        "/demo/forge/fail" => {
+            crate::pump::arm_forge_failure();
+            Ok(())
+        }
         "/demo/advance" => {
             match wire::query_param(&req, "minutes").and_then(|m| m.parse::<i64>().ok()) {
                 Some(m) if (1..=10_080).contains(&m) => {
@@ -220,6 +240,12 @@ pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
                 .to_owned(),
         );
     }
+    if account == scenario::postgrant::REPORT_APPROVER {
+        parts.push(
+            "Financial signatory: approve each funder report that the programme manager generated."
+                .to_owned(),
+        );
+    }
     let roster = core.roster();
     let mut staff: BTreeSet<Role> = BTreeSet::new();
     let mut managed: BTreeSet<ProgrammeId> = BTreeSet::new();
@@ -307,6 +333,10 @@ pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
                 "IRC member: {}.",
                 tally(true).say("IRC case", "IRC cases", "to declare first, then validate or raise a concern")
             ),
+            Role::FinanceApprover => "Finance approver: approve payment requests, verify bank details and hardship evidence on the operations home page.".to_owned(),
+            Role::PaymentReleaser => "Payment releaser: release approved payments after the bank hold, and open the payee page.".to_owned(),
+            Role::ContractSignatory => "Contract signatory: countersign each contract the lead signed.".to_owned(),
+            Role::Auditor => "Auditor: read the audit log, the contracts and the funder reports.".to_owned(),
             other => format!(
                 "{}: this release has no page for this role yet.",
                 fstp_access::role_wire_name(other)
@@ -342,6 +372,9 @@ pub(crate) fn roles_of(inner: &Inner, account: AccountId) -> String {
     if inner.ports.tenant.holds_admin(account) {
         words.push("Tenant admin");
     }
+    if account == scenario::postgrant::REPORT_APPROVER {
+        words.push("Financial signatory");
+    }
     let roster = state.core.roster();
     let mut roles: BTreeSet<Role> = BTreeSet::new();
     let mut receiving: BTreeSet<Role> = BTreeSet::new();
@@ -367,6 +400,10 @@ pub(crate) fn roles_of(inner: &Inner, account: AccountId) -> String {
             Role::CommitteeMember => "Committee member",
             Role::CommitteeChair => "Committee chair",
             Role::IrcMember => "IRC member",
+            Role::FinanceApprover => "Finance approver",
+            Role::PaymentReleaser => "Payment releaser",
+            Role::ContractSignatory => "Contract signatory",
+            Role::Auditor => "Auditor",
             _ => "Staff role without a page yet",
         });
     }
@@ -495,12 +532,13 @@ fn page(site: &Site) -> Response {
         people.push_str(&format!(
             "<li class=\"card person\"><p class=\"person-name\"><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small></p>\n\
 <p><span data-demo-does>{n}</span></p>\n\
-<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}</li>\n",
+<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}{pmail}</li>\n",
             u = esc(&url),
             w = esc(&who),
             e = esc(&email),
             r = esc(&roles_of(&inner, account)),
             n = esc(&short_line(&inner, account)),
+            pmail = crate::maildemo::person_html(&inner, &email),
         ));
     }
     let auth = lock(&inner.auth);
@@ -531,6 +569,15 @@ fn page(site: &Site) -> Response {
         .iter()
         .map(|a| format!("<a href=\"/demo/applicant?at={a}\">{a}</a> "))
         .collect();
+    let grant: String = scenario::postgrant::SCENES
+        .iter()
+        .map(|g| format!("<a href=\"/demo/grant?at={g}\">{g}</a> "))
+        .collect();
+    let clocks: String = crate::grantdemo::CLOCK_LINKS
+        .iter()
+        .map(|(k, t)| format!("<a href=\"/demo/clock?to={k}\">{t}</a> "))
+        .collect();
+    let mailbox = crate::maildemo::section_html(&inner);
     let origin = esc(&site.info.origin);
     let public = public_calls_path(&inner)
         .map(|p| {
@@ -563,8 +610,12 @@ Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refr
 <h2>Messages the cell sent</h2>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\
 <p>Review: {review}</p>\n<p>Applicant: {applicant}</p>\n\
+<p>Grant (post-grant lifecycle): {grant}</p>\n\
 <p><a href=\"/demo/reset\">Reset</a> (an empty cell and its first tenant admin)</p>\n\
 <p>Clock: <a href=\"/demo/advance?minutes=60\">+60 minutes</a> <a href=\"/demo/advance?minutes=1440\">+1 day</a></p>\n\
+<p>Grant clock: {clocks}</p>\n\
+<p>Fake forge: <a href=\"/demo/forge/synthetic-sensor-kit\">the public repository</a> | <a href=\"/demo/forge/fail\">Make the next checks fail (the forge answers 404 once)</a></p>\n\
+{mailbox}\
 </main>\n</body></html>\n",
         name = esc(site.info.name),
     );
