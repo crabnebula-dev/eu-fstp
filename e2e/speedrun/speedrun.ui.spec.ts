@@ -60,16 +60,17 @@ test.describe('speedrun through the screens', () => {
   });
 
   /**
-   * The reviewer reaches the grants list from the home page. The grant
-   * page itself answers R-AC-01 for a reviewer, because `GRANT_READERS`
-   * of the registry lists no reviewer. The amount determination is
-   * therefore not reachable from a screen yet: reported to the lead in
-   * `docs/handoff/m5-demo.md`. The wire step is in `speedrun.api.spec.ts`.
+   * R-NG-03: the reviewer reaches the grants list from the home page, then
+   * the grant under "Grants you review". The overview is refused to a
+   * reviewer, so the page reads `grant.determination_view` and shows the
+   * determination form (M5 reads follow-up, `docs/handoff/m5-ui.md`).
    */
   test('ui_reviewer_reaches_the_grants_list', async ({ browser }) => {
     const cell = await chooseGrantScene(browser, 'NEGOTIATION_READY');
     const r1 = await Seat.signIn(browser, cell, WHO.reviewer);
     await click(r1.page, '#home-work a[data-work="grants"]', /\/app\/grants$/);
+    await click(r1.page, `a[href="/app/grants/${X}"]`, new RegExp(`/app/grants/${X}$`));
+    await expect(r1.page.locator('#grant-determine-form')).toBeVisible();
     await r1.close();
   });
 

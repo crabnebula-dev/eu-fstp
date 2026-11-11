@@ -8,10 +8,11 @@
 // formatted. The browser never computes money (ADR-006, I-86): a body
 // carries the amount the person typed, and the cell decides.
 //
-// Interim, pending the lead: `grant.overview` does not yet name the
-// agreed plan or the milestones of the plan (`docs/handoff/m5-ui.md`).
-// The decoder reads both when the cell sends them (`plan`,
-// `milestones`) and the pages ask for the numbers otherwise.
+// M5 reads follow-up: `grant.overview` names the plan and its milestones
+// with the cell's paid, pending and available sums (R-PR-07, I-58). The
+// decoder still accepts an overview without them, and the pages then ask
+// for the numbers. `grant.list_mine` and `contract.awaiting_me` list the
+// caller's grants and the contracts awaiting the caller's signature.
 
 import { parseAmount } from "../core/money.js";
 
@@ -77,6 +78,12 @@ export interface MilestoneInfo {
   readonly amount: string;
   readonly paid: string | null;
   readonly due: string | null;
+  /** What pending requests hold, as the cell computed it. */
+  readonly pending: string | null;
+  /** What a new request may still claim (I-58), as the cell computed it. */
+  readonly available: string | null;
+  /** Whether the programme manager closed the milestone. */
+  readonly closed: boolean;
 }
 
 /** `grant.overview`. */
@@ -100,10 +107,13 @@ function milestoneInfo(v: unknown): MilestoneInfo | null {
   }
   const paid = nullOr(o["paid"], amount);
   const due = nullOr(o["due"], text);
-  if (paid === undefined || due === undefined) {
+  const pending = o["pending"] === undefined ? null : nullOr(o["pending"], amount);
+  const available = o["available"] === undefined ? null : nullOr(o["available"], amount);
+  const closed = o["closed"] === undefined ? false : o["closed"];
+  if (paid === undefined || due === undefined || pending === undefined || available === undefined || typeof closed !== "boolean") {
     return null;
   }
-  return Object.freeze({ milestone: o["milestone"], amount: o["amount"], paid, due });
+  return Object.freeze({ milestone: o["milestone"], amount: o["amount"], paid, due, pending, available, closed });
 }
 
 /** Decodes `grant.overview`. */
@@ -131,6 +141,100 @@ export function decodeOverview(v: unknown): Overview | null {
     agreedPlan: plan,
     milestones: ms,
   });
+}
+
+// grant.list_mine and contract.awaiting_me (M5 reads follow-up)
+// ---------------------------------------------------------------------------
+
+/** Why a grant is in the caller's list: the rule of `grant.overview` that admits the caller. */
+export const GRANT_VIA = ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] as const;
+export type GrantVia = (typeof GRANT_VIA)[number];
+
+/** One grant of `grant.list_mine`. */
+export interface GrantRow {
+  readonly proposal: string;
+  readonly call: string | null;
+  readonly state: string;
+  readonly amount: string | null;
+  readonly paid: string;
+  readonly contract: string | null;
+  readonly via: GrantVia;
+}
+
+function grantRow(v: unknown): GrantRow | null {
+  const o = rec(v);
+  if (o === null || !isIdText(o["proposal"]) || !text(o["state"]) || !amount(o["paid"])) {
+    return null;
+  }
+  const via = o["via"];
+  const call = nullOr(o["call"], isIdText);
+  const amt = nullOr(o["amount"], amount);
+  const contract = nullOr(o["contract"], isIdText);
+  if (typeof via !== "string" || !(GRANT_VIA as readonly string[]).includes(via) || call === undefined || amt === undefined || contract === undefined) {
+    return null;
+  }
+  return Object.freeze({ proposal: o["proposal"], call, state: o["state"], amount: amt, paid: o["paid"], contract, via: via as GrantVia });
+}
+
+/** Decodes `grant.list_mine`. */
+export function decodeGrantList(v: unknown): readonly GrantRow[] | null {
+  return each(v, grantRow);
+}
+
+/** One contract version awaiting the caller's signature (`contract.awaiting_me`). */
+export interface ToSignRow {
+  readonly proposal: string;
+  readonly contract: string;
+  readonly version: number;
+  readonly field: string;
+  readonly role: string;
+  readonly state: "sent" | "signed_by_grantee";
+  readonly digest: string | null;
+}
+
+function toSignRow(v: unknown): ToSignRow | null {
+  const o = rec(v);
+  if (o === null || !isIdText(o["proposal"]) || !isIdText(o["contract"]) || !count(o["version"]) || !text(o["field"]) || !text(o["role"])) {
+    return null;
+  }
+  const state = o["state"];
+  const digest = nullOr(o["digest"], hex64);
+  if ((state !== "sent" && state !== "signed_by_grantee") || digest === undefined) {
+    return null;
+  }
+  return Object.freeze({ proposal: o["proposal"], contract: o["contract"], version: o["version"], field: o["field"], role: o["role"], state, digest });
+}
+
+/** `grant.determination_view`: what the assigned reviewer needs to determine the amount (R-NG-03). */
+export interface DeterminationView {
+  readonly proposal: string;
+  readonly state: string;
+  readonly determination: string | null;
+  /** The plan the determination starts from, as `agreedPlan` of the overview. */
+  readonly agreedPlan: string | null;
+  readonly planTotal: string | null;
+  readonly granted: string | null;
+}
+
+/** Decodes `grant.determination_view`. */
+export function decodeDetermination(v: unknown): DeterminationView | null {
+  const o = rec(v);
+  if (o === null || !isIdText(o["proposal"]) || !text(o["state"])) {
+    return null;
+  }
+  const determination = nullOr(o["determination"], isIdText);
+  const plan = nullOr(o["plan"], isIdText);
+  const total = nullOr(o["plan_total"], amount);
+  const granted = nullOr(o["granted"], amount);
+  if (determination === undefined || plan === undefined || total === undefined || granted === undefined) {
+    return null;
+  }
+  return Object.freeze({ proposal: o["proposal"], state: o["state"], determination, agreedPlan: plan, planTotal: total, granted });
+}
+
+/** Decodes `contract.awaiting_me`. */
+export function decodeToSign(v: unknown): readonly ToSignRow[] | null {
+  return each(v, toSignRow);
 }
 
 // ---------------------------------------------------------------------------

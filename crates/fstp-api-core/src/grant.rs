@@ -13,6 +13,7 @@ use fstp_domain::id::{
 use fstp_json::{Array, Object, ToJson, Value};
 
 use crate::McpSafe;
+use crate::grant_lists::{DeterminationView, GrantRow, MilestoneRow, SignRow};
 
 fn dec(x: u128) -> Value {
     Value::String(x.to_string())
@@ -34,7 +35,7 @@ fn array<T: ToJson>(items: &[T]) -> Value {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GrantModel {
     /// `grant.overview`.
-    Overview(GrantOverview),
+    Overview(Box<GrantOverview>),
     /// `contract.view`.
     Contract(ContractView),
     /// `payment.status`.
@@ -43,6 +44,12 @@ pub enum GrantModel {
     Queue(Vec<QueueRow>),
     /// `report.list`.
     Reports(Vec<ReportRow>),
+    /// `grant.list_mine` (M5 reads follow-up).
+    Grants(Vec<GrantRow>),
+    /// `contract.awaiting_me` (M5 reads follow-up).
+    ToSign(Vec<SignRow>),
+    /// `grant.determination_view` (R-NG-03).
+    Determination(DeterminationView),
 }
 
 impl ToJson for GrantModel {
@@ -53,6 +60,9 @@ impl ToJson for GrantModel {
             GrantModel::Payments(rows) => array(rows),
             GrantModel::Queue(rows) => array(rows),
             GrantModel::Reports(rows) => array(rows),
+            GrantModel::Grants(rows) => array(rows),
+            GrantModel::ToSign(rows) => array(rows),
+            GrantModel::Determination(v) => v.to_json(),
         }
     }
 }
@@ -76,6 +86,11 @@ pub struct GrantOverview {
     pub contract: Option<ContractId>,
     /// The number of payment requests.
     pub requests: u32,
+    /// The plan of the effective contract, else the agreed plan of the
+    /// current determination (M5 reads follow-up).
+    pub plan: Option<fstp_domain::id::PlanVersionId>,
+    /// The plan's milestones with the cell's sums (R-PR-07, I-58).
+    pub milestones: Vec<MilestoneRow>,
 }
 
 impl ToJson for GrantOverview {
@@ -88,6 +103,8 @@ impl ToJson for GrantOverview {
         let _ = o.insert("paid", Value::from(self.paid.as_str()));
         let _ = o.insert("contract", nullable(self.contract, |c| dec(c.raw())));
         let _ = o.insert("requests", Value::from(self.requests));
+        let _ = o.insert("plan", nullable(self.plan, |p| dec(p.raw())));
+        let _ = o.insert("milestones", array(&self.milestones));
         Value::Object(o)
     }
 }
@@ -302,7 +319,7 @@ pub(crate) fn samples() -> Vec<GrantModel> {
         }],
     };
     vec![
-        GrantModel::Overview(GrantOverview {
+        GrantModel::Overview(Box::new(GrantOverview {
             proposal: ProposalId::from_raw(3),
             state: "GRANTED",
             determination: Some(4),
@@ -310,8 +327,18 @@ pub(crate) fn samples() -> Vec<GrantModel> {
             paid: "0.00".to_owned(),
             contract: Some(ContractId::from_raw(5)),
             requests: 1,
-        }),
-        GrantModel::Overview(GrantOverview {
+            plan: Some(fstp_domain::id::PlanVersionId::from_raw(6)),
+            milestones: vec![MilestoneRow {
+                milestone: MilestoneId::from_raw(9),
+                amount: "1000.00".to_owned(),
+                due: "2027-03-01".to_owned(),
+                paid: "0.00".to_owned(),
+                pending: "100.00".to_owned(),
+                available: "900.00".to_owned(),
+                closed: false,
+            }],
+        })),
+        GrantModel::Overview(Box::new(GrantOverview {
             proposal: ProposalId::from_raw(3),
             state: "NEGOTIATION",
             determination: None,
@@ -319,7 +346,9 @@ pub(crate) fn samples() -> Vec<GrantModel> {
             paid: "0.00".to_owned(),
             contract: None,
             requests: 0,
-        }),
+            plan: None,
+            milestones: Vec::new(),
+        })),
         GrantModel::Contract(ContractView {
             proposal: ProposalId::from_raw(3),
             contract: Some(ContractId::from_raw(5)),
@@ -359,5 +388,50 @@ pub(crate) fn samples() -> Vec<GrantModel> {
             generated_by_me: false,
             approved: false,
         }]),
+        GrantModel::Grants(vec![GrantRow {
+            proposal: ProposalId::from_raw(3),
+            call: Some(CallId::from_raw(2)),
+            state: "IN_EXECUTION",
+            amount: Some("1000.00".to_owned()),
+            paid: "0.00".to_owned(),
+            contract: Some(ContractId::from_raw(5)),
+            via: "programme_manager",
+        }]),
+        GrantModel::Grants(vec![GrantRow {
+            proposal: ProposalId::from_raw(3),
+            call: None,
+            state: "NEGOTIATION",
+            amount: None,
+            paid: "0.00".to_owned(),
+            contract: None,
+            via: "team",
+        }]),
+        GrantModel::Grants(Vec::new()),
+        GrantModel::ToSign(vec![SignRow {
+            proposal: ProposalId::from_raw(3),
+            contract: ContractId::from_raw(5),
+            version: 1,
+            field: "signatory".to_owned(),
+            role: "signatory",
+            state: "signed_by_grantee",
+            digest: Some("00".repeat(32)),
+        }]),
+        GrantModel::ToSign(Vec::new()),
+        GrantModel::Determination(DeterminationView {
+            proposal: ProposalId::from_raw(3),
+            state: "NEGOTIATION",
+            determination: Some(4),
+            plan: Some(fstp_domain::id::PlanVersionId::from_raw(6)),
+            plan_total: Some("1000.00".to_owned()),
+            granted: Some("900.00".to_owned()),
+        }),
+        GrantModel::Determination(DeterminationView {
+            proposal: ProposalId::from_raw(3),
+            state: "NEGOTIATION",
+            determination: None,
+            plan: None,
+            plan_total: None,
+            granted: None,
+        }),
     ]
 }

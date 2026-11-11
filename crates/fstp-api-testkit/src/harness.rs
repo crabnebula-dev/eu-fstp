@@ -4671,3 +4671,8 @@ mod m5_api_tests {
         );
     }
 }
+
+/// The M5 reads follow-up through the API (`docs/handoff/m5-ui.md`).
+#[cfg(test)]
+#[path = "harness_m5_reads.rs"]
+mod m5_reads_tests;

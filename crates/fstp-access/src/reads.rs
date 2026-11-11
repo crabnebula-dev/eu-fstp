@@ -166,11 +166,18 @@ pub enum ReadKind {
     ListDeliveries,
     GetMailRelay,
     GetProgrammeTimeline,
+    // M5 reads follow-up: the caller's own grants and the contracts
+    // awaiting the caller's signature (module documentation).
+    ListMyGrants,
+    ListMyContractsToSign,
+    // M5 reads follow-up (lead, 2026-11-12): the assigned reviewer's view
+    // of what an amount determination needs (R-NG-03).
+    GetDetermination,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 59] = [
+    pub const ALL: [ReadKind; 62] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -230,6 +237,9 @@ impl ReadKind {
         ReadKind::ListDeliveries,
         ReadKind::GetMailRelay,
         ReadKind::GetProgrammeTimeline,
+        ReadKind::ListMyGrants,
+        ReadKind::ListMyContractsToSign,
+        ReadKind::GetDetermination,
     ];
 }
 
@@ -286,6 +296,11 @@ pub enum ReadRule {
     TenantAdmin,
     /// The caller's own objects only.
     Own,
+    /// The caller's own reviewer assignment of the target proposal,
+    /// declared free of conflict, over an active reviewer binding in its
+    /// programme (R-NG-03, R-CF-02, I-03). Unlike `AssignedReviewer`, the
+    /// target is the proposal, not the assignment.
+    ProposalReviewer,
     /// Any one of these rules.
     AnyOf(&'static [ReadRule]),
 }
@@ -521,6 +536,21 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadKind::GetProgrammeTimeline,
         ReadRule::Holder(Role::ProgrammeManager),
         OPEN_ALWAYS,
+    ),
+    // M5 reads follow-up: the caller's own lists. The dispatch keeps
+    // only the grants `GetGrant` and the contracts `GetContract` would
+    // serve the caller, judging each with `authorize_read`, so neither
+    // list widens those reads (R-AC-01, SoD, programme scope).
+    (ReadKind::ListMyGrants, ReadRule::Own, OPEN_ALWAYS),
+    (ReadKind::ListMyContractsToSign, ReadRule::Own, OPEN_ALWAYS),
+    // M5 reads follow-up (lead, 2026-11-12): R-NG-03 has the assigned
+    // reviewers set the amount, so they read what the determination
+    // needs, in NEGOTIATION only. Every other state is a judged refusal.
+    // `GRANT_READER` stays as it is.
+    (
+        ReadKind::GetDetermination,
+        ReadRule::ProposalReviewer,
+        &[StateTag::Negotiation],
     ),
 ];
 
@@ -883,6 +913,28 @@ fn judge(
         },
         ReadRule::AssignedReviewer => {
             declared_assignee(state, account, ctx, AssignmentKind::Reviewer, now).map(|()| rule)
+        }
+        ReadRule::ProposalReviewer => {
+            let Some(x) = ctx.proposal else {
+                return deny(DenyRule::Rac01);
+            };
+            // I-03 first: a reviewer of X with a conflict on it is refused
+            // as conflicted, even once the conflict released the assignment.
+            let assigned_ever = state.review().assignments().any(|(_, a)| {
+                a.reviewer == account && a.proposal == x && a.kind == AssignmentKind::Reviewer
+            });
+            if assigned_ever && state.review().conflict_fact(account, x) {
+                return deny(DenyRule::I03);
+            }
+            let own = own_assignment(state, account, x, AssignmentKind::Reviewer);
+            let Some(a) = own else {
+                return deny(DenyRule::Rac01);
+            };
+            let with = Context {
+                assignment: Some(a),
+                ..*ctx
+            };
+            declared_assignee(state, account, &with, AssignmentKind::Reviewer, now).map(|()| rule)
         }
         ReadRule::IrcAssignee => {
             declared_assignee(state, account, ctx, AssignmentKind::Irc, now).map(|()| rule)

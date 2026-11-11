@@ -919,6 +919,11 @@ pub enum Rule {
     /// is refused as the actor, not as a conflict, since the M5 commands
     /// name the assigned reviewer in their actor rule (`ACTOR_RULES`).
     GrantReviewer,
+    /// Lead, 2026-11-12: the determination view of X (R-NG-03): its
+    /// assigned reviewer, declared free of conflict, in NEGOTIATION. An
+    /// undeclared or conflicted assignee is refused as a conflict, as the
+    /// score sheet is.
+    Determination,
 }
 
 impl Rule {
@@ -1029,7 +1034,7 @@ impl Rule {
             ],
             Rule::Amender => &[Some(Role::Applicant), Some(Role::CommitteeMember)],
             Rule::ContractSide => &[Some(Role::Applicant), Some(Role::ProgrammeManager)],
-            Rule::GrantReviewer => &[Some(Role::CommitteeMember)],
+            Rule::GrantReviewer | Rule::Determination => &[Some(Role::CommitteeMember)],
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
@@ -1473,6 +1478,12 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("contract.view", T::Proposal, R::GrantReader).tool("fstp_get_contract_status"),
     RefOp::read("payment.status", T::Proposal, R::GrantReader).tool("fstp_get_payment_status"),
     RefOp::read("payment.queue", T::None, R::AnyAccount).tool("fstp_get_payment_queue"),
+    // M5 reads follow-up: the caller's own lists, web only. The dispatch
+    // keeps the grants and contracts the overview and contract reads
+    // serve the caller.
+    RefOp::read("grant.list_mine", T::None, R::AnyAccount),
+    RefOp::read("contract.awaiting_me", T::None, R::AnyAccount),
+    RefOp::read("grant.determination_view", T::Proposal, R::Determination),
     RefOp::act("grant.determine_amount", T::Negotiation, R::GrantReviewer).binding(),
     RefOp::act("grant.accept", T::Negotiation, R::Lead).binding(),
     RefOp::act("grant.approve", T::Negotiation, R::ProgrammeManager).binding(),
@@ -1704,6 +1715,17 @@ fn admit(
         Rule::ContractSide => open(who == Who::Lead || who.manager()),
         Rule::Amender => open(matches!(who, Who::Lead | Who::AssignedReviewer)),
         Rule::GrantReviewer => open(who == Who::AssignedReviewer),
+        Rule::Determination => {
+            if who == Who::SuspendedReviewer && who.conflicted_in(x) {
+                return Err(Conflict);
+            }
+            assignee(
+                Who::AssignedReviewer,
+                Who::AssignedReviewerUndeclared,
+                Who::AssignedReviewerConflicted,
+            )?;
+            open(x == Some(StateTag::Negotiation))
+        }
     }
 }
 
