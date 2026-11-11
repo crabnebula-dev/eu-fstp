@@ -10,7 +10,8 @@
 // renders only its main content and never builds the shell itself.
 //
 // - Top bar: the tenant mark, which links to the home page, a spacer,
-//   Notifications, and a `nav` "Account tools" with the M3 page of
+//   Mailbox with its open count (lane m6/mailbox), Notifications, and a
+//   `nav` "Account tools" with the M3 page of
 //   passkeys and sessions (`/auth/account`), `navOf`'s Account link.
 //   Help has no page in this release, so it is left out.
 // - Sidebar, top to bottom: the role chip ("Signed in as ..."), the
@@ -153,6 +154,46 @@ function sidebar(): HTMLElement {
   ]);
 }
 
+/** The number of messages to act on, once the shell read it (lane m6/mailbox). */
+let openCount: number | null = null;
+
+/** The attribute that marks the mailbox link of a top bar. */
+const MAILBOX = "data-tool";
+
+/**
+ * The Mailbox link of the top bar (lane m6/mailbox,
+ * `docs/handoff/mailbox-design.md`), with the open count once known.
+ */
+function mailboxLink(): HTMLElement {
+  const attrs: Record<string, string> = { class: "tool-link", href: WORK_PATHS.mailbox, [MAILBOX]: "mailbox" };
+  if (here() === WORK_PATHS.mailbox) {
+    attrs["aria-current"] = "page";
+  }
+  const a = h("a", attrs, [homeLabel("nav.mailbox")]);
+  fillCount(a);
+  return a;
+}
+
+function fillCount(a: Element): void {
+  if (openCount === null) {
+    return;
+  }
+  const count = String(openCount);
+  a.setAttribute("data-open", count);
+  a.replaceChildren(homeLabel("nav.mailbox_count", { count }));
+}
+
+/**
+ * Shows `n`, the number of messages to act on, on every Mailbox link of
+ * the page and of every shell built later.
+ */
+export function showMailboxCount(n: number): void {
+  openCount = n;
+  for (const a of Array.from(document.querySelectorAll(`a[="mailbox"]`))) {
+    fillCount(a);
+  }
+}
+
 /** The top bar: the tenant mark that links home, and Notifications. */
 function topBar(): HTMLElement {
   return h("header", { class: "site-header site-header--app" }, [
@@ -163,6 +204,7 @@ function topBar(): HTMLElement {
       ]),
       h("span", { class: "topbar-spacer" }),
       h("ul", { class: "topbar-tools" }, [
+        h("li", {}, [mailboxLink()]),
         h("li", {}, [
           h("a", { class: "tool-link", href: WORK_PATHS.notices, "data-tool": "notices" }, [
             homeLabel("nav.notifications"),

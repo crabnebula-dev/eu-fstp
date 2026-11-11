@@ -139,6 +139,8 @@ pub enum ReadModel {
     /// `tenant.get_mail_relay`: the relay host and whether a CA is pinned
     /// (M6 lane L6-API, ADR-018).
     MailRelay(crate::views::MailRelayView),
+    /// `me.mailbox`: the caller's own messages (lane m6/mailbox, I-27, I-86).
+    Mailbox(crate::mailbox::MailboxView),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -277,6 +279,7 @@ impl ToJson for ReadModel {
             ReadModel::Deliveries(rows) => array(rows),
             ReadModel::Timeline(rows) => array(rows),
             ReadModel::MailRelay(v) => v.to_json(),
+            ReadModel::Mailbox(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1704,6 +1707,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
+            ReadModel::Mailbox(_) => &["me.mailbox"],
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
@@ -2085,6 +2089,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MailRelay(crate::views::MailRelayView {
                 relay: Some(("relay.fund.test".to_owned(), true)),
             }),
+            ReadModel::Mailbox(crate::mailbox::MailboxView::default()),
+            ReadModel::Mailbox(crate::mailbox::samples()),
         ]
         .into_iter()
         .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
@@ -2164,7 +2170,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 42;
+    const VARIANTS: usize = 43;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2213,6 +2219,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Deliveries(_) => 39,
             ReadModel::Timeline(_) => 40,
             ReadModel::MailRelay(_) => 41,
+            ReadModel::Mailbox(_) => 42,
         }
     }
 

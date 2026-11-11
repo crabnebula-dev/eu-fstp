@@ -166,11 +166,15 @@ pub enum ReadKind {
     ListDeliveries,
     GetMailRelay,
     GetProgrammeTimeline,
+    // Lane m6/mailbox (`docs/handoff/mailbox-design.md`): the caller's own
+    // mailbox, derived from existing state, each message kept only when
+    // the read behind its page admits the caller.
+    GetMyMailbox,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 59] = [
+    pub const ALL: [ReadKind; 60] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -230,6 +234,7 @@ impl ReadKind {
         ReadKind::ListDeliveries,
         ReadKind::GetMailRelay,
         ReadKind::GetProgrammeTimeline,
+        ReadKind::GetMyMailbox,
     ];
 }
 
@@ -522,6 +527,10 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::Holder(Role::ProgrammeManager),
         OPEN_ALWAYS,
     ),
+    // Lane m6/mailbox: the caller's own messages only (I-86). Dispatch
+    // keeps each message only when `authorize_read` admits the caller to
+    // the read behind its page.
+    (ReadKind::GetMyMailbox, ReadRule::Own, OPEN_ALWAYS),
 ];
 
 /// The readers of a grant (M5 design section 5).

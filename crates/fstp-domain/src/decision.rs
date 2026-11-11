@@ -394,6 +394,17 @@ pub fn awaiting_guardian_consent_in_negotiation(state: &State, proposal: Proposa
     crate::proposal::intake::proposal_state(state, proposal) == Some(StateTag::Negotiation)
 }
 
+/// Whether IRC assignment `assignment` recorded its review of `proposal`
+/// in the current IRC round (lane m6/mailbox, R-IR-01). A read with no
+/// new state: the mailbox closes the IRC member's message with it.
+pub fn irc_review_recorded(
+    state: &State,
+    proposal: ProposalId,
+    assignment: crate::id::AssignmentId,
+) -> bool {
+    crate::proposal::life::facts(state, proposal).is_some_and(|f| f.irc.contains_key(&assignment))
+}
+
 /// The question that derives the minor flag of `proposal` (R-ID-04,
 /// state-machine NOTE 14): `IsVerifiedAdultAtDeadline` for its lead at the
 /// deadline of the call in which it passes IRC review. Both gates ask it,

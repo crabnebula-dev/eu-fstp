@@ -4671,3 +4671,8 @@ mod m5_api_tests {
         );
     }
 }
+
+/// Lane m6/mailbox: `me.mailbox` on the matrix worlds
+/// (`docs/handoff/mailbox-design.md` section 7).
+#[cfg(test)]
+mod mailbox_tests;

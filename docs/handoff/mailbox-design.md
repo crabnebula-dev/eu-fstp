@@ -57,7 +57,7 @@ Each work message is computed again on every read from the state the same read s
 Three rules, each tested:
 
 1. **Own only.** The read is `ReadRule::Own`. It derives messages for the caller's account and nothing else (I-86). It never names another account.
-2. **The target read decides.** Before a message is kept, the mailbox asks `fstp_access::authorize_read` for the read behind its page (D11), with the caller's own principal, state and clock. A message whose page the caller could not read is dropped. So the mailbox never shows more than the read rules show, in any of the 16 proposal states. Examples: the declaration view for `review.declare` (R-CF-02), the score sheet for `review.score` (I-03), the IRC case for `irc.review`, the intake queue for `intake.knock_out`, the round through its call for `round.vote`, the contract read for `contract.sign` (I-21 keeps drafts to the team).
+2. **The target read decides.** Before a message is kept, the mailbox asks `fstp_access::authorize_read` for the read behind its page (D11), with the caller's own principal, state and clock. A message whose page the caller could not read is dropped. So the mailbox never shows more than the read rules show, in any of the 16 proposal states. Examples: the caller's own assignment list for `review.declare` and `irc.declare` (R-CF-02 forbids a content read before the declaration), the score sheet for `review.score` (I-03), the IRC case for `irc.review`, the intake queue for `intake.knock_out`, the round through its call for `round.vote`, the contract read for `contract.sign` (I-21 keeps drafts to the team).
 3. **Act only where the domain lets you.** Work messages follow the domain's own guards: SoD-04 and I-05 for release, I-67 for activation approval, the signing order of `contracts.md` for the signatory, and an active binding at the read instant for every role.
 
 The page itself still runs its own read and command checks. The mailbox only decides what to point at.
@@ -87,7 +87,7 @@ The pending action page `/app/pending/{id}` had no page on `main` (`pending.rs` 
 | T3 | same | SoD-04, I-05: a releaser who approved the request, or accepted a line of it, gets no `payment.release` message |
 | T4 | same, and `fstp-api-core` unit tests | I-27, I-86: every reply holds only the members of section 1, ids are decimal, `href` matches `MAILBOX_ROUTES`, no `@`, and no title or text of the world appears |
 | T5 | `fstp-api-core/src/mailbox.rs` unit tests | Each kind maps to one route and one target read, and `open` equals the number of action messages |
-| T6 | `fstp-api-testkit/tests/i85_mailbox_pending.rs` | I-85: a prepared action appears as `pending.confirm` for its own account only, and disappears once confirmed or discarded |
+| T6 | `fstp-api-testkit/src/harness/mailbox_tests.rs` | I-85: a prepared action appears as `pending.confirm` for its own account only, and disappears once confirmed or discarded |
 | T7 | `web/test/mailbox.test.ts` | The decoder refuses any member outside the shape; every `MAILBOX_ROUTES` pattern is mounted by the shell or listed as an M5 page; the nav shows the open count |
 | T8 | registry, authz reference, `REPLIES` fit | The read is in the registry, the reference matrix (`R::AnyAccount`, no tool) and the reply shapes, as for every read |
 
@@ -128,3 +128,11 @@ Open questions:
 - **MB-Q4.** MCP: add `fstp_list_mailbox`, filtering each message by the scope of its target read? Recommendation: yes, after T1 runs over the MCP channel.
 - **MB-Q5.** Should emails link to `/app/mailbox#<id>` instead of the page? Recommendation: no, keep one click to the work.
 - **MB-Q6.** Programme managers have no work message in this cut. Candidates: an advanced signature route to approve (P-30 step 3), contract changes proposed by the grantee, and milestones to close. Each needs a request state the domain does not expose yet.
+
+## 10. First cut: status and known gaps
+
+- Built: sections 2 to 8, except the MCP tool (MB-D5). The read is `GET /api/v1/me/mailbox`, the pages are `/app/mailbox` and `/app/pending/{id}`, and the top bar shows "Mailbox (n)".
+- **Gap G1, recusal.** A committee member recused from a round (R-CF-02 NOTE) still sees `round.vote` until the round closes. The recusal is a vault question that the round page asks, and the mailbox asks no vault question. The round page then says the member is recused.
+- **Gap G2, the target gate has no failing case in the worlds.** Every message the sources derive is already readable, so test T1 passes with or without the `authorize_read` gate. The gate stays as a second line, and T1 proves the sources alone never point at a closed page.
+- **Gap G3, M5 pages.** `/app/grants/{proposal}/contract` and `/app/me/payment-queue` show the not-found page on this branch until lane `m5/ui` merges. The web test lists them as M5 pages and fails if a mailbox route is neither mounted nor listed.
+- **Gap G4, scoring history.** When the journal no longer holds a proposal's history, `review.score` stays listed and its page says why it cannot load.

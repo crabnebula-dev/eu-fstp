@@ -317,6 +317,7 @@ export const WORK_PATHS = Object.freeze({
   calls: "/app/calls",
   proposals: "/app/proposals",
   notices: "/app/notices",
+  mailbox: "/app/mailbox",
   proposal: (p: string): string => `/app/proposals/${p}`,
   guardian: (p: string): string => `/app/proposals/${p}/guardian`,
   onboarding: "/app/admin/onboarding/summary",

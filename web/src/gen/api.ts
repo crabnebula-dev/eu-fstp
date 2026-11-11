@@ -197,6 +197,7 @@ export type OpName =
   | "agents.revoke"
   | "me.sessions"
   | "me.roles"
+  | "me.mailbox"
   | "me.end_session"
   | "me.add_passkey"
   | "pending.list"
@@ -414,6 +415,7 @@ export interface OpParams {
   readonly "agents.revoke": { readonly "client": string };
   readonly "me.sessions": Readonly<Record<never, string>>;
   readonly "me.roles": Readonly<Record<never, string>>;
+  readonly "me.mailbox": Readonly<Record<never, string>>;
   readonly "me.end_session": { readonly "session": string };
   readonly "me.add_passkey": Readonly<Record<never, string>>;
   readonly "pending.list": Readonly<Record<never, string>>;
@@ -604,6 +606,7 @@ export const OP_NAMES: readonly OpName[] = [
   "agents.revoke",
   "me.sessions",
   "me.roles",
+  "me.mailbox",
   "me.end_session",
   "me.add_passkey",
   "pending.list",
@@ -2654,6 +2657,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "me.mailbox",
+    method: "GET",
+    path: "/me/mailbox",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "mailbox" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "me.end_session",
     method: "POST",
     path: "/me/sessions/{session}/end",
@@ -3878,6 +3895,31 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
       "drafts": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
       "signatories": { schema: { kind: "array", items: { kind: "enum", values: ["financial_signatory", "legal_signatory"] } }, optional: false },
+    },
+  },
+  "me.mailbox": {
+    kind: "object",
+    fields: {
+      "open": { schema: { kind: "int" }, optional: false },
+      "messages": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "string" }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern"] }, optional: false },
+          "action": { schema: { kind: "bool" }, optional: false },
+          "href": { schema: { kind: "string" }, optional: false },
+          "since": { schema: { kind: "id" }, optional: true },
+          "due": { schema: { kind: "id" }, optional: true },
+          "proposal": { schema: { kind: "id" }, optional: true },
+          "call": { schema: { kind: "id" }, optional: true },
+          "assignment": { schema: { kind: "id" }, optional: true },
+          "round": { schema: { kind: "id" }, optional: true },
+          "contract": { schema: { kind: "id" }, optional: true },
+          "request": { schema: { kind: "id" }, optional: true },
+          "pending": { schema: { kind: "id" }, optional: true },
+          "programme": { schema: { kind: "id" }, optional: true },
+        },
+      } }, optional: false },
     },
   },
   "tenant.list_admins": {

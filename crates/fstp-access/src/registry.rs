@@ -1856,6 +1856,9 @@ pub const OPS: &[OpSpec] = &[
     // I-86: the caller's own active roles, for the interim home page of
     // design section 15.0 (2026-10-31). Web only: no tool.
     OpSpec::read("me.roles", RK::ListMyRoles, "/me/roles").class(Personal),
+    // Lane m6/mailbox (`docs/handoff/mailbox-design.md`): the caller's own
+    // messages, derived from existing state. Web only: no tool (MB-D5).
+    OpSpec::read("me.mailbox", RK::GetMyMailbox, "/me/mailbox").class(Personal),
     OpSpec::new(
         "me.end_session",
         OpKind::M3Port(PortKind::EndSession),
