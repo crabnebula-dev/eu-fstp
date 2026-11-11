@@ -128,10 +128,10 @@ fn receiving<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<Mai
             (Some(StateTag::Stage2), Role::Applicant) => {
                 out.push(MailItem::new(MailKind::Stage2Respond, at));
             }
-            (Some(StateTag::Negotiation), _) => {
-                if !lock(&call.st.content).acknowledged(account, proposal) {
-                    out.push(MailItem::new(MailKind::NegotiationAcknowledge, at));
-                }
+            (Some(StateTag::Negotiation), _)
+                if !lock(&call.st.content).acknowledged(account, proposal) =>
+            {
+                out.push(MailItem::new(MailKind::NegotiationAcknowledge, at));
             }
             _ => {}
         }
