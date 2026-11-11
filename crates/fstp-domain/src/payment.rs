@@ -1364,3 +1364,93 @@ pub(crate) fn governing_policy(state: &State, cmd: &Command) -> Result<PolicySco
     };
     crate::grant::call_scope(state, grant)
 }
+
+// ---------------------------------------------------------------------------
+// Read view of a grant's milestones (M5 reads follow-up, R-PR-07, I-58)
+// ---------------------------------------------------------------------------
+
+/// One milestone of a grant's plan with its money, as the payment form
+/// shows it (M5 design section 5, R-PR-07). Every sum is the cell's
+/// (ADR-006), folded the way the I-58 check folds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MilestoneFunds {
+    /// The milestone.
+    pub milestone: MilestoneId,
+    /// Its amount in the plan.
+    pub amount: PosAmount,
+    /// Its due date.
+    pub due: Timestamp,
+    /// What RELEASED and PAID requests hold on it.
+    pub paid: NonNegAmount,
+    /// What pending requests hold on it (I-58).
+    pub pending: NonNegAmount,
+    /// What a new request may still claim: the amount less paid and
+    /// pending. Zero once the milestone is closed (NOTE 12) and outside
+    /// IN_EXECUTION, where the check refuses every request.
+    pub available: NonNegAmount,
+    /// Whether the programme manager closed it (NOTE 12).
+    pub closed: bool,
+}
+
+/// The plan of a grant and its milestones, in plan order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantMilestones {
+    /// The plan of the effective contract version, else the agreed plan
+    /// of the current amount determination (R-NG-03).
+    pub plan: crate::id::PlanVersionId,
+    /// Its milestones.
+    pub milestones: Vec<MilestoneFunds>,
+}
+
+/// The milestones of `grant` with what is paid, pending and available on
+/// each, or `None` before an amount determination names a plan. It reads
+/// the projection only. `available` is the exact edge of the I-58 check
+/// of a new request: one cent more is refused.
+pub fn grant_milestones(state: &State, grant: ProposalId) -> Option<GrantMilestones> {
+    let plan = state
+        .money
+        .contract_plan(grant)
+        .or_else(|| state.money.determined(grant).map(|(p, _)| p))?;
+    let p = crate::proposal::intake::plan(state, plan)?;
+    let open = crate::proposal::intake::proposal_state(state, grant) == Some(StateTag::InExecution);
+    let held = |milestone: MilestoneId, pick: fn(RequestStatus) -> bool| {
+        state
+            .payments
+            .of(grant)
+            .filter(|r| pick(r.status))
+            .flat_map(|r| r.lines.values())
+            .filter(|l| l.milestone == milestone)
+            .filter_map(Line::holds)
+            .fold(None, |acc, a| add_opt(acc, Some(a)))
+    };
+    let milestones = p
+        .tasks
+        .iter()
+        .flat_map(|t| t.milestones.iter())
+        .filter_map(|m| {
+            let zero =
+                NonNegAmount::new(fstp_money::Amount::zero(m.amount.amount().currency())).ok()?;
+            let paid = held(m.id, RequestStatus::paid).unwrap_or(zero);
+            let pending = held(m.id, RequestStatus::pending).unwrap_or(zero);
+            let closed = state.money.milestone_closed(grant, m.id);
+            let whole = NonNegAmount::new(m.amount.amount()).ok()?;
+            let available = if closed || !open {
+                zero
+            } else {
+                add_opt(Some(paid), Some(pending))
+                    .and_then(|used| crate::grant::sub(whole, used))
+                    .unwrap_or(zero)
+            };
+            Some(MilestoneFunds {
+                milestone: m.id,
+                amount: m.amount,
+                due: m.due,
+                paid,
+                pending,
+                available,
+                closed,
+            })
+        })
+        .collect();
+    Some(GrantMilestones { plan, milestones })
+}
