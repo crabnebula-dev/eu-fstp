@@ -47,6 +47,7 @@
 //!   `https://<host>` with no port, which no loopback listener can be.
 //!   The real ceremonies are M3's, in `fstp-cell`.
 
+mod assess;
 mod assets;
 mod auth;
 mod control;
@@ -136,6 +137,10 @@ impl Config {
                     ));
                 }
                 "--demo-signin" => cfg.demo_signin = true,
+                // M7 lane L-DEMO: `synthetic` (the default) or `replay:<dir>`.
+                "--assessor" => crate::assess::set_mode(crate::assess::Mode::parse(
+                    &args.next().ok_or("--assessor needs a value")?,
+                )?),
                 other => return Err(format!("unknown argument {other}")),
             }
         }
@@ -187,9 +192,11 @@ impl Inner {
         let mut settings = (*seams.settings).clone();
         if let Some(r) = settings.inference.as_mut() {
             r.model = fstp_domain::policy::ModelRef(model.to_owned());
+            r.endpoint = Some(crate::assess::endpoint());
         }
         seams.settings = Arc::new(settings);
         let ports = FakePorts::new(world, seams).map_err(|e| e.to_string())?;
+        ports.precheck.set_link(crate::assess::link());
         // R-GA-01: the scenarios create their SuperSAFE programme through
         // core commands, with no complete creator draft, so its Guide reads the
         // artefacts of the SuperSAFE fixture.

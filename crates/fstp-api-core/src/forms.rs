@@ -628,7 +628,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
             BodyRule::Exactly(&["notice_version"])
         }
         OpKind::M3Port(
-            PortKind::ApproveRecovery
+            PortKind::RequestPrecheck
+            | PortKind::ApproveRecovery
             | PortKind::EndSession
             | PortKind::BeginVerification
             | PortKind::BeginGuardianConsent,

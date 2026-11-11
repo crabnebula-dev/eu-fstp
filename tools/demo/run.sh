@@ -101,8 +101,8 @@ build() {
   "$ROOT/web/node_modules/.bin/tsc" -p "$ROOT/web/tsconfig.json"
   "$ROOT/web/node_modules/.bin/tsc" -p "$ROOT/web/build"
   node "$ROOT/web/dist/build/pack.js" "$ROOT/web/dist" "$ROOT/web/src" "$ROOT/web/dist/app" shell/main.js
-  echo "Building fstp-e2e-cell"
-  (cd "$ROOT" && CARGO_INCREMENTAL=0 cargo build -q --locked -p fstp-api-testkit --bin fstp-e2e-cell)
+  echo "Building fstp-e2e-cell and fstp-assessor"
+  (cd "$ROOT" && CARGO_INCREMENTAL=0 cargo build -q --locked -p fstp-api-testkit --bin fstp-e2e-cell -p fstp-assessor --bin fstp-assessor)
 }
 
 stop() {

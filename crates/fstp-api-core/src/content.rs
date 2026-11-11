@@ -80,6 +80,20 @@ pub(crate) enum SaveError {
     Full,
 }
 
+/// One counted pre-check request (M7 design section 4). It holds ids
+/// and the instant only, never draft text (I-21).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PrecheckRequest {
+    /// The draft's call.
+    pub(crate) call: fstp_domain::id::CallId,
+    /// The draft.
+    pub(crate) proposal: ProposalId,
+    /// The account that asked.
+    pub(crate) account: AccountId,
+    /// When it asked.
+    pub(crate) at: fstp_domain::time::Timestamp,
+}
+
 /// The content store of one cell process.
 #[derive(Debug, Default)]
 pub(crate) struct ContentStore {
@@ -88,6 +102,8 @@ pub(crate) struct ContentStore {
     submitted: BTreeMap<ProposalId, Workspace>,
     texts: BTreeMap<u128, String>,
     acknowledged: BTreeSet<(AccountId, ProposalId)>,
+    /// The counted pre-check requests (M7 design section 4, P-23).
+    prechecks: Vec<PrecheckRequest>,
 }
 
 impl ContentStore {
@@ -183,6 +199,21 @@ impl ContentStore {
     /// The text this core stored under `r`.
     pub(crate) fn text(&self, r: TextRef) -> Option<&str> {
         self.texts.get(&r.id().raw()).map(String::as_str)
+    }
+
+    /// Counts one pre-check request at the moment it is made (P-23,
+    /// TH-29). `false` when the store is full, and the run is refused.
+    pub(crate) fn count_precheck(&mut self, r: PrecheckRequest) -> bool {
+        if self.prechecks.len() >= MAX_TEXTS {
+            return false;
+        }
+        self.prechecks.push(r);
+        true
+    }
+
+    /// Every counted pre-check request, oldest first.
+    pub(crate) fn prechecks(&self) -> &[PrecheckRequest] {
+        &self.prechecks
     }
 }
 

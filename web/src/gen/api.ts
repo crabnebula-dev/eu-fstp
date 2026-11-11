@@ -137,6 +137,8 @@ export type OpName =
   | "proposal.view"
   | "proposal.get_workspace"
   | "proposal.save_workspace"
+  | "proposal.precheck"
+  | "proposal.precheck_runs"
   | "proposal.record_plan"
   | "proposal.add_member"
   | "proposal.add_guardian"
@@ -178,6 +180,7 @@ export type OpName =
   | "stage2.no_questions"
   | "review.rank"
   | "review.findings"
+  | "assess.findings_status"
   | "review.mark_finding"
   | "committee.ranking"
   | "committee.open_round"
@@ -354,6 +357,8 @@ export interface OpParams {
   readonly "proposal.view": { readonly "proposal": string };
   readonly "proposal.get_workspace": { readonly "proposal": string };
   readonly "proposal.save_workspace": { readonly "proposal": string };
+  readonly "proposal.precheck": { readonly "proposal": string };
+  readonly "proposal.precheck_runs": { readonly "proposal": string };
   readonly "proposal.record_plan": { readonly "proposal": string };
   readonly "proposal.add_member": { readonly "proposal": string };
   readonly "proposal.add_guardian": { readonly "proposal": string };
@@ -395,6 +400,7 @@ export interface OpParams {
   readonly "stage2.no_questions": { readonly "assignment": string };
   readonly "review.rank": { readonly "assignment": string };
   readonly "review.findings": { readonly "assignment": string };
+  readonly "assess.findings_status": { readonly "call": string };
   readonly "review.mark_finding": { readonly "finding": string };
   readonly "committee.ranking": { readonly "call": string };
   readonly "committee.open_round": { readonly "call": string };
@@ -544,6 +550,8 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.view",
   "proposal.get_workspace",
   "proposal.save_workspace",
+  "proposal.precheck",
+  "proposal.precheck_runs",
   "proposal.record_plan",
   "proposal.add_member",
   "proposal.add_guardian",
@@ -585,6 +593,7 @@ export const OP_NAMES: readonly OpName[] = [
   "stage2.no_questions",
   "review.rank",
   "review.findings",
+  "assess.findings_status",
   "review.mark_finding",
   "committee.ranking",
   "committee.open_round",
@@ -1814,6 +1823,34 @@ export const OPERATIONS: readonly Operation[] = [
     tool: { name: "fstp_save_workspace", scope: "proposals:draft", prepareOnly: false },
   },
   {
+    name: "proposal.precheck",
+    method: "POST",
+    path: "/proposals/{proposal}/precheck",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "precheck" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "proposal.precheck_runs",
+    method: "GET",
+    path: "/proposals/{proposal}/precheck",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "precheck" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "proposal.record_plan",
     method: "PUT",
     path: "/proposals/{proposal}/plan",
@@ -2386,6 +2423,20 @@ export const OPERATIONS: readonly Operation[] = [
     session: "any",
     classification: "confidential",
     tool: { name: "fstp_get_findings", scope: "findings:read", prepareOnly: false },
+  },
+  {
+    name: "assess.findings_status",
+    method: "GET",
+    path: "/calls/{call}/findings-status",
+    base: "api",
+    segments: [{ kind: "literal", text: "calls" }, { kind: "param", name: "call" }, { kind: "literal", text: "findings-status" }],
+    params: ["call"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
   },
   {
     name: "review.mark_finding",
@@ -3655,6 +3706,84 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "narrative": { schema: { kind: "string" }, optional: false },
     },
   },
+  "proposal.precheck": {
+    kind: "object",
+    fields: {
+      "assessor": { schema: { kind: "enum", values: ["synthetic", "model"] }, optional: false },
+      "remaining": { schema: {
+        kind: "object",
+        fields: {
+          "proposal_today": { schema: { kind: "int" }, optional: false },
+          "proposal_call": { schema: { kind: "int" }, optional: false },
+          "account_call": { schema: { kind: "int" }, optional: false },
+          "next": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+        },
+      }, optional: false },
+      "runs": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "run": { schema: { kind: "id" }, optional: false },
+          "requested": { schema: { kind: "id" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["pending", "done", "unavailable"] }, optional: false },
+          "findings": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              ["kind"]: { schema: { kind: "enum", values: ["completeness", "quality", "accuracy", "integrity"] }, optional: false },
+              "criterion": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "severity": { schema: { kind: "enum", values: ["info", "minor", "major"] }, optional: false },
+              "statement": { schema: { kind: "string" }, optional: false },
+              "evidence": { schema: { kind: "array", items: {
+                kind: "object",
+                fields: {
+                  "section": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+                  "quote": { schema: { kind: "string" }, optional: false },
+                },
+              } }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "proposal.precheck_runs": {
+    kind: "object",
+    fields: {
+      "assessor": { schema: { kind: "enum", values: ["synthetic", "model"] }, optional: false },
+      "remaining": { schema: {
+        kind: "object",
+        fields: {
+          "proposal_today": { schema: { kind: "int" }, optional: false },
+          "proposal_call": { schema: { kind: "int" }, optional: false },
+          "account_call": { schema: { kind: "int" }, optional: false },
+          "next": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+        },
+      }, optional: false },
+      "runs": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "run": { schema: { kind: "id" }, optional: false },
+          "requested": { schema: { kind: "id" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["pending", "done", "unavailable"] }, optional: false },
+          "findings": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              ["kind"]: { schema: { kind: "enum", values: ["completeness", "quality", "accuracy", "integrity"] }, optional: false },
+              "criterion": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "severity": { schema: { kind: "enum", values: ["info", "minor", "major"] }, optional: false },
+              "statement": { schema: { kind: "string" }, optional: false },
+              "evidence": { schema: { kind: "array", items: {
+                kind: "object",
+                fields: {
+                  "section": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+                  "quote": { schema: { kind: "string" }, optional: false },
+                },
+              } }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "proposal.record_plan": {
     kind: "object",
     fields: {
@@ -3790,6 +3919,15 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "confidence": { schema: { kind: "int" }, optional: false },
       "statement": { schema: { kind: "string" }, optional: false },
       "mark": { schema: { kind: "nullable", inner: { kind: "enum", values: ["Agreed", "Disputed"] } }, optional: false },
+      "assessor": { schema: { kind: "enum", values: ["synthetic", "model"] }, optional: false },
+    },
+  } },
+  "assess.findings_status": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["pending", "ready"] }, optional: false },
+      "findings": { schema: { kind: "int" }, optional: false },
     },
   } },
   "review.stage2_thread": {

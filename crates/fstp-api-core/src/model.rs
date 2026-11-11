@@ -139,6 +139,12 @@ pub enum ReadModel {
     /// `tenant.get_mail_relay`: the relay host and whether a CA is pinned
     /// (M6 lane L6-API, ADR-018).
     MailRelay(crate::views::MailRelayView),
+    /// `proposal.precheck` and `proposal.precheck_runs`: a draft's pre-check
+    /// runs and remaining checks, for its team only (M7, I-21, TH-02).
+    Precheck(crate::views::PrecheckView),
+    /// `assess.findings_status`: counts per proposal, never a statement
+    /// (M7 design section 7).
+    FindingsStatus(Vec<crate::views::FindingsStatusRow>),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -277,6 +283,8 @@ impl ToJson for ReadModel {
             ReadModel::Deliveries(rows) => array(rows),
             ReadModel::Timeline(rows) => array(rows),
             ReadModel::MailRelay(v) => v.to_json(),
+            ReadModel::Precheck(v) => v.to_json(),
+            ReadModel::FindingsStatus(rows) => array(rows),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1445,6 +1453,7 @@ pub(crate) mod reply_shape_tests {
             confidence: 1000,
             statement: "SYNTHETIC FINDING".to_owned(),
             mark,
+            assessor: "synthetic",
         }
     }
 
@@ -1704,6 +1713,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
+            ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
+            ReadModel::FindingsStatus(_) => &["assess.findings_status"],
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
@@ -2085,6 +2096,41 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MailRelay(crate::views::MailRelayView {
                 relay: Some(("relay.fund.test".to_owned(), true)),
             }),
+            ReadModel::Precheck(crate::views::PrecheckView {
+                assessor: "synthetic",
+                proposal_today: 0,
+                proposal_call: 4,
+                account_call: 4,
+                next: Some(1_794_050_000_000_000),
+                runs: vec![crate::views::PrecheckRunRow {
+                    run: 3,
+                    requested: 1_794_000_000_000_000,
+                    state: "done",
+                    findings: vec![crate::views::PrecheckFindingRow {
+                        kind: "completeness",
+                        criterion: None,
+                        severity: "minor",
+                        statement: "SYNTHETIC FINDING".to_owned(),
+                        evidence: vec![crate::views::PrecheckEvidenceRow {
+                            section: "narrative",
+                            quote: "synthetic".to_owned(),
+                        }],
+                    }],
+                }],
+            }),
+            ReadModel::Precheck(crate::views::PrecheckView {
+                assessor: "model",
+                proposal_today: 1,
+                proposal_call: 5,
+                account_call: 5,
+                next: None,
+                runs: Vec::new(),
+            }),
+            ReadModel::FindingsStatus(vec![crate::views::FindingsStatusRow {
+                proposal: 1001,
+                status: "ready",
+                findings: 9,
+            }]),
         ]
         .into_iter()
         .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
@@ -2164,7 +2210,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 42;
+    const VARIANTS: usize = 44;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2213,6 +2259,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Deliveries(_) => 39,
             ReadModel::Timeline(_) => 40,
             ReadModel::MailRelay(_) => 41,
+            ReadModel::Precheck(_) => 42,
+            ReadModel::FindingsStatus(_) => 43,
         }
     }
 

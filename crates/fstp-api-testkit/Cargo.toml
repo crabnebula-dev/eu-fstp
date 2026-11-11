@@ -41,6 +41,12 @@ fstp-smtp.workspace = true
 fstp-brand.workspace = true
 # M5 lane L-API: the fake wallet, QTSP and trusted list of test cells.
 fstp-contract.workspace = true
+# M7 lane L-DEMO: the pre-check provider and the demo assessment run the
+# real cell side of the assessor queue (`fstp_assessor::CellJob`, `Link`).
+fstp-assess.workspace = true
+fstp-assessor.workspace = true
+fstp-findings.workspace = true
+fstp-infer.workspace = true
 
 
 [lints]

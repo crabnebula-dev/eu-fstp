@@ -38,6 +38,8 @@ fstp-sigval.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# M7 lane L-DEMO: the SuperSAFE P-23 value in the pre-check limit test.
+fstp-programme.workspace = true
 
 [lints]
 workspace = true

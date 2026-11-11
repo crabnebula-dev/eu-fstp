@@ -254,7 +254,7 @@ const PROPOSALS: [Seeded; 5] = [
 
 /// The stages of `POST /test/scenario/review` (`e2e/review/contract.ts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReviewAt {
+pub(crate) enum ReviewAt {
     Submitted,
     Stage1,
     Stage1Scored,
@@ -265,7 +265,7 @@ enum ReviewAt {
 }
 
 impl ReviewAt {
-    fn parse(s: &str) -> Option<ReviewAt> {
+    pub(crate) fn parse(s: &str) -> Option<ReviewAt> {
         Some(match s {
             "submitted" => ReviewAt::Submitted,
             "stage1" => ReviewAt::Stage1,
@@ -315,10 +315,10 @@ fn narrative(s: &Seeded) -> String {
     } else {
         String::new()
     };
-    format!(
-        "{} The work plan has three tasks over twelve months.{canary}",
-        s.summary
-    )
+    // M7 lane L-DEMO: the body is a synthetic corpus item (`crate::assess`).
+    let body = crate::assess::corpus_narrative(s.key)
+        .unwrap_or_else(|| "The work plan has three tasks over twelve months.".to_owned());
+    format!("{}\n\n{body}{canary}", s.summary)
 }
 
 /// A domain text reference to `text` stored under `id`.
@@ -691,6 +691,11 @@ async fn submit(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
             ]),
         )
         .await?;
+        // M7 lane L-DEMO: the submission is assessed at once (I-10, I-11).
+        let t = seed.tick();
+        let n = narrative(s);
+        let texts = [s.title, s.summary, n.as_str()];
+        crate::assess::on_submit(seed.inner, t, CALL, s.proposal, texts).await?;
     }
     Ok(())
 }
@@ -1102,7 +1107,10 @@ pub(crate) async fn review(site: &Site, req: &Request) -> Response {
     }
 }
 
-async fn build_review(info: &SiteInfo, stage: ReviewAt) -> Result<(Inner, Value), String> {
+pub(crate) async fn build_review(
+    info: &SiteInfo,
+    stage: ReviewAt,
+) -> Result<(Inner, Value), String> {
     let (inner, people, canaries) = fresh_review(info)?;
     let mut seed = Seeder {
         inner: &inner,
