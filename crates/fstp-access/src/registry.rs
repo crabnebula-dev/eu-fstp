@@ -1939,6 +1939,15 @@ pub const OPS: &[OpSpec] = &[
         &IN_NONE,
         Scope::ProposalsRead,
     ),
+    // M5 reads follow-up: the caller's grants and the contracts awaiting
+    // the caller's signature, so nobody types a proposal number. Web
+    // only, as `grant.overview` is (I-85).
+    OpSpec::read("grant.list_mine", RK::ListMyGrants, "/me/grants"),
+    OpSpec::read(
+        "contract.awaiting_me",
+        RK::ListMyContractsToSign,
+        "/me/contracts-awaiting-signature",
+    ),
     OpSpec::command(
         "grant.determine_amount",
         CK::DetermineAmount,

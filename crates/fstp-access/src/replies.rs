@@ -463,6 +463,30 @@ const CONTRACT_VIEW: Shape = Shape::Object(&[
     ),
 ]);
 
+/// One milestone of a grant with its money (M5 reads follow-up, R-PR-07,
+/// I-58). `due` is a UTC day, `YYYY-MM-DD`.
+const MILESTONE_FUNDS: Shape = Shape::Object(&[
+    m("milestone", Shape::Id),
+    m("amount", Shape::Amount),
+    m("due", Shape::String),
+    m("paid", Shape::Amount),
+    m("pending", Shape::Amount),
+    m("available", Shape::Amount),
+    m("closed", Shape::Bool),
+]);
+
+/// Why a grant is in the caller's list: the rule of `grant.overview` that
+/// admitted the caller (M5 reads follow-up).
+const GRANT_VIA: &[&str] = &[
+    "team",
+    "former_team",
+    "programme_manager",
+    "finance_approver",
+    "payment_releaser",
+    "contract_signatory",
+    "auditor",
+];
+
 /// The reply shape of each operation whose `data` the API core serves,
 /// by operation name.
 pub const REPLIES: &[(&str, Shape)] = &[
@@ -478,9 +502,42 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("paid", Shape::Amount),
             m("contract", Shape::Nullable(&Shape::Id)),
             m("requests", Shape::Int),
+            // M5 reads follow-up: the plan and its milestones, every sum
+            // the cell's (R-PR-07, I-58, ADR-006).
+            m("plan", Shape::Nullable(&Shape::Id)),
+            m("milestones", Shape::Array(&MILESTONE_FUNDS)),
         ]),
     ),
     ("contract.view", CONTRACT_VIEW),
+    // M5 reads follow-up: the caller's grants, and the contract versions
+    // awaiting the caller's signature. I-86: parties by field and role.
+    (
+        "grant.list_mine",
+        Shape::Array(&Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("call", Shape::Nullable(&Shape::Id)),
+            m("state", Shape::Enum(STATE_NAMES)),
+            m("amount", Shape::Nullable(&Shape::Amount)),
+            m("paid", Shape::Amount),
+            m("contract", Shape::Nullable(&Shape::Id)),
+            m("via", Shape::Enum(GRANT_VIA)),
+        ])),
+    ),
+    (
+        "contract.awaiting_me",
+        Shape::Array(&Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("contract", Shape::Id),
+            m("version", Shape::Int),
+            m("field", Shape::String),
+            m(
+                "role",
+                Shape::Enum(&["lead", "team_member", "guardian", "signatory"]),
+            ),
+            m("state", Shape::Enum(&["sent", "signed_by_grantee"])),
+            m("digest", Shape::Nullable(&Shape::String)),
+        ])),
+    ),
     ("payment.status", Shape::Array(&PAYMENT_REQUEST)),
     (
         "payment.queue",

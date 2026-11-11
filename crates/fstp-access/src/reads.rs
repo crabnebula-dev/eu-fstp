@@ -166,11 +166,15 @@ pub enum ReadKind {
     ListDeliveries,
     GetMailRelay,
     GetProgrammeTimeline,
+    // M5 reads follow-up: the caller's own grants and the contracts
+    // awaiting the caller's signature (module documentation).
+    ListMyGrants,
+    ListMyContractsToSign,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 59] = [
+    pub const ALL: [ReadKind; 61] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -230,6 +234,8 @@ impl ReadKind {
         ReadKind::ListDeliveries,
         ReadKind::GetMailRelay,
         ReadKind::GetProgrammeTimeline,
+        ReadKind::ListMyGrants,
+        ReadKind::ListMyContractsToSign,
     ];
 }
 
@@ -522,6 +528,12 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::Holder(Role::ProgrammeManager),
         OPEN_ALWAYS,
     ),
+    // M5 reads follow-up: the caller's own lists. The dispatch keeps
+    // only the grants `GetGrant` and the contracts `GetContract` would
+    // serve the caller, judging each with `authorize_read`, so neither
+    // list widens those reads (R-AC-01, SoD, programme scope).
+    (ReadKind::ListMyGrants, ReadRule::Own, OPEN_ALWAYS),
+    (ReadKind::ListMyContractsToSign, ReadRule::Own, OPEN_ALWAYS),
 ];
 
 /// The readers of a grant (M5 design section 5).
