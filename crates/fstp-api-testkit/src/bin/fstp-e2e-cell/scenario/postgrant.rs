@@ -41,6 +41,11 @@ pub(crate) const RELEASER: AccountId = AccountId::from_raw(602);
 pub(crate) const SIGNATORY: AccountId = AccountId::from_raw(603);
 /// The account of the auditor.
 pub(crate) const AUDITOR: AccountId = AccountId::from_raw(604);
+/// The lead of proposal x, who signs in to run the grant.
+pub(crate) const LEAD_X: AccountId = L1;
+/// The front-door label of that lead.
+pub(crate) const LEAD_LABEL: &str = "Lead applicant X";
+
 /// The account of the report approver, the Financial signatory of the
 /// tenant (R-RP-03, Q3).
 pub(crate) const REPORT_APPROVER: AccountId = AccountId::from_raw(605);
@@ -86,6 +91,9 @@ pub(crate) const REPORT_PERSON: (&str, AccountId, &str) =
 pub(crate) fn label(account: AccountId) -> Option<&'static str> {
     if account == REPORT_PERSON.1 {
         return Some(REPORT_PERSON.2);
+    }
+    if account == LEAD_X {
+        return Some(LEAD_LABEL);
     }
     EXTRAS.iter().find(|p| p.account == account).map(|p| p.label)
 }
@@ -537,6 +545,11 @@ pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value)
     let (inner, _people, _canaries) = fresh_review_with(info, true)?;
     {
         let mut auth = lock_auth(&inner);
+        for p in [("lead-x-self", LEAD_X, LEAD_LABEL)] {
+            let mail = email(p.0)?;
+            auth.person(&mail, p.1);
+            let _ = auth.invite(p.1)?;
+        }
         for p in EXTRAS.iter().map(|p| (p.key, p.account, p.label)).chain([REPORT_PERSON]) {
             let mail = email(p.0)?;
             auth.person(&mail, p.1);
@@ -601,4 +614,61 @@ pub(crate) async fn demo(site: &Site, name: &str) -> Result<(), String> {
     inner.set_scene(name);
     site.replace(inner);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use fstp_domain::StateTag;
+    use fstp_rt::future::block_on;
+
+    fn info() -> SiteInfo {
+        SiteInfo {
+            name: "a",
+            host: "a.fstp.localhost".to_owned(),
+            origin: "http://a.fstp.localhost:8640".to_owned(),
+            control: "http://127.0.0.1:8641".to_owned(),
+            assets: fstp_web_assets::AssetSet::from_files("main.js", &[("main.js", b"export {};")])
+                .unwrap(),
+            auth_assets: std::sync::Arc::new(crate::assets::AuthAssets::empty()),
+            demo_signin: false,
+        }
+    }
+
+    /// M5 exit "a call cycle runs through to PAID", R-PR-01, R-RP-04, I-05,
+    /// I-30, I-31, I-33, I-44: each post-grant scene builds through the
+    /// operations and leaves proposal x in the state its name says.
+    #[test]
+    fn m5_demo_grant_scenes_reach_their_states() {
+        let want = [
+            (GrantAt::NegotiationReady, StateTag::Negotiation),
+            (GrantAt::Sent, StateTag::Negotiation),
+            (GrantAt::Effective, StateTag::Granted),
+            (GrantAt::InExecution, StateTag::InExecution),
+            (GrantAt::UnderReview, StateTag::InExecution),
+            (GrantAt::Paid, StateTag::InExecution),
+            (GrantAt::AllClosed, StateTag::Completed),
+        ];
+        for (at, tag) in want {
+            let (inner, v) = block_on(build(&info(), at)).unwrap_or_else(|e| panic!("{at:?}: {e}"));
+            let state = inner.ports.engine.state();
+            let x = PROPOSALS[0].proposal;
+            assert_eq!(
+                fstp_domain::view::proposal_state(&state.core, x),
+                Some(tag),
+                "{at:?}: {}",
+                v.to_compact()
+            );
+            let paid = state
+                .core
+                .payments()
+                .summaries()
+                .any(|s| s.status == fstp_domain::payment::RequestStatus::Paid);
+            assert_eq!(paid, at >= GrantAt::Paid, "{at:?}");
+            let reports = v.get("reports").and_then(Value::as_array).map_or(0, |a| a.len());
+            assert_eq!(reports, if at == GrantAt::AllClosed { 4 } else { 0 }, "{at:?}");
+        }
+    }
 }

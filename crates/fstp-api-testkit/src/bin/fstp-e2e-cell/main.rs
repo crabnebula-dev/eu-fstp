@@ -52,6 +52,7 @@ mod auth;
 mod control;
 mod demo;
 mod demo_signin;
+mod grantdemo;
 mod onboarding;
 mod people;
 mod precheck;
@@ -320,6 +321,9 @@ impl Handler for CellOrigin {
         async move {
             if for_vault(&site.info, &req) {
                 return vault_page(&req);
+            }
+            if req.target.path().starts_with("/fake-vault/verifications/") {
+                return grantdemo::vault(&site.inner(), req).await;
             }
             let path = req.target.path().to_owned();
             if path == "/" && req.method == Method::GET {

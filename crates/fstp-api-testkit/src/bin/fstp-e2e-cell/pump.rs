@@ -40,11 +40,6 @@ pub(crate) fn arm_forge_failure() {
     FAIL_NEXT.store(true, Ordering::SeqCst);
 }
 
-/// Whether the 404 is armed.
-pub(crate) fn forge_failure_armed() -> bool {
-    FAIL_NEXT.load(Ordering::SeqCst)
-}
-
 fn next_id() -> CommandId {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut b = *b"fstp:e2e:pump\0\0\0";
