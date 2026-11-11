@@ -354,7 +354,13 @@ impl Vault for FakeVault {
                 let origin = origin.ok_or(OracleDown)?;
                 format!("{origin}/w#synthetic-ticket-{n}")
             }
-            _ => format!("/fake-vault/verifications/{n}"),
+            // M5 L-DEMO: a bank or hardship ticket opens the vault's read
+            // page `/r` on the vault origin, which the grant pages accept
+            // (I-86).
+            _ => match origin {
+                Some(origin) => format!("{origin}/r#synthetic-ticket-{n}"),
+                None => format!("/fake-vault/verifications/{n}"),
+            },
         };
         log.verifications.push((purpose, a));
         log.next = n.saturating_add(1);

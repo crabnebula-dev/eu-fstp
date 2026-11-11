@@ -41,6 +41,12 @@ fstp-smtp.workspace = true
 fstp-brand.workspace = true
 # M5 lane L-API: the fake wallet, QTSP and trusted list of test cells.
 fstp-contract.workspace = true
+# M6 lane L6-DEMO: the real timeline, dispatcher and mail composer behind the
+# demo cell's sent-mail list, over the test sink.
+fstp-cell-core.workspace = true
+fstp-timeline.workspace = true
+fstp-dispatch.workspace = true
+fstp-mail.workspace = true
 
 
 [lints]
