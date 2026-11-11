@@ -10,10 +10,21 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-assessor = { path = ".." }
+fstp-assess = { path = "../../fstp-assess" }
+fstp-domain = { path = "../../fstp-domain" }
+fstp-findings = { path = "../../fstp-findings" }
+fstp-infer = { path = "../../fstp-infer" }
 
 [[bin]]
 name = "assessor_queue_ndjson"
 path = "fuzz_targets/assessor_queue_ndjson.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "assessor_result_decode"
+path = "fuzz_targets/assessor_result_decode.rs"
 test = false
 doc = false
 bench = false

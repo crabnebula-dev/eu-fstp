@@ -1,0 +1,1 @@
+{"status":"done","job":"7","findings":[{"kind":"completeness","criterion":null,"element":"problem","severity":"minor","statement":"Short.","evidence":[{"kind":"submission","text":{"id":"3","digest":"0000000000000000000000000000000000000000000000000000000000000000"},"start":0,"end":3}]}],"dropped":0,"replies":[],"retrievals":[]}

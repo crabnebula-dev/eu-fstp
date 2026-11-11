@@ -215,6 +215,19 @@ fn list<'a>(
     Ok(a)
 }
 
+/// A canonical decimal `u128` id, or `None`.
+pub(crate) fn parse_id(s: &str) -> Option<u128> {
+    let canonical = !s.is_empty()
+        && s.len() <= 39
+        && s.bytes().all(|b| b.is_ascii_digit())
+        && (s == "0" || !s.starts_with('0'));
+    if canonical {
+        s.parse::<u128>().ok()
+    } else {
+        None
+    }
+}
+
 /// A `u128` id as a canonical decimal string.
 fn id(v: &Value, what: &'static str) -> Result<u128, QueueError> {
     let s = v.as_str().ok_or(QueueError::Shape(what))?;

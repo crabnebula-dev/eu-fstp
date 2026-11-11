@@ -29,12 +29,17 @@
 mod assessor;
 mod egress;
 mod inference;
+mod intake;
 mod queue;
 mod retrieval;
 
 pub use assessor::{Assessor, Premasked, refused, result_bytes};
 pub use egress::{AssessorDestination, EgressError, Fence};
 pub use inference::{Inference, InferenceMode};
+pub use intake::{
+    CellJob, Intake, IntakeError, IntakeFinding, Link, LinkError, MAX_REPLIES, MAX_RESULT_BYTES,
+    MAX_RESULT_FINDINGS, MAX_RETRIEVALS, PendingCause, decode_result,
+};
 pub use queue::{
     JobConfig, JobLine, Line, LineReader, MAX_CRITERIA, MAX_LINE_BYTES, MAX_OWN, MAX_PARTS,
     MAX_SOURCES, QueueError, SourceLine, decode_job,
