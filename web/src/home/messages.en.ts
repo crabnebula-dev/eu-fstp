@@ -30,6 +30,8 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "nav.programme_setup": "Programme set-up",
   "nav.approvals": "Approvals",
   "nav.my_applications": "My applications",
+  "nav.grants": "Grants",
+  "nav.operations": "Operations",
   "nav.open_calls": "Open calls",
 
   "home.title": "Your work",
@@ -110,6 +112,13 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.work.round": "Open cut-off round of {call}",
   "home.work.irc_cases": "Your IRC cases",
   "home.work.open_calls": "See open calls",
+  "home.work.grant": "Your grant: {title}",
+  "home.work.grants": "All your grants",
+  "home.work.grants_reviewer": "Grants you review: amount determination and payment requests",
+  "home.work.grants_staff": "Open a grant",
+  "home.work.operations": "Your operations queues: payments, contracts and funder reports",
+  "home.group.operations": "Operations",
+  "home.operations.intro": "Payment requests to review, approve, release and confirm, contracts to countersign and funder reports.",
 
   "role.programme_manager": "Programme manager",
   "role.call_drafter": "Call drafter",

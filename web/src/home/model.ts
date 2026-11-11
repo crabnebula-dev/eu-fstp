@@ -245,6 +245,9 @@ export type WorkKind =
   | "studio"
   | "approvals"
   | "people"
+  | "grant"
+  | "grants"
+  | "operations"
   | "open-calls";
 
 /** One own proposal, as `proposal.list_own` gives it. */
@@ -276,6 +279,7 @@ export type WorkGroup =
   | "coordinator"
   | "committee"
   | "irc"
+  | "operations"
   | "everyone";
 
 /** One link of the home page. */
@@ -330,12 +334,19 @@ export const WORK_PATHS = Object.freeze({
   notifiable: (c: string): string => `/app/calls/${c}/notifiable-conflicts`,
   ranking: (c: string): string => `/app/calls/${c}/ranking`,
   round: (r: string): string => `/app/cut-off-rounds/${r}`,
+  grants: "/app/grants",
+  grant: (p: string): string => `/app/grants/${p}`,
+  operations: "/app/operations",
   assignments: "/app/me/assignments",
   ircCases: "/app/me/irc-cases",
 });
 
 /** The roles whose pages this release has, beside the Receiving roles. */
 const STAFF_WITH_PAGES: ReadonlySet<RoleName> = new Set<RoleName>([
+  "finance_approver",
+  "payment_releaser",
+  "contract_signatory",
+  "auditor",
   "programme_manager",
   "call_drafter",
   "fstp_coordinator",
@@ -412,10 +423,14 @@ export function workOf(
     } else {
       applies = true;
       add("applicant", "proposal", WORK_PATHS.proposal(p.proposal), text("home.work.proposal", { title }));
+      if (p.role === "lead") {
+        add("applicant", "grant", WORK_PATHS.grant(p.proposal), text("home.work.grant", { title }));
+      }
     }
   }
   if (applies) {
     add("applicant", "proposals", WORK_PATHS.proposals, text("home.work.proposals"));
+    add("applicant", "grants", WORK_PATHS.grants, text("home.work.grants"));
   }
 
   // J0, J1, J2: the tenant admin.
@@ -442,6 +457,7 @@ export function workOf(
   // J6: a committee member's assignments.
   if (holds("committee_member").length > 0) {
     add("committee", "assignments", WORK_PATHS.assignments, text("home.work.assignments"));
+    add("committee", "grants", WORK_PATHS.grants, text("home.work.grants_reviewer"));
   }
   // J8: the IRC cases.
   if (holds("irc_member").length > 0) {
@@ -466,6 +482,12 @@ export function workOf(
   // J1, J3: the call boards of the programme staff.
   for (const c of callsOf([...holds("programme_manager"), ...holds("call_drafter")])) {
     add("programme", "board", WORK_PATHS.board(c), text("home.work.board", { call: nameOf(c) }));
+  }
+
+  // M5: the Operations queues and the grants of the programme staff.
+  if (holdsOperations(r)) {
+    add("operations", "operations", WORK_PATHS.operations, text("home.work.operations"));
+    add("operations", "grants", WORK_PATHS.grants, text("home.work.grants_staff"));
   }
 
   // J4: anyone may read the open calls.
@@ -501,7 +523,9 @@ export type NavKind =
   | "onboarding"
   | "creator"
   | "approvals"
+  | "operations"
   | "proposals"
+  | "grants"
   | "calls"
   | "account";
 
@@ -511,6 +535,20 @@ export interface NavLink {
   readonly href: string;
   /** The label id in the home catalogue. */
   readonly label: string;
+}
+
+/** The roles whose work is in the operations queues (M5 design section 6). */
+const OPERATIONS_ROLES: readonly RoleName[] = [
+  "programme_manager",
+  "finance_approver",
+  "payment_releaser",
+  "contract_signatory",
+  "auditor",
+];
+
+/** Whether the caller holds a role with operations work: a staff binding or a signatory role. */
+export function holdsOperations(r: MyRoles): boolean {
+  return r.signatories.length > 0 || r.roles.some((b) => b.proposal === null && OPERATIONS_ROLES.includes(b.role));
 }
 
 /**
@@ -529,6 +567,9 @@ export function navLinksOf(r: MyRoles): readonly NavLink[] {
   }
   if (holds("irc_member")) {
     out.push({ kind: "irc-cases", href: WORK_PATHS.ircCases, label: "nav.my_cases" });
+  }
+  if (holdsOperations(r)) {
+    out.push({ kind: "operations", href: WORK_PATHS.operations, label: "nav.operations" });
   }
   if (r.tenantAdmin) {
     out.push({ kind: "onboarding", href: WORK_PATHS.onboarding, label: "nav.onboarding" });
@@ -549,6 +590,7 @@ export function navOf(roles: MyRoles | null): readonly NavLink[] {
     { kind: "home", href: WORK_PATHS.home, label: "nav.home" },
     ...(roles === null ? [] : navLinksOf(roles)),
     { kind: "proposals", href: WORK_PATHS.proposals, label: "nav.my_applications" },
+    { kind: "grants", href: WORK_PATHS.grants, label: "nav.grants" },
     { kind: "calls", href: WORK_PATHS.calls, label: "nav.open_calls" },
     { kind: "account", href: WORK_PATHS.account, label: "nav.account" },
   ] satisfies NavLink[]);

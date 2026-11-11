@@ -226,6 +226,8 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "negotiation.next.guardian": "If the applicant lead is under 18, the guardian gives consent in the identity vault.",
   "negotiation.next.amount": "The grant amount is determined, then accepted and approved.",
   "negotiation.next.contract": "The contract is drafted and signed.",
+  "negotiation.next.grant_link": "Open the grant page",
+  "negotiation.next.contract_link": "Open the contract",
   "negotiation.closed": "This proposal is not in negotiation.",
   "negotiation.lead_acknowledges": "The applicant lead acknowledges this notice.",
 

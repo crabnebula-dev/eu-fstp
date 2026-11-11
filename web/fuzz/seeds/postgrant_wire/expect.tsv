@@ -1,0 +1,16 @@
+# postgrant_wire corpus: the M5 read bodies of web/src/grant/models.ts
+# (grant.overview, contract.view, payment.status, payment.queue,
+# report.list and the vault redirect). Each line is <verdict><TAB><JSON
+# string>. The verdict is `accepted` when at least one decoder takes the
+# value and `refused` when none does.
+accepted	"{\"proposal\":\"3\",\"state\":\"NEGOTIATION\",\"determination\":\"4\",\"amount\":\"1000.00\",\"paid\":\"0.00\",\"contract\":null,\"requests\":0}"
+accepted	"{\"proposal\":\"3\",\"contract\":\"5\",\"status\":\"sent\",\"versions\":[{\"version\":1,\"state\":\"sent\",\"parties\":[{\"field\":\"lead\",\"role\":\"lead\",\"signed\":false,\"mine\":true}],\"revisions\":1,\"digest\":null,\"open_changes\":[2]}]}"
+accepted	"[{\"request\":\"7\",\"proposal\":\"3\",\"status\":\"UNDER_REVIEW\",\"kind\":\"hardship\",\"submission_checks\":true,\"acceptance_checks\":false,\"lines\":[{\"line\":\"8\",\"milestone\":\"9\",\"requested\":\"100.00\",\"approved\":null}]}]"
+accepted	"[{\"task\":\"review\",\"request\":{\"request\":\"7\",\"proposal\":\"3\",\"status\":\"PAID\",\"kind\":\"milestone\",\"submission_checks\":true,\"acceptance_checks\":true,\"lines\":[]}}]"
+accepted	"[{\"report\":\"11\",\"kind\":\"audit_file\",\"call\":\"2\",\"programme\":null,\"document\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"template\":\"t/1\",\"generated_by_me\":false,\"approved\":false}]"
+accepted	"{\"redirect\":\"https://id.cell.example/w#ab\"}"
+refused	"{\"proposal\":\"-1\"}"
+refused	"[{\"request\":\"7\"}]"
+refused	"null"
+refused	"\"x\""
+refused	"[[],[]]"
