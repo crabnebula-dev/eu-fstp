@@ -7,7 +7,7 @@
 
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
 import { mountPostGrant } from "../src/grant/routes.js";
-import { decodeGrantList, decodeOverview, decodeToSign } from "../src/grant/models.js";
+import { decodeDetermination, decodeGrantList, decodeOverview, decodeToSign } from "../src/grant/models.js";
 import type { PageEnv } from "../src/reviewer/kit.js";
 import { VALIDATORS } from "../src/gen/api.js";
 import { assert, test } from "./support/harness.js";
@@ -155,4 +155,28 @@ test("r_pr_07_payment_form_fills_the_cells_available_amount", async () => {
   select.value = "10";
   fill.click();
   assert(amount.value === "", "a closed milestone fills nothing");
+});
+
+/** R-NG-03: the assigned reviewer, refused the overview, reaches the determination form through the determination view, with the plan filled in. */
+test("r_ng_03_reviewer_reaches_the_determination_form_by_clicking", async () => {
+  prepare("/app/grants/3");
+  const sent: string[] = [];
+  const view = { proposal: "3", state: "NEGOTIATION", determination: null, plan: "6", plan_total: "1000.00", granted: null };
+  await mountPostGrant(env({ "GET /grants/3/determination": view }, sent), "/app/grants/3");
+  await settle();
+  assert(sent.includes("GET /grants/3"), "the overview is asked first");
+  assert(sent.includes("GET /grants/3/determination"), sent.join(", "));
+  const t = text();
+  assert(t.includes("Determine the grant amount"), `the determination form: ${t.slice(0, 400)}`);
+  assert(t.includes("1000.00") && t.includes("NEGOTIATION"), "plan total and state");
+  assert(!t.includes("Payment requests"), "no payment link on the reviewer view");
+  const plan = fakeDocument.getElementById("grant-determine-plan") as unknown as { value: string } | null;
+  assert(plan?.value === "6", `the plan is filled: ${plan?.value ?? "none"}`);
+});
+
+/** R-NG-03: the determination view decoder refuses a number amount (ADR-006). */
+test("r_ng_03_determination_decoder_refuses_number_amounts", () => {
+  const ok = decodeDetermination({ proposal: "3", state: "NEGOTIATION", determination: "4", plan: "6", plan_total: "1000.00", granted: "900.00" });
+  assert(ok !== null && ok.agreedPlan === "6" && ok.granted === "900.00", "decoded");
+  assert(decodeDetermination({ proposal: "3", state: "NEGOTIATION", determination: null, plan: "6", plan_total: 1000, granted: null }) === null, "number refused");
 });

@@ -205,6 +205,33 @@ function toSignRow(v: unknown): ToSignRow | null {
   return Object.freeze({ proposal: o["proposal"], contract: o["contract"], version: o["version"], field: o["field"], role: o["role"], state, digest });
 }
 
+/** `grant.determination_view`: what the assigned reviewer needs to determine the amount (R-NG-03). */
+export interface DeterminationView {
+  readonly proposal: string;
+  readonly state: string;
+  readonly determination: string | null;
+  /** The plan the determination starts from, as `agreedPlan` of the overview. */
+  readonly agreedPlan: string | null;
+  readonly planTotal: string | null;
+  readonly granted: string | null;
+}
+
+/** Decodes `grant.determination_view`. */
+export function decodeDetermination(v: unknown): DeterminationView | null {
+  const o = rec(v);
+  if (o === null || !isIdText(o["proposal"]) || !text(o["state"])) {
+    return null;
+  }
+  const determination = nullOr(o["determination"], isIdText);
+  const plan = nullOr(o["plan"], isIdText);
+  const total = nullOr(o["plan_total"], amount);
+  const granted = nullOr(o["granted"], amount);
+  if (determination === undefined || plan === undefined || total === undefined || granted === undefined) {
+    return null;
+  }
+  return Object.freeze({ proposal: o["proposal"], state: o["state"], determination, agreedPlan: plan, planTotal: total, granted });
+}
+
 /** Decodes `contract.awaiting_me`. */
 export function decodeToSign(v: unknown): readonly ToSignRow[] | null {
   return each(v, toSignRow);

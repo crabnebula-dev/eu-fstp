@@ -15,6 +15,11 @@ export const GRANT_LABELS: Readonly<Record<string, string>> = {
   "grant.hub.row": "Proposal {id}",
   "grant.hub.row_titled": "Proposal {id}: {title}",
   "grant.hub.open": "Open grant {id}",
+  "grant.reviewer.intro":
+    "You review this proposal. Set the grant amount from the agreed plan, minus any ineligible costs. The platform computes the amount and checks the limits.",
+  "grant.reviewer.plan": "Plan the amount starts from",
+  "grant.reviewer.plan_total": "Plan total in EUR",
+  "grant.reviewer.granted": "Determined amount in EUR",
   "grant.hub.to_sign": "Contracts awaiting your signature",
   "grant.hub.to_sign_row": "Contract of proposal {id}, version {version}",
   "grant.hub.to_sign_sent": "Waiting for the grantee side",

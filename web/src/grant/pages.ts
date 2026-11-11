@@ -33,6 +33,7 @@ import {
 } from "./kit.js";
 import {
   decodeGrantList,
+  decodeDetermination,
   decodeOverview,
   decodeToSign,
   decodeRedirect,
@@ -42,6 +43,7 @@ import {
   isIdText,
   reasonBody,
   type Overview,
+  type DeterminationView,
   type GrantRow,
   type ToSignRow,
 } from "./models.js";
@@ -169,7 +171,7 @@ function deductionRows(t: I18n, n: number): { readonly root: HTMLElement; readon
   return { root: h("div", { class: "fstp-field-group" }, [a.root, r.root]), amount: a.control, reason: r.control };
 }
 
-function determineSection(env: PageEnv, t: I18n, f: Frame, o: Overview, reload: () => Promise<void>): HTMLElement {
+function determineSection(env: PageEnv, t: I18n, f: Frame, o: { readonly proposal: string; readonly agreedPlan: string | null }, reload: () => Promise<void>): HTMLElement {
   const plan = textField("grant-determine-plan", t.label("grant.determine.plan"), { inputmode: "numeric", value: o.agreedPlan ?? "" });
   const rows: ReturnType<typeof deductionRows>[] = [];
   const slot = h("div", { id: "grant-deductions" });
@@ -321,6 +323,16 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
   const render = async (): Promise<void> => {
     const r = await readOp(env, "grant.overview", { proposal }, (v): v is Overview => decodeOverview(v) !== null);
     if (!r.ok) {
+      // R-NG-03: the assigned reviewer reads no overview, only what the determination needs.
+      const roles = await rolesOrNull();
+      if (can(roles, "committee_member")) {
+        const d = await readOp(env, "grant.determination_view", { proposal }, (v): v is DeterminationView => decodeDetermination(v) !== null);
+        const view = d.ok ? decodeDetermination(d.data) : null;
+        if (view !== null) {
+          f.show(reviewerBody(env, t, f, view, render));
+          return;
+        }
+      }
       f.problem(r.problem);
       f.show([h("p", {}, [link(GRANT_PATHS.hub, t.label("grant.link_hub"))])]);
       return;
@@ -373,6 +385,27 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
     f.show(body);
   };
   await guarded(f, render);
+}
+
+/**
+ * The assigned reviewer's grant page (R-NG-03): the state, the plan the determination starts
+ * from with its total, the current determination, and the determination form. The cell
+ * serves this view in NEGOTIATION only, and computes every amount (ADR-006).
+ */
+function reviewerBody(env: PageEnv, t: I18n, f: Frame, v: DeterminationView, reload: () => Promise<void>): Child[] {
+  const plain = isStateTag(v.state) ? t.label(`kit.state.${v.state}`) : v.state;
+  return [
+    h("p", { id: "grant-state", "data-state": v.state }, [badge(plain, v.state)]),
+    h("p", {}, [t.label("grant.reviewer.intro")]),
+    facts([
+      [t.label("grant.reviewer.plan"), v.agreedPlan ?? "-"],
+      [t.label("grant.reviewer.plan_total"), v.planTotal ?? "-"],
+      [t.label("grant.determination"), v.determination === null ? t.label("grant.determination_none") : t.label("grant.determination_set", { id: v.determination })],
+      [t.label("grant.reviewer.granted"), v.granted ?? "-"],
+    ]),
+    determineSection(env, t, f, v, reload),
+    h("p", {}, [link(GRANT_PATHS.hub, t.label("grant.link_hub"))]),
+  ];
 }
 
 /** The grant pages, each with its route below `/app/`. */
