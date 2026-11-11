@@ -8,6 +8,7 @@
 
 import { h } from "../core/dom.js";
 import { holdLeave, whenLeft } from "../core/router.js";
+import { precheckLink } from "../precheck/page.js";
 import { type AutosaveStatus, createAutosave } from "./autosave.js";
 import { call } from "./client.js";
 import { loadProposal } from "./load.js";
@@ -59,6 +60,8 @@ export function mountWorkspace(id: string): void {
     }
     if (draftEditable(p.state)) {
       f.main.append(proposalSteps(id, "workspace"));
+      // M7 lane L-UI: the pre-check of the saved draft (R-LA-06).
+      f.main.append(precheckLink(id));
     }
     if (!draftEditable(p.state)) {
       f.main.append(

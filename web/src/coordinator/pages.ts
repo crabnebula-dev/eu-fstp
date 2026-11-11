@@ -14,6 +14,7 @@
 // - R-CF-04: notifiable conflicts reach the coordinator as drafts.
 
 import { declaredHere, markDeclared } from "./declared.js";
+import { findingsStatusSection } from "../findings/panel.js";
 import { h, type Child } from "../core/dom.js";
 import type { I18n } from "../core/i18n.js";
 import {
@@ -566,6 +567,8 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
     const notSelected = board.data.filter((r) => r.state === "NOT_SELECTED").length;
     const waiting = board.data.filter((r) => r.state === "STAGE1").length;
     const ranked = board.data.some((r) => AFTER_SELECTION.has(r.state) && r.state !== "STAGE2");
+    // M7 lane L-UI: findings pending or a count per proposal, never a statement.
+    const assessment = await findingsStatusSection(env, call);
     f.show([
       h("h2", { id: "board-summary" }, [
         t.label("coord.board.summary", { selected: String(selected), not_selected: String(notSelected) }),
@@ -584,6 +587,7 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
         headRow(t, ["coord.col_proposal", "coord.col_title", "coord.col_state", "coord.col_action"]),
         h("tbody", {}, rows),
       ]),
+      assessment,
     ]);
   };
   await guarded(f, render);

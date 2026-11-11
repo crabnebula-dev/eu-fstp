@@ -17,6 +17,7 @@
 import { isRankingView } from "../committee/models.js";
 import { h, type Child } from "../core/dom.js";
 import type { I18n, Label } from "../core/i18n.js";
+import { findingsSection } from "../findings/panel.js";
 import { readRankingSummary, readScoreCorrection, readScoreSheet, type FieldError } from "./forms.js";
 import {
   FormErrors,
@@ -343,8 +344,11 @@ async function showWork(env: PageEnv, t: I18n, f: Frame, s: AssignmentSummary): 
               ]),
             ]),
           ];
+    // M7 lane L-UI: the assessor's findings with agree and dispute marks.
+    const findings = await findingsSection(env, f, s.assignment);
     f.show([
       contentSection(t, view),
+      findings,
       scoreForm(env, t, f, s.assignment, sheet.data, mode, (m) => render(m)),
       ...summary,
       later,
