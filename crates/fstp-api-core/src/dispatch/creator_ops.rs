@@ -775,7 +775,7 @@ async fn preview<P: Seams>(
 /// Interim, pending a programme listing of the domain (lane W1b): a
 /// programme with no call, no binding and no draft is not listed. A cell
 /// serves one tenant, so each listed programme is the tenant's (I-19).
-fn programmes(state: &EngineState) -> Vec<ProgrammeId> {
+pub(super) fn programmes(state: &EngineState) -> Vec<ProgrammeId> {
     let mut out: BTreeSet<ProgrammeId> = BTreeSet::new();
     for (_, c) in state.core.calls().iter() {
         let _ = out.insert(c.programme());

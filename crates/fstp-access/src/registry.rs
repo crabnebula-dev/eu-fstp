@@ -2211,6 +2211,15 @@ pub const OPS: &[OpSpec] = &[
     // R-RP-04, I-44, R-RP-03 (Q3).
     OpSpec::read("report.list", RK::ListReports, "/programmes/{programme}/reports")
         .acting(REPORT_READERS),
+    // Lane m5/report-programmes (R-RP-03): the programmes whose reports
+    // `report.list` serves the caller, so the tenant-wide Financial
+    // signatory reaches them by clicking. Web only, as `report.list` is.
+    OpSpec::read(
+        "report.programmes",
+        RK::ListReportProgrammes,
+        "/me/report-programmes",
+    )
+    .acting(REPORT_READERS),
     OpSpec::new(
         "report.generate",
         OpKind::Grant(GrantKind::ReportGenerate),

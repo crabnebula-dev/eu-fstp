@@ -52,6 +52,9 @@ pub enum GrantModel {
     Determination(DeterminationView),
     /// `payment.line_review_view` (R-PR-08, lane m5/polish-access).
     LineReview(Box<crate::grant_lists::LineReviewView>),
+    /// `report.programmes`: the programmes whose reports `report.list`
+    /// serves the caller (lane m5/report-programmes, R-RP-03).
+    ReportProgrammes(Vec<ProgrammeId>),
 }
 
 impl ToJson for GrantModel {
@@ -66,6 +69,16 @@ impl ToJson for GrantModel {
             GrantModel::ToSign(rows) => array(rows),
             GrantModel::Determination(v) => v.to_json(),
             GrantModel::LineReview(v) => v.to_json(),
+            GrantModel::ReportProgrammes(ps) => {
+                let mut a = Array::new();
+                for p in ps {
+                    let mut o = Object::new();
+                    let _ = o.insert("id", dec(p.raw()));
+                    let _ = o.insert("name", Value::String(crate::creator::programme_name(*p)));
+                    a.push(Value::Object(o));
+                }
+                Value::Array(a)
+            }
         }
     }
 }
@@ -410,6 +423,8 @@ pub(crate) fn samples() -> Vec<GrantModel> {
             via: "team",
         }]),
         GrantModel::Grants(Vec::new()),
+        GrantModel::ReportProgrammes(vec![ProgrammeId::from_raw(1), ProgrammeId::from_raw(2)]),
+        GrantModel::ReportProgrammes(Vec::new()),
         GrantModel::ToSign(vec![SignRow {
             proposal: ProposalId::from_raw(3),
             contract: ContractId::from_raw(5),

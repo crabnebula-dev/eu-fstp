@@ -185,11 +185,15 @@ pub enum ReadKind {
     // Lane m5/polish-access (2026-11-12): the assigned reviewer's view of
     // what a payment line review needs (R-PR-08).
     GetLineReview,
+    // Lane m5/report-programmes (R-RP-03): the programmes whose funder
+    // reports the caller reads, by id and name, so the tenant-wide
+    // Financial signatory reaches them by clicking.
+    ListReportProgrammes,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 66] = [
+    pub const ALL: [ReadKind; 67] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -256,6 +260,7 @@ impl ReadKind {
         ReadKind::GetFindingsStatus,
         ReadKind::GetMyMailbox,
         ReadKind::GetLineReview,
+        ReadKind::ListReportProgrammes,
     ];
 }
 
@@ -594,6 +599,21 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadKind::GetLineReview,
         ReadRule::ProposalReviewer,
         &[StateTag::InExecution],
+    ),
+    // Lane m5/report-programmes (R-RP-03, Q3): the programmes whose
+    // reports `report.list` serves the caller, by id and name only. The
+    // rule admits a programme manager or an auditor of any programme.
+    // A Financial signatory holds a tenant-wide role (NOTE 5), so the
+    // dispatch admits it in the tenant fold beside this rule, as for
+    // `report.list`. The dispatch keeps only the programmes whose
+    // `report.list` admits the caller, so the list never widens it.
+    (
+        ReadKind::ListReportProgrammes,
+        ReadRule::AnyOf(&[
+            ReadRule::HolderAnywhere(Role::ProgrammeManager),
+            ReadRule::HolderAnywhere(Role::Auditor),
+        ]),
+        OPEN_ALWAYS,
     ),
 ];
 

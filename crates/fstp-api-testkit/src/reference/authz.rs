@@ -900,6 +900,10 @@ pub enum Rule {
     /// The funder reports of P: its programme manager or auditor, and the
     /// Financial signatory, who approves them (Q3).
     ReportReader,
+    /// The programmes whose funder reports the caller reads: a programme
+    /// manager or an auditor of any programme, and the Financial
+    /// signatory (lane m5/report-programmes, R-RP-03).
+    ReportProgrammes,
     /// A finance approver of P.
     Finance,
     /// A payment releaser of P.
@@ -1025,7 +1029,7 @@ impl Rule {
                 Some(Role::ContractSignatory),
                 Some(Role::Auditor),
             ],
-            Rule::ReportReader => &[
+            Rule::ReportReader | Rule::ReportProgrammes => &[
                 Some(Role::ProgrammeManager),
                 Some(Role::Auditor),
                 Some(Role::FinancialSignatory),
@@ -1541,6 +1545,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("vault.hardship.submit", T::Grant, R::Lead),
     RefOp::act("vault.hardship.verify", T::Grant, R::Finance),
     RefOp::read("report.list", T::Programme, R::ReportReader),
+    RefOp::read("report.programmes", T::None, R::ReportProgrammes),
     RefOp::act("report.generate", T::Programme, R::ProgrammeManager),
     RefOp::act("report.approve", T::Report, R::FinancialSignatory),
 ];
@@ -1728,6 +1733,13 @@ fn admit(
         Rule::ReportReader => {
             open(who.manager() || matches!(who, Who::Auditor | Who::FinancialSignatory))
         }
+        Rule::ReportProgrammes => open(
+            who.manager()
+                || matches!(
+                    who,
+                    Who::OtherProgrammeManager | Who::Auditor | Who::FinancialSignatory
+                ),
+        ),
         Rule::Finance => open(who == Who::FinanceApprover),
         Rule::Releaser => open(who == Who::PaymentReleaser),
         Rule::FinancialSignatory => open(who == Who::FinancialSignatory),

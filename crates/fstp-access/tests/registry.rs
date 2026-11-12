@@ -987,7 +987,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 66] = [
+const READ_NAMES: [&str; 67] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1064,6 +1064,9 @@ const READ_NAMES: [&str; 66] = [
     "GetMyMailbox",
     // Lane m5/polish-access: the assigned reviewer's line review view.
     "GetLineReview",
+    // Lane m5/report-programmes: the programmes whose reports the caller
+    // reads (R-RP-03).
+    "ListReportProgrammes",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the
