@@ -1032,6 +1032,18 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
                 ("token_digest", hex(token_digest)),
             ],
         ),
+        TenantCommand::IssueInvitation {
+            invitation,
+            account,
+            token_digest,
+        } => tagged(
+            "IssueInvitation",
+            vec![
+                ("account", account_json(*account)),
+                ("invitation", hex(invitation)),
+                ("token_digest", hex(token_digest)),
+            ],
+        ),
         TenantCommand::EnrolByInvitation {
             invitation,
             credential,
@@ -1075,6 +1087,14 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
         "IssueFirstAdminInvitation" => {
             fields(o, &["account", "invitation", "token_digest"])?;
             Ok(TenantCommand::IssueFirstAdminInvitation {
+                invitation: array_from(o, "invitation")?,
+                account: account_from(o, "account")?,
+                token_digest: array_from(o, "token_digest")?,
+            })
+        }
+        "IssueInvitation" => {
+            fields(o, &["account", "invitation", "token_digest"])?;
+            Ok(TenantCommand::IssueInvitation {
                 invitation: array_from(o, "invitation")?,
                 account: account_from(o, "account")?,
                 token_digest: array_from(o, "token_digest")?,

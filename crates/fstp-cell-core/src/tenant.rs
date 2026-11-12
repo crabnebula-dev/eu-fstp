@@ -41,6 +41,26 @@ pub enum TenantCommand {
         /// on a self-hosted cell.
         token_digest: [u8; 32],
     },
+    /// A tenant admin issues an invitation for a new account, with a
+    /// step-up (design section 8.3 ceremony 1, `authentication.md` "First
+    /// passkey"). The gate classes it as `ManagementRoleChange`, since an
+    /// invitation is how management personnel are added
+    /// (`crate::gate::HighRiskAction::of`).
+    ///
+    /// Interim, pending Daniel: section 8.7 names no issue route, so it
+    /// goes through `POST /api/v1/commands`. The issuer's client draws
+    /// the invitation id, the account id and the token, and sends only
+    /// the token digest, so the cell never holds the token. The decider
+    /// refuses an account any record names and an invitation id in use.
+    /// The invitation is never split (Q35 splits the first admin's only).
+    IssueInvitation {
+        /// The invitation id.
+        invitation: [u8; 16],
+        /// The invited account, new to the cell.
+        account: AccountId,
+        /// `fstp_auth::ceremony::token_digest` of the one token.
+        token_digest: [u8; 32],
+    },
     /// Enrol the first passkey of an invited account (design section 8.3,
     /// ceremony 1). Only the ceremony route admission
     /// `gate::admit_invitation_enrolment` admits it, after it verified the

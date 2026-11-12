@@ -535,3 +535,150 @@ fn i78_verified_stepup_is_admitted_under_its_challenge_id() {
     let again = key.assertion(challenge);
     assert!(gate::admit_verified_stepup(&s, &magic, &req, &again, 0, NOW).is_err());
 }
+
+/// The first admin enrolled, so `ADMIN` is a tenant admin.
+fn with_admin() -> Vec<(Timestamp, [u8; 16], Vec<CellRecord>)> {
+    let open = state_of(&[issued_split()]);
+    let batch = enrol(&open, &halves(), &Passkey::new(), true, NOW).unwrap();
+    vec![issued_split(), (NOW, [0x77; 16], batch)]
+}
+
+/// Decides `IssueInvitation` by `actor`, with the step-up instant `stepup`.
+fn issue(
+    s: &CellState,
+    actor: AccountId,
+    invitation: [u8; 16],
+    account: AccountId,
+    token: [u8; 32],
+    stepup: Option<Timestamp>,
+) -> Result<Vec<CellRecord>, String> {
+    let c = CellCommand::Tenant(TenantCommand::IssueInvitation {
+        invitation,
+        account,
+        token_digest: token_digest(&Token(token)),
+    });
+    crate::decide::decide_with(
+        s,
+        &c,
+        crate::decide::Who::Account(actor),
+        NOW.micros(),
+        Some([0x88; 16]),
+        stepup,
+        &crate::inputs::RouteInputs::none(),
+        &Answers::new(),
+    )
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// `authentication.md` "First passkey", design section 8.3 ceremony 1,
+/// I-78: a tenant admin's invitation needs a step-up. The gate classes
+/// `IssueInvitation` as `ManagementRoleChange`, so a session without a
+/// step-up is refused, and the decider refuses a batch without one too.
+#[test]
+fn i78_tenant_admin_invitation_needs_a_step_up() {
+    let s = state_of(&with_admin());
+    let invitee = AccountId::from_raw(0xB1B1);
+    let c = CellCommand::Tenant(TenantCommand::IssueInvitation {
+        invitation: [0x2D; 16],
+        account: invitee,
+        token_digest: [9; 32],
+    });
+    assert_eq!(
+        gate::HighRiskAction::of(&Action::Command(c.clone())),
+        Ok(Some(gate::HighRiskAction::ManagementRoleChange))
+    );
+    let session = SessionView {
+        id: [0x5E; 16],
+        account: ADMIN,
+        method: Method::Passkey,
+        started: NOW,
+        last_used: NOW,
+    };
+    let policy = gate::LoginPolicy {
+        stepup_freshness_us: crate::tenant::P71_DEFAULT_US,
+    };
+    assert_eq!(
+        gate::admit_command(
+            &s,
+            &session,
+            Action::Command(c),
+            [1; 16],
+            None,
+            NOW,
+            &policy
+        )
+        .err(),
+        Some(Deny::StepUpRequired(
+            gate::HighRiskAction::ManagementRoleChange
+        ))
+    );
+    assert!(issue(&s, ADMIN, [0x2D; 16], invitee, [5; 32], None).is_err());
+}
+
+/// Design section 8.3 ceremony 1, ADR-008: a tenant admin with a step-up
+/// issues a whole, non-first-admin invitation for a new account. Its
+/// invitee enrols with the one token and a UV passkey. A non-admin, a
+/// reused invitation id and an account a record names are refused.
+#[test]
+fn adr008_tenant_admin_invitation_enrols_a_new_account() {
+    let base = with_admin();
+    let s = state_of(&base);
+    let invitee = AccountId::from_raw(0xB1B1);
+    let token = [0x44; 32];
+    let batch = issue(&s, ADMIN, [0x2D; 16], invitee, token, Some(NOW)).unwrap();
+    assert_eq!(
+        batch,
+        vec![CellRecord::Auth(AuthRecord::InvitationIssued {
+            invitation: [0x2D; 16],
+            account: invitee,
+            token_digest: token_digest(&Token(token)),
+            first_admin: false,
+            split: false,
+        })]
+    );
+    assert!(
+        issue(
+            &s,
+            invitee,
+            [0x2E; 16],
+            AccountId::from_raw(3),
+            token,
+            Some(NOW)
+        )
+        .is_err()
+    );
+    assert!(issue(&s, ADMIN, [0x2F; 16], ADMIN, token, Some(NOW)).is_err());
+    let mut log = base.clone();
+    log.push((NOW, [0x88; 16], batch));
+    let issued = state_of(&log);
+    assert!(
+        issue(
+            &issued,
+            ADMIN,
+            [0x2D; 16],
+            AccountId::from_raw(4),
+            token,
+            Some(NOW)
+        )
+        .is_err(),
+        "a reused invitation id"
+    );
+    let key = Passkey::new();
+    let enrolled = enrol(
+        &issued,
+        &InvitationProof::Token(Token(token)),
+        &key,
+        true,
+        NOW,
+    )
+    .unwrap();
+    assert!(enrolled.iter().any(|r| matches!(
+        r,
+        CellRecord::Auth(AuthRecord::CredentialRegistered { account, .. }) if *account == invitee
+    )));
+    assert!(
+        !enrolled
+            .iter()
+            .any(|r| matches!(r, CellRecord::Auth(AuthRecord::FirstAdminEnrolled { .. })))
+    );
+}

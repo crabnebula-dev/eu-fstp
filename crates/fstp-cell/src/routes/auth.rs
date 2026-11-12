@@ -15,8 +15,6 @@
 //!
 //! Steps that need an API the sources do not offer yet fail closed with
 //! 501 after every check that applies before them:
-//! - `EndSession` and `RevokeCredential`: `decide` takes no session rows
-//!   (`fstp_cell_core::RouteInput::SessionRows`).
 //! - Adding a passkey: the step-up digest of `AddPasskey` names a
 //!   credential id that the options call cannot know yet.
 //! - Self-registration, the recovery request and its email proof, and the
@@ -29,13 +27,14 @@ use fstp_auth::ceremony::{
     split_token_digest, token_digest, verify_new_passkey,
 };
 use fstp_auth::codec::Token;
-use fstp_auth::session::{LoginRefusal, may_end_session, verify_passkey_login};
+use fstp_auth::session::{LoginRefusal, SessionLogin, may_end_session, verify_passkey_login};
 use fstp_auth::stepup::{StepUpRequest, challenge as stepup_challenge};
 use fstp_auth::{Method, SessionLifetimes, SessionView};
 use fstp_cell_core::gate::{
     Action, HighRiskAction, ReadAction, RouteDeny, admit_invitation_enrolment,
     admit_verified_stepup, management_holders,
 };
+use fstp_cell_core::inputs::SessionRows;
 use fstp_cell_core::{CellCommand, CellState};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
@@ -46,8 +45,7 @@ use fstp_webauthn::{AssertionResponse, RegistrationResponse};
 use crate::http::body::{self, BodyRefusal};
 use crate::http::{decode_command_body, set_session_cookie};
 use crate::routes::handle::{
-    Caller, Ctx, Reply, Rule, admit, bad_body, decimal, denied, hex_value, needs_route_input,
-    random, run, unavailable,
+    Caller, Ctx, Reply, Rule, admit, bad_body, decimal, denied, hex_value, random, run, unavailable,
 };
 use crate::routes::{
     AUTH_BODY_LIMIT, Backend, CEREMONY_BODY_LIMIT, ChallengePurpose, ChallengeRow, SessionRow,
@@ -986,6 +984,23 @@ const fn method_name(m: Method) -> &'static str {
     }
 }
 
+/// The session rows a batch that ends sessions is decided with
+/// (`fstp_cell_core::inputs::SessionRows`): each live row, and the
+/// credential each passkey session logged in with. Rows are data, not
+/// proof, and `decide` uses only those of the account its rule names.
+fn session_rows(rows: &[SessionRow]) -> SessionRows {
+    let logins = rows
+        .iter()
+        .filter_map(|r| {
+            r.credential.as_ref().map(|c| SessionLogin {
+                session: r.id,
+                credential: c.clone(),
+            })
+        })
+        .collect();
+    SessionRows::new(rows.iter().map(view_of).collect(), logins)
+}
+
 /// The live sessions of the caller's account.
 async fn live_sessions<B: Backend>(
     ctx: &Ctx<B>,
@@ -1049,15 +1064,14 @@ fn param<const N: usize>(req: &Request, name: &'static str) -> Result<[u8; N], R
 }
 
 /// `DELETE /auth/sessions/{id}` (Session, R-LG-04): only the session's own
-/// account ends it. The gate admits `EndSession`, then the route fails
-/// closed with 501, since `decide` takes no session rows yet.
+/// account ends it. The gate admits `EndSession`, and the batch is decided
+/// with the account's live session rows.
 pub(crate) async fn end_session<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Caller) -> Reply {
     let id = match param::<16>(req, "id") {
         Ok(id) => id,
         Err(r) => return r,
     };
     let command = CellCommand::Auth(fstp_auth::AuthCommand::EndSession { session: id });
-    let blocked = needs_route_input(&command);
     let command_id = match random::<16>() {
         Ok(i) => i,
         Err(r) => return r,
@@ -1082,10 +1096,7 @@ pub(crate) async fn end_session<B: Backend>(ctx: &Ctx<B>, req: &Request, caller:
     if !may_end_session(&views, caller.view.account, id) {
         return Reply::refuse(StatusCode::NOT_FOUND, None, "session");
     }
-    if blocked {
-        return Reply::not_built();
-    }
-    run(ctx, admitted).await
+    run(ctx, admitted.with_sessions(session_rows(&rows))).await
 }
 
 /// `GET /auth/devices` (Session, R-LG-04): the account's own live
@@ -1143,8 +1154,9 @@ fn delete_query(req: &Request) -> Result<([u8; 16], [u8; 16]), Reply> {
 
 /// `DELETE /auth/devices/{id}?command_id=..&stepup=..` (high risk
 /// `ChangeLoginMethods`, R-LG-04). The gate checks the step-up for
-/// `RevokeCredential` of the caller's own credential. Then the route
-/// fails closed with 501, since `decide` takes no session rows yet.
+/// `RevokeCredential` of the caller's own credential. The batch is decided
+/// with the account's live session rows, so it ends the sessions that
+/// credential logged in.
 pub(crate) async fn remove_device<B: Backend>(
     ctx: &Ctx<B>,
     req: &Request,
@@ -1164,8 +1176,7 @@ pub(crate) async fn remove_device<B: Backend>(
         account: caller.view.account,
         credential,
     });
-    let blocked = needs_route_input(&command);
-    let admitted = match admit(
+    let (s, admitted) = match admit(
         ctx,
         caller,
         Action::Command(command),
@@ -1174,13 +1185,14 @@ pub(crate) async fn remove_device<B: Backend>(
     )
     .await
     {
-        Ok((_, a)) => a,
+        Ok(x) => x,
         Err(reply) => return reply,
     };
-    if blocked {
-        return Reply::not_built();
-    }
-    run(ctx, admitted).await
+    let rows = match live_sessions(ctx, &s, caller).await {
+        Ok(r) => r,
+        Err(reply) => return reply,
+    };
+    run(ctx, admitted.with_sessions(session_rows(&rows))).await
 }
 
 /// `POST /auth/recovery/{case}/approve` (high risk `ApproveRecovery`,
