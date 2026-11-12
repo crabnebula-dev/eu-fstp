@@ -138,6 +138,10 @@ async function mountHub(env: PageEnv): Promise<void> {
     form.addEventListener("submit", (ev) => {
       ev.preventDefault();
       const v = input.control.value.trim();
+      if (v === "") {
+        input.control.focus();
+        return;
+      }
       if (!isIdText(v)) {
         f.alert(t.label("grant.hub.open_err"));
         return;
@@ -156,7 +160,7 @@ async function mountHub(env: PageEnv): Promise<void> {
     if (mine.length + board.length + assigned.length === 0) {
       body.push(h("p", { id: "grant-hub-none" }, [t.label("grant.hub.none")]));
     }
-    body.push(form);
+    body.push(h("details", { id: "grant-open-details", class: "card" }, [h("summary", {}, [t.label("grant.hub.open_by_number")]), form]));
     f.show(body);
   });
 }
@@ -348,14 +352,14 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
     const body: Child[] = [
       h("p", { id: "grant-state", "data-state": o.state }, [badge(plain, o.state)]),
       facts([
-        [t.label("grant.determination"), o.determination === null ? t.label("grant.determination_none") : t.label("grant.determination_set", { id: o.determination })],
+        [t.label("grant.determination"), o.determination === null ? t.label("grant.determination_none") : h("span", {}, [t.label("grant.determination_set"), " ", h("span", { class: "text-sm", "data-reference": o.determination }, [t.label("grant.determination_ref", { id: o.determination })])])],
         [t.label("grant.amount"), o.amount ?? "-"],
         [t.label("grant.paid"), o.paid],
         [t.label("grant.requests"), String(o.requests)],
       ]),
       h("nav", { "aria-label": t.label("grant.links") }, [
         h("ul", { class: "fstp-list" }, [
-          h("li", {}, [link(GRANT_PATHS.contract(proposal), t.label("grant.link_contract"))]),
+          h("li", {}, [link(GRANT_PATHS.contract(proposal), t.label("grant.link_contract", { id: proposal }))]),
           h("li", {}, [link(GRANT_PATHS.payments(proposal), t.label("grant.link_payments"))]),
           h("li", {}, [link(`/app/proposals/${proposal}/progress`, t.label("grant.link_progress"))]),
           h("li", {}, [link(GRANT_PATHS.hub, t.label("grant.link_hub"))]),
@@ -400,7 +404,7 @@ function reviewerBody(env: PageEnv, t: I18n, f: Frame, v: DeterminationView, rel
     facts([
       [t.label("grant.reviewer.plan"), v.agreedPlan ?? "-"],
       [t.label("grant.reviewer.plan_total"), v.planTotal ?? "-"],
-      [t.label("grant.determination"), v.determination === null ? t.label("grant.determination_none") : t.label("grant.determination_set", { id: v.determination })],
+      [t.label("grant.determination"), v.determination === null ? t.label("grant.determination_none") : h("span", {}, [t.label("grant.determination_set"), " ", h("span", { class: "text-sm", "data-reference": v.determination }, [t.label("grant.determination_ref", { id: v.determination })])])],
       [t.label("grant.reviewer.granted"), v.granted ?? "-"],
     ]),
     determineSection(env, t, f, v, reload),

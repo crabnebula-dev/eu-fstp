@@ -131,3 +131,33 @@ test("r_rp_03_report_page_holds_back_approval_of_own_report", async () => {
   assert(!text().includes("Approve report 11"), "an own report cannot");
   assert(text().includes("you cannot approve it"), "the reason is shown");
 });
+
+/** R-NF-03, I-96: a payment request reads as an ordinal and a milestone, never as its 64-bit reference, and the chip shows one label. */
+test("r_nf_03_payment_labels_are_human_and_the_chip_is_not_doubled", async () => {
+  prepare();
+  const sent: Sent[] = [];
+  const id = "5563071439709405207";
+  const row = { request: id, proposal: "1001", status: "UNDER_REVIEW", kind: "milestone", submission_checks: true, acceptance_checks: true, lines: [{ line: "8", milestone: "1", requested: "100.00", approved: null }] };
+  await mountPostGrant(env({ "GET /grants/1001/payment-requests": [row] }, sent), "/app/grants/1001/payments");
+  await new Promise((r) => setTimeout(r, 20));
+  const t = text();
+  assert(t.includes("Payment request 1 for milestone 1"), t.slice(0, 400));
+  assert(!t.includes(id), "the reference is not a label");
+  assert(!t.includes("Open request"), "no raw id label");
+  assert(t.includes("Under review (UNDER_REVIEW)"), "one visible label, the code kept as hidden text");
+});
+
+/** R-NF-03: the operations queue labels a request by its milestone and shows a contract state as a translated chip. */
+test("r_nf_03_operations_labels_have_no_raw_ids_or_enums", async () => {
+  prepare();
+  const sent: Sent[] = [];
+  const request = { request: "5563071439709405207", proposal: "1001", status: "UNDER_REVIEW", kind: "milestone", submission_checks: true, acceptance_checks: true, lines: [{ line: "8", milestone: "1", requested: "100.00", approved: null }] };
+  const toSign = [{ proposal: "1001", contract: "12", version: 1, field: "signatory", role: "signatory", state: "signed_by_grantee", digest: "ab".repeat(32) }];
+  await mountPostGrant(env({ "GET /me/payment-queue": [{ task: "review", request }], "GET /me/contracts-awaiting-signature": toSign }, sent), "/app/operations");
+  await new Promise((r) => setTimeout(r, 20));
+  const t = text();
+  assert(t.includes("Payment request for milestone 1 of proposal 1001"), t.slice(0, 500));
+  assert(!t.includes("Request 5563071439709405207"), "no raw id label");
+  assert(t.includes("Contract of proposal 1001") && t.includes("Signed by the grantee"), t.slice(0, 600));
+  assert(!t.includes("signed_by_grantee signed_by_grantee"), "no doubled enum");
+});

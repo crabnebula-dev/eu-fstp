@@ -45,7 +45,9 @@ import {
   type ReportRow,
   type ToSignRow,
 } from "../grant/models.js";
-import { statusBadge } from "../payments/pages.js";
+import { requestLabel, statusBadge } from "../payments/pages.js";
+import { contractStateBadge } from "../contract/pages.js";
+import { isStateTag } from "../reviewer/kit.js";
 
 const TASKS = ["review", "approve", "release", "confirm"] as const;
 
@@ -66,11 +68,9 @@ function queueSection(t: I18n, rows: readonly QueueRow[]): HTMLElement {
         { class: "fstp-list", "data-task": task },
         mine.map((r) =>
           h("li", { "data-request": r.request.request }, [
-            h("a", { href: GRANT_PATHS.payment(r.request.proposal, r.request.request) }, [
-              t.label("ops.queue.open", { id: r.request.request }),
-            ]),
+            h("a", { href: GRANT_PATHS.payment(r.request.proposal, r.request.request) }, [requestLabel(t, r.request, null)]),
             " ",
-            t.label("ops.queue.row", { id: r.request.request, proposal: r.request.proposal }),
+            t.label("ops.queue.of_proposal", { proposal: r.request.proposal }),
             " ",
             statusBadge(t, r.request.status),
           ]),
@@ -88,6 +88,10 @@ function openByNumber(env: PageEnv, t: I18n, f: Frame): HTMLFormElement {
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const v = input.control.value.trim();
+    if (v === "") {
+      input.control.focus();
+      return;
+    }
     if (!isIdText(v)) {
       f.alert(t.label("ops.reports.open_err"));
       return;
@@ -115,7 +119,7 @@ async function mountOperations(env: PageEnv): Promise<void> {
     const toSign = s.ok ? (decodeToSign(s.data) ?? []) : [];
     if (toSign.length > 0 || can(roles, "contract_signatory")) {
       const rows = toSign.map((r) =>
-        h("li", { "data-contract": r.contract }, [link(GRANT_PATHS.contract(r.proposal), t.label("ops.contracts.open", { id: r.proposal })), " ", badge(r.state, r.state)]),
+        h("li", { "data-contract": r.contract }, [link(GRANT_PATHS.contract(r.proposal), t.label("ops.contracts.open", { id: r.proposal })), " ", contractStateBadge(t, r.state)]),
       );
       body.push(
         section("ops-contracts", t.label("ops.contracts.heading"), [
@@ -133,18 +137,20 @@ async function mountOperations(env: PageEnv): Promise<void> {
           h(
             "ul",
             { class: "fstp-list" },
-            grants.map((r) => h("li", { "data-grant": r.proposal }, [link(GRANT_PATHS.grant(r.proposal), t.label("ops.grants.row", { id: r.proposal })), " ", badge(r.state, r.state)])),
+            grants.map((r) => h("li", { "data-grant": r.proposal }, [link(GRANT_PATHS.grant(r.proposal), t.label("ops.grants.row", { id: r.proposal })), " ", badge(isStateTag(r.state) ? t.label(`kit.state.${r.state}`) : r.state, r.state)])),
           ),
         ]),
       );
     }
     // Funder reports of each programme the caller's bindings name.
+    // Every binding names its programme, so a signatory who holds a role in exactly one
+    // programme gets a direct link. The number form stays behind a disclosure.
     const programmes =
-      roles === null ? [] : [...new Set(roles.roles.filter((b) => b.proposal === null).map((b) => b.programme))].sort((a, b) => (a.length === b.length ? (a < b ? -1 : 1) : a.length - b.length));
+      roles === null ? [] : [...new Set(roles.roles.map((b) => b.programme))].sort((a, b) => (a.length === b.length ? (a < b ? -1 : 1) : a.length - b.length));
     body.push(
       section("ops-reports", t.label("ops.reports.heading"), [
-        h("ul", { class: "fstp-list" }, programmes.map((p) => h("li", {}, [link(GRANT_PATHS.reports(p), t.label("ops.reports.programme", { id: p }))]))),
-        openByNumber(env, t, f),
+        h("ul", { class: "fstp-list" }, programmes.map((p) => h("li", {}, [link(GRANT_PATHS.reports(p), t.label(programmes.length === 1 ? "ops.reports.programme_only" : "ops.reports.programme", { id: p }))]))),
+        h("details", { id: "ops-reports-details" }, [h("summary", {}, [t.label("ops.reports.open_by_number")]), openByNumber(env, t, f)]),
       ]),
     );
     body.push(h("p", { class: "text-sm" }, [t.label("ops.roles_callout"), " ", link("/app/admin/onboarding/summary", t.label("ops.roles_link"))]));

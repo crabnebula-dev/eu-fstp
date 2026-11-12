@@ -154,9 +154,17 @@ export function link(href: string, text: Label): HTMLElement {
   return h("a", { href }, [text]);
 }
 
-/** A status badge with its formal state beside it (I-96). */
+/**
+ * A status chip: one translated label in a `.badge`. The formal state
+ * code stays in the page as visually hidden text and as `data-state`, so
+ * the legal state is never ambiguous to assistive technology (I-96) and
+ * nobody reads the same words twice.
+ */
 export function badge(plain: Label | string, formal: string): HTMLElement {
-  return h("span", { class: "state-chip" }, [h("span", { class: "badge badge--info" }, [plain]), " ", h("span", { class: "state-name" }, [formal])]);
+  return h("span", { class: "state-chip", "data-state": formal }, [
+    h("span", { class: "badge badge--info" }, [plain]),
+    h("span", { class: "state-name fstp-visually-hidden" }, [` (${formal})`]),
+  ]);
 }
 
 /** A `dl` of label and value pairs. */
