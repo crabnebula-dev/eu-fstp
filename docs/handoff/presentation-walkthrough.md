@@ -116,6 +116,7 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - The report approver F2 must open the collapsed field and type programme number 1. Auditor A1 has a direct link instead.
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
+- Programme manager M1's set-up in the review scenes starts from an empty draft. Step 1 fails and steps 2 to 11 stay locked, so the review page and its previews cannot be reached by clicking. Stay on the call board for M1.
 
 ## If something goes wrong
 
