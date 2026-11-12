@@ -18,7 +18,7 @@ i17_identity_release::i17_release_ticket_only_for_operations_in_negotiation | se
 i18_guardian_consent::i18_cell_asks_adult_attestation_before_guardian_ticket | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i18_guardian_consent::i18_no_minor_flagged_proposal_reaches_granted_without_consent | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i18_guardian_consent::i18_r_ng_01_irc_actor_is_never_shown_the_vault_outcomes | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
-i19_boundary::i19_cell_process_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
+i19_boundary::i19_cell_process_serves_one_cell | run_cycle runs login and the reachable part of create-programme over HTTP (F-CYCLE1); the creator activation by the second tenant admin cannot run, since fstp-cell decides creator commands with NoEnvironment and strict D2e refuses a core ActivateProgramme (cycle::CREATOR_ENVIRONMENT_SEAM) | lead to assign (a production CreatorEnvironment for fstp-cell: funder profile, probes, SoD preview, attested tenant admins)
 i19_boundary::i19_only_registered_metadata_crosses | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_control_plane_and_witness_hold_no_account_id | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_vault_match_keys_differ_across_cells | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -55,7 +55,7 @@ i81_backups::i81_erased_text_unrecoverable_from_every_backup | M3 test world run
 i81_backups::i81_teeth_live_email_digest_is_recomputed | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_teeth_live_identity_match_digest_is_recomputed | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i81_backups::i81_text_salt_never_stored_in_clear | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i82_role_plan::i82_pool_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
+i82_role_plan::i82_pool_serves_one_cell | run_cycle runs login and the reachable part of create-programme over HTTP (F-CYCLE1); the creator activation by the second tenant admin cannot run, since fstp-cell decides creator commands with NoEnvironment and strict D2e refuses a core ActivateProgramme (cycle::CREATOR_ENVIRONMENT_SEAM) | lead to assign (a production CreatorEnvironment for fstp-cell: funder profile, probes, SoD preview, attested tenant admins)
 i83_placement::i83_self_hosted_layout_runs_two_instances | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 main_startup::i24_cell_start_raises_possible_deletion_for_a_missing_in_doubt_row | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_cr_01_at_rest::r_cr_01_backups_and_snapshots_use_the_hybrid_kem | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane

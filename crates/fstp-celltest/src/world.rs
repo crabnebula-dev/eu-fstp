@@ -601,20 +601,17 @@ impl World {
     }
 
     /// Runs a call cycle on one cell. An empty script runs on any cell of
-    /// the world. Each step drives the cell's HTTP routes with the
-    /// software authenticator, which lane W3a agent one and the slice of
-    /// lane W3b build, so a script with steps refuses until they land.
+    /// the world. Each step drives the cell's HTTP routes with software
+    /// passkeys ([`crate::cycle`], lanes F-CYCLE1 and F-CYCLE2). The first
+    /// step that the cell cannot run over HTTP yet ends the cycle with its
+    /// seam.
     pub fn run_cycle(&self, cell: u8, script: &CycleScript) -> CycleReport {
-        let result = if self.cell(cell).is_none() {
-            Err(NotImplemented::new(
+        let result = match self.cell(cell) {
+            None => Err(NotImplemented::new(
                 "fstp_celltest::world::World::run_cycle on a cell the world does not hold",
-            ))
-        } else if script.steps.is_empty() {
-            Ok(())
-        } else {
-            Err(NotImplemented::new(
-                "fstp_celltest::world::World::run_cycle steps (the cell routes of lane W3a agent one and the slice of lane W3b)",
-            ))
+            )),
+            Some(_) if script.steps.is_empty() => Ok(()),
+            Some(handle) => crate::cycle::Cycle::new(handle).run(&script.steps),
         };
         CycleReport { result }
     }
