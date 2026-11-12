@@ -5,9 +5,10 @@
 //! Lane W1c wrote these tests before the production code. Each starts a
 //! one-cell world and is red until the cell runtime of lane W3a exists.
 //!
-//! Gaps (lanes W1a and W3a): `World` exposes no decrypted ledger read and
 //! `CycleScript` names steps by text only, so the scripts below name the
-//! M2 generators and suites by label.
+//! M2 generators and suites by label. `fstp_celltest::cycle` reads those
+//! labels (lane F-CYCLE2), and `CellHandle::ledger` gives the decrypted
+//! ledger.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -31,15 +32,25 @@ fn one_cell_world() -> World {
     .unwrap_or_else(|e| panic!("the one-cell world did not start: {e}"))
 }
 
-/// The seam of the ledger read: `World` gives no decrypted ledger of a cell
-/// yet (lanes W1a and W3a).
+/// The refusal of the ledger read: the world holds no cell 0, or its
+/// ledger cannot be read. `CellHandle::ledger` closed the former seam
+/// (lane F-CYCLE2 wired it).
 const LEDGER_READ_SEAM: &str =
-    "fstp_celltest::world::World has no decrypted ledger read of a cell (lanes W1a and W3a)";
+    "fstp_celltest::world::CellHandle::ledger of cell 0 could not be read";
 
-/// The M2 core records in cell 0's ledger, after decryption.
+/// The M2 core records in cell 0's ledger, after decryption, in order.
 fn cell_core_records(world: &World) -> Result<Vec<fstp_domain::Record>, NotImplemented> {
-    let _ = world;
-    Err(NotImplemented::new(LEDGER_READ_SEAM))
+    let cell = world.cell(0).ok_or(NotImplemented::new(LEDGER_READ_SEAM))?;
+    let ledger = cell
+        .ledger()
+        .map_err(|_| NotImplemented::new(LEDGER_READ_SEAM))?;
+    Ok(ledger
+        .into_iter()
+        .filter_map(|e| match e.record {
+            fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(r)) => Some(r),
+            _ => None,
+        })
+        .collect())
 }
 
 /// Design section 14.6: the M2 generators run through

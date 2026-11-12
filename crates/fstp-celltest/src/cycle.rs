@@ -61,6 +61,17 @@ pub const SIGNUP_SEAM: &str = "fstp_celltest::cycle signup: POST /auth/signup fa
 /// reaches a world cell's vault.
 pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/vault-tickets and /api/v1/verifications answer 501 (no ticket signing in the route layer), and no section 6.9 seeding reaches a world cell's vault (fstp-vault-seeded is not started by start_cell)";
 
+/// A seeding step (`seed:...`, `minor-applicant:seed-...`) refuses: the
+/// world starts each vault as `fstp_vault::service::serve`, never as the
+/// test-only `fstp-vault-seeded`, so no section 6.9 seeding reaches it.
+pub const VAULT_SEED_SEAM: &str = "fstp_celltest::cycle seed steps: start_cell runs fstp_vault::service::serve, not the test-only fstp-vault-seeded, so no design section 6.9 seeding (vault_seed::SeedSource) reaches a world cell's vault";
+
+/// An M2 path or suite step (`m2:...`, `m2-suite:...`) or a step of the
+/// I-18 minor applicant (`minor-applicant:...`) refuses: each runs on an
+/// active programme with a published call, and none activates over HTTP
+/// ([`CREATOR_ENVIRONMENT_SEAM`]).
+pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2, m2-suite and minor-applicant steps: each M2 setup runs on an active programme with a published call, and no programme activates over HTTP (CREATOR_ENVIRONMENT_SEAM: fstp-cell decides creator commands with NoEnvironment)";
+
 /// A step name outside the vocabulary of the module documentation. The
 /// scripts of `seam_world`, `i18_guardian_consent`, `i38_egress`,
 /// `i39_licence` and others name steps of their own (`m2-suite:...`,
@@ -108,6 +119,15 @@ impl<'w> Cycle<'w> {
                 Err(NotImplemented::new(NO_ACTIVE_PROGRAMME_SEAM))
             }
             "signup" => Err(NotImplemented::new(SIGNUP_SEAM)),
+            s if s.starts_with("seed:") || s.starts_with("minor-applicant:seed-") => {
+                Err(NotImplemented::new(VAULT_SEED_SEAM))
+            }
+            s if s.starts_with("m2:")
+                || s.starts_with("m2-suite:")
+                || s.starts_with("minor-applicant:") =>
+            {
+                Err(NotImplemented::new(M2_SETUP_SEAM))
+            }
             "verify-identity" => Err(NotImplemented::new(VERIFY_IDENTITY_SEAM)),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
         }
