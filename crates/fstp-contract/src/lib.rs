@@ -44,5 +44,5 @@ pub use model::{
 };
 pub use port::{ProductionSignaturePort, SignatureError, SignaturePort, SignerRef};
 pub use record::ContractRecord;
-pub use render::{ContractTerms, RenderError, TermsBlock, render};
+pub use render::{AgreementValues, ContractTerms, RenderError, TermsBlock, render};
 pub use signing::{Signed, SigningError, required_level, sign_increment, verify_revision_chain};

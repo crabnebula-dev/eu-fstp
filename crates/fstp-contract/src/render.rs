@@ -30,6 +30,44 @@ pub struct ContractTerms {
     pub parties: Vec<(String, String)>,
 }
 
+/// The values the sub-grant agreement layout shows, each already
+/// formatted. The contract PDF passes a grant's values. The creator
+/// preview passes visible markers for the values a draft cannot know.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgreementValues<'a> {
+    /// The proposal the agreement is for.
+    pub proposal: &'a str,
+    /// The currency code of the granted amount.
+    pub currency: &'a str,
+    /// The granted amount.
+    pub amount: &'a str,
+    /// The agreed plan version.
+    pub plan: &'a str,
+}
+
+/// The clause that stands in for every clause text until legal review.
+/// `TODO(legal)`: the clause texts come from the signed grant agreement
+/// and legal review (`contracts.md`, I-49).
+pub const CLAUSES_PENDING: &str = "Clause texts pending legal review.";
+
+/// The heading of the sub-grant agreement for `proposal`.
+#[must_use]
+pub fn agreement_heading(proposal: &str) -> String {
+    format!("Sub-grant agreement for proposal {proposal}")
+}
+
+/// The blocks of the sub-grant agreement: one layout for the contract
+/// PDF and the creator's contract preview (R-CT-01, R-PG-01).
+#[must_use]
+pub fn agreement_blocks(v: &AgreementValues<'_>) -> Vec<TermsBlock> {
+    vec![
+        TermsBlock::Heading(agreement_heading(v.proposal)),
+        TermsBlock::Clause(format!("Granted amount: {} {}.", v.currency, v.amount)),
+        TermsBlock::Clause(format!("Agreed plan version: {}.", v.plan)),
+        TermsBlock::Clause(CLAUSES_PENDING.to_owned()),
+    ]
+}
+
 /// Why rendering failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RenderError(pub WriteError);

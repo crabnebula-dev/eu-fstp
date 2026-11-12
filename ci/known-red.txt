@@ -10,7 +10,6 @@
 adr007_store_and_erasure::adr007_erased_textref_resolves_to_its_log_entry | set-up passes under strict D2e (F-D2E); the interim erasure rule refuses causes 3 and 4 to an account (WrongActor), and the property draws all four causes | F-ERASE
 engine_mem::seam_cell_engine_matches_reference_engine_over_mem_store | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-fstp_api_testkit::fake::creator_wire_tests::r_pg_01_previews_read_as_text | reference models versus Daniel answers of 2026-10-31 (I-50 timing, re-grants, P-77) | m4 conflicts lane
 fstp_api_testkit::matrix::tests::t_authz_matrix_direct | authorisation matrix harness | m4access (W3a)
 i17_identity_release::i17_app_database_holds_no_identity_attribute | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i17_identity_release::i17_canary_attributes_never_reach_judging_responses | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run

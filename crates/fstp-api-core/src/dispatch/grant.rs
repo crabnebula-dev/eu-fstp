@@ -573,26 +573,28 @@ fn base_terms(
             "Sub-grant agreement for proposal {}, version {version}",
             p.raw()
         ),
-        blocks: vec![
-            TermsBlock::Heading(format!("Sub-grant agreement for proposal {}", p.raw())),
-            TermsBlock::Clause(format!("Granted amount: EUR {amount}.")),
-            TermsBlock::Clause(format!("Agreed plan version: {plan}.")),
-            // TODO(legal): the clause texts come from the signed grant
-            // agreement and legal review (`contracts.md`, I-49).
-            TermsBlock::Clause("Clause texts pending legal review.".to_owned()),
-        ],
+        // TODO(legal): the clause texts come from the signed grant
+        // agreement and legal review (`contracts.md`, I-49).
+        blocks: fstp_contract::render::agreement_blocks(&fstp_contract::AgreementValues {
+            proposal: &p.raw().to_string(),
+            currency: "EUR",
+            amount: &amount,
+            plan: &plan,
+        }),
         parties: parties
             .iter()
-            .map(|x| {
-                let label = match x.role {
-                    PartyRole::Lead => "Lead applicant",
-                    PartyRole::TeamMember => "Team member",
-                    PartyRole::Guardian => "Guardian",
-                    PartyRole::Signatory => "Contract signatory",
-                };
-                (x.field.clone(), label.to_owned())
-            })
+            .map(|x| (x.field.clone(), party_label(x.role).to_owned()))
             .collect(),
+    }
+}
+
+/// The visible label of a party role on the contract and its preview.
+pub(super) fn party_label(role: PartyRole) -> &'static str {
+    match role {
+        PartyRole::Lead => "Lead applicant",
+        PartyRole::TeamMember => "Team member",
+        PartyRole::Guardian => "Guardian",
+        PartyRole::Signatory => "Contract signatory",
     }
 }
 

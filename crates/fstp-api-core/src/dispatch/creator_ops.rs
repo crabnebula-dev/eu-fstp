@@ -697,10 +697,183 @@ async fn wording_texts<P: Seams>(call: &Call<'_, P>, refs: &[TextRef]) -> Previe
     PreviewTexts(texts)
 }
 
+/// The marker of a value each grant sets and a draft cannot know.
+fn per_grant(what: &str) -> String {
+    format!("[{what}: set for each grant]")
+}
+
+/// The marker of a draft field with no value, as the Guide preview
+/// spells it.
+fn unset(key: &str) -> String {
+    format!("[{key}: not set in the draft]")
+}
+
+/// The string or number at `path` of a spec, if set and non-empty.
+fn spec_scalar(spec: &Value, path: &[&str]) -> Option<String> {
+    let mut v = spec;
+    for k in path {
+        v = v.get(k)?;
+    }
+    match v {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.as_str().to_owned()),
+        _ => None,
+    }
+}
+
+/// A token of the spec as a label: `record_keeping` reads `Record keeping`.
+/// The instrument and signature route tokens read as the contract pages
+/// name them.
+fn token_label(token: &str) -> String {
+    match token {
+        "mou" => return "Memorandum of understanding".to_owned(),
+        "wallet_qes" => return "EUDI Wallet qualified signature".to_owned(),
+        "qtsp_remote_qes" => return "Remote qualified signature".to_owned(),
+        "approved_advanced" => {
+            return "Advanced signature with programme manager approval".to_owned();
+        }
+        _ => {}
+    }
+    let spaced = token.replace('_', " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => spaced,
+    }
+}
+
+/// The tokens of the array at `path` of a spec, as labels. `None` when
+/// the field is a gap or empty.
+fn spec_labels(spec: &Value, path: &[&str]) -> Option<Vec<String>> {
+    let mut v = spec;
+    for k in path {
+        v = v.get(k)?;
+    }
+    let labels: Vec<String> = v
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(token_label)
+        .collect();
+    (!labels.is_empty()).then_some(labels)
+}
+
+/// The contract placeholder preview of a draft spec (R-PG-01, R-CT-01;
+/// `programme-creator.md` step 11).
+///
+/// It lays out the sub-grant agreement of `fstp-contract`
+/// ([`fstp_contract::render::agreement_blocks`]), the layout the contract
+/// PDF uses, as text blocks. The draft supplies the programme, the
+/// currency, the instrument and template (P-29), the grant range (P-04),
+/// the flow-down obligations (I-49) and the signature cascade (P-30).
+/// Each value that only a grant sets shows one visible marker: the
+/// proposal, the amount, the plan version, the dates and the parties.
+/// The clause texts stay the pending-review clause of the contract.
+/// `TODO(legal)`: the clause texts come from the signed grant agreement
+/// and legal review (`contracts.md`, I-49).
+fn contract_preview(spec: &Value) -> Vec<fstp_guide::PreviewBlock> {
+    use fstp_contract::TermsBlock;
+    use fstp_guide::{PreviewBlock, PreviewKind};
+    let block = |kind, text: String| PreviewBlock { kind, text };
+    let inner = spec.get("spec").unwrap_or(spec);
+    let currency = spec_scalar(inner, &["currency"]).unwrap_or_else(|| unset("currency"));
+    let proposal = per_grant("proposal");
+    let amount = per_grant("granted amount");
+    let plan = per_grant("agreed plan version");
+    let terms = fstp_contract::render::agreement_blocks(&fstp_contract::AgreementValues {
+        proposal: &proposal,
+        currency: &currency,
+        amount: &amount,
+        plan: &plan,
+    });
+    let mut terms = terms.into_iter().map(|b| match b {
+        TermsBlock::Heading(t) => block(PreviewKind::Heading, t),
+        TermsBlock::Clause(t) => block(PreviewKind::Paragraph, t),
+    });
+    let mut out: Vec<PreviewBlock> = terms.next().into_iter().collect();
+    out.push(block(
+        PreviewKind::Paragraph,
+        format!(
+            "Programme: {}",
+            spec_scalar(inner, &["identity", "name"]).unwrap_or_else(|| unset("identity.name"))
+        ),
+    ));
+    let instrument = spec_scalar(inner, &["contract", "p29_instrument", "instrument"]);
+    let template = spec_scalar(inner, &["contract", "p29_instrument", "template", "id"]);
+    let version = spec_scalar(
+        inner,
+        &["contract", "p29_instrument", "template", "version"],
+    );
+    out.push(block(
+        PreviewKind::Paragraph,
+        match (instrument, template, version) {
+            (Some(i), Some(t), Some(v)) => {
+                format!("Instrument: {}, template {t} version {v}.", token_label(&i))
+            }
+            _ => format!("Instrument: {}.", unset("contract.p29_instrument")),
+        },
+    ));
+    out.extend(terms);
+    out.push(block(
+        PreviewKind::Paragraph,
+        match (
+            spec_scalar(inner, &["money", "p04_grant_range", "min"]),
+            spec_scalar(inner, &["money", "p04_grant_range", "max"]),
+        ) {
+            (Some(min), Some(max)) => {
+                format!("Grant range per proposal: {currency} {min} to {currency} {max}.")
+            }
+            _ => format!(
+                "Grant range per proposal: {}.",
+                unset("money.p04_grant_range")
+            ),
+        },
+    ));
+    out.push(block(
+        PreviewKind::Paragraph,
+        format!(
+            "Tasks, milestones, start dates and due dates: {}.",
+            per_grant("agreed plan")
+        ),
+    ));
+    out.push(block(
+        PreviewKind::Heading,
+        "Flow-down obligations".to_owned(),
+    ));
+    match spec_labels(inner, &["contract", "flow_down"]) {
+        Some(labels) => out.extend(labels.into_iter().map(|l| block(PreviewKind::Item, l))),
+        None => out.push(block(PreviewKind::Item, unset("contract.flow_down"))),
+    }
+    out.push(block(PreviewKind::Heading, "Signatures".to_owned()));
+    out.push(block(
+        PreviewKind::Paragraph,
+        format!(
+            "Signature cascade: {}.",
+            spec_labels(inner, &["contract", "p30_signature_cascade"])
+                .map_or_else(|| unset("contract.p30_signature_cascade"), |l| l.join(", "))
+        ),
+    ));
+    for role in [
+        fstp_contract::PartyRole::Lead,
+        fstp_contract::PartyRole::Signatory,
+    ] {
+        out.push(block(
+            PreviewKind::Item,
+            format!(
+                "{}: {}",
+                super::grant::party_label(role),
+                per_grant("party")
+            ),
+        ));
+    }
+    out
+}
+
 /// `creator.preview` (R-PG-01, I-51; design sections 2.2 J1 and 3.2):
-/// the Guide preview from `fstp-guide` and the public page preview from
-/// `fstp-public`, as text blocks over the draft's values. The contract
-/// placeholder preview is a seam: no contract renderer exists before M8.
+/// the Guide preview from `fstp-guide`, the public page preview from
+/// `fstp-public` and the contract placeholder preview over the
+/// `fstp-contract` agreement layout ([`contract_preview`]), as text
+/// blocks over the draft's values.
 async fn preview<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
@@ -712,15 +885,17 @@ async fn preview<P: Seams>(
     let kind = match op.request.get("preview").and_then(Value::as_str) {
         Some("guide") => "guide",
         Some("public") => "public",
-        Some("contract") => {
-            return Err(call.refuse(ApiError::NotImplemented(
-                "the contract placeholder preview: no contract renderer exists before M8",
-            )));
-        }
+        Some("contract") => "contract",
         _ => return Err(call.refuse(ApiError::bad_request(forms::REQUEST_RULE))),
     };
     let view = fstp_creator::draft_view(&state.core, &state.creator, p)
         .ok_or_else(|| call.refuse(no_draft()))?;
+    if kind == "contract" {
+        return Ok(CreatorModel::Preview {
+            kind,
+            blocks: contract_preview(&view.spec),
+        });
+    }
     if kind == "public" {
         return Ok(CreatorModel::Preview {
             kind,
@@ -894,4 +1069,45 @@ fn proposals<P: Seams>(call: &Call<'_, P>, p: ProgrammeId) -> Result<CreatorMode
         });
     }
     Ok(CreatorModel::Proposals(rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// R-PG-01, R-CT-01: the contract preview of a spec lays out the
+    /// `fstp-contract` agreement over the draft's values, with one marker
+    /// for each value only a grant sets, and never a made-up amount.
+    #[test]
+    fn r_pg_01_contract_preview_marks_per_grant_values() {
+        let spec = fstp_json::parse(
+            br#"{"currency":"EUR","identity":{"name":"Synthetic programme"},
+            "money":{"p04_grant_range":{"max":"100000.00","min":"5000.00"}},
+            "contract":{"flow_down":["record_keeping"],
+            "p29_instrument":{"instrument":"mou","template":{"id":"t-1","version":1}},
+            "p30_signature_cascade":["wallet_qes"]}}"#,
+        )
+        .unwrap_or(Value::Null);
+        let blocks = contract_preview(&spec);
+        let texts: Vec<&str> = blocks.iter().map(|b| b.text.as_str()).collect();
+        let heading = fstp_contract::render::agreement_heading(&per_grant("proposal"));
+        assert_eq!(texts.first(), Some(&heading.as_str()), "{texts:?}");
+        for want in [
+            "Programme: Synthetic programme",
+            "Granted amount: EUR [granted amount: set for each grant].",
+            "Agreed plan version: [agreed plan version: set for each grant].",
+            fstp_contract::render::CLAUSES_PENDING,
+            "Grant range per proposal: EUR 5000.00 to EUR 100000.00.",
+            "Record keeping",
+            "Lead applicant: [party: set for each grant]",
+        ] {
+            assert!(texts.contains(&want), "{want}: {texts:?}");
+        }
+        let gap = contract_preview(&Value::Null);
+        assert!(
+            gap.iter()
+                .any(|b| b.text == "Programme: [identity.name: not set in the draft]"),
+            "{gap:?}"
+        );
+    }
 }

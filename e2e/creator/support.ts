@@ -791,6 +791,12 @@ export async function reviewAndRequest(m1: Person, origin: string, p: string): P
     await expect(page.locator(id), `${id} renders`).not.toHaveText('');
   }
   await expect(page.locator(CREATOR_UI.previewGuide)).toContainText('SuperSAFE');
+  // R-PG-01, R-CT-01: the contract preview lays out the agreement over
+  // the draft, with a marker for each value only a grant sets.
+  const contract = page.locator(CREATOR_UI.previewContract);
+  await expect(contract).toContainText('Sub-grant agreement for proposal [proposal: set for each grant]');
+  await expect(contract).toContainText('Memorandum of understanding');
+  await expect(contract).not.toContainText('This preview is not available.');
   await expect(page.locator(CREATOR_UI.requestActivation)).toBeEnabled();
   await page.locator(CREATOR_UI.requestActivation).click();
   await expect(page.locator(CREATOR_UI.activationStatus)).toHaveAttribute('data-status', 'requested');
