@@ -386,7 +386,7 @@ const AUTH_RULES: [(&str, AuthClass); 31] = [
 /// guards, money, scoring, policy validation, the ledger and input
 /// checks. SoD-10 and SoD-11 refuse an assignment for the reviewer's
 /// organisation, which is the assignment's input, not the actor.
-const GUARD_RULES: [&str; 60] = [
+const GUARD_RULES: [&str; 62] = [
     "I-07",
     "I-08",
     "I-09",
@@ -453,6 +453,10 @@ const GUARD_RULES: [&str; 60] = [
     "R-CT-01",
     "R-RP-01",
     "R-RP-04",
+    // M9 lane P1: the public choice guards. I-41 judges the grant's state
+    // and its current choice, I-42 its minor flag, never the actor.
+    "I-41",
+    "I-42",
 ];
 
 /// The class of a refusal rule. Rules outside both tables, such as I-84,

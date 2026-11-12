@@ -1183,5 +1183,18 @@ fn sample(kind: CommandKind) -> Command {
             wording: text_ref(23),
         },
         K::RevokeCalibrationConsent => Command::RevokeCalibrationConsent { proposal },
+        K::SetPublicChoice => Command::SetPublicChoice {
+            proposal,
+            phase: fstp_domain::publicity::PublicPhase::Funded,
+            level: fstp_domain::publicity::PublicLevel::Project,
+            title: text_ref(24),
+            summary: text_ref(25),
+            grantee: text_ref(26),
+            deliverables: std::collections::BTreeSet::new(),
+        },
+        K::WithdrawPublicChoice => Command::WithdrawPublicChoice {
+            proposal,
+            phase: fstp_domain::publicity::PublicPhase::Funded,
+        },
     }
 }

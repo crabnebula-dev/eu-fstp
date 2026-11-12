@@ -567,6 +567,8 @@ struct Deliverable {
     milestone: MilestoneId,
     /// Its SPDX licence.
     licence: SpdxId,
+    /// Its evidence snapshot.
+    snapshot: crate::id::ContentDigest,
     /// Whether it was accepted.
     accepted: bool,
 }
@@ -637,6 +639,34 @@ impl MoneyState {
     /// The rules version of the `GrantDecided` of `proposal`, once granted.
     pub fn grant_rules(&self, proposal: ProposalId) -> Option<RulesVersion> {
         self.grants.get(&proposal).map(|g| g.rules)
+    }
+
+    /// Every accepted deliverable of the grant `proposal`, in id order, with
+    /// its licence and evidence snapshot (M9 lane P1).
+    pub fn accepted_deliverables(
+        &self,
+        proposal: ProposalId,
+    ) -> Vec<(DeliverableId, &SpdxId, crate::id::ContentDigest)> {
+        self.deliverables
+            .iter()
+            .filter(|(_, d)| d.grant == proposal && d.accepted)
+            .map(|(id, d)| (*id, &d.licence, d.snapshot))
+            .collect()
+    }
+
+    /// The licence and evidence snapshot of `deliverable` when it is an
+    /// accepted deliverable of the grant `proposal`. The public view of a
+    /// finished grant shows such deliverables when the grantee includes
+    /// them (`public-transparency.md`, M9 lane P1).
+    pub fn accepted_deliverable(
+        &self,
+        proposal: ProposalId,
+        deliverable: DeliverableId,
+    ) -> Option<(&SpdxId, crate::id::ContentDigest)> {
+        self.deliverables
+            .get(&deliverable)
+            .filter(|d| d.grant == proposal && d.accepted)
+            .map(|d| (&d.licence, d.snapshot))
     }
 
     /// Whether the programme manager closed `milestone` of the grant `proposal`.
@@ -2315,6 +2345,7 @@ pub(crate) fn apply(
                     grant: d.grant,
                     milestone: d.milestone,
                     licence: d.licence.clone(),
+                    snapshot: d.snapshot,
                     accepted: d.accepted,
                 },
             );

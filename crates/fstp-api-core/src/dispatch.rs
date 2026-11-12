@@ -141,6 +141,8 @@ pub(crate) mod people;
 mod precheck;
 /// The public pages, the feed and the public tools (lane W2c).
 mod public;
+// M9 lane P1: the grantee lead's public choices (R-PB-02, I-43).
+mod publicity;
 /// The tenant operations (lane m4tenant).
 mod tenant;
 
@@ -929,7 +931,9 @@ async fn store_texts<P: Seams>(
         .ok_or(ApiError::refused(ErrorCode::NotFound, "Input"))?;
     let class = match form.kind {
         fstp_domain::command::CommandKind::DraftCall
-        | fstp_domain::command::CommandKind::EditCall => TextClass::Public,
+        | fstp_domain::command::CommandKind::EditCall
+        // M9 lane P1, R-PB-03: the grantee's approved public texts.
+        | fstp_domain::command::CommandKind::SetPublicChoice => TextClass::Public,
         _ => TextClass::Confidential,
     };
     for (path, s) in texts {
@@ -1824,6 +1828,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetDetermination => {
             let p = proposal_param(call, op)?;
             ReadModel::Grant(grant_lists::determination(call, p))
+        }
+        // M9 lane P1: the grantee lead's public choices (R-PB-02, I-43).
+        ReadKind::GetPublicity => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Grant(publicity::view(call, p).await)
         }
         // Lane m5/polish-access: the assigned reviewer's line review view
         // (R-PR-08).

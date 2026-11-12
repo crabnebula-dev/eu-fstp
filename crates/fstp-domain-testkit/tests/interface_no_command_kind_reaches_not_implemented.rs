@@ -537,6 +537,7 @@ fn walk(backend: Backend) {
     ));
     scheduled_end(&mut walk, backend);
     calibration_consent(&mut walk, backend);
+    public_choice(&mut walk, backend);
 
     walk.w
         .invariants()
@@ -577,6 +578,48 @@ fn calibration_consent(walk: &mut Walk, backend: Backend) {
     ];
     for (kind, outcome) in kinds.into_iter().zip(outcomes) {
         match outcome {
+            Ok(_) => {
+                walk.seen.insert(kind);
+            }
+            Err(r) if is_not_implemented(&r) => {
+                panic!("{kind:?} reached a not-implemented refusal")
+            }
+            Err(r) => panic!("production refuses a legal {kind:?} with {r}"),
+        }
+    }
+}
+
+/// The public choice commands of M9 lane P1 (R-PB-02, I-43). The money
+/// references model no choice, so they run through production `decide`
+/// on a copy of the walk's core state, where PA is COMPLETED. The
+/// reference twin skips them.
+fn public_choice(walk: &mut Walk, backend: Backend) {
+    use fstp_domain::publicity::{PublicLevel, PublicPhase};
+    use fstp_domain_testkit::publicity::{ChoiceDriver, set_choice};
+    let kinds = [
+        CommandKind::SetPublicChoice,
+        CommandKind::WithdrawPublicChoice,
+    ];
+    if backend == Backend::Reference {
+        walk.seen.extend(kinds);
+        return;
+    }
+    assert_eq!(walk.state(PA), Some(StateTag::Completed), "PA completed");
+    let mut d = ChoiceDriver::new(&walk.w.life.rev.sod.state, walk.w.now());
+    let cmds = [
+        set_choice(
+            PA,
+            PublicPhase::Finished,
+            PublicLevel::Full,
+            BTreeSet::new(),
+        ),
+        Command::WithdrawPublicChoice {
+            proposal: PA,
+            phase: PublicPhase::Finished,
+        },
+    ];
+    for (kind, cmd) in kinds.into_iter().zip(cmds) {
+        match d.exec(LA, &cmd).unwrap_or_else(|e| panic!("{e}")) {
             Ok(_) => {
                 walk.seen.insert(kind);
             }

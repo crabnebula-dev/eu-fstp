@@ -934,4 +934,35 @@ pub enum Record {
         /// The lead.
         by: AccountId,
     },
+    /// The grantee lead set the public choice of one phase of a grant
+    /// (R-PB-02, R-PB-03, I-43; M9 lane P1). It replaces any earlier choice
+    /// of that phase. The public filter applies the lower of the level and
+    /// the programme maximum at read time.
+    PublicChoiceSet {
+        /// The grant.
+        proposal: ProposalId,
+        /// The phase.
+        phase: crate::publicity::PublicPhase,
+        /// The chosen level.
+        level: crate::publicity::PublicLevel,
+        /// The approved project title, a public text.
+        title: TextRef,
+        /// The approved public summary, a public text.
+        summary: TextRef,
+        /// The approved grantee name, a public text.
+        grantee: TextRef,
+        /// The accepted deliverables included, finished phase only.
+        deliverables: BTreeSet<DeliverableId>,
+        /// The lead.
+        by: AccountId,
+    },
+    /// The grantee lead withdrew the public choice of one phase (I-43).
+    PublicChoiceWithdrawn {
+        /// The grant.
+        proposal: ProposalId,
+        /// The phase.
+        phase: crate::publicity::PublicPhase,
+        /// The lead.
+        by: AccountId,
+    },
 }

@@ -67,6 +67,9 @@ pub mod payment;
 // M12 lane L12-I37: calibration consent.
 pub mod calibration;
 
+// M9 lane P1: grantee choices for the public pages.
+pub mod publicity;
+
 // M3 lane W2c: read-only accessors for the cell (M3 design section 0.5).
 pub mod view;
 

@@ -1742,6 +1742,7 @@ pub(crate) mod reply_shape_tests {
                 crate::grant::GrantModel::Grants(_) => &["grant.list_mine"],
                 crate::grant::GrantModel::ToSign(_) => &["contract.awaiting_me"],
                 crate::grant::GrantModel::Determination(_) => &["grant.determination_view"],
+                crate::grant::GrantModel::Publicity(_) => &["grant.publicity.view"],
                 crate::grant::GrantModel::LineReview(_) => &["payment.line_review_view"],
                 crate::grant::GrantModel::ReportProgrammes(_) => &["report.programmes"],
             },

@@ -940,6 +940,12 @@ pub enum Rule {
     /// (R-PR-08): its assigned reviewer, declared free of conflict, while
     /// X is IN_EXECUTION. The world names the request under review.
     LineReview,
+    /// M9 lane P1: the public choices of X (R-PB-02, I-43). Reading: the
+    /// lead, once X is GRANTED, IN_EXECUTION or COMPLETED. In COMPLETED
+    /// the lead's binding has ended, and the lead still makes the finished
+    /// choice there (`public-transparency.md` Opt-in model). A team member
+    /// or guardian reads nothing.
+    Publicity,
 }
 
 impl Rule {
@@ -1058,6 +1064,7 @@ impl Rule {
             Rule::GrantReviewer | Rule::Determination | Rule::LineReview => {
                 &[Some(Role::CommitteeMember)]
             }
+            Rule::Publicity => &[Some(Role::Applicant)],
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
@@ -1559,6 +1566,12 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("report.programmes", T::None, R::ReportProgrammes),
     RefOp::act("report.generate", T::Programme, R::ProgrammeManager),
     RefOp::act("report.approve", T::Report, R::FinancialSignatory),
+    // M9 lane P1 (R-PB-02, I-41, I-42, I-43). Reading: the grantee lead
+    // alone makes the public choices, web only. A choice outside the
+    // states I-41 admits is a guard refusal, not an authorisation one.
+    RefOp::read("grant.publicity.view", T::Proposal, R::Publicity),
+    RefOp::act("grant.publicity.set", T::Proposal, R::Lead).binding(),
+    RefOp::act("grant.publicity.withdraw", T::Proposal, R::Lead).binding(),
 ];
 
 /// Whether the rule admits the principal, and the class if not. The
@@ -1783,6 +1796,13 @@ fn admit(
             )?;
             open(x == Some(StateTag::InExecution))
         }
+        Rule::Publicity => open(
+            who == Who::Lead
+                && matches!(
+                    x,
+                    Some(StateTag::Granted | StateTag::InExecution | StateTag::Completed)
+                ),
+        ),
     }
 }
 

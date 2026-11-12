@@ -44,6 +44,7 @@ pub mod model;
 mod pageforms;
 pub mod pending;
 pub mod port;
+pub mod publicity;
 pub mod rate;
 pub mod salted;
 pub mod tenant;

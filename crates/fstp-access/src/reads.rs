@@ -189,11 +189,14 @@ pub enum ReadKind {
     // reports the caller reads, by id and name, so the tenant-wide
     // Financial signatory reaches them by clicking.
     ListReportProgrammes,
+    // M9 lane P1 (R-PB-02, I-43): the grantee lead's view of the public
+    // choices of a grant, with the maximum levels and the minor flag.
+    GetPublicity,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 67] = [
+    pub const ALL: [ReadKind; 68] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -261,6 +264,7 @@ impl ReadKind {
         ReadKind::GetMyMailbox,
         ReadKind::GetLineReview,
         ReadKind::ListReportProgrammes,
+        ReadKind::GetPublicity,
     ];
 }
 
@@ -322,6 +326,11 @@ pub enum ReadRule {
     /// programme (R-NG-03, R-CF-02, I-03). Unlike `AssignedReviewer`, the
     /// target is the proposal, not the assignment.
     ProposalReviewer,
+    /// The maker of a grant's public choices: its lead through an active
+    /// Applicant binding, or through the one a terminal state ended
+    /// normally (`fstp_domain::publicity::is_choice_maker`, M9 lane P1).
+    /// The read and the choice commands admit the same accounts.
+    ChoiceMaker,
     /// Any one of these rules.
     AnyOf(&'static [ReadRule]),
 }
@@ -622,6 +631,19 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
             ReadRule::HolderAnywhere(Role::Auditor),
         ]),
         OPEN_ALWAYS,
+    ),
+    // M9 lane P1 (R-PB-02, I-41, I-43): the grantee lead reads the public
+    // choices of the grant once it is GRANTED, and after COMPLETED ended
+    // the lead's binding. Interim, pending Daniel: TERMINATED is closed,
+    // since a terminated grant shows nowhere.
+    (
+        ReadKind::GetPublicity,
+        ReadRule::ChoiceMaker,
+        &[
+            StateTag::Granted,
+            StateTag::InExecution,
+            StateTag::Completed,
+        ],
     ),
 ];
 
@@ -966,6 +988,12 @@ fn judge(
         ReadRule::FormerTeam => match (ctx.proposal, ctx.state) {
             (Some(x), Some(s)) if s.is_terminal() => open(former_team(state, account, x)),
             _ => deny(DenyRule::Rac01),
+        },
+        ReadRule::ChoiceMaker => match ctx.proposal {
+            Some(x) => open(fstp_domain::publicity::is_choice_maker(
+                state, account, x, now,
+            )),
+            None => deny(DenyRule::Rac01),
         },
         ReadRule::Lead => match ctx.proposal {
             Some(x) => open(receiving(state, account, x, Role::Applicant, now)),

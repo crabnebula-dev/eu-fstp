@@ -67,6 +67,7 @@ use fstp_domain::policy::{
 use fstp_domain::proposal::{
     EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, ReentryStage, Task,
 };
+use fstp_domain::publicity::{PublicLevel, PublicPhase};
 use fstp_domain::record::{
     Assigned, AssignmentReleased, BindingEnded, BindingGranted, BindingReinstated,
     BindingSuspended, BindingVoided, ConflictDeclared, ConflictDetected, ContentRead,
@@ -739,6 +740,9 @@ pub(crate) enum RecordTag {
     CalibrationConsentRequested,
     CalibrationConsentGiven,
     CalibrationConsentRevoked,
+    // M9 lane P1.
+    PublicChoiceSet,
+    PublicChoiceWithdrawn,
     // M4 changes D2 and D5.
     ProgrammeActivated,
     CutOffRoundOpened,
@@ -752,7 +756,7 @@ pub(crate) enum RecordTag {
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
     /// tags of M4 changes D2 and D5, then the Guide record of R-GA-01.
-    pub(crate) const ALL: [RecordTag; 70] = [
+    pub(crate) const ALL: [RecordTag; 72] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -817,6 +821,8 @@ impl RecordTag {
         RecordTag::CalibrationConsentRequested,
         RecordTag::CalibrationConsentGiven,
         RecordTag::CalibrationConsentRevoked,
+        RecordTag::PublicChoiceSet,
+        RecordTag::PublicChoiceWithdrawn,
         RecordTag::ProgrammeActivated,
         RecordTag::CutOffRoundOpened,
         RecordTag::BallotCast,
@@ -927,6 +933,8 @@ impl RecordTag {
             Record::CalibrationConsentRequested { .. } => RecordTag::CalibrationConsentRequested,
             Record::CalibrationConsentGiven { .. } => RecordTag::CalibrationConsentGiven,
             Record::CalibrationConsentRevoked { .. } => RecordTag::CalibrationConsentRevoked,
+            Record::PublicChoiceSet { .. } => RecordTag::PublicChoiceSet,
+            Record::PublicChoiceWithdrawn { .. } => RecordTag::PublicChoiceWithdrawn,
             Record::ProgrammeActivated(_) => RecordTag::ProgrammeActivated,
             Record::CutOffRoundOpened { .. } => RecordTag::CutOffRoundOpened,
             Record::BallotCast { .. } => RecordTag::BallotCast,
@@ -1531,6 +1539,14 @@ fn check_results(g: &mut Gen, d: &mut Draw) -> Vec<CheckResult> {
     out
 }
 
+fn deliverable_set(g: &mut Gen, d: &mut Draw) -> BTreeSet<DeliverableId> {
+    let mut out = BTreeSet::new();
+    for _ in 0..g.usize_in(0..=3) {
+        out.insert(id(g, d, DeliverableId::from_raw));
+    }
+    out
+}
+
 fn accounts(g: &mut Gen, d: &mut Draw) -> BTreeSet<AccountId> {
     let mut out = BTreeSet::new();
     for _ in 0..g.usize_in(0..=4) {
@@ -1959,6 +1975,19 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::RevokeCalibrationConsent => Command::RevokeCalibrationConsent {
             proposal: id(g, d, ProposalId::from_raw),
         },
+        CommandKind::SetPublicChoice => Command::SetPublicChoice {
+            proposal: id(g, d, ProposalId::from_raw),
+            phase: *g.pick(&PublicPhase::ALL),
+            level: *g.pick(&PublicLevel::ALL),
+            title: text(g, d),
+            summary: text(g, d),
+            grantee: text(g, d),
+            deliverables: deliverable_set(g, d),
+        },
+        CommandKind::WithdrawPublicChoice => Command::WithdrawPublicChoice {
+            proposal: id(g, d, ProposalId::from_raw),
+            phase: *g.pick(&PublicPhase::ALL),
+        },
     })
 }
 
@@ -2355,6 +2384,21 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
         },
         RecordTag::CalibrationConsentRevoked => Record::CalibrationConsentRevoked {
             proposal: id(g, d, ProposalId::from_raw),
+            by: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::PublicChoiceSet => Record::PublicChoiceSet {
+            proposal: id(g, d, ProposalId::from_raw),
+            phase: *g.pick(&PublicPhase::ALL),
+            level: *g.pick(&PublicLevel::ALL),
+            title: text(g, d),
+            summary: text(g, d),
+            grantee: text(g, d),
+            deliverables: deliverable_set(g, d),
+            by: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::PublicChoiceWithdrawn => Record::PublicChoiceWithdrawn {
+            proposal: id(g, d, ProposalId::from_raw),
+            phase: *g.pick(&PublicPhase::ALL),
             by: id(g, d, AccountId::from_raw),
         },
         RecordTag::CutOffRoundOpened => Record::CutOffRoundOpened {

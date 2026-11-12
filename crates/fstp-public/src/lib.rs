@@ -36,8 +36,8 @@ pub use query::{PublicPart, PublicQuery, parse_public_query};
 pub use slug::{public_slugs, resolve_slug};
 pub use view::{
     GrantChoice, GrantChoices, GrantStatus, Level, ProgrammeIdentity, PublicAggregate, PublicCall,
-    PublicGrant, PublicGuide, PublicProgramme, PublicTexts, PublicView, public_view,
-    public_view_with,
+    PublicDeliverable, PublicGrant, PublicGuide, PublicProgramme, PublicTexts, PublicView,
+    grant_choices, maxima, public_view, public_view_with,
 };
 
 /// Why a public operation failed.

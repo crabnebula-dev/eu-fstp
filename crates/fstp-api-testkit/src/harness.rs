@@ -792,6 +792,15 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         ]),
         "grant.accept" | "grant.approve" => obj(vec![("determination", s("1"))]),
         "grant.terminate" | "milestone.close" => obj(vec![("reason", s("SYNTHETIC REASON"))]),
+        "grant.publicity.set" => obj(vec![
+            ("phase", s("Funded")),
+            ("level", s("Project")),
+            ("title", s("SYNTHETIC PUBLIC TITLE")),
+            ("summary", s("SYNTHETIC PUBLIC SUMMARY")),
+            ("grantee", s("SYNTHETIC GRANTEE")),
+            ("deliverables", Value::Array(Array::new())),
+        ]),
+        "grant.publicity.withdraw" => obj(vec![("phase", s("Funded"))]),
         "amendment.propose" => obj(vec![("plan", dec(t.plan.unwrap_or(1)))]),
         "amendment.route" => obj(vec![("route", s("Irc"))]),
         "contract.propose_change" => obj(vec![
@@ -1411,7 +1420,7 @@ impl Seeder {
             v => v.to_compact().into_bytes(),
         };
         let call = |core: &ApiCore| -> Result<OpResult, ApiError> {
-            let op = decode_route(method, path, &bytes)?;
+            let op = decode_web(method, path, &bytes)?;
             block_on(core.dispatch(
                 Credential::SessionCookie(l.cookie.clone()),
                 &RequestHead::new(),
@@ -4676,6 +4685,11 @@ mod m5_api_tests {
 #[cfg(test)]
 #[path = "harness_m5_reads.rs"]
 mod m5_reads_tests;
+/// M9 lane P1: the grantee choice operations through the API (R-PB-02,
+/// R-PB-03, I-41, I-43).
+#[cfg(test)]
+#[path = "harness_m9_publicity.rs"]
+mod m9_publicity_tests;
 /// Lane m6/mailbox: `me.mailbox` on the matrix worlds
 /// (`docs/handoff/mailbox-design.md` section 7).
 #[cfg(test)]

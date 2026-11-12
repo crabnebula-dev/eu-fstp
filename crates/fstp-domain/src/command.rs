@@ -736,6 +736,31 @@ pub enum Command {
         /// The proposal.
         proposal: ProposalId,
     },
+    /// The grantee lead sets the public choice of one phase of a grant
+    /// (R-PB-02, R-PB-03, I-41, I-42, I-43). Lane M9 P1, `crate::publicity`.
+    SetPublicChoice {
+        /// The grant.
+        proposal: ProposalId,
+        /// The phase the choice governs.
+        phase: crate::publicity::PublicPhase,
+        /// The chosen level, stored as chosen even above the maximum.
+        level: crate::publicity::PublicLevel,
+        /// The approved project title, a public text.
+        title: TextRef,
+        /// The approved public summary, a public text.
+        summary: TextRef,
+        /// The approved grantee name, a public text.
+        grantee: TextRef,
+        /// The accepted deliverables included, finished phase only.
+        deliverables: BTreeSet<DeliverableId>,
+    },
+    /// The grantee lead withdraws the public choice of one phase (I-43).
+    WithdrawPublicChoice {
+        /// The grant.
+        proposal: ProposalId,
+        /// The phase.
+        phase: crate::publicity::PublicPhase,
+    },
 }
 
 /// The fieldless tag of a [`Command`].
@@ -875,11 +900,15 @@ pub enum CommandKind {
     GiveCalibrationConsent,
     /// [`Command::RevokeCalibrationConsent`].
     RevokeCalibrationConsent,
+    /// [`Command::SetPublicChoice`].
+    SetPublicChoice,
+    /// [`Command::WithdrawPublicChoice`].
+    WithdrawPublicChoice,
 }
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 67] = [
+    pub const ALL: [CommandKind; 69] = [
         CommandKind::CreateProgramme,
         CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
@@ -947,6 +976,8 @@ impl CommandKind {
         CommandKind::RequestCalibrationConsent,
         CommandKind::GiveCalibrationConsent,
         CommandKind::RevokeCalibrationConsent,
+        CommandKind::SetPublicChoice,
+        CommandKind::WithdrawPublicChoice,
     ];
 
     /// Whether the kind is a high-risk action from the list in
@@ -1074,6 +1105,8 @@ impl Command {
             Command::RequestCalibrationConsent { .. } => CommandKind::RequestCalibrationConsent,
             Command::GiveCalibrationConsent { .. } => CommandKind::GiveCalibrationConsent,
             Command::RevokeCalibrationConsent { .. } => CommandKind::RevokeCalibrationConsent,
+            Command::SetPublicChoice { .. } => CommandKind::SetPublicChoice,
+            Command::WithdrawPublicChoice { .. } => CommandKind::WithdrawPublicChoice,
         }
     }
 

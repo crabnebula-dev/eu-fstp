@@ -94,6 +94,7 @@ pub(crate) fn grant(call: &str, tag: &str, level: Level, status: GrantStatus) ->
         summary: format!("{tag} synthetic public summary, approved by the grantee."),
         grantee: (level >= Level::ProjectAndGrantee).then(|| format!("{tag} Synthetic Grantee")),
         amount: (level == Level::Full).then(|| "40000.00".to_owned()),
+        deliverables: Vec::new(),
     }
 }
 
@@ -369,6 +370,7 @@ pub(crate) fn gen_view(g: &mut Gen) -> PublicView {
                     summary: canary(g, n, "gsum"),
                     grantee: (level >= Level::ProjectAndGrantee).then(|| canary(g, n, "who")),
                     amount: (level == Level::Full).then(|| canary(g, n, "amt")),
+                    deliverables: Vec::new(),
                 }
             })
             .collect()

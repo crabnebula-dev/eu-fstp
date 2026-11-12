@@ -1099,7 +1099,11 @@ pub const fn class_of(kind: CommandKind) -> RefClass {
         // not Q18 option B commands, so the strict reading protects them.
         // Lane L12-I37: the calibration consent commands follow the strict
         // reading too.
-        CommandKind::RequestCalibrationConsent
+        // M9 lane P1: so do the public choice commands, since a withdrawal
+        // must never be blocked (I-43).
+        CommandKind::SetPublicChoice
+        | CommandKind::WithdrawPublicChoice
+        | CommandKind::RequestCalibrationConsent
         | CommandKind::GiveCalibrationConsent
         | CommandKind::RevokeCalibrationConsent
         | CommandKind::ActivateProgramme
