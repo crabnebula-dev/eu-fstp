@@ -584,6 +584,11 @@ export interface ProposalInfo {
   readonly role: ProposalRole | undefined;
   /** The proposal title, or `""` when none is written or sent. */
   readonly title: string;
+  /**
+   * The knock-out reason the FSTP coordinator recorded, for an
+   * INELIGIBLE proposal (O-54), or `""` when the cell sends none.
+   */
+  readonly knockOutReason: string;
 }
 
 function proposalInfo(v: unknown): ProposalInfo | null {
@@ -596,10 +601,11 @@ function proposalInfo(v: unknown): ProposalInfo | null {
   const state = parseProposalState(member(o, "state"));
   const r = role(member(o, "role"));
   const title = optText(o, "title");
-  if (proposal === null || call === null || state === null || r === null || title === null) {
+  const reason = optText(o, "knock_out_reason");
+  if (proposal === null || call === null || state === null || r === null || title === null || reason === null) {
     return null;
   }
-  return Object.freeze({ proposal, call, state, role: r, title });
+  return Object.freeze({ proposal, call, state, role: r, title, knockOutReason: reason });
 }
 
 /** `proposal.list_own`: an array of `{proposal, call?, state, role?, title?}`. */

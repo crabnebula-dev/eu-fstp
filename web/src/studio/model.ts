@@ -131,6 +131,35 @@ export function readCallState(v: unknown): CallRow | null {
   return { call, state, open, title: title ?? null };
 }
 
+/** One call of a `call.list` reply that is not published yet (lane m4/fast-flow). */
+export interface WaitingCall {
+  readonly call: string;
+  readonly state: CallState;
+  /** Whether the caller may approve it (R-PC-03), as the server says. */
+  readonly mayApprove: boolean;
+}
+
+/**
+ * The calls of a `call.list` reply in DRAFT or APPROVED, in reply order.
+ * Null when the body has another shape.
+ */
+export function readWaitingCalls(v: unknown): WaitingCall[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: WaitingCall[] = [];
+  for (const x of v as unknown[]) {
+    const o = record(x);
+    if (o === null) return null;
+    const call = o["call"];
+    const status = o["status"];
+    const may = o["may_approve"];
+    if (typeof call !== "string" || !isProgrammeId(call) || typeof status !== "string" || typeof may !== "boolean") return null;
+    const state = Object.hasOwn(CALL_STATES, status) ? CALL_STATES[status] : undefined;
+    if (state === undefined) return null;
+    if (state !== "PUBLISHED") out.push({ call, state, mayApprove: may });
+  }
+  return out;
+}
+
 /** The published calls the caller's programme bindings on `p` reach, ascending. */
 export function programmeCalls(r: MyRoles, p: string): string[] {
   const out = new Set<string>();

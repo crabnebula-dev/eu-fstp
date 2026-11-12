@@ -147,6 +147,7 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "outcome.ineligible.kicker": "Final outcome",
   "outcome.ineligible.title": "Not eligible",
   "outcome.ineligible.text": "Your proposal did not meet one of the call's eligibility rules. It cannot continue in this call.",
+  "outcome.ineligible.reason": "Reason recorded by the FSTP coordinator: {reason}",
   "outcome.not_selected.kicker": "Final outcome",
   "outcome.not_selected.title": "Not selected",
   "outcome.not_selected.text": "Your proposal was not selected in this call. Thank you for the work you put into it. You may apply to a later call.",
