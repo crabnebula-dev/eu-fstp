@@ -352,3 +352,24 @@ pub fn handle_http_post(bytes: &[u8]) -> Result<McpReply, McpError> {
     let response = stub_server()?.transport_only(surface, &req);
     Ok(McpReply { response })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    /// R-NF-02, TH-26: the crash inputs of fuzz targets `jsonrpc_decode`
+    /// and `mcp_message_decode` in CI run 42359742731. Each is refused as
+    /// `NotJson` and never panics. Its text is the fixed `NotJson` text,
+    /// which holds the input only by coincidence.
+    #[test]
+    fn r_nf_02_th26_fuzz_crash_inputs_are_refused_as_not_json() {
+        for input in [&b"s not one JSON value"[..], &b"ot one JSON value"[..]] {
+            assert_eq!(decode_jsonrpc(input), Err(McpError::NotJson));
+            let e = decode_message(input).unwrap_err();
+            assert_eq!(e, McpError::NotJson);
+            assert_eq!(e.to_string(), "the body is not one JSON value");
+        }
+    }
+}

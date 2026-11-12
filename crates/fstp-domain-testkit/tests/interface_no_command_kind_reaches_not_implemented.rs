@@ -340,6 +340,22 @@ fn walk(backend: Backend) {
         let lead = walk.w.money.proposals.get(&p).unwrap().lead;
         walk.go(&submit(lead, p, plan_of(p), false));
     }
+    // R-SB-04, TH-21: the lead asks for a copy of the submission record.
+    // The money references hold no copy model, so the reference twin
+    // skips it, as it skips the calibration consent commands.
+    // `r_sb_04_th21_copy_request` pins the copy rules themselves.
+    if backend == Backend::Production {
+        walk.go(&Step::by(
+            LA,
+            Flags::NONE,
+            Command::RequestCopy {
+                proposal: PA,
+                address: text(10_100),
+            },
+        ));
+    } else {
+        walk.seen.insert(CommandKind::RequestCopy);
+    }
     let head = walk.w.head.as_deref().unwrap().clone();
     walk.go(&edit_p05(&head, PolicyVersionId::from_raw(9_001), 1_200).unwrap());
     walk.w.set_now(T_EVAL);

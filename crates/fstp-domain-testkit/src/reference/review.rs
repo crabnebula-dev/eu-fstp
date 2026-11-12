@@ -1568,7 +1568,20 @@ fn read_verdict(
             && b.active()
             && b.start <= now
     });
-    if team {
+    // The former team keeps a read-only view of its own proposal content
+    // after a terminal state (Daniel, 2026-11-06, m4-design "Former team
+    // after a terminal state"; production `ReadRule::FormerTeam`). Its
+    // binding ended normally: not voided and not suspended.
+    let former = life.state.is_terminal()
+        && view.bindings.values().any(|b| {
+            b.account == actor
+                && b.proposal == Some(proposal)
+                && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+                && b.end.is_some()
+                && b.voided.is_none()
+                && !b.suspended
+        });
+    if team || former {
         return Verdict::Accept;
     }
     if rev.facts.contains(&(actor, proposal)) {
