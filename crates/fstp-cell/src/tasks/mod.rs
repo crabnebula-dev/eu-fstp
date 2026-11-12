@@ -69,3 +69,54 @@ impl<R: Runtime> Clock for SystemClock<R> {
         self.rt.sleep(Duration::from_micros(micros))
     }
 }
+
+/// The longest a [`FnClock`] sleeps before it reads its clock again.
+pub const FN_CLOCK_POLL: Duration = Duration::from_millis(100);
+
+/// The clock a cell was started with ([`crate::engine::CommitClock`]),
+/// with sleeps on the cell's runtime. Production starts a cell on the
+/// system clock. A test world starts it on a clock the test can move.
+///
+/// A sleep never trusts the clock to move at the host's pace: it sleeps
+/// at most [`FN_CLOCK_POLL`] at a time and reads the clock again. So a
+/// test clock that jumps forward wakes a task within that bound.
+#[derive(Clone)]
+pub struct FnClock<R> {
+    rt: R,
+    now: crate::engine::CommitClock,
+}
+
+impl<R> std::fmt::Debug for FnClock<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnClock").finish_non_exhaustive()
+    }
+}
+
+impl<R: Runtime> FnClock<R> {
+    /// The clock `now` over `rt`.
+    pub fn new(rt: R, now: crate::engine::CommitClock) -> FnClock<R> {
+        FnClock { rt, now }
+    }
+}
+
+impl<R: Runtime> Clock for FnClock<R> {
+    fn now(&self) -> i64 {
+        (self.now)()
+    }
+
+    fn sleep_until(&self, at: i64) -> impl Future<Output = ()> + Send {
+        let rt = self.rt.clone();
+        let now = std::sync::Arc::clone(&self.now);
+        async move {
+            loop {
+                let left = at.saturating_sub(now()).max(0);
+                if left == 0 {
+                    return;
+                }
+                let micros = u64::try_from(left).unwrap_or(u64::MAX);
+                rt.sleep(Duration::from_micros(micros).min(FN_CLOCK_POLL))
+                    .await;
+            }
+        }
+    }
+}

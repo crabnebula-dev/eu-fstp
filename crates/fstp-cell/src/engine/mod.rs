@@ -458,6 +458,7 @@ pub struct CellEngine {
     tx: Sender<Job>,
     snapshot: Arc<Mutex<Arc<CellState>>>,
     shutdown: Shutdown,
+    clock: CommitClock,
 }
 
 impl std::fmt::Debug for CellEngine {
@@ -473,6 +474,21 @@ fn lock_snapshot(m: &Mutex<Arc<CellState>>) -> MutexGuard<'_, Arc<CellState>> {
 }
 
 impl CellEngine {
+    /// The same engine handle on the cell clock `clock`. The cell's own
+    /// tasks read their instants from [`CellEngine::now`], so a test world
+    /// that moves its clock moves theirs. Handles cloned from it share it.
+    #[must_use]
+    pub fn with_clock(mut self, clock: CommitClock) -> CellEngine {
+        self.clock = clock;
+        self
+    }
+
+    /// The current instant of the cell clock, in UTC microseconds. The
+    /// system clock unless [`CellEngine::with_clock`] set another.
+    pub fn now(&self) -> i64 {
+        (self.clock)()
+    }
+
     /// Replays `store` into `CellState` and spawns the engine task on
     /// `rt` (design section 5.5). The task joins `shutdown` as a
     /// participant. The join handle gives the store back once the task
@@ -520,6 +536,7 @@ impl CellEngine {
                 tx,
                 snapshot,
                 shutdown: shutdown.clone(),
+                clock: system_commit_clock(),
             },
             handle,
         )

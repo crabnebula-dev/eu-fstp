@@ -79,8 +79,9 @@ use crate::stored::{MAX_SEALED_LEN, MIN_SEALED_LEN, StoredEntry, decode_stored_e
 pub type Decode<T> = fn(canonical: &[u8], schema: u16) -> Result<T, DecodeError>;
 
 /// The store's clock: UTC microseconds, or `None` when it cannot tell.
-/// It stamps anchors and checks step-up freshness at commit.
-pub type Clock = fn() -> Option<i64>;
+/// It stamps anchors and checks step-up freshness at commit. A cell
+/// passes its own clock, so a test world can run a cell on a test clock.
+pub type Clock = Arc<dyn Fn() -> Option<i64> + Send + Sync>;
 
 /// The system clock in UTC microseconds.
 pub fn system_clock() -> Option<i64> {
@@ -521,7 +522,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             outbox_keys,
             decode,
             schema: SCHEMA_V1,
-            clock: system_clock,
+            clock: Arc::new(system_clock),
             anchorer: Anchorer::new(),
         })
     }

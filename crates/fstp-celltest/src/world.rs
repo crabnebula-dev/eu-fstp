@@ -224,6 +224,62 @@ pub struct CellUrls {
     pub health: String,
 }
 
+/// The instant a world cell's clock shows until a test sets it, in UTC
+/// microseconds: one microsecond after the Unix epoch, before every
+/// model's first instant (`fstp_domain_testkit::r#gen::roster::T0` is one
+/// second). So a test may set the clock to any model instant after the
+/// cell started, and the cell's own genesis entries never lie after it.
+pub const WORLD_CLOCK_START: i64 = 1;
+
+/// The test clock of one world cell (lane F-CYCLE2). It stands still at
+/// [`WORLD_CLOCK_START`] until a test sets or advances it. The cell reads
+/// it everywhere it reads time: its route backend, its store's commit
+/// instant, its first admin invitation and its timeline and erasure tasks
+/// (`fstp_cell::process::start_with_clock`). Production cells run on the
+/// system clock.
+///
+/// A clock that stands still makes every ledger instant a test's choice,
+/// so a cell ledger can equal a reference ledger record for record. The
+/// cell refuses a command whose instant lies before its latest recorded
+/// instant, so a test moves the clock forward only.
+#[derive(Clone, Debug)]
+pub struct WorldClock(std::sync::Arc<std::sync::atomic::AtomicI64>);
+
+impl Default for WorldClock {
+    fn default() -> WorldClock {
+        WorldClock(std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+            WORLD_CLOCK_START,
+        )))
+    }
+}
+
+impl WorldClock {
+    /// The current instant, in UTC microseconds.
+    pub fn now(&self) -> i64 {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Sets the clock to `at`, in UTC microseconds.
+    pub fn set(&self, at: i64) {
+        self.0.store(at, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Moves the clock forward by `micros`, saturating.
+    pub fn advance(&self, micros: i64) {
+        let _ = self.0.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |t| Some(t.saturating_add(micros.max(0))),
+        );
+    }
+
+    /// The clock as the cell reads it.
+    fn commit_clock(&self) -> fstp_cell::engine::CommitClock {
+        let c = self.clone();
+        std::sync::Arc::new(move || c.now())
+    }
+}
+
 /// The login credentials of a cell's roles, by database and role. The
 /// harness mints them at provisioning, as the cell and vault components
 /// would at step 6 of design section 9.2: a random password and a client
@@ -239,6 +295,7 @@ pub struct CellHandle {
     id: [u8; 16],
     host: String,
     logins: CellLogins,
+    clock: WorldClock,
     runtime: Option<std::sync::Arc<CellRuntime>>,
 }
 
@@ -250,6 +307,11 @@ impl CellHandle {
     /// minted it. `None` for a role outside that database's plan.
     pub fn role_login(&self, db: CellDatabase, role: RoleName) -> Option<&RoleLogin> {
         self.logins.get(&(db, role))
+    }
+
+    /// The cell's test clock ([`WorldClock`]).
+    pub fn clock(&self) -> &WorldClock {
+        &self.clock
     }
 
     /// The cell's index in its world.
@@ -2213,7 +2275,12 @@ fn start_cell(
             health: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         },
     };
-    let running = match s.rt.block_on(fstp_cell::process::start(&s.rt, parts)) {
+    let clock = WorldClock::default();
+    let running = match s.rt.block_on(fstp_cell::process::start_with_clock(
+        &s.rt,
+        parts,
+        clock.commit_clock(),
+    )) {
         Ok(r) => r,
         Err(e) => {
             let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
@@ -2269,6 +2336,7 @@ fn start_cell(
         id: cell,
         host,
         logins,
+        clock,
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
             running: Mutex::new(Running {

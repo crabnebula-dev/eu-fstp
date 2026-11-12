@@ -2721,7 +2721,6 @@ pub fn properties<'a, B: AuthBackend>(m: &'a AuthModel<B>) -> Vec<Property<'a, A
 /// software passkey per account and device. What the cell cannot do over
 /// HTTP yet refuses with a seam that names the missing part:
 ///
-/// - [`http::CLOCK_SEAM`]: the world's cells run on the host clock.
 /// - [`http::MAGIC_LINK_SEAM`]: an invited account has no email address,
 ///   and the world captures no outbox mail.
 /// - [`http::ROLE_GRANT_SEAM`]: a programme role needs an active
@@ -2758,9 +2757,8 @@ pub mod http {
     /// route table as `fstp_cell::routes::table` (design section 8.7).
     pub const ROUTE_TABLE_SEAM: &str = "fstp_celltest::mc::auth_model::http::production_routes: fstp-cell exposes no route table yet, only the Route type (design section 8.7, lane W3a)";
 
-    /// [`AuthClient::set_clock`] refuses: a world cell reads the host
-    /// clock (`fstp_cell::tasks::system_now`), and no test clock reaches
-    /// it.
+    /// The former seam of [`AuthClient::set_clock`]. Lane F-CYCLE2 closed
+    /// it: a world cell runs on its `crate::world::WorldClock`.
     pub const CLOCK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::set_clock: a world cell runs on the host clock, and no test clock reaches its backend (fstp-cell routes/pg.rs, world.rs start_cell)";
 
     /// A magic-link login refuses: an invited account has no email
@@ -3016,10 +3014,11 @@ pub mod http {
             Some((id, challenge.try_into().ok()?))
         }
 
-        /// Sets the cell's test clock. Refuses with [`CLOCK_SEAM`].
+        /// Sets the cell's test clock (`crate::world::WorldClock`). The
+        /// former [`CLOCK_SEAM`] is closed: a world cell runs on it.
         pub fn set_clock(&self, at: Timestamp) -> Result<(), NotImplemented> {
-            let _ = at;
-            Err(NotImplemented::new(CLOCK_SEAM))
+            self.cell.clock().set(at.micros());
+            Ok(())
         }
 
         /// Registers a new device of `person` through the invitation proof

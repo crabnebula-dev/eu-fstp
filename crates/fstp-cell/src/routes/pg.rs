@@ -123,7 +123,7 @@ pub struct PgBackend<R: Runtime> {
     app: Pool<R>,
     cred_lookup: [u8; 32],
     logins: Mutex<BTreeMap<[u8; 16], Vec<u8>>>,
-    clock: fn() -> i64,
+    clock: crate::engine::CommitClock,
 }
 
 impl<R: Runtime> std::fmt::Debug for PgBackend<R> {
@@ -153,8 +153,15 @@ impl<R: Runtime> PgBackend<R> {
             app,
             cred_lookup,
             logins: Mutex::new(BTreeMap::new()),
-            clock: crate::tasks::system_now,
+            clock: crate::engine::system_commit_clock(),
         })
+    }
+
+    /// The same backend on the cell clock `clock` (`crate::process::start_with_clock`).
+    #[must_use]
+    pub fn with_clock(mut self, clock: crate::engine::CommitClock) -> PgBackend<R> {
+        self.clock = clock;
+        self
     }
 
     fn logins(&self) -> MutexGuard<'_, BTreeMap<[u8; 16], Vec<u8>>> {
