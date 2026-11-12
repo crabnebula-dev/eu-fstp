@@ -13,89 +13,94 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - Open the front door `http://127.0.0.1:8641/demo` in Chrome or Chromium. Everything starts there.
 - The scenes are links under "Scenes". Choosing one replaces the whole cell state in under a second. Any step can be repeated by choosing its scene again.
 - People are listed under "People of this scene". "Sign in as" is one click with no passkey, and it opens a new tab. The top bar then says "Demo sign-in". Step-up shows a plain "Confirm" button.
-- The cell's date is in late October 2026, so the public call reads as already closed.
+- The cell's clock is fixed. It reads 30 October 2026 in the early scenes and December 2026 in the grant scenes.
+- Most links on `/demo` open a new tab. "Sign in as" and "raw message" do. The scene links and the clock links stay on `/demo`.
 - Run `tools/demo/run.sh stop` at the end.
 
 ## 1. The public call (1 minute)
 
 1. On `/demo`, choose the applicant scene **OPEN_CALL**.
-2. Choose "Public open calls" in the top bar, then "SuperSAFE open call 2026".
-3. Point out: the call page shows the dates with their time zone, the total budget, "Who can apply" and "Use of AI tools". The page has no script and sets no cookie.
+2. Choose "Public open calls" in the top bar (a new tab opens), then "SuperSAFE open call 2026".
+3. Point out: the call page shows the dates with their time zone, the total budget, "Who can apply" and "Use of AI tools". The page has no script and sets no cookie. "Sign in to apply" and "Create an account" are the only actions.
 
 ## 2. The applicant drafts and checks with AI (4 minutes)
 
 1. Choose the applicant scene **DRAFT**. "Sign in as" the lead, listed by the address `synthetic-lead-z…@e2e.invalid`.
-2. Home, "Your proposal: Synthetic closed protocol bridge", then "Write the proposal". Type a word: "All changes are saved." appears.
-3. Choose "Check my draft", then "Check my draft now".
+2. Home, "Your proposal: Synthetic closed protocol bridge", then "Write the proposal". Type a word in the title or narrative: "All changes are saved." appears.
+3. Choose "Check my draft", then "Check my draft now". The page shows "Checks left: 1 today on this proposal" before the check.
 4. Point out:
    - The page names "Synthetic assessor (demo)" and says no language model ran.
    - The findings include a major completeness finding, "Rubric element: Team and experience". No score, band or decision is shown.
-   - The check is limited to one a day. The button disables and shows when the next check is available.
+   - The check is limited to one a day. The button disables and the page says when the next check is available.
    - The submission text reaches the assessor only as data, never as instructions.
-5. Optional: open "Guide" from the proposal. The Guide now explains the pre-check and the AI disclosure.
+5. Optional: from the proposal choose "Read the call", then "Read the Guide for Applicants". Section 5, "How to apply", explains the pre-submission check, and section 6 explains how reviewers use AI.
 
 ## 3. Review with conflict checks and AI findings (4 minutes)
 
 1. Choose the review scene **stage1**, then "Sign in as Committee member R1".
 2. Home, "Your review assignments", then "Open the assignment for proposal 1001".
 3. Before declaring, only the title and the neutral summary show. Choose "No, I have no conflict of interest", then "Record my declaration". The proposal, "Assessor findings" and the score sheet appear.
-4. Press "Agree" or "Dispute" on a finding.
-5. Enter whole numbers from 0 to 5 in "Criterion 1" to "Criterion 3", then "Record my scores". 3.5 or 6 is refused with a clear message.
-6. Optional: proposal 1003 carries "Integrity, Major: The text addresses an assessor or a model. It is treated as data." It shows a prompt injection caught and treated as data.
-7. Sign in as "Coordinator C1", then Home, "Call board of SuperSAFE open call 2026". The "AI assessment" section shows counts only, never the statements.
+4. Press "Agree" or "Dispute" on a finding. The finding then reads "You agreed."
+5. Enter whole numbers from 0 to 5 in "Criterion 1" to "Criterion 3", then "Record my scores". 3.5 is refused with "Enter a whole number from 0 to 5 for Criterion 1, with no spaces, signs or decimals." 6 is refused with "The score for Criterion 1 must be at most 5."
+6. Optional: back in "My assignments", open the assignment for proposal 1003 and declare no conflict. Finding 4 reads "Integrity, Major: The text addresses an assessor or a model. It is treated as data." It shows a prompt injection caught and treated as data.
+7. Sign in as "Coordinator C1", then Home, "Call board of SuperSAFE open call 2026". The "AI assessment" section shows counts per proposal only, never the statements.
 
 ## 4. Ranking and the committee (2 minutes)
 
 1. Choose the review scene **ranked**, then sign in as R1.
-2. Home, "Ranking of SuperSAFE open call 2026". The table ranks 1001, 1004 and 1003 with weighted scores and the remaining budget.
-3. Sign in as R4: row 2 shows "Recused", because R4 declared a conflict on it.
+2. Home, "Ranking of SuperSAFE open call 2026". The table ranks proposals 1001, 1004 and 1003 with weighted scores, the requested amounts and the remaining call budget.
+3. Sign in as R4 and open the same ranking: row 2 shows "Recused", because R4 declared a conflict on it.
 
 ## 5. The independent review committee (2 minutes)
 
 1. Choose the review scene **irc_review**, then sign in as IRC member I1.
 2. Home, "Your IRC cases", "Open the IRC case of proposal 1001". Declare "No, I have no conflict of interest" and "Record my declaration".
 3. Choose "Validate the nomination", then "Record my verdict".
-4. Sign in as I2 and do the same. Proposal 1001 enters NEGOTIATION, as the coordinator's call board shows.
-5. Optional: the applicant scene **IRC_REVIEW_MINOR** shows a minor's proposal held until a guardian consents. The guardian's Home links to the consent page.
+4. Sign in as I2 and do the same. Proposal 1001 enters NEGOTIATION. Sign in as Coordinator C1, then Home, "Call board of SuperSAFE open call 2026": the row of proposal 1001 reads "Negotiation".
+5. Optional: the applicant scene **IRC_REVIEW_MINOR** shows a minor's proposal held until a guardian consents. Sign in as the guardian, listed by the address `synthetic-guardian…@e2e.invalid`. Home, "Guardian consent for Synthetic school data vault", then "Continue to the identity vault".
 
 ## 6. Negotiation and the contract (5 minutes)
 
 1. Choose the grant scene **NEGOTIATION_READY**.
-2. Sign in as R1. Home, "Grants you review", then the link "Proposal 1001". Assigned reviewers set the amount (R-NG-03). Enter the agreed plan number shown on the page and "Record the determination".
-3. Choose the grant scene **SENT**. Sign in as "Lead applicant X". Home, "Your grant", "Contract and signatures". The page shows the version, the parties and the content hash. Press "Sign".
-4. Sign in as the contract signatory S1. Home, the operations queues link (or "Operations" in the sidebar), "Contracts awaiting your signature", the contract of proposal 1001, "Sign". The contract becomes effective.
-5. Choose **EFFECTIVE** to show the signed contract and the grant as GRANTED.
+2. Sign in as R1. Home, "Grants you review: amount determination and payment requests", then the link "Proposal 1001". Assigned reviewers set the amount (R-NG-03). Enter the plan number shown under "Plan the amount starts from" (6001) in "Agreed plan number" and press "Record the determination". The page reads "The determination is recorded." and 60000.00.
+3. Choose the grant scene **SENT**. Sign in as "Lead applicant X". Home, "Your grant: Synthetic open sensor kit", "Contract of proposal 1001". The page shows the version, the parties and the content hash. Press "Sign". The page reads "Your signature is applied."
+4. Sign in as the contract signatory S1. Home, "Your operations queues: payments, contracts and funder reports" (or "Operations" in the sidebar), then under "Contracts awaiting your signature" the link "Contract of proposal 1001", then "Sign". The contract status becomes "Effective".
+5. Choose **EFFECTIVE** to show the signed contract and the grant as "Granted".
 
 ## 7. Payment with evidence, review, approval and release (5 minutes)
 
-1. Choose the grant scene **UNDER_REVIEW**. Sign in as "Lead applicant X". Home, "Your grant", "Payment requests". The request for milestone 1 passed its automatic checks.
-2. Sign in as R1. Home, the payment requests to review, then the request. Accept the line. The reviewer sees only what the line review needs.
-3. Sign in as finance approver F1. Operations, "To approve", the request, "Approve the payment", "Confirm".
-4. Sign in as payment releaser P1. Operations, the request, "Release the payment". It is refused with I-33: the bank hold is still running. This is a talking point.
-5. On `/demo`, choose "Advance the P-36 bank hold". As P1, reload and release again, then "Confirm". The status reads RELEASED.
-6. Choose **PAID** to show "Paid so far" and the paid request.
+1. Choose the grant scene **UNDER_REVIEW**. On `/demo`, point out the bank line: the details were verified by finance, and the P-36 hold of 7 days is still running (I-33). Sign in as "Lead applicant X". Home, "Your grant: Synthetic open sensor kit", "Payment requests". "Payment request 1 for milestone 7001" is "Under review" and both automatic checks read "Passed".
+2. Sign in as R1. Home, "Payment requests to review" (the card says "1 payment request to review"). Under "To review", open "Payment request for milestone 7001". The reviewer sees the evidence of the line only. The amount is already filled in at 60000.00. Press "Record the decision for line 1 (milestone 7001)". The page says the review is complete and waits for the finance approver.
+3. Sign in as finance approver F1. Home, "Operations". Under "To approve", open "Payment request for milestone 7001", then "Approve the payment" and "Confirm". The status reads "Payment approved".
+4. Sign in as payment releaser P1. Home, "Operations". Under "To release", open the request, then "Release the payment". It is refused: "The platform refused this under rule I-33." The bank hold is still running. This is a talking point.
+5. On `/demo`, choose "Advance past the P-36 bank hold". The bank line now says the hold ended. As P1, reload the request page, press "Release the payment" again, then "Confirm". The page reads "The payment is released." and the status "Released".
+6. Choose **PAID** and sign in as the lead. The grant page shows "Paid so far" 60000.00, and the payment request is "Paid".
 7. Point out: the reviewer, the approver and the releaser are three different people (separation of duties). Amounts are computed on the server only. Bank details live in a separate vault on another origin.
-8. Optional: the grant scene **HARDSHIP** shows a hardship request with its evidence in the vault, which finance verifies.
+8. Optional: the grant scene **HARDSHIP**. The lead opens "Payment requests": the request is of kind "Hardship contribution". Sign in as F1, Home, "Operations", then under "Grants you work on" the link "Proposal 1001", then "Verify hardship evidence". The vault page opens on its own origin. Press "Verify the hardship evidence": "Done. The vault recorded the fact. No bank value leaves the vault."
 
 ## 8. Closure and the funder reports (2 minutes)
 
 1. Choose the grant scene **ALL_CLOSED**. The lead's Home shows "Completed".
-2. Sign in as the report approver F2 (Financial signatory). Open "Operations", then the reports of programme 1.
-3. Point out: five funder outputs, each approved, with its SHA-256 and template version. "Humans upload approved documents to the funder portal. The platform submits nothing."
+2. Sign in as the auditor A1, Home, "Operations", then "Open the funder reports of your programme (programme 1)". The report approver "Report approver (Financial signatory) F2" has no such link. If you use F2, open "Operations", then "Open the reports of another programme by its number", type 1 in "Programme number" and press "Open reports".
+3. Point out: five funder outputs (call publication record, periodic reporting data, audit file, deliverable draft, open call package), each "Approved", with its SHA-256 and template version. "Humans upload approved documents to the funder portal. The platform submits nothing."
 
 ## 9. Mail that never carries content (2 minutes)
 
 1. Choose the applicant scene **DEFERRED_AFTER_CONCERN**. Wait about 5 seconds, then choose "Refresh this page" on `/demo`.
-2. Under "Mail through the dispatcher", open "raw message". The mail names proposal 1001 and links to `/app/notices`. The concern text itself stays on the platform, and the mail says the platform never asks for bank details by email.
-3. Sign in as "Lead applicant X" and open the notices to read the concern on the platform.
-4. Optional fault demo: choose the scene again and click "Refuse the next message (451)" straight away, before the mail is sent. Then "+60 minutes": the mail is retried and sent once. "Accept, then lose the reply" ends IN_DOUBT and is never sent twice.
+2. Under "Mail through the dispatcher", open "raw message" (a new tab). The mail names proposal 1001 and links to `/app/notices`. The concern text itself stays on the platform, and the mail says the platform never asks for bank details by email.
+3. Sign in as "Lead applicant X" and choose "Notifications" in the top bar. The notice reads "The independent review committee raised a concern about your proposal."
+4. Optional fault demo: choose the scene again and click "Refuse the next message (451)" straight away, before the mail is sent. Wait 5 seconds and refresh: the delivery reads TRANSIENT. Then "+60 minutes" and refresh: the mail is sent once. For "Accept, then lose the reply", the delivery reads COMMITTING, then after "+60 minutes" it ends IN_DOUBT and is never sent twice.
 
 ## 10. The platform mailbox (3 minutes)
 
-1. Choose the review scene **stage1** and sign in as R1. The top bar shows "Mailbox (n)", and Home says how many items wait.
-2. Open the mailbox. Each item names the work and links to the page where it happens, such as the declaration or the score sheet.
-3. Do the work, for example "Record my declaration". Back in the mailbox, the item is gone. Items close themselves when the work is done.
-4. Repeat with other people: Coordinator C1 in **submitted** (the intake check), IRC member I1 in **irc_review**, the lead in the applicant scenes **STAGE2** and **NEGOTIATION**, finance and the releaser in **UNDER_REVIEW**.
+1. Choose the review scene **stage1** and sign in as R1. The top bar shows "Mailbox (2)", and Home says "Your mailbox: 2 waiting for you".
+2. Choose "Mailbox". Each item names the work and links to the page where it happens: "Declare any conflict on assignment …". The numbers in the item names are internal ids.
+3. Open the first item and do the work: "No, I have no conflict of interest", then "Record my declaration". Back in the mailbox, the declaration item is gone and "Score assignment …" has taken its place. Items close themselves when the work is done.
+4. Repeat with other people:
+   - Coordinator C1 in **submitted**: "Check the knock-out criteria of new proposals in call 1".
+   - IRC member I1 in **irc_review**: three items "Declare any conflict on IRC assignment …".
+   - The lead ("Lead applicant X") in **STAGE2**: "Answer the stage 2 questions on proposal 1001". In **NEGOTIATION**: "Read and acknowledge the negotiation notice of proposal 1001".
+   - In **UNDER_REVIEW**: R1 has "Review the lines of payment request …". The mailboxes of F1 and P1 are empty at first. F1 gets "Approve payment request …" once R1 has reviewed. P1 gets "Release payment request …" once F1 has approved.
 5. Point out:
    - The mailbox is computed from the work each person may see, so it shows nothing a person could not open.
    - Emails carry only ids, a time and one link, and point back into the platform.
@@ -105,7 +110,10 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 
 - `/auth/account`: removing a passkey asks for a passkey, which a demo account does not have.
 - A second pre-check in the DRAFT scene: choose DRAFT again instead.
-- A reviewer opening the grant page after negotiation is refused with R-AC-01. Go through the review links instead.
+- A reviewer opening the grant page (`/app/grants/1001`) after negotiation is refused with R-AC-01. Go through "Payment requests to review" and Operations instead.
+- In the SENT scene, do not press "Accept the amount" on the grant page. It answers "The platform refused this under rule row." Go straight to "Contract of proposal 1001".
+- The mailbox item names carry long internal ids, such as "Review the lines of payment request 5563…". Say so if asked.
+- The first release in step 7.4 shows no "Confirm" dialog, because the hold refuses it first. Only the second release asks for "Confirm".
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
 
