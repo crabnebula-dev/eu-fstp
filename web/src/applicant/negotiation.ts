@@ -64,7 +64,7 @@ export function mountNegotiation(id: string): void {
       showFailure(f, n.failure);
       return;
     }
-    f.heading.replaceChildren(t("negotiation.title"), " ", h("span", { class: "state-name" }, [`(${p.state})`]));
+    f.heading.replaceChildren(t("negotiation.title"), " ", h("span", { class: "state-name fstp-visually-hidden" }, [`(${p.state})`]));
     const slot = h("div", {});
     if (n.value.acknowledged) {
       slot.append(acknowledged());
