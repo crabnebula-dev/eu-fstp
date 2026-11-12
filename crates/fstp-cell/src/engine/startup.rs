@@ -16,8 +16,15 @@
 //!    custody, then the group secrets are opened under it (I-80). The
 //!    ledger is sealed under those keys, so both come first.
 //! 3. The witness reports its open prepare, if any, and the cell resolves
-//!    it from its chain: a present row committed, a missing one raises
-//!    `PossibleDeletion` and is recorded as `InDoubtAbsent` (I-24).
+//!    it from its chain: a present row committed, and a missing one is
+//!    recorded as `InDoubtAbsent` at the witness (I-24). The cell then
+//!    raises `PossibleDeletion` to tenant admins and the auditor view for
+//!    every `InDoubtAbsent` record the witness log holds, before the chain
+//!    is verified (design section 7.2 "In doubt", ADR-010). The store
+//!    holds the alert durably before the witness forgets the prepare
+//!    (`fstp_audit::anchorer`), and every raise is keyed by `(n, link)`.
+//!    So a crash between the record and the raise loses no alert, and an
+//!    alert row that was deleted is raised again at the next start.
 //! 4. The engine replays the ledger (design section 5.5).
 //! 5. The chain verifies against the witness log (`fstp_audit::verify`).
 //!    A chain that fails keeps the cell from serving.
@@ -171,10 +178,11 @@ pub enum StartPhase {
     GroupSecretsOpened,
     /// An in-doubt prepare was resolved: its row exists.
     InDoubtCommitted,
-    /// `PossibleDeletion` was raised for an in-doubt prepare whose row is
-    /// missing.
+    /// `PossibleDeletion` was raised to tenant admins and the auditor view
+    /// for every `InDoubtAbsent` record of the witness log.
     PossibleDeletionRaised,
-    /// The witness recorded `InDoubtAbsent` for it.
+    /// The witness recorded `InDoubtAbsent` for an in-doubt prepare whose
+    /// row is missing.
     InDoubtAbsentRecorded,
     /// The ledger was replayed into `CellState`.
     LedgerReplayed,
@@ -314,6 +322,13 @@ pub trait StartStore: CellStore {
     /// The pinned witness receipt keys. The start-up verification checks
     /// every stored receipt under the set the store checks new ones with.
     fn pinned_witness_keys(&self) -> Vec<Vec<u8>>;
+
+    /// Raises `PossibleDeletion` for each of `heads`, durably and keyed by
+    /// `(n, link)`, so a head raised before changes nothing.
+    fn raise_possible_deletions(
+        &mut self,
+        heads: &[(u64, fstp_audit::Link)],
+    ) -> impl Future<Output = Result<(), StartRefusal>> + Send;
 }
 
 impl<D: Database, L: WitnessLink> StartStore for AnchoredStore<D, WitnessClient<L>> {
@@ -334,6 +349,15 @@ impl<D: Database, L: WitnessLink> StartStore for AnchoredStore<D, WitnessClient<
 
     fn pinned_witness_keys(&self) -> Vec<Vec<u8>> {
         self.witness_keys().to_vec()
+    }
+
+    async fn raise_possible_deletions(
+        &mut self,
+        heads: &[(u64, fstp_audit::Link)],
+    ) -> Result<(), StartRefusal> {
+        AnchoredStore::raise_possible_deletions(self, heads)
+            .await
+            .map_err(|_| StartRefusal::Store)
     }
 }
 
@@ -379,6 +403,29 @@ impl<R: Runtime, L: WitnessLink> StartStore for PgCellStore<R, WitnessClient<L>>
     fn pinned_witness_keys(&self) -> Vec<Vec<u8>> {
         self.inner().witness_keys().to_vec()
     }
+
+    async fn raise_possible_deletions(
+        &mut self,
+        heads: &[(u64, fstp_audit::Link)],
+    ) -> Result<(), StartRefusal> {
+        self.inner_mut()
+            .raise_possible_deletions(heads)
+            .await
+            .map_err(|_| StartRefusal::Store)
+    }
+}
+
+/// The `InDoubtAbsent` records of the witness log, as `(n, link)`, in
+/// witness order. Each one is a possible deletion the cell must raise
+/// (design section 7.2 "In doubt", `fstp_audit::verify` lists the same
+/// set as `possible_deletions`).
+fn in_doubt_absent(log: &[WitnessRecord]) -> Vec<(u64, fstp_audit::Link)> {
+    log.iter()
+        .filter_map(|w| match w {
+            WitnessRecord::InDoubtAbsent { n, link } => Some((*n, *link)),
+            WitnessRecord::Prepare(_) | WitnessRecord::Abort { .. } => None,
+        })
+        .collect()
 }
 
 /// The parts every start path shares, after its store parts are taken.
@@ -553,14 +600,14 @@ where
     match store.resolve_open_prepare().await? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
-        Resolved::AbsentRecorded => {
-            // The anchorer core raises the alert before the witness
-            // forgets the prepare (fstp_audit::anchorer, W2g reading).
-            report(StartPhase::PossibleDeletionRaised);
-            report(StartPhase::InDoubtAbsentRecorded);
-        }
+        Resolved::AbsentRecorded => report(StartPhase::InDoubtAbsentRecorded),
     }
     let log = store.witness_log().await?;
+    let in_doubt = in_doubt_absent(&log);
+    if !in_doubt.is_empty() {
+        store.raise_possible_deletions(&in_doubt).await?;
+        report(StartPhase::PossibleDeletionRaised);
+    }
     let chain = store.stored_chain().await?;
     let shutdown = Shutdown::new();
     let (engine, engine_task) =

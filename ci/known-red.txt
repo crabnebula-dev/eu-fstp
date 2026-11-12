@@ -9,7 +9,7 @@
 
 adr007_store_and_erasure::adr007_erased_textref_resolves_to_its_log_entry | set-up passes under strict D2e (F-D2E); the interim erasure rule refuses causes 3 and 4 to an account (WrongActor), and the property draws all four causes | F-ERASE
 engine_mem::seam_cell_engine_matches_reference_engine_over_mem_store | M2_EQUIVALENCE_SEAM: the M2 generator equivalence through CellEngine needs fstp_celltest::mc::driver_model, which fstp-cell tests cannot depend on; the seam names fstp-celltest as its home (design 14.6), where seam_driver_core_matches_reference_engine covers DriverCore. Moving it is a lead decision | lead to assign
-erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
+erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change | the runner records a RecordKeyOp for every custody call (create, wrap, unwrap, destroy), as ADR-004 Reconciliation records Daniel's decision of 2026-10-29; the test asks for one per state change (creates and destroys) only. Conflict raised to Daniel, not resolved by recording fewer calls | Daniel to decide
 fstp_api_testkit::matrix::tests::t_authz_matrix_direct | authorisation matrix harness | m4access (W3a)
 i17_identity_release::i17_app_database_holds_no_identity_attribute | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 i17_identity_release::i17_canary_attributes_never_reach_judging_responses | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
@@ -20,8 +20,8 @@ i19_boundary::i19_only_registered_metadata_crosses | M3 test world run_cycle, se
 i19_boundary::i19_session_of_one_cell_is_refused_by_another | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_control_plane_and_witness_hold_no_account_id | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i20_tenants::i20_vault_match_keys_differ_across_cells | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_audit_chain::i24_custody_ops_reconcile_with_key_records | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-i24_audit_chain::i24_erasure_entries_are_chained | set-up passes under strict D2e (F-D2E); RecordEpochDestroyed by an account is refused (WrongActor), so it waits on the erasure runner's key records | F-KEYOP
+i24_audit_chain::i24_custody_ops_reconcile_with_key_records | RECONCILE_SEAM: fstp_custody::Custody calls carry no request id and UsagePage holds opaque records, so the backend usage log names no request id; KEY_OPS_SEAM: the cell writes RecordKeyOp ledger records with request ids but no sealed KeyOp chain event, and no reader or reconciliation task exists (ADR-004) | F-KEYOP follow-up with F-KEYD (custody trait and keyd wire)
+i24_audit_chain::i24_erasure_entries_are_chained | the test issues RecordEpochDestroyed as ADMIN, and only the erasure runner system task may (WrongActor, design 3.5); behind it prod_store_batch waits on STORE_SEAM | lead to assign
 i38_egress::i38_self_hosted_captures_match_the_templates | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_cell_sends_no_canary_to_crabnebula_hosts | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i38_egress::i38_self_hosted_witness_never_targets_crabnebula | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
@@ -50,7 +50,6 @@ i81_backups::i81_teeth_live_identity_match_digest_is_recomputed | M3 test world 
 i81_backups::i81_text_salt_never_stored_in_clear | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i82_role_plan::i82_pool_serves_one_cell | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 i83_placement::i83_self_hosted_layout_runs_two_instances | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
-main_startup::i24_cell_start_raises_possible_deletion_for_a_missing_in_doubt_row | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_cr_01_at_rest::r_cr_01_backups_and_snapshots_use_the_hybrid_kem | M3 test world run_cycle, self-hosted witness and cluster isolation | M3 slice-cycle lane
 r_id_03_documents::r_id_03_document_unrecoverable_after_verification | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
 r_lg_04_sessions_and_devices::r_lg_04_sessions_and_devices_listed_and_ended | seam named in the panic message (provisional entry) | M3 or M4 lane to confirm from the CI run
