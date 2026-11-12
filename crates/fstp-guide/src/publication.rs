@@ -42,6 +42,9 @@ pub struct GuideSource<'a> {
     pub privacy_statement_url: Option<&'a str>,
     /// The stored narrative texts.
     pub texts: &'a dyn StoredTexts,
+    /// Whether the cell has a pre-check provider (Q38,
+    /// [`GuideInputs::precheck_available`]).
+    pub precheck_available: bool,
 }
 
 /// Why no Guide was bound at publication.
@@ -86,6 +89,7 @@ pub fn publication_guide(
         data_protection_summary: source.data_protection_summary,
         privacy_statement_url: source.privacy_statement_url,
         texts: source.texts,
+        precheck_available: source.precheck_available,
     };
     let bound = crate::bind(source.template, &inputs).map_err(PublicationError::Guide)?;
     crate::render(&bound).map_err(PublicationError::Guide)

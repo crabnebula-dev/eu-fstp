@@ -343,6 +343,8 @@ pub(crate) fn guide_facts(
         data_protection_summary: None,
         privacy_statement_url: None,
         texts: &AnyStoredText,
+        // The scan reads sections and bindings only, never the note.
+        precheck_available: false,
     };
     let preview = fstp_guide::preview(&template, &inputs);
     let sections_missing = preview

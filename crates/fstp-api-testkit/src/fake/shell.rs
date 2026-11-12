@@ -210,6 +210,12 @@ impl CellEnvironment {
         self.guide_spec = Some(spec);
     }
 
+    /// Sets the ports the cell has, as [`CellEnvironment::with_ports`]
+    /// does, on an environment already in an engine (Q38).
+    pub fn set_ports(&mut self, ports: PortPresence) {
+        self.ports = ports;
+    }
+
     /// Marks the decisions of this environment as dry runs, or not. A dry
     /// run peeks at the probes and never runs them, so an approval runs
     /// them once, at its execution.
@@ -484,6 +490,9 @@ impl CreatorEnvironment for CellEnvironment {
             privacy_statement_url: privacy,
             texts: texts.public_texts(),
             digest: fstp_crypto::sha256,
+            // Q38: the Guide describes the pre-check when this cell has a
+            // provider, as the e2e and demo cells do by default.
+            precheck_available: self.ports.precheck,
         })
     }
 }

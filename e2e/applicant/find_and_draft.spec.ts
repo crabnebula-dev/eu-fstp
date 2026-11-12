@@ -81,6 +81,11 @@ test.describe('J4 find a call and draft', () => {
     const guide = page.locator(AUI.guide.body);
     await expect(guide).toBeVisible();
     await expect(guide.locator('h2').first()).toBeVisible();
+    // Q38: the cell has a pre-check provider, so the Guide describes the
+    // available pre-check and no longer says it is not yet available.
+    await expect(guide).toContainText('The pre-submission check is available on this platform.');
+    await expect(guide).toContainText('You are then interacting with an AI system, not a person.');
+    await expect(guide).not.toContainText('not yet available');
   });
 
   /**

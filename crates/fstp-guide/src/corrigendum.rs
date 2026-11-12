@@ -81,6 +81,8 @@ pub fn corrigendum(
         data_protection_summary: None,
         privacy_statement_url: None,
         texts,
+        // Only P-05 and P-13 are read: the flag reaches no text.
+        precheck_available: false,
     };
     let ctx = Ctx::new(&inputs);
     let p05 = match resolve(&ctx, "P-05")? {

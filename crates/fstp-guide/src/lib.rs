@@ -22,7 +22,9 @@
 //!   effective-limits record, and [`page_with_corrigenda`] serves the
 //!   stored Guide page with its corrigenda after it (I-51, I-53, Q37 C).
 //! - The renderer follows the block that describes the pre-check with
-//!   the fixed [`PRECHECK_NOTE`] (Q38 C).
+//!   the fixed [`PRECHECK_NOTE`] (Q38 C) when the cell has no pre-check
+//!   provider, and with [`PRECHECK_AVAILABLE`] and [`PRECHECK_LEGAL`]
+//!   when it has one ([`GuideInputs::precheck_available`]).
 //! - [`preview_text`] shows a draft's Guide as text blocks, with a marker
 //!   naming each placeholder that has no value yet.
 //!
@@ -58,7 +60,10 @@ pub use profile::{
     ProfileError, ProfileFiles, ProfileSource, ShippedProfiles, WordingStatus,
 };
 pub use publication::{GuideSource, PublicationError, publication_guide};
-pub use render::{BoundText, GUIDE_LOCALE, GUIDE_TITLE, PRECHECK_NOTE, RenderedGuide};
+pub use render::{
+    BoundText, GUIDE_LOCALE, GUIDE_TITLE, PRECHECK_AVAILABLE, PRECHECK_LEGAL, PRECHECK_NOTE,
+    RenderedGuide,
+};
 pub use resolve::{
     GuideCall, GuideInputs, NoStoredTexts, RESOLVERS, Resolver, Shape, Source, StoredTexts,
 };
@@ -243,6 +248,9 @@ pub struct Template {
     blocks: Vec<Block>,
     header: usize,
     values: BTreeMap<Key, Value>,
+    /// Whether the cell has a pre-check provider, from the inputs it was
+    /// bound to (Q38). An unbound template holds `false`.
+    precheck_available: bool,
 }
 
 impl Template {
@@ -278,6 +286,11 @@ impl Template {
     pub(crate) fn value(&self, key: Key) -> Option<&Value> {
         self.values.get(&key)
     }
+
+    /// Whether the renderer describes the available pre-check (Q38).
+    pub(crate) fn precheck_available(&self) -> bool {
+        self.precheck_available
+    }
 }
 
 /// Parses a Guide template: the Markdown subset with `{{key}}`
@@ -299,6 +312,7 @@ pub fn parse_template(bytes: &[u8]) -> Result<Template, GuideError> {
         blocks,
         header,
         values: BTreeMap::new(),
+        precheck_available: false,
     })
 }
 
@@ -329,6 +343,7 @@ pub fn bind(template: &Template, inputs: &GuideInputs<'_>) -> Result<Template, G
         blocks: template.blocks.clone(),
         header: template.header,
         values,
+        precheck_available: inputs.precheck_available,
     })
 }
 

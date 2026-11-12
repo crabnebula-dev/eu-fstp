@@ -185,6 +185,12 @@ impl FakeEngine {
             .set_guide_spec(spec);
     }
 
+    /// Sets the ports of the cell's creator environment, so a test runs a
+    /// cell without a pre-check provider (Q38, `CellEnvironment::set_ports`).
+    pub fn set_ports(&self, ports: fstp_creator::PortPresence) {
+        lock(&self.inner).engine.decider_mut().0.set_ports(ports);
+    }
+
     /// The ledger head.
     pub fn head(&self) -> Seq {
         lock(&self.inner).engine.head()

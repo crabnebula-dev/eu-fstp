@@ -442,6 +442,11 @@ pub struct GuideInputs<'a> {
     pub privacy_statement_url: Option<&'a str>,
     /// The stored narrative texts.
     pub texts: &'a dyn StoredTexts,
+    /// Whether the cell has a pre-check provider: the `Precheck` port is
+    /// present (Q38, M7). The renderer then follows the pre-check step
+    /// with [`crate::PRECHECK_AVAILABLE`], and otherwise with the Q38 C
+    /// note [`crate::PRECHECK_NOTE`]. It binds no placeholder.
+    pub precheck_available: bool,
 }
 
 const UNSET: &str = "the draft leaves its field unset";
