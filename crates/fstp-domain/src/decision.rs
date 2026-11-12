@@ -667,6 +667,13 @@ fn decide_knock_out(
         rules: RulesVersion::M2,
     });
     if outcomes.iter().any(|o| !o.passed) {
+        // The lead is told of the outcome, by ids and a link only (I-27).
+        // The recorded reason stays on the platform (O-54). Lane
+        // m4/fast-flow, so the early decision reaches the applicant.
+        out.push(Record::OutboxEnqueued(OutboxEvent::ProposalOutcome {
+            proposal: *proposal,
+            state: StateTag::Ineligible,
+        }));
         out.push(transition(
             *proposal,
             StateTag::Submitted,

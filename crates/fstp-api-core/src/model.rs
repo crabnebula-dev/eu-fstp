@@ -449,6 +449,9 @@ pub struct ProposalSummary {
     pub role: &'static str,
     /// Its title: the submitted one, else the team's draft title.
     pub title: Option<String>,
+    /// The knock-out reason the FSTP coordinator recorded, for an
+    /// INELIGIBLE proposal read through the web (O-54, R-EV-01).
+    pub knock_out_reason: Option<String>,
 }
 
 impl ToJson for ProposalSummary {
@@ -460,6 +463,9 @@ impl ToJson for ProposalSummary {
         let _ = o.insert("role", Value::from(self.role));
         if let Some(t) = &self.title {
             let _ = o.insert("title", Value::from(t.as_str()));
+        }
+        if let Some(r) = &self.knock_out_reason {
+            let _ = o.insert("knock_out_reason", Value::from(r.as_str()));
         }
         Value::Object(o)
     }
@@ -1369,6 +1375,7 @@ pub(crate) mod reply_shape_tests {
             state: "SUBMITTED".to_owned(),
             role: "lead",
             title: title.map(str::to_owned),
+            knock_out_reason: None,
         }
     }
 

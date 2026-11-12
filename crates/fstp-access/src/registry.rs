@@ -530,6 +530,14 @@ const ADMIN: &[RoleOrApplicant] = &[R(Role::TenantAdmin)];
 const MANAGER: &[RoleOrApplicant] = &[R(Role::ProgrammeManager)];
 const MANAGER_OR_ADMIN: &[RoleOrApplicant] = &[R(Role::ProgrammeManager), R(Role::TenantAdmin)];
 const CALL_AUTHOR: &[RoleOrApplicant] = &[R(Role::ProgrammeManager), R(Role::CallDrafter)];
+/// The readers of a draft and of its knock-out criteria: the programme
+/// manager, the call drafter, who writes them (roles table), and a
+/// tenant admin.
+const KNOCK_OUT_READER: &[RoleOrApplicant] = &[
+    R(Role::ProgrammeManager),
+    R(Role::CallDrafter),
+    R(Role::TenantAdmin),
+];
 const CALL_STAFF: &[RoleOrApplicant] = &[
     R(Role::ProgrammeManager),
     R(Role::CallDrafter),
@@ -1083,7 +1091,7 @@ pub const OPS: &[OpSpec] = &[
         RK::GetDraft,
         "/programmes/{programme}/draft",
     )
-    .acting(MANAGER_OR_ADMIN)
+    .acting(KNOCK_OUT_READER)
     .tool(
         "fstp_creator_get_draft",
         "Read the fields of a draft programme.",

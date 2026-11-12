@@ -795,6 +795,22 @@ fn check_create(state: &State, policy: &PolicyVersion, ctx: &Ctx) -> Result<Acco
     Ok(by)
 }
 
+/// Whether `version` differs from `head` in P-09 only: the same
+/// programme and currency, the same live values and every other frozen
+/// value unchanged, with a different P-09.
+pub fn changes_only_knock_outs(head: &PolicyVersion, version: &PolicyVersion) -> bool {
+    if version.programme != head.programme
+        || version.currency != head.currency
+        || version.live != head.live
+        || version.frozen.p09 == head.frozen.p09
+    {
+        return false;
+    }
+    let mut rest = version.frozen.clone();
+    rest.p09 = head.frozen.p09.clone();
+    rest == head.frozen
+}
+
 /// What a checked `EditPolicy` needs to decide.
 struct EditPlan<'a> {
     /// The author.
@@ -817,13 +833,20 @@ fn check_edit<'a>(
         .policy
         .programme(version.programme)
         .ok_or_else(unknown)?;
-    require_holder(
-        state,
-        author,
-        version.programme,
-        &[Role::ProgrammeManager],
-        ctx.now,
-    )?;
+    // The roles table: the programme manager sets policy parameters, and
+    // the call drafter writes the knock-out criteria. So a call drafter
+    // may author a version that changes P-09 alone (lane m4/fast-flow,
+    // Daniel's decision of 2026-11-12). Both are Drafting roles (SoD-01),
+    // and the fold makes the author the last author of P-09 (R-PC-03).
+    let editors: &[Role] = if programme
+        .head()
+        .is_some_and(|h| changes_only_knock_outs(h, version))
+    {
+        &[Role::ProgrammeManager, Role::CallDrafter]
+    } else {
+        &[Role::ProgrammeManager]
+    };
+    require_holder(state, author, version.programme, editors, ctx.now)?;
     let head = programme.head().ok_or_else(unknown)?;
     if head.id != base || version.parent != Some(base) {
         return Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState));

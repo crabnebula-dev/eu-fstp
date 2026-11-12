@@ -164,7 +164,60 @@ fn build<P: Seams>(
         next = next.saturating_add(1);
         Ok(id)
     };
-    crate::creator::build(form, &op.request, supplied, &mut draw)
+    let cmd = crate::creator::build(form, &op.request, supplied, &mut draw)?;
+    store_manual_wording(cmd, wording)
+}
+
+/// The P-09 wording a person typed into `creator.save_fields`, from the
+/// command the strict form built (lane m4/fast-flow).
+fn typed_wording(cmd: &Command) -> Option<fstp_creator::PendingWording> {
+    match cmd {
+        Command::Creator(CreatorCommand::SaveFields { fields, .. }) => {
+            fields.iter().find_map(fstp_creator::manual_wording)
+        }
+        _ => None,
+    }
+}
+
+/// `cmd` with typed P-09 wording named by stored texts: `refs` once the
+/// texts are stored, else a stand-in reference per text for the dry run,
+/// as [`accept_wording`] does (ADR-007, Daniel's answer of 2026-11-07).
+/// Any other command is returned as it is.
+fn store_manual_wording(cmd: Command, refs: Option<&[TextRef]>) -> Result<Command, ApiError> {
+    let Command::Creator(CreatorCommand::SaveFields {
+        programme,
+        base,
+        mut fields,
+    }) = cmd
+    else {
+        return Ok(cmd);
+    };
+    for f in &mut fields {
+        let Some(w) = fstp_creator::manual_wording(f) else {
+            continue;
+        };
+        let stand_in: Vec<TextRef>;
+        let named = match refs {
+            Some(r) => r,
+            None => {
+                stand_in = w
+                    .texts()
+                    .iter()
+                    .zip(1_u128..)
+                    .map(|(t, i)| forms::text_ref(i, t))
+                    .collect();
+                &stand_in
+            }
+        };
+        *f = w
+            .accept(named, fstp_crypto::sha256)
+            .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+    }
+    Ok(Command::Creator(CreatorCommand::SaveFields {
+        programme,
+        base,
+        fields,
+    }))
 }
 
 /// What the execution stores before it runs: the stored values, and the
@@ -211,6 +264,37 @@ async fn store<P: Seams>(
             text,
             wording: Some(refs),
         });
+    }
+    // Lane m4/fast-flow: P-09 wording typed into a save is stored the same
+    // way, each text as a public text of the programme (ADR-007).
+    if form == Form::SaveFields {
+        let mut no_ids =
+            || -> Result<u128, ApiError> { Err(ApiError::bad_request(forms::REQUEST_RULE)) };
+        let typed = crate::creator::build(form, &op.request, &supplied, &mut no_ids)
+            .ok()
+            .and_then(|c| typed_wording(&c));
+        if let Some(w) = typed {
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+            let mut refs = Vec::new();
+            for s in w.texts() {
+                let r = call
+                    .ports
+                    .texts()
+                    .put(TextClass::Public, TextOwner::Programme(p), s.as_bytes())
+                    .await
+                    .map_err(|e| port_failed(e, "text"))?;
+                let r = forms::text_ref(r.0, &s);
+                lock(&call.st.content).remember(r, &s);
+                refs.push(r);
+            }
+            return Ok(Stored {
+                supplied,
+                text,
+                wording: Some(refs),
+            });
+        }
     }
     match form {
         Form::Invite => {

@@ -245,8 +245,26 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             base,
             fields,
         } => {
-            manager(core, *programme, actor, ctx.now)?;
-            let d = open_draft(creator, *programme)?;
+            // The roles table: the call drafter writes the knock-out
+            // criteria, so a save of P-09 alone admits a call drafter too.
+            // Such a save is also the one edit an active programme takes
+            // here: its core `EditPolicy` makes the next call freeze the
+            // new criteria (I-12), and a call approved before it returns
+            // to DRAFT (R-PC-03 NOTE). Lane m4/fast-flow, Daniel's
+            // decision of 2026-11-12.
+            let knock_outs = !fields.is_empty() && fields.iter().all(|f| f.field == FieldId::P09);
+            if knock_outs {
+                manager_or_drafter(core, *programme, actor, ctx.now)?;
+            } else {
+                manager(core, *programme, actor, ctx.now)?;
+            }
+            let d = if knock_outs {
+                creator
+                    .draft(*programme)
+                    .ok_or(CreatorRefusal::UnknownDraft)?
+            } else {
+                open_draft(creator, *programme)?
+            };
             at_head(d, *base)?;
             if fields.is_empty() {
                 return Err(CreatorRefusal::NothingToSave);
@@ -266,7 +284,14 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                     provenance: f.provenance.clone(),
                 })
                 .collect();
-            save(core, d, *programme, *base, actor, ctx, &edits)
+            let mut decision = save(core, d, *programme, *base, actor, ctx, &edits)?;
+            if d.active().is_some() {
+                // An active draft folds no creator record. The core
+                // `PolicyVersionRecorded` carries the change, and the
+                // draft view reads policy values from the head.
+                decision.records.clear();
+            }
+            Ok(decision)
         }
         CreatorCommand::AcceptNarrative {
             programme,
@@ -698,6 +723,27 @@ fn manager(
     now: Timestamp,
 ) -> Result<(), CreatorRefusal> {
     if holds_manager(core, programme, actor, now) {
+        Ok(())
+    } else {
+        Err(CreatorRefusal::NotProgrammeManager)
+    }
+}
+
+/// A programme manager or a call drafter on the programme: the writers of
+/// the knock-out criteria (roles table, `SPEC/02-domain/roles-and-sod.md`).
+fn manager_or_drafter(
+    core: &State,
+    programme: ProgrammeId,
+    actor: AccountId,
+    now: Timestamp,
+) -> Result<(), CreatorRefusal> {
+    let drafter = core.roster().bindings().any(|(_, b)| {
+        b.account == actor
+            && b.programme == programme
+            && b.role == Role::CallDrafter
+            && b.active_at(now)
+    });
+    if drafter || holds_manager(core, programme, actor, now) {
         Ok(())
     } else {
         Err(CreatorRefusal::NotProgrammeManager)

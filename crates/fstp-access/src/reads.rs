@@ -330,6 +330,14 @@ const COMMITTEE: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Holder(Role::CommitteeChair),
 ]);
 const DRAFT_READER: ReadRule = ReadRule::AnyOf(&[ReadRule::DraftManager, ReadRule::TenantAdmin]);
+/// The draft read of the knock-out criteria: a draft reader, or a call
+/// drafter of the programme, who writes the knock-out criteria (roles
+/// table; lane m4/fast-flow, Daniel 2026-11-12).
+const KNOCK_OUT_READER: ReadRule = ReadRule::AnyOf(&[
+    ReadRule::DraftManager,
+    ReadRule::TenantAdmin,
+    ReadRule::Holder(Role::CallDrafter),
+]);
 /// The creator start lists: a tenant admin, or a programme manager of any
 /// programme of the tenant (R-PG-02, J1).
 const CREATOR_START: ReadRule = ReadRule::AnyOf(&[
@@ -453,7 +461,7 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ]),
         OPEN_ALWAYS,
     ),
-    (ReadKind::GetDraft, DRAFT_READER, OPEN_ALWAYS),
+    (ReadKind::GetDraft, KNOCK_OUT_READER, OPEN_ALWAYS),
     (ReadKind::GetReport, DRAFT_READER, OPEN_ALWAYS),
     (ReadKind::GetPreview, DRAFT_READER, OPEN_ALWAYS),
     (ReadKind::GetImpact, DRAFT_READER, OPEN_ALWAYS),

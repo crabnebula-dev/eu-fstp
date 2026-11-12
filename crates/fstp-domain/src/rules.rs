@@ -1178,7 +1178,13 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     // M4 change D2, Q1 interim reading: a tenant admin outside the builder
     // set, as for `CreateProgramme` (O-47).
     (K::ActivateProgramme, ActorRule::TenantAdmin),
-    (K::EditPolicy, PM),
+    // The call drafter writes the knock-out criteria (roles table), so
+    // the policy lane admits a call drafter for a version that changes
+    // P-09 alone, and the programme manager for any version.
+    (
+        K::EditPolicy,
+        ActorRule::AnyOf(&[PM, ActorRule::Holder(Role::CallDrafter)]),
+    ),
     (
         K::DraftCall,
         ActorRule::AnyOf(&[ActorRule::Holder(Role::CallDrafter), PM]),

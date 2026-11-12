@@ -2190,6 +2190,13 @@ fn knock_out(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         ..Expect::default()
     };
     if failed {
+        // The outcome notice of the lead, by ids only (I-27, O-54).
+        exp.wants.push(Want::Exact(Record::OutboxEnqueued(
+            OutboxEvent::ProposalOutcome {
+                proposal: *proposal,
+                state: StateTag::Ineligible,
+            },
+        )));
         exp.transitions.push(transition(
             *proposal,
             StateTag::Submitted,

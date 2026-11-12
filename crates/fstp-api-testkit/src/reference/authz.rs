@@ -790,6 +790,11 @@ pub enum Rule {
     /// admin needs the draft, its report and previews, and either may
     /// acknowledge a warning (design section 8.4, I-67 witnesses).
     DraftManager,
+    /// A programme manager or call drafter of P, or a tenant admin.
+    /// Reading: the call drafter writes the knock-out criteria (roles
+    /// table), so it reads the draft that holds them (lane m4/fast-flow,
+    /// Daniel 2026-11-12).
+    KnockOutReader,
     /// A programme manager of P or a tenant admin. Reading: A1 invites the
     /// first programme manager, who invites the rest in step 9.
     Inviter,
@@ -971,6 +976,11 @@ impl Rule {
                 &[Some(Role::ProgrammeManager), Some(Role::TenantAdmin)]
             }
             Rule::CallAuthor => &[Some(Role::ProgrammeManager), Some(Role::CallDrafter)],
+            Rule::KnockOutReader => &[
+                Some(Role::ProgrammeManager),
+                Some(Role::CallDrafter),
+                Some(Role::TenantAdmin),
+            ],
             Rule::CallStaff => &[
                 Some(Role::ProgrammeManager),
                 Some(Role::CallDrafter),
@@ -1263,7 +1273,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         T::Programme,
         R::ProgrammeManager,
     ),
-    RefOp::read("creator.get_draft", T::Programme, R::DraftManager).tool("fstp_creator_get_draft"),
+    RefOp::read("creator.get_draft", T::Programme, R::KnockOutReader)
+        .tool("fstp_creator_get_draft"),
     RefOp::read("creator.get_report", T::Programme, R::DraftManager)
         .tool("fstp_creator_get_report"),
     RefOp::act("creator.acknowledge", T::Programme, R::DraftManager),
@@ -1578,6 +1589,9 @@ fn admit(
         Rule::SecondAdmin => open(who.tenant_admin() && who != Who::SoleTenantAdmin),
         Rule::ProgrammeManager => open(who.manager()),
         Rule::DraftManager | Rule::Inviter => open(who.manager() || who.tenant_admin()),
+        Rule::KnockOutReader => {
+            open(who.manager() || who.tenant_admin() || who == Who::CallDrafter)
+        }
         Rule::CreatorStart => {
             open(who.tenant_admin() || who.manager() || who == Who::OtherProgrammeManager)
         }

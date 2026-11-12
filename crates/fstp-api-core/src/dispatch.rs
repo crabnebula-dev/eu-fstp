@@ -1555,10 +1555,17 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let mut own = own_proposals(&call.state, a, call.now, Ended::Final);
-            let content = lock(&call.st.content);
+            {
+                let content = lock(&call.st.content);
+                for p in &mut own {
+                    // An unknown proposal shows no title, never an empty one.
+                    p.title = content.title_of(p.proposal);
+                }
+            }
             for p in &mut own {
-                // An unknown proposal shows no title, never an empty one.
-                p.title = content.title_of(p.proposal);
+                if p.state == "INELIGIBLE" {
+                    p.knock_out_reason = knock_out_reason(call, p.proposal);
+                }
             }
             ReadModel::OwnProposals(own)
         }
@@ -1582,6 +1589,9 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
             };
             mine.title = lock(&call.st.content).title_of(p);
+            if mine.state == "INELIGIBLE" {
+                mine.knock_out_reason = knock_out_reason(call, p);
+            }
             // R-AU-01, I-84: the team's read of its own proposal appends a
             // `ContentRead` through every channel (design section 3.8).
             let seq = append_content_read(call, p).await?;
@@ -1956,9 +1966,32 @@ fn own_proposals(
             state: tag.map_or("UNKNOWN", |t| t.spec_name()).to_owned(),
             role,
             title: None,
+            knock_out_reason: None,
         });
     }
     out
+}
+
+/// The knock-out reason the FSTP coordinator recorded for `p`, when this
+/// core holds its text (O-54: an INELIGIBLE proposal shows the recorded
+/// knock-out reason). The reason is a confidential text of the proposal,
+/// so it is read from what this core remembered when it stored it, and
+/// from nowhere else. Web callers only: an agent's read carries no
+/// free text written by staff (lane m4/fast-flow).
+fn knock_out_reason<P: Seams>(call: &Call<'_, P>, p: ProposalId) -> Option<String> {
+    if call.caller.via() != Via::Web {
+        return None;
+    }
+    let entries = call.ports.engine().ledger()?;
+    let reason = entries.iter().rev().find_map(|e| match &e.record {
+        fstp_engine::Record::Core(fstp_domain::record::Record::KnockOutRecorded {
+            proposal,
+            reason: Some(r),
+            ..
+        }) if *proposal == p => Some(*r),
+        _ => None,
+    })?;
+    lock(&call.st.content).text(reason).map(str::to_owned)
 }
 
 /// The caller's assignments, without released ones.

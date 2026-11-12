@@ -68,6 +68,7 @@ fn model(g: &mut Gen) -> (ReadModel, Vec<String>) {
                     state: "DRAFT".to_owned(),
                     role: "lead",
                     title: Some(t),
+                    knock_out_reason: None,
                 }
             })
             .collect();
