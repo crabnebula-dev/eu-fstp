@@ -212,6 +212,11 @@ fn cell_entry(c: &CellCommand) -> Option<&'static str> {
             Some("ChangeLoginMethods")
         }
         CellCommand::Tenant(TenantCommand::GrantTenantAdmin { .. }) => Some("GrantTenantAdmin"),
+        // `authentication.md` "First passkey": a tenant admin issues an
+        // invitation with a step-up. Inviting is how management personnel
+        // are added (the role row's "Why"), so it takes the action of that
+        // row. Interim, pending Daniel: no row of its own.
+        CellCommand::Tenant(TenantCommand::IssueInvitation { .. }) => Some("GrantTenantAdmin"),
         CellCommand::Tenant(TenantCommand::EndTenantAdmin { .. }) => Some("EndTenantAdmin"),
         CellCommand::Tenant(TenantCommand::ApproveSelfGrant { .. }) => Some("ApproveSelfGrant"),
         CellCommand::Tenant(TenantCommand::SetLoginPolicy { .. }) => Some("SetLoginPolicy"),

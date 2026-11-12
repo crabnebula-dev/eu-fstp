@@ -2710,30 +2710,84 @@ pub fn properties<'a, B: AuthBackend>(m: &'a AuthModel<B>) -> Vec<Property<'a, A
 }
 
 // ---------------------------------------------------------------------------
-// The HTTP seam of the I-77, I-79 and R-LG-04 machines.
+// The HTTP client of the I-77, I-79 and R-LG-04 machines.
 
-/// The HTTP client the machines of design section 14.4 drive a cell with.
+/// The HTTP client the machines of design section 14.4 drive a cell with
+/// (lane F-HTTP).
 ///
-/// `CellHandle` has no HTTP client yet, and the cell has no routes. Every
-/// call refuses with [`http::HTTP_SEAM`], so a machine is red for that
-/// reason only. Lanes W1a and W3a remove the seam. The method set and
-/// routes follow design sections 8.2 to 8.7.
+/// Each call goes through `CellHandle::request`, so through the world's
+/// edge to the cell's tunnel listener, as a browser on the cell origin
+/// sends it. Every registration and assertion is real WebAuthn from a
+/// software passkey per account and device. What the cell cannot do over
+/// HTTP yet refuses with a seam that names the missing part:
+///
+/// - [`http::CLOCK_SEAM`]: the world's cells run on the host clock.
+/// - [`http::MAGIC_LINK_SEAM`]: an invited account has no email address,
+///   and the world captures no outbox mail.
+/// - [`http::ROLE_GRANT_SEAM`]: a programme role needs an active
+///   programme, and no programme activates over HTTP.
+/// - [`http::SUSPEND_SEAM_HTTP`]: no vault fact seeding reaches a world
+///   cell's reaction (design section 6.9, lane F-AUTHP).
+/// - [`http::RECOVERY_SEAM`]: the recovery request, email proof and
+///   completion routes fail closed (ADR-008 "Unset lifetimes").
+/// - [`http::OPERATOR_TICKET_SEAM`]: no control-plane signer of operator
+///   tickets runs in the world.
 pub mod http {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    use fstp_cell_core::CellCommand;
+    use fstp_cell_core::tenant::TenantCommand;
     use fstp_domain::id::AccountId;
     use fstp_domain::time::Timestamp;
 
     use super::RosterChange;
     use crate::NotImplemented;
     use crate::reference::auth::RefMethod;
-    use crate::world::{CellHandle, DbMode, VaultLayout, World, WorldError, WorldSpec};
+    use crate::soft_authn::{self as sa, Alg, AttestedCredential, Ceremony, SoftAuthenticator};
+    use crate::world::{
+        CellHandle, DbMode, HttpReply, HttpRequest, VaultLayout, World, WorldError, WorldSpec,
+    };
 
-    /// Why every call refuses for now.
+    /// The former seam of every call. Lane F-HTTP closed it: the calls
+    /// below drive the cell's routes.
     pub const HTTP_SEAM: &str = "fstp_celltest::world::CellHandle has no HTTP client and the cell has no auth routes yet (lanes W1a and W3a)";
 
     /// The former seam of [`production_routes`], kept so callers that name
     /// it still compile. Lane W3a closed the seam: `fstp-cell` exposes its
     /// route table as `fstp_cell::routes::table` (design section 8.7).
     pub const ROUTE_TABLE_SEAM: &str = "fstp_celltest::mc::auth_model::http::production_routes: fstp-cell exposes no route table yet, only the Route type (design section 8.7, lane W3a)";
+
+    /// [`AuthClient::set_clock`] refuses: a world cell reads the host
+    /// clock (`fstp_cell::tasks::system_now`), and no test clock reaches
+    /// it.
+    pub const CLOCK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::set_clock: a world cell runs on the host clock, and no test clock reaches its backend (fstp-cell routes/pg.rs, world.rs start_cell)";
+
+    /// A magic-link login refuses: an invited account has no email
+    /// address the cell knows, and the world captures no outbox mail.
+    pub const MAGIC_LINK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::login by magic link: an invited account has no email address in the cell (self-registration is not built), and the world captures no outbox mail";
+
+    /// A programme role grant or end refuses: every programme role names
+    /// an active programme, and the cell decides creator commands with
+    /// `fstp_engine::NoEnvironment`, so no programme activates over HTTP.
+    pub const ROLE_GRANT_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::roster: a programme role needs an active programme, and fstp-cell decides creator commands with NoEnvironment (no profile, probes, SoD preview or attested tenant admins), so no programme activates over HTTP";
+
+    /// A conflict-of-interest suspension refuses: no vault fact seeding
+    /// reaches the cell's `VaultChanged` reaction in the world.
+    pub const SUSPEND_SEAM_HTTP: &str = "fstp_celltest::mc::auth_model::http::AuthClient::suspend_for_conflict: no vault fact seeding reaches a world cell's VaultChanged reaction (design section 6.9; the cell side is SUSPEND_SEAM, lane F-AUTHP)";
+
+    /// The recovery ceremonies refuse: the request, email proof and
+    /// completion routes fail closed with 501.
+    pub const RECOVERY_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient recovery: POST /auth/recovery, .../email and .../complete fail closed (501), since the recovery tokens have no lifetime (ADR-008 \"Unset lifetimes\", fstp_cell_core::gate::ROUTE_ADMISSION_SEAM), pending Daniel";
+
+    /// An operator ticket refuses: no control-plane signer runs in the
+    /// world, and the cell refuses `ApplyOperatorTicket` (no ticket form).
+    pub const OPERATOR_TICKET_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::recovery_ticket: no control-plane ticket signer runs in the world, and fstp-cell-core refuses ApplyOperatorTicket (no operator ticket form)";
+
+    /// The client refuses: the cell answered in a way the harness cannot
+    /// read, or a passkey could not be built. Not a seam: a defect.
+    pub const HARNESS_FAILED: &str =
+        "fstp_celltest::mc::auth_model::http::AuthClient: the harness could not drive the cell";
 
     /// Every route of the production cell with its risk class, from
     /// `fstp_cell::routes::table`. It no longer refuses.
@@ -2752,7 +2806,8 @@ pub mod http {
         })
     }
 
-    /// A session cookie value the cell set.
+    /// A session cookie the cell set: the `Cookie` field value
+    /// `__Host-fstp=<value>`.
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     pub struct Cookie(pub Vec<u8>);
 
@@ -2776,19 +2831,143 @@ pub mod http {
         }
     }
 
+    fn failed() -> NotImplemented {
+        NotImplemented::new(HARNESS_FAILED)
+    }
+
+    /// A software passkey of one device: the authenticator's builders for
+    /// the cell host and an Ed25519 key.
+    struct Device {
+        auth: SoftAuthenticator,
+        key: fstp_crypto::sig::Ed25519SigningKey,
+        id: Vec<u8>,
+    }
+
+    impl Device {
+        fn new(host: &str) -> Result<Device, NotImplemented> {
+            Ok(Device {
+                auth: SoftAuthenticator::for_rp(host),
+                key: fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|_| failed())?,
+                id: fstp_crypto::random_array::<16>()
+                    .map_err(|_| failed())?
+                    .to_vec(),
+            })
+        }
+
+        /// The registration body `{attestation_object, challenge_id,
+        /// client_data_json}` over `challenge`, with UP and UV.
+        fn registration_body(
+            &mut self,
+            challenge_id: &str,
+            challenge: [u8; 32],
+        ) -> Result<Vec<u8>, NotImplemented> {
+            let client_data = self
+                .auth
+                .client_data(Ceremony::Create, challenge, &[])
+                .map_err(|_| failed())?;
+            let attested = AttestedCredential {
+                aaguid: [0; 16],
+                id: self.id.clone(),
+                cose_key: sa::cose_key(Alg::Ed25519, &self.key.public_key(), None),
+            };
+            let auth_data = sa::authenticator_data(
+                self.auth.rp_id(),
+                sa::flags::UP | sa::flags::UV,
+                0,
+                Some(&attested),
+            );
+            let attestation = sa::none_attestation_object(&auth_data);
+            Ok(format!(
+                "{{\"attestation_object\":\"{}\",\"challenge_id\":\"{challenge_id}\",\"client_data_json\":\"{}\"}}",
+                hex(&attestation),
+                hex(&client_data)
+            )
+            .into_bytes())
+        }
+
+        /// The assertion body over `challenge` with UP, UV and the next
+        /// counter.
+        fn assertion_body(
+            &mut self,
+            challenge_id: &str,
+            challenge: [u8; 32],
+        ) -> Result<Vec<u8>, NotImplemented> {
+            let client_data = self
+                .auth
+                .client_data(Ceremony::Get, challenge, &[])
+                .map_err(|_| failed())?;
+            let auth_data = self.auth.assertion_data(&[]).map_err(|_| failed())?;
+            let mut message = auth_data.clone();
+            message.extend_from_slice(&fstp_crypto::sha256(&client_data));
+            let signature = self.key.sign(&message).map_err(|_| failed())?;
+            Ok(format!(
+                "{{\"authenticator_data\":\"{}\",\"challenge_id\":\"{challenge_id}\",\
+                 \"client_data_json\":\"{}\",\"credential_id\":\"{}\",\"signature\":\"{}\"}}",
+                hex(&auth_data),
+                hex(&client_data),
+                hex(&self.id),
+                hex(&signature),
+            )
+            .into_bytes())
+        }
+    }
+
+    /// One account the client enrolled: its id in the cell and its
+    /// devices, device 0 first.
+    struct Person {
+        cell: AccountId,
+        devices: Vec<Device>,
+    }
+
+    /// What the client knows of the cell.
+    #[derive(Default)]
+    struct Known {
+        /// The machines' accounts, by their model id.
+        people: BTreeMap<AccountId, Person>,
+        /// The harness's own session of the first tenant admin, which
+        /// issues the invitations.
+        admin: Option<Cookie>,
+        /// Each cookie the cell set: the model account and the session id.
+        sessions: BTreeMap<Vec<u8>, (AccountId, [u8; 16])>,
+    }
+
     /// The auth client of one cell.
-    #[derive(Debug)]
     pub struct AuthClient<'w> {
         cell: &'w CellHandle,
+        known: Mutex<Known>,
     }
+
+    impl std::fmt::Debug for AuthClient<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("AuthClient")
+                .field("cell", &self.cell.index())
+                .finish_non_exhaustive()
+        }
+    }
+
+    /// The model account of the cell's first tenant admin. The first admin
+    /// enrols through the split invitation of provisioning (design section
+    /// 8.3, Q35). Every other account enrols through a tenant admin's
+    /// invitation, which the harness issues in its own admin session.
+    pub const FIRST_ADMIN: AccountId = fstp_domain_testkit::r#gen::roster::ADMIN;
 
     impl<'w> AuthClient<'w> {
         /// The client of `cell`.
         pub fn new(cell: &'w CellHandle) -> AuthClient<'w> {
-            AuthClient { cell }
+            AuthClient {
+                cell,
+                known: Mutex::new(Known::default()),
+            }
         }
 
-        /// One request. Refuses with [`HTTP_SEAM`] until the seam goes.
+        fn known(&self) -> std::sync::MutexGuard<'_, Known> {
+            self.known
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+
+        /// One request: `Host` is the cell host, a `POST` or `DELETE`
+        /// carries the cell origin, and a `POST` a JSON body.
         pub fn call(
             &self,
             method: &str,
@@ -2796,152 +2975,403 @@ pub mod http {
             cookie: Option<&Cookie>,
             body: &[u8],
         ) -> Result<Reply, NotImplemented> {
-            let _ = (self.cell.index(), method, path, cookie, body);
-            Err(NotImplemented::new(HTTP_SEAM))
+            let r = self.send(method, path, cookie, body)?;
+            Ok(Reply {
+                status: r.status,
+                body: r.body,
+            })
         }
 
-        /// Sets the cell's test clock.
+        /// [`AuthClient::call`] with the reply's header fields.
+        fn send(
+            &self,
+            method: &str,
+            path: &str,
+            cookie: Option<&Cookie>,
+            body: &[u8],
+        ) -> Result<HttpReply, NotImplemented> {
+            let host = self.cell.host();
+            let mut r = HttpRequest::new(method, path).header("host", host);
+            if matches!(method, "POST" | "DELETE") {
+                r = r.header("origin", format!("https://{host}"));
+            }
+            if method == "POST" {
+                r = r
+                    .header("content-type", "application/json")
+                    .body(body.to_vec());
+            }
+            if let Some(c) = cookie {
+                r = r.header("cookie", c.0.clone());
+            }
+            self.cell.request(&r).map_err(|_| failed())
+        }
+
+        /// The `challenge_id` and challenge of an options reply.
+        fn options(reply: &Reply) -> Option<(String, [u8; 32])> {
+            if !reply.ok() {
+                return None;
+            }
+            let id = json_str(&reply.body, "challenge_id")?;
+            let challenge = unbase64url(&json_str(&reply.body, "challenge")?)?;
+            Some((id, challenge.try_into().ok()?))
+        }
+
+        /// Sets the cell's test clock. Refuses with [`CLOCK_SEAM`].
         pub fn set_clock(&self, at: Timestamp) -> Result<(), NotImplemented> {
-            self.call(
+            let _ = at;
+            Err(NotImplemented::new(CLOCK_SEAM))
+        }
+
+        /// Registers a new device of `person` through the invitation proof
+        /// `token` (hex of one token or of both halves).
+        fn register(&self, token: &str, device: &mut Device) -> Result<bool, NotImplemented> {
+            let base = format!("/auth/invitations/{token}/register");
+            let options = self.call("POST", &format!("{base}/options"), None, b"{}")?;
+            let Some((id, challenge)) = Self::options(&options) else {
+                return Ok(false);
+            };
+            let body = device.registration_body(&id, challenge)?;
+            Ok(self.call("POST", &base, None, &body)?.ok())
+        }
+
+        /// Enrols the first tenant admin through the split invitation and
+        /// opens the harness's admin session.
+        fn enrol_first_admin(&self) -> Result<bool, NotImplemented> {
+            if self.known().people.contains_key(&FIRST_ADMIN) {
+                return Ok(true);
+            }
+            let inv = self.cell.first_admin_invitation().map_err(|_| failed())?;
+            let token = format!("{}{}", hex(&inv.first), hex(&inv.second));
+            let mut device = Device::new(self.cell.host())?;
+            if !self.register(&token, &mut device)? {
+                return Ok(false);
+            }
+            let ledger = self.cell.ledger().map_err(|_| failed())?;
+            let cell = ledger
+                .iter()
+                .find_map(|e| match &e.record {
+                    fstp_cell_core::CellRecord::Auth(
+                        fstp_auth::AuthRecord::FirstAdminEnrolled { account },
+                    ) => Some(*account),
+                    _ => None,
+                })
+                .ok_or_else(failed)?;
+            self.known().people.insert(
+                FIRST_ADMIN,
+                Person {
+                    cell,
+                    devices: vec![device],
+                },
+            );
+            let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+            self.known().admin = Some(admin);
+            Ok(true)
+        }
+
+        /// A step-up for `command` under `command_id` in `session`, by the
+        /// session account's device 0. The step-up id, or `None` when the
+        /// cell refused it.
+        fn step_up(
+            &self,
+            session: &Cookie,
+            command: &CellCommand,
+            command_id: [u8; 16],
+        ) -> Result<Option<[u8; 16]>, NotImplemented> {
+            let Some((account, _)) = self.known().sessions.get(&session.0).copied() else {
+                return Ok(None);
+            };
+            let options = self.call(
                 "POST",
-                "/test/clock",
-                None,
-                at.micros().to_string().as_bytes(),
-            )
-            .map(|_| ())
+                "/auth/stepup/options",
+                Some(session),
+                &command_body(command, command_id, None),
+            )?;
+            let Some((id, challenge)) = Self::options(&options) else {
+                return Ok(None);
+            };
+            let body = {
+                let mut k = self.known();
+                let device = k
+                    .people
+                    .get_mut(&account)
+                    .and_then(|p| p.devices.first_mut())
+                    .ok_or_else(failed)?;
+                device.assertion_body(&id, challenge)?
+            };
+            if !self
+                .call("POST", "/auth/stepup", Some(session), &body)?
+                .ok()
+            {
+                return Ok(None);
+            }
+            Ok(unhex_array(&id))
         }
 
-        /// Enrols `account` through an invitation with a software passkey.
+        /// `command` with a step-up through `POST /api/v1/commands` in
+        /// `session`, as the cell's pages send it. Whether the cell
+        /// committed it.
+        pub fn command_with_stepup(
+            &self,
+            session: &Cookie,
+            command: &CellCommand,
+        ) -> Result<bool, NotImplemented> {
+            let command_id = fstp_crypto::random_array::<16>().map_err(|_| failed())?;
+            let Some(stepup) = self.step_up(session, command, command_id)? else {
+                return Ok(false);
+            };
+            Ok(self
+                .call(
+                    "POST",
+                    "/api/v1/commands",
+                    Some(session),
+                    &command_body(command, command_id, Some(stepup)),
+                )?
+                .ok())
+        }
+
+        /// Enrols `account` with a software passkey: the first admin
+        /// through the split invitation, any other account through an
+        /// invitation the harness issues as the first admin, with a
+        /// step-up (`TenantCommand::IssueInvitation`). The cell account id
+        /// is random. An account enrolled already gives `false`, except
+        /// the first admin, whom the harness may have enrolled first.
         pub fn enrol(&self, account: AccountId) -> Result<bool, NotImplemented> {
-            let path = format!("/auth/invitations/{}/register", account.raw());
-            Ok(self.call("POST", &path, None, b"{}")?.ok())
+            if account == FIRST_ADMIN {
+                return self.enrol_first_admin();
+            }
+            if self.known().people.contains_key(&account) {
+                return Ok(false);
+            }
+            if !self.enrol_first_admin()? {
+                return Ok(false);
+            }
+            let admin = self.known().admin.clone().ok_or_else(failed)?;
+            let raw = u128::from_be_bytes(fstp_crypto::random_array::<16>().map_err(|_| failed())?);
+            let cell = AccountId::from_raw(raw | 1);
+            let token = fstp_crypto::random_array::<32>().map_err(|_| failed())?;
+            let command = CellCommand::Tenant(TenantCommand::IssueInvitation {
+                invitation: fstp_crypto::random_array::<16>().map_err(|_| failed())?,
+                account: cell,
+                token_digest: fstp_auth::ceremony::token_digest(&fstp_auth::codec::Token(token)),
+            });
+            if !self.command_with_stepup(&admin, &command)? {
+                return Ok(false);
+            }
+            let mut device = Device::new(self.cell.host())?;
+            if !self.register(&hex(&token), &mut device)? {
+                return Ok(false);
+            }
+            self.known().people.insert(
+                account,
+                Person {
+                    cell,
+                    devices: vec![device],
+                },
+            );
+            Ok(true)
         }
 
-        /// A login of `account` by `m`: the passkey routes, or the magic
-        /// link routes ending in `POST /auth/magic/consume`.
+        /// The harness's own session of the first tenant admin, once
+        /// [`AuthClient::enrol`] enrolled the first admin.
+        pub fn admin_session(&self) -> Option<Cookie> {
+            self.known().admin.clone()
+        }
+
+        /// A passkey login of `account` with its device 0.
+        fn passkey_login(&self, account: AccountId) -> Result<Option<Cookie>, NotImplemented> {
+            if !self.known().people.contains_key(&account) {
+                return Ok(None);
+            }
+            let options = self.call("POST", "/auth/passkey/login/options", None, b"{}")?;
+            let Some((id, challenge)) = Self::options(&options) else {
+                return Ok(None);
+            };
+            let body = {
+                let mut k = self.known();
+                let device = k
+                    .people
+                    .get_mut(&account)
+                    .and_then(|p| p.devices.first_mut())
+                    .ok_or_else(failed)?;
+                device.assertion_body(&id, challenge)?
+            };
+            let reply = self.send("POST", "/auth/passkey/login", None, &body)?;
+            if !reply.ok() {
+                return Ok(None);
+            }
+            let pair: Vec<u8> = reply
+                .header("set-cookie")
+                .and_then(|set| set.split(|b| *b == b';').next())
+                .ok_or_else(failed)?
+                .to_vec();
+            let session: [u8; 16] = json_str(&reply.body, "session")
+                .and_then(|s| unhex_array(&s))
+                .ok_or_else(failed)?;
+            self.known()
+                .sessions
+                .insert(pair.clone(), (account, session));
+            Ok(Some(Cookie(pair)))
+        }
+
+        /// A login of `account` by `m`: the passkey routes with device 0.
+        /// A magic link refuses with [`MAGIC_LINK_SEAM`].
         pub fn login(
             &self,
             account: AccountId,
             m: RefMethod,
         ) -> Result<Option<Cookie>, NotImplemented> {
-            let body = format!("{{\"account\":\"{}\"}}", account.raw());
-            let reply = match m {
-                RefMethod::MagicLink => {
-                    self.call("POST", "/auth/magic/request", None, body.as_bytes())?;
-                    self.call("POST", "/auth/magic/consume", None, body.as_bytes())?
-                }
-                _ => {
-                    self.call("POST", "/auth/passkey/login/options", None, body.as_bytes())?;
-                    self.call("POST", "/auth/passkey/login", None, body.as_bytes())?
-                }
-            };
-            Ok(reply.ok().then_some(Cookie(reply.body)))
+            match m {
+                RefMethod::MagicLink => Err(NotImplemented::new(MAGIC_LINK_SEAM)),
+                _ => self.passkey_login(account),
+            }
         }
 
-        /// A roster change by admin1 with a fresh step-up, through
-        /// `POST /api/v1/commands`.
+        /// A roster change in the session `admin`, with a fresh step-up,
+        /// through `POST /api/v1/commands`. A tenant admin grant is
+        /// `GrantTenantAdmin`. A programme role grant or end refuses with
+        /// [`ROLE_GRANT_SEAM`].
         pub fn roster(&self, admin: &Cookie, change: RosterChange) -> Result<bool, NotImplemented> {
-            let body = format!("{change:?}");
-            self.call("POST", "/auth/stepup/options", Some(admin), body.as_bytes())?;
-            self.call("POST", "/auth/stepup", Some(admin), body.as_bytes())?;
-            Ok(self
-                .call("POST", "/api/v1/commands", Some(admin), body.as_bytes())?
-                .ok())
+            match change {
+                RosterChange::GrantAdmin { account } => {
+                    let Some(cell) = self.known().people.get(&account).map(|p| p.cell) else {
+                        return Ok(false);
+                    };
+                    let command =
+                        CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: cell });
+                    self.command_with_stepup(admin, &command)
+                }
+                RosterChange::Grant { .. } | RosterChange::End { .. } => {
+                    Err(NotImplemented::new(ROLE_GRANT_SEAM))
+                }
+            }
         }
 
-        /// Seeds a vault fact through the test seeding of design section
-        /// 6.9 that gives `account` a conflict of interest, so the cell's
-        /// reaction suspends its Judging bindings (I-06).
+        /// Gives `account` a conflict of interest through vault seeding.
+        /// Refuses with [`SUSPEND_SEAM_HTTP`].
         pub fn suspend_for_conflict(&self, account: AccountId) -> Result<bool, NotImplemented> {
-            let body = format!("{{\"conflict\":\"{}\"}}", account.raw());
-            Ok(self
-                .call("POST", "/test/vault/conflict", None, body.as_bytes())?
-                .ok())
+            let _ = account;
+            Err(NotImplemented::new(SUSPEND_SEAM_HTTP))
         }
 
-        /// Whether the cell admits a request in the session.
+        /// Whether the cell admits a request in the session:
+        /// `GET /auth/sessions` answers 2xx.
         pub fn admitted(&self, session: &Cookie) -> Result<bool, NotImplemented> {
             Ok(self.call("GET", "/auth/sessions", Some(session), b"")?.ok())
         }
 
-        /// `GET /auth/sessions`: the session ids listed.
+        /// `GET /auth/sessions`: the body that lists the sessions.
         pub fn sessions(&self, session: &Cookie) -> Result<Option<Vec<u8>>, NotImplemented> {
             let r = self.call("GET", "/auth/sessions", Some(session), b"")?;
             Ok(r.ok().then_some(r.body))
         }
 
-        /// `DELETE /auth/sessions/{id}`.
+        /// `DELETE /auth/sessions/{id}`. `id` is a cookie the cell set,
+        /// which stands for its session id, or a session id.
         pub fn end_session(&self, session: &Cookie, id: &[u8]) -> Result<bool, NotImplemented> {
-            let path = format!("/auth/sessions/{}", hex(id));
+            let target = match self.known().sessions.get(id) {
+                Some((_, s)) => s.to_vec(),
+                None => id.to_vec(),
+            };
+            let path = format!("/auth/sessions/{}", hex(&target));
             Ok(self.call("DELETE", &path, Some(session), b"")?.ok())
         }
 
-        /// `GET /auth/devices`: the devices listed.
+        /// `GET /auth/devices`: the body that lists the devices.
         pub fn devices(&self, session: &Cookie) -> Result<Option<Vec<u8>>, NotImplemented> {
             let r = self.call("GET", "/auth/devices", Some(session), b"")?;
             Ok(r.ok().then_some(r.body))
         }
 
-        /// `DELETE /auth/devices/{id}`, with a step-up when `stepup` holds.
+        /// `DELETE /auth/devices/{id}?command_id=..&stepup=..` of the
+        /// session account's device `device`, with a step-up when `stepup`
+        /// holds. Without one, the request names a step-up id the cell
+        /// never granted.
         pub fn remove_device(
             &self,
             session: &Cookie,
             device: u8,
             stepup: bool,
         ) -> Result<bool, NotImplemented> {
-            if stepup {
-                self.call("POST", "/auth/stepup", Some(session), b"{}")?;
-            }
-            let path = format!("/auth/devices/{device}");
+            let found = {
+                let k = self.known();
+                k.sessions.get(&session.0).and_then(|(account, _)| {
+                    let p = k.people.get(account)?;
+                    let d = p.devices.get(usize::from(device))?;
+                    Some((p.cell, d.id.clone()))
+                })
+            };
+            let Some((account, credential)) = found else {
+                return Ok(false);
+            };
+            let command = CellCommand::Auth(fstp_auth::AuthCommand::RevokeCredential {
+                account,
+                credential: credential.clone(),
+            });
+            let command_id = fstp_crypto::random_array::<16>().map_err(|_| failed())?;
+            let granted = if stepup {
+                self.step_up(session, &command, command_id)?
+            } else {
+                None
+            };
+            let id = match granted {
+                Some(id) => id,
+                None => fstp_crypto::random_array::<16>().map_err(|_| failed())?,
+            };
+            let path = format!(
+                "/auth/devices/{}?command_id={}&stepup={}",
+                hex(&credential),
+                hex(&command_id),
+                hex(&id)
+            );
             Ok(self.call("DELETE", &path, Some(session), b"")?.ok())
         }
 
-        /// `POST /auth/recovery` for `account`.
+        /// `POST /auth/recovery` for `account`. Refuses with
+        /// [`RECOVERY_SEAM`].
         pub fn recovery(&self, account: AccountId) -> Result<Option<CaseRef>, NotImplemented> {
-            let body = format!("{{\"account\":\"{}\"}}", account.raw());
-            let r = self.call("POST", "/auth/recovery", None, body.as_bytes())?;
-            Ok(r.ok().then_some(CaseRef(r.body)))
+            let _ = account;
+            Err(NotImplemented::new(RECOVERY_SEAM))
         }
 
-        /// `POST /auth/recovery/{case}/email`.
+        /// `POST /auth/recovery/{case}/email`. Refuses with
+        /// [`RECOVERY_SEAM`].
         pub fn recovery_email(&self, case: &CaseRef) -> Result<bool, NotImplemented> {
-            let path = format!("/auth/recovery/{}/email", hex(&case.0));
-            Ok(self.call("POST", &path, None, b"{}")?.ok())
+            let _ = case;
+            Err(NotImplemented::new(RECOVERY_SEAM))
         }
 
         /// `POST /auth/recovery/{case}/approve` in `approver`'s session.
+        /// Refuses with [`RECOVERY_SEAM`], since no case can be opened.
         pub fn recovery_approve(
             &self,
             case: &CaseRef,
             approver: &Cookie,
             stepup: bool,
         ) -> Result<bool, NotImplemented> {
-            if stepup {
-                self.call("POST", "/auth/stepup", Some(approver), b"{}")?;
-            }
-            let path = format!("/auth/recovery/{}/approve", hex(&case.0));
-            Ok(self.call("POST", &path, Some(approver), b"{}")?.ok())
+            let _ = (case, approver, stepup);
+            Err(NotImplemented::new(RECOVERY_SEAM))
         }
 
-        /// An operator ticket for `case`, signed by the test control plane.
+        /// An operator ticket for `case`. Refuses with
+        /// [`OPERATOR_TICKET_SEAM`].
         pub fn recovery_ticket(
             &self,
             case: &CaseRef,
             two_staff: bool,
         ) -> Result<bool, NotImplemented> {
-            let body = format!("{{\"two_staff\":{two_staff}}}");
-            let path = format!("/test/operator-ticket/{}", hex(&case.0));
-            Ok(self.call("POST", &path, None, body.as_bytes())?.ok())
+            let _ = (case, two_staff);
+            Err(NotImplemented::new(OPERATOR_TICKET_SEAM))
         }
 
-        /// `POST /auth/recovery/{case}/complete` with a new software passkey.
+        /// `POST /auth/recovery/{case}/complete` with a new software
+        /// passkey. Refuses with [`RECOVERY_SEAM`].
         pub fn recovery_complete(&self, case: &CaseRef) -> Result<Option<Cookie>, NotImplemented> {
-            let path = format!("/auth/recovery/{}/complete", hex(&case.0));
-            let r = self.call("POST", &path, None, b"{}")?;
-            Ok(r.ok().then_some(Cookie(r.body)))
+            let _ = case;
+            Err(NotImplemented::new(RECOVERY_SEAM))
         }
 
-        /// The tenant audit view as `session` sees it.
+        /// The tenant audit view as `session` sees it:
+        /// `GET /api/v1/audit/anchors`.
         pub fn audit_view(&self, session: &Cookie) -> Result<Vec<u8>, NotImplemented> {
             Ok(self
                 .call("GET", "/api/v1/audit/anchors", Some(session), b"")?
@@ -2949,8 +3379,72 @@ pub mod http {
         }
     }
 
+    /// The canonical command body `{command, command_id, stepup?}`.
+    fn command_body(
+        command: &CellCommand,
+        command_id: [u8; 16],
+        stepup: Option<[u8; 16]>,
+    ) -> Vec<u8> {
+        let c = String::from_utf8_lossy(&fstp_cell_core::encode_cell_command(command)).into_owned();
+        let mut body = format!("{{\"command\":{c},\"command_id\":\"{}\"", hex(&command_id));
+        if let Some(s) = stepup {
+            body.push_str(&format!(",\"stepup\":\"{}\"", hex(&s)));
+        }
+        body.push('}');
+        body.into_bytes()
+    }
+
+    /// The string member `key` of a JSON reply. The cell writes canonical
+    /// JSON whose strings here hold only hexadecimal or base64url, so the
+    /// first `"key":"` names it.
+    fn json_str(body: &[u8], key: &str) -> Option<String> {
+        let t = std::str::from_utf8(body).ok()?;
+        let (_, rest) = t.split_once(&format!("\"{key}\":\""))?;
+        let (v, _) = rest.split_once('"')?;
+        Some(v.to_owned())
+    }
+
     /// Lower-case hex of `b`.
     pub fn hex(b: &[u8]) -> String {
         b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    fn unhex(s: &str) -> Option<Vec<u8>> {
+        s.as_bytes()
+            .chunks(2)
+            .map(|pair| match pair {
+                [a, b] => {
+                    let digits = [*a, *b];
+                    u8::from_str_radix(std::str::from_utf8(&digits).ok()?, 16).ok()
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn unhex_array<const N: usize>(s: &str) -> Option<[u8; N]> {
+        unhex(s)?.try_into().ok()
+    }
+
+    /// The base64url alphabet (RFC 4648 section 5).
+    const BASE64URL: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    /// Unpadded base64url, as an options reply writes its challenge.
+    fn unbase64url(s: &str) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut acc: u32 = 0;
+        let mut bits: u32 = 0;
+        for c in s.bytes() {
+            let v = u32::try_from(BASE64URL.iter().position(|x| *x == c)?).ok()?;
+            acc = (acc << 6) | v;
+            bits = bits.checked_add(6)?;
+            if bits >= 8 {
+                bits = bits.checked_sub(8)?;
+                out.push(u8::try_from((acc >> bits) & 0xFF).ok()?);
+                acc &= (1u32 << bits).checked_sub(1)?;
+            }
+        }
+        Some(out)
     }
 }

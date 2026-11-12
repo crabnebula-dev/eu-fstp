@@ -1361,6 +1361,11 @@ fn decide_tenant(
                 policy: policy.clone(),
             })])
         }
+        TenantCommand::IssueInvitation {
+            invitation,
+            account,
+            token_digest,
+        } => issue_invitation(s, *invitation, *account, *token_digest, actor, stepup_at),
         // Provisioning issues the first one as a system task, and only a
         // ceremony admission enrols. Neither reaches this point.
         TenantCommand::IssueFirstAdminInvitation { .. }
@@ -1418,6 +1423,51 @@ fn issue_first_admin_invitation(
     .map_err(|e| match e {
         fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
         _ => refuse(RuleRef::Input, RefusalReason::WrongState),
+    })?;
+    Ok(vec![CellRecord::Auth(record)])
+}
+
+/// `IssueInvitation` by a tenant admin (design section 8.3 ceremony 1,
+/// `authentication.md` "First passkey"). The rule is
+/// `fstp_auth::ceremony::issue_invitation` with the tenant admin issuer:
+/// the actor is a current tenant admin, the batch consumes a step-up, and
+/// no record names the account. The invitation id must be new.
+///
+/// The gate admitted the step-up (`ManagementRoleChange`), and the driver
+/// passes its assertion instant as `stepup_at`. A decision without one is
+/// refused here too, so no path issues an invitation without a step-up.
+/// The deployment mode only splits a first admin's token, which this
+/// issuer never draws, so the SaaS mode stands in for it.
+fn issue_invitation(
+    s: &CellState,
+    invitation: [u8; 16],
+    account: AccountId,
+    token_digest: [u8; 32],
+    actor: AccountId,
+    stepup_at: Option<Timestamp>,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let admin = s.tenant().is_admin(actor);
+    if !admin {
+        return Err(wrong_actor());
+    }
+    if s.auth().invitation(invitation).is_some() {
+        return Err(reused());
+    }
+    let stepup = stepup_at
+        .map(|_| ())
+        .ok_or(fstp_auth::stepup::StepUpDeny::Required);
+    let issuer = fstp_auth::ceremony::Issuer::TenantAdmin { admin, stepup };
+    let record = fstp_auth::ceremony::issue_invitation(
+        issuer,
+        fstp_auth::recovery::Deployment::Saas,
+        invitation,
+        account,
+        token_digest,
+        !account_known(s, account),
+    )
+    .map_err(|e| match e {
+        fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
+        _ => refuse(RuleRef::I78, RefusalReason::GuardFailed),
     })?;
     Ok(vec![CellRecord::Auth(record)])
 }
