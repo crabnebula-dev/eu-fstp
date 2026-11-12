@@ -90,6 +90,32 @@ fn test_line(line: &str) -> Option<(&str, Outcome)> {
     Some((name, outcome))
 }
 
+/// A line without its ANSI control sequences (`ESC [` ... final byte).
+/// CI sets `CARGO_TERM_COLOR=always`, so cargo wraps `Running` and
+/// `error` in colour codes; without this the gate saw no binary start.
+fn plain(line: &str) -> std::borrow::Cow<'_, str> {
+    if !line.contains('\u{1b}') {
+        return std::borrow::Cow::Borrowed(line);
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        if chars.clone().next() == Some('[') {
+            chars.next();
+            for f in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&f) {
+                    break;
+                }
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Reads the output of a cargo test run. Lines longer than [`MAX_LINE`]
 /// and lines in no known form are skipped, so test output that a test
 /// itself prints cannot forge a result: a forged `test` line can only
@@ -101,6 +127,8 @@ pub fn read_run(output: &str) -> Run {
         if line.len() > MAX_LINE {
             continue;
         }
+        let line = plain(line);
+        let line = line.as_ref();
         if line.starts_with("error[E") || line.starts_with("error: could not compile") {
             run.compile_error = true;
             continue;
@@ -350,6 +378,23 @@ test result: ok. 1 passed
 
     fn list(text: &str) -> Vec<Entry> {
         read_list(text).unwrap()
+    }
+
+    /// CI runs with `CARGO_TERM_COLOR=always`. The gate still reads the
+    /// coloured `Running` and compile error lines (CI run 43171761149
+    /// printed "0 binaries" with every test binary run).
+    #[test]
+    fn known_red_run_reads_coloured_cargo_lines() {
+        let run = read_run(
+            "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m tests/d11.rs (target/debug/deps/d11-a94d5b054c7eab89)\n\
+             test d11_x ... FAILED\n\
+             test result: FAILED. 0 passed; 1 failed\n\
+             \u{1b}[0m\u{1b}[1m\u{1b}[91merror[E0308]\u{1b}[0m: mismatched types\n",
+        );
+        assert!(run.binaries.contains("d11"));
+        assert_eq!(run.tests["d11::d11_x"], vec![Outcome::Failed]);
+        assert!(run.compile_error);
+        assert!(run.unfinished.is_empty());
     }
 
     /// The gate reads keys and outcomes per binary, doc-tests included.
