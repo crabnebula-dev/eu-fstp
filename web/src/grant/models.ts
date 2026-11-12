@@ -616,3 +616,42 @@ export function canonicalBody(v: unknown): unknown {
   }
   return v;
 }
+
+/** The evidence of one line, as the lead gave it (R-PR-01). A text the cell did not keep is null. */
+export interface LineEvidence {
+  readonly line: string;
+  readonly location: string | null;
+  readonly release: string | null;
+  readonly licence: string | null;
+  readonly report: string | null;
+}
+
+/** `payment.line_review_view`: what the assigned reviewer needs to decide each line (R-PR-08). */
+export interface LineReviewView {
+  readonly request: RequestRow;
+  readonly evidence: readonly LineEvidence[];
+}
+
+/** Decodes `payment.line_review_view`: a request row whose lines carry their evidence. */
+export function decodeLineReview(v: unknown): LineReviewView | null {
+  const request = requestRow(v);
+  const o = rec(v);
+  const lines = o === null ? null : each(o["lines"], (x) => {
+    const l = rec(x);
+    if (l === null || !isIdText(l["line"])) {
+      return null;
+    }
+    const location = nullOr(l["location"], text);
+    const release = nullOr(l["release"], text);
+    const licence = nullOr(l["licence"], text);
+    const report = nullOr(l["report"], text);
+    if (location === undefined || release === undefined || licence === undefined || report === undefined) {
+      return null;
+    }
+    return Object.freeze({ line: l["line"], location, release, licence, report });
+  });
+  if (request === null || lines === null) {
+    return null;
+  }
+  return Object.freeze({ request, evidence: lines });
+}

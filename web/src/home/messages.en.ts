@@ -58,6 +58,11 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.to_score_one": "{count} proposal needs your score",
   "home.to_score_other": "{count} proposals need your score",
   "home.to_score.intro": "Declare any conflict first. Then read the proposal and record your score.",
+  // Lane m5/polish-access: the payment lines waiting on an assigned reviewer (R-PR-08).
+  "home.to_review_payments_one": "{count} payment request to review",
+  "home.to_review_payments_other": "{count} payment requests to review",
+  "home.to_review_payments.intro": "You are an assigned reviewer of a grant that asked for payment. Check the evidence and decide each line.",
+  "home.work.payment_review": "Payment requests to review",
   "home.to_rank_one": "{count} proposal to rank",
   "home.to_rank_other": "{count} proposals to rank",
   "home.to_rank.intro": "Read the ranking of each call and take part in its cut-off round.",

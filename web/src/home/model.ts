@@ -559,7 +559,7 @@ export function holdsOperations(r: MyRoles): boolean {
  * and "Navigation per role group"). A page that needs an id, such as
  * the intake queue of one call, is listed on the home page instead.
  */
-export function navLinksOf(r: MyRoles): readonly NavLink[] {
+export function navLinksOf(r: MyRoles, reviewWork = false): readonly NavLink[] {
   const out: NavLink[] = [];
   const staff = r.roles.filter((b) => b.proposal === null);
   const holds = (role: RoleName): boolean => staff.some((b) => b.role === role);
@@ -569,7 +569,9 @@ export function navLinksOf(r: MyRoles): readonly NavLink[] {
   if (holds("irc_member")) {
     out.push({ kind: "irc-cases", href: WORK_PATHS.ircCases, label: "nav.my_cases" });
   }
-  if (holdsOperations(r)) {
+  // R-PR-08 (lane m5/polish-access): an assigned reviewer with payment lines to decide
+  // reaches them through Operations, which lists the requests to review.
+  if (holdsOperations(r) || (reviewWork && holds("committee_member"))) {
     out.push({ kind: "operations", href: WORK_PATHS.operations, label: "nav.operations" });
   }
   if (r.tenantAdmin) {
@@ -586,10 +588,10 @@ export function navLinksOf(r: MyRoles): readonly NavLink[] {
  * own applications and the open calls), and Account. `roles` is null
  * until the shell has read them.
  */
-export function navOf(roles: MyRoles | null): readonly NavLink[] {
+export function navOf(roles: MyRoles | null, reviewWork = false): readonly NavLink[] {
   return Object.freeze([
     { kind: "home", href: WORK_PATHS.home, label: "nav.home" },
-    ...(roles === null ? [] : navLinksOf(roles)),
+    ...(roles === null ? [] : navLinksOf(roles, reviewWork)),
     { kind: "proposals", href: WORK_PATHS.proposals, label: "nav.my_applications" },
     { kind: "grants", href: WORK_PATHS.grants, label: "nav.grants" },
     { kind: "calls", href: WORK_PATHS.calls, label: "nav.open_calls" },
