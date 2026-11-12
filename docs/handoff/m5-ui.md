@@ -175,3 +175,10 @@ R-PR-08, R-PR-01, R-PR-05, R-AC-01, R-CF-02, R-NF-03. I-03, I-05, I-32, I-33, I-
 - "rule row": the cell names RuleRef::Row as the rule text "row" for a wrong-state refusal. The page now maps "row" to "This step is not open now. The grant or request is at another stage." and "actor" to "You may not do this step for this item." Other rules still show their id (the I-33 refusal in the walkthrough is unchanged).
 - Report approver F2: the programme list comes from the caller's programme bindings, and F2 has none. No existing read gives the programmes a tenant-wide role may approve for. Left as is. Open question: a read that lists the programmes of the tenant for tenant-wide roles.
 - Report approver F2, decided (lane m5/report-programmes, 2026-11-12): a new narrow read `report.programmes` (`GET /me/report-programmes`) answers programme ids and names only. Its rule admits a programme manager or an auditor of any programme. The dispatch admits a Financial signatory of the tenant fold beside the rule, as `report.list` does (NOTE 5, R-RP-03). It lists only the programmes whose `report.list` admits the caller, so it widens no read. An applicant and a reviewer are refused with R-AC-01. `creator.list_programmes` stays the creator's, so the creator start gains no new reader. No SoD rule bears on it: it is a read, and `report.approve` still refuses the report's generator. The Operations page shows "Open the funder reports of programme N" per listed programme. "Your programme" stays for a caller bound in that programme. When the read refuses, the page falls back to the binding programmes, and the number form stays behind the disclosure. Web only, no MCP tool.
+
+## Decided by Daniel on 2026-11-13
+
+- The assigned reviewer reads the grant overview after NEGOTIATION, for the line review of payment requests (SoD-12).
+- The reviewer does not keep a view of payment requests they decided. The line review view stays closed once a request leaves UNDER_REVIEW.
+- `contract.awaiting_me` gets a read-only MCP tool, as `contract.view` has.
+- Operations stops offering a funder reports link to a person whose `report.list` refuses them, such as R1.

@@ -70,3 +70,10 @@ tools/demo/run.sh stop
 - Whether an INELIGIBLE proposal's outcome notice should open calibration consent (decision 6). If not, the calibration lane needs a state filter.
 - The reason read needs a durable source in a production cell, such as a read of the `KnockOutRecorded` text through the text store with a clearance (decision 7).
 - TODO(legal): any wording that should accompany a not-eligible notice to an applicant, such as the right to complain.
+
+## Decided by Daniel on 2026-11-13
+
+- P-01 and the call text do not take the P-09 path. After activation only the knock-out criteria change through a call drafter's save.
+- An INELIGIBLE proposal's outcome notice does not open calibration consent. The calibration side needs a state filter that leaves INELIGIBLE proposals out (I-37).
+- The reason read gets a durable source: the `KnockOutRecorded` text, read through the text store with a clearance.
+- Wording beside a not-eligible notice, such as the right to complain: on hold. The `TODO(legal)` stays.

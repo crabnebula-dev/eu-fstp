@@ -178,4 +178,4 @@ No question blocks a lane. Lanes build the interim decisions D1 to D6 of section
 
 One item needs Daniel before the public pages go live, not before the lanes start:
 
-- **Funder visibility wording (I-69, L-08).** The Horizon Europe profile needs the approved acknowledgement text and emblem rules. Lanes render a `TODO(legal)` placeholder element. Recommendation: Daniel supplies the text from the SuperSAFE grant agreement, and F1 adds it as a profile wording ref.
+- **Funder visibility wording (I-69, L-08).** The Horizon Europe profile needs the approved acknowledgement text and emblem rules. Lanes render a `TODO(legal)` placeholder element. Recommendation: Daniel supplies the text from the SuperSAFE grant agreement, and F1 adds it as a profile wording ref. Accepted by Daniel on 2026-11-13. The placeholder stays until he supplies the text.

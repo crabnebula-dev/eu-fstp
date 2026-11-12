@@ -137,3 +137,11 @@ Open questions:
 - **Gap G2, the target gate has no failing case in the worlds.** Every message the sources derive is already readable, so test T1 passes with or without the `authorize_read` gate. The gate stays as a second line, and T1 proves the sources alone never point at a closed page.
 - **Gap G3, M5 pages.** `/app/grants/{proposal}/contract` and `/app/operations` show the not-found page on this branch until lane `m5/ui` merges. The web test lists them as M5 pages and fails if a mailbox route is neither mounted nor listed.
 - **Gap G4, scoring history.** When the journal no longer holds a proposal's history, `review.score` stays listed and its page says why it cannot load.
+
+### Decided by Daniel on 2026-11-13
+
+- MB-Q1: yes. Notices carry a per-account "read" mark. It needs a small store, so an ADR comes first.
+- MB-Q2: yes. `stage2.respond` splits into one message per unanswered question, once the journal folds answers per question.
+- MB-Q3: yes. An invitation or role grant to an existing account shows as a message.
+- MB-Q4: yes, later. `fstp_list_mailbox` waits until the mailbox runs over the MCP channel.
+- MB-Q5: no. Emails keep linking straight to the page of the work.
