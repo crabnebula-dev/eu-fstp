@@ -35,6 +35,25 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
    - The submission text reaches the assessor only as data, never as instructions.
 5. Optional: from the proposal choose "Read the call", then "Read the Guide for Applicants". Section 5, "How to apply", explains the pre-submission check, and section 6 explains how reviewers use AI.
 
+## Fast flow: criteria and the early decision (4 minutes)
+
+One live chain: the criteria the call drafter writes are the ones the coordinator applies. Details are in `fast-flow.md`.
+
+1. On `/demo`, under "Scenes", choose **fast_flow** on the line "Fast flow (criteria and the early decision)". The programme is active, and call 1 is in DRAFT. No proposal exists yet.
+2. "Sign in as Call drafter D1". On Home choose "Knock-out criteria of programme 1". Edit the criteria in the text boxes, or choose "Add an item to Knock-out criteria (P-09)" for a new one. Then choose "Save the knock-out criteria". The page reads "The knock-out criteria are saved. The next call a programme manager publishes freezes them (I-12)."
+3. "Sign in as Programme manager M1". Home, "Programme set-up of programme 1", then "Open approval and publication". Call 1 is listed as DRAFT, and its number is filled in. Choose "Approve the publication of this call", then "Publish this call" and "Confirm". The page reads "Published. The call is PUBLISHED."
+4. Back on `/demo`, choose "Submit the synthetic proposals to call 1". Proposals 1001, 1002 and 1003 are submitted by their leads, who now appear under "People of this scene".
+5. "Sign in as Coordinator C1". Choose the line "Your mailbox: … waiting for you" on Home, or "Mailbox" in the top bar. Then choose "Check the knock-out criteria of new proposals in call 1". In the intake queue choose "Declare for proposal 1002", then "No, I have no conflict of interest" and "Record my declaration". Choose "Go to the knock-out check of proposal 1002".
+6. The criteria D1 wrote appear by their text, in order. Mark the first "Fails" and the others "Passes". "Record the knock-out check" without a reason is refused: "Enter the reason the proposal fails." Type a reason in "Reason for a failed criterion" and record again. The state becomes INELIGIBLE.
+7. Optional: do the same for proposal 1001 with every criterion "Passes". It stays SUBMITTED until its reviewers are assigned and declared, as in section 3.
+8. On `/demo`, "Sign in as" the lead listed by the address `synthetic-lead-z…@e2e.invalid`. Home, "Your proposal: Synthetic closed protocol bridge". The page shows "Not eligible" and "Reason recorded by the FSTP coordinator:" with the reason C1 typed.
+9. On `/demo`, wait about 5 seconds and choose "Refresh this page". Under "Mail through the dispatcher", open the "raw message" of the template `proposal-outcome`. It names proposal 1002 and links to `/app/proposals/1002`.
+10. Point out:
+    - Separation of duties: D1 writes the criteria, and C1 applies them. No person may hold both roles in one programme (SoD-01). D1 cannot approve the call, and M1 approves it (R-PC-03).
+    - The criteria are frozen when the call is published, so the check uses exactly the published criteria (I-12).
+    - The reason is recorded with the decision, and the applicant reads it on the platform (R-EV-01).
+    - The mail carries ids, a time and a link only, never the reason or the criteria (I-27).
+
 ## 3. Review with conflict checks and AI findings (4 minutes)
 
 1. Choose the review scene **stage1**, then "Sign in as Committee member R1".

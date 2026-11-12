@@ -97,6 +97,9 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
     if let Some(r) = crate::maildemo::route(&req) {
         return r;
     }
+    if let Some(r) = scenario::fastflow::route(site, &req).await {
+        return r;
+    }
     let path = req.target.path().to_owned();
     let done = match path.as_str() {
         "/demo" | "/demo/" => return page(site),
@@ -316,7 +319,7 @@ pub(crate) fn what_they_can_do(inner: &Inner, account: AccountId) -> String {
                     "Programme manager: the board of each published call of the programme.".to_owned()
                 }
             }
-            Role::CallDrafter => "Call drafter: the call boards of the programme.".to_owned(),
+            Role::CallDrafter => "Call drafter: the knock-out criteria of the programme on its Home page, and its call boards.".to_owned(),
             Role::FstpCoordinator => {
                 "FSTP coordinator: the intake queue and the board of each published call.".to_owned()
             }
@@ -624,7 +627,7 @@ Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refr
 <h2>Messages the cell sent</h2>\n<p>An email from the platform carries ids, a time and one link into the platform, never proposal content (I-27). Inside, each person's Mailbox (top bar, and the line on their home page) lists the same work and links to where it happens.</p>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\
 <p>Review: {review}</p>\n<p>Applicant: {applicant}</p>\n\
-<p>Grant (post-grant lifecycle): {grant}</p>\n\
+<p>Grant (post-grant lifecycle): {grant}</p>\n{fast}\
 <p><a href=\"/demo/reset\">Reset</a> (an empty cell and its first tenant admin)</p>\n\
 <p>Clock: <a href=\"/demo/advance?minutes=60\">+60 minutes</a> <a href=\"/demo/advance?minutes=1440\">+1 day</a></p>\n\
 <p>Grant clock: {clocks}</p>\n\
@@ -632,6 +635,7 @@ Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refr
 {mailbox}\
 </main>\n</body></html>\n",
         name = esc(site.info.name),
+        fast = scenario::fastflow::links_html(),
     );
     let mut r = Response::with_body(
         StatusCode::OK,
