@@ -693,7 +693,20 @@ impl Ghost {
         let Some(p) = self.programmes.get(&v.programme) else {
             return Ok(Verdict::Refuse);
         };
-        if !self.holds(who, v.programme, Role::ProgrammeManager)
+        // The roles table: the programme manager sets policy parameters,
+        // and the call drafter writes the knock-out criteria, so a call
+        // drafter may author a version whose only change is P-09.
+        let knock_outs_only = self.head(v.programme).is_some_and(|h| {
+            let mut rest = v.frozen.clone();
+            rest.p09 = h.frozen.p09.clone();
+            v.frozen.p09 != h.frozen.p09
+                && rest == h.frozen
+                && v.live == h.live
+                && v.currency == h.currency
+        });
+        let editor = self.holds(who, v.programme, Role::ProgrammeManager)
+            || (knock_outs_only && self.holds(who, v.programme, Role::CallDrafter));
+        if !editor
             || p.head != base
             || v.parent != Some(base)
             || self.version_taken(v.id)

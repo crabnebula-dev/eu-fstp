@@ -3836,6 +3836,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
       "role": { schema: { kind: "enum", values: ["lead", "member", "guardian"] }, optional: false },
       "title": { schema: { kind: "string" }, optional: true },
+      "knock_out_reason": { schema: { kind: "string" }, optional: true },
     },
   } },
   "proposal.view": {
@@ -3846,6 +3847,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
       "role": { schema: { kind: "enum", values: ["lead", "member", "guardian"] }, optional: false },
       "title": { schema: { kind: "string" }, optional: true },
+      "knock_out_reason": { schema: { kind: "string" }, optional: true },
     },
   },
   "me.assignments": { kind: "array", items: {

@@ -218,7 +218,7 @@ function copyForm(f: Frame, p: ProposalInfo): HTMLElement {
  * held in IRC_REVIEW (I-18) needs a hold member that `proposal.view`
  * does not carry, so this page shows none for it.
  */
-function outcomePanel(state: ProposalState): HTMLElement[] {
+function outcomePanel(state: ProposalState, reason = ""): HTMLElement[] {
   const key =
     state === "INELIGIBLE"
       ? "ineligible"
@@ -236,6 +236,10 @@ function outcomePanel(state: ProposalState): HTMLElement[] {
       h("h2", { id: "proposal-outcome-heading" }, [t(`outcome.${key}.title`)]),
       h("p", { class: "state-name" }, [t("outcome.formal", { state })]),
       h("p", {}, [t(`outcome.${key}.text`)]),
+      // O-54: an INELIGIBLE proposal shows the recorded knock-out reason.
+      ...(key === "ineligible" && reason !== ""
+        ? [h("p", { id: "proposal-knock-out-reason" }, [t("outcome.ineligible.reason", { reason })])]
+        : []),
       ...(key === "deferred" ? [] : [h("p", {}, [h("a", { href: APP.calls }, [t("outcome.other_calls")])])]),
     ]),
   ];
@@ -268,7 +272,7 @@ export function mountProposal(id: string, done?: string): void {
       h("span", { class: "state-name" }, [p.state]),
     ]);
     // R-JV-01: the progress map and the activity log of the proposal.
-    f.main.append(title, state, journeyNav(p.proposal), ...outcomePanel(p.state));
+    f.main.append(title, state, journeyNav(p.proposal), ...outcomePanel(p.state, p.knockOutReason));
     if (p.call !== undefined) {
       f.main.append(h("p", {}, [h("a", { href: APP.call(p.call) }, [t("proposal.call_link")])]));
     }

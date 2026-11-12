@@ -26,7 +26,7 @@ import { readPreview, readProposals, type Draft, type ProposalRow, type Report }
 import { anyObject, call, report } from "../creator/ops.js";
 import { PATHS, link, loadDraft, loadReport } from "../creator/pages/common.js";
 import { readMyRoles, type MyRoles } from "../home/model.js";
-import { readCallState, readImpact, programmeCalls, stepStates, type CallRow } from "./model.js";
+import { mayApproveCalls, readCallState, readImpact, readWaitingCalls, programmeCalls, stepStates, type CallRow } from "./model.js";
 import {
   STUDIO_PATHS,
   activationPanel,
@@ -182,7 +182,24 @@ export function mountApproval(p: string): void {
       const controls = callControls();
       wire(controls);
       const rows = await callRows(programmeCalls(roles, p));
-      calls.replaceWith(callsPanel(roles, p, rows, (c) => roles.titles.get(c) ?? callName(c), controls.root));
+      const panel = callsPanel(roles, p, rows, (c) => roles.titles.get(c) ?? callName(c), controls.root);
+      calls.replaceWith(panel);
+      // Lane m4/fast-flow: the calls waiting for their approval or
+      // publication, from `call.list`, so a programme manager reaches a
+      // DRAFT call by clicking. The first one fills in the call number.
+      if (mayApproveCalls(roles, p)) {
+        const w = await call("call.list", [p], undefined, (v) => readWaitingCalls(v) !== null);
+        const waiting = w.kind === "done" ? (readWaitingCalls(w.body) ?? []) : [];
+        const list = panel.querySelector("#seal-call-list");
+        for (const c of waiting) {
+          list?.append(h("li", { "data-call": c.call, "data-state": c.state }, [t.label("studio.calls.waiting", { call: callName(c.call), state: c.state })]));
+        }
+        const first = waiting[0];
+        if (first !== undefined && controls.number instanceof HTMLInputElement && controls.number.value === "") {
+          controls.number.value = first.call;
+          controls.root.prepend(h("p", { "data-note": "prefilled" }, [t.label("studio.calls.prefilled")]));
+        }
+      }
     }
     if (d !== null) ready(main);
   })();

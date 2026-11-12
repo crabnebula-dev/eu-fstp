@@ -36,6 +36,7 @@ export const STUDIO_PATHS = {
   overview: (p: string): string => `/app/programmes/${p}/studio`,
   approval: (p: string): string => `/app/programmes/${p}/studio/approval`,
   guide: (p: string): string => `/app/programmes/${p}/studio/guide`,
+  knockOuts: (p: string): string => `/app/programmes/${p}/studio/knock-outs`,
 } as const;
 
 /** The creator step page of `step` (`creator/pages/common.ts` `PATHS.step`). */

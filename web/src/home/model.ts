@@ -243,6 +243,7 @@ export type WorkKind =
   | "onboarding"
   | "creator"
   | "studio"
+  | "knock-outs"
   | "approvals"
   | "people"
   | "grant"
@@ -345,6 +346,7 @@ export const WORK_PATHS = Object.freeze({
   approvals: "/app/admin/approvals",
   creator: (p: string): string => `/app/programmes/${p}/creator/review`,
   studio: (p: string): string => `/app/programmes/${p}/studio`,
+  knockOuts: (p: string): string => `/app/programmes/${p}/studio/knock-outs`,
   people: (p: string): string => `/app/programmes/${p}/people`,
   board: (c: string): string => `/app/calls/${c}/board`,
   intake: (c: string): string => `/app/calls/${c}/intake`,
@@ -495,6 +497,12 @@ export function workOf(
   const rounds = r.rounds.filter((x) => committeeCalls.includes(x.call)).sort((a, b) => byId(a.round, b.round));
   for (const x of rounds) {
     add("committee", "cut-off-round", WORK_PATHS.round(x.round), text("home.work.round", { call: nameOf(x.call) }));
+  }
+  // The roles table: the call drafter writes the knock-out criteria
+  // (lane m4/fast-flow). Every programme a role is granted in is active,
+  // and every active programme has its creator draft (D2e).
+  for (const p of programmes(holds("call_drafter"))) {
+    add("programme", "knock-outs", WORK_PATHS.knockOuts(p), text("home.work.knock_outs", { programme: p }));
   }
   // J1, J3: the call boards of the programme staff.
   for (const c of callsOf([...holds("programme_manager"), ...holds("call_drafter")])) {

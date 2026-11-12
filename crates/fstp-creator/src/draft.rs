@@ -352,14 +352,19 @@ pub fn draft_view(
     let draft = creator.draft(programme)?;
     let head = fstp_domain::policy::head(core, programme)?;
     let profile = profile_of(draft).ok();
-    let spec = crate::guide::draft_spec(
-        creator,
-        programme,
-        draft,
-        head,
-        &draft.set_fields(),
-        profile.as_ref(),
-    );
+    // An active programme's head policy is its policy, so every policy
+    // field reads from the head there, saved through the creator or not
+    // (lane m4/fast-flow: the knock-out criteria of an active programme).
+    let mut set = draft.set_fields();
+    if draft.active().is_some() {
+        set.extend(
+            FIELDS
+                .iter()
+                .filter(|f| f.kind == FieldKind::Policy)
+                .map(|f| f.id),
+        );
+    }
+    let spec = crate::guide::draft_spec(creator, programme, draft, head, &set, profile.as_ref());
     let spec = fstp_json::parse(fstp_programme::encode_spec(&spec).as_bytes()).ok()?;
     let pending_narratives = FIELDS
         .iter()
@@ -444,6 +449,29 @@ pub fn pending_wording(creator: &CreatorState, programme: ProgrammeId) -> Option
         }),
         _ => None,
     }
+}
+
+/// The P-09 wording a person typed into a manual save, when `edit` is a
+/// P-09 edit that holds at least one inline text (lane m4/fast-flow). The
+/// shell stores each inline text as a public text (ADR-007) and saves the
+/// criteria with each text named by its reference, through
+/// [`PendingWording::accept`], with manual provenance. The ledger body
+/// never holds the wording.
+pub fn manual_wording(edit: &FieldEdit) -> Option<PendingWording> {
+    if edit.field != FieldId::P09 || edit.provenance != Provenance::Manual {
+        return None;
+    }
+    let FieldValue::P09(k) = &edit.value else {
+        return None;
+    };
+    let inline = k
+        .items()
+        .iter()
+        .any(|x| matches!(x.text, Narrative::Inline(_)));
+    inline.then(|| PendingWording {
+        items: k.items().to_vec(),
+        provenance: Provenance::Manual,
+    })
 }
 
 impl PendingWording {

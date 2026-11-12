@@ -334,6 +334,8 @@ const OWN_PROPOSAL: Shape = Shape::Object(&[
     m("state", Shape::Enum(OWN_STATE_NAMES)),
     m("role", Shape::Enum(&["lead", "member", "guardian"])),
     opt("title", Shape::String),
+    // O-54: an INELIGIBLE proposal shows the recorded knock-out reason.
+    opt("knock_out_reason", Shape::String),
 ]);
 
 /// One of the caller's assignments, with no applicant identity (I-17).

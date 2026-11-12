@@ -10,6 +10,7 @@ import { mount as review } from "./pages/review.js";
 import { mountNew, mountStart } from "./pages/start.js";
 import { mount as step } from "./pages/step.js";
 import { mountApproval, mountGuide, mountOverview } from "../studio/pages.js";
+import { mountKnockOuts } from "../studio/knockouts.js";
 
 /** A route and the page it mounts. */
 export interface PageRoute extends RouteDef {
@@ -48,6 +49,12 @@ export const CREATOR_ROUTES: readonly PageRoute[] = [
     pattern: "/app/programmes/{programme}/studio/guide",
     segments: programme,
     mount: (p) => mountGuide(p["programme"] ?? ""),
+  },
+  {
+    name: "studio.knock_outs",
+    pattern: "/app/programmes/{programme}/studio/knock-outs",
+    segments: programme,
+    mount: (p) => mountKnockOuts(p["programme"] ?? ""),
   },
   {
     name: "creator.imports",

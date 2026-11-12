@@ -111,6 +111,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.work.creator_new": "Open a new programme draft",
   "home.work.approvals": "Approvals waiting for a tenant admin",
   "home.work.studio": "Programme set-up of programme {programme}",
+  "home.work.knock_outs": "Knock-out criteria of programme {programme}",
   "home.work.creator": "Validation report of programme {programme}",
   "home.work.people": "People and invitations of programme {programme}",
   "home.work.board": "Call board of {call}",

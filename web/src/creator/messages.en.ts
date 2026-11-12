@@ -169,6 +169,21 @@ const LABELS: Readonly<Record<string, string>> = {
   "studio.guide.title": "Guide for Applicants preview",
   "studio.guide.intro": "This preview is built from the draft values. Placeholders without a value are marked (R-GA-01).",
   "studio.back": "Back to programme set-up",
+  // Lane m4/fast-flow: the knock-out criteria, written by the call drafter.
+  "studio.knock_outs.title": "Knock-out criteria",
+  "studio.knock_outs.programme": "Programme {programme}",
+  "studio.knock_outs.intro":
+    "Write each knock-out criterion as one plain sentence. A proposal that fails any criterion receives no further review (R-EV-01).",
+  "studio.knock_outs.separation":
+    "You write the criteria. The FSTP coordinator applies them to each submitted proposal. No person may hold both roles in one programme (SoD-01).",
+  "studio.knock_outs.save": "Save the knock-out criteria",
+  "studio.knock_outs.saving": "Saving the knock-out criteria.",
+  "studio.knock_outs.saved": "The knock-out criteria are saved.",
+  "studio.knock_outs.saved_active":
+    "The knock-out criteria are saved. The next call a programme manager publishes freezes them (I-12).",
+  "studio.knock_outs.home": "Back to Home",
+  "studio.calls.waiting": "{call}: {state}",
+  "studio.calls.prefilled": "The number of the first call waiting for its approval or publication is filled in.",
 
   // Template narrative (TH-49).
   "creator.narrative.pending":

@@ -2670,7 +2670,9 @@ mod read_rules_over_built_states {
         COORDINATOR, DraftSpec, L1, PR1, R1, ReviewSetup, declare, machine_judges, review_truth,
         run_records, scenario_from,
     };
-    use fstp_domain_testkit::r#gen::roster::{ADMIN, P1, STAFF_PM, SodSetup, T0, call};
+    use fstp_domain_testkit::r#gen::roster::{
+        ADMIN, P1, STAFF_DRAFTER, STAFF_PM, SodSetup, T0, call,
+    };
     use fstp_domain_testkit::scenario::Scenario;
     use fstp_engine::EngineState;
 
@@ -2917,7 +2919,9 @@ mod read_rules_over_built_states {
     }
 
     /// R-PG-01, I-65: the draft reads open to the programme's manager and to
-    /// tenant admins, and to no Judging role.
+    /// tenant admins, and to no Judging role. The call drafter, who writes
+    /// the knock-out criteria (roles table), reads the draft that holds
+    /// them, and no other draft read (lane m4/fast-flow).
     #[test]
     fn r_pg_01_draft_reads_open_to_managers_and_admins() {
         let s = submitted();
@@ -2930,6 +2934,12 @@ mod read_rules_over_built_states {
         let reviewer = web(R1, LoginMethod::Passkey, &[], st);
         assert_eq!(
             read(ReadKind::GetDraft, target, &reviewer, st),
+            Err(DenyRule::Rac01)
+        );
+        let drafter = web(STAFF_DRAFTER, LoginMethod::Passkey, &[], st);
+        assert_eq!(read(ReadKind::GetDraft, target, &drafter, st), Ok(()));
+        assert_eq!(
+            read(ReadKind::GetReport, target, &drafter, st),
             Err(DenyRule::Rac01)
         );
         let elsewhere = ReadTarget::Programme(ProgrammeId::from_raw(4_242));
