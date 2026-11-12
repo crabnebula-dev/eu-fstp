@@ -113,7 +113,7 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - A reviewer opening the grant page (`/app/grants/1001`) after negotiation is refused with R-AC-01. Go through "Payment requests to review" and Operations instead.
 - In the SENT scene the grant page no longer offers "Accept the amount", because the contract exists. Go to "Contract of proposal 1001".
 - The first release in step 7.4 shows no "Confirm" dialog, because the hold refuses it first. Only the second release asks for "Confirm".
-- The programme manager's programme set-up pages (creator review) fail on the contract preview, which is not built yet. Stay on the call board and the people page for M1.
+- The programme manager's programme set-up pages (creator review) fail on the contract preview, which is not built yet. Stay on the call board for M1.
 - The report approver F2 must open the collapsed field and type programme number 1. Auditor A1 has a direct link instead.
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
