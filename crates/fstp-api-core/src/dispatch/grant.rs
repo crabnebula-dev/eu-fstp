@@ -1005,8 +1005,8 @@ fn instant(op: &Op, name: &str) -> Result<Timestamp, ApiError> {
 
 /// `report.generate` (R-RP-04, I-44): one output of the Horizon Europe
 /// profile from a snapshot of the core ledger. A mismatch fails
-/// generation with I-44. Interim: the open call package waits for the
-/// stored Guide bytes to reach this core.
+/// generation with I-44. The open call package takes the stored Guide of
+/// the call from the ledger state (R-RP-04, I-48, I-53).
 async fn generate<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
@@ -1037,6 +1037,8 @@ async fn generate<P: Seams>(
     let snap = snapshot(call)?;
     let identifier;
     let periods;
+    let parts;
+    let package;
     let request = match kind {
         fstp_report::ReportKind::CallPublicationRecord => {
             let c = call_id()?;
@@ -1061,9 +1063,19 @@ async fn generate<P: Seams>(
             }
         }
         fstp_report::ReportKind::OpenCallPackage => {
-            return Err(ApiError::NotImplemented(
-                "the open call package: the stored Guide bytes and package parts reach this core in a later lane",
-            ));
+            let c = call_id()?;
+            parts = package_parts(&call.state, c)?;
+            package = fstp_report::PackageInputs {
+                guide: parts.guide.as_bytes(),
+                proposal_form: &parts.proposal_form,
+                contract_template: &parts.contract_template,
+                data_protection: &parts.data_protection,
+                privacy_statement_url: &parts.privacy_url,
+            };
+            fstp_report::Request::OpenCallPackage {
+                call: c,
+                package: &package,
+            }
         }
     };
     let output = fstp_report::generate(&snap, &request).map_err(|e| match e {
@@ -1084,6 +1096,55 @@ async fn generate<P: Seams>(
         seq,
         ReadModel::Created(vec![("report", report.raw())]),
     ))
+}
+
+/// The parts of the open call package, owned (R-RP-04, I-48).
+struct PackageParts {
+    guide: String,
+    proposal_form: Vec<fstp_pdf::Block>,
+    contract_template: Vec<fstp_pdf::Block>,
+    data_protection: Vec<fstp_pdf::Block>,
+    privacy_url: String,
+}
+
+fn para(text: impl Into<String>) -> fstp_pdf::Block {
+    fstp_pdf::Block {
+        kind: fstp_pdf::BlockKind::Paragraph,
+        text: text.into(),
+    }
+}
+
+/// The stored Guide of `call` with the parts the package adds. The data
+/// protection notice and the privacy statement address are the ones the
+/// Guide stored at publication (R-GA-01, I-53). The proposal form and the
+/// contract template are the same skeletons the contract draft uses.
+fn package_parts(state: &EngineState, call: CallId) -> Result<PackageParts, ApiError> {
+    let stored = fstp_domain::programme::stored_guide(&state.core, call).ok_or_else(not_found)?;
+    let canonical = stored.canonical().to_owned();
+    let content = fstp_report::read_canonical(canonical.as_bytes())
+        .map_err(|_| ApiError::refused(ErrorCode::Refused, "R-RP-04"))?;
+    let privacy_url = content
+        .value("funder.privacy_statement_url")
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let summary = content.value("gdpr.notice_summary").unwrap_or_default();
+    Ok(PackageParts {
+        guide: canonical,
+        proposal_form: vec![para(
+            "Proposal form: title, summary, team, plan and milestones, budget lines.",
+        )],
+        // TODO(legal): the clause texts come from the signed grant
+        // agreement and legal review (`contracts.md`, I-49).
+        contract_template: vec![
+            para("Sub-grant agreement: granted amount, agreed plan version."),
+            para("Clause texts pending legal review."),
+        ],
+        data_protection: vec![para(format!(
+            "{summary} Portal Privacy Statement: {privacy_url}"
+        ))],
+        privacy_url,
+    })
 }
 
 /// `report.approve`: a Financial signatory who did not generate the

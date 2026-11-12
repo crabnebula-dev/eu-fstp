@@ -57,6 +57,7 @@ const MAX_STEPS: usize = 400;
 type Staged = <SmtpTransport<TokioRuntime> as Transport>::Staged;
 
 /// One message the cell composed, with what the demo page shows.
+#[derive(Clone)]
 struct Item {
     outbox: [u8; 16],
     to: String,
@@ -67,8 +68,11 @@ struct Item {
 
 /// The mirror, the delivery log and the worker of one cell state.
 struct Mail {
-    /// Which cell state this mirror follows (`Arc` address).
-    inner: usize,
+    /// The cell state this mirror follows. The mirror holds the `Arc`, so
+    /// the allocator cannot give its address to a later cell state: a
+    /// pointer compare would then take a new scene for the old one and
+    /// the mail of the new scene would never be mirrored.
+    inner: Arc<Inner>,
     state: CellState,
     entries: Vec<Entry<CellRecord>>,
     seen: usize,
@@ -92,11 +96,35 @@ impl Source for Raw<'_> {
     }
 }
 
+/// Whether `held` and `now` are one cell state. `held` keeps its state
+/// alive, so equal addresses mean one state (I-27 demo, mail spec flake).
+fn same_state<T>(held: &Arc<T>, now: &Arc<T>) -> bool {
+    Arc::ptr_eq(held, now)
+}
+
 /// The running demo mail: the sink, the runtime and the mirror.
 pub(crate) struct MailDemo {
     rt: TokioRuntime,
     sink: SmtpSink,
+    /// The mirror. Only the tick thread locks it, and it holds the lock
+    /// across the SMTP exchange. A request handler runs on a runtime
+    /// worker and never touches it: a handler blocked here would stop
+    /// the worker that turns the I/O driver, and the exchange that the
+    /// lock holder waits for would never finish.
     mail: Mutex<Option<Mail>>,
+    /// What the demo page reads, published by the tick after each step.
+    /// Its lock is never held across I/O.
+    view: Mutex<Option<View>>,
+}
+
+/// A snapshot of the mirror for the demo page.
+struct View {
+    inner: Arc<Inner>,
+    base: usize,
+    items: Vec<(Item, String)>,
+    broken: Option<String>,
+    seen: usize,
+    skipped: usize,
 }
 
 static DEMO: OnceLock<Arc<MailDemo>> = OnceLock::new();
@@ -114,6 +142,7 @@ pub(crate) fn start(rt: &TokioRuntime, sites: Vec<Arc<Site>>) -> Result<(), Stri
         rt: rt.clone(),
         sink,
         mail: Mutex::new(None),
+        view: Mutex::new(None),
     });
     let _ = DEMO.set(Arc::clone(&demo));
     let _ = std::thread::Builder::new()
@@ -131,7 +160,7 @@ pub(crate) fn start(rt: &TokioRuntime, sites: Vec<Arc<Site>>) -> Result<(), Stri
 
 fn fresh(inner: &Arc<Inner>, base: usize) -> Mail {
     Mail {
-        inner: Arc::as_ptr(inner) as usize,
+        inner: Arc::clone(inner),
         state: CellState::genesis(),
         entries: Vec::new(),
         seen: 0,
@@ -254,18 +283,28 @@ impl MailDemo {
     fn tick(&self, site: &Site) {
         let inner = site.inner();
         let mut guard = lock(&self.mail);
-        let now_inner = Arc::as_ptr(&inner) as usize;
-        if guard.as_ref().is_none_or(|m| m.inner != now_inner) {
+        if guard.as_ref().is_none_or(|m| !same_state(&m.inner, &inner)) {
             let base = self.sink.messages().len();
             *guard = Some(fresh(&inner, base));
         }
         let Some(m) = guard.as_mut() else { return };
-        if m.broken.is_some() {
-            return;
-        }
-        if let Err(e) = self.step(site, &inner, m) {
+        if m.broken.is_none()
+            && let Err(e) = self.step(site, &inner, m)
+        {
             m.broken = Some(e);
         }
+        *lock(&self.view) = Some(View {
+            inner: Arc::clone(&m.inner),
+            base: m.base,
+            items: m
+                .items
+                .iter()
+                .map(|i| (i.clone(), phase_of(m, &i.outbox)))
+                .collect(),
+            broken: m.broken.clone(),
+            seen: m.seen,
+            skipped: m.skipped.len(),
+        });
     }
 
     fn step(&self, site: &Site, inner: &Inner, m: &mut Mail) -> Result<(), String> {
@@ -394,20 +433,16 @@ fn rows(inner: &Arc<Inner>, email: Option<&str>) -> String {
     let Some(demo) = DEMO.get() else {
         return String::new();
     };
-    let guard = lock(&demo.mail);
-    // A scene change leaves the mirror of the old state until the next tick.
-    let Some(m) = guard
-        .as_ref()
-        .filter(|m| m.inner == Arc::as_ptr(inner) as usize)
-    else {
+    let guard = lock(&demo.view);
+    // A scene change leaves the view of the old state until the next tick.
+    let Some(m) = guard.as_ref().filter(|m| same_state(&m.inner, inner)) else {
         return String::new();
     };
     let mut out = String::new();
-    for i in &m.items {
+    for (i, phase) in &m.items {
         if email.is_some_and(|e| e != i.to) {
             continue;
         }
-        let phase = phase_of(m, &i.outbox);
         let (when, link, subject) = match sink_index(demo, i, m.base) {
             Some(n) => {
                 let s = demo.sink.messages();
@@ -428,7 +463,7 @@ fn rows(inner: &Arc<Inner>, email: Option<&str>) -> String {
             .unwrap_or(&i.to);
         out.push_str(&format!(
             "<li data-demo-mail data-phase=\"{p}\">{subject} to {who}, template {t}, event {e}, delivery <strong>{p}</strong>, sink time {when} ms {link}</li>\n",
-            p = esc(&phase),
+            p = esc(phase),
             subject = esc(&subject),
             who = esc(who),
             t = esc(&i.template),
@@ -454,23 +489,23 @@ pub(crate) fn section_html(inner: &Arc<Inner>) -> String {
     let status = DEMO
         .get()
         .map(|d| {
-            lock(&d.mail)
+            lock(&d.view)
                 .as_ref()
-                .filter(|m| m.inner == Arc::as_ptr(inner) as usize)
+                .filter(|m| same_state(&m.inner, inner))
                 .and_then(|m| m.broken.clone())
         })
         .unwrap_or(None);
     let stats = DEMO
         .get()
         .and_then(|d| {
-            lock(&d.mail)
+            lock(&d.view)
                 .as_ref()
-                .filter(|m| m.inner == Arc::as_ptr(inner) as usize)
+                .filter(|m| same_state(&m.inner, inner))
                 .map(|m| {
                     format!(
                         "{} ledger entries followed ({} skipped), {} messages composed",
                         m.seen,
-                        m.skipped.len(),
+                        m.skipped,
                         m.items.len()
                     )
                 })
@@ -532,4 +567,25 @@ pub(crate) fn route(req: &Request) -> Option<Response> {
         "default-src 'none'; frame-ancestors 'none'",
     );
     Some(r)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A mirror that holds its cell state never mistakes a later state for
+    /// it, however the allocator reuses addresses (the cause of the
+    /// `i27_irc_concern_mail_holds_ids_and_a_link_only` flake: a scene
+    /// chosen twice within one tick got the freed address of an older one).
+    #[test]
+    fn i27_mirror_never_mistakes_a_new_scene_for_the_old_one() {
+        for _ in 0..1_000 {
+            let held = Arc::new([0_u8; 64]);
+            let older = Arc::new([0_u8; 64]);
+            drop(older);
+            let now = Arc::new([0_u8; 64]);
+            assert!(!same_state(&held, &now));
+            assert!(same_state(&held, &Arc::clone(&held)));
+        }
+    }
 }

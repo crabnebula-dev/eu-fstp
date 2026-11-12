@@ -90,6 +90,14 @@ fn action_of(p: &VerificationPurpose) -> Option<(&'static str, &'static str)> {
         VerificationPurpose::BankView(_) => {
             ("Payee of the released payment", "Mark the payee as viewed")
         }
+        VerificationPurpose::HardshipEvidence(_) => (
+            "Submit the hardship evidence",
+            "Submit synthetic hardship evidence",
+        ),
+        VerificationPurpose::HardshipVerification(_) => (
+            "Verify the hardship evidence",
+            "Verify the hardship evidence",
+        ),
         _ => return None,
     })
 }
@@ -157,6 +165,10 @@ pub(crate) fn vault_read(inner: &Inner, req: &Request) -> Option<Response> {
                 VerificationPurpose::BankDetails(g) => t.write_bank(g, now),
                 VerificationPurpose::BankVerification(g) => t.verify_bank(g),
                 VerificationPurpose::BankDispute(g) => t.dispute_bank(g, true),
+                // R-PR-04: the reference is the one the seed filed.
+                VerificationPurpose::HardshipVerification(g) => {
+                    t.verify_hardship(g, crate::scenario::postgrant::hardship_evidence(g));
+                }
                 _ => {}
             });
             Some(wire::json(StatusCode::OK, &wire::obj(vec![])))

@@ -20,12 +20,11 @@
 //! | `IN_EXECUTION` | the clock passed the first milestone start, x is IN_EXECUTION |
 //! | `UNDER_REVIEW` | the lead requested payment of milestone 1 with deliverable evidence, the checks passed |
 //! | `PAID` | line accepted, approved, released after the bank hold and confirmed paid |
-//! | `ALL_CLOSED` | the milestone closed, x COMPLETED, four funder outputs generated and approved |
+//! | `ALL_CLOSED` | the milestone closed, x COMPLETED, five funder outputs generated and approved |
+//! | `HARDSHIP` | x IN_EXECUTION. The lead submitted a hardship request. Finance verifies the evidence on the vault page |
 //!
 //! Interim readings of this lane, logged in `docs/handoff/m5-demo.md`:
 //!
-//! - The open call package of R-RP-04 is not generated: the API core
-//!   answers 501 until the stored Guide bytes reach it.
 //! - Checks run in the pump of the demo cell (`crate::pump`), which
 //!   plays the checks runner against the fake forge.
 
@@ -131,10 +130,12 @@ pub(crate) enum GrantAt {
     UnderReview,
     Paid,
     AllClosed,
+    /// Not on the path to ALL_CLOSED: a branch from IN_EXECUTION.
+    Hardship,
 }
 
 /// The names of the scenes, in the order a grant lives.
-pub(crate) const SCENES: [&str; 7] = [
+pub(crate) const SCENES: [&str; 8] = [
     "NEGOTIATION_READY",
     "SENT",
     "EFFECTIVE",
@@ -142,6 +143,7 @@ pub(crate) const SCENES: [&str; 7] = [
     "UNDER_REVIEW",
     "PAID",
     "ALL_CLOSED",
+    "HARDSHIP",
 ];
 
 impl GrantAt {
@@ -154,6 +156,7 @@ impl GrantAt {
             "UNDER_REVIEW" => GrantAt::UnderReview,
             "PAID" => GrantAt::Paid,
             "ALL_CLOSED" => GrantAt::AllClosed,
+            "HARDSHIP" => GrantAt::Hardship,
             _ => return None,
         })
     }
@@ -175,6 +178,13 @@ struct Reached {
     contract: Option<String>,
     request: Option<String>,
     reports: Vec<(String, String)>,
+}
+
+/// The hardship evidence reference of grant x. The vault draws it in a
+/// production cell. The synthetic vault uses this one, so the seeded
+/// request and the vault page agree (R-PR-04).
+pub(crate) fn hardship_evidence(x: ProposalId) -> fstp_domain::id::HardshipEvidenceId {
+    fstp_domain::id::HardshipEvidenceId::from_raw(x.raw().saturating_add(8_000))
 }
 
 /// The first milestone start of proposal x.
@@ -395,6 +405,22 @@ pub(crate) fn request_body(x: ProposalId, release: &str) -> Value {
     ])
 }
 
+/// The hardship request of x: the milestone request with the hardship
+/// kind and its evidence reference.
+pub(crate) fn hardship_body(x: ProposalId, release: &str) -> Value {
+    let Value::Object(mut o) = request_body(x, release) else {
+        return request_body(x, release);
+    };
+    let _ = o.insert(
+        "kind",
+        obj(vec![
+            ("type", "Hardship".into()),
+            ("evidence", dec(hardship_evidence(x).raw())),
+        ]),
+    );
+    Value::Object(o)
+}
+
 /// Seeds `at` and returns what it reached.
 async fn seed_grant(seed: &mut Seeder<'_>, at: GrantAt) -> Result<Reached, String> {
     let mut reached = Reached::default();
@@ -418,6 +444,29 @@ async fn seed_grant(seed: &mut Seeder<'_>, at: GrantAt) -> Result<Reached, Strin
     seed.at(first_milestone_start().saturating_add(SECOND));
     sweep(seed)?;
     if at == GrantAt::InExecution {
+        return Ok(reached);
+    }
+    if at == GrantAt::Hardship {
+        // R-PR-04: the lead asks for the hardship ticket and files a
+        // hardship request that names the evidence. Finance verifies the
+        // evidence on the vault page. Only operations run here.
+        seed.api(
+            s.lead,
+            ApiMethod::Post,
+            &format!("/grants/{}/hardship-evidence", x.raw()),
+            &obj(vec![]),
+        )
+        .await?;
+        let v = seed
+            .api(
+                s.lead,
+                ApiMethod::Post,
+                &format!("/grants/{}/payment-requests", x.raw()),
+                &hardship_body(x, crate::pump::FORGE_RELEASE),
+            )
+            .await?;
+        reached.request = Some(member(&v, "request")?);
+        crate::pump::run_checks_now(seed.inner, Timestamp::from_micros(seed.now))?;
         return Ok(reached);
     }
     let v = seed
@@ -513,9 +562,8 @@ async fn seed_grant(seed: &mut Seeder<'_>, at: GrantAt) -> Result<Reached, Strin
     Ok(reached)
 }
 
-/// Generates the four funder outputs the API core builds, and has the
-/// Financial signatory approve each (R-RP-04, R-RP-03, I-44). The open
-/// call package waits for the stored Guide bytes (501).
+/// Generates the five funder outputs the API core builds, and has the
+/// Financial signatory approve each (R-RP-04, R-RP-03, I-44).
 async fn reports(seed: &mut Seeder<'_>) -> Result<Vec<(String, String)>, String> {
     let from = T_SETUP;
     let to = seed.now.saturating_add(DAY);
@@ -525,6 +573,7 @@ async fn reports(seed: &mut Seeder<'_>) -> Result<Vec<(String, String)>, String>
         "periodic_reporting_data",
         "audit_file",
         "deliverable_draft",
+        "open_call_package",
     ] {
         let mut body = vec![("kind", Value::from(kind)), ("call", dec(CALL.raw()))];
         if kind == "periodic_reporting_data" {
@@ -681,6 +730,7 @@ mod tests {
             (GrantAt::UnderReview, StateTag::InExecution),
             (GrantAt::Paid, StateTag::InExecution),
             (GrantAt::AllClosed, StateTag::Completed),
+            (GrantAt::Hardship, StateTag::InExecution),
         ];
         for (at, tag) in want {
             let (inner, v) = block_on(build(&info(), at)).unwrap_or_else(|e| panic!("{at:?}: {e}"));
@@ -697,14 +747,39 @@ mod tests {
                 .payments()
                 .summaries()
                 .any(|s| s.status == fstp_domain::payment::RequestStatus::Paid);
-            assert_eq!(paid, at >= GrantAt::Paid, "{at:?}");
+            assert_eq!(
+                paid,
+                at >= GrantAt::Paid && at != GrantAt::Hardship,
+                "{at:?}"
+            );
+            // R-PR-04: the hardship scene holds one hardship request, whose
+            // evidence the vault has not verified yet.
+            let hardship: Vec<_> = state
+                .core
+                .payments()
+                .summaries()
+                .filter(|s| s.hardship)
+                .collect();
+            assert_eq!(
+                hardship.len(),
+                usize::from(at == GrantAt::Hardship),
+                "{at:?}"
+            );
+            assert!(
+                !inner
+                    .ports
+                    .vault
+                    .truth()
+                    .hardship_verified(x, hardship_evidence(x)),
+                "{at:?}: finance verifies on the vault page"
+            );
             let reports = v
                 .get("reports")
                 .and_then(Value::as_array)
                 .map_or(0, |a| a.len());
             assert_eq!(
                 reports,
-                if at == GrantAt::AllClosed { 4 } else { 0 },
+                if at == GrantAt::AllClosed { 5 } else { 0 },
                 "{at:?}"
             );
         }
