@@ -47,9 +47,12 @@ import {
 
 const STATES = ["drafted", "sent", "signed_by_grantee", "effective", "amendment_pending", "superseded", "terminated"];
 
-function stateBadge(t: I18n, s: string): HTMLElement {
+/** The chip of a contract state: one translated label, the code kept hidden (I-96). */
+export function contractStateBadge(t: I18n, s: string): HTMLElement {
   return badge(STATES.includes(s) ? t.label(`contract.state.${s}`) : s, s);
 }
+
+const stateBadge = contractStateBadge;
 
 function versionSection(t: I18n, v: Version): HTMLElement {
   return section(`contract-version-${String(v.version)}`, t.label("contract.version", { n: String(v.version) }), [

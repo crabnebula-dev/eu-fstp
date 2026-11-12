@@ -57,6 +57,7 @@ export const FINDINGS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "pre.limit": "No check is left now.",
   "pre.remaining": "Checks left: {today} today on this proposal, {call} in this call, {account} across your drafts in this call.",
   "pre.next": "The next check is available from {at}.",
+  "pre.latest": "Latest check",
   "pre.runs": "Earlier checks",
   "pre.none": "No check has run on this draft yet.",
   "pre.run_heading": "Check of {at}",

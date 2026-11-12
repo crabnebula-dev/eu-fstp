@@ -144,8 +144,13 @@ function render(f: Frame, id: string, slot: HTMLElement, v: PrecheckView, status
     h("p", {}, [l("pre.intro")]),
     ...remaining(v),
     h("p", {}, [runBtn]),
-    h("h2", {}, [l("pre.runs")]),
-    ...(v.runs.length === 0 ? [h("p", { id: "precheck-none" }, [l("pre.none")])] : v.runs.map((r, i) => runSection(r, i === 0))),
+    ...(v.runs.length === 0
+      ? [h("h2", {}, [l("pre.runs")]), h("p", { id: "precheck-none" }, [l("pre.none")])]
+      : [
+          h("h2", { id: "precheck-latest-heading" }, [l("pre.latest")]),
+          runSection(v.runs[0] as PrecheckRun, true),
+          ...(v.runs.length > 1 ? [h("h2", {}, [l("pre.runs")]), ...v.runs.slice(1).map((r) => runSection(r, false))] : []),
+        ]),
   );
 }
 

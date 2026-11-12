@@ -13,7 +13,7 @@
 //   vault page.
 
 import { h, type Child } from "../core/dom.js";
-import type { I18n } from "../core/i18n.js";
+import type { I18n, Label } from "../core/i18n.js";
 import { frame, guarded, idRoute, readOp, selectEl, type JudgingPage } from "../reviewer/kit.js";
 import {
   GRANT_PATHS,
@@ -53,6 +53,39 @@ import {
 /** The state badge of a request: the plain label with the formal state beside it (I-96). */
 export function statusBadge(t: I18n, s: string): HTMLElement {
   return badge(t.label(`pay.status.${s}`), s);
+}
+
+/** The distinct milestone numbers of a request, in line order. */
+function milestonesOf(r: RequestRow): string[] {
+  return [...new Set(r.lines.map((l) => l.milestone))];
+}
+
+/**
+ * The human label of a payment request: its ordinal among the requests of
+ * the grant, when known, and the milestones it claims. The 64-bit
+ * reference stays in the address and in `requestReference`.
+ */
+export function requestLabel(t: I18n, r: RequestRow, ordinal: number | null): Label {
+  const ms = milestonesOf(r);
+  const m = ms.join(", ");
+  if (ordinal !== null) {
+    return ms.length === 0 ? t.label("pay.request.n", { n: String(ordinal) }) : t.label(ms.length === 1 ? "pay.request.n_ms1" : "pay.request.n_msN", { n: String(ordinal), m });
+  }
+  if (ms.length === 0) {
+    return t.label(r.kind === "hardship" ? "pay.request.hardship" : "pay.request.plain");
+  }
+  return t.label(ms.length === 1 ? "pay.request.ms1" : "pay.request.msN", { m });
+}
+
+/** The muted reference line of a request, for a person who needs the number. */
+function requestReference(t: I18n, r: RequestRow): HTMLElement {
+  return h("p", { class: "text-sm", id: "pay-reference" }, [t.label("pay.request.ref", { id: r.request })]);
+}
+
+/** The position (from 1) of `request` among `rows`, ordered by reference. */
+function ordinalOf(rows: readonly RequestRow[], request: string): number {
+  const ids = rows.map((x) => x.request).sort((a, b) => (a.length === b.length ? (a < b ? -1 : 1) : a.length - b.length));
+  return ids.indexOf(request) + 1;
 }
 
 function total(t: I18n, r: RequestRow): HTMLElement[] {
@@ -121,7 +154,7 @@ async function mountList(env: PageEnv, params: Readonly<Record<string, string>>)
             {},
             rows.map((x) =>
               h("tr", { "data-request": x.request, "data-status": x.status }, [
-                h("th", { scope: "row" }, [h("a", { href: GRANT_PATHS.payment(proposal, x.request) }, [t.label("pay.list.open", { id: x.request })])]),
+                h("th", { scope: "row" }, [h("a", { href: GRANT_PATHS.payment(proposal, x.request) }, [requestLabel(t, x, ordinalOf(rows, x.request))])]),
                 h("td", {}, [statusBadge(t, x.status)]),
                 h("td", {}, [t.label(`pay.kind.${x.kind}`)]),
                 h("td", {}, total(t, x)),
@@ -214,7 +247,7 @@ async function mountForm(env: PageEnv, params: Readonly<Record<string, string>>)
   const t = labels(env);
   const proposal = params["proposal"] ?? "";
   const resubmit = params["request"];
-  const f = frame(env, t, resubmit === undefined ? t.label("pay.form.title", { id: proposal }) : t.label("pay.resubmit.title", { id: resubmit }));
+  const f = frame(env, t, resubmit === undefined ? t.label("pay.form.title", { id: proposal }) : t.label("pay.resubmit.title"));
   await guarded(f, async () => {
     const o = await readOp(env, "grant.overview", { proposal }, (v): v is Overview => decodeOverview(v) !== null);
     const milestones = o.ok ? (decodeOverview(o.data)?.milestones ?? []) : [];
@@ -293,10 +326,11 @@ function simple(
 }
 
 function reviewSection(env: PageEnv, t: I18n, f: Frame, r: RequestRow, reload: () => Promise<void>): HTMLElement {
-  const forms = r.lines.map((l) => {
-    const approved = textField(`pay-review-amount-${l.line}`, t.label("pay.review.approved", { line: l.line }), { inputmode: "decimal", value: l.requested });
-    const reason = textField(`pay-review-reason-${l.line}`, t.label("pay.review.reason", { line: l.line }));
-    const submit = buttonEl(`pay-review-submit-${l.line}`, "submit", t.label("pay.review.submit", { line: l.line }));
+  const forms = r.lines.map((l, i) => {
+    const n = { line: String(i + 1), m: l.milestone };
+    const approved = textField(`pay-review-amount-${l.line}`, t.label("pay.review.approved", n), { inputmode: "decimal", value: l.requested });
+    const reason = textField(`pay-review-reason-${l.line}`, t.label("pay.review.reason", n));
+    const submit = buttonEl(`pay-review-submit-${l.line}`, "submit", t.label("pay.review.submit", n));
     const form = formEl(`pay-review-form-${l.line}`, [approved.root, reason.root, submit]);
     onSubmit(f, form, submit, async () => {
       f.clearAlert();
@@ -379,7 +413,7 @@ async function mountRequest(env: PageEnv, params: Readonly<Record<string, string
   const t = labels(env);
   const proposal = params["proposal"] ?? "";
   const id = params["request"] ?? "";
-  const f = frame(env, t, t.label("pay.detail.title", { id }));
+  const f = frame(env, t, t.label("pay.detail.title"));
   const render = async (): Promise<void> => {
     const res = await readOp(env, "payment.status", { proposal }, (v): v is readonly RequestRow[] => decodePayments(v) !== null);
     if (!res.ok) {
@@ -394,8 +428,10 @@ async function mountRequest(env: PageEnv, params: Readonly<Record<string, string
       return;
     }
     const roles = await rolesOrNull();
+    f.retitle(requestLabel(t, r, ordinalOf(decodePayments(res.data) ?? [], id)));
     const body: Child[] = [
       h("p", {}, [link(GRANT_PATHS.payments(proposal), t.label("pay.detail.back"))]),
+      requestReference(t, r),
       h("p", { id: "pay-status", "data-status": r.status }, [t.label("pay.detail.status"), ": ", statusBadge(t, r.status)]),
       facts([
         [t.label("pay.list.col_kind"), t.label(`pay.kind.${r.kind}`)],

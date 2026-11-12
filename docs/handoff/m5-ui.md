@@ -107,3 +107,16 @@ Branch `m5/reads`. It answers the three requests above and the lead's reviewer g
 - The narrowed direct and HTTP authorisation matrices agree with the reference for all four reads (`FSTP_MATRIX_OPS`).
 - `web/test/m5reads.test.ts` (R-AC-01, R-NF-03, R-PR-07, R-NG-03).
 - `e2e/speedrun/speedrun.ui.spec.ts`: the reviewer step now clicks to the determination form. Not run in this lane.
+
+## Polish: labels, decisions
+
+Lane `m5/polish-text`. Display text and chips only; no data flow or access logic changed.
+
+1. **State chip.** `badge()` in `web/src/grant/kit.ts` now shows one translated label. The formal code stays as visually hidden text (`state-name fstp-visually-hidden`, read as "(CODE)") and as `data-state` on the chip, so I-96 still holds for assistive technology and tests. Operations contract rows use the new `contractStateBadge`; Operations grant rows map proposal states through `kit.state.*`.
+2. **Payment request labels.** The 64-bit reference is no longer a label. Lists and the request page read "Payment request N for milestone M", where N is the position among the grant's requests ordered by reference. The Operations queue has no list, so it reads "Payment request for milestone M of proposal P". The request page shows a muted "Reference {id}" line. Line review fields read "Line N (milestone M)".
+3. **Determination.** The grant and reviewer pages read "Recorded" with a muted "Reference {id}".
+4. **Open by number.** The grant hub and Operations forms sit in a `details` disclosure. An empty submit moves focus to the field and shows no banner. A non-digit entry still shows the error.
+5. **Contract link.** "Contract of proposal {id}" on the grant page. Operations shows the same label with a state chip.
+6. **Pre-check.** The newest run is under "Latest check" (`#precheck-latest`); the rest are under "Earlier checks".
+7. **Reports.** Programmes now come from every role binding, since each binding names its programme. With exactly one, the link reads "Open the funder reports of your programme (programme N)". The number form moved into a disclosure. A tenant-wide Financial signatory with no binding at all still needs the number: no read lists programmes for them. Open question for Daniel.
+8. No test expectation was weakened. Two tests were added in `web/test/m5ui_pages.test.ts`.
