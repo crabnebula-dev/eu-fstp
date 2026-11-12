@@ -25,8 +25,10 @@
 //!   only that id. A draft slug made only of digits, or one that another
 //!   active programme's draft also names, names no programme, and its
 //!   programme is public under its id (`fstp_public::slug`).
-//! - No grantee choice record exists before M9, so the view is built with
-//!   no choice and shows no grant (Q11).
+//! - The grantee choices are folded from the core's `PublicChoiceSet` and
+//!   `PublicChoiceWithdrawn` records (`fstp_public::grant_choices`, M9
+//!   lane P1). Their texts are read through `get_public` like every other
+//!   text, so a withdrawal or a lower maximum shows on the next request.
 //!
 //! # Seams, each failing closed
 //!
@@ -119,8 +121,14 @@ async fn texts_of<P: Seams>(
     call: &Call<'_, P>,
     programme: ProgrammeId,
     identity: ProgrammeIdentity,
+    choices: &fstp_public::GrantChoices,
 ) -> PublicTexts {
     let mut ids: Vec<TextId> = Vec::new();
+    // M9 lane P1: the approved texts of every grantee choice. The view
+    // shows only those its filter admits.
+    for (_, c) in choices.iter() {
+        ids.extend([c.title, c.summary, c.grantee]);
+    }
     for (_, v) in call.state.core.calls().iter() {
         if v.programme() != programme || !v.is_open_at(call.now) {
             continue;
@@ -303,9 +311,11 @@ pub(super) async fn read<P: Seams>(
     let Some((programme, identity)) = programme_of(&call.state, slug) else {
         return Err(call.refuse(not_public()));
     };
-    let texts = texts_of(call, programme, identity).await;
-    let view = fstp_public::public_view(&call.state.core, programme, &texts, call.now)
-        .map_err(|e| call.refuse(refused(e)))?;
+    let choices = fstp_public::grant_choices(&call.state.core);
+    let texts = texts_of(call, programme, identity, &choices).await;
+    let view =
+        fstp_public::public_view_with(&call.state.core, programme, &texts, &choices, call.now)
+            .map_err(|e| call.refuse(refused(e)))?;
     let web = call.caller.via() == Via::Web && !op.from_tool;
     let sheet = super::brand_of(&call.state).map(|b| format!("/brand/{}.css", b.digest));
     let reply =

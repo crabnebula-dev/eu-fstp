@@ -47,6 +47,7 @@ use crate::policy::{
 use crate::proposal::{
     EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, ReentryStage, Task,
 };
+use crate::publicity::{PublicLevel, PublicPhase};
 use crate::record::{Declared, OutboxEvent, RulesVersion};
 use crate::refusal::RuleRef;
 use crate::roles::{BindingScope, CoolingOff, Role};
@@ -439,6 +440,13 @@ unit_enum!(SystemCause {
     PaymentPort,
 });
 unit_enum!(ContractEvent { Effective });
+unit_enum!(PublicPhase { Funded, Finished });
+unit_enum!(PublicLevel {
+    Hidden,
+    Project,
+    ProjectAndGrantee,
+    Full
+});
 unit_enum!(CheckPhase {
     Submission,
     Acceptance
@@ -656,7 +664,7 @@ every! {
     /// Every rule except `Param`, whose rules are `PARAMS`.
     FIXED_RULES: [RuleRef; RuleRef::ALL_FIXED] by rule_name {
         I01, I02, I03, I04, I05, I06, I07, I08, I09, I10, I11, I12, I13, I14, I15, I18,
-        I23, I31, I32, I33, I34, I35, I36, I37, I50, I52, I64, I65, I66, I67, I78, I84, I85,
+        I23, I31, I32, I33, I34, I35, I36, I37, I41, I42, I50, I52, I64, I65, I66, I67, I78, I84, I85,
         Sod01, Sod02, Sod03, Sod04, Sod05, Sod06, Sod07, Sod09, Sod10, Sod11, Sod12,
         Rpc01, Rpc02, Rpc03, Rsb01, Rsb02, Rsb03, Rsb04, Rsb05,
         Rev01, Rev02, Rev03, Rev05, Rev06, Rev07, Rev08, Rev09, Rir01, Rir02, Rir04,
@@ -772,6 +780,8 @@ const fn rule_name(r: RuleRef) -> &'static str {
         | RuleRef::I35
         | RuleRef::I36
         | RuleRef::I37
+        | RuleRef::I41
+        | RuleRef::I42
         | RuleRef::I50
         | RuleRef::I52
         | RuleRef::I64

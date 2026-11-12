@@ -127,6 +127,8 @@ pub struct State {
     pub(crate) payments: PaymentState,
     /// Lane L12-I37: calibration consent (I-37).
     pub(crate) calibration: crate::calibration::ConsentState,
+    /// Lane M9 P1: grantee choices for the public pages (I-43).
+    pub(crate) publicity: crate::publicity::PublicityState,
     /// Text ids and digests.
     pub(crate) texts: TextIndex,
 }
@@ -148,6 +150,7 @@ impl State {
             money: MoneyState::genesis(),
             payments: PaymentState::genesis(),
             calibration: crate::calibration::ConsentState::genesis(),
+            publicity: crate::publicity::PublicityState::genesis(),
             texts: TextIndex {
                 digests: BTreeMap::new(),
             },
@@ -202,6 +205,11 @@ impl State {
     /// The payment part.
     pub fn payments(&self) -> &PaymentState {
         &self.payments
+    }
+
+    /// The publicity part: grantee choices for the public pages.
+    pub fn publicity(&self) -> &crate::publicity::PublicityState {
+        &self.publicity
     }
 
     /// The calibration consent part.

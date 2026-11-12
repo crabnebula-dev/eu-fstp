@@ -313,6 +313,7 @@ pub fn choice(p: ProposalId, funded: Level, finished: Level) -> GrantChoice {
         title,
         summary,
         grantee,
+        deliverables: Vec::new(),
     }
 }
 
@@ -434,6 +435,7 @@ pub fn reference(
             summary: summary.to_owned(),
             grantee,
             amount: shown_amount,
+            deliverables: Vec::new(),
         };
         let e = by_call.entry(f.call.clone()).or_insert((0, 0, 0));
         e.0 = e.0.saturating_add(1);

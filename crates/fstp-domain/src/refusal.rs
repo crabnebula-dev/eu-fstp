@@ -64,6 +64,10 @@ pub enum RuleRef {
     I36,
     /// I-37: calibration use needs a recorded, unrevoked consent, requested after the outcome notice.
     I37,
+    /// I-41: no public page shows anything about a proposal that never reached GRANTED.
+    I41,
+    /// I-42: no public page names a minor, at any visibility level.
+    I42,
     /// I-50: P-05 never exceeds P-58.
     I50,
     /// I-52: a Guide is generated only when every required section is
@@ -193,7 +197,7 @@ pub enum RuleRef {
 impl RuleRef {
     /// Every variant except `Param`, in declaration order.
     /// `Param` variants are covered by `crate::rules::CATALOGUE`.
-    pub const ALL_FIXED: [RuleRef; 84] = [
+    pub const ALL_FIXED: [RuleRef; 86] = [
         RuleRef::I01,
         RuleRef::I02,
         RuleRef::I03,
@@ -218,6 +222,8 @@ impl RuleRef {
         RuleRef::I35,
         RuleRef::I36,
         RuleRef::I37,
+        RuleRef::I41,
+        RuleRef::I42,
         RuleRef::I50,
         RuleRef::I52,
         RuleRef::I64,
@@ -308,6 +314,8 @@ impl RuleRef {
             RuleRef::I35 => "I-35",
             RuleRef::I36 => "I-36",
             RuleRef::I37 => "I-37",
+            RuleRef::I41 => "I-41",
+            RuleRef::I42 => "I-42",
             RuleRef::I50 => "I-50",
             RuleRef::I52 => "I-52",
             RuleRef::I64 => "I-64",

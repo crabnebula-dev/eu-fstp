@@ -2242,6 +2242,30 @@ pub const OPS: &[OpSpec] = &[
         "/reports/{report}/approval",
     )
     .acting(FIN_SIGNATORY),
+    // M9 lane P1 (R-PB-02, R-PB-03, I-41, I-42, I-43). The grantee lead
+    // reads and makes the public choices of a grant. Web only, as every
+    // M5 grant command is (I-85). Interim, pending Daniel: the names and
+    // routes below.
+    OpSpec::read(
+        "grant.publicity.view",
+        RK::GetPublicity,
+        "/grants/{proposal}/publicity",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "grant.publicity.set",
+        CK::SetPublicChoice,
+        Post,
+        "/grants/{proposal}/publicity",
+    )
+    .acting(LEAD),
+    OpSpec::command(
+        "grant.publicity.withdraw",
+        CK::WithdrawPublicChoice,
+        Post,
+        "/grants/{proposal}/publicity/withdrawal",
+    )
+    .acting(LEAD),
 ];
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:

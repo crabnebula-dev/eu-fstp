@@ -249,11 +249,12 @@ fn ops_cover_every_command_kind_once() {
     let stray: Vec<&String> = routed.keys().filter(|k| !all.contains(*k)).collect();
     assert!(stray.is_empty(), "routed kinds outside ALL: {stray:?}");
     // M5 lane L-API routes the 15 M5 kinds and M6 lane L6-API one (RequestCopy): 37 plus 15 plus 1.
-    assert_eq!(routed.len(), 53, "routed command kinds");
+    // M9 lane P1 routes the two public choice kinds: 55.
+    assert_eq!(routed.len(), 55, "routed command kinds");
     assert_eq!(
         all.len(),
-        67,
-        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12 and RequestCopy of M6"
+        69,
+        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12, RequestCopy of M6 and the two public choice kinds of M9"
     );
 }
 
@@ -486,7 +487,8 @@ fn ops_high_risk_and_binding_follow_the_domain() {
     // are 36 command operations. (Lane m4reg corrected the floor here from
     // 37, which counted kinds, not operations.)
     // M5 lane L-API routes the 15 kinds of M5 that `LATER` held, so 49.
-    assert_eq!(kinds.len(), 49, "command kinds of command operations");
+    // M9 lane P1 adds `SetPublicChoice` and `WithdrawPublicChoice`, so 51.
+    assert_eq!(kinds.len(), 51, "command kinds of command operations");
     assert!(checked >= 36, "only {checked} command operations");
 }
 
@@ -987,7 +989,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 67] = [
+const READ_NAMES: [&str; 68] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1067,6 +1069,8 @@ const READ_NAMES: [&str; 67] = [
     // Lane m5/report-programmes: the programmes whose reports the caller
     // reads (R-RP-03).
     "ListReportProgrammes",
+    // M9 lane P1: the grantee lead's public choices (R-PB-02, I-43).
+    "GetPublicity",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

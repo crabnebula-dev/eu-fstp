@@ -55,6 +55,8 @@ pub enum GrantModel {
     /// `report.programmes`: the programmes whose reports `report.list`
     /// serves the caller (lane m5/report-programmes, R-RP-03).
     ReportProgrammes(Vec<ProgrammeId>),
+    /// `grant.publicity.view` (M9 lane P1, R-PB-02, I-43).
+    Publicity(Box<crate::publicity::PublicityView>),
 }
 
 impl ToJson for GrantModel {
@@ -69,6 +71,7 @@ impl ToJson for GrantModel {
             GrantModel::ToSign(rows) => array(rows),
             GrantModel::Determination(v) => v.to_json(),
             GrantModel::LineReview(v) => v.to_json(),
+            GrantModel::Publicity(v) => v.to_json(),
             GrantModel::ReportProgrammes(ps) => {
                 let mut a = Array::new();
                 for p in ps {
@@ -463,6 +466,56 @@ pub(crate) fn samples() -> Vec<GrantModel> {
         GrantModel::LineReview(Box::new(crate::grant_lists::LineReviewView {
             request: request.clone(),
             texts: Vec::new(),
+        })),
+        GrantModel::Publicity(Box::new(crate::publicity::PublicityView {
+            proposal: ProposalId::from_raw(3),
+            state: "COMPLETED",
+            minor: false,
+            max_funded: fstp_public::Level::Full,
+            max_finished: fstp_public::Level::ProjectAndGrantee,
+            funded: crate::publicity::PhaseView {
+                open: true,
+                choice: Some(crate::publicity::ChoiceView {
+                    level: fstp_public::Level::Full,
+                    effective: fstp_public::Level::Full,
+                    title: "Synthetic title".to_owned(),
+                    summary: "Synthetic summary".to_owned(),
+                    grantee: "Synthetic Grantee".to_owned(),
+                    deliverables: Vec::new(),
+                }),
+            },
+            finished: crate::publicity::PhaseView {
+                open: true,
+                choice: Some(crate::publicity::ChoiceView {
+                    level: fstp_public::Level::Full,
+                    effective: fstp_public::Level::ProjectAndGrantee,
+                    title: String::new(),
+                    summary: String::new(),
+                    grantee: String::new(),
+                    deliverables: vec![fstp_domain::id::DeliverableId::from_raw(7)],
+                }),
+            },
+            deliverables: vec![crate::publicity::DeliverableView {
+                id: fstp_domain::id::DeliverableId::from_raw(7),
+                licence: "MIT".to_owned(),
+                snapshot: "ab".repeat(32),
+            }],
+        })),
+        GrantModel::Publicity(Box::new(crate::publicity::PublicityView {
+            proposal: ProposalId::from_raw(3),
+            state: "GRANTED",
+            minor: true,
+            max_funded: fstp_public::Level::Hidden,
+            max_finished: fstp_public::Level::Hidden,
+            funded: crate::publicity::PhaseView {
+                open: true,
+                choice: None,
+            },
+            finished: crate::publicity::PhaseView {
+                open: false,
+                choice: None,
+            },
+            deliverables: Vec::new(),
         })),
     ]
 }

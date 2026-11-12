@@ -45,6 +45,7 @@ pub mod activation;
 pub mod clock;
 pub mod harness;
 pub mod mc;
+pub mod publicity;
 pub mod reference;
 pub mod scenario;
 pub mod vault;

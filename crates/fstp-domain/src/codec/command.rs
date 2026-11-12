@@ -82,6 +82,8 @@ tagged_enum! {
         RequestCalibrationConsent { proposal },
         GiveCalibrationConsent { proposal, wording },
         RevokeCalibrationConsent { proposal },
+        SetPublicChoice { proposal, phase, level, title, summary, grantee, deliverables },
+        WithdrawPublicChoice { proposal, phase },
     }
     money {
         DraftCall { call, programme, opens, deadline, deadline_zone, budget, text },

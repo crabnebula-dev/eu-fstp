@@ -1,0 +1,48 @@
+// The English labels of the grantee visibility screen (M9 lane P2,
+// R-NF-04). Every id starts with `grant.visibility.`. Plain language only
+// (docs/design/10). The notes follow `public-transparency.md` NOTE 1 and
+// NOTE 3. TODO(legal): Daniel reviews the wording of both notes.
+
+export const VISIBILITY_LABELS: Readonly<Record<string, string>> = {
+  "grant.visibility.title": "Public visibility of grant {id}",
+  "grant.visibility.intro":
+    "Choose what the public pages of this programme show about your grant. Nothing is shown until you choose. You can change or withdraw your choice at any time, and the public pages change at once.",
+  "grant.visibility.note_platform": "Your choice governs this platform only.",
+  "grant.visibility.note_reporting": "Reporting to the funder covers every grant, whatever you choose here.",
+  "grant.visibility.minor":
+    "A grant whose team includes a person under 18 is never shown on the public pages. Only Hidden can be chosen.",
+  "grant.visibility.funded.heading": "While the project runs",
+  "grant.visibility.finished.heading": "After the project is finished",
+  "grant.visibility.funded.closed": "You can choose this once the grant is granted.",
+  "grant.visibility.finished.closed": "You can choose this once the project is finished.",
+  "grant.visibility.max": "The programme allows at most: {level}",
+  "grant.visibility.current": "Your current choice: {level}",
+  "grant.visibility.effective": "The public pages show: {level}",
+  "grant.visibility.none": "No choice yet. The public pages show nothing about this grant.",
+  "grant.visibility.shows": "Shown at this level: {fields}",
+  "grant.visibility.shows_nothing": "Nothing is shown at this level.",
+  "grant.visibility.level": "Level",
+  "grant.visibility.level.hidden": "Hidden",
+  "grant.visibility.level.project": "Project",
+  "grant.visibility.level.project_and_grantee": "Project and grantee",
+  "grant.visibility.level.full": "Full",
+  "grant.visibility.level_above_max": "{level} (above the programme maximum)",
+  "grant.visibility.field.title": "project title",
+  "grant.visibility.field.summary": "public summary",
+  "grant.visibility.field.call": "call",
+  "grant.visibility.field.status": "status",
+  "grant.visibility.field.grantee": "grantee name",
+  "grant.visibility.field.amount": "granted amount",
+  "grant.visibility.title_label": "Project title for the public pages",
+  "grant.visibility.summary_label": "Public summary, written by you. It is not your proposal text.",
+  "grant.visibility.grantee_label": "Grantee name as it should appear",
+  "grant.visibility.deliverables": "Accepted deliverables to include",
+  "grant.visibility.deliverable": "Deliverable {id}, licence {licence}",
+  "grant.visibility.save": "Save choice",
+  "grant.visibility.withdraw": "Withdraw choice",
+  "grant.visibility.saved": "Your choice is saved. The public pages show it now.",
+  "grant.visibility.withdrawn": "Your choice is withdrawn. The public pages no longer show this grant.",
+  "grant.visibility.err_texts": "Write the title and the summary. Levels with the grantee name also need the name.",
+  "grant.visibility.link": "Public visibility",
+  "grant.visibility.back": "Back to the grant",
+};

@@ -571,9 +571,54 @@ const GRANT_VIA: &[&str] = &[
     "auditor",
 ];
 
+/// The public visibility levels, lowest first (`public-transparency.md`).
+const PUBLIC_LEVELS: &[&str] = &["hidden", "project", "project_and_grantee", "full"];
+
+/// One phase of `grant.publicity.view` (M9 lane P1): whether a choice can
+/// be set now (I-41), and the current choice with its effective level.
+const PUBLICITY_PHASE: Shape = Shape::Object(&[
+    m("open", Shape::Bool),
+    m(
+        "choice",
+        Shape::Nullable(&Shape::Object(&[
+            m("level", Shape::Enum(PUBLIC_LEVELS)),
+            m("effective", Shape::Enum(PUBLIC_LEVELS)),
+            m("title", Shape::String),
+            m("summary", Shape::String),
+            m("grantee", Shape::String),
+            m("deliverables", Shape::Array(&Shape::Id)),
+        ])),
+    ),
+]);
+
 /// The reply shape of each operation whose `data` the API core serves,
 /// by operation name.
 pub const REPLIES: &[(&str, Shape)] = &[
+    // M9 lane P1 (R-PB-02, R-PB-03, I-41, I-42, I-43): the grantee lead's
+    // public choices, the programme maxima P-50 and P-51, the minor flag
+    // that disables every level but hidden (D4), and the accepted
+    // deliverables a finished choice may include. Texts are the lead's own
+    // public texts. No account, amount or proposal text.
+    (
+        "grant.publicity.view",
+        Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("state", Shape::Enum(STATE_NAMES)),
+            m("minor", Shape::Bool),
+            m("max_funded", Shape::Enum(PUBLIC_LEVELS)),
+            m("max_finished", Shape::Enum(PUBLIC_LEVELS)),
+            m("funded", PUBLICITY_PHASE),
+            m("finished", PUBLICITY_PHASE),
+            m(
+                "deliverables",
+                Shape::Array(&Shape::Object(&[
+                    m("id", Shape::Id),
+                    m("licence", Shape::String),
+                    m("snapshot", Shape::String),
+                ])),
+            ),
+        ]),
+    ),
     // M5 lane L-API (M5 design section 5). I-86: no bank detail, identity
     // attribute or vault value; parties by field and role only.
     (

@@ -1281,6 +1281,12 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::RequestCalibrationConsent, PM),
     (K::GiveCalibrationConsent, ActorRule::Lead),
     (K::RevokeCalibrationConsent, ActorRule::Lead),
+    // M9 lane P1 (R-PB-02, I-43). The grantee lead sets and withdraws the
+    // public choices. The publicity lane also admits the lead whose
+    // binding COMPLETED ended, since the finished choice is made there
+    // (interim, pending Daniel).
+    (K::SetPublicChoice, ActorRule::Lead),
+    (K::WithdrawPublicChoice, ActorRule::Lead),
 ];
 
 /// The actor rule of `kind`, from [`ACTOR_RULES`].

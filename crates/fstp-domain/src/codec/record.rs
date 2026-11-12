@@ -370,6 +370,8 @@ tagged_enum! {
         CalibrationConsentRequested { proposal, notice, by },
         CalibrationConsentGiven { proposal, wording, by },
         CalibrationConsentRevoked { proposal, by },
+        PublicChoiceSet { proposal, phase, level, title, summary, grantee, deliverables, by },
+        PublicChoiceWithdrawn { proposal, phase, by },
     }
     money {
         CallDrafted { call, programme, opens, deadline, deadline_zone, budget, text, author },

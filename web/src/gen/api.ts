@@ -248,7 +248,10 @@ export type OpName =
   | "report.list"
   | "report.programmes"
   | "report.generate"
-  | "report.approve";
+  | "report.approve"
+  | "grant.publicity.view"
+  | "grant.publicity.set"
+  | "grant.publicity.withdraw";
 
 /** One segment of a route: fixed text, or a named parameter. */
 export type Segment =
@@ -475,6 +478,9 @@ export interface OpParams {
   readonly "report.programmes": Readonly<Record<never, string>>;
   readonly "report.generate": { readonly "programme": string };
   readonly "report.approve": { readonly "report": string };
+  readonly "grant.publicity.view": { readonly "proposal": string };
+  readonly "grant.publicity.set": { readonly "proposal": string };
+  readonly "grant.publicity.withdraw": { readonly "proposal": string };
 }
 
 /** Every operation name, in registry order. */
@@ -674,6 +680,9 @@ export const OP_NAMES: readonly OpName[] = [
   "report.programmes",
   "report.generate",
   "report.approve",
+  "grant.publicity.view",
+  "grant.publicity.set",
+  "grant.publicity.withdraw",
 ];
 
 /** Every operation of the registry, in registry order. */
@@ -3408,6 +3417,48 @@ export const OPERATIONS: readonly Operation[] = [
     classification: "confidential",
     tool: null,
   },
+  {
+    name: "grant.publicity.view",
+    method: "GET",
+    path: "/grants/{proposal}/publicity",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "publicity" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "grant.publicity.set",
+    method: "POST",
+    path: "/grants/{proposal}/publicity",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "publicity" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "grant.publicity.withdraw",
+    method: "POST",
+    path: "/grants/{proposal}/publicity/withdrawal",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "publicity" }, { kind: "literal", text: "withdrawal" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
 ];
 
 /** The operation named `name`. */
@@ -3506,6 +3557,58 @@ export interface SchemaField {
 
 /** The reply shape of each operation whose data the API core serves, by operation name. */
 export const SCHEMAS: Readonly<Record<string, Schema>> = {
+  "grant.publicity.view": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED"] }, optional: false },
+      "minor": { schema: { kind: "bool" }, optional: false },
+      "max_funded": { schema: { kind: "enum", values: ["hidden", "project", "project_and_grantee", "full"] }, optional: false },
+      "max_finished": { schema: { kind: "enum", values: ["hidden", "project", "project_and_grantee", "full"] }, optional: false },
+      "funded": { schema: {
+        kind: "object",
+        fields: {
+          "open": { schema: { kind: "bool" }, optional: false },
+          "choice": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "level": { schema: { kind: "enum", values: ["hidden", "project", "project_and_grantee", "full"] }, optional: false },
+              "effective": { schema: { kind: "enum", values: ["hidden", "project", "project_and_grantee", "full"] }, optional: false },
+              "title": { schema: { kind: "string" }, optional: false },
+              "summary": { schema: { kind: "string" }, optional: false },
+              "grantee": { schema: { kind: "string" }, optional: false },
+              "deliverables": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
+            },
+          } }, optional: false },
+        },
+      }, optional: false },
+      "finished": { schema: {
+        kind: "object",
+        fields: {
+          "open": { schema: { kind: "bool" }, optional: false },
+          "choice": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "level": { schema: { kind: "enum", values: ["hidden", "project", "project_and_grantee", "full"] }, optional: false },
+              "effective": { schema: { kind: "enum", values: ["hidden", "project", "project_and_grantee", "full"] }, optional: false },
+              "title": { schema: { kind: "string" }, optional: false },
+              "summary": { schema: { kind: "string" }, optional: false },
+              "grantee": { schema: { kind: "string" }, optional: false },
+              "deliverables": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
+            },
+          } }, optional: false },
+        },
+      }, optional: false },
+      "deliverables": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          "licence": { schema: { kind: "string" }, optional: false },
+          "snapshot": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "grant.overview": {
     kind: "object",
     fields: {

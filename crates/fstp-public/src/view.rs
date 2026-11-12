@@ -42,8 +42,9 @@
 use std::collections::BTreeMap;
 
 use fstp_domain::State;
-use fstp_domain::id::{CallId, ProgrammeId, ProposalId, TextId};
+use fstp_domain::id::{CallId, DeliverableId, ProgrammeId, ProposalId, TextId};
 use fstp_domain::programme::{CallView, ProgrammeStatus, programme_status};
+use fstp_domain::publicity::{PublicLevel, PublicPhase};
 use fstp_domain::roles::BindingScope;
 use fstp_domain::rules::{ParamId, StateTag};
 use fstp_domain::time::Timestamp;
@@ -90,6 +91,16 @@ impl Level {
     pub fn from_token(token: &str) -> Option<Level> {
         Level::ALL.into_iter().find(|l| l.token() == token)
     }
+
+    /// The level of a grantee choice record (M9 lane P1).
+    pub const fn from_domain(level: PublicLevel) -> Level {
+        match level {
+            PublicLevel::Hidden => Level::Hidden,
+            PublicLevel::Project => Level::Project,
+            PublicLevel::ProjectAndGrantee => Level::ProjectAndGrantee,
+            PublicLevel::Full => Level::Full,
+        }
+    }
 }
 
 /// The phase of a public grant.
@@ -106,8 +117,9 @@ pub enum GrantStatus {
 /// One grantee's visibility choice and the public texts they approved
 /// (R-PB-02, R-PB-03).
 ///
-/// The record arrives with M9. Until then only the testkit builds
-/// synthetic ones, and every M4 cell passes [`GrantChoices::none`].
+/// [`grant_choices`] folds them from the `PublicChoiceSet` and
+/// `PublicChoiceWithdrawn` records of the core (M9 lane P1). Tests may
+/// build synthetic ones.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GrantChoice {
     /// The level chosen for the funded phase.
@@ -120,6 +132,60 @@ pub struct GrantChoice {
     pub summary: TextId,
     /// The approved grantee name, a public text.
     pub grantee: TextId,
+    /// The accepted deliverables the grantee includes in the finished
+    /// phase. The view shows only those the core holds as accepted
+    /// deliverables of the grant.
+    pub deliverables: Vec<DeliverableId>,
+}
+
+/// The grantee choice records of the core, folded for the view (M9 lane
+/// P1, I-43). Each grant takes the level of each phase from that phase's
+/// current choice, and `Hidden` for a phase with none. Its texts and
+/// deliverables come from the choice of the phase its state is in:
+/// finished for COMPLETED, funded otherwise. A grant whose current phase
+/// has no choice takes the other phase's texts, which the view never
+/// shows, since that phase's level is `Hidden`. A grant with no choice
+/// at all has no entry.
+pub fn grant_choices(core: &State) -> GrantChoices {
+    let publicity = core.publicity();
+    let mut out = GrantChoices::none();
+    let proposals: std::collections::BTreeSet<ProposalId> =
+        publicity.iter().map(|(p, _, _)| p).collect();
+    for p in proposals {
+        let funded = publicity.choice(p, PublicPhase::Funded);
+        let finished = publicity.choice(p, PublicPhase::Finished);
+        let current = if proposal_state(core, p) == Some(StateTag::Completed) {
+            finished.or(funded)
+        } else {
+            funded.or(finished)
+        };
+        let Some(c) = current else {
+            continue;
+        };
+        let level = |x: Option<&fstp_domain::publicity::PublicChoice>| {
+            x.map_or(Level::Hidden, |c| Level::from_domain(c.level))
+        };
+        out.insert(
+            p,
+            GrantChoice {
+                funded: level(funded),
+                finished: level(finished),
+                title: c.title.id(),
+                summary: c.summary.id(),
+                grantee: c.grantee.id(),
+                deliverables: c.deliverables.iter().copied().collect(),
+            },
+        );
+    }
+    out
+}
+
+/// The funded and finished maxima of `programme`'s head policy, P-50 and
+/// P-51. A value that does not decode reads as hidden, as the filter
+/// reads it.
+pub fn maxima(core: &State, programme: ProgrammeId) -> (Level, Level) {
+    let p = PublicParams::of(core, programme);
+    (p.p50, p.p51)
 }
 
 /// The grantee choice records of one programme, by proposal.
@@ -278,6 +344,19 @@ pub struct PublicGrant {
     pub grantee: Option<String>,
     /// The granted amount, an ADR-006 amount string, at [`Level::Full`].
     pub amount: Option<String>,
+    /// The accepted deliverables the grantee includes, finished grants
+    /// only (`public-transparency.md`).
+    pub deliverables: Vec<PublicDeliverable>,
+}
+
+/// One accepted deliverable of a finished grant, with its licence and
+/// evidence snapshot (`public-transparency.md`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicDeliverable {
+    /// Its SPDX licence identifier.
+    pub licence: String,
+    /// The digest of its evidence snapshot, lowercase hexadecimal.
+    pub snapshot: String,
 }
 
 /// One public aggregate: the grants of one call that the view shows.
@@ -533,6 +612,25 @@ fn public_grant(
     };
     let granted = core.money().granted(proposal)?.amount();
     let amount = (level == Level::Full).then(|| granted.to_string());
+    // A finished grant shows the accepted deliverables its grantee
+    // includes, each with its licence and evidence snapshot.
+    let deliverables = if status == GrantStatus::Completed {
+        choice
+            .deliverables
+            .iter()
+            .filter_map(|d| core.money().accepted_deliverable(proposal, *d))
+            .map(|(licence, snapshot)| PublicDeliverable {
+                licence: licence.0.clone(),
+                snapshot: snapshot
+                    .bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     Some(ShownGrant {
         grant: PublicGrant {
             call: call.raw().to_string(),
@@ -542,6 +640,7 @@ fn public_grant(
             summary,
             grantee,
             amount,
+            deliverables,
         },
         granted,
     })

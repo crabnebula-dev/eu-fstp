@@ -195,6 +195,11 @@ pub(crate) enum Derive {
     /// before the digest. Without one it is refused, and nothing is
     /// derived here, so a confirmation never picks a later plan (I-85).
     LatestPlan,
+    /// M9 lane P1, R-PB-03: the title, summary and grantee name of a
+    /// public choice must arrive as strings, which the server stores as
+    /// public texts. A client text reference is refused, so a choice never
+    /// names proposal content.
+    PublicTexts,
 }
 
 /// The form of one command kind.
@@ -518,6 +523,28 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
         K::RouteAmendment => CmdForm {
             params: &[("amendment", Some("amendment"))],
             required: &["route"],
+            ..form(kind)
+        },
+        // M9 lane P1 (R-PB-02, R-PB-03). The three texts arrive as text
+        // and the server stores each one as a public text of the grant, so
+        // the command never names a text the client chose.
+        K::SetPublicChoice => CmdForm {
+            params: PROPOSAL,
+            required: &[
+                "phase",
+                "level",
+                "title",
+                "summary",
+                "grantee",
+                "deliverables",
+            ],
+            texts: &["title", "summary", "grantee"],
+            derive: Derive::PublicTexts,
+            ..form(kind)
+        },
+        K::WithdrawPublicChoice => CmdForm {
+            params: PROPOSAL,
+            required: &["phase"],
             ..form(kind)
         },
         _ => return None,
@@ -1065,6 +1092,13 @@ pub(crate) fn build(
     }
     match f.derive {
         Derive::None => {}
+        Derive::PublicTexts => {
+            for p in ["title", "summary", "grantee"] {
+                if request.get(p).and_then(Value::as_str).is_none() {
+                    return Err(bad());
+                }
+            }
+        }
         Derive::ProposalOfAssignment => {
             let a = id_param(request, "assignment").ok_or_else(bad)?;
             let p = if cx.trial {
