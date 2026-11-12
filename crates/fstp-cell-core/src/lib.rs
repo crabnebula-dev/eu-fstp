@@ -58,9 +58,9 @@ pub use codec::{
 };
 pub use decide::{
     ACCOUNT_ERASURE_CAUSES, ERASURE_CAUSES, RELEASE_STATES, ROUTE_INPUT_MISSING, RouteInput,
-    WRITE_KIND_GUARDIAN_CONSENT, action_digest, attest_at, decide_reaction, reaction_queries,
-    route_inputs, self_grant_digest, stepup_id, try_action_digest, vault_changed,
-    without_vault_outcomes,
+    WRITE_KIND_GUARDIAN_CONSENT, action_digest, attest_at, decide_reaction,
+    decide_reaction_with_inputs, reaction_queries, route_inputs, self_grant_digest, stepup_id,
+    try_action_digest, vault_changed, without_vault_outcomes,
 };
 pub use inputs::{RouteInputs, SessionRows};
 pub use state::CellState;

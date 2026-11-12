@@ -1833,12 +1833,31 @@ pub fn decide_reaction(
     now: Timestamp,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
+    decide_reaction_with_inputs(s, cmd, now, &RouteInputs::none(), answers)
+}
+
+/// [`decide_reaction`] with the live session rows of `inputs`. A
+/// suspension or a voiding in the reaction then ends every live session
+/// of its account in the same batch (design section 5.1, "Reactions",
+/// and [`session_reactions`]). Without rows the batch is the M2 engine's
+/// alone, as for any other command.
+pub fn decide_reaction_with_inputs(
+    s: &CellState,
+    cmd: &fstp_engine::Command,
+    now: Timestamp,
+    inputs: &RouteInputs,
+    answers: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
     let epoch = reaction_epoch_of(cmd)?;
     clock(s, now)?;
     let records = fstp_engine::DomainDecider
         .decide(s.engine(), cmd, &reaction_ctx(epoch, now), answers)
         .map_err(CellRefusal::Domain)?;
-    let batch: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
+    let mut batch: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
+    if let Some(rows) = inputs.sessions() {
+        let reactions = session_reactions(s, &batch, rows, now);
+        batch.extend(reactions);
+    }
     storable(&batch)?;
     Ok(batch)
 }

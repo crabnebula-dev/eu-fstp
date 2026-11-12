@@ -28,7 +28,7 @@ use fstp_cell_core::tenant::TenantCommand;
 use fstp_cell_core::tenant::TenantRecord;
 use fstp_cell_core::{CellCommand, CellRecord};
 use fstp_celltest::mc::auth_model::http::production_routes;
-use fstp_celltest::mc::auth_model::{ProdCell, ProdError, prod_session};
+use fstp_celltest::mc::auth_model::{ProdCell, ProdError, credential_of, prod_session};
 use fstp_celltest::mc::stepup_model::{
     Mutant, Production, Reference, StepUpBackend, StepUpDefect, StepUpModel, ids, login_policy_p71,
     prod_action_digest, prod_self_grant_digest, properties,
@@ -111,6 +111,31 @@ fn cell() -> ProdCell {
     ProdCell::bootstrapped().unwrap_or_else(|e| panic!("{e}"))
 }
 
+/// The id of a step-up the ledger granted to [`admin_session`] for
+/// `digest`, asserted at [`NOW`] with a passkey and user verification
+/// (design section 8.4). `ProdCell::grant_stepup` runs the route check and
+/// production records `StepUpGranted`, so the gate meets the step-up in
+/// the ledger. ADMIN registers its first passkey once, before the first
+/// grant.
+fn granted(cell: &mut ProdCell, digest: [u8; 32]) -> [u8; 16] {
+    let credential = credential_of(ADMIN, 0);
+    if !cell.state().auth().has_any_credential(ADMIN) {
+        cell.register_passkey(ADMIN, credential.clone(), T0)
+            .unwrap_or_else(|e| panic!("ADMIN's passkey: {e}"));
+    }
+    match cell.grant_stepup(
+        &prod_session(&admin_session()),
+        &credential,
+        digest,
+        true,
+        NOW,
+    ) {
+        Ok(Ok(id)) => id,
+        Ok(Err(deny)) => panic!("the step-up route refused: {deny:?}"),
+        Err(e) => panic!("the step-up was not granted: {e}"),
+    }
+}
+
 const NOW: Timestamp = Timestamp::from_micros(3_000_000_000);
 
 fn admin_session() -> RefSession {
@@ -189,6 +214,7 @@ fn m3_command(name: &str) -> Option<CellCommand> {
         "ApproveBreakGlass" => CellCommand::Ops(OpsCommand::ApproveBreakGlass {
             request: [0x42; 16],
         }),
+        "ApproveRecovery" => CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x7C; 16] }),
         _ => return None,
     };
     Some(c)
@@ -209,13 +235,10 @@ const NOT_ROUTED_IN_M3: [(&str, &str); 7] = [
 
 /// Table entries that M3 routes but the stubs give no action for. The
 /// sweep fails on them until the stubs gain the action (lane W1b gap).
-const M3_GAPS: [(&str, &str); 2] = [
-    (
-        "IdentityDownload",
-        "POST /api/v1/vault-tickets with download scope",
-    ),
-    ("ApproveRecovery", "POST /auth/recovery/{case}/approve"),
-];
+const M3_GAPS: [(&str, &str); 1] = [(
+    "IdentityDownload",
+    "POST /api/v1/vault-tickets with download scope",
+)];
 
 /// Whether `d` is the refusal a fault must get. Each fault names its own
 /// `Deny` variant, so a refusal for another reason, such as a missing
@@ -229,13 +252,14 @@ type Expect = fn(&Deny) -> bool;
 /// a consumed one may be refused as any step-up refusal. The other faults
 /// map to the variant design section 5.4 names for them.
 fn faulty(
+    id: [u8; 16],
     digest: [u8; 32],
     other: [u8; 32],
     p71: i64,
 ) -> Vec<(&'static str, RefSession, Option<StepUpView>, Expect)> {
     let s = admin_session();
     let good = StepUpView {
-        id: [0x5C; 16],
+        id,
         session: s.id,
         action_digest: digest,
         asserted_at: NOW,
@@ -387,7 +411,7 @@ fn i78_every_high_risk_route_and_command_needs_a_fresh_step_up() {
         "high-risk entries with no M3 action, not listed as gaps: {unlisted:?}"
     );
 
-    let cell = cell();
+    let mut cell = cell();
     let p71 = r::P71_DEFAULT_US;
     let command_id = [0xC0; 16];
     for name in names.iter().filter(|n| !later.contains(*n)) {
@@ -396,7 +420,8 @@ fn i78_every_high_risk_route_and_command_needs_a_fresh_step_up() {
         };
         let digest = prod_action_digest(&cmd, command_id).unwrap_or_else(|e| panic!("{e}"));
         let other = r::action_digest(b"another command", command_id);
-        for (fault, s, u, expect) in faulty(digest, other, p71) {
+        let id = granted(&mut cell, digest);
+        for (fault, s, u, expect) in faulty(id, digest, other, p71) {
             let got = gate::admit_command(
                 cell.state(),
                 &prod_session(&s),
@@ -416,7 +441,7 @@ fn i78_every_high_risk_route_and_command_needs_a_fresh_step_up() {
             }
         }
         let fresh = StepUpView {
-            id: [0x5C; 16],
+            id,
             session: admin_session().id,
             action_digest: digest,
             asserted_at: NOW,
@@ -857,9 +882,10 @@ fn i78_tenant_p71_above_the_default_is_refused() {
 /// its age is at most the smaller of the tenant value and the default.
 #[test]
 fn i78_p71_may_only_shorten() {
-    let cell = cell();
+    let mut cell = cell();
     let cmd = m3_command("ReleasePayment").unwrap_or_else(|| panic!("no ReleasePayment"));
     let digest = prod_action_digest(&cmd, [0xC0; 16]).unwrap_or_else(|e| panic!("{e}"));
+    let id = granted(&mut cell, digest);
     fstp_prop::check("i78_p71_may_only_shorten", |g: &mut Gen| {
         let tenant = g.i64_in(1..=2 * r::P71_DEFAULT_US);
         let limit = r::effective_p71(Some(tenant));
@@ -870,7 +896,7 @@ fn i78_p71_may_only_shorten() {
         }
         .max(0);
         let u = StepUpView {
-            id: [0x5C; 16],
+            id,
             session: admin_session().id,
             action_digest: digest,
             asserted_at: Timestamp::from_micros(NOW.micros() - age),
