@@ -64,7 +64,10 @@ pub(crate) fn provision(
 
 /// The invitation and the invitee of the latest `InviteAdmin` the engine
 /// port appended after its first `before` executions.
-fn appended_invitation(inner: &Inner, before: usize) -> Option<(InvitationId, AccountId)> {
+pub(crate) fn appended_invitation(
+    inner: &Inner,
+    before: usize,
+) -> Option<(InvitationId, AccountId)> {
     inner
         .ports
         .engine
@@ -127,6 +130,17 @@ pub(crate) fn accept(inner: &Inner, account: AccountId) -> Result<(), String> {
     let Some(invitation) = lock(&inner.auth).taken_admin_invitation(account) else {
         return Ok(());
     };
+    take(inner, account, invitation)
+}
+
+/// `account` takes the open admin invitation `invitation` with the token
+/// digest the ledger holds (`AcceptAdminInvitation`, web only, I-85), as
+/// M3's enrolment ceremony would.
+pub(crate) fn take(
+    inner: &Inner,
+    account: AccountId,
+    invitation: InvitationId,
+) -> Result<(), String> {
     let state = inner.ports.engine.state();
     let token_digest = state
         .tenant
