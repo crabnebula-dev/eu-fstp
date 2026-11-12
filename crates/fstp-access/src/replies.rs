@@ -165,6 +165,29 @@ const PRECHECK_VIEW: Shape = Shape::Object(&[
     ),
 ]);
 
+/// The kinds of a mailbox message (lane m6/mailbox, `docs/handoff/mailbox-design.md`
+/// section 2), as `me.mailbox` spells them.
+pub const MAILBOX_KINDS: &[&str] = &[
+    "pending.confirm",
+    "proposal.submit",
+    "stage2.respond",
+    "negotiation.acknowledge",
+    "review.declare",
+    "review.score",
+    "irc.declare",
+    "irc.review",
+    "intake.knock_out",
+    "round.vote",
+    "admin.approve_activation",
+    "contract.sign",
+    "payment.review",
+    "payment.approve",
+    "payment.release",
+    "payment.confirm",
+    "notice.outcome",
+    "notice.irc_concern",
+];
+
 /// Every proposal state, as the state machine names it.
 pub const STATE_NAMES: &[&str] = &[
     "DRAFT",
@@ -1018,6 +1041,34 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m(
                 "signatories",
                 Shape::Array(&Shape::Enum(&["financial_signatory", "legal_signatory"])),
+            ),
+        ]),
+    ),
+    // Lane m6/mailbox (`docs/handoff/mailbox-design.md` section 1, I-27,
+    // I-86): ids, kinds, instants, a flag and a path under `/app/`. No
+    // title, text, score, name or email.
+    (
+        "me.mailbox",
+        Shape::Object(&[
+            m("open", Shape::Int),
+            m(
+                "messages",
+                Shape::Array(&Shape::Object(&[
+                    m("id", Shape::String),
+                    m("kind", Shape::Enum(MAILBOX_KINDS)),
+                    m("action", Shape::Bool),
+                    m("href", Shape::String),
+                    opt("since", Shape::Id),
+                    opt("due", Shape::Id),
+                    opt("proposal", Shape::Id),
+                    opt("call", Shape::Id),
+                    opt("assignment", Shape::Id),
+                    opt("round", Shape::Id),
+                    opt("contract", Shape::Id),
+                    opt("request", Shape::Id),
+                    opt("pending", Shape::Id),
+                    opt("programme", Shape::Id),
+                ])),
             ),
         ]),
     ),

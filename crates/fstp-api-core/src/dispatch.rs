@@ -131,6 +131,8 @@ mod grant_lists;
 pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
+// Lane m6/mailbox: `me.mailbox`, derived from existing state.
+mod mailbox;
 /// The people operations of journey J2 (lane inv). The file sits beside
 /// `creator.rs`, as the lane's file plan names it.
 #[path = "people.rs"]
@@ -1758,6 +1760,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             ReadModel::MyRoles(me_roles::read(call, a).await)
+        }
+        // Lane m6/mailbox (`docs/handoff/mailbox-design.md`, I-86).
+        ReadKind::GetMyMailbox => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::Mailbox(mailbox::read(call, a))
         }
         // Lane j2, `SPEC/12-journey-ui.md` section 10 (I-92, I-93, I-97).
         ReadKind::GetJourney => {

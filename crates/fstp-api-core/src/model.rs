@@ -145,6 +145,8 @@ pub enum ReadModel {
     /// `assess.findings_status`: counts per proposal, never a statement
     /// (M7 design section 7).
     FindingsStatus(Vec<crate::views::FindingsStatusRow>),
+    /// `me.mailbox`: the caller's own messages (lane m6/mailbox, I-27, I-86).
+    Mailbox(crate::mailbox::MailboxView),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -285,6 +287,7 @@ impl ToJson for ReadModel {
             ReadModel::MailRelay(v) => v.to_json(),
             ReadModel::Precheck(v) => v.to_json(),
             ReadModel::FindingsStatus(rows) => array(rows),
+            ReadModel::Mailbox(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1715,6 +1718,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
             ReadModel::FindingsStatus(_) => &["assess.findings_status"],
+            ReadModel::Mailbox(_) => &["me.mailbox"],
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
@@ -2135,6 +2139,8 @@ pub(crate) mod reply_shape_tests {
                 status: "ready",
                 findings: 9,
             }]),
+            ReadModel::Mailbox(crate::mailbox::MailboxView::default()),
+            ReadModel::Mailbox(crate::mailbox::samples()),
         ]
         .into_iter()
         .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
@@ -2214,7 +2220,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 44;
+    const VARIANTS: usize = 45;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2265,6 +2271,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MailRelay(_) => 41,
             ReadModel::Precheck(_) => 42,
             ReadModel::FindingsStatus(_) => 43,
+            ReadModel::Mailbox(_) => 44,
         }
     }
 

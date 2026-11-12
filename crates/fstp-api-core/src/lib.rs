@@ -38,6 +38,7 @@ pub mod grant;
 pub mod grant_lists;
 pub mod ids;
 mod journal;
+pub mod mailbox;
 pub mod meta;
 pub mod model;
 mod pageforms;

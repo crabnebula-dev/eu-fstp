@@ -10,6 +10,7 @@
 // 4. the Judging pages of the coordinator, reviewers, committee and IRC
 //    (lane W4c), with the "Proposal status" strip of section 8.3;
 // 5. the progress map and the activity log of a proposal (lane j3).
+// 6. the mailbox and the prepared action page (lane m6/mailbox).
 //
 // The tables hold disjoint patterns, so the order only fixes which table
 // is asked first. A path that no table holds shows the not-found page.
@@ -39,7 +40,10 @@ import { mountHome } from "../home/page.js";
 import { mountPostGrant } from "../grant/routes.js";
 import { addJudgingStrip } from "../journey/pages.js";
 import { JOURNEY_ROUTES } from "../journey/routes.js";
-import { startSession } from "../home/session.js";
+import { MAILBOX_PAGE_ROUTES } from "../mailbox/routes.js";
+import { myRoles, startSession } from "../home/session.js";
+import { showMailboxCount } from "../home/nav.js";
+import { mailboxCount } from "../mailbox/pages.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
 import { browserEnv } from "../reviewer/kit.js";
@@ -78,6 +82,20 @@ function mountJourney(path: string): boolean {
   return true;
 }
 
+let mailbox: ReturnType<typeof createRouter> | null = null;
+
+/** Mounts the mailbox or a prepared action page (lane m6/mailbox). False when none has the path. */
+function mountMailboxPage(path: string): boolean {
+  mailbox ??= createRouter(MAILBOX_PAGE_ROUTES);
+  const m = mailbox.match(path);
+  const route = m === null ? undefined : MAILBOX_PAGE_ROUTES.find((r) => r.name === m.name);
+  if (m === null || route === undefined) {
+    return false;
+  }
+  route.mount(m.params);
+  return true;
+}
+
 /** The element the Judging pages render into: the shell's `#app`, else the body. */
 function root(): HTMLElement {
   const app = document.getElementById("app");
@@ -95,7 +113,7 @@ async function run(path: string): Promise<void> {
     mountHome();
     return;
   }
-  if (mountSite(path) || mountStaff(path) || mountJourney(path) || mountApplicantPage(path)) {
+  if (mountSite(path) || mountMailboxPage(path) || mountStaff(path) || mountJourney(path) || mountApplicantPage(path)) {
     return;
   }
   // The M5 post-grant pages: grants, contract, payment requests and operations.
@@ -114,6 +132,16 @@ async function run(path: string): Promise<void> {
 installTrustedTypesPolicy();
 installFooterGuard();
 void startSession(location.pathname);
+// Lane m6/mailbox: a signed-in person sees the number of messages to act
+// on beside the Mailbox link of the top bar.
+void myRoles().then(async (a) => {
+  if (a.kind === "roles") {
+    const n = await mailboxCount();
+    if (n !== null) {
+      showMailboxCount(n);
+    }
+  }
+});
 // Every `/app/` page renders in this one document (lane m4/site scope
 // item 1): `core/router.ts` handles in-app links, Back and Forward. The
 // title of each page it opens is spoken in a polite live region of its

@@ -506,6 +506,12 @@ impl PaymentState {
         self.requests.get(&request).map(|r| r.grant)
     }
 
+    /// The finance approver of `request`, once approved (lane m6/mailbox:
+    /// the mailbox offers no release to the approver, SoD-04, I-05).
+    pub fn approver(&self, request: RequestId) -> Option<AccountId> {
+        self.requests.get(&request).and_then(|r| r.approver)
+    }
+
     /// The releaser of `request`, once released.
     pub fn releaser(&self, request: RequestId) -> Option<AccountId> {
         self.requests.get(&request).and_then(|r| r.releaser)

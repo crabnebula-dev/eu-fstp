@@ -66,7 +66,8 @@ import {
   readOp,
   record,
 } from "../reviewer/kit.js";
-import { type MyRoles, type OwnProposal, type Work, type WorkItem, workOf } from "./model.js";
+import { type MyRoles, type OwnProposal, WORK_PATHS, type Work, type WorkItem, workOf } from "./model.js";
+import { mailboxCount } from "../mailbox/pages.js";
 import { homeLabel } from "./nav.js";
 import { myRoles } from "./session.js";
 import { activityNav, journeyNav } from "../journey/links.js";
@@ -531,6 +532,17 @@ export function mountHome(): void {
       parts.push(h("p", { id: "home-no-role" }, [homeLabel("home.no_role")]));
     } else {
       parts.push(h("p", { class: "muted" }, [homeLabel(adminOnly(a.roles) ? "home.admin.intro" : "home.intro")]));
+    }
+    // Lane m6/mailbox: the way to the work waiting for the caller.
+    const open = await mailboxCount();
+    if (open !== null) {
+      parts.push(
+        h("p", { id: "home-mailbox", class: "callout" }, [
+          h("a", { href: WORK_PATHS.mailbox, "data-mailbox-link": "", "data-open": String(open) }, [
+            open === 0 ? homeLabel("home.mailbox_none") : homeLabel("home.mailbox", { count: String(open) }),
+          ]),
+        ]),
+      );
     }
     const work = h("div", { id: "home-work", class: "layout-side" }, [
       h("div", { class: "home-cards" }, [

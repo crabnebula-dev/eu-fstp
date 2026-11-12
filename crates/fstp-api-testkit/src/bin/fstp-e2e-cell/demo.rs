@@ -534,13 +534,14 @@ fn page(site: &Site) -> Response {
         people.push_str(&format!(
             "<li class=\"card person\"><p class=\"person-name\"><a href=\"{u}\" target=\"_blank\" rel=\"noopener\">{w}</a> <small>{e}</small></p>\n\
 <p><span data-demo-does>{n}</span></p>\n\
-<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}{pmail}</li>\n",
+<p class=\"person-role\"><strong class=\"badge badge--info\" data-demo-role>{r}</strong></p>\n{signin}<p><a data-demo-mailbox href=\"{o}/app/mailbox\" target=\"_blank\" rel=\"noopener\">Mailbox</a> <span class=\"muted\">(after sign-in: the work waiting for this person)</span></p>\n{pmail}</li>\n",
             u = esc(&url),
             w = esc(&who),
             e = esc(&email),
             r = esc(&roles_of(&inner, account)),
             n = esc(&short_line(&inner, account)),
             pmail = crate::maildemo::person_html(&inner, &email),
+            o = esc(&site.info.origin),
         ));
     }
     let auth = lock(&inner.auth);
@@ -609,7 +610,7 @@ fn page(site: &Site) -> Response {
 Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refresh it</a> to see new messages and links.</p>\n\
 <p>{how}</p>\n\
 <h2>People of this scene</h2>\n<ul class=\"people\">\n{people}</ul>\n\
-<h2>Messages the cell sent</h2>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
+<h2>Messages the cell sent</h2>\n<p>An email from the platform carries ids, a time and one link into the platform, never proposal content (I-27). Inside, each person's Mailbox (top bar, and the line on their home page) lists the same work and links to where it happens.</p>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\
 <p>Review: {review}</p>\n<p>Applicant: {applicant}</p>\n\
 <p>Grant (post-grant lifecycle): {grant}</p>\n\

@@ -1473,6 +1473,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // caller's own roles. Reading: any account reads its own, web only,
     // with no tool (I-86).
     RefOp::read("me.roles", T::None, R::AnyAccount),
+    // Lane m6/mailbox: any account reads its own mailbox, web only, with
+    // no tool (MB-D5, I-86).
+    RefOp::read("me.mailbox", T::None, R::AnyAccount),
     RefOp::act("me.end_session", T::None, R::AnyAccount),
     RefOp::act("me.add_passkey", T::None, R::AnyAccount).hr(),
     RefOp::read("pending.list", T::None, R::AnyAccount),
