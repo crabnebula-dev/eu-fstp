@@ -44,7 +44,8 @@ export type GrantScene =
   | 'IN_EXECUTION'
   | 'UNDER_REVIEW'
   | 'PAID'
-  | 'ALL_CLOSED';
+  | 'ALL_CLOSED'
+  | 'HARDSHIP';
 
 /** One person, signed in by the front door's link, in a context of their own. */
 export class Seat {

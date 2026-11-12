@@ -22,7 +22,9 @@
 #                   DEFERRED_AFTER_CONCERN INELIGIBLE
 # Grant scenes:    NEGOTIATION_READY SENT EFFECTIVE IN_EXECUTION UNDER_REVIEW PAID
 #                   ALL_CLOSED (x from negotiation to a closed grant with its
-#                   funder reports, through the real operations)
+#                   five funder outputs, through the real operations)
+#                   HARDSHIP (x in execution, the lead filed a hardship
+#                   request, finance verifies its evidence on the vault page)
 #
 # Every seed replaces the cell's state and prints one-time enrolment links
 # for its people. Open a link in Chromium or Chrome to enrol a passkey and

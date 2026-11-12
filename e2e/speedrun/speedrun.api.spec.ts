@@ -166,8 +166,8 @@ test.describe('speedrun at the wire', () => {
       (s) => s === 'COMPLETED',
     );
 
-    // Row 14: four funder outputs, approved by the Financial signatory, never by the generator (R-RP-03).
-    for (const kind of ['call_publication_record', 'audit_file', 'deliverable_draft']) {
+    // Row 14: five funder outputs, approved by the Financial signatory, never by the generator (R-RP-03).
+    for (const kind of ['call_publication_record', 'audit_file', 'deliverable_draft', 'open_call_package']) {
       const report = String((await pm.ok('POST', '/programmes/1/reports', { kind, call: '1' })).report);
       await pm.refused('POST', `/reports/${report}/approval`, {});
       await approver.ok('POST', `/reports/${report}/approval`, {});
