@@ -120,3 +120,49 @@ Lane `m5/polish-text`. Display text and chips only; no data flow or access logic
 6. **Pre-check.** The newest run is under "Latest check" (`#precheck-latest`); the rest are under "Earlier checks".
 7. **Reports.** Programmes now come from every role binding, since each binding names its programme. With exactly one, the link reads "Open the funder reports of your programme (programme N)". The number form moved into a disclosure. A tenant-wide Financial signatory with no binding at all still needs the number: no read lists programmes for them. Open question for Daniel.
 8. No test expectation was weakened. Two tests were added in `web/test/m5ui_pages.test.ts`.
+
+## Polish: line review access, decisions
+
+Lane `m5/polish-access`. A browser click-through of `UNDER_REVIEW` found that nobody could do the line review by clicking, that R1's Home gave no way to it, and that a release needed six vault steps first.
+
+### Who can do what now
+
+| Person | What they reach by clicking |
+| --- | --- |
+| Committee member R1 (assigned reviewer) | Home card "1 payment request to review", or the sidebar Operations link. Operations, "To review", the request page with each line's evidence and the decision forms |
+| R2, R3, R4, H1, I1 and other roles without the right | The request page still answers R-AC-01. Only the declared, conflict-free assigned reviewer reads the line review view |
+| Finance approver F1 | Operations, "To approve", approve |
+| Payment releaser P1 | Operations, "To release", release. Refused with I-33 until the P-36 hold ends |
+
+### Decisions
+
+1. **A narrow read, not a wider `GRANT_READERS`.** `payment.line_review_view` (`GET /grants/{proposal}/payment-requests/{request}/line-review`, `ReadKind::GetLineReview`) uses the existing `ReadRule::ProposalReviewer`: the caller's own reviewer assignment of the grant, declared, conflict first (I-03, R-CF-02). It is web only, as `payment.review_line` is (I-85).
+2. **D11 rows.** The read is open only while the grant is IN_EXECUTION. Every other proposal state is a judged refusal. The dispatch then serves only a request of that grant in UNDER_REVIEW. Any other request, existing or not, is refused as R-AC-01, so the view reveals no other request.
+3. **What it holds.** The request row as `payment.status` shows it (status, kind, both checks, lines with requested and approved amounts), and per line the evidence the lead gave: location, release, licence and report. No bank detail, account, payee or paid sum (I-86). The reference matrix has a `LineReview` rule, and the narrowed direct and HTTP matrices agree.
+4. **Evidence source.** The domain projection keeps no line evidence, so the API core journal now keeps the evidence of each `RequestPayment` it recorded, bounded. A text the core did not store shows as "-", never a guess.
+5. **The page.** When `payment.status` is refused to a committee member, the request page reads the line review view and shows it with the same request label, reference line, state chip and line labels as the full page. The back link goes to Operations, since the reviewer reads no payment list. After the last line is decided the view closes, and the page says "The line review of this request is complete".
+6. **Home and sidebar.** A committee member whose `payment.queue` holds a review gets the card "Payment requests to review" first on Home, linking to Operations. The shell adds the sidebar Operations link for such a person only. The mailbox's `payment.review` message links to Operations, which now leads to a working page.
+7. **SoD unchanged.** The reviewer is offered no approve or release button. The test checks that the reviewer's approval is refused (SoD-04, I-05).
+8. **Bank details in the seeds.** From `IN_EXECUTION` on, every grant scene runs the lead's `vault.bank.set` and finance's `vault.bank.verify`, each followed by the vault page's own action (`grantdemo::act_on_ticket`, shared with `/r/act`). The entry happens at the seed's instant, so the P-36 hold still runs. The first release press is refused with I-33.
+9. **The hold, shown.** The seed reply has a `bank` member. `run.sh` prints when the details were entered, that they are verified, and when the hold ends. `/demo` shows `#demo-bank` with the same facts. The programme's live P-36 is 7 days.
+10. **The hold link.** "Advance past the P-36 bank hold" now moves the clock one minute past the end of the hold of the latest entry, read from the programme's live P-36. Without bank details it keeps the old 30 days. This closes open question 2 of `m5-demo.md`.
+11. **PAID and ALL_CLOSED.** These scenes now wait for the hold before the release, instead of writing bank details at setup time.
+12. **Step-up in the click-through.** Approve and release open the step-up dialog in the demo. The spec confirms it with the dialog's demo button, as a presenter would.
+
+### Requirements and invariants covered
+
+R-PR-08, R-PR-01, R-PR-05, R-AC-01, R-CF-02, R-NF-03. I-03, I-05, I-32, I-33, I-60, I-85, I-86, SoD-04, D11.
+
+### Tests
+
+- `crates/fstp-access/tests/m5reads_d11_list_reads.rs`: `r_pr_08_d11_line_review_view_is_the_assigned_reviewers_in_execution`.
+- `crates/fstp-api-testkit/src/harness_m5_reads.rs`: `r_pr_08_assigned_reviewer_reads_and_decides_the_line_review`, `r_pr_08_d11_line_review_view_is_closed_outside_execution`.
+- `scenario/postgrant.rs`: `m5_demo_grant_scenes_reach_their_states` now checks the verified bank details and the running hold.
+- `web/test/m5reads.test.ts` and `web/test/home.test.ts`: three `r_pr_08_*` tests.
+- `e2e/speedrun/speedrun.ui.spec.ts`: `ui_payment_under_review_to_released_by_clicking`, clicking only.
+
+### Open questions for Daniel
+
+1. The line review view is closed once the request leaves UNDER_REVIEW, so the reviewer cannot look back at a decided request. Should the reviewer keep a read-only view of requests they decided?
+2. The Operations page offers R1 a funder reports link per programme, which R1 cannot open. It was left as is to keep this lane's web edits small.
+3. `review_home/review_usability_programme_manager_pages_load.spec.ts` fails twice in this run, on `/programmes/1/draft/previews/contract` (501) and `/calls/1/findings-status` (403). Neither read is touched by this lane.
