@@ -166,3 +166,10 @@ R-PR-08, R-PR-01, R-PR-05, R-AC-01, R-CF-02, R-NF-03. I-03, I-05, I-32, I-33, I-
 1. The line review view is closed once the request leaves UNDER_REVIEW, so the reviewer cannot look back at a decided request. Should the reviewer keep a read-only view of requests they decided?
 2. The Operations page offers R1 a funder reports link per programme, which R1 cannot open. It was left as is to keep this lane's web edits small.
 3. `review_home/review_usability_programme_manager_pages_load.spec.ts` fails twice in this run, on `/programmes/1/draft/previews/contract` (501) and `/calls/1/findings-status` (403). Neither read is touched by this lane.
+
+## Polish: final, decisions
+
+- Mailbox labels: the server already carries the proposal (assignments, payments, contracts) or the call (rounds) in each message, so no server change. Labels now read "Declare any conflict on proposal {proposal}", "Score proposal {proposal}", "Review the lines of the payment request of proposal {proposal}", "Sign the contract of proposal {proposal}", "Vote in the cut-off round of call {call}". The pending item shows no id. The milestone number is not in the message, so payment labels name the proposal only. I-27 email rules untouched. Display text expectations changed; routes and the e2e selectors (by href) did not.
+- Grant page: accept, approve and determine sections show only while the state is NEGOTIATION and no contract exists. A contract exists only after acceptance and approval, so the overview already tells that the step is past. No new read.
+- "rule row": the cell names RuleRef::Row as the rule text "row" for a wrong-state refusal. The page now maps "row" to "This step is not open now. The grant or request is at another stage." and "actor" to "You may not do this step for this item." Other rules still show their id (the I-33 refusal in the walkthrough is unchanged).
+- Report approver F2: the programme list comes from the caller's programme bindings, and F2 has none. No existing read gives the programmes a tenant-wide role may approve for. Left as is. Open question: a read that lists the programmes of the tenant for tenant-wide roles.

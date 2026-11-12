@@ -173,3 +173,13 @@ test("r_nf_04_mailbox_every_label_formats_with_every_id", () => {
     assert(!text.includes("{"), `${k}: ${text}`);
   }
 });
+
+/** I-27: a label shows a proposal or call number, never a 19-digit assignment, request, round or pending id. */
+test("i27_mailbox_labels_show_no_internal_ids", () => {
+  for (const k of MAIL_KINDS) {
+    const label = MAILBOX_LABELS[labelKey(k)] ?? "";
+    for (const bad of ["{assignment}", "{request}", "{round}", "{pending}", "{contract}"]) {
+      assert(!label.includes(bad), `${k} shows ${bad}`);
+    }
+  }
+});

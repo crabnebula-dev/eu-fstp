@@ -387,6 +387,12 @@ export function writeOp(
 export function problemText(t: I18n, p: Problem): Label {
   switch (p.kind) {
     case "refused":
+      if (p.rule === "row") {
+        return t.label("kit.refused_row");
+      }
+      if (p.rule === "actor") {
+        return t.label("kit.refused_actor");
+      }
       return p.rule !== null && p.rule !== ""
         ? t.label("kit.refused_rule", { rule: p.rule })
         : t.label("kit.refused_code", { code: p.code });
