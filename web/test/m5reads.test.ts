@@ -7,7 +7,7 @@
 
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
 import { mountPostGrant } from "../src/grant/routes.js";
-import { decodeDetermination, decodeGrantList, decodeLineReview, decodeOverview, decodeToSign } from "../src/grant/models.js";
+import { decodeDetermination, decodeGrantList, decodeLineReview, decodeOverview, decodeReportProgrammes, decodeToSign } from "../src/grant/models.js";
 import type { PageEnv } from "../src/reviewer/kit.js";
 import { VALIDATORS } from "../src/gen/api.js";
 import { assert, test } from "./support/harness.js";
@@ -227,4 +227,69 @@ test("r_pr_08_reviewer_reaches_the_line_review_by_clicking", async () => {
   assert(fakeDocument.getElementById("pay-review-form-11") !== null, "the decision form of line 11");
   assert(t.includes("Back to Operations"), "the way back is Operations, not the payments list");
   assert(!/bank|iban|payee/i.test(t), "I-86: nothing about bank details");
+});
+
+/** The `[href, text]` of each link of the page. */
+function links(): Array<[string, string]> {
+  return fakeDocument.documentElement
+    .descendants()
+    .filter((e) => e.localName === "a")
+    .map((e) => [e.getAttribute("href") ?? "", e.textContent ?? ""]);
+}
+
+const REPORT_PROGRAMMES = [
+  { id: "1", name: "Programme 1" },
+  { id: "2", name: "Programme 2" },
+];
+
+/** R-RP-03, R-NF-03: the validator and decoder of `report.programmes` take ids and names, and refuse a number id. */
+test("r_rp_03_report_programmes_decoder_reads_ids_and_names", () => {
+  const check = (VALIDATORS as Readonly<Record<string, (x: unknown) => boolean>>)["report.programmes"];
+  assert(check?.(REPORT_PROGRAMMES) === true, "report.programmes validates");
+  const d = decodeReportProgrammes(REPORT_PROGRAMMES);
+  assert(d !== null && d.length === 2 && d[1]?.id === "2", JSON.stringify(d));
+  assert(decodeReportProgrammes([{ id: 1, name: "Programme 1" }]) === null, "a number id is refused");
+});
+
+/**
+ * R-RP-03, R-NF-03: the Financial signatory holds a tenant-wide role and no programme binding.
+ * Its operations page links the funder reports of each programme `report.programmes` names,
+ * so nobody types a programme number. The number form stays as a fallback.
+ */
+test("r_rp_03_signatory_operations_page_links_each_programmes_reports", async () => {
+  prepare("/app/operations");
+  const sent: string[] = [];
+  await mountPostGrant(env({ "GET /me/payment-queue": [], "GET /me/grants": [], "GET /me/report-programmes": REPORT_PROGRAMMES }, sent), "/app/operations");
+  await settle();
+  assert(sent.includes("GET /me/report-programmes"), sent.join(", "));
+  const l = links();
+  for (const p of ["1", "2"]) {
+    const found = l.find(([href]) => href === `/app/programmes/${p}/reports`);
+    assert(found !== undefined, `programme ${p} is linked: ${JSON.stringify(l)}`);
+    assert(found?.[1] === `Open the funder reports of programme ${p}`, JSON.stringify(found));
+  }
+  const t = text();
+  assert(!t.includes("your programme"), "a tenant-wide role has no programme of its own");
+  assert(t.includes("Open the reports of another programme by its number"), "the number form stays as a fallback");
+});
+
+/** R-RP-03: with one programme and no binding in it, the link still names the programme without "your". */
+test("r_rp_03_single_programme_without_binding_uses_the_plain_label", async () => {
+  prepare("/app/operations");
+  const sent: string[] = [];
+  await mountPostGrant(env({ "GET /me/payment-queue": [], "GET /me/grants": [], "GET /me/report-programmes": [REPORT_PROGRAMMES[0]] }, sent), "/app/operations");
+  await settle();
+  const found = links().find(([href]) => href === "/app/programmes/1/reports");
+  assert(found?.[1] === "Open the funder reports of programme 1", JSON.stringify(found));
+});
+
+/** R-AC-01: when the cell refuses `report.programmes`, the page shows no report link it was not given. */
+test("r_ac_01_refused_report_programmes_links_no_reports", async () => {
+  prepare("/app/operations");
+  const sent: string[] = [];
+  await mountPostGrant(env({ "GET /me/payment-queue": [], "GET /me/grants": [] }, sent), "/app/operations");
+  await settle();
+  assert(sent.includes("GET /me/report-programmes"), sent.join(", "));
+  assert(!links().some(([href]) => href.endsWith("/reports")), JSON.stringify(links()));
+  assert(text().includes("Open the reports of another programme by its number"), "the number form remains");
 });

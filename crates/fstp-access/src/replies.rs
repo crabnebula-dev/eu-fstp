@@ -684,6 +684,14 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("approved", Shape::Bool),
         ])),
     ),
+    // Lane m5/report-programmes (R-RP-03, I-86): ids and names only.
+    (
+        "report.programmes",
+        Shape::Array(&Shape::Object(&[
+            m("id", Shape::Id),
+            m("name", Shape::String),
+        ])),
+    ),
     (
         "payment.submit",
         Shape::Object(&[m("accepted", Shape::Bool), m("request", Shape::Id)]),

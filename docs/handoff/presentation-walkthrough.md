@@ -81,7 +81,7 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 ## 8. Closure and the funder reports (2 minutes)
 
 1. Choose the grant scene **ALL_CLOSED**. The lead's Home shows "Completed".
-2. Sign in as the auditor A1, Home, "Operations", then "Open the funder reports of your programme (programme 1)". The report approver "Report approver (Financial signatory) F2" has no such link. If you use F2, open "Operations", then "Open the reports of another programme by its number", type 1 in "Programme number" and press "Open reports".
+2. Sign in as the report approver "Report approver (Financial signatory) F2", Home, "Operations", then "Open the funder reports of programme 1". The auditor A1 gets the same page through "Open the funder reports of your programme (programme 1)".
 3. Point out: five funder outputs (call publication record, periodic reporting data, audit file, deliverable draft, open call package), each "Approved", with its SHA-256 and template version. "Humans upload approved documents to the funder portal. The platform submits nothing."
 
 ## 9. Mail that never carries content (2 minutes)
@@ -113,7 +113,7 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - A reviewer opening the grant page (`/app/grants/1001`) after negotiation is refused with R-AC-01. Go through "Payment requests to review" and Operations instead.
 - In the SENT scene the grant page no longer offers "Accept the amount", because the contract exists. Go to "Contract of proposal 1001".
 - The first release in step 7.4 shows no "Confirm" dialog, because the hold refuses it first. Only the second release asks for "Confirm".
-- The report approver F2 must open the collapsed field and type programme number 1. Auditor A1 has a direct link instead.
+- On the Operations page, leave "Open the reports of another programme by its number" closed. Both F2 and A1 reach the reports through their link, so nobody types a programme number.
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
 - Programme manager M1's set-up in the review scenes starts from an empty draft. Step 1 fails and steps 2 to 11 stay locked, so the review page and its previews cannot be reached by clicking. Stay on the call board for M1.

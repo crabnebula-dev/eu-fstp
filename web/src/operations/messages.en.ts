@@ -23,7 +23,7 @@ export const OPERATIONS_LABELS: Readonly<Record<string, string>> = {
   "ops.grants.row": "Proposal {id}",
   "ops.contracts.open": "Contract of proposal {id}",
   "ops.reports.heading": "Funder reports",
-  "ops.reports.programme": "Funder reports of programme {id}",
+  "ops.reports.programme": "Open the funder reports of programme {id}",
   "ops.reports.programme_only": "Open the funder reports of your programme (programme {id})",
   "ops.reports.open_by_number": "Open the reports of another programme by its number",
   "ops.reports.open_label": "Programme number",

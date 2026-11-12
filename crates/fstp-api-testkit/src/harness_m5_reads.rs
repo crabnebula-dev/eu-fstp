@@ -623,3 +623,50 @@ fn r_pr_08_d11_line_review_view_is_closed_outside_execution() {
         );
     }
 }
+
+/// The programme ids of `who`'s `report.programmes`.
+fn report_programmes(seed: &mut Seeder, who: AccountId) -> Vec<String> {
+    rows(&read(seed, who, "/me/report-programmes"))
+        .iter()
+        .map(|r| {
+            let name = str_member(r, "name").expect("name");
+            let id = str_member(r, "id").expect("id");
+            assert_eq!(name, format!("Programme {id}"), "the synthetic name");
+            id
+        })
+        .collect()
+}
+
+/// R-RP-03, R-AC-01, SoD (lane m5/report-programmes): the tenant-wide
+/// Financial signatory, who approves funder reports, lists the programme
+/// P and then reads its reports by clicking. A programme manager and an
+/// auditor of P list it too. An applicant and a reviewer are refused,
+/// and a programme manager of another programme does not list P. Every
+/// listed programme is one `report.list` serves the caller.
+#[test]
+fn r_rp_03_report_programmes_admit_the_financial_signatory_only_among_outsiders() {
+    let w = world(StateTag::Granted);
+    let p = w.targets.programme.expect("P").raw().to_string();
+    let mut seed = seeder(w);
+    for who in [ORG_SIGNATORY, PM, AUDITOR] {
+        let listed = report_programmes(&mut seed, who);
+        assert!(listed.contains(&p), "R-RP-03: {who:?} lists {listed:?}");
+        for q in &listed {
+            assert!(
+                seed.api(who, GET, &format!("/programmes/{q}/reports"), &Value::Null)
+                    .is_ok(),
+                "R-AC-01: {who:?} lists {q} whose reports it may not read"
+            );
+        }
+    }
+    assert!(
+        !report_programmes(&mut seed, PM_OTHER).contains(&p),
+        "R-AC-01: a manager of another programme lists P"
+    );
+    for who in [LEAD, REVIEWER] {
+        let e = seed
+            .api(who, GET, "/me/report-programmes", &Value::Null)
+            .expect_err("refused");
+        assert!(e.contains("R-AC-01"), "{who:?}: {e}");
+    }
+}

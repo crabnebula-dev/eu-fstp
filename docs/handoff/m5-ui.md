@@ -23,7 +23,7 @@ Click paths from sign-in:
 - Lead: Home, card "Your applications", "Your grant" link, then the grant page and its links. The negotiation page also links to the grant and contract pages.
 - Assigned reviewer: Home, card "Your review assignments", "Grants you review", then the grant page (determination) and Operations (line review).
 - Programme manager, finance approver, payment releaser, contract signatory, auditor: Home card "Operations" and the sidebar "Operations" link, then the queues, the grant list and the reports. The sidebar shows "Grants" to everyone.
-- Financial signatory (tenant-wide): the sidebar "Operations" link, then reports by programme number.
+- Financial signatory (tenant-wide): the sidebar "Operations" link, then "Open the funder reports of programme N" for each programme (`report.programmes`). The number form stays as a fallback.
 
 Edits outside my four folders, needed for reachability: `web/src/home/{model,page,messages.en}.ts`, `web/src/auth/{sitenav,messages.en}.ts` (the account page mirrors the sidebar), `web/src/shell/main.ts`, `web/src/applicant/{negotiation,messages.en}.ts`, and the tests `home.test.ts` and `fuzz_targets.test.ts`. I updated three expectations in `home.test.ts` because the navigation now holds "Grants" and "Operations" and the auditor has a page. No invariant test was weakened.
 
@@ -81,6 +81,7 @@ Branch `m5/reads`. It answers the three requests above and the lead's reviewer g
 | `grant.list_mine` | `GET /me/grants` | `Own`, all 16 states | each grant `grant.overview` serves the caller, with `via`: the rule that admitted the caller |
 | `contract.awaiting_me` | `GET /me/contracts-awaiting-signature` | `Own`, all 16 states | each latest, live version that waits on the caller's own signature now, where `contract.view` serves the caller |
 | `grant.determination_view` | `GET /grants/{proposal}/determination` | `ProposalReviewer`, NEGOTIATION only | the declared, conflict-free assigned reviewer of the proposal |
+| `report.programmes` | `GET /me/report-programmes` | `HolderAnywhere(ProgrammeManager)` or `HolderAnywhere(Auditor)`, all 16 states, plus the tenant-fold Financial signatory in dispatch | each programme, by id and name, whose `report.list` admits the caller (lane m5/report-programmes) |
 
 ### Decisions
 
@@ -118,7 +119,7 @@ Lane `m5/polish-text`. Display text and chips only; no data flow or access logic
 4. **Open by number.** The grant hub and Operations forms sit in a `details` disclosure. An empty submit moves focus to the field and shows no banner. A non-digit entry still shows the error.
 5. **Contract link.** "Contract of proposal {id}" on the grant page. Operations shows the same label with a state chip.
 6. **Pre-check.** The newest run is under "Latest check" (`#precheck-latest`); the rest are under "Earlier checks".
-7. **Reports.** Programmes now come from every role binding, since each binding names its programme. With exactly one, the link reads "Open the funder reports of your programme (programme N)". The number form moved into a disclosure. A tenant-wide Financial signatory with no binding at all still needs the number: no read lists programmes for them. Open question for Daniel.
+7. **Reports.** Programmes now come from every role binding, since each binding names its programme. With exactly one, the link reads "Open the funder reports of your programme (programme N)". The number form moved into a disclosure. A tenant-wide Financial signatory with no binding at all needed the number then. Lane m5/report-programmes closed this with `report.programmes` (see "Polish: final, decisions").
 8. No test expectation was weakened. Two tests were added in `web/test/m5ui_pages.test.ts`.
 
 ## Polish: line review access, decisions
@@ -173,3 +174,4 @@ R-PR-08, R-PR-01, R-PR-05, R-AC-01, R-CF-02, R-NF-03. I-03, I-05, I-32, I-33, I-
 - Grant page: accept, approve and determine sections show only while the state is NEGOTIATION and no contract exists. A contract exists only after acceptance and approval, so the overview already tells that the step is past. No new read.
 - "rule row": the cell names RuleRef::Row as the rule text "row" for a wrong-state refusal. The page now maps "row" to "This step is not open now. The grant or request is at another stage." and "actor" to "You may not do this step for this item." Other rules still show their id (the I-33 refusal in the walkthrough is unchanged).
 - Report approver F2: the programme list comes from the caller's programme bindings, and F2 has none. No existing read gives the programmes a tenant-wide role may approve for. Left as is. Open question: a read that lists the programmes of the tenant for tenant-wide roles.
+- Report approver F2, decided (lane m5/report-programmes, 2026-11-12): a new narrow read `report.programmes` (`GET /me/report-programmes`) answers programme ids and names only. Its rule admits a programme manager or an auditor of any programme. The dispatch admits a Financial signatory of the tenant fold beside the rule, as `report.list` does (NOTE 5, R-RP-03). It lists only the programmes whose `report.list` admits the caller, so it widens no read. An applicant and a reviewer are refused with R-AC-01. `creator.list_programmes` stays the creator's, so the creator start gains no new reader. No SoD rule bears on it: it is a read, and `report.approve` still refuses the report's generator. The Operations page shows "Open the funder reports of programme N" per listed programme. "Your programme" stays for a caller bound in that programme. When the read refuses, the page falls back to the binding programmes, and the number form stays behind the disclosure. Web only, no MCP tool.

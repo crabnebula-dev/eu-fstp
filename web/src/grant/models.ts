@@ -462,6 +462,23 @@ export function decodeReports(v: unknown): readonly ReportRow[] | null {
   });
 }
 
+/** One programme whose funder reports the caller reads (`report.programmes`, R-RP-03). */
+export interface ReportProgramme {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** Decodes `report.programmes`. */
+export function decodeReportProgrammes(v: unknown): readonly ReportProgramme[] | null {
+  return each(v, (x) => {
+    const o = rec(x);
+    if (o === null || !isIdText(o["id"]) || !text(o["name"])) {
+      return null;
+    }
+    return Object.freeze({ id: o["id"], name: o["name"] });
+  });
+}
+
 /** The `{redirect}` of a vault ticket op. */
 export function decodeRedirect(v: unknown): string | null {
   const o = rec(v);

@@ -468,6 +468,46 @@ pub(super) async fn list_reports<P: Seams>(
     call.accept(ReadModel::Grant(GrantModel::Reports(rows)))
 }
 
+/// `report.programmes` (lane m5/report-programmes, R-RP-03): the
+/// programmes whose `report.list` admits the caller, by id. A Financial
+/// signatory of the tenant fold reads the reports of every programme, so
+/// it lists each programme of the state. Any other caller passes
+/// `authorize_read` of this read first, a programme manager or an auditor
+/// of some programme, and then lists only the programmes whose
+/// `report.list` admits it. An applicant or a reviewer is refused
+/// (R-AC-01). The list never widens `report.list`.
+pub(super) async fn report_programmes<P: Seams>(call: &Call<'_, P>) -> Result<OpResult, ApiError> {
+    let account = call.account();
+    let signatory =
+        account.is_some_and(|a| fstp_engine::report::financial_signatory(&call.state, a));
+    if !signatory {
+        let rop = ReadOp {
+            kind: ReadKind::ListReportProgrammes,
+            target: ReadTarget::None,
+        };
+        if let Err(d) = fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
+            return Err(call.refuse(super::read_denied(d.rule())));
+        }
+    }
+    let rows = super::creator_ops::programmes(&call.state)
+        .into_iter()
+        .filter(|p| {
+            signatory
+                || fstp_access::authorize_read(
+                    &ReadOp {
+                        kind: ReadKind::ListReports,
+                        target: ReadTarget::Programme(*p),
+                    },
+                    &call.caller.p,
+                    &call.state,
+                    call.now,
+                )
+                .is_ok()
+        })
+        .collect();
+    call.accept(ReadModel::Grant(GrantModel::ReportProgrammes(rows)))
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------

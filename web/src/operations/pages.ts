@@ -13,7 +13,7 @@
 // - R-RP-04: the platform submits nothing to the funder portal.
 
 import { h, type Child } from "../core/dom.js";
-import type { I18n } from "../core/i18n.js";
+import type { I18n, Label } from "../core/i18n.js";
 import { frame, guarded, idRoute, readOp, selectEl, type JudgingPage } from "../reviewer/kit.js";
 import {
   GRANT_PATHS,
@@ -37,11 +37,13 @@ import {
   decodeDrawn,
   decodeGrantList,
   decodeQueue,
+  decodeReportProgrammes,
   decodeReports,
   decodeToSign,
   isIdText,
   type GrantRow,
   type QueueRow,
+  type ReportProgramme,
   type ReportRow,
   type ToSignRow,
 } from "../grant/models.js";
@@ -142,14 +144,19 @@ async function mountOperations(env: PageEnv): Promise<void> {
         ]),
       );
     }
-    // Funder reports of each programme the caller's bindings name.
-    // Every binding names its programme, so a signatory who holds a role in exactly one
-    // programme gets a direct link. The number form stays behind a disclosure.
-    const programmes =
-      roles === null ? [] : [...new Set(roles.roles.map((b) => b.programme))].sort((a, b) => (a.length === b.length ? (a < b ? -1 : 1) : a.length - b.length));
+    // Funder reports of each programme whose `report.list` admits the caller (R-RP-03).
+    // `report.programmes` names them, so the tenant-wide Financial signatory, who holds
+    // no programme binding, reaches them by clicking. When that read refuses, the
+    // programmes of the caller's bindings stand in. The number form stays behind a disclosure.
+    const bound = new Set(roles === null ? [] : roles.roles.map((b) => b.programme));
+    const rp = await readOp(env, "report.programmes", {}, (v): v is readonly ReportProgramme[] => decodeReportProgrammes(v) !== null);
+    const listed = rp.ok ? (decodeReportProgrammes(rp.data) ?? []).map((p) => p.id) : [...bound];
+    const programmes = [...new Set(listed)].sort((a, b) => (a.length === b.length ? (a < b ? -1 : 1) : a.length - b.length));
+    // "Your programme" only where a binding names it; a tenant-wide role gets the plain label.
+    const label = (p: string): Label => t.label(programmes.length === 1 && bound.has(p) ? "ops.reports.programme_only" : "ops.reports.programme", { id: p });
     body.push(
       section("ops-reports", t.label("ops.reports.heading"), [
-        h("ul", { class: "fstp-list" }, programmes.map((p) => h("li", {}, [link(GRANT_PATHS.reports(p), t.label(programmes.length === 1 ? "ops.reports.programme_only" : "ops.reports.programme", { id: p }))]))),
+        h("ul", { class: "fstp-list" }, programmes.map((p) => h("li", { "data-programme": p }, [link(GRANT_PATHS.reports(p), label(p))]))),
         h("details", { id: "ops-reports-details" }, [h("summary", {}, [t.label("ops.reports.open_by_number")]), openByNumber(env, t, f)]),
       ]),
     );

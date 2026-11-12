@@ -246,6 +246,7 @@ export type OpName =
   | "vault.hardship.submit"
   | "vault.hardship.verify"
   | "report.list"
+  | "report.programmes"
   | "report.generate"
   | "report.approve";
 
@@ -471,6 +472,7 @@ export interface OpParams {
   readonly "vault.hardship.submit": { readonly "proposal": string };
   readonly "vault.hardship.verify": { readonly "proposal": string };
   readonly "report.list": { readonly "programme": string };
+  readonly "report.programmes": Readonly<Record<never, string>>;
   readonly "report.generate": { readonly "programme": string };
   readonly "report.approve": { readonly "report": string };
 }
@@ -669,6 +671,7 @@ export const OP_NAMES: readonly OpName[] = [
   "vault.hardship.submit",
   "vault.hardship.verify",
   "report.list",
+  "report.programmes",
   "report.generate",
   "report.approve",
 ];
@@ -3364,6 +3367,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "report.programmes",
+    method: "GET",
+    path: "/me/report-programmes",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "report-programmes" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "report.generate",
     method: "POST",
     path: "/programmes/{programme}/reports",
@@ -3657,6 +3674,13 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "template": { schema: { kind: "string" }, optional: false },
       "generated_by_me": { schema: { kind: "bool" }, optional: false },
       "approved": { schema: { kind: "bool" }, optional: false },
+    },
+  } },
+  "report.programmes": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "id": { schema: { kind: "id" }, optional: false },
+      "name": { schema: { kind: "string" }, optional: false },
     },
   } },
   "payment.submit": {
