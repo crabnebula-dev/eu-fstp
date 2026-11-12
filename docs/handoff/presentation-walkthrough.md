@@ -128,6 +128,7 @@ Before the call exists, a programme manager builds the programme in a guided cre
 - On the Operations page, leave "Open the reports of another programme by its number" closed. Both F2 and A1 reach the reports through their link, so nobody types a programme number.
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
+- In the review, applicant and grant scenes M1's own set-up of programme 1 is an empty draft, and its steps stay locked. Show the creator only in the "programme_setup" scene.
 
 ## If something goes wrong
 
