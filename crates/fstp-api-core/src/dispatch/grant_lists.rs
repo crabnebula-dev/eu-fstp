@@ -177,3 +177,56 @@ pub(super) fn determination<P: Seams>(call: &Call<'_, P>, p: ProposalId) -> Gran
             .map(|(_, g)| g.amount().to_string()),
     })
 }
+
+/// `payment.line_review_view` of request `{request}` of grant `p`, after
+/// `authorize_read` cleared the caller as the declared, conflict-free
+/// assigned reviewer of `p` while it is IN_EXECUTION (R-PR-08, lane
+/// m5/polish-access). It serves only a request of `p` in UNDER_REVIEW,
+/// the one status in which a line can be decided. Any other request,
+/// whether it exists or not, is refused as the rule refuses (R-AC-01), so
+/// the view reveals no other request.
+pub(super) fn line_review<P: Seams>(
+    call: &Call<'_, P>,
+    op: &crate::Op,
+    p: ProposalId,
+) -> Result<GrantModel, ApiError> {
+    use fstp_domain::payment::RequestStatus;
+    let refused = || super::read_denied(fstp_access::DenyRule::Rac01);
+    let r = crate::forms::id_param(&op.request, "request")
+        .map(fstp_domain::id::RequestId::from_raw)
+        .ok_or_else(|| ApiError::bad_request(crate::forms::REQUEST_RULE))?;
+    let summary = call
+        .state
+        .core
+        .payments()
+        .summaries()
+        .find(|s| s.request == r && s.grant == p && s.status == RequestStatus::UnderReview)
+        .ok_or_else(refused)?;
+    let content = super::lock(&call.st.content);
+    let text =
+        |t: Option<fstp_domain::id::TextRef>| t.and_then(|t| content.text(t).map(str::to_owned));
+    let journal = super::lock(&call.st.journal);
+    let given = journal.line_evidence(r).unwrap_or(&[]);
+    let texts = summary
+        .lines
+        .iter()
+        .map(|l| {
+            given
+                .iter()
+                .find(|(id, _)| *id == l.line)
+                .map(|(_, e)| crate::grant_lists::LineTexts {
+                    location: text(e.location),
+                    release: text(e.release),
+                    licence: e.licence.as_ref().map(|s| s.0.clone()),
+                    report: text(e.report),
+                })
+                .unwrap_or_default()
+        })
+        .collect();
+    Ok(GrantModel::LineReview(Box::new(
+        crate::grant_lists::LineReviewView {
+            request: super::grant::request_row(&summary),
+            texts,
+        },
+    )))
+}

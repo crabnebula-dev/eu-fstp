@@ -927,6 +927,10 @@ pub enum Rule {
     /// undeclared or conflicted assignee is refused as a conflict, as the
     /// score sheet is.
     Determination,
+    /// Lane m5/polish-access: the line review view of a request of X
+    /// (R-PR-08): its assigned reviewer, declared free of conflict, while
+    /// X is IN_EXECUTION. The world names the request under review.
+    LineReview,
 }
 
 impl Rule {
@@ -1037,7 +1041,9 @@ impl Rule {
             ],
             Rule::Amender => &[Some(Role::Applicant), Some(Role::CommitteeMember)],
             Rule::ContractSide => &[Some(Role::Applicant), Some(Role::ProgrammeManager)],
-            Rule::GrantReviewer | Rule::Determination => &[Some(Role::CommitteeMember)],
+            Rule::GrantReviewer | Rule::Determination | Rule::LineReview => {
+                &[Some(Role::CommitteeMember)]
+            }
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
@@ -1496,6 +1502,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("grant.list_mine", T::None, R::AnyAccount),
     RefOp::read("contract.awaiting_me", T::None, R::AnyAccount),
     RefOp::read("grant.determination_view", T::Proposal, R::Determination),
+    RefOp::read("payment.line_review_view", T::Proposal, R::LineReview),
     RefOp::act("grant.determine_amount", T::Negotiation, R::GrantReviewer).binding(),
     RefOp::act("grant.accept", T::Negotiation, R::Lead).binding(),
     RefOp::act("grant.approve", T::Negotiation, R::ProgrammeManager).binding(),
@@ -1738,6 +1745,17 @@ fn admit(
                 Who::AssignedReviewerConflicted,
             )?;
             open(x == Some(StateTag::Negotiation))
+        }
+        Rule::LineReview => {
+            if who == Who::SuspendedReviewer && who.conflicted_in(x) {
+                return Err(Conflict);
+            }
+            assignee(
+                Who::AssignedReviewer,
+                Who::AssignedReviewerUndeclared,
+                Who::AssignedReviewerConflicted,
+            )?;
+            open(x == Some(StateTag::InExecution))
         }
     }
 }

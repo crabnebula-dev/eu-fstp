@@ -50,6 +50,8 @@ pub enum GrantModel {
     ToSign(Vec<SignRow>),
     /// `grant.determination_view` (R-NG-03).
     Determination(DeterminationView),
+    /// `payment.line_review_view` (R-PR-08, lane m5/polish-access).
+    LineReview(Box<crate::grant_lists::LineReviewView>),
 }
 
 impl ToJson for GrantModel {
@@ -63,6 +65,7 @@ impl ToJson for GrantModel {
             GrantModel::Grants(rows) => array(rows),
             GrantModel::ToSign(rows) => array(rows),
             GrantModel::Determination(v) => v.to_json(),
+            GrantModel::LineReview(v) => v.to_json(),
         }
     }
 }
@@ -376,7 +379,7 @@ pub(crate) fn samples() -> Vec<GrantModel> {
         GrantModel::Payments(vec![request.clone()]),
         GrantModel::Queue(vec![QueueRow {
             task: "review",
-            request,
+            request: request.clone(),
         }]),
         GrantModel::Reports(vec![ReportRow {
             report: 11,
@@ -433,5 +436,18 @@ pub(crate) fn samples() -> Vec<GrantModel> {
             plan_total: None,
             granted: None,
         }),
+        GrantModel::LineReview(Box::new(crate::grant_lists::LineReviewView {
+            request: request.clone(),
+            texts: vec![crate::grant_lists::LineTexts {
+                location: Some("https://forge.example/synthetic".to_owned()),
+                release: Some("v1.0.0".to_owned()),
+                licence: Some("MIT".to_owned()),
+                report: None,
+            }],
+        })),
+        GrantModel::LineReview(Box::new(crate::grant_lists::LineReviewView {
+            request: request.clone(),
+            texts: Vec::new(),
+        })),
     ]
 }

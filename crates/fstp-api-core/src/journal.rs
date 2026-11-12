@@ -44,8 +44,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use fstp_domain::command::{Command as Core, DeclarationSubject};
 use fstp_domain::decision::Vote;
 use fstp_domain::id::{
-    AccountId, AssignmentId, CallId, DecisionId, PlanVersionId, ProposalId, TextRef,
+    AccountId, AssignmentId, CallId, DecisionId, LineId, PlanVersionId, ProposalId, RequestId,
+    TextRef,
 };
+use fstp_domain::payment::LineEvidence;
 use fstp_domain::scoring::ScoreKey;
 use fstp_domain::time::Timestamp;
 use fstp_engine::{Command, EngineState};
@@ -61,6 +63,12 @@ const MAX_THREAD: usize = 1_000;
 
 /// The most score keys and "no questions" assignments it tracks.
 const MAX_KEYS: usize = 1_000_000;
+
+/// The most payment requests whose line evidence it keeps.
+const MAX_REQUESTS: usize = 100_000;
+
+/// The most lines of one payment request whose evidence it keeps.
+const MAX_LINES: usize = 1_000;
 
 /// The most cut-off rounds it tracks.
 const MAX_ROUNDS: usize = 100_000;
@@ -144,6 +152,9 @@ pub(crate) struct Journal {
     concerns: BTreeMap<ProposalId, Timestamp>,
     rounds: BTreeMap<DecisionId, RoundFacts>,
     open_rounds: BTreeMap<CallId, DecisionId>,
+    /// Lane m5/polish-access: the evidence of each line of each payment
+    /// request this core recorded, for the line review view (R-PR-08).
+    evidence: BTreeMap<RequestId, Vec<(LineId, LineEvidence)>>,
 }
 
 /// The proposal a folded command concerns, read against the state before
@@ -203,6 +214,19 @@ impl Journal {
     /// Folds a command that appended at `now`, read against the state
     /// before it (`before`), which names the proposal of an assignment.
     pub(crate) fn fold(&mut self, cmd: &Command, before: &EngineState, now: Timestamp) {
+        // Lane m5/polish-access: a payment request keeps its line evidence
+        // (R-PR-01, R-PR-08). A request past the bound has none, and its
+        // view shows no evidence rather than a wrong one.
+        if let Command::Core(Core::RequestPayment { request, lines, .. }) = cmd
+            && (self.evidence.len() < MAX_REQUESTS || self.evidence.contains_key(request))
+        {
+            let kept = lines
+                .iter()
+                .take(MAX_LINES)
+                .map(|l| (l.line, l.evidence.clone()))
+                .collect();
+            self.evidence.insert(*request, kept);
+        }
         match cmd {
             Command::Core(c) => self.fold_core(c, before, now),
             // R-EV-05: the plan, then its submission, as the entry holds them.
@@ -479,6 +503,12 @@ impl Journal {
     pub(crate) fn concern(&self, proposal: ProposalId) -> Result<Option<Timestamp>, Unknown> {
         self.known(proposal)?;
         Ok(self.concerns.get(&proposal).copied())
+    }
+
+    /// The evidence of each line of payment request `request`, as the lead
+    /// gave it, or `None` when this core did not record the request.
+    pub(crate) fn line_evidence(&self, request: RequestId) -> Option<&[(LineId, LineEvidence)]> {
+        self.evidence.get(&request).map(Vec::as_slice)
     }
 
     /// Whether a declaration raised a notifiable conflict on `proposal`.
