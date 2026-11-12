@@ -95,10 +95,15 @@ fn time_verify(appends: u64) -> Duration {
 /// 100 ms of slack for noise. With linear lookups the ratio is about
 /// four. With the current per-anchor scans it is about sixteen, and a
 /// chain of a million appends would take hours to verify.
+///
+/// Each size is timed three times and the fastest run counts, so a busy
+/// CI runner does not fail a linear verifier (CI run 43191138164 timed one
+/// slow run of 32,000). The bound is unchanged.
 #[test]
 fn review_i24_verify_time_is_not_quadratic_in_anchors() {
-    let small = time_verify(8_000);
-    let large = time_verify(32_000);
+    let best = |appends: u64| (0..3).map(|_| time_verify(appends)).min().unwrap();
+    let small = best(8_000);
+    let large = best(32_000);
     assert!(
         large < small * 8 + Duration::from_millis(100),
         "verify of 8,000 appends took {small:?}, of 32,000 took {large:?}"
