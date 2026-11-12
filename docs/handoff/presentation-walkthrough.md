@@ -17,6 +17,18 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - Most links on `/demo` open a new tab. "Sign in as" and "raw message" do. The scene links and the clock links stay on `/demo`.
 - Run `tools/demo/run.sh stop` at the end.
 
+## Optional: Programme set-up (2 minutes)
+
+Before the call exists, a programme manager builds the programme in a guided creator. This scene shows a fully built SuperSAFE draft.
+
+1. On `/demo`, under "Scenes", choose "programme_setup" on the line "Programme set-up". Then "Sign in as Programme manager M1".
+2. Home, "Programme set-up of programme 5563071439709405193". The cell draws this long number when the draft opens, and it is the same in every run. The overview groups the 11 steps under five headings, and each step reads "validated".
+3. In the step list choose "11. Review: validated". The page shows the final validation report, then the previews "Guide for Applicants", "Public programme page" and "Contract".
+4. Point out:
+   - Every step is checked as it is saved, and a step opens only when the steps before it validate (R-PG-01).
+   - The previews are built from the draft values. The contract preview marks each value only a grant sets, such as "[granted amount: set for each grant]".
+   - "Request activation" is enabled because the report is clean. Activation then needs a second tenant admin who did not build the programme (I-66, I-67). This scene lists no such admin, so end on the review page without pressing it.
+
 ## 1. The public call (1 minute)
 
 1. On `/demo`, choose the applicant scene **OPEN_CALL**.
@@ -116,7 +128,6 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - The report approver F2 must open the collapsed field and type programme number 1. Auditor A1 has a direct link instead.
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
-- Programme manager M1's set-up in the review scenes starts from an empty draft. Step 1 fails and steps 2 to 11 stay locked, so the review page and its previews cannot be reached by clicking. Stay on the call board for M1.
 
 ## If something goes wrong
 

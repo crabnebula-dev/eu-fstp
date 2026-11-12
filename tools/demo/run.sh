@@ -8,6 +8,8 @@
 #        tools/demo/run.sh seed review <stage>
 #        tools/demo/run.sh seed applicant <at>
 #        tools/demo/run.sh seed grant <scene>   the post-grant lifecycle (M5)
+#        tools/demo/run.sh seed setup           M1 holds a fully built programme
+#                                               draft (the creator review)
 #        tools/demo/run.sh clock <to>           grant clock: milestone_start p36
 #                                               due_minus_14 due due_plus_7
 #        tools/demo/run.sh forge-fail           the fake forge answers 404 once
@@ -72,6 +74,13 @@ show() {
       if (v.first_admin) {
         console.log("First tenant admin: " + v.first_admin.email);
         console.log("  enrol: " + v.first_admin.url);
+        return;
+      }
+      if (v.scene === "programme_setup") {
+        console.log("Programme set-up: draft programme " + v.programme + " (SuperSAFE), every step validates");
+        for (const [k, p] of Object.entries(v.people)) {
+          console.log(("  " + k).padEnd(6) + p.label.padEnd(22) + p.invite_url);
+        }
         return;
       }
       if (v.people) {
@@ -167,6 +176,10 @@ start() {
 
 seed() {
   local kind=${1:-} what=${2:-}
+  if [[ $kind == setup ]]; then
+    control POST /test/scenario/setup | show
+    return
+  fi
   [[ -n $kind && -n $what ]] || usage
   case $kind in
     review) control POST /test/scenario/review "{\"stage\":\"$what\"}" | show ;;

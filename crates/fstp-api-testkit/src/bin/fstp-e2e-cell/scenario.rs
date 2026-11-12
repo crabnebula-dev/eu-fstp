@@ -66,6 +66,7 @@ use crate::wire::{self, dec, obj};
 use crate::{Inner, Site, SiteInfo};
 
 pub(crate) mod postgrant;
+pub(crate) mod setup;
 
 /// The SuperSAFE programme of every seed.
 const PROGRAMME: ProgrammeId = ProgrammeId::from_raw(1);

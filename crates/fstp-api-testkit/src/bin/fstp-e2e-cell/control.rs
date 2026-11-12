@@ -16,6 +16,8 @@
 //! - `POST /test/scenario/applicant {at}` and
 //!   `POST /test/scenario/review {stage}`: a fresh cell seeded through
 //!   production commands ([`crate::scenario`]).
+//! - `POST /test/scenario/setup`: a fresh cell where programme manager M1
+//!   holds a fully built programme draft ([`crate::scenario::setup`]).
 //!
 //! - `POST /test/precheck`: one run of the fake pre-check provider
 //!   ([`crate::precheck`], Q38 C).
@@ -152,6 +154,7 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
         (false, "/test/scenario/applicant") => scenario::applicant(site, &req).await,
         (false, "/test/scenario/review") => scenario::review(site, &req).await,
         (false, "/test/scenario/grant") => scenario::postgrant::control(site, &req).await,
+        (false, "/test/scenario/setup") => scenario::setup::control(site).await,
         (false, "/test/precheck") => crate::precheck::handle(),
         _ => wire::not_found(),
     }
