@@ -179,3 +179,30 @@ No question blocks a lane. Lanes build the interim decisions D1 to D6 of section
 One item needs Daniel before the public pages go live, not before the lanes start:
 
 - **Funder visibility wording (I-69, L-08).** The Horizon Europe profile needs the approved acknowledgement text and emblem rules. Lanes render a `TODO(legal)` placeholder element. Recommendation: Daniel supplies the text from the SuperSAFE grant agreement, and F1 adds it as a profile wording ref.
+
+---
+
+## P lanes: decisions taken
+
+Lanes P1, P3 and P2, built 2026-11-13. Each decision below is interim, pending Daniel. None weakens an invariant. D1 to D6 of section 1.3 stand.
+
+| # | Decision | Reason |
+| --- | --- | --- |
+| PD1 | Records and commands spell phase and level as the domain variant names: `Funded`, `Finished`, `Hidden`, `Project`, `ProjectAndGrantee`, `Full`. The read model and the public tools keep the tokens `hidden` to `full` | The codec writes every fieldless enum by its variant name. The level tokens of P-50 and P-51 are unchanged |
+| PD2 | Only the grant's lead makes its choices: through an active Applicant binding, or through the Applicant binding that a terminal state ended normally. One rule serves the read (`ReadRule::ChoiceMaker`) and both commands (`fstp_domain::publicity::is_choice_maker`) | COMPLETED ends the Receiving bindings, and the finished choice is made there. A voided binding admits nothing |
+| PD3 | A funded choice is set in GRANTED, IN_EXECUTION or COMPLETED, and a finished choice in COMPLETED. TERMINATED refuses both under I-41. `grant.publicity.view` is open in GRANTED, IN_EXECUTION and COMPLETED | A terminated grant shows nowhere, so a choice there has no effect |
+| PD4 | A withdrawal needs a current choice of that phase, else it is refused under I-41. Section 2.2 named no guard | Test plan section 3 has every choice op refused on a never-granted proposal. A choice exists only from GRANTED on |
+| PD5 | A minor-flagged grant takes `Hidden` only. Any higher level is refused under I-42. The screen disables those levels | D4. The flag fails closed, as the filter reads it |
+| PD6 | The set op takes the title, summary and grantee name as text, never as a reference. The API core stores each one as a public text owned by the proposal. A client text reference is refused as a malformed request | R-PB-03. The domain holds no text class, so the op is where the check can hold |
+| PD7 | Each phase has its own texts. The view takes the texts of the phase the grant's state is in, and `GrantChoice` keeps one text set | The M4 filter and its reference stay unchanged |
+| PD8 | A finished choice may include accepted deliverables of its grant only. The public pages show each one's licence and evidence snapshot digest. The domain's deliverable fold now keeps the snapshot it already received | `public-transparency.md` names licences and evidence snapshots. No record changed |
+| PD9 | A level above the programme maximum stays selectable and is stored as chosen. The screen marks it "above the programme maximum" and shows the effective level | Section 2.1 rule: the filter applies the lower of the two at read time |
+| PD10 | Operation names and routes: `grant.publicity.view` (`GET /grants/{proposal}/publicity`), `grant.publicity.set` (`POST` on the same path) and `grant.publicity.withdraw` (`POST .../publicity/withdrawal`). Web only, no MCP tool. Both commands are binding under P-77 | As every M5 grant command (I-85) |
+| PD11 | The authorisation matrix classes I-41 and I-42 refusals as guard rules | They judge the grant's state, its choice and its minor flag, never the actor |
+| PD12 | The licence reference classes both choice commands as Evaluation, so no licence state blocks them (I-39 strict reading) | A withdrawal must never wait |
+
+Open questions for Daniel:
+
+- The Full level also names "milestone status" in `public-transparency.md`. The pages show the granted amount only. Which milestone facts may be public?
+- The wording of the screen's two notes (`public-transparency.md` NOTE 1 and NOTE 3) carries `TODO(legal)`.
+- `interface_no_command_kind_reaches_not_implemented` in `fstp-domain-testkit` fails on `main` at 0ede3ef7: the walk accepts no `RequestCopy`. This lane adds the two choice kinds to that walk, and they pass.

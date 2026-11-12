@@ -388,6 +388,20 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
     if (live && (lead || finance)) {
       body.push(bankSection(env, t, f, o, lead, finance));
     }
+    // M9 lane P2 (R-PB-02): the grantee lead chooses what the public pages show, from
+    // GRANTED on. COMPLETED ended the lead's binding, so there the former team sees the link
+    // too, and the cell admits only the lead.
+    const staff = ["programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"].some((r) =>
+      can(roles, r as Parameters<typeof can>[1]),
+    );
+    if ((live && lead) || (o.state === "COMPLETED" && (lead || !staff))) {
+      body.push(
+        section("grant-visibility", t.label("grant.visibility.link"), [
+          h("p", {}, [t.label("grant.visibility.note_platform")]),
+          link(GRANT_PATHS.visibility(proposal), t.label("grant.visibility.link")),
+        ]),
+      );
+    }
     f.show(body);
   };
   await guarded(f, render);

@@ -9,6 +9,7 @@
 
 import { assert, show } from "../test/support/harness.js";
 import * as models from "../src/grant/models.js";
+import * as visibility from "../src/grant/visibility/model.js";
 import type { Checker, FuzzTarget } from "./harness.js";
 import { readExpectations } from "./harness.js";
 
@@ -20,6 +21,7 @@ const DECODERS: readonly ((v: unknown) => unknown)[] = [
   models.decodeReports,
   models.decodeRedirect,
   (v) => models.decodeDrawn(v, "contract"),
+  visibility.decodePublicity,
 ];
 
 const AMOUNT = /^(0|[1-9][0-9]*)\.[0-9]{2}$/;
@@ -46,6 +48,15 @@ export function checkerFor(m: typeof models): Checker {
       if (o !== null) {
         assert(ID.test(o.proposal), `overview proposal ${show(o.proposal)} is not an id`);
         assert(AMOUNT.test(o.paid), `overview paid ${show(o.paid)} is not an ADR-006 amount`);
+      }
+      const p = visibility.decodePublicity(v);
+      if (p !== null) {
+        assert(ID.test(p.proposal), `publicity proposal ${show(p.proposal)} is not an id`);
+        for (const ph of [p.funded, p.finished]) {
+          if (ph.choice !== null) {
+            assert(visibility.rank(ph.choice.effective) >= 0, `effective level ${show(ph.choice.effective)} is not a level`);
+          }
+        }
       }
       const rows = m.decodePayments(v);
       if (rows !== null) {

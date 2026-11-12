@@ -8,9 +8,10 @@ import { OPERATIONS_PAGES } from "../operations/pages.js";
 import { PAYMENT_PAGES } from "../payments/pages.js";
 import type { JudgingPage, PageEnv } from "../reviewer/kit.js";
 import { GRANT_PAGES } from "./pages.js";
+import { VISIBILITY_PAGES } from "./visibility/page.js";
 
 /** Every post-grant page, the payment form before the payment page that shares its prefix. */
-export const POST_GRANT_PAGES: readonly JudgingPage[] = [...GRANT_PAGES, ...CONTRACT_PAGES, ...PAYMENT_PAGES, ...OPERATIONS_PAGES];
+export const POST_GRANT_PAGES: readonly JudgingPage[] = [...GRANT_PAGES, ...VISIBILITY_PAGES, ...CONTRACT_PAGES, ...PAYMENT_PAGES, ...OPERATIONS_PAGES];
 
 let router: Router | null = null;
 

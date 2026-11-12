@@ -16,6 +16,9 @@
 //! - `funded` and `finished`: `{grants: [grant]}`, with each grant as
 //!   `{call, level, status, title, summary, grantee, amount}`. A member
 //!   the level does not show is absent, never null.
+//!   A finished grant whose grantee includes accepted deliverables also
+//!   has `deliverables: [{licence, snapshot}]` (M9 lane P2). With none,
+//!   the member is absent.
 //!
 //! A call the view does not hold is [`PublicError::NotFound`].
 
@@ -185,6 +188,19 @@ fn grant(g: &PublicGrant) -> Value {
     }
     if let Some(a) = &g.amount {
         let _ = o.insert("amount", Value::from(a.as_str()));
+    }
+    if !g.deliverables.is_empty() {
+        let list: Vec<Value> = g
+            .deliverables
+            .iter()
+            .map(|d| {
+                object(vec![
+                    ("licence", Value::from(d.licence.as_str())),
+                    ("snapshot", Value::from(d.snapshot.as_str())),
+                ])
+            })
+            .collect();
+        let _ = o.insert("deliverables", Value::from(list));
     }
     Value::Object(o)
 }

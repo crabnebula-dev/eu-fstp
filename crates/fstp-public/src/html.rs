@@ -162,6 +162,9 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.grant.status", "Status"),
     label("public.grant.grantee", "Grantee"),
     label("public.grant.amount", "Granted amount"),
+    label("public.grant.deliverables", "Accepted deliverables"),
+    label("public.grant.licence", "Licence"),
+    label("public.grant.snapshot", "Evidence snapshot"),
     label("public.status.granted", "Granted"),
     label("public.status.in_execution", "In execution"),
     label("public.status.completed", "Completed"),
@@ -616,6 +619,20 @@ fn grants_page(heading: &str, none: &str, grants: &[PublicGrant]) -> Element {
         if let Some(amount) = &g.amount {
             facts.push_child(el("dt", "public.grant.amount"));
             facts.push_child(Element::new("dd").text(amount));
+        }
+        if !g.deliverables.is_empty() {
+            let mut items = Element::new("ul").attr("class", "deliverables");
+            for d in &g.deliverables {
+                items.push_child(
+                    Element::new("li")
+                        .child(el("span", "public.grant.licence"))
+                        .child(Element::new("span").text(&format!(": {}. ", d.licence)))
+                        .child(el("span", "public.grant.snapshot"))
+                        .child(Element::new("span").text(&format!(": {}", d.snapshot))),
+                );
+            }
+            facts.push_child(el("dt", "public.grant.deliverables"));
+            facts.push_child(Element::new("dd").child(items));
         }
         list.push_child(
             Element::new("li")

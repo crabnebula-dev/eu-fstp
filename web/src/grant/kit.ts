@@ -35,13 +35,14 @@ import { OPERATIONS_LABELS } from "../operations/messages.en.js";
 import { PAYMENTS_LABELS } from "../payments/messages.en.js";
 import { canonicalBody } from "./models.js";
 import { GRANT_LABELS } from "./messages.en.js";
+import { VISIBILITY_LABELS } from "./visibility/messages.en.js";
 
 export { buttonEl, formEl, textArea, textField };
 export type { Frame, PageEnv };
 
 /** The catalogue of every post-grant page. */
 export function labels(env: PageEnv): I18n {
-  return pageI18n(env, { ...GRANT_LABELS, ...CONTRACT_LABELS, ...PAYMENTS_LABELS, ...OPERATIONS_LABELS });
+  return pageI18n(env, { ...GRANT_LABELS, ...CONTRACT_LABELS, ...PAYMENTS_LABELS, ...OPERATIONS_LABELS, ...VISIBILITY_LABELS });
 }
 
 /** What a call that needs the step-up and the passkey page needs from the page. */
@@ -142,6 +143,7 @@ export const GRANT_PATHS = Object.freeze({
   grant: (p: string): string => `/app/grants/${p}`,
   contract: (p: string): string => `/app/grants/${p}/contract`,
   payments: (p: string): string => `/app/grants/${p}/payments`,
+  visibility: (p: string): string => `/app/grants/${p}/visibility`,
   paymentNew: (p: string): string => `/app/grants/${p}/payments/new`,
   payment: (p: string, r: string): string => `/app/grants/${p}/payments/${r}`,
   resubmit: (p: string, r: string): string => `/app/grants/${p}/payments/${r}/resubmit`,
