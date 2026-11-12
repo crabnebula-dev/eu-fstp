@@ -24,7 +24,7 @@ Each scene replaces the cell state. Each starts from the `NEGOTIATION` applicant
 | `NEGOTIATION_READY` | x in NEGOTIATION, nothing determined. Every post-grant person enrolled |
 | `SENT` | amount determined, accepted, approved. Contract drafted, one clause change agreed, sent |
 | `EFFECTIVE` | the lead and the signatory signed. x is GRANTED |
-| `IN_EXECUTION` | the clock passed the first milestone start. x is IN_EXECUTION |
+| `IN_EXECUTION` | the clock passed the first milestone start. x is IN_EXECUTION. The lead entered bank details and finance verified them. The P-36 hold runs (shown on /demo) |
 | `UNDER_REVIEW` | the lead requested payment of milestone 1 with deliverable evidence. The checks passed |
 | `PAID` | line accepted, approved, released after the bank hold, confirmed paid |
 | `ALL_CLOSED` | milestone closed, x COMPLETED, five funder outputs generated and approved |
@@ -39,7 +39,7 @@ Open `<control base>/demo`, choose a scene, then "Sign in as" the person. Each p
 | Person | Click path |
 | --- | --- |
 | Lead applicant X | Home, "Your grant" link, grant page, then Contract and Payment requests links. Bank details on the grant page open the vault page |
-| Committee member R1 (reviewer) | Home, "Grants you review". The grant page answers R-AC-01 for a reviewer (see gaps) |
+| Committee member R1 (reviewer) | Home, "Grants you review", the determination form in NEGOTIATION. From UNDER_REVIEW: Home, "Payment requests to review", Operations, the request, the line review (`m5-ui.md`, "Polish: line review access") |
 | Programme manager M1 | Home, "Operations", then the grants list and the grant page. Reports at `/app/programmes/1/reports` |
 | Contract signatory S1 | Home, "Operations", the grant, the contract, countersign |
 | Finance approver F1 | Home, "Operations", the approval queue. Bank verification on the grant page |
@@ -70,7 +70,7 @@ R-NG-03, R-CT-01, R-CT-04, R-PR-01 to R-PR-05, R-RP-03, R-RP-04, R-NF-03. I-05, 
 ## Decisions and open questions for Daniel
 
 1. **Speedrun starts at the negotiation.** Rows 1 to 4 already have M4 specs and seeds, and a 40-hour deadline favours a short run. Decision: `NEGOTIATION_READY` is the start. The full-call video would chain the M4 scenes by hand.
-2. **P-36 hold in the demo.** The clock link advances 30 days, and the speedrun passes with it. I did not read the programme's P-36 value. Open: read P-36 from the programme and advance exactly that.
+2. **P-36 hold in the demo.** The clock link advances 30 days, and the speedrun passes with it. I did not read the programme's P-36 value. Open: read P-36 from the programme and advance exactly that. Closed by lane m5/polish-access: the link now moves past the hold of the latest bank entry, by the live P-36.
 3. **Fake forge is not behind the checks runner.** `fstp-checks` needs resolved evidence texts and an egress client. The pump passes the checks and fails them once on request. The location text is `http://a.fstp.localhost/demo/forge/...`, which no code fetches. Open: wire `fstp_checks::runner::run` to the forge when the evidence reads exist.
 4. **Open call package not generated.** Closed by the gaps lane, see below.
 5. **Hardship request is not seeded.** Closed by the gaps lane, see below.

@@ -34,7 +34,7 @@ const P36_HOLD_DAYS: i64 = 30;
 /// The clock links of the demo page: query value and link text.
 pub(crate) const CLOCK_LINKS: [(&str, &str); 5] = [
     ("milestone_start", "Advance to the first milestone start"),
-    ("p36", "Advance the P-36 bank hold (30 days)"),
+    ("p36", "Advance past the P-36 bank hold"),
     ("due_minus_14", "Advance to milestone due minus 14 days"),
     ("due", "Advance to the milestone due date"),
     ("due_plus_7", "Advance to milestone due plus 7 days"),
@@ -44,9 +44,15 @@ pub(crate) const CLOCK_LINKS: [(&str, &str); 5] = [
 /// the clock where it is.
 pub(crate) fn clock_to(inner: &Inner, to: &str) -> Result<(), String> {
     let now = inner.ports.clock.read().micros();
+    // Lane m5/polish-access: the hold link moves the clock one minute past
+    // the end of the hold of the latest bank detail write, by the
+    // programme's live P-36. Without either it keeps the old month.
+    let hold_end = crate::scenario::postgrant::bank_status(inner)
+        .and_then(|b| b.hold_ends)
+        .map(|e| e.saturating_add(60_000_000));
     let target = match to {
         "milestone_start" => MILESTONE_START + 3_600_000_000,
-        "p36" => now.saturating_add(P36_HOLD_DAYS * DAY),
+        "p36" => hold_end.unwrap_or_else(|| now.saturating_add(P36_HOLD_DAYS * DAY)),
         "due_minus_14" => MILESTONE_DUE - 14 * DAY,
         "due" => MILESTONE_DUE,
         "due_plus_7" => MILESTONE_DUE + 7 * DAY,
@@ -157,24 +163,44 @@ pub(crate) fn vault_read(inner: &Inner, req: &Request) -> Option<Response> {
             ))
         }
         (&Method::POST, "/r/act") => {
-            let Some((purpose, _)) = ticket() else {
+            if !act_on_ticket(inner) {
                 return Some(wire::not_found());
-            };
-            let now = inner.ports.clock.read();
-            inner.ports.vault.change(|t| match purpose {
-                VerificationPurpose::BankDetails(g) => t.write_bank(g, now),
-                VerificationPurpose::BankVerification(g) => t.verify_bank(g),
-                VerificationPurpose::BankDispute(g) => t.dispute_bank(g, true),
-                // R-PR-04: the reference is the one the seed filed.
-                VerificationPurpose::HardshipVerification(g) => {
-                    t.verify_hardship(g, crate::scenario::postgrant::hardship_evidence(g));
-                }
-                _ => {}
-            });
+            }
             Some(wire::json(StatusCode::OK, &wire::obj(vec![])))
         }
         _ => None,
     }
+}
+
+/// The action of the latest vault ticket, as the vault page's button posts
+/// it: the lead's bank detail write, finance's verification, a dispute,
+/// or a hardship verification. The demo seeds call it too, right after
+/// the operation that issued the ticket, so seeded bank details pass
+/// through the same operations and vault action as a click (I-33,
+/// R-PR-05). `false` when no ticket has an action.
+pub(crate) fn act_on_ticket(inner: &Inner) -> bool {
+    let Some((purpose, _)) = inner
+        .ports
+        .vault
+        .verifications()
+        .into_iter()
+        .rev()
+        .find(|(p, _)| action_of(p).is_some())
+    else {
+        return false;
+    };
+    let now = inner.ports.clock.read();
+    inner.ports.vault.change(|t| match purpose {
+        VerificationPurpose::BankDetails(g) => t.write_bank(g, now),
+        VerificationPurpose::BankVerification(g) => t.verify_bank(g),
+        VerificationPurpose::BankDispute(g) => t.dispute_bank(g, true),
+        // R-PR-04: the reference is the one the seed filed.
+        VerificationPurpose::HardshipVerification(g) => {
+            t.verify_hardship(g, crate::scenario::postgrant::hardship_evidence(g));
+        }
+        _ => {}
+    });
+    true
 }
 
 /// `/demo/forge/synthetic-sensor-kit` on the control base: a public

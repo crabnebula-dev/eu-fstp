@@ -591,6 +591,17 @@ fn page(site: &Site) -> Response {
         })
         .unwrap_or_default();
     let scene = esc(&inner.scene());
+    // Lane m5/polish-access: the bank details of the grant and their P-36
+    // hold, so the presenter knows when a release can pass (I-33).
+    let bank = scenario::postgrant::bank_status(&inner)
+        .map(|b| {
+            format!(
+                "<p id=\"demo-bank\" data-verified=\"{v}\">{s}</p>\n",
+                v = b.verified,
+                s = esc(&b.sentence(now))
+            )
+        })
+        .unwrap_or_default();
     let how = if site.info.demo_signin {
         "Choose \"Sign in as\" to open the person's home page in one click, with no passkey. Use one browser profile per person, such as a new incognito window each. Pages signed in this way say \"Demo sign-in\" in the top bar. The name link enrols a passkey instead, and works once."
     } else {
@@ -605,7 +616,7 @@ fn page(site: &Site) -> Response {
 <span class=\"topbar-spacer\"></span>{public}<a class=\"tool-link\" href=\"{origin}/app/calls\" target=\"_blank\" rel=\"noopener\">Open calls on the cell</a></div></header>\n\
 <main id=\"main\">\n\
 <h1>FSTP demo, cell {name}</h1>\n\
-<p id=\"demo-scene\" class=\"scene\">Scene: <strong>{scene}</strong></p>\n\
+<p id=\"demo-scene\" class=\"scene\">Scene: <strong>{scene}</strong></p>\n{bank}\
 <p class=\"muted\">Test cell with synthetic data only. Cell: <a href=\"{origin}/auth/login\" target=\"_blank\" rel=\"noopener\">{origin}</a>. \
 Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refresh it</a> to see new messages and links.</p>\n\
 <p>{how}</p>\n\

@@ -7,7 +7,7 @@
 
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
 import { mountPostGrant } from "../src/grant/routes.js";
-import { decodeDetermination, decodeGrantList, decodeOverview, decodeToSign } from "../src/grant/models.js";
+import { decodeDetermination, decodeGrantList, decodeLineReview, decodeOverview, decodeToSign } from "../src/grant/models.js";
 import type { PageEnv } from "../src/reviewer/kit.js";
 import { VALIDATORS } from "../src/gen/api.js";
 import { assert, test } from "./support/harness.js";
@@ -179,4 +179,52 @@ test("r_ng_03_determination_decoder_refuses_number_amounts", () => {
   const ok = decodeDetermination({ proposal: "3", state: "NEGOTIATION", determination: "4", plan: "6", plan_total: "1000.00", granted: "900.00" });
   assert(ok !== null && ok.agreedPlan === "6" && ok.granted === "900.00", "decoded");
   assert(decodeDetermination({ proposal: "3", state: "NEGOTIATION", determination: null, plan: "6", plan_total: 1000, granted: null }) === null, "number refused");
+});
+
+const LINE_REVIEW = {
+  request: "9",
+  proposal: "3",
+  status: "UNDER_REVIEW",
+  kind: "milestone",
+  submission_checks: true,
+  acceptance_checks: false,
+  lines: [
+    {
+      line: "11",
+      milestone: "7",
+      requested: "60000.00",
+      approved: null,
+      location: "https://forge.example/synthetic/repo",
+      release: "v1.0.0",
+      licence: "MIT",
+      report: "SYNTHETIC DELIVERY REPORT",
+    },
+  ],
+};
+
+/** R-PR-08, I-86: the generated validator and the page decoder accept the line review view, evidence and all. */
+test("r_pr_08_line_review_view_decodes", () => {
+  const check = (VALIDATORS as Readonly<Record<string, (x: unknown) => boolean>>)["payment.line_review_view"];
+  assert(check !== undefined && check(LINE_REVIEW), "the generated validator accepts the view");
+  const v = decodeLineReview(LINE_REVIEW);
+  assert(v !== null && v.request.lines.length === 1 && v.evidence[0]?.licence === "MIT", "decoded");
+  assert(decodeLineReview({ ...LINE_REVIEW, lines: [{ ...LINE_REVIEW.lines[0], requested: 60000 }] }) === null, "ADR-006: a number amount is refused");
+});
+
+/** R-PR-08, R-AC-01: the assigned reviewer, refused the payment status, reaches the line review of the request through the line review view. */
+test("r_pr_08_reviewer_reaches_the_line_review_by_clicking", async () => {
+  prepare("/app/grants/3/payments/9");
+  const sent: string[] = [];
+  await mountPostGrant(env({ "GET /grants/3/payment-requests/9/line-review": LINE_REVIEW }, sent), "/app/grants/3/payments/9");
+  await settle();
+  assert(sent.includes("GET /grants/3/payment-requests"), "the payment status is asked first");
+  assert(sent.includes("GET /grants/3/payment-requests/9/line-review"), sent.join(", "));
+  const t = text();
+  assert(t.includes("Payment request for milestone 7"), `the request label: ${t.slice(0, 400)}`);
+  assert(t.includes("Reference 9"), "the muted reference");
+  assert(t.includes("https://forge.example/synthetic/repo") && t.includes("MIT") && t.includes("SYNTHETIC DELIVERY REPORT"), "the evidence");
+  assert(t.includes("Line review"), "the line review section");
+  assert(fakeDocument.getElementById("pay-review-form-11") !== null, "the decision form of line 11");
+  assert(t.includes("Back to Operations"), "the way back is Operations, not the payments list");
+  assert(!/bank|iban|payee/i.test(t), "I-86: nothing about bank details");
 });

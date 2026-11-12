@@ -461,3 +461,165 @@ fn r_ng_03_d11_determination_view_is_closed_outside_negotiation() {
         );
     }
 }
+
+/// The path of the line review view of request `r` of grant `x`.
+fn line_review_path(x: ProposalId, r: u128) -> String {
+    format!("/grants/{}/payment-requests/{r}/line-review", x.raw())
+}
+
+/// R-PR-08, I-60, R-AC-01, I-03, R-CF-02, I-86 (lane m5/polish-access):
+/// while a request is UNDER_REVIEW, the assigned reviewer of the grant
+/// reads the line review view and decides each line from it. The view
+/// names the request, its lines with their evidence, and the checks, and
+/// no bank detail, account or email. An unassigned committee member, an
+/// undeclared, a conflicted or a released reviewer, the lead, the
+/// programme manager, finance, the releaser and an unbound person are
+/// refused. Once the line is decided the request is ACCEPTED, the view
+/// closes, and the reviewer cannot approve it either (SoD-04, I-05).
+#[test]
+fn r_pr_08_assigned_reviewer_reads_and_decides_the_line_review() {
+    let w = world(StateTag::InExecution);
+    let x = w.targets.proposal.expect("X");
+    let r = w.targets.request.expect("a request under review");
+    let accepted = w.targets.accepted.expect("an accepted request");
+    let mut seed = seeder(w);
+    let path = line_review_path(x, r);
+    let v = seed
+        .api(REVIEWER, GET, &path, &Value::Null)
+        .unwrap_or_else(|e| panic!("{path}: {e}"));
+    let text = v.to_compact();
+    assert!(!text.contains('@'), "I-86: an email in {text}");
+    for leak in ["account", "bank", "iban", "payee"] {
+        assert!(!text.contains(leak), "I-86: {leak} in {text}");
+    }
+    let keys: Vec<String> = v
+        .as_object()
+        .expect("an object")
+        .iter()
+        .map(|(k, _)| k.to_owned())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "request",
+            "proposal",
+            "status",
+            "kind",
+            "submission_checks",
+            "acceptance_checks",
+            "lines"
+        ],
+        "I-86: only what the line review needs"
+    );
+    assert_eq!(str_member(&v, "status").as_deref(), Some("UNDER_REVIEW"));
+    assert_eq!(str_member(&v, "request"), Some(r.to_string()));
+    let lines = rows(v.get("lines").expect("lines"));
+    assert_eq!(lines.len(), 1);
+    let line = &lines[0];
+    assert_eq!(
+        str_member(line, "location").as_deref(),
+        Some("https://forge.example/synthetic/repo"),
+        "R-PR-01: the evidence the lead gave"
+    );
+    assert_eq!(str_member(line, "release").as_deref(), Some("v1.0.0"));
+    assert_eq!(str_member(line, "licence").as_deref(), Some("MIT"));
+    assert_eq!(
+        str_member(line, "report").as_deref(),
+        Some("SYNTHETIC DELIVERY REPORT")
+    );
+    assert_eq!(str_member(line, "requested").as_deref(), Some("100.00"));
+    let refused = |seed: &mut Seeder, who: AccountId| -> String {
+        seed.api(who, GET, &path, &Value::Null)
+            .expect_err("refused")
+    };
+    assert!(refused(&mut seed, MEMBER).contains("R-AC-01"), "unassigned");
+    assert!(
+        refused(&mut seed, REVIEWER_UNDECLARED).contains("R-CF-02"),
+        "undeclared"
+    );
+    assert!(
+        refused(&mut seed, REVIEWER_CONFLICTED).contains("I-03"),
+        "conflicted"
+    );
+    for who in [
+        LEAD,
+        TEAM,
+        PM,
+        FINANCE,
+        RELEASER,
+        AUDITOR,
+        REVIEWER_RELEASED,
+        UNBOUND,
+    ] {
+        assert!(refused(&mut seed, who).contains("R-AC-01"), "{who:?}");
+    }
+    // A request that is not UNDER_REVIEW has no line review view.
+    let e = seed
+        .api(REVIEWER, GET, &line_review_path(x, accepted), &Value::Null)
+        .expect_err("ACCEPTED is closed");
+    assert!(e.contains("R-AC-01"), "{e}");
+    // R-PR-08, I-60: the reviewer approves a lower amount with a reason,
+    // once the acceptance checks passed (I-32).
+    let id = str_member(line, "line").expect("line id");
+    m5_checks(
+        &mut seed,
+        fstp_domain::id::RequestId::from_raw(r),
+        fstp_domain::id::LineId::from_raw(id.parse().unwrap()),
+        fstp_domain::payment::CheckPhase::Acceptance,
+    )
+    .unwrap();
+    let again = seed.api(REVIEWER, GET, &path, &Value::Null).unwrap();
+    assert_eq!(
+        again.get("acceptance_checks"),
+        Some(&Value::Bool(true)),
+        "I-32: the view shows the passed checks"
+    );
+    seed.api(
+        REVIEWER,
+        POST,
+        &format!("/payment-requests/{r}/lines/{id}/decision"),
+        &obj(vec![
+            ("approved", s("80.00")),
+            ("currency", s("EUR")),
+            ("reason", s("SYNTHETIC REDUCTION REASON")),
+        ]),
+    )
+    .unwrap();
+    let e = seed
+        .api(REVIEWER, GET, &path, &Value::Null)
+        .expect_err("the review is over");
+    assert!(e.contains("R-AC-01"), "{e}");
+    // SoD-04, I-05: the line reviewer neither approves nor releases.
+    assert!(
+        seed.api(
+            REVIEWER,
+            POST,
+            &format!("/payment-requests/{r}/approval"),
+            &obj(vec![])
+        )
+        .is_err(),
+        "SoD-04: the reviewer approved"
+    );
+}
+
+/// R-PR-08, D11: outside IN_EXECUTION the assigned reviewer reads no
+/// line review view.
+#[test]
+fn r_pr_08_d11_line_review_view_is_closed_outside_execution() {
+    for state in [
+        StateTag::Negotiation,
+        StateTag::Granted,
+        StateTag::Completed,
+    ] {
+        let w = world(state);
+        let x = w.targets.proposal.expect("X");
+        let mut seed = seeder(w);
+        let e = seed
+            .api(REVIEWER, GET, &line_review_path(x, 1), &Value::Null)
+            .expect_err("closed");
+        assert!(
+            e.contains("R-AC-01") || e.contains("I-03"),
+            "{state:?}: {e}"
+        );
+    }
+}

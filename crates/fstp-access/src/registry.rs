@@ -2092,6 +2092,14 @@ pub const OPS: &[OpSpec] = &[
         "/payment-requests/{request}/withdrawal",
     )
     .acting(LEAD),
+    // Lane m5/polish-access (2026-11-12): the assigned reviewer's line
+    // review view (R-PR-08). Web only, as `payment.review_line` is (I-85).
+    OpSpec::read(
+        "payment.line_review_view",
+        RK::GetLineReview,
+        "/grants/{proposal}/payment-requests/{request}/line-review",
+    )
+    .acting(REVIEWER),
     OpSpec::command(
         "payment.review_line",
         CK::AcceptLine,

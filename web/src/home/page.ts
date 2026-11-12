@@ -68,6 +68,7 @@ import {
 } from "../reviewer/kit.js";
 import { type MyRoles, type OwnProposal, WORK_PATHS, type Work, type WorkItem, workOf } from "./model.js";
 import { mailboxCount } from "../mailbox/pages.js";
+import { decodeQueue, type QueueRow } from "../grant/models.js";
 import { homeLabel } from "./nav.js";
 import { myRoles } from "./session.js";
 import { activityNav, journeyNav } from "../journey/links.js";
@@ -130,6 +131,8 @@ interface Counts {
   readonly queue: ReadonlyMap<string, number> | null;
   readonly irc: number | null;
   readonly admins: number | null;
+  /** The payment requests waiting on the caller's own line review (R-PR-08). */
+  readonly toReview: number | null;
 }
 
 const isAdmins: Guard<{ readonly admins: readonly { readonly account: string; readonly handle: string; readonly verified: boolean }[] }> =
@@ -222,6 +225,20 @@ async function inIrcReview(env: ReturnType<typeof browserEnv>, x: AssignmentSumm
   return c.problem.kind === "refused" ? 0 : null;
 }
 
+let reviewCount: Promise<number | null> | null = null;
+
+/**
+ * The payment requests waiting on the caller's own line review, read once per page load from
+ * `payment.queue`, or null when it cannot be read (R-PR-08). The cell lists a request for
+ * review only to an active assigned reviewer of its grant.
+ */
+export function paymentReviewCount(): Promise<number | null> {
+  reviewCount ??= readOp(browserEnv(document.body), "payment.queue", {}, (v): v is readonly QueueRow[] => decodeQueue(v) !== null)
+    .then((q) => (q.ok ? (decodeQueue(q.data) ?? []).filter((r) => r.task === "review").length : null))
+    .catch(() => null);
+  return reviewCount;
+}
+
 /** Reads the counts the caller's cards show. Each read is made only for a card the caller has. */
 async function readCounts(w: Work, r: MyRoles): Promise<Counts> {
   const env = browserEnv(document.body);
@@ -263,8 +280,10 @@ async function readCounts(w: Work, r: MyRoles): Promise<Counts> {
   const admins = r.tenantAdmin
     ? readOp(env, "tenant.list_admins", {}, isAdmins).then((a) => (a.ok ? a.data.admins.length : null))
     : Promise.resolve(null);
+  const toReview = has("assignments") ? paymentReviewCount() : Promise.resolve(null);
   return {
     toScore: await toScore,
+    toReview: await toReview,
     toRank: has("ranking") ? await toRank : null,
     knockOut: has("intake") ? await knockOut : null,
     queue: await queue,
@@ -345,6 +364,17 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
     if (c.queue !== null) {
       after.push(queueHealth(c.queue));
     }
+  }
+
+  // R-PR-08 (lane m5/polish-access): an assigned reviewer with payment lines to decide gets
+  // a card first, linking to Operations, which lists each request to review.
+  if (c.toReview !== null && c.toReview > 0) {
+    out.push({
+      id: "home-payment-review",
+      title: counted("home.to_review_payments", c.toReview),
+      body: [h("p", {}, [homeLabel("home.to_review_payments.intro")])],
+      items: [{ kind: "operations", href: WORK_PATHS.operations, text: { id: "home.work.payment_review", args: {} }, group: "committee" }],
+    });
   }
 
   // J6: the reviewer's assignments.

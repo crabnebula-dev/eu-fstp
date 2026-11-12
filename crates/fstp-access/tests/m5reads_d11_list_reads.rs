@@ -132,3 +132,49 @@ fn r_ng_03_d11_determination_view_is_the_assigned_reviewers_in_negotiation() {
         );
     }
 }
+
+/// R-PR-08, D11, R-AC-01, I-03, R-CF-02, I-86 (lane m5/polish-access):
+/// the line review view is the assigned reviewer's alone, declared free
+/// of conflict, and open only while the grant is IN_EXECUTION. Every
+/// other state is a judged refusal. The dispatch narrows it further to a
+/// request in UNDER_REVIEW. It is web only, as `payment.review_line` is
+/// (I-85). Its reply carries the request, its lines, their evidence and
+/// the checks, and nothing about bank details, accounts or the grant.
+#[test]
+fn r_pr_08_d11_line_review_view_is_the_assigned_reviewers_in_execution() {
+    let (rule, open) = read_rule(ReadKind::GetLineReview).expect("a rule");
+    assert_eq!(rule, ReadRule::ProposalReviewer);
+    assert_eq!(open, &[StateTag::InExecution]);
+    assert!(ReadKind::ALL.contains(&ReadKind::GetLineReview));
+    let spec = op("payment.line_review_view").expect("in the registry");
+    assert_eq!(spec.kind, OpKind::Read(ReadKind::GetLineReview));
+    assert_eq!(
+        spec.route.map(|(_, p)| p),
+        Some("/grants/{proposal}/payment-requests/{request}/line-review")
+    );
+    assert!(spec.tool.is_none(), "I-85: the line review view has a tool");
+    let text = format!("{:?}", reply("payment.line_review_view").expect("a shape"));
+    for member in [
+        "\"request\"",
+        "\"status\"",
+        "\"submission_checks\"",
+        "\"acceptance_checks\"",
+        "\"lines\"",
+        "\"requested\"",
+        "\"approved\"",
+        "\"location\"",
+        "\"release\"",
+        "\"licence\"",
+        "\"report\"",
+    ] {
+        assert!(text.contains(member), "lacks {member}: {text}");
+    }
+    for leak in [
+        "account", "bank", "iban", "payee", "\"paid\"", "contract", "email",
+    ] {
+        assert!(
+            !text.contains(leak),
+            "the line review view names {leak}: {text}"
+        );
+    }
+}

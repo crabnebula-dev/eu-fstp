@@ -386,3 +386,24 @@ test("adr014_return_path_stays_on_the_cell_origin", () => {
     },
   );
 });
+
+/** R-PR-08 (lane m5/polish-access): an assigned reviewer with payment lines to review gets Operations in the navigation, and only then. */
+test("r_pr_08_nav_links_operations_for_a_reviewer_with_review_work", () => {
+  const r = roles({ ...EMPTY, roles: [{ role: "committee_member", programme: "1", calls: ["1"] }] });
+  eq(
+    navLinksOf(r).map((l) => l.kind),
+    ["assignments"],
+    "no Operations link without review work",
+  );
+  eq(
+    navLinksOf(r, true).map((l) => l.kind),
+    ["assignments", "operations"],
+    "Operations once the queue holds a line review",
+  );
+  assert(
+    navOf(r, true).some((l) => l.kind === "operations" && l.href === "/app/operations"),
+    "the navigation links the Operations page",
+  );
+  const outsider = roles({ ...EMPTY, roles: [{ role: "applicant", programme: "1", proposal: "1001", calls: ["1"] }] });
+  assert(!navLinksOf(outsider, true).some((l) => l.kind === "operations"), "review work alone needs a committee binding");
+});

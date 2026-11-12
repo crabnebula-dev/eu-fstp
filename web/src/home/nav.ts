@@ -47,6 +47,9 @@ import { type MyRoles, type NavLink, WORK_PATHS, chipRoles, navOf } from "./mode
 
 let catalogue: I18n | null = null;
 
+/** Whether the caller has payment lines to review (R-PR-08, lane m5/polish-access). */
+let reviewWork = false;
+
 /**
  * The home catalogue. Interim, pending the lead: the shell passes no
  * locale or terminology overrides yet, so the pages use English.
@@ -99,7 +102,7 @@ const PROFILE = "/app/me";
  */
 function links(roles: MyRoles | null): { readonly main: HTMLElement[]; readonly tools: HTMLElement[] } {
   const current = here();
-  const all = navOf(roles);
+  const all = navOf(roles, reviewWork);
   return {
     main: all.filter((l) => l.kind !== "account").map((l) => item(l, current)),
     tools: all
@@ -244,5 +247,17 @@ export function showRoles(roles: MyRoles): void {
   }
   for (const chip of Array.from(document.querySelectorAll(`[${CHIP}]`))) {
     chip.replaceChildren(chipText(roles));
+  }
+}
+
+/**
+ * Marks that the caller has payment lines to review (R-PR-08, lane m5/polish-access), so
+ * every site navigation of the page, and every one built later, links Operations for an
+ * assigned reviewer who holds no Operations role.
+ */
+export function showReviewWork(): void {
+  reviewWork = true;
+  if (known !== null) {
+    showRoles(known);
   }
 }

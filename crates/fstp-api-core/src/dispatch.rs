@@ -1481,7 +1481,7 @@ fn read_target(op: &Op) -> ReadTarget {
 }
 
 /// The API error of a denied read.
-fn read_denied(rule: DenyRule) -> ApiError {
+pub(super) fn read_denied(rule: DenyRule) -> ApiError {
     match rule {
         DenyRule::Actor => ApiError::refused(ErrorCode::Unauthenticated, "actor"),
         DenyRule::Input => ApiError::refused(ErrorCode::NotFound, "Input"),
@@ -1810,6 +1810,12 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetDetermination => {
             let p = proposal_param(call, op)?;
             ReadModel::Grant(grant_lists::determination(call, p))
+        }
+        // Lane m5/polish-access: the assigned reviewer's line review view
+        // (R-PR-08).
+        ReadKind::GetLineReview => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Grant(grant_lists::line_review(call, op, p).map_err(|e| call.refuse(e))?)
         }
         // M6 lane L6-API, M6 design section 6: the tenant admin's mail
         // relay and delivery log.

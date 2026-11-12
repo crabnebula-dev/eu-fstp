@@ -634,6 +634,33 @@ pub const REPLIES: &[(&str, Shape)] = &[
         ])),
     ),
     ("payment.status", Shape::Array(&PAYMENT_REQUEST)),
+    // Lane m5/polish-access (2026-11-12): what a line review needs, for
+    // the assigned reviewer (R-PR-08, R-PR-01, I-32). The evidence the
+    // lead gave per line, and no bank detail, account or paid sum (I-86).
+    (
+        "payment.line_review_view",
+        Shape::Object(&[
+            m("request", Shape::Id),
+            m("proposal", Shape::Id),
+            m("status", Shape::Enum(REQUEST_STATES)),
+            m("kind", Shape::Enum(&["milestone", "hardship"])),
+            m("submission_checks", Shape::Bool),
+            m("acceptance_checks", Shape::Bool),
+            m(
+                "lines",
+                Shape::Array(&Shape::Object(&[
+                    m("line", Shape::Id),
+                    m("milestone", Shape::Id),
+                    m("requested", Shape::Amount),
+                    m("approved", Shape::Nullable(&Shape::Amount)),
+                    m("location", Shape::Nullable(&Shape::String)),
+                    m("release", Shape::Nullable(&Shape::String)),
+                    m("licence", Shape::Nullable(&Shape::String)),
+                    m("report", Shape::Nullable(&Shape::String)),
+                ])),
+            ),
+        ]),
+    ),
     (
         "payment.queue",
         Shape::Array(&Shape::Object(&[

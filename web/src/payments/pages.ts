@@ -39,12 +39,15 @@ import {
   closeBody,
   decodeOverview,
   decodePayments,
+  decodeLineReview,
   decodeRedirect,
   isAmountText,
   lineBody,
   paymentBody,
   reviewBody,
   type LineBody,
+  type LineEvidence,
+  type LineReviewView,
   type MilestoneInfo,
   type Overview,
   type RequestRow,
@@ -414,9 +417,14 @@ async function mountRequest(env: PageEnv, params: Readonly<Record<string, string
   const proposal = params["proposal"] ?? "";
   const id = params["request"] ?? "";
   const f = frame(env, t, t.label("pay.detail.title"));
+  // R-PR-08: whether this page showed the assigned reviewer's line review view.
+  const seen = { review: false };
   const render = async (): Promise<void> => {
     const res = await readOp(env, "payment.status", { proposal }, (v): v is readonly RequestRow[] => decodePayments(v) !== null);
     if (!res.ok) {
+      if (await reviewerFallback(env, t, f, proposal, id, seen, render)) {
+        return;
+      }
       f.problem(res.problem);
       f.show([h("p", {}, [link(GRANT_PATHS.payments(proposal), t.label("pay.detail.back"))])]);
       return;
@@ -496,6 +504,87 @@ async function mountRequest(env: PageEnv, params: Readonly<Record<string, string
     f.show(body);
   };
   await guarded(f, render);
+}
+
+/**
+ * The assigned reviewer's request page (R-PR-08, lane m5/polish-access). A committee member
+ * reads no `payment.status`, so the page reads `payment.line_review_view`, which the cell
+ * serves to the declared, conflict-free assigned reviewer while the request is UNDER_REVIEW.
+ * It shows the request with the same labels and chips as the full page, each line with its
+ * evidence, and the line review forms. Once the last line is decided the view closes, and the
+ * page says the review is complete. `true` when it rendered the page.
+ */
+async function reviewerFallback(
+  env: PageEnv,
+  t: I18n,
+  f: Frame,
+  proposal: string,
+  id: string,
+  seen: { review: boolean },
+  reload: () => Promise<void>,
+): Promise<boolean> {
+  const roles = await rolesOrNull();
+  if (!can(roles, "committee_member")) {
+    return false;
+  }
+  const back = h("p", {}, [link(GRANT_PATHS.operations, t.label("pay.reviewer.back"))]);
+  const v = await readOp(env, "payment.line_review_view", { proposal, request: id }, (x): x is LineReviewView => decodeLineReview(x) !== null);
+  const view = v.ok ? decodeLineReview(v.data) : null;
+  if (view === null) {
+    if (!seen.review) {
+      return false;
+    }
+    f.show([h("p", { id: "pay-review-complete" }, [t.label("pay.reviewer.complete")]), back]);
+    return true;
+  }
+  seen.review = true;
+  const r = view.request;
+  f.retitle(requestLabel(t, r, null));
+  const ev = (line: string): LineEvidence | undefined => view.evidence.find((e) => e.line === line);
+  const cell = (s: string | null | undefined): string => (s === null || s === undefined || s === "" ? "-" : s);
+  f.show([
+    back,
+    requestReference(t, r),
+    h("p", { id: "pay-status", "data-status": r.status }, [t.label("pay.detail.status"), ": ", statusBadge(t, r.status)]),
+    h("p", {}, [t.label("pay.reviewer.intro")]),
+    facts([
+      [t.label("pay.list.col_kind"), t.label(`pay.kind.${r.kind}`)],
+      [t.label("pay.detail.checks"), checks(t, r)],
+    ]),
+    h("table", { id: "pay-lines-table" }, [
+      h("caption", {}, [t.label("pay.detail.lines")]),
+      h("thead", {}, [
+        h("tr", {}, [
+          h("th", { scope: "col" }, [t.label("pay.detail.line_milestone")]),
+          h("th", { scope: "col" }, [t.label("pay.detail.line_requested")]),
+          h("th", { scope: "col" }, [t.label("pay.detail.line_approved")]),
+          h("th", { scope: "col" }, [t.label("pay.reviewer.location")]),
+          h("th", { scope: "col" }, [t.label("pay.reviewer.release")]),
+          h("th", { scope: "col" }, [t.label("pay.reviewer.licence")]),
+          h("th", { scope: "col" }, [t.label("pay.reviewer.report")]),
+        ]),
+      ]),
+      h(
+        "tbody",
+        {},
+        r.lines.map((l) => {
+          const e = ev(l.line);
+          return h("tr", { "data-line": l.line }, [
+            h("th", { scope: "row" }, [l.milestone]),
+            h("td", {}, [l.requested]),
+            h("td", {}, [l.approved ?? t.label("pay.detail.line_none")]),
+            h("td", {}, [cell(e?.location)]),
+            h("td", {}, [cell(e?.release)]),
+            h("td", {}, [cell(e?.licence)]),
+            h("td", {}, [cell(e?.report)]),
+          ]);
+        }),
+      ),
+    ]),
+    h("p", { class: "text-sm" }, [t.label("pay.sod")]),
+    reviewSection(env, t, f, r, reload),
+  ]);
+  return true;
 }
 
 /** The payment pages, each with its route below `/app/`. */

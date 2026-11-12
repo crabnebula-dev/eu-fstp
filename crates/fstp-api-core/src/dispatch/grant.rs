@@ -226,7 +226,7 @@ pub(super) fn party_role(r: PartyRole) -> &'static str {
     }
 }
 
-fn request_row(s: &RequestSummary) -> RequestRow {
+pub(super) fn request_row(s: &RequestSummary) -> RequestRow {
     RequestRow {
         request: s.request,
         proposal: s.grant,

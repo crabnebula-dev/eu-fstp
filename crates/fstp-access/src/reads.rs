@@ -182,11 +182,14 @@ pub enum ReadKind {
     // mailbox, derived from existing state, each message kept only when
     // the read behind its page admits the caller.
     GetMyMailbox,
+    // Lane m5/polish-access (2026-11-12): the assigned reviewer's view of
+    // what a payment line review needs (R-PR-08).
+    GetLineReview,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 65] = [
+    pub const ALL: [ReadKind; 66] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -252,6 +255,7 @@ impl ReadKind {
         ReadKind::GetPrecheckRuns,
         ReadKind::GetFindingsStatus,
         ReadKind::GetMyMailbox,
+        ReadKind::GetLineReview,
     ];
 }
 
@@ -581,6 +585,16 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // keeps each message only when `authorize_read` admits the caller to
     // the read behind its page.
     (ReadKind::GetMyMailbox, ReadRule::Own, OPEN_ALWAYS),
+    // Lane m5/polish-access (2026-11-12): R-PR-08 has the assigned
+    // reviewers decide each line, so they read what the line review
+    // needs while the grant is IN_EXECUTION. The dispatch serves only a
+    // request of that grant in UNDER_REVIEW. Every other state is a
+    // judged refusal. `GRANT_READER` stays as it is.
+    (
+        ReadKind::GetLineReview,
+        ReadRule::ProposalReviewer,
+        &[StateTag::InExecution],
+    ),
 ];
 
 /// The readers of a grant (M5 design section 5).

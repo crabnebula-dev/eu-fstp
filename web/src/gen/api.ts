@@ -230,6 +230,7 @@ export type OpName =
   | "payment.submit"
   | "payment.resubmit"
   | "payment.withdraw"
+  | "payment.line_review_view"
   | "payment.review_line"
   | "payment.request_changes"
   | "payment.approve"
@@ -454,6 +455,7 @@ export interface OpParams {
   readonly "payment.submit": { readonly "proposal": string };
   readonly "payment.resubmit": { readonly "request": string };
   readonly "payment.withdraw": { readonly "request": string };
+  readonly "payment.line_review_view": { readonly "proposal": string; readonly "request": string };
   readonly "payment.review_line": { readonly "request": string; readonly "line": string };
   readonly "payment.request_changes": { readonly "request": string };
   readonly "payment.approve": { readonly "request": string };
@@ -651,6 +653,7 @@ export const OP_NAMES: readonly OpName[] = [
   "payment.submit",
   "payment.resubmit",
   "payment.withdraw",
+  "payment.line_review_view",
   "payment.review_line",
   "payment.request_changes",
   "payment.approve",
@@ -3137,6 +3140,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "payment.line_review_view",
+    method: "GET",
+    path: "/grants/{proposal}/payment-requests/{request}/line-review",
+    base: "api",
+    segments: [{ kind: "literal", text: "grants" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "payment-requests" }, { kind: "param", name: "request" }, { kind: "literal", text: "line-review" }],
+    params: ["proposal", "request"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "payment.review_line",
     method: "POST",
     path: "/payment-requests/{request}/lines/{line}/decision",
@@ -3579,6 +3596,30 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   } },
+  "payment.line_review_view": {
+    kind: "object",
+    fields: {
+      "request": { schema: { kind: "id" }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "status": { schema: { kind: "enum", values: ["SUBMITTED", "CHECKS_FAILED", "UNDER_REVIEW", "CHANGES_REQUESTED", "ACCEPTED", "PAYMENT_APPROVED", "RELEASED", "PAID", "REJECTED", "WITHDRAWN", "CLOSED"] }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["milestone", "hardship"] }, optional: false },
+      "submission_checks": { schema: { kind: "bool" }, optional: false },
+      "acceptance_checks": { schema: { kind: "bool" }, optional: false },
+      "lines": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "line": { schema: { kind: "id" }, optional: false },
+          "milestone": { schema: { kind: "id" }, optional: false },
+          "requested": { schema: { kind: "amount" }, optional: false },
+          "approved": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
+          "location": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "release": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "licence": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "report": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "payment.queue": { kind: "array", items: {
     kind: "object",
     fields: {

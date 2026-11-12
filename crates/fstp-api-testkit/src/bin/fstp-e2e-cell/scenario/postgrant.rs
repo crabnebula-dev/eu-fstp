@@ -187,6 +187,124 @@ pub(crate) fn hardship_evidence(x: ProposalId) -> fstp_domain::id::HardshipEvide
     fstp_domain::id::HardshipEvidenceId::from_raw(x.raw().saturating_add(8_000))
 }
 
+/// The bank details of grant x as the synthetic vault holds them, for the
+/// seed reply and the demo page (I-33, R-PR-05). The vault holds facts
+/// only: no bank value exists anywhere (I-86).
+pub(crate) struct BankStatus {
+    /// When the lead last entered them, in microseconds.
+    pub(crate) entered: i64,
+    /// Whether finance verified that entry.
+    pub(crate) verified: bool,
+    /// Whether a dispute is open.
+    pub(crate) disputed: bool,
+    /// The live P-36 hold of the programme in days, when readable.
+    pub(crate) hold_days: Option<i64>,
+    /// When the hold of that entry ends, in microseconds.
+    pub(crate) hold_ends: Option<i64>,
+}
+
+/// The live P-36 hold of the demo programme in days, from its value
+/// `{"days":N}`, or `None` when it cannot be read.
+fn p36_days(inner: &Inner) -> Option<i64> {
+    let state = inner.ports.engine.state();
+    let value = fstp_domain::policy::live_values(&state.core, PROGRAMME)?
+        .opaque
+        .get(&fstp_domain::rules::ParamId::P36)?
+        .as_str()
+        .to_owned();
+    let parsed = fstp_json::parse(value.as_bytes()).ok()?;
+    let days = parsed.as_object()?.get("days")?.as_u64()?;
+    i64::try_from(days).ok()
+}
+
+/// The bank details of grant x, or `None` before the lead entered any.
+pub(crate) fn bank_status(inner: &Inner) -> Option<BankStatus> {
+    let facts = inner.ports.vault.truth().bank(PROPOSALS[0].proposal)?;
+    let entered = facts.written.micros();
+    let hold_days = p36_days(inner);
+    Some(BankStatus {
+        entered,
+        verified: facts.verified,
+        disputed: facts.disputed,
+        hold_days,
+        hold_ends: hold_days.map(|d| entered.saturating_add(d.saturating_mul(DAY))),
+    })
+}
+
+impl BankStatus {
+    /// The seed reply member `bank`.
+    fn to_json(&self, now: i64) -> Value {
+        let ends = self
+            .hold_ends
+            .map_or(Value::Null, |e| rfc3339(e).as_str().into());
+        obj(vec![
+            ("entered", rfc3339(self.entered).as_str().into()),
+            ("verified", Value::Bool(self.verified)),
+            ("disputed", Value::Bool(self.disputed)),
+            (
+                "hold_days",
+                self.hold_days
+                    .map_or(Value::Null, |d| d.to_string().as_str().into()),
+            ),
+            ("hold_ends", ends),
+            (
+                "hold_passed",
+                Value::Bool(self.hold_ends.is_some_and(|e| e <= now)),
+            ),
+        ])
+    }
+
+    /// One plain sentence for the demo page, under 40 words.
+    pub(crate) fn sentence(&self, now: i64) -> String {
+        let entered = rfc3339(self.entered);
+        let state = if self.disputed {
+            "are disputed"
+        } else if self.verified {
+            "were verified by finance"
+        } else {
+            "are not verified yet"
+        };
+        let hold = match (self.hold_days, self.hold_ends) {
+            (Some(d), Some(e)) if e <= now => {
+                format!("The P-36 hold of {d} days ended at {}.", rfc3339(e))
+            }
+            (Some(d), Some(e)) => format!(
+                "The P-36 hold of {d} days ends at {}, so a release before then is refused (I-33).",
+                rfc3339(e)
+            ),
+            _ => "The P-36 hold cannot be read, so every release is refused (I-33).".to_owned(),
+        };
+        format!("Bank details of the grant: entered by the lead at {entered} and {state}. {hold}")
+    }
+}
+
+/// The lead enters bank details and finance verifies them, each through
+/// its operation and then the vault page's action (I-33, R-PR-05). The
+/// entry starts the P-36 hold at the seed's instant.
+async fn bank_details(seed: &mut Seeder<'_>, lead: AccountId, x: ProposalId) -> Result<(), String> {
+    seed.api(
+        lead,
+        ApiMethod::Post,
+        &format!("/grants/{}/bank-details", x.raw()),
+        &obj(vec![]),
+    )
+    .await?;
+    if !crate::grantdemo::act_on_ticket(seed.inner) {
+        return Err("no bank detail ticket on the vault page".to_owned());
+    }
+    seed.api(
+        FINANCE,
+        ApiMethod::Post,
+        &format!("/grants/{}/bank-details/verification", x.raw()),
+        &obj(vec![]),
+    )
+    .await?;
+    if !crate::grantdemo::act_on_ticket(seed.inner) {
+        return Err("no bank verification ticket on the vault page".to_owned());
+    }
+    Ok(())
+}
+
 /// The first milestone start of proposal x.
 fn first_milestone_start() -> i64 {
     DEADLINE.saturating_add(40 * DAY)
@@ -443,6 +561,10 @@ async fn seed_grant(seed: &mut Seeder<'_>, at: GrantAt) -> Result<Reached, Strin
     }
     seed.at(first_milestone_start().saturating_add(SECOND));
     sweep(seed)?;
+    // Lane m5/polish-access: from IN_EXECUTION on, the lead entered bank
+    // details and finance verified them, so the release needs no detour
+    // through the vault pages. The P-36 hold of that entry still runs.
+    bank_details(seed, s.lead, x).await?;
     if at == GrantAt::InExecution {
         return Ok(reached);
     }
@@ -513,12 +635,12 @@ async fn seed_grant(seed: &mut Seeder<'_>, at: GrantAt) -> Result<Reached, Strin
         &obj(vec![]),
     )
     .await?;
-    // I-33: the lead entered the bank details long before, and finance
-    // verified them, so the P-36 hold has passed.
-    seed.inner.ports.vault.change(|t| {
-        t.write_bank(x, Timestamp::from_micros(T_SETUP));
-        t.verify_bank(x);
-    });
+    // I-33: the release waits until the P-36 hold of the verified bank
+    // details has passed.
+    let ends = bank_status(seed.inner)
+        .and_then(|b| b.hold_ends)
+        .ok_or("the bank hold cannot be read")?;
+    seed.at(ends.saturating_add(60 * SECOND));
     seed.api(
         RELEASER,
         ApiMethod::Post,
@@ -664,6 +786,13 @@ pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value)
             reached.request.as_deref().map_or(Value::Null, Value::from),
         ),
         ("reports", Value::Array(reports.into_iter().collect())),
+        // Lane m5/polish-access: the bank details and their P-36 hold.
+        (
+            "bank",
+            bank_status(&inner).map_or(Value::Null, |b| {
+                b.to_json(inner.ports.clock.read().micros())
+            }),
+        ),
     ]);
     Ok((inner, v))
 }
@@ -773,6 +902,38 @@ mod tests {
                     .hardship_verified(x, hardship_evidence(x)),
                 "{at:?}: finance verifies on the vault page"
             );
+            // R-PR-05, I-33 (lane m5/polish-access): from IN_EXECUTION on, the
+            // lead's bank details are verified and the reply names their hold.
+            // Until the PAID scene the hold still runs, so a release now is
+            // refused. From PAID on the release waited for the hold.
+            let bank = bank_status(&inner);
+            let now = inner.ports.clock.read();
+            if at >= GrantAt::InExecution {
+                let b = bank.unwrap_or_else(|| panic!("{at:?}: no bank details"));
+                assert!(b.verified && !b.disputed, "{at:?}: verified");
+                let ends = b.hold_ends.expect("a readable P-36 hold");
+                let releasable = inner.ports.vault.truth().bank_releasable(
+                    x,
+                    now,
+                    fstp_domain::time::Days::new(u16::try_from(b.hold_days.unwrap()).unwrap()),
+                );
+                if matches!(
+                    at,
+                    GrantAt::InExecution | GrantAt::UnderReview | GrantAt::Hardship
+                ) {
+                    assert!(ends > now.micros(), "{at:?}: the hold still runs");
+                    assert!(!releasable, "{at:?}: I-33 refuses a release now");
+                }
+                let reply = v.get("bank").expect("bank");
+                assert_eq!(reply.get("verified"), Some(&Value::Bool(true)), "{at:?}");
+                assert!(
+                    reply.get("hold_ends").and_then(Value::as_str).is_some(),
+                    "{at:?}: {}",
+                    v.to_compact()
+                );
+            } else {
+                assert!(bank.is_none(), "{at:?}: no bank details yet");
+            }
             let reports = v
                 .get("reports")
                 .and_then(Value::as_array)

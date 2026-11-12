@@ -152,3 +152,64 @@ impl ToJson for DeterminationView {
         Value::Object(o)
     }
 }
+
+/// The evidence texts of one line, as the lead gave them (R-PR-01, P-34).
+/// A text this core did not store is `None`, never a guess.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LineTexts {
+    /// The public location of the deliverables.
+    pub location: Option<String>,
+    /// The release or commit identifier.
+    pub release: Option<String>,
+    /// The SPDX licence identifier.
+    pub licence: Option<String>,
+    /// The progress or delivery report.
+    pub report: Option<String>,
+}
+
+/// What a payment line review needs, for the assigned reviewer of the
+/// grant while the request is UNDER_REVIEW (R-PR-08, lane
+/// m5/polish-access): the request row, and the evidence of each line in
+/// line order. I-86: no bank detail, account or paid sum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineReviewView {
+    /// The request, as `payment.status` shows it.
+    pub request: crate::grant::RequestRow,
+    /// The evidence of each line of `request.lines`, in the same order.
+    pub texts: Vec<LineTexts>,
+}
+
+impl ToJson for LineReviewView {
+    fn to_json(&self) -> Value {
+        let text = |t: &Option<String>| nullable(t.as_deref(), Value::from);
+        let mut o = Object::new();
+        let r = &self.request;
+        let _ = o.insert("request", dec(r.request.raw()));
+        let _ = o.insert("proposal", dec(r.proposal.raw()));
+        let _ = o.insert("status", Value::from(r.status));
+        let _ = o.insert("kind", Value::from(r.kind));
+        let _ = o.insert("submission_checks", Value::Bool(r.submission_checks));
+        let _ = o.insert("acceptance_checks", Value::Bool(r.acceptance_checks));
+        let none = LineTexts::default();
+        let lines = r
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let t = self.texts.get(i).unwrap_or(&none);
+                let mut x = Object::new();
+                let _ = x.insert("line", dec(l.line.raw()));
+                let _ = x.insert("milestone", dec(l.milestone.raw()));
+                let _ = x.insert("requested", Value::from(l.requested.as_str()));
+                let _ = x.insert("approved", nullable(l.approved.as_deref(), Value::from));
+                let _ = x.insert("location", text(&t.location));
+                let _ = x.insert("release", text(&t.release));
+                let _ = x.insert("licence", text(&t.licence));
+                let _ = x.insert("report", text(&t.report));
+                Value::Object(x)
+            })
+            .collect();
+        let _ = o.insert("lines", Value::Array(lines));
+        Value::Object(o)
+    }
+}

@@ -36,13 +36,14 @@ import { h, installTrustedTypesPolicy } from "../core/dom.js";
 import { VISUALLY_HIDDEN_CLASS } from "../core/a11y.js";
 import { createRouter, rerender, startNavigation } from "../core/router.js";
 import { CREATOR_ROUTES, type PageRoute } from "../creator/routes.js";
-import { mountHome } from "../home/page.js";
+import { mountHome, paymentReviewCount } from "../home/page.js";
 import { mountPostGrant } from "../grant/routes.js";
 import { addJudgingStrip } from "../journey/pages.js";
 import { JOURNEY_ROUTES } from "../journey/routes.js";
 import { MAILBOX_PAGE_ROUTES } from "../mailbox/routes.js";
 import { myRoles, startSession } from "../home/session.js";
-import { showMailboxCount } from "../home/nav.js";
+import { showMailboxCount, showReviewWork } from "../home/nav.js";
+import { holdsOperations } from "../home/model.js";
 import { mailboxCount } from "../mailbox/pages.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
@@ -139,6 +140,15 @@ void myRoles().then(async (a) => {
     const n = await mailboxCount();
     if (n !== null) {
       showMailboxCount(n);
+    }
+    // R-PR-08 (lane m5/polish-access): an assigned reviewer with payment lines to decide
+    // gets the Operations link, which lists them.
+    const reviewer = a.roles.roles.some((b) => b.proposal === null && b.role === "committee_member");
+    if (reviewer && !holdsOperations(a.roles)) {
+      const k = await paymentReviewCount();
+      if (k !== null && k > 0) {
+        showReviewWork();
+      }
     }
   }
 });
