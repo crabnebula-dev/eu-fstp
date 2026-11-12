@@ -6,49 +6,35 @@ CrabNebula Ltd operates the hosted service. The same codebase also builds a self
 
 ## Status
 
-Status on 2026-11-06. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. M4 started on 2026-10-29, before M3 closed, so that pages existed for a demo. M5 started on 2026-11-06, alongside M4, so the whole process can be recorded as one video.
+Status on 2026-11-13. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. Several milestones were built in parallel so the whole process could be shown end to end. A milestone closes only when its exit criteria pass in CI. M0 to M2 are closed. The others below are built in part or in full, but none is closed yet.
 
-| Milestone | Content | State |
-| --- | --- | --- |
-| M0 | Specification freeze for v1 | Done |
-| M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done |
-| M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done, merged into `main` |
-| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | In progress. Exit criteria not yet green |
-| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | In progress. Most interfaces are built. The exit criteria are not yet green |
-| M5 | Contracts with online signing, payment requests in record-only mode, grant completion, and the funder reports (pulled forward from M9) | Design done (`docs/handoff/m5-design.md`). Building starts as M4 lanes finish |
-| M6 to M12 | Timeline and email, the LLM assessor, messaging, export and white-labelling, hardening, the pilot and calibration | Not started |
+| Milestone | Content | Built | Exit criteria |
+| --- | --- | --- | --- |
+| M0 | Specification freeze for v1 | Done | Closed |
+| M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done | Closed |
+| M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done | Closed at domain level |
+| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Mostly built | Not green. About 60 tests on `ci/known-red.txt` wait on the test world's slice cycle, the self-hosted witness and the cluster isolation scans. OVHcloud is named in ADR-005 |
+| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built | Not green. SuperSAFE is built through the creator and the cycle reaches NEGOTIATION in the demo. I-66 and I-67 tests and the authorisation matrix are on the known-red list, and the I-84 MCP matrix run has not finished |
+| M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built | The cycle reaches PAID in the demo. The I-30 to I-33 tests exist. Not yet confirmed in CI |
+| M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests exist. The crash-injection run is not yet confirmed in CI |
+| M7 | Assessor, pre-check, evaluation harness, synthetic corpus | Built | The I-10, I-11 and I-21 tests exist. No evaluation run against a live model has been reported, so the thresholds are not yet met |
+| M8 | Matrix and WhatsApp | Deferred (B-03, B-05) | None while deferred |
+| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | In part: ML-DSA-65, the I-75 scan and the I-90 sweep, brand tokens and sheet, the mandatory footer, tenant terminology, the SBOM | Not green. Open: grantee publicity choices, the versioned funder profile with the Horizon Europe profile, the notice companion signature, and the exit audit |
+| M10 | Hardening on a Mythos-tier model | Not started | Needs the Mythos-tier run. Design in `docs/handoff/m10-m12-design.md` |
+| M11 | Pilot with SuperSAFE and a second programme | Not started | Waits on the parties' approval |
+| M12 | Calibration with consented real proposals | Consent records and per-corpus metrics (`fstp-calib`) only | Needs real consented proposals |
 
-### M3: what exists and what is open
+CI on `main` passes deps-check, fmt and clippy, the web tests and the SBOM job. The test jobs are red: the known-red gate misreads the test logs, and a D11 test shows a committee member can read a WITHDRAWN proposal without a conflict declaration.
 
-Built: the cell runtime with its routes, engine, record store and signing, and the control plane protocol and provisioning. Authentication uses passkeys and magic links, with first-admin enrolment. The identity vault, the witness and the vault run loops work. Every database connection checks the server identity (I-83), all role grants come from one plan (I-82), and a local development stack runs.
+### M3: what is open
 
-Open: the slice cycle steps of the test world, the self-hosted witness, record store gaps, key-volume custody, the control plane run loops, the vault audit chain, and ML-DSA-65 in moduletto. Production anchoring waits on the last one.
+Built: the cell runtime with its routes, engine, record store and signing, and the control plane protocol and provisioning. Authentication uses passkeys and magic links, with step-up, recovery and first-admin enrolment. The identity vault, the witness and the vault run loops work. Key custody runs through `fstp-keyd`. Every database connection checks the server identity (I-83), and all role grants come from one plan (I-82). ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.
 
-### M4: what is on `main`
+Open, by lane of `docs/handoff/m3-finish.md`: the HTTP client of the test world, the slice cycle steps, the self-hosted witness, the cell keystore's key operation records, the vault audit chain, the control plane run loops, erasure and backups over a real cycle, the isolation scans, and the exit audit.
 
-- Tenant onboarding through to two admins, and the signatory roles (SoD-14 to SoD-18).
-- The programme creator, with drafts, validation and activation by a second admin (I-66, I-67). Imported funding documents change a draft only through a named programme manager (I-65).
-- The Planning Studio ("Programme set-up"). It groups the eleven creator steps into five studios and shows the approval and publication rules.
-- The vocabulary packs. Plain grant language is the default, and the optional Voyage pack adds a secondary label (O-55). Labels never override approved or legal text (I-72).
-- The Guide for Applicants parser and renderer.
-- A home page and role navigation after sign-in, and the applicant, reviewer, coordinator, committee and IRC pages.
-- The public pages under `/p`: programme, call, funded and finished pages, the feed and the public research tools. They use no script and set no cookie (R-PB-04), and show only what I-41 to I-43 allow.
-- The journey layer: the projector, the visibility rules, the progress map with its text list and help panels, and the activity log.
-- The OAuth 2.1 server for agent clients, and the authorisation matrix harness.
+### Demo
 
-### M4: built in lanes, not yet on `main`
-
-These are built and tested in their lanes, and merge in batches once CI shows no new failure:
-
-- The progress map drawn from a server-built element tree, the route on the public call pages (R-JV-06), and read-only access for a former team after a proposal ends.
-- Programme invitations (journey J2). The invitee accepts the exact terms shown, and a role is granted only with accepted terms and, for SoD-09, a verified identity.
-- The MCP server (I-84 to I-87). Only `fstp_prepare_call_publication` can prepare a high-risk action.
-- The Guide stored at publication, with numbered corrigenda for later P-05 and P-13 tightening (I-51, I-53).
-- Authorisation matrix fixes for the public, creator, review and committee operations.
-- The applicant vault ports: date of birth (Q23), affiliations, guardian consent and the stage 2 revision.
-- CI split into parallel shards, so the full suite runs on CI.
-
-Still open for the M4 exit: SuperSAFE built end to end through the creator pages, the authorisation matrix fully green, the call cycle to NEGOTIATION in CI, the admin, auditor and agent pages, coverage-guided fuzzing of the TypeScript parsers (Jazzer.js), and the full review.
+`tools/demo/run.sh` runs one test cell with synthetic people and scenes from programme set-up to a paid grant, the AI assessment, the fast-flow knock-out decision and the mailbox. `docs/handoff/presentation-walkthrough.md` is the click-through script.
 
 ### Branches
 
