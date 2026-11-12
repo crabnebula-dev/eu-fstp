@@ -587,7 +587,7 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
         headRow(t, ["coord.col_proposal", "coord.col_title", "coord.col_state", "coord.col_action"]),
         h("tbody", {}, rows),
       ]),
-      assessment,
+      ...(assessment === null ? [] : [assessment]),
     ]);
   };
   await guarded(f, render);

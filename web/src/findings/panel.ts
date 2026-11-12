@@ -15,6 +15,7 @@
 import { h, type Child } from "../core/dom.js";
 import type { I18n, Label } from "../core/i18n.js";
 import { buttonEl, callOp, guarded, pageI18n, whileBusy, writeOp, type Frame, type PageEnv } from "../reviewer/kit.js";
+import { readMyRoles } from "../home/model.js";
 import { FINDINGS_LABELS } from "./messages.en.js";
 import {
   decodeFindingsStatus,
@@ -136,7 +137,18 @@ function statusText(t: I18n, s: FindingsStatus): Label {
  * The coordinator's assessment status of `call`: per submitted proposal,
  * "Findings pending" or a count. Never a statement (I-10).
  */
-export async function findingsStatusSection(env: PageEnv, call: string): Promise<HTMLElement> {
+export async function findingsStatusSection(env: PageEnv, call: string): Promise<HTMLElement | null> {
+  // The read is the coordinator's alone (M7 design section 7). Other
+  // readers of the call board, such as the programme manager, would only
+  // be refused, so the section is left out for them.
+  const me = await callOp(env, "me.roles", {}, undefined, (v): v is unknown => readMyRoles(v) !== null);
+  const roles = me.ok ? readMyRoles(me.data) : null;
+  const coordinates =
+    roles !== null &&
+    roles.roles.some((b) => b.role === "fstp_coordinator" && b.proposal === null && b.calls.includes(call));
+  if (!coordinates) {
+    return null;
+  }
   const t = findingsI18n(env);
   const answer = await callOp(env, "assess.findings_status", { call }, undefined, (v): v is unknown =>
     decodeFindingsStatus(v) !== null,

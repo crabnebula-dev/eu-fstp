@@ -256,7 +256,23 @@ export interface OwnProposal {
   readonly role: "lead" | "member" | "guardian" | undefined;
   /** The title, or `""` when the cell sends none. */
   readonly title: string;
+  /**
+   * The proposal state, when the cell sent it. The grant link shows only
+   * in a state where the grant read opens (`GRANT_STATES` in fstp-access).
+   */
+  readonly state?: string;
 }
+
+/** The proposal states in which a grant exists and `grant.overview` opens. */
+const GRANT_LINK_STATES: ReadonlySet<string> = new Set([
+  "NEGOTIATION",
+  "WITHDRAWN",
+  "DECLINED",
+  "GRANTED",
+  "IN_EXECUTION",
+  "COMPLETED",
+  "TERMINATED",
+]);
 
 /** A message id of the home catalogue and its arguments. */
 export interface Text {
@@ -424,7 +440,7 @@ export function workOf(
     } else {
       applies = true;
       add("applicant", "proposal", WORK_PATHS.proposal(p.proposal), text("home.work.proposal", { title }));
-      if (p.role === "lead") {
+      if (p.role === "lead" && (p.state === undefined || GRANT_LINK_STATES.has(p.state))) {
         add("applicant", "grant", WORK_PATHS.grant(p.proposal), text("home.work.grant", { title }));
       }
     }

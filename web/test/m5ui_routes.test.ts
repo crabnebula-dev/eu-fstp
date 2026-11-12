@@ -49,6 +49,19 @@ test("r_nf_03_lead_reaches_the_grant_from_home_and_everyone_has_the_grants_nav",
   assert(!navOf(lead).some((l) => l.href === "/app/operations"), "a lead has no operations queue");
 });
 
+/** R-AC-01, R-NF-03: the home page links the grant only in a state where `grant.overview` opens, so a lead in STAGE2 is never sent to a refusal. */
+test("r_ac_01_home_links_the_grant_only_where_the_grant_read_opens", () => {
+  const lead = roles({ ...base, roles: [{ role: "applicant", programme: "1", proposal: "1004", calls: ["1"] }] });
+  const at = (state: string): string[] =>
+    workOf(lead, [{ proposal: "1004", role: "lead", title: "Synthetic", state }], name, untitled).items.map((i) => i.href);
+  for (const state of ["DRAFT", "SUBMITTED", "STAGE1", "STAGE2", "RANKED", "IRC_REVIEW", "NOT_SELECTED"]) {
+    assert(!at(state).includes("/app/grants/1004"), `no grant link in ${state}`);
+  }
+  for (const state of ["NEGOTIATION", "GRANTED", "IN_EXECUTION", "COMPLETED"]) {
+    assert(at(state).includes("/app/grants/1004"), `the grant link in ${state}`);
+  }
+});
+
 /** R-NF-03, SoD-04: the finance approver, payment releaser, contract signatory and programme manager reach the operations page by clicking. */
 test("r_nf_03_operations_roles_reach_the_queues_from_home_and_nav", () => {
   for (const role of ["finance_approver", "payment_releaser", "contract_signatory", "programme_manager", "auditor"]) {

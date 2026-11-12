@@ -546,7 +546,7 @@ export function mountHome(): void {
     const listed = await call("proposal.list_own", {}, undefined, decodeOwnProposals);
     const infos: readonly ProposalInfo[] = listed.ok ? listed.value : [];
     const own: readonly OwnProposal[] | null = listed.ok
-      ? listed.value.map((p) => ({ proposal: p.proposal, role: p.role, title: p.title }))
+      ? listed.value.map((p) => ({ proposal: p.proposal, role: p.role, title: p.title, state: p.state }))
       : null;
     const w = workOf(
       a.roles,
