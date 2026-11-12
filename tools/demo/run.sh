@@ -89,6 +89,7 @@ show() {
         console.log("  agreed plan " + v.plan + ", milestone " + v.milestone + " (for the determination and payment forms)");
         if (v.contract) console.log("  contract " + v.contract);
         if (v.request) console.log("  payment request " + v.request);
+        if (v.bank) console.log("  bank details entered " + v.bank.entered + ", " + (v.bank.verified ? "verified" : "not verified") + "; P-36 hold of " + v.bank.hold_days + " days ends " + v.bank.hold_ends + (v.bank.hold_passed ? " (passed)" : " (release refused until then, I-33)"));
         for (const r of v.reports) console.log("  funder report " + r.report + " (" + r.kind + ")");
         console.log("  open " + process.argv[2] + "/demo and choose Sign in as for each person");
         return;
