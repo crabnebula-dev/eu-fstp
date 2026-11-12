@@ -755,6 +755,12 @@ pub struct GuideFacts {
     pub texts: BTreeMap<fstp_domain::id::TextId, String>,
     /// SHA-256 through `fstp-crypto`, which the shell passes in.
     pub digest: fn(&[u8]) -> [u8; 32],
+    /// Whether the cell has a pre-check provider: its `Precheck` port is
+    /// present (Q38, M7). The Guide then describes the available check
+    /// in place of the Q38 C note. Only Guides published after this
+    /// field arrived carry it, since a published Guide is never bound
+    /// again (I-53).
+    pub precheck_available: bool,
 }
 
 /// The stored texts of [`GuideFacts`].
@@ -840,6 +846,7 @@ pub(crate) fn with_guide(
         data_protection_summary: Some(&facts.data_protection_summary),
         privacy_statement_url: Some(&facts.privacy_statement_url),
         texts: &texts,
+        precheck_available: facts.precheck_available,
     };
     let rendered = fstp_guide::publication_guide(&post, *call, &source).map_err(|_| no_guide())?;
     let canonical = String::from_utf8(rendered.canonical().to_vec()).map_err(|_| no_guide())?;

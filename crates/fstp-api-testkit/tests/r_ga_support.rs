@@ -100,6 +100,7 @@ impl CreatorEnvironment for GuideEnv {
             privacy_statement_url: PRIVACY.to_owned(),
             texts: BTreeMap::new(),
             digest: fstp_crypto::sha256,
+            precheck_available: false,
         })
     }
 }

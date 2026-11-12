@@ -201,6 +201,9 @@ pub(crate) struct Inputs {
     pub(crate) guide_version: u32,
     /// The platform address applicants create an account on.
     pub(crate) platform_url: String,
+    /// Whether the cell has a pre-check provider (Q38). The Guide then
+    /// describes the available pre-check in place of the Q38 C note.
+    pub(crate) precheck_available: bool,
 }
 
 /// One bound placeholder occurrence of a rendered Guide.
@@ -304,6 +307,7 @@ pub(crate) fn guide_inputs<'a>(
         data_protection_summary: Some(SYNTHETIC_DATA_PROTECTION),
         privacy_statement_url: Some(SYNTHETIC_PRIVACY_URL),
         texts: &fstp_guide::NoStoredTexts,
+        precheck_available: inputs.precheck_available,
     }
 }
 
@@ -504,6 +508,7 @@ pub(crate) fn inputs_over(compiled: Compiled) -> Inputs {
         call: synthetic_call(),
         guide_version: 1,
         platform_url: "https://a.fstp.example/".to_owned(),
+        precheck_available: false,
     }
 }
 

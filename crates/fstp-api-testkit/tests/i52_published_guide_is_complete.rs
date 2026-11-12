@@ -58,6 +58,7 @@ fn i52_published_guide_refuses_a_template_missing_a_section() {
         data_protection_summary: Some("Synthetic summary. Not a privacy notice."),
         privacy_statement_url: Some("https://privacy.fstp.example/statement"),
         texts: &NoStoredTexts,
+        precheck_available: false,
     };
     assert_eq!(
         published_guide(&w.published, GUIDE_CALL, &source).map(|_| ()),
@@ -80,6 +81,7 @@ fn i52_published_guide_refuses_an_unresolved_placeholder() {
         data_protection_summary: None,
         privacy_statement_url: Some("https://privacy.fstp.example/statement"),
         texts: &NoStoredTexts,
+        precheck_available: false,
     };
     match published_guide(&w.published, GUIDE_CALL, &source) {
         Err(PublicError::Guide(GuideError::Unresolved { key, .. })) => {

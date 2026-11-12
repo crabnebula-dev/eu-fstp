@@ -188,3 +188,47 @@ fn r_ga_01_http_privacy_address_is_refused_before_step_up() {
     assert!(c.ports.step_up.begun().is_empty(), "a step-up was begun");
     assert!(c.ports.engine.appended().is_empty());
 }
+
+/// R-GA-01, R-LA-08, Q38: a fake cell has a pre-check provider by
+/// default, as the e2e and demo cells do. The Guide it stores at
+/// publication describes the available pre-check and drops the Q38 C
+/// note, in the page `calls.guide` serves and in the canonical document
+/// the digest is taken over.
+#[test]
+fn r_ga_01_q38_cell_with_precheck_port_stores_the_precheck_paragraph() {
+    let c = cell(false);
+    publish(&c).unwrap_or_else(|e| panic!("the publication is refused: {e:?}"));
+    let state = c.ports.engine.state();
+    let stored = fstp_domain::programme::stored_guide(&state.core, GUIDE_CALL)
+        .unwrap_or_else(|| panic!("R-GA-01: no Guide was stored at publication"))
+        .clone();
+    let page = calls_guide(&c);
+    assert!(page.contains(fstp_guide::PRECHECK_AVAILABLE), "{page}");
+    assert!(page.contains(fstp_guide::PRECHECK_LEGAL), "{page}");
+    assert!(!page.contains(fstp_guide::PRECHECK_NOTE), "{page}");
+    assert!(stored.canonical().contains(fstp_guide::PRECHECK_AVAILABLE));
+    assert!(!stored.canonical().contains(fstp_guide::PRECHECK_NOTE));
+    // I-52: the stored digest is taken over the canonical document that
+    // holds the paragraph.
+    assert_eq!(
+        stored.digest(),
+        fstp_domain::id::ContentDigest::from_bytes(fstp_crypto::sha256(
+            stored.canonical().as_bytes()
+        ))
+    );
+}
+
+/// R-GA-01, Q38 C: a cell without a pre-check provider stores a Guide
+/// that keeps the "not yet available" note, and no pre-check paragraph.
+#[test]
+fn r_ga_01_q38_cell_without_precheck_port_keeps_the_note() {
+    let c = cell(false);
+    c.ports.engine.set_ports(fstp_creator::PortPresence {
+        precheck: false,
+        score_tools: false,
+    });
+    publish(&c).unwrap_or_else(|e| panic!("the publication is refused: {e:?}"));
+    let page = calls_guide(&c);
+    assert!(page.contains(fstp_guide::PRECHECK_NOTE), "{page}");
+    assert!(!page.contains(fstp_guide::PRECHECK_AVAILABLE), "{page}");
+}

@@ -102,6 +102,8 @@ pub fn draft_guide_preview(
         data_protection_summary: None,
         privacy_statement_url: None,
         texts,
+        // The text preview shows the template blocks only, never the note.
+        precheck_available: false,
     };
     let mut out = vec![block(PreviewKind::Heading, fstp_guide::GUIDE_TITLE)];
     out.extend(fstp_guide::preview_text(template, &inputs));

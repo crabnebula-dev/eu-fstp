@@ -122,7 +122,24 @@ Decisions made tonight, each the strict and quick option:
 
 Open questions:
 
-- **Q38 Guide note not removed.** The Guide still says the pre-check is not yet available. Removing it needs a "pre-check port present" fact from `GuideFacts` through `GuideSource` and `GuideInputs` to the renderer, plus every test construction. It changes the published Guide digest of cells with a port. Not done tonight, to keep the I-51 snapshot stable. Please decide whether the note goes per cell or with M7's exit.
+- **Q38 Guide note.** Done per cell by lane m7/guide-note; see "Q38 Guide note: decisions" below.
 - **AI disclosure wording.** `TODO(legal)` in `web/src/findings/messages.en.ts` (AI Act Article 50).
 - **Name stripping (Q4).** The demo uses an empty name mask; the corpus contact block is left out of the narratives instead.
 - **Run deletion.** Pre-check runs are not deleted when the call closes or the applicant withdraws yet.
+
+## Q38 Guide note: decisions
+
+Lane m7/guide-note, 2026-11-12. Interim, pending Daniel.
+
+1. **Per cell, not per milestone.** The note goes where the cell has a pre-check provider. `GuideFacts`, `GuideSource` and `GuideInputs` carry `precheck_available`. `bind` copies it into the bound `Template`, and the renderer reads it there. The e2e and demo cells set it from `PortPresence::precheck`, which is true by default. A cell without a provider keeps the Q38 C note.
+2. **What the Guide says with the port.** The template step stays byte for byte. After it come two fixed paragraphs of class `guide-note`: `PRECHECK_AVAILABLE` and `PRECHECK_LEGAL`. The first says the check is available and where to find it. It says the applicant is interacting with an AI system, not a person. It says the check gives findings, never a score, a band or a decision. It says each run counts towards the limits above, that only the team sees results, and that the submission is assessed afresh.
+3. **The P-23 limit is not restated.** The template step just before shows `{{P-23.per_day}}` and `{{P-23.per_call}}` as locked values bound from the call. The paragraph points to "the limits above" and holds no number. So no parameter-bound text stands outside the bindings, and `bound()` stays one entry per placeholder (I-51).
+4. **Legal wording.** `PRECHECK_LEGAL` is a visible `TODO(legal)` line asking for approval of the AI interaction disclosure (R-LA-08, `ai-act.md`). It follows the template's own visible markers in sections 10 and 11. No article is cited. The profile's `legal_wording_pending` reads only the template, so this renderer line does not make `LegalWordingPending` fail. Open question below.
+5. **I-51, I-52, I-53.** The canonical document holds the paragraph as `["note", ...]` lines, so the digest covers it and the two flag values never share a digest. A published Guide is stored in its entry and never bound again (I-53). So Guides already published keep the note and their digest. Only Guides published after this change carry the paragraph. No snapshot or digest test was weakened. The tests that build inputs by hand pass `false` and keep their old expectations.
+6. **Previews.** The creator's Guide scan and the public text preview pass `false`. Neither shows the note: the scan reads sections and bindings, and `preview_text` shows template blocks only.
+7. **Tests.** `fstp-guide` `r_ga_01_precheck_note.rs`: both flag values, the order after the step, the canonical document, the digest input differing, and no paragraph without the step. `fstp-api-testkit` `i51_published_guide_snapshot.rs`: I-51 bytes unchanged under a live P-05 edit with the port, and the published page following the flag. `r_ga_01_fake_cell_stores_the_guide.rs`: the fake cell stores the paragraph with its digest over the canonical document, and a cell without the port keeps the note. Playwright `applicant/find_and_draft.spec.ts` `r_la_08_...`: the applicant's Guide shows the paragraph and not the note.
+
+Open questions:
+
+- Should the renderer's `TODO(legal)` line count towards `legal_wording_pending`, so an approved profile still waits for the disclosure wording?
+- Should the paragraph restate the per-day number itself? That needs a second bound occurrence of `{{P-23.per_day}}` outside the template.

@@ -44,11 +44,23 @@ fn template() -> Template {
         .unwrap_or_else(|e| panic!("template: {e}"))
 }
 
-/// The Guide of `call` in `core`, bound over `compiled`.
+/// The Guide of `call` in `core`, bound over `compiled`, in a cell with
+/// no pre-check provider.
 fn guide(
     core: &State,
     call: fstp_domain::id::CallId,
     compiled: &Compiled,
+) -> Result<PublicGuide, PublicError> {
+    guide_port(core, call, compiled, false)
+}
+
+/// The Guide of `call` in `core`, bound over `compiled`, in a cell with a
+/// pre-check provider when `port` holds (Q38).
+fn guide_port(
+    core: &State,
+    call: fstp_domain::id::CallId,
+    compiled: &Compiled,
+    port: bool,
 ) -> Result<PublicGuide, PublicError> {
     let t = template();
     let id = call.raw().to_string();
@@ -60,6 +72,7 @@ fn guide(
         data_protection_summary: Some(SUMMARY),
         privacy_statement_url: Some(PRIVACY),
         texts: &NoStoredTexts,
+        precheck_available: port,
     };
     published_guide(core, call, &source)
 }
@@ -227,4 +240,41 @@ fn i51_guide_shows_live_values_from_the_core_state() {
         !html.contains("7 years"),
         "the caller's P-41 reached the Guide"
     );
+}
+
+/// I-51, I-53, Q38: with the pre-check port present, a live edit of P-05
+/// after publication still leaves the Guide bytes unchanged.
+#[test]
+fn i51_q38_live_p05_edit_leaves_the_guide_bytes_unchanged_with_the_port() {
+    let w = world();
+    let before =
+        guide_port(&w.published, GUIDE_CALL, &w.compiled, true).unwrap_or_else(|e| panic!("{e}"));
+    let after =
+        guide_port(&w.edited, GUIDE_CALL, &w.compiled, true).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(before.document.as_bytes(), after.document.as_bytes());
+}
+
+/// R-GA-01, R-LA-08, Q38: the published Guide of a cell with the
+/// pre-check port describes the available check and drops the Q38 C
+/// note. Without the port it keeps the note. The two pages differ.
+#[test]
+fn r_la_08_q38_published_guide_follows_the_precheck_port() {
+    let w = world();
+    let on =
+        guide_port(&w.published, GUIDE_CALL, &w.compiled, true).unwrap_or_else(|e| panic!("{e}"));
+    let off = guide(&w.published, GUIDE_CALL, &w.compiled).unwrap_or_else(|e| panic!("{e}"));
+    let on_html = on.document.as_str();
+    let off_html = off.document.as_str();
+    assert!(
+        on_html.contains(fstp_guide::PRECHECK_AVAILABLE),
+        "{on_html}"
+    );
+    assert!(on_html.contains(fstp_guide::PRECHECK_LEGAL), "{on_html}");
+    assert!(!on_html.contains(fstp_guide::PRECHECK_NOTE), "{on_html}");
+    assert!(off_html.contains(fstp_guide::PRECHECK_NOTE), "{off_html}");
+    assert!(
+        !off_html.contains(fstp_guide::PRECHECK_AVAILABLE),
+        "{off_html}"
+    );
+    assert_ne!(on.document.as_bytes(), off.document.as_bytes());
 }

@@ -29,11 +29,32 @@ pub const GUIDE_TITLE: &str = "Guide for Applicants";
 /// The language of every rendered Guide: that of the template.
 pub const GUIDE_LOCALE: &str = "en";
 
-/// The fixed note after the pre-check description (Q38 C, Daniel's
-/// answer of 2026-11-06): the Guide keeps its pre-check section and says
-/// that the pre-check is not yet available. The pre-check arrives in M7.
+/// The fixed note after the pre-check description when the cell has no
+/// pre-check provider (Q38 C, Daniel's answer of 2026-11-06): the Guide
+/// keeps its pre-check section and says that the pre-check is not yet
+/// available.
 pub const PRECHECK_NOTE: &str =
     "Note: the pre-submission check is not yet available on this platform.";
+
+/// The paragraph after the pre-check description when the cell has a
+/// pre-check provider (Q38, M7; R-LA-08, TH-02, P-23). It says where the
+/// check is, that the applicant interacts with an AI system, that it
+/// gives findings and never a score, and that each run counts towards the
+/// P-23 limits the template states as locked values just before. It
+/// restates no number, so no parameter-bound text stands outside the
+/// bindings (I-51). It holds no quote mark, so the page shows it as is.
+pub const PRECHECK_AVAILABLE: &str = "The pre-submission check is available on this platform. \
+Use the Check my draft link on your draft page. \
+You are then interacting with an AI system, not a person. \
+It lists what may be missing or unclear as findings, never as a score, a band or a decision. \
+Each run counts towards the limits above. \
+Only your team sees the results, and your submitted proposal is assessed afresh.";
+
+/// The legal marker after [`PRECHECK_AVAILABLE`]: the wording of the AI
+/// interaction disclosure needs approval (R-LA-08, `ai-act.md`). It
+/// starts with [`crate::LEGAL_MARKER`], as the template's own markers do.
+pub const PRECHECK_LEGAL: &str =
+    "TODO(legal): approve the wording of this AI interaction disclosure before first use.";
 
 /// The version line of the canonical document.
 const CANONICAL_VERSION: &str = "[\"fstp.guide\",1]";
@@ -449,17 +470,22 @@ pub(crate) fn render(template: &Template) -> Result<RenderedGuide, GuideError> {
         .child(Element::new("h1").text(GUIDE_TITLE));
     for b in template.body() {
         w.block(b, &mut main)?;
-        // Q38 C: the block that describes the pre-check is followed by the
-        // fixed note, in the page and in the canonical document.
+        // Q38: the block that describes the pre-check is followed, in the
+        // page and in the canonical document, by the fixed note when the
+        // cell has no pre-check provider, and by the paragraph that
+        // describes the available check and its legal marker when it has.
         if describes_precheck(b) {
-            w.canon.push_str("[\"note\",");
-            json_str(&mut w.canon, PRECHECK_NOTE);
-            w.canon.push_str("]\n");
-            main.push_child(
-                Element::new("p")
-                    .attr("class", "guide-note")
-                    .text(PRECHECK_NOTE),
-            );
+            let notes: &[&str] = if template.precheck_available() {
+                &[PRECHECK_AVAILABLE, PRECHECK_LEGAL]
+            } else {
+                &[PRECHECK_NOTE]
+            };
+            for note in notes {
+                w.canon.push_str("[\"note\",");
+                json_str(&mut w.canon, note);
+                w.canon.push_str("]\n");
+                main.push_child(Element::new("p").attr("class", "guide-note").text(note));
+            }
         }
     }
     let cats = Catalogues::new(

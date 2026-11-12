@@ -95,6 +95,7 @@ fn review_i51_live_p41_edit_leaves_the_guide_bytes_unchanged() {
             data_protection_summary: Some("Synthetic summary. Not a privacy notice."),
             privacy_statement_url: Some("https://privacy.fstp.example/statement"),
             texts: &NoStoredTexts,
+            precheck_available: false,
         };
         published_guide(&w.published, GUIDE_CALL, &source).unwrap_or_else(|e| panic!("{e}"))
     };
