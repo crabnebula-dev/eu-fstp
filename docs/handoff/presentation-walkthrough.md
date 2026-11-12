@@ -1,6 +1,6 @@
 # Presentation walkthrough: one grant from call to payment
 
-A script for showing the platform live, in about 30 minutes. It follows one synthetic proposal ("Synthetic open sensor kit", proposal 1001) through the whole cycle. Every person reaches their work by clicking from sign-in. All data is synthetic.
+A script for showing the platform live, in about 36 minutes with every section, or about 30 without the programme set-up and the fast flow. It follows one synthetic proposal ("Synthetic open sensor kit", proposal 1001) through the whole cycle. Every person reaches their work by clicking from sign-in. All data is synthetic.
 
 Each step names the scene to seed, the person to sign in as, the clicks, and what to point out. Link texts are quoted as they appear on screen. The detail behind each step is in `m4-demo.md`, `m5-demo.md`, `m6-demo.md`, `m7-demo.md` and `mailbox-design.md`.
 
