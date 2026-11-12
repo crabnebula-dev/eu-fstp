@@ -79,9 +79,15 @@ fn production_issues(state: StateTag, actor: AccountId) -> Result<bool, String> 
         proposal: PR1.raw(),
     });
     match cell.exec(cmd, actor, at) {
-        Ok(batch) => Ok(batch
-            .iter()
-            .any(|r| matches!(r, CellRecord::Release(ReleaseRecord::TicketIssued { .. })))),
+        // Issuing a release ticket appends `IdentityReleaseIssued` (design
+        // section 6.5, ADR-009). `TicketIssued` is the write ticket record.
+        Ok(batch) => Ok(batch.iter().any(|r| {
+            matches!(
+                r,
+                CellRecord::Release(ReleaseRecord::IdentityReleaseIssued { proposal, by, .. })
+                    if *proposal == PR1.raw() && *by == actor
+            )
+        })),
         Err(ProdError::Refused(_)) => Ok(false),
         Err(e @ ProdError::NotImplemented(_)) => Err(e.to_string()),
     }
