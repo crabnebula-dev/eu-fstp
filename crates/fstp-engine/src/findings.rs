@@ -59,7 +59,7 @@
 //!
 //! Status: lane L-FIND-B of milestone M2.
 
-use fstp_domain::assignment::{Assignment, AssignmentStatus};
+use fstp_domain::assignment::{Assignment, AssignmentStatus, ReleaseCause};
 use fstp_domain::command::{Actor, Ctx, Via};
 use fstp_domain::engine::FoldError;
 use fstp_domain::id::{AccountId, CallId, ProposalId};
@@ -352,14 +352,21 @@ fn mark_basis<'s>(
 
 /// The conflict refusal of a `Mark` by an assignee of the finding's
 /// proposal in the finding's call, over an active binding of its role:
-/// I-03 for a conflict fact, R-CF-02 for an assignment still awaiting
-/// its declaration (`roles-and-sod.md` Conflict declarations). It names
-/// only what the assignee already knows, since its own assignment is on
-/// that proposal. `None` for anyone else, who gets [`mark_refused`].
+/// I-03 for a conflict the assignee declared, R-CF-02 for an assignment
+/// still awaiting its declaration (`roles-and-sod.md` Conflict
+/// declarations). It names only what the assignee already knows, since
+/// its own assignment is on that proposal. `None` for anyone else, who
+/// gets [`mark_refused`].
+///
+/// Interim, pending Daniel: a conflict only the vault detected gets
+/// [`mark_refused`] too (I-03, I-10). The vault returns only a boolean to
+/// the platform, and the assignee never stated that conflict. So a mark
+/// refusal neither confirms the detection nor tells whether the finding
+/// id is taken.
 fn assignee_refusal(core: &State, by: AccountId, f: &Finding, now: Timestamp) -> Option<Refusal> {
     let review = core.review();
     let programme = core.calls().get(f.call)?.programme();
-    let mut own = review.assignments().filter(|(_, a)| {
+    let own = review.assignments().filter(|(_, a)| {
         a.reviewer == by
             && a.proposal == f.proposal
             && a.call == f.call
@@ -371,13 +378,15 @@ fn assignee_refusal(core: &State, by: AccountId, f: &Finding, now: Timestamp) ->
                     && b.active_at(now)
             })
     });
-    let first = own.next()?;
+    let own: Vec<&Assignment> = own.map(|(_, a)| a).collect();
     if review.conflict_fact(by, f.proposal) {
-        return Some(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+        let declared = own
+            .iter()
+            .any(|a| a.status == AssignmentStatus::Released(ReleaseCause::DeclaredConflict));
+        return declared.then(|| Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
     }
-    std::iter::once(first)
-        .chain(own)
-        .any(|(_, a)| a.status == AssignmentStatus::AwaitingDeclaration)
+    own.iter()
+        .any(|a| a.status == AssignmentStatus::AwaitingDeclaration)
         .then(|| Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed))
 }
 
