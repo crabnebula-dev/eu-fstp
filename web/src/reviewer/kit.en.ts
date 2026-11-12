@@ -25,6 +25,8 @@ export const KIT_LABELS: Readonly<Record<string, string>> = {
   "kit.state.TERMINATED": "Terminated",
   "kit.refused_rule": "The platform refused this under rule {rule}.",
   "kit.refused_code": "The platform refused this ({code}).",
+  "kit.refused_row": "This step is not open now. The grant or request is at another stage.",
+  "kit.refused_actor": "You may not do this step for this item.",
   "kit.failed_network": "The platform could not be reached. Check the connection and try again.",
   "kit.failed_response": "The platform sent an answer this page does not accept, so nothing from it is shown.",
   "kit.failed_request": "This page could not form the request.",

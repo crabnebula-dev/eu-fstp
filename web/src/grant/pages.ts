@@ -347,6 +347,8 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
     }
     const roles = await rolesOrNull();
     const negotiation = o.state === "NEGOTIATION";
+    // A contract exists only after the amount was accepted and approved, so those actions are past.
+    const amountOpen = negotiation && o.contract === null;
     const live = o.state === "GRANTED" || o.state === "IN_EXECUTION";
     const plain = isStateTag(o.state) ? t.label(`kit.state.${o.state}`) : o.state;
     const body: Child[] = [
@@ -367,13 +369,13 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
       ]),
     ];
     const lead = can(roles, "applicant", proposal);
-    if (negotiation && can(roles, "committee_member")) {
+    if (amountOpen && can(roles, "committee_member")) {
       body.push(determineSection(env, t, f, o, render));
     }
-    if (negotiation && o.determination !== null && lead) {
+    if (amountOpen && o.determination !== null && lead) {
       body.push(confirmSection(env, t, f, o, "accept", render));
     }
-    if (negotiation && o.determination !== null && can(roles, "programme_manager")) {
+    if (amountOpen && o.determination !== null && can(roles, "programme_manager")) {
       body.push(confirmSection(env, t, f, o, "approve", render));
     }
     if (live && can(roles, "programme_manager")) {

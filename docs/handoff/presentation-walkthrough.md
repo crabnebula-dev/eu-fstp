@@ -94,13 +94,13 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 ## 10. The platform mailbox (3 minutes)
 
 1. Choose the review scene **stage1** and sign in as R1. The top bar shows "Mailbox (2)", and Home says "Your mailbox: 2 waiting for you".
-2. Choose "Mailbox". Each item names the work and links to the page where it happens: "Declare any conflict on assignment …". The numbers in the item names are internal ids.
-3. Open the first item and do the work: "No, I have no conflict of interest", then "Record my declaration". Back in the mailbox, the declaration item is gone and "Score assignment …" has taken its place. Items close themselves when the work is done.
+2. Choose "Mailbox". Each item names the work and links to the page where it happens: "Declare any conflict on proposal 1001". Each item names a proposal or call number, never an internal id.
+3. Open the first item and do the work: "No, I have no conflict of interest", then "Record my declaration". Back in the mailbox, the declaration item is gone and "Score proposal 1001" has taken its place. Items close themselves when the work is done.
 4. Repeat with other people:
    - Coordinator C1 in **submitted**: "Check the knock-out criteria of new proposals in call 1".
-   - IRC member I1 in **irc_review**: three items "Declare any conflict on IRC assignment …".
+   - IRC member I1 in **irc_review**: three items "Declare any conflict on IRC case of proposal …".
    - The lead ("Lead applicant X") in **STAGE2**: "Answer the stage 2 questions on proposal 1001". In **NEGOTIATION**: "Read and acknowledge the negotiation notice of proposal 1001".
-   - In **UNDER_REVIEW**: R1 has "Review the lines of payment request …". The mailboxes of F1 and P1 are empty at first. F1 gets "Approve payment request …" once R1 has reviewed. P1 gets "Release payment request …" once F1 has approved.
+   - In **UNDER_REVIEW**: R1 has "Review the lines of the payment request of proposal 1001". The mailboxes of F1 and P1 are empty at first. F1 gets "Approve the payment request of proposal 1001" once R1 has reviewed. P1 gets "Release the payment request of proposal 1001" once F1 has approved.
 5. Point out:
    - The mailbox is computed from the work each person may see, so it shows nothing a person could not open.
    - Emails carry only ids, a time and one link, and point back into the platform.
@@ -111,8 +111,7 @@ tools/demo/run.sh            # builds the pages, the cell and the assessor; seed
 - `/auth/account`: removing a passkey asks for a passkey, which a demo account does not have.
 - A second pre-check in the DRAFT scene: choose DRAFT again instead.
 - A reviewer opening the grant page (`/app/grants/1001`) after negotiation is refused with R-AC-01. Go through "Payment requests to review" and Operations instead.
-- In the SENT scene, do not press "Accept the amount" on the grant page. It answers "The platform refused this under rule row." Go straight to "Contract of proposal 1001".
-- The mailbox item names carry long internal ids, such as "Review the lines of payment request 5563…". Say so if asked.
+- In the SENT scene the grant page no longer offers "Accept the amount", because the contract exists. Go to "Contract of proposal 1001".
 - The first release in step 7.4 shows no "Confirm" dialog, because the hold refuses it first. Only the second release asks for "Confirm".
 - Visible "TODO(legal)" lines and "the approved wording is pending" footers are placeholders for legal wording. Say so if asked.
 - The synthetic proposal texts contain test markers such as "SYNTHETIC-CONTENT-CANARY". They check that no content leaks.
