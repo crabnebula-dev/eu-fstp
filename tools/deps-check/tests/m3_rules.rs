@@ -706,6 +706,27 @@ fn layering_m3_rule3_only_fstp_cell_composes_core_and_store() {
     );
 }
 
+/// Design section 2.4 rule 3: the test-only `fstp-api-testkit` (M4 design
+/// section 1.3, rule A9) may compose `fstp-cell-core` and `fstp-pgstore`
+/// for its test cell, as `fstp-celltest` may. It never ships.
+#[test]
+fn layering_m3_rule3_test_only_api_testkit_may_compose_core_and_store() {
+    let g = designed()
+        .edge("fstp-api-testkit", "fstp-cell-core", N)
+        .edge("fstp-api-testkit", "fstp-pgstore", N);
+    let repo = repo_with("composer-testkit", &g);
+    let (_, text) = repo.check_with(&[]);
+    assert!(
+        !has_finding(
+            &text,
+            "error",
+            "layering-m3-composer",
+            &["fstp-api-testkit"]
+        ),
+        "the test kit is reported as a composer:\n{text}"
+    );
+}
+
 /// I-19, I-20, design section 2.4 rule 4: the control-plane crates reach no
 /// crate that defines tenant records, account types or vault data.
 #[test]

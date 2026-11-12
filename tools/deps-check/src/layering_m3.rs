@@ -35,13 +35,14 @@
 //! `fstp-celltest` joins the test-only crates.
 //!
 //! Rules 2, 6, 7 and 9 exempt only the crates each one names. Rule 3
-//! exempts the test-only crates `fstp-celltest` and `fstp-domain-testkit`,
-//! which never ship. The source scans read every file that can ship with a
-//! workspace member: every `.rs` file of its package directory outside
-//! `tests/`, `benches/`, `examples/`, `fuzz/` and `target/`, each shipped
-//! target root, and every file a `mod`, `#[path]` or `include!` loads from
-//! those, wherever it lies (see [`member_sources`]). They skip deps-check
-//! itself, whose rules hold the scanned names as data.
+//! exempts the test-only crates `fstp-celltest`, `fstp-domain-testkit` and
+//! `fstp-api-testkit`, which never ship. The source scans read every file
+//! that can ship with a workspace member: every `.rs` file of its package
+//! directory outside `tests/`, `benches/`, `examples/`, `fuzz/` and
+//! `target/`, each shipped target root, and every file a `mod`,
+//! `#[path]` or `include!` loads from those, wherever it lies (see
+//! [`member_sources`]). They skip deps-check itself, whose rules hold the
+//! scanned names as data.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -101,6 +102,10 @@ const VAULT_CORE_USERS: [&str; 2] = ["fstp-vault", CELLTEST];
 const COMPOSER: &str = "fstp-cell";
 const CORE: &str = "fstp-cell-core";
 const STORE: &str = "fstp-pgstore";
+/// Rule 3: the M4 test kit composes a test cell (its demo cell runs the real
+/// timeline and dispatcher). It is test only (M4 design section 1.3, rule
+/// A9) and never ships.
+const API_TESTKIT: &str = "fstp-api-testkit";
 
 /// Rule 4: the control-plane crates.
 const CONTROL_PLANE: [&str; 6] = [
@@ -267,7 +272,7 @@ pub(crate) fn check(meta: &Metadata) -> Vec<Finding> {
 
     // Rule 3.
     for (&krate, &start) in &members {
-        if krate == COMPOSER || TEST_ONLY.contains(&krate) {
+        if krate == COMPOSER || krate == API_TESTKIT || TEST_ONLY.contains(&krate) {
             continue;
         }
         let parent = reach(meta, start, &SHIPPED);
