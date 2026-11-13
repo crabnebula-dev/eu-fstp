@@ -1116,23 +1116,28 @@ fn i24_erasure_entries_are_chained() {
         t(1),
     )
     .unwrap_or_else(|e| panic!("{e}"));
+    // An account records an erasure request (cause 2) or a cell erasure
+    // (cause 3) only. A retention expiry (cause 1) is the system's (ADR-007
+    // "Erasure-log entries", W2c), so the set-up asks as the tenant admin.
     let mut batch = cell
         .exec(
             CellCommand::Text(TextCommand::EraseTexts {
                 ids: vec![text],
-                cause: 1,
+                cause: 2,
             }),
             ADMIN,
             t(2),
         )
         .unwrap_or_else(|e| panic!("{e}"));
+    // Only the erasure runner records a destroyed epoch (design section
+    // 3.5, W2c), so the set-up issues it through that system task.
     batch.extend(
-        cell.exec(
+        cell.exec_system(
             CellCommand::Key(KeyCommand::RecordEpochDestroyed {
                 epoch: 1,
                 receipt: [0xD5; 32],
             }),
-            ADMIN,
+            fstp_cell_core::SystemTask::ErasureRunner,
             t(3),
         )
         .unwrap_or_else(|e| panic!("{e}")),
