@@ -227,14 +227,10 @@ fn r_sw_02_reference_destroy_list_is_the_ca_key_and_every_live_root() {
     assert_eq!(keys, expected);
 }
 
-/// The seam of [`restore_cell`]: no harness call restores a cell from
-/// one backup copy and reports what opened. Lanes W2k and W3b add it.
-const RESTORE_SEAM: &str = "no harness call restores a cell from a backup copy and reports what opened (lanes W2k and W3b)";
-
-/// The objects of cell `cell` that opened after restoring each copy.
+/// The objects of cell `cell` that opened after restoring each copy
+/// (`World::restore_cell`, lane m3/erase-cell).
 fn restore_cell(world: &World, cell: u8) -> Result<Vec<String>, String> {
-    let _ = (world, cell);
-    Err(RESTORE_SEAM.to_owned())
+    world.restore_cell(cell).map_err(|e| e.to_string())
 }
 
 /// One custody key of a cell, as the custody simulator lists it.
@@ -260,18 +256,20 @@ fn live_cell_keys(world: &World, cell: u8) -> Result<BTreeSet<LiveKey>, String> 
         .map_err(|e| e.to_string())
 }
 
-/// The seam of [`erasure_confirmation`]: the world does not expose the
-/// erasure confirmation the control plane issues (design section 3.7
-/// step 4). Lanes W2h and W3b add it.
-const CONFIRMATION_SEAM: &str =
-    "fstp_celltest::world::World does not expose the cell erasure confirmation (lanes W2h and W3b)";
-
 /// The confirmation's custody receipts, as the handle each one names, and
 /// whether its composite signature verifies under the control plane's
 /// key.
+/// (`World::cell_erasure`, `fstp_control::erase`, lane m3/erase-cell).
 fn erasure_confirmation(world: &World, cell: u8) -> Result<(Vec<Vec<u8>>, bool), String> {
-    let _ = (world, cell);
-    Err(CONFIRMATION_SEAM.to_owned())
+    let (c, pk) = world
+        .cell_erasure(cell)
+        .map_err(|e| e.to_string())?
+        .ok_or("cell 0 has no erasure confirmation")?;
+    let handles = c.keys.iter().map(|k| k.handle.clone()).collect();
+    Ok((
+        handles,
+        fstp_control::erase::verify_erasure_confirmation(&pk, &c),
+    ))
 }
 
 /// R-SW-02 AC, design section 3.7: backups and WAL archives of two cells
@@ -339,5 +337,48 @@ fn r_sw_02_cell_erasure_kills_every_backup() {
     assert_eq!(
         kept, other,
         "the erasure of cell 0 changed the keys of cell 1"
+    );
+}
+
+/// R-SW-02 teeth for the world test above: before `erase-cell`, the
+/// restore trial of a cell opens a keystore image from a backup copy, a
+/// text under the App chain and the Vault chain's Match key, so an empty
+/// trial after the erasure is a finding. A second `erase-cell` of the
+/// same cell refuses, and the confirmation names two distinct approvers
+/// (lane m3/erase-cell).
+#[test]
+fn r_sw_02_teeth_restore_trial_opens_every_kind_before_erasure() {
+    let world = World::start(WorldSpec {
+        cells: 1,
+        mode: DbMode::Shared,
+        vault_layout: VaultLayout::SeparateCluster,
+        self_hosted: false,
+        process_mode: false,
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let steps = |s: &[&str]| CycleScript {
+        steps: s.iter().map(|x| (*x).to_owned()).collect(),
+    };
+    let report = world.run_cycle(0, &steps(&["call-cycle", "base-backup", "wal-archive"]));
+    if let Err(e) = report.result {
+        panic!("{e} (NotImplemented)");
+    }
+    let before = restore_cell(&world, 0).unwrap_or_else(|e| panic!("{e}"));
+    for kind in [": keystore image", ": text ", "vault: Match key"] {
+        assert!(
+            before.iter().any(|o| o.contains(kind)),
+            "the trial opens no {kind:?} before the erasure: {before:?}"
+        );
+    }
+    assert!(world.cell_erasure(0).unwrap().is_none());
+    if let Err(e) = world.run_cycle(0, &steps(&["erase-cell"])).result {
+        panic!("erase-cell: {e} (NotImplemented)");
+    }
+    assert_eq!(restore_cell(&world, 0), Ok(Vec::new()));
+    let (c, _) = world.cell_erasure(0).unwrap().unwrap();
+    assert_ne!(c.approvers[0], c.approvers[1]);
+    assert!(
+        world.run_cycle(0, &steps(&["erase-cell"])).result.is_err(),
+        "a second erasure of the cell ran"
     );
 }

@@ -350,6 +350,9 @@ pub struct CellBackups {
     /// The login email canaries of the accounts the cycle signed up, by
     /// cell account (lane m3/erase-steps).
     logins: Mutex<Vec<Login>>,
+    /// The erasure confirmation of the cell's `erase-cell`
+    /// ([`crate::erase_cell`], lane m3/erase-cell).
+    pub(crate) erasure: OnceLock<fstp_control::erase::ErasureConfirmation>,
 }
 
 impl CellBackups {
@@ -1160,6 +1163,89 @@ impl World {
         }
         if !known {
             return Err(err("document_opens", &"names no uploaded document"));
+        }
+        Ok(out)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The restore of one cell (R-SW-02, lane m3/erase-cell).
+
+impl World {
+    /// What of cell `index` opens when each backup copy of the world is
+    /// restored alone, and then from the live store (R-SW-02 AC, design
+    /// section 3.7, I-81). Lane m3/erase-cell. Each entry names the copy
+    /// and the object:
+    ///
+    /// - `<object>: keystore image` for a keystore snapshot of the cell
+    ///   that opens under its CellBackup chain;
+    /// - `<object>: text <id>` and `live: text <id>` for a text of an
+    ///   opened image, or of the live keystore, that opens under a live
+    ///   App root. Key rows follow the restore rule of ADR-012: the live
+    ///   keystore's rows, then the copy's own;
+    /// - `vault: Match key` and `vault: document <id>` for a Vault chain
+    ///   key that a root or group row ever written gives under a live
+    ///   Vault root (`crate::vault_keys`).
+    ///
+    /// The base backups and WAL segments open under their ClusterBackup
+    /// keys, which a cell erasure keeps. Every row of the cell in them is
+    /// sealed under App or Vault chain keys, whose rows come only from the
+    /// keystore images and the Vault keystore above, so the entries above
+    /// cover them. Interim, pending Daniel: no server is started over a
+    /// restored copy, as in [`World::restored_copies`].
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell does not exist, runs no custody, or an opened
+    /// image does not decode.
+    pub fn restore_cell(&self, index: u8) -> Result<Vec<String>, WorldError> {
+        let cell = self
+            .cell(index)
+            .ok_or_else(|| err("restore_cell", &"names no cell of the world"))?;
+        let custody = cell.custody()?;
+        let id = cell.id();
+        let live = live_image(cell)?;
+        let secret = {
+            let state = lock(&cell.backups.state);
+            state
+                .chain
+                .as_ref()
+                .and_then(|c| c.secret(&custody, id).ok())
+        };
+        let prefix = format!("{}/keystore/", hex(&id));
+        let mut out = Vec::new();
+        let mut images = Vec::new();
+        for (name, bytes) in self.backup_objects()? {
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            let Some(opened) = secret.as_ref().and_then(|s| open_container(s, &bytes).ok()) else {
+                continue;
+            };
+            out.push(format!("{name}: keystore image"));
+            images.push((
+                name,
+                decode_image(&opened.plaintext).map_err(|e| err("an image", &e))?,
+            ));
+        }
+        images.push(("live".to_owned(), live.clone()));
+        for (name, image) in &images {
+            let rows = [&live, image];
+            let seals = unwrap_every_root(&custody, id, &rows);
+            for text in &image.texts {
+                if open_text(id, &rows, &seals, text).is_some() {
+                    out.push(format!("{name}: text {}", hex(&text.id)));
+                }
+            }
+        }
+        let vault = vault_keys(cell)?;
+        if !vault.reachable_match_keys().is_empty() {
+            out.push("vault: Match key".to_owned());
+        }
+        for d in vault.documents() {
+            if !vault.reachable_secrets(d.group).is_empty() {
+                out.push(format!("vault: document {}", hex(&d.id)));
+            }
         }
         Ok(out)
     }

@@ -31,6 +31,7 @@
 //! - [`agent`], the `fstp-pgagent` executor, listener and run loop;
 //! - [`operator`], the staff passkey login and step-up;
 //! - [`approval`], the two-operator check of destructive jobs (ADR-011);
+//! - [`erase`], the `erase-cell` job and its confirmation (R-SW-02);
 //! - [`service`], the `CellToCp` listener and the `fstp-control` run loop.
 //!
 //! [`service::run`] and [`agent::run`] serve until SIGTERM. A destructive
@@ -45,6 +46,7 @@ pub mod api;
 pub mod approval;
 pub mod catalogue;
 pub mod config;
+pub mod erase;
 pub mod exchange;
 pub mod install;
 pub mod isolation_audit;
@@ -119,6 +121,8 @@ pub enum ControlError {
     Database(&'static str),
     /// The operator login or authorisation refused (ADR-008, ADR-011).
     Operator(operator::OperatorRefusal),
+    /// Custody refused a call of a control-plane job (ADR-004).
+    Custody(fstp_custody::CustodyError),
 }
 
 impl std::fmt::Display for ControlError {
@@ -144,6 +148,7 @@ impl std::fmt::Display for ControlError {
             ControlError::Signal => f.write_str("termination signals could not be set up"),
             ControlError::Database(step) => write!(f, "database step failed: {step}"),
             ControlError::Operator(r) => write!(f, "operator refused: {r:?}"),
+            ControlError::Custody(e) => write!(f, "custody refused: {e}"),
         }
     }
 }

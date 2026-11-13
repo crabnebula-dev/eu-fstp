@@ -51,6 +51,9 @@
 //!   erases its login email and replaces the `Lookup` key, and an identity
 //!   erasure on the Vault chain, which replaces the `Match` key (design
 //!   section 3.5, decision 27, lane m3/erase-steps).
+//! - `erase-cell`: two operators approve the cell's erasure and the control
+//!   plane destroys every custody key of the cell (R-SW-02, design section
+//!   3.7, [`crate::erase_cell`], lane m3/erase-cell).
 //! - `abort-next-append`, `retry` and `replay-step-up`: the fault steps of
 //!   R-NF-08 (lane F-ERASE). The first arms the cell store's fault point,
 //!   so the next append aborts after its rows are inserted. A command
@@ -598,6 +601,10 @@ impl<'w> Cycle<'w> {
             // The erasure steps of lane m3/erase-steps.
             "erase-account" => self.erase_account(),
             "erase-identity" => self.erase_identity(),
+            // The cell erasure of lane m3/erase-cell (`crate::erase_cell`).
+            "erase-cell" => {
+                Self::backup_step("erase-cell", crate::erase_cell::erase(self.client.cell()))
+            }
             "upload-document" => self.upload_document(),
             "record-verification" => self.record_verification(),
             "minor-applicant:draft" => self.minor_draft(),

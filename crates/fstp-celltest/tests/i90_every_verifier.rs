@@ -13,7 +13,8 @@
 //! [`i90_every_composite_verify_call_site_is_in_the_table`] scans the
 //! shipped sources. A new `composite::verify*` call site that no row
 //! names fails it, so a new verifier cannot skip the sweep. Lane C2 added
-//! the notice companion row.
+//! the notice companion row. Lane m3/erase-cell added the cell erasure
+//! confirmation row.
 //!
 //! The layout is draft 19 section 4.3: `mldsaSig || tradSig`. Code outside
 //! `fstp-crypto` splits it with `composite::MLDSA_SIGNATURE_LEN` (I-75).
@@ -36,6 +37,10 @@ use fstp_contract::digest::Digest;
 use fstp_contract::notice_companion::{
     NoticeCompanionKey, NoticeCompanionSigned, NoticeId, sign_notice_companion,
     verify_notice_companion,
+};
+use fstp_control::approval::JobDigest;
+use fstp_control::erase::{
+    CONFIRMATION_CONTEXT, ErasedKey, ErasureConfirmation, verify_erasure_confirmation,
 };
 use fstp_crypto::composite::{self, CompositeSigningKey, MLDSA_SIGNATURE_LEN, SIGNATURE_LEN};
 use fstp_keys::Purpose;
@@ -67,7 +72,7 @@ struct Verifier {
 /// Every composite verifier of the platform. A shipped file with a
 /// `composite::verify*` call that no row names fails
 /// [`i90_every_composite_verify_call_site_is_in_the_table`].
-const VERIFIERS: [Verifier; 6] = [
+const VERIFIERS: [Verifier; 7] = [
     Verifier {
         name: "audit anchor (fstp_audit::anchor::anchor_signature_verifies)",
         site: "crates/fstp-audit/src/anchor.rs",
@@ -103,6 +108,12 @@ const VERIFIERS: [Verifier; 6] = [
         site: "crates/fstp-contract/src/notice_companion.rs",
         sign: companion_sign,
         verify: companion_verify,
+    },
+    Verifier {
+        name: "cell erasure confirmation (fstp_control::erase::verify_erasure_confirmation)",
+        site: "crates/fstp-control/src/erase.rs",
+        sign: erasure_sign,
+        verify: erasure_verify,
     },
 ];
 
@@ -236,6 +247,42 @@ fn companion_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
         signature: sig.to_vec(),
     };
     verify_notice_companion(&rec, pk)
+}
+
+/// The erasure confirmation of variant `v`, unsigned (R-SW-02, lane
+/// m3/erase-cell).
+fn erasure(v: u8) -> ErasureConfirmation {
+    ErasureConfirmation {
+        cell: fstp_cp_proto::CellId([v; 16]),
+        erased_at: 1_800_000_000 + i64::from(v),
+        job: JobDigest([v ^ 0x5a; 32]),
+        approvers: [
+            fstp_cp_proto::StaffRef([1; 16]),
+            fstp_cp_proto::StaffRef([2; 16]),
+        ],
+        keys: vec![ErasedKey {
+            chain: None,
+            handle: vec![v; 16],
+            receipt: fstp_custody::DestroyReceipt(vec![v; 8]),
+        }],
+        signature: Vec::new(),
+    }
+}
+
+/// Signs as `fstp_control::erase::erase_cell` does: the body under
+/// `CONFIRMATION_CONTEXT`.
+fn erasure_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    let body = erasure(v).body().unwrap();
+    key.sign_with_context(&body, CONFIRMATION_CONTEXT)
+        .unwrap()
+        .to_bytes()
+        .to_vec()
+}
+
+fn erasure_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    let mut c = erasure(v);
+    c.signature = sig.to_vec();
+    verify_erasure_confirmation(pk, &c)
 }
 
 // ------------------------------------------------------------- the sweep

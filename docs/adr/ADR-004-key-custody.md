@@ -412,6 +412,13 @@ Per-epoch TPM objects (Q32, option B) are evaluated with the M9 self-hosted pack
 - Each CA rolls over yearly, with an overlap in which both keys are trusted.
 - Cell erasure (R-SW-02) destroys the cell CA key together with every live root epoch of the cell's App, Vault and CellBackup chains. The erasure confirmation lists every destroy receipt.
 
+Recorded at first use by lane m3/erase-cell, 2026-11-13. Interim, pending Daniel:
+
+- **Destroying a sign key.** The `Custody` trait keeps its six operations (I-80). Destroying a CA sign key is a separate trait, `fstp_control::erase::SignKeyCustody`, with one operation. It returns a `DestroyReceipt` as `destroy` does. The test custody implements it. `OkmsCustody` and `KeydCustody` do not yet, so cell erasure runs in the test world only.
+- **What is destroyed.** `fstp-control erase-cell` takes the cell's live roots and CA sign keys as input. It refuses a root of another cell, and a root of the ClusterBackup or ControlPlane chain. In production the list comes from `cp.custody_entry` and the backend's own listing, which is not built.
+- **Erasure confirmation.** A composite signature under the context `fstp-cell-erasure-v1`. The signed body holds the cell, the erasure time, the job digest, both approvers, and one entry per destroyed key: chain code (0 for a CA key), handle and receipt. The key is a control-plane composite key, level 2 under chain ControlPlane, handed in by the caller. Its custody placement and rotation follow the staff assertion key.
+- **Order.** The design's step 1 and step 4 run: every key is destroyed, then the confirmation is issued. Steps 2 and 3, dropping the databases and removing the routes, need the destructive `fstp-pgagent` jobs and the edge route removal, which are not built.
+
 ### Signing key placement in M3
 
 | Key | Algorithm | Placement | Rotation |

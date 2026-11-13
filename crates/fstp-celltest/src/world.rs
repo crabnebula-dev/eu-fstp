@@ -2280,6 +2280,9 @@ pub(crate) struct WorldCustody {
     /// (design section 1.3, ADR-004 "CA keys in custody", lane
     /// m3/erase-steps). They are made here and never leave.
     sign_keys: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, fstp_crypto::sig::EcdsaP256KeyPair>>>,
+    /// The reference of every root it created, by handle, so the control
+    /// plane can name each live root of the cell (lane m3/erase-cell).
+    refs: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, fstp_custody::RootRef>>>,
 }
 
 impl WorldCustody {
@@ -2320,6 +2323,32 @@ impl WorldCustody {
             spki,
         ))
     }
+
+    /// Every live root, by its full reference, and every live `sign` key:
+    /// what the control plane names for the cell's erasure (lane
+    /// m3/erase-cell).
+    pub(crate) fn cell_keys(&self) -> fstp_control::erase::CellKeys {
+        let refs = lock(&self.refs);
+        fstp_control::erase::CellKeys {
+            roots: lock(&self.roots)
+                .keys()
+                .filter_map(|h| refs.get(h).cloned())
+                .collect(),
+            ca: lock(&self.sign_keys)
+                .keys()
+                .map(|h| fstp_custody::SignKeyRef {
+                    backend: fstp_custody::BackendId::Simulator,
+                    handle: fstp_custody::CustodyHandle(h.clone()),
+                })
+                .collect(),
+        }
+    }
+
+    /// Destroys the `sign` key `handle`. Whether it lived (lane
+    /// m3/erase-cell).
+    pub(crate) fn remove_sign_key(&self, handle: &[u8]) -> bool {
+        lock(&self.sign_keys).remove(handle).is_some()
+    }
 }
 
 impl fstp_custody::Custody for WorldCustody {
@@ -2336,13 +2365,15 @@ impl fstp_custody::Custody for WorldCustody {
             lock(&self.roots).insert(handle.to_vec(), key);
             lock(&self.made).push(key);
             lock(&self.chains).insert(handle.to_vec(), label.chain);
-            Ok(fstp_custody::RootRef {
+            let root = fstp_custody::RootRef {
                 backend: fstp_custody::BackendId::Simulator,
                 cell: label.cell,
                 chain: label.chain,
                 epoch: label.epoch,
                 handle: fstp_custody::CustodyHandle(handle.to_vec()),
-            })
+            };
+            lock(&self.refs).insert(handle.to_vec(), root.clone());
+            Ok(root)
         })();
         std::future::ready(made)
     }
