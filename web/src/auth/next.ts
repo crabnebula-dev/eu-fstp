@@ -13,9 +13,30 @@
 // no space, no `//` and no dot segment, plain or percent-encoded. Every
 // other value lands on the home page. This module is pure: it touches
 // no DOM, no storage and no network.
+//
+// The M3 cell serves the auth pages only, and no `/app/` page. Its shell
+// says so with `<meta name="fstp-landing" content="/auth/account">`, so a
+// sign-in there lands on the account page (Daniel, 2026-11-13, M3 exit
+// audit section 7, item 9). The meta names the account page or nothing:
+// any other value lands on the home page.
 
 /** The home page of the web pages. */
 export const HOME_PATH = "/app/";
+
+/** The account page, the landing on a cell that serves no `/app/` page. */
+export const ACCOUNT_PATH = "/auth/account";
+
+/** The name of the shell's meta element that names the landing. */
+export const LANDING_META = "fstp-landing";
+
+/**
+ * The page a sign-in lands on, from the content of the shell's
+ * [`LANDING_META`] element, or null when the shell has none: the account
+ * page when the content names it exactly, else the home page.
+ */
+export function homeOf(declared: unknown): string {
+  return declared === ACCOUNT_PATH ? ACCOUNT_PATH : HOME_PATH;
+}
 
 /** The login page. */
 export const LOGIN_PATH = "/auth/login";
@@ -56,8 +77,14 @@ export function isReturnPath(path: unknown): path is string {
 /**
  * The page to open after a sign-in on a page whose query is `search`:
  * its `next` member when that is a return path, else the home page.
+ * `home` is the landing of the serving cell ([`homeOf`]). A cell whose
+ * landing is the account page serves no `/app/` page, so no return path
+ * applies there.
  */
-export function landingAfterSignIn(search: string): string {
+export function landingAfterSignIn(search: string, home: string = HOME_PATH): string {
+  if (home !== HOME_PATH) {
+    return homeOf(home);
+  }
   let next: string | null = null;
   try {
     next = new URLSearchParams(search).get(NEXT);

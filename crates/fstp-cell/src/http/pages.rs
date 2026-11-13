@@ -247,7 +247,49 @@ impl Pages {
     pub fn asset_paths(&self) -> impl Iterator<Item = &str> {
         self.assets.keys().map(String::as_str)
     }
+
+    /// The same pages, whose shell names the account page as the landing
+    /// after sign-in: [`ACCOUNT_LANDING_META`] right after the shell's
+    /// `<head>` tag. `web/src/auth/next.ts` reads it. The M3 cell serves
+    /// the auth pages only and no `/app/` page, so its sign-ins land on
+    /// `/auth/account` (Daniel, 2026-11-13, M3 exit audit section 7,
+    /// item 9). The element holds no script and no style, so the cell CSP
+    /// still covers the shell.
+    ///
+    /// # Errors
+    ///
+    /// [`PagesError::Missing`] when the shell has no `<head>` tag.
+    pub fn landing_on_account(self) -> Result<Pages, PagesError> {
+        let missing = PagesError::Missing(NO_HEAD);
+        let at = self
+            .shell
+            .windows(HEAD_TAG.len())
+            .position(|w| w.eq_ignore_ascii_case(HEAD_TAG))
+            .and_then(|p| p.checked_add(HEAD_TAG.len()))
+            .ok_or(missing)?;
+        let (before, after) = self.shell.split_at(at);
+        let mut shell = Vec::with_capacity(self.shell.len().saturating_add(64));
+        shell.extend_from_slice(before);
+        shell.extend_from_slice(ACCOUNT_LANDING_META.as_bytes());
+        shell.extend_from_slice(after);
+        Ok(Pages {
+            shell,
+            assets: self.assets,
+        })
+    }
 }
+
+/// The meta element that names the account page as the landing after
+/// sign-in ([`Pages::landing_on_account`]).
+pub const ACCOUNT_LANDING_META: &str = "<meta name=\"fstp-landing\" content=\"/auth/account\">";
+
+/// The opening tag of the shell's head element, matched without regard to
+/// case.
+const HEAD_TAG: &[u8] = b"<head>";
+
+/// What [`Pages::landing_on_account`] misses in a shell without a head
+/// element.
+const NO_HEAD: &str = "the head element of the shell";
 
 #[cfg(test)]
 mod tests {
@@ -275,5 +317,30 @@ mod tests {
         ] {
             assert_eq!(asset_name(bad), None, "{bad}");
         }
+    }
+
+    /// R-NF-03, design section 11.2, M3 exit audit section 7 item 9
+    /// (Daniel, 2026-11-13): the M3 shell names the account page as the
+    /// landing right after `<head>`, keeps every other byte, and a shell
+    /// without `<head>` is refused.
+    #[test]
+    fn r_nf_03_m3_shell_names_the_account_page_as_landing() {
+        let pages = Pages {
+            shell: b"<!doctype html><HEAD><title></title></head><body></body>".to_vec(),
+            assets: BTreeMap::new(),
+        };
+        let landed = pages.landing_on_account().unwrap();
+        let want = format!(
+            "<!doctype html><HEAD>{ACCOUNT_LANDING_META}<title></title></head><body></body>"
+        );
+        assert_eq!(landed.shell(), want.as_bytes());
+        let headless = Pages {
+            shell: b"<!doctype html><body></body>".to_vec(),
+            assets: BTreeMap::new(),
+        };
+        assert!(matches!(
+            headless.landing_on_account(),
+            Err(PagesError::Missing(_))
+        ));
     }
 }

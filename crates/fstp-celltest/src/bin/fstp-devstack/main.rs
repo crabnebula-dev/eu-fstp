@@ -75,7 +75,7 @@ use std::io::Write as _;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::process::ExitCode;
 
-use fstp_cell::http::pages::PAGE_PATHS;
+use fstp_cell::http::pages::{PAGE_PATHS, Pages};
 use fstp_celltest::world::{
     AUTH_PAGES_ENV, CellHandle, CellUrls, DbMode, EDGE_PORT_ENV, HttpRequest, VaultLayout, World,
     WorldError, WorldSpec, auth_pages,
@@ -132,6 +132,18 @@ fn check_origins(cell: &CellHandle, urls: &CellUrls, edge: SocketAddr) -> Result
         }
     }
     Ok(())
+}
+
+/// The compiled auth pages ([`auth_pages`]), with a shell that names the
+/// account page as the landing after sign-in. The M3 cell serves no
+/// `/app/` page, so its sign-ins land on `/auth/account` (Daniel,
+/// 2026-11-13, M3 exit audit section 7, item 9;
+/// `Pages::landing_on_account`).
+fn m3_pages() -> Result<Option<Pages>, WorldError> {
+    auth_pages()?
+        .map(Pages::landing_on_account)
+        .transpose()
+        .map_err(|e| WorldError::Store(format!("the compiled auth pages: {e}")))
 }
 
 /// The one SaaS-mode world of the stack.
@@ -265,7 +277,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     if e2e {
-        return match auth_pages() {
+        return match m3_pages() {
             Ok(Some(pages)) => e2e::run(args.get(1..).unwrap_or_default(), pages),
             Ok(None) => {
                 eprintln!(
@@ -294,7 +306,7 @@ fn main() -> ExitCode {
         }
     };
     // Before the slow world start: a browser needs the compiled pages.
-    let pages = match auth_pages() {
+    let pages = match m3_pages() {
         Ok(Some(pages)) => pages,
         Ok(None) => {
             eprintln!(

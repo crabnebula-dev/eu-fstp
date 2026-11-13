@@ -6,6 +6,7 @@
 import { clear, h } from './dom.js';
 import { createI18n } from './i18n.js';
 import { AUTH_EN, type AuthMessageId } from './messages.en.js';
+import { LANDING_META, homeOf } from './next.js';
 import { Failure, type FailureCode } from './webauthn.js';
 
 /** The catalogue of the auth pages. */
@@ -206,6 +207,15 @@ export function busy(button: HTMLButtonElement, run: () => Promise<void>): () =>
       button.removeAttribute('aria-busy');
     });
   };
+}
+
+/**
+ * The page a sign-in on this cell lands on: the content of the shell's
+ * `fstp-landing` meta element, read through `homeOf` (`next.ts`).
+ */
+export function signedInHome(): string {
+  const meta = document.querySelector(`meta[name="${LANDING_META}"]`);
+  return homeOf(meta === null ? null : meta.getAttribute('content'));
 }
 
 /** Opens `path` of this origin, replacing the current history entry. */
