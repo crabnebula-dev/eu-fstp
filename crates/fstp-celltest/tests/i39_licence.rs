@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
-use fstp_celltest::egress::{Direction, Endpoint, Peer};
+use fstp_celltest::egress::{AttemptOutcome, Direction, Endpoint, Peer};
 use fstp_celltest::mc::licence_model::{
     Activity, ProdKeySet, prod_permits, prod_refresh, prod_token, prod_verify, ref_state,
     release_stub, seam_or_stub,
@@ -545,15 +545,17 @@ const SERVICE_FAULTS: [(&str, Trace); 8] = [
     ("clock-skew", Trace::RequestAndAnswer),
 ];
 
-/// The gap that stands for faults below TLS. The egress recorder keeps
-/// the bytes of successful reads and writes above TLS only. A refused
-/// connection or a failed handshake leaves nothing, so no test can show
-/// that the cell met such a fault.
-const ATTEMPT_SEAM: &str = "the egress recorder keeps no record of a connection attempt that fails below TLS, so a refused or failed-TLS attempt cannot be shown (design section 14.3; lead, harness)";
-
-/// Whether the captures since `from` show a CrabNebula attempt by cell 0
-/// that met a fault with `trace`.
-fn met_fault(world: &World, from: usize, trace: Trace) -> Result<(), String> {
+/// Whether the captures since `from` and the connection attempts since
+/// `attempts_from` show a CrabNebula attempt by cell 0 that met a fault
+/// with `trace`.
+///
+/// The egress recorder keeps the bytes of reads and writes above TLS
+/// only, so a refused connection or a failed handshake leaves no capture.
+/// Lane m3/licence-update closed the former `ATTEMPT_SEAM` here: the
+/// world's CrabNebula link records every connection attempt with how far
+/// it got (`fstp_celltest::egress::Attempt`). A fault below TLS must show
+/// such an attempt, and no byte above TLS.
+fn met_fault(world: &World, from: usize, attempts_from: usize, trace: Trace) -> Result<(), String> {
     let new: Vec<_> = world
         .egress()
         .captures()
@@ -563,8 +565,15 @@ fn met_fault(world: &World, from: usize, trace: Trace) -> Result<(), String> {
         .collect();
     let sent = new.iter().any(|c| c.direction == Direction::Outbound);
     let answered = new.iter().any(|c| c.direction == Direction::Inbound);
+    let below_tls = world
+        .egress()
+        .attempts()
+        .into_iter()
+        .skip(attempts_from)
+        .filter(|a| a.route.to == Peer::CrabNebula && a.route.from == Endpoint::cell(0))
+        .any(|a| a.outcome != AttemptOutcome::Connected);
     match trace {
-        Trace::BelowTls => Err(ATTEMPT_SEAM.to_owned()),
+        Trace::BelowTls if below_tls && !sent && !answered => Ok(()),
         Trace::RequestOnly if sent && !answered => Ok(()),
         Trace::RequestAndAnswer if sent && answered => Ok(()),
         _ => Err(format!(
@@ -582,7 +591,8 @@ fn met_fault(world: &World, from: usize, trace: Trace) -> Result<(), String> {
 ///
 /// Gap: `CycleScript` names steps by text, and lane W3b defines the step
 /// vocabulary. `services-down:<fault>` and the step names here are the
-/// W1g proposal. Faults below TLS wait for [`ATTEMPT_SEAM`].
+/// W1g proposal. Faults below TLS are shown by the connection attempts
+/// the world records ([`met_fault`]).
 #[test]
 fn i39_cycle_completes_with_services_down() {
     let world = World::start(WorldSpec {
@@ -610,11 +620,12 @@ fn i39_cycle_completes_with_services_down() {
                 steps: steps.to_vec(),
             };
             let from = world.egress().captures().len();
+            let attempts_from = world.egress().attempts().len();
             let outcome = world
                 .run_cycle(0, &script)
                 .result
                 .map_err(|e| e.to_string())
-                .and_then(|()| met_fault(&world, from, *trace));
+                .and_then(|()| met_fault(&world, from, attempts_from, *trace));
             outcome.err().map(|e| (*fault, e))
         })
         .collect();
