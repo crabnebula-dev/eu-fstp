@@ -18,8 +18,12 @@
 //! 4. [`OperatorLogin::authorise`] admits a request. A non-destructive
 //!    request that changes state (`provision-cell`) needs a step-up within
 //!    [`STEP_UP_WINDOW_SECS`], and consumes it. A destructive request is
-//!    refused with [`ControlError::ApprovalRequired`] until the
-//!    two-operator check exists.
+//!    refused there with [`ControlError::ApprovalRequired`].
+//! 5. A destructive job goes through the two-operator check instead
+//!    ([`crate::approval`]). Each approver calls
+//!    [`OperatorLogin::begin_approval`] and
+//!    [`OperatorLogin::finish_approval`] in their own session. The
+//!    requester then calls [`OperatorLogin::authorise_destructive`].
 //!
 //! Interim, pending Daniel: the three lifetimes. `SPEC/` and the ADRs fix
 //! none of them for staff. P-71 and P-72 are tenant parameters, and staff
@@ -38,6 +42,7 @@ use fstp_webauthn::{AssertionExpect, AssertionResponse, CoseKey, RelyingParty, S
 
 use crate::ControlError;
 use crate::api::CpApiRequest;
+use crate::approval::{ApprovalBook, ApprovedJob, DestructiveJob, JobDigest, job_digest};
 
 /// How long a challenge may be answered, in seconds. Interim.
 pub const CHALLENGE_LIFETIME_SECS: i64 = 120;
@@ -124,12 +129,33 @@ struct Session {
     step_up_at: Option<i64>,
 }
 
+/// An approval challenge that waits for its assertion (ADR-011).
+struct PendingApproval {
+    session: [u8; 32],
+    job: DestructiveJob,
+    issued_at: i64,
+}
+
+/// The domain label of an approval challenge.
+const APPROVAL_LABEL: &[u8] = b"fstp-cp-approval-v1";
+
+/// The challenge of an approval: SHA-256 over the label, the job digest
+/// and 32 random octets, so the assertion over it binds the job.
+fn approval_challenge(digest: JobDigest, nonce: &[u8; 32]) -> [u8; 32] {
+    let mut m = APPROVAL_LABEL.to_vec();
+    m.extend_from_slice(&digest.0);
+    m.extend_from_slice(nonce);
+    fstp_crypto::sha256(&m)
+}
+
 /// The operator login state of one `fstp-control` process.
 pub struct OperatorLogin {
     rp: RelyingParty,
     credentials: Vec<(StaffCredential, u32)>,
     pending: BTreeMap<[u8; 32], Pending>,
     sessions: BTreeMap<[u8; 32], Session>,
+    approvals: BTreeMap<[u8; 32], PendingApproval>,
+    book: ApprovalBook,
 }
 
 impl std::fmt::Debug for OperatorLogin {
@@ -139,6 +165,7 @@ impl std::fmt::Debug for OperatorLogin {
             .field("credentials", &self.credentials.len())
             .field("pending", &self.pending.len())
             .field("sessions", &self.sessions.len())
+            .field("approvals", &self.approvals.len())
             .finish()
     }
 }
@@ -165,6 +192,8 @@ impl OperatorLogin {
             credentials: staff.iter().map(|c| (c.clone(), 0)).collect(),
             pending: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            book: ApprovalBook::default(),
         })
     }
 
@@ -178,6 +207,8 @@ impl OperatorLogin {
             .retain(|_, p| fresh(p.issued_at, now, CHALLENGE_LIFETIME_SECS));
         self.sessions
             .retain(|_, s| fresh(s.started_at, now, SESSION_LIFETIME_SECS));
+        self.approvals
+            .retain(|_, p| fresh(p.issued_at, now, CHALLENGE_LIFETIME_SECS));
     }
 
     /// Draws a challenge for `purpose` at `now` (seconds).
@@ -221,6 +252,17 @@ impl OperatorLogin {
         if !fresh(pending.issued_at, now, CHALLENGE_LIFETIME_SECS) {
             return Err(refuse(OperatorRefusal::ChallengeExpired));
         }
+        self.check_assertion(challenge, assertion)
+    }
+
+    /// Verifies `assertion` over `challenge` against the pinned credential
+    /// it names, with user verification required, and returns its staff
+    /// member.
+    fn check_assertion(
+        &mut self,
+        challenge: [u8; 32],
+        assertion: &AssertionResponse,
+    ) -> Result<StaffRef, ControlError> {
         let (cred, count) = self
             .credentials
             .iter_mut()
@@ -338,5 +380,103 @@ impl OperatorLogin {
             }
             CpApiRequest::PrivilegeAudit { .. } => Ok(s.staff),
         }
+    }
+
+    /// Draws the challenge of an approval of `job` inside `session`
+    /// (ADR-011 "Two-operator approval"). The challenge binds the job
+    /// digest. It is single use and lives [`CHALLENGE_LIFETIME_SECS`].
+    ///
+    /// # Errors
+    ///
+    /// The session refusals, [`OperatorRefusal::Capacity`] and
+    /// [`OperatorRefusal::Random`].
+    pub fn begin_approval(
+        &mut self,
+        session: OperatorSession,
+        job: &DestructiveJob,
+        now: i64,
+    ) -> Result<[u8; 32], ControlError> {
+        self.session(session, now)?;
+        self.prune(now);
+        if self.approvals.len() >= MAX_PENDING {
+            return Err(refuse(OperatorRefusal::Capacity));
+        }
+        let nonce: [u8; 32] =
+            fstp_crypto::random_array().map_err(|_| refuse(OperatorRefusal::Random))?;
+        let challenge = approval_challenge(job_digest(job), &nonce);
+        self.approvals.insert(
+            challenge,
+            PendingApproval {
+                session: session.0,
+                job: job.clone(),
+                issued_at: now,
+            },
+        );
+        Ok(challenge)
+    }
+
+    /// Finishes an approval: a fresh passkey assertion with user
+    /// verification over the approval challenge, from the session's own
+    /// staff member. It is that member's step-up for this one job. The
+    /// approval is recorded and logged, and the staff member returned.
+    ///
+    /// # Errors
+    ///
+    /// [`OperatorRefusal::Challenge`] for a challenge never drawn, used,
+    /// or drawn in another session. [`OperatorRefusal::ChallengeExpired`],
+    /// [`OperatorRefusal::OtherStaff`] for another member's credential, and
+    /// the assertion and session refusals.
+    pub fn finish_approval(
+        &mut self,
+        session: OperatorSession,
+        challenge: [u8; 32],
+        assertion: &AssertionResponse,
+        now: i64,
+    ) -> Result<StaffRef, ControlError> {
+        let pending = self
+            .approvals
+            .remove(&challenge)
+            .filter(|p| p.session == session.0)
+            .ok_or(refuse(OperatorRefusal::Challenge))?;
+        if !fresh(pending.issued_at, now, CHALLENGE_LIFETIME_SECS) {
+            return Err(refuse(OperatorRefusal::ChallengeExpired));
+        }
+        let owner = self.session(session, now)?.staff;
+        let staff = self.check_assertion(challenge, assertion)?;
+        if staff != owner {
+            return Err(refuse(OperatorRefusal::OtherStaff));
+        }
+        self.book.approve(staff, &pending.job, now)?;
+        Ok(staff)
+    }
+
+    /// Admits the destructive `job` for the requester of `session`. The
+    /// requester and a second, distinct staff member must each hold a
+    /// fresh approval of the job digest. The approvals are consumed and
+    /// the run is logged.
+    ///
+    /// # Errors
+    ///
+    /// [`ControlError::ApprovalRequired`] without both approvals, and the
+    /// session refusals.
+    pub fn authorise_destructive(
+        &mut self,
+        session: OperatorSession,
+        job: &DestructiveJob,
+        now: i64,
+    ) -> Result<ApprovedJob, ControlError> {
+        let requester = self.session(session, now)?.staff;
+        self.book.take(requester, job, now)
+    }
+
+    /// Logs a custody call of an admitted job, before the call
+    /// (ADR-004 "Reconciliation").
+    pub fn log_custody_call(&mut self, job: &ApprovedJob, request: [u8; 16], now: i64) {
+        self.book.log_custody_call(job, request, now);
+    }
+
+    /// The approval log, oldest first.
+    pub fn approval_log(&self) -> &[crate::approval::ApprovalEvent] {
+        self.book.log()
     }
 }

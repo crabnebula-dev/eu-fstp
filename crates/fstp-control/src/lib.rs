@@ -30,15 +30,19 @@
 //!   TLS that the `CellToCp` link and the agent link share;
 //! - [`agent`], the `fstp-pgagent` executor, listener and run loop;
 //! - [`operator`], the staff passkey login and step-up;
+//! - [`approval`], the two-operator check of destructive jobs (ADR-011);
 //! - [`service`], the `CellToCp` listener and the `fstp-control` run loop.
 //!
-//! [`service::run`] and [`agent::run`] serve until SIGTERM. Destructive
-//! jobs and requests keep refusing with [`ControlError::ApprovalRequired`]
-//! until the two-operator check exists. [`install::run`] stays a refusal
+//! [`service::run`] and [`agent::run`] serve until SIGTERM. A destructive
+//! request runs only through the two-operator check of [`approval`].
+//! Destructive `fstp-pgagent` jobs keep refusing with
+//! [`ControlError::ApprovalRequired`], since the agent's own check of the
+//! approvals is not built. [`install::run`] stays a refusal
 //! under B-06.
 
 pub mod agent;
 pub mod api;
+pub mod approval;
 pub mod catalogue;
 pub mod config;
 pub mod exchange;
@@ -89,7 +93,7 @@ pub enum ControlError {
     /// A `fstp-pgagent` job did not decode. It names the rule broken.
     Job(&'static str),
     /// A destructive job needs two operators' approvals (ADR-011
-    /// "Two-operator approval"), which this build cannot check yet.
+    /// "Two-operator approval"), and they are not all there.
     ApprovalRequired,
     /// An operator API request did not decode. It names the rule broken.
     Request(&'static str),

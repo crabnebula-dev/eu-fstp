@@ -106,6 +106,15 @@ Daniel decided on 2026-10-28 that destructive jobs need two operators (Q4 A).
 - Non-destructive jobs run on one operator's request with a passkey and a step-up, as `provision-cell` does.
 - The same two-person rule applies to the one-time set-up of the managed control cluster below.
 
+Recorded at first use by lane m3/erase-cell, 2026-11-13. Interim, pending Daniel:
+
+- **Job digest.** SHA-256 over `"fstp-cp-job-v1"`, a zero octet, a kind octet and the job's canonical bytes. `erase-cell` is kind 1 over its `fstp_control::api` frame. A `fstp-pgagent` job is kind 2 over the cluster id and its job frame. Each encoding has one spelling, so equal digests mean equal jobs.
+- **Approval.** An approver opens an approval inside an operator session. The challenge is SHA-256 over `"fstp-cp-approval-v1"`, the job digest and 32 random octets. The approver answers with a passkey assertion with user verification from the session's own staff member. That assertion is the approver's fresh step-up for this job. It binds the job digest, and it lives the challenge lifetime.
+- **Two distinct staff.** Approvals count by staff member, never by session or credential. Two sessions or two passkeys of one person give one approval. The requester must hold one of the two approvals.
+- **Lifetime and use.** An approval lives 5 minutes from its assertion. A job that runs consumes every approval of its digest. A refused request consumes none.
+- **Log.** `fstp-control` logs every approval, every refused request, every custody call of the job and the run, each with the job digest and staff references. Interim: the log is held in memory, like operator tickets, until `cp.job` rows are written.
+- **`fstp-pgagent`.** The agent's own check against the pinned staff key set is not built. Destructive agent jobs keep refusing, so `DropCellDatabase`, `DropRoles` and `SetNoLogin` do not run yet.
+
 ### Provisioning a cell in SaaS
 
 `fstp-control provision-cell --org <ref> --mode shared|dedicated` is run by an operator with a passkey and a step-up. Each step is idempotent and recorded in `cp.job`.

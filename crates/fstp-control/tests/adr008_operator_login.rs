@@ -11,9 +11,10 @@
 
 use fstp_control::ControlError;
 use fstp_control::api::{CpApiRequest, OrgRef};
+use fstp_control::approval::{APPROVAL_LIFETIME_SECS, ApprovalEvent, DestructiveJob, job_digest};
 use fstp_control::operator::{
-    CHALLENGE_LIFETIME_SECS, OperatorLogin, OperatorRefusal, Purpose, SESSION_LIFETIME_SECS,
-    STEP_UP_WINDOW_SECS, StaffCredential,
+    CHALLENGE_LIFETIME_SECS, OperatorLogin, OperatorRefusal, OperatorSession, Purpose,
+    SESSION_LIFETIME_SECS, STEP_UP_WINDOW_SECS, StaffCredential,
 };
 use fstp_control::placement::ClusterId;
 use fstp_control::provision::CellMode;
@@ -284,4 +285,176 @@ fn adr008_operator_relying_party_is_the_exact_host() {
         OperatorRefusal::Host
     );
     assert!(OperatorLogin::new(HOST, &[]).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// The two-operator check with passkeys (ADR-011, lane m3/erase-cell).
+
+fn erase(cell: u8) -> DestructiveJob {
+    DestructiveJob::EraseCell {
+        cell: CellId([cell; 16]),
+    }
+}
+
+/// Logs `p` in at `now` and returns the session.
+fn log_in(login: &mut OperatorLogin, p: &mut Passkey, now: i64) -> OperatorSession {
+    let c = login.begin(Purpose::Login, now).unwrap();
+    login.finish_login(c, &p.assert(&c), now).unwrap().0
+}
+
+/// `p` approves `job` in `session` at `now`.
+fn approve(
+    login: &mut OperatorLogin,
+    session: OperatorSession,
+    p: &mut Passkey,
+    job: &DestructiveJob,
+    now: i64,
+) -> Result<StaffRef, ControlError> {
+    let c = login.begin_approval(session, job, now)?;
+    let assertion = p.assert(&c);
+    login.finish_approval(session, c, &assertion, now)
+}
+
+/// ADR-011 "Two-operator approval", R-SW-02: two distinct staff members,
+/// each in their own session with a fresh passkey assertion over the job
+/// digest, admit `erase-cell` for the requester. Both approvals and the
+/// run are logged, and the approvals are spent.
+#[test]
+fn adr011_erase_cell_runs_with_two_distinct_staff_approvals() {
+    let mut a = Passkey::new(1, 0xa1);
+    let mut b = Passkey::new(2, 0xb2);
+    let mut login = OperatorLogin::new(HOST, &[a.pinned(), b.pinned()]).unwrap();
+    let sa = log_in(&mut login, &mut a, T0);
+    let sb = log_in(&mut login, &mut b, T0);
+    let job = erase(5);
+    assert_eq!(
+        login
+            .authorise_destructive(sa, &job, T0 + 1)
+            .map(|j| j.approvers()),
+        Err(ControlError::ApprovalRequired)
+    );
+    assert_eq!(approve(&mut login, sa, &mut a, &job, T0 + 2), Ok(a.staff));
+    assert!(login.authorise_destructive(sa, &job, T0 + 3).is_err());
+    assert_eq!(approve(&mut login, sb, &mut b, &job, T0 + 4), Ok(b.staff));
+    let approved = login.authorise_destructive(sa, &job, T0 + 5).unwrap();
+    assert_eq!(approved.job(), &job);
+    assert_eq!(approved.digest(), job_digest(&job));
+    assert_eq!(approved.approvers(), [a.staff, b.staff]);
+    assert!(login.authorise_destructive(sa, &job, T0 + 6).is_err());
+    let digest = job_digest(&job);
+    let log = login.approval_log();
+    assert!(log.contains(&ApprovalEvent::Approved {
+        digest,
+        staff: a.staff,
+        at: T0 + 2
+    }));
+    assert!(log.contains(&ApprovalEvent::Approved {
+        digest,
+        staff: b.staff,
+        at: T0 + 4
+    }));
+    assert!(log.contains(&ApprovalEvent::Ran {
+        digest,
+        approvers: [a.staff, b.staff],
+        at: T0 + 5
+    }));
+}
+
+/// ADR-011, R-SW-02: one person never satisfies both approvals, with two
+/// sessions or two pinned passkeys of their own.
+#[test]
+fn adr011_one_person_never_satisfies_both_approvals() {
+    let mut a = Passkey::new(1, 0xa1);
+    let mut a2 = Passkey::new(1, 0xa2);
+    let mut login = OperatorLogin::new(HOST, &[a.pinned(), a2.pinned()]).unwrap();
+    let s1 = log_in(&mut login, &mut a, T0);
+    let s2 = log_in(&mut login, &mut a2, T0);
+    let job = erase(6);
+    approve(&mut login, s1, &mut a, &job, T0 + 1).unwrap();
+    approve(&mut login, s2, &mut a2, &job, T0 + 2).unwrap();
+    approve(&mut login, s1, &mut a, &job, T0 + 3).unwrap();
+    for s in [s1, s2] {
+        assert_eq!(
+            login
+                .authorise_destructive(s, &job, T0 + 4)
+                .map(|j| j.approvers()),
+            Err(ControlError::ApprovalRequired)
+        );
+    }
+}
+
+/// ADR-011 "Each approval is a passkey assertion with user verification":
+/// an approval needs the session's own staff member, user verification, a
+/// challenge drawn in the same session, and it counts for its own job
+/// only.
+#[test]
+fn adr011_approval_binds_its_staff_session_and_job() {
+    let mut a = Passkey::new(1, 0xa1);
+    let mut b = Passkey::new(2, 0xb2);
+    let mut login = OperatorLogin::new(HOST, &[a.pinned(), b.pinned()]).unwrap();
+    let sa = log_in(&mut login, &mut a, T0);
+    let sb = log_in(&mut login, &mut b, T0);
+    let job = erase(7);
+
+    let c = login.begin_approval(sa, &job, T0).unwrap();
+    assert_eq!(
+        refusal(login.finish_approval(sa, c, &b.assert(&c), T0)),
+        OperatorRefusal::OtherStaff
+    );
+    let c = login.begin_approval(sa, &job, T0).unwrap();
+    let no_uv = a.assert_for(&c, HOST, &format!("https://{HOST}"), false);
+    assert_eq!(
+        refusal(login.finish_approval(sa, c, &no_uv, T0)),
+        OperatorRefusal::Assertion
+    );
+    let c = login.begin_approval(sa, &job, T0).unwrap();
+    assert_eq!(
+        refusal(login.finish_approval(sb, c, &b.assert(&c), T0)),
+        OperatorRefusal::Challenge
+    );
+    let c = login.begin(Purpose::StepUp, T0).unwrap();
+    assert_eq!(
+        refusal(login.finish_approval(sa, c, &a.assert(&c), T0)),
+        OperatorRefusal::Challenge
+    );
+    let c = login.begin_approval(sa, &job, T0).unwrap();
+    assert!(matches!(
+        refusal(login.finish_approval(sa, c, &a.assert(&c), T0 + CHALLENGE_LIFETIME_SECS + 1)),
+        OperatorRefusal::Challenge | OperatorRefusal::ChallengeExpired
+    ));
+
+    approve(&mut login, sa, &mut a, &job, T0 + 1).unwrap();
+    approve(&mut login, sb, &mut b, &erase(8), T0 + 1).unwrap();
+    assert!(login.authorise_destructive(sa, &job, T0 + 2).is_err());
+    assert!(login.authorise_destructive(sb, &erase(8), T0 + 2).is_err());
+    assert!(
+        login
+            .authorise(
+                sa,
+                &CpApiRequest::EraseCell {
+                    cell: CellId([7; 16])
+                },
+                T0 + 2
+            )
+            .is_err()
+    );
+}
+
+/// ADR-011 "expires after a fixed lifetime": an approval older than
+/// `APPROVAL_LIFETIME_SECS` does not count.
+#[test]
+fn adr011_approval_expires() {
+    let mut a = Passkey::new(1, 0xa1);
+    let mut b = Passkey::new(2, 0xb2);
+    let mut login = OperatorLogin::new(HOST, &[a.pinned(), b.pinned()]).unwrap();
+    let sa = log_in(&mut login, &mut a, T0);
+    let sb = log_in(&mut login, &mut b, T0);
+    let job = erase(9);
+    approve(&mut login, sa, &mut a, &job, T0).unwrap();
+    approve(&mut login, sb, &mut b, &job, T0).unwrap();
+    assert!(
+        login
+            .authorise_destructive(sa, &job, T0 + APPROVAL_LIFETIME_SECS + 1)
+            .is_err()
+    );
 }
