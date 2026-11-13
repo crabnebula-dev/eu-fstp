@@ -2359,6 +2359,85 @@ pub mod paths {
         Ok(out)
     }
 
+    /// The vault of [`tie_rest`]: [`truth`] with L1 an adult, and L2
+    /// verified with an identity of its own and attested 18 or older from
+    /// the call's opening (lane m3/cycle-steps).
+    pub fn tie_truth() -> GroundTruth {
+        use fstp_domain_testkit::r#gen::review::{L2, tag};
+        let mut t = truth(true);
+        t.set_identity(L2, tag(L2));
+        t.verify(L2);
+        t.attest_adult(L2, fstp_domain_testkit::r#gen::roster::LEAD_ADULT_FROM);
+        t
+    }
+
+    /// The steps that take a cell from the end of `to(Submitted)` to two
+    /// RANKED proposals with one score (lane m3/cycle-steps, NOTE 6): L2
+    /// drafts, plans and submits PR2 in call 1, then both proposals are
+    /// assigned to the setup's reviewers, admitted and scored with the
+    /// setup's stage 1 vectors, stage 1 closes, and both reviewers ask no
+    /// questions. PR1 and PR2 then rank level, so a cut-off of the call
+    /// meets a tie that the P-17 condition breaks.
+    ///
+    /// # Errors
+    ///
+    /// A setup the testkit refuses.
+    pub fn tie_rest() -> Result<Vec<PathStep>, String> {
+        use fstp_domain::id::ProposalId;
+        use fstp_domain_testkit::r#gen::review::{
+            L2, PR2, draft_binding, milestone_of, record_plan,
+        };
+        let s = setup();
+        let mut out = at(
+            vec![
+                fstp_domain_testkit::r#gen::roster::draft(
+                    L2,
+                    PR2,
+                    call(1),
+                    draft_binding(1, 0),
+                    false,
+                ),
+                record_plan(L2, plan_of(PR2), PR2, &[milestone_of(PR2)])?,
+                submit(L2, PR2, plan_of(PR2), false),
+            ],
+            T0,
+        );
+        let both: [ProposalId; 2] = [PR1, PR2];
+        let mut eval = Vec::new();
+        for p in both {
+            for r in &s.reviewers {
+                eval.extend(assign_declared(*r, p, call(1), AssignmentKind::Reviewer));
+            }
+            eval.push(declare(
+                COORDINATOR,
+                DeclarationSubject::Proposal(p),
+                false,
+                false,
+            ));
+            eval.push(knock_out(p, true));
+            eval.push(admit(p));
+        }
+        for p in both {
+            for (r, v) in s.reviewers.iter().zip(&s.start_scores) {
+                let key = ScoreKey {
+                    assignment: assignment_of(*r, p, call(1), AssignmentKind::Reviewer),
+                    stage: Stage::One,
+                    plan: plan_of(p),
+                };
+                eval.push(score(*r, key, v));
+            }
+            eval.push(close(Actor::Account(COORDINATOR), p));
+        }
+        for p in both {
+            for r in &s.reviewers {
+                let id = assignment_of(*r, p, call(1), AssignmentKind::Reviewer);
+                eval.push(no_questions(*r, p, id));
+            }
+        }
+        out.extend(at(eval, T_EVAL));
+        Ok(out)
+    }
+
     /// A change the driver seam makes at one step of a path, so that the
     /// M2 engine refuses some inputs and the seam compares refusals
     /// (design sections 5.2 and 14.6).

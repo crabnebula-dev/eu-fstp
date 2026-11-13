@@ -822,6 +822,57 @@ impl HttpDriver<'_, '_> {
     }
 }
 
+impl HttpDriver<'_, '_> {
+    /// Continues a cell on which an earlier driver ran a path over a part
+    /// of `truth`, and runs `steps`, each at its own instant (lane
+    /// m3/cycle-steps). The vault already holds the persons and
+    /// attestations of every account the cell knows as a generator
+    /// account, so only the accounts new in `truth` or in `steps` enrol,
+    /// and only their facts are seeded. No setup runs again.
+    ///
+    /// # Errors
+    ///
+    /// The refusal of the first step that did not run, or the driver's
+    /// failure.
+    pub fn continue_timed(
+        &mut self,
+        truth: &GroundTruth,
+        steps: &[(Step, Timestamp)],
+    ) -> Result<Seq, ExecError> {
+        self.truth = truth.clone();
+        let known: Vec<(AccountId, IdentityTag)> = truth
+            .identities()
+            .filter(|(a, _)| truth.is_verified(*a) && self.is_generator(*a))
+            .collect();
+        for (a, t) in known {
+            self.persons.insert(a, t);
+        }
+        let adults: Vec<(AccountId, Timestamp)> = truth.adults().collect();
+        for (a, from) in adults {
+            if self.is_generator(a) {
+                self.adults.insert(a, from.micros());
+            }
+        }
+        let mut accounts: BTreeSet<AccountId> = truth.identities().map(|(a, _)| a).collect();
+        for (s, _) in steps {
+            accounts.extend(named_accounts(s));
+        }
+        for a in &accounts {
+            self.enrol(*a)?;
+        }
+        self.sync_vault()?;
+        self.settle_each = false;
+        for (s, at) in steps {
+            M2Driver::execute(self, s, *at)?;
+        }
+        self.tally = Tally {
+            setup: true,
+            ..Tally::default()
+        };
+        self.read()
+    }
+}
+
 impl M2Driver for HttpDriver<'_, '_> {
     fn truth(&self) -> &GroundTruth {
         &self.truth
@@ -1485,6 +1536,73 @@ pub const PATH_SEAM: &str = "fstp_celltest::m2_http: the m2:path-to step names a
 /// seam: the step is on standard error.
 pub const PATH_REFUSED: &str = "fstp_celltest::m2_http: the cell did not take a step of the M2 path (the step and the cell's reply are on standard error)";
 
+/// `m2:path-to-ranked-with-tie` continues the cell of `m2:path-to-submitted`
+/// only: it refuses on a cell where PR1 is not SUBMITTED.
+pub const TIE_PATH_SEAM: &str = "fstp_celltest::m2_http: m2:path-to-ranked-with-tie continues a cell on which m2:path-to-submitted left PR1 in SUBMITTED, and this cell has no such PR1";
+
+/// `m2:path-to-ranked-with-tie` (lane m3/cycle-steps, NOTE 6): on a cell
+/// where `m2:path-to-submitted` left PR1 SUBMITTED, the steps of
+/// `crate::mc::driver_model::paths::tie_rest` run over
+/// `paths::tie_truth`, so PR1 and L2's PR2 end RANKED with one score. The
+/// path is first replayed on the M2 domain from genesis, so a path the
+/// domain refuses is a [`PATH_SEAM`], never a cell refusal.
+fn run_tie_path(client: &AuthClient<'_>, step: &str) -> Result<(), NotImplemented> {
+    use crate::mc::driver_model::paths;
+    use fstp_domain::rules::StateTag;
+    let pr1 = ProposalId::from_raw(fstp_domain_testkit::r#gen::review::PR1.raw());
+    let submitted = client
+        .cell()
+        .ledger()
+        .ok()
+        .and_then(|l| fstp_cell_core::replay(&l).ok())
+        .and_then(|s| fstp_domain::view::proposal_state(&s.engine().core, pr1))
+        == Some(StateTag::Submitted);
+    if !submitted {
+        return Err(NotImplemented::new(TIE_PATH_SEAM));
+    }
+    let rest = paths::tie_rest().map_err(|e| {
+        eprintln!("fstp_celltest::m2_http {step}: {e}");
+        NotImplemented::new(PATH_SEAM)
+    })?;
+    let mut whole = paths::to(StateTag::Submitted).map_err(|e| {
+        eprintln!("fstp_celltest::m2_http {step}: {e}");
+        NotImplemented::new(PATH_SEAM)
+    })?;
+    whole.extend(rest.iter().cloned());
+    if let Err(e) = paths::check_with_domain(&whole, paths::tie_truth()) {
+        eprintln!("fstp_celltest::m2_http {step}: the M2 domain refused the path: {e}");
+        return Err(NotImplemented::new(PATH_SEAM));
+    }
+    let timed: Vec<(Step, Timestamp)> = rest.into_iter().map(|p| (p.step, p.at)).collect();
+    let mut driver = HttpDriver::new(client);
+    match driver.continue_timed(&paths::tie_truth(), &timed) {
+        Ok(_) => {
+            // Both proposals must end RANKED on the cell, as on the domain.
+            let pr2 = ProposalId::from_raw(fstp_domain_testkit::r#gen::review::PR2.raw());
+            let states = client
+                .cell()
+                .ledger()
+                .ok()
+                .and_then(|l| fstp_cell_core::replay(&l).ok())
+                .map(|s| {
+                    [pr1, pr2].map(|p| fstp_domain::view::proposal_state(&s.engine().core, p))
+                });
+            if states == Some([Some(StateTag::Ranked); 2]) {
+                return Ok(());
+            }
+            eprintln!("fstp_celltest::m2_http {step}: PR1 and PR2 ended in {states:?}");
+            Err(NotImplemented::new(PATH_REFUSED))
+        }
+        Err(e) => {
+            eprintln!(
+                "fstp_celltest::m2_http {step}: {e:?}; driver fault: {:?}",
+                driver.fault()
+            );
+            Err(NotImplemented::new(PATH_REFUSED))
+        }
+    }
+}
+
 /// The state a path step names.
 fn path_state(name: &str) -> Option<fstp_domain::rules::StateTag> {
     use fstp_domain::rules::StateTag;
@@ -1522,6 +1640,9 @@ pub fn run_m2_step(client: &AuthClient<'_>, step: &str) -> Result<(), NotImpleme
     let Some(name) = step.strip_prefix("m2:path-to-") else {
         return Err(NotImplemented::new(crate::cycle::M2_SETUP_SEAM));
     };
+    if name == "ranked-with-tie" {
+        return run_tie_path(client, step);
+    }
     let Some(target) = path_state(name) else {
         return Err(NotImplemented::new(crate::cycle::M2_SETUP_SEAM));
     };
