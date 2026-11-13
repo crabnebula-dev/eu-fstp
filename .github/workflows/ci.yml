@@ -121,7 +121,7 @@ jobs:
         include:
           - part: workspace
             packages: --workspace --exclude fstp-api-testkit --exclude fstp-domain-testkit
-            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell
+            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell slice_devstack_
             timeout: 60
           # I-19, I-20, I-80, I-82, I-83: the isolation (multi-cell) job of
           # m3-design sections 14.4 and 14.8, as a part of its own. It runs
@@ -130,6 +130,11 @@ jobs:
           # test. The workspace part skips the same tests, and
           # teeth_m3_registry checks that each runs in exactly one part.
           - { part: isolation-multi-cell, packages: -p fstp-celltest --test t_iso_i19 --test t_iso_i20 --test t_db_iso_i82 --test i83_placement --test i80_custody --test i19_boundary, filter: t_iso_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell, timeout: 60 }
+          # W3b, M3 exit audit section 7 item 7: slice_devstack starts
+          # fstp-devstack, which serves the compiled auth pages. This part
+          # compiles them with the pinned Node.js and tsc first (ADR-003),
+          # and the workspace part skips the test.
+          - { part: devstack, packages: -p fstp-celltest --test slice_devstack, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
             timeout: 60
@@ -174,7 +179,7 @@ jobs:
       TEST_FILTER: ${{ matrix.filter }}
       TEST_SKIP: ${{ matrix.skip }}
       TEST_SHARD: ${{ matrix.shard }}
-      # ADR-003 record, as in the web job. The workspace part compiles the
+      # ADR-003 record, as in the web job. The devstack part compiles the
       # auth pages that slice_devstack and the dev stack serve.
       NODE_VERSION: "24.11.1"
       NPM_VERSION: "11.6.2"
@@ -243,9 +248,10 @@ jobs:
           echo "FSTP_KEY_VOLUME_DIR=$mnt" >> "$GITHUB_ENV"
       # slice_devstack starts fstp-devstack, which refuses to start without
       # the compiled auth pages (web/dist/auth). M3 exit audit section 7,
-      # item 7. The pinned Node.js and tsc compile them (ADR-003).
+      # item 7. The pinned Node.js and tsc compile them (ADR-003) in the
+      # devstack part only, before cargo test runs.
       - name: Compile the auth pages with the pinned Node.js and tsc (ADR-003)
-        if: matrix.part == 'workspace'
+        if: matrix.part == 'devstack'
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/node.tar.xz"
