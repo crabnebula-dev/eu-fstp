@@ -145,3 +145,9 @@ Open questions:
 - MB-Q3: yes. An invitation or role grant to an existing account shows as a message.
 - MB-Q4: yes, later. `fstp_list_mailbox` waits until the mailbox runs over the MCP channel.
 - MB-Q5: no. Emails keep linking straight to the page of the work.
+
+## Decisions of 2026-11-13: build notes
+
+Lane `product/decisions-1113` builds the eight decisions of 2026-11-13 recorded in this file, in `fast-flow.md` and in `m5-ui.md`. Each reading below is interim, pending Daniel.
+
+1. **Calibration consent leaves INELIGIBLE proposals out (I-37).** Interim, pending Daniel: the filter sits in the domain's calibration lane, the one place consent is requested. An outcome notice with state INELIGIBLE is not noted as the outcome notice. A request on an INELIGIBLE proposal is refused under I-37. A consent on an INELIGIBLE proposal never admits it to a calibration set. No API op requests consent yet (M12), so no web or MCP surface changed. Tests: `crates/fstp-domain-testkit/tests/i37_ineligible_outcome_opens_no_consent.rs`.
