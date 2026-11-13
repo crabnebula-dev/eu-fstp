@@ -313,6 +313,31 @@ async fn timeline_setup(engine: &CellEngine, setup: Setup) -> Result<(), String>
     Ok(())
 }
 
+/// A's open passkey session, started at `SETUP_AT`, before the scheduled
+/// end: the one row of `auth.session` in the scenario.
+struct ASession;
+
+impl timeline::SessionSource for ASession {
+    fn sessions_of(&self, account: fstp_domain::id::AccountId) -> timeline::RowsFuture<'_> {
+        let at = Timestamp::from_micros(SETUP_AT);
+        let live = if account == A {
+            vec![SessionView {
+                id: [0xA5; 16],
+                account: A,
+                method: Method::Passkey,
+                started: at,
+                last_used: at,
+            }]
+        } else {
+            Vec::new()
+        };
+        Box::pin(std::future::ready(Some(fstp_cell_core::SessionRows::new(
+            live,
+            Vec::new(),
+        ))))
+    }
+}
+
 /// Seam: starts a cell over in-memory parts where account A holds a
 /// Drafting binding whose end is scheduled for [`END_AT`]
 /// (`BindingEndScheduled`), and holds an open passkey session from before
@@ -323,8 +348,9 @@ async fn timeline_setup(engine: &CellEngine, setup: Setup) -> Result<(), String>
 /// Reading: a command counts as issued when the engine committed it or
 /// reported it as a duplicate. A command the decider refuses is not in the
 /// list, so a refusal can never pass for a commit. The session itself is
-/// not a ledger record: the gate's view of sessions is the routes' (lane
-/// W3a agent one), so the scenario holds the binding and its end only.
+/// not a ledger record but a row of `auth.session` (design section 4.2,
+/// int3), so the timeline reads it through [`ASession`], its session
+/// source.
 fn run_timeline(ticks: &[i64], restart_after: Option<usize>) -> Result<Vec<Issued>, &'static str> {
     let rt = TokioRuntime::new_multi_thread(2).map_err(|_| "no runtime")?;
     let rt2 = rt.clone();
@@ -345,7 +371,7 @@ fn run_timeline(ticks: &[i64], restart_after: Option<usize>) -> Result<Vec<Issue
             .map_err(|e| Box::leak(e.into_boxed_str()) as &'static str)?;
         let mut out = Vec::new();
         for (i, t) in ticks.iter().enumerate() {
-            for item in timeline::tick(&engine, Timestamp::from_micros(*t)).await {
+            for item in timeline::tick(&engine, &ASession, Timestamp::from_micros(*t)).await {
                 if let timeline::Issued::Ran(Ok(done)) = item.result {
                     out.push(Issued {
                         at: *t,
