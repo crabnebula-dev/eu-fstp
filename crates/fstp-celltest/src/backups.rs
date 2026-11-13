@@ -1010,3 +1010,157 @@ impl World {
         Ok(cell.custody()?.live_keys())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Identity documents (design section 3.6, R-ID-03, lane m3/erase-steps).
+
+/// `bytes` as a PostgreSQL uuid literal.
+fn uuid_of(bytes: [u8; 16]) -> String {
+    let h = hex(&bytes);
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
+}
+
+/// Runs `sql` in the cell's vault database `v_<cell>`, on the cluster
+/// that holds it, as the cluster's superuser. Interim, pending Daniel:
+/// the harness plays the vault's writes of design section 3.6 that no
+/// route can take yet.
+fn vault_sql(cell: &CellHandle, sql: &str) -> Result<String, WorldError> {
+    let db = fstp_control::pg::database_name(
+        fstp_control::pg::CellDatabase::Vault,
+        fstp_cp_proto::CellId(cell.id()),
+    );
+    for (_, server) in &world_part(cell)?.clusters {
+        let found = server
+            .psql(
+                "postgres",
+                &format!("SELECT count(*) FROM pg_database WHERE datname = '{db}'"),
+            )
+            .map_err(|e| err("the vault database", &e))?;
+        if found == "1" {
+            return server
+                .psql(&db, sql)
+                .map_err(|e| err("a vault statement", &e));
+        }
+    }
+    Err(err("the vault database", &"is on no cluster of the world"))
+}
+
+/// `upload-document` (design section 3.6, lane m3/erase-steps): a
+/// document canary is uploaded for the cell account `account`. The
+/// cell's Vault chain keystore seals it in a `Document` group of its own
+/// (`crate::vault_keys`). Its sealed data key goes to `keystore.data_key`
+/// and the sealed document to `vault.document` of `v_<cell>`, so base
+/// backups and WAL segments hold both. Interim, pending Daniel: the
+/// vault origin takes no write ticket the route layer can sign (design
+/// 6.5), object storage is not modelled, so `sealed_object_ref` holds the
+/// sealed document itself, and the rows are written by [`vault_sql`].
+///
+/// # Errors
+///
+/// Fails when a seal or a statement fails.
+pub(crate) fn upload_document(cell: &CellHandle, account: u128) -> Result<(), WorldError> {
+    let canary = Canary::generate(cell.index(), CanaryKind::Document)
+        .map_err(|e| err("a document canary", &e))?;
+    let doc = vault_keys(cell)?.upload_document(account, canary)?;
+    let id = uuid_of(doc.id);
+    vault_sql(
+        cell,
+        &format!(
+            "INSERT INTO keystore.data_key (id, group_id, generation, sealed, state) VALUES ('{id}', '{}', 1, '\\x{}', 1);\n\
+             INSERT INTO vault.document (doc_id, account_id, dek, sealed_object_ref, uploaded_at) VALUES ('{id}', '{}', '{id}', '\\x{}', {});",
+            uuid_of(doc.group.0),
+            hex(&doc.sealed_key),
+            uuid_of(account.to_be_bytes()),
+            hex(&doc.blob),
+            cell.clock().now(),
+        ),
+    )?;
+    Ok(())
+}
+
+/// The erasure batch of a recorded verification (design section 3.6): the
+/// document's group dies with the Vault epoch the batch replaces, and its
+/// data key row leaves `keystore.data_key` at the commit. The document is
+/// marked verified once the old root is destroyed.
+///
+/// # Errors
+///
+/// Fails when the batch or the statement fails.
+pub(crate) fn verify_document(
+    cell: &CellHandle,
+    doc: &crate::vault_keys::Document,
+) -> Result<(), WorldError> {
+    let keys = vault_keys(cell)?;
+    keys.erasure_batch(&std::collections::BTreeSet::from([doc.group]), None, |_| {
+        vault_sql(
+            cell,
+            &format!(
+                "DELETE FROM keystore.data_key WHERE id = '{}'",
+                uuid_of(doc.id)
+            ),
+        )
+        .map(|_| ())
+    })?;
+    keys.mark_verified(doc.id);
+    Ok(())
+}
+
+impl World {
+    /// The document canary the world uploaded last (lane m3/erase-steps).
+    ///
+    /// # Errors
+    ///
+    /// Fails when no document was uploaded.
+    pub fn uploaded_document(&self) -> Result<Canary, WorldError> {
+        let mut last = None;
+        for c in self.cells() {
+            if let Some(d) = vault_keys(c)?.documents().pop() {
+                last = Some(d.canary);
+            }
+        }
+        last.ok_or_else(|| err("uploaded_document", &"no document was uploaded"))
+    }
+
+    /// The copies of [`World::restored_copies`] from which the document
+    /// `document` opens, as `copy <i>`, the live store last (I-81,
+    /// R-ID-03, lane m3/erase-steps). A copy holds the document when its
+    /// stores hold both its sealed data key and its sealed bytes. It
+    /// opens when a secret of its group, from any group row ever written
+    /// under a live custody root, opens the key and the key the document.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a copy cannot be restored or names no uploaded document.
+    pub fn document_opens(&self, document: &Canary) -> Result<Vec<String>, WorldError> {
+        let copies = self.restored_copies()?;
+        let mut out = Vec::new();
+        let mut known = false;
+        for c in self.cells() {
+            let keys = vault_keys(c)?;
+            for doc in keys.documents().iter().filter(|d| d.canary == *document) {
+                known = true;
+                for (i, copy) in copies.iter().enumerate() {
+                    let has = |needle: &[u8]| copy.stores.iter().any(|(_, b)| holds(b, needle));
+                    if !(has(&doc.sealed_key) && has(&doc.blob)) {
+                        continue;
+                    }
+                    let opened = keys.open_document(doc, &doc.sealed_key, &doc.blob);
+                    if opened.as_deref() == Some(document.text().as_bytes()) {
+                        out.push(format!("copy {i}"));
+                    }
+                }
+            }
+        }
+        if !known {
+            return Err(err("document_opens", &"names no uploaded document"));
+        }
+        Ok(out)
+    }
+}

@@ -167,7 +167,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps, the cell erasure and document steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps and the cell erasure step of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -586,6 +586,8 @@ impl<'w> Cycle<'w> {
             // The erasure steps of lane m3/erase-steps.
             "erase-account" => self.erase_account(),
             "erase-identity" => self.erase_identity(),
+            "upload-document" => self.upload_document(),
+            "record-verification" => self.record_verification(),
             "minor-applicant:draft" => self.minor_draft(),
             "minor-applicant:submit" => self.submit(),
             "minor-applicant:evaluate" => {
@@ -1129,6 +1131,22 @@ impl<'w> Cycle<'w> {
         step: &str,
         name: Option<crate::canary::Canary>,
     ) -> Result<(AccountId, Cookie), NotImplemented> {
+        let (who, cookie) = self.self_register(step)?;
+        match (name, self.values.attributes()) {
+            (Some(c), _) => {
+                let tuple = format!("{}={}", CanaryKind::Name.label(), c.text());
+                self.verify_identity_of(step, who, &tuple, Some(c))?;
+            }
+            (None, Some(a)) => self.verify_as(step, who, &a)?,
+            (None, None) => self.verify(step, who)?,
+        }
+        Ok((who, cookie))
+    }
+
+    /// The self-registration of a new applicant with a canary login email,
+    /// with no verification seeded (lane m3/erase-steps splits it out of
+    /// [`Cycle::applicant_named`] for `upload-document`).
+    fn self_register(&mut self, step: &str) -> Result<(AccountId, Cookie), NotImplemented> {
         self.applicants = self.applicants.saturating_add(1);
         let who = AccountId::from_raw(APPLICANTS.saturating_add(self.applicants));
         let (email, canary) = match self.values.email() {
@@ -1149,14 +1167,6 @@ impl<'w> Cycle<'w> {
         if let Some(c) = canary {
             let account = self.account(step, who)?;
             crate::backups::note_login(self.client.cell(), account.raw(), c);
-        }
-        match (name, self.values.attributes()) {
-            (Some(c), _) => {
-                let tuple = format!("{}={}", CanaryKind::Name.label(), c.text());
-                self.verify_identity_of(step, who, &tuple, Some(c))?;
-            }
-            (None, Some(a)) => self.verify_as(step, who, &a)?,
-            (None, None) => self.verify(step, who)?,
         }
         Ok((who, cookie))
     }
@@ -1518,6 +1528,50 @@ impl<'w> Cycle<'w> {
                 cell.rekey_identities(rekey)
             }),
         )
+    }
+
+    /// `upload-document` (lane m3/erase-steps, design section 3.6): a new
+    /// applicant self-registers, with no verification yet, and uploads an
+    /// identity document canary to the vault (`crate::backups::upload_document`).
+    /// Claim: the harness plays the vault origin's upload, since the route
+    /// layer cannot sign a write ticket (`VERIFY_IDENTITY_SEAM`).
+    fn upload_document(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "upload-document";
+        let (who, _) = self.self_register(STEP)?;
+        let account = self.account(STEP, who)?;
+        Self::backup_step(
+            STEP,
+            crate::backups::upload_document(self.client.cell(), account.raw()),
+        )
+    }
+
+    /// `record-verification` (lane m3/erase-steps, design section 3.6):
+    /// the verification of each uploaded document's account is recorded
+    /// (seeded, design section 6.9), and the vault puts the document key
+    /// into an immediate erasure batch on the Vault chain
+    /// (`crate::backups::verify_document`). The step ends once the old
+    /// root is destroyed.
+    fn record_verification(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "record-verification";
+        let cell = self.client.cell();
+        let docs: Vec<crate::vault_keys::Document> = match crate::backups::vault_keys(cell) {
+            Ok(k) => k.documents().into_iter().filter(|d| !d.verified).collect(),
+            Err(e) => return Self::backup_step(STEP, Err(e)),
+        };
+        if docs.is_empty() {
+            return Err(Self::refused(STEP, "a document to verify", None));
+        }
+        for doc in docs {
+            self.person = self.person.saturating_add(1);
+            let tuple = format!("synthetic-person-{}", self.person);
+            cell.seed_identity(AccountId::from_raw(doc.account), tuple.as_bytes(), None)
+                .map_err(|e| {
+                    eprintln!("fstp_celltest::cycle {STEP}: the seeded verification: {e}");
+                    NotImplemented::new(STEP_REFUSED)
+                })?;
+            Self::backup_step(STEP, crate::backups::verify_document(cell, &doc))?;
+        }
+        Ok(())
     }
 
     /// The Judging staff of the evaluation (`life_judges` of the M2 life

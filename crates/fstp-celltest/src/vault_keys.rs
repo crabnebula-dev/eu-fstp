@@ -35,14 +35,21 @@
 //!   the live identities' match keys from those. An erased identity's
 //!   match key is replaced by 32 random bytes, so no tuple recomputes it
 //!   and its account keeps its identity row.
+//! - **Documents.** An uploaded document is sealed under a fresh data key
+//!   in a `Document` group of its own. Its sealed key goes to
+//!   `keystore.data_key` and the sealed document to `vault.document` of
+//!   `v_<cell>` (`crate::backups::upload_document`), so backups hold them.
+//!   A recorded verification runs an erasure batch that drops the group
+//!   and deletes the key row at the commit (design section 3.6).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fstp_crypto::aead;
-use fstp_crypto::hybrid_kem::{self, HybridSecretKey};
+use fstp_crypto::hybrid_kem::{self, HybridPublicKey, HybridSecretKey};
 use fstp_custody::{Aad, Custody, RootLabel, RootRef, SealKey, WrappedSealKey};
-use fstp_keys::{CellId, Chain, Epoch, GroupId, Purpose};
+use fstp_keys::envelope::{self, DataKey, SealContext};
+use fstp_keys::{CellId, Chain, Epoch, GroupId, ObjectId, Purpose};
 use fstp_rt::future::block_on;
 
 use crate::canary::Canary;
@@ -89,6 +96,37 @@ struct Identity {
     erased: bool,
 }
 
+/// One identity document the world uploaded (design section 3.6).
+#[derive(Clone, Debug)]
+pub(crate) struct Document {
+    /// The document id.
+    pub(crate) id: [u8; 16],
+    /// The account it belongs to.
+    pub(crate) account: u128,
+    /// Its own `Document` group.
+    pub(crate) group: GroupId,
+    /// Its data key, sealed to the group in the FSK1 form.
+    pub(crate) sealed_key: Vec<u8>,
+    /// The document, sealed under the data key in the FSB1 form.
+    pub(crate) blob: Vec<u8>,
+    /// The document canary it holds.
+    pub(crate) canary: Canary,
+    /// Whether its verification was recorded and its batch completed.
+    pub(crate) verified: bool,
+}
+
+/// The seal context of document `id` in `group`.
+fn document_ctx(cell: [u8; 16], group: GroupId, id: [u8; 16]) -> SealContext {
+    SealContext {
+        cell: CellId(cell),
+        chain: Chain::Vault,
+        purpose: Purpose::Document,
+        group,
+        generation: 1,
+        object: ObjectId(id),
+    }
+}
+
 /// The live state of the chain.
 struct State {
     root: RootRow,
@@ -101,6 +139,7 @@ struct State {
     /// Every group row ever written.
     groups: Vec<GroupRow>,
     identities: Vec<Identity>,
+    documents: Vec<Document>,
 }
 
 /// The Vault chain keystore of one cell (module documentation).
@@ -207,6 +246,7 @@ impl VaultKeys {
                 roots: vec![root],
                 groups: vec![row],
                 identities: Vec::new(),
+                documents: Vec::new(),
             }),
         })
     }
@@ -287,8 +327,9 @@ impl VaultKeys {
     /// that identity is erased and the `Match` group takes a new
     /// generation. `commit` gets the vault's identity rekey: each current
     /// match key of a seeded identity to its new one, empty when no
-    /// identity is erased. `R(e)` is destroyed only after `commit`
-    /// succeeded and the scratch check passed.
+    /// identity is erased. It also writes the batch's other rows, such as
+    /// a dropped document's key row. `R(e)` is destroyed only after
+    /// `commit` succeeded and the scratch check passed.
     pub(crate) fn erasure_batch(
         &self,
         drop: &BTreeSet<GroupId>,
@@ -349,10 +390,8 @@ impl VaultKeys {
         }
         st.roots.push(root.clone());
         st.groups.extend(live.values().cloned());
-        // Step 4: the vault's rows move in one journal.
-        if erase.is_some() {
-            commit(&rekey)?;
-        }
+        // Step 4: the vault's rows move in one commit.
+        commit(&rekey)?;
         if let Some(tuple) = erase {
             for i in st.identities.iter_mut().filter(|i| i.tuple == tuple) {
                 i.erased = true;
@@ -371,6 +410,116 @@ impl VaultKeys {
         // Step 6: `R(e)` dies.
         block_on(self.custody.destroy(&old.root)).map_err(|e| err("the Vault destroy", &e))?;
         Ok(())
+    }
+
+    /// Adds a group of `purpose` at generation 1, sealed under `S(e)`, and
+    /// gives its public key.
+    pub(crate) fn add_group(
+        &self,
+        purpose: Purpose,
+    ) -> Result<(GroupId, HybridPublicKey), WorldError> {
+        let mut st = lock(&self.state);
+        let s = self.seal_key(&st)?;
+        let group = GroupId(random16("a group id")?);
+        let secret = hybrid_kem::generate().map_err(|e| err("a group key", &e))?;
+        let row = seal_group(&s, self.cell, purpose, group, 1, st.root.epoch, &secret)?;
+        st.live.insert(group, row.clone());
+        st.groups.push(row);
+        Ok((group, secret.public().clone()))
+    }
+
+    /// Every group secret of `group` that a row ever written gives under a
+    /// live custody root of the cell, as [`VaultKeys::reachable_match_keys`]
+    /// tries them.
+    pub(crate) fn reachable_secrets(&self, group: GroupId) -> Vec<HybridSecretKey> {
+        let st = lock(&self.state);
+        let live = self.custody.live_handles();
+        let mut out = Vec::new();
+        for r in &st.roots {
+            for handle in &live {
+                let mut root = r.root.clone();
+                root.handle = fstp_custody::CustodyHandle(handle.clone());
+                let Ok(s) = block_on(self.custody.unwrap(
+                    &root,
+                    &r.wrapped,
+                    &seal_aad(self.cell, r.epoch),
+                )) else {
+                    continue;
+                };
+                for row in st.groups.iter().filter(|g| g.group == group) {
+                    if let Some(sk) = open_group(&s, self.cell, row) {
+                        out.push(sk);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Uploads `canary` as the identity document of `account` (design
+    /// section 3.6): a `Document` group of its own at generation 1, a
+    /// fresh data key sealed to it through the hybrid KEM, and the
+    /// document sealed under the data key. Both bound to the context
+    /// (cell, Vault, `Document`, group, 1, document id).
+    pub(crate) fn upload_document(
+        &self,
+        account: u128,
+        canary: Canary,
+    ) -> Result<Document, WorldError> {
+        let (group, public) = self.add_group(Purpose::Document)?;
+        let id = random16("a document id")?;
+        let ctx = document_ctx(self.cell, group, id);
+        let dek = DataKey::generate().map_err(|e| err("a data key", &e))?;
+        let sealed = envelope::seal_key(&public, &dek, &ctx).map_err(|e| err("a data key", &e))?;
+        let blob = envelope::seal_blob(&dek, &ctx, canary.text().as_bytes())
+            .map_err(|e| err("a document", &e))?;
+        let doc = Document {
+            id,
+            account,
+            group,
+            sealed_key: envelope::encode_sealed_key(&sealed).map_err(|e| err("a key", &e))?,
+            blob: envelope::encode_sealed_blob(&blob).map_err(|e| err("a document", &e))?,
+            canary,
+            verified: false,
+        };
+        lock(&self.state).documents.push(doc.clone());
+        Ok(doc)
+    }
+
+    /// Every document uploaded so far.
+    pub(crate) fn documents(&self) -> Vec<Document> {
+        lock(&self.state).documents.clone()
+    }
+
+    /// Marks document `id` verified, once its erasure batch completed.
+    pub(crate) fn mark_verified(&self, id: [u8; 16]) {
+        for d in lock(&self.state)
+            .documents
+            .iter_mut()
+            .filter(|d| d.id == id)
+        {
+            d.verified = true;
+        }
+    }
+
+    /// Opens `doc` from the sealed key `sealed_key` and the sealed document
+    /// `blob` under every secret of its group that a row ever written
+    /// gives under a live root. The plaintext of the first that opens.
+    pub(crate) fn open_document(
+        &self,
+        doc: &Document,
+        sealed_key: &[u8],
+        blob: &[u8],
+    ) -> Option<Vec<u8>> {
+        let sealed = envelope::decode_sealed_key(sealed_key).ok()?;
+        let blob = envelope::decode_sealed_blob(blob).ok()?;
+        let ctx = document_ctx(self.cell, doc.group, doc.id);
+        self.reachable_secrets(doc.group).iter().find_map(|sk| {
+            let dk = envelope::open_key(sk, &sealed, &ctx).ok()?;
+            envelope::open_blob(&dk, &ctx, &blob)
+                .ok()
+                .map(|p| p.to_vec())
+        })
     }
 
     /// Every `Match` HMAC key that a row ever written gives under a live

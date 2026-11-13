@@ -56,27 +56,20 @@ fn r_id_03_document_key_dies_with_its_epoch_on_the_reference() {
     document_dies(Reference);
 }
 
-/// The seam of [`document_opens`]: no harness call restores each backup
-/// copy and tries the document's wrapped key against every live custody
-/// key. It needs the vault keystore schema (lane W2d) and the backups of
-/// lanes W2k and W3b.
-const DOCUMENT_SEAM: &str = "no harness call restores each backup and tries the document key against every live custody key (lanes W2d, W2k and W3b)";
-
-/// The seam of [`world_document`]: the world does not expose the canary
-/// document it uploads. Lane W3b adds the accessor.
-const UPLOAD_SEAM: &str =
-    "fstp_celltest::world::World does not expose the canary document it uploads (lane W3b)";
-
+/// The canary document the world uploaded last (`World::uploaded_document`,
+/// lane m3/erase-steps).
 fn world_document(world: &World) -> Result<Canary, String> {
-    let _ = (world, CanaryKind::Document);
-    Err(UPLOAD_SEAM.to_owned())
+    let d = world.uploaded_document().map_err(|e| e.to_string())?;
+    assert_eq!(d.kind, CanaryKind::Document);
+    Ok(d)
 }
 
 /// The copies, by name, from which the document opens, the live store
-/// among them.
+/// among them. `World::document_opens` (lane m3/erase-steps) restores
+/// each backup copy and tries the document's wrapped key under every
+/// group secret that any key row gives under a live custody key.
 fn document_opens(world: &World, document: &Canary) -> Result<Vec<String>, String> {
-    let _ = (world, document);
-    Err(DOCUMENT_SEAM.to_owned())
+    world.document_opens(document).map_err(|e| e.to_string())
 }
 
 fn cycle(world: &World, steps: &[&str]) {
