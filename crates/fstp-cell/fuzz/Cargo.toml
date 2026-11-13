@@ -25,6 +25,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "keystore_image_decode"
+path = "fuzz_targets/keystore_image_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

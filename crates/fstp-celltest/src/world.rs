@@ -307,6 +307,8 @@ pub struct CellHandle {
     /// What the last cycle on this cell kept (lane F-CYCLE3).
     cycle: Mutex<Option<crate::cycle::CycleMemory>>,
     runtime: Option<std::sync::Arc<CellRuntime>>,
+    /// The cell's backups and stored texts (lane F-ERASE).
+    pub(crate) backups: crate::backups::CellBackups,
 }
 
 /// The refusal of a call on a cell that runs no listener.
@@ -556,7 +558,21 @@ impl CellHandle {
     }
 
     /// The cell's erasure task (`fstp_cell::tasks::erasure`).
-    fn erasure(&self) -> Result<fstp_cell::tasks::erasure::ErasureHandle, WorldError> {
+    /// The cell's custody, which shares its roots with the cell (lane
+    /// F-ERASE).
+    pub(crate) fn custody(&self) -> Result<WorldCustody, WorldError> {
+        Ok(self.runtime()?.custody.clone())
+    }
+
+    /// Runs `f` on the cell's runtime to its end (lane F-ERASE).
+    pub(crate) fn block_on<T>(
+        &self,
+        f: impl std::future::Future<Output = T>,
+    ) -> Result<T, WorldError> {
+        Ok(self.runtime()?.services.rt.block_on(f))
+    }
+
+    pub(crate) fn erasure(&self) -> Result<fstp_cell::tasks::erasure::ErasureHandle, WorldError> {
         let rt = self.runtime()?;
         let running = lock(&rt.running);
         running
@@ -837,7 +853,11 @@ impl World {
                 prepare_cluster(cluster)?;
             }
             match start_cells(&spec, &clusters, &plans, pages.as_ref(), &egress) {
-                Ok(started) => cells = started,
+                Ok(started) => {
+                    crate::backups::attach(&started, &clusters)?;
+                    cells = started;
+                }
+
                 Err(e) => {
                     remember_failed(&spec, &clusters, &plans);
                     return Err(e);
@@ -928,6 +948,11 @@ impl World {
         }
         for (name, bytes) in self.egress.store_set().stores {
             set.push(name, bytes);
+        }
+        // What left the running system: the sealed backup objects (lane
+        // F-ERASE).
+        for (name, bytes) in self.backup_objects()? {
+            set.push(format!("objects/{name}"), bytes);
         }
         // The edge's stores (lane F-ISO): its route table and its
         // connection log. The edge serves every world of the process, so
@@ -1196,6 +1221,18 @@ fn cluster_state(name: &str) -> Result<&'static Mutex<ClusterState>, WorldError>
     Ok(state)
 }
 
+/// The registered id of cluster `name` (lane F-ERASE): the owner of its
+/// ClusterBackup containers (ADR-012).
+pub(crate) fn cluster_id(name: &str) -> Result<[u8; 16], WorldError> {
+    Ok(lock(cluster_state(name)?).id.0)
+}
+
+/// The login of the replication role of cluster `name`, once it exists
+/// (lane F-ERASE).
+pub(crate) fn replication_of(name: &str) -> Result<Option<RoleLogin>, WorldError> {
+    Ok(lock(cluster_state(name)?).replication.clone())
+}
+
 /// The process-wide turn of [`World::start_with_pages`]: one world start
 /// at a time (lead decision, 2026-11-13).
 fn start_lock() -> &'static Mutex<()> {
@@ -1301,7 +1338,7 @@ pub const REPLICATION_ROLE: &str = "fstp_repl";
 
 /// Whether `fstp-pgagent` manages clusters of `kind`: every self-operated
 /// kind. The control-plane clusters are provider-managed (Q3 C).
-fn is_agent_kind(kind: ClusterKind) -> bool {
+pub(crate) fn is_agent_kind(kind: ClusterKind) -> bool {
     kind != ClusterKind::Control
 }
 
@@ -1967,12 +2004,19 @@ mod pki {
 /// custody backend of design section 3.3 the way `fstp-custody-sim`
 /// does, and holds synthetic roots only.
 #[derive(Clone, Default)]
-struct WorldCustody {
+pub(crate) struct WorldCustody {
     roots: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, [u8; 32]>>>,
     /// Every root it created, destroyed ones included, in order. The
     /// I-80 scans look for these bytes ([`World::root_needles`], lane
     /// F-ERASE).
     made: std::sync::Arc<Mutex<Vec<[u8; 32]>>>,
+}
+
+impl WorldCustody {
+    /// The handle of every root that lives (lane F-ERASE).
+    pub(crate) fn live_handles(&self) -> Vec<Vec<u8>> {
+        lock(&self.roots).keys().cloned().collect()
+    }
 }
 
 impl fstp_custody::Custody for WorldCustody {
@@ -3190,6 +3234,7 @@ fn start_cell(
         clock,
         mail,
         cycle: Mutex::new(None),
+        backups: crate::backups::CellBackups::default(),
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
             running: Mutex::new(Running {
