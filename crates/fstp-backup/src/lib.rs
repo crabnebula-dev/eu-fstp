@@ -1,11 +1,17 @@
 //! The backup agent: backup container, multipart S3 client with SigV4 and
 //! an XML subset parser (M3 design section 3.8, ADR-012).
 //!
-//! Status: the container decoder is built (lane F-CRYPTO). Every other
-//! operation is a W0 stub that refuses with
-//! [`BackupError::NotImplemented`] until lane W2k fills it.
+//! Status: the container decoder (lane F-CRYPTO), the container writer and
+//! opener and the WAL segment name parser (lane F-ERASE) are built. The S3
+//! client, the XML subset parser and the agent run loop are W0 stubs that
+//! refuse with [`BackupError::NotImplemented`] until lane W2k fills them.
+//! Until then the test world plays the uploader and the object store.
 
 mod container;
+mod seal;
+mod wal;
+
+pub use seal::{ContainerKind, GroupRef, Opened, open_container, seal_container};
 
 /// Why a backup operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +25,11 @@ pub enum BackupError {
     KeyNotHybrid,
     /// The container breaks an ADR-012 rule. It names the rule.
     Malformed(&'static str),
+    /// Sealing failed: the KEM, the AEAD or the generator. It names the
+    /// part.
+    Seal(&'static str),
+    /// The data key or a chunk did not open under the given group secret.
+    OpenFailed,
 }
 
 impl std::fmt::Display for BackupError {
@@ -30,6 +41,8 @@ impl std::fmt::Display for BackupError {
                 write!(f, "the data key is not sealed through the hybrid KEM")
             }
             BackupError::Malformed(rule) => write!(f, "the container breaks the {rule} rule"),
+            BackupError::Seal(part) => write!(f, "sealing the {part} failed"),
+            BackupError::OpenFailed => write!(f, "the container does not open under this key"),
         }
     }
 }
@@ -84,10 +97,15 @@ pub fn decode_s3_xml(bytes: &[u8]) -> Result<S3Response, BackupError> {
     Err(BackupError::NotImplemented("fstp_backup::decode_s3_xml"))
 }
 
-/// Parses a WAL segment name. Fuzzed (`wal_name_parse`).
+/// Parses a WAL segment name: 24 uppercase hex digits, the timeline,
+/// the log id and the segment within it ([`wal`]). Fuzzed
+/// (`wal_name_parse`).
+///
+/// # Errors
+///
+/// [`BackupError::Malformed`] for any other spelling.
 pub fn parse_wal_name(name: &str) -> Result<WalName, BackupError> {
-    let _ = name;
-    Err(BackupError::NotImplemented("fstp_backup::parse_wal_name"))
+    wal::parse(name)
 }
 
 /// Runs one backup agent invocation.

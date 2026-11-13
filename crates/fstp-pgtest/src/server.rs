@@ -523,6 +523,79 @@ impl PgServer {
         Ok(dump)
     }
 
+    /// A base backup of the whole cluster, taken over loopback with
+    /// `pg_basebackup` as the replication role of `login` (M3 design
+    /// section 3.8, G22, lane F-ERASE). It gives the files that
+    /// `pg_basebackup -Ft -X stream` writes, by name: `base.tar` and
+    /// `pg_wal.tar`, so the backup restores alone. The WAL is streamed, so
+    /// a segment recycled during the backup is not lost. The role's
+    /// certificate and key are written to a fresh directory of mode 0700
+    /// under the server's client directory, which is removed after the
+    /// run. The password travels in the environment, as for
+    /// [`PgServer::psql`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error with `pg_basebackup`'s standard error when it
+    /// fails, and when the client files cannot be written.
+    pub fn base_backup_files(
+        &self,
+        login: &crate::RoleLogin,
+    ) -> Result<Vec<(String, Vec<u8>)>, Error> {
+        let dir = self
+            .dir
+            .join(CLIENT_DIR)
+            .join(format!("basebackup-{}", random_hex(8)?));
+        DirBuilder::new()
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| Error::io("cannot create the client directory", &e))?;
+        let out_dir = dir.join("out");
+        let run = || -> Result<Vec<(String, Vec<u8>)>, Error> {
+            for (name, bytes) in [("cert.pem", &login.cert_pem), ("key.pem", &login.key_pem)] {
+                write_private(&dir.join(name), bytes, 0o600, &RunAs::Current)?;
+            }
+            let mut cmd = Command::new(self.bindir.join("pg_basebackup"));
+            cmd.env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("LC_ALL", "C")
+                .env("PGPASSWORD", &login.password)
+                .env("PGSSLMODE", "verify-full")
+                .env("PGSSLROOTCERT", self.dir.join("tls").join("ca.pem"))
+                .env("PGSSLCERT", dir.join("cert.pem"))
+                .env("PGSSLKEY", dir.join("key.pem"))
+                .env("PGCONNECT_TIMEOUT", "10")
+                .env("PGAPPNAME", "fstp-pgtest")
+                .args(["-h", HOST, "-p", &self.port.to_string(), "-U", &login.role])
+                .arg("-D")
+                .arg(&out_dir)
+                .args(["-F", "t", "-X", "stream", "-c", "fast", "-w"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let out = cmd
+                .output()
+                .map_err(|e| Error::io("cannot run pg_basebackup", &e))?;
+            if !out.status.success() {
+                return Err(Error::new(format!(
+                    "pg_basebackup failed ({}): {}",
+                    out.status,
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )));
+            }
+            let mut files = Vec::new();
+            for name in ["base.tar", "pg_wal.tar"] {
+                let bytes = fs::read(out_dir.join(name))
+                    .map_err(|e| Error::io(&format!("cannot read {name}"), &e))?;
+                files.push((name.to_owned(), bytes));
+            }
+            Ok(files)
+        };
+        let result = run();
+        let _ = fs::remove_dir_all(&dir);
+        result
+    }
+
     /// A command for the client program `program` of the server's
     /// binaries, set up to connect as the superuser: a clean environment,
     /// the password in `PGPASSWORD`, and TLS verify-full with the

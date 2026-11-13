@@ -82,6 +82,8 @@ use fstp_keys::{CellId, Chain, DekId, Epoch, GroupId, ObjectId, Purpose};
 use fstp_rt::ShutdownSignal;
 use fstp_rt::future::{Either, race, yield_now};
 
+pub mod snapshot;
+
 use super::Clock;
 use crate::CellError;
 use crate::engine::chan::{self, Receiver, ReplyTx, Sender};
@@ -141,10 +143,14 @@ pub enum ErasureEvent {
     },
 }
 
-/// One stored text: its data key and its sealed body.
+/// One stored text: its data key, the group generation its body was
+/// sealed under, and its sealed body. The body's seal context keeps that
+/// generation after the data key is resealed to a later one (design
+/// section 3.5 step 2), so a live sibling of an erased text still opens.
 #[derive(Clone)]
 struct TextRow {
     dek: DekId,
+    generation: u32,
     blob: SealedBlob,
 }
 
@@ -958,7 +964,14 @@ impl<C: Custody> ErasureRunner<C> {
             .map_err(|_| keys_err("key admission"))?;
         self.chain = chain;
         self.store.keys.insert(dek, (g, generation, sealed));
-        self.store.texts.insert(id, TextRow { dek, blob });
+        self.store.texts.insert(
+            id,
+            TextRow {
+                dek,
+                generation,
+                blob,
+            },
+        );
         Ok(())
     }
 
@@ -990,7 +1003,8 @@ impl<C: Custody> ErasureRunner<C> {
             .ok_or(OpenRefusal::Keys)?;
         let ctx = ctx_for(self.store.cell, *g, *generation, id);
         let dk = envelope::open_key(sk, sealed, &ctx).map_err(|_| OpenRefusal::Keys)?;
-        envelope::open_blob(&dk, &ctx, &row.blob).map_err(|_| OpenRefusal::Keys)
+        let body = ctx_for(self.store.cell, *g, row.generation, id);
+        envelope::open_blob(&dk, &body, &row.blob).map_err(|_| OpenRefusal::Keys)
     }
 
     /// Whether the runner has work: a request not yet joined, or a batch

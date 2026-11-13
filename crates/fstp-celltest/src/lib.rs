@@ -17,6 +17,7 @@
     reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
 )]
 
+pub mod backups;
 pub mod canary;
 pub mod custody_sim;
 pub mod cycle;

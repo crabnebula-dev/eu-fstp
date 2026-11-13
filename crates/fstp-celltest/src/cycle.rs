@@ -39,8 +39,20 @@
 //! - `minor-applicant:...`: the I-18 variant "Minor applicant", with a
 //!   seeded guardian consent that is verified or not.
 //! - `call-cycle`: the steps from `login` to `grant` as one step.
-//! - `erase-text` and `erase-one-text`: one text stored and erased by an
-//!   erasure request, to the end of the erasure batch (lane F-ISO).
+//! - `erase-one-text`: one text stored and erased by an erasure request,
+//!   to the end of the erasure batch (lane F-ISO).
+//! - `erase-text`: a text stored that stays live, and the oldest live text
+//!   of an earlier `erase-text` erased, then a keystore snapshot
+//!   ([`crate::backups`], lane F-ERASE).
+//! - `base-backup`, `wal-archive`, `keystore-snapshot` and `rotate-chain`:
+//!   the backups of [`crate::backups`] and the yearly re-wrap of the
+//!   CellBackup chain (lane F-ERASE).
+//! - `abort-next-append`, `retry` and `replay-step-up`: the fault steps of
+//!   R-NF-08 (lane F-ERASE). The first arms the cell store's fault point,
+//!   so the next append aborts after its rows are inserted. A command
+//!   whose append it aborted is sent again once. `retry` checks that each
+//!   aborted command was. `replay-step-up` sends the last command that
+//!   carried a step-up again, and the cell must not commit it twice.
 //! - `<kind>:<text>` and `authenticator:<hex>`: values of the next
 //!   applicant (`Person`, lane F-ISO).
 //!
@@ -146,7 +158,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the rotation, backup, snapshot, account and identity erasure, document and fault steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the account, identity and cell erasure and document steps of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -476,9 +488,33 @@ impl<'w> Cycle<'w> {
                 }
                 Ok(())
             }
-            // One text put and erased (`t_iso_i19` names it
-            // `erase-one-text`, `i80_custody` and `i81_backups` `erase-text`).
-            "erase-one-text" | "erase-text" => self.erase_text(),
+            // One text put and erased (`t_iso_i19`).
+            "erase-one-text" => self.erase_text(),
+            // The backup steps of lane F-ERASE (`crate::backups`).
+            "erase-text" => self.erase_stored_text(),
+            "base-backup" => Self::backup_step(
+                "base-backup",
+                crate::backups::base_backup(self.client.cell()),
+            ),
+            "wal-archive" => Self::backup_step(
+                "wal-archive",
+                crate::backups::wal_archive(self.client.cell()),
+            ),
+            "keystore-snapshot" => Self::backup_step(
+                "keystore-snapshot",
+                crate::backups::keystore_snapshot(self.client.cell()),
+            ),
+            // The fault steps of R-NF-08 (lane F-ERASE).
+            "abort-next-append" => {
+                self.client.cell().backups.fault().arm_abort_next_append();
+                Ok(())
+            }
+            "retry" => self.retry(),
+            "replay-step-up" => self.replay_step_up(),
+            "rotate-chain" => Self::backup_step(
+                "rotate-chain",
+                crate::backups::rotate_chain(self.client.cell()),
+            ),
             "minor-applicant:draft" => self.minor_draft(),
             "minor-applicant:submit" => self.submit(),
             "minor-applicant:evaluate" => {
@@ -527,6 +563,44 @@ impl<'w> Cycle<'w> {
             Some(r) if r.ok() => Ok(()),
             other => Err(Self::refused(step, what, other.as_ref())),
         }
+    }
+
+    /// `retry`: every append the fault point aborted was sent again, and
+    /// at least one was. A point armed with no append after it refuses.
+    fn retry(&self) -> Result<(), NotImplemented> {
+        let b = &self.client.cell().backups;
+        let (fired, retried) = (b.fault().fired(), b.retried());
+        if fired > 0 && fired == retried && !b.fault().armed() {
+            return Ok(());
+        }
+        eprintln!(
+            "fstp_celltest::cycle retry: {fired} aborted appends, {retried} sent again, armed {}",
+            b.fault().armed()
+        );
+        Err(NotImplemented::new(STEP_REFUSED))
+    }
+
+    /// `replay-step-up`: the last command that carried a step-up is sent
+    /// again byte for byte. The cell must not commit it a second time:
+    /// its ledger head stays where it was. The reply itself may be a
+    /// refusal or the first commit's answer.
+    fn replay_step_up(&self) -> Result<(), NotImplemented> {
+        const STEP: &str = "replay-step-up";
+        let failed = || NotImplemented::new(STEP_REFUSED);
+        let cell = self.client.cell();
+        let before = cell.ledger().map_err(|_| failed())?.len();
+        if self.client.replay_last_stepup()?.is_none() {
+            eprintln!("fstp_celltest::cycle {STEP}: no command carried a step-up yet");
+            return Err(failed());
+        }
+        let after = cell.ledger().map_err(|_| failed())?.len();
+        if after != before {
+            eprintln!(
+                "fstp_celltest::cycle {STEP}: the replay committed ({before} entries, then {after})"
+            );
+            return Err(failed());
+        }
+        Ok(())
     }
 
     /// The cell's state, replayed from its ledger.
@@ -1138,6 +1212,63 @@ impl<'w> Cycle<'w> {
                 eprintln!("fstp_celltest::cycle {STEP}: {e}");
                 NotImplemented::new(STEP_REFUSED)
             })
+    }
+
+    /// A backup step's outcome. A failure is no seam: it is written to
+    /// standard error and ends the step with [`STEP_REFUSED`].
+    fn backup_step(
+        step: &str,
+        done: Result<(), crate::world::WorldError>,
+    ) -> Result<(), NotImplemented> {
+        done.map_err(|e| {
+            eprintln!("fstp_celltest::cycle {step}: {e}");
+            NotImplemented::new(STEP_REFUSED)
+        })
+    }
+
+    /// `erase-text` (lane F-ERASE, `crate::backups`): stores a text that
+    /// stays live, then erases the oldest live text an earlier
+    /// `erase-text` stored, or a second new text on the first one.
+    /// `PutText` of each new text and `EraseTexts` go over HTTP as the
+    /// first tenant admin. The step waits until the batch completed, and
+    /// then takes the keystore snapshot that follows every erasure batch
+    /// (design section 3.8).
+    fn erase_stored_text(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "erase-text";
+        const ERASURE_REQUEST: u16 = 2;
+        let admin = self
+            .admin
+            .clone()
+            .ok_or(NotImplemented::new(NOT_LOGGED_IN))?;
+        let cell = self.client.cell();
+        let plan = match crate::backups::prepare_text_erasure(cell) {
+            Ok(p) => p,
+            Err(e) => return Self::backup_step(STEP, Err(e)),
+        };
+        for id in &plan.put {
+            self.command(
+                STEP,
+                "PutText",
+                &admin,
+                CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id: *id }),
+                false,
+            )?;
+        }
+        self.command(
+            STEP,
+            "EraseTexts",
+            &admin,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::EraseTexts {
+                ids: vec![plan.erase],
+                cause: ERASURE_REQUEST,
+            }),
+            false,
+        )?;
+        Self::backup_step(
+            STEP,
+            cell.await_erased(plan.erase, std::time::Duration::from_secs(120)),
+        )?;
+        Self::backup_step(STEP, crate::backups::keystore_snapshot(cell))
     }
 
     /// The Judging staff of the evaluation (`life_judges` of the M2 life
