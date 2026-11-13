@@ -40,6 +40,27 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "pgagent_config_decode"
+path = "fuzz_targets/pgagent_config_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pgagent_outcome_decode"
+path = "fuzz_targets/pgagent_outcome_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control_config_decode"
+path = "fuzz_targets/control_config_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

@@ -94,16 +94,11 @@ impl Placement {
     }
 }
 
-/// Runs the control plane service until shutdown.
-///
-/// Not built yet. The service needs the operator passkey and step-up
-/// login (fstp-webauthn), control-plane custody and the `CellToCp`
-/// listener over mutual TLS. This lane builds the parts it composes:
-/// placement, the role plan, the provisioning jobs and the protocol.
+/// Runs the control plane service until shutdown: [`crate::service::run`].
 ///
 /// # Errors
 ///
-/// Always [`ControlError::NotImplemented`].
+/// The errors of [`crate::service::run`].
 pub fn run() -> Result<(), ControlError> {
-    Err(ControlError::NotImplemented("fstp_control::run"))
+    crate::service::run()
 }

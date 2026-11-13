@@ -26,7 +26,10 @@
 //!   string with several statements fails to prepare. SQL kept in files
 //!   can be embedded with `include_str!`, which also yields
 //!   `&'static str`. `Box::leak` could turn a runtime string into one;
-//!   review must reject that, since the type is the only guard.
+//!   review must reject that, since the type is the only guard. The one
+//!   exception is `Client::execute_rendered_ddl`, built only with the
+//!   `rendered-ddl` feature, for the DDL that `fstp-pgagent` renders from
+//!   typed slots (ADR-011).
 //! - **Strict typing.** Parameter and column types come from the server's
 //!   ParameterDescription and RowDescription and must match the Rust type
 //!   exactly (see [`types`]). A mismatch is an error, never a conversion.

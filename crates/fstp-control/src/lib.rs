@@ -24,29 +24,55 @@
 //! - [`CATALOGUE`], the `cp` column map of design section 4.4, whose
 //!   tables the `migrations/cp` set creates.
 //!
-//! The three service loops ([`placement::run`], [`pgagent::run`] and
-//! [`install::run`]) are not built yet and refuse with
-//! [`ControlError::NotImplemented`]. See each one for what it waits on.
+//! - [`config`], the closed JSON process configurations of `fstp-control`
+//!   and `fstp-pgagent`;
+//! - [`exchange`], the one-exchange-per-connection framing over mutual
+//!   TLS that the `CellToCp` link and the agent link share;
+//! - [`agent`], the `fstp-pgagent` executor, listener and run loop;
+//! - [`operator`], the staff passkey login and step-up;
+//! - [`service`], the `CellToCp` listener and the `fstp-control` run loop.
+//!
+//! [`service::run`] and [`agent::run`] serve until SIGTERM. Destructive
+//! jobs and requests keep refusing with [`ControlError::ApprovalRequired`]
+//! until the two-operator check exists. [`install::run`] stays a refusal
+//! under B-06.
 
+pub mod agent;
 pub mod api;
 pub mod catalogue;
+pub mod config;
+pub mod exchange;
 pub mod install;
 pub mod isolation_audit;
+pub mod operator;
 pub mod pg;
 pub mod pgagent;
 pub mod placement;
 pub mod provision;
+pub mod service;
 
 pub use catalogue::CATALOGUE;
 
-/// The configuration of the control plane service.
+/// The configuration of the control plane service, as
+/// [`config::decode_control_config`] reads it.
 ///
 /// No field may hold a payment account type or a debtor account (I-16,
-/// design section 14.4 `i16_config_types_hold_no_debtor_account`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// design section 14.4 `i16_config_types_hold_no_debtor_account`). No
+/// field holds a credential: the TLS keys sit in files under
+/// `credentials_dir`, readable only by the service's OS user.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ControlConfig {
     /// The registered database clusters.
     pub clusters: Vec<placement::Cluster>,
+    /// The control-private address the `CellToCp` listener binds.
+    pub cell_listen: std::net::SocketAddr,
+    /// The directory of the TLS files ([`config::CONTROL_FILES`]).
+    pub credentials_dir: String,
+    /// The control-plane host, the relying party id of staff passkeys
+    /// (ADR-008 "Control plane").
+    pub operator_host: String,
+    /// The pinned staff passkeys (ADR-011 "Two-operator approval").
+    pub staff: Vec<operator::StaffCredential>,
 }
 
 /// Why a control plane operation failed. No variant carries input bytes
@@ -67,7 +93,7 @@ pub enum ControlError {
     ApprovalRequired,
     /// An operator API request did not decode. It names the rule broken.
     Request(&'static str),
-    /// An install configuration did not decode. It names the rule broken.
+    /// A configuration did not decode. It names the rule broken.
     Config(&'static str),
     /// A placement was refused (I-83).
     Placement(placement::PlacementError),
@@ -78,6 +104,17 @@ pub enum ControlError {
     Subnet,
     /// A catalogue read failed. It names the query.
     Catalogue(&'static str),
+    /// A file or socket operation failed.
+    Io(std::io::ErrorKind),
+    /// A TLS configuration did not build. It names the configuration.
+    Tls(&'static str),
+    /// Termination signals could not be set up.
+    Signal,
+    /// A database session or statement of the agent failed. It names the
+    /// step.
+    Database(&'static str),
+    /// The operator login or authorisation refused (ADR-008, ADR-011).
+    Operator(operator::OperatorRefusal),
 }
 
 impl std::fmt::Display for ControlError {
@@ -93,11 +130,16 @@ impl std::fmt::Display for ControlError {
                 f.write_str("destructive job needs two operators' approvals")
             }
             ControlError::Request(rule) => write!(f, "API request refused: {rule}"),
-            ControlError::Config(rule) => write!(f, "install configuration refused: {rule}"),
+            ControlError::Config(rule) => write!(f, "configuration refused: {rule}"),
             ControlError::Placement(e) => write!(f, "placement refused: {e:?}"),
             ControlError::Mode(e) => write!(f, "provisioning mode refused: {e:?}"),
             ControlError::Subnet => f.write_str("malformed pg_hba subnet"),
             ControlError::Catalogue(query) => write!(f, "catalogue read failed: {query}"),
+            ControlError::Io(kind) => write!(f, "i/o failed: {kind:?}"),
+            ControlError::Tls(what) => write!(f, "TLS configuration refused: {what}"),
+            ControlError::Signal => f.write_str("termination signals could not be set up"),
+            ControlError::Database(step) => write!(f, "database step failed: {step}"),
+            ControlError::Operator(r) => write!(f, "operator refused: {r:?}"),
         }
     }
 }

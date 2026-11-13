@@ -192,6 +192,13 @@ pub enum PgagentJob {
     ApplyGrants(DbIdent),
     /// Reads the isolation auditor's catalogue rows (design section 9.3).
     PrivilegeAudit,
+    /// Renders `pg_hba.conf` from the role plan of every cell database
+    /// the cluster holds, and reloads the server configuration (ADR-011
+    /// `WriteHba`). The agent reads the cell databases from its own
+    /// server and the subnet from its own configuration, so the job holds
+    /// no field. A line goes away only with its database, whose drop is
+    /// destructive itself.
+    WriteHba,
     /// Ends a role at once. Destructive.
     SetNoLogin(RoleIdent),
     /// `DROP DATABASE` for one cell database, by cell erasure (R-SW-02).
@@ -227,6 +234,7 @@ const KIND_PRIVILEGE_AUDIT: u8 = 7;
 const KIND_SET_NOLOGIN: u8 = 8;
 const KIND_DROP_DATABASE: u8 = 9;
 const KIND_DROP_ROLES: u8 = 10;
+const KIND_WRITE_HBA: u8 = 11;
 
 fn db_code(db: CellDatabase) -> u8 {
     match db {
@@ -296,6 +304,7 @@ pub fn encode_pgagent_job(job: &PgagentJob) -> Result<Vec<u8>, ControlError> {
             push_db(&mut out, d);
         }
         PgagentJob::PrivilegeAudit => out.push(KIND_PRIVILEGE_AUDIT),
+        PgagentJob::WriteHba => out.push(KIND_WRITE_HBA),
         PgagentJob::SetNoLogin(r) => {
             out.push(KIND_SET_NOLOGIN);
             push_role(&mut out, r);
@@ -397,6 +406,7 @@ pub fn decode_pgagent_job(bytes: &[u8]) -> Result<PgagentJob, ControlError> {
         },
         KIND_APPLY_GRANTS => PgagentJob::ApplyGrants(r.db()?),
         KIND_PRIVILEGE_AUDIT => PgagentJob::PrivilegeAudit,
+        KIND_WRITE_HBA => PgagentJob::WriteHba,
         KIND_SET_NOLOGIN => PgagentJob::SetNoLogin(r.role()?),
         KIND_DROP_DATABASE => PgagentJob::DropCellDatabase(r.db()?),
         KIND_DROP_ROLES => PgagentJob::DropRoles(r.db()?),
@@ -592,7 +602,8 @@ const ROLE_REASSERTED: &str =
 ///
 /// [`PgagentJob::PrivilegeAudit`] reads rows rather than running
 /// statements, through `isolation_audit::read_catalogue`, so it renders
-/// none here.
+/// none here. [`PgagentJob::WriteHba`] writes a file through
+/// [`crate::agent`], so it renders none either.
 ///
 /// # Errors
 ///
@@ -629,6 +640,7 @@ pub fn job_statements(job: &PgagentJob) -> Result<Vec<Statement>, ControlError> 
         }
         PgagentJob::ApplyGrants(d) => apply_grants(d),
         PgagentJob::PrivilegeAudit
+        | PgagentJob::WriteHba
         | PgagentJob::SetNoLogin(_)
         | PgagentJob::DropCellDatabase(_)
         | PgagentJob::DropRoles(_) => Ok(Vec::new()),
@@ -832,6 +844,16 @@ impl AgentScope {
     pub fn admits(&self, job: &PgagentJob) -> Result<(), ControlError> {
         let db = match job {
             PgagentJob::HardenCluster | PgagentJob::PrivilegeAudit => return Ok(()),
+            // The file holds the lines of cell databases, which only
+            // application and vault clusters hold.
+            PgagentJob::WriteHba => {
+                return match self.kind {
+                    ClusterKind::Application | ClusterKind::Vault => Ok(()),
+                    ClusterKind::Control | ClusterKind::Witness => {
+                        Err(ControlError::Job("no cell databases on this cluster kind"))
+                    }
+                };
+            }
             PgagentJob::CreateCellDatabase(d)
             | PgagentJob::CreateRoles(d)
             | PgagentJob::ApplyRevocations(d)
@@ -871,20 +893,13 @@ impl AgentScope {
     }
 }
 
-/// Runs the agent until shutdown.
-///
-/// Not built yet. Two parts are missing. The listener needs the
-/// control-plane CA's mutual TLS. The executor needs an `fstp-pgwire`
-/// entry point for rendered DDL, since `Client` takes `&'static str`
-/// statements only. [`AgentScope::statements`] gives the SQL that entry
-/// point will run. The local configuration that names the cluster kind
-/// for [`AgentScope::new`] arrives with the listener.
+/// Runs the agent until shutdown: [`crate::agent::run`].
 ///
 /// # Errors
 ///
-/// Always [`ControlError::NotImplemented`].
+/// The errors of [`crate::agent::run`].
 pub fn run() -> Result<(), ControlError> {
-    Err(ControlError::NotImplemented("fstp_control::pgagent::run"))
+    crate::agent::run()
 }
 
 #[cfg(test)]

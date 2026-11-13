@@ -57,7 +57,9 @@ fn moved_role(r: &RoleIdent) -> RoleIdent {
 /// and verifier.
 fn reference(job: &PgagentJob) -> (PgagentJob, Option<CellId>, Option<String>) {
     match job {
-        PgagentJob::HardenCluster | PgagentJob::PrivilegeAudit => (job.clone(), None, None),
+        PgagentJob::HardenCluster | PgagentJob::PrivilegeAudit | PgagentJob::WriteHba => {
+            (job.clone(), None, None)
+        }
         PgagentJob::CreateCellDatabase(d) => (
             PgagentJob::CreateCellDatabase(moved_db(d)),
             Some(d.cell()),
