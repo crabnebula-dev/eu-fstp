@@ -706,6 +706,32 @@ impl CellHandle {
             .map_err(|e| WorldError::Store(format!("the contract port's fact: {e}")))
     }
 
+    /// One tick of the cell's timeline task at the world clock's instant
+    /// (`fstp_cell::tasks::timeline::tick`, lane m3/money-drivers): the
+    /// System commands due then, admitted by the gate under the system
+    /// task `Timeline`, and the timeline step's plan and firings. The
+    /// cell's own timeline task runs the same tick once the clock passes
+    /// its next tick. It reads no session rows, so a due
+    /// `EndSessionsAtBindingEnd` waits for that task.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no listener.
+    pub fn timeline_tick(&self) -> Result<Vec<fstp_cell::tasks::timeline::TickItem>, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        let cell = running
+            .cell
+            .as_ref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        let now = fstp_domain::time::Timestamp::from_micros(self.clock().now());
+        Ok(rt.services.rt.block_on(fstp_cell::tasks::timeline::tick(
+            cell.engine(),
+            &fstp_cell::tasks::timeline::NoSessions,
+            now,
+        )))
+    }
+
     /// The cell's ledger after decryption, read through the cell's own
     /// store at a quiescent point (design sections 5.3 and 7.2), in
     /// sequence order.
