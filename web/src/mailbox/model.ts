@@ -31,6 +31,9 @@ export const MAIL_KINDS = [
   "payment.confirm",
   "notice.outcome",
   "notice.irc_concern",
+  // MB-Q3 (2026-11-13): invitations and role grants of an existing account.
+  "invitation.open",
+  "role.granted",
 ] as const;
 
 /** One kind. */
@@ -59,6 +62,8 @@ export const MAILBOX_ROUTES: Readonly<Record<MailKind, string>> = Object.freeze(
   "payment.confirm": "/app/operations",
   "notice.outcome": "/app/notices",
   "notice.irc_concern": "/app/notices",
+  "invitation.open": "/app/",
+  "role.granted": "/app/",
 });
 
 /**
@@ -85,6 +90,9 @@ export const ID_MEMBERS = [
   "programme",
   // MB-Q2: the ordinal of an unanswered stage 2 question.
   "question",
+  // MB-Q3: the role binding and the invitation.
+  "binding",
+  "invitation",
 ] as const;
 
 /** One id member. */

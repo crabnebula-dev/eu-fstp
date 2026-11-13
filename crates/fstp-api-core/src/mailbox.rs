@@ -56,11 +56,16 @@ pub enum MailKind {
     NoticeOutcome,
     /// An IRC concern notice (R-IR-02).
     NoticeIrcConcern,
+    /// An invitation the caller's existing account holds, not yet
+    /// granted (MB-Q3, SoD-09).
+    InvitationOpen,
+    /// A role granted to the caller's existing account (MB-Q3).
+    RoleGranted,
 }
 
 impl MailKind {
     /// Every kind, in the order the mailbox lists them.
-    pub const ALL: [MailKind; 18] = [
+    pub const ALL: [MailKind; 20] = [
         MailKind::PendingConfirm,
         MailKind::ContractSign,
         MailKind::PaymentReview,
@@ -79,6 +84,8 @@ impl MailKind {
         MailKind::RoundVote,
         MailKind::NoticeOutcome,
         MailKind::NoticeIrcConcern,
+        MailKind::InvitationOpen,
+        MailKind::RoleGranted,
     ];
 
     /// The kind as the wire spells it (`fstp_access::MAILBOX_KINDS`).
@@ -102,13 +109,21 @@ impl MailKind {
             MailKind::PaymentConfirm => "payment.confirm",
             MailKind::NoticeOutcome => "notice.outcome",
             MailKind::NoticeIrcConcern => "notice.irc_concern",
+            MailKind::InvitationOpen => "invitation.open",
+            MailKind::RoleGranted => "role.granted",
         }
     }
 
     /// Whether the caller must act. A notice is to read, and never closes
     /// (MB-D2).
     pub const fn action(self) -> bool {
-        !matches!(self, MailKind::NoticeOutcome | MailKind::NoticeIrcConcern)
+        !matches!(
+            self,
+            MailKind::NoticeOutcome
+                | MailKind::NoticeIrcConcern
+                | MailKind::InvitationOpen
+                | MailKind::RoleGranted
+        )
     }
 
     /// The read behind the message's page. The mailbox keeps a message
@@ -132,6 +147,8 @@ impl MailKind {
             | MailKind::PaymentRelease
             | MailKind::PaymentConfirm => ReadKind::ListMyPaymentQueue,
             MailKind::NoticeOutcome | MailKind::NoticeIrcConcern => ReadKind::GetOwnNotices,
+            // MB-Q3: the home page lists the caller's own roles.
+            MailKind::InvitationOpen | MailKind::RoleGranted => ReadKind::ListMyRoles,
         }
     }
 
@@ -169,6 +186,8 @@ pub const MAILBOX_ROUTES: &[(MailKind, &str)] = &[
     (MailKind::PaymentConfirm, "/app/operations"),
     (MailKind::NoticeOutcome, "/app/notices"),
     (MailKind::NoticeIrcConcern, "/app/notices"),
+    (MailKind::InvitationOpen, "/app/"),
+    (MailKind::RoleGranted, "/app/"),
 ];
 
 /// The ids a message names. Only those its page needs are set.
@@ -195,11 +214,15 @@ pub struct MailRefs {
     /// The ordinal of an unanswered stage 2 question in its thread, from 1
     /// (MB-Q2). Part of the id, and shown in the label.
     pub question: Option<u128>,
+    /// The role binding a grant made (MB-Q3).
+    pub binding: Option<u128>,
+    /// The invitation (MB-Q3).
+    pub invitation: Option<u128>,
 }
 
 impl MailRefs {
     /// The members as the wire names them, with their values.
-    fn members(&self) -> [(&'static str, Option<u128>); 9] {
+    fn members(&self) -> [(&'static str, Option<u128>); 11] {
         [
             ("proposal", self.proposal),
             ("call", self.call),
@@ -210,6 +233,8 @@ impl MailRefs {
             ("pending", self.pending),
             ("programme", self.programme),
             ("question", self.question),
+            ("binding", self.binding),
+            ("invitation", self.invitation),
         ]
     }
 
@@ -429,6 +454,8 @@ pub(crate) fn samples() -> MailboxView {
         pending: Some(7),
         programme: Some(8),
         question: Some(9),
+        binding: Some(10),
+        invitation: Some(11),
     };
     MailboxView::new(
         MailKind::ALL
@@ -462,6 +489,8 @@ mod tests {
             pending: Some(17),
             programme: Some(18),
             question: Some(19),
+            binding: Some(20),
+            invitation: Some(21),
         }
     }
 
@@ -559,6 +588,8 @@ mod tests {
                     "pending",
                     "programme",
                     "question",
+                    "binding",
+                    "invitation",
                     "read",
                 ]
                 .contains(k),

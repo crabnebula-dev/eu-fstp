@@ -52,7 +52,7 @@ fn seeder(w: Built) -> Seeder {
 }
 
 /// The members a message may hold (design section 1).
-const MEMBERS: [&str; 16] = [
+const MEMBERS: [&str; 18] = [
     "id",
     "kind",
     "action",
@@ -61,6 +61,9 @@ const MEMBERS: [&str; 16] = [
     "read",
     // MB-Q2: the ordinal of an unanswered stage 2 question.
     "question",
+    // MB-Q3: the role binding and the invitation.
+    "binding",
+    "invitation",
     "since",
     "due",
     "proposal",
@@ -74,8 +77,10 @@ const MEMBERS: [&str; 16] = [
 ];
 
 /// The id members of a message.
-const IDS: [&str; 11] = [
+const IDS: [&str; 13] = [
     "question",
+    "binding",
+    "invitation",
     "since",
     "due",
     "proposal",
@@ -201,6 +206,7 @@ fn target_read(m: &Value) -> String {
             "/me/payment-queue".to_owned()
         }
         "notice.outcome" | "notice.irc_concern" => "/me/notices".to_owned(),
+        "invitation.open" | "role.granted" => "/me/roles".to_owned(),
         other => panic!("no read for {other}"),
     }
 }
@@ -288,6 +294,7 @@ fn i86_r_ac_01_mailbox_points_only_at_pages_the_reader_may_read() {
         "round.vote",
         "notice.outcome",
         "notice.irc_concern",
+        "role.granted",
     ];
     for k in expected {
         assert!(seen.contains(k), "no world gave {k}: {seen:?}");

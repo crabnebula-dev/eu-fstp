@@ -186,6 +186,10 @@ pub const MAILBOX_KINDS: &[&str] = &[
     "payment.confirm",
     "notice.outcome",
     "notice.irc_concern",
+    // MB-Q3 (2026-11-13): invitations and role grants of an existing
+    // account.
+    "invitation.open",
+    "role.granted",
 ];
 
 /// Every proposal state, as the state machine names it.
@@ -1164,6 +1168,9 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     opt("read", Shape::Bool),
                     // MB-Q2: the ordinal of an unanswered stage 2 question.
                     opt("question", Shape::Id),
+                    // MB-Q3: the role binding and the invitation.
+                    opt("binding", Shape::Id),
+                    opt("invitation", Shape::Id),
                     opt("since", Shape::Id),
                     opt("due", Shape::Id),
                     opt("proposal", Shape::Id),

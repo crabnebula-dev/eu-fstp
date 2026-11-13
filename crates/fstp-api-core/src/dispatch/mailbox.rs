@@ -37,6 +37,7 @@ pub(super) fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> MailboxV
     contracts(call, account, &mut out);
     payments(call, account, &mut out);
     notices(call, account, &mut out);
+    people(call, account, &mut out);
     out.retain(|m| admitted(call, m));
     let mut view = MailboxView::new(out);
     // MB-Q1, ADR-020: each notice carries the caller's own read mark.
@@ -440,5 +441,58 @@ fn notices<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailI
             m.since = Some(t);
             out.push(m);
         }
+    }
+}
+
+/// MB-Q3 (decided by Daniel on 2026-11-13): the invitations and role
+/// grants of the caller's existing account, as notices that link to the
+/// home page, which lists the caller's own roles.
+///
+/// - `invitation.open`: a live invitation for the caller's account (an
+///   invitation by account, or one the account accepted with its link),
+///   while the account holds no active binding of its role in its
+///   programme. The message names the programme and the invitation, never
+///   the link token or the address (MB-D4, I-27, I-86).
+/// - `role.granted`: each active programme binding of the caller, with the
+///   instant it started.
+fn people<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailItem>) {
+    let roster = call.state.core.roster();
+    let holds = |programme: ProgrammeId, role: Role| {
+        roster.bindings().any(|(_, b)| {
+            b.account == account
+                && b.programme == programme
+                && b.role == role
+                && b.active_at(call.now)
+        })
+    };
+    for (programme, d) in call.state.creator.drafts() {
+        for (id, i) in d.invitations() {
+            if i.withdrawn || i.account() != Some(account) || holds(programme, i.role) {
+                continue;
+            }
+            out.push(MailItem::new(
+                MailKind::InvitationOpen,
+                MailRefs {
+                    programme: Some(programme.raw()),
+                    invitation: Some(id.raw()),
+                    ..refs()
+                },
+            ));
+        }
+    }
+    for (id, b) in roster.bindings() {
+        if b.account != account || b.scope != BindingScope::Programme || !b.active_at(call.now) {
+            continue;
+        }
+        let mut m = MailItem::new(
+            MailKind::RoleGranted,
+            MailRefs {
+                programme: Some(b.programme.raw()),
+                binding: Some(id.raw()),
+                ..refs()
+            },
+        );
+        m.since = Some(b.start);
+        out.push(m);
     }
 }
