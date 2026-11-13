@@ -23,6 +23,7 @@ pub mod chain;
 pub mod codec;
 pub mod config;
 pub mod egress;
+mod messages;
 pub mod origin;
 pub mod service;
 pub mod start;
