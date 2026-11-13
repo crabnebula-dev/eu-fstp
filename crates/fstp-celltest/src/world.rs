@@ -816,6 +816,11 @@ impl World {
         spec: WorldSpec,
         pages: Option<fstp_cell::http::pages::Pages>,
     ) -> Result<World, WorldError> {
+        // One world start at a time in the process (lead decision,
+        // 2026-11-13, lane F-ERASE): worlds that start in parallel race
+        // on the shared clusters. Only the start is serialised. A world
+        // that started runs beside the others.
+        let _turn = lock(start_lock());
         let mut plans = Vec::with_capacity(usize::from(spec.cells));
         for _ in 0..spec.cells {
             plans.push(cell_plan()?);
@@ -1189,6 +1194,13 @@ fn cluster_state(name: &str) -> Result<&'static Mutex<ClusterState>, WorldError>
     })));
     states.insert(name.to_owned(), state);
     Ok(state)
+}
+
+/// The process-wide turn of [`World::start_with_pages`]: one world start
+/// at a time (lead decision, 2026-11-13).
+fn start_lock() -> &'static Mutex<()> {
+    static START: Mutex<()> = Mutex::new(());
+    &START
 }
 
 /// Locks `m`. The harness holds no invariant that a panic could break
