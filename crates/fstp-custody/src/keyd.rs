@@ -63,8 +63,8 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::{
     Aad, BackendId, CellId, Chain, Custody, CustodyError, CustodyHandle, DestroyReceipt,
-    EcdsaSignature, Epoch, Refusal, RootLabel, RootRef, SealKey, SignKeyRef, UsageCursor,
-    UsagePage, WrappedSealKey,
+    EcdsaSignature, Epoch, KeyBox, Refusal, RootLabel, RootRef, SealKey, SignKeyRef, UsageCursor,
+    UsagePage, WrappedSealKey, key_box,
 };
 
 /// The magic of a keyd frame.
@@ -428,8 +428,8 @@ pub enum Request {
         root: RootHandle,
         /// The AAD.
         aad: Vec<u8>,
-        /// The seal key.
-        key: Zeroizing<[u8; 32]>,
+        /// The seal key, in a heap allocation of its own ([`KeyBox`]).
+        key: KeyBox,
     },
     /// Unwrap a seal key under a root.
     Unwrap {
@@ -571,7 +571,24 @@ impl Request {
 ///
 /// Refuses an AAD, wrapped key or handle above its limit.
 pub fn encode_request(request: &Request) -> Result<Vec<u8>, CustodyError> {
-    let mut b = Zeroizing::new(Vec::new());
+    // The body may hold a seal key, so the frame wipes it on drop.
+    let frame = KeydFrame {
+        kind: request.kind(),
+        body: request_body(request)?,
+    };
+    encode_frame(&frame)
+}
+
+/// The longest body of a request that holds a seal key: a wrap with the
+/// longest AAD. The body buffer starts with this capacity, so it never
+/// grows. A growing `Vec` frees its old buffer unwiped, which would
+/// leave a seal key behind (I-80).
+pub const KEY_REQUEST_BODY_MAX: usize = REQUEST_ID_LEN + ROOT_LEN + 2 + MAX_AAD_LEN + 32;
+
+/// The body of `request`, in `Zeroizing` memory that never reallocates
+/// while it holds a seal key ([`KEY_REQUEST_BODY_MAX`]).
+fn request_body(request: &Request) -> Result<Zeroizing<Vec<u8>>, CustodyError> {
+    let mut b = Zeroizing::new(Vec::with_capacity(KEY_REQUEST_BODY_MAX));
     b.extend_from_slice(&request.id().0);
     match request {
         Request::CreateRoot {
@@ -610,12 +627,7 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>, CustodyError> {
             b.extend_from_slice(&cursor.to_be_bytes());
         }
     }
-    // The body may hold a seal key, so the frame wipes it on drop.
-    let frame = KeydFrame {
-        kind: request.kind(),
-        body: b,
-    };
-    encode_frame(&frame)
+    Ok(b)
 }
 
 /// A response of `fstp-keyd`. Its `Debug` form never shows a seal key.
@@ -625,8 +637,9 @@ pub enum Response {
     Root(RootHandle),
     /// A wrapped seal key.
     Wrapped(Vec<u8>),
-    /// An unwrapped seal key.
-    Unwrapped(Zeroizing<[u8; 32]>),
+    /// An unwrapped seal key, in a heap allocation of its own
+    /// ([`KeyBox`]), so a move of the response copies no key byte.
+    Unwrapped(KeyBox),
     /// A destroy receipt.
     Destroyed(Vec<u8>),
     /// A DER signature.
@@ -671,7 +684,8 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response, CustodyError> {
     let response = match frame.kind {
         KIND_ROOT => Response::Root(r.root()?),
         KIND_WRAPPED => Response::Wrapped(r.u16_bytes(MAX_WRAPPED_LEN)?.to_vec()),
-        KIND_UNWRAPPED => Response::Unwrapped(Zeroizing::new(r.array()?)),
+        // Straight from the frame body into the heap: no stack copy.
+        KIND_UNWRAPPED => Response::Unwrapped(key_box(r.take(32)?)?),
         KIND_DESTROYED => Response::Destroyed(r.u16_bytes(MAX_FRAME_BODY)?.to_vec()),
         KIND_SIGNED => Response::Signed(r.u16_bytes(MAX_FRAME_BODY)?.to_vec()),
         KIND_USAGE_PAGE => {
@@ -914,8 +928,9 @@ impl KeydCustody {
         let socket = self.socket.clone();
         Exchange::new(move || {
             let frame = frame?;
-            let answer = Zeroizing::new(exchange(&socket, &frame)?);
-            decode_response(&answer)
+            let mut answer = Zeroizing::new(exchange(&socket, &frame)?);
+            drop(frame);
+            decode_answer(&mut answer[..])
         })
     }
 
@@ -988,6 +1003,16 @@ fn checked_receipt(root: RootHandle, bytes: Vec<u8>) -> Result<DestroyReceipt, C
 
 /// What one exchange gives back.
 type Answer = Result<Response, CustodyError>;
+
+/// Decodes the answer frame `answer` and wipes it at once, before the
+/// response leaves the exchange thread. An `Unwrapped` response holds
+/// its seal key in a [`KeyBox`] of its own, so the frame was its only
+/// other copy (I-80).
+fn decode_answer(answer: &mut [u8]) -> Answer {
+    let response = decode_response(answer);
+    zeroize::Zeroize::zeroize(answer);
+    response
+}
 
 /// The shared state of one [`Exchange`]: its answer once the thread has
 /// one, and the waker of the task that waits for it.
@@ -1126,7 +1151,8 @@ impl Custody for KeydCustody {
             id: crate::request_or_fresh()?,
             root: KeydCustody::root_of(root)?,
             aad: aad.0.clone(),
-            key: Zeroizing::new(*key.expose()),
+            // Heap to heap: the key never sits on the stack (I-80).
+            key: key_box(key.expose())?,
         };
         let exchange = self.call(&request);
         drop(request);
@@ -1149,7 +1175,8 @@ impl Custody for KeydCustody {
             wrapped: w.0.clone(),
         };
         match self.call(&request).await? {
-            Response::Unwrapped(k) => Ok(SealKey::from_bytes(*k)),
+            // The key's allocation becomes the seal key's: no copy.
+            Response::Unwrapped(k) => Ok(SealKey::from_box(k)),
             other => Err(unexpected(other)),
         }
     }
@@ -1210,5 +1237,84 @@ impl Custody for KeydCustody {
             }),
             other => Err(unexpected(other)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CANARY: [u8; 32] = [0xc5; 32];
+
+    fn unwrapped_frame() -> Vec<u8> {
+        encode_frame(&KeydFrame {
+            kind: KIND_UNWRAPPED,
+            body: Zeroizing::new(CANARY.to_vec()),
+        })
+        .unwrap()
+    }
+
+    /// I-80, ADR-004 part 2: the client wipes the answer frame of an
+    /// unwrap as soon as it is decoded, so the response's own key is the
+    /// only copy of `S(e)` that leaves the exchange.
+    #[test]
+    fn i80_decode_answer_wipes_the_unwrap_frame() {
+        let mut frame = unwrapped_frame();
+        let response = decode_answer(&mut frame[..]).unwrap();
+        assert!(frame.iter().all(|b| *b == 0), "the frame still holds bytes");
+        match response {
+            Response::Unwrapped(k) => assert_eq!(*k, Zeroizing::new(CANARY)),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// I-80: a frame that does not decode is wiped too.
+    #[test]
+    fn i80_decode_answer_wipes_a_bad_frame() {
+        let mut frame = unwrapped_frame();
+        frame.push(0);
+        assert!(decode_answer(&mut frame[..]).is_err());
+        assert!(frame.iter().all(|b| *b == 0), "the frame still holds bytes");
+    }
+
+    /// I-80: the unwrapped key lives in a heap allocation of its own,
+    /// which the seal key takes over. Neither step copies the key bytes,
+    /// so no stale copy is left where the response moved.
+    #[test]
+    fn i80_unwrapped_key_becomes_the_seal_key_without_a_copy() {
+        let frame = unwrapped_frame();
+        let Response::Unwrapped(k) = decode_response(&frame).unwrap() else {
+            panic!("not an unwrap response");
+        };
+        let at = k.as_ptr();
+        let range = frame.as_ptr_range();
+        assert!(!range.contains(&at), "the key aliases the frame buffer");
+        let moved = vec![Ok::<Response, CustodyError>(Response::Unwrapped(k))];
+        let Some(Ok(Response::Unwrapped(k))) = moved.into_iter().next() else {
+            panic!("the response did not move");
+        };
+        let key = SealKey::from_box(k);
+        assert_eq!(key.expose().as_ptr(), at);
+        assert_eq!(key.expose(), &CANARY);
+    }
+
+    /// I-80: the body of a wrap request, which holds `S(e)`, is written
+    /// into a buffer that never grows, even with the longest AAD. A `Vec`
+    /// that grows frees its old buffer unwiped.
+    #[test]
+    fn i80_wrap_request_body_never_reallocates() {
+        let request = Request::Wrap {
+            id: RequestId([1; REQUEST_ID_LEN]),
+            root: RootHandle {
+                chain: Chain::App,
+                epoch: Epoch(3),
+            },
+            aad: vec![7; MAX_AAD_LEN],
+            key: key_box(&CANARY).unwrap(),
+        };
+        let body = request_body(&request).unwrap();
+        assert!(body.len() <= KEY_REQUEST_BODY_MAX, "{} bytes", body.len());
+        assert_eq!(body.len(), KEY_REQUEST_BODY_MAX);
+        assert!(body.ends_with(&CANARY));
     }
 }

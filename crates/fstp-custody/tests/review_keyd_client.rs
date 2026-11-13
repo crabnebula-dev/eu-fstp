@@ -44,7 +44,7 @@ fn wrap_frame() -> Vec<u8> {
             epoch: Epoch(1),
         },
         aad: b"aad".to_vec(),
-        key: Zeroizing::new(CANARY),
+        key: Box::new(Zeroizing::new(CANARY)),
     })
     .unwrap()
 }

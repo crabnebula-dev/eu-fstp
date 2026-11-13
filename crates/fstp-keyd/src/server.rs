@@ -266,11 +266,8 @@ impl Server {
             .split_first_chunk::<{ aead::NONCE_LEN }>()
             .ok_or(Refusal::UnwrapFailed)?;
         let opened = aead::open(root, nonce, &full, body).map_err(|_| Refusal::UnwrapFailed)?;
-        let key: [u8; 32] = opened
-            .as_slice()
-            .try_into()
-            .map_err(|_| Refusal::UnwrapFailed)?;
-        Ok(Response::Unwrapped(Zeroizing::new(key)))
+        let key = fstp_custody::key_box(&opened).map_err(|_| Refusal::UnwrapFailed)?;
+        Ok(Response::Unwrapped(key))
     }
 
     /// Destroys the root of `handle`, in the steps of ADR-004 part 2, and
@@ -893,7 +890,7 @@ mod tests {
             id: ID,
             root,
             aad: b"aad".to_vec(),
-            key: Zeroizing::new(key),
+            key: Box::new(Zeroizing::new(key)),
         })
     }
 
@@ -941,7 +938,7 @@ mod tests {
         );
         assert_eq!(
             unwrap(&mut s, r2, &w2),
-            Response::Unwrapped(Zeroizing::new([2; 32]))
+            Response::Unwrapped(Box::new(Zeroizing::new([2; 32])))
         );
         assert!(Server::open(&dir, &Passphrase::from_bytes(b"another").unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1037,7 +1034,7 @@ mod tests {
         assert_eq!(other_aad, Response::Refused(Refusal::UnwrapFailed));
         assert_eq!(
             unwrap(&mut s, a1, &w),
-            Response::Unwrapped(Zeroizing::new([9; 32]))
+            Response::Unwrapped(Box::new(Zeroizing::new([9; 32])))
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1327,7 +1324,7 @@ mod tests {
         };
         assert_eq!(
             unwrap(&mut s, live, &w),
-            Response::Unwrapped(Zeroizing::new([4; 32]))
+            Response::Unwrapped(Box::new(Zeroizing::new([4; 32])))
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1477,7 +1474,7 @@ mod review {
             id: ID,
             root: r1,
             aad: b"aad".to_vec(),
-            key: Zeroizing::new([1; 32]),
+            key: Box::new(Zeroizing::new([1; 32])),
         }) {
             Response::Wrapped(w) => w,
             other => panic!("wrap: {other:?}"),
@@ -1513,7 +1510,7 @@ mod review {
         });
         let _ = std::fs::remove_dir_all(&dir);
         match unwrapped {
-            Ok(r) => assert_eq!(r, Response::Unwrapped(Zeroizing::new([1; 32]))),
+            Ok(r) => assert_eq!(r, Response::Unwrapped(Box::new(Zeroizing::new([1; 32])))),
             Err(e) => panic!("a torn key table write lost every root: {e:?}"),
         }
     }

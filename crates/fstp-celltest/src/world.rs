@@ -2624,11 +2624,8 @@ impl fstp_custody::Custody for WorldCustody {
             .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
         let pt = fstp_crypto::aead::open(&k, &nonce, &aad.0, body)
             .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
-        let bytes: [u8; 32] = pt
-            .as_slice()
-            .try_into()
-            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
-        Ok(fstp_custody::SealKey::from_bytes(bytes))
+        fstp_custody::SealKey::from_slice(&pt)
+            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))
     }
 
     async fn destroy(

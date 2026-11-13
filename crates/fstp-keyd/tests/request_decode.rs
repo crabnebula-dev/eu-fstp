@@ -52,7 +52,7 @@ fn sample_request(g: &mut Gen) -> Result<KeydRequest, Fail> {
             id,
             root: root(g),
             aad: g.bytes(0..=64),
-            key: zeroize::Zeroizing::new(arr(g)),
+            key: Box::new(zeroize::Zeroizing::new(arr(g))),
         },
         2 => KeydRequest::Unwrap {
             id,
