@@ -113,7 +113,17 @@ Recorded at first use by lane m3/erase-cell, 2026-11-13. Interim, pending Daniel
 - **Two distinct staff.** Approvals count by staff member, never by session or credential. Two sessions or two passkeys of one person give one approval. The requester must hold one of the two approvals.
 - **Lifetime and use.** An approval lives 5 minutes from its assertion. A job that runs consumes every approval of its digest. A refused request consumes none.
 - **Log.** `fstp-control` logs every approval, every refused request, every custody call of the job and the run, each with the job digest and staff references. Interim: the log is held in memory, like operator tickets, until `cp.job` rows are written.
-- **`fstp-pgagent`.** The agent's own check against the pinned staff key set is not built. Destructive agent jobs keep refusing, so `DropCellDatabase`, `DropRoles` and `SetNoLogin` do not run yet.
+- **`fstp-pgagent`.** Superseded by the record of lane m3/erase-cell-2 below.
+
+Recorded at first use by lane m3/erase-cell-2, 2026-11-13. Interim, pending Daniel:
+
+- **Challenge, version 2.** The approval challenge is SHA-256 over `"fstp-cp-approval-v2"`, the job digest, the time the challenge was drawn as a big-endian `i64`, and 32 random octets. It replaces version 1, so the agent can bound an approval's age from the signed bytes alone.
+- **Evidence.** `fstp-control` keeps each approval's assertion, random octets and challenge time. An approved agent job carries both, the requester's first.
+- **Approved frame.** A destructive job travels as its own frame: version octet 2, the job frame with a 16-bit length, then two approvals. Each approval is the challenge time, the 32 random octets, and the credential id, authenticator data, client data JSON and signature, each with a 16-bit length. A plain job frame (version octet 1) of a destructive job is still refused. The decoder `pgagent_approved_job_decode` is fuzzed from its first commit.
+- **Pinned staff key set.** The agent configuration gains an optional member `approvals`: the agent's own cluster id, the control-plane host and the staff passkeys, in the control-plane staff form. Without it the agent refuses every destructive job.
+- **The agent's check.** The agent recomputes the job digest from its own cluster id and the job, then each challenge. Both assertions must verify with user verification against pinned passkeys of two distinct staff members. A challenge may be at most 60 seconds ahead of the agent's clock and at most 7 minutes old, the challenge lifetime plus the approval lifetime. Each challenge counts once. A refusal spends nothing.
+- **Limits of the check.** The agent keeps no sign counts, since one person's approvals of several jobs can arrive in any order. `fstp-control` keeps them. Spent challenges live in memory, so a restarted agent could run a job again within the 7 minutes. Every destructive job is idempotent, so that repeats the approved effect only.
+- **Destructive SQL.** `DropCellDatabase` is `DROP DATABASE IF EXISTS "<db>" WITH (FORCE)`, which ends the database's sessions first. `DropRoles` refuses while the database exists, then drops each planned role of that database that exists. `SetNoLogin` sets NOLOGIN, then ends the role's sessions through `pg_terminate_backend`. `WriteHba` after the drops leaves no line of the cell.
 
 ### Provisioning a cell in SaaS
 

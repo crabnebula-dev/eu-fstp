@@ -37,6 +37,8 @@ use fstp_custody::{
 
 use crate::ControlError;
 use crate::approval::{ApprovedJob, DestructiveJob, JobDigest};
+use crate::pg::CellDatabase;
+use crate::placement::ClusterId;
 
 /// The composite signature context of an erasure confirmation.
 pub const CONFIRMATION_CONTEXT: &[u8] = b"fstp-cell-erasure-v1";
@@ -46,6 +48,44 @@ const CONFIRMATION_MAGIC: &[u8; 4] = b"FCE1";
 
 /// The chains a cell erasure destroys (design section 3.7 step 1).
 pub const CELL_CHAINS: [Chain; 3] = [Chain::App, Chain::Vault, Chain::CellBackup];
+
+/// A finished step of a cell erasure, as the approval log records it
+/// (design section 3.7). It holds ids and counts only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErasureStep {
+    /// Step 1: every listed root and CA key of the cell is destroyed in
+    /// custody.
+    KeysDestroyed {
+        /// The number of keys destroyed.
+        count: u16,
+    },
+    /// Step 2: `fstp-pgagent` dropped one of the cell's databases.
+    DatabaseDropped {
+        /// The cluster.
+        cluster: ClusterId,
+        /// The database.
+        database: CellDatabase,
+    },
+    /// Step 2: `fstp-pgagent` dropped the roles of one of the cell's
+    /// databases.
+    RolesDropped {
+        /// The cluster.
+        cluster: ClusterId,
+        /// The database.
+        database: CellDatabase,
+    },
+    /// Step 2: `fstp-pgagent` rewrote the cluster's `pg_hba.conf`, which
+    /// no longer holds a line of the cell.
+    HbaRewritten {
+        /// The cluster.
+        cluster: ClusterId,
+    },
+    /// Step 3: the edge removed every route of the cell.
+    RoutesRemoved {
+        /// The number of routes removed.
+        count: u16,
+    },
+}
 
 /// Destroys a CA sign key in custody (ADR-004 "CA keys in custody").
 /// Kept apart from the six operations of the `Custody` trait (I-80).

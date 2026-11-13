@@ -42,7 +42,10 @@ use fstp_webauthn::{AssertionExpect, AssertionResponse, CoseKey, RelyingParty, S
 
 use crate::ControlError;
 use crate::api::CpApiRequest;
-use crate::approval::{ApprovalBook, ApprovedJob, DestructiveJob, JobDigest, job_digest};
+use crate::approval::{
+    ApprovalBook, ApprovalEvidence, ApprovedJob, DestructiveJob, approval_challenge, job_digest,
+};
+use crate::erase::ErasureStep;
 
 /// How long a challenge may be answered, in seconds. Interim.
 pub const CHALLENGE_LIFETIME_SECS: i64 = 120;
@@ -134,18 +137,7 @@ struct PendingApproval {
     session: [u8; 32],
     job: DestructiveJob,
     issued_at: i64,
-}
-
-/// The domain label of an approval challenge.
-const APPROVAL_LABEL: &[u8] = b"fstp-cp-approval-v1";
-
-/// The challenge of an approval: SHA-256 over the label, the job digest
-/// and 32 random octets, so the assertion over it binds the job.
-fn approval_challenge(digest: JobDigest, nonce: &[u8; 32]) -> [u8; 32] {
-    let mut m = APPROVAL_LABEL.to_vec();
-    m.extend_from_slice(&digest.0);
-    m.extend_from_slice(nonce);
-    fstp_crypto::sha256(&m)
+    nonce: [u8; 32],
 }
 
 /// The operator login state of one `fstp-control` process.
@@ -403,13 +395,14 @@ impl OperatorLogin {
         }
         let nonce: [u8; 32] =
             fstp_crypto::random_array().map_err(|_| refuse(OperatorRefusal::Random))?;
-        let challenge = approval_challenge(job_digest(job), &nonce);
+        let challenge = approval_challenge(job_digest(job), now, &nonce);
         self.approvals.insert(
             challenge,
             PendingApproval {
                 session: session.0,
                 job: job.clone(),
                 issued_at: now,
+                nonce,
             },
         );
         Ok(challenge)
@@ -446,7 +439,13 @@ impl OperatorLogin {
         if staff != owner {
             return Err(refuse(OperatorRefusal::OtherStaff));
         }
-        self.book.approve(staff, &pending.job, now)?;
+        let evidence = ApprovalEvidence {
+            issued_at: pending.issued_at,
+            nonce: pending.nonce,
+            assertion: assertion.clone(),
+        };
+        self.book
+            .approve_with_evidence(staff, &pending.job, now, evidence)?;
         Ok(staff)
     }
 
@@ -473,6 +472,12 @@ impl OperatorLogin {
     /// (ADR-004 "Reconciliation").
     pub fn log_custody_call(&mut self, job: &ApprovedJob, request: [u8; 16], now: i64) {
         self.book.log_custody_call(job, request, now);
+    }
+
+    /// Logs a finished step of an admitted cell erasure (design section
+    /// 3.7).
+    pub fn log_step(&mut self, job: &ApprovedJob, step: ErasureStep, now: i64) {
+        self.book.log_step(job, step, now);
     }
 
     /// The approval log, oldest first.
