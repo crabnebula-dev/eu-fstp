@@ -15,6 +15,9 @@
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
+#   e2e-demo     the demo Playwright project against fstp-e2e-cell, on the
+#                pinned Node.js and Chrome Headless Shell (ADR-003). Not a
+#                part of the test matrix, so test-gate never judges it
 #   sbom         the CycloneDX 1.6 SBOM from deps-check, written twice and
 #                compared byte for byte (R-NF-07, ADR-003)
 #
@@ -470,6 +473,105 @@ jobs:
           rustup toolchain install --no-self-update || rustup show
       - name: web/src/gen/api.ts matches the operation registry
         run: cargo run --locked -p gen-ts -- --check
+
+  # Daniel, 2026-11-13 (M3 exit audit section 7, item 26): the demo
+  # Playwright project runs as a job of its own. It is not a part of the
+  # test matrix, so test-gate never judges it. It builds the demo cell
+  # (fstp-e2e-cell), starts it with passkeys only, as the e2e suite runs
+  # it, runs the specs of project demo, and stops the cell.
+  e2e-demo:
+    name: e2e (Playwright, demo)
+    needs: deps-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # ADR-003 record, as in the web job.
+      NODE_VERSION: "24.11.1"
+      NPM_VERSION: "11.6.2"
+      NODE_SHA256: "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8"
+      # ADR-003 record, Playwright browsers: Chrome Headless Shell
+      # 156.0.8078.4 (Playwright 1.64.1, chromium-headless-shell revision
+      # 1248), the archive for linux64 and its SHA-256.
+      PW_HEADLESS_SHELL_VERSION: "156.0.8078.4"
+      PW_HEADLESS_SHELL_REVISION: "1248"
+      PW_HEADLESS_SHELL_SHA256: "c3e50596aef52c58f8fda3c6b3411c33d34c88b177b3ed1c2243359fd3b8ba20"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Check out with plain git
+        env:
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$JOB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init -q "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format='checked out %H %s'
+      - name: Install the pinned Node.js and check its SHA-256 (ADR-003)
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/node.tar.xz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$archive" \
+            "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"
+          echo "$NODE_SHA256  $archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/node"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/node" --strip-components=1
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+      - name: Node.js and npm are the recorded versions
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(npm --version)" = "$NPM_VERSION"
+      - name: npm ci --ignore-scripts in web/ and e2e/
+        run: |
+          set -euo pipefail
+          (cd web && npm ci --ignore-scripts --no-audit --no-fund)
+          (cd e2e && npm ci --ignore-scripts --no-audit --no-fund)
+      # ADR-003: Playwright browsers are fetched by a controlled CI step,
+      # never during npm ci, and checked against the recorded SHA-256.
+      # The layout is the one Playwright's own installer writes.
+      - name: Fetch the pinned Chrome Headless Shell and check its SHA-256 (ADR-003)
+        run: |
+          set -euo pipefail
+          browsers="$RUNNER_TEMP/ms-playwright"
+          dir="$browsers/chromium_headless_shell-$PW_HEADLESS_SHELL_REVISION"
+          archive="$RUNNER_TEMP/chrome-headless-shell-linux64.zip"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$archive" \
+            "https://cdn.playwright.dev/builds/cft/$PW_HEADLESS_SHELL_VERSION/linux64/chrome-headless-shell-linux64.zip"
+          echo "$PW_HEADLESS_SHELL_SHA256  $archive" | sha256sum -c -
+          mkdir -p "$dir"
+          unzip -q "$archive" -d "$dir"
+          rm -f "$archive"
+          test -x "$dir/chrome-headless-shell-linux64/chrome-headless-shell"
+          touch "$dir/INSTALLATION_COMPLETE"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$browsers" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1" >> "$GITHUB_ENV"
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          rustup toolchain install --no-self-update || rustup show
+          rustc --version
+          cargo --version
+      - name: Build and start the demo cell with passkeys only
+        env:
+          FSTP_DEMO_SIGNIN: "off"
+        run: |
+          set -euo pipefail
+          echo "FSTP_DEMO_STATE=$RUNNER_TEMP/demo" >> "$GITHUB_ENV"
+          FSTP_DEMO_STATE="$RUNNER_TEMP/demo" tools/demo/run.sh start
+      - name: Playwright, project demo
+        run: tools/demo/run.sh e2e --workers=1
+      - name: Stop the demo cell
+        if: always()
+        run: |
+          tools/demo/run.sh stop || true
+          if [ -f "$FSTP_DEMO_STATE/cell.log" ]; then tail -n 200 "$FSTP_DEMO_STATE/cell.log"; fi
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
