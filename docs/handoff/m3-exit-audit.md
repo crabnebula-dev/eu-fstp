@@ -6,25 +6,39 @@ The exit criteria: I-16 to I-20, I-24, I-38, I-39 and I-77 to I-83 green; isolat
 
 ## 1. Summary
 
+Updated late on 2026-11-13, after the decision lanes of section 7 merged. Local targeted runs only; CI has not yet judged this state.
+
 | Criterion | State on `main` | What remains |
 | --- | --- | --- |
 | I-16 | Green | None |
 | I-17 | Green | None |
 | I-18 | Green | None |
 | I-19 | Green | None |
-| I-20 | Red: `t_iso_i20_no_shared_identifier_across_tenants` | Daniel: Q-ISO below |
-| I-24 | Red: three tests | Daniel: Q-KEYOP and Q-SIM. One set-up seam |
-| I-38 | Red: three self-hosted tests | Build: licence and update tasks in the cell, a CrabNebula stand-in, self-hosted seed steps |
-| I-39 | Red: `i39_cycle_completes_with_services_down` | Build: services-down and restart steps |
-| I-77 | Red: one test, 242 of 256 cases pass | Fix in the test's cookie bookkeeping (Q-I77) |
+| I-20 | Green (vault-change ids keyed per cell, item 4) | None |
+| I-24 | Red: `i24_erasure_entries_are_chained` | Build: the production store and anchorer behind `prod_store_batch` (STORE_SEAM). A lane is on it |
+| I-38 | Green (licence and update tasks, CrabNebula stand-in) | None |
+| I-39 | Green | None |
+| I-77 | Green (item 6) | None |
 | I-78 | Green | None |
 | I-79 | Red: `i79_non_receiving_never_recovered_by_email_alone` | Daniel: Q-I79 |
-| I-80 | Green on macOS; the two Linux memory scans fail in CI | Daniel: Q-SIM (process mode needs a wrapping custody simulator) |
+| I-80 | Green on macOS. The two Linux memory scans now get a PID through process mode; first real run is in CI | Confirm in CI |
 | I-81 | Green | None |
 | I-82 | Green | None |
 | I-83 | Green | None |
-| Isolation | Green except `t_iso_i20` | As I-20 |
+| Isolation | Green | Confirm in CI (part `isolation-multi-cell`) |
 | Hosting provider | Met: OVHcloud is named in ADR-005 | Verify items V1 to V11 stay open for the R-HS-01 claim (L-15) |
+
+Other M3 tests still red: `r_nf_08_aborted_append_never_reuses_a_nonce` (the vault sealed-value layout needs an ADR record), `sod_08_break_glass` (item 12), `adr007_erased_textref` (item 13), `seam_async` (item 15 was not enough, see section 8), `r_nf_08_no_api_takes_a_caller_nonce` (unlisted, see section 8).
+
+## 8. Open after the second round
+
+- `r_nf_08_no_api_takes_a_caller_nonce` fails on `fstp_control::approval::approval_challenge(digest, issued_at, nonce)`, from the two-operator check. The nonce is part of a passkey challenge hash and seals nothing. Recommendation: an entry in the scan's `NOT_SEALS` list with that reason. That widens an invariant test's list, so it waits on Daniel. It is not on the known-red list, so CI stays red until then.
+- `seam_async`: leaving out vault digests and epochs is not enough. The cell's creator-path set-up and its extra vault answers also differ from the engine's. Recommendation: compare the set-up apart and split off the extra vault answers, as the M2-over-HTTP lockstep does.
+- Process mode runs every cell and vault in one `fstp-world-host` process, not separate binaries. Separate binaries need `fstp_cell::run` to accept a full configuration.
+- The S(e) memory scan covers the App and Vault chains only, not CellBackup.
+- Devstack browser specs: 8 of 22 pass. The rest wait on the `/test/scenario/negotiation` control route, a login policy command (P-70 is a start option only), the creator-path programme set-up in the spec, and the AddPasskey step-up digest.
+- The `devstack` CI part compiles the auth pages with Node before `cargo test`. ADR-003 says `cargo test` never needs Node.
+- Cell erasure: keyd holds no sign keys yet; each erasure takes five approvals per operator; route removal reaches only an edge in the same process; the object-storage prefix and witness credentials are not deleted.
 
 ## 2. Where the tests run
 
