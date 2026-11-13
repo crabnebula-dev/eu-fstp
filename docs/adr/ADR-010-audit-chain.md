@@ -235,6 +235,9 @@ A batch of entries shares one prepare. Steps 1 to 6 can abort. The vault follows
 - It reaches the witness over its `VaultDestination::Witness` connection (boundary rule B4a).
 - The cell never anchors the vault's chain, and the vault never anchors the cell's.
 - `i24_vault_chain_anchored_by_the_vault_only` checks both directions.
+- Coverage (open point 5, Daniel, 2026-11-13): each committed fact batch and each identity release or read is a kind 1 row. A KeyOp stays a kind 2 event.
+- Interim, pending Daniel: one vault call whose journal is not empty is one entry and one kind 1 row. The vault has no ledger, so the row carries its entry itself: `entry_seq`, a random `entry_command`, `entry_schema` (1 fact batch, 2 release, 3 read) and a sealed `body`. The body holds the SHA-256 digest of each row the call wrote. The stored hash is the kind 1 hash above over that entry, with `key_ix` 0. Vault migration 7 adds these columns.
+- Interim, pending Daniel: the vault has no alert store. A prepare whose row is missing after an unknown COMMIT outcome is recorded as `InDoubtAbsent`, and the vault then refuses to start. That refusal is its `PossibleDeletion`.
 
 ### Custody reconciliation
 

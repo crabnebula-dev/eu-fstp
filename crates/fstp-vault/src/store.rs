@@ -170,6 +170,41 @@ pub async fn persist<R: Runtime>(
         return Ok(());
     }
     let mut tx = client.transaction().await.map_err(db)?;
+    persist_in(&mut tx, sealer, entries).await?;
+    tx.commit().await.map_err(db)
+}
+
+/// The digest of one stored row: SHA-256 over each stored column value,
+/// each with its 4-byte big-endian length, after the table name. Sealed
+/// values enter as their stored bytes, so the digest needs no key.
+fn row_digest(table: &[u8], columns: &[&[u8]]) -> [u8; 32] {
+    let mut h = fstp_crypto::Sha256::new();
+    for part in std::iter::once(table).chain(columns.iter().copied()) {
+        let len = u32::try_from(part.len()).unwrap_or(u32::MAX);
+        h.update(&len.to_be_bytes());
+        h.update(part);
+    }
+    h.finish()
+}
+
+/// Writes `entries` inside the open transaction `tx`, and returns the
+/// digest of each row it inserted or changed, in order. The vault chain
+/// writer binds these digests in the entry of its kind 1 row
+/// (`crate::chain`, ADR-010 open point 5).
+///
+/// # Errors
+///
+/// As [`persist`]. The caller rolls the transaction back.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per journal entry, as the tables list them"
+)]
+pub async fn persist_in<R: Runtime>(
+    tx: &mut fstp_pgwire::Transaction<'_, R>,
+    sealer: &dyn Sealer,
+    entries: &[JournalEntry],
+) -> Result<Vec<[u8; 32]>, VaultError> {
+    let mut digests = Vec::with_capacity(entries.len());
     for e in entries {
         match e {
             JournalEntry::Written {
@@ -208,6 +243,10 @@ pub async fn persist<R: Runtime>(
                 )
                 .await
                 .map_err(db)?;
+                digests.push(row_digest(
+                    b"vault.fact",
+                    &[&key, &sealed_affected.bytes, &body.dek, &body.bytes],
+                ));
             }
             JournalEntry::Acked {
                 epoch,
@@ -232,6 +271,10 @@ pub async fn persist<R: Runtime>(
                 if n != 1 {
                     return Err(VaultError::Unavailable(DB));
                 }
+                digests.push(row_digest(
+                    b"vault.epoch",
+                    &[&key, &seq.to_be_bytes(), &sealed_affected.bytes],
+                ));
             }
             JournalEntry::TicketUsed { nonce, at } => {
                 let r = tx
@@ -247,6 +290,10 @@ pub async fn persist<R: Runtime>(
                         VaultError::Unavailable(DB)
                     });
                 }
+                digests.push(row_digest(
+                    b"vault.ticket_used",
+                    &[nonce, &at.to_be_bytes()],
+                ));
             }
             JournalEntry::NegotiationOpened {
                 proposal,
@@ -269,6 +316,10 @@ pub async fn persist<R: Runtime>(
                 if n != 1 {
                     return Err(VaultError::Unavailable(DB));
                 }
+                digests.push(row_digest(
+                    b"vault.negotiation",
+                    &[&proposal.0.to_be_bytes(), &sealed.bytes, &seq.to_be_bytes()],
+                ));
             }
             JournalEntry::NegotiationClosed { proposal, seq } => {
                 // A close with no open row still records its sequence, so a
@@ -287,6 +338,10 @@ pub async fn persist<R: Runtime>(
                 if n != 1 {
                     return Err(VaultError::Unavailable(DB));
                 }
+                digests.push(row_digest(
+                    b"vault.negotiation.closed",
+                    &[&proposal.0.to_be_bytes(), &seq.to_be_bytes()],
+                ));
             }
             JournalEntry::Asked {
                 at,
@@ -301,6 +356,15 @@ pub async fn persist<R: Runtime>(
                 )
                 .await
                 .map_err(db)?;
+                digests.push(row_digest(
+                    b"vault.query_log",
+                    &[
+                        &at.to_be_bytes(),
+                        &digest,
+                        &[u8::from(*holds)],
+                        &epoch.to_be_bytes(),
+                    ],
+                ));
             }
             JournalEntry::P17Set {
                 programme,
@@ -312,6 +376,10 @@ pub async fn persist<R: Runtime>(
                 )
                 .await
                 .map_err(db)?;
+                digests.push(row_digest(
+                    b"vault.country_condition",
+                    &[&programme.0.to_be_bytes(), &countries_bytes(countries)?],
+                ));
             }
             JournalEntry::IdentityAssigned {
                 identity,
@@ -323,6 +391,10 @@ pub async fn persist<R: Runtime>(
                 )
                 .await
                 .map_err(db)?;
+                digests.push(row_digest(
+                    b"vault.identity",
+                    &[&identity.0.to_be_bytes(), match_key],
+                ));
             }
             JournalEntry::AccountVerified {
                 account,
@@ -335,10 +407,18 @@ pub async fn persist<R: Runtime>(
                 )
                 .await
                 .map_err(db)?;
+                digests.push(row_digest(
+                    b"vault.account",
+                    &[
+                        &account.0.to_be_bytes(),
+                        &identity.0.to_be_bytes(),
+                        &epoch.to_be_bytes(),
+                    ],
+                ));
             }
         }
     }
-    tx.commit().await.map_err(db)
+    Ok(digests)
 }
 
 /// Rebuilds the vault of `cell` from its database, with the pinned ticket

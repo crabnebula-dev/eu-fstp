@@ -173,6 +173,9 @@ fn serve_over(
         origin_host: "id.i83.cell.fstp.localhost".to_owned(),
         internal_listen: loopback,
         origin_listen: loopback,
+        // No chain writer: these tests start the vault only (ADR-010 open
+        // point 5, Q-C, lane F-VCHAIN).
+        chain: None,
     };
     let handle = block_on(serve(rt().clone(), parts))?;
     block_on(handle.shutdown(Duration::from_secs(10)))

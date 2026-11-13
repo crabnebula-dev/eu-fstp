@@ -1009,6 +1009,7 @@ dependencies = [
  "fstp-obs",
  "fstp-pgtest",
  "fstp-pgwire",
+ "fstp-pki",
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",

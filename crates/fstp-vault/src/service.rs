@@ -24,14 +24,15 @@
 //! Every call runs on a copy of the vault. The call's journal is what the
 //! database must record before the vault answers (`crate::origin`).
 //!
-//! Reading of lane int5, reported to Daniel and the lead: ADR-010 says the
-//! vault follows the prepare, receipt and commit steps for its own chain,
-//! and open point 5 leaves open which vault rows become chain rows. The
-//! vault chain writer is not built. So a call whose journal is not empty
-//! is refused with 503, and the copy is dropped: nothing is persisted that
-//! the vault chain would have to witness. Calls with an empty journal,
-//! such as the epoch read, are answered. No vault fact, query log row or
-//! acknowledgement is stored until the vault chain records them.
+//! Daniel decided ADR-010 open point 5 on 2026-11-13 (m3-finish Q-C):
+//! each committed fact batch and each identity release or read is a kind
+//! 1 row of the vault chain. A call whose journal is not empty commits its
+//! rows, its one kind 1 row and its anchor in one transaction, after the
+//! witness receipted the row's link (`crate::chain`, lane F-VCHAIN). Only
+//! then is it answered and the copy kept. Without a chain writer
+//! ([`VaultParts::chain`] is `None`), or when the witness or the database
+//! fails, such a call is refused with 503 and the copy is dropped. Calls
+//! with an empty journal, such as the epoch read, are always answered.
 //!
 //! The caller hands in no claim about its database server. It hands in
 //! the registration set ([`VaultParts::registered_servers`]): each
@@ -63,6 +64,8 @@ use fstp_tls::TlsStream;
 use fstp_witness::lock::AsyncMutex;
 
 use crate::VaultError;
+use crate::chain::{VaultChain, VaultChainParts};
+use crate::origin::JournalEntry;
 use crate::origin::{INTERNAL_ROUTES, Vault};
 use crate::start::{ClusterRole, DatabaseView, accepts_database, placement_marker};
 use crate::store::{Sealer, load};
@@ -242,6 +245,11 @@ pub struct VaultParts {
     pub internal_listen: SocketAddr,
     /// Where the tunnel listener binds.
     pub origin_listen: SocketAddr,
+    /// The vault chain writer: the Vault chain's anchor key and the
+    /// witness (ADR-010, open point 5). `None` runs no writer, so every
+    /// call that would write is refused with 503 and reads are served
+    /// (ADR-010 "Witness unavailable").
+    pub chain: Option<VaultChainParts>,
 }
 
 impl std::fmt::Debug for VaultParts {
@@ -252,10 +260,55 @@ impl std::fmt::Debug for VaultParts {
     }
 }
 
-/// The vault under its async lock.
-#[derive(Default)]
-struct Held {
+/// The vault under its async lock, with its store when the chain writer
+/// runs.
+struct Held<R: Runtime> {
     vault: Vault,
+    store: Option<Persist<R>>,
+}
+
+impl<R: Runtime> Default for Held<R> {
+    fn default() -> Self {
+        Held {
+            vault: Vault::default(),
+            store: None,
+        }
+    }
+}
+
+/// What persists a call: the database login, its connection once open,
+/// the sealer and the vault chain writer (`crate::chain`).
+struct Persist<R: Runtime> {
+    rt: R,
+    db: fstp_pgwire::Config,
+    client: Option<Client<R>>,
+    sealer: Arc<dyn Sealer>,
+    chain: VaultChain<R>,
+}
+
+impl<R: Runtime> Persist<R> {
+    /// Commits `journal` with its chain row, anchored at the witness. A
+    /// failed database connection is dropped, and the next call opens
+    /// another, with the same I-83 server check.
+    async fn commit(&mut self, journal: &[JournalEntry], now: i64) -> Result<(), VaultError> {
+        if self.client.is_none() {
+            let c = Client::connect(&self.rt, &self.db)
+                .await
+                .map_err(|_| VaultError::Unavailable("the vault database"))?;
+            self.client = Some(c);
+        }
+        let Some(client) = self.client.as_mut() else {
+            return Err(VaultError::Unavailable("the vault database"));
+        };
+        let done = self
+            .chain
+            .commit(client, self.sealer.as_ref(), journal, now)
+            .await;
+        if matches!(done, Err(VaultError::Unavailable(_))) {
+            self.client = None;
+        }
+        done
+    }
 }
 
 /// One call's result.
@@ -265,8 +318,8 @@ struct Answer {
     body: Vec<u8>,
 }
 
-struct Shared {
-    held: AsyncMutex<Held>,
+struct Shared<R: Runtime> {
+    held: AsyncMutex<Held<R>>,
 }
 
 fn now_us() -> i64 {
@@ -277,14 +330,27 @@ fn now_us() -> i64 {
         .unwrap_or(0)
 }
 
-impl Shared {
-    /// Runs `call` on a copy of the vault, and keeps the copy only when its
-    /// journal is empty (module documentation).
-    async fn run(&self, call: impl FnOnce(&mut Vault) -> Answer) -> Answer {
+impl<R: Runtime> Shared<R> {
+    /// Runs `call` on a copy of the vault at `now`. A call with an empty
+    /// journal keeps the copy and is answered. A call with a journal is
+    /// answered only once its rows, its kind 1 chain row and its anchor
+    /// committed (`crate::chain`). Without a chain writer, or when the
+    /// witness or the database fails, it is refused with 503 and the copy
+    /// is dropped, so memory never runs ahead of the database.
+    async fn run(&self, now: i64, call: impl FnOnce(&mut Vault) -> Answer) -> Answer {
         let mut held = self.held.lock().await;
         let mut next = held.vault.clone();
         let answer = call(&mut next);
-        if !next.take_journal().is_empty() {
+        let journal = next.take_journal();
+        if journal.is_empty() {
+            held.vault = next;
+            return answer;
+        }
+        let committed = match held.store.as_mut() {
+            Some(p) => p.commit(&journal, now).await.is_ok(),
+            None => false,
+        };
+        if !committed {
             return Answer {
                 status: 503,
                 headers: vec![("content-type", "text/plain; charset=utf-8".to_owned())],
@@ -308,9 +374,9 @@ fn response(a: Answer) -> fstp_http::Response {
 }
 
 /// The internal listener's handler.
-struct Internal(Arc<Shared>);
+struct Internal<R: Runtime>(Arc<Shared<R>>);
 
-impl fstp_http::Handler for Internal {
+impl<R: Runtime> fstp_http::Handler for Internal<R> {
     async fn handle(&self, req: fstp_http::Request) -> fstp_http::Response {
         let path = req.target.path().to_owned();
         let known = INTERNAL_ROUTES.iter().any(|r| r.path == path);
@@ -336,7 +402,7 @@ impl fstp_http::Handler for Internal {
         let body = req.body;
         let a = self
             .0
-            .run(|v| Answer {
+            .run(now, |v| Answer {
                 status: 200,
                 headers: vec![("content-type", "application/json".to_owned())],
                 body: v.internal_bytes(&body, now),
@@ -347,9 +413,9 @@ impl fstp_http::Handler for Internal {
 }
 
 /// The vault origin's handler.
-struct Origin(Arc<Shared>);
+struct Origin<R: Runtime>(Arc<Shared<R>>);
 
-impl fstp_http::Handler for Origin {
+impl<R: Runtime> fstp_http::Handler for Origin<R> {
     async fn handle(&self, req: fstp_http::Request) -> fstp_http::Response {
         let now = now_us();
         let method = req.method.as_str().to_owned();
@@ -357,7 +423,7 @@ impl fstp_http::Handler for Origin {
         let body = req.body;
         let a = self
             .0
-            .run(|v| {
+            .run(now, |v| {
                 let r = v.origin(&method, &path, &body, now);
                 Answer {
                     status: r.status,
@@ -616,6 +682,7 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
         origin_host,
         internal_listen,
         origin_listen,
+        chain,
     } = parts;
     // The server check runs on this connection and on any cancel
     // connection before anything passes the TLS handshake (I-83).
@@ -629,8 +696,20 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
     })?;
     check_database(&mut client, &registered_servers).await?;
     let vault = load(&mut client, sealer.as_ref(), cell, &ticket_keys).await?;
+    // ADR-010 "Start-up": the vault verifies its chain against the
+    // witness before it serves.
+    let store = match chain {
+        Some(parts) => Some(Persist {
+            rt: rt.clone(),
+            chain: VaultChain::open(rt.clone(), cell, parts, &mut client).await?,
+            db,
+            client: Some(client),
+            sealer,
+        }),
+        None => None,
+    };
     let shared = Arc::new(Shared {
-        held: AsyncMutex::new(Held { vault }),
+        held: AsyncMutex::new(Held { vault, store }),
     });
     let internal_tcp = rt
         .bind_tcp(internal_listen)

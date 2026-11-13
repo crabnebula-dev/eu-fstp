@@ -2345,7 +2345,18 @@ fn start_cell(
     let cell_ca = pki::Ca::new(&format!("cell CA {}", hex.get(..12).unwrap_or("")))?;
     let anchor = fstp_crypto::composite::generate().map_err(|e| fail("the anchor key", &e))?;
     let anchor_public = anchor.public_key().to_bytes().to_vec();
-    let registration = [(fstp_audit::ChainId::App, anchor_public)];
+    // The vault anchors its own chain under its own key (ADR-010 "The
+    // vault chain is anchored by the vault only"), so the witness pins
+    // both chains' anchor keys.
+    let vault_anchor =
+        fstp_crypto::composite::generate().map_err(|e| fail("the vault anchor key", &e))?;
+    let registration = [
+        (fstp_audit::ChainId::App, anchor_public),
+        (
+            fstp_audit::ChainId::Vault,
+            vault_anchor.public_key().to_bytes().to_vec(),
+        ),
+    ];
     let witness = if spec.self_hosted {
         // A self-hosted install starts its own local witness over a file
         // store and registers the cell CA with it (ADR-010 "Self-hosted
@@ -2420,6 +2431,28 @@ fn start_cell(
         .issue(CertKind::Server, &vault_host, None, &[&vault_host], &[])?;
     let ticket =
         fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the ticket key", &e))?;
+    let vault_witness = cell_ca.issue(
+        CertKind::Client,
+        "vault-witness",
+        Some(fstp_witness::peer::OU_VAULT_WITNESS),
+        &[],
+        &[],
+    )?;
+    let vault_chain = fstp_vault::chain::VaultChainParts {
+        anchor_key: vault_anchor,
+        witness: fstp_vault::chain::VaultWitness {
+            addr: witness.handle.local_addr(),
+            server_name: witness.name.clone(),
+            tls: fstp_tls::ClientConfig::mutual(
+                &witness.ca_pem,
+                &vault_witness.cert_pem,
+                &vault_witness.key_pem,
+            )
+            .map_err(tls_err("the vault witness TLS"))?,
+            ca_digest: witness.ca_digest,
+        },
+        witness_keys: vec![witness.handle.receipt_public_key()],
+    };
     let sealer = fstp_vault::service::AeadSealer::new(
         fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?,
         fstp_crypto::aead::Key::generate().map_err(|e| fail("the vault data key", &e))?,
@@ -2464,6 +2497,7 @@ fn start_cell(
                 origin_host: vault_host.clone(),
                 internal_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
                 origin_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+                chain: Some(vault_chain),
             },
         ))
         .map_err(|e| fail("the vault", &e))?;
