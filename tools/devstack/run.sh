@@ -5,6 +5,17 @@
 # 11.2). Local development only.
 #
 # Usage: tools/devstack/run.sh
+#        tools/devstack/run.sh e2e [playwright args...]
+#
+# `e2e` runs the M3 browser specs (Playwright project `devstack`, the
+# root specs of e2e/) against `fstp-devstack e2e`: two cells on
+# https://a.fstp.localhost and https://b.fstp.localhost. Chromium reaches
+# the edge port through the manifest's resolver rule and pins the origin
+# CA's key, so neither port 443 nor a trusted CA is needed. The stack
+# stops when the specs end. FSTP_DEVSTACK_PORT (default 8660) is the edge
+# port, and the two control bases listen on the next two ports.
+# FSTP_DEVSTACK_STATE (default target/devstack-e2e) holds the manifest
+# and the stack log.
 #
 # The pages of web/src are compiled by the pinned tsc that
 # web/node_modules already holds (ADR-003). This script never runs
@@ -61,6 +72,28 @@ fi
 
 cd "$root"
 cargo build --locked -p fstp-celltest --bin fstp-devstack
+
+if [ "${1:-}" = "e2e" ]; then
+  shift
+  port="${FSTP_DEVSTACK_PORT:-8660}"
+  state="${FSTP_DEVSTACK_STATE:-$root/target/devstack-e2e}"
+  mkdir -p "$state"
+  rm -f "$state/stack.json"
+  FSTP_EDGE_PORT="$port" "$target/debug/fstp-devstack" e2e \
+    --manifest-out "$state/stack.json" --control-port "$((port + 1))" \
+    >"$state/stack.log" 2>&1 &
+  pid=$!
+  trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+  for _ in $(seq 1 600); do
+    [ -s "$state/stack.json" ] && break
+    kill -0 "$pid" 2>/dev/null || { echo "run.sh: fstp-devstack e2e stopped, see $state/stack.log" >&2; exit 1; }
+    sleep 0.2
+  done
+  [ -s "$state/stack.json" ] || { echo "run.sh: fstp-devstack e2e wrote no manifest" >&2; exit 1; }
+  cd "$root/e2e"
+  FSTP_E2E_STACK="$state/stack.json" node_modules/.bin/playwright test --project=devstack "$@"
+  exit $?
+fi
 
 # exec, so that SIGTERM reaches the stack itself.
 exec "$target/debug/fstp-devstack"

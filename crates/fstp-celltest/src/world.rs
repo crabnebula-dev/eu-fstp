@@ -231,6 +231,19 @@ pub struct CellUrls {
     pub health: String,
 }
 
+/// What `fstp-devstack e2e` fixes of one world cell
+/// ([`World::start_with_dev_cells`]). Local development only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DevCell {
+    /// The tenant host. The same host across world starts keeps a
+    /// browser's origins, and so its manifest, valid.
+    pub host: String,
+    /// The instant the cell's clock shows at its start, in UTC
+    /// microseconds. A browser drops a cookie whose expiry lies before
+    /// its own clock, so a browser stack starts near the wall clock.
+    pub clock_start: i64,
+}
+
 /// The instant a world cell's clock shows until a test sets it, in UTC
 /// microseconds: one microsecond after the Unix epoch, before every
 /// model's first instant (`fstp_domain_testkit::r#gen::roster::T0` is one
@@ -816,6 +829,23 @@ impl World {
         spec: WorldSpec,
         pages: Option<fstp_cell::http::pages::Pages>,
     ) -> Result<World, WorldError> {
+        World::start_with_dev_cells(spec, pages, &[])
+    }
+
+    /// [`World::start_with_pages`] with the host and the clock start of
+    /// each cell fixed by `dev`, cell `i` by `dev[i]`. A cell past the end
+    /// of `dev` gets a host from its id and the clock of [`WorldClock`].
+    /// `fstp-devstack e2e` starts its world this way, so a browser keeps
+    /// its origins when the stack starts the world again ([`DevCell`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`].
+    pub fn start_with_dev_cells(
+        spec: WorldSpec,
+        pages: Option<fstp_cell::http::pages::Pages>,
+        dev: &[DevCell],
+    ) -> Result<World, WorldError> {
         let mut plans = Vec::with_capacity(usize::from(spec.cells));
         for _ in 0..spec.cells {
             plans.push(cell_plan()?);
@@ -831,7 +861,7 @@ impl World {
             for cluster in clusters.iter().filter(|c| is_agent_kind(c.kind())) {
                 prepare_cluster(cluster)?;
             }
-            match start_cells(&spec, &clusters, &plans, pages.as_ref(), &egress) {
+            match start_cells(&spec, &clusters, &plans, pages.as_ref(), &egress, dev) {
                 Ok(started) => cells = started,
                 Err(e) => {
                     remember_failed(&spec, &clusters, &plans);
@@ -1080,6 +1110,19 @@ impl World {
     /// Fails when the world runs no cell.
     pub fn origin_ca_pem(&self) -> Result<Vec<u8>, WorldError> {
         Ok(self.services()?.origin.pem.clone())
+    }
+
+    /// The SHA-256 digest of the SubjectPublicKeyInfo of the origin CA
+    /// ([`World::origin_ca_pem`]). The cells of
+    /// [`World::start_with_dev_cells`] serve the CA in their origin
+    /// chains, so Chromium's `--ignore-certificate-errors-spki-list`
+    /// with this digest reaches them, and keeps it across world starts.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the world runs no cell.
+    pub fn origin_ca_spki_digest(&self) -> Result<[u8; 32], WorldError> {
+        Ok(self.services()?.origin.spki_digest)
     }
 
     /// Where the world's edge listens on loopback.
@@ -1498,6 +1541,16 @@ fn with_foreign_lines(rendered: &str, current: &str) -> String {
     out
 }
 
+/// What a world cell serves on its origin and what `fstp-devstack e2e`
+/// fixes of it ([`start_cell`]).
+#[derive(Clone, Copy)]
+struct CellServe<'a> {
+    /// The compiled auth pages, if any.
+    pages: Option<&'a fstp_cell::http::pages::Pages>,
+    /// The fixed host and clock start, if any.
+    dev: Option<&'a DevCell>,
+}
+
 /// Provisions every cell of `plans`, then the service databases, then
 /// starts each cell over its databases ([`World::start`]).
 fn start_cells(
@@ -1506,6 +1559,7 @@ fn start_cells(
     plans: &[RolePlan],
     pages: Option<&fstp_cell::http::pages::Pages>,
     egress: &EgressLog,
+    dev: &[DevCell],
 ) -> Result<Vec<CellHandle>, WorldError> {
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -1523,7 +1577,10 @@ fn start_cells(
             index(i)?,
             plan,
             logins,
-            pages,
+            CellServe {
+                pages,
+                dev: dev.get(i),
+            },
             egress,
         )?);
     }
@@ -2760,9 +2817,10 @@ fn start_cell(
     index: u8,
     plan: &RolePlan,
     logins: CellLogins,
-    pages: Option<&fstp_cell::http::pages::Pages>,
+    serve: CellServe<'_>,
     egress: &EgressLog,
 ) -> Result<CellHandle, WorldError> {
+    let CellServe { pages, dev } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
     let s = services()?;
@@ -2770,7 +2828,7 @@ fn start_cell(
         |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("cell {index}: {what}: {e}"));
     let cell = plan.cell.0;
     let hex = cell_label(&cell);
-    let host = cell_host(&cell);
+    let host = dev.map_or_else(|| cell_host(&cell), |d| d.host.clone());
     let vault_host = format!("id.{host}");
     let login = |db: CellDatabase, role: RoleName| {
         logins
@@ -2875,9 +2933,21 @@ fn start_cell(
         &[&vault_tunnel_name],
         &[],
     )?;
-    let vault_origin = s
-        .origin
-        .issue(CertKind::Server, &vault_host, None, &[&vault_host], &[])?;
+    // A dev cell serves the origin CA after each origin leaf, so a
+    // browser that pins the CA's key reaches both origins
+    // ([`World::origin_ca_spki_digest`]).
+    let with_ca = |cert: pki::Issued| match dev {
+        Some(_) => pki::Issued {
+            cert_pem: [cert.cert_pem, s.origin.pem.clone()].concat(),
+            key_pem: cert.key_pem,
+        },
+        None => cert,
+    };
+    let vault_origin =
+        with_ca(
+            s.origin
+                .issue(CertKind::Server, &vault_host, None, &[&vault_host], &[])?,
+        );
     let ticket =
         fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the ticket key", &e))?;
     let vault_witness = cell_ca.issue(
@@ -2911,6 +2981,9 @@ fn start_cell(
         fstp_crypto::random_array::<32>().map_err(|e| fail("the vault digest key", &e))?,
     );
     let clock = WorldClock::default();
+    if let Some(d) = dev {
+        clock.set(d.clock_start);
+    }
     let mail = crate::world_mail::WorldMail::default();
     let vault =
         s.rt.block_on(crate::seeded_vault::SeededVault::start(
@@ -3025,9 +3098,10 @@ fn start_cell(
     let cell_tunnel =
         s.control
             .issue(CertKind::Server, &tunnel_name, None, &[&tunnel_name], &[])?;
-    let cell_origin = s
-        .origin
-        .issue(CertKind::Server, &host, None, &[&host], &[])?;
+    let cell_origin = with_ca(
+        s.origin
+            .issue(CertKind::Server, &host, None, &[&host], &[])?,
+    );
     let cell_internal = cell_ca.issue(CertKind::Server, "cell", None, &[], &loopback)?;
     let ledger_key = fstp_pgstore::LedgerKey::new(
         1,
