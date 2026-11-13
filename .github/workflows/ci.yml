@@ -145,14 +145,11 @@ jobs:
             packages: -p fstp-api-testkit
             skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate i67_m_activate i84_t_authz_matrix_mcp_equals_channel_policy_of_web
             timeout: 90
-          # I-66: the M-ACTIVATE model check peaks at about 8 GB and runs
-          # about 6 minutes (measured 2026-11-13). Beside the rest of the
-          # api-testkit part it lost its runner three times, so it runs on
-          # a runner of its own. Both tests of the binary run here.
-          # The I-67 model check is its sibling with the same memory profile;
-          # it lost the api-testkit runner on 2026-11-13. The part runs one
-          # test at a time, since two of these at once exceed the runner.
-          - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate --test i67_m_activate, threads: 1, timeout: 120 }
+          # I-66 and I-67: the M-ACTIVATE model checks run 4 to 7 minutes each.
+          # Before lane m4/mactivate-mem they peaked at about 20 GB and lost
+          # their runners. Since then each peaks under 2 GB (measured
+          # 2026-11-13). They keep a part of their own for their run time.
+          - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate --test i67_m_activate, timeout: 120 }
           # I-84: the MCP channel matrix. Inside the api-testkit part it ran
           # past 75 minutes on 2026-11-13 and the part was cancelled at 90, so
           # it runs in 8 shards of its own, as the direct matrix does.
