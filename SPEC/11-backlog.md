@@ -149,7 +149,7 @@ Reserved identifiers:
 
 ## B-12: Organisation identity through the Yivi Business Wallet
 
-Deferred by Daniel on 2026-11-13. The Yivi app comes first (`03-architecture/eudi-wallet.md`, ADR-020). CrabNebula joins the Business Wallet design partner programme meanwhile.
+Deferred by Daniel on 2026-11-13. The Yivi app comes first (`03-architecture/eudi-wallet.md`, ADR-021). CrabNebula joins the Business Wallet design partner programme meanwhile.
 
 Scope when resumed: verifying a register-verified organisation and the mandate of the person acting for it, for example for organisation applicants or tenant onboarding. The spec has no organisation identity step today, so this starts with new requirements.
 

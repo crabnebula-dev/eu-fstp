@@ -1,4 +1,4 @@
-# ADR-020: Yivi wallet verification
+# ADR-021: Yivi wallet verification
 
 Status: Proposed. Drafted 2026-11-13 from Daniel's decisions of that day (issue #7). The rows marked "Decided" are his. Rows marked "Proposed" or "Open" wait for him, and no implementation starts on them before this ADR is accepted.
 

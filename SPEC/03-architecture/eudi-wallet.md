@@ -17,7 +17,7 @@
 
 ## Yivi (decided 2026-11-13)
 
-The Yivi app is an accepted wallet for the steps below. `../../docs/adr/ADR-020-yivi-wallet.md` holds the protocol profile and the record of what Yivi's documentation states.
+The Yivi app is an accepted wallet for the steps below. `../../docs/adr/ADR-021-yivi-wallet.md` holds the protocol profile and the record of what Yivi's documentation states.
 
 | Step | Requirement | What the wallet discloses |
 | --- | --- | --- |
