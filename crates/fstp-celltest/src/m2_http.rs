@@ -13,11 +13,13 @@
 //! its reference as it always does, and to the cell. The cell must accept
 //! and refuse as the engine does and append the same M2 core records, and
 //! the machine's invariants must hold over the cell's ledger. The SoD
-//! machine (I-04, I-06) and the review machine (I-03, I-35) implement
+//! machine (I-04, I-06), the review machine (I-03, I-35), the money
+//! machine (I-13, I-14, I-15) and the ledger machine (I-23) implement
 //! [`CellMachine`]. A reduced case is one case of at most
 //! [`REDUCED_COMMANDS`] commands under a fixed seed. The seed is the
 //! first from the suite's own on which the engine alone runs a case long
-//! enough to count, so it picks the commands, never the cell's outcome.
+//! enough to count, and shows the suite's [`Witness`] if it has one. So
+//! it picks the commands, never the cell's outcome.
 //!
 //! How the driver maps a machine onto the cell:
 //!
@@ -89,12 +91,22 @@ use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::Role;
 use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::driver::M2Driver;
+use fstp_domain_testkit::r#gen::money::{
+    MoneyCmd, MoneyFocus, MoneyMachine, MoneyModel, MoneyOutput, machine_setup as money_setup,
+};
 use fstp_domain_testkit::r#gen::review::{
     RevCmd, RevFocus, RevModel, RevOp, RevOutput, ReviewMachine, machine_setup as review_setup,
 };
 use fstp_domain_testkit::r#gen::roster::{
     ADMIN, ADMIN_2, MachineCmd, MachineModel, MachineOutput, SodFocus, SodMachine, Step, T0,
     VaultOp,
+};
+use fstp_domain_testkit::mc::ledger_model::{
+    LedgerCmd, LedgerGhost, LedgerMachine, LedgerOutput, LedgerSut, LedgerVaultOp,
+    check_corrections, ledger_machine_setup, ledger_truth, machine_genesis_steps,
+};
+use fstp_domain_testkit::reference::money::{
+    MoneyView, check_i13, check_i14, check_i15, check_i64,
 };
 use fstp_domain_testkit::reference::review::{
     RevView, check_handles, check_i02_assignments, check_i03, check_i36, check_i36_held,
@@ -157,8 +169,8 @@ const MIN_ACCEPTED: usize = 4;
 /// The least steps a reduced case must send after its setup.
 const MIN_STEPS: usize = 10;
 
-/// An `m2-suite` step names a suite the driver has no machine for yet.
-pub const SUITE_SEAM: &str = "fstp_celltest::m2_http: the m2-suite step names an M2 suite whose machine has no cell driver yet; the SoD machine (I-04, I-06) and the review machine (I-03, I-35) run over the cell, and the money and ledger machines (I-13, I-14, I-15, I-23) still drive fstp_domain_testkit's own drivers only";
+/// An `m2-suite` step names a suite the driver has no machine for.
+pub const SUITE_SEAM: &str = "fstp_celltest::m2_http: the m2-suite step names an M2 suite with no cell driver; the SoD machine (I-04, I-06), the review machine (I-03, I-35), the money machine (I-13, I-14, I-15) and the ledger machine (I-23) run over the cell";
 
 /// The model key of `account`.
 fn key(account: AccountId) -> AccountId {
@@ -208,6 +220,11 @@ pub struct HttpDriver<'c, 'w> {
     records: Vec<Record>,
     /// The number of entries of the cell's ledger at the last read.
     entries: usize,
+    /// The M2 core records of the cell's ledger at the last read, one
+    /// batch per command id (lane m3/money-drivers).
+    batches: Vec<Vec<Record>>,
+    /// The cell's ledger at the last read.
+    ledger: Vec<fstp_ledger::Entry<fstp_cell_core::CellRecord>>,
     /// Whether each seeded write is processed at once, as during the
     /// setup, where many writes would otherwise wait for one command.
     settle_each: bool,
@@ -255,6 +272,8 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             affiliated: BTreeSet::new(),
             records: Vec::new(),
             entries: 0,
+            batches: Vec::new(),
+            ledger: Vec::new(),
             settle_each: true,
             fault: None,
             tally: Tally::default(),
@@ -283,16 +302,92 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             Err(e) => return Err(self.fail(format!("the ledger read failed: {e}"))),
         };
         self.entries = ledger.len();
-        self.records = ledger
-            .into_iter()
-            .filter_map(|e| match e.record {
-                fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(r)) => Some(r),
-                _ => None,
-            })
-            .collect();
+        let mut batches: Vec<Vec<Record>> = Vec::new();
+        let mut last: Option<[u8; 16]> = None;
+        for e in &ledger {
+            let fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(r)) = &e.record else {
+                continue;
+            };
+            match batches.last_mut() {
+                Some(b) if last == Some(e.command) => b.push(r.clone()),
+                _ => batches.push(vec![r.clone()]),
+            }
+            last = Some(e.command);
+        }
+        self.records = batches.iter().flatten().cloned().collect();
+        self.batches = batches;
+        self.ledger = ledger;
         Ok(Seq::from_raw(
             u64::try_from(self.entries).unwrap_or(u64::MAX),
         ))
+    }
+
+    /// The M2 core records of the cell's ledger at the last read, one
+    /// batch per command.
+    pub fn batches(&self) -> &[Vec<Record>] {
+        &self.batches
+    }
+
+    /// The cell's ledger at the last read.
+    pub fn ledger(&self) -> &[fstp_ledger::Entry<fstp_cell_core::CellRecord>] {
+        &self.ledger
+    }
+
+    /// Runs the System step `step` at `now` through the cell's system
+    /// task for it, as a serving cell does (lane m3/money-drivers):
+    ///
+    /// - The contract port's EFFECTIVE fact goes through
+    ///   `CellHandle::contract_effective`, which the gate admits under
+    ///   the system task `ContractPort` only.
+    /// - A command of the timeline's cause runs as one tick of the
+    ///   timeline task (`CellHandle::timeline_tick`). The tick issues
+    ///   every command due at `now`, so a reduced case sends such a step
+    ///   only where the engine has no other System command due
+    ///   ([`only_due`]). The cell took it when the tick appended M2 core
+    ///   records.
+    ///
+    /// Any other System step has no task in the cell, and the driver
+    /// fails it.
+    fn system(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError> {
+        use fstp_domain::command::{ContractEvent, SystemCause};
+        let before = self.records.len();
+        let cell = self.client.cell();
+        let took = match (&step.actor, &step.cmd) {
+            (
+                Actor::System(SystemCause::ContractPort),
+                Command::ContractFact {
+                    proposal,
+                    contract,
+                    event: ContractEvent::Effective,
+                },
+            ) => match cell.contract_effective(*proposal, *contract) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("fstp_celltest::m2_http: refused {:?}: {e}", step.cmd);
+                    false
+                }
+            },
+            (Actor::System(SystemCause::Timeline), _) => match cell.timeline_tick() {
+                Ok(_) => false,
+                Err(e) => return Err(self.fail(format!("the timeline tick at {now:?}: {e}"))),
+            },
+            _ => {
+                return Err(self.fail(format!(
+                    "a System step the cell has no task for: {:?} by {:?}",
+                    step.cmd, step.actor
+                )));
+            }
+        };
+        let head = self.read()?;
+        // A tick took the step when it appended M2 core records.
+        let took = took || self.records.len() > before;
+        if took {
+            self.tally.accepted = self.tally.accepted.saturating_add(1);
+            Ok(head)
+        } else {
+            self.tally.refused = self.tally.refused.saturating_add(1);
+            Err(ExecError::Refused(remote_refusal()))
+        }
     }
 
     /// Moves the cell clock to `at`. It never runs backwards.
@@ -391,6 +486,12 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
                         r.status,
                         String::from_utf8_lossy(&r.body)
                     )));
+                }
+                // A step-up refused on a session the cell ended, such as
+                // one that expired while the clock moved on: log in again
+                // once (lane m3/money-drivers).
+                None if attempt == 0 => {
+                    self.sessions.remove(&account);
                 }
                 None => {
                     return Err(self.fail(format!(
@@ -891,7 +992,7 @@ impl M2Driver for HttpDriver<'_, '_> {
     fn execute(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError> {
         self.clock_to(now)?;
         let Actor::Account(actor) = step.actor else {
-            return Err(self.fail(format!("a System step over HTTP: {:?}", step.cmd)));
+            return self.system(step, now);
         };
         for a in named_accounts(step) {
             if !self.is_generator(a) {
@@ -968,6 +1069,20 @@ pub struct RemoteOutput {
 /// M2 core records it appended and the step's description.
 pub type EngineSide<'a> = (bool, &'a [Record], &'a str);
 
+/// The engine's side before a command: its domain state and its vault
+/// facts. A reduced case reads it to leave out what the cell cannot
+/// express (lane m3/money-drivers).
+#[derive(Clone, Debug)]
+pub struct EngineView {
+    /// The engine's domain state.
+    pub state: fstp_domain::State,
+    /// The engine's vault facts.
+    pub truth: GroundTruth,
+}
+
+/// The cell's ledger before a command.
+pub type Prior = [fstp_ledger::Entry<fstp_cell_core::CellRecord>];
+
 /// An M2 machine that runs in lockstep over a cell ([`OverHttp`]).
 pub trait CellMachine: StateMachine {
     /// Whether `cmd` is the machine's setup from genesis.
@@ -977,26 +1092,48 @@ pub trait CellMachine: StateMachine {
     /// draft flag and a verified setup vault (module documentation).
     fn for_cell(cmd: Self::Command) -> Self::Command;
 
-    /// Whether the cell can express `cmd` in `model`: a vault change the
-    /// vault cannot hold is left out of a reduced case.
-    fn cell_admits(model: &Self::Model, cmd: &Self::Command) -> bool;
+    /// Whether the cell can express `cmd` in `model`, where `engine` is
+    /// the engine's side before it, if the machine gives one: a vault
+    /// change the vault cannot hold, or a System step whose tick would
+    /// issue more than the step, is left out of a reduced case.
+    fn cell_admits(model: &Self::Model, cmd: &Self::Command, engine: Option<&EngineView>) -> bool;
 
-    /// Sends `cmd` to the cell.
+    /// The engine's side in `sut`, for [`CellMachine::cell_admits`].
+    fn engine_view(sut: &Self::Sut) -> Option<EngineView> {
+        let _ = sut;
+        None
+    }
+
+    /// The setup the cell runs before the first command of a case, for a
+    /// machine whose start state is built outside its commands. `None`
+    /// for a machine whose first command is its setup.
+    fn implicit_setup(&self, remote: &mut HttpDriver<'_, '_>) -> Option<Result<Seq, ExecError>> {
+        let _ = remote;
+        None
+    }
+
+    /// Sends `cmd` to the cell, where `out` is what the engine did with
+    /// it.
     ///
     /// # Errors
     ///
     /// The cell's refusal, or the driver's failure.
-    fn drive(remote: &mut HttpDriver<'_, '_>, cmd: &Self::Command) -> Result<Seq, ExecError>;
+    fn drive(
+        remote: &mut HttpDriver<'_, '_>,
+        cmd: &Self::Command,
+        out: &Self::Output,
+    ) -> Result<Seq, ExecError>;
 
     /// What the engine did with the command of `out`.
     fn engine_side(out: &Self::Output) -> EngineSide<'_>;
 
-    /// The machine's invariants over the M2 core records of the cell.
+    /// The machine's invariants over the cell's ledger after a command,
+    /// where `prior` is the ledger before it.
     ///
     /// # Errors
     ///
     /// The first invariant that fails.
-    fn cell_invariant(records: &[Record], truth: &GroundTruth) -> Result<(), String>;
+    fn cell_invariant(prior: &Prior, remote: &HttpDriver<'_, '_>) -> Result<(), String>;
 }
 
 /// `step` with the flags the cell derives and the draft flag the cell
@@ -1058,7 +1195,7 @@ impl CellMachine for SodMachine {
         }
     }
 
-    fn cell_admits(model: &MachineModel, cmd: &MachineCmd) -> bool {
+    fn cell_admits(model: &MachineModel, cmd: &MachineCmd, _engine: Option<&EngineView>) -> bool {
         let MachineCmd::Vault {
             op: VaultOp::Merge(account, _),
             ..
@@ -1076,7 +1213,11 @@ impl CellMachine for SodMachine {
                 .any(|(x, y, _)| x == old || y == old))
     }
 
-    fn drive(remote: &mut HttpDriver<'_, '_>, cmd: &MachineCmd) -> Result<Seq, ExecError> {
+    fn drive(
+        remote: &mut HttpDriver<'_, '_>,
+        cmd: &MachineCmd,
+        _out: &MachineOutput,
+    ) -> Result<Seq, ExecError> {
         match cmd {
             MachineCmd::Setup { truth, .. } => match SodMachine::setup().steps() {
                 Ok(steps) => remote.start(truth, &steps, T0),
@@ -1094,7 +1235,8 @@ impl CellMachine for SodMachine {
         (out.result.is_ok(), &out.appended, &out.context)
     }
 
-    fn cell_invariant(records: &[Record], truth: &GroundTruth) -> Result<(), String> {
+    fn cell_invariant(_prior: &Prior, remote: &HttpDriver<'_, '_>) -> Result<(), String> {
+        let (records, truth) = (&remote.records, &remote.truth);
         let view = View::of(records.iter())
             .map_err(|e| format!("the reference cannot follow the cell's ledger: {e}"))?;
         check_i01(&view)?;
@@ -1125,7 +1267,7 @@ impl CellMachine for ReviewMachine {
 
     /// The vault holds no end of a relationship, so a reduced case draws
     /// no `Unrelate`.
-    fn cell_admits(_model: &RevModel, cmd: &RevCmd) -> bool {
+    fn cell_admits(_model: &RevModel, cmd: &RevCmd, _engine: Option<&EngineView>) -> bool {
         !matches!(
             cmd,
             RevCmd::Vault {
@@ -1135,7 +1277,11 @@ impl CellMachine for ReviewMachine {
         )
     }
 
-    fn drive(remote: &mut HttpDriver<'_, '_>, cmd: &RevCmd) -> Result<Seq, ExecError> {
+    fn drive(
+        remote: &mut HttpDriver<'_, '_>,
+        cmd: &RevCmd,
+        _out: &RevOutput,
+    ) -> Result<Seq, ExecError> {
         match cmd {
             RevCmd::Setup { truth } => match review_setup().steps() {
                 Ok(steps) => remote.start(truth, &steps, T0),
@@ -1152,7 +1298,8 @@ impl CellMachine for ReviewMachine {
         (out.result.is_ok(), &out.appended, &out.context)
     }
 
-    fn cell_invariant(records: &[Record], _truth: &GroundTruth) -> Result<(), String> {
+    fn cell_invariant(_prior: &Prior, remote: &HttpDriver<'_, '_>) -> Result<(), String> {
+        let records = &remote.records;
         let view = View::of(records.iter())
             .map_err(|e| format!("the roles reference cannot follow the cell's ledger: {e}"))?;
         let rev = RevView::of(records.iter())
@@ -1168,17 +1315,291 @@ impl CellMachine for ReviewMachine {
     }
 }
 
+/// The instant of the money machine's commands and of its prelude
+/// (`fstp_domain_testkit::mc::life_model::T_EVAL`).
+const MONEY_LATE: Timestamp = fstp_domain_testkit::mc::life_model::T_EVAL;
+
+/// Whether every System command the engine in `state` has due at `now`
+/// is among `cmds`. A timeline tick issues every due command, so a System
+/// step of the timeline's cause runs over the cell only where it would
+/// issue nothing else (lane m3/money-drivers).
+fn only_due(state: &fstp_domain::State, now: Timestamp, cmds: &[Command]) -> bool {
+    fstp_domain::due(state, now)
+        .iter()
+        .all(|c| cmds.contains(c))
+}
+
+/// The money machine over a cell (lane m3/money-drivers). Its start
+/// state is built outside its commands, so the cell runs the setup of
+/// [`money_setup`] before the first command, from genesis by the same
+/// steps (`MoneySetup::timed_steps`). The engine side is the machine's
+/// mirror ([`MoneyMachine::mirrored`]), and each command goes to the cell
+/// as the step the mirror ran. Interim readings, pending Daniel:
+///
+/// - The contract port's EFFECTIVE fact runs through the cell's contract
+///   port task in process, which stands for a completed signature.
+/// - `StartExecution` runs as one tick of the cell's timeline. A reduced
+///   case draws it only where the engine has no other System command
+///   due ([`only_due`]).
+/// - The invariants over the cell fold its ledger into the money
+///   reference view, batch by batch, and check I-13, I-14, I-15 and
+///   I-64 on it.
+impl CellMachine for MoneyMachine {
+    fn is_setup(_cmd: &MoneyCmd) -> bool {
+        false
+    }
+
+    /// No money step is a tenant admin's or names a draft, so the cell
+    /// derives the flags the step carries.
+    fn for_cell(cmd: MoneyCmd) -> MoneyCmd {
+        cmd
+    }
+
+    fn cell_admits(model: &MoneyModel, cmd: &MoneyCmd, engine: Option<&EngineView>) -> bool {
+        match cmd {
+            MoneyCmd::Start(p) => engine.is_some_and(|e| {
+                only_due(
+                    &e.state,
+                    model.world.now(),
+                    &[Command::StartExecution { proposal: *p }],
+                )
+            }),
+            _ => true,
+        }
+    }
+
+    fn engine_view(sut: &Option<MoneyModel>) -> Option<EngineView> {
+        sut.as_ref().map(|m| EngineView {
+            state: m.world.life.rev.sod.state.clone(),
+            truth: m.world.truth().clone(),
+        })
+    }
+
+    fn implicit_setup(&self, remote: &mut HttpDriver<'_, '_>) -> Option<Result<Seq, ExecError>> {
+        let setup = money_setup();
+        Some(match setup.timed_steps() {
+            Ok(steps) => {
+                let mut timed: Vec<(Step, Timestamp)> =
+                    steps.into_iter().map(|(at, s)| (s, at)).collect();
+                timed.extend(self.prelude.iter().map(|s| (s.clone(), MONEY_LATE)));
+                remote.start_timed(&cell_truth(&setup.truth()), &timed)
+            }
+            Err(e) => Err(remote.fail(format!("the money setup steps: {e}"))),
+        })
+    }
+
+    /// The step the mirror ran, at its instant. A command the mirror did
+    /// not turn into a step reaches neither side.
+    fn drive(
+        remote: &mut HttpDriver<'_, '_>,
+        _cmd: &MoneyCmd,
+        out: &MoneyOutput,
+    ) -> Result<Seq, ExecError> {
+        match &out.step {
+            Some(step) => remote.execute(step, out.at),
+            None => Err(ExecError::Refused(Refusal::not_implemented())),
+        }
+    }
+
+    fn engine_side(out: &MoneyOutput) -> EngineSide<'_> {
+        (out.accepted, &out.appended, &out.context)
+    }
+
+    fn cell_invariant(_prior: &Prior, remote: &HttpDriver<'_, '_>) -> Result<(), String> {
+        let truth = &remote.truth;
+        let mut view = MoneyView::new();
+        for b in remote.batches() {
+            view.fold_batch(b, truth)
+                .map_err(|e| format!("the money reference cannot follow the cell's ledger: {e}"))?;
+        }
+        check_i13(&view)?;
+        check_i14(&view, truth)?;
+        check_i15(&view)?;
+        check_i64(&view)
+    }
+}
+
+/// Whether the identity of `account` in `truth` has an exclusion or a
+/// relation, which a vault account cannot carry to another person.
+fn identity_has_facts(truth: &GroundTruth, account: AccountId) -> bool {
+    let Some(t) = truth.identity_of(account) else {
+        return true;
+    };
+    truth.exclusions().any(|(u, _)| u == t) || truth.relations().any(|(x, y, _)| x == t || y == t)
+}
+
+/// The ledger machine of I-23 over a cell (lane m3/money-drivers). Its
+/// engine side is the machine's own run over a `MemStore`
+/// ([`LedgerOutput`]). The cell runs its setup from genesis through the
+/// creator path, then each command: core steps over HTTP, System steps
+/// through the cell's system tasks ([`HttpDriver::system`]) and vault
+/// changes through the seeded vault. Interim readings, pending Daniel:
+///
+/// - A step at an instant later than the cell's clock runs only when it
+///   is one System command of the timeline that the engine has due then.
+///   The cell's clock cannot run backwards, so a later step the engine
+///   refuses, which leaves the engine's instant where it was, is left out
+///   of a reduced case. A System step of the timeline at the current
+///   instant runs only where the engine has nothing else due
+///   ([`only_due`]).
+/// - A merge or a split moves an account to another person. The vault
+///   cannot move its facts, so a reduced case draws one only for an
+///   account whose identity has no exclusion or relation.
+/// - I-23 over the cell: the ledger before each command is a prefix of the
+///   ledger after it, entry for entry, the ledger replays, and every
+///   correction among its M2 records targets an earlier record of the
+///   same kind.
+impl CellMachine for LedgerMachine {
+    fn is_setup(cmd: &LedgerCmd) -> bool {
+        matches!(cmd, LedgerCmd::Setup { .. })
+    }
+
+    fn for_cell(cmd: LedgerCmd) -> LedgerCmd {
+        match cmd {
+            LedgerCmd::Core {
+                now,
+                step,
+                scripted,
+            } => LedgerCmd::Core {
+                now,
+                step: Box::new(step.iter().map(|s| cell_step(s, now.micros())).collect()),
+                scripted,
+            },
+            other => other,
+        }
+    }
+
+    fn cell_admits(model: &LedgerGhost, cmd: &LedgerCmd, engine: Option<&EngineView>) -> bool {
+        match cmd {
+            LedgerCmd::Setup { .. } => true,
+            LedgerCmd::Vault { op, .. } => match op {
+                LedgerVaultOp::Merge(a, _) | LedgerVaultOp::Split(a) => {
+                    engine.is_some_and(|e| !identity_has_facts(&e.truth, *a))
+                }
+                LedgerVaultOp::Relate(..) | LedgerVaultOp::Exclude(_) => true,
+            },
+            LedgerCmd::Core { now, step, .. } => {
+                let Some(e) = engine else {
+                    return false;
+                };
+                let timeline: Vec<Command> = step
+                    .iter()
+                    .filter(|s| {
+                        matches!(
+                            s.actor,
+                            Actor::System(fstp_domain::command::SystemCause::Timeline)
+                        )
+                    })
+                    .map(|s| s.cmd.clone())
+                    .collect();
+                let later = model.now.is_some_and(|t| *now > t);
+                if later {
+                    let due = fstp_domain::due(&e.state, *now);
+                    timeline.len() == step.len() && !due.is_empty() && due == timeline
+                } else {
+                    timeline.is_empty() || only_due(&e.state, *now, &timeline)
+                }
+            }
+        }
+    }
+
+    fn engine_view(sut: &LedgerSut) -> Option<EngineView> {
+        sut.run.as_ref().map(|r| EngineView {
+            state: r.scenario.state().core.clone(),
+            truth: r.scenario.truth().clone(),
+        })
+    }
+
+    fn drive(
+        remote: &mut HttpDriver<'_, '_>,
+        cmd: &LedgerCmd,
+        _out: &LedgerOutput,
+    ) -> Result<Seq, ExecError> {
+        match cmd {
+            LedgerCmd::Setup { .. } => {
+                let setup = ledger_machine_setup();
+                match machine_genesis_steps(&setup) {
+                    Ok(steps) => {
+                        let timed: Vec<(Step, Timestamp)> =
+                            steps.into_iter().map(|(at, s)| (s, at)).collect();
+                        remote.start_timed(&cell_truth(&ledger_truth(&setup)), &timed)
+                    }
+                    Err(e) => Err(remote.fail(format!("the ledger setup steps: {e}"))),
+                }
+            }
+            LedgerCmd::Core { now, step, .. } => {
+                let mut last = Err(ExecError::Refused(Refusal::not_implemented()));
+                for s in step.iter() {
+                    last = remote.execute(s, *now);
+                    if last.is_err() {
+                        break;
+                    }
+                }
+                last
+            }
+            LedgerCmd::Vault { now, op } => remote.change_vault(&|t| op.apply(t), *now),
+        }
+    }
+
+    fn engine_side(out: &LedgerOutput) -> EngineSide<'_> {
+        match &out.applied {
+            Ok(a) => (a.accepted, &a.appended, &out.context),
+            Err(_) => (false, &[], &out.context),
+        }
+    }
+
+    fn cell_invariant(prior: &Prior, remote: &HttpDriver<'_, '_>) -> Result<(), String> {
+        let ledger = remote.ledger();
+        if ledger.get(..prior.len()) != Some(prior) {
+            return Err(format!(
+                "I-23: the cell's ledger of {} entries is no longer a prefix of its ledger of {} entries",
+                prior.len(),
+                ledger.len()
+            ));
+        }
+        fstp_cell_core::replay(ledger)
+            .map_err(|e| format!("I-23: the cell's ledger does not replay: {e:?}"))?;
+        let engine: Vec<fstp_ledger::Entry<fstp_engine::Record>> = ledger
+            .iter()
+            .filter_map(|e| {
+                e.clone()
+                    .try_map_record(|_, r| match r {
+                        fstp_cell_core::CellRecord::Engine(r) => Ok(r),
+                        _ => Err(()),
+                    })
+                    .ok()
+            })
+            .collect();
+        check_corrections(&engine)
+    }
+}
+/// What a reduced case must show on the engine side to count: called on
+/// each engine output of the first case after its setup, it answers
+/// `true` once it saw it. The seed is picked on the engine alone, so the
+/// witness picks commands, never an outcome on the cell.
+pub type Witness<M> = Box<dyn FnMut(&<M as StateMachine>::Output) -> bool>;
+
 /// An M2 machine in lockstep with a cell (module documentation). Each
 /// command runs on the machine's own engine, which the machine checks as
 /// it always does, and on the cell, which must agree with the engine.
-pub struct OverHttp<'d, 'c, 'w, M> {
+pub struct OverHttp<'d, 'c, 'w, M: StateMachine> {
     inner: M,
     /// The cell, or none for a dry run on the engine alone, which picks
     /// the seed of a case that is long enough.
     remote: Option<RefCell<&'d mut HttpDriver<'c, 'w>>>,
-    /// The setups run so far. Only the first case reaches the cell; a
-    /// later case of the runner runs on the engine alone.
+    /// The cases that sent a command so far. Only the first reaches the
+    /// cell; a later case of the runner runs on the engine alone.
     cases: RefCell<u32>,
+    /// Set when a case starts, cleared by its first command.
+    fresh: RefCell<bool>,
+    /// The engine's side after the latest command.
+    engine: RefCell<Option<EngineView>>,
+    /// The cell's ledger before the latest command.
+    prior: RefCell<Vec<fstp_ledger::Entry<fstp_cell_core::CellRecord>>>,
+    /// What the first case must show on the engine side to count, if
+    /// anything, and whether it showed it ([`Witness`]).
+    witness: RefCell<Option<Witness<M>>>,
+    witnessed: RefCell<bool>,
     /// The steps of the first case after its setup, and how many the
     /// engine accepted.
     counts: RefCell<(usize, usize)>,
@@ -1193,24 +1614,44 @@ impl<'d, 'c, 'w, M: CellMachine> OverHttp<'d, 'c, 'w, M> {
         remote: &'d mut HttpDriver<'c, 'w>,
         max_commands: usize,
     ) -> OverHttp<'d, 'c, 'w, M> {
+        OverHttp::with(inner, Some(RefCell::new(remote)), max_commands)
+    }
+
+    /// `inner` on the engine alone.
+    pub fn dry(inner: M, max_commands: usize) -> OverHttp<'d, 'c, 'w, M> {
+        OverHttp::with(inner, None, max_commands)
+    }
+
+    fn with(
+        inner: M,
+        remote: Option<RefCell<&'d mut HttpDriver<'c, 'w>>>,
+        max_commands: usize,
+    ) -> OverHttp<'d, 'c, 'w, M> {
         OverHttp {
             inner,
-            remote: Some(RefCell::new(remote)),
+            remote,
             cases: RefCell::new(0),
+            fresh: RefCell::new(false),
+            engine: RefCell::new(None),
+            prior: RefCell::new(Vec::new()),
+            witness: RefCell::new(None),
+            witnessed: RefCell::new(true),
             counts: RefCell::new((0, 0)),
             max_commands,
         }
     }
 
-    /// `inner` on the engine alone.
-    pub fn dry(inner: M, max_commands: usize) -> OverHttp<'d, 'c, 'w, M> {
-        OverHttp {
-            inner,
-            remote: None,
-            cases: RefCell::new(0),
-            counts: RefCell::new((0, 0)),
-            max_commands,
-        }
+    /// The machine whose first case counts only once `witness` saw an
+    /// engine output it looks for.
+    pub fn with_witness(self, witness: Witness<M>) -> OverHttp<'d, 'c, 'w, M> {
+        self.witness.replace(Some(witness));
+        self.witnessed.replace(false);
+        self
+    }
+
+    /// Whether the first case showed what its witness looks for.
+    pub fn witnessed(&self) -> bool {
+        *self.witnessed.borrow()
     }
 
     /// The steps of the first case after its setup, and how many the
@@ -1309,7 +1750,10 @@ impl<M: CellMachine> StateMachine for OverHttp<'_, '_, '_, M> {
     }
 
     fn init_sut(&self) -> M::Sut {
-        self.inner.init_sut()
+        let sut = self.inner.init_sut();
+        self.fresh.replace(true);
+        self.engine.replace(M::engine_view(&sut));
+        sut
     }
 
     fn command(&self, g: &mut Gen, model: &M::Model) -> M::Command {
@@ -1317,15 +1761,20 @@ impl<M: CellMachine> StateMachine for OverHttp<'_, '_, '_, M> {
     }
 
     fn precondition(&self, model: &M::Model, cmd: &M::Command) -> bool {
-        M::cell_admits(model, cmd) && self.inner.precondition(model, cmd)
+        M::cell_admits(model, cmd, self.engine.borrow().as_ref())
+            && self.inner.precondition(model, cmd)
     }
 
     fn run(&self, sut: &mut M::Sut, cmd: &M::Command) -> (M::Output, RemoteOutput) {
         let out = self.inner.run(sut, cmd);
+        self.engine.replace(M::engine_view(sut));
         let setup = M::is_setup(cmd);
+        // A case counts from its first command, which is the setup of a
+        // machine whose setup is a command.
+        let starting = self.fresh.replace(false);
         let first = {
             let mut n = self.cases.borrow_mut();
-            if setup {
+            if starting {
                 *n = n.saturating_add(1);
             }
             *n == 1
@@ -1337,6 +1786,11 @@ impl<M: CellMachine> StateMachine for OverHttp<'_, '_, '_, M> {
             if accepted {
                 c.1 = c.1.saturating_add(1);
             }
+            if let Some(w) = self.witness.borrow_mut().as_mut()
+                && w(&out)
+            {
+                self.witnessed.replace(true);
+            }
         }
         let Some(remote) = self.remote.as_ref().filter(|_| first) else {
             let mirror = RemoteOutput {
@@ -1347,8 +1801,15 @@ impl<M: CellMachine> StateMachine for OverHttp<'_, '_, '_, M> {
             return (out, mirror);
         };
         let mut remote = remote.borrow_mut();
+        if starting
+            && !setup
+            && let Some(Err(e)) = self.inner.implicit_setup(&mut remote)
+        {
+            let _ = remote.fail(format!("the setup did not run on the cell: {e:?}"));
+        }
+        self.prior.replace(remote.ledger.clone());
         let before = remote.records.len();
-        let result = M::drive(&mut remote, cmd);
+        let result = M::drive(&mut remote, cmd, &out);
         let appended = if setup {
             Vec::new()
         } else {
@@ -1404,7 +1865,7 @@ impl<M: CellMachine> StateMachine for OverHttp<'_, '_, '_, M> {
         if remote.records.is_empty() {
             return Ok(());
         }
-        M::cell_invariant(&remote.records, M2Driver::truth(&**remote))
+        M::cell_invariant(&self.prior.borrow(), &remote)
     }
 
     fn max_commands(&self) -> usize {
@@ -1431,7 +1892,12 @@ const SEED_BASE: u64 = 0x5eed_0002;
 ///
 /// The suites and their machines: I-04 and I-06 run the SoD machine
 /// (`SodFocus::I04`, `SodFocus::I06`), I-03 and I-35 the review machine
-/// (`RevFocus::I03`, `RevFocus::I34_I35`).
+/// (`RevFocus::I03`, `RevFocus::I34_I35`). I-13 and I-15 run the money
+/// machine on grant sequences (`MoneyFocus::GRANTS`), and I-14 on P-05
+/// edits among grants (`MoneyFocus::P05`). Interim reading, pending
+/// Daniel: each money suite counts only with an engine-side witness of
+/// its invariant ([`grant_witness`], [`p05_witness`],
+/// [`repeat_witness`]).
 ///
 /// # Errors
 ///
@@ -1441,33 +1907,165 @@ const SEED_BASE: u64 = 0x5eed_0002;
 /// The details are on standard error.
 pub fn run_suite(client: &AuthClient<'_>, suite: &str) -> Result<(), NotImplemented> {
     match suite {
-        "I-04" => run_machine(client, suite, || SodMachine::new(SodFocus::I04)),
-        "I-06" => run_machine(client, suite, || SodMachine::new(SodFocus::I06)),
-        "I-03" => run_machine(client, suite, || ReviewMachine::new(RevFocus::I03)),
-        "I-35" => run_machine(client, suite, || ReviewMachine::new(RevFocus::I34_I35)),
+        "I-04" => run_machine(client, suite, || SodMachine::new(SodFocus::I04), None),
+        "I-06" => run_machine(client, suite, || SodMachine::new(SodFocus::I06), None),
+        "I-03" => run_machine(client, suite, || ReviewMachine::new(RevFocus::I03), None),
+        "I-35" => run_machine(
+            client,
+            suite,
+            || ReviewMachine::new(RevFocus::I34_I35),
+            None,
+        ),
+        "I-13" => run_machine(
+            client,
+            suite,
+            || MoneyMachine::mirrored(MoneyFocus::GRANTS),
+            Some(&grant_witness),
+        ),
+        "I-14" => run_machine(
+            client,
+            suite,
+            || MoneyMachine::mirrored(MoneyFocus::P05),
+            Some(&p05_witness),
+        ),
+        "I-23" => run_machine(
+            client,
+            suite,
+            || LedgerMachine::new(REDUCED_COMMANDS),
+            Some(&correction_witness),
+        ),
+        "I-15" => match MoneyMachine::repeat_prelude() {
+            Ok(prelude) => run_machine(
+                client,
+                suite,
+                || MoneyMachine::mirrored_after(MoneyFocus::GRANTS, prelude.clone()),
+                Some(&repeat_witness),
+            ),
+            Err(e) => {
+                eprintln!("fstp_celltest::m2_http I-15: the prelude: {e}");
+                Err(NotImplemented::new(DRIVER_FAILED))
+            }
+        },
         _ => Err(NotImplemented::new(SUITE_SEAM)),
     }
 }
 
+/// The proposals of the money machine whose leads share one identity
+/// (`fstp_domain_testkit::r#gen::money::machine_setup`).
+const SYBIL_PROPOSALS: [u128; 3] = [11, 12, 14];
+
+/// I-13: the case determines an amount within P-04 and has one
+/// determination refused.
+fn grant_witness() -> Witness<MoneyMachine> {
+    let (mut determined, mut refused) = (false, false);
+    Box::new(move |out: &MoneyOutput| {
+        let determine = matches!(
+            out.step.as_ref().map(|s| &s.cmd),
+            Some(Command::DetermineAmount { .. })
+        );
+        determined |= out
+            .appended
+            .iter()
+            .any(|r| matches!(r, Record::AmountDetermined { .. }));
+        refused |= determine && !out.accepted;
+        determined && refused
+    })
+}
+
+/// I-14: the case reserves under the cap and records a P-05 edit.
+fn p05_witness() -> Witness<MoneyMachine> {
+    let mut reserved = false;
+    Box::new(move |out: &MoneyOutput| {
+        reserved |= out
+            .appended
+            .iter()
+            .any(|r| matches!(r, Record::CapReserved { .. }));
+        reserved
+            && out
+                .appended
+                .iter()
+                .any(|r| matches!(r, Record::PolicyVersionRecorded { .. }))
+    })
+}
+
+/// I-23: the case appends a correction: a corrected score, a new policy
+/// version, or a binding ended, suspended, voided or reinstated.
+fn correction_witness() -> Witness<LedgerMachine> {
+    Box::new(|out: &LedgerOutput| {
+        let Ok(a) = &out.applied else {
+            return false;
+        };
+        a.accepted
+            && (out.context.starts_with("CorrectScore")
+                || a.appended.iter().any(|r| {
+                    matches!(
+                        r,
+                        Record::PolicyVersionRecorded { .. }
+                            | Record::BindingEnded(_)
+                            | Record::BindingSuspended(_)
+                            | Record::BindingVoided(_)
+                            | Record::BindingReinstated(_)
+                            | Record::ScoreVoided(_)
+                    )
+                }))
+    })
+}
+
+/// I-15: the case starts with lead a's proposal granted
+/// (`MoneyMachine::repeat_prelude`). It then either declines another
+/// proposal of the same identity for its incomplete deliverable record,
+/// or sends a grant fact of one whose amount it determined: a repeat
+/// grant to the same applicant, which needs its public deliverables.
+fn repeat_witness() -> Witness<MoneyMachine> {
+    let mut determined: BTreeSet<ProposalId> = BTreeSet::new();
+    Box::new(move |out: &MoneyOutput| {
+        let repeat = |p: ProposalId| p.raw() != 11 && SYBIL_PROPOSALS.contains(&p.raw());
+        for r in &out.appended {
+            match r {
+                Record::AmountDetermined { proposal, .. } if repeat(*proposal) => {
+                    determined.insert(*proposal);
+                }
+                Record::NegotiationDeclined { proposal, .. } if repeat(*proposal) => return true,
+                _ => {}
+            }
+        }
+        match out.step.as_ref().map(|s| &s.cmd) {
+            Some(
+                Command::AcceptGrant { proposal, .. }
+                | Command::ApproveGrant { proposal, .. }
+                | Command::ContractFact { proposal, .. },
+            ) => determined.contains(proposal),
+            _ => false,
+        }
+    })
+}
+
 /// Runs the reduced case of the machine `make` builds over the cell of
-/// `client` ([`run_suite`]).
+/// `client` ([`run_suite`]), whose engine side must show what `witness`
+/// looks for, if anything.
 fn run_machine<M: CellMachine>(
     client: &AuthClient<'_>,
     suite: &str,
     make: impl Fn() -> M,
+    witness: Option<&dyn Fn() -> Witness<M>>,
 ) -> Result<(), NotImplemented> {
     let name = format!("m2-suite:{suite}:reduced over the cell");
-    let seed = pick_seed(&make, suite, &name)?;
+    let seed = pick_seed(&make, witness, suite, &name)?;
     let mut driver = HttpDriver::new(client);
-    let machine = OverHttp::new(make(), &mut driver, REDUCED_COMMANDS);
+    let mut machine = OverHttp::new(make(), &mut driver, REDUCED_COMMANDS);
+    if let Some(w) = witness {
+        machine = machine.with_witness(w());
+    }
     let outcome = fstp_prop::run_machine(&name, case_config(seed), &machine);
+    let witnessed = machine.witnessed();
     drop(machine);
     let tally = driver.tally;
     eprintln!("fstp_celltest::m2_http {name}, seed {seed}: {tally:?}");
     match outcome {
         // A case so short that it tells nothing is no pass.
         Outcome::Passed { .. }
-            if !tally.setup
+            if !witnessed
+                || !tally.setup
                 || tally.accepted < MIN_ACCEPTED
                 || tally
                     .accepted
@@ -1505,20 +2103,26 @@ const SEED_TRIES: u64 = 256;
 
 /// The first seed from [`seed_of`] on whose reduced case the engine
 /// alone passes the machine, with at least twice [`MIN_STEPS`] steps and
-/// twice [`MIN_ACCEPTED`] accepted ones. The seed picks a case, never an
-/// outcome on the cell: the cell runs the case the engine ran.
+/// twice [`MIN_ACCEPTED`] accepted ones, and that shows what `witness`
+/// looks for, if anything. The seed picks a case, never an outcome on the
+/// cell: the cell runs the case the engine ran.
 fn pick_seed<M: CellMachine>(
     make: &impl Fn() -> M,
+    witness: Option<&dyn Fn() -> Witness<M>>,
     suite: &str,
     name: &str,
 ) -> Result<u64, NotImplemented> {
     let base = seed_of(suite);
     for i in 0..SEED_TRIES {
         let seed = base.wrapping_add(i);
-        let dry: OverHttp<'_, '_, '_, M> = OverHttp::dry(make(), REDUCED_COMMANDS);
+        let mut dry: OverHttp<'_, '_, '_, M> = OverHttp::dry(make(), REDUCED_COMMANDS);
+        if let Some(w) = witness {
+            dry = dry.with_witness(w());
+        }
         let outcome = fstp_prop::run_machine(name, case_config(seed), &dry);
         let (steps, accepted) = dry.counts();
         if outcome.is_passed()
+            && dry.witnessed()
             && steps >= MIN_STEPS.saturating_mul(2)
             && accepted >= MIN_ACCEPTED.saturating_mul(2)
         {
