@@ -876,3 +876,82 @@ fn i39_cell_commands_commit_while_crabnebula_services_are_down() {
 fn i38_egress_templates_differ_by_call() {
     assert_ne!(licence_bytes(), update_bytes());
 }
+
+/// A clock that never moves: a sleep past its instant never ends.
+#[derive(Clone)]
+struct Frozen;
+
+impl Clock for Frozen {
+    fn now(&self) -> i64 {
+        START
+    }
+
+    async fn sleep_until(&self, at: i64) {
+        if at > START {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+/// A service that takes every call and never answers, and says when the
+/// first call arrived.
+#[derive(Clone)]
+struct Silent(Arc<std::sync::atomic::AtomicBool>);
+
+impl CnTransport for Silent {
+    fn exchange(
+        &self,
+        _host: &'static str,
+        _request: Vec<u8>,
+    ) -> impl Future<Output = Result<Vec<u8>, CnFault>> + Send {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::future::pending()
+    }
+}
+
+/// I-39, design section 10.2 (lane m3/licence-update): a shutdown ends
+/// the release task with a call still in flight. On a clock that never
+/// reaches the call's timeout, the task returns once the stop signal
+/// fires, so a cell never waits for a CrabNebula service to stop.
+#[test]
+fn i39_shutdown_ends_a_release_call_in_flight() {
+    let rt = TokioRuntime::new_multi_thread(2).unwrap();
+    let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let client = CnClient::new(Mode::SelfHosted, Silent(Arc::clone(&called)));
+    let stop = Shutdown::new();
+    let signal = stop.signal();
+    let view = ReleaseView::default();
+    let settings = ReleaseSettings {
+        licence: None,
+        version: VERSION,
+        channel: Channel::Stable,
+    };
+    let ended = rt.block_on(async {
+        let run = release::run(
+            &Frozen,
+            &client,
+            Mode::SelfHosted,
+            settings,
+            None,
+            &view,
+            &signal,
+        );
+        let trigger = async {
+            while !called.load(std::sync::atomic::Ordering::SeqCst) {
+                fstp_rt::Runtime::sleep(&rt, std::time::Duration::from_millis(5)).await;
+            }
+            stop.trigger();
+        };
+        let both = async {
+            let ((), ()) = fstp_rt::future::join(run, trigger).await;
+        };
+        fstp_rt::timeout(&rt, std::time::Duration::from_secs(10), both)
+            .await
+            .is_ok()
+    });
+    assert!(
+        ended && called.load(std::sync::atomic::Ordering::SeqCst),
+        "I-39: the release task kept a call in flight after the stop signal"
+    );
+    assert!(view.attempts().is_empty(), "{:?}", view.attempts());
+}

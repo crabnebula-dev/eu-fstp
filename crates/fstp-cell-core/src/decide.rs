@@ -359,6 +359,7 @@ fn engine_ctx(actor: AccountId, now: Timestamp, command: Option<[u8; 16]>, a: &A
 fn system_ctx(task: SystemTask, now: Timestamp, command: Option<[u8; 16]>) -> Ctx {
     let cause = match task {
         SystemTask::ContractPort => SystemCause::ContractPort,
+        SystemTask::PaymentPort => SystemCause::PaymentPort,
         SystemTask::ErasureRunner | SystemTask::Timeline | SystemTask::Provisioning => {
             SystemCause::Timeline
         }
@@ -458,6 +459,12 @@ fn due_engine_command<'a>(
         (
             SystemTask::ContractPort,
             fstp_engine::Command::Core(fstp_domain::Command::ContractFact { .. }),
+        ) => Ok(cmd),
+        // The payment port issues only the checks runner's `RecordChecks`
+        // (M5 design section 4.2, `SystemTask::PaymentPort`).
+        (
+            SystemTask::PaymentPort,
+            fstp_engine::Command::Core(fstp_domain::Command::RecordChecks { .. }),
         ) => Ok(cmd),
         _ => Err(wrong_actor()),
     }

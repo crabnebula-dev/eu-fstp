@@ -285,6 +285,11 @@ pub struct PgStartParts<C, R: Runtime, L, V, T> {
     /// The clock of the timeline and erasure tasks: the system clock in
     /// production, a test clock in a test world.
     pub clock: crate::engine::CommitClock,
+    /// The clock of the licence refresh and the update check, or `None`
+    /// to run them on `clock`. A test world passes a clock it moves ahead
+    /// of the cell's, so a call falls due without moving the cell's own
+    /// time (lane m3/licence-update).
+    pub release_clock: Option<crate::engine::CommitClock>,
 }
 
 /// A started cell over the store `S`.
@@ -448,6 +453,8 @@ struct Common<C, V, T> {
     listen: [(ListenerKind, SocketAddr); 3],
     /// The clock of the timeline and erasure tasks.
     clock: crate::engine::CommitClock,
+    /// The clock of the release tasks, or `None` for `clock`.
+    release_clock: Option<crate::engine::CommitClock>,
 }
 
 /// Starts a cell from `parts` over the in-memory anchoring store and
@@ -493,6 +500,7 @@ where
         licence,
         listen,
         clock: crate::engine::system_commit_clock(),
+        release_clock: None,
     };
     // ADR-010 "Keys", I-90: a pin set that accepts no receipt is refused
     // when the store is built, before any prepare reaches the witness.
@@ -534,6 +542,7 @@ where
         licence,
         listen,
         clock,
+        release_clock,
     } = parts;
     let common = Common {
         config,
@@ -545,6 +554,7 @@ where
         licence,
         listen,
         clock,
+        release_clock,
     };
     let open = move |cell: [u8; 16]| {
         if store.inner().cell() == cell {
@@ -689,7 +699,11 @@ where
             channel: fstp_release::egress::Channel::Stable,
         };
         let signal = shutdown.signal();
-        let clock = FnClock::new(rt.clone(), std::sync::Arc::clone(&parts.clock));
+        let release_clock = parts
+            .release_clock
+            .clone()
+            .unwrap_or_else(|| std::sync::Arc::clone(&parts.clock));
+        let clock = FnClock::new(rt.clone(), release_clock);
         let task_view = view.clone();
         let hold = parts.licence;
         let mode = config.mode;

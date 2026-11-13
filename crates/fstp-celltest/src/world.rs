@@ -2915,6 +2915,11 @@ struct CellRuntime {
     relays: Mutex<Vec<crate::relay::Relay>>,
     /// The cell's custody, which shares its roots with the cell.
     custody: WorldCustody,
+    /// What the cell restarts from (lane m3/licence-update).
+    restart: RestartParts,
+    /// The cell's CrabNebula stand-in and release clock (lane
+    /// m3/licence-update).
+    release: ReleaseWorld,
 }
 
 impl fmt::Debug for CellRuntime {
@@ -3493,23 +3498,44 @@ fn start_cell(
     };
     // The fault point of the cell's record store (lane F-ERASE).
     let backups = crate::backups::CellBackups::default();
-    let running = match s.rt.block_on(fstp_cell::process::start_with(
-        &s.rt,
-        parts,
-        fstp_cell::process::StartOptions {
-            clock: clock.commit_clock(),
-            creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
-            proof_mail: std::sync::Arc::new(mail.clone()),
-            operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
-            // P-70: the world's tenant enables magic links, as the auth
-            // machines' universe does (`mc::auth_model::ENABLED`).
-            login_methods: fstp_auth::EnabledMethods {
-                methods: vec![fstp_auth::Method::MagicLink],
-            },
-            control_plane,
-            fault_point: Some(backups.fault().clone()),
+    // Lane m3/licence-update: the cell's CrabNebula stand-in, its first
+    // licence token and the clock of its release tasks.
+    let release = match start_release_world(s, egress, index, &clock) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            return Err(e);
+        }
+    };
+    let options = fstp_cell::process::StartOptions {
+        clock: clock.commit_clock(),
+        creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
+        proof_mail: std::sync::Arc::new(mail.clone()),
+        operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
+        // P-70: the world's tenant enables magic links, as the auth
+        // machines' universe does (`mc::auth_model::ENABLED`).
+        login_methods: fstp_auth::EnabledMethods {
+            methods: vec![fstp_auth::Method::MagicLink],
         },
-    )) {
+        control_plane,
+        fault_point: Some(backups.fault().clone()),
+        crabnebula: Some(fstp_cell::egress::SharedCnTransport::new(
+            release.standin.transport(),
+        )),
+        licence: Some(release.first.clone()),
+        release_clock: Some(release.clock()),
+    };
+    let restart = match RestartParts::of(&parts, &options) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            return Err(e);
+        }
+    };
+    let running = match s
+        .rt
+        .block_on(fstp_cell::process::start_with(&s.rt, parts, options))
+    {
         Ok(r) => r,
         Err(e) => {
             let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
@@ -3576,18 +3602,17 @@ fn start_cell(
     };
     // The first admin's login email, as the tenant contact's address that
     // provisioning names (lane m3/login-m2http). Synthetic.
-    {
+    let first_admin = {
         use fstp_auth::ceremony::{split_token_digest, token_digest};
         use fstp_auth::codec::Token;
         let digest = match &invitation {
             Invitation::Split(i) => split_token_digest(&Token(i.first), &Token(i.second)),
             Invitation::Whole(t) => token_digest(&Token(*t)),
         };
-        running.note_first_admin_email(
-            digest,
-            login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN),
-        );
-    }
+        let email = login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN);
+        running.note_first_admin_email(digest, email.clone());
+        (digest, email)
+    };
     Ok(CellHandle {
         index,
         id: cell,
@@ -3611,6 +3636,11 @@ fn start_cell(
             witness,
             relays: Mutex::new(relays.relays),
             custody,
+            restart: RestartParts {
+                first_admin,
+                ..restart
+            },
+            release,
         })),
     })
 }
@@ -4258,6 +4288,485 @@ struct TicketSigner(std::sync::Arc<fstp_crypto::sig::Ed25519SigningKey>);
 impl fmt::Debug for TicketSigner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("TicketSigner(..)")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lane m3/licence-update: the CrabNebula stand-in of each cell, the clock
+// of its release tasks, and the restart of a cell (I-38, I-39).
+
+/// The names the stand-in's server certificate carries: both service
+/// hosts (design section 10.1).
+const CRABNEBULA_NAMES: [&str; 2] = [
+    fstp_release::egress::LICENCE_HOST,
+    fstp_release::egress::UPDATE_HOST,
+];
+
+/// How long a release step waits for the cell's call, in real time.
+const RELEASE_WAIT: Duration = Duration::from_secs(90);
+
+/// How often a release step reads the cell's release view.
+const RELEASE_POLL: Duration = Duration::from_millis(20);
+
+/// How far a release step moves the release clock to make both calls due
+/// at once: a day after an answer, and at most a day of backoff after a
+/// failure (`fstp_cell::tasks::release::Schedule`), and a second more.
+const RELEASE_KICK_US: i64 = 86_400_000_000 + 1_000_000;
+
+/// How long a release step waits in real time before it moves the
+/// release clock past a call's timeout, so a call that the stand-in
+/// never answers ends (`fstp_cell::tasks::release::CALL_TIMEOUT_US`).
+const RELEASE_TIMEOUT_NUDGE: Duration = Duration::from_millis(500);
+
+/// How long a release step waits in real time, with no call in flight
+/// and no call of its kind seen, before it moves the release clock by a
+/// day again.
+const RELEASE_REKICK: Duration = Duration::from_secs(2);
+
+/// The CrabNebula side of one world cell (lane m3/licence-update): its
+/// stand-in, the licence token it issued first, and the offset of the
+/// cell's release clock from the cell's own clock.
+struct ReleaseWorld {
+    standin: crate::crabnebula::StandIn<Rt>,
+    first: fstp_cell::tasks::release::LicenceHold,
+    clock: WorldClock,
+    offset: std::sync::Arc<std::sync::atomic::AtomicI64>,
+}
+
+impl fmt::Debug for ReleaseWorld {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReleaseWorld")
+            .field("standin", &self.standin)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ReleaseWorld {
+    /// The release clock: the cell's clock plus the offset.
+    fn clock(&self) -> fstp_cell::engine::CommitClock {
+        let c = self.clock.clone();
+        let offset = std::sync::Arc::clone(&self.offset);
+        std::sync::Arc::new(move || {
+            c.now()
+                .saturating_add(offset.load(std::sync::atomic::Ordering::SeqCst))
+        })
+    }
+
+    /// Waits until no call of the cell is in flight, at most
+    /// `RELEASE_WAIT`. In mode `timed-out` the stand-in never answers,
+    /// so the release clock moves past the call timeout to end the call.
+    fn settle(&self, mode: crate::crabnebula::Mode) {
+        let timed_out = crate::crabnebula::Mode::Down(crate::crabnebula::Fault::TimedOut);
+        let past_timeout = fstp_cell::tasks::release::CALL_TIMEOUT_US.saturating_add(1_000_000);
+        let start = Instant::now();
+        let mut nudged = Instant::now();
+        while self.standin.in_flight() > 0 && start.elapsed() < RELEASE_WAIT {
+            if mode == timed_out && nudged.elapsed() > RELEASE_TIMEOUT_NUDGE {
+                self.advance(past_timeout);
+                nudged = Instant::now();
+            }
+            std::thread::sleep(RELEASE_POLL);
+        }
+    }
+
+    /// Moves the release clock forward by `micros`, never the cell's.
+    fn advance(&self, micros: i64) {
+        let _ = self.offset.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |o| Some(o.saturating_add(micros.max(0))),
+        );
+    }
+}
+
+/// Starts the CrabNebula stand-in of world cell `index` (lane
+/// m3/licence-update, [`crate::crabnebula`]). A CA of its own issues the
+/// server certificate for both service hosts, and a second CA, which the
+/// cell does not trust, the certificate of the `failed-tls` fault. The
+/// licence service holds one noncommercial licence for the cell, and
+/// its key is the one key the cell pins. The first token is issued at
+/// the release clock's start, as the registration page would issue it
+/// (design section 10.2, Q41).
+fn start_release_world(
+    s: &'static Services,
+    egress: &EgressLog,
+    index: u8,
+    clock: &WorldClock,
+) -> Result<ReleaseWorld, WorldError> {
+    use fstp_pki::cert::CertKind;
+    let fail = |what: &str, e: &dyn fmt::Display| {
+        WorldError::Store(format!(
+            "cell {index}: the CrabNebula stand-in: {what}: {e}"
+        ))
+    };
+    let ca = pki::Ca::new("fstp world CrabNebula stand-in CA")?;
+    let other = pki::Ca::new("fstp world untrusted CA")?;
+    let name = fstp_release::egress::LICENCE_HOST;
+    let good = ca.issue(CertKind::Server, name, None, &CRABNEBULA_NAMES, &[])?;
+    let bad = other.issue(CertKind::Server, name, None, &CRABNEBULA_NAMES, &[])?;
+    let server = |cert: &pki::Issued| {
+        fstp_tls::ServerConfig::new(&cert.cert_pem, &cert.key_pem)
+            .map_err(|e| fail("a server TLS", &e))
+    };
+    let key = fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the key", &e))?;
+    let pinned = fstp_release::licence::Ed25519Public(key.public_key());
+    let mut id = [0u8; 16];
+    fstp_crypto::random_bytes(&mut id).map_err(|_| fail("the licence id", &"randomness"))?;
+    let licence = fstp_release::licence::LicenceId(id);
+    let offset = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let partial = ReleaseClockSource {
+        clock: clock.clone(),
+        offset: std::sync::Arc::clone(&offset),
+    };
+    let standin =
+        s.rt.block_on(crate::crabnebula::start(
+            s.rt.clone(),
+            egress.clone(),
+            crate::crabnebula::StandInParts {
+                cell: index,
+                server: server(&good)?,
+                untrusted: server(&bad)?,
+                client: fstp_tls::ClientConfig::new(&ca.pem)
+                    .map_err(|e| fail("the client TLS", &e))?,
+                licence,
+                key,
+                clock: std::sync::Arc::new(move || partial.now()),
+            },
+        ))
+        .map_err(|e| fail("the start", &e))?;
+    let now_s = clock.now().div_euclid(1_000_000);
+    let token = standin
+        .first_token(now_s)
+        .map_err(|e| fail("the first token", &format!("{e:?}")))?;
+    let keys = fstp_release::licence::KeySet::shipped(&[pinned])
+        .map_err(|e| fail("the pinned key set", &format!("{e:?}")))?;
+    Ok(ReleaseWorld {
+        standin,
+        first: fstp_cell::tasks::release::LicenceHold { token, keys },
+        clock: clock.clone(),
+        offset,
+    })
+}
+
+/// The release clock as the stand-in reads it.
+struct ReleaseClockSource {
+    clock: WorldClock,
+    offset: std::sync::Arc<std::sync::atomic::AtomicI64>,
+}
+
+impl ReleaseClockSource {
+    fn now(&self) -> i64 {
+        self.clock
+            .now()
+            .saturating_add(self.offset.load(std::sync::atomic::Ordering::SeqCst))
+    }
+}
+
+/// What a world cell restarts from (lane m3/licence-update): every part
+/// of its first start but the keystore, which the running cell hands
+/// over, and the listen addresses, which the restarted cell binds again.
+/// The composite `Anchor` key is kept as its encoded bytes, since the
+/// key has no `Clone`. The world is test-only and its keys synthetic.
+#[derive(Clone)]
+struct RestartParts {
+    cell: [u8; 16],
+    mode: fstp_cell::config::Mode,
+    host: String,
+    writer: fstp_pgwire::Config,
+    app: fstp_pgwire::Config,
+    registered_servers: Vec<fstp_cell::process::RegisteredSpki>,
+    custody: WorldCustody,
+    anchor: Vec<u8>,
+    ledger: std::sync::Arc<fstp_pgstore::LedgerKeys>,
+    cred_lookup: [u8; 32],
+    witness: fstp_cell::witness::link::WitnessEndpoint,
+    witness_keys: Vec<Vec<u8>>,
+    vault: SharedVault,
+    tunnel_tls: fstp_cell::http::tunnel::TunnelTls,
+    internal_tls: std::sync::Arc<fstp_tls::ServerConfig>,
+    pages: Option<fstp_cell::http::pages::Pages>,
+    options: fstp_cell::process::StartOptions,
+    /// The first admin's invitation digest and login email, which the
+    /// restarted cell notes again (`RunningCell::note_first_admin_email`).
+    first_admin: ([u8; 32], String),
+}
+
+impl RestartParts {
+    /// The restart parts of a first start from `parts` and `options`.
+    fn of(
+        parts: &fstp_cell::process::CellProcessParts<WorldCustody, SharedVault>,
+        options: &fstp_cell::process::StartOptions,
+    ) -> Result<RestartParts, WorldError> {
+        let anchor = parts
+            .keys
+            .anchor
+            .to_bytes()
+            .map_err(|e| WorldError::Store(format!("the anchor key bytes: {e}")))?;
+        Ok(RestartParts {
+            cell: parts.cell,
+            mode: parts.mode,
+            host: parts.host.clone(),
+            writer: parts.writer.clone(),
+            app: parts.app.clone(),
+            registered_servers: parts.registered_servers.clone(),
+            custody: parts.custody.clone(),
+            anchor: anchor.to_vec(),
+            ledger: std::sync::Arc::clone(&parts.keys.ledger),
+            cred_lookup: parts.keys.cred_lookup,
+            witness: parts.witness.clone(),
+            witness_keys: parts.witness_keys.clone(),
+            vault: parts.vault.clone(),
+            tunnel_tls: parts.tunnel_tls.clone(),
+            internal_tls: std::sync::Arc::clone(&parts.internal_tls),
+            pages: parts.pages.clone(),
+            options: options.clone(),
+            first_admin: ([0; 32], String::new()),
+        })
+    }
+
+    /// The process parts of a restart over `keystore`, bound at `listen`.
+    fn parts(
+        &self,
+        keystore: fstp_cell::tasks::erasure::Keystore,
+        listen: fstp_cell::process::Listen,
+    ) -> Result<fstp_cell::process::CellProcessParts<WorldCustody, SharedVault>, WorldError> {
+        let anchor = fstp_crypto::composite::CompositeSigningKey::from_bytes(&self.anchor)
+            .map_err(|e| WorldError::Store(format!("the anchor key: {e}")))?;
+        Ok(fstp_cell::process::CellProcessParts {
+            cell: self.cell,
+            mode: self.mode,
+            host: self.host.clone(),
+            writer: self.writer.clone(),
+            app: self.app.clone(),
+            registered_servers: self.registered_servers.clone(),
+            custody: self.custody.clone(),
+            keystore: Some(keystore),
+            keys: fstp_cell::process::CellKeys {
+                anchor,
+                ledger: std::sync::Arc::clone(&self.ledger),
+                cred_lookup: self.cred_lookup,
+            },
+            witness: self.witness.clone(),
+            witness_keys: self.witness_keys.clone(),
+            vault: self.vault.clone(),
+            tunnel_tls: self.tunnel_tls.clone(),
+            internal_tls: std::sync::Arc::clone(&self.internal_tls),
+            pages: self.pages.clone(),
+            listen,
+        })
+    }
+}
+
+/// Which call a release step waits for.
+pub use fstp_cell::tasks::release::CallKind;
+
+/// The refusal of a release step on a SaaS cell, which never reaches a
+/// CrabNebula host (B12, I-38).
+pub const SAAS_RELEASE: &str = "fstp_celltest::world release steps: a SaaS cell runs no licence refresh or update check (B12), so the step has no call to wait for";
+
+/// A release step that saw no call of its kind in time.
+pub const RELEASE_NO_CALL: &str = "fstp_celltest::world release steps: the cell made no call of the kind in time (the attempts are on standard error)";
+
+impl CellHandle {
+    /// Restarts the cell (lane m3/licence-update): the running process
+    /// drains and stops, and a new one starts over the same databases,
+    /// with the keystore the old one held and the licence token it held
+    /// last. The vault, the witness, the relays and the stand-in keep
+    /// running. The new process binds the same listen addresses, so the
+    /// edge routes and the health address stay valid.
+    ///
+    /// Claims, Interim, pending Daniel: the keystore passes in process,
+    /// since the keystore tables are not built, and the licence token
+    /// passes the same way, since the sealed licence store is not built.
+    /// What `fstp_cell::routes::pg` keeps in process memory between two
+    /// ceremony steps is lost, so a restart falls between cycle steps.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process, the old one gives no keystore
+    /// or does not stop, or the new one does not start.
+    pub fn restart(&self) -> Result<(), WorldError> {
+        let rt = self.runtime()?;
+        let s = rt.services;
+        let mut running = lock(&rt.running);
+        let old = running
+            .cell
+            .take()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        let keystore = s.rt.block_on(old.erasure().keystore());
+        let hold = old.release().hold();
+        let bound = old.bound();
+        let stopped = s.rt.block_on(old.shutdown(CELL_DRAIN));
+        let keystore = keystore.ok_or_else(|| {
+            WorldError::Store("the restart: the old process gave no keystore".to_owned())
+        })?;
+        stopped.map_err(|e| WorldError::Store(format!("the restart: the old process: {e}")))?;
+        let parts = rt.restart.parts(keystore, bound)?;
+        let mut options = rt.restart.options.clone();
+        if hold.is_some() {
+            options.licence = hold;
+        }
+        let new =
+            s.rt.block_on(fstp_cell::process::start_with(&s.rt, parts, options))
+                .map_err(|e| WorldError::Store(format!("the restart: the new process: {e}")))?;
+        let (digest, email) = &rt.restart.first_admin;
+        new.note_first_admin_email(*digest, email.clone());
+        running.cell = Some(new);
+        Ok(())
+    }
+
+    /// The payment port's `RecordChecks` of `request`, issued in process
+    /// (`fstp_cell::process::RunningCell::payment_checks`, lane
+    /// m3/licence-update). It stands for the M5 checks runner, which the
+    /// cell does not run yet. Claims built on it say so.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell refused the checks or runs no process.
+    pub fn payment_checks(
+        &self,
+        request: fstp_domain::id::RequestId,
+        phase: fstp_domain::payment::CheckPhase,
+        results: Vec<fstp_domain::payment::CheckResult>,
+        snapshot: fstp_domain::id::ContentDigest,
+    ) -> Result<(), WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        let cell = running
+            .cell
+            .as_ref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        rt.services
+            .rt
+            .block_on(cell.payment_checks(request, phase, results, snapshot))
+            .map_err(|e| WorldError::Store(format!("the payment port's checks: {e}")))
+    }
+
+    /// The admin view of the cell's licence refresh and update check
+    /// (`fstp_cell::tasks::release::ReleaseView`).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn release_view(&self) -> Result<fstp_cell::tasks::release::ReleaseView, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| c.release().clone())
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
+    /// Sets how the cell's CrabNebula stand-in answers from now on
+    /// (`services-down:<fault>`, I-39).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn set_crabnebula_mode(&self, mode: crate::crabnebula::Mode) -> Result<(), WorldError> {
+        self.runtime()?.release.standin.set_mode(mode);
+        Ok(())
+    }
+
+    /// The mode of the cell's CrabNebula stand-in.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn crabnebula_mode(&self) -> Result<crate::crabnebula::Mode, WorldError> {
+        Ok(self.runtime()?.release.standin.mode())
+    }
+
+    /// Makes the cell's next licence refresh and update check due now,
+    /// and waits until the cell made a call of `kind` (lane
+    /// m3/licence-update). With `mode`, the stand-in answers in that mode
+    /// until the call ended, then in its former mode again.
+    ///
+    /// The step moves the release clock, never the cell's own clock, by a
+    /// day and a second: past the daily slot after an answer and past the
+    /// longest backoff after a failure. Calls of earlier steps end first,
+    /// and only a call that started after the move counts. While no call
+    /// is in flight and none of its kind was seen, the step moves the
+    /// clock again. In mode `timed-out` it moves the clock past the call
+    /// timeout, so a call the stand-in never answers ends. A call made in
+    /// mode up must be answered.
+    ///
+    /// # Errors
+    ///
+    /// [`SAAS_RELEASE`] on a SaaS cell, [`RELEASE_NO_CALL`] when no call
+    /// of `kind` ended in time, and a store error for an unanswered call
+    /// in mode up.
+    pub fn release_call(
+        &self,
+        kind: CallKind,
+        mode: Option<crate::crabnebula::Mode>,
+    ) -> Result<fstp_cell::tasks::release::Attempt, WorldError> {
+        use fstp_cell::tasks::release::Outcome;
+        if self.runtime()?.restart.mode == fstp_cell::config::Mode::Saas {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                SAAS_RELEASE,
+            )));
+        }
+        let rt = self.runtime()?;
+        let view = self.release_view()?;
+        let former = rt.release.standin.mode();
+        let used = mode.unwrap_or(former);
+        let timed_out = crate::crabnebula::Mode::Down(crate::crabnebula::Fault::TimedOut);
+        let past_timeout = fstp_cell::tasks::release::CALL_TIMEOUT_US.saturating_add(1_000_000);
+        // Calls of earlier steps end first, in their own mode: a kick
+        // would move the release clock past their timeout.
+        rt.release.settle(former);
+        let mut nudged = Instant::now();
+        rt.release.standin.set_mode(used);
+        rt.release.advance(RELEASE_KICK_US);
+        // Only a call that started after the kick counts.
+        let kick_at = (rt.release.clock())();
+        let started = Instant::now();
+        let mut kicked = Instant::now();
+        let found = loop {
+            if let Some(a) = view
+                .attempts()
+                .into_iter()
+                .find(|a| a.kind == kind && a.started >= kick_at)
+            {
+                break Some(a);
+            }
+            if started.elapsed() > RELEASE_WAIT {
+                break None;
+            }
+            let idle = rt.release.standin.in_flight() == 0;
+            if used == timed_out && !idle && nudged.elapsed() > RELEASE_TIMEOUT_NUDGE {
+                rt.release.advance(past_timeout);
+                nudged = Instant::now();
+            }
+            // A call that ended just after the kick waits out its slot or
+            // its backoff. With no call in flight, the next kick makes it
+            // due again. A call in flight is never cut short by a kick.
+            if idle && kicked.elapsed() > RELEASE_REKICK {
+                rt.release.advance(RELEASE_KICK_US);
+                kicked = Instant::now();
+            }
+            std::thread::sleep(RELEASE_POLL);
+        };
+        // The other call of the kick ends in the step's mode too.
+        rt.release.settle(used);
+        rt.release.standin.set_mode(former);
+        let Some(attempt) = found else {
+            eprintln!(
+                "fstp_celltest::world release_call {kind:?}: attempts {:?}",
+                view.attempts()
+            );
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                RELEASE_NO_CALL,
+            )));
+        };
+        if used == crate::crabnebula::Mode::Up && attempt.outcome != Outcome::Answered {
+            return Err(WorldError::Store(format!(
+                "the {kind:?} call in mode up was not answered: {attempt:?}"
+            )));
+        }
+        Ok(attempt)
     }
 }
 
