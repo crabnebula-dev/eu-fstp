@@ -970,6 +970,49 @@ fn i80_root_canary_absent_from_logs_dumps_and_backups() {
     assert!(report.is_clean(), "{report:?}");
 }
 
+/// I-80, design section 14.1 (lane m3/custody-decisions): the path the
+/// Linux memory scans take, on every platform. In process mode a cell and
+/// its vault run in a process apart from the test, and the cell's custody
+/// in another. The cell reaches custody over the `fstp-keyd` wire form,
+/// so its roots stay in the custody process. After a cycle, an erasure
+/// and a rotation, custody has reported roots and the seal keys of a
+/// destroyed epoch, so the scans have needles. No store read passes
+/// vacuously: a world in process mode refuses to give its stores.
+#[test]
+fn i80_process_mode_keeps_roots_in_a_custody_process() {
+    let world = World::start(WorldSpec {
+        cells: 1,
+        ..spec(true)
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let steps = ["call-cycle", "erase-text", "rotate-chain"];
+    if let Err(e) = world.run_cycle(0, &script(&steps)).result {
+        panic!("{e}");
+    }
+    use fstp_celltest::egress::Component;
+    let cell = world
+        .process_id(0, Component::Cell)
+        .expect("a cell process");
+    let custody = world.custody_process_id(0).expect("a custody process");
+    assert_ne!(cell, std::process::id());
+    assert_ne!(custody, std::process::id());
+    assert_ne!(cell, custody);
+    assert_eq!(world.process_id(0, Component::Vault), Some(cell));
+    assert_eq!(world.process_id(1, Component::Cell), None);
+    assert!(world.cell(0).is_none(), "the test process holds a cell");
+    assert!(world.stores().is_err() && world.databases().is_err());
+    assert!(!world.root_needles().is_empty(), "custody reported no root");
+    let chains = [Chain::App, Chain::Vault];
+    let all = world.epoch_seal_needles(&chains, false).unwrap();
+    let destroyed = world.epoch_seal_needles(&chains, true).unwrap();
+    assert!(
+        !destroyed.is_empty() && destroyed.len() < all.len(),
+        "{} seal keys, {} of destroyed epochs",
+        all.len(),
+        destroyed.len()
+    );
+}
+
 /// I-80, Q27: the Linux-only memory scans run in CI. This companion runs
 /// on every platform and checks that `ci.yml` names both.
 #[test]
@@ -991,24 +1034,36 @@ mod linux {
     use fstp_celltest::egress::Component;
     use fstp_celltest::procmem::read_memory;
 
-    /// The seam of [`process_ids`]: a process-mode world exposes no
-    /// process id of its components. Lane W3b adds the accessor.
-    const PID_SEAM: &str =
-        "fstp_celltest::world::World exposes no process ids of its components (lane W3b)";
-
+    /// The process that runs component `c` of cell `cell` in a world in
+    /// process mode (`World::process_id`, lane m3/custody-decisions). The
+    /// cell's custody runs in a process of its own, so a root never has
+    /// a reason to be in this one.
     fn process_ids(world: &World, cell: u8, c: Component) -> Result<u32, String> {
-        let _ = (world, cell, c);
-        Err(PID_SEAM.to_owned())
+        let pid = world
+            .process_id(cell, c)
+            .ok_or_else(|| format!("no process runs {c:?} of cell {cell}"))?;
+        if pid == std::process::id() {
+            return Err("the component runs in the test process".to_owned());
+        }
+        Ok(pid)
     }
 
-    /// The seam of [`epoch_seal_needles`]: the simulator gives no canary
-    /// epoch seal key `S(e)` (ADR-004 part 2, the proposed reading for
-    /// W1d). Lane W1a adds it, and this helper then reads it.
-    const SEAL_NEEDLE_SEAM: &str = "fstp_celltest::custody_sim gives no canary epoch seal keys S(e) (ADR-004 part 2, lane W1a)";
-
+    /// The epoch seal keys `S(e)` that the cells' custody processes
+    /// wrapped (ADR-004 part 2), only those of destroyed epochs when
+    /// `destroyed_only` holds. Custody sees each `S(e)` when it wraps it
+    /// (Daniel, 2026-11-13: the simulator wraps, m3-exit-audit section 7,
+    /// item 2). The chains are those an `fstp-cell` or `fstp-vault`
+    /// process holds keys of: App and Vault. CellBackup keys belong to
+    /// `fstp-backup`. No needle at all would pass vacuously, so it is an
+    /// error.
     fn epoch_seal_needles(world: &World, destroyed_only: bool) -> Result<Vec<Needle>, String> {
-        let _ = (world, destroyed_only);
-        Err(SEAL_NEEDLE_SEAM.to_owned())
+        let needles = world
+            .epoch_seal_needles(&[Chain::App, Chain::Vault], destroyed_only)
+            .map_err(|e| e.to_string())?;
+        if needles.is_empty() {
+            return Err("custody reported no seal key to look for".to_owned());
+        }
+        Ok(needles)
     }
 
     fn memory_hits(world: &World, needles: &[Needle]) -> Vec<String> {

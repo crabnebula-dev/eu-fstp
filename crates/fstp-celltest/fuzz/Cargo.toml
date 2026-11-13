@@ -18,6 +18,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "custody_sim_report_decode"
+path = "fuzz_targets/custody_sim_report_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

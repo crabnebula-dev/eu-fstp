@@ -209,3 +209,89 @@ fn memory_holds(pid: u32, needles: &[fstp_celltest::scan::Needle], addresses: &[
         fstp_celltest::procmem::ProcMemError::Unsupported
     );
 }
+
+/// I-80, ADR-004 part 2, lane m3/custody-decisions: `fstp-custody-sim
+/// --serve` is a custody process that the production client
+/// `KeydCustody` reaches over the `fstp-keyd` wire form. It creates,
+/// wraps, unwraps, logs and destroys under each call's request id, and
+/// refuses a tampered wrap and a destroyed root. Its report gives the
+/// test the root and the seal key, which never cross the socket in a
+/// response.
+#[test]
+fn harness_custody_sim_serves_custody_over_the_keyd_wire_form() {
+    use fstp_celltest::custody_sim::report::Kind;
+    use fstp_celltest::world_host::SimProcess;
+    use fstp_custody::keyd::KeydCustody;
+    use fstp_custody::{CellId, RequestId, with_request};
+
+    let dir = std::env::temp_dir().join(format!("fstp-cs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir(&dir).unwrap();
+    let sim = SimProcess::spawn(2, &dir).unwrap();
+    assert_ne!(sim.pid(), std::process::id());
+    let client = KeydCustody::new(sim.socket()).unwrap();
+    let label = RootLabel {
+        cell: Some(CellId([0x5A; 16])),
+        chain: Chain::App,
+        epoch: Epoch(0),
+    };
+    let created = RequestId([1; 16]);
+    let root = block_on(with_request(created, || client.create_root(label.clone()))).unwrap();
+    // A second create of the same chain and epoch finds the root.
+    let again = block_on(client.create_root(label)).unwrap();
+    assert_eq!(again, root);
+
+    let aad = Aad(b"synthetic aad".to_vec());
+    let key = SealKey::from_bytes([0x3C; 32]);
+    let wrapped = block_on(with_request(RequestId([2; 16]), || {
+        client.wrap(&root, &key, &aad)
+    }))
+    .unwrap();
+    let back = block_on(with_request(RequestId([3; 16]), || {
+        client.unwrap(&root, &wrapped, &aad)
+    }))
+    .unwrap();
+    assert_eq!(back.expose(), &[0x3C; 32]);
+    let mut tampered = wrapped.0.clone();
+    tampered[20] ^= 1;
+    let Err(err) = block_on(client.unwrap(&root, &WrappedSealKey(tampered), &aad)) else {
+        panic!("a tampered wrap unwrapped");
+    };
+    assert_eq!(err, CustodyError::Refused(Refusal::UnwrapFailed));
+
+    // The usage log names each served call under its request id.
+    let page = block_on(client.usage_since(&root, UsageCursor::default())).unwrap();
+    let ids: Vec<[u8; 16]> = page
+        .operations
+        .iter()
+        .map(|r| match fstp_custody::usage::decode_entry(r).unwrap() {
+            fstp_custody::usage::UsageEntry::Record(u) => u.request.0,
+            fstp_custody::usage::UsageEntry::Damaged { .. } => panic!("a damaged record"),
+        })
+        .collect();
+    assert_eq!(ids, vec![[1; 16], [2; 16], [3; 16]]);
+
+    block_on(with_request(RequestId([4; 16]), || client.destroy(&root))).unwrap();
+    let Err(err) = block_on(client.wrap(&root, &key, &aad)) else {
+        panic!("a destroyed root wrapped");
+    };
+    assert_eq!(err, CustodyError::Refused(Refusal::Destroyed));
+
+    // The report: the root, the seal key it wrapped, then the destroy.
+    let records = sim.records().unwrap();
+    let kinds: Vec<Kind> = records.iter().map(|r| r.kind).collect();
+    assert_eq!(kinds, vec![Kind::Root, Kind::Seal, Kind::Destroyed]);
+    assert_eq!(records[1].bytes, [0x3C; 32]);
+    let root_bytes = records[0].bytes;
+    let canary = Canary::parse(&format!(
+        "CNRY-2-rootkey-{}",
+        String::from_utf8(root_bytes.to_vec()).unwrap()
+    ));
+    assert!(canary.is_some(), "the root is not a root key canary");
+    assert!(
+        !wrapped.0.windows(32).any(|w| w == root_bytes),
+        "the root crossed the socket"
+    );
+    drop(sim);
+    let _ = std::fs::remove_dir_all(&dir);
+}

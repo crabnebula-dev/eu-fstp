@@ -867,6 +867,10 @@ pub struct World {
     /// instances ([`install_cluster_plan`]). Dropped after the cells.
     #[allow(dead_code, reason = "held for its Drop, which frees the slot")]
     install: Option<InstallSlot>,
+    /// In process mode, the processes that run the cells, their vaults
+    /// and their custody ([`crate::world_host`], lane
+    /// m3/custody-decisions). The world then holds no cell of its own.
+    host: Option<crate::world_host::WorldHost>,
 }
 
 impl World {
@@ -1046,6 +1050,50 @@ impl World {
         pages: Option<fstp_cell::http::pages::Pages>,
         dev: &[DevCell],
     ) -> Result<World, WorldError> {
+        if spec.process_mode {
+            if pages.is_some() || !dev.is_empty() {
+                return Err(WorldError::NotImplemented(NotImplemented::new(
+                    "fstp_celltest::world::World in process mode serves no auth pages and fixes no dev cells",
+                )));
+            }
+            return Ok(World {
+                spec,
+                cells: Vec::new(),
+                clusters: Vec::new(),
+                egress: EgressLog::new(),
+                install: None,
+                host: Some(crate::world_host::WorldHost::start(&spec)?),
+            });
+        }
+        World::start_in_process(spec, pages, dev, &[])
+    }
+
+    /// The world of a `fstp-world-host` process ([`crate::world_host`]):
+    /// [`World::start`] in this process, with the custody of cell `i` on
+    /// the socket `custody[i]`. The spec must not ask for process mode.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`], and a refusal of a spec in process mode or a
+    /// socket count other than the cell count.
+    pub fn start_hosted(
+        spec: WorldSpec,
+        custody: &[std::path::PathBuf],
+    ) -> Result<World, WorldError> {
+        if spec.process_mode || custody.len() != usize::from(spec.cells) {
+            return Err(WorldError::Store(
+                "a hosted world runs in this process, with one custody socket per cell".to_owned(),
+            ));
+        }
+        World::start_in_process(spec, None, &[], custody)
+    }
+
+    fn start_in_process(
+        spec: WorldSpec,
+        pages: Option<fstp_cell::http::pages::Pages>,
+        dev: &[DevCell],
+        custody: &[std::path::PathBuf],
+    ) -> Result<World, WorldError> {
         // One world start at a time in the process (lead decision,
         // 2026-11-13, lane F-ERASE): worlds that start in parallel race
         // on the shared clusters. Only the start is serialised. A world
@@ -1066,7 +1114,15 @@ impl World {
             for cluster in clusters.iter().filter(|c| is_agent_kind(c.kind())) {
                 prepare_cluster(cluster)?;
             }
-            match start_cells(&spec, &clusters, &plans, pages.as_ref(), &egress, dev) {
+            match start_cells(
+                &spec,
+                &clusters,
+                &plans,
+                pages.as_ref(),
+                &egress,
+                dev,
+                custody,
+            ) {
                 Ok(started) => {
                     crate::backups::attach(&started, &clusters)?;
                     cells = started;
@@ -1083,6 +1139,7 @@ impl World {
             clusters,
             egress,
             install,
+            host: None,
         })
     }
 
@@ -1105,6 +1162,18 @@ impl World {
     /// A second script on the same cell continues the first one's cycle:
     /// its passkeys, sessions, programme and call (lane F-CYCLE3).
     pub fn run_cycle(&self, cell: u8, script: &CycleScript) -> CycleReport {
+        if let Some(host) = &self.host {
+            if usize::from(cell) >= host.cells() {
+                return CycleReport {
+                    result: Err(NotImplemented::new(
+                        "fstp_celltest::world::World::run_cycle on a cell the world does not hold",
+                    )),
+                };
+            }
+            return CycleReport {
+                result: host.run_cycle(cell, script, &self.egress),
+            };
+        }
         let result = match self.cell(cell) {
             None => Err(NotImplemented::new(
                 "fstp_celltest::world::World::run_cycle on a cell the world does not hold",
@@ -1141,6 +1210,11 @@ impl World {
     /// Fails when a CHECKPOINT or a dump fails, or a file or directory
     /// cannot be read. A scan then never runs over stale or missing data.
     pub fn stores(&self) -> Result<StoreSet, WorldError> {
+        if self.host.is_some() {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                PROCESS_MODE_STORES,
+            )));
+        }
         let mut set = StoreSet::default();
         for cluster in &self.clusters {
             for (name, bytes) in cluster_stores(cluster.name(), cluster.server())?.stores {
@@ -1187,6 +1261,11 @@ impl World {
     ///
     /// Fails when a cluster cannot list its databases.
     pub fn databases(&self) -> Result<Vec<WorldDatabase>, WorldError> {
+        if self.host.is_some() {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                PROCESS_MODE_STORES,
+            )));
+        }
         let mut out = Vec::new();
         for cluster in &self.clusters {
             for (oid, name) in list_databases(cluster.name(), cluster.server())? {
@@ -1210,8 +1289,15 @@ impl World {
     /// destroyed roots included (I-80, design section 14.4, lane
     /// F-ERASE). The roots are the world custody's synthetic bytes, held
     /// in the test process only. A label names the cell and the order of
-    /// creation, never the bytes.
+    /// creation, never the bytes. In process mode the roots live in each
+    /// cell's custody process, which reports them to the test process
+    /// only ([`crate::world_host`]).
     pub fn root_needles(&self) -> Vec<crate::scan::Needle> {
+        if let Some(host) = &self.host {
+            // A report that cannot be read gives no needle, which the
+            // I-80 scans refuse as vacuous.
+            return host.root_needles().unwrap_or_default();
+        }
         let mut out = Vec::new();
         for c in &self.cells {
             let Some(rt) = c.runtime.as_ref() else {
@@ -1225,6 +1311,53 @@ impl World {
             }
         }
         out
+    }
+
+    /// In process mode, one needle per epoch seal key `S(e)` that a cell's
+    /// custody process wrapped under a root of one of `chains`: only those
+    /// whose root was destroyed when `destroyed_only` holds (I-80, ADR-004
+    /// part 2, lane m3/custody-decisions). Custody sees every `S(e)` when
+    /// it wraps it, so the test knows each one without asking the cell.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a world that is not in process mode, whose custody runs in
+    /// this process, and fails when a report cannot be read.
+    pub fn epoch_seal_needles(
+        &self,
+        chains: &[fstp_custody::Chain],
+        destroyed_only: bool,
+    ) -> Result<Vec<crate::scan::Needle>, WorldError> {
+        match &self.host {
+            Some(host) => host.seal_needles(chains, destroyed_only),
+            None => Err(WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World::epoch_seal_needles: only a world in process mode reports the seal keys its custody wrapped",
+            ))),
+        }
+    }
+
+    /// In process mode, the id of the process that runs `component` of
+    /// cell `cell`: the `fstp-world-host` process for the cell and its
+    /// vault ([`crate::world_host`], interim, pending Daniel). `None` for
+    /// any other component, a cell the world does not hold, or a world
+    /// whose cells run in this process.
+    pub fn process_id(&self, cell: u8, component: crate::egress::Component) -> Option<u32> {
+        let host = self.host.as_ref()?;
+        let held = usize::from(cell) < host.cells();
+        match component {
+            crate::egress::Component::Cell | crate::egress::Component::Vault if held => {
+                Some(host.pid())
+            }
+            _ => None,
+        }
+    }
+
+    /// In process mode, the id of cell `cell`'s custody process.
+    pub fn custody_process_id(&self, cell: u8) -> Option<u32> {
+        self.host
+            .as_ref()?
+            .custody(cell)
+            .map(crate::world_host::SimProcess::pid)
     }
 
     /// Every PostgreSQL cluster of the world, of every kind.
@@ -1359,6 +1492,10 @@ impl Drop for World {
         retire(&self.spec, &self.clusters, &ids);
     }
 }
+
+/// The refusal of a store read in process mode: the stores belong to the
+/// host process, and an empty set would pass any scan.
+const PROCESS_MODE_STORES: &str = "fstp_celltest::world::World in process mode: the stores and databases belong to the fstp-world-host process, which does not report them";
 
 /// The refusal of a world part that only a world with a started cell
 /// runs: the witness and the edge start with the first cell.
@@ -1781,6 +1918,8 @@ struct CellServe<'a> {
     pages: Option<&'a fstp_cell::http::pages::Pages>,
     /// The fixed host and clock start, if any.
     dev: Option<&'a DevCell>,
+    /// In a hosted world, the socket of the cell's custody process.
+    custody: Option<&'a std::path::Path>,
 }
 
 /// Provisions every cell of `plans`, then the service databases, then
@@ -1792,6 +1931,7 @@ fn start_cells(
     pages: Option<&fstp_cell::http::pages::Pages>,
     egress: &EgressLog,
     dev: &[DevCell],
+    custody: &[std::path::PathBuf],
 ) -> Result<Vec<CellHandle>, WorldError> {
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -1812,6 +1952,7 @@ fn start_cells(
             CellServe {
                 pages,
                 dev: dev.get(i),
+                custody: custody.get(i).map(std::path::PathBuf::as_path),
             },
             egress,
         )?);
@@ -2309,20 +2450,45 @@ pub(crate) struct WorldCustody {
     /// The reference of every root it created, by handle, so the control
     /// plane can name each live root of the cell (lane m3/erase-cell).
     refs: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, fstp_custody::RootRef>>>,
+    /// In process mode, the cell's custody process: its roots live there
+    /// and never in this process ([`crate::custody_sim::serve`], lane
+    /// m3/custody-decisions). The handles of its live roots are kept here.
+    remote: Option<std::sync::Arc<fstp_custody::keyd::KeydCustody>>,
+    remote_live: std::sync::Arc<Mutex<std::collections::BTreeSet<Vec<u8>>>>,
 }
 
 impl WorldCustody {
+    /// The custody of a cell in process mode: every root operation goes to
+    /// the custody process on `socket` through the production client
+    /// `KeydCustody`, so no root byte enters this process (I-80). CA keys
+    /// stay here, as in every world.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty socket path.
+    pub(crate) fn remote(socket: &std::path::Path) -> Result<WorldCustody, WorldError> {
+        let client = fstp_custody::keyd::KeydCustody::new(socket)
+            .map_err(|e| WorldError::Store(format!("the custody client: {e}")))?;
+        Ok(WorldCustody {
+            remote: Some(std::sync::Arc::new(client)),
+            ..WorldCustody::default()
+        })
+    }
+
     /// The handle of every root that lives (lane F-ERASE).
     pub(crate) fn live_handles(&self) -> Vec<Vec<u8>> {
-        lock(&self.roots).keys().cloned().collect()
+        let mut out: Vec<Vec<u8>> = lock(&self.roots).keys().cloned().collect();
+        out.extend(lock(&self.remote_live).iter().cloned());
+        out
     }
 
     /// Every key that lives: each root with its chain, and each `sign`
     /// key with no chain, by handle (lane m3/erase-steps).
     pub(crate) fn live_keys(&self) -> Vec<(Option<fstp_keys::Chain>, Vec<u8>)> {
         let chains = lock(&self.chains);
-        let mut out: Vec<(Option<fstp_keys::Chain>, Vec<u8>)> = lock(&self.roots)
-            .keys()
+        let mut out: Vec<(Option<fstp_keys::Chain>, Vec<u8>)> = self
+            .live_handles()
+            .iter()
             .map(|h| (chains.get(h).copied(), h.clone()))
             .collect();
         out.extend(lock(&self.sign_keys).keys().map(|h| (None, h.clone())));
@@ -2356,8 +2522,9 @@ impl WorldCustody {
     pub(crate) fn cell_keys(&self) -> fstp_control::erase::CellKeys {
         let refs = lock(&self.refs);
         fstp_control::erase::CellKeys {
-            roots: lock(&self.roots)
-                .keys()
+            roots: self
+                .live_handles()
+                .iter()
                 .filter_map(|h| refs.get(h).cloned())
                 .collect(),
             ca: lock(&self.sign_keys)
@@ -2378,127 +2545,134 @@ impl WorldCustody {
 }
 
 impl fstp_custody::Custody for WorldCustody {
-    fn create_root(
+    // In process mode each root operation goes to the cell's custody
+    // process (`remote`). The `async fn` bodies run when the caller polls,
+    // so the caller's request id is current for `KeydCustody`
+    // (`fstp_custody::with_request`).
+
+    async fn create_root(
         &self,
         label: fstp_custody::RootLabel,
-    ) -> impl std::future::Future<Output = Result<fstp_custody::RootRef, fstp_custody::CustodyError>>
-    + Send {
-        let made = (|| {
-            let key =
-                fstp_crypto::random_array::<32>().map_err(fstp_custody::CustodyError::Crypto)?;
-            let handle =
-                fstp_crypto::random_array::<16>().map_err(fstp_custody::CustodyError::Crypto)?;
-            lock(&self.roots).insert(handle.to_vec(), key);
-            lock(&self.made).push(key);
-            lock(&self.chains).insert(handle.to_vec(), label.chain);
-            let root = fstp_custody::RootRef {
-                backend: fstp_custody::BackendId::Simulator,
-                cell: label.cell,
-                chain: label.chain,
-                epoch: label.epoch,
-                handle: fstp_custody::CustodyHandle(handle.to_vec()),
-            };
-            lock(&self.refs).insert(handle.to_vec(), root.clone());
-            Ok(root)
-        })();
-        std::future::ready(made)
+    ) -> Result<fstp_custody::RootRef, fstp_custody::CustodyError> {
+        let chain = label.chain;
+        let root = match &self.remote {
+            Some(remote) => {
+                let root = remote.create_root(label).await?;
+                lock(&self.remote_live).insert(root.handle.0.clone());
+                root
+            }
+            None => {
+                let key = fstp_crypto::random_array::<32>()
+                    .map_err(fstp_custody::CustodyError::Crypto)?;
+                let handle = fstp_crypto::random_array::<16>()
+                    .map_err(fstp_custody::CustodyError::Crypto)?;
+                lock(&self.roots).insert(handle.to_vec(), key);
+                lock(&self.made).push(key);
+                fstp_custody::RootRef {
+                    backend: fstp_custody::BackendId::Simulator,
+                    cell: label.cell,
+                    chain: label.chain,
+                    epoch: label.epoch,
+                    handle: fstp_custody::CustodyHandle(handle.to_vec()),
+                }
+            }
+        };
+        lock(&self.chains).insert(root.handle.0.clone(), chain);
+        lock(&self.refs).insert(root.handle.0.clone(), root.clone());
+        Ok(root)
     }
 
-    fn wrap(
+    async fn wrap(
         &self,
         root: &fstp_custody::RootRef,
         key: &fstp_custody::SealKey,
         aad: &fstp_custody::Aad,
-    ) -> impl std::future::Future<
-        Output = Result<fstp_custody::WrappedSealKey, fstp_custody::CustodyError>,
-    > + Send {
+    ) -> Result<fstp_custody::WrappedSealKey, fstp_custody::CustodyError> {
         use fstp_custody::{CustodyError, Refusal};
-        let r = (|| {
-            let rk = *lock(&self.roots)
-                .get(&root.handle.0)
-                .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
-            let k = fstp_crypto::aead::Key::from_bytes(&rk).map_err(CustodyError::Crypto)?;
-            let s =
-                fstp_crypto::aead::seal(&k, &aad.0, key.expose()).map_err(CustodyError::Crypto)?;
-            let mut out = s.nonce.to_vec();
-            out.extend_from_slice(&s.body);
-            Ok(fstp_custody::WrappedSealKey(out))
-        })();
-        std::future::ready(r)
+        if let Some(remote) = &self.remote {
+            return remote.wrap(root, key, aad).await;
+        }
+        let rk = *lock(&self.roots)
+            .get(&root.handle.0)
+            .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
+        let k = fstp_crypto::aead::Key::from_bytes(&rk).map_err(CustodyError::Crypto)?;
+        let s = fstp_crypto::aead::seal(&k, &aad.0, key.expose()).map_err(CustodyError::Crypto)?;
+        let mut out = s.nonce.to_vec();
+        out.extend_from_slice(&s.body);
+        Ok(fstp_custody::WrappedSealKey(out))
     }
 
-    fn unwrap(
+    async fn unwrap(
         &self,
         root: &fstp_custody::RootRef,
         w: &fstp_custody::WrappedSealKey,
         aad: &fstp_custody::Aad,
-    ) -> impl std::future::Future<Output = Result<fstp_custody::SealKey, fstp_custody::CustodyError>>
-    + Send {
+    ) -> Result<fstp_custody::SealKey, fstp_custody::CustodyError> {
         use fstp_custody::{CustodyError, Refusal};
-        let r = (|| {
-            let rk = *lock(&self.roots)
-                .get(&root.handle.0)
-                .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
-            let k = fstp_crypto::aead::Key::from_bytes(&rk).map_err(CustodyError::Crypto)?;
-            let (nonce, body) =
-                w.0.split_at_checked(fstp_crypto::aead::NONCE_LEN)
-                    .ok_or(CustodyError::Refused(Refusal::UnwrapFailed))?;
-            let nonce: [u8; fstp_crypto::aead::NONCE_LEN] = nonce
-                .try_into()
-                .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
-            let pt = fstp_crypto::aead::open(&k, &nonce, &aad.0, body)
-                .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
-            let bytes: [u8; 32] = pt
-                .as_slice()
-                .try_into()
-                .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
-            Ok(fstp_custody::SealKey::from_bytes(bytes))
-        })();
-        std::future::ready(r)
+        if let Some(remote) = &self.remote {
+            return remote.unwrap(root, w, aad).await;
+        }
+        let rk = *lock(&self.roots)
+            .get(&root.handle.0)
+            .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
+        let k = fstp_crypto::aead::Key::from_bytes(&rk).map_err(CustodyError::Crypto)?;
+        let (nonce, body) =
+            w.0.split_at_checked(fstp_crypto::aead::NONCE_LEN)
+                .ok_or(CustodyError::Refused(Refusal::UnwrapFailed))?;
+        let nonce: [u8; fstp_crypto::aead::NONCE_LEN] = nonce
+            .try_into()
+            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+        let pt = fstp_crypto::aead::open(&k, &nonce, &aad.0, body)
+            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+        let bytes: [u8; 32] = pt
+            .as_slice()
+            .try_into()
+            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+        Ok(fstp_custody::SealKey::from_bytes(bytes))
     }
 
-    fn destroy(
+    async fn destroy(
         &self,
         root: &fstp_custody::RootRef,
-    ) -> impl std::future::Future<
-        Output = Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError>,
-    > + Send {
-        let gone = lock(&self.roots).remove(&root.handle.0).is_some();
-        std::future::ready(if gone {
+    ) -> Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError> {
+        if let Some(remote) = &self.remote {
+            let receipt = remote.destroy(root).await?;
+            lock(&self.remote_live).remove(&root.handle.0);
+            return Ok(receipt);
+        }
+        if lock(&self.roots).remove(&root.handle.0).is_some() {
             Ok(fstp_custody::DestroyReceipt(root.handle.0.clone()))
         } else {
             Err(fstp_custody::CustodyError::Refused(
                 fstp_custody::Refusal::UnknownRoot,
             ))
-        })
+        }
     }
 
-    fn sign(
+    async fn sign(
         &self,
         key: &fstp_custody::SignKeyRef,
         digest: &[u8; 32],
-    ) -> impl std::future::Future<
-        Output = Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError>,
-    > + Send {
+    ) -> Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError> {
         use fstp_custody::{CustodyError, Refusal};
-        let signed = match lock(&self.sign_keys).get(&key.handle.0) {
+        match lock(&self.sign_keys).get(&key.handle.0) {
             Some(k) => k
                 .sign_digest(digest)
                 .map(fstp_custody::EcdsaSignature)
                 .map_err(CustodyError::Crypto),
             None => Err(CustodyError::Refused(Refusal::NoSignKey)),
-        };
-        std::future::ready(signed)
+        }
     }
 
-    fn usage_since(
+    async fn usage_since(
         &self,
-        _root: &fstp_custody::RootRef,
-        _cursor: fstp_custody::UsageCursor,
-    ) -> impl std::future::Future<
-        Output = Result<fstp_custody::UsagePage, fstp_custody::CustodyError>,
-    > + Send {
-        std::future::ready(Ok(fstp_custody::UsagePage::default()))
+        root: &fstp_custody::RootRef,
+        cursor: fstp_custody::UsageCursor,
+    ) -> Result<fstp_custody::UsagePage, fstp_custody::CustodyError> {
+        match &self.remote {
+            Some(remote) => remote.usage_since(root, cursor).await,
+            None => Ok(fstp_custody::UsagePage::default()),
+        }
     }
 }
 
@@ -3191,7 +3365,11 @@ fn start_cell(
     serve: CellServe<'_>,
     egress: &EgressLog,
 ) -> Result<CellHandle, WorldError> {
-    let CellServe { pages, dev } = serve;
+    let CellServe {
+        pages,
+        dev,
+        custody: custody_socket,
+    } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
     let s = services()?;
@@ -3216,7 +3394,10 @@ fn start_cell(
     // The cell CA key is a `sign` key of the cell's world custody, where the
     // cell's roots live too (ADR-004 "CA keys in custody", lane
     // m3/erase-steps).
-    let custody = WorldCustody::default();
+    let custody = match custody_socket {
+        Some(socket) => WorldCustody::remote(socket)?,
+        None => WorldCustody::default(),
+    };
     let cell_ca = pki::Ca::in_custody(
         &format!("cell CA {}", hex.get(..12).unwrap_or("")),
         &custody,
@@ -4895,6 +5076,7 @@ mod review_tests {
             }],
             egress: EgressLog::new(),
             install: None,
+            host: None,
         };
         (world, server)
     }

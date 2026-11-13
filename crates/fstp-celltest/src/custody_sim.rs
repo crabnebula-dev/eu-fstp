@@ -26,10 +26,13 @@
 //! - A create or destroy that fails still refuses with
 //!   [`CustodyError::NotImplemented`] and names the reason. Wrap and
 //!   unwrap refuse with [`CustodyError::Refused`], as `fstp-keyd` does.
-//! - The process serves no custody protocol yet. The frame codec of
-//!   `fstp-custody` is lane W2f. [`run`] creates the roots, writes their
-//!   needles for the test that started it, and holds them until its
-//!   standard input closes.
+//!
+//! # The process
+//!
+//! [`run`] either creates two roots, writes their needles for the test
+//! that started it and holds them until its standard input closes, or,
+//! with `--serve`, serves custody over the `fstp-keyd` wire form
+//! ([`serve`]) and reports what it saw ([`report`]).
 
 use std::fmt;
 use std::future::{Future, ready};
@@ -47,6 +50,9 @@ use fstp_custody::{
 use crate::NotImplemented;
 use crate::canary::{Canary, CanaryKind};
 use crate::scan::Needle;
+
+pub mod report;
+pub mod serve;
 
 /// The bytes of one simulated root. No `Clone`, no `Debug`, and the bytes
 /// are overwritten on drop. The identifier is allowed only in `fstp-keyd`
@@ -81,9 +87,34 @@ struct SimRoot {
 #[derive(Default)]
 struct SimState {
     roots: Vec<SimRoot>,
+    /// Where a serving simulator reports each root, wrapped seal key and
+    /// destroy for the test that started it ([`report`]).
+    report: Option<std::fs::File>,
     /// The usage log: the handle of the root each record names, and the
     /// record in the layout of `fstp_custody::usage`.
     usage: Vec<(CustodyHandle, Vec<u8>)>,
+}
+
+impl SimState {
+    /// Appends one record to the report, when the simulator has one.
+    fn report_record(
+        &mut self,
+        kind: report::Kind,
+        root: &RootRef,
+        bytes: &[u8; 32],
+    ) -> Result<(), NotImplemented> {
+        let Some(file) = self.report.as_mut() else {
+            return Ok(());
+        };
+        let record = report::Record {
+            kind,
+            chain: root.chain,
+            epoch: root.epoch.0,
+            bytes: *bytes,
+        };
+        file.write_all(&record.encode())
+            .map_err(|_| NotImplemented::new("fstp-custody-sim: cannot write the report"))
+    }
 }
 
 /// The custody simulator.
@@ -127,6 +158,17 @@ impl CustodySim {
             cell_index,
             state: Arc::new(Mutex::new(SimState::default())),
         }
+    }
+
+    /// A new simulator for cell index `cell_index` that appends a
+    /// [`report`] record to `report` for each root it creates, each seal
+    /// key it wraps and each root it destroys. The test that started a
+    /// serving simulator reads its needles from there.
+    #[must_use]
+    pub fn reporting(cell_index: u8, report: std::fs::File) -> CustodySim {
+        let sim = CustodySim::for_cell(cell_index);
+        sim.lock().report = Some(report);
+        sim
     }
 
     /// A second handle on the same simulator: the same roots and the same
@@ -187,6 +229,7 @@ impl CustodySim {
         };
         let record = usage_record(request, UsageOp::Create, &root);
         state.usage.push((root.handle.clone(), record));
+        state.report_record(report::Kind::Root, &root, &canary.secret_bytes())?;
         state.roots.push(SimRoot {
             root: root.clone(),
             material: Some(RootMaterial(canary.secret_bytes())),
@@ -230,6 +273,8 @@ impl CustodySim {
             ));
         };
         entry.material = None;
+        let destroyed = entry.root.clone();
+        state.report_record(report::Kind::Destroyed, &destroyed, &[0; 32])?;
         let mut receipt = b"fstp-custody-sim destroyed ".to_vec();
         receipt.extend_from_slice(&root.handle.0);
         let record = usage_record(request, UsageOp::Destroy, root);
@@ -271,6 +316,9 @@ impl CustodySim {
         let mut out = Vec::with_capacity(WRAPPED_LEN);
         out.extend_from_slice(&sealed.nonce);
         out.extend_from_slice(&sealed.body);
+        state
+            .report_record(report::Kind::Seal, root, key.expose())
+            .map_err(|_| CustodyError::Refused(Refusal::Internal))?;
         let record = usage_record(request, UsageOp::Wrap, root);
         state.usage.push((root.handle.clone(), record));
         Ok(WrappedSealKey(out))
@@ -516,9 +564,16 @@ pub struct SimArgs {
     /// Where to write one line per root: canary text, a tab, and the root
     /// bytes in lowercase hex. The file is created with mode 0600.
     pub needles_out: Option<std::path::PathBuf>,
+    /// Serve custody on this Unix socket instead of holding two roots
+    /// ([`serve`]).
+    pub serve: Option<std::path::PathBuf>,
+    /// Where a serving simulator writes its [`report`]. The file is created
+    /// with mode 0600.
+    pub report: Option<std::path::PathBuf>,
 }
 
-/// Parses `--cell-index <n>`, `--cell <32 hex>` and `--needles-out <path>`.
+/// Parses `--cell-index <n>`, `--cell <32 hex>`, `--needles-out <path>`,
+/// `--serve <socket>` and `--report <path>`.
 ///
 /// # Errors
 ///
@@ -542,6 +597,8 @@ pub fn parse_args(args: &[String]) -> Result<SimArgs, NotImplemented> {
                 out.cell = Some(cell);
             }
             "--needles-out" => out.needles_out = Some(value.into()),
+            "--serve" => out.serve = Some(value.into()),
+            "--report" => out.report = Some(value.into()),
             _ => return Err(NotImplemented::new("fstp-custody-sim: unknown flag")),
         }
     }
@@ -550,7 +607,8 @@ pub fn parse_args(args: &[String]) -> Result<SimArgs, NotImplemented> {
 
 /// Runs the simulator as a process until its standard input closes.
 ///
-/// It creates one root for the App chain and one for the Vault chain at
+/// With `--serve` it serves custody on that socket ([`serve::serve`]).
+/// Otherwise it creates one root for the App chain and one for the Vault chain at
 /// epoch 1, and writes their needles if asked. On standard output it then
 /// prints one line `root <address>` per root, in needle order, and then
 /// `ready`. The address is where the root's [`RootMaterial`] bytes sit
@@ -564,6 +622,13 @@ pub fn parse_args(args: &[String]) -> Result<SimArgs, NotImplemented> {
 pub fn run() -> Result<(), NotImplemented> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args = parse_args(&args)?;
+    if let Some(socket) = &args.serve {
+        let sim = match &args.report {
+            Some(path) => CustodySim::reporting(args.cell_index, create_private(path)?),
+            None => CustodySim::for_cell(args.cell_index),
+        };
+        return serve::serve(socket, sim);
+    }
     let sim = CustodySim::for_cell(args.cell_index);
     let mut roots = Vec::new();
     for chain in [Chain::App, Chain::Vault] {
@@ -621,4 +686,15 @@ fn write_needles(path: &std::path::Path, needles: &[Needle]) -> Result<(), NotIm
         .open(path)
         .and_then(|mut f| f.write_all(text.as_bytes()))
         .map_err(|_| NotImplemented::new("fstp-custody-sim: cannot write the needle file"))
+}
+
+/// Creates the file `path` with mode 0600. It must not exist yet.
+fn create_private(path: &std::path::Path) -> Result<std::fs::File, NotImplemented> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| NotImplemented::new("fstp-custody-sim: cannot create the report file"))
 }

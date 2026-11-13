@@ -1538,7 +1538,7 @@ M3 adds:
 - **Scanners** search raw bytes, both hex cases, base64, base64url, percent-encoding, JSON string escaping and UTF-16LE.
 - **Teeth for scanners and auditors.** Each scanner test has a twin that seeds one canary and asserts that it is found. Each catalogue auditor has a twin that seeds one forbidden grant.
 - **Real topology.** `fstp-pgtest` worlds with application, vault, control and witness servers, each with its own cluster CA. Role certificates are minted at test time by `fstp-pki`.
-- **Process mode.** I-80 and isolation tests spawn real binaries through `CARGO_BIN_EXE_*`.
+- **Process mode.** I-80 and isolation tests spawn real binaries through `CARGO_BIN_EXE_*`. Interim, pending Daniel (lane m3/custody-decisions, 2026-11-13): one `fstp-world-host` process runs every cell and vault of the world, and each cell's custody runs in its own `fstp-custody-sim --serve` process. The cell reaches custody through `KeydCustody`, so its roots never enter the host. Separate `fstp-cell` and `fstp-vault` binaries wait until `fstp_cell::run` accepts a full configuration.
 - **Fixtures** are synthetic only, shaped like the corpus variants "Sybil", "Excluded affiliation", "Minor applicant" and "Repeat applicant".
 
 ### 14.2 Models
