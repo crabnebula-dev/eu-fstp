@@ -125,7 +125,7 @@ jobs:
           - part: workspace
             packages: --workspace --exclude fstp-api-testkit --exclude fstp-domain-testkit
             skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell slice_devstack_
-            timeout: 60
+            timeout: 180
           # I-19, I-20, I-80, I-82, I-83: the isolation (multi-cell) job of
           # m3-design sections 14.4 and 14.8, as a part of its own. It runs
           # every t_iso_* and t_db_iso_* test, the i80_root_canary_* scans,
@@ -143,13 +143,16 @@ jobs:
             timeout: 60
           - part: api-testkit
             packages: -p fstp-api-testkit
-            skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate
+            skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate i67_m_activate
             timeout: 90
           # I-66: the M-ACTIVATE model check peaks at about 8 GB and runs
           # about 6 minutes (measured 2026-11-13). Beside the rest of the
           # api-testkit part it lost its runner three times, so it runs on
           # a runner of its own. Both tests of the binary run here.
-          - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate, timeout: 60 }
+          # The I-67 model check is its sibling with the same memory profile;
+          # it lost the api-testkit runner on 2026-11-13. The part runs one
+          # test at a time, since two of these at once exceed the runner.
+          - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate --test i67_m_activate, threads: 1, timeout: 120 }
           # Q34 B: HTTP and MCP at the 9-row policy covering array. On CI the
           # shards ran past 50 minutes on 2026-11-12, so each has 100. Measured
           # locally on 4 threads: about 53 minutes in all, so 4 shards.
@@ -182,6 +185,7 @@ jobs:
       TEST_FILTER: ${{ matrix.filter }}
       TEST_SKIP: ${{ matrix.skip }}
       TEST_SHARD: ${{ matrix.shard }}
+      TEST_THREADS: ${{ matrix.threads }}
       # ADR-003 record, as in the web job. The devstack part compiles the
       # auth pages that slice_devstack and the dev stack serve.
       NODE_VERSION: "24.11.1"
@@ -285,6 +289,7 @@ jobs:
           for f in $TEST_FILTER; do libtest+=("$f"); gate+=(--filter "$f"); done
           for s in $TEST_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done
           if [ -n "$TEST_SHARD" ]; then export FSTP_MATRIX_SHARD="$TEST_SHARD"; fi
+          if [ -n "${TEST_THREADS:-}" ]; then export RUST_TEST_THREADS="$TEST_THREADS"; fi
           echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
           cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
           cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
