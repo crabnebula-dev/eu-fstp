@@ -206,3 +206,34 @@ Open questions for Daniel:
 - The Full level also names "milestone status" in `public-transparency.md`. The pages show the granted amount only. Which milestone facts may be public?
 - The wording of the screen's two notes (`public-transparency.md` NOTE 1 and NOTE 3) carries `TODO(legal)`.
 - `interface_no_command_kind_reaches_not_implemented` in `fstp-domain-testkit` fails on `main` at 0ede3ef7: the walk accepts no `RequestCopy`. This lane adds the two choice kinds to that walk, and they pass.
+
+---
+
+## F1 and C2: decisions taken
+
+Lanes F1 and C2, built 2026-11-13. Each decision below is interim, pending Daniel. None weakens an invariant. D3 and D6 of section 1.3 stand.
+
+| # | Decision | Reason |
+| --- | --- | --- |
+| FD1 | A field holds exactly `name`, `label`, `level` and `figure`. Levels are `call`, `recipient`, `period` and `total`. `figure` is one of twelve folds: `call_budget`, `proposals_created`, `proposals_submitted`, `knock_out_decisions`, `recipient_count`, `grants_closed`, `committed`, `paid`, `paid_in_period`, `paid_hardship_in_period`, `released_commitment_in_period`, `released_commitments` | Section 2.5 asks for a closed enum of folds. Each fold is defined at fixed levels, and the parser refuses any other pairing, member or literal (I-44) |
+| FD2 | Amounts stay decimal strings (ADR-006). Counts are JSON integers. Document outputs print `label: value` lines | Money never travels as a JSON number |
+| FD3 | Members that carry no figure stay fixed by the output kind: ids, dates, currency, cost category and vault attribute names. Field names may not take them | Only figures can fail to reconcile. Fixed members keep the M5 shape the R-RP-04 tests pin |
+| FD4 | The HE v1 file reproduces the M5 member names. Headers gain `profile_version` and `profile_digest`, and templates come from the profile. The selection report lists its figures, the call budget among them, under one "Figures" heading | The output names the exact profile it was built under (R-RP-01) |
+| FD5 | A profile may define a subset of the five outputs. Generating an output it does not define is refused. The synthetic profile defines three | A funder without a call publication record needs no such output |
+| FD6 | Call outputs use the call's frozen P-53, and the periodic data the programme's head P-53. A P-53 value that names no shipped profile refuses with `P-53`. The engine refuses a `ReportGenerated` whose profile id and version differ from the pinned P-53 | P-53 is a frozen parameter. The engine holds no profile files, so it cannot check the digest |
+| FD7 | The `profile` member of `ReportGenerated` is required. No fixture or seed holds a stored `ReportGenerated`. A development ledger that does must be reset | A decoder that accepts records without a profile would let a document name no profile |
+| FD8 | `reporting_periods` is `{"source": "data_sheet", "parameter": "P-57"}`, the only accepted value. Periods still come with each request | P-57 is the one Data Sheet date parameter in `policy-parameters.md`. No parameter holds the period ends yet |
+| FD9 | HE v1 names two visibility elements, `acknowledgement` and `emblem`. Each wording ref has status `TODO(legal)`, the only status the parser accepts. The fstp-public footer does not read them yet | Daniel supplies the SuperSAFE text later (section 6). The footer belongs to lane B2 |
+| FD10 | The synthetic profile lives in `crates/fstp-report/tests/profiles/synthetic-funder/`, not in `fstp-api-testkit` | The tests that read it are in `fstp-report` |
+| FD11 | The read `programme.funder_profile.view` is not built | It needs a read kind, registry, reply, authorisation reference, matrix and generated TypeScript rows. No screen reads it yet |
+| CD1 | `Purpose::NoticeCompanion` takes code 14, the next free code, on the App chain. ADR-004 gets the table row and a record line | ADR-004 says a new purpose takes the next free code |
+| CD2 | The signed message is the notice id as 16 big-endian bytes, then the 32-byte SHA-256 of the sealed PDF | `contractual-notices.md` signs "over its hash". The id binds the signature to one notice |
+| CD3 | `NoticeCompanionSigned` is a typed record without a stored form. `NoticeId` is a local `u128` newtype | No notice record or store exists yet. A stored form needs a decoder and a fuzz target, which come with the notice store |
+| CD4 | `NoticeCompanionKey::from_custody` takes the purpose with the key and refuses any other purpose. The cell keystore does not create or rotate this key yet | The keystore belongs to the F-KEYOP lane. Rotation follows the `Anchor` key (ADR-004 record line) |
+| CD5 | The verifier also requires the record's key digest to equal the SHA-256 of the given public key | A record then names the key it claims, and a swapped key fails |
+
+Open questions for Daniel:
+
+- Is P-57 the right reference for reporting periods, or should a new Data Sheet parameter hold the period ends and report deadlines?
+- `funder-reporting.md` calls profiles tenant-owned, while D3 ships them. Does D3 stand beyond M9?
+- Should the notice companion message carry more than the notice id and PDF hash, such as the tenant or the seal digest?
