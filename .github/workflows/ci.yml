@@ -477,8 +477,8 @@ jobs:
   # Daniel, 2026-11-13 (M3 exit audit section 7, item 26): the demo
   # Playwright project runs as a job of its own. It is not a part of the
   # test matrix, so test-gate never judges it. It builds the demo cell
-  # (fstp-e2e-cell), starts it with passkeys only, as the e2e suite runs
-  # it, runs the specs of project demo, and stops the cell.
+  # (fstp-e2e-cell), starts it with its demo sign-in, runs the specs of
+  # project demo, and stops the cell.
   e2e-demo:
     name: e2e (Playwright, demo)
     needs: deps-check
@@ -558,9 +558,10 @@ jobs:
           rustup toolchain install --no-self-update || rustup show
           rustc --version
           cargo --version
-      - name: Build and start the demo cell with passkeys only
-        env:
-          FSTP_DEMO_SIGNIN: "off"
+      # The demo specs need the demo sign-in, which tools/demo/run.sh turns
+      # on by default (--demo-signin, test only, rule A9). With it every
+      # spec of project demo passed locally on 2026-11-13 (464 of 464).
+      - name: Build and start the demo cell
         run: |
           set -euo pipefail
           echo "FSTP_DEMO_STATE=$RUNNER_TEMP/demo" >> "$GITHUB_ENV"
