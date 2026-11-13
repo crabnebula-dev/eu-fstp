@@ -51,18 +51,19 @@ use crate::reference::vault::{
 // ---------------------------------------------------------------------------
 // Seams.
 
-/// The seam of every production event that carries ledger values.
-/// `fstp-celltest` depends on `fstp-ledger` since lane W2c, so
-/// [`production_event`] builds `Event::Appended` from `fstp_ledger::Seq`
-/// and `AppendError`. A non-empty read still refuses with this seam: a
-/// model reply ([`LEntry`]) carries a sequence and a command id but no
-/// records, so no `fstp_ledger::Entry` can be built from it. An empty read
-/// needs no ledger value, so it passes.
+/// Not a seam since lane m3/seams-custody. A model read reply ([`LEntry`])
+/// carries a sequence and a command id but no records. [`Production`] now
+/// keeps the records each run asked to append, by command id, and the
+/// second writer's own record. Each run mirrors the ledger it saw in an
+/// `fstp_ledger::MemStore`, one production sequence per record, and maps
+/// the model's sequences to the mirror's. The constant names a mapping
+/// that failed: a model entry whose records no run appended, or a
+/// sequence the run never saw. Either stops the run as a backend that did
+/// not answer.
 ///
-/// The seam is the M-DRIVER model's only. [`Shell`] keeps its ledger in an
-/// `fstp_ledger::MemStore` and answers every read with the stored
-/// entries, so the seam tests never meet it.
-pub const LEDGER_SEAM: &str = "fstp_celltest::mc::driver_model: a model read reply carries no records, so no fstp_ledger::Entry can be built for Event::Read (lane W1c)";
+/// [`Shell`] keeps its ledger in an `fstp_ledger::MemStore` and answers
+/// every read with the stored entries, so the seam tests never meet it.
+pub const LEDGER_SEAM: &str = "fstp_celltest::mc::driver_model: a model entry or sequence has no production entry (no run appended its records, or the run never saw it)";
 
 /// The seam of the caller's command id, closed by lane W2c:
 /// `DriverCore::start_with_id` takes the caller's command id, and
@@ -481,6 +482,7 @@ impl DriverBackend for Mutant {
 pub struct Production {
     genesis: CellState,
     admitted: [Admitted; 2],
+    ledger: ProdLedger,
 }
 
 /// The cell command of `cmd`: a text write, which asks the vault nothing.
@@ -882,6 +884,7 @@ impl Production {
         Ok(Production {
             genesis,
             admitted: [one, two],
+            ledger: ProdLedger::default(),
         })
     }
 }
@@ -892,14 +895,19 @@ pub struct ProdRun {
     state: CellState,
     driver: DriverCore,
     need: Option<Need>,
+    /// Model sequence and production head of each entry the run read or
+    /// appended, from (0, 0).
+    seqs: Vec<(u64, u64)>,
+    /// The ledger as the run saw it, one production sequence per record.
+    mirror: MemStore<CellRecord>,
 }
 
 /// The production event for `reply` to `need`.
 ///
 /// # Errors
 ///
-/// [`LEDGER_SEAM`] for a non-empty read, whose model entries carry no
-/// records. A duplicate reply names no earlier entry, so the event names
+/// [`LEDGER_SEAM`] for a non-empty read: [`Production`] builds those from
+/// its own record of each entry, so this function never takes one. A duplicate reply names no earlier entry, so the event names
 /// `Seq::ZERO`, which the driver does not read. An append reply carries no
 /// chain link, so the event names link zero.
 pub fn production_event(need: &Need, reply: &Reply) -> Result<Event, NotImplemented> {
@@ -1008,25 +1016,203 @@ impl DriverBackend for Production {
             state: self.genesis.clone(),
             driver: DriverCore::start_with_id(admitted, caller),
             need: None,
+            seqs: vec![(0, 0)],
+            mirror: MemStore::new(),
         })
     }
 
     fn step(&self, run: &mut ProdRun, reply: Option<&Reply>) -> Result<DNeed, NotImplemented> {
-        let ev = match (&run.need, reply) {
-            (Some(n), Some(r)) => Some(production_event(n, r)?),
+        let need = run.need.take();
+        let ev = match (&need, reply) {
+            (Some(n), Some(r)) => Some(self.event(run, n, r)?),
             _ => None,
         };
         match run.driver.step(&mut run.state, ev) {
             Step::Need(n) => {
-                let out = model_need(&n);
+                if let Need::Append {
+                    at, command, batch, ..
+                } = &n
+                {
+                    self.ledger.remember(*command, *at, batch)?;
+                }
+                let out = run.model_need(&n)?;
                 run.need = Some(n);
                 Ok(out)
             }
             Step::Done(r) => {
                 run.need = None;
-                Ok(DNeed::Done(model_done(&r)?))
+                Ok(DNeed::Done(match model_done(&r)? {
+                    DDone::Ok { head } => DDone::Ok {
+                        head: run.model_seq(fstp_ledger::Seq::from_raw(head))?,
+                    },
+                    other => other,
+                }))
             }
         }
+    }
+}
+
+impl Production {
+    /// The production event for `reply` to `need`. A read appends the
+    /// records of each new model entry to the run's mirror of the ledger,
+    /// from the records its writer appended ([`ProdLedger`]), and gives
+    /// the mirror's entries after the need's head. An append that
+    /// committed adds the run's batch to the mirror.
+    fn event(
+        &self,
+        run: &mut ProdRun,
+        need: &Need,
+        reply: &Reply,
+    ) -> Result<Event, NotImplemented> {
+        fn seam<E>(_: E) -> NotImplemented {
+            NotImplemented::new(LEDGER_SEAM)
+        }
+        match (need, reply) {
+            (Need::ReadFrom(from), Reply::Read(entries)) => {
+                for e in entries {
+                    if run.seqs.iter().any(|(m, _)| *m == e.seq) {
+                        continue;
+                    }
+                    let (at, batch) = self.ledger.records(e.command)?;
+                    let head = run.mirror.head();
+                    let prod = run
+                        .mirror
+                        .append(head, at, e.command, batch)
+                        .map_err(seam)?;
+                    run.seqs.push((e.seq, prod.raw()));
+                }
+                let first = from
+                    .raw()
+                    .checked_add(1)
+                    .ok_or(NotImplemented::new(LEDGER_SEAM))?;
+                let mut out = Vec::new();
+                run.mirror
+                    .read(fstp_ledger::Seq::from_raw(first), usize::MAX, &mut out)
+                    .map_err(seam)?;
+                Ok(Event::Read(out))
+            }
+            (
+                Need::Append {
+                    expected,
+                    at,
+                    command,
+                    batch,
+                    ..
+                },
+                Reply::Appended(AppendReply::Ok(seq)),
+            ) => {
+                if run.mirror.head() != *expected {
+                    return Err(NotImplemented::new(LEDGER_SEAM));
+                }
+                let prod = run
+                    .mirror
+                    .append(*expected, *at, *command, batch.clone())
+                    .map_err(seam)?;
+                run.seqs.push((*seq, prod.raw()));
+                Ok(Event::Appended(Ok((prod, [0; 32]))))
+            }
+            _ => production_event(need, reply),
+        }
+    }
+}
+
+/// The records of every entry a production run asked to append, by
+/// command id, with the record of the second writer's entry. The model's
+/// ledger holds one sequence per entry, and production one per record,
+/// so each run maps the two ([`ProdRun`]).
+#[derive(Debug, Default)]
+struct ProdLedger(std::sync::Mutex<Batches>);
+
+/// The time and records of each appended batch, by command id.
+type Batches = std::collections::BTreeMap<[u8; 16], (i64, Vec<CellRecord>)>;
+
+impl Clone for ProdLedger {
+    fn clone(&self) -> ProdLedger {
+        ProdLedger(std::sync::Mutex::new(self.lock().clone()))
+    }
+}
+
+/// Two runs asked to append different records under one command id, so
+/// the model's entry names no single batch.
+const RECORDS_DIFFER: &str =
+    "fstp_celltest::mc::driver_model: two runs appended different records under one command id";
+
+impl ProdLedger {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Batches> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn remember(
+        &self,
+        command: [u8; 16],
+        at: i64,
+        batch: &[CellRecord],
+    ) -> Result<(), NotImplemented> {
+        let mut map = self.lock();
+        match map.get(&command) {
+            Some((t, b)) if *t == at && b.as_slice() == batch => Ok(()),
+            Some(_) => Err(NotImplemented::new(RECORDS_DIFFER)),
+            None => {
+                map.insert(command, (at, batch.to_vec()));
+                Ok(())
+            }
+        }
+    }
+
+    fn records(&self, command: [u8; 16]) -> Result<(i64, Vec<CellRecord>), NotImplemented> {
+        if command == FOREIGN_ID {
+            // The second writer's entry: a text write of its own.
+            return Ok((
+                AT.micros(),
+                vec![CellRecord::Text(
+                    fstp_cell_core::text::TextRecord::TextPut { id: FOREIGN_ID },
+                )],
+            ));
+        }
+        self.lock()
+            .get(&command)
+            .cloned()
+            .ok_or(NotImplemented::new(LEDGER_SEAM))
+    }
+}
+
+impl ProdRun {
+    /// The model sequence of production head `prod`, from what the run
+    /// read and appended.
+    fn model_seq(&self, prod: fstp_ledger::Seq) -> Result<u64, NotImplemented> {
+        self.seqs
+            .iter()
+            .rev()
+            .find(|(_, p)| *p == prod.raw())
+            .map(|(m, _)| *m)
+            .ok_or(NotImplemented::new(LEDGER_SEAM))
+    }
+
+    /// The model's need for production need `n`, its sequences mapped.
+    fn model_need(&self, n: &Need) -> Result<DNeed, NotImplemented> {
+        Ok(match model_need(n) {
+            DNeed::ReadFrom(_) => match n {
+                Need::ReadFrom(s) => DNeed::ReadFrom(self.model_seq(*s)?),
+                _ => return Err(NotImplemented::new(LEDGER_SEAM)),
+            },
+            DNeed::Append { command, .. } => match n {
+                Need::Append { expected, .. } => DNeed::Append {
+                    expected: self.model_seq(*expected)?,
+                    command,
+                },
+                _ => return Err(NotImplemented::new(LEDGER_SEAM)),
+            },
+            DNeed::Ack { epoch, .. } => match n {
+                Need::Ack { seq, .. } => DNeed::Ack {
+                    epoch,
+                    seq: self.model_seq(*seq)?,
+                },
+                _ => return Err(NotImplemented::new(LEDGER_SEAM)),
+            },
+            other => other,
+        })
     }
 }
 
