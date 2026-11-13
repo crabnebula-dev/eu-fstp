@@ -382,6 +382,37 @@ impl Vault {
         Ok(events)
     }
 
+    /// Takes the fact write `w` at `now` through `fstp_vault_core::write`
+    /// and journals it at the epoch it takes, as a write of the vault
+    /// origin is (NOTE 4). No route of this crate calls it: the recorder
+    /// route of ADR-008 will, once it exists ([`Vault::verification_fact`]).
+    /// A caller that links this library may take a fact the vault core
+    /// admits. The test-only seeded vault of design section 6.9 does.
+    ///
+    /// # Errors
+    ///
+    /// The vault core's refusal, as it refuses any write.
+    pub fn take_fact_write(
+        &mut self,
+        w: fstp_vault_core::FactWrite,
+        now: i64,
+    ) -> Result<Vec<VaultEvent>, CoreError> {
+        let fact = fstp_vault_core::fact::decode_fact(w.kind, &w.body)
+            .map_err(|_| CoreError::Refused(VaultRefusal::Malformed))?;
+        self.take_fact(fact, now)
+    }
+
+    /// [`Vault::take_fact_write`] of a typed fact, such as the
+    /// verification [`Vault::verification_fact`] builds, whose identity
+    /// the vault resolved from its match key.
+    ///
+    /// # Errors
+    ///
+    /// The vault core's refusal, as it refuses any write.
+    pub fn take_fact(&mut self, fact: Fact, now: i64) -> Result<Vec<VaultEvent>, CoreError> {
+        self.write_journaled(fact, now)
+    }
+
     /// Takes an acknowledgement and journals it when it made an epoch
     /// effective. A repeat changes nothing and journals nothing. An
     /// effective verification also journals its account's identity

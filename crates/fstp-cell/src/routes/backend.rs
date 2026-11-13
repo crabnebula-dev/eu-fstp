@@ -138,6 +138,17 @@ pub trait Backend: Send + Sync + 'static {
     /// The cell clock, UTC microseconds.
     fn now(&self) -> Timestamp;
 
+    /// The creator shell facts of `cmd` on `state` (`crate::shell`). The
+    /// default holds none, so every check that needs one fails closed.
+    fn creator_facts(
+        &self,
+        state: &CellState,
+        cmd: &fstp_creator::CreatorCommand,
+    ) -> fstp_cell_core::creator::CreatorFacts {
+        let _ = (state, cmd);
+        fstp_cell_core::creator::CreatorFacts::default()
+    }
+
     /// The state folded to the engine's head.
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send;
 

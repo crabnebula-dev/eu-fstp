@@ -846,6 +846,12 @@ fn command_from_value(value: &Value) -> Result<CellCommand, DecodeError> {
         "onboarding" => fstp_engine::tenant::request_from_json(inner)
             .map(|c| CellCommand::Engine(fstp_engine::Command::Tenant(c)))
             .map_err(body("onboarding")),
+        // The creator path of M4 design section 3.4 (lane F-CYCLE2): the
+        // command route takes a creator command in the creator codec's
+        // form, so a programme activates over HTTP (D2e).
+        "creator" => fstp_creator::CreatorCommand::from_json(inner)
+            .map(|c| CellCommand::Engine(fstp_engine::Command::Creator(c)))
+            .map_err(body("creator")),
         // M5 lane L-API: a report record the shell generated, or an approval.
         "report" => fstp_report::ReportRecord::from_json(inner)
             .map(|r| CellCommand::Engine(fstp_engine::Command::Report(r)))
@@ -880,8 +886,9 @@ impl ToJson for CellCommand {
             CellCommand::Engine(fstp_engine::Command::Finding(c)) => {
                 wrap("finding", finding_command_json(c))
             }
-            // M4 forms (lane m4eng). The decoder does not read them back yet;
-            // the lead adds them with the cell routes of M4.
+            // M4 forms (lane m4eng). The decoder reads a creator command
+            // back (lane F-CYCLE2). It does not read a bridge or import
+            // command back yet; the lead adds them with the cell routes of M4.
             CellCommand::Engine(fstp_engine::Command::Creator(c)) => wrap("creator", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Bridge(c)) => wrap("bridge", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Import(c)) => {

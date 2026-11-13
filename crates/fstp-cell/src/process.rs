@@ -181,6 +181,7 @@ pub struct RunningCell<R: Runtime> {
     erasure: ErasureHandle,
     app: Pool<R>,
     reader: PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>,
+    clock: crate::engine::CommitClock,
 }
 
 impl<R: Runtime> std::fmt::Debug for RunningCell<R> {
@@ -441,7 +442,8 @@ impl fstp_http::Handler for NoRoute {
     }
 }
 
-/// Starts the cell of `parts` on `rt` (module documentation).
+/// Starts the cell of `parts` on `rt` (module documentation), with the
+/// production [`StartOptions`].
 ///
 /// # Errors
 ///
@@ -449,6 +451,53 @@ impl fstp_http::Handler for NoRoute {
 pub async fn start<R, C, V>(
     rt: &R,
     parts: CellProcessParts<C, V>,
+) -> Result<RunningCell<R>, CellError>
+where
+    R: Runtime,
+    C: Custody + Clone + Send + Sync + 'static,
+    V: VaultClient + Clone,
+{
+    start_with(rt, parts, StartOptions::default()).await
+}
+
+/// What a caller may set beyond [`CellProcessParts`]. The default is the
+/// production cell: the system clock and [`crate::shell::ProductionShell`].
+#[derive(Clone)]
+pub struct StartOptions {
+    /// The cell clock: the route backend's instants, the store's commit
+    /// instant, the first admin's invitation and the timeline and erasure
+    /// tasks all read it. A test world passes a clock it can move, so its
+    /// tests set the cell's time (lane F-CYCLE2).
+    pub clock: crate::engine::CommitClock,
+    /// The creator shell the command route reads its facts from
+    /// ([`crate::shell`]).
+    pub creator_shell: Arc<dyn crate::shell::CreatorShell>,
+}
+
+impl Default for StartOptions {
+    fn default() -> StartOptions {
+        StartOptions {
+            clock: crate::engine::system_commit_clock(),
+            creator_shell: Arc::new(crate::shell::ProductionShell),
+        }
+    }
+}
+
+impl std::fmt::Debug for StartOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartOptions").finish_non_exhaustive()
+    }
+}
+
+/// [`start`] with the options `options` ([`StartOptions`]).
+///
+/// # Errors
+///
+/// The first step that fails, as a [`CellError`].
+pub async fn start_with<R, C, V>(
+    rt: &R,
+    parts: CellProcessParts<C, V>,
+    options: StartOptions,
 ) -> Result<RunningCell<R>, CellError>
 where
     R: Runtime,
@@ -473,6 +522,10 @@ where
         pages,
         listen,
     } = parts;
+    let StartOptions {
+        clock,
+        creator_shell,
+    } = options;
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
     // server's OU and SPKI before its startup message.
@@ -522,9 +575,25 @@ where
         Arc::new(MemoryOutboxKeys::default()),
     )
     .map_err(store_err)?;
+    let store_clock = Arc::clone(&clock);
+    let store = PgCellStore::from_store(
+        store
+            .into_inner()
+            .with_clock(Arc::new(move || Some(store_clock()))),
+    );
     let (store, keystore) = match keystore {
         Some(k) => (store, k),
-        None => genesis(rt, store, vault.clone(), custody.clone(), cell).await?,
+        None => {
+            genesis(
+                rt,
+                store,
+                vault.clone(),
+                custody.clone(),
+                cell,
+                Arc::clone(&clock),
+            )
+            .await?
+        }
     };
     let started = start_pg(
         rt,
@@ -543,6 +612,7 @@ where
                 (ListenerKind::Internal, listen.internal),
                 (ListenerKind::Health, listen.health),
             ],
+            clock: Arc::clone(&clock),
         },
         &mut |_| {},
     )
@@ -550,7 +620,9 @@ where
     .map_err(refusal)?;
     let backend = Arc::new(
         PgBackend::new(started.engine.clone(), app_pool.clone(), keys.cred_lookup)
-            .map_err(store_err)?,
+            .map_err(store_err)?
+            .with_clock(Arc::clone(&clock))
+            .with_shell(creator_shell),
     );
     let front_cfg = FrontConfig {
         cell,
@@ -607,6 +679,7 @@ where
         rt: rt.clone(),
         cell,
         mode,
+        clock,
         engine: started.engine,
         backend,
         shutdown: started.shutdown,
@@ -654,6 +727,7 @@ async fn genesis<R, C, V>(
     vault: V,
     custody: C,
     cell: [u8; 16],
+    clock: crate::engine::CommitClock,
 ) -> Result<(PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>, Keystore), CellError>
 where
     R: Runtime,
@@ -665,6 +739,7 @@ where
         CellEngine::start(rt, store, vault, &shutdown, crate::engine::DEFAULT_QUEUE)
             .await
             .map_err(store_err)?;
+    let engine = engine.with_clock(clock);
     let runner = ErasureRunner::genesis(custody, engine.clone(), cell).await;
     // The engine ends once its last handle drops, and gives the store back.
     let keystore = runner.map(|r| r.keystore().clone());
@@ -750,7 +825,7 @@ impl<R: Runtime> RunningCell<R> {
                 fstp_auth::recovery::Deployment::SelfHosted,
             ),
         };
-        let now = fstp_domain::time::Timestamp::from_micros(crate::tasks::system_now());
+        let now = fstp_domain::time::Timestamp::from_micros((self.clock)());
         let admitted = gate::admit_first_admin_invitation(
             &self.engine.state(),
             invitation,

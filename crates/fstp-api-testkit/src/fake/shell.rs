@@ -65,13 +65,11 @@ use fstp_api_core::port::{
 };
 use fstp_api_core::salted;
 use fstp_creator::{
-    CreatorCommand, CreatorInputs, PortPresence, PreviewOutcome, ProbeKind, ProbeOutcome, ProbeSet,
-    SodPreview, Theme, VaultChecks,
+    CreatorCommand, CreatorInputs, PortPresence, ProbeKind, ProbeOutcome, ProbeSet, SodPreview,
+    Theme, VaultChecks,
 };
 use fstp_domain::command::{Actor, Ctx, SystemCause, Via};
-use fstp_domain::id::{
-    AccountId, BindingId, CallId, CommandId, ContentDigest, OrganisationId, TextId, TextRef,
-};
+use fstp_domain::id::{AccountId, CallId, CommandId, ContentDigest, OrganisationId, TextRef};
 use fstp_domain::oracle::{Answers, OracleDown, Query};
 use fstp_domain::policy::FunderProfileRef;
 use fstp_engine::compose::GuideFacts;
@@ -263,72 +261,21 @@ impl CellEnvironment {
         set
     }
 
-    /// The live SoD previews of the draft of `cmd` (module documentation).
+    /// The live SoD previews of the draft of `cmd` (module documentation),
+    /// through `fstp_engine::compose::sod_previews`, which `fstp-cell`
+    /// shares. Every vault answer is recorded.
     fn previews(&self, state: &EngineState, cmd: &CreatorCommand, ctx: &Ctx) -> SodPreview {
-        let mut out = SodPreview::default();
-        let programme = cmd.programme();
-        let (Some(draft), Some(audit)) = (state.creator.draft(programme), &self.vault_audit) else {
-            return out;
+        let Some(audit) = &self.vault_audit else {
+            return SodPreview::default();
         };
-        let granter = Ctx {
-            actor: Actor::Account(draft.opener()),
-            tenant_admin: true,
-            second_tenant_admin: None,
-            binds_tenant_admin: false,
-            ..*ctx
-        };
-        for t in fstp_creator::preview_targets(&state.creator, programme) {
-            // A granted invitation passed its SoD guards at the grant. A
-            // second grant of the held binding is refused as a duplicate
-            // (M4 design 15.0, 2026-10-31), which is no SoD outcome.
-            let held = state.core.roster().bindings().any(|(_, b)| {
-                b.account == t.account
-                    && b.programme == programme
-                    && b.role == t.role
-                    && b.status == fstp_domain::roles::BindingStatus::Active
-            });
-            if held {
-                let _ = out.outcomes.insert(t.invitation, PreviewOutcome::Admitted);
-                continue;
-            }
-            let grant = fstp_domain::Command::GrantRole {
-                binding: BindingId::from_raw(0),
-                account: t.account,
-                programme,
-                role: t.role,
-                start: ctx.now,
-                second_admin: None,
-                confidentiality: Some(TextRef::new(
-                    TextId::from_raw(0),
-                    ContentDigest::from_bytes([0; 32]),
-                )),
-                organisation: t.organisation,
-                end: None,
-            };
-            let granter = Ctx {
-                binds_tenant_admin: lock(&self.admins).contains(&t.account),
-                ..granter
-            };
-            let outcome =
-                match fstp_domain::roles::preview_grant_queries(&state.core, &grant, &granter) {
-                    Err(r) => Some(PreviewOutcome::Refused(r.rule)),
-                    Ok(queries) => self.answers(audit, &queries).map(|answers| {
-                        match fstp_domain::roles::preview_grant(
-                            &state.core,
-                            &grant,
-                            &granter,
-                            &answers,
-                        ) {
-                            Ok(()) => PreviewOutcome::Admitted,
-                            Err(r) => PreviewOutcome::Refused(r.rule),
-                        }
-                    }),
-                };
-            if let Some(o) = outcome {
-                let _ = out.outcomes.insert(t.invitation, o);
-            }
-        }
-        out
+        let admins = lock(&self.admins).clone();
+        fstp_engine::compose::sod_previews(
+            state,
+            cmd,
+            ctx,
+            &|a| admins.contains(&a),
+            &mut |queries| self.answers(audit, queries),
+        )
     }
 
     /// The answers to `queries`, each recorded. `None` when the vault
@@ -408,8 +355,7 @@ impl CellEnvironment {
 
 /// The profile name of a P-53 reference, `{"profile": name, "version": n}`.
 fn profile_name(p: &FunderProfileRef) -> Option<String> {
-    let v = fstp_json::parse(p.0.as_str().as_bytes()).ok()?;
-    v.get("profile")?.as_str().map(str::to_owned)
+    fstp_engine::compose::profile_name(p)
 }
 
 impl CreatorEnvironment for CellEnvironment {

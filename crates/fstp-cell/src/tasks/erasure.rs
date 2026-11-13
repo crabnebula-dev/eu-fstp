@@ -552,7 +552,7 @@ impl<C: Custody> ErasureRunner<C> {
             id,
             state
                 .now_floor()
-                .max(Timestamp::from_micros(super::system_now())),
+                .max(Timestamp::from_micros(self.engine.now())),
         )
         .map_err(|_| keys_err("key record admission"))?;
         match self.engine.execute(admitted).await {

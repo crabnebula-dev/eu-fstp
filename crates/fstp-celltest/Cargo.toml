@@ -38,6 +38,11 @@ fstp-release-svc.workspace = true
 fstp-backup.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
+# The creator shell facts of a cell (lane F-CYCLE2).
+fstp-creator.workspace = true
+fstp-guide.workspace = true
+fstp-programme.workspace = true
+fstp-money.workspace = true
 fstp-ledger.workspace = true
 fstp-migrate.workspace = true
 fstp-pgtest.workspace = true
@@ -63,7 +68,6 @@ fstp-api-testkit = { path = "../fstp-api-testkit" }
 # M9 lane C2: the notice companion verifier row of the I-90 sweep.
 fstp-contract.workspace = true
 fstp-mail.workspace = true
-fstp-money.workspace = true
 fstp-smtp.workspace = true
 fstp-json.workspace = true
 fstp-api-core.workspace = true

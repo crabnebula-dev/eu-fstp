@@ -63,7 +63,7 @@ use crate::config::{CellConfig, Mode};
 use crate::egress::{CnClient, CnTransport};
 use crate::tasks::erasure::{self, ErasureHandle, ErasureRunner, Keystore};
 use crate::tasks::release::{self, LicenceHold, ReleaseSettings, ReleaseView};
-use crate::tasks::{SystemClock, timeline};
+use crate::tasks::{FnClock, timeline};
 use crate::witness::store::{AnchoredStore, ChainRead, Database, Resolved, StoreKeys};
 use crate::witness::{WitnessClient, WitnessLink};
 
@@ -282,6 +282,9 @@ pub struct PgStartParts<C, R: Runtime, L, V, T> {
     pub licence: Option<LicenceHold>,
     /// Where to bind each listener. Port 0 picks a free port.
     pub listen: [(ListenerKind, SocketAddr); 3],
+    /// The clock of the timeline and erasure tasks: the system clock in
+    /// production, a test clock in a test world.
+    pub clock: crate::engine::CommitClock,
 }
 
 /// A started cell over the store `S`.
@@ -440,6 +443,8 @@ struct Common<C, V, T> {
     crabnebula: Option<T>,
     licence: Option<LicenceHold>,
     listen: [(ListenerKind, SocketAddr); 3],
+    /// The clock of the timeline and erasure tasks.
+    clock: crate::engine::CommitClock,
 }
 
 /// Starts a cell from `parts` over the in-memory anchoring store and
@@ -484,6 +489,7 @@ where
         crabnebula,
         licence,
         listen,
+        clock: crate::engine::system_commit_clock(),
     };
     // ADR-010 "Keys", I-90: a pin set that accepts no receipt is refused
     // when the store is built, before any prepare reaches the witness.
@@ -524,6 +530,7 @@ where
         crabnebula,
         licence,
         listen,
+        clock,
     } = parts;
     let common = Common {
         config,
@@ -534,6 +541,7 @@ where
         crabnebula,
         licence,
         listen,
+        clock,
     };
     let open = move |cell: [u8; 16]| {
         if store.inner().cell() == cell {
@@ -614,6 +622,7 @@ where
         CellEngine::start(rt, store, parts.vault, &shutdown, super::DEFAULT_QUEUE)
             .await
             .map_err(|_| StartRefusal::Store)?;
+    let engine = engine.with_clock(std::sync::Arc::clone(&parts.clock));
     report(StartPhase::LedgerReplayed);
     let view = ChainView {
         cell: CellId(cell),
@@ -647,7 +656,7 @@ where
     // command (design sections 5.1 and 8.2).
     {
         let signal = shutdown.signal();
-        let clock = SystemClock::new(rt.clone());
+        let clock = FnClock::new(rt.clone(), std::sync::Arc::clone(&parts.clock));
         let engine = engine.clone();
         drop(rt.spawn(async move {
             timeline::run(&clock, &engine, &signal).await;
@@ -660,8 +669,11 @@ where
     // `Lookup` key yet, nor the app pool and cell secret store that its
     // delivery log, outbox source and mail egress need, so none starts.
     // The erasure task (design section 3.5).
-    let (erasure, erasure_task) =
-        erasure::task(runner, SystemClock::new(rt.clone()), shutdown.signal());
+    let (erasure, erasure_task) = erasure::task(
+        runner,
+        FnClock::new(rt.clone(), std::sync::Arc::clone(&parts.clock)),
+        shutdown.signal(),
+    );
     drop(rt.spawn(erasure_task));
     let view = ReleaseView::default();
     if let (Mode::SelfHosted, Some(transport)) = (config.mode, parts.crabnebula) {
@@ -672,7 +684,7 @@ where
             channel: fstp_release::egress::Channel::Stable,
         };
         let signal = shutdown.signal();
-        let clock = SystemClock::new(rt.clone());
+        let clock = FnClock::new(rt.clone(), std::sync::Arc::clone(&parts.clock));
         let task_view = view.clone();
         let hold = parts.licence;
         let mode = config.mode;

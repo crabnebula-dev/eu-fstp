@@ -2848,7 +2848,6 @@ pub fn properties<'a, B: AuthBackend>(m: &'a AuthModel<B>) -> Vec<Property<'a, A
 /// software passkey per account and device. What the cell cannot do over
 /// HTTP yet refuses with a seam that names the missing part:
 ///
-/// - [`http::CLOCK_SEAM`]: the world's cells run on the host clock.
 /// - [`http::MAGIC_LINK_SEAM`]: an invited account has no email address,
 ///   and the world captures no outbox mail.
 /// - [`http::ROLE_GRANT_SEAM`]: a programme role needs an active
@@ -2885,27 +2884,26 @@ pub mod http {
     /// route table as `fstp_cell::routes::table` (design section 8.7).
     pub const ROUTE_TABLE_SEAM: &str = "fstp_celltest::mc::auth_model::http::production_routes: fstp-cell exposes no route table yet, only the Route type (design section 8.7, lane W3a)";
 
-    /// [`AuthClient::set_clock`] refuses: a world cell reads the host
-    /// clock (`fstp_cell::tasks::system_now`), and no test clock reaches
-    /// it.
+    /// The former seam of [`AuthClient::set_clock`]. Lane F-CYCLE2 closed
+    /// it: a world cell runs on its `crate::world::WorldClock`.
     pub const CLOCK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::set_clock: a world cell runs on the host clock, and no test clock reaches its backend (fstp-cell routes/pg.rs, world.rs start_cell)";
 
     /// A magic-link login refuses: an invited account has no email
     /// address the cell knows, and the world captures no outbox mail.
-    pub const MAGIC_LINK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::login by magic link: an invited account has no email address in the cell (self-registration is not built), and the world captures no outbox mail";
+    pub const MAGIC_LINK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::login by magic link: an invited account has no email address in the cell (self-registration is not built), and the pg backend puts no magic link in an outbox the world could capture (fstp-cell routes/pg.rs send_magic_link)";
 
     /// A programme role grant or end refuses: every programme role names
-    /// an active programme, and the cell decides creator commands with
-    /// `fstp_engine::NoEnvironment`, so no programme activates over HTTP.
-    pub const ROLE_GRANT_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::roster: a programme role needs an active programme, and fstp-cell decides creator commands with NoEnvironment (no profile, probes, SoD preview or attested tenant admins), so no programme activates over HTTP";
+    /// an active programme, and this client sets up none of its own. The
+    /// cycle's creator path activates one over HTTP (lane F-CYCLE2).
+    pub const ROLE_GRANT_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::roster: a programme role needs an active programme; the cycle activates one through the creator path (fstp_celltest::cycle create-programme), but the machine client sets up no programme of its own yet";
 
-    /// A conflict-of-interest suspension refuses: no vault fact seeding
-    /// reaches the cell's `VaultChanged` reaction in the world.
-    pub const SUSPEND_SEAM_HTTP: &str = "fstp_celltest::mc::auth_model::http::AuthClient::suspend_for_conflict: no vault fact seeding reaches a world cell's VaultChanged reaction (design section 6.9; the cell side is SUSPEND_SEAM, lane F-AUTHP)";
+    /// A conflict-of-interest suspension refuses: the world's seeded vault
+    /// takes facts now, but this client seeds no conflict fact yet.
+    pub const SUSPEND_SEAM_HTTP: &str = "fstp_celltest::mc::auth_model::http::AuthClient::suspend_for_conflict: the world runs the seeded vault (CellHandle::seed), but the client seeds no conflict fact yet, and the cell side of the suspension is SUSPEND_SEAM (lane F-AUTHP)";
 
     /// The recovery ceremonies refuse: the request, email proof and
     /// completion routes fail closed with 501.
-    pub const RECOVERY_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient recovery: POST /auth/recovery, .../email and .../complete fail closed (501), since the recovery tokens have no lifetime (ADR-008 \"Unset lifetimes\", fstp_cell_core::gate::ROUTE_ADMISSION_SEAM), pending Daniel";
+    pub const RECOVERY_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient recovery: POST /auth/recovery, .../email and .../complete fail closed (501): the gate admits no ProveRecoveryEmail or CompleteRecovery (fstp_cell_core::gate::ROUTE_ADMISSION_SEAM), though fstp_cell_core::lifetimes now holds the interim token lifetimes of ADR-008 \"Unset lifetimes\"";
 
     /// An operator ticket refuses: no control-plane signer runs in the
     /// world, and the cell refuses `ApplyOperatorTicket` (no ticket form).
@@ -3143,10 +3141,11 @@ pub mod http {
             Some((id, challenge.try_into().ok()?))
         }
 
-        /// Sets the cell's test clock. Refuses with [`CLOCK_SEAM`].
+        /// Sets the cell's test clock (`crate::world::WorldClock`). The
+        /// former [`CLOCK_SEAM`] is closed: a world cell runs on it.
         pub fn set_clock(&self, at: Timestamp) -> Result<(), NotImplemented> {
-            let _ = at;
-            Err(NotImplemented::new(CLOCK_SEAM))
+            self.cell.clock().set(at.micros());
+            Ok(())
         }
 
         /// Registers a new device of `person` through the invitation proof
@@ -3225,10 +3224,13 @@ pub mod http {
                     .ok_or_else(failed)?;
                 device.assertion_body(&id, challenge)?
             };
-            if !self
-                .call("POST", "/auth/stepup", Some(session), &body)?
-                .ok()
-            {
+            let reply = self.call("POST", "/auth/stepup", Some(session), &body)?;
+            if !reply.ok() {
+                eprintln!(
+                    "fstp_celltest AuthClient: the step-up was refused: {} {}",
+                    reply.status,
+                    String::from_utf8_lossy(&reply.body)
+                );
                 return Ok(None);
             }
             Ok(unhex_array(&id))
@@ -3296,6 +3298,43 @@ pub mod http {
                 },
             );
             Ok(true)
+        }
+
+        /// The cell's account id of the model account `account`, once
+        /// [`AuthClient::enrol`] enrolled it.
+        pub fn cell_account(&self, account: AccountId) -> Option<AccountId> {
+            self.known().people.get(&account).map(|p| p.cell)
+        }
+
+        /// The cell (the world's handle) this client drives.
+        pub fn cell(&self) -> &'w CellHandle {
+            self.cell
+        }
+
+        /// `command` through `POST /api/v1/commands` in `session`, with a
+        /// step-up when `stepup` holds: the cell's reply. A step-up the
+        /// cell refused gives `None`.
+        pub fn command_reply(
+            &self,
+            session: &Cookie,
+            command: &CellCommand,
+            stepup: bool,
+        ) -> Result<Option<Reply>, NotImplemented> {
+            let command_id = fstp_crypto::random_array::<16>().map_err(|_| failed())?;
+            let granted = if stepup {
+                match self.step_up(session, command, command_id)? {
+                    Some(id) => Some(id),
+                    None => return Ok(None),
+                }
+            } else {
+                None
+            };
+            Ok(Some(self.call(
+                "POST",
+                "/api/v1/commands",
+                Some(session),
+                &command_body(command, command_id, granted),
+            )?))
         }
 
         /// The harness's own session of the first tenant admin, once

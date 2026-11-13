@@ -1298,6 +1298,13 @@ pub mod recovery { pub fn complete(..) -> Result<Vec<AuthRecord>, CellRefusal>; 
 | `GET /api/v1/audit/anchors`, `GET /api/v1/erasures` | Session, Auditor or tenant admin |
 | `GET /healthz` | Loopback only, fixed body |
 
+Proposed rows for the auth pages of section 11.2, Interim, pending Daniel (lane F-CYCLE2, 2026-11-13). They are not yet rows of `fstp_cell::routes::table`: the I-78 test `i78_page_routes_are_public_gets_outside_the_section_8_7_table` holds the strict reading until Daniel accepts them.
+
+| Route | Risk class |
+| --- | --- |
+| `GET /auth/login`, `GET /auth/signup`, `GET /auth/invite`, `GET /auth/recovery`, `GET /auth/account` | Public page shell, normal, no body |
+| `GET /assets/auth/{file}`, `GET /assets/auth/pages/{file}` | Public compiled script or style, normal, no body |
+
 ---
 
 ## 9. Control plane, provisioning and edge
