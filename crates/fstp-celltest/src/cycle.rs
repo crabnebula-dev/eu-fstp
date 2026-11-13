@@ -38,6 +38,11 @@
 //!   no contract signature route yet.
 //! - `minor-applicant:...`: the I-18 variant "Minor applicant", with a
 //!   seeded guardian consent that is verified or not.
+//! - `call-cycle`: the steps from `login` to `grant` as one step.
+//! - `erase-text` and `erase-one-text`: one text stored and erased by an
+//!   erasure request, to the end of the erasure batch (lane F-ISO).
+//! - `<kind>:<text>` and `authenticator:<hex>`: values of the next
+//!   applicant (`Person`, lane F-ISO).
 //!
 //! Lane F-CYCLE3: the cell clock moves to the call's opening and past its
 //! deadline, and every session is renewed by passkey after a move
@@ -141,7 +146,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside lane W3b's vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant); the canary and fault steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the rotation, backup, snapshot, account and identity erasure, document and fault steps of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.

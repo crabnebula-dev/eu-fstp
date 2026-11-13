@@ -963,6 +963,27 @@ impl World {
         &self.egress
     }
 
+    /// One needle per custody root that any cell of the world created,
+    /// destroyed roots included (I-80, design section 14.4, lane
+    /// F-ERASE). The roots are the world custody's synthetic bytes, held
+    /// in the test process only. A label names the cell and the order of
+    /// creation, never the bytes.
+    pub fn root_needles(&self) -> Vec<crate::scan::Needle> {
+        let mut out = Vec::new();
+        for c in &self.cells {
+            let Some(rt) = c.runtime.as_ref() else {
+                continue;
+            };
+            for (n, root) in lock(&rt.custody.made).iter().enumerate() {
+                out.push(crate::scan::Needle {
+                    label: format!("cell {} root {n}", c.index),
+                    bytes: root.to_vec(),
+                });
+            }
+        }
+        out
+    }
+
     /// Every PostgreSQL cluster of the world, of every kind.
     pub fn clusters(&self) -> &[ClusterHandle] {
         &self.clusters
@@ -1936,6 +1957,10 @@ mod pki {
 #[derive(Clone, Default)]
 struct WorldCustody {
     roots: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, [u8; 32]>>>,
+    /// Every root it created, destroyed ones included, in order. The
+    /// I-80 scans look for these bytes ([`World::root_needles`], lane
+    /// F-ERASE).
+    made: std::sync::Arc<Mutex<Vec<[u8; 32]>>>,
 }
 
 impl fstp_custody::Custody for WorldCustody {
@@ -1950,6 +1975,7 @@ impl fstp_custody::Custody for WorldCustody {
             let handle =
                 fstp_crypto::random_array::<16>().map_err(fstp_custody::CustodyError::Crypto)?;
             lock(&self.roots).insert(handle.to_vec(), key);
+            lock(&self.made).push(key);
             Ok(fstp_custody::RootRef {
                 backend: fstp_custody::BackendId::Simulator,
                 cell: label.cell,
@@ -2521,6 +2547,8 @@ struct CellRuntime {
     /// The recording relays of the cell's links to its vault, its
     /// witness and the control plane ([`crate::relay`], lane F-ISO).
     relays: Mutex<Vec<crate::relay::Relay>>,
+    /// The cell's custody, which shares its roots with the cell.
+    custody: WorldCustody,
 }
 
 impl fmt::Debug for CellRuntime {
@@ -3006,6 +3034,7 @@ fn start_cell(
         fstp_keys::DekId(fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?),
         fstp_crypto::aead::Key::generate().map_err(|e| fail("the ledger key", &e))?,
     );
+    let custody = WorldCustody::default();
     let parts = fstp_cell::process::CellProcessParts {
         cell,
         mode: if spec.self_hosted {
@@ -3037,7 +3066,7 @@ fn start_cell(
                 },
             })
             .collect(),
-        custody: WorldCustody::default(),
+        custody: custody.clone(),
         keystore: None,
         keys: fstp_cell::process::CellKeys {
             anchor,
@@ -3159,6 +3188,7 @@ fn start_cell(
             health: bound.health,
             witness,
             relays: Mutex::new(relays.relays),
+            custody,
         })),
     })
 }
