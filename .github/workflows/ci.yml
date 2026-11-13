@@ -8,9 +8,10 @@
 #   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
 #   test         cargo test with a real PostgreSQL 16 in parallel parts: the
-#                workspace in three, and the HTTP and direct matrix tests in
-#                shards. Each part is gated by the known-red list in
-#                ci/known-red.txt (tools/test-gate --partial)
+#                workspace in three, the multi-cell isolation tests, and the
+#                HTTP and direct matrix tests in shards. Each part is gated
+#                by the known-red list in ci/known-red.txt (tools/test-gate
+#                --partial)
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
@@ -120,7 +121,15 @@ jobs:
         include:
           - part: workspace
             packages: --workspace --exclude fstp-api-testkit --exclude fstp-domain-testkit
+            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell
             timeout: 60
+          # I-19, I-20, I-80, I-82, I-83: the isolation (multi-cell) job of
+          # m3-design sections 14.4 and 14.8, as a part of its own. It runs
+          # every t_iso_* and t_db_iso_* test, the i80_root_canary_* scans,
+          # the other process-mode memory scan and the process-mode I-19
+          # test. The workspace part skips the same tests, and
+          # teeth_m3_registry checks that each runs in exactly one part.
+          - { part: isolation-multi-cell, packages: -p fstp-celltest --test t_iso_i19 --test t_iso_i20 --test t_db_iso_i82 --test i83_placement --test i80_custody --test i19_boundary, filter: t_iso_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
             timeout: 60
@@ -246,11 +255,11 @@ jobs:
           echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
           cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
           cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
-      # I-80, Q27: the Linux-only process-memory scans ran in the workspace
+      # I-80, Q27: the Linux-only process-memory scans ran in the isolation
       # run above, on the ext4 key volume. Their outcome is gated by
       # test-gate. This step fails when either did not run at all.
       - name: memory scan (I-80, Linux only)
-        if: matrix.part == 'workspace'
+        if: matrix.part == 'isolation-multi-cell'
         run: |
           set -euo pipefail
           for t in i80_root_canary_absent_from_cell_and_vault_memory \
