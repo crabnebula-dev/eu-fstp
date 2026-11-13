@@ -188,7 +188,7 @@ mod adversarial {
             id: ID,
             root: r1,
             aad: b"aad".to_vec(),
-            key: Zeroizing::new([3; 32]),
+            key: Box::new(Zeroizing::new([3; 32])),
         }) {
             Response::Wrapped(w) => w,
             other => panic!("wrap: {other:?}"),
@@ -216,7 +216,7 @@ mod adversarial {
         });
         let _ = std::fs::remove_dir_all(&dir);
         match unwrapped {
-            Ok(r) => assert_eq!(r, Response::Unwrapped(Zeroizing::new([3; 32]))),
+            Ok(r) => assert_eq!(r, Response::Unwrapped(Box::new(Zeroizing::new([3; 32])))),
             Err(e) => panic!("a torn slot append lost every root: {e:?}"),
         }
     }

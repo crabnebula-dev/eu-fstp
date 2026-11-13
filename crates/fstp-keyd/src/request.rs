@@ -41,7 +41,8 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, KeydError> {
         wire::KIND_WRAP => {
             let root = r.root()?;
             let aad = r.u16_bytes(MAX_AAD_LEN)?.to_vec();
-            let key = Zeroizing::new(r.array::<32>()?);
+            let key = fstp_custody::key_box(r.take(32)?)
+                .map_err(|_| KeydError::Malformed("a seal key is 32 bytes"))?;
             Request::Wrap { id, root, aad, key }
         }
         wire::KIND_UNWRAP => {

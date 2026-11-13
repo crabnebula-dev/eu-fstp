@@ -120,7 +120,8 @@ impl Server {
             }
             Request::Wrap { root, aad, key, .. } => {
                 let root = self.root(*root)?.clone();
-                let key = SealKey::from_bytes(**key);
+                let key = SealKey::from_slice(&key[..])
+                    .map_err(|_| Response::Refused(Refusal::BadRequest))?;
                 self.sim
                     .wrap_with_id(id, &root, &key, &Aad(aad.clone()))
                     .map(|w| Response::Wrapped(w.0))
@@ -137,7 +138,11 @@ impl Server {
                         &WrappedSealKey(wrapped.clone()),
                         &Aad(aad.clone()),
                     )
-                    .map(|k| Response::Unwrapped((*k.expose()).into()))
+                    .and_then(|k| {
+                        fstp_custody::key_box(k.expose())
+                            .map_err(|_| CustodyError::Refused(Refusal::Internal))
+                    })
+                    .map(Response::Unwrapped)
                     .map_err(refused)
             }
             Request::Destroy { root: handle, .. } => {

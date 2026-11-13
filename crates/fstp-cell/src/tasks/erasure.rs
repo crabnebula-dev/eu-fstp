@@ -248,13 +248,12 @@ pub enum LoginEmailSet {
 fn digest_key(sk: &HybridSecretKey, purpose: Purpose) -> Result<SealKey, CellError> {
     let mut info = KEYED_DIGEST_LABEL.to_vec();
     info.push(purpose.code());
-    let mut out = [0u8; 32];
-    let derived = fstp_crypto::kdf::hkdf_sha256(&[], &sk.to_bytes()[..], &info, &mut out);
-    let key = SealKey::from_bytes(out);
-    out = [0u8; 32];
-    let _ = out;
-    derived.map_err(|_| keys_err("keyed digest key"))?;
-    Ok(key)
+    // The key is derived straight into its heap allocation, so no copy
+    // of it is left on the stack (I-80).
+    let mut out = fstp_custody::zeroed_key_box();
+    fstp_crypto::kdf::hkdf_sha256(&[], &sk.to_bytes()[..], &info, &mut out[..])
+        .map_err(|_| keys_err("keyed digest key"))?;
+    Ok(SealKey::from_box(out))
 }
 
 /// The keyed digest of the normalised `address` under `key`.

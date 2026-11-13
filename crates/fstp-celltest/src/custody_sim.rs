@@ -356,13 +356,11 @@ impl CustodySim {
         let opened = aead::open(&aead_key, nonce, &wrap_aad(root, aad), body)
             .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
         drop(aead_key);
-        let bytes: [u8; 32] = opened
-            .as_slice()
-            .try_into()
+        let key = SealKey::from_slice(&opened)
             .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
         let record = usage_record(request, UsageOp::Unwrap, root);
         state.usage.push((root.handle.clone(), record));
-        Ok(SealKey::from_bytes(bytes))
+        Ok(key)
     }
 
     /// The material of a live root, for the test that checks where it may

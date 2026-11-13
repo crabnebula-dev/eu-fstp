@@ -90,26 +90,81 @@ pub struct RootLabel {
     pub epoch: Epoch,
 }
 
+/// The 32 bytes of a seal key in a heap allocation of their own, wiped
+/// on drop. A move of the box moves its pointer and never the bytes, so
+/// a key that passes through futures, channels and return values leaves
+/// no stale copy behind it (I-80, ADR-004 part 2).
+pub type KeyBox = Box<Zeroizing<[u8; 32]>>;
+
+/// A zeroed [`KeyBox`], for a caller that writes the key in place.
+#[must_use]
+pub fn zeroed_key_box() -> KeyBox {
+    Box::new(Zeroizing::new([0u8; 32]))
+}
+
+/// A [`KeyBox`] holding a copy of `bytes`, copied straight into the heap
+/// allocation.
+///
+/// # Errors
+///
+/// Returns [`CustodyError::Protocol`] when `bytes` is not 32 bytes long.
+pub fn key_box(bytes: &[u8]) -> Result<KeyBox, CustodyError> {
+    if bytes.len() != 32 {
+        return Err(CustodyError::Protocol("a seal key is 32 bytes"));
+    }
+    let mut out = zeroed_key_box();
+    out.copy_from_slice(bytes);
+    Ok(out)
+}
+
 /// A 32-byte epoch seal key `S(e)`. It implements no `Clone`, no `Debug`
 /// and no `ToJson`, and wipes its bytes on drop (ADR-004 part 2).
-pub struct SealKey(Zeroizing<[u8; 32]>);
+///
+/// The bytes live in one heap allocation for the key's whole life
+/// ([`KeyBox`]). A `SealKey` is a pointer, so moving it copies no key
+/// byte, and dropping it wipes the one place the bytes are (I-80: no
+/// copy of a destroyed epoch's `S(e)` stays in process memory).
+pub struct SealKey(KeyBox);
 
 impl ZeroizeOnDrop for SealKey {}
 
 impl SealKey {
-    /// Wraps key bytes.
+    /// Wraps key bytes. The caller's array is a copy this type cannot
+    /// wipe, so production code uses [`SealKey::from_slice`] on a
+    /// `Zeroizing` buffer, or [`SealKey::generate`].
     #[must_use]
     pub fn from_bytes(bytes: [u8; 32]) -> SealKey {
-        SealKey(Zeroizing::new(bytes))
+        let mut out = zeroed_key_box();
+        out.copy_from_slice(&bytes);
+        SealKey(out)
     }
 
-    /// A fresh seal key from the system generator.
+    /// A seal key holding a copy of `bytes`, copied straight into its
+    /// heap allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CustodyError::Protocol`] when `bytes` is not 32 bytes
+    /// long.
+    pub fn from_slice(bytes: &[u8]) -> Result<SealKey, CustodyError> {
+        key_box(bytes).map(SealKey)
+    }
+
+    /// The seal key whose bytes are in `bytes`. The allocation is taken
+    /// over, so no byte is copied.
+    #[must_use]
+    pub fn from_box(bytes: KeyBox) -> SealKey {
+        SealKey(bytes)
+    }
+
+    /// A fresh seal key from the system generator, written straight into
+    /// its heap allocation.
     ///
     /// # Errors
     ///
     /// Returns [`CustodyError::Crypto`] when the generator fails.
     pub fn generate() -> Result<SealKey, CustodyError> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
+        let mut bytes = zeroed_key_box();
         fstp_crypto::random_bytes(&mut bytes[..]).map_err(CustodyError::Crypto)?;
         Ok(SealKey(bytes))
     }
