@@ -99,10 +99,12 @@ name = "fstp-cell-core"
 version = "0.1.0"
 dependencies = [
  "fstp-auth",
+ "fstp-creator",
  "fstp-crypto",
  "fstp-domain",
  "fstp-engine",
  "fstp-findings",
+ "fstp-guide",
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
