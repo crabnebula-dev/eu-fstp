@@ -1019,41 +1019,12 @@ impl MoneySetup {
         let mut truth = self.truth();
         change(&mut truth);
         let mut w = MoneyWorld::new(backend, truth);
-        for s in self.draft_steps()? {
+        for (at, s) in self.timed_steps()? {
+            w.set_now(at);
             w = w.must(&s)?;
         }
-        let going: Vec<&MoneyDraft> = self.drafts.iter().filter(|d| d.negotiate).collect();
-        for d in &going {
-            w = w.must(&submit(d.lead, d.proposal, plan_of(d.proposal), false))?;
-        }
         w.set_now(T_EVAL);
-        for d in &going {
-            w = w.ranked(d.proposal, &self.reviewers)?;
-        }
-        if going.is_empty() {
-            return Ok(w);
-        }
-        let order: Vec<ProposalId> = going.iter().map(|d| d.proposal).collect();
-        let n = u32::try_from(order.len()).map_err(|_| "too many proposals")?;
-        w = w.must(&cut_off(
-            R1,
-            cut_off_decision(1),
-            call(1),
-            order,
-            n,
-            false,
-            ballots(&[R1, R2, R3], Vote::For),
-        ))?;
-        for d in &going {
-            for i in [IRC, IRC2] {
-                for st in assign_declared(i, d.proposal, call(1), AssignmentKind::Irc) {
-                    w = w.must(&st)?;
-                }
-            }
-            for i in [IRC, IRC2] {
-                let a = assignment_of(i, d.proposal, call(1), AssignmentKind::Irc);
-                w = w.must(&irc_review(i, a, true))?;
-            }
+        for d in self.drafts.iter().filter(|d| d.negotiate) {
             if w.state(d.proposal) != Some(StateTag::Negotiation) {
                 return Err(format!(
                     "setup: {:?} did not reach NEGOTIATION (it is in {:?})",
@@ -1064,6 +1035,88 @@ impl MoneySetup {
         }
         Ok(w)
     }
+
+    /// The steps of [`MoneySetup::world`] from genesis, each with its
+    /// instant: every step must be accepted. A cell driver runs the same
+    /// list over a running cell (M3 design section 14.6, lane
+    /// m3/money-drivers).
+    ///
+    /// # Errors
+    ///
+    /// A plan or a policy of the setup that cannot be built.
+    pub fn timed_steps(&self) -> Result<Vec<(Timestamp, Step)>, String> {
+        let t0 = crate::r#gen::roster::T0;
+        let mut out: Vec<(Timestamp, Step)> =
+            self.draft_steps()?.into_iter().map(|s| (t0, s)).collect();
+        let going: Vec<&MoneyDraft> = self.drafts.iter().filter(|d| d.negotiate).collect();
+        for d in &going {
+            out.push((t0, submit(d.lead, d.proposal, plan_of(d.proposal), false)));
+        }
+        let mut late: Vec<Step> = Vec::new();
+        for d in &going {
+            late.extend(ranked_steps(d.proposal, &self.reviewers));
+        }
+        if !going.is_empty() {
+            let order: Vec<ProposalId> = going.iter().map(|d| d.proposal).collect();
+            let n = u32::try_from(order.len()).map_err(|_| "too many proposals")?;
+            late.extend(cut_off(
+                R1,
+                cut_off_decision(1),
+                call(1),
+                order,
+                n,
+                false,
+                ballots(&[R1, R2, R3], Vote::For),
+            ));
+            for d in &going {
+                for i in [IRC, IRC2] {
+                    late.extend(assign_declared(i, d.proposal, call(1), AssignmentKind::Irc));
+                }
+                for i in [IRC, IRC2] {
+                    let a = assignment_of(i, d.proposal, call(1), AssignmentKind::Irc);
+                    late.push(irc_review(i, a, true));
+                }
+            }
+        }
+        out.extend(late.into_iter().map(|s| (T_EVAL, s)));
+        Ok(out)
+    }
+}
+
+/// The steps of [`MoneyWorld::ranked`]: `proposal` through intake, stage
+/// 1 with `reviewers`, and stage 2 with "no questions", to RANKED.
+pub fn ranked_steps(proposal: ProposalId, reviewers: &[AccountId]) -> Vec<Step> {
+    let mut out = Vec::new();
+    for r in reviewers.iter().copied() {
+        out.extend(assign_declared(
+            r,
+            proposal,
+            call(1),
+            AssignmentKind::Reviewer,
+        ));
+    }
+    out.push(declare(
+        COORDINATOR,
+        DeclarationSubject::Proposal(proposal),
+        false,
+        false,
+    ));
+    out.push(knock_out(proposal, true));
+    out.push(admit(proposal));
+    for r in reviewers.iter().copied() {
+        let key = ScoreKey {
+            assignment: assignment_of(r, proposal, call(1), AssignmentKind::Reviewer),
+            stage: Stage::One,
+            plan: plan_of(proposal),
+        };
+        out.push(score(r, key, &[2, 2]));
+    }
+    out.push(close(Actor::Account(COORDINATOR), proposal));
+    for r in reviewers.iter().copied() {
+        let a = assignment_of(r, proposal, call(1), AssignmentKind::Reviewer);
+        out.push(no_questions(r, proposal, a));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,34 +1462,7 @@ impl MoneyWorld {
         proposal: ProposalId,
         reviewers: &[AccountId],
     ) -> Result<MoneyWorld, String> {
-        let mut w = self.clone();
-        for r in reviewers.iter().copied() {
-            for s in assign_declared(r, proposal, call(1), AssignmentKind::Reviewer) {
-                w = w.must(&s)?;
-            }
-        }
-        w = w.must(&declare(
-            COORDINATOR,
-            DeclarationSubject::Proposal(proposal),
-            false,
-            false,
-        ))?;
-        w = w.must(&knock_out(proposal, true))?;
-        w = w.must(&admit(proposal))?;
-        for r in reviewers.iter().copied() {
-            let key = ScoreKey {
-                assignment: assignment_of(r, proposal, call(1), AssignmentKind::Reviewer),
-                stage: Stage::One,
-                plan: plan_of(proposal),
-            };
-            w = w.must(&score(r, key, &[2, 2]))?;
-        }
-        w = w.must(&close(Actor::Account(COORDINATOR), proposal))?;
-        for r in reviewers.iter().copied() {
-            let a = assignment_of(r, proposal, call(1), AssignmentKind::Reviewer);
-            w = w.must(&no_questions(r, proposal, a))?;
-        }
-        Ok(w)
+        self.must(&ranked_steps(proposal, reviewers))
     }
 
     /// Every invariant predicate of this lane on the world.
@@ -1728,6 +1754,49 @@ pub struct MoneyMachine {
     pub focus: MoneyFocus,
     /// The start state, built once from genesis.
     pub start: Result<MoneyWorld, String>,
+    /// Whether the system under test is a mirror of the model that steps
+    /// each command again and reports it as a [`MoneyOutput`]. A cell
+    /// driver compares that engine side with a cell's (lane
+    /// m3/money-drivers). Without it the output is empty.
+    pub mirror: bool,
+    /// Steps run after the setup at `T_EVAL`, each of which must be
+    /// accepted, such as a grant a reduced case starts from
+    /// ([`MoneyMachine::mirrored_after`]).
+    pub prelude: Vec<Step>,
+    /// The amount decision number the machine draws first: one more than
+    /// the determinations of [`MoneyMachine::prelude`].
+    pub first_decision: u128,
+}
+
+/// What the engine did with one money machine command, when the machine
+/// runs with a mirror ([`MoneyMachine::mirrored`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoneyOutput {
+    /// The step the command became, or none for a command that is not
+    /// drawn yet (Q-W7-7) or a harness failure.
+    pub step: Option<Step>,
+    /// The instant the step ran at.
+    pub at: Timestamp,
+    /// Whether production took it.
+    pub accepted: bool,
+    /// The M2 core records it appended.
+    pub appended: Vec<Record>,
+    /// What the command is.
+    pub context: String,
+}
+
+impl MoneyOutput {
+    /// No step at `at`: a command that is not drawn, or a machine
+    /// without a mirror.
+    fn none(at: Timestamp, context: String) -> MoneyOutput {
+        MoneyOutput {
+            step: None,
+            at,
+            accepted: false,
+            appended: Vec::new(),
+            context,
+        }
+    }
 }
 
 /// The setup of the machine: four leads, three of them one identity, P-04
@@ -1751,7 +1820,106 @@ impl MoneyMachine {
         MoneyMachine {
             focus,
             start: machine_setup().world(backend),
+            mirror: false,
+            prelude: Vec::new(),
+            first_decision: 1,
         }
+    }
+
+    /// The machine of `focus` over production, with a mirror that reports
+    /// what the engine did with each command ([`MoneyOutput`]).
+    pub fn mirrored(focus: MoneyFocus) -> MoneyMachine {
+        MoneyMachine {
+            mirror: true,
+            ..MoneyMachine::new(focus, Backend::Production)
+        }
+    }
+
+    /// [`MoneyMachine::mirrored`] from the setup followed by `prelude` at
+    /// `T_EVAL`, each step of which must be accepted. The machine's own
+    /// amount decisions follow those of the prelude.
+    pub fn mirrored_after(focus: MoneyFocus, prelude: Vec<Step>) -> MoneyMachine {
+        let mut m = MoneyMachine::mirrored(focus);
+        let mut determined = 0u128;
+        let start = m.start.and_then(|mut w| {
+            for s in &prelude {
+                match w.step(s)? {
+                    Some((next, records)) => {
+                        let n = records
+                            .iter()
+                            .filter(|r| matches!(r, Record::AmountDetermined { .. }))
+                            .count();
+                        determined = determined.saturating_add(u128::try_from(n).unwrap_or(0));
+                        w = next;
+                    }
+                    None => return Err(format!("the prelude step {s:?} was refused")),
+                }
+            }
+            Ok(w)
+        });
+        m.start = start;
+        m.prelude = prelude;
+        m.first_decision = determined.saturating_add(1);
+        m
+    }
+
+    /// The prelude of a reduced case of I-15: lead a's proposal [`PA`]
+    /// granted at its full plan, so that any later grant to a proposal of
+    /// the same identity is a repeat grant (I-15, R-NG-05).
+    pub fn repeat_prelude() -> Result<Vec<Step>, String> {
+        let current = amount_decision(PA, 1);
+        Ok(vec![
+            determine(R1, PA, current, plan_of(PA), &[])?,
+            accept_grant_as(LA, PA, accept_decision(PA), current),
+            approve_grant_as(STAFF_PM, PA, approve_decision(PA), current),
+            contract_effective(PA),
+        ])
+    }
+
+    /// Steps `model` with `cmd`, as [`StateMachine::next_state`] does, and
+    /// returns what the engine did.
+    fn advance(model: &mut MoneyModel, cmd: &MoneyCmd) -> MoneyOutput {
+        let at = model.world.now();
+        let step = match MoneyMachine::step_of(model, cmd) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                return MoneyOutput::none(at, format!("{cmd:?}, not drawn yet"));
+            }
+            Err(e) => {
+                model.divergence = Some(format!("harness: {e}"));
+                return MoneyOutput::none(at, format!("{cmd:?}: {e}"));
+            }
+        };
+        let context = format!("{:?} by {:?}", step.cmd, step.actor);
+        let mut out = MoneyOutput {
+            step: Some(step.clone()),
+            at,
+            accepted: false,
+            appended: Vec::new(),
+            context,
+        };
+        match model.world.step(&step) {
+            Ok(Some((w, records))) => {
+                model.world = w;
+                if records
+                    .iter()
+                    .any(|r| matches!(r, Record::AmountDetermined { .. }))
+                {
+                    model.decisions = model.decisions.saturating_add(1);
+                }
+                if records
+                    .iter()
+                    .any(|r| matches!(r, Record::PolicyVersionRecorded { .. }))
+                {
+                    model.versions = model.versions.saturating_add(1);
+                }
+                out.accepted = true;
+                out.appended = records;
+            }
+            Ok(None) => {}
+            Err(e) => model.divergence = Some(e),
+        }
+        out
     }
 
     fn proposals() -> [ProposalId; 4] {
@@ -1866,15 +2034,15 @@ pub fn superseded_determination(view: &MoneyView, p: ProposalId) -> Option<Decis
 
 impl StateMachine for MoneyMachine {
     type Model = MoneyModel;
-    type Sut = ();
+    type Sut = Option<MoneyModel>;
     type Command = MoneyCmd;
-    type Output = ();
+    type Output = MoneyOutput;
 
     fn init_model(&self) -> MoneyModel {
         match &self.start {
             Ok(w) => MoneyModel {
                 world: w.clone(),
-                decisions: 1,
+                decisions: self.first_decision,
                 versions: 1,
                 divergence: None,
             },
@@ -1887,7 +2055,9 @@ impl StateMachine for MoneyMachine {
         }
     }
 
-    fn init_sut(&self) {}
+    fn init_sut(&self) -> Option<MoneyModel> {
+        self.mirror.then(|| self.init_model())
+    }
 
     fn command(&self, g: &mut Gen, _model: &MoneyModel) -> MoneyCmd {
         let p = *g.pick(&Self::proposals());
@@ -1919,39 +2089,20 @@ impl StateMachine for MoneyMachine {
         model.divergence.is_none()
     }
 
-    fn run(&self, _sut: &mut (), _cmd: &MoneyCmd) {}
-
-    fn next_state(&self, model: &mut MoneyModel, cmd: &MoneyCmd) {
-        let step = match MoneyMachine::step_of(model, cmd) {
-            Ok(Some(s)) => s,
-            Ok(None) => return,
-            Err(e) => {
-                model.divergence = Some(format!("harness: {e}"));
-                return;
-            }
-        };
-        match model.world.step(&step) {
-            Ok(Some((w, records))) => {
-                model.world = w;
-                if records
-                    .iter()
-                    .any(|r| matches!(r, Record::AmountDetermined { .. }))
-                {
-                    model.decisions = model.decisions.saturating_add(1);
-                }
-                if records
-                    .iter()
-                    .any(|r| matches!(r, Record::PolicyVersionRecorded { .. }))
-                {
-                    model.versions = model.versions.saturating_add(1);
-                }
-            }
-            Ok(None) => {}
-            Err(e) => model.divergence = Some(e),
+    /// With a mirror, the mirror steps `cmd` as the model will and reports
+    /// it. Without one the output is empty.
+    fn run(&self, sut: &mut Option<MoneyModel>, cmd: &MoneyCmd) -> MoneyOutput {
+        match sut {
+            Some(mirror) => MoneyMachine::advance(mirror, cmd),
+            None => MoneyOutput::none(Timestamp::from_micros(0), String::new()),
         }
     }
 
-    fn invariant(&self, model: &MoneyModel, _sut: &()) -> Result<(), String> {
+    fn next_state(&self, model: &mut MoneyModel, cmd: &MoneyCmd) {
+        let _ = MoneyMachine::advance(model, cmd);
+    }
+
+    fn invariant(&self, model: &MoneyModel, _sut: &Option<MoneyModel>) -> Result<(), String> {
         if let Some(d) = &model.divergence {
             return Err(format!("two-way: {d}"));
         }
