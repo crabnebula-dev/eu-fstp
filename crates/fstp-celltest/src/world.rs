@@ -296,6 +296,9 @@ pub struct CellHandle {
     host: String,
     logins: CellLogins,
     clock: WorldClock,
+    mail: crate::world_mail::WorldMail,
+    /// What the last cycle on this cell kept (lane F-CYCLE3).
+    cycle: Mutex<Option<crate::cycle::CycleMemory>>,
     runtime: Option<std::sync::Arc<CellRuntime>>,
 }
 
@@ -312,6 +315,11 @@ impl CellHandle {
     /// The cell's test clock ([`WorldClock`]).
     pub fn clock(&self) -> &WorldClock {
         &self.clock
+    }
+
+    /// The cell's mail capture ([`crate::world_mail`]).
+    pub fn mail(&self) -> &crate::world_mail::WorldMail {
+        &self.mail
     }
 
     /// The cell's index in its world.
@@ -447,6 +455,55 @@ impl CellHandle {
         rt.services
             .rt
             .block_on(running.vault.seed_verification(account.raw(), attributes))
+    }
+
+    /// Seeds the synthetic vault fact `fact` from `source` into the cell's
+    /// seeded vault ([`crate::seeded_vault::SeededVault::seed_vault_fact`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`CellHandle::seed`].
+    pub fn seed_vault_fact(
+        &self,
+        source: crate::vault_seed::SeedSource,
+        fact: fstp_vault_core::fact::Fact,
+    ) -> Result<Vec<fstp_vault_core::VaultEvent>, crate::vault_seed::SeedError> {
+        let rt = self.runtime().map_err(|_| {
+            crate::vault_seed::SeedError::NotImplemented(NotImplemented::new(NOT_STARTED))
+        })?;
+        let running = lock(&rt.running);
+        rt.services
+            .rt
+            .block_on(running.vault.seed_vault_fact(source, fact))
+    }
+
+    /// The contract port's EFFECTIVE fact of `contract` on `proposal`,
+    /// issued in process (`fstp_cell::process::RunningCell::contract_fact`,
+    /// lane F-CYCLE3). It stands for a completed contract signature, which
+    /// the cell cannot take over HTTP yet. Claims built on it say so.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell refused the fact or runs no listener.
+    pub fn contract_effective(
+        &self,
+        proposal: fstp_domain::id::ProposalId,
+        contract: fstp_domain::id::ContractId,
+    ) -> Result<(), WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        let cell = running
+            .cell
+            .as_ref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        rt.services
+            .rt
+            .block_on(cell.contract_fact(
+                proposal,
+                contract,
+                fstp_domain::command::ContractEvent::Effective,
+            ))
+            .map_err(|e| WorldError::Store(format!("the contract port's fact: {e}")))
     }
 
     /// The cell's ledger after decryption, read through the cell's own
@@ -708,13 +765,27 @@ impl World {
     /// passkeys ([`crate::cycle`], lanes F-CYCLE1 and F-CYCLE2). The first
     /// step that the cell cannot run over HTTP yet ends the cycle with its
     /// seam.
+    ///
+    /// A second script on the same cell continues the first one's cycle:
+    /// its passkeys, sessions, programme and call (lane F-CYCLE3).
     pub fn run_cycle(&self, cell: u8, script: &CycleScript) -> CycleReport {
         let result = match self.cell(cell) {
             None => Err(NotImplemented::new(
                 "fstp_celltest::world::World::run_cycle on a cell the world does not hold",
             )),
             Some(_) if script.steps.is_empty() => Ok(()),
-            Some(handle) => crate::cycle::Cycle::new(handle).run(&script.steps),
+            Some(handle) => {
+                // A cycle continues from what the last script on this cell
+                // kept (lane F-CYCLE3).
+                let memory = lock(&handle.cycle).take();
+                let mut cycle = match memory {
+                    Some(m) => crate::cycle::Cycle::resume(handle, m),
+                    None => crate::cycle::Cycle::new(handle),
+                };
+                let result = cycle.run(&script.steps);
+                *lock(&handle.cycle) = Some(cycle.into_memory());
+                result
+            }
         };
         CycleReport { result }
     }
@@ -2174,6 +2245,7 @@ fn start_cell(
         fstp_crypto::random_array::<32>().map_err(|e| fail("the vault digest key", &e))?,
     );
     let clock = WorldClock::default();
+    let mail = crate::world_mail::WorldMail::default();
     let vault =
         s.rt.block_on(crate::seeded_vault::SeededVault::start(
             s.rt.clone(),
@@ -2324,6 +2396,7 @@ fn start_cell(
         fstp_cell::process::StartOptions {
             clock: clock.commit_clock(),
             creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
+            proof_mail: std::sync::Arc::new(mail.clone()),
         },
     )) {
         Ok(r) => r,
@@ -2382,6 +2455,8 @@ fn start_cell(
         host,
         logins,
         clock,
+        mail,
+        cycle: Mutex::new(None),
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
             running: Mutex::new(Running {

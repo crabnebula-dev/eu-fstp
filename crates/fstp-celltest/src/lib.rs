@@ -29,6 +29,7 @@ pub mod seeded_vault;
 pub mod soft_authn;
 pub mod vault_seed;
 pub mod world;
+pub mod world_mail;
 pub mod world_shell;
 
 /// The refusal of a W0 stub. It names the operation.

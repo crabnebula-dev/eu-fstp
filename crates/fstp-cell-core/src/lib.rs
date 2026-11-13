@@ -182,6 +182,16 @@ pub enum SystemTask {
     /// Provisioning (design section 9.2 step 10): the first tenant admin's
     /// `IssueFirstAdminInvitation`, with the cell's deployment mode.
     Provisioning,
+    /// The contract port (M5 design section 4.1): the core `ContractFact`
+    /// of a contract, with the actor `System(ContractPort)`. The engine's
+    /// contract envelope composes the same command when a signature
+    /// completes a version.
+    ///
+    /// Interim (lane F-CYCLE3): no contract signature route runs in the
+    /// cell yet, so only a test world issues it, in process, through
+    /// `fstp_cell::process::RunningCell::contract_fact`. No request handler
+    /// reaches it, and claims built on it say so.
+    ContractPort,
 }
 
 /// The context a system task's command runs in.

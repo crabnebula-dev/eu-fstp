@@ -846,7 +846,9 @@ fn route_only(c: &CellCommand) -> bool {
                 | A::RequestRecovery { .. }
                 | A::ProveRecoveryEmail { .. }
                 | A::CompleteRecovery { .. }
-        ) | CellCommand::Tenant(TenantCommand::EnrolByInvitation { .. })
+        ) | CellCommand::Tenant(
+            TenantCommand::EnrolByInvitation { .. } | TenantCommand::EnrolBySelfRegistration { .. }
+        )
     )
 }
 
@@ -1079,6 +1081,58 @@ pub fn admit_invitation_enrolment(
     })
 }
 
+/// `POST /auth/signup` (ceremony, design section 8.3 ceremony 2): admits
+/// `EnrolBySelfRegistration` of the new account `account` with the new
+/// passkey that `reg` registers.
+///
+/// The route drew `account` when it sent the email proof, and took that
+/// proof token once, within its lifetime
+/// (`crate::lifetimes::SIGNUP_PROOF_US`), before it calls this. The gate
+/// checks `fstp_auth::ceremony::admit_self_registration`: no record names
+/// the account and it holds no role outside Receiving. It then verifies
+/// the passkey through `fstp_auth::ceremony::verify_fresh_passkey`, with
+/// UV requested but not required (an applicant passkey, ADR-008 "User
+/// verification"), and a credential id new to the cell.
+///
+/// No session acts, so the principal is [`Principal::Ceremony`] for the
+/// new account. The verified credential goes into the batch's inputs.
+///
+/// # Errors
+///
+/// The first check that fails.
+pub fn admit_self_registration(
+    s: &CellState,
+    account: AccountId,
+    reg: &fstp_auth::ceremony::Registration<'_>,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    use fstp_auth::ceremony::verify_fresh_passkey;
+    let known = s.tenant().is_admin(account)
+        || s.auth().names_account(account)
+        || s.engine()
+            .core
+            .roster()
+            .bindings()
+            .any(|(_, b)| b.account == account);
+    let holds = holds_management(s, account, now).map_err(RouteDeny::Gate)?;
+    fstp_auth::ceremony::admit_self_registration(!known, !holds, true).map_err(RouteDeny::Enrol)?;
+    let registered = |c: &[u8]| s.auth().is_registered(c);
+    let cred = verify_fresh_passkey(reg, false, &registered).map_err(RouteDeny::Enrol)?;
+    let command = CellCommand::Tenant(TenantCommand::EnrolBySelfRegistration {
+        account,
+        credential: cred.id.clone(),
+    });
+    Ok(Admitted {
+        action: Action::Command(command),
+        principal: Principal::Ceremony(account),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none().with_credential(cred),
+    })
+}
+
 /// Provisioning (design sections 8.3 and 9.2 step 10, Q35): admits
 /// `IssueFirstAdminInvitation` of `invitation` for the new account
 /// `account`, with the token digest `token_digest`, as the system task
@@ -1290,6 +1344,12 @@ pub fn admit_system(
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),
+        ) => true,
+        (
+            SystemTask::ContractPort,
+            CellCommand::Engine(fstp_engine::Command::Core(fstp_domain::Command::ContractFact {
+                ..
+            })),
         ) => true,
         _ => false,
     };

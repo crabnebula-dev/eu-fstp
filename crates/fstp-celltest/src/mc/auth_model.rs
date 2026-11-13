@@ -3056,6 +3056,16 @@ pub mod http {
         sessions: BTreeMap<Vec<u8>, (AccountId, [u8; 16])>,
     }
 
+    /// What an [`AuthClient`] knows of its cell, kept between clients
+    /// ([`AuthClient::resume`]).
+    pub struct ClientMemory(Known);
+
+    impl std::fmt::Debug for ClientMemory {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ClientMemory").finish_non_exhaustive()
+        }
+    }
+
     /// The auth client of one cell.
     pub struct AuthClient<'w> {
         cell: &'w CellHandle,
@@ -3083,6 +3093,26 @@ pub mod http {
                 cell,
                 known: Mutex::new(Known::default()),
             }
+        }
+
+        /// The client of `cell` that resumes from `memory`: the passkeys,
+        /// account ids and sessions an earlier client of the same cell
+        /// kept (lane F-CYCLE3, so `World::run_cycle` continues a cell's
+        /// cycle).
+        pub fn resume(cell: &'w CellHandle, memory: ClientMemory) -> AuthClient<'w> {
+            AuthClient {
+                cell,
+                known: Mutex::new(memory.0),
+            }
+        }
+
+        /// What this client knows of its cell, for [`AuthClient::resume`].
+        pub fn into_memory(self) -> ClientMemory {
+            ClientMemory(
+                self.known
+                    .into_inner()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
         }
 
         fn known(&self) -> std::sync::MutexGuard<'_, Known> {
@@ -3274,7 +3304,10 @@ pub mod http {
             if !self.enrol_first_admin()? {
                 return Ok(false);
             }
-            let admin = self.known().admin.clone().ok_or_else(failed)?;
+            // A fresh session of the first admin: the cell clock may have
+            // moved past the idle lifetime (P-72) of the last one.
+            let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+            self.known().admin = Some(admin.clone());
             let raw = u128::from_be_bytes(fstp_crypto::random_array::<16>().map_err(|_| failed())?);
             let cell = AccountId::from_raw(raw | 1);
             let token = fstp_crypto::random_array::<32>().map_err(|_| failed())?;
@@ -3298,6 +3331,96 @@ pub mod http {
                 },
             );
             Ok(true)
+        }
+
+        /// Self-registers `account` with the synthetic address `email` and a
+        /// software passkey (design section 8.3 ceremony 2, lane F-CYCLE3):
+        /// `POST /auth/signup/options {email}`, the proof from the world's
+        /// mail capture (`crate::world_mail`), `POST /auth/signup/options
+        /// {token}` and `POST /auth/signup`. The new account's session, or
+        /// `None` when the cell refused a step. The cell account id is read
+        /// from the `CredentialRegistered` record of the new passkey.
+        pub fn signup(
+            &self,
+            account: AccountId,
+            email: &str,
+        ) -> Result<Option<Cookie>, NotImplemented> {
+            if self.known().people.contains_key(&account) {
+                return Ok(None);
+            }
+            let asked = self.call(
+                "POST",
+                "/auth/signup/options",
+                None,
+                format!("{{\"email\":\"{email}\"}}").as_bytes(),
+            )?;
+            if asked.status != 202 {
+                return Ok(None);
+            }
+            let Some(token) = self
+                .cell
+                .mail()
+                .latest(fstp_cell::mail::ProofKind::Signup, email)
+            else {
+                return Ok(None);
+            };
+            let token = hex(&token);
+            let options = self.call(
+                "POST",
+                "/auth/signup/options",
+                None,
+                format!("{{\"token\":\"{token}\"}}").as_bytes(),
+            )?;
+            let Some((id, challenge)) = Self::options(&options) else {
+                return Ok(None);
+            };
+            let mut device = Device::new(self.cell.host())?;
+            let mut body = device.registration_body(&id, challenge)?;
+            // The registration body is one canonical object; the token joins
+            // it as its last member, in key order.
+            body.pop();
+            body.extend_from_slice(format!(",\"token\":\"{token}\"}}").as_bytes());
+            let reply = self.send("POST", "/auth/signup", None, &body)?;
+            if !reply.ok() {
+                eprintln!(
+                    "fstp_celltest AuthClient: the signup was refused: {} {}",
+                    reply.status,
+                    String::from_utf8_lossy(&reply.body)
+                );
+                return Ok(None);
+            }
+            let pair: Vec<u8> = reply
+                .header("set-cookie")
+                .and_then(|set| set.split(|b| *b == b';').next())
+                .ok_or_else(failed)?
+                .to_vec();
+            let session: [u8; 16] = json_str(&reply.body, "session")
+                .and_then(|s| unhex_array(&s))
+                .ok_or_else(failed)?;
+            let ledger = self.cell.ledger().map_err(|_| failed())?;
+            let cell = ledger
+                .iter()
+                .find_map(|e| match &e.record {
+                    fstp_cell_core::CellRecord::Auth(
+                        fstp_auth::AuthRecord::CredentialRegistered {
+                            account,
+                            credential,
+                            ..
+                        },
+                    ) if *credential == device.id => Some(*account),
+                    _ => None,
+                })
+                .ok_or_else(failed)?;
+            let mut k = self.known();
+            k.people.insert(
+                account,
+                Person {
+                    cell,
+                    devices: vec![device],
+                },
+            );
+            k.sessions.insert(pair.clone(), (account, session));
+            Ok(Some(Cookie(pair)))
         }
 
         /// The cell's account id of the model account `account`, once
@@ -3551,7 +3674,17 @@ pub mod http {
         command_id: [u8; 16],
         stepup: Option<[u8; 16]>,
     ) -> Vec<u8> {
-        let c = String::from_utf8_lossy(&fstp_cell_core::encode_cell_command(command)).into_owned();
+        let mut c =
+            String::from_utf8_lossy(&fstp_cell_core::encode_cell_command(command)).into_owned();
+        // I-18, NOTE 14: a request never names the minor flag of a draft;
+        // the cell sets it. The canonical form orders `minor` before
+        // `proposal`, so the member and its comma go together.
+        if let CellCommand::Engine(fstp_engine::Command::Core(
+            fstp_domain::Command::CreateDraft { minor, .. },
+        )) = command
+        {
+            c = c.replace(&format!("\"minor\":{minor},"), "");
+        }
         let mut body = format!("{{\"command\":{c},\"command_id\":\"{}\"", hex(&command_id));
         if let Some(s) = stepup {
             body.push_str(&format!(",\"stepup\":\"{}\"", hex(&s)));

@@ -356,10 +356,16 @@ fn engine_ctx(actor: AccountId, now: Timestamp, command: Option<[u8; 16]>, a: &A
 
 /// The M2 context of a system task's command: `System(Timeline)`, with
 /// no attestation (`fstp_domain::due`).
-fn system_ctx(now: Timestamp, command: Option<[u8; 16]>) -> Ctx {
+fn system_ctx(task: SystemTask, now: Timestamp, command: Option<[u8; 16]>) -> Ctx {
+    let cause = match task {
+        SystemTask::ContractPort => SystemCause::ContractPort,
+        SystemTask::ErasureRunner | SystemTask::Timeline | SystemTask::Provisioning => {
+            SystemCause::Timeline
+        }
+    };
     Ctx {
         now,
-        actor: Actor::System(SystemCause::Timeline),
+        actor: Actor::System(cause),
         command: CommandId::from_bytes(command.unwrap_or([0; 16])),
         via: Via::Web,
         tenant_admin: false,
@@ -415,7 +421,9 @@ fn overdue(s: &CellState, c: &CellCommand, now: Timestamp) -> Result<(), CellRef
             | CellCommand::Auth(_)
             | CellCommand::Ops(OpsCommand::EndBreakGlass { .. })
             | CellCommand::Tenant(
-                TenantCommand::EndTenantAdmin { .. } | TenantCommand::EnrolByInvitation { .. }
+                TenantCommand::EndTenantAdmin { .. }
+                    | TenantCommand::EnrolByInvitation { .. }
+                    | TenantCommand::EnrolBySelfRegistration { .. }
             )
     ) {
         return Ok(());
@@ -445,6 +453,12 @@ fn due_engine_command<'a>(
         {
             Ok(cmd)
         }
+        // The contract port issues only the core contract fact (M5 design
+        // section 4.1, `SystemTask::ContractPort`).
+        (
+            SystemTask::ContractPort,
+            fstp_engine::Command::Core(fstp_domain::Command::ContractFact { .. }),
+        ) => Ok(cmd),
         _ => Err(wrong_actor()),
     }
 }
@@ -478,7 +492,7 @@ pub(crate) fn queries_with_inputs(
                 CellCommand::Engine(cmd) => {
                     let cmd = due_engine_command(s, task, cmd, now)?;
                     fstp_engine::DomainDecider
-                        .queries(s.engine(), cmd, &system_ctx(now, command))
+                        .queries(s.engine(), cmd, &system_ctx(task, now, command))
                         .map_err(CellRefusal::Domain)
                 }
                 CellCommand::Timeline(TimelineCommand::Fire {
@@ -487,7 +501,7 @@ pub(crate) fn queries_with_inputs(
                     let wrapped = fstp_engine::Command::Core((**core).clone());
                     let cmd = due_engine_command(s, task, &wrapped, now)?;
                     fstp_engine::DomainDecider
-                        .queries(s.engine(), cmd, &system_ctx(now, command))
+                        .queries(s.engine(), cmd, &system_ctx(task, now, command))
                         .map_err(CellRefusal::Domain)
                 }
                 _ => Ok(Vec::new()),
@@ -680,6 +694,10 @@ fn decide_unchecked(
             invitation,
             credential,
         }) => decide_enrolment(s, *invitation, credential, actor, now, inputs),
+        CellCommand::Tenant(TenantCommand::EnrolBySelfRegistration {
+            account,
+            credential,
+        }) => decide_self_registration(s, *account, credential, actor, now, inputs),
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
@@ -704,7 +722,7 @@ fn decide_system(
         (_, CellCommand::Engine(cmd)) => {
             let cmd = due_engine_command(s, task, cmd, now)?;
             let records = fstp_engine::DomainDecider
-                .decide(s.engine(), cmd, &system_ctx(now, command), answers)
+                .decide(s.engine(), cmd, &system_ctx(task, now, command), answers)
                 .map_err(CellRefusal::Domain)?;
             Ok(records.into_iter().map(CellRecord::Engine).collect())
         }
@@ -803,7 +821,12 @@ fn decide_timeline(
                 let wrapped = fstp_engine::Command::Core((**core).clone());
                 let cmd = due_engine_command(s, SystemTask::Timeline, &wrapped, now)?;
                 let records = fstp_engine::DomainDecider
-                    .decide(s.engine(), cmd, &system_ctx(now, command), answers)
+                    .decide(
+                        s.engine(),
+                        cmd,
+                        &system_ctx(SystemTask::Timeline, now, command),
+                        answers,
+                    )
                     .map_err(CellRefusal::Domain)?;
                 batch.extend(records.into_iter().map(CellRecord::Engine));
             }
@@ -1408,7 +1431,8 @@ fn decide_tenant(
         // Provisioning issues the first one as a system task, and only a
         // ceremony admission enrols. Neither reaches this point.
         TenantCommand::IssueFirstAdminInvitation { .. }
-        | TenantCommand::EnrolByInvitation { .. } => Err(wrong_actor()),
+        | TenantCommand::EnrolByInvitation { .. }
+        | TenantCommand::EnrolBySelfRegistration { .. } => Err(wrong_actor()),
     }
 }
 
@@ -1577,6 +1601,54 @@ fn decide_enrolment(
         }));
     }
     Ok(batch)
+}
+
+/// `EnrolBySelfRegistration`, a new Receiving account and its first passkey
+/// (design section 8.3, ceremony 2, `authentication.md` "First passkey").
+///
+/// The route took the email proof token, and the admission
+/// `crate::gate::admit_self_registration` verified the registration. The
+/// batch checks again what the ledger can tell at the commit instant
+/// (`fstp_auth::ceremony::admit_self_registration`): the account is the
+/// actor, no record names it yet, it holds no role outside Receiving, and
+/// the credential the gate verified is the one the command names and is
+/// new to the cell. An applicant passkey records whether it gave UV
+/// (ADR-008 "User verification"). The one record is
+/// `CredentialRegistered`.
+fn decide_self_registration(
+    s: &CellState,
+    account: AccountId,
+    credential: &[u8],
+    actor: AccountId,
+    now: Timestamp,
+    inputs: &RouteInputs,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    if account != actor {
+        return Err(wrong_actor());
+    }
+    if credential.is_empty() || credential.len() > MAX_CREDENTIAL {
+        return Err(invalid());
+    }
+    if s.auth().is_registered(credential) {
+        return Err(reused());
+    }
+    let Some(cred) = inputs.credential() else {
+        return Err(needs(RouteInput::VerifiedCredential));
+    };
+    if cred.id != credential {
+        return Err(invalid());
+    }
+    // The route admits only after it took the email proof, in the same
+    // ceremony.
+    fstp_auth::ceremony::admit_self_registration(
+        !account_known(s, account),
+        !holds_management_at(s, account, now),
+        true,
+    )
+    .map_err(|_| refuse(RuleRef::Input, RefusalReason::WrongState))?;
+    Ok(vec![CellRecord::Auth(fstp_auth::AuthRecord::registration(
+        account, cred,
+    ))])
 }
 
 fn decide_text(

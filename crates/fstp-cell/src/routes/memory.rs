@@ -65,6 +65,7 @@ struct Mem {
     emails: BTreeMap<String, AccountId>,
     tokens: BTreeMap<[u8; 32], TokenRow>,
     outbox: Vec<(AccountId, [u8; 32])>,
+    proofs: Vec<(String, [u8; 32])>,
 }
 
 impl Mem {
@@ -162,6 +163,21 @@ impl MemoryBackend {
     /// reads the bytes it signs from here.
     pub fn peek_challenge(&self, id: [u8; 16]) -> Option<ChallengeRow> {
         self.with(|m| m.challenges.get(&id).cloned()).ok().flatten()
+    }
+
+    /// Every record of the ledger, in order.
+    pub fn records(&self) -> Vec<CellRecord> {
+        self.with(|m| {
+            let mut entries = Vec::new();
+            let _ = m.store.read(Seq::ZERO, usize::MAX, &mut entries);
+            entries.into_iter().map(|e| e.record).collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Every self-registration email proof sent, in order.
+    pub fn signup_proofs(&self) -> Vec<(String, [u8; 32])> {
+        self.with(|m| m.proofs.clone()).unwrap_or_default()
     }
 
     /// Every magic link the outbox holds, in order.
@@ -351,6 +367,14 @@ impl Backend for MemoryBackend {
         token: [u8; 32],
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
         ready(self.with(|m| m.outbox.push((account, token))))
+    }
+
+    fn send_signup_proof(
+        &self,
+        email: String,
+        token: [u8; 32],
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        ready(self.with(|m| m.proofs.push((email, token))))
     }
 
     fn stepup_asserted_at(

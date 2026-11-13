@@ -61,6 +61,10 @@ pub enum ChallengePurpose {
     /// (design section 8.3), bound to the digest of the invitation proof
     /// its options call named.
     Registration,
+    /// The registration of the first passkey of a self-registration
+    /// (design section 8.3 ceremony 2), bound to the digest of the email
+    /// proof token its options call named.
+    Signup,
 }
 
 /// One row of `auth.challenge` (design section 4.2).
@@ -88,6 +92,9 @@ pub struct ChallengeRow {
 pub enum TokenKind {
     /// A magic link.
     MagicLink,
+    /// The email proof of a self-registration. Its row names the new
+    /// account the route drew (design section 8.3 ceremony 2).
+    SignupProof,
 }
 
 /// One row of `auth.token`. Only the token's SHA-256 digest is stored.
@@ -255,6 +262,18 @@ pub trait Backend: Send + Sync + 'static {
         account: AccountId,
         token: [u8; 32],
     ) -> impl Future<Output = Result<(), BackendFault>> + Send;
+
+    /// Sends the email proof `token` of a self-registration to `email`
+    /// through the cell's proof mail port (`crate::mail`). The provided
+    /// body fails closed.
+    fn send_signup_proof(
+        &self,
+        email: String,
+        token: [u8; 32],
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (email, token);
+        std::future::ready(Err(BackendFault::Unavailable))
+    }
 
     /// When step-up `id` was asserted: the instant of its `StepUpGranted`
     /// entry.
