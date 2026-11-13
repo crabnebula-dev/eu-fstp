@@ -215,6 +215,9 @@ fn m3_command(name: &str) -> Option<CellCommand> {
             request: [0x42; 16],
         }),
         "ApproveRecovery" => CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x7C; 16] }),
+        "IdentityDownload" => CellCommand::Release(
+            fstp_cell_core::release::ReleaseCommand::IssueDownloadTicket { proposal: 1 },
+        ),
         _ => return None,
     };
     Some(c)
@@ -235,10 +238,9 @@ const NOT_ROUTED_IN_M3: [(&str, &str); 7] = [
 
 /// Table entries that M3 routes but the stubs give no action for. The
 /// sweep fails on them until the stubs gain the action (lane W1b gap).
-const M3_GAPS: [(&str, &str); 1] = [(
-    "IdentityDownload",
-    "POST /api/v1/vault-tickets with download scope",
-)];
+/// `IdentityDownload` gained `IssueDownloadTicket`, the download scope of
+/// `POST /api/v1/vault-tickets`.
+const M3_GAPS: [(&str, &str); 0] = [];
 
 /// Whether `d` is the refusal a fault must get. Each fault names its own
 /// `Deny` variant, so a refusal for another reason, such as a missing
