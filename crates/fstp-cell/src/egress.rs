@@ -949,7 +949,7 @@ mod tests {
         answer: &[u8],
     ) -> (Result<Vec<u8>, CnFault>, Option<Vec<u8>>) {
         let (c, s) = fstp_rt::duplex::duplex(4096);
-        let request = b"GET /v1/updates/stable/0.3.0 HTTP/1.1\r\nHost: x\r\n\r\n";
+        let request = b"GET /probe HTTP/1.1\r\nHost: x\r\n\r\n";
         fstp_rt::future::block_on(fstp_rt::future::join(
             exchange_over(tls, host, c, request),
             serve_once(s, answer),
@@ -1000,10 +1000,7 @@ mod tests {
         assert_eq!(answer, OK);
         let decoded = decode_response(&answer).unwrap();
         assert_eq!(decoded.status, 200);
-        assert_eq!(
-            server.unwrap(),
-            b"GET /v1/updates/stable/0.3.0 HTTP/1.1\r\nHost: x\r\n\r\n"
-        );
+        assert_eq!(server.unwrap(), b"GET /probe HTTP/1.1\r\nHost: x\r\n\r\n");
     }
 
     fn relay() -> Destination {
