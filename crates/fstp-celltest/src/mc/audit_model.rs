@@ -61,8 +61,13 @@
 //! - Lane dsa merged on 2026-10-29. Its two seams are gone:
 //!   `fstp_crypto::composite::generate` succeeds, and
 //!   [`prod_composite_public_key`] returns `key.public_key().to_bytes()`.
-//! - W2e replaces [`STORE_SEAM`]. W2f replaces [`KEY_OPS_SEAM`]. W2f and
-//!   W1a replace [`RECONCILE_SEAM`].
+//! - W2e replaces [`STORE_SEAM`].
+//! - Lane m3/seams-custody replaced the reconciliation seams. Custody
+//!   calls carry request ids end to end (`fstp_custody::with_request`
+//!   and the shared usage record of `fstp_custody::usage`), and
+//!   [`prod_reconcile`], [`prod_usage_log`], [`prod_key_ops_of_chain`]
+//!   and [`prod_cell_custody_round`] reach production. [`RECONCILE_SEAM`]
+//!   and [`KEY_OPS_SEAM`] name what stays open.
 
 use fstp_audit::chain::{self as pchain, ChainRow, Link, RowKind};
 use fstp_audit::{AuditError, CellId, ChainId};
@@ -105,10 +110,10 @@ pub const ANCHOR_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_an
 /// never signs, or a failed composite signer. Either stops the run.
 pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_receipt: fstp_witness::sign_receipt refused (row 0, witness sequence 0, or the composite signer failed)";
 
-/// No crate has the reconciliation task of ADR-004, and neither the
-/// `Custody` trait nor the custody simulator's usage log carries a
-/// request id (lanes W2f and W1a).
-pub const RECONCILE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_reconcile: no reconciliation task exists, and Custody calls and the simulator usage log carry no request id (ADR-004 Reconciliation, lanes W2f and W1a)";
+/// Not a seam since lane m3/seams-custody: `fstp_custody::usage::reconcile`
+/// matches usage entries with `KeyOp` records by request id. Still open:
+/// no scheduled task runs it daily and raises `CustodyAnomaly`.
+pub const RECONCILE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_reconcile: no daily task runs fstp_custody::usage::reconcile and raises CustodyAnomaly (ADR-004 Reconciliation)";
 
 /// Lane W2e landed `fstp_pgstore::PgRecordStore`, whose append writes
 /// ledger entries, chain rows and anchor rows. This seam still needs a
@@ -117,10 +122,11 @@ pub const RECONCILE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_reconcile
 /// calls it also waits on [`VERIFY_SEAM`].
 pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: a granted cell database waits on fstp_control::pg::cell_role_plan (lane W2h) and anchor signing on fstp_audit::anchor::sign_anchor (lane W2g); lane W2e landed PgRecordStore";
 
-/// No cell keystore makes custody calls with request ids or writes their
-/// `KeyOp` events to the chain, and no reader decodes those events (ADR-004
-/// Reconciliation, lane W2f).
-pub const KEY_OPS_SEAM: &str = "fstp_celltest::mc::audit_model::prod_cell_custody_round: no cell keystore makes custody calls with request ids and writes KeyOp events to its chain, and no reader decodes them (ADR-004 Reconciliation, lane W2f)";
+/// The cell keystore writes a `RecordKeyOp` ledger record per call with
+/// the request id the call carries, and [`prod_key_ops_of_chain`] reads
+/// them. Still open: no cell code writes the sealed `KeyOp` event (kind 2)
+/// of the same call, which Daniel decided on 2026-10-29.
+pub const KEY_OPS_SEAM: &str = "fstp_celltest::mc::audit_model::prod_key_ops_of_chain: the cell writes RecordKeyOp ledger records with request ids, but no sealed KeyOp event (ADR-004 Reconciliation)";
 
 /// A production refusal as `NotImplemented`: the stub's own operation, or
 /// `op` for any other refusal, such as a failed composite signer.
@@ -195,13 +201,43 @@ pub fn prod_composite_public_key(
 }
 
 /// The production reconciliation of a backend usage log with the
-/// chain's `KeyOp` events. Refuses with [`RECONCILE_SEAM`].
+/// chain's `KeyOp` records, through `fstp_custody::usage::reconcile`.
+/// Each side names its operation by `fstp_custody::usage::UsageOp::name`.
+///
+/// # Errors
+///
+/// An operation name that is no `UsageOp`.
 pub fn prod_reconcile(
     usage: &[RefKeyOp],
     key_ops: &[RefKeyOp],
 ) -> Result<Vec<RefKeyOp>, NotImplemented> {
-    let _ = (usage, key_ops);
-    Err(NotImplemented::new(RECONCILE_SEAM))
+    let to_use = |k: &RefKeyOp| {
+        fstp_custody::usage::UsageOp::from_name(&k.op)
+            .map(|op| fstp_custody::usage::KeyUse {
+                request: fstp_custody::RequestId(k.request_id),
+                op,
+            })
+            .ok_or(NotImplemented::new(UNKNOWN_OP))
+    };
+    let usage: Vec<_> = usage.iter().map(to_use).collect::<Result<_, _>>()?;
+    let recorded: Vec<_> = key_ops.iter().map(to_use).collect::<Result<_, _>>()?;
+    Ok(fstp_custody::usage::reconcile(&usage, &recorded)
+        .into_iter()
+        .map(|u| ref_key_op(u.request, u.op))
+        .collect())
+}
+
+/// An operation name of a `RefKeyOp` that no `UsageOp` has. Production
+/// readers never give one, so it stops the run.
+const UNKNOWN_OP: &str =
+    "fstp_celltest::mc::audit_model::prod_reconcile: an operation name that is no UsageOp";
+
+/// The reference form of a production key use.
+fn ref_key_op(request: fstp_custody::RequestId, op: fstp_custody::usage::UsageOp) -> RefKeyOp {
+    RefKeyOp {
+        request_id: request.0,
+        op: op.name().as_bytes().to_vec(),
+    }
 }
 
 /// A batch of ledger records as the production store wrote it.
@@ -224,49 +260,251 @@ pub fn prod_store_batch(
 }
 
 /// One custody round of the production cell keystore: the roots it used,
-/// and the App chain it wrote with its `KeyOp` records. W2f adds what
-/// the `KeyOp` reader needs, such as a content-key handle.
-#[derive(Debug)]
+/// and the App chain it wrote with its `KeyOp` records.
 pub struct CustodyRound {
     /// The roots the round created, whose usage logs the test reads.
     pub roots: Vec<fstp_custody::RootRef>,
-    /// The App chain after the round.
+    /// The App chain after the round. Each ledger entry of the cell is one
+    /// kind 1 row, its body sealed under [`CustodyRound::keys`] as
+    /// `fstp-pgstore` seals it (ADR-007 "Sealed bodies").
     pub chain: SymChain,
+    /// The cell whose ledger AAD binds each body.
+    pub cell: [u8; 16],
+    /// The ledger key the reader opens the bodies with.
+    pub keys: fstp_pgstore::LedgerKeys,
 }
 
-/// The production cell keystore creates a root, wraps under it and
-/// destroys it, through `sim`. Refuses with [`KEY_OPS_SEAM`].
+impl std::fmt::Debug for CustodyRound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustodyRound")
+            .field("roots", &self.roots)
+            .field("chain", &self.chain)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The custody round's failure, as the seam type of this file.
+const ROUND_FAILED: &str = "fstp_celltest::mc::audit_model::prod_cell_custody_round: the production cell keystore round failed";
+
+/// A vault at the genesis epoch. Key records ask no query.
+struct GenesisVault;
+
+impl fstp_cell::engine::VaultClient for GenesisVault {
+    fn epoch(
+        &self,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_domain::id::VaultEpoch, fstp_cell_core::driver::VaultFault>,
+    > + Send {
+        std::future::ready(Ok(fstp_domain::id::VaultEpoch::GENESIS))
+    }
+
+    fn ask(
+        &self,
+        _queries: &[fstp_domain::oracle::Query],
+        _reaction_for: Option<fstp_domain::id::VaultEpoch>,
+        _at: fstp_domain::time::Timestamp,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_domain::oracle::Answers, fstp_cell_core::driver::VaultFault>,
+    > + Send {
+        std::future::ready(Err(fstp_cell_core::driver::VaultFault::Unavailable))
+    }
+
+    fn ack(
+        &self,
+        _epoch: fstp_domain::id::VaultEpoch,
+        _seq: fstp_ledger::Seq,
+        _link: [u8; 32],
+    ) -> impl std::future::Future<Output = Result<(), fstp_cell_core::driver::VaultFault>> + Send
+    {
+        std::future::ready(Ok(()))
+    }
+}
+
+/// The step of the round that failed, as `NotImplemented`. A custody
+/// refusal keeps the backend's own text, such as a simulator seam.
+fn round_err(e: fstp_cell::CellError) -> NotImplemented {
+    match e {
+        fstp_cell::CellError::Custody(fstp_custody::CustodyError::NotImplemented(op)) => {
+            NotImplemented::new(op)
+        }
+        _ => NotImplemented::new(ROUND_FAILED),
+    }
+}
+
+/// The production cell keystore over `sim`, on an in-memory cell ledger
+/// (ADR-004 "Reconciliation"). `fstp_cell::tasks::erasure::ErasureRunner`
+/// creates the App chain at epoch 0: `R(0)` and `S(0)` wrapped under it.
+/// Then the cell starts again as `fstp_cell::engine::startup` does: the
+/// keystore unwraps `S(0)` under a kept request id, and the runner writes
+/// that call's deferred record. Every call writes its `RecordKeyOp`
+/// with the request id the call carries to custody.
+///
+/// The cell ledger is then written as an App chain, one kind 1 row per
+/// entry with its body sealed as `fstp-pgstore` seals it.
+///
+/// # Errors
+///
+/// A custody refusal of the simulator, under the simulator's own text,
+/// or [`ROUND_FAILED`].
 pub fn prod_cell_custody_round(
     sim: &crate::custody_sim::CustodySim,
 ) -> Result<CustodyRound, NotImplemented> {
-    let _ = sim;
-    Err(NotImplemented::new(KEY_OPS_SEAM))
+    use fstp_cell::engine::{CellEngine, Unanchored, read_after};
+    use fstp_cell::tasks::erasure::ErasureRunner;
+    use fstp_rt::Shutdown;
+
+    let cell = CELL;
+    let fail = |_| NotImplemented::new(ROUND_FAILED);
+    let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(2).map_err(fail)?;
+    let rt2 = rt.clone();
+    let custody = sim.handle();
+    let (roots, entries) = rt.block_on(async move {
+        let store = Unanchored::open(fstp_ledger::MemStore::new(), cell)
+            .await
+            .map_err(|_| NotImplemented::new(ROUND_FAILED))?;
+        let shutdown = Shutdown::new();
+        let (engine, task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
+            .await
+            .map_err(|_| NotImplemented::new(ROUND_FAILED))?;
+        let runner = ErasureRunner::genesis(custody.handle(), engine.clone(), cell)
+            .await
+            .map_err(round_err)?;
+        let mut keystore = runner.keystore().clone();
+        drop(runner);
+        let seal = keystore.unwrap_current(&custody).await.map_err(round_err)?;
+        let groups = keystore.open_groups(&seal).map_err(round_err)?;
+        let runner = ErasureRunner::from_open(custody, engine.clone(), keystore, seal, groups)
+            .await
+            .map_err(round_err)?;
+        let roots = runner.keystore().root_refs();
+        drop(runner);
+        drop(engine);
+        let store = task.await.map_err(|_| NotImplemented::new(ROUND_FAILED))?;
+        let entries = read_after(&store, fstp_ledger::Seq::ZERO)
+            .await
+            .map_err(|_| NotImplemented::new(ROUND_FAILED))?;
+        Ok::<_, NotImplemented>((roots, entries))
+    })?;
+    chain_of(cell, roots, &entries)
 }
 
-/// The `KeyOp` records of `store`, read by the production reader with
-/// what `round` holds for it. Refuses with [`KEY_OPS_SEAM`].
+/// The App chain of `entries`, each sealed under a fresh ledger key.
+fn chain_of(
+    cell: [u8; 16],
+    roots: Vec<fstp_custody::RootRef>,
+    entries: &[fstp_ledger::Entry<fstp_cell_core::CellRecord>],
+) -> Result<CustodyRound, NotImplemented> {
+    use fstp_ledger::Canonical as _;
+
+    let fail = |_| NotImplemented::new(ROUND_FAILED);
+    let mut bytes = [0u8; 32];
+    fstp_crypto::random_bytes(&mut bytes).map_err(fail)?;
+    let seal_key = fstp_crypto::aead::Key::from_bytes(&bytes).map_err(fail)?;
+    let held = fstp_crypto::aead::Key::from_bytes(&bytes).map_err(fail)?;
+    let keys = fstp_pgstore::LedgerKeys::new(fstp_pgstore::LedgerKey::new(
+        1,
+        fstp_keys::DekId([0x1E; 16]),
+        held,
+    ));
+    let mut chain = SymChain::genesis(cell, RefChain::App);
+    for e in entries {
+        if chain.store.next_seq() != e.seq.raw() {
+            return Err(NotImplemented::new(ROUND_FAILED));
+        }
+        let aad = fstp_pgstore::ledger_aad(&cell, e.seq.raw(), e.at, &e.command, e.schema);
+        let sealed =
+            fstp_crypto::aead::seal(&seal_key, &aad, &e.record.canonical()).map_err(fail)?;
+        let mut body = sealed.nonce.to_vec();
+        body.extend_from_slice(&sealed.body);
+        let spec = RowSpec::Ledger {
+            at: e.at,
+            command: e.command,
+            schema: e.schema,
+            key_ix: 1,
+            body,
+        };
+        chain
+            .append(&[spec], e.at.saturating_add(1))
+            .map_err(|_| NotImplemented::new(ROUND_FAILED))?;
+    }
+    Ok(CustodyRound {
+        roots,
+        chain,
+        cell,
+        keys,
+    })
+}
+
+/// The `KeyOp` records of `store`, read as the reconciliation reads them:
+/// each kind 1 row's ledger entry is opened under the round's ledger key,
+/// decoded as a cell record, and a `KeyOpRecorded` body is read by
+/// `fstp_cell::tasks::erasure::key_op_of_body`. A row without its entry
+/// holds no record. Each record names its operation by
+/// `fstp_custody::usage::UsageOp::name`.
 ///
-/// The reader gets the whole store, rows and ledger entries, since the
-/// spec leaves open whether a `KeyOp` is a kind 2 event or a ledger
-/// record. Design section 3.3 and ADR-004 say "KeyOp audit event".
-/// Design section 5.1 also defines `KeyCommand::RecordKeyOp`, a ledger
-/// record. The lead settles this with Daniel. Design section 7.1 seals
-/// event bodies under the `Ledger` purpose, so either reading needs a
-/// content-key handle, which W2f adds to [`CustodyRound`]. The reference
-/// reads unsealed kind 2 events.
+/// Interim, pending Daniel: the reader takes the `RecordKeyOp` ledger
+/// records. Daniel decided on 2026-10-29 that each call is also a sealed
+/// `KeyOp` event (kind 2) in the App chain. No cell code writes that
+/// event yet, so the reconciliation reads the ledger records.
+///
+/// # Errors
+///
+/// A body that does not open or decode.
 pub fn prod_key_ops_of_chain(
     round: &CustodyRound,
     store: &SymStore,
 ) -> Result<Vec<RefKeyOp>, NotImplemented> {
-    let _ = (round, store);
-    Err(NotImplemented::new(KEY_OPS_SEAM))
+    const UNREADABLE: &str = "fstp_celltest::mc::audit_model::prod_key_ops_of_chain: a ledger body did not open or decode";
+    let mut out = Vec::new();
+    for row in &store.rows {
+        let RefRowKind::Ledger { seq } = row.kind else {
+            continue;
+        };
+        let Some(e) = store.ledger.iter().find(|e| e.seq == seq) else {
+            continue;
+        };
+        let stored = fstp_pgstore::StoredEntry {
+            seq: e.seq,
+            at: e.at,
+            command: e.command,
+            schema: e.schema,
+            key_ix: e.key_ix,
+            sealed: e.body.clone(),
+        };
+        let plain = fstp_pgstore::open_stored_entry(&round.keys, &round.cell, &stored)
+            .map_err(|_| NotImplemented::new(UNREADABLE))?;
+        let record = fstp_cell_core::codec::record_from_canonical_at(&plain, e.schema)
+            .map_err(|_| NotImplemented::new(UNREADABLE))?;
+        if let fstp_cell_core::CellRecord::Key(fstp_cell_core::KeyRecord::KeyOpRecorded { op }) =
+            record
+        {
+            let k = fstp_cell::tasks::erasure::key_op_of_body(&op)
+                .map_err(|_| NotImplemented::new(UNREADABLE))?;
+            out.push(ref_key_op(
+                fstp_custody::RequestId(k.request),
+                fstp_custody::usage::UsageOp::of_call(k.call),
+            ));
+        }
+    }
+    Ok(out)
 }
 
-/// The usage entries of a backend usage page, each with its request id.
-/// Refuses with [`RECONCILE_SEAM`]: the simulator's records carry none.
+/// The usage entries of a backend usage page, each with its request id,
+/// through `fstp_custody::usage::decode_entry`.
+///
+/// # Errors
+///
+/// A record that does not decode, or a damage marker, which the
+/// reconciliation raises as `CustodyAnomaly`.
 pub fn prod_usage_log(page: &fstp_custody::UsagePage) -> Result<Vec<RefKeyOp>, NotImplemented> {
-    let _ = page;
-    Err(NotImplemented::new(RECONCILE_SEAM))
+    const DAMAGED: &str = "fstp_celltest::mc::audit_model::prod_usage_log: a usage record is damaged or does not decode (CustodyAnomaly)";
+    page.operations
+        .iter()
+        .map(|bytes| match fstp_custody::usage::decode_entry(bytes) {
+            Ok(fstp_custody::usage::UsageEntry::Record(r)) => Ok(ref_key_op(r.request, r.op)),
+            _ => Err(NotImplemented::new(DAMAGED)),
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
