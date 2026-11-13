@@ -26,7 +26,8 @@
 //! 4. When the vault is ahead of the state's epoch, process the change
 //!    first (NOTE 3). Ask `ChangedSince` with `reaction_for` set and
 //!    decide `VaultChanged` as the M2 engine does. Append it under its
-//!    reserved id and acknowledge it with its sequence and link (NOTE 4).
+//!    reserved id, keyed by the cell (I-20), and acknowledge it with its
+//!    sequence and link (NOTE 4).
 //!    Then start again from step 2.
 //! 5. Ask the command's queries once. A fault fails closed. An answer at
 //!    a newer epoch starts again from step 2, so the change is processed
@@ -289,6 +290,7 @@ pub struct DriverCore {
     attempts: usize,
     progress: Progress,
     reacked: bool,
+    cell: [u8; 16],
 }
 
 /// The refusal of a command whose vault questions went unanswered (NOTE 2).
@@ -334,7 +336,24 @@ impl DriverCore {
             attempts: 0,
             progress: Progress::default(),
             reacked: false,
+            cell: [0; 16],
         }
+    }
+
+    /// The driver in the cell `cell`: its reactions are appended under
+    /// ids keyed by `cell` ([`state::reaction_command_id`], I-20, Daniel's
+    /// decision of 2026-11-13). A driver started without a cell keys them
+    /// by the all-zero id. The engine of a serving cell always names its
+    /// own cell.
+    #[must_use]
+    pub fn in_cell(mut self, cell: [u8; 16]) -> DriverCore {
+        self.cell = cell;
+        self
+    }
+
+    /// The cell the driver keys its reaction ids by.
+    pub fn cell(&self) -> [u8; 16] {
+        self.cell
     }
 
     /// The admitted command.
@@ -388,7 +407,7 @@ impl DriverCore {
     ) -> Result<Step, ExecError> {
         match (phase, ev) {
             (Phase::Start, None) => {
-                if state::reaction_epoch(self.command).is_some() {
+                if state::is_reaction_command_id(self.command) {
                     return Err(ExecError::ReservedCommandId);
                 }
                 let system = matches!(self.admitted.principal(), crate::gate::Principal::System(_));
@@ -537,7 +556,7 @@ impl DriverCore {
 
     fn after_epoch(&mut self, state: &CellState, reported: VaultEpoch) -> Result<Step, ExecError> {
         if !self.reacked
-            && let Some(seq) = state.reaction_to(reported.raw())
+            && let Some(seq) = state.reaction_to(self.cell, reported.raw())
         {
             self.reacked = true;
             return self.need(
@@ -679,7 +698,7 @@ impl DriverCore {
         self.append(
             state,
             batch,
-            reaction_command_id(target.raw()),
+            reaction_command_id(self.cell, target.raw()),
             Pending::Reaction(target),
             side,
         )

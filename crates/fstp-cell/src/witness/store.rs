@@ -797,6 +797,10 @@ impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static>
 impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static> CellStore
     for AnchoredStore<D, W>
 {
+    fn cell(&self) -> [u8; 16] {
+        self.cell.0
+    }
+
     async fn append_cell(&mut self, req: AppendRequest) -> Result<Committed, CellAppendError> {
         self.append_anchored(req).await
     }

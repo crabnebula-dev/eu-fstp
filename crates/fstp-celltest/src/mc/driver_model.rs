@@ -132,6 +132,10 @@ pub fn fact() -> RefWrite {
     }
 }
 
+/// The highest vault epoch whose reaction id [`kind_of`] recognises. The
+/// model's vault reaches far fewer epochs.
+const MODEL_EPOCH_BOUND: u64 = 64;
+
 /// What an entry of the model's ledger is, by its command id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EntryKind {
@@ -150,12 +154,13 @@ pub fn kind_of(id: [u8; 16]) -> EntryKind {
     if id == FOREIGN_ID {
         return EntryKind::Foreign;
     }
-    if is_reaction_command_id(id) {
-        let mut be = [0u8; 8];
-        for (slot, b) in be.iter_mut().zip(id.iter().skip(8)) {
-            *slot = *b;
-        }
-        return EntryKind::Reaction(u64::from_be_bytes(be));
+    // A reaction id is keyed by the reference cell (I-20, Daniel's
+    // decision of 2026-11-13), so its epoch is found by search. An id in
+    // the reserved namespace that names no model epoch is a defect.
+    if is_reaction_command_id(id)
+        && let Some(epoch) = rv::reaction_epoch_up_to(id, MODEL_EPOCH_BOUND)
+    {
+        return EntryKind::Reaction(epoch);
     }
     for c in Cmd::ALL {
         if id == c.id() {
@@ -1014,7 +1019,7 @@ impl DriverBackend for Production {
         let caller = retry_id.unwrap_or(cmd.id());
         Ok(ProdRun {
             state: self.genesis.clone(),
-            driver: DriverCore::start_with_id(admitted, caller),
+            driver: DriverCore::start_with_id(admitted, caller).in_cell(rv::REACTION_CELL),
             need: None,
             seqs: vec![(0, 0)],
             mirror: MemStore::new(),
@@ -1986,7 +1991,7 @@ impl Shell {
         {
             self.record_grant(&admitted, &u)?;
         }
-        let mut driver = DriverCore::start(admitted);
+        let mut driver = DriverCore::start(admitted).in_cell(rv::REACTION_CELL);
         let mut ev: Option<Event> = None;
         for _ in 0..256 {
             match driver.step(&mut self.state, ev.take()) {

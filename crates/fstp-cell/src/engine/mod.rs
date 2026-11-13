@@ -227,6 +227,10 @@ pub trait CellStore: AsyncRecordStore<CellRecord> + Send + Sync + 'static {
         &self,
         seq: Seq,
     ) -> impl Future<Output = Result<Option<StoredCommit>, StoreError>> + Send;
+
+    /// The cell whose ledger this is. The engine keys its reaction
+    /// command ids by it (I-20, Daniel's decision of 2026-11-13).
+    fn cell(&self) -> [u8; 16];
 }
 
 /// Reads every entry of `store` after `after`, in pages.
@@ -378,6 +382,10 @@ impl<S: AsyncRecordStore<CellRecord> + Send + Sync + 'static> AsyncRecordStore<C
 }
 
 impl<S: AsyncRecordStore<CellRecord> + Send + Sync + 'static> CellStore for Unanchored<S> {
+    fn cell(&self) -> [u8; 16] {
+        self.cell.0
+    }
+
     async fn append_cell(&mut self, req: AppendRequest) -> Result<Committed, CellAppendError> {
         // The command check and the head check come first (ADR-007), so a
         // retry of a committed command is still a duplicate. The step-up
@@ -615,7 +623,7 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
     /// Drives one `DriverCore` to its end.
     async fn execute(&mut self, admitted: Admitted) -> Result<Done, EngineError> {
         let at = admitted.at();
-        let mut driver = DriverCore::start(admitted);
+        let mut driver = DriverCore::start(admitted).in_cell(self.store.cell());
         let mut event: Option<Event> = None;
         let mut receipt: Option<ReceiptRef> = None;
         loop {

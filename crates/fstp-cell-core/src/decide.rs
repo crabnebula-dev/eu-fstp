@@ -1974,13 +1974,20 @@ pub fn vault_changed(epoch: VaultEpoch, changed: BTreeSet<AccountId>) -> fstp_en
     fstp_engine::Command::Core(fstp_domain::Command::VaultChanged { epoch, changed })
 }
 
-/// The context of a reaction: a `System(Vault)` actor at `now`, under the
-/// reaction's reserved command id, as `fstp_engine::Engine` runs it.
-pub(crate) fn reaction_ctx(epoch: VaultEpoch, now: Timestamp) -> Ctx {
+/// The context of a reaction: a `System(Vault)` actor at `now`, as
+/// `fstp_engine::Engine` runs it. Its command id is the reserved prefix
+/// followed by zeros. The domain reads no command id from `Ctx`, and the
+/// driver appends the reaction under the id keyed by its cell
+/// ([`crate::state::reaction_command_id`], I-20).
+pub(crate) fn reaction_ctx(now: Timestamp) -> Ctx {
+    let mut command = [0u8; 16];
+    for (slot, b) in command.iter_mut().zip(crate::state::RESERVED_PREFIX.iter()) {
+        *slot = *b;
+    }
     Ctx {
         now,
         actor: Actor::System(SystemCause::Vault),
-        command: CommandId::from_bytes(crate::state::reaction_command_id(epoch.raw())),
+        command: CommandId::from_bytes(command),
         via: Via::Web,
         tenant_admin: false,
         second_tenant_admin: None,
@@ -1996,10 +2003,10 @@ pub fn reaction_queries(
     cmd: &fstp_engine::Command,
     now: Timestamp,
 ) -> Result<Vec<Query>, CellRefusal> {
-    let epoch = reaction_epoch_of(cmd)?;
+    reaction_epoch_of(cmd)?;
     clock(s, now)?;
     fstp_engine::DomainDecider
-        .queries(s.engine(), cmd, &reaction_ctx(epoch, now))
+        .queries(s.engine(), cmd, &reaction_ctx(now))
         .map_err(CellRefusal::Domain)
 }
 
@@ -2027,10 +2034,10 @@ pub fn decide_reaction_with_inputs(
     inputs: &RouteInputs,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
-    let epoch = reaction_epoch_of(cmd)?;
+    reaction_epoch_of(cmd)?;
     clock(s, now)?;
     let records = fstp_engine::DomainDecider
-        .decide(s.engine(), cmd, &reaction_ctx(epoch, now), answers)
+        .decide(s.engine(), cmd, &reaction_ctx(now), answers)
         .map_err(CellRefusal::Domain)?;
     let mut batch: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
     if let Some(rows) = inputs.sessions() {

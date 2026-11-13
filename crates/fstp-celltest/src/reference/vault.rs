@@ -51,17 +51,42 @@ pub const TICKET_LIFETIME_MAX_US: i64 = 5 * 60 * 1_000_000;
 /// (design section 5.2). A caller command may not use them.
 pub const REACTION_COMMAND_PREFIX: [u8; 8] = *b"fstp:vc:";
 
-/// The command id of the reaction to vault epoch `epoch`: the reserved
-/// prefix, then the epoch big-endian.
+/// The cell id of the reference cell. Its reaction command ids are keyed
+/// by it, and a production driver the models compare with runs in it.
+pub const REACTION_CELL: [u8; 16] = [0x52; 16];
+
+/// The command id of the reaction to vault epoch `epoch` in the reference
+/// cell [`REACTION_CELL`]: the reserved prefix, then the first 8 bytes of
+/// HMAC-SHA256 keyed by the cell id over the prefix and the epoch,
+/// big-endian. Daniel decided on 2026-11-13 (M3 exit audit, section 7,
+/// item 4) that the id is keyed per cell, so no identifier is shared
+/// across tenants (I-20).
 pub fn reaction_command_id(epoch: u64) -> [u8; 16] {
+    let mut data = [0u8; 16];
+    for (slot, b) in data.iter_mut().zip(REACTION_COMMAND_PREFIX.iter()) {
+        *slot = *b;
+    }
+    for (slot, b) in data.iter_mut().skip(8).zip(epoch.to_be_bytes().iter()) {
+        *slot = *b;
+    }
+    let mac = fstp_crypto::hmac_sha256(&REACTION_CELL, &data);
     let mut out = [0u8; 16];
     for (slot, b) in out.iter_mut().zip(REACTION_COMMAND_PREFIX.iter()) {
         *slot = *b;
     }
-    for (slot, b) in out.iter_mut().skip(8).zip(epoch.to_be_bytes().iter()) {
+    for (slot, b) in out.iter_mut().skip(8).zip(mac.iter()) {
         *slot = *b;
     }
     out
+}
+
+/// The epoch whose reaction id in the reference cell is `id`, searched
+/// among the epochs up to `bound`. A keyed id names no epoch by itself.
+pub fn reaction_epoch_up_to(id: [u8; 16], bound: u64) -> Option<u64> {
+    if !is_reaction_command_id(id) {
+        return None;
+    }
+    (0..=bound).find(|e| reaction_command_id(*e) == id)
 }
 
 /// Whether `id` is a reserved reaction command id.

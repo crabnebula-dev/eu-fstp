@@ -15,9 +15,9 @@
 //! - It also indexes, from the M2 records, what the gate needs and the M2
 //!   projection does not keep: the end instants of bindings, recorded or
 //!   scheduled, the instants of their suspensions and voidings, and the
-//!   call and lead of each proposal. It indexes the reactions to vault
-//!   epochs by their reserved command ids (NOTE 4), and every committed
-//!   command id, so a crash retry finds its stored result (ADR-007).
+//!   call and lead of each proposal. It indexes every committed command
+//!   id, so a crash retry finds its stored result (ADR-007), and the
+//!   reaction to a vault epoch is found by its keyed id (NOTE 4).
 //!
 //! On a refusal the state may be partly folded, as with
 //! `fstp_engine::apply`, so callers fold into a copy.
@@ -38,9 +38,9 @@ use crate::tenant::{TenantLoginPolicy, TenantRecord};
 use crate::text::TextRecord;
 use crate::{CellRecord, FoldError, KeyRecord};
 
-/// The first bytes of every command id the driver issues itself: a
-/// reaction to a vault epoch is this prefix followed by the epoch,
-/// big-endian (`fstp_engine::RESERVED_COMMAND_PREFIX`).
+/// The first bytes of every command id the driver issues itself
+/// (`fstp_engine::RESERVED_COMMAND_PREFIX`). The rest of a reaction's id
+/// is keyed per cell ([`reaction_command_id`]).
 pub const RESERVED_PREFIX: [u8; 8] = fstp_engine::RESERVED_COMMAND_PREFIX;
 
 /// The first bytes of every command id of a system task
@@ -67,22 +67,34 @@ pub fn system_command_id(suffix: [u8; 8]) -> [u8; 16] {
     id
 }
 
-/// The epoch a reserved reaction command id names, or `None` for any
-/// other id.
-pub fn reaction_epoch(command: [u8; 16]) -> Option<u64> {
-    let (head, tail) = command.split_at(RESERVED_PREFIX.len());
-    if head != RESERVED_PREFIX {
-        return None;
-    }
-    <[u8; 8]>::try_from(tail).ok().map(u64::from_be_bytes)
+/// Whether `command` is in the driver's reserved namespace
+/// [`RESERVED_PREFIX`]. Every reaction command id is, in every cell.
+pub fn is_reaction_command_id(command: [u8; 16]) -> bool {
+    command.starts_with(&RESERVED_PREFIX)
 }
 
-/// The reserved command id of the reaction to `epoch`.
-pub fn reaction_command_id(epoch: u64) -> [u8; 16] {
+/// The reserved command id of the reaction to vault epoch `epoch` in the
+/// cell `cell`: [`RESERVED_PREFIX`], then the first 8 bytes of
+/// HMAC-SHA256 keyed by the cell id over the prefix and the epoch,
+/// big-endian.
+///
+/// Daniel decided on 2026-11-13 (M3 exit audit, section 7, item 4) that
+/// the id is keyed per cell, so two cells at one epoch share no
+/// identifier (I-20). It stays a function of the cell and the epoch, so
+/// every driver of one cell names one reaction alike and the store's
+/// duplicate check keeps it idempotent (ADR-007).
+pub fn reaction_command_id(cell: [u8; 16], epoch: u64) -> [u8; 16] {
+    let mut data = [0u8; 16];
+    let (head, tail) = data.split_at_mut(RESERVED_PREFIX.len());
+    head.copy_from_slice(&RESERVED_PREFIX);
+    tail.copy_from_slice(&epoch.to_be_bytes());
+    let mac = fstp_crypto::hmac_sha256(&cell, &data);
     let mut id = [0u8; 16];
     let (head, tail) = id.split_at_mut(RESERVED_PREFIX.len());
     head.copy_from_slice(&RESERVED_PREFIX);
-    tail.copy_from_slice(&epoch.to_be_bytes());
+    for (slot, b) in tail.iter_mut().zip(mac.iter()) {
+        *slot = *b;
+    }
     id
 }
 
@@ -497,7 +509,6 @@ pub struct CellState {
     pub(crate) timeline: crate::timeline::TimelineState,
     bindings: BTreeMap<BindingId, BindingFacts>,
     proposals: BTreeMap<ProposalId, (CallId, AccountId)>,
-    reactions: BTreeMap<u64, Seq>,
     commands: BTreeMap<[u8; 16], Seq>,
     /// The command id of the engine entry being folded and the sequence
     /// number of its first engine record (`fstp_engine::apply_entry_record`).
@@ -522,7 +533,6 @@ impl CellState {
             timeline: crate::timeline::TimelineState::default(),
             bindings: BTreeMap::new(),
             proposals: BTreeMap::new(),
-            reactions: BTreeMap::new(),
             commands: BTreeMap::new(),
             engine_entry: None,
         }
@@ -590,10 +600,12 @@ impl CellState {
     }
 
     /// The last sequence number of the committed reaction to vault epoch
-    /// `epoch`, found by its reserved command id (NOTE 4, design section
-    /// 5.2).
-    pub fn reaction_to(&self, epoch: u64) -> Option<Seq> {
-        self.reactions.get(&epoch).copied()
+    /// `epoch` in the cell `cell`, found by its keyed reserved command id
+    /// ([`reaction_command_id`], NOTE 4, design section 5.2).
+    pub fn reaction_to(&self, cell: [u8; 16], epoch: u64) -> Option<Seq> {
+        self.commands
+            .get(&reaction_command_id(cell, epoch))
+            .copied()
     }
 
     /// The sequence number of the last entry committed under `command`,
@@ -712,9 +724,6 @@ pub(crate) fn fold(
         CellRecord::Release(r) => fold_release(&mut s.tickets, r)?,
         CellRecord::Ops(r) => fold_ops(&mut s.break_glass, r)?,
         CellRecord::Timeline(r) => s.timeline.fold(r)?,
-    }
-    if let Some(epoch) = reaction_epoch(command) {
-        s.reactions.insert(epoch, seq);
     }
     s.commands.insert(command, seq);
     s.head = seq;
@@ -1199,16 +1208,24 @@ fn fold_ops(grants: &mut BTreeMap<[u8; 16], bool>, r: &OpsRecord) -> Result<(), 
 mod tests {
     use super::*;
 
-    /// NOTE 4, design section 5.2: a reaction's reserved command id names
-    /// its epoch, and no other id names one.
+    /// NOTE 4, design section 5.2, I-20: a reaction's command id is in the
+    /// reserved namespace and is a function of its cell and epoch alone
+    /// (ADR-007). Two cells at one epoch never share it, by Daniel's
+    /// decision of 2026-11-13 (M3 exit audit, section 7, item 4).
     #[test]
-    fn adr007_reaction_command_id_names_its_epoch() {
+    fn i20_reaction_command_id_is_keyed_per_cell() {
+        let (a, b) = ([0xA1; 16], [0xB2; 16]);
         for epoch in [0, 1, 7, u64::MAX] {
-            assert_eq!(reaction_epoch(reaction_command_id(epoch)), Some(epoch));
+            let id = reaction_command_id(a, epoch);
+            assert!(is_reaction_command_id(id));
+            assert_eq!(id, reaction_command_id(a, epoch));
+            assert_ne!(id, reaction_command_id(b, epoch));
+            assert_ne!(id, reaction_command_id(a, epoch ^ 1));
+            assert_ne!(id.get(8..), Some(&epoch.to_be_bytes()[..]));
         }
-        assert_eq!(reaction_epoch([0x5A; 16]), None);
-        let mut id = reaction_command_id(3);
+        assert!(!is_reaction_command_id([0x5A; 16]));
+        let mut id = reaction_command_id(a, 3);
         id[0] = b'g';
-        assert_eq!(reaction_epoch(id), None);
+        assert!(!is_reaction_command_id(id));
     }
 }
