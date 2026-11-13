@@ -3,10 +3,15 @@
 //!
 //! Custody never exports root material. A caller holds only references,
 //! wrapped seal keys and receipts. The trait has exactly the six
-//! operations of ADR-004 part 2, and none returns a root.
+//! operations of ADR-004 part 2, and none returns a root. A caller makes a call under
+//! its [`RequestId`] with [`with_request`], so a keystore can record the
+//! call before it makes it (ADR-004 "Reconciliation").
 //!
 //! - [`keyd`]: the framed protocol of the file custody server `fstp-keyd`
 //!   and its client [`KeydCustody`] (Q32 A).
+//! - [`usage`]: the usage record of a backend, and the reconciliation of
+//!   a usage log with a chain's `KeyOp` records (ADR-004
+//!   "Reconciliation").
 //! - [`okms`]: the OVHcloud KMS client [`OkmsCustody`] and its response
 //!   decoder. Its network calls wait on Q11 (ADR-004 part 2).
 //!
@@ -20,6 +25,7 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 pub mod keyd;
 pub mod okms;
+pub mod usage;
 
 pub use fstp_keys::{CellId, Chain, Epoch};
 pub use keyd::KeydCustody;
@@ -34,6 +40,24 @@ pub enum BackendId {
     Keyd,
     /// The test simulator in `fstp-celltest`.
     Simulator,
+}
+
+/// A request id (ADR-004 "Reconciliation"). Every custody call carries
+/// one, and a backend with a usage log records it ([`usage`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RequestId(pub [u8; keyd::REQUEST_ID_LEN]);
+
+impl RequestId {
+    /// A fresh random request id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CustodyError::Crypto`] when the generator fails.
+    pub fn generate() -> Result<RequestId, CustodyError> {
+        fstp_crypto::random_array()
+            .map(RequestId)
+            .map_err(CustodyError::Crypto)
+    }
 }
 
 /// An opaque handle that a backend gives a root or signing key.
@@ -129,7 +153,8 @@ pub struct UsageCursor(pub Vec<u8>);
 /// One page of a backend's usage log, for reconciliation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UsagePage {
-    /// The operations, as opaque records.
+    /// The operations, as opaque records in the layout of [`usage`].
+    /// [`usage::decode_entry`] reads one.
     pub operations: Vec<Vec<u8>>,
     /// The cursor after this page.
     pub next: UsageCursor,
@@ -284,4 +309,111 @@ pub trait Custody: Send + Sync + 'static {
         root: &RootRef,
         cursor: UsageCursor,
     ) -> impl Future<Output = Result<UsagePage, CustodyError>> + Send;
+}
+
+// ---------------------------------------------------------------------------
+// The request id of a call (ADR-004 "Reconciliation").
+//
+// The `Custody` trait keeps exactly the six operations of ADR-004 part 2
+// (I-80). A caller that has recorded a call under a request id makes the
+// call inside `with_request`, and a backend with a usage log reads the id
+// with `current_request` when it builds the call. A backend reads it at
+// the call, at a poll of its future, or both, and `with_request` holds
+// the id over each.
+
+std::thread_local! {
+    static CURRENT_REQUEST: std::cell::Cell<Option<RequestId>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The request id of the custody call being made on this thread, if the
+/// caller gave one ([`with_request`]).
+#[must_use]
+pub fn current_request() -> Option<RequestId> {
+    CURRENT_REQUEST.with(std::cell::Cell::get)
+}
+
+/// The caller's request id, or a fresh one: what a backend with a usage
+/// log sends.
+///
+/// # Errors
+///
+/// Returns [`CustodyError::Crypto`] when the generator fails.
+pub fn request_or_fresh() -> Result<RequestId, CustodyError> {
+    current_request().map_or_else(RequestId::generate, Ok)
+}
+
+/// Sets the current request id until dropped, then restores the one
+/// before.
+struct RequestScope(Option<RequestId>);
+
+impl RequestScope {
+    fn enter(id: RequestId) -> RequestScope {
+        RequestScope(CURRENT_REQUEST.with(|c| c.replace(Some(id))))
+    }
+}
+
+impl Drop for RequestScope {
+    fn drop(&mut self) {
+        let before = self.0;
+        CURRENT_REQUEST.with(|c| c.set(before));
+    }
+}
+
+/// A custody call made under a request id ([`with_request`]).
+pub struct WithRequest<F> {
+    id: RequestId,
+    call: std::pin::Pin<Box<F>>,
+}
+
+impl<F: Future> Future for WithRequest<F> {
+    type Output = F::Output;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<F::Output> {
+        let _scope = RequestScope::enter(self.id);
+        self.call.as_mut().poll(cx)
+    }
+}
+
+/// Makes the custody call `call` under the request id `id`. The id is
+/// current while `call` runs and while its future is polled, so the
+/// backend logs it (ADR-004 "Reconciliation").
+pub fn with_request<F: Future>(id: RequestId, call: impl FnOnce() -> F) -> WithRequest<F> {
+    let scope = RequestScope::enter(id);
+    let call = Box::pin(call());
+    drop(scope);
+    WithRequest { id, call }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod request_tests {
+    use super::*;
+
+    /// ADR-004 "Reconciliation": the caller's request id is current while
+    /// the call is made and while its future is polled, and only then.
+    #[test]
+    fn adr004_with_request_holds_the_id_over_the_call_and_its_polls() {
+        let id = RequestId([3; 16]);
+        let inner = RequestId([4; 16]);
+        assert_eq!(current_request(), None);
+        let mut at_call = None;
+        let fut = with_request(id, || {
+            at_call = current_request();
+            async {
+                let first = current_request();
+                let nested = with_request(inner, || async { current_request() }).await;
+                (first, nested, current_request())
+            }
+        });
+        assert_eq!(at_call, Some(id));
+        assert_eq!(current_request(), None, "the id leaked out of the call");
+        let got = fstp_rt::future::block_on(fut);
+        assert_eq!(got, (Some(id), Some(inner), Some(id)));
+        assert_eq!(current_request(), None, "the id leaked out of the poll");
+        assert_eq!(request_or_fresh().map(|r| r == id), Ok(false));
+    }
 }

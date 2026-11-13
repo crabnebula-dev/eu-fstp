@@ -8,12 +8,21 @@
 //! process (design section 3.3, `SimCustody`), so a memory scan of a cell
 //! or vault process shows whether root bytes ever entered it.
 //!
+//! Its usage log holds one record per served create and destroy, in the
+//! layout of `fstp_custody::usage` that `fstp-keyd` writes, with the
+//! caller's request id (`fstp_custody::with_request`, ADR-004
+//! "Reconciliation").
+//!
 //! # Seams
 //!
 //! - Wrapping and unwrapping seal keys need AES-256-GCM from
 //!   `fstp_crypto::aead`, and CA signing needs ECDSA from
 //!   `fstp_crypto::sig`. Both are lane W1h. Until then those operations
 //!   refuse with [`CustodyError::NotImplemented`].
+//!   `fstp_crypto::aead` has landed, but the harness test
+//!   `harness_custody_sim_wrap_refuses_until_the_aead_lands` still pins
+//!   the refusal. Whether the simulator now wraps is a question for
+//!   Daniel (lane m3/seams-custody).
 //! - [`CustodyError`] has only the `NotImplemented` variant in the W0
 //!   stub. A destroy of an unknown root refuses with it too, and names the
 //!   reason. Lane W2f gives the error its real variants.
@@ -25,12 +34,13 @@
 use std::fmt;
 use std::future::{Future, ready};
 use std::io::{Read as _, Write as _};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use fstp_custody::usage::{OUTCOME_SERVED, UsageOp, UsageRecord, encode_record};
 use fstp_custody::{
     Aad, BackendId, CellId, Chain, Custody, CustodyError, CustodyHandle, DestroyReceipt,
-    EcdsaSignature, Epoch, RootLabel, RootRef, SealKey, SignKeyRef, UsageCursor, UsagePage,
-    WrappedSealKey,
+    EcdsaSignature, Epoch, RequestId, RootLabel, RootRef, SealKey, SignKeyRef, UsageCursor,
+    UsagePage, WrappedSealKey,
 };
 
 use crate::NotImplemented;
@@ -67,13 +77,15 @@ struct SimRoot {
 #[derive(Default)]
 struct SimState {
     roots: Vec<SimRoot>,
-    usage: Vec<Vec<u8>>,
+    /// The usage log: the handle of the root each record names, and the
+    /// record in the layout of `fstp_custody::usage`.
+    usage: Vec<(CustodyHandle, Vec<u8>)>,
 }
 
 /// The custody simulator.
 pub struct CustodySim {
     cell_index: u8,
-    state: Mutex<SimState>,
+    state: Arc<Mutex<SimState>>,
 }
 
 impl fmt::Debug for CustodySim {
@@ -104,7 +116,17 @@ impl CustodySim {
     pub fn for_cell(cell_index: u8) -> CustodySim {
         CustodySim {
             cell_index,
-            state: Mutex::new(SimState::default()),
+            state: Arc::new(Mutex::new(SimState::default())),
+        }
+    }
+
+    /// A second handle on the same simulator: the same roots and the same
+    /// usage log. A keystore that owns its custody client takes one.
+    #[must_use]
+    pub fn handle(&self) -> CustodySim {
+        CustodySim {
+            cell_index: self.cell_index,
+            state: Arc::clone(&self.state),
         }
     }
 
@@ -121,12 +143,27 @@ impl CustodySim {
             .count()
     }
 
-    /// Creates a root for `label` with fresh canary bytes.
+    /// Creates a root for `label` with fresh canary bytes, under the
+    /// caller's request id or a fresh one.
     ///
     /// # Errors
     ///
     /// Refuses when the random source fails.
     pub fn create(&self, label: RootLabel) -> Result<RootRef, NotImplemented> {
+        self.create_with_id(fresh_id()?, label)
+    }
+
+    /// Creates a root for `label` with fresh canary bytes, and logs the
+    /// call under `request` (ADR-004 "Reconciliation").
+    ///
+    /// # Errors
+    ///
+    /// Refuses when the random source fails.
+    pub fn create_with_id(
+        &self,
+        request: RequestId,
+        label: RootLabel,
+    ) -> Result<RootRef, NotImplemented> {
         let canary = Canary::generate(self.cell_index, CanaryKind::RootKey)?;
         let mut state = self.lock();
         let number = u64::try_from(state.roots.len())
@@ -139,7 +176,8 @@ impl CustodySim {
             epoch: label.epoch,
             handle: CustodyHandle(format!("sim-root-{number}").into_bytes()),
         };
-        state.usage.push(usage_record("create", &root.handle));
+        let record = usage_record(request, UsageOp::Create, &root);
+        state.usage.push((root.handle.clone(), record));
         state.roots.push(SimRoot {
             root: root.clone(),
             material: Some(RootMaterial(canary.secret_bytes())),
@@ -148,13 +186,29 @@ impl CustodySim {
         Ok(root)
     }
 
-    /// Destroys the root `root` refers to and returns the receipt.
+    /// Destroys the root `root` refers to under the caller's request
+    /// id or a fresh one, and returns the receipt.
     ///
     /// # Errors
     ///
     /// Refuses a root this simulator does not hold, or one already
     /// destroyed.
     pub fn destroy_root(&self, root: &RootRef) -> Result<DestroyReceipt, NotImplemented> {
+        self.destroy_root_with_id(fresh_id()?, root)
+    }
+
+    /// Destroys the root `root` refers to, logs the call under `request`
+    /// and returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a root this simulator does not hold, or one already
+    /// destroyed.
+    pub fn destroy_root_with_id(
+        &self,
+        request: RequestId,
+        root: &RootRef,
+    ) -> Result<DestroyReceipt, NotImplemented> {
         let mut state = self.lock();
         let Some(entry) = state
             .roots
@@ -168,7 +222,8 @@ impl CustodySim {
         entry.material = None;
         let mut receipt = b"fstp-custody-sim destroyed ".to_vec();
         receipt.extend_from_slice(&root.handle.0);
-        state.usage.push(usage_record("destroy", &root.handle));
+        let record = usage_record(request, UsageOp::Destroy, root);
+        state.usage.push((root.handle.clone(), record));
         Ok(DestroyReceipt(receipt))
     }
 
@@ -210,11 +265,31 @@ impl CustodySim {
     }
 }
 
-fn usage_record(op: &str, handle: &CustodyHandle) -> Vec<u8> {
-    let mut out = op.as_bytes().to_vec();
-    out.push(b' ');
-    out.extend_from_slice(&handle.0);
-    out
+/// The caller's request id (`fstp_custody::with_request`), or a fresh
+/// one.
+fn fresh_id() -> Result<RequestId, NotImplemented> {
+    fstp_custody::request_or_fresh()
+        .map_err(|_| NotImplemented::new("fstp_celltest::custody_sim: no random request id"))
+}
+
+/// The usage record of a served call on `root`, in the layout of
+/// `fstp_custody::usage` that `fstp-keyd` writes too. The simulator is
+/// client 0, and it logs only the calls it served.
+fn usage_record(request: RequestId, op: UsageOp, root: &RootRef) -> Vec<u8> {
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    encode_record(&UsageRecord {
+        request,
+        op,
+        chain: root.chain.code(),
+        epoch: root.epoch,
+        time,
+        outcome: OUTCOME_SERVED,
+        client: 0,
+    })
+    .to_vec()
 }
 
 fn cursor_index(cursor: &UsageCursor) -> usize {
@@ -286,8 +361,8 @@ impl Custody for CustodySim {
             .usage
             .iter()
             .skip(from)
-            .filter(|r| r.ends_with(&root.handle.0))
-            .cloned()
+            .filter(|(h, _)| *h == root.handle)
+            .map(|(_, r)| r.clone())
             .collect();
         let next = u64::try_from(state.usage.len()).unwrap_or(u64::MAX);
         ready(Ok(UsagePage {

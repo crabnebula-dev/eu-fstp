@@ -559,7 +559,7 @@ where
 /// `open` gives for the configured cell.
 async fn start_with<R, C, V, T, S>(
     rt: &R,
-    parts: Common<C, V, T>,
+    mut parts: Common<C, V, T>,
     anchor_key: Vec<u8>,
     open: impl FnOnce([u8; 16]) -> Result<S, StartRefusal>,
     report: &mut (dyn FnMut(StartPhase) + Send),

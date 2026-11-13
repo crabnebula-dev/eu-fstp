@@ -367,22 +367,7 @@ pub fn decode_receipt(bytes: &[u8]) -> Result<Receipt, CustodyError> {
     })
 }
 
-/// A request id (ADR-004 "Reconciliation").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RequestId(pub [u8; REQUEST_ID_LEN]);
-
-impl RequestId {
-    /// A fresh random request id.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CustodyError::Crypto`] when the generator fails.
-    pub fn generate() -> Result<RequestId, CustodyError> {
-        fstp_crypto::random_array()
-            .map(RequestId)
-            .map_err(CustodyError::Crypto)
-    }
-}
+pub use crate::RequestId;
 
 /// A root of `fstp-keyd`: one chain and epoch. It is also the custody
 /// handle of the root.
@@ -965,9 +950,13 @@ fn exchange(socket: &Path, frame: &[u8]) -> Result<Vec<u8>, CustodyError> {
 }
 
 impl Custody for KeydCustody {
+    // Each call carries the caller's request id when it made the call
+    // through `crate::with_request`, and a fresh one otherwise. `fstp-keyd`
+    // logs it (ADR-004 "Reconciliation").
+
     async fn create_root(&self, label: RootLabel) -> Result<RootRef, CustodyError> {
         let request = Request::CreateRoot {
-            id: RequestId::generate()?,
+            id: crate::request_or_fresh()?,
             cell: label.cell,
             chain: label.chain,
             epoch: label.epoch,
@@ -991,7 +980,7 @@ impl Custody for KeydCustody {
         aad: &Aad,
     ) -> Result<WrappedSealKey, CustodyError> {
         let request = Request::Wrap {
-            id: RequestId::generate()?,
+            id: crate::request_or_fresh()?,
             root: KeydCustody::root_of(root)?,
             aad: aad.0.clone(),
             key: Zeroizing::new(*key.expose()),
@@ -1011,7 +1000,7 @@ impl Custody for KeydCustody {
         aad: &Aad,
     ) -> Result<SealKey, CustodyError> {
         let request = Request::Unwrap {
-            id: RequestId::generate()?,
+            id: crate::request_or_fresh()?,
             root: KeydCustody::root_of(root)?,
             aad: aad.0.clone(),
             wrapped: w.0.clone(),
@@ -1025,7 +1014,7 @@ impl Custody for KeydCustody {
     async fn destroy(&self, root: &RootRef) -> Result<DestroyReceipt, CustodyError> {
         let handle = KeydCustody::root_of(root)?;
         let request = Request::Destroy {
-            id: RequestId::generate()?,
+            id: crate::request_or_fresh()?,
             root: handle,
         };
         match self.call(&request).await? {
@@ -1043,7 +1032,7 @@ impl Custody for KeydCustody {
             return Err(CustodyError::InvalidConfig("the key is not a keyd key"));
         }
         let request = Request::Sign {
-            id: RequestId::generate()?,
+            id: crate::request_or_fresh()?,
             key: key.handle.0.clone(),
             digest: *digest,
         };
@@ -1067,7 +1056,7 @@ impl Custody for KeydCustody {
             ),
         };
         let request = Request::UsageSince {
-            id: RequestId::generate()?,
+            id: crate::request_or_fresh()?,
             root: KeydCustody::root_of(root)?,
             cursor,
         };
