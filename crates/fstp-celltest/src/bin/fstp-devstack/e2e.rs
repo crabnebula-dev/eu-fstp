@@ -46,6 +46,11 @@
 //! The cell clock starts at the wall clock at each world start and then
 //! moves only through `/test/clock/advance`.
 
+#![allow(
+    clippy::disallowed_macros,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
+
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
