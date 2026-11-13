@@ -18,7 +18,9 @@
 //! - [`store`] is the PostgreSQL store of a SaaS witness, and
 //!   [`MIGRATIONS`] its migration set.
 //! - [`service`] is the run loop: the mutual TLS listener, the store and
-//!   the receipts, on one runtime through `fstp-rt` ([`serve`]).
+//!   the receipts, on one runtime through `fstp-rt`. [`serve`] runs it
+//!   over the database of a SaaS witness, and [`serve_local`] over the
+//!   file store of a self-hosted install.
 //! - [`lock`] is the async mutex the service and the cell's link use.
 //!
 //! [`CATALOGUE`] holds the column maps of the witness database (design
@@ -36,11 +38,13 @@
 //! certificates and anchor public keys `PublicKeyMaterial` (Daniel,
 //! 2026-10-30).
 //!
-//! [`run`], the binary's entry, still refuses: the process configuration
-//! and the receipt key's custody entry are not designed yet (ADR-010
-//! "Keys", open point 6). [`serve`] is the run loop a world starts.
+//! [`run`], the binary's entry, reads the process configuration of
+//! [`config`], opens the receipt key through the witness's own
+//! `fstp-keyd` entry (ADR-004 part 2, Q-D), and runs [`serve`] or
+//! [`serve_local`] until SIGTERM (lane F-CP).
 
 pub mod chain_witness;
+pub mod config;
 pub mod file_store;
 pub mod lock;
 pub mod message;
@@ -59,7 +63,7 @@ pub use crate::chain_witness::{
 pub use crate::file_store::{FileRecord, decode_file_store, encode_file_store, load_file_store};
 pub use crate::message::{WitnessMessage, decode_witness_message, encode_witness_message};
 pub use crate::receipt::sign_receipt;
-pub use crate::service::{WitnessHandle, WitnessParts, serve};
+pub use crate::service::{LocalWitnessParts, WitnessHandle, WitnessParts, serve, serve_local};
 
 /// The witness migrations, in order (design sections 4.4 and 4.6):
 ///
@@ -111,6 +115,11 @@ pub enum WitnessError {
     BadCa,
     /// A listener failed.
     Io(std::io::ErrorKind),
+    /// The process configuration or a credential file was refused. It
+    /// names the rule broken.
+    Config(&'static str),
+    /// A custody call failed.
+    Custody,
 }
 
 impl std::fmt::Display for WitnessError {
@@ -125,6 +134,8 @@ impl std::fmt::Display for WitnessError {
             WitnessError::Tls => f.write_str("witness TLS configuration refused"),
             WitnessError::BadCa => f.write_str("a registered CA certificate does not read"),
             WitnessError::Io(k) => write!(f, "witness listener: {k:?}"),
+            WitnessError::Config(rule) => write!(f, "witness configuration refused: {rule}"),
+            WitnessError::Custody => f.write_str("witness custody call failed"),
         }
     }
 }
@@ -230,16 +241,128 @@ pub const CATALOGUE: &[TableSpec] = &[
     },
 ];
 
-/// The binary's entry. It refuses: the process configuration and the
-/// receipt key's custody entry are not designed (ADR-010 "Keys", open
-/// point 6). [`serve`] is the run loop, which a world starts with the
-/// parts it holds.
+/// The environment variable that names the configuration file.
+pub const CONFIG_ENV: &str = "FSTP_WITNESS_CONFIG";
+
+/// How long the witness drains at SIGTERM.
+pub const DRAIN: std::time::Duration = std::time::Duration::from_secs(20);
+
+fn read(dir: &std::path::Path, name: &'static str) -> Result<Vec<u8>, WitnessError> {
+    std::fs::read(dir.join(name)).map_err(|_| WitnessError::Config(name))
+}
+
+/// The binary's entry (lane F-CP):
+///
+/// 1. It decodes the configuration that [`CONFIG_ENV`] names
+///    ([`config::decode_config`]).
+/// 2. It reads the credentials directory and the receipt key file. Its
+///    `fstp-keyd` entry unwraps `S(e)`, which opens the receipt key
+///    (ADR-004 part 2, "Self-hosted witness receipt key", Q-D).
+/// 3. It registers its termination handlers, then runs [`serve`] over
+///    its database (SaaS) or [`serve_local`] over its file store
+///    (self-hosted) on one tokio runtime through `fstp-rt` (ADR-002).
+/// 4. At SIGTERM or SIGINT it stops accepting and drains for [`DRAIN`].
 ///
 /// # Errors
 ///
-/// [`WitnessError::NotImplemented`].
+/// [`WitnessError::Config`] for a missing or refused configuration or
+/// credential, [`WitnessError::Custody`] when `fstp-keyd` does not unwrap
+/// `S(e)`, and the errors of [`serve`] and [`serve_local`].
 pub fn run() -> Result<(), WitnessError> {
-    Err(WitnessError::NotImplemented(
-        "fstp_witness::run: the process configuration and the receipt key's custody entry (ADR-010 Keys, open point 6); fstp_witness::serve is the run loop",
-    ))
+    use fstp_custody::Custody as _;
+    use fstp_rt::signal::{Signals as _, TerminationListener as _};
+    let path = std::env::var_os(CONFIG_ENV).ok_or(WitnessError::Config(CONFIG_ENV))?;
+    let bytes = std::fs::read(&path).map_err(|_| WitnessError::Config(CONFIG_ENV))?;
+    let cfg = config::decode_config(&bytes)?;
+    let creds = &cfg.credentials_dir;
+    let server_chain_pem = read(creds, "server.pem")?;
+    let server_key_pem = read(creds, "server.key")?;
+    let key_file = config::decode_receipt_key_file(&read(creds, config::RECEIPT_KEY_FILE)?)?;
+    let custody = fstp_custody::keyd::KeydCustody::new(&cfg.keyd_socket)
+        .map_err(|_| WitnessError::Config("keyd_socket"))?;
+    let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(2)
+        .map_err(|e| WitnessError::Io(e.kind()))?;
+    let mut term = rt
+        .listen_termination()
+        .map_err(|_| WitnessError::Config("termination handlers"))?;
+    let db = match &cfg.store {
+        config::WitnessStore::Database {
+            host,
+            port,
+            role,
+            dbname,
+        } => {
+            let password = String::from_utf8(read(creds, "db.password")?)
+                .map_err(|_| WitnessError::Config("db.password"))?;
+            let tls = fstp_pgwire::ClientTls::new(
+                &read(creds, "db-ca.pem")?,
+                &read(creds, "db.pem")?,
+                &read(creds, "db.key")?,
+            )
+            .map_err(|_| WitnessError::Config("database TLS"))?;
+            let pw = fstp_pgwire::Password::new(password.trim_end())
+                .map_err(|_| WitnessError::Config("db.password"))?;
+            Some(
+                fstp_pgwire::Config::new(
+                    host.clone(),
+                    *port,
+                    role.as_str(),
+                    pw,
+                    dbname.clone(),
+                    tls,
+                )
+                .map_err(|_| WitnessError::Config("database"))?,
+            )
+        }
+        config::WitnessStore::Files { .. } => None,
+    };
+    let task_rt = rt.clone();
+    rt.block_on(async move {
+        let seal = custody
+            .unwrap(
+                &config::root_of(&key_file),
+                &fstp_custody::WrappedSealKey(key_file.wrapped.clone()),
+                &fstp_custody::Aad(config::wrap_aad(key_file.epoch)),
+            )
+            .await
+            .map_err(|_| WitnessError::Custody)?;
+        let receipt_key = config::open_receipt_key(&key_file, &seal)?;
+        drop(seal);
+        let handle = match (db, &cfg.store) {
+            (Some(db), _) => {
+                serve(
+                    task_rt.clone(),
+                    WitnessParts {
+                        db,
+                        receipt_key,
+                        server_chain_pem,
+                        server_key_pem,
+                        listen: cfg.listen,
+                    },
+                )
+                .await?
+            }
+            (None, config::WitnessStore::Files { dir }) => {
+                serve_local(
+                    task_rt.clone(),
+                    LocalWitnessParts {
+                        dir: dir.clone(),
+                        receipt_key,
+                        server_chain_pem,
+                        server_key_pem,
+                        listen: cfg.listen,
+                    },
+                )
+                .await?
+            }
+            (None, config::WitnessStore::Database { .. }) => {
+                return Err(WitnessError::Config("database"));
+            }
+        };
+        let _signal = term.recv().await;
+        handle
+            .shutdown(DRAIN)
+            .await
+            .map_err(|_| WitnessError::Io(std::io::ErrorKind::TimedOut))
+    })
 }

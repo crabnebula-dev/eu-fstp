@@ -3,7 +3,10 @@
 //! and 7.2). Lane int5.
 //!
 //! [`serve`] runs the service on one runtime through `fstp-rt` until its
-//! [`WitnessHandle`] shuts it down:
+//! [`WitnessHandle`] shuts it down. [`serve_local`] runs the same service
+//! for a self-hosted install over the append-only file store of
+//! [`crate::file_store::FileStore`] instead of a database (lane F-SELF,
+//! ADR-010 "Self-hosted witness"). Step 1 then opens and loads that store:
 //!
 //! 1. It connects to its database as `witness_service`, checks the
 //!    placement marker (kind 4, I-83) and loads the registered cell CAs
@@ -31,6 +34,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -44,6 +48,7 @@ use fstp_rt::{
 
 use crate::WitnessError;
 use crate::chain_witness::{ChainWitness, Refusal, Sender, accepts_sender};
+use crate::file_store::FileStore;
 use crate::lock::AsyncMutex;
 use crate::message::WitnessMessage;
 use crate::peer::{PinnedCa, sender_of};
@@ -93,17 +98,165 @@ struct Chain {
     log: Vec<WitnessRecord>,
 }
 
-/// What the service holds under its async lock: the database client and
-/// the chains loaded so far.
+/// Where the witness keeps its records: the PostgreSQL database of a SaaS
+/// witness, or the append-only file store of a local witness.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one store per witness process, never moved after start"
+)]
+enum Backend<R: Runtime> {
+    /// The `witness_service` login and its connection, once open.
+    Pg {
+        db: fstp_pgwire::Config,
+        client: Option<Client<R>>,
+    },
+    /// The file store of a self-hosted install (ADR-010 "Self-hosted
+    /// witness").
+    File(FileStore),
+    /// No store: the placeholder that `AsyncMutex` needs as a default.
+    /// Every operation refuses.
+    Closed,
+}
+
+impl<R: Runtime> Backend<R> {
+    /// The database client, connecting first if needed.
+    async fn client<'a>(
+        rt: &R,
+        db: &fstp_pgwire::Config,
+        client: &'a mut Option<Client<R>>,
+    ) -> Result<&'a mut Client<R>, StoreError> {
+        if client.is_none() {
+            let c = Client::connect(rt, db)
+                .await
+                .map_err(|_| StoreError::Unavailable("connect"))?;
+            *client = Some(c);
+        }
+        client.as_mut().ok_or(StoreError::Unavailable("connect"))
+    }
+
+    /// Drops the database connection after a failure, so the next use
+    /// opens another. A file store keeps nothing open.
+    fn reset(&mut self) {
+        if let Backend::Pg { client, .. } = self {
+            *client = None;
+        }
+    }
+
+    async fn load_chain(
+        &mut self,
+        rt: &R,
+        cell: CellId,
+        chain: ChainId,
+    ) -> Result<LoadedChain, StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let c = Self::client(rt, db, client).await?;
+                store::load_chain(c, cell, chain).await
+            }
+            Backend::File(f) => f.load_chain(cell, chain),
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+
+    async fn load_registry(&mut self, rt: &R) -> Result<Vec<store::RegisteredCell>, StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let c = Self::client(rt, db, client).await?;
+                store::load_registry(c).await
+            }
+            Backend::File(f) => f.load_registry(),
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+
+    async fn insert_prepare(
+        &mut self,
+        rt: &R,
+        p: &Prepare,
+        row: &AnchorRow,
+    ) -> Result<(), StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let c = Self::client(rt, db, client).await?;
+                store::insert_prepare(c, row).await
+            }
+            Backend::File(f) => f.append_prepare(p, row),
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each argument is one field of the record"
+    )]
+    async fn insert_withdrawal(
+        &mut self,
+        rt: &R,
+        message: &WitnessMessage,
+        kind: RecordKind,
+        n: u64,
+        link: &Link,
+        at: i64,
+        w: &crate::chain_witness::Withdrawal,
+    ) -> Result<(), StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let (cell, chain) = match message {
+                    WitnessMessage::Abort { cell, chain, .. }
+                    | WitnessMessage::InDoubtAbsent { cell, chain, .. } => (*cell, *chain),
+                    WitnessMessage::Prepare(_) => return Err(StoreError::Corrupt("withdrawal")),
+                };
+                let c = Self::client(rt, db, client).await?;
+                store::insert_withdrawal(c, cell, chain, kind, n, link, at, w).await
+            }
+            Backend::File(f) => f.append_withdrawal(message, at, w),
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+
+    async fn register(
+        &mut self,
+        rt: &R,
+        cell: CellId,
+        ca_cert_der: &[u8],
+        anchor_keys: &[(ChainId, Vec<u8>)],
+        at: i64,
+    ) -> Result<(), StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let c = Self::client(rt, db, client).await?;
+                store::register_cell(c, cell, ca_cert_der, at).await?;
+                for (chain, key) in anchor_keys {
+                    store::register_anchor_key(c, cell, *chain, key, at).await?;
+                }
+                Ok(())
+            }
+            Backend::File(f) => {
+                f.register_cell(cell, ca_cert_der, at)?;
+                for (chain, key) in anchor_keys {
+                    f.register_anchor_key(cell, *chain, key, at)?;
+                }
+                Ok(())
+            }
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+}
+
+/// The refusal of the placeholder store.
+const CLOSED: StoreError = StoreError::Unavailable("closed");
+
+/// What the service holds under its async lock: its store and the chains
+/// loaded so far.
 struct Core<R: Runtime> {
-    client: Option<Client<R>>,
+    backend: Backend<R>,
     chains: BTreeMap<(CellId, u8), Chain>,
 }
 
 impl<R: Runtime> Default for Core<R> {
     fn default() -> Self {
         Core {
-            client: None,
+            backend: Backend::Closed,
             chains: BTreeMap::new(),
         }
     }
@@ -119,7 +272,6 @@ struct Registered {
 
 struct Shared<R: Runtime> {
     rt: R,
-    db: fstp_pgwire::Config,
     receipt_key: CompositeSigningKey,
     server_chain_pem: Vec<u8>,
     server_key_pem: Vec<u8>,
@@ -146,19 +298,6 @@ fn store_err(e: StoreError) -> WitnessError {
 }
 
 impl<R: Runtime> Shared<R> {
-    /// The database client, connecting first if needed.
-    async fn client<'a>(&self, core: &'a mut Core<R>) -> Result<&'a mut Client<R>, StoreError> {
-        if core.client.is_none() {
-            let c = Client::connect(&self.rt, &self.db)
-                .await
-                .map_err(|_| StoreError::Unavailable("connect"))?;
-            core.client = Some(c);
-        }
-        core.client
-            .as_mut()
-            .ok_or(StoreError::Unavailable("connect"))
-    }
-
     /// Rebuilds the TLS configuration over the registered cell CAs.
     fn rebuild_tls(&self) -> Result<(), WitnessError> {
         let roots: Vec<u8> = locked(&self.cells)
@@ -222,13 +361,12 @@ impl<R: Runtime> Shared<R> {
     ) -> Result<&'a mut Chain, StoreError> {
         let key = (cell, chain.byte());
         if !core.chains.contains_key(&key) {
-            let client = self.client(core).await?;
             let LoadedChain { state, held, log } =
-                match store::load_chain(client, cell, chain).await {
+                match core.backend.load_chain(&self.rt, cell, chain).await {
                     Ok(l) => l,
                     Err(e) => {
                         if matches!(e, StoreError::Unavailable(_)) {
-                            core.client = None;
+                            core.backend.reset();
                         }
                         return Err(e);
                     }
@@ -283,14 +421,11 @@ impl<R: Runtime> Shared<R> {
             anchor: p.anchor.clone(),
             receipt: receipt.clone(),
         };
-        let stored = match self.client(&mut core).await {
-            Ok(client) => store::insert_prepare(client, &row).await,
-            Err(e) => Err(e),
-        };
+        let stored = core.backend.insert_prepare(&self.rt, &p, &row).await;
         if stored.is_err() {
             // Nothing was stored, so nothing changes. The chain is read
             // again from the store on its next use.
-            core.client = None;
+            core.backend.reset();
             core.chains.remove(&(cell, chain.byte()));
             return WireReply::Refused;
         }
@@ -334,14 +469,26 @@ impl<R: Runtime> Shared<R> {
             Err(_) => return WireReply::Refused,
         };
         let at = now_us();
-        let stored = match self.client(&mut core).await {
-            Ok(client) => {
-                store::insert_withdrawal(client, cell, chain, kind, n, &link, at, &w).await
-            }
-            Err(e) => Err(e),
+        let message = match kind {
+            RecordKind::Abort => WitnessMessage::Abort {
+                cell,
+                chain,
+                n,
+                link,
+            },
+            _ => WitnessMessage::InDoubtAbsent {
+                cell,
+                chain,
+                n,
+                link,
+            },
         };
+        let stored = core
+            .backend
+            .insert_withdrawal(&self.rt, &message, kind, n, &link, at, &w)
+            .await;
         if stored.is_err() {
-            core.client = None;
+            core.backend.reset();
             core.chains.remove(&(cell, chain.byte()));
             return WireReply::Refused;
         }
@@ -468,11 +615,10 @@ impl<R: Runtime> WitnessHandle<R> {
     pub async fn reload_registry(&self) -> Result<(), WitnessError> {
         {
             let mut core = self.shared.core.lock().await;
-            let client = self.shared.client(&mut core).await.map_err(store_err)?;
-            let all = match store::load_registry(client).await {
+            let all = match core.backend.load_registry(&self.shared.rt).await {
                 Ok(all) => all,
                 Err(e) => {
-                    core.client = None;
+                    core.backend.reset();
                     return Err(store_err(e));
                 }
             };
@@ -505,16 +651,16 @@ impl<R: Runtime> WitnessHandle<R> {
         let at = now_us();
         {
             let mut core = self.shared.core.lock().await;
-            let client = self.shared.client(&mut core).await.map_err(store_err)?;
-            store::register_cell(client, cell, ca_cert_der, at)
-                .await
-                .map_err(store_err)?;
-            for (chain, key) in anchor_keys {
-                store::register_anchor_key(client, cell, *chain, key, at)
-                    .await
-                    .map_err(store_err)?;
+            let rt = &self.shared.rt;
+            let registered = core
+                .backend
+                .register(rt, cell, ca_cert_der, anchor_keys, at)
+                .await;
+            if let Err(e) = registered {
+                core.backend.reset();
+                return Err(store_err(e));
             }
-            let all = store::load_registry(client).await.map_err(store_err)?;
+            let all = core.backend.load_registry(rt).await.map_err(store_err)?;
             let mine = all.into_iter().find(|r| r.cell == cell);
             let keys = mine.map(|r| keys_of(&r)).unwrap_or_default();
             self.shared.pin(cell, ca_cert_der, keys)?;
@@ -581,14 +727,105 @@ pub async fn serve<R: Runtime>(
         )));
     }
     let registry = store::load_registry(&mut client).await.map_err(store_err)?;
+    let backend = Backend::Pg {
+        db,
+        client: Some(client),
+    };
+    start(
+        rt,
+        backend,
+        registry,
+        receipt_key,
+        server_chain_pem,
+        server_key_pem,
+        listen,
+    )
+    .await
+}
+
+/// What a local witness of a self-hosted install starts from (ADR-010
+/// "Self-hosted witness").
+pub struct LocalWitnessParts {
+    /// The directory of its append-only file store. Only the witness's
+    /// OS user may read and write it.
+    pub dir: PathBuf,
+    /// The composite receipt key, from the witness's own `fstp-keyd`
+    /// entry (ADR-004 part 2, "Self-hosted witness receipt key").
+    pub receipt_key: CompositeSigningKey,
+    /// The witness server certificate chain from the install CA, PEM,
+    /// leaf first.
+    pub server_chain_pem: Vec<u8>,
+    /// Its private key, PEM.
+    pub server_key_pem: Vec<u8>,
+    /// Where to listen. Port 0 picks a free port.
+    pub listen: SocketAddr,
+}
+
+impl std::fmt::Debug for LocalWitnessParts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalWitnessParts")
+            .field("listen", &self.listen)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Starts the local witness of a self-hosted install from `parts` on
+/// `rt`. It runs the same listener, sender rule, anchor check and
+/// receipts as [`serve`], over the file store in
+/// [`LocalWitnessParts::dir`] ([`FileStore`]). It loads every file of the
+/// store first, so a store with a missing, changed or cut record never
+/// serves.
+///
+/// Scope (ADR-010 open point 7): a root user on the node can rewrite the
+/// store and the cell's database together, which the local witness does
+/// not detect.
+///
+/// # Errors
+///
+/// [`WitnessError::Store`] when the store does not open or load, and
+/// [`WitnessError::Io`] when the listener cannot be bound.
+pub async fn serve_local<R: Runtime>(
+    rt: R,
+    parts: LocalWitnessParts,
+) -> Result<WitnessHandle<R>, WitnessError> {
+    let LocalWitnessParts {
+        dir,
+        receipt_key,
+        server_chain_pem,
+        server_key_pem,
+        listen,
+    } = parts;
+    let files = FileStore::open(&dir).map_err(store_err)?;
+    let registry = files.load_registry().map_err(store_err)?;
+    start(
+        rt,
+        Backend::File(files),
+        registry,
+        receipt_key,
+        server_chain_pem,
+        server_key_pem,
+        listen,
+    )
+    .await
+}
+
+/// Pins `registry`, binds the listener and runs the accept loop.
+async fn start<R: Runtime>(
+    rt: R,
+    backend: Backend<R>,
+    registry: Vec<store::RegisteredCell>,
+    receipt_key: CompositeSigningKey,
+    server_chain_pem: Vec<u8>,
+    server_key_pem: Vec<u8>,
+    listen: SocketAddr,
+) -> Result<WitnessHandle<R>, WitnessError> {
     let shared = Arc::new(Shared {
         rt: rt.clone(),
-        db,
         receipt_key,
         server_chain_pem,
         server_key_pem,
         core: AsyncMutex::new(Core {
-            client: Some(client),
+            backend,
             chains: BTreeMap::new(),
         }),
         cells: Mutex::new(BTreeMap::new()),

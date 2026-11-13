@@ -29,6 +29,9 @@ fstp-witness.workspace = true
 [dev-dependencies]
 fstp-prop.workspace = true
 fstp-pgtest.workspace = true
+# In-house test-only edge of lane F-VCHAIN: the certificates of the vault
+# chain tests (a cell CA with its vault-witness and cell-app leaves).
+fstp-pki.workspace = true
 
 [lints]
 workspace = true

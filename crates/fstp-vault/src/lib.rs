@@ -19,6 +19,7 @@
 //! flag or file.
 
 pub mod catalogue;
+pub mod chain;
 pub mod codec;
 pub mod config;
 pub mod egress;
@@ -49,6 +50,8 @@ pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written};
 ///    own shape, for a set applied without the runner (I-16).
 /// 6. `column_classes`: the length checks of Daniel's Q-A classes
 ///    (2026-11-07, design section 4.5, R-NF-08).
+/// 7. `vault_chain`: the entry columns of a kind 1 row of the vault chain
+///    (ADR-010 open point 5, Daniel, 2026-11-13).
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(1, "meta", include_str!("../migrations/vault/0001_meta.sql")),
     fstp_migrate::Migration::new(
@@ -71,6 +74,11 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         6,
         "column_classes",
         include_str!("../migrations/vault/0006_column_classes.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        7,
+        "vault_chain",
+        include_str!("../migrations/vault/0007_vault_chain.sql"),
     ),
 ];
 
@@ -113,17 +121,17 @@ pub fn match_key(key: &[u8; 32], tuple: &[u8]) -> [u8; MATCH_KEY_LEN] {
     fstp_crypto::hmac_sha256(key, tuple)
 }
 
-/// The binary's entry. It refuses: the process configuration, the vault
-/// keystore that gives the sealing keys, and the vault chain writer are
-/// not built (ADR-010 open point 5). [`service::serve`] is the run loop,
-/// which a world starts with the parts it holds.
+/// The binary's entry. It refuses: the process configuration and the
+/// vault keystore that gives the sealing and anchor keys are not built.
+/// [`service::serve`] is the run loop, which a world starts with the
+/// parts it holds.
 ///
 /// # Errors
 ///
 /// [`VaultError::NotImplemented`].
 pub fn run() -> Result<(), VaultError> {
     Err(VaultError::NotImplemented(
-        "fstp_vault::run: the process configuration, the vault keystore and the vault chain writer (ADR-010 open point 5); fstp_vault::service::serve is the run loop",
+        "fstp_vault::run: the process configuration and the vault keystore; fstp_vault::service::serve is the run loop",
     ))
 }
 

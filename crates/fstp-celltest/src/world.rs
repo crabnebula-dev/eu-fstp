@@ -22,9 +22,16 @@
 //! starts real cells: the witness over its database, the edge on
 //! loopback, and per cell its vault and its cell process over their
 //! databases, with the first admin's split invitation ([`World::start`],
-//! "Cells"). A self-hosted world with cells still refuses with
-//! [`NotImplemented`]: its local witness keeps a file store, which has no
-//! run loop.
+//! "Cells"). A self-hosted world with cells starts each cell the same way
+//! in self-hosted mode, over its two instances, with a local witness of
+//! its own over a file store (`fstp_witness::serve_local`, lane F-SELF).
+//! B-06 defers `fstp-install`, so the world plays the install: it writes
+//! the install files and registers the cell CA with the local witness.
+//! The SaaS edge stays the harness's way into the cell.
+//!
+//! Scope of the self-hosted I-24 claim (ADR-010 open point 7, Daniel,
+//! 2026-11-13): a root user on the cell node is outside what the local
+//! witness detects. Only the optional external bucket would detect it.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -405,7 +412,27 @@ impl CellHandle {
     ///
     /// Fails when the world did not receive both halves.
     pub fn first_admin_invitation(&self) -> Result<FirstAdminInvitation, WorldError> {
-        Ok(lock(&self.runtime()?.running).invitation)
+        match lock(&self.runtime()?.running).invitation {
+            Invitation::Split(i) => Ok(i),
+            Invitation::Whole(_) => Err(WorldError::Store(
+                "a self-hosted invitation is one whole token (first_admin_token)".to_owned(),
+            )),
+        }
+    }
+
+    /// The first tenant admin's token as the admin types it: both halves
+    /// of a SaaS invitation joined, or the whole token of a self-hosted
+    /// install, which `fstp-install` writes to its token file (design
+    /// section 8.3, Q35).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no listener.
+    pub fn first_admin_token(&self) -> Result<Vec<u8>, WorldError> {
+        Ok(match lock(&self.runtime()?.running).invitation {
+            Invitation::Split(i) => [i.first, i.second].concat(),
+            Invitation::Whole(t) => t.to_vec(),
+        })
     }
 
     /// Seeds the fact write `w` from `source` into the cell's seeded vault
@@ -502,6 +529,10 @@ pub struct World {
     cells: Vec<CellHandle>,
     clusters: Vec<ClusterHandle>,
     egress: EgressLog,
+    /// The install slot of a self-hosted world, which names its two
+    /// instances ([`install_cluster_plan`]). Dropped after the cells.
+    #[allow(dead_code, reason = "held for its Drop, which frees the slot")]
+    install: Option<InstallSlot>,
 }
 
 impl World {
@@ -668,7 +699,8 @@ impl World {
         for _ in 0..spec.cells {
             plans.push(cell_plan()?);
         }
-        let clusters = cluster_plan(&spec)
+        let install = spec.self_hosted.then(InstallSlot::take);
+        let clusters = install_cluster_plan(&spec, install.as_ref())
             .iter()
             .map(|(kind, name)| ClusterHandle::start_named(*kind, name))
             .collect::<Result<Vec<_>, _>>()?;
@@ -690,6 +722,7 @@ impl World {
             cells,
             clusters,
             egress: EgressLog::new(),
+            install,
         })
     }
 
@@ -720,8 +753,9 @@ impl World {
     }
 
     /// Every database, object directory, log and metrics sink: each
-    /// cluster's stores as [`cluster_stores`] gives them, and each egress
-    /// connection per direction (`egress/...`).
+    /// cluster's stores as [`cluster_stores`] gives them, the file store of
+    /// each self-hosted local witness (`selfhosted_witness_<cell>/...`),
+    /// and each egress connection per direction (`egress/...`).
     ///
     /// The set holds every write committed before the call, since each
     /// cluster runs a CHECKPOINT first. The clusters are shared by the
@@ -736,6 +770,18 @@ impl World {
         for cluster in &self.clusters {
             for (name, bytes) in cluster_stores(cluster.name(), cluster.server())?.stores {
                 set.push(name, bytes);
+            }
+        }
+        for c in &self.cells {
+            let Some(local) = c.runtime.as_ref().and_then(|r| r.witness.local.as_ref()) else {
+                continue;
+            };
+            let label = format!(
+                "selfhosted_witness_{}",
+                cell_label(&c.id).get(..12).unwrap_or("")
+            );
+            for (name, bytes) in read_tree(&local.dir.join(WITNESS_STORE_DIR))? {
+                set.push(format!("{label}/{name}"), bytes);
             }
         }
         for (name, bytes) in self.egress.store_set().stores {
@@ -791,6 +837,49 @@ impl World {
             )))
     }
 
+    /// The witness the world's cells anchor at: the SaaS witness, or the
+    /// local witness of a self-hosted install.
+    fn witness(&self) -> Result<&WorldWitness, WorldError> {
+        self.cells
+            .iter()
+            .find_map(|c| c.runtime.as_ref().map(|r| &r.witness))
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(
+                WITNESS_SEAM,
+            )))
+    }
+
+    /// The files a self-hosted install writes outside its database
+    /// clusters (design section 9.5): its configuration, and its
+    /// credentials. B-06 defers `fstp-install`, so the world plays it
+    /// and writes these files into the install directory of each cell
+    /// ([`start_cell`]). Each file is read back from that directory.
+    ///
+    /// # Errors
+    ///
+    /// Fails for a SaaS world, and when a file cannot be read.
+    pub fn install_files(&self) -> Result<InstallFiles, WorldError> {
+        if !self.spec.self_hosted {
+            return Err(WorldError::Store(
+                "a SaaS world writes no install files".to_owned(),
+            ));
+        }
+        let mut out = InstallFiles::default();
+        for c in &self.cells {
+            let Some(local) = c.runtime.as_ref().and_then(|r| r.witness.local.as_ref()) else {
+                continue;
+            };
+            for (set, sub) in [
+                (&mut out.config, INSTALL_CONFIG_DIR),
+                (&mut out.credentials, INSTALL_CREDENTIALS_DIR),
+            ] {
+                for (name, bytes) in read_tree(&local.dir.join(sub))? {
+                    set.push(format!("install/{sub}/{name}"), bytes);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// The witness's receipt public keys, encoded, as each cell of the
     /// world pins them (ADR-010 "Keys", I-90). A test checks every stored
     /// receipt under this set.
@@ -799,7 +888,7 @@ impl World {
     ///
     /// Fails when the world runs no witness.
     pub fn witness_keys(&self) -> Result<Vec<Vec<u8>>, WorldError> {
-        Ok(vec![self.services()?.witness.receipt_public_key()])
+        Ok(vec![self.witness()?.handle.receipt_public_key()])
     }
 
     /// Where the world's witness is reached on this host. It speaks the
@@ -810,10 +899,7 @@ impl World {
     ///
     /// Fails when the world runs no witness.
     pub fn witness_url(&self) -> Result<String, WorldError> {
-        Ok(format!(
-            "https://{}/",
-            self.services()?.witness.local_addr()
-        ))
+        Ok(format!("https://{}/", self.witness()?.handle.local_addr()))
     }
 
     /// The certificate of the CA that signs the world's public host
@@ -1830,8 +1916,10 @@ struct Edge {
     table: std::sync::Arc<Mutex<fstp_edge::RouteTable>>,
 }
 
-/// What every world of a test binary shares: the runtime, the CAs, the
-/// witness and the edge. Like the clusters, they live for the process.
+/// What every world of a test binary shares: the runtime, the CAs and
+/// the edge. Like the clusters, they live for the process. The SaaS
+/// witness is shared too ([`saas_witness`]), and each self-hosted install
+/// starts a local witness of its own ([`start_local_witness`]).
 struct Services {
     rt: Rt,
     /// The control-plane CA: the witness server certificate, the tunnel
@@ -1841,7 +1929,6 @@ struct Services {
     /// public CA (design section 9.2 step 5). A browser trusts it once
     /// its certificate is installed ([`World::origin_ca_pem`]).
     origin: pki::Ca,
-    witness: fstp_witness::WitnessHandle<Rt>,
     edge: Edge,
 }
 
@@ -1853,21 +1940,85 @@ impl fmt::Debug for Services {
     }
 }
 
-/// The services of the process, started on first use over the witness
-/// cluster `witness` and its service login.
-fn services(witness: &ClusterHandle) -> Result<&'static Services, WorldError> {
+/// The services of the process, started on first use.
+fn services() -> Result<&'static Services, WorldError> {
     static SERVICES: OnceLock<Result<Services, WorldError>> = OnceLock::new();
     SERVICES
-        .get_or_init(|| start_services(witness))
+        .get_or_init(start_services)
         .as_ref()
         .map_err(Clone::clone)
 }
 
-fn start_services(witness_cluster: &ClusterHandle) -> Result<Services, WorldError> {
+fn start_services() -> Result<Services, WorldError> {
     let fail = |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("{what}: {e}"));
     let rt = Rt::new_multi_thread(4).map_err(|e| fail("the world runtime", &e))?;
     let control = pki::Ca::new("fstp world control-plane CA")?;
     let origin = pki::Ca::new("fstp world origin CA")?;
+    let edge = rt.block_on(start_edge(&rt, &control))?;
+    Ok(Services {
+        rt,
+        control,
+        origin,
+        edge,
+    })
+}
+
+/// The witness a world cell anchors at, and how the cell reaches it.
+struct WorldWitness {
+    handle: std::sync::Arc<fstp_witness::WitnessHandle<Rt>>,
+    /// The CA that issued the witness server certificate, PEM.
+    ca_pem: Vec<u8>,
+    /// The SHA-256 digest of that CA's SubjectPublicKeyInfo, which the
+    /// cell pins (R-NF-09).
+    ca_digest: [u8; 32],
+    /// The name the witness server certificate carries.
+    name: String,
+    /// The install of a self-hosted cell, whose local witness stops with
+    /// the cell. `None` for the shared SaaS witness.
+    local: Option<LocalInstall>,
+}
+
+/// The install directory of a self-hosted cell: its local witness's file
+/// store and the install files ([`World::install_files`]). It is removed
+/// when the cell's runtime drops.
+struct LocalInstall {
+    dir: std::path::PathBuf,
+}
+
+impl Drop for LocalInstall {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// A local witness stops with its cell, also when the cell fails to start.
+impl Drop for WorldWitness {
+    fn drop(&mut self) {
+        if self.local.is_some() {
+            self.handle.trigger_shutdown();
+        }
+    }
+}
+
+/// The SaaS witness of the process, started on first use over the witness
+/// cluster `witness` and its service login.
+fn saas_witness(
+    s: &'static Services,
+    witness: &ClusterHandle,
+) -> Result<std::sync::Arc<fstp_witness::WitnessHandle<Rt>>, WorldError> {
+    type Witness = Result<std::sync::Arc<fstp_witness::WitnessHandle<Rt>>, WorldError>;
+    static WITNESS: OnceLock<Witness> = OnceLock::new();
+    WITNESS
+        .get_or_init(|| start_saas_witness(s, witness).map(std::sync::Arc::new))
+        .clone()
+}
+
+fn start_saas_witness(
+    s: &Services,
+    witness_cluster: &ClusterHandle,
+) -> Result<fstp_witness::WitnessHandle<Rt>, WorldError> {
+    let fail = |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("{what}: {e}"));
+    let (rt, control) = (&s.rt, &s.control);
     let login = lock(cluster_state(witness_cluster.name())?)
         .service
         .clone()
@@ -1893,14 +2044,165 @@ fn start_services(witness_cluster: &ClusterHandle) -> Result<Services, WorldErro
             },
         ))
         .map_err(|e| fail("the witness", &e))?;
-    let edge = rt.block_on(start_edge(&rt, &control))?;
-    Ok(Services {
-        rt,
-        control,
-        origin,
-        witness,
-        edge,
+    Ok(witness)
+}
+
+/// The name the local witness server certificate of a self-hosted install
+/// carries.
+const LOCAL_WITNESS_NAME: &str = "witness.selfhosted.localhost";
+
+/// The directory of the local witness's file store in an install
+/// directory.
+const WITNESS_STORE_DIR: &str = "witness";
+/// The directory of the install configuration files.
+const INSTALL_CONFIG_DIR: &str = "config";
+/// The directory of the install credential files.
+const INSTALL_CREDENTIALS_DIR: &str = "credentials";
+
+/// Starts the local witness of a self-hosted install for `cell`, as
+/// `fstp-install` would at first start (ADR-010 "Self-hosted witness",
+/// design section 9.5 step 6). B-06 defers the installer, so the world
+/// plays it:
+///
+/// - a fresh install directory, readable by its owner only, holds the
+///   witness's file store;
+/// - an install CA issues the witness server certificate;
+/// - the composite receipt key is generated here. In production it is a
+///   level 2 key of the witness's own `fstp-keyd` entry with its own
+///   credential (ADR-004 part 2, "Self-hosted witness receipt key"). The
+///   world runs no `fstp-keyd`, so it hands the key in;
+/// - the witness listens on loopback, never on a CrabNebula host (I-38).
+fn start_local_witness(s: &Services, cell: &[u8; 16]) -> Result<WorldWitness, WorldError> {
+    let fail = |what: &str, e: &dyn fmt::Display| {
+        WorldError::Store(format!("the local witness: {what}: {e}"))
+    };
+    let mut tag = [0u8; 6];
+    fstp_crypto::random_bytes(&mut tag).map_err(|_| fail("randomness", &"none"))?;
+    let dir = std::env::temp_dir().join(format!(
+        "fstp-selfhosted-{}-{}-{}",
+        std::process::id(),
+        cell_label(cell).get(..12).unwrap_or(""),
+        crate::canary::lower_hex(&tag)
+    ));
+    let mut b = std::fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        b.mode(0o700);
+    }
+    b.create(&dir)
+        .map_err(|e| fail("the install directory", &e))?;
+    let install_ca = pki::Ca::new("self-hosted install CA")?;
+    let server = install_ca.issue(
+        fstp_pki::cert::CertKind::Server,
+        LOCAL_WITNESS_NAME,
+        None,
+        &[LOCAL_WITNESS_NAME],
+        &[],
+    )?;
+    let key = fstp_crypto::composite::generate().map_err(|e| fail("the receipt key", &e))?;
+    let started = s.rt.block_on(fstp_witness::serve_local(
+        s.rt.clone(),
+        fstp_witness::LocalWitnessParts {
+            dir: dir.join(WITNESS_STORE_DIR),
+            receipt_key: key,
+            server_chain_pem: server.cert_pem,
+            server_key_pem: server.key_pem.clone(),
+            listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        },
+    ));
+    let handle = match started {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(fail("the start", &e));
+        }
+    };
+    Ok(WorldWitness {
+        handle: std::sync::Arc::new(handle),
+        ca_pem: install_ca.pem.clone(),
+        ca_digest: install_ca.spki_digest,
+        name: LOCAL_WITNESS_NAME.to_owned(),
+        local: Some(LocalInstall { dir }),
     })
+}
+
+/// Writes the install files of a self-hosted cell into `dir`, as
+/// `fstp-install` would (design section 9.5, R-NF-05): the install
+/// configuration, and as credentials the first-admin token and each
+/// role's password, certificate and key.
+/// Every credential byte was generated for this install. Each file is
+/// readable by its owner only.
+fn write_install_files(
+    dir: &Path,
+    host: &str,
+    logins: &CellLogins,
+    token: &[u8; 32],
+) -> Result<(), WorldError> {
+    let fail = |e: std::io::Error| WorldError::Store(format!("an install file: {e}"));
+    let write = |rel: &str, bytes: &[u8]| -> Result<(), WorldError> {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(fail)?;
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&path).map_err(fail)?;
+        std::io::Write::write_all(&mut f, bytes).map_err(fail)
+    };
+    write(
+        &format!("{INSTALL_CONFIG_DIR}/fstp-install.conf"),
+        format!("{{\"eudi_relying_party\":\"tenant_registration\",\"host\":\"{host}\"}}\n")
+            .as_bytes(),
+    )?;
+    write(
+        &format!("{INSTALL_CREDENTIALS_DIR}/first-admin-token"),
+        crate::canary::lower_hex(token).as_bytes(),
+    )?;
+    for login in logins.values() {
+        let base = format!("{INSTALL_CREDENTIALS_DIR}/roles/{}", login.role);
+        write(&format!("{base}/password"), login.password.as_bytes())?;
+        write(&format!("{base}/cert.pem"), &login.cert_pem)?;
+        write(&format!("{base}/key.pem"), &login.key_pem)?;
+    }
+    Ok(())
+}
+
+/// Every regular file under `root`, as `(path relative to root, bytes)`,
+/// in path order. A missing directory holds none.
+fn read_tree(root: &Path) -> Result<Vec<(String, Vec<u8>)>, WorldError> {
+    let fail = |e: std::io::Error| WorldError::Store(format!("{}: {e}", root.display()));
+    let mut out = Vec::new();
+    let mut todo = vec![root.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        let entries = match std::fs::read_dir(&d) {
+            Ok(e) => e,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(fail(e)),
+        };
+        for entry in entries {
+            let path = entry.map_err(fail)?.path();
+            if path.is_dir() {
+                todo.push(path);
+            } else {
+                let bytes = std::fs::read(&path).map_err(fail)?;
+                let rel = path
+                    .strip_prefix(root)
+                    .map_err(|_| WorldError::Store("a path outside its tree".to_owned()))?
+                    .to_string_lossy()
+                    .into_owned();
+                out.push((rel, bytes));
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// The pgwire configuration of `login` on `dbname` of `server`.
@@ -1995,7 +2297,27 @@ fn cell_host(cell: &[u8; 16]) -> String {
 struct Running {
     cell: Option<fstp_cell::process::RunningCell<Rt>>,
     vault: crate::seeded_vault::SeededVault,
-    invitation: FirstAdminInvitation,
+    invitation: Invitation,
+}
+
+/// The files a self-hosted install writes outside its database clusters
+/// (design section 9.5), as [`World::install_files`] reads them back.
+#[derive(Clone, Debug, Default)]
+pub struct InstallFiles {
+    /// The configuration files, such as the `fstp-install` configuration.
+    pub config: StoreSet,
+    /// The credential files: the first-admin token and each role's
+    /// password, certificate and key. Every byte is generated at install.
+    pub credentials: StoreSet,
+}
+
+/// The first admin's invitation as a world cell drew it.
+#[derive(Clone, Copy)]
+enum Invitation {
+    /// The two halves of a SaaS cell (Q35).
+    Split(FirstAdminInvitation),
+    /// The whole token of a self-hosted install.
+    Whole([u8; 32]),
 }
 
 /// What a started cell's handle reaches (design section 14.3).
@@ -2003,6 +2325,7 @@ struct CellRuntime {
     services: &'static Services,
     running: Mutex<Running>,
     health: SocketAddr,
+    witness: WorldWitness,
 }
 
 impl fmt::Debug for CellRuntime {
@@ -2030,6 +2353,13 @@ impl CellRuntime {
         let r = lock(&self.running);
         let _ = self.services.rt.block_on(r.vault.shutdown(CELL_DRAIN));
         lock(&self.services.edge.table).remove_cell_by_id(cell);
+        if let Some(local) = &self.witness.local {
+            let _ = local;
+            let _ = self
+                .services
+                .rt
+                .block_on(self.witness.handle.shutdown(CELL_DRAIN));
+        }
     }
 }
 
@@ -2068,14 +2398,20 @@ fn registered_server_keys(
 /// (design section 9.2 steps 5, 6, 8, 9 and 10):
 ///
 /// 1. The cell CA, the cell's keys and its custody. The witness pins the
-///    cell CA and the App chain's anchor key.
+///    cell CA and the App chain's anchor key. A SaaS cell registers at the
+///    shared witness. A self-hosted cell starts its own local witness over
+///    a file store in a fresh install directory, and registers there
+///    ([`start_local_witness`]).
 /// 2. The vault over `v_<cell>`, with its internal listener and its
 ///    origin's tunnel listener.
 /// 3. The cell over `c_<cell>` through `fstp_cell::process::start`, which
 ///    creates epoch 0 of its key chain on its first start.
 /// 4. The edge routes for `<cell host>` and `id.<cell host>`.
 /// 5. The first tenant admin's invitation, drawn by the cell as two
-///    halves. The world plays both staff channels and keeps both.
+///    halves. The world plays both staff channels and keeps both. A
+///    self-hosted cell draws it whole, and the world writes it to the
+///    install's token file with the other install files
+///    ([`World::install_files`]).
 #[allow(
     clippy::too_many_lines,
     reason = "one start, step by step, as the design lists it"
@@ -2090,16 +2426,7 @@ fn start_cell(
 ) -> Result<CellHandle, WorldError> {
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
-    if spec.self_hosted {
-        return Err(WorldError::NotImplemented(NotImplemented::new(
-            "fstp_celltest::world a self-hosted cell: the local witness with its file store (ADR-010 Self-hosted witness) has no run loop",
-        )));
-    }
-    let witness_cluster = clusters
-        .iter()
-        .find(|c| c.kind() == ClusterKind::Witness)
-        .ok_or_else(|| WorldError::Store("the world runs no witness cluster".to_owned()))?;
-    let s = services(witness_cluster)?;
+    let s = services()?;
     let fail =
         |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("cell {index}: {what}: {e}"));
     let cell = plan.cell.0;
@@ -2121,28 +2448,67 @@ fn start_cell(
     let cell_ca = pki::Ca::new(&format!("cell CA {}", hex.get(..12).unwrap_or("")))?;
     let anchor = fstp_crypto::composite::generate().map_err(|e| fail("the anchor key", &e))?;
     let anchor_public = anchor.public_key().to_bytes().to_vec();
-    // Provisioning writes the registration as the witness migrator, and
-    // the witness reloads its registry: witness_service may only read it.
-    let registered_at = i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| fail("the clock", &e))?
-            .as_micros(),
-    )
-    .map_err(|e| fail("the clock", &e))?;
-    sql_as(
-        witness_cluster,
-        WITNESS_SET,
-        &format!("{WITNESS_SET}_migrator"),
-        &fstp_witness::store::registration_sql(
+    // The vault anchors its own chain under its own key (ADR-010 "The
+    // vault chain is anchored by the vault only"), so the witness pins
+    // both chains' anchor keys.
+    let vault_anchor =
+        fstp_crypto::composite::generate().map_err(|e| fail("the vault anchor key", &e))?;
+    let registration = [
+        (fstp_audit::ChainId::App, anchor_public),
+        (
+            fstp_audit::ChainId::Vault,
+            vault_anchor.public_key().to_bytes().to_vec(),
+        ),
+    ];
+    let witness = if spec.self_hosted {
+        // A self-hosted install starts its own local witness over a file
+        // store and registers the cell CA with it (ADR-010 "Self-hosted
+        // witness", design section 9.5 step 6).
+        let w = start_local_witness(s, &cell)?;
+        s.rt.block_on(w.handle.register_cell(
             fstp_audit::CellId(cell),
             &cell_ca.der,
-            &[(fstp_audit::ChainId::App, anchor_public)],
-            registered_at,
-        ),
-    )?;
-    s.rt.block_on(s.witness.reload_registry())
+            &registration,
+        ))
         .map_err(|e| fail("the witness registration", &e))?;
+        w
+    } else {
+        // Provisioning writes the registration as the witness migrator,
+        // and the witness reloads its registry: witness_service may only
+        // read it.
+        let witness_cluster = clusters
+            .iter()
+            .find(|c| c.kind() == ClusterKind::Witness)
+            .ok_or_else(|| WorldError::Store("the world runs no witness cluster".to_owned()))?;
+        let handle = saas_witness(s, witness_cluster)?;
+        let registered_at = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| fail("the clock", &e))?
+                .as_micros(),
+        )
+        .map_err(|e| fail("the clock", &e))?;
+        sql_as(
+            witness_cluster,
+            WITNESS_SET,
+            &format!("{WITNESS_SET}_migrator"),
+            &fstp_witness::store::registration_sql(
+                fstp_audit::CellId(cell),
+                &cell_ca.der,
+                &registration,
+                registered_at,
+            ),
+        )?;
+        s.rt.block_on(handle.reload_registry())
+            .map_err(|e| fail("the witness registration", &e))?;
+        WorldWitness {
+            handle,
+            ca_pem: s.control.pem.clone(),
+            ca_digest: s.control.spki_digest,
+            name: WITNESS_NAME.to_owned(),
+            local: None,
+        }
+    };
     let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
     let tunnel_name = format!("c{hex}.tunnel.fstp.localhost");
     let vault_tunnel_name = format!("v{hex}.tunnel.fstp.localhost");
@@ -2168,6 +2534,31 @@ fn start_cell(
         .issue(CertKind::Server, &vault_host, None, &[&vault_host], &[])?;
     let ticket =
         fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the ticket key", &e))?;
+    let vault_witness = cell_ca.issue(
+        CertKind::Client,
+        "vault-witness",
+        Some(fstp_witness::peer::OU_VAULT_WITNESS),
+        &[],
+        &[],
+    )?;
+    // The seeded vault of a world cell does not write `vault_audit.chain`
+    // yet: these parts wait on its chain writer (seam SEEDED_VAULT_CHAIN,
+    // after the merge of m3/cycle2 and m3/self-cp-vchain on 2026-11-13).
+    let _vault_chain = fstp_vault::chain::VaultChainParts {
+        anchor_key: vault_anchor,
+        witness: fstp_vault::chain::VaultWitness {
+            addr: witness.handle.local_addr(),
+            server_name: witness.name.clone(),
+            tls: fstp_tls::ClientConfig::mutual(
+                &witness.ca_pem,
+                &vault_witness.cert_pem,
+                &vault_witness.key_pem,
+            )
+            .map_err(tls_err("the vault witness TLS"))?,
+            ca_digest: witness.ca_digest,
+        },
+        witness_keys: vec![witness.handle.receipt_public_key()],
+    };
     let sealer = fstp_vault::service::AeadSealer::new(
         fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?,
         fstp_crypto::aead::Key::generate().map_err(|e| fail("the vault data key", &e))?,
@@ -2238,16 +2629,16 @@ fn start_cell(
         &[],
         &[],
     )?;
-    let witness = fstp_cell::witness::link::WitnessEndpoint {
-        addr: s.witness.local_addr(),
-        server_name: WITNESS_NAME.to_owned(),
+    let witness_endpoint = fstp_cell::witness::link::WitnessEndpoint {
+        addr: witness.handle.local_addr(),
+        server_name: witness.name.clone(),
         tls: fstp_tls::ClientConfig::mutual(
-            &s.control.pem,
+            &witness.ca_pem,
             &cell_witness.cert_pem,
             &cell_witness.key_pem,
         )
         .map_err(tls_err("the witness client TLS"))?,
-        ca_digest: s.control.spki_digest,
+        ca_digest: witness.ca_digest,
     };
     let cell_tunnel =
         s.control
@@ -2263,7 +2654,11 @@ fn start_cell(
     );
     let parts = fstp_cell::process::CellProcessParts {
         cell,
-        mode: fstp_cell::config::Mode::Saas,
+        mode: if spec.self_hosted {
+            fstp_cell::config::Mode::SelfHosted
+        } else {
+            fstp_cell::config::Mode::Saas
+        },
         host: host.clone(),
         writer: pg_config(
             app_cluster.server(),
@@ -2296,8 +2691,8 @@ fn start_cell(
             cred_lookup: fstp_crypto::random_array::<32>()
                 .map_err(|e| fail("the CredLookup key", &e))?,
         },
-        witness,
-        witness_keys: vec![s.witness.receipt_public_key()],
+        witness: witness_endpoint,
+        witness_keys: vec![witness.handle.receipt_public_key()],
         vault: SharedVault(std::sync::Arc::new(vault_client)),
         tunnel_tls: fstp_cell::http::tunnel::TunnelTls {
             tunnel: std::sync::Arc::new(
@@ -2357,15 +2752,29 @@ fn start_cell(
     let invitation = route().and_then(|()| {
         s.rt.block_on(running.issue_first_admin_invitation())
             .map_err(|e| fail("the first admin invitation", &e))
-            .and_then(|t| match t.second {
-                Some(second) => Ok(FirstAdminInvitation {
+            .and_then(|t| match (t.second, spec.self_hosted) {
+                (Some(second), false) => Ok(Invitation::Split(FirstAdminInvitation {
                     first: t.first,
                     second,
-                }),
-                None => Err(WorldError::Store(format!(
+                })),
+                // A self-hosted install hands the token over whole, in its
+                // token file (design section 8.3, Q35).
+                (None, true) => Ok(Invitation::Whole(t.first)),
+                (Some(_), true) => Err(WorldError::Store(format!(
+                    "cell {index}: a self-hosted invitation came in halves"
+                ))),
+                (None, false) => Err(WorldError::Store(format!(
                     "cell {index}: a SaaS invitation came whole"
                 ))),
             })
+    });
+    // A self-hosted install writes its configuration and credential
+    // files once the token exists (design section 9.5, R-NF-05).
+    let invitation = invitation.and_then(|i| match (&witness.local, &i) {
+        (Some(local), Invitation::Whole(token)) => {
+            write_install_files(&local.dir, &host, &logins, token).map(|()| i)
+        }
+        _ => Ok(i),
     });
     let invitation = match invitation {
         Ok(i) => i,
@@ -2390,6 +2799,7 @@ fn start_cell(
                 invitation,
             }),
             health: bound.health,
+            witness,
         })),
     })
 }
@@ -2651,6 +3061,51 @@ pub fn cluster_plan(spec: &WorldSpec) -> Vec<(ClusterKind, String)> {
             out.push(named(ClusterKind::Witness));
             out
         }
+    }
+}
+
+/// The install slot of a live self-hosted world. Two self-hosted worlds
+/// alive at once are two installs, so each takes the lowest free slot and
+/// runs instances of its own ([`install_cluster_plan`]). The slot is free
+/// again when the world drops.
+#[derive(Debug)]
+struct InstallSlot(u32);
+
+/// The slots of the live self-hosted worlds of the process.
+fn install_slots() -> &'static Mutex<std::collections::BTreeSet<u32>> {
+    static SLOTS: OnceLock<Mutex<std::collections::BTreeSet<u32>>> = OnceLock::new();
+    SLOTS.get_or_init(Mutex::default)
+}
+
+impl InstallSlot {
+    fn take() -> InstallSlot {
+        let mut slots = lock(install_slots());
+        let free = (0u32..).find(|n| !slots.contains(n)).unwrap_or(u32::MAX);
+        slots.insert(free);
+        InstallSlot(free)
+    }
+}
+
+impl Drop for InstallSlot {
+    fn drop(&mut self) {
+        lock(install_slots()).remove(&self.0);
+    }
+}
+
+/// The clusters a world starts: [`cluster_plan`], except that a
+/// self-hosted world in install slot `k > 0` names its instances
+/// `selfhosted<k>_<kind>`. So a second live install never shares the
+/// first one's servers (R-NF-05).
+fn install_cluster_plan(
+    spec: &WorldSpec,
+    slot: Option<&InstallSlot>,
+) -> Vec<(ClusterKind, String)> {
+    match slot {
+        Some(InstallSlot(k)) if *k > 0 => SELF_HOSTED_KINDS
+            .iter()
+            .map(|kind| (*kind, format!("selfhosted{k}_{}", kind_label(*kind))))
+            .collect(),
+        _ => cluster_plan(spec),
     }
 }
 
@@ -3033,6 +3488,7 @@ mod review_tests {
                 server,
             }],
             egress: EgressLog::new(),
+            install: None,
         };
         (world, server)
     }

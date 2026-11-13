@@ -16,9 +16,12 @@
 //!   and `ack_link` the `PublicDigest` class, receipts the `Signature`
 //!   class, public keys the `PublicKeyMaterial` class and custody handles
 //!   the `OpaqueReference` class. Migration 5 adds their length checks.
-//! - `vault_audit.chain` has no ledger, so its `epoch` column takes the
-//!   place of `ledger_seq` in `audit.chain`: a kind 1 row records a vault
-//!   epoch, a kind 2 row an event such as a ticket use.
+//! - `vault_audit.chain` has no ledger. Under Daniel's answer of
+//!   2026-11-13 (ADR-010 open point 5), each committed fact batch and each
+//!   identity release or read is a kind 1 row, which carries its own entry
+//!   in `entry_seq`, `entry_command`, `entry_schema` and the sealed `body`
+//!   (migration 7). `epoch` names the highest epoch a fact batch wrote. A
+//!   kind 2 row is an event, such as a KeyOp.
 //! - The migration ledger `fstp_migrate.schema_migrations`, which the
 //!   `fstp-migrate` runner creates, has the shape and classes of
 //!   `fstp_pgstore::CATALOGUE`. Migration 6 creates it for a set applied
@@ -165,6 +168,9 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("stored_hash", PublicDigest),
             col("body", Sealed),
             col("link", PublicDigest),
+            col("entry_seq", Sequence),
+            col("entry_command", RandomId),
+            col("entry_schema", Enum),
         ],
     },
     TableSpec {

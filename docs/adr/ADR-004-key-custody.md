@@ -253,6 +253,7 @@ Epoch seal keys and I-80 (decided by Daniel on 2026-10-28):
 
 - The Vault chain has its own custody entry and its own credential. A compromise of application keys does not expose the vault (R-NF-08).
 - `fstp-control` and `fstp-witness` use separate ControlPlane entries and credentials.
+- The self-hosted witness receipt key has its own `fstp-keyd` entry with its own credential (Daniel, 2026-11-13, m3-finish Q-D, ADR-010 open point 6). See "Self-hosted witness receipt key" below.
 - Groups that hold data keys hold at most 256 of them. A `Document` group holds one. That bound keeps the re-seal cost of each affected group at 255 hybrid seals or fewer.
 - The `Ledger` group never takes part in an erasure, because the ledger holds no free text (ADR-007). Its data keys are replaced under the part 1 seal-count rule.
 - `Lookup`, `CredLookup` and `Match` hold no data keys. Each erasure that removes one of their subjects replaces them (below).
@@ -418,7 +419,8 @@ Per-epoch TPM objects (Q32, option B) are evaluated with the M9 self-hosted pack
 | App chain anchor key, per cell | Composite Ed25519 plus ML-DSA-65 | App chain level 2 key, purpose `Anchor`. This is the "Level 2 key of the cell" of the table above | Re-sealed under each new epoch. Replaced yearly. Old public keys stay in the anchor key history the witness holds |
 | Vault chain anchor key, per cell | Composite | Vault chain level 2 key, purpose `Anchor` | As above |
 | Vault ticket key, per cell | Ed25519 | App chain level 2 key, purpose `Ticket` | Yearly, and on suspicion. The vault pins the current and the next public key |
-| Witness receipt key | Composite | The witness's own ControlPlane custody entry, with a separate credential | Yearly. Cells pin a set of witness keys. A new key is announced signed by the old one |
+| Witness receipt key, SaaS | Composite | The witness's own ControlPlane custody entry, with a separate credential | Yearly. Cells pin a set of witness keys. A new key is announced signed by the old one |
+| Witness receipt key, self-hosted | Composite | A separate `fstp-keyd` entry of the local witness, chain ControlPlane, with its own credential (Q-D, below) | As the SaaS key |
 | Licence token key | Ed25519 | Control-plane custody, level 2 under chain ControlPlane | Yearly. A key-transition statement signed by the current key adds the next one |
 | Staff assertion key, operator ticket key | Composite | Control-plane custody, level 2 under chain ControlPlane | Yearly. Each cell pins the current and the next public key at provisioning |
 | Restore declaration key | Composite | Control-plane custody, level 2 under chain ControlPlane, held by `fstp-control` | Yearly. The witness pins the current and the next public key. Interim, pending Daniel: proposed by ADR-012 (Declared restores at the witness) |
@@ -428,6 +430,17 @@ Per-epoch TPM objects (Q32, option B) are evaluated with the M9 self-hosted pack
 - Release root and release signing keys are not built in M3 (I-91 is an M9 exit). The two-tier release signing above stands unchanged.
 - ML-DSA-65 halves come from moduletto (I-75), and every composite verifier requires both halves (I-90).
 - moduletto has no ML-DSA-65 yet. Until the pull request of ADR-001 A2 lands, every composite key above refuses to sign with a typed error, and none is created in production. aws-lc-rs ML-DSA is never a production fallback (Daniel, 2026-10-28).
+
+### Self-hosted witness receipt key
+
+Decided by Daniel on 2026-11-13 (m3-finish Q-D, ADR-010 open point 6): the receipt key of a self-hosted local witness has a separate `fstp-keyd` entry with its own credential.
+
+- The entry belongs to the witness alone. Its chain is ControlPlane. The credential is readable only by the `fstp-witness` OS user, and no other component's credential can use the entry.
+- `fstp-install` creates the entry and the key at first start, before it starts the witness (design section 9.5, step 6). B-06 defers the installer, so the M3 test world plays this step.
+- The key is a level 2 key. Its secret half is the 64-byte composite private key of `CompositeSigningKey::to_bytes`, sealed under the epoch seal key `S(e)` of the entry. Those bytes are sealed for this one key only (ADR-010, "Component key reuse").
+- Interim, pending Daniel: the seal binds purpose `Anchor` (code 9), the composite signing key purpose, with chain ControlPlane. The owner and the chain keep it apart from any anchor key, so no new purpose code is added.
+- Interim, pending Daniel: the key file `receipt.key` in the witness credentials directory. It holds the custody root reference, the wrapped `S(e)` and the sealed secret. Its layout is in `fstp_witness::config`, with a fuzz target from its first commit.
+- The SaaS witness keeps its own ControlPlane custody entry, as the table above says. Until the OKMS client takes a ControlPlane entry, the SaaS witness process reads its key through the same `fstp-keyd` path.
 
 ### Reconciliation
 
@@ -487,5 +500,5 @@ W2f also checks these items on the host side.
 
 - The purpose code table above is Proposed (m3-finish Q-E). Daniel accepts it, or names other codes, before the F-CRYPTO lane merges.
 - Self-hosted physical cluster backups need a ClusterBackup chain entry, which M3 design section 9.5 does not list. Proposed: `fstp-install` creates one per local cluster, usable only through the root-only console socket.
-- The self-hosted witness needs custody for its receipt key, which section 9.5 also omits. Proposed: a `fstp-keyd` ControlPlane entry with its own socket for the `fstp-witness` OS user.
+- The self-hosted witness needs custody for its receipt key, which section 9.5 also omits. Proposed: a `fstp-keyd` ControlPlane entry with its own socket for the `fstp-witness` OS user. Decided by Daniel on 2026-11-13 (m3-finish Q-D): a separate `fstp-keyd` entry with its own credential. Recorded under "Self-hosted witness receipt key".
 - ADR-001 lists the aws-lc-rs functions in use. The ADR-001 amendment of 2026-10-28 adds PBKDF2-HMAC-SHA-256 for the file custody key table and AES-256-GCM-SIV as a conditional fallback (ADR-001 A8). Daniel accepted A8 with that amendment on 2026-10-28, so the file custody KDF is no longer blocked on it.

@@ -22,6 +22,11 @@ fstp-pki.workspace = true
 # In-house edge of lane int5: the ECDSA P-256 check that binds a client
 # certificate to the pinned cell CA that signed it (ADR-010 "Witnesses").
 fstp-crypto.workspace = true
+# In-house edges of lane F-CP: the process configuration (JSON), and the
+# receipt key through the witness's own fstp-keyd entry (ADR-004 part 2).
+fstp-json.workspace = true
+fstp-keys.workspace = true
+fstp-custody.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
