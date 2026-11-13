@@ -129,7 +129,27 @@ fn receiving<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<Mai
                 }
             }
             (Some(StateTag::Stage2), Role::Applicant) => {
-                out.push(MailItem::new(MailKind::Stage2Respond, at));
+                // MB-Q2 (decided by Daniel on 2026-11-13): one message per
+                // unanswered question, as the journal folds the answers.
+                // A thread the journal does not hold keeps one message for
+                // the proposal, and its page says why it cannot load.
+                let unanswered = lock(&call.st.journal).unanswered(proposal);
+                match unanswered {
+                    Ok(list) => {
+                        for (n, asked) in list {
+                            let mut m = MailItem::new(
+                                MailKind::Stage2Respond,
+                                MailRefs {
+                                    question: Some(u128::from(n)),
+                                    ..at
+                                },
+                            );
+                            m.since = Some(asked);
+                            out.push(m);
+                        }
+                    }
+                    Err(_) => out.push(MailItem::new(MailKind::Stage2Respond, at)),
+                }
             }
             (Some(StateTag::Negotiation), _)
                 if !lock(&call.st.content).acknowledged(account, proposal) =>

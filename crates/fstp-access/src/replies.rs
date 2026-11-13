@@ -1162,6 +1162,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("href", Shape::String),
                     // MB-Q1, ADR-020: a notice's per-account read mark.
                     opt("read", Shape::Bool),
+                    // MB-Q2: the ordinal of an unanswered stage 2 question.
+                    opt("question", Shape::Id),
                     opt("since", Shape::Id),
                     opt("due", Shape::Id),
                     opt("proposal", Shape::Id),

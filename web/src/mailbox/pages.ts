@@ -22,7 +22,7 @@ import { createI18n, type I18n, type Label } from "../core/i18n.js";
 import { anyObject, call as command } from "../creator/ops.js";
 import { OPERATIONS, VALIDATORS } from "../gen/api.js";
 import { MAILBOX_LABELS } from "./messages.en.js";
-import { type MailMessage, type Mailbox, MAILBOX_PATHS, dayOf, labelArgs, labelKey, readMailbox, split } from "./model.js";
+import { type MailMessage, type Mailbox, MAILBOX_PATHS, dayOf, labelArgs, messageKey, readMailbox, split } from "./model.js";
 
 let catalogue: I18n | null = null;
 
@@ -103,7 +103,7 @@ function item(m: MailMessage, reload: () => void): HTMLElement {
   if (due !== null) {
     meta.push(mailboxLabel("mailbox.due", { day: due }));
   }
-  const what: (HTMLElement | string)[] = [h("a", { href: m.href, "data-mail-link": m.kind }, [mailboxLabel(labelKey(m.kind), labelArgs(m, MAILBOX_LABELS[labelKey(m.kind)] ?? ""))])];
+  const what: (HTMLElement | string)[] = [h("a", { href: m.href, "data-mail-link": m.kind }, [mailboxLabel(messageKey(m), labelArgs(m, MAILBOX_LABELS[messageKey(m)] ?? ""))])];
   if (m.read !== null) {
     what.push(" ", h("span", { class: m.read ? "badge" : "badge badge--info", "data-read": String(m.read) }, [mailboxLabel(m.read ? "mailbox.read" : "mailbox.unread")]));
   }

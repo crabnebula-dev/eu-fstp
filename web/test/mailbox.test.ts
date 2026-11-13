@@ -9,7 +9,7 @@ import { SCHEMAS, VALIDATORS } from "../src/gen/api.js";
 import { HOME_LABELS } from "../src/home/messages.en.js";
 import { WORK_PATHS } from "../src/home/model.js";
 import { MAILBOX_LABELS } from "../src/mailbox/messages.en.js";
-import { M5_ROUTES, MAILBOX_PATHS, MAILBOX_ROUTES, MAIL_KINDS, type MailKind, fills, labelArgs, labelKey, readMailbox, split } from "../src/mailbox/model.js";
+import { M5_ROUTES, MAILBOX_PATHS, MAILBOX_ROUTES, MAIL_KINDS, type MailKind, fills, labelArgs, labelKey, messageKey, readMailbox, split } from "../src/mailbox/model.js";
 import { mailboxLabel, readPendingList } from "../src/mailbox/pages.js";
 import { MAILBOX_PAGE_ROUTES } from "../src/mailbox/routes.js";
 import { assert, eq, show, test } from "./support/harness.js";
@@ -199,4 +199,17 @@ test("adr020_i27_mailbox_reader_reads_the_read_mark_of_notices_only", () => {
   ]) {
     eq(readMailbox(bad), null, show(bad));
   }
+});
+
+/** R-EV-05, MB-Q2 (decided by Daniel on 2026-11-13): a stage 2 message names its question, its label shows the ordinal, and the id stays unique per question. */
+test("r_ev_05_mailbox_stage2_message_names_its_question", () => {
+  const one = { ...msg("stage2.respond"), id: "stage2.respond:11:1", question: "1" };
+  const two = { ...msg("stage2.respond"), id: "stage2.respond:11:2", question: "2" };
+  const b = readMailbox(reply([one, two]));
+  assert(b !== null, "two questions read");
+  const m = b.messages[1];
+  assert(m !== undefined, "the second");
+  eq(messageKey(m), "mailbox.kind.stage2.respond.question", "the per-question label");
+  eq(String(mailboxLabel(messageKey(m), labelArgs(m, MAILBOX_LABELS[messageKey(m)] ?? ""))), "Answer question 2 on proposal 11", "the label");
+  eq(readMailbox(reply([{ ...one, question: "first" }])), null, "a question is a decimal id");
 });

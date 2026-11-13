@@ -192,11 +192,14 @@ pub struct MailRefs {
     pub pending: Option<u128>,
     /// The programme.
     pub programme: Option<u128>,
+    /// The ordinal of an unanswered stage 2 question in its thread, from 1
+    /// (MB-Q2). Part of the id, and shown in the label.
+    pub question: Option<u128>,
 }
 
 impl MailRefs {
     /// The members as the wire names them, with their values.
-    fn members(&self) -> [(&'static str, Option<u128>); 8] {
+    fn members(&self) -> [(&'static str, Option<u128>); 9] {
         [
             ("proposal", self.proposal),
             ("call", self.call),
@@ -206,6 +209,7 @@ impl MailRefs {
             ("request", self.request),
             ("pending", self.pending),
             ("programme", self.programme),
+            ("question", self.question),
         ]
     }
 
@@ -424,6 +428,7 @@ pub(crate) fn samples() -> MailboxView {
         request: Some(6),
         pending: Some(7),
         programme: Some(8),
+        question: Some(9),
     };
     MailboxView::new(
         MailKind::ALL
@@ -456,6 +461,7 @@ mod tests {
             request: Some(16),
             pending: Some(17),
             programme: Some(18),
+            question: Some(19),
         }
     }
 
@@ -552,6 +558,8 @@ mod tests {
                     "request",
                     "pending",
                     "programme",
+                    "question",
+                    "read",
                 ]
                 .contains(k),
                 "{k}"

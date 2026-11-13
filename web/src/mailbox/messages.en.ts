@@ -26,6 +26,7 @@ export const MAILBOX_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "mailbox.kind.pending.confirm": "Confirm or discard an action your agent prepared",
   "mailbox.kind.proposal.submit": "Submit proposal {proposal} before the deadline",
   "mailbox.kind.stage2.respond": "Answer the stage 2 questions on proposal {proposal}",
+  "mailbox.kind.stage2.respond.question": "Answer question {question} on proposal {proposal}",
   "mailbox.kind.negotiation.acknowledge": "Read and acknowledge the negotiation notice of proposal {proposal}",
   "mailbox.kind.review.declare": "Declare any conflict on proposal {proposal}",
   "mailbox.kind.review.score": "Score proposal {proposal}",

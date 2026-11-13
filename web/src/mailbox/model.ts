@@ -83,6 +83,8 @@ export const ID_MEMBERS = [
   "request",
   "pending",
   "programme",
+  // MB-Q2: the ordinal of an unanswered stage 2 question.
+  "question",
 ] as const;
 
 /** One id member. */
@@ -233,6 +235,14 @@ export function readMailbox(v: unknown): Mailbox | null {
 /** The catalogue key of a message's label: `mailbox.kind.<kind>`. */
 export function labelKey(kind: MailKind): string {
   return `mailbox.kind.${kind}`;
+}
+
+/**
+ * The catalogue key of message `m`: its kind's key, or for a stage 2
+ * message that names its question, the per-question key (MB-Q2).
+ */
+export function messageKey(m: MailMessage): string {
+  return m.kind === "stage2.respond" && m.ids.question !== undefined ? "mailbox.kind.stage2.respond.question" : labelKey(m.kind);
 }
 
 /**

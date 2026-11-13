@@ -4368,6 +4368,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "action": { schema: { kind: "bool" }, optional: false },
           "href": { schema: { kind: "string" }, optional: false },
           "read": { schema: { kind: "bool" }, optional: true },
+          "question": { schema: { kind: "id" }, optional: true },
           "since": { schema: { kind: "id" }, optional: true },
           "due": { schema: { kind: "id" }, optional: true },
           "proposal": { schema: { kind: "id" }, optional: true },

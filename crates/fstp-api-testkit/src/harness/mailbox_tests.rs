@@ -52,13 +52,15 @@ fn seeder(w: Built) -> Seeder {
 }
 
 /// The members a message may hold (design section 1).
-const MEMBERS: [&str; 15] = [
+const MEMBERS: [&str; 16] = [
     "id",
     "kind",
     "action",
     "href",
     // MB-Q1 (ADR-020): a notice's read mark.
     "read",
+    // MB-Q2: the ordinal of an unanswered stage 2 question.
+    "question",
     "since",
     "due",
     "proposal",
@@ -72,7 +74,8 @@ const MEMBERS: [&str; 15] = [
 ];
 
 /// The id members of a message.
-const IDS: [&str; 10] = [
+const IDS: [&str; 11] = [
+    "question",
     "since",
     "due",
     "proposal",
@@ -231,7 +234,21 @@ const STATES: [StateTag; 11] = [
 fn i86_r_ac_01_mailbox_points_only_at_pages_the_reader_may_read() {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for state in STATES {
-        let mut seed = seeder(world(state));
+        let w = world(state);
+        let asking = w.targets.assignments.get(&REVIEWER).copied();
+        let mut seed = seeder(w);
+        // MB-Q2 (2026-11-13): `stage2.respond` names an unanswered question,
+        // so a reviewer asks one in STAGE2 before the mailboxes are read.
+        if state == StateTag::Stage2 {
+            let a = asking.expect("the reviewer's assignment in STAGE2");
+            seed.api(
+                REVIEWER,
+                POST,
+                &format!("/assignments/{}/questions", a.raw()),
+                &obj(vec![("text", s("SYNTHETIC QUESTION"))]),
+            )
+            .unwrap_or_else(|e| panic!("ask: {e}"));
+        }
         for who in Who::ALL {
             if Variant::of(who) != Variant::Main {
                 continue;
@@ -621,7 +638,7 @@ fn adr020_i86_notice_read_mark_is_per_account() {
 /// mark, and a malformed body is refused.
 #[test]
 fn adr020_mb_d2_work_messages_take_no_read_mark() {
-    let mut seed = seeder(world(StateTag::Stage2));
+    let mut seed = seeder(world(StateTag::Negotiation));
     let v = mailbox(&mut seed, LEAD);
     let work: Vec<String> = messages(&v)
         .into_iter()
@@ -635,4 +652,74 @@ fn adr020_mb_d2_work_messages_take_no_read_mark() {
         .api(LEAD, POST, "/me/mailbox/read", &obj(vec![("id", s("x"))]))
         .expect_err("a malformed body");
     assert!(!e.is_empty());
+}
+
+/// The `question` ordinals of the lead's `stage2.respond` messages.
+fn questions(v: &Value) -> Vec<String> {
+    messages(v)
+        .into_iter()
+        .filter(|m| text(m, "kind") == "stage2.respond")
+        .map(|m| text(&m, "question").to_owned())
+        .collect()
+}
+
+/// R-EV-05, MB-Q2 (decided by Daniel on 2026-11-13), MB-D2: in STAGE2
+/// the lead gets one `stage2.respond` message per unanswered question,
+/// each naming its ordinal and the instant it was asked. The team's
+/// answer closes every question asked before it, and a later question
+/// opens a message of its own. Only the lead gets them (I-86).
+#[test]
+fn r_ev_05_mailbox_stage2_has_one_message_per_unanswered_question() {
+    let w = world(StateTag::Stage2);
+    let x = w.targets.proposal.expect("X");
+    let a1 = *w
+        .targets
+        .assignments
+        .get(&REVIEWER)
+        .expect("R's assignment");
+    let a2 = *w
+        .targets
+        .assignments
+        .get(&REVIEWER_2)
+        .expect("R2's assignment");
+    let mut seed = seeder(w);
+    let ask = |seed: &mut Seeder, a: AssignmentId, who: AccountId| {
+        seed.api(
+            who,
+            POST,
+            &format!("/assignments/{}/questions", a.raw()),
+            &obj(vec![("text", s("SYNTHETIC QUESTION"))]),
+        )
+        .unwrap_or_else(|e| panic!("ask: {e}"));
+    };
+    let n = questions(&mailbox(&mut seed, LEAD)).len();
+    assert_eq!(n, 0, "no question is asked yet");
+    ask(&mut seed, a1, REVIEWER);
+    ask(&mut seed, a2, REVIEWER_2);
+    let v = mailbox(&mut seed, LEAD);
+    check_reply(&v, &WORLD_TEXTS, Who::Lead);
+    let open = questions(&v);
+    assert_eq!(open.len(), n + 2, "{}", v.to_compact());
+    let ids = of_kind(&v, "stage2.respond");
+    let unique: BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "one id per question: {ids:?}");
+    assert!(
+        questions(&mailbox(&mut seed, TEAM)).is_empty(),
+        "the lead answers (I-86)"
+    );
+    seed.api(
+        LEAD,
+        POST,
+        &format!("/proposals/{}/stage2/answers", x.raw()),
+        &obj(vec![("text", s("SYNTHETIC ANSWERS"))]),
+    )
+    .unwrap_or_else(|e| panic!("answer: {e}"));
+    assert!(
+        questions(&mailbox(&mut seed, LEAD)).is_empty(),
+        "MB-D2: the answer closes every earlier question"
+    );
+    ask(&mut seed, a1, REVIEWER);
+    let later = questions(&mailbox(&mut seed, LEAD));
+    assert_eq!(later.len(), 1, "{later:?}");
+    assert_eq!(later[0], (n + 3).to_string(), "the ordinal in the thread");
 }
