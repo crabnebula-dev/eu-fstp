@@ -61,7 +61,10 @@
 //! - Lane dsa merged on 2026-10-29. Its two seams are gone:
 //!   `fstp_crypto::composite::generate` succeeds, and
 //!   [`prod_composite_public_key`] returns `key.public_key().to_bytes()`.
-//! - W2e replaces [`STORE_SEAM`].
+//! - Lane m3/i24-store replaced [`STORE_SEAM`]. [`prod_store_batch`]
+//!   appends through the cell's anchoring store and reads the chain
+//!   back. The same batch through `fstp_pgstore::PgRecordStore` stays
+//!   open.
 //! - Lane m3/seams-custody replaced the reconciliation seams. Custody
 //!   calls carry request ids end to end (`fstp_custody::with_request`
 //!   and the shared usage record of `fstp_custody::usage`), and
@@ -115,12 +118,15 @@ pub const RECEIPT_SIGN_SEAM: &str = "fstp_celltest::mc::audit_model::prod_sign_r
 /// no scheduled task runs it daily and raises `CustodyAnomaly`.
 pub const RECONCILE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_reconcile: no daily task runs fstp_custody::usage::reconcile and raises CustodyAnomaly (ADR-004 Reconciliation)";
 
-/// Lane W2e landed `fstp_pgstore::PgRecordStore`, whose append writes
-/// ledger entries, chain rows and anchor rows. This seam still needs a
-/// granted cell database, which waits on `fstp_control::pg::cell_role_plan`
-/// (lane W2h), and production anchor signing (lane W2g). The test that
-/// calls it also waits on [`VERIFY_SEAM`].
-pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: a granted cell database waits on fstp_control::pg::cell_role_plan (lane W2h) and anchor signing on fstp_audit::anchor::sign_anchor (lane W2g); lane W2e landed PgRecordStore";
+/// Not a seam since lane m3/i24-store: [`prod_store_batch`] appends
+/// through the cell's anchoring store, `fstp_cell::witness::store::
+/// AnchoredStore`, with the `fstp_audit` anchorer and the `fstp_witness`
+/// core behind the production witness client. A refusal of any step
+/// stops the test under this name. Still open: the same batch through
+/// `fstp_pgstore::PgRecordStore` over a granted cell database, which
+/// the shared store harness of the test crate provisions and this
+/// library cannot reach.
+pub const STORE_SEAM: &str = "fstp_celltest::mc::audit_model::prod_store_batch: the production anchoring store, its witness or its read-back refused the batch";
 
 /// The cell keystore writes a `RecordKeyOp` ledger record per call with
 /// the request id the call carries, and [`prod_key_ops_of_chain`] reads
@@ -250,13 +256,283 @@ pub struct StoredBatch {
     pub seqs: Vec<u64>,
 }
 
+/// The command id of the append of [`prod_store_batch`].
+const STORE_COMMAND: [u8; 16] = *b"i24-store-batch1";
+
+/// The commit time of [`prod_store_batch`], UTC microseconds (2027-01-15).
+const STORE_AT: i64 = 1_800_000_000_000_000;
+
+/// The SPKI digest of the witness CA that the store's witness client
+/// pins. The in-process link reports it for its one peer.
+const STORE_WITNESS_CA: [u8; 32] = [0x57; 32];
+
+/// The `fstp_witness` core of `CELL`'s App chain, its receipt key and its
+/// log, as the witness service keeps them.
+struct StoreWitness {
+    core: std::sync::Mutex<fstp_witness::ChainWitness>,
+    key: fstp_crypto::composite::CompositeSigningKey,
+    log: std::sync::Mutex<Vec<fstp_audit::WitnessRecord>>,
+}
+
+/// An in-process [`fstp_cell::witness::WitnessLink`] to a
+/// [`StoreWitness`]. It carries each message of the production witness
+/// client to the witness core as the witness service does: a prepare is
+/// receipted with `fstp_witness::sign_receipt`, and every recorded
+/// message is logged.
+#[derive(Clone)]
+struct StoreWitnessLink(std::sync::Arc<StoreWitness>);
+
+fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+impl StoreWitnessLink {
+    fn answer(
+        &self,
+        message: fstp_cell::witness::WitnessMessage,
+    ) -> fstp_cell::witness::WitnessReply {
+        use fstp_cell::witness::{WitnessMessage, WitnessReply};
+        let sender = fstp_witness::Sender::writer(CellId(CELL), ChainId::App);
+        let mut core = locked(&self.0.core);
+        match message {
+            WitnessMessage::Prepare(p) => match core.prepare(sender, &p, p.anchor.at) {
+                Err(_) => WitnessReply::Refused,
+                Ok(fields) => {
+                    match fstp_witness::sign_receipt(
+                        &self.0.key,
+                        CellId(CELL),
+                        ChainId::App,
+                        &fields,
+                    ) {
+                        Err(_) => WitnessReply::Refused,
+                        Ok(receipt) => {
+                            locked(&self.0.log).push(fstp_audit::WitnessRecord::Prepare(
+                                fstp_audit::AnchorRow {
+                                    anchor: p.anchor.clone(),
+                                    receipt: receipt.clone(),
+                                },
+                            ));
+                            WitnessReply::Receipt(receipt)
+                        }
+                    }
+                }
+            },
+            WitnessMessage::Abort { n, link } => match core.abort(sender, n, &link) {
+                Ok(_) => {
+                    locked(&self.0.log).push(fstp_audit::WitnessRecord::Abort { n, link });
+                    WitnessReply::Recorded
+                }
+                Err(_) => WitnessReply::UnknownPrepare,
+            },
+            WitnessMessage::InDoubtAbsent { n, link } => {
+                match core.in_doubt_absent(sender, n, &link) {
+                    Ok(_) => {
+                        locked(&self.0.log)
+                            .push(fstp_audit::WitnessRecord::InDoubtAbsent { n, link });
+                        WitnessReply::Recorded
+                    }
+                    Err(_) => WitnessReply::UnknownPrepare,
+                }
+            }
+        }
+    }
+}
+
+impl fstp_cell::witness::WitnessLink for StoreWitnessLink {
+    fn peer_issuer(
+        &self,
+    ) -> impl std::future::Future<Output = Result<[u8; 32], fstp_audit::anchorer::WitnessFault>> + Send
+    {
+        std::future::ready(Ok(STORE_WITNESS_CA))
+    }
+
+    fn send(
+        &self,
+        message: fstp_cell::witness::WitnessMessage,
+    ) -> impl std::future::Future<
+        Output = Result<fstp_cell::witness::WitnessReply, fstp_audit::anchorer::WitnessFault>,
+    > + Send {
+        std::future::ready(Ok(self.answer(message)))
+    }
+
+    fn outstanding(
+        &self,
+        _cell: CellId,
+        _chain: ChainId,
+    ) -> impl std::future::Future<
+        Output = Result<Option<(u64, Link)>, fstp_audit::anchorer::WitnessFault>,
+    > + Send {
+        std::future::ready(Ok(locked(&self.0.core).state().outstanding))
+    }
+
+    fn log(
+        &self,
+        _cell: CellId,
+        _chain: ChainId,
+    ) -> impl std::future::Future<
+        Output = Result<Vec<fstp_audit::WitnessRecord>, fstp_audit::anchorer::WitnessFault>,
+    > + Send {
+        std::future::ready(Ok(locked(&self.0.log).clone()))
+    }
+}
+
+/// The reference fields of a production anchor.
+fn ref_anchor_fields(a: &fstp_audit::Anchor) -> r::AnchorFields {
+    r::AnchorFields {
+        n: a.n,
+        link: a.link.0,
+        at: a.at,
+    }
+}
+
 /// Appends `batch` through the production store and anchorer, against a
-/// fresh App chain. Refuses with [`STORE_SEAM`].
+/// fresh App chain of [`CELL`], as one append of one command (design
+/// section 5.3, ADR-010).
+///
+/// The store is `fstp_cell::witness::store::AnchoredStore` over its
+/// in-memory database. It seals each record under the ledger key, links
+/// one kind 1 row per entry with `fstp_audit::ChainWriter`, signs the
+/// anchor with `fstp_audit::anchor::sign_anchor`, and runs the
+/// `fstp_audit` anchorer: prepare, receipt, commit. Its witness is the
+/// production `fstp_cell::witness::WitnessClient` over the
+/// `fstp_witness` core, which checks every receipt under the pinned
+/// witness key. The chain is then read back as an auditor reads it: the
+/// stored rows, the sealed ledger entries, the anchor rows and the
+/// witness log. Signatures stay out of the result, since the verifier
+/// signs a view with its own keys.
+///
+/// # Errors
+///
+/// [`STORE_SEAM`] when a key, the append or the read-back fails.
 pub fn prod_store_batch(
     batch: &[fstp_cell_core::CellRecord],
 ) -> Result<StoredBatch, NotImplemented> {
-    let _ = batch;
-    Err(NotImplemented::new(STORE_SEAM))
+    use fstp_cell::witness::WitnessClient;
+    use fstp_cell::witness::store::{AnchoredStore, Database as _, MemDatabase, StoreKeys};
+    use fstp_ledger::{AsyncRecordStore as _, Seq};
+
+    fn fail<E>(_: E) -> NotImplemented {
+        NotImplemented::new(STORE_SEAM)
+    }
+    let witness = StoreWitnessLink(std::sync::Arc::new(StoreWitness {
+        core: std::sync::Mutex::new(fstp_witness::ChainWitness::genesis(
+            CellId(CELL),
+            ChainId::App,
+        )),
+        key: fstp_crypto::composite::generate().map_err(fail)?,
+        log: std::sync::Mutex::new(Vec::new()),
+    }));
+    let keys = StoreKeys {
+        anchor: fstp_crypto::composite::generate().map_err(fail)?,
+        ledger: fstp_keys::envelope::DataKey::generate().map_err(fail)?,
+        witness: vec![witness.0.key.public_key().to_bytes().to_vec()],
+    };
+    let client = WitnessClient::new(
+        witness.clone(),
+        CellId(CELL),
+        ChainId::App,
+        STORE_WITNESS_CA,
+    );
+    let mut store = AnchoredStore::new(MemDatabase::new(), client, CELL, keys).map_err(fail)?;
+    let head = fstp_rt::future::block_on(async {
+        store.start().await?;
+        store
+            .append(Seq::ZERO, STORE_AT, STORE_COMMAND, batch.to_vec())
+            .await
+            .map_err(|_| fstp_ledger::StoreError::Unavailable)
+    })
+    .map_err(fail)?;
+
+    // The plaintext ledger names the seq of each record, in batch order.
+    let tables = store.db().tables();
+    let mut entries = Vec::new();
+    fstp_ledger::RecordStore::read(
+        tables.ledger(),
+        Seq::ZERO,
+        batch.len().saturating_add(1),
+        &mut entries,
+    )
+    .map_err(fail)?;
+    if entries.len() != batch.len()
+        || entries.last().map(|e| e.seq) != Some(head)
+        || entries.iter().zip(batch).any(|(e, rec)| e.record != *rec)
+    {
+        return Err(NotImplemented::new(STORE_SEAM));
+    }
+    let seqs = entries.iter().map(|e| e.seq.raw()).collect();
+
+    let read = store.db().read_chain();
+    let rows = read
+        .rows
+        .iter()
+        .map(|r| crate::reference::audit::RefRow {
+            n: r.row.n,
+            at: r.row.at,
+            kind: match &r.row.kind {
+                RowKind::Ledger { seq } => RefRowKind::Ledger { seq: *seq },
+                RowKind::Event { body } => RefRowKind::Event { body: body.clone() },
+            },
+            stored_hash: r.row.stored_hash,
+            link: r.link.0,
+        })
+        .collect();
+    let ledger = read
+        .stored
+        .iter()
+        .map(|e| RefLedgerEntry {
+            seq: e.seq,
+            at: e.at,
+            command: e.command,
+            schema: e.schema,
+            key_ix: e.key_ix,
+            body: e.body.clone(),
+        })
+        .collect();
+    let anchors = read
+        .anchors
+        .iter()
+        .map(|a| SymAnchorRow {
+            anchor: ref_anchor_fields(&a.anchor),
+            receipt: ref_receipt(&a.receipt.fields),
+            forgery: None,
+        })
+        .collect();
+    let log = locked(&witness.0.log).clone();
+    let witness_log = log
+        .iter()
+        .map(|w| match w {
+            fstp_audit::WitnessRecord::Prepare(row) => SymWitnessRecord::Prepare {
+                anchor: ref_anchor_fields(&row.anchor),
+                receipt: ref_receipt(&row.receipt.fields),
+            },
+            fstp_audit::WitnessRecord::Abort { n, link } => SymWitnessRecord::Abort {
+                n: *n,
+                link: link.0,
+            },
+            fstp_audit::WitnessRecord::InDoubtAbsent { n, link } => {
+                SymWitnessRecord::InDoubtAbsent {
+                    n: *n,
+                    link: link.0,
+                }
+            }
+        })
+        .collect();
+    let witness_state = ref_witness_state(&locked(&witness.0.core));
+    Ok(StoredBatch {
+        chain: SymChain {
+            cell: CELL,
+            chain: RefChain::App,
+            store: SymStore {
+                rows,
+                ledger,
+                anchors,
+            },
+            witness_state,
+            witness: witness_log,
+            wal: Vec::new(),
+        },
+        seqs,
+    })
 }
 
 /// One custody round of the production cell keystore: the roots it used,
