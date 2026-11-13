@@ -8,8 +8,8 @@
 //!   one `+`. `LicenseRef-` and `DocumentRef-…:LicenseRef-` references are
 //!   kept as references. The parser does not hold the SPDX licence list, so
 //!   P-26 is the gate on which identifiers count (R-PR-02).
-//! - The input is at most [`MAX_LEN`] bytes and nests at most
-//!   [`MAX_DEPTH`] parentheses.
+//! - The input and its canonical form are each at most [`MAX_LEN`] bytes,
+//!   and the input nests at most [`MAX_DEPTH`] parentheses.
 
 use std::fmt;
 
@@ -52,7 +52,7 @@ pub enum Expr {
 pub enum SpdxError {
     /// No expression.
     Empty,
-    /// Longer than [`MAX_LEN`].
+    /// Longer than [`MAX_LEN`], as written or in canonical form.
     TooLong,
     /// Nested deeper than [`MAX_DEPTH`].
     TooDeep,
@@ -249,7 +249,30 @@ pub fn parse(s: &str) -> Result<Expr, SpdxError> {
     if p.at < p.toks.len() {
         return Err(SpdxError::Unexpected(p.at));
     }
+    // The canonical form can be longer than the input, since it puts a
+    // space on both sides of every operator. Refusing it here keeps every
+    // accepted expression within reach of its own canonical form.
+    if rendered_len(&e) > MAX_LEN {
+        return Err(SpdxError::TooLong);
+    }
     Ok(e)
+}
+
+/// Counts the bytes of a rendering without keeping them.
+struct Counter(usize);
+
+impl fmt::Write for Counter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 = self.0.saturating_add(s.len());
+        Ok(())
+    }
+}
+
+fn rendered_len(e: &Expr) -> usize {
+    let mut c = Counter(0);
+    // Counter never fails, and the Display impl only forwards its errors.
+    let _ = fmt::Write::write_fmt(&mut c, format_args!("{e}"));
+    c.0
 }
 
 fn listed(set: &LicenceSet, id: &str) -> bool {

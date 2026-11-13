@@ -171,3 +171,60 @@ fn r_pr_02_licence_tag_detection() {
     );
     assert_eq!(detect(&[0xff, 0xfe, 0x00]), Detected::Absent);
 }
+
+/// The input of CI fuzz run 43337494359 (target `spdx_expression`). It is
+/// 510 bytes, but its canonical form is longer than [`MAX_LEN`], because
+/// rendering puts a space on both sides of every operator.
+const FUZZ_43337494359: &str = concat!(
+    "MINoMIT OR (he1-0ADMM\tAND (e\tAND (1 OR .)OR .MM\tAND (e\t",
+    "AND (1 OR .)OR .)\t\tAND (1 OR .)OR 8MM\tAND (e\t",
+    "AND (1 OR .)OR .)\tAND (e\tAND (e1 OR .)OR .))\tAND(e\t",
+    "AND (e1 OR .)AND (e\tAND (e1 OR .)OR .))\tAND(e.0pacse AND",
+    " T OR Ref--Apac AND Licenah OR .0 AND T OR .0aah OR .h \tAND (e1 ",
+    "OR .)OR .) AND 0 AND MsenseRInLiceLicensnu0 AND T OR .0aah OR .h",
+    " OR .ah OR .0h OR .0aah OR .0-1u0 AND MILicc AND Ms OR .0pacse A",
+    "ND T OR Ref--Apac AND Licenah OR .0 AND T OR .0aah OR .h OR .0aa",
+    "h OR .0h OR .0aah OR .0MseNDp OR .0NT OR (Apa))",
+);
+
+/// R-PR-02, TH-26: an expression whose canonical form would exceed
+/// [`MAX_LEN`] is refused as too long, so every accepted expression
+/// renders to a form that parses to the same tree. Regression for CI fuzz
+/// run 43337494359.
+#[test]
+fn r_pr_02_th_26_spdx_refuses_when_the_canonical_form_is_too_long() {
+    assert_eq!(FUZZ_43337494359.len(), 510);
+    assert_eq!(parse(FUZZ_43337494359), Err(SpdxError::TooLong));
+    // Each `)AND(` gains two spaces when rendered.
+    let mut tight = String::from("(A OR B)");
+    while tight.len().saturating_add(11) <= MAX_LEN {
+        tight.push_str("AND(A OR B)");
+    }
+    assert_eq!(parse(&tight), Err(SpdxError::TooLong));
+    // At the bound itself an expression still parses and round trips.
+    let mut fits = String::from("A");
+    while fits.len().saturating_add(6) <= MAX_LEN {
+        fits.push_str(" AND A");
+    }
+    let e = parse(&fits).unwrap();
+    assert_eq!(e.to_string(), fits);
+    assert_eq!(parse(&e.to_string()), Ok(e));
+}
+
+/// R-PR-02, TH-26: deep nesting is refused with a typed error and never
+/// exhausts the stack, whatever the length of the input.
+#[test]
+fn r_pr_02_th_26_spdx_deep_nesting_is_refused() {
+    let huge = format!("{}MIT{}", "(".repeat(100_000), ")".repeat(100_000));
+    assert_eq!(parse(&huge), Err(SpdxError::TooLong));
+    let open = "(".repeat(100_000);
+    assert_eq!(parse(&open), Err(SpdxError::TooLong));
+    let within = format!(
+        "{}MIT{}",
+        "(".repeat(MAX_LEN / 2 - 2),
+        ")".repeat(MAX_LEN / 2 - 2)
+    );
+    assert_eq!(parse(&within), Err(SpdxError::TooDeep));
+    let edge = format!("{}MIT{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
+    assert_eq!(parse(&edge), Ok(parse("MIT").unwrap()));
+}
