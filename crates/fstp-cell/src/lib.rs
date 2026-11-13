@@ -48,6 +48,7 @@ pub mod config;
 pub mod egress;
 pub mod engine;
 pub mod http;
+pub mod mail;
 pub mod process;
 pub mod routes;
 pub mod shell;

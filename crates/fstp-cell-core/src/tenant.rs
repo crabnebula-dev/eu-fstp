@@ -72,6 +72,22 @@ pub enum TenantCommand {
         /// The new credential id.
         credential: Vec<u8>,
     },
+    /// Create a new Receiving account by self-registration and enrol its
+    /// first passkey (design section 8.3, ceremony 2). Only the ceremony
+    /// route admission `gate::admit_self_registration` admits it, after
+    /// the route took the email proof token and the gate verified the
+    /// registration. The batch records the key that admission verified.
+    ///
+    /// Interim, pending Daniel (ADR-008 open point "Self-registration
+    /// without a passkey"): this form always enrols a passkey. The route
+    /// refuses the form without one, so the build neither requires nor
+    /// excludes it at the API.
+    EnrolBySelfRegistration {
+        /// The new account, drawn by the route with the email proof.
+        account: AccountId,
+        /// The new credential id.
+        credential: Vec<u8>,
+    },
 }
 
 /// A tenant record.

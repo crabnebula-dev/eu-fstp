@@ -1061,6 +1061,16 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
                 ("invitation", hex(invitation)),
             ],
         ),
+        TenantCommand::EnrolBySelfRegistration {
+            account,
+            credential,
+        } => tagged(
+            "EnrolBySelfRegistration",
+            vec![
+                ("account", account_json(*account)),
+                ("credential", hex(credential)),
+            ],
+        ),
     }
 }
 
@@ -1111,6 +1121,13 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
             fields(o, &["credential", "invitation"])?;
             Ok(TenantCommand::EnrolByInvitation {
                 invitation: array_from(o, "invitation")?,
+                credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
+            })
+        }
+        "EnrolBySelfRegistration" => {
+            fields(o, &["account", "credential"])?;
+            Ok(TenantCommand::EnrolBySelfRegistration {
+                account: account_from(o, "account")?,
                 credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
             })
         }

@@ -400,6 +400,38 @@ impl SeededVault {
         Ok(events)
     }
 
+    /// Seeds the synthetic fact `fact` from `source` at the cell's clock
+    /// instant, through `Vault::take_fact`, as [`SeededVault::seed_verification`]
+    /// does (design section 6.9). Lane F-CYCLE3 seeds over-18 attestations
+    /// and guardian consents this way. The fact becomes effective after the
+    /// cell's reaction (NOTE 4).
+    ///
+    /// # Errors
+    ///
+    /// As [`SeededVault::seed`].
+    pub async fn seed_vault_fact(
+        &self,
+        source: SeedSource,
+        fact: fstp_vault_core::fact::Fact,
+    ) -> Result<Vec<VaultEvent>, SeedError> {
+        let kind = fact.kind();
+        let (events, at) = self
+            .shared
+            .run(|v, now| (v.take_fact(fact, now), now))
+            .await
+            .map_err(|()| {
+                SeedError::NotImplemented(crate::NotImplemented::new(
+                    "fstp_celltest::seeded_vault: the vault database refused the seeded journal",
+                ))
+            })?;
+        let events = events.map_err(SeedError::from)?;
+        self.shared
+            .log()
+            .writes
+            .push(SeededWrite { source, kind, at });
+        Ok(events)
+    }
+
     /// Every seeded write so far.
     pub fn seed_log(&self) -> SeedLog {
         self.shared.log().clone()

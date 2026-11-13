@@ -368,14 +368,11 @@ async fn dispatch<B: Backend>(
         (Endpoint::PageAsset, _) => auth::page_asset(ctx, req, ""),
         (Endpoint::PageModule, _) => auth::page_asset(ctx, req, "pages/"),
         (Endpoint::MagicConsume, _) => auth::magic_consume(ctx, req).await,
-        (
-            Endpoint::SignupOptions
-            | Endpoint::Signup
-            | Endpoint::RecoveryRequest
-            | Endpoint::RecoveryEmail
-            | Endpoint::RecoveryComplete,
-            _,
-        ) => auth::not_built_ceremony(req),
+        (Endpoint::SignupOptions, _) => auth::signup_options(ctx, req).await,
+        (Endpoint::Signup, _) => auth::signup(ctx, req).await,
+        (Endpoint::RecoveryRequest | Endpoint::RecoveryEmail | Endpoint::RecoveryComplete, _) => {
+            auth::not_built_ceremony(req)
+        }
         (Endpoint::StepUpOptions, Some(c)) => auth::stepup_options(ctx, req, &c).await,
         (Endpoint::StepUp, Some(c)) => auth::stepup(ctx, req, &c).await,
         (Endpoint::PasskeyOptions | Endpoint::PasskeyAdd, Some(c)) => {

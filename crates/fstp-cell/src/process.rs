@@ -472,6 +472,8 @@ pub struct StartOptions {
     /// The creator shell the command route reads its facts from
     /// ([`crate::shell`]).
     pub creator_shell: Arc<dyn crate::shell::CreatorShell>,
+    /// The proof mail port of self-registration ([`crate::mail`]).
+    pub proof_mail: Arc<dyn crate::mail::ProofMail>,
 }
 
 impl Default for StartOptions {
@@ -479,6 +481,7 @@ impl Default for StartOptions {
         StartOptions {
             clock: crate::engine::system_commit_clock(),
             creator_shell: Arc::new(crate::shell::ProductionShell),
+            proof_mail: Arc::new(crate::mail::NoProofMail),
         }
     }
 }
@@ -525,6 +528,7 @@ where
     let StartOptions {
         clock,
         creator_shell,
+        proof_mail,
     } = options;
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
@@ -622,7 +626,8 @@ where
         PgBackend::new(started.engine.clone(), app_pool.clone(), keys.cred_lookup)
             .map_err(store_err)?
             .with_clock(Arc::clone(&clock))
-            .with_shell(creator_shell),
+            .with_shell(creator_shell)
+            .with_proof_mail(proof_mail),
     );
     let front_cfg = FrontConfig {
         cell,
@@ -838,6 +843,47 @@ impl<R: Runtime> RunningCell<R> {
         .map_err(store_err)?;
         self.engine.execute(admitted).await.map_err(store_err)?;
         Ok(FirstAdminToken { first, second })
+    }
+
+    /// The contract port's fact `event` of `contract` on `proposal` (M5
+    /// design section 4.1), as the system task
+    /// `fstp_cell_core::SystemTask::ContractPort`.
+    ///
+    /// Interim (lane F-CYCLE3): the cell runs no contract signature route
+    /// yet, so nothing in a serving cell calls this. A test world calls it
+    /// in process to stand for a completed signature, and its claims say
+    /// so. The gate admits only `ContractFact` under this task, and the
+    /// domain decides it with every guard of its row.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] when no random value is available, and
+    /// [`CellError::Store`] when the gate or the engine refuses.
+    pub async fn contract_fact(
+        &self,
+        proposal: fstp_domain::id::ProposalId,
+        contract: fstp_domain::id::ContractId,
+        event: fstp_domain::command::ContractEvent,
+    ) -> Result<(), CellError> {
+        let suffix = fstp_crypto::random_array::<8>().map_err(|_| CellError::Keys("ids"))?;
+        let now = fstp_domain::time::Timestamp::from_micros((self.clock)());
+        let action = gate::Action::Command(fstp_cell_core::CellCommand::Engine(
+            fstp_engine::Command::Core(fstp_domain::Command::ContractFact {
+                proposal,
+                contract,
+                event,
+            }),
+        ));
+        let admitted = gate::admit_system(
+            &self.engine.state(),
+            action,
+            fstp_cell_core::SystemTask::ContractPort,
+            fstp_cell_core::system_command_id(suffix),
+            now,
+        )
+        .map_err(store_err)?;
+        self.engine.execute(admitted).await.map_err(store_err)?;
+        Ok(())
     }
 
     /// Stops the listeners and the tasks, and waits up to `deadline` for

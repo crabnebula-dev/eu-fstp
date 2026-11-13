@@ -70,6 +70,7 @@ const fn purpose_code(p: ChallengePurpose) -> i16 {
         ChallengePurpose::Login => 1,
         ChallengePurpose::StepUp => 2,
         ChallengePurpose::Registration => 3,
+        ChallengePurpose::Signup => 4,
     }
 }
 
@@ -78,6 +79,7 @@ fn purpose_of(code: i16) -> Option<ChallengePurpose> {
         ChallengePurpose::Login,
         ChallengePurpose::StepUp,
         ChallengePurpose::Registration,
+        ChallengePurpose::Signup,
     ]
     .into_iter()
     .find(|p| purpose_code(*p) == code)
@@ -87,6 +89,7 @@ fn purpose_of(code: i16) -> Option<ChallengePurpose> {
 const fn token_code(k: TokenKind) -> i16 {
     match k {
         TokenKind::MagicLink => 1,
+        TokenKind::SignupProof => 2,
     }
 }
 
@@ -94,6 +97,7 @@ const fn token_code(k: TokenKind) -> i16 {
 const fn token_lifetime(k: TokenKind) -> i64 {
     match k {
         TokenKind::MagicLink => crate::routes::MAGIC_LINK_US,
+        TokenKind::SignupProof => fstp_cell_core::lifetimes::SIGNUP_PROOF_US,
     }
 }
 
@@ -125,6 +129,7 @@ pub struct PgBackend<R: Runtime> {
     logins: Mutex<BTreeMap<[u8; 16], Vec<u8>>>,
     clock: crate::engine::CommitClock,
     shell: Arc<dyn crate::shell::CreatorShell>,
+    proof_mail: Arc<dyn crate::mail::ProofMail>,
 }
 
 impl<R: Runtime> std::fmt::Debug for PgBackend<R> {
@@ -156,6 +161,7 @@ impl<R: Runtime> PgBackend<R> {
             logins: Mutex::new(BTreeMap::new()),
             clock: crate::engine::system_commit_clock(),
             shell: Arc::new(crate::shell::ProductionShell),
+            proof_mail: Arc::new(crate::mail::NoProofMail),
         })
     }
 
@@ -163,6 +169,13 @@ impl<R: Runtime> PgBackend<R> {
     #[must_use]
     pub fn with_shell(mut self, shell: Arc<dyn crate::shell::CreatorShell>) -> PgBackend<R> {
         self.shell = shell;
+        self
+    }
+
+    /// The same backend over the proof mail port `mail` (`crate::mail`).
+    #[must_use]
+    pub fn with_proof_mail(mut self, mail: Arc<dyn crate::mail::ProofMail>) -> PgBackend<R> {
+        self.proof_mail = mail;
         self
     }
 
@@ -464,6 +477,18 @@ impl<R: Runtime> Backend for PgBackend<R> {
         // keystore does not give yet (module documentation).
         let _ = (account, token);
         std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    fn send_signup_proof(
+        &self,
+        email: String,
+        token: [u8; 32],
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        std::future::ready(
+            self.proof_mail
+                .send(crate::mail::ProofKind::Signup, &email, token)
+                .map_err(fault),
+        )
     }
 
     fn stepup_asserted_at(

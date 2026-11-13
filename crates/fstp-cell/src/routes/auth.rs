@@ -17,8 +17,9 @@
 //! 501 after every check that applies before them:
 //! - Adding a passkey: the step-up digest of `AddPasskey` names a
 //!   credential id that the options call cannot know yet.
-//! - Self-registration, the recovery request and its email proof, and the
-//!   recovery completion: their routes are not written yet. Int3 added
+//! - The recovery request and its email proof, and the recovery
+//!   completion: their routes are not written yet. Self-registration is
+//!   built (lane F-CYCLE3) except its form without a passkey. Int3 added
 //!   `admit_recovery_request` and `admit_recovery_completion`, which
 //!   these routes are to call.
 
@@ -32,7 +33,7 @@ use fstp_auth::stepup::{StepUpRequest, challenge as stepup_challenge};
 use fstp_auth::{Method, SessionLifetimes, SessionView};
 use fstp_cell_core::gate::{
     Action, HighRiskAction, ReadAction, RouteDeny, admit_invitation_enrolment,
-    admit_verified_stepup, management_holders,
+    admit_self_registration, admit_verified_stepup, management_holders,
 };
 use fstp_cell_core::inputs::SessionRows;
 use fstp_cell_core::{CellCommand, CellState};
@@ -45,7 +46,8 @@ use fstp_webauthn::{AssertionResponse, RegistrationResponse};
 use crate::http::body::{self, BodyRefusal};
 use crate::http::{decode_command_body, set_session_cookie};
 use crate::routes::handle::{
-    Caller, Ctx, Reply, Rule, admit, bad_body, decimal, denied, hex_value, random, run, unavailable,
+    Caller, Ctx, Reply, Rule, admit, bad_body, decimal, denied, exec_failed, hex_value, random,
+    run, unavailable,
 };
 use crate::routes::{
     AUTH_BODY_LIMIT, Backend, CEREMONY_BODY_LIMIT, ChallengePurpose, ChallengeRow, SessionRow,
@@ -533,11 +535,17 @@ fn proof_digest(proof: &InvitationProof) -> [u8; 32] {
 /// refused at enrolment once its challenge is spent. Interim, pending
 /// The enrolment applies the rule of the invitation
 /// (`fstp_cell_core::gate::admit_invitation_enrolment`).
-fn creation_options<B>(ctx: &Ctx<B>, challenge: &[u8; 32], user: &[u8; 16]) -> Value {
+fn creation_options<B>(
+    ctx: &Ctx<B>,
+    challenge: &[u8; 32],
+    user: &[u8; 16],
+    uv_required: bool,
+) -> Value {
+    let uv = if uv_required { "required" } else { "preferred" };
     let host = ctx.cfg.rp.parts().0.to_owned();
     let mut selection = Object::with_capacity(2);
     selection.insert("residentKey", Value::String("required".to_owned()));
-    selection.insert("userVerification", Value::String("required".to_owned()));
+    selection.insert("userVerification", Value::String(uv.to_owned()));
     let params: Array = ALGORITHMS
         .iter()
         .filter_map(|alg| Number::from_lexeme(alg).ok())
@@ -605,7 +613,7 @@ pub(crate) async fn invitation_options<B: Backend>(ctx: &Ctx<B>, req: &Request) 
     }
     let mut o = Object::with_capacity(2);
     o.insert("challenge_id", hex_value(&id));
-    o.insert("public_key", creation_options(ctx, &nonce, &user));
+    o.insert("public_key", creation_options(ctx, &nonce, &user, true));
     Reply::json(StatusCode::OK, &Value::Object(o))
 }
 
@@ -719,6 +727,247 @@ pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request)
         Ok(admitted) => run(ctx, admitted).await,
         Err(RouteDeny::Gate(d)) => denied(d),
         Err(_) => login_refused(Rule::Adr008),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Self-registration (design section 8.3 ceremony 2, lane F-CYCLE3).
+//
+// Body forms, as `web/src/auth/pages/signup.ts` sends them:
+//
+// 1. `POST /auth/signup/options {email}` draws the new account id and a
+//    single-use proof token, stores the token's digest with the account
+//    (`auth.token`, kind `SignupProof`), and sends the token to the address
+//    through the cell's proof mail port (`crate::mail`). The reply is 202
+//    and the same for every address: the cell keeps no login email yet, so
+//    it never tells which addresses hold accounts.
+// 2. `POST /auth/signup/options {token}` answers `{challenge_id,
+//    public_key}` with the creation options of a registration challenge
+//    bound to the token's digest. It never looks the token up, so the
+//    reply tells nothing about which tokens are live.
+// 3. `POST /auth/signup {attestation_object, challenge_id,
+//    client_data_json, token}` takes the challenge and then the token,
+//    each once, and enrols the account and its first passkey through
+//    `fstp_cell_core::gate::admit_self_registration`. It opens a passkey
+//    session for the new account.
+//
+// Interim, pending Daniel (ADR-008 open point "Self-registration without
+// a passkey"): the passkey members are optional at the API, so it neither
+// requires nor excludes a passkey. A body with the token alone fails
+// closed with 501, since the cell keeps no login email to sign such an
+// account in.
+
+/// The one reply of `POST /auth/signup/options {email}`.
+fn signup_sent() -> Reply {
+    let mut o = Object::with_capacity(1);
+    o.insert("status", Value::String("accepted".to_owned()));
+    Reply::json(StatusCode::ACCEPTED, &Value::Object(o))
+}
+
+/// A signup options body: an email address or a proof token.
+enum SignupOptions {
+    Email(String),
+    Token([u8; 32]),
+}
+
+fn decode_signup_options(bytes: &[u8]) -> Result<SignupOptions, BodyRefusal> {
+    let o = body::object(bytes, AUTH_BODY_LIMIT)?;
+    if o.get("token").is_some() {
+        body::members(&o, &["token"], &[])?;
+        return body::hex_member::<32>(&o, "token").map(SignupOptions::Token);
+    }
+    decode_email(bytes).map(SignupOptions::Email)
+}
+
+/// `POST /auth/signup/options` (Ceremony, Receiving accounts only, design
+/// section 8.3 ceremony 2): the email proof, or the creation options of
+/// the proven ceremony (section comment above).
+pub(crate) async fn signup_options<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
+    match decode_signup_options(&req.body) {
+        Err(r) => bad_body(r),
+        Ok(SignupOptions::Email(email)) => send_signup_proof(ctx, email).await,
+        Ok(SignupOptions::Token(token)) => {
+            let (id, nonce, user) = match (random::<16>(), random::<32>(), random::<16>()) {
+                (Ok(i), Ok(n), Ok(u)) => (i, n, u),
+                (Err(r), _, _) | (_, Err(r), _) | (_, _, Err(r)) => return r,
+            };
+            let row = ChallengeRow {
+                id,
+                purpose: ChallengePurpose::Signup,
+                session: None,
+                action_digest: Some(fstp_crypto::sha256(&token)),
+                nonce,
+                issued_at: ctx.backend.now(),
+            };
+            if let Err(f) = ctx.backend.put_challenge(row).await {
+                return unavailable(f);
+            }
+            let mut o = Object::with_capacity(2);
+            o.insert("challenge_id", hex_value(&id));
+            o.insert("public_key", creation_options(ctx, &nonce, &user, false));
+            Reply::json(StatusCode::OK, &Value::Object(o))
+        }
+    }
+}
+
+/// Draws the new account and the proof token, stores the token's digest
+/// and sends the token. A fault of the store or of the mail port is 503,
+/// which tells nothing about the address either.
+async fn send_signup_proof<B: Backend>(ctx: &Ctx<B>, email: String) -> Reply {
+    let (token, raw) = match (random::<32>(), random::<16>()) {
+        (Ok(t), Ok(a)) => (t, a),
+        (Err(r), _) | (_, Err(r)) => return r,
+    };
+    let row = TokenRow {
+        digest: fstp_crypto::sha256(&token),
+        kind: TokenKind::SignupProof,
+        account: AccountId::from_raw(u128::from_be_bytes(raw)),
+        issued_at: ctx.backend.now(),
+    };
+    if let Err(f) = ctx.backend.put_token(row).await {
+        return unavailable(f);
+    }
+    if let Err(f) = ctx.backend.send_signup_proof(email, token).await {
+        return unavailable(f);
+    }
+    signup_sent()
+}
+
+/// A signup body: the proof token and, when a passkey is enrolled, the
+/// registration and the challenge it answers.
+struct SignupBody {
+    token: [u8; 32],
+    registration: Option<RegistrationBody>,
+}
+
+fn decode_signup(bytes: &[u8]) -> Result<SignupBody, BodyRefusal> {
+    let o = body::object(bytes, CEREMONY_BODY_LIMIT)?;
+    body::members(
+        &o,
+        &["token"],
+        &[
+            "attestation_object",
+            "challenge_id",
+            "client_data_json",
+            "credential_id",
+        ],
+    )?;
+    let token = body::hex_member::<32>(&o, "token")?;
+    let passkey = ["attestation_object", "challenge_id", "client_data_json"];
+    let given = passkey.iter().filter(|m| o.get(m).is_some()).count();
+    let registration = match given {
+        0 if o.get("credential_id").is_none() => None,
+        3 => {
+            if o.get("credential_id").is_some() {
+                body::bytes_member(&o, "credential_id", MAX_CREDENTIAL)?;
+            }
+            Some(RegistrationBody {
+                challenge_id: body::hex_member::<16>(&o, "challenge_id")?,
+                response: RegistrationResponse {
+                    client_data_json: body::bytes_member(&o, "client_data_json", MAX_CLIENT_DATA)?,
+                    attestation_object: body::bytes_member(
+                        &o,
+                        "attestation_object",
+                        MAX_ATTESTATION,
+                    )?,
+                },
+            })
+        }
+        _ => return Err(BodyRefusal::Member("attestation_object")),
+    };
+    Ok(SignupBody {
+        token,
+        registration,
+    })
+}
+
+/// `POST /auth/signup` (Ceremony, Receiving accounts only, design section
+/// 8.3 ceremony 2): creates the account the email proof names, with its
+/// first passkey, and opens a passkey session.
+///
+/// In order: the body decodes (400). Without passkey members the route
+/// fails closed with 501 (section comment above). The challenge is a
+/// signup challenge bound to the token's digest, and the route takes it
+/// once (401, the same reply for every cause). The registration must
+/// answer it on the cell origin for the cell's relying party (401). Only
+/// then is the proof token taken, once and within
+/// `fstp_cell_core::lifetimes::SIGNUP_PROOF_US`, so a failed passkey
+/// leaves the proof for a retry (401). The gate then admits the
+/// enrolment, and the batch records `CredentialRegistered` for the new
+/// account.
+pub(crate) async fn signup<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
+    let b = match decode_signup(&req.body) {
+        Ok(b) => b,
+        Err(r) => return bad_body(r),
+    };
+    let Some(reg) = b.registration else {
+        return Reply::not_built();
+    };
+    let digest = fstp_crypto::sha256(&b.token);
+    let bound = |row: &ChallengeRow| {
+        row.purpose == ChallengePurpose::Signup
+            && row
+                .action_digest
+                .is_some_and(|d| fstp_crypto::constant_time_eq(&d, &digest))
+    };
+    match ctx.backend.challenge(reg.challenge_id).await {
+        Err(f) => return unavailable(f),
+        Ok(Some(row)) if bound(&row) => {}
+        Ok(_) => return login_refused(Rule::Adr008),
+    }
+    let row = match ctx.backend.take_challenge(reg.challenge_id).await {
+        Err(f) => return unavailable(f),
+        Ok(Some(row)) if bound(&row) => row,
+        Ok(_) => return login_refused(Rule::Adr008),
+    };
+    let now = ctx.backend.now();
+    if !fresh(row.issued_at, now, CHALLENGE_US) {
+        return login_refused(Rule::Adr008);
+    }
+    let registration = Registration {
+        response: &reg.response,
+        rp: &ctx.cfg.rp,
+        challenge: row.nonce,
+    };
+    if verify_new_passkey(&registration, false).is_err() {
+        return login_refused(Rule::Adr008);
+    }
+    let proof = match ctx.backend.take_token(digest, TokenKind::SignupProof).await {
+        Err(f) => return unavailable(f),
+        Ok(None) => return login_refused(Rule::Adr008),
+        Ok(Some(p)) => p,
+    };
+    if !fresh(
+        proof.issued_at,
+        now,
+        fstp_cell_core::lifetimes::SIGNUP_PROOF_US,
+    ) {
+        return login_refused(Rule::Adr008);
+    }
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let command_id = match random::<16>() {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+    let admitted = match admit_self_registration(&s, proof.account, &registration, command_id, now)
+    {
+        Ok(a) => a,
+        Err(RouteDeny::Gate(d)) => return denied(d),
+        Err(_) => return login_refused(Rule::Adr008),
+    };
+    let credential = match admitted.action() {
+        Action::Command(CellCommand::Tenant(
+            fstp_cell_core::tenant::TenantCommand::EnrolBySelfRegistration { credential, .. },
+        )) => credential.clone(),
+        _ => return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal"),
+    };
+    match ctx.backend.execute(admitted).await {
+        Err(f) => unavailable(f),
+        Ok(Err(e)) => exec_failed(&e),
+        Ok(Ok(_)) => open_session(ctx, proof.account, Method::Passkey, Some(credential)).await,
     }
 }
 
