@@ -814,9 +814,6 @@ impl<'w> Cycle<'w> {
     /// world's mail capture and a passkey (design section 8.3 ceremony 2).
     fn signup(&mut self) -> Result<(), NotImplemented> {
         const STEP: &str = "signup";
-        if !self.call {
-            return Err(NotImplemented::new(NO_CALL));
-        }
         let (who, cookie) = self.new_applicant(STEP)?;
         self.pending = Some((who, cookie));
         Ok(())
