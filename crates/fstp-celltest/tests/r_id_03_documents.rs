@@ -7,9 +7,11 @@
 //! until `fstp_keys::erasure` (lane W2f), the vault (lane W2d), the backup
 //! agent (lane W2k) and the cell runtime (lane W3a) land.
 //!
-//! ADR-012 leaves open how a Vault chain snapshot is verified. Until that
-//! is decided, no Vault chain rotation passes step 5, so the world test
-//! stays red after the other lanes land, as ADR-012 says.
+//! ADR-012 leaves open how a Vault chain snapshot is verified (option A or
+//! B). Interim, pending Daniel (lane m3/erase-steps): the world's Vault
+//! chain keystore (`fstp_celltest::vault_keys`) runs step 5 as a scratch
+//! check in the test process, so its rotation destroys the old epoch and
+//! the world test runs.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
