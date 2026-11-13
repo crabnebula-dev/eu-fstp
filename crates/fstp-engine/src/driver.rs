@@ -620,20 +620,7 @@ impl<S: RecordStore<Record>, O: IdentityOracle, D: Decider> Engine<S, O, D> {
     /// [`Engine::hold_import`] holds it, and a creator check that reads a
     /// saved value refuses to pass.
     fn hold_recorded(&mut self, holds: Vec<Hold>) -> bool {
-        let mut all = true;
-        for hold in holds {
-            all &= match hold {
-                Hold::Proposals(proposals) => self.state.import.hold_recorded(&proposals).is_ok(),
-                Hold::Saved { programme, fields } => {
-                    self.state.creator.hold_saved(programme, &fields)
-                }
-                Hold::Import { programme, edit } => {
-                    self.state.creator.hold_import(programme, &edit)
-                }
-            };
-        }
-        crate::bridge::rehold_confirmed(&mut self.state);
-        all
+        hold_in(&mut self.state, holds)
     }
 
     /// Holds `value` under `text` in the import store, as the shell
@@ -1002,4 +989,34 @@ enum VaultStep {
     Current,
     /// A vault change was handled or raced, so start again from a fresh state.
     Again,
+}
+
+/// Holds `holds` in `state` ([`Engine::hold_recorded`]).
+fn hold_in(state: &mut EngineState, holds: Vec<Hold>) -> bool {
+    let mut all = true;
+    for hold in holds {
+        all &= match hold {
+            Hold::Proposals(proposals) => state.import.hold_recorded(&proposals).is_ok(),
+            Hold::Saved { programme, fields } => state.creator.hold_saved(programme, &fields),
+            Hold::Import { programme, edit } => state.creator.hold_import(programme, &edit),
+        };
+    }
+    crate::bridge::rehold_confirmed(state);
+    all
+}
+
+/// Holds the values of the entry `batch`, decided for `cmd` by `ctx` on
+/// `before` and now folded into `after` (module documentation, "Held
+/// values"). A shell that runs its own driver over the engine's decider
+/// calls it once the entry is appended, as [`Engine::execute`] does.
+/// Returns whether every value is held. A value that is not held fails
+/// its checks closed.
+pub fn hold_appended(
+    before: &EngineState,
+    after: &mut EngineState,
+    cmd: &Command,
+    ctx: &Ctx,
+    batch: &[Record],
+) -> bool {
+    hold_in(after, holds_of(before, cmd, ctx, batch))
 }

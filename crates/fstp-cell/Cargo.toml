@@ -31,6 +31,10 @@ fstp-auth.workspace = true
 fstp-webauthn.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
+# The creator shell facts of a cell (lane F-CYCLE2).
+fstp-creator.workspace = true
+fstp-guide.workspace = true
+fstp-money.workspace = true
 # M6 lane L6-TL: the timeline engine the timeline task runs.
 fstp-timeline.workspace = true
 fstp-ledger.workspace = true

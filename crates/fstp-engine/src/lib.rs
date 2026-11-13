@@ -117,7 +117,7 @@ pub use bridge::BridgeCommand;
 pub use compose::{CreatorEnvironment, CreatorFailure, NoEnvironment};
 pub use driver::{
     CatchUpError, CreatorDecider, Decider, DomainDecider, Engine, ExecError, MAX_ATTEMPTS,
-    OpenError, RESERVED_COMMAND_PREFIX, is_reserved_command_id,
+    OpenError, RESERVED_COMMAND_PREFIX, hold_appended, is_reserved_command_id,
 };
 pub use tenant::{Provisioning, TenantEntry, TenantFacts, TenantPart, TenantRequest};
 

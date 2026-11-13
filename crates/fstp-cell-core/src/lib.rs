@@ -36,6 +36,7 @@
 #[cfg(test)]
 mod ceremony_tests;
 pub mod codec;
+pub mod creator;
 mod decide;
 pub mod driver;
 pub mod gate;

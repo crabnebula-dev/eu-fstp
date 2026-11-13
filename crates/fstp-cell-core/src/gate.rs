@@ -207,6 +207,15 @@ fn table_action(name: &str) -> Option<HighRiskAction> {
 /// The table entry name of a cell command, if a row names it.
 fn cell_entry(c: &CellCommand) -> Option<&'static str> {
     match c {
+        // The two high-risk creator commands (`CreatorCommand::high_risk`)
+        // take the rows of the core commands they compose (D2e): opening a
+        // draft creates the programme, and the approval activates it.
+        CellCommand::Engine(fstp_engine::Command::Creator(
+            fstp_creator::CreatorCommand::OpenDraft { .. },
+        )) => Some("CreateProgramme"),
+        CellCommand::Engine(fstp_engine::Command::Creator(
+            fstp_creator::CreatorCommand::ApproveActivation { .. },
+        )) => Some("ActivateProgramme"),
         CellCommand::Auth(fstp_auth::AuthCommand::RegisterCredential { .. }) => Some("AddPasskey"),
         CellCommand::Auth(fstp_auth::AuthCommand::RevokeCredential { .. }) => {
             Some("ChangeLoginMethods")
@@ -536,6 +545,15 @@ impl Admitted {
     #[must_use]
     pub fn with_sessions(mut self, rows: SessionRows) -> Admitted {
         self.inputs = self.inputs.with_sessions(rows);
+        self
+    }
+
+    /// The same admission with the creator shell facts the route read
+    /// from the cell's shell (`crate::creator::CreatorFacts`). Facts are
+    /// data: they change no check of the gate.
+    #[must_use]
+    pub fn with_creator(mut self, facts: crate::creator::CreatorFacts) -> Admitted {
+        self.inputs = self.inputs.with_creator(facts);
         self
     }
 

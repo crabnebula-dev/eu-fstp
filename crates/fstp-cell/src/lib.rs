@@ -50,6 +50,7 @@ pub mod engine;
 pub mod http;
 pub mod process;
 pub mod routes;
+pub mod shell;
 pub mod tasks;
 pub mod vault;
 pub mod witness;

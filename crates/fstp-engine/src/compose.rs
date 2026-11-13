@@ -861,6 +861,170 @@ pub(crate) fn with_guide(
     Ok(records)
 }
 
+// ---------------------------------------------------------------------------
+// Shell helpers: the SoD previews and the profile name, shared by every
+// shell that supplies a `CreatorEnvironment` (the API test kit's fake cell
+// and `fstp-cell`).
+
+/// What the SoD preview of one invitation needs (design 3.2, module
+/// documentation "Readings").
+enum PreviewCase {
+    /// The invited binding is held already. Its grant passed its SoD
+    /// guards, and a second grant would be refused as a duplicate (M4
+    /// design 15.0), which is no SoD outcome.
+    Held,
+    /// The guard refused before any vault question.
+    Refused(RuleRef),
+    /// The grant asks `queries`.
+    Ask {
+        grant: Box<fstp_domain::Command>,
+        granter: Ctx,
+        queries: Vec<Query>,
+    },
+}
+
+/// The SoD preview cases of the draft of `cmd`: one per target of
+/// `fstp_creator::preview_targets`, as the draft's opener would grant it at
+/// `ctx.now`. `is_admin` tells the attested tenant admins. The grant
+/// carries a placeholder binding id and confidentiality reference, which
+/// no SoD guard reads.
+fn preview_cases(
+    state: &EngineState,
+    cmd: &CreatorCommand,
+    ctx: &Ctx,
+    is_admin: &dyn Fn(AccountId) -> bool,
+) -> Vec<(fstp_creator::InvitationId, PreviewCase)> {
+    let programme = cmd.programme();
+    let Some(draft) = state.creator.draft(programme) else {
+        return Vec::new();
+    };
+    let granter = Ctx {
+        actor: Actor::Account(draft.opener()),
+        tenant_admin: true,
+        second_tenant_admin: None,
+        binds_tenant_admin: false,
+        ..*ctx
+    };
+    let mut out = Vec::new();
+    for t in fstp_creator::preview_targets(&state.creator, programme) {
+        let held = state.core.roster().bindings().any(|(_, b)| {
+            b.account == t.account
+                && b.programme == programme
+                && b.role == t.role
+                && b.status == fstp_domain::roles::BindingStatus::Active
+        });
+        if held {
+            out.push((t.invitation, PreviewCase::Held));
+            continue;
+        }
+        let grant = fstp_domain::Command::GrantRole {
+            binding: fstp_domain::id::BindingId::from_raw(0),
+            account: t.account,
+            programme,
+            role: t.role,
+            start: ctx.now,
+            second_admin: None,
+            confidentiality: Some(fstp_domain::id::TextRef::new(
+                fstp_domain::id::TextId::from_raw(0),
+                fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+            )),
+            organisation: t.organisation,
+            end: None,
+        };
+        let granter = Ctx {
+            binds_tenant_admin: is_admin(t.account),
+            ..granter
+        };
+        let case = match fstp_domain::roles::preview_grant_queries(&state.core, &grant, &granter) {
+            Err(r) => PreviewCase::Refused(r.rule),
+            Ok(queries) => PreviewCase::Ask {
+                grant: Box::new(grant),
+                granter,
+                queries,
+            },
+        };
+        out.push((t.invitation, case));
+    }
+    out
+}
+
+/// The vault questions of the SoD previews of `cmd` ([`sod_previews`]), so
+/// a shell that answers from a vault call asks them with the command's
+/// own.
+pub fn sod_preview_queries(
+    state: &EngineState,
+    cmd: &CreatorCommand,
+    ctx: &Ctx,
+    is_admin: &dyn Fn(AccountId) -> bool,
+) -> Vec<Query> {
+    let mut out: Vec<Query> = Vec::new();
+    for (_, case) in preview_cases(state, cmd, ctx, is_admin) {
+        if let PreviewCase::Ask { queries, .. } = case {
+            for q in queries {
+                if !out.contains(&q) {
+                    out.push(q);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The live SoD previews of the draft of `cmd` (design 3.2): for each
+/// invitation with an account, `fstp_domain::roles::preview_grant` of the
+/// grant the draft's opener would make at `ctx.now`. `answer` gives the
+/// vault answers of a preview's questions, or `None` when it cannot, so
+/// that preview has no outcome and its invitation fails closed as
+/// `InviteeRefused`. The shell records each answer it gives (NOTE 5).
+pub fn sod_previews(
+    state: &EngineState,
+    cmd: &CreatorCommand,
+    ctx: &Ctx,
+    is_admin: &dyn Fn(AccountId) -> bool,
+    answer: &mut dyn FnMut(&[Query]) -> Option<Answers>,
+) -> SodPreview {
+    let mut out = SodPreview::default();
+    for (invitation, case) in preview_cases(state, cmd, ctx, is_admin) {
+        let outcome = match case {
+            PreviewCase::Held => Some(fstp_creator::PreviewOutcome::Admitted),
+            PreviewCase::Refused(rule) => Some(fstp_creator::PreviewOutcome::Refused(rule)),
+            PreviewCase::Ask {
+                grant,
+                granter,
+                queries,
+            } => answer(&queries).map(|answers| {
+                match fstp_domain::roles::preview_grant(&state.core, &grant, &granter, &answers) {
+                    Ok(()) => fstp_creator::PreviewOutcome::Admitted,
+                    Err(r) => fstp_creator::PreviewOutcome::Refused(r.rule),
+                }
+            }),
+        };
+        if let Some(o) = outcome {
+            let _ = out.outcomes.insert(invitation, o);
+        }
+    }
+    out
+}
+
+/// The profile name of a P-53 reference, `{"profile": name, "version": n}`,
+/// as a shell looks the funder profile up in its profile source.
+pub fn profile_name(p: &fstp_domain::policy::FunderProfileRef) -> Option<String> {
+    let v = fstp_json::parse(p.0.as_str().as_bytes()).ok()?;
+    v.get("profile")?.as_str().map(str::to_owned)
+}
+
+/// The P-53 reference the funder profile of `cmd` is read from: the one
+/// an opening names, or else the reference of the draft of its programme.
+pub fn profile_ref(
+    state: &EngineState,
+    cmd: &CreatorCommand,
+) -> Option<fstp_domain::policy::FunderProfileRef> {
+    match cmd {
+        CreatorCommand::OpenDraft { profile, .. } => Some(profile.clone()),
+        other => Some(state.creator.draft(other.programme())?.profile().clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

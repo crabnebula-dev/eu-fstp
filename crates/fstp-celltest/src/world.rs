@@ -235,7 +235,7 @@ pub const WORLD_CLOCK_START: i64 = 1;
 /// [`WORLD_CLOCK_START`] until a test sets or advances it. The cell reads
 /// it everywhere it reads time: its route backend, its store's commit
 /// instant, its first admin invitation and its timeline and erasure tasks
-/// (`fstp_cell::process::start_with_clock`). Production cells run on the
+/// (`fstp_cell::process::StartOptions`). Production cells run on the
 /// system clock.
 ///
 /// A clock that stands still makes every ledger instant a test's choice,
@@ -406,6 +406,47 @@ impl CellHandle {
     /// Fails when the world did not receive both halves.
     pub fn first_admin_invitation(&self) -> Result<FirstAdminInvitation, WorldError> {
         Ok(lock(&self.runtime()?.running).invitation)
+    }
+
+    /// Seeds the fact write `w` from `source` into the cell's seeded vault
+    /// (design section 6.9, [`crate::seeded_vault`]). The fact becomes
+    /// effective after the cell's reaction to its epoch (NOTE 4), which
+    /// the cell runs before its next command that asks the vault.
+    ///
+    /// # Errors
+    ///
+    /// The vault core's refusal, or a cell that runs no vault.
+    pub fn seed(
+        &self,
+        source: crate::vault_seed::SeedSource,
+        w: fstp_vault_core::FactWrite,
+    ) -> Result<Vec<fstp_vault_core::VaultEvent>, crate::vault_seed::SeedError> {
+        let rt = self.runtime().map_err(|_| {
+            crate::vault_seed::SeedError::NotImplemented(NotImplemented::new(NOT_STARTED))
+        })?;
+        let running = lock(&rt.running);
+        rt.services.rt.block_on(running.vault.seed(source, w))
+    }
+
+    /// Seeds a synthetic verification of the cell account `account` with
+    /// the identity of the synthetic attribute tuple `attributes`
+    /// ([`crate::seeded_vault::SeededVault::seed_verification`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`CellHandle::seed`].
+    pub fn seed_verification(
+        &self,
+        account: fstp_domain::id::AccountId,
+        attributes: &[u8],
+    ) -> Result<Vec<fstp_vault_core::VaultEvent>, crate::vault_seed::SeedError> {
+        let rt = self.runtime().map_err(|_| {
+            crate::vault_seed::SeedError::NotImplemented(NotImplemented::new(NOT_STARTED))
+        })?;
+        let running = lock(&rt.running);
+        rt.services
+            .rt
+            .block_on(running.vault.seed_verification(account.raw(), attributes))
     }
 
     /// The cell's ledger after decryption, read through the cell's own
@@ -1953,7 +1994,7 @@ fn cell_host(cell: &[u8; 16]) -> String {
 /// The parts of a started world cell.
 struct Running {
     cell: Option<fstp_cell::process::RunningCell<Rt>>,
-    vault: fstp_vault::service::VaultHandle<Rt>,
+    vault: crate::seeded_vault::SeededVault,
     invitation: FirstAdminInvitation,
 }
 
@@ -2132,10 +2173,11 @@ fn start_cell(
         fstp_crypto::aead::Key::generate().map_err(|e| fail("the vault data key", &e))?,
         fstp_crypto::random_array::<32>().map_err(|e| fail("the vault digest key", &e))?,
     );
+    let clock = WorldClock::default();
     let vault =
-        s.rt.block_on(fstp_vault::service::serve(
+        s.rt.block_on(crate::seeded_vault::SeededVault::start(
             s.rt.clone(),
-            fstp_vault::service::VaultParts {
+            crate::seeded_vault::SeededParts {
                 cell,
                 db: pg_config(
                     vault_cluster.server(),
@@ -2161,16 +2203,17 @@ fn start_cell(
                 ticket_keys: vec![ticket.public_key()],
                 internal_tls: server(&vault_internal, Some(&cell_ca.pem))
                     .map_err(tls_err("the vault internal TLS"))?,
-                tunnel_tls: std::sync::Arc::new(
-                    server(&vault_tunnel, Some(&s.control.pem))
-                        .map_err(tls_err("the vault tunnel TLS"))?,
-                ),
-                origin_tls: std::sync::Arc::new(
-                    server(&vault_origin, None).map_err(tls_err("the vault origin TLS"))?,
-                ),
+                tunnel_tls: fstp_cell::http::tunnel::TunnelTls {
+                    tunnel: std::sync::Arc::new(
+                        server(&vault_tunnel, Some(&s.control.pem))
+                            .map_err(tls_err("the vault tunnel TLS"))?,
+                    ),
+                    origin: std::sync::Arc::new(
+                        server(&vault_origin, None).map_err(tls_err("the vault origin TLS"))?,
+                    ),
+                },
                 origin_host: vault_host.clone(),
-                internal_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
-                origin_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+                clock: clock.clone(),
             },
         ))
         .map_err(|e| fail("the vault", &e))?;
@@ -2275,11 +2318,13 @@ fn start_cell(
             health: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         },
     };
-    let clock = WorldClock::default();
-    let running = match s.rt.block_on(fstp_cell::process::start_with_clock(
+    let running = match s.rt.block_on(fstp_cell::process::start_with(
         &s.rt,
         parts,
-        clock.commit_clock(),
+        fstp_cell::process::StartOptions {
+            clock: clock.commit_clock(),
+            creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
+        },
     )) {
         Ok(r) => r,
         Err(e) => {

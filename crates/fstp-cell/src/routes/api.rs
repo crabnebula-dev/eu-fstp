@@ -41,6 +41,10 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         return bad_body(BodyRefusal::Member("command"));
     };
     let blocked = needs_route_input(&command);
+    let creator = match &command {
+        CellCommand::Engine(fstp_engine::Command::Creator(c)) => Some(c.clone()),
+        _ => None,
+    };
     let admitted = match admit(
         ctx,
         caller,
@@ -50,7 +54,11 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     )
     .await
     {
-        Ok((_, a)) => a,
+        // A creator command reads the shell's facts (`crate::shell`).
+        Ok((s, a)) => match &creator {
+            Some(c) => a.with_creator(ctx.backend.creator_facts(&s, c)),
+            None => a,
+        },
         Err(reply) => return reply,
     };
     if blocked {

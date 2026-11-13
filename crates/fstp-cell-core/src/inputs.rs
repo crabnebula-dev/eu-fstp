@@ -81,6 +81,7 @@ pub struct RouteInputs {
     credential: Option<NewCredential>,
     ticket: Option<VerifiedTicket>,
     outbox: Option<Vec<crate::timeline::MessageBody>>,
+    creator: Option<crate::creator::CreatorFacts>,
 }
 
 impl RouteInputs {
@@ -151,5 +152,20 @@ impl RouteInputs {
     /// The message bodies, if given.
     pub fn outbox(&self) -> Option<&[crate::timeline::MessageBody]> {
         self.outbox.as_deref()
+    }
+
+    /// The same inputs with the creator shell facts `facts`, which the
+    /// route read from the cell's shell (`crate::creator`). Facts are
+    /// data: they change no check of the gate, and the creator decides
+    /// over them.
+    #[must_use]
+    pub fn with_creator(mut self, facts: crate::creator::CreatorFacts) -> RouteInputs {
+        self.creator = Some(facts);
+        self
+    }
+
+    /// The creator shell facts, if given.
+    pub fn creator(&self) -> Option<&crate::creator::CreatorFacts> {
+        self.creator.as_ref()
     }
 }

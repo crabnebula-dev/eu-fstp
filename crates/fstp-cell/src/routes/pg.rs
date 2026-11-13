@@ -124,6 +124,7 @@ pub struct PgBackend<R: Runtime> {
     cred_lookup: [u8; 32],
     logins: Mutex<BTreeMap<[u8; 16], Vec<u8>>>,
     clock: crate::engine::CommitClock,
+    shell: Arc<dyn crate::shell::CreatorShell>,
 }
 
 impl<R: Runtime> std::fmt::Debug for PgBackend<R> {
@@ -154,10 +155,18 @@ impl<R: Runtime> PgBackend<R> {
             cred_lookup,
             logins: Mutex::new(BTreeMap::new()),
             clock: crate::engine::system_commit_clock(),
+            shell: Arc::new(crate::shell::ProductionShell),
         })
     }
 
-    /// The same backend on the cell clock `clock` (`crate::process::start_with_clock`).
+    /// The same backend over the creator shell `shell` (`crate::shell`).
+    #[must_use]
+    pub fn with_shell(mut self, shell: Arc<dyn crate::shell::CreatorShell>) -> PgBackend<R> {
+        self.shell = shell;
+        self
+    }
+
+    /// The same backend on the cell clock `clock` (`crate::process::StartOptions`).
     #[must_use]
     pub fn with_clock(mut self, clock: crate::engine::CommitClock) -> PgBackend<R> {
         self.clock = clock;
@@ -194,6 +203,14 @@ impl<R: Runtime> PgBackend<R> {
 impl<R: Runtime> Backend for PgBackend<R> {
     fn now(&self) -> Timestamp {
         Timestamp::from_micros((self.clock)())
+    }
+
+    fn creator_facts(
+        &self,
+        state: &CellState,
+        cmd: &fstp_creator::CreatorCommand,
+    ) -> fstp_cell_core::creator::CreatorFacts {
+        self.shell.facts(state, cmd)
     }
 
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send {

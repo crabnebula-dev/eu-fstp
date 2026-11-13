@@ -524,12 +524,13 @@ impl DriverCore {
 
     /// The command's vault queries on `state`.
     fn queries(&self, state: &CellState) -> Result<Vec<Query>, ExecError> {
-        crate::decide::queries_with(
+        crate::decide::queries_with_inputs(
             state,
             self.cell_command()?,
             self.who()?,
             self.admitted.at().micros(),
             Some(self.command),
+            self.admitted.inputs(),
         )
         .map_err(ExecError::Refused)
     }
@@ -762,6 +763,24 @@ impl DriverCore {
         )
     }
 
+    /// Holds the saved values of an account's engine command whose batch
+    /// was just folded from `before` into `after` (`crate::creator`).
+    fn hold_appended(
+        &self,
+        before: &CellState,
+        after: &mut CellState,
+        at: Timestamp,
+        batch: &[CellRecord],
+    ) {
+        let (Ok(CellCommand::Engine(cmd)), Ok(Who::Account(actor))) =
+            (self.cell_command(), self.who())
+        else {
+            return;
+        };
+        let ctx = crate::decide::account_engine_ctx(before, actor, cmd, at, Some(self.command));
+        crate::creator::hold_appended(before, after, cmd, &ctx, batch);
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "the parts of the pending append and its result"
@@ -786,6 +805,9 @@ impl DriverCore {
                 }
                 let mut next = state.clone();
                 fold_batch(&mut next, at, command, &batch).map_err(ExecError::Fold)?;
+                if matches!(pending, Pending::Command) {
+                    self.hold_appended(state, &mut next, at, &batch);
+                }
                 *state = next;
                 match pending {
                     Pending::Command => Ok(self.finish(Ok(Done {

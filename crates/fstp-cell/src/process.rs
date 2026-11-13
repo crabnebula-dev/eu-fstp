@@ -442,8 +442,8 @@ impl fstp_http::Handler for NoRoute {
     }
 }
 
-/// Starts the cell of `parts` on `rt` (module documentation), on the
-/// system clock.
+/// Starts the cell of `parts` on `rt` (module documentation), with the
+/// production [`StartOptions`].
 ///
 /// # Errors
 ///
@@ -457,22 +457,47 @@ where
     C: Custody + Clone + Send + Sync + 'static,
     V: VaultClient + Clone,
 {
-    start_with_clock(rt, parts, crate::engine::system_commit_clock()).await
+    start_with(rt, parts, StartOptions::default()).await
 }
 
-/// [`start`] on the clock `clock`: the route backend's instants, the
-/// store's commit instant, the first admin's invitation and the
-/// timeline and erasure tasks all read it. Production passes the system
-/// clock. A test world passes a clock it can move, so its tests can set
-/// the cell's time (lane F-CYCLE2).
+/// What a caller may set beyond [`CellProcessParts`]. The default is the
+/// production cell: the system clock and [`crate::shell::ProductionShell`].
+#[derive(Clone)]
+pub struct StartOptions {
+    /// The cell clock: the route backend's instants, the store's commit
+    /// instant, the first admin's invitation and the timeline and erasure
+    /// tasks all read it. A test world passes a clock it can move, so its
+    /// tests set the cell's time (lane F-CYCLE2).
+    pub clock: crate::engine::CommitClock,
+    /// The creator shell the command route reads its facts from
+    /// ([`crate::shell`]).
+    pub creator_shell: Arc<dyn crate::shell::CreatorShell>,
+}
+
+impl Default for StartOptions {
+    fn default() -> StartOptions {
+        StartOptions {
+            clock: crate::engine::system_commit_clock(),
+            creator_shell: Arc::new(crate::shell::ProductionShell),
+        }
+    }
+}
+
+impl std::fmt::Debug for StartOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartOptions").finish_non_exhaustive()
+    }
+}
+
+/// [`start`] with the options `options` ([`StartOptions`]).
 ///
 /// # Errors
 ///
 /// The first step that fails, as a [`CellError`].
-pub async fn start_with_clock<R, C, V>(
+pub async fn start_with<R, C, V>(
     rt: &R,
     parts: CellProcessParts<C, V>,
-    clock: crate::engine::CommitClock,
+    options: StartOptions,
 ) -> Result<RunningCell<R>, CellError>
 where
     R: Runtime,
@@ -497,6 +522,10 @@ where
         pages,
         listen,
     } = parts;
+    let StartOptions {
+        clock,
+        creator_shell,
+    } = options;
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
     // server's OU and SPKI before its startup message.
@@ -592,7 +621,8 @@ where
     let backend = Arc::new(
         PgBackend::new(started.engine.clone(), app_pool.clone(), keys.cred_lookup)
             .map_err(store_err)?
-            .with_clock(Arc::clone(&clock)),
+            .with_clock(Arc::clone(&clock))
+            .with_shell(creator_shell),
     );
     let front_cfg = FrontConfig {
         cell,

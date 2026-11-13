@@ -38,6 +38,11 @@ fstp-release-svc.workspace = true
 fstp-backup.workspace = true
 fstp-domain.workspace = true
 fstp-engine.workspace = true
+# The creator shell facts of a cell (lane F-CYCLE2).
+fstp-creator.workspace = true
+fstp-guide.workspace = true
+fstp-programme.workspace = true
+fstp-money.workspace = true
 fstp-ledger.workspace = true
 fstp-migrate.workspace = true
 fstp-pgtest.workspace = true
@@ -61,7 +66,6 @@ aws-lc-rs.workspace = true
 # Test only: the loopback SMTP sink for the moved dispatch and mail relay tests.
 fstp-api-testkit = { path = "../fstp-api-testkit" }
 fstp-mail.workspace = true
-fstp-money.workspace = true
 fstp-smtp.workspace = true
 fstp-json.workspace = true
 fstp-api-core.workspace = true

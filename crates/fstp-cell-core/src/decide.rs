@@ -329,6 +329,19 @@ pub fn attest_at(
 }
 
 /// The M2 context of an account's command.
+/// The M2 context of an account's engine command `cmd` on `s` at `now`,
+/// with the attestations of the tenant fold.
+pub(crate) fn account_engine_ctx(
+    s: &CellState,
+    actor: AccountId,
+    cmd: &fstp_engine::Command,
+    now: Timestamp,
+    command: Option<[u8; 16]>,
+) -> Ctx {
+    let a = attestation(s, actor, cmd, command.map(|id| (id, now)));
+    engine_ctx(actor, now, command, &a)
+}
+
 fn engine_ctx(actor: AccountId, now: Timestamp, command: Option<[u8; 16]>, a: &Attest) -> Ctx {
     Ctx {
         now,
@@ -443,6 +456,19 @@ pub(crate) fn queries_with(
     at: i64,
     command: Option<[u8; 16]>,
 ) -> Result<Vec<Query>, CellRefusal> {
+    queries_with_inputs(s, c, who, at, command, &RouteInputs::none())
+}
+
+/// [`queries_with`] with the route inputs `inputs`, whose creator facts a
+/// creator command reads (`crate::creator`).
+pub(crate) fn queries_with_inputs(
+    s: &CellState,
+    c: &CellCommand,
+    who: Who,
+    at: i64,
+    command: Option<[u8; 16]>,
+    inputs: &RouteInputs,
+) -> Result<Vec<Query>, CellRefusal> {
     let now = Timestamp::from_micros(at);
     clock(s, now)?;
     let actor = match who {
@@ -474,11 +500,20 @@ pub(crate) fn queries_with(
     overdue(s, c, now)?;
     match c {
         CellCommand::Engine(cmd) => {
-            let a = attestation(s, actor, cmd, command.map(|id| (id, now)));
-            let ctx = engine_ctx(actor, now, command, &a);
-            fstp_engine::DomainDecider
+            let ctx = account_engine_ctx(s, actor, cmd, now, command);
+            // The creator decider over the cell's environment, with the
+            // questions of its SoD previews (`crate::creator`).
+            let none = Answers::new();
+            let env = crate::creator::CellEnvironment::new(s, inputs.creator(), &none);
+            let mut out = fstp_engine::CreatorDecider(env)
                 .queries(s.engine(), cmd, &ctx)
-                .map_err(CellRefusal::Domain)
+                .map_err(CellRefusal::Domain)?;
+            for q in crate::creator::preview_queries(s, cmd, &ctx) {
+                if !out.contains(&q) {
+                    out.push(q);
+                }
+            }
+            Ok(out)
         }
         CellCommand::Release(ReleaseCommand::IssueWriteTicket {
             kind: WRITE_KIND_GUARDIAN_CONSENT,
@@ -630,7 +665,7 @@ fn decide_unchecked(
     }
     overdue(s, c, now)?;
     match c {
-        CellCommand::Engine(cmd) => decide_engine(s, cmd, actor, now, command, answers),
+        CellCommand::Engine(cmd) => decide_engine(s, cmd, actor, now, command, inputs, answers),
         CellCommand::Auth(cmd) => {
             let call = AuthCall {
                 actor,
@@ -787,11 +822,15 @@ fn decide_engine(
     actor: AccountId,
     now: Timestamp,
     command: Option<[u8; 16]>,
+    inputs: &RouteInputs,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     let a = attestation(s, actor, cmd, command.map(|id| (id, now)));
     let ctx = engine_ctx(actor, now, command, &a);
-    let records = fstp_engine::DomainDecider
+    // A creator command reads the cell's environment (`crate::creator`).
+    // Every other engine command is decided as `DomainDecider` decides it.
+    let env = crate::creator::CellEnvironment::new(s, inputs.creator(), answers);
+    let records = fstp_engine::CreatorDecider(env)
         .decide(s.engine(), cmd, &ctx, answers)
         .map_err(CellRefusal::Domain)?;
     let mut out: Vec<CellRecord> = records.into_iter().map(CellRecord::Engine).collect();
