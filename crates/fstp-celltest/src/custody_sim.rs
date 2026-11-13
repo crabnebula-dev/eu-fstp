@@ -8,24 +8,24 @@
 //! process (design section 3.3, `SimCustody`), so a memory scan of a cell
 //! or vault process shows whether root bytes ever entered it.
 //!
-//! Its usage log holds one record per served create and destroy, in the
-//! layout of `fstp_custody::usage` that `fstp-keyd` writes, with the
-//! caller's request id (`fstp_custody::with_request`, ADR-004
-//! "Reconciliation").
+//! Its usage log holds one record per served create, wrap, unwrap and
+//! destroy, in the layout of `fstp_custody::usage` that `fstp-keyd`
+//! writes, with the caller's request id (`fstp_custody::with_request`,
+//! ADR-004 "Reconciliation").
+//!
+//! Wrap and unwrap seal a key under its root with AES-256-GCM from
+//! `fstp_crypto::aead`, in the layout `fstp-keyd` uses: the nonce, then
+//! the sealed key and its tag. The AAD binds a label, the root's handle
+//! and the caller's AAD. Daniel decided on 2026-11-13 that the simulator
+//! wraps and unwraps (m3-exit-audit section 7, item 2, Q-SIM).
 //!
 //! # Seams
 //!
-//! - Wrapping and unwrapping seal keys need AES-256-GCM from
-//!   `fstp_crypto::aead`, and CA signing needs ECDSA from
-//!   `fstp_crypto::sig`. Both are lane W1h. Until then those operations
-//!   refuse with [`CustodyError::NotImplemented`].
-//!   `fstp_crypto::aead` has landed, but the harness test
-//!   `harness_custody_sim_wrap_refuses_until_the_aead_lands` still pins
-//!   the refusal. Whether the simulator now wraps is a question for
-//!   Daniel (lane m3/seams-custody).
-//! - [`CustodyError`] has only the `NotImplemented` variant in the W0
-//!   stub. A destroy of an unknown root refuses with it too, and names the
-//!   reason. Lane W2f gives the error its real variants.
+//! - CA signing needs ECDSA from `fstp_crypto::sig` (lane W1h). Until
+//!   then `sign` refuses with [`CustodyError::NotImplemented`].
+//! - A create or destroy that fails still refuses with
+//!   [`CustodyError::NotImplemented`] and names the reason. Wrap and
+//!   unwrap refuse with [`CustodyError::Refused`], as `fstp-keyd` does.
 //! - The process serves no custody protocol yet. The frame codec of
 //!   `fstp-custody` is lane W2f. [`run`] creates the roots, writes their
 //!   needles for the test that started it, and holds them until its
@@ -36,11 +36,12 @@ use std::future::{Future, ready};
 use std::io::{Read as _, Write as _};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use fstp_crypto::aead;
 use fstp_custody::usage::{OUTCOME_SERVED, UsageOp, UsageRecord, encode_record};
 use fstp_custody::{
     Aad, BackendId, CellId, Chain, Custody, CustodyError, CustodyHandle, DestroyReceipt,
-    EcdsaSignature, Epoch, RequestId, RootLabel, RootRef, SealKey, SignKeyRef, UsageCursor,
-    UsagePage, WrappedSealKey,
+    EcdsaSignature, Epoch, Refusal, RequestId, RootLabel, RootRef, SealKey, SignKeyRef,
+    UsageCursor, UsagePage, WrappedSealKey,
 };
 
 use crate::NotImplemented;
@@ -72,6 +73,9 @@ struct SimRoot {
     root: RootRef,
     canary: Canary,
     material: Option<RootMaterial>,
+    /// The wraps sealed under this root, so the AEAD seal limit holds
+    /// across calls (ADR-004 "Seal-count limit").
+    seals: u64,
 }
 
 #[derive(Default)]
@@ -97,9 +101,14 @@ impl fmt::Debug for CustodySim {
     }
 }
 
-/// The refusal while `fstp_crypto` has no AEAD or signing module.
-const WAITS_FOR_CRYPTO: &str =
-    "fstp_celltest::custody_sim: wrap, unwrap and sign need fstp_crypto aead and sig (lane W1h)";
+/// The refusal of `sign` while `fstp_crypto` has no signing module.
+const WAITS_FOR_CRYPTO: &str = "fstp_celltest::custody_sim: sign needs fstp_crypto sig (lane W1h)";
+
+/// The label that opens the AAD of every wrap, as in `fstp-keyd`.
+const WRAP_LABEL: &[u8] = b"fstp-custody-sim-wrap-v1";
+
+/// The length of a wrapped seal key: nonce, sealed key, tag.
+const WRAPPED_LEN: usize = aead::NONCE_LEN + 32 + aead::TAG_LEN;
 
 impl CustodySim {
     /// A new simulator whose root canaries name cell index 0.
@@ -182,6 +191,7 @@ impl CustodySim {
             root: root.clone(),
             material: Some(RootMaterial(canary.secret_bytes())),
             canary,
+            seals: 0,
         });
         Ok(root)
     }
@@ -227,6 +237,86 @@ impl CustodySim {
         Ok(DestroyReceipt(receipt))
     }
 
+    /// Wraps `key` under the live root `root` with `aad`, and logs the
+    /// call under `request` (ADR-004 part 2 and "Reconciliation").
+    ///
+    /// # Errors
+    ///
+    /// Refuses a root this simulator does not hold, a destroyed root, and
+    /// a root that reached the AEAD seal limit.
+    pub fn wrap_with_id(
+        &self,
+        request: RequestId,
+        root: &RootRef,
+        key: &SealKey,
+        aad: &Aad,
+    ) -> Result<WrappedSealKey, CustodyError> {
+        let mut state = self.lock();
+        let entry = live_root(&mut state.roots, root)?;
+        let material = entry
+            .material
+            .as_ref()
+            .ok_or(CustodyError::Refused(Refusal::Destroyed))?;
+        let aead_key = aead::Key::from_bytes_with_count(material.expose(), entry.seals)
+            .map_err(CustodyError::Crypto)?;
+        let sealed =
+            aead::seal(&aead_key, &wrap_aad(root, aad), key.expose()).map_err(|e| match e {
+                fstp_crypto::CryptoError::SealLimitReached => {
+                    CustodyError::Refused(Refusal::LimitReached)
+                }
+                other => CustodyError::Crypto(other),
+            })?;
+        entry.seals = aead_key.seal_count();
+        drop(aead_key);
+        let mut out = Vec::with_capacity(WRAPPED_LEN);
+        out.extend_from_slice(&sealed.nonce);
+        out.extend_from_slice(&sealed.body);
+        let record = usage_record(request, UsageOp::Wrap, root);
+        state.usage.push((root.handle.clone(), record));
+        Ok(WrappedSealKey(out))
+    }
+
+    /// Unwraps `w` under the live root `root` with `aad`, and logs the
+    /// call under `request`.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a root this simulator does not hold, a destroyed root, and
+    /// a wrapped key that does not open under this root and AAD. A
+    /// refused unwrap is not logged, since the log holds served calls.
+    pub fn unwrap_with_id(
+        &self,
+        request: RequestId,
+        root: &RootRef,
+        w: &WrappedSealKey,
+        aad: &Aad,
+    ) -> Result<SealKey, CustodyError> {
+        let mut state = self.lock();
+        let entry = live_root(&mut state.roots, root)?;
+        let material = entry
+            .material
+            .as_ref()
+            .ok_or(CustodyError::Refused(Refusal::Destroyed))?;
+        if w.0.len() != WRAPPED_LEN {
+            return Err(CustodyError::Refused(Refusal::UnwrapFailed));
+        }
+        let (nonce, body) =
+            w.0.split_first_chunk::<{ aead::NONCE_LEN }>()
+                .ok_or(CustodyError::Refused(Refusal::UnwrapFailed))?;
+        let aead_key = aead::Key::from_bytes_with_count(material.expose(), entry.seals)
+            .map_err(CustodyError::Crypto)?;
+        let opened = aead::open(&aead_key, nonce, &wrap_aad(root, aad), body)
+            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+        drop(aead_key);
+        let bytes: [u8; 32] = opened
+            .as_slice()
+            .try_into()
+            .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+        let record = usage_record(request, UsageOp::Unwrap, root);
+        state.usage.push((root.handle.clone(), record));
+        Ok(SealKey::from_bytes(bytes))
+    }
+
     /// The material of a live root, for the test that checks where it may
     /// appear.
     pub fn with_material<T>(
@@ -265,11 +355,57 @@ impl CustodySim {
     }
 }
 
+/// The entry of the live root `root` refers to.
+fn live_root<'a>(
+    roots: &'a mut [SimRoot],
+    root: &RootRef,
+) -> Result<&'a mut SimRoot, CustodyError> {
+    let entry = roots
+        .iter_mut()
+        .find(|r| r.root.handle == root.handle)
+        .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
+    if entry.material.is_none() {
+        return Err(CustodyError::Refused(Refusal::Destroyed));
+    }
+    Ok(entry)
+}
+
+/// The AAD of a wrap: the label, the root's chain, epoch and handle, and
+/// the caller's AAD. The handle is length-prefixed, so no two roots and
+/// AADs give the same bytes.
+fn wrap_aad(root: &RootRef, aad: &Aad) -> Vec<u8> {
+    let handle = &root.handle.0;
+    let mut out = Vec::with_capacity(
+        WRAP_LABEL
+            .len()
+            .saturating_add(13)
+            .saturating_add(handle.len())
+            .saturating_add(aad.0.len()),
+    );
+    out.extend_from_slice(WRAP_LABEL);
+    out.push(root.chain.code());
+    out.extend_from_slice(&root.epoch.0.to_be_bytes());
+    out.extend_from_slice(
+        &u32::try_from(handle.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
+    out.extend_from_slice(handle);
+    out.extend_from_slice(&aad.0);
+    out
+}
+
 /// The caller's request id (`fstp_custody::with_request`), or a fresh
 /// one.
 fn fresh_id() -> Result<RequestId, NotImplemented> {
     fstp_custody::request_or_fresh()
         .map_err(|_| NotImplemented::new("fstp_celltest::custody_sim: no random request id"))
+}
+
+/// The caller's request id, or a fresh one, for a call that refuses with
+/// a [`CustodyError`].
+fn fresh_custody_id() -> Result<RequestId, CustodyError> {
+    fstp_custody::request_or_fresh()
 }
 
 /// The usage record of a served call on `root`, in the layout of
@@ -317,8 +453,7 @@ impl Custody for CustodySim {
         key: &SealKey,
         aad: &Aad,
     ) -> impl Future<Output = Result<WrappedSealKey, CustodyError>> + Send {
-        let _ = (root, key, aad);
-        ready(Err(CustodyError::NotImplemented(WAITS_FOR_CRYPTO)))
+        ready(fresh_custody_id().and_then(|id| self.wrap_with_id(id, root, key, aad)))
     }
 
     fn unwrap(
@@ -327,8 +462,7 @@ impl Custody for CustodySim {
         w: &WrappedSealKey,
         aad: &Aad,
     ) -> impl Future<Output = Result<SealKey, CustodyError>> + Send {
-        let _ = (root, w, aad);
-        ready(Err(CustodyError::NotImplemented(WAITS_FOR_CRYPTO)))
+        ready(fresh_custody_id().and_then(|id| self.unwrap_with_id(id, root, w, aad)))
     }
 
     fn destroy(

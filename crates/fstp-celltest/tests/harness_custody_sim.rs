@@ -12,7 +12,10 @@ use std::process::{Command, Stdio};
 use fstp_celltest::canary::{Canary, CanaryKind};
 use fstp_celltest::custody_sim::CustodySim;
 use fstp_celltest::scan::{StoreSet, scan_bytes};
-use fstp_custody::{Aad, Chain, Custody as _, Epoch, RootLabel, SealKey, WrappedSealKey};
+use fstp_custody::{
+    Aad, Chain, Custody as _, CustodyError, Epoch, Refusal, RootLabel, SealKey, UsageCursor,
+    WrappedSealKey,
+};
 use fstp_rt::future::block_on;
 
 fn label(chain: Chain) -> RootLabel {
@@ -53,19 +56,66 @@ fn harness_custody_sim_destroy_drops_the_material() {
     assert_eq!(page.operations.len(), 2, "{page:?}");
 }
 
-/// Wrapping needs `fstp_crypto::aead` (lane W1h), so it refuses with a
-/// typed `NotImplemented` and never returns a made-up wrap.
+/// I-80 and ADR-004 part 2: the simulator wraps a seal key under a root
+/// with `fstp_crypto::aead` and unwraps it back. It refuses a tampered
+/// wrap, a wrap under another AAD or root, and a destroyed root. Each
+/// served wrap and unwrap is in the usage log. This replaces the pin
+/// `harness_custody_sim_wrap_refuses_until_the_aead_lands`, retired by
+/// Daniel's decision of 2026-11-13 (m3-exit-audit section 7, item 2).
 #[test]
-fn harness_custody_sim_wrap_refuses_until_the_aead_lands() {
+fn harness_custody_sim_wrap_round_trips_and_refuses_a_tampered_wrap() {
     let sim = CustodySim::new().unwrap();
     let root = block_on(sim.create_root(label(Chain::App))).unwrap();
+    let other = block_on(sim.create_root(label(Chain::Vault))).unwrap();
+    let aad = Aad(b"cell 0 app epoch 1".to_vec());
     let key = SealKey::from_bytes([7; 32]);
-    let err = block_on(sim.wrap(&root, &key, &Aad(Vec::new()))).unwrap_err();
-    assert!(format!("{err:?}").contains("NotImplemented"), "{err:?}");
-    let Err(err) = block_on(sim.unwrap(&root, &WrappedSealKey(vec![1]), &Aad(Vec::new()))) else {
-        panic!("unwrap returned a key");
+    let wrapped = block_on(sim.wrap(&root, &key, &aad)).unwrap();
+    assert_eq!(wrapped.0.len(), 12 + 32 + 16);
+    assert!(
+        !wrapped.0.windows(32).any(|w| w == [7; 32]),
+        "the wrap holds the key in clear"
+    );
+    let back = block_on(sim.unwrap(&root, &wrapped, &aad)).unwrap();
+    assert_eq!(back.expose(), &[7; 32]);
+
+    let refused = |w: &WrappedSealKey, r: &fstp_custody::RootRef, a: &Aad| match block_on(
+        sim.unwrap(r, w, a),
+    ) {
+        Ok(_) => panic!("a tampered or misbound wrap unwrapped"),
+        Err(e) => e,
     };
-    assert!(format!("{err:?}").contains("NotImplemented"), "{err:?}");
+    let unwrap_failed = CustodyError::Refused(Refusal::UnwrapFailed);
+    for at in [0, 12, wrapped.0.len() - 1] {
+        let mut tampered = wrapped.0.clone();
+        tampered[at] ^= 1;
+        assert_eq!(
+            refused(&WrappedSealKey(tampered), &root, &aad),
+            unwrap_failed
+        );
+    }
+    let short = WrappedSealKey(wrapped.0[..wrapped.0.len() - 1].to_vec());
+    assert_eq!(refused(&short, &root, &aad), unwrap_failed);
+    assert_eq!(refused(&wrapped, &root, &Aad(Vec::new())), unwrap_failed);
+    assert_eq!(refused(&wrapped, &other, &aad), unwrap_failed);
+
+    // Two wraps of one key differ, since each has a fresh nonce.
+    let again = block_on(sim.wrap(&root, &key, &aad)).unwrap();
+    assert_ne!(again.0, wrapped.0);
+
+    // Create, two wraps and one unwrap were served and logged. Refused
+    // unwraps are not.
+    let page = block_on(sim.usage_since(&root, UsageCursor::default())).unwrap();
+    assert_eq!(page.operations.len(), 4, "{page:?}");
+
+    block_on(sim.destroy(&root)).unwrap();
+    assert_eq!(
+        refused(&wrapped, &root, &aad),
+        CustodyError::Refused(Refusal::Destroyed)
+    );
+    let Err(err) = block_on(sim.wrap(&root, &key, &aad)) else {
+        panic!("a destroyed root wrapped");
+    };
+    assert_eq!(err, CustodyError::Refused(Refusal::Destroyed));
 }
 
 /// Design section 3.3: `fstp-custody-sim` runs as its own process, holds
