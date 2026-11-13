@@ -431,7 +431,16 @@ fn i77_management_login_requires_phishing_resistant_method_over_http() {
                 .login(ADMIN, RefMethod::Passkey)
                 .map_err(|e| e.to_string())?
                 .ok_or("admin1 cannot log in by passkey")?;
-            let mut cookies: Vec<(m::Sess, Cookie)> = Vec::new();
+            // Each cookie's model key is its session and the number of its
+            // login, so two sessions of one account, method and tick get
+            // distinct keys. An ended session's cookie stays ended when a
+            // later login opens a session with equal fields. Daniel decided
+            // this bookkeeping on 2026-11-13 (M3 exit audit, section 7,
+            // item 6). `latest` holds the login number that owns each
+            // model session now.
+            let mut cookies: Vec<((m::Sess, usize), Cookie)> = Vec::new();
+            let mut latest: std::collections::BTreeMap<m::Sess, usize> =
+                std::collections::BTreeMap::new();
             for _ in 0..g.usize_in(1..=12) {
                 let mut actions = Vec::new();
                 model.actions(&s, &mut actions);
@@ -456,7 +465,9 @@ fn i77_management_login_requires_phishing_resistant_method_over_http() {
                         );
                         if let (Some(c), Some(t)) = (got, next) {
                             if let Some(x) = t.sessions.iter().find(|x| !s.sessions.contains(x)) {
-                                cookies.push((*x, c));
+                                let n = cookies.len();
+                                latest.insert(*x, n);
+                                cookies.push(((*x, n), c));
                             }
                             s = t;
                         }
@@ -507,8 +518,9 @@ fn i77_management_login_requires_phishing_resistant_method_over_http() {
                         s = t;
                     }
                 }
-                for (x, c) in &cookies {
-                    let live = s.sessions.contains(x) && s.reference_admits(x);
+                for ((x, n), c) in &cookies {
+                    let live =
+                        latest.get(x) == Some(n) && s.sessions.contains(x) && s.reference_admits(x);
                     let got = client.admitted(c).map_err(|e| e.to_string())?;
                     prop_assert_eq!(got, live, "request in session {x:?} at tick {}", s.tick);
                 }
