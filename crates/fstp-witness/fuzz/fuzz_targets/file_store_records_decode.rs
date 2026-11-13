@@ -43,7 +43,11 @@ fuzz_target!(|data: &[u8]| {
         ChainId::Vault
     };
     let first = load_chain_file(cell, chain, bytes);
-    assert_eq!(first, load_chain_file(cell, chain, bytes), "not deterministic");
+    assert_eq!(
+        first,
+        load_chain_file(cell, chain, bytes),
+        "not deterministic"
+    );
     let Ok(loaded) = first else {
         return;
     };
@@ -60,6 +64,9 @@ fuzz_target!(|data: &[u8]| {
             Some((row.anchor.n, row.anchor.link)),
             "the last prepare is not outstanding"
         ),
-        _ => assert_eq!(loaded.state.outstanding, None, "a withdrawn prepare is outstanding"),
+        _ => assert_eq!(
+            loaded.state.outstanding, None,
+            "a withdrawn prepare is outstanding"
+        ),
     }
 });

@@ -16,7 +16,11 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let first = parse_profile(data);
-    assert_eq!(first, parse_profile(data), "the parser is not deterministic");
+    assert_eq!(
+        first,
+        parse_profile(data),
+        "the parser is not deterministic"
+    );
     let Ok(p) = first else {
         return;
     };

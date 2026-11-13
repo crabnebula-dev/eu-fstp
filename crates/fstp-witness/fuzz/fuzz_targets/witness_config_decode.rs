@@ -44,9 +44,15 @@ fuzz_target!(|data: &[u8]| {
         "an accepted key file does not re-encode to its input"
     );
     if let Some((_, head)) = data.split_last() {
-        assert!(decode_receipt_key_file(head).is_err(), "a cut file accepted");
+        assert!(
+            decode_receipt_key_file(head).is_err(),
+            "a cut file accepted"
+        );
     }
     let mut longer = data.to_vec();
     longer.push(0);
-    assert!(decode_receipt_key_file(&longer).is_err(), "a trailing byte accepted");
+    assert!(
+        decode_receipt_key_file(&longer).is_err(),
+        "a trailing byte accepted"
+    );
 });
