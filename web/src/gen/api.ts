@@ -2928,7 +2928,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_list_contracts_to_sign", scope: "proposals:read", prepareOnly: false },
   },
   {
     name: "grant.determination_view",

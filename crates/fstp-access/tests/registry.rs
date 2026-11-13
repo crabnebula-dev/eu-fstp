@@ -684,11 +684,11 @@ fn i85_every_high_risk_tool_is_prepare_only() {
 /// exists that the user's roles could not perform in the interface, so
 /// every operation with a tool has a web route. The capability table of
 /// design section 3.8 holds 35 tools, and M5 design 12.1 adds three
-/// read-only ones.
+/// read-only ones. Daniel added `fstp_list_contracts_to_sign` on 2026-11-13.
 #[test]
 fn i84_every_tool_has_a_web_route() {
     let tools: Vec<&OpSpec> = OPS.iter().filter(|o| o.tool.is_some()).collect();
-    assert_eq!(tools.len(), 38, "operations with a tool");
+    assert_eq!(tools.len(), 39, "operations with a tool");
     let routeless: Vec<&str> = tools
         .iter()
         .filter(|o| o.route.is_none())
@@ -716,7 +716,7 @@ fn i84_every_tool_maps_to_one_op() {
             }
         }
     }
-    assert_eq!(by_tool.len(), 38, "distinct tool names");
+    assert_eq!(by_tool.len(), 39, "distinct tool names");
     let shared: Vec<(&str, Vec<&str>)> = by_tool
         .into_iter()
         .filter(|(_, ops)| ops.len() != 1)
@@ -771,7 +771,12 @@ const CAPABILITY_ROWS: [(&str, &[&str], &str); 7] = [
     // M5 design 12.1: read-only status tools.
     (
         "Grantee",
-        &["fstp_get_contract_status", "fstp_get_payment_status"],
+        &[
+            "fstp_get_contract_status",
+            "fstp_get_payment_status",
+            // Decided by Daniel on 2026-11-13.
+            "fstp_list_contracts_to_sign",
+        ],
         "",
     ),
     (

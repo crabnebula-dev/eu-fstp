@@ -1539,7 +1539,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // keeps the grants and contracts the overview and contract reads
     // serve the caller.
     RefOp::read("grant.list_mine", T::None, R::AnyAccount),
-    RefOp::read("contract.awaiting_me", T::None, R::AnyAccount),
+    // Decided by Daniel on 2026-11-13: a read-only tool, as contract.view.
+    RefOp::read("contract.awaiting_me", T::None, R::AnyAccount).tool("fstp_list_contracts_to_sign"),
     RefOp::read("grant.determination_view", T::Proposal, R::Determination),
     RefOp::read("payment.line_review_view", T::Proposal, R::LineReview),
     RefOp::act("grant.determine_amount", T::Negotiation, R::GrantReviewer).binding(),

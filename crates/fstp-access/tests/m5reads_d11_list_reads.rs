@@ -6,8 +6,10 @@
 //! 16 proposal states, so no state leaves it unjudged. The dispatch then
 //! keeps only the grants and contracts that `grant.overview` and
 //! `contract.view` would serve the caller, so the lists never widen
-//! those reads. Both are web only: no MCP tool, since `grant.overview`
-//! has none (I-85). Each has a reply shape, so gen-ts emits a validator.
+//! those reads. `grant.list_mine` is web only, since `grant.overview` has
+//! no tool (I-85). `contract.awaiting_me` has a read-only tool, as
+//! `contract.view` has (decided by Daniel on 2026-11-13). Each has a reply
+//! shape, so gen-ts emits a validator.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -39,15 +41,26 @@ fn d11_m5_lists_are_own_reads_open_in_every_state() {
     }
 }
 
-/// I-85, R-AC-01: each list is a read with no tool, at its route, and is
-/// neither high risk nor binding.
+/// I-85, I-84, R-AC-01: each list is a read at its route, and is neither
+/// high risk nor binding. `grant.list_mine` has no tool, as
+/// `grant.overview` has none. `contract.awaiting_me` has the read-only
+/// tool `fstp_list_contracts_to_sign` with the scope of `contract.view`,
+/// as `contract.view` has one (decided by Daniel on 2026-11-13).
 #[test]
 fn i85_m5_lists_are_web_only_reads() {
     for (name, kind, path) in LISTS {
         let spec = op(name).unwrap_or_else(|| panic!("{name} is not in the registry"));
         assert_eq!(spec.kind, OpKind::Read(kind), "{name}");
         assert_eq!(spec.route.map(|(_, p)| p), Some(path), "{name}");
-        assert!(spec.tool.is_none(), "I-85: {name} has an MCP tool");
+        if name == "contract.awaiting_me" {
+            let t = spec.tool.unwrap_or_else(|| panic!("{name} has no tool"));
+            assert_eq!(t.name, "fstp_list_contracts_to_sign");
+            assert!(!t.prepare_only, "I-84: a read-only tool");
+            let view = op("contract.view").and_then(|o| o.tool).expect("a tool");
+            assert_eq!(t.scope, view.scope, "the scope of contract.view");
+        } else {
+            assert!(spec.tool.is_none(), "I-85: {name} has an MCP tool");
+        }
         assert!(!spec.high_risk && !spec.binding, "{name}");
     }
 }

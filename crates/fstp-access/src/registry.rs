@@ -1994,13 +1994,21 @@ pub const OPS: &[OpSpec] = &[
         Scope::ProposalsRead,
     ),
     // M5 reads follow-up: the caller's grants and the contracts awaiting
-    // the caller's signature, so nobody types a proposal number. Web
-    // only, as `grant.overview` is (I-85).
+    // the caller's signature, so nobody types a proposal number. The grant
+    // list is web only, as `grant.overview` is (I-85). Decided by Daniel on
+    // 2026-11-13: the signing list has a read-only tool, as `contract.view`
+    // has, with the same scope. Signing stays web only (I-85).
     OpSpec::read("grant.list_mine", RK::ListMyGrants, "/me/grants"),
     OpSpec::read(
         "contract.awaiting_me",
         RK::ListMyContractsToSign,
         "/me/contracts-awaiting-signature",
+    )
+    .tool(
+        "fstp_list_contracts_to_sign",
+        "List the contract versions that wait on the caller's own signature.",
+        &IN_NONE,
+        Scope::ProposalsRead,
     ),
     // Lead, 2026-11-12: the assigned reviewer's determination view (R-NG-03).
     // Web only, as `grant.determine_amount` is (I-85).

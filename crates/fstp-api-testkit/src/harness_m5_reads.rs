@@ -180,6 +180,29 @@ fn r_ac_01_grant_list_names_the_admitting_role() {
     }
 }
 
+/// `who`'s signing list through the MCP tool `fstp_list_contracts_to_sign`
+/// with a token of `scopes` (decided by Daniel on 2026-11-13).
+fn to_sign_mcp(seed: &mut Seeder, who: AccountId, scopes: &[Scope]) -> Result<Value, String> {
+    seed.tick();
+    let token = seed.ports.tokens.issue(
+        who,
+        agent_of(who),
+        scopes.iter().copied(),
+        LoginMethod::Passkey,
+    );
+    let r = decode_tool("fstp_list_contracts_to_sign", b"{}").and_then(|op| {
+        block_on(
+            seed.core
+                .dispatch(Credential::Bearer(token), &RequestHead::new(), op),
+        )
+    });
+    match r {
+        Ok(OpResult::Done { body, .. }) => Ok(body.to_json()),
+        Ok(other) => Err(other.to_json().to_compact()),
+        Err(e) => Err(e.to_json().to_compact()),
+    }
+}
+
 /// R-CT-01, P-30, I-86: the signing list follows the signing order. The
 /// grantee side waits first; the signatory only after it; nobody once the
 /// version is effective. The programme manager is never a party.
@@ -241,6 +264,18 @@ fn r_ct_01_contracts_awaiting_me_follow_the_signing_order() {
         "P-30: the signatory countersigns last"
     );
     assert!(to_sign(&mut seed, PM).is_empty());
+    // I-84, I-86 (decided by Daniel on 2026-11-13): the MCP tool answers
+    // the same rows as the web read, names no account or bank value, and
+    // needs the scope of `contract.view`.
+    let web = read(&mut seed, LEAD, "/me/contracts-awaiting-signature");
+    let agent = to_sign_mcp(&mut seed, LEAD, &Scope::ALL).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(agent.to_compact(), web.to_compact(), "I-84: as the web");
+    assert!(!leaks(&agent.to_compact()), "I-86: {}", agent.to_compact());
+    let e = to_sign_mcp(&mut seed, LEAD, &[]).expect_err("no scope");
+    assert!(e.contains("\"scope\""), "I-84: refused for its scope: {e}");
+    let signatory =
+        to_sign_mcp(&mut seed, SIGNATORY, &Scope::ALL).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(signatory.to_compact(), "[]", "P-30 through MCP");
     seed.api(
         LEAD,
         POST,
