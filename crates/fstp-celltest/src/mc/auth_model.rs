@@ -2890,7 +2890,7 @@ pub mod http {
 
     /// A magic-link login refuses: an invited account has no email
     /// address the cell knows, and the world captures no outbox mail.
-    pub const MAGIC_LINK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::login by magic link: an invited account has no email address in the cell (self-registration is not built), and the pg backend puts no magic link in an outbox the world could capture (fstp-cell routes/pg.rs send_magic_link)";
+    pub const MAGIC_LINK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::login by magic link: no account has a login email in the cell: an invitation names none, and self-registration (built by lane F-CYCLE3) keeps none, since the keyed login email index needs the Lookup key that the keystore does not give (fstp-cell routes/pg.rs login_account); the pg backend also puts no magic link in an outbox the world could capture (send_magic_link)";
 
     /// A programme role grant or end refuses: every programme role names
     /// an active programme, and this client sets up none of its own. The

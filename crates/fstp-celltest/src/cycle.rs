@@ -353,6 +353,24 @@ impl<'w> Cycle<'w> {
             "rank" => self.rank(),
             "negotiate" => self.negotiate(),
             "grant" => self.grant(),
+            // The whole cycle as one step (`i80_custody`, `i81_backups`).
+            "call-cycle" => {
+                for s in [
+                    "login",
+                    "create-programme",
+                    "publish-call",
+                    "signup",
+                    "verify-identity",
+                    "submit-proposal",
+                    "score",
+                    "rank",
+                    "negotiate",
+                    "grant",
+                ] {
+                    self.step(s)?;
+                }
+                Ok(())
+            }
             "minor-applicant:draft" => self.minor_draft(),
             "minor-applicant:submit" => self.submit(),
             "minor-applicant:evaluate" => {
