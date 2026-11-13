@@ -246,15 +246,18 @@ struct LiveKey {
     handle: Vec<u8>,
 }
 
-/// The seam of [`live_cell_keys`]: the world does not list the live
-/// custody keys of one cell (every live root of its App, Vault and
-/// CellBackup chains, and its cell CA key). Lanes W3a and W3b add it.
-const LIVE_KEYS_SEAM: &str = "fstp_celltest::world::World does not list the live custody roots and the cell CA key of one cell (lanes W3a and W3b)";
-
-/// The live custody keys of cell `cell`.
+/// The live custody keys of cell `cell`: every live root of its App,
+/// Vault and CellBackup chains, and its cell CA key, as the cell's world
+/// custody lists them (`World::live_custody_keys`, lane m3/erase-steps).
 fn live_cell_keys(world: &World, cell: u8) -> Result<BTreeSet<LiveKey>, String> {
-    let _ = (world, cell);
-    Err(LIVE_KEYS_SEAM.to_owned())
+    world
+        .live_custody_keys(cell)
+        .map(|keys| {
+            keys.into_iter()
+                .map(|(chain, handle)| LiveKey { chain, handle })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// The seam of [`erasure_confirmation`]: the world does not expose the

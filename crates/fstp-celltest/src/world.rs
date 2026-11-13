@@ -531,13 +531,49 @@ impl CellHandle {
         account: fstp_domain::id::AccountId,
         attributes: &[u8],
     ) -> Result<Vec<fstp_vault_core::VaultEvent>, crate::vault_seed::SeedError> {
+        self.seed_identity(account, attributes, None)
+    }
+
+    /// Seeds a synthetic verification of `account` with the identity of
+    /// `attributes`, whose name canary is `name`, if any. Its match key
+    /// comes from the cell's Vault chain keystore, which keeps the tuple
+    /// (`crate::vault_keys`, lane m3/erase-steps).
+    pub(crate) fn seed_identity(
+        &self,
+        account: fstp_domain::id::AccountId,
+        attributes: &[u8],
+        name: Option<crate::canary::Canary>,
+    ) -> Result<Vec<fstp_vault_core::VaultEvent>, crate::vault_seed::SeedError> {
+        let refused = |e: WorldError| {
+            eprintln!("fstp_celltest::world seed_identity: {e}");
+            crate::vault_seed::SeedError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::vault_keys: the Vault chain keystore refused the match key (the error is on standard error)",
+            ))
+        };
+        let mk = crate::backups::vault_keys(self)
+            .and_then(|k| k.match_key(attributes, name))
+            .map_err(refused)?;
         let rt = self.runtime().map_err(|_| {
             crate::vault_seed::SeedError::NotImplemented(NotImplemented::new(NOT_STARTED))
         })?;
         let running = lock(&rt.running);
         rt.services
             .rt
-            .block_on(running.vault.seed_verification(account.raw(), attributes))
+            .block_on(running.vault.seed_verification_keyed(account.raw(), mk))
+    }
+
+    /// Moves the identities of the cell's seeded vault to new match keys
+    /// (`crate::seeded_vault::SeededVault::rekey_identities`).
+    pub(crate) fn rekey_identities(
+        &self,
+        rekey: &BTreeMap<[u8; 32], [u8; 32]>,
+    ) -> Result<(), WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        rt.services
+            .rt
+            .block_on(running.vault.rekey_identities(rekey))
+            .map_err(|e| WorldError::Store(format!("the vault rekey: {e}")))
     }
 
     /// Seeds the synthetic vault fact `fact` from `source` into the cell's
@@ -1993,10 +2029,43 @@ mod pki {
         pub(super) key_pem: Vec<u8>,
     }
 
-    /// A CA of the world. Its key never leaves the test process.
+    /// Where a CA's key lives.
+    enum CaKey {
+        /// In the test process.
+        Local(fstp_crypto::sig::EcdsaP256KeyPair),
+        /// A `sign` key of the cell's world custody (ADR-004 "CA keys in
+        /// custody", lane m3/erase-steps), with its SubjectPublicKeyInfo.
+        Custody(super::WorldCustody, fstp_custody::SignKeyRef, Vec<u8>),
+    }
+
+    impl CaKey {
+        fn spki_der(&self) -> Result<Vec<u8>, WorldError> {
+            match self {
+                CaKey::Local(k) => k.spki_der().map_err(|e| err("a CA key", &e)),
+                CaKey::Custody(_, _, spki) => Ok(spki.clone()),
+            }
+        }
+
+        /// The signature over `message`: locally, or through custody
+        /// `sign` over its SHA-256 digest.
+        fn sign(&self, message: &[u8]) -> Result<Vec<u8>, WorldError> {
+            match self {
+                CaKey::Local(k) => k.sign(message).map_err(|e| err("a CA signature", &e)),
+                CaKey::Custody(custody, key, _) => {
+                    use fstp_custody::Custody as _;
+                    fstp_rt::future::block_on(custody.sign(key, &fstp_crypto::sha256(message)))
+                        .map(|s| s.0)
+                        .map_err(|e| err("a CA signature in custody", &e))
+                }
+            }
+        }
+    }
+
+    /// A CA of the world. Its key never leaves the test process, or the
+    /// cell's world custody for a cell CA.
     pub(super) struct Ca {
         name: String,
-        key: fstp_crypto::sig::EcdsaP256KeyPair,
+        key: CaKey,
         /// The CA certificate, DER.
         pub(super) der: Vec<u8>,
         /// The CA certificate, PEM.
@@ -2010,7 +2079,24 @@ mod pki {
         pub(super) fn new(name: &str) -> Result<Ca, WorldError> {
             let key =
                 fstp_crypto::sig::EcdsaP256KeyPair::generate().map_err(|e| err("a CA key", &e))?;
-            let spki = key.spki_der().map_err(|e| err("a CA key", &e))?;
+            Ca::with_key(name, CaKey::Local(key))
+        }
+
+        /// A fresh self-signed CA named `name` whose key is a `sign` key
+        /// made inside `custody` (design section 1.3, ADR-004 "CA keys in
+        /// custody"). The cell CA is made so (lane m3/erase-steps).
+        pub(super) fn in_custody(
+            name: &str,
+            custody: &super::WorldCustody,
+        ) -> Result<Ca, WorldError> {
+            let (key, spki) = custody
+                .create_sign_key()
+                .map_err(|e| err("a CA key in custody", &e))?;
+            Ca::with_key(name, CaKey::Custody(custody.clone(), key, spki))
+        }
+
+        fn with_key(name: &str, key: CaKey) -> Result<Ca, WorldError> {
+            let spki = key.spki_der()?;
             let dn = DistinguishedName {
                 common_name: name.to_owned(),
                 organizational_unit: None,
@@ -2032,7 +2118,7 @@ mod pki {
                 algorithm: SignatureAlgorithm::EcdsaP256Sha256,
             };
             let t = tbs(&spec).map_err(|e| err("a CA", &e))?;
-            let sig = key.sign(t.as_der()).map_err(|e| err("a CA", &e))?;
+            let sig = key.sign(t.as_der())?;
             let der = assemble(&t, &sig).map_err(|e| err("a CA", &e))?;
             let pem = encode(PemLabel::Certificate, &der)
                 .map_err(|e| err("a CA", &e))?
@@ -2057,7 +2143,7 @@ mod pki {
         ) -> Result<Issued, WorldError> {
             let key =
                 fstp_crypto::sig::EcdsaP256KeyPair::generate().map_err(|e| err("a key", &e))?;
-            let issuer_spki = self.key.spki_der().map_err(|e| err("a CA key", &e))?;
+            let issuer_spki = self.key.spki_der()?;
             let now = now()?;
             let not_before = now.saturating_sub(BACKDATE);
             let spec = CertSpec {
@@ -2082,7 +2168,7 @@ mod pki {
                 algorithm: SignatureAlgorithm::EcdsaP256Sha256,
             };
             let t = tbs(&spec).map_err(|e| err("a leaf", &e))?;
-            let sig = self.key.sign(t.as_der()).map_err(|e| err("a leaf", &e))?;
+            let sig = self.key.sign(t.as_der())?;
             let der = assemble(&t, &sig).map_err(|e| err("a leaf", &e))?;
             let cert_pem = encode(PemLabel::Certificate, &der)
                 .map_err(|e| err("a leaf", &e))?
@@ -2107,12 +2193,51 @@ pub(crate) struct WorldCustody {
     /// I-80 scans look for these bytes ([`World::root_needles`], lane
     /// F-ERASE).
     made: std::sync::Arc<Mutex<Vec<[u8; 32]>>>,
+    /// The chain of every root it created, by handle (lane m3/erase-steps).
+    chains: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, fstp_keys::Chain>>>,
+    /// The ECDSA P-256 `sign` keys it holds, by handle: the cell CA key
+    /// (design section 1.3, ADR-004 "CA keys in custody", lane
+    /// m3/erase-steps). They are made here and never leave.
+    sign_keys: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, fstp_crypto::sig::EcdsaP256KeyPair>>>,
 }
 
 impl WorldCustody {
     /// The handle of every root that lives (lane F-ERASE).
     pub(crate) fn live_handles(&self) -> Vec<Vec<u8>> {
         lock(&self.roots).keys().cloned().collect()
+    }
+
+    /// Every key that lives: each root with its chain, and each `sign`
+    /// key with no chain, by handle (lane m3/erase-steps).
+    pub(crate) fn live_keys(&self) -> Vec<(Option<fstp_keys::Chain>, Vec<u8>)> {
+        let chains = lock(&self.chains);
+        let mut out: Vec<(Option<fstp_keys::Chain>, Vec<u8>)> = lock(&self.roots)
+            .keys()
+            .map(|h| (chains.get(h).copied(), h.clone()))
+            .collect();
+        out.extend(lock(&self.sign_keys).keys().map(|h| (None, h.clone())));
+        out
+    }
+
+    /// Makes an ECDSA P-256 `sign` key inside custody and gives its
+    /// reference and SubjectPublicKeyInfo (lane m3/erase-steps). The
+    /// private key never leaves.
+    pub(crate) fn create_sign_key(
+        &self,
+    ) -> Result<(fstp_custody::SignKeyRef, Vec<u8>), fstp_custody::CustodyError> {
+        let key = fstp_crypto::sig::EcdsaP256KeyPair::generate()
+            .map_err(fstp_custody::CustodyError::Crypto)?;
+        let spki = key.spki_der().map_err(fstp_custody::CustodyError::Crypto)?;
+        let handle =
+            fstp_crypto::random_array::<16>().map_err(fstp_custody::CustodyError::Crypto)?;
+        lock(&self.sign_keys).insert(handle.to_vec(), key);
+        Ok((
+            fstp_custody::SignKeyRef {
+                backend: fstp_custody::BackendId::Simulator,
+                handle: fstp_custody::CustodyHandle(handle.to_vec()),
+            },
+            spki,
+        ))
     }
 }
 
@@ -2129,6 +2254,7 @@ impl fstp_custody::Custody for WorldCustody {
                 fstp_crypto::random_array::<16>().map_err(fstp_custody::CustodyError::Crypto)?;
             lock(&self.roots).insert(handle.to_vec(), key);
             lock(&self.made).push(key);
+            lock(&self.chains).insert(handle.to_vec(), label.chain);
             Ok(fstp_custody::RootRef {
                 backend: fstp_custody::BackendId::Simulator,
                 cell: label.cell,
@@ -2211,14 +2337,20 @@ impl fstp_custody::Custody for WorldCustody {
 
     fn sign(
         &self,
-        _key: &fstp_custody::SignKeyRef,
-        _digest: &[u8; 32],
+        key: &fstp_custody::SignKeyRef,
+        digest: &[u8; 32],
     ) -> impl std::future::Future<
         Output = Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError>,
     > + Send {
-        std::future::ready(Err(fstp_custody::CustodyError::Refused(
-            fstp_custody::Refusal::NoSignKey,
-        )))
+        use fstp_custody::{CustodyError, Refusal};
+        let signed = match lock(&self.sign_keys).get(&key.handle.0) {
+            Some(k) => k
+                .sign_digest(digest)
+                .map(fstp_custody::EcdsaSignature)
+                .map_err(CustodyError::Crypto),
+            None => Err(CustodyError::Refused(Refusal::NoSignKey)),
+        };
+        std::future::ready(signed)
     }
 
     fn usage_since(
@@ -2938,7 +3070,14 @@ fn start_cell(
     let app_db = database_name(CellDatabase::App, &plan.cell);
     let vault_db = database_name(CellDatabase::Vault, &plan.cell);
     // Step 1.
-    let cell_ca = pki::Ca::new(&format!("cell CA {}", hex.get(..12).unwrap_or("")))?;
+    // The cell CA key is a `sign` key of the cell's world custody, where the
+    // cell's roots live too (ADR-004 "CA keys in custody", lane
+    // m3/erase-steps).
+    let custody = WorldCustody::default();
+    let cell_ca = pki::Ca::in_custody(
+        &format!("cell CA {}", hex.get(..12).unwrap_or("")),
+        &custody,
+    )?;
     let anchor = fstp_crypto::composite::generate().map_err(|e| fail("the anchor key", &e))?;
     let anchor_public = anchor.public_key().to_bytes().to_vec();
     // The vault anchors its own chain under its own key (ADR-010 "The
@@ -3210,7 +3349,6 @@ fn start_cell(
         fstp_keys::DekId(fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?),
         fstp_crypto::aead::Key::generate().map_err(|e| fail("the ledger key", &e))?,
     );
-    let custody = WorldCustody::default();
     let parts = fstp_cell::process::CellProcessParts {
         cell,
         mode: if spec.self_hosted {

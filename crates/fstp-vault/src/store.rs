@@ -396,6 +396,25 @@ pub async fn persist_in<R: Runtime>(
                     &[&identity.0.to_be_bytes(), match_key],
                 ));
             }
+            JournalEntry::IdentityRekeyed {
+                identity,
+                match_key,
+            } => {
+                let n = tx
+                    .execute(
+                        "UPDATE vault.identity SET match_key = $2 WHERE identity_id = $1",
+                        &[&uuid(identity.0), &match_key.to_vec()],
+                    )
+                    .await
+                    .map_err(db)?;
+                if n != 1 {
+                    return Err(VaultError::Unavailable(DB));
+                }
+                digests.push(row_digest(
+                    b"vault.identity",
+                    &[&identity.0.to_be_bytes(), match_key],
+                ));
+            }
             JournalEntry::AccountVerified {
                 account,
                 identity,

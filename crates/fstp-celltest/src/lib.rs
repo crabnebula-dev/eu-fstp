@@ -30,6 +30,7 @@ pub mod relay;
 pub mod scan;
 pub mod seeded_vault;
 pub mod soft_authn;
+pub mod vault_keys;
 pub mod vault_seed;
 pub mod world;
 pub mod world_mail;

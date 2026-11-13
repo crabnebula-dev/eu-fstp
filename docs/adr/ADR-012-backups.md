@@ -48,7 +48,7 @@ body   = chunk(0) | chunk(1) | ... | chunk(n), and chunk(n) alone has final = 1
 - `sealed_key` is the data key in the 1210-byte `FSK1` form of ADR-004, sealed to the chain's group key. The purpose code for backups comes from the ADR-004 purpose table: Record at first use.
 - Each chunk is sealed with AES-256-GCM through `fstp_crypto::aead::seal`, which draws a random 96-bit nonce. The nonce is stored in the chunk.
 - The AAD binds each chunk to its container, its position and its final flag. A chunk moved, reordered or relabelled fails to open.
-- Test vectors: Record before lane W2k's first production commit, in this ADR.
+- Test vectors: recorded below in "Record: container test vectors" (lane m3/erase-steps, 2026-11-13). The writer and opener landed in lane F-ERASE before them.
 
 Rules:
 
@@ -57,6 +57,22 @@ Rules:
 - **Seal limit:** a container whose chunk count would reach the 2^24 hard limit of ADR-004 is split. Each part gets its own data key.
 - **Decoder:** one spelling only. `final` is 0 or 1. A non-final chunk has `len` equal to `chunk_size`, and the final chunk has `len` at most `chunk_size`. Exactly one chunk is final, and it is the last. Bytes after it are refused. A missing final chunk is reported as truncation.
 - **Opening:** needs the group secret, which opens only through the chain's current epoch seal key, unwrapped through custody. `fstp-control` holds the ClusterBackup chain and `fstp-cell` the CellBackup chain (ADR-004). The key that seals vault snapshots is an open point (Keystore snapshots).
+
+### Record: container test vectors
+
+Recorded by lane m3/erase-steps on 2026-11-13. Interim, pending Daniel, like the container bytes they record.
+
+- `seal_container` draws the container id, the data key, the KEM randomness and each chunk nonce itself. No API takes them from a caller (ADR-004 nonce rule). So each vector is a container the writer sealed once and the test decodes. Production randomness is unchanged.
+- The vector key pair is fixed. Its X25519 scalar is `SHA-256("fstp-adr012-vector-v1 x25519")`. Its ML-KEM-768 seeds are `d = SHA-256("fstp-adr012-vector-v1 mlkem d")` and `z = SHA-256("fstp-adr012-vector-v1 mlkem z")`, expanded through FIPS 203 `ML-KEM.KeyGen_internal`.
+- SHA-256 of the public key `pk_X || pk_M`: `0304c1ef4c006f2310fa89666d06d7161bace83f4f75af95856548c6e4212e78`.
+- The container bytes are Rust constants in `crates/fstp-celltest/tests/adr012_container_vectors.rs`, as ADR-004 item 3 keeps its vectors. That crate may name the single-half ML-KEM entry points for test vectors (I-75 scan).
+
+| Vector | Kind, chain | Owner, group, generation, part | Plaintext | Container id | Data key | SHA-256 of the container |
+| --- | --- | --- | --- | --- | --- | --- |
+| V1 | 3 keystore snapshot, CellBackup (3) | `11` x16, `22` x16, 1, 0 | empty (one empty final chunk) | `56ba72ac6b2081c17aceb7b1a32698c8` | `11d1ae184bce65726ef2766bc93f968b7098f631fb6dc01ef844d7f8990c4f98` | `4750b2152de2f8bcee455ed0f43775b91026524bb7b71dd6c580da55379a0900` |
+| V2 | 2 WAL segment, ClusterBackup (4) | `33` x16, `44` x16, 7, 2 | the 39 ASCII bytes `synthetic WAL segment, ADR-012 vector 2` | `b3d161759f60bc6cb1769cf510998905` | `a77531001dcf43265464ea9fd68cbdedbbc946a442be8a05d9f8b963f533150a` | `fe4f9a4dc50d6be5ca06a125a8b4faca0e4a3cd8c26c0b46fdeae29d9fd6ed29` |
+
+The test checks each digest and each header field at its offset. It opens each container through `open_container`, and again by hand: the data key through `fstp_keys::envelope::open_key` under the context (owner, chain, purpose `Backup`, group, generation, container id), and each chunk under `header | index u64 | final u8`. A changed header byte and another key pair are refused. The test also reads this record, so the values here and in the test cannot drift apart. No multi-chunk vector is recorded, since a 1 MiB constant is too large. `r_cr_01_container_round_trips_under_the_hybrid_kem` covers two chunks.
 
 ### Object names
 
@@ -178,7 +194,7 @@ No listing call exists in M3, so a restore needs another way to find the newest 
 ## Open points
 
 - The second provider, its regions and the retention values (Q25, L-15).
-- The proposed container bytes (`FBC1`) need Daniel's acceptance. Test vectors are recorded before W2k's first production commit.
+- The proposed container bytes (`FBC1`) need Daniel's acceptance. The test vectors are recorded (Record: container test vectors), late: the writer landed first.
 - How a restore finds the newest base backup: a `cp` record or a listing call. The `cp` record needs an `Infrastructure` register entry (ADR-009), and self-hosted installs need the local index or the listing call.
 - **Keystore snapshot path, tied to ADR-004 erasure step 5.** The writers, the two proposed `KeystoreSnapshots` destinations (ADR-009), and the vault snapshot key (option A or B under Keystore snapshots). Vault chain rotations cannot complete until Daniel accepts one option.
 - **Declared restores.** The `RestoreDeclared` statement, the restore declaration key (ADR-004 placement table), the `DeclareRestore` job (ADR-011), `fstp-control` as a witness client (ADR-009) and the `LostInRestore` verdict (ADR-010). Each is entered in its ADR as interim, pending Daniel, and they stand or fall together. Which jobs carry the production restore itself is also open.

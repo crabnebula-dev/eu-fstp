@@ -97,10 +97,13 @@ enum Subject {
 }
 
 /// The seam of [`world_canaries`] for the kinds the world does not
-/// record: it records the text salt and proposal text canaries of the
-/// texts `erase-text` stores (`World::text_canaries`, lane F-ERASE), but
-/// not the login emails or identity names it seeds.
-const CANARY_SEAM: &str = "fstp_celltest::world::World records the canaries of erase-text only (text salt and proposal text), not the login email or identity name canaries it seeds, by erased or live subject";
+/// record. It records the text salt and proposal text canaries of the
+/// texts `erase-text` stores (`World::text_canaries`, lane F-ERASE), the
+/// login email canaries of the accounts the cycle signs up
+/// (`World::login_canaries`) and the name canaries of the identities
+/// `erase-identity` seeds (`World::identity_canaries`, lane
+/// m3/erase-steps).
+const CANARY_SEAM: &str = "fstp_celltest::world::World records text salt, proposal text, login email and identity name canaries only, by erased or live subject";
 
 /// The canaries of `kind` the world seeded for the erased subject, or for
 /// the live subjects.
@@ -113,25 +116,30 @@ fn world_canaries(
         CanaryKind::TextSalt | CanaryKind::ProposalText => world
             .text_canaries(kind, subject == Subject::Erased)
             .map_err(|e| e.to_string()),
+        CanaryKind::Email => world
+            .login_canaries(subject == Subject::Erased)
+            .map_err(|e| e.to_string()),
+        CanaryKind::Name => world
+            .identity_canaries(subject == Subject::Erased)
+            .map_err(|e| e.to_string()),
         _ => Err(CANARY_SEAM.to_owned()),
     }
 }
 
-/// The seam of [`recomputed_digests`]: no harness call recomputes a
-/// keyed digest of a guessed value under every key a live root opens,
-/// and matches it against the index rows of every copy.
-const DIGEST_SEAM: &str = "no harness call recomputes keyed digests under every live-openable Lookup or Match key (lanes W2e and W1a)";
-
 /// The index rows of every copy that a live key's digest of `guess`
-/// matches.
+/// matches, through `World::recompute_digests` (lane m3/erase-steps): the
+/// keyed digest of `guess` under every `Lookup` (App) or `Match` (Vault)
+/// key that a live custody root opens from any keystore row, looked for
+/// in every store of every copy.
 fn recomputed_digests(
     world: &World,
     copies: &[StoreSet],
     chain: Chain,
     guess: &[u8],
 ) -> Result<Vec<String>, String> {
-    let _ = (world, copies, chain, guess);
-    Err(DIGEST_SEAM.to_owned())
+    world
+        .recompute_digests(copies, chain, guess)
+        .map_err(|e| e.to_string())
 }
 
 /// The script of the text tests: backups before and between two text

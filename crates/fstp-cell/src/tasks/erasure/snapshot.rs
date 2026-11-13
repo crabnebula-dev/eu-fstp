@@ -21,18 +21,27 @@
 //! ```text
 //! image = "FKI1" | version u8 = 1 | cell 16
 //!         | n u32 | root*  | n u32 | group* | n u32 | key* | n u32 | text*
+//!         | n u32 | digest*
 //! root  = epoch u64 | backend u8 | handle_len u8 | handle | wrapped_len u16
 //!         | wrapped | destroyed u8 | receipt digest 32, when destroyed = 1
 //! group = group 16 | generation u32 | epoch u64 | nonce 12 | len u32 | body
 //! key   = dek 16 | group 16 | generation u32 | sealed key 1210 (FSK1)
 //! text  = id 16 | dek 16 | generation u32 | len u32 | sealed blob (FSB1)
+//! digest = keyed digest 32 | account 16
 //! ```
 //!
 //! Integers are big-endian. Rows are in strictly increasing order of
 //! their key (epoch, then group and generation, then data key, then text
-//! id), so the decoder admits one spelling only. A data key's group and
-//! generation must be those of its sealed key's header. Bytes after the
-//! last text are refused. Fuzzed (`keystore_image_decode`).
+//! id, then keyed digest), so the decoder admits one spelling only. A data
+//! key's group and generation must be those of its sealed key's header.
+//! Bytes after the last digest are refused. Fuzzed
+//! (`keystore_image_decode`).
+//!
+//! The digest rows are the keyed login email index (design sections 3.5
+//! and 4.2, decision 27): each `HMAC-SHA-256(Lookup, normalised address)`
+//! and its account, as an index table row would hold them. Lane
+//! m3/erase-steps added them, interim pending Daniel, with the image still
+//! at version 1, since no image has left a test world.
 
 use std::collections::BTreeMap;
 
@@ -43,9 +52,11 @@ use fstp_keys::envelope::{
     self, SEALED_KEY_LEN, decode_sealed_blob, decode_sealed_key, encode_sealed_blob,
     encode_sealed_key,
 };
-use fstp_keys::{CellId, Chain, Epoch, GroupId};
+use fstp_keys::{CellId, Chain, Epoch, GroupId, Purpose};
 
-use super::{GroupRow, Keystore, ctx_for, open_group, seal_aad};
+use super::{
+    GroupRow, Keystore, ctx_for, digest_key, keyed_digest, normalise_email, open_group, seal_aad,
+};
 
 /// The magic of a keystore image.
 pub const IMAGE_MAGIC: [u8; 4] = *b"FKI1";
@@ -137,6 +148,15 @@ pub struct ImageText {
     pub blob: Vec<u8>,
 }
 
+/// One row of the keyed login email index (module documentation).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageDigest {
+    /// The keyed digest of a normalised login email.
+    pub digest: [u8; 32],
+    /// The account it names.
+    pub account: [u8; 16],
+}
+
 /// The wrapped and sealed rows of one keystore (module documentation).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KeystoreImage {
@@ -150,6 +170,8 @@ pub struct KeystoreImage {
     pub keys: Vec<ImageKey>,
     /// The sealed texts, by id.
     pub texts: Vec<ImageText>,
+    /// The keyed login email index, by digest.
+    pub digests: Vec<ImageDigest>,
 }
 
 const fn backend_code(b: BackendId) -> u8 {
@@ -216,12 +238,22 @@ impl Keystore {
                 blob: encode_sealed_blob(&row.blob).map_err(|_| ImageError::Malformed("text"))?,
             });
         }
+        let digests = self
+            .logins
+            .digests
+            .iter()
+            .map(|(digest, account)| ImageDigest {
+                digest: *digest,
+                account: account.to_be_bytes(),
+            })
+            .collect();
         Ok(KeystoreImage {
             cell: self.cell.0,
             roots,
             groups,
             keys,
             texts,
+            digests,
         })
     }
 }
@@ -299,6 +331,11 @@ pub fn encode_image(image: &KeystoreImage) -> Result<Vec<u8>, ImageError> {
         out.extend_from_slice(&t.generation.to_be_bytes());
         out.extend_from_slice(&len_u32(t.blob.len())?.to_be_bytes());
         out.extend_from_slice(&t.blob);
+    }
+    out.extend_from_slice(&len_u32(image.digests.len())?.to_be_bytes());
+    for d in &image.digests {
+        out.extend_from_slice(&d.digest);
+        out.extend_from_slice(&d.account);
     }
     // The encoder admits only what the decoder admits.
     match decode_image(&out) {
@@ -465,8 +502,15 @@ pub fn decode_image(bytes: &[u8]) -> Result<KeystoreImage, ImageError> {
             blob,
         });
     }
+    let mut prev = None;
+    for _ in 0..r.count(48)? {
+        let digest = r.array::<32>()?;
+        ascending(&mut prev, digest)?;
+        let account = r.array::<16>()?;
+        image.digests.push(ImageDigest { digest, account });
+    }
     if !r.rest.is_empty() {
-        return Err(ImageError::Malformed("bytes after the last text"));
+        return Err(ImageError::Malformed("bytes after the last digest"));
     }
     Ok(image)
 }
@@ -552,13 +596,55 @@ pub fn open_text(
     None
 }
 
+/// Every HMAC key of the login email index that `rows` give under
+/// `seal_keys` (design section 3.5, G24, I-81). Every group secret row is
+/// tried under every seal key, and each secret that opens gives the
+/// `Lookup` key it would derive, whatever its group. So the list holds
+/// at least every `Lookup` key a caller can reach.
+///
+/// The caller unwraps `seal_keys` through custody, so a destroyed root
+/// gives none.
+#[must_use]
+pub fn login_digest_keys(
+    cell: [u8; 16],
+    rows: &[&KeystoreImage],
+    seal_keys: &[SealKey],
+) -> Vec<SealKey> {
+    let cell = CellId(cell);
+    let mut out = Vec::new();
+    for img in rows {
+        for g in &img.groups {
+            let row = GroupRow {
+                epoch: g.epoch,
+                nonce: g.nonce,
+                body: g.body.clone(),
+            };
+            for s in seal_keys {
+                if let Ok(sk) = open_group(s, cell, GroupId(g.group), g.generation, &row)
+                    && let Ok(key) = digest_key(&sk, Purpose::Lookup)
+                {
+                    out.push(key);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The keyed digest of the login email `email` under the index key `key`:
+/// `HMAC-SHA-256(key, normalised address)`, as the index row holds it.
+#[must_use]
+pub fn login_digest(key: &SealKey, email: &str) -> [u8; 32] {
+    keyed_digest(key, normalise_email(email).as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
+    use fstp_keys::ObjectId;
     use fstp_keys::envelope::{DataKey, SealContext};
-    use fstp_keys::{ObjectId, Purpose};
 
     fn image() -> KeystoreImage {
         let sk = fstp_crypto::hybrid_kem::generate().unwrap();
@@ -610,6 +696,16 @@ mod tests {
                 generation: 1,
                 blob: encode_sealed_blob(&blob).unwrap(),
             }],
+            digests: vec![
+                ImageDigest {
+                    digest: [1; 32],
+                    account: [2; 16],
+                },
+                ImageDigest {
+                    digest: [3; 32],
+                    account: [4; 16],
+                },
+            ],
         }
     }
 
@@ -634,6 +730,9 @@ mod tests {
     fn i81_keystore_image_refuses_other_spellings() {
         let mut img = image();
         img.roots.swap(0, 1);
+        assert!(encode_image(&img).is_err());
+        let mut img = image();
+        img.digests.swap(0, 1);
         assert!(encode_image(&img).is_err());
         let mut img = image();
         img.keys[0].group = [5; 16];
