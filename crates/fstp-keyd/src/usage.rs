@@ -1,9 +1,8 @@
 //! The append-only usage log of `fstp-keyd` (ADR-004 part 2
 //! "Reconciliation").
 //!
-//! One fixed-length record per operation. It holds no key bytes. No ADR
-//! fixed these bytes before this lane; their record in ADR-004 is with
-//! the lead.
+//! One fixed-length record per operation. It holds no key bytes. The
+//! layout is `fstp_custody::usage`, which the test simulator writes too.
 //!
 //! ```text
 //! record = id 16 | tag u8 = 0xf1 | op u8 | chain u8 | epoch u64
@@ -28,29 +27,22 @@ use std::io::{BufReader, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use fstp_custody::keyd::{RequestId, RootHandle};
+use fstp_custody::usage::{USAGE_RECORD_LEN, UsageOp, UsageRecord, encode_record, record_intact};
 
 use crate::KeydError;
 
 /// The name of the usage log on the key volume.
 pub(crate) const USAGE_FILE: &str = "usage.log";
 /// Length of one record.
-pub(crate) const RECORD_LEN: usize = 41;
-/// The offset of the record tag, after the request id.
-const TAG_AT: usize = 16;
-/// The tag byte of every record.
-pub(crate) const RECORD_TAG: u8 = 0xf1;
-/// Length of a record before its check.
-const CHECKED_LEN: usize = RECORD_LEN - CHECK_LEN;
-/// Length of the check.
-const CHECK_LEN: usize = 4;
+pub(crate) const RECORD_LEN: usize = USAGE_RECORD_LEN;
 
 /// Operation codes.
-pub(crate) const OP_CREATE: u8 = 1;
-pub(crate) const OP_WRAP: u8 = 2;
-pub(crate) const OP_UNWRAP: u8 = 3;
-pub(crate) const OP_DESTROY: u8 = 4;
-pub(crate) const OP_SIGN: u8 = 5;
-pub(crate) const OP_USAGE: u8 = 6;
+pub(crate) const OP_CREATE: u8 = UsageOp::Create.code();
+pub(crate) const OP_WRAP: u8 = UsageOp::Wrap.code();
+pub(crate) const OP_UNWRAP: u8 = UsageOp::Unwrap.code();
+pub(crate) const OP_DESTROY: u8 = UsageOp::Destroy.code();
+pub(crate) const OP_SIGN: u8 = UsageOp::Sign.code();
+pub(crate) const OP_USAGE: u8 = UsageOp::Usage.code();
 
 /// Outcome codes: 0 served, otherwise the refusal code.
 pub(crate) const OUTCOME_SERVED: u8 = 0;
@@ -70,16 +62,6 @@ fn record_len_u64() -> u64 {
     u64::try_from(RECORD_LEN).unwrap_or(u64::MAX)
 }
 
-/// The check of the first [`CHECKED_LEN`] bytes of a record.
-fn check_of(head: &[u8]) -> [u8; CHECK_LEN] {
-    let digest = fstp_crypto::sha256(head);
-    let mut out = [0u8; CHECK_LEN];
-    if let Some(d) = digest.get(..CHECK_LEN) {
-        out.copy_from_slice(d);
-    }
-    out
-}
-
 /// The damage marker that stands in a usage page for the record at log
 /// index `index`: the tag and the index.
 fn damage_marker(index: u64) -> Vec<u8> {
@@ -91,8 +73,7 @@ fn damage_marker(index: u64) -> Vec<u8> {
 
 /// Whether `rec` has the record tag and a matching check.
 fn intact(rec: &[u8; RECORD_LEN]) -> bool {
-    let (head, check) = rec.split_at(CHECKED_LEN);
-    rec.get(TAG_AT) == Some(&RECORD_TAG) && check == check_of(head)
+    record_intact(rec)
 }
 
 impl UsageLog {
@@ -140,17 +121,17 @@ impl UsageLog {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let mut rec = Vec::with_capacity(RECORD_LEN);
-        rec.extend_from_slice(&id.0);
-        rec.push(RECORD_TAG);
-        rec.push(op);
-        rec.push(root.map_or(0, |r| r.chain.code()));
-        rec.extend_from_slice(&root.map_or(0, |r| r.epoch.0).to_be_bytes());
-        rec.extend_from_slice(&time.to_be_bytes());
-        rec.push(outcome);
-        rec.push(client);
-        let check = check_of(&rec);
-        rec.extend_from_slice(&check);
+        // One layout for every backend log (`fstp_custody::usage`).
+        let op = UsageOp::from_code(op).ok_or(KeydError::Io("an unknown usage operation"))?;
+        let rec = encode_record(&UsageRecord {
+            request: id,
+            op,
+            chain: root.map_or(0, |r| r.chain.code()),
+            epoch: root.map_or(fstp_custody::Epoch(0), |r| r.epoch),
+            time,
+            outcome,
+            client,
+        });
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .create(true)

@@ -10,9 +10,12 @@
 //!   blob, with [`envelope::DataKey`] and its seal count.
 //! - [`erasure`]: the chain state and the planner of the seven erasure
 //!   steps of ADR-004 part 2 (I-81).
+//! - [`keyop`]: the body of a `KeyOp` record, one custody call with its
+//!   request id (ADR-004 "Reconciliation").
 
 pub mod envelope;
 pub mod erasure;
 pub mod hierarchy;
+pub mod keyop;
 
 pub use hierarchy::{CellId, Chain, DekId, Epoch, GroupId, ObjectId, Purpose};

@@ -33,6 +33,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "key_op_decode"
+path = "fuzz_targets/key_op_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

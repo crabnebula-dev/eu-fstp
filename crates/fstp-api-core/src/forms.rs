@@ -651,6 +651,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
         OpKind::M3Port(PortKind::DeclareAffiliations) => BodyRule::Exactly(&["affiliations"]),
         OpKind::M3Port(PortKind::StateBirthDate) => BodyRule::Exactly(&["date_of_birth"]),
+        // MB-Q1, ADR-020: the message id of the notice to mark read.
+        OpKind::M3Port(PortKind::MarkMailboxRead) => BodyRule::Exactly(&["message"]),
         OpKind::M3Port(PortKind::AcknowledgeNegotiationNotice) => {
             BodyRule::Exactly(&["notice_version"])
         }

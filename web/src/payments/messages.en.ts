@@ -124,6 +124,7 @@ export const PAYMENTS_LABELS: Readonly<Record<string, string>> = {
   "pay.sod": "Approver and releaser are different people for any single payment (SoD-04).",
   // Lane m5/polish-access: the assigned reviewer's request page (R-PR-08).
   "pay.reviewer.back": "Back to Operations",
+  "pay.reviewer.grant": "Grant overview of proposal {id}",
   "pay.reviewer.intro": "You are an assigned reviewer of this grant. Check the evidence of each line, then record a decision per line.",
   "pay.reviewer.complete": "The line review of this request is complete. It now waits for the finance approver.",
   "pay.reviewer.location": "Deliverable location",

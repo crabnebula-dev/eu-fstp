@@ -484,6 +484,15 @@ pub struct StartOptions {
     /// until the tenant's setting is handed in (lane m3/login-m2http,
     /// Interim, pending Daniel: no record carries P-70 yet).
     pub login_methods: fstp_auth::EnabledMethods,
+    /// The control plane link of a SaaS cell ([`crate::control`]). With
+    /// one, the cell sends its heartbeats there. Interim, pending Daniel
+    /// (lane F-ISO): the control plane runs no listener yet (lane F-CP),
+    /// so the production default is `None`, and a test world passes the
+    /// world's control plane.
+    pub control_plane: Option<crate::control::ControlPlaneEndpoint>,
+    /// A test's fault point on the cell's record store
+    /// ([`fstp_pgstore::FaultPoint`], lane F-ERASE). Production sets none.
+    pub fault_point: Option<fstp_pgstore::FaultPoint>,
 }
 
 impl Default for StartOptions {
@@ -494,6 +503,8 @@ impl Default for StartOptions {
             proof_mail: Arc::new(crate::mail::NoProofMail),
             operator_key: None,
             login_methods: fstp_auth::EnabledMethods::default(),
+            control_plane: None,
+            fault_point: None,
         }
     }
 }
@@ -543,7 +554,12 @@ where
         proof_mail,
         operator_key,
         login_methods,
+        control_plane,
+        fault_point,
     } = options;
+    if control_plane.is_some() {
+        crate::control::allowed(mode).map_err(CellError::Egress)?;
+    }
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
     // server's OU and SPKI before its startup message.
@@ -594,11 +610,13 @@ where
     )
     .map_err(store_err)?;
     let store_clock = Arc::clone(&clock);
-    let store = PgCellStore::from_store(
-        store
-            .into_inner()
-            .with_clock(Arc::new(move || Some(store_clock()))),
-    );
+    let mut inner = store
+        .into_inner()
+        .with_clock(Arc::new(move || Some(store_clock())));
+    if let Some(f) = fault_point {
+        inner = inner.with_fault_point(f);
+    }
+    let store = PgCellStore::from_store(inner);
     let (store, keystore) = match keystore {
         Some(k) => (store, k),
         None => {
@@ -706,6 +724,16 @@ where
         }
         .map_err(|e| CellError::Io(e.kind()))?;
         servers.push(server);
+    }
+    // B4, I-19: a SaaS cell reports its heartbeat to the control plane
+    // through the closed protocol only. A self-hosted cell never does.
+    if let Some(endpoint) = control_plane {
+        drop(rt.spawn(crate::control::heartbeat_task(
+            rt.clone(),
+            endpoint,
+            cell,
+            started.shutdown.signal(),
+        )));
     }
     Ok(RunningCell {
         rt: rt.clone(),

@@ -315,6 +315,8 @@ pub struct PgRecordStore<R: Runtime, T, W> {
     schema: u16,
     clock: Clock,
     anchorer: Anchorer,
+    /// A test's fault point, if one is set ([`crate::FaultPoint`]).
+    fault: Option<crate::FaultPoint>,
 }
 
 /// What steps 1 to 6 of an append left for the prepare.
@@ -524,6 +526,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             schema: SCHEMA_V1,
             clock: Arc::new(system_clock),
             anchorer: Anchorer::new(),
+            fault: None,
         })
     }
 
@@ -539,6 +542,14 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         }
         self.schema = schema;
         Ok(self)
+    }
+
+    /// The same store with the test fault point `fault` ([`crate::FaultPoint`],
+    /// lane F-ERASE). Production never sets one.
+    #[must_use]
+    pub fn with_fault_point(mut self, fault: crate::FaultPoint) -> Self {
+        self.fault = Some(fault);
+        self
     }
 
     /// The same store with another clock.
@@ -1187,6 +1198,13 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 return Err(e);
             }
         };
+        // A test's armed fault point aborts here, after the sealed rows
+        // are inserted, so their WAL records stay (R-NF-08).
+        if self.fault.as_ref().is_some_and(crate::FaultPoint::take) {
+            let _ = tx.rollback().await;
+            let _ = self.anchorer.failed();
+            return Err(StoreFault::Refused("an armed fault point aborted the append").into());
+        }
         // Step 7: sign and prepare the prospective head.
         let anchor = match (self.clock)() {
             Some(now) => self.signer.sign_anchor(

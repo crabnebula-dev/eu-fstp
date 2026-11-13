@@ -510,13 +510,12 @@ pub struct TextRef(pub u128);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PublicTextRef(pub u128);
 
-/// The clearance a read obtained, which a store checks before it releases
-/// text.
-///
-/// W0 placeholder with no fields. Lane W3a writes it in `fstp-access`.
-pub struct ReadClearance {
-    _w0: (),
-}
+// A text read takes the clearance a read obtained, `fstp_access::ReadClearance`,
+// which a store checks before it releases text. Only
+// `fstp_access::authorize_read` builds one (Daniel, 2026-11-13: the
+// knock-out reason is read through the text store with a clearance). It is
+// named by path, not re-exported (M4 design section 1.3 rule A2).
+use fstp_access::ReadClearance;
 
 /// Who owns a stored blob, such as an uploaded import document (R-PG-02).
 ///

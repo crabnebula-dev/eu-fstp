@@ -985,3 +985,77 @@ fn j2_judging_terms_bind_p75_and_p77() {
         assert_eq!(d.get("p77"), Some(&Value::Null));
     }
 }
+
+// ---------------------------------------------------------------------------
+// MB-Q3 (decided by Daniel on 2026-11-13): the mailbox
+// ---------------------------------------------------------------------------
+
+/// The `(kind, programme, action)` of each message of `l`'s mailbox.
+fn mail(c: &FakeCell, l: &WebLogin) -> Vec<(String, String, bool)> {
+    let op =
+        fstp_api_core::decode::decode_route(fstp_api_core::decode::Method::Get, "/me/mailbox", &[]);
+    let v = done(&c.web(l, op), "me.mailbox").unwrap_or_else(|e| panic!("{e}"));
+    let text = v.to_compact();
+    assert!(!text.contains('@'), "I-86: an address in {text}");
+    v.get("messages")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("no messages in {text}"))
+        .iter()
+        .map(|m| {
+            (
+                m.get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                m.get("programme")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                m.get("action").and_then(Value::as_bool).unwrap_or(true),
+            )
+        })
+        .collect()
+}
+
+/// SoD-09, I-86, I-27, MB-Q3 (decided by Daniel on 2026-11-13): an
+/// invitation that an existing account accepted shows in that account's
+/// mailbox as a notice naming the programme, until the role is granted.
+/// The grant then shows as a notice of its own. Nobody else sees either,
+/// and no message holds the link token or the address.
+#[test]
+fn sod09_i86_j2_invitation_and_grant_show_in_the_invitees_mailbox() {
+    let j = draft().unwrap();
+    let to = email(1);
+    let a = fresh(1);
+    let t = invite(&j, &to, "programme_manager").unwrap();
+    let invitee = login(&j.c, a);
+    let p = j.p.raw().to_string();
+    let has = |m: &[(String, String, bool)], kind: &str| {
+        m.iter()
+            .any(|(k, prog, action)| k == kind && *prog == p && !action)
+    };
+    assert!(
+        !has(&mail(&j.c, &invitee), "invitation.open"),
+        "before acceptance"
+    );
+    accept(&j.c, &invitee, &t).unwrap();
+    let after = mail(&j.c, &invitee);
+    assert!(has(&after, "invitation.open"), "{after:?}");
+    assert!(!has(&after, "role.granted"), "{after:?}");
+    let other = mail(&j.c, &login(&j.c, fresh(2)));
+    assert!(other.is_empty(), "I-86: {other:?}");
+    j.c.ports.vault.change(|truth| truth.verify(a));
+    let id = str_of(&row_of(&j, &to).unwrap(), "id").unwrap();
+    done(
+        &stepped(&j.c, &j.admin, || people::grant_invitation(j.p, &id)),
+        "roles.grant by invitation",
+    )
+    .unwrap();
+    let granted = mail(&j.c, &invitee);
+    assert!(!has(&granted, "invitation.open"), "{granted:?}");
+    assert!(has(&granted, "role.granted"), "{granted:?}");
+    let op =
+        fstp_api_core::decode::decode_route(fstp_api_core::decode::Method::Get, "/me/mailbox", &[]);
+    let text = reply_text(&j.c.web(&invitee, op));
+    assert!(!text.contains(&t), "the link token in {text}");
+}

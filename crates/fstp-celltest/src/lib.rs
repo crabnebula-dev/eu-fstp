@@ -17,6 +17,7 @@
     reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
 )]
 
+pub mod backups;
 pub mod canary;
 pub mod custody_sim;
 pub mod cycle;
@@ -24,6 +25,7 @@ pub mod egress;
 pub mod mc;
 pub mod procmem;
 pub mod reference;
+pub mod relay;
 pub mod scan;
 pub mod seeded_vault;
 pub mod soft_authn;

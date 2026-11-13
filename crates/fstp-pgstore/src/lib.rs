@@ -56,6 +56,7 @@ mod catalogue;
 mod checkpoint;
 mod delivery;
 mod error;
+mod fault;
 mod migrations;
 mod outbox;
 mod pool;
@@ -71,6 +72,7 @@ pub use delivery::{
     Phase, backoff_us, may_commit, may_record, next_step,
 };
 pub use error::{AppendFault, DbFault, DecodeError, StoreFault};
+pub use fault::FaultPoint;
 pub use migrations::MIGRATIONS;
 pub use outbox::{KeyFuture, MAX_OUTBOX_BODY, MAX_OUTBOX_ROWS, OutboxKey, OutboxKeys, OutboxRow};
 pub use pool::{MAX_POOL_CLIENTS, Pool, PoolError, Role, database_name, role_name};

@@ -66,30 +66,25 @@ struct OpenReport {
     live_failed: Vec<String>,
 }
 
-/// The seam of [`backup_copies`]: the world takes `pg_basebackup` copies
-/// and WAL archives through `fstp-backup` and restores each into a fresh
-/// server, but exposes no call for it. Lanes W2k and W3b add it.
-const BACKUP_SEAM: &str = "fstp_celltest::world::World takes and restores no backups through fstp-backup (lanes W2k and W3b)";
-
-/// Every backup copy of the world, each restored into a fresh server, and
-/// the live store last.
+/// Every backup copy of the world, each restored alone, and the live
+/// store last (`World::restored_copies`, lane F-ERASE). Interim, pending
+/// Daniel: a base backup or WAL copy is its opened files, and no server
+/// is started over them.
 fn backup_copies(world: &World) -> Result<Vec<StoreSet>, String> {
-    let _ = world;
-    Err(BACKUP_SEAM.to_owned())
+    world.restored_copies().map_err(|e| e.to_string())
 }
-
-/// The seam of [`open_every_key`]: no harness call reads the keystore
-/// rows of a restored copy and tries them against every live custody
-/// key. It needs the keystore schema (lane W2e) and the simulator's
-/// unwrap (lane W1a, waiting for `fstp_crypto::aead`).
-const OPEN_SEAM: &str = "no harness call tries every keystore row of a copy against every live custody key (lanes W2e and W1a)";
 
 /// Tries every wrapped key in every copy against every live custody key,
 /// and opens every text it reaches. It counts each erased and each live
 /// text it tried, by copy.
 fn open_every_key(world: &World, copies: &[StoreSet]) -> Result<OpenReport, String> {
-    let _ = (world, copies);
-    Err(OPEN_SEAM.to_owned())
+    let t = world.try_every_text(copies).map_err(|e| e.to_string())?;
+    Ok(OpenReport {
+        erased_tried: t.erased_tried,
+        live_tried: t.live_tried,
+        erased_opened: t.erased_opened,
+        live_failed: t.live_failed,
+    })
 }
 
 /// Whose canaries a test asks for.
@@ -101,10 +96,11 @@ enum Subject {
     Live,
 }
 
-/// The seam of [`world_canaries`]: the world seeds canaries into its
-/// cells but does not say which, nor whose subject each belongs to. Lane
-/// W3b adds the accessor.
-const CANARY_SEAM: &str = "fstp_celltest::world::World does not expose the canaries it seeded, by kind and by erased or live subject (lane W3b)";
+/// The seam of [`world_canaries`] for the kinds the world does not
+/// record: it records the text salt and proposal text canaries of the
+/// texts `erase-text` stores (`World::text_canaries`, lane F-ERASE), but
+/// not the login emails or identity names it seeds.
+const CANARY_SEAM: &str = "fstp_celltest::world::World records the canaries of erase-text only (text salt and proposal text), not the login email or identity name canaries it seeds, by erased or live subject";
 
 /// The canaries of `kind` the world seeded for the erased subject, or for
 /// the live subjects.
@@ -113,8 +109,12 @@ fn world_canaries(
     kind: CanaryKind,
     subject: Subject,
 ) -> Result<Vec<Canary>, String> {
-    let _ = (world, kind, subject);
-    Err(CANARY_SEAM.to_owned())
+    match kind {
+        CanaryKind::TextSalt | CanaryKind::ProposalText => world
+            .text_canaries(kind, subject == Subject::Erased)
+            .map_err(|e| e.to_string()),
+        _ => Err(CANARY_SEAM.to_owned()),
+    }
 }
 
 /// The seam of [`recomputed_digests`]: no harness call recomputes a

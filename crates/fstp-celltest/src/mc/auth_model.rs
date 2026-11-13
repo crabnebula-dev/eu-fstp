@@ -3060,6 +3060,9 @@ pub mod http {
         admin: Option<Cookie>,
         /// Each cookie the cell set: the model account and the session id.
         sessions: BTreeMap<Vec<u8>, (AccountId, [u8; 16])>,
+        /// The last command sent with a step-up: its session and request
+        /// body, for a replay (lane F-ERASE, R-NF-08).
+        last_stepup: Option<(Cookie, Vec<u8>)>,
         /// Whether the machines' programme P1 is active
         /// (`crate::cycle::Cycle::machine_programme`).
         programme: bool,
@@ -3157,7 +3160,20 @@ pub mod http {
             cookie: Option<&Cookie>,
             body: &[u8],
         ) -> Result<Reply, NotImplemented> {
-            let r = self.send(method, path, cookie, body)?;
+            // A command whose append the cell store's armed fault point
+            // aborted is sent again once, byte for byte, as a client
+            // retries a failed request (R-NF-08, lane F-ERASE). A step-up
+            // ceremony is redone whole instead ([`AuthClient::step_up`]).
+            let fault = self.cell.backups.fault();
+            let fired = fault.fired();
+            let mut r = self.send(method, path, cookie, body)?;
+            if path == "/api/v1/commands"
+                && fault.fired() > fired
+                && !(200..300).contains(&r.status)
+            {
+                self.cell.backups.note_retry();
+                r = self.send(method, path, cookie, body)?;
+            }
             Ok(Reply {
                 status: r.status,
                 body: r.body,
@@ -3253,8 +3269,28 @@ pub mod http {
 
         /// A step-up for `command` under `command_id` in `session`, by the
         /// session account's device 0. The step-up id, or `None` when the
-        /// cell refused it.
+        /// cell refused it. A ceremony whose append the cell store's armed
+        /// fault point aborted is redone once, from new options (R-NF-08,
+        /// lane F-ERASE).
         fn step_up(
+            &self,
+            session: &Cookie,
+            command: &CellCommand,
+            command_id: [u8; 16],
+        ) -> Result<Option<[u8; 16]>, NotImplemented> {
+            let fault = self.cell.backups.fault();
+            let fired = fault.fired();
+            match self.step_up_once(session, command, command_id)? {
+                None if fault.fired() > fired => {
+                    self.cell.backups.note_retry();
+                    self.step_up_once(session, command, command_id)
+                }
+                r => Ok(r),
+            }
+        }
+
+        /// One step-up ceremony ([`AuthClient::step_up`]).
+        fn step_up_once(
             &self,
             session: &Cookie,
             command: &CellCommand,
@@ -3381,7 +3417,28 @@ pub mod http {
         /// {token}` and `POST /auth/signup`. The new account's session, or
         /// `None` when the cell refused a step. The cell account id is read
         /// from the `CredentialRegistered` record of the new passkey.
+        ///
+        /// A ceremony whose append the cell store's armed fault point
+        /// aborted is redone once, from a new proof (R-NF-08, lane
+        /// F-ERASE).
         pub fn signup(
+            &self,
+            account: AccountId,
+            email: &str,
+        ) -> Result<Option<Cookie>, NotImplemented> {
+            let fault = self.cell.backups.fault();
+            let fired = fault.fired();
+            match self.signup_once(account, email)? {
+                None if fault.fired() > fired => {
+                    self.cell.backups.note_retry();
+                    self.signup_once(account, email)
+                }
+                r => Ok(r),
+            }
+        }
+
+        /// One self-registration ceremony ([`AuthClient::signup`]).
+        fn signup_once(
             &self,
             account: AccountId,
             email: &str,
@@ -3493,11 +3550,30 @@ pub mod http {
             } else {
                 None
             };
+            let body = command_body(command, command_id, None, granted);
+            if granted.is_some() {
+                self.known().last_stepup = Some((session.clone(), body.clone()));
+            }
             Ok(Some(self.call(
                 "POST",
                 "/api/v1/commands",
                 Some(session),
-                &command_body(command, command_id, None, granted),
+                &body,
+            )?))
+        }
+
+        /// Sends the last command that carried a step-up again, byte for
+        /// byte: a replay of a consumed step-up (design section 3.2,
+        /// R-NF-08, lane F-ERASE). `None` when no command carried one.
+        pub fn replay_last_stepup(&self) -> Result<Option<Reply>, NotImplemented> {
+            let Some((session, body)) = self.known().last_stepup.clone() else {
+                return Ok(None);
+            };
+            Ok(Some(self.call(
+                "POST",
+                "/api/v1/commands",
+                Some(&session),
+                &body,
             )?))
         }
 

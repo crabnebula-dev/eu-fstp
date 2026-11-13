@@ -33,7 +33,15 @@
 //!
 //! Every custody call first appends a `RecordKeyOp` ledger record with
 //! its request id (ADR-004 "Reconciliation", Daniel 2026-10-29). A call
-//! whose record cannot be appended is never made.
+//! whose record cannot be appended is never made. The call then carries
+//! the same request id to custody (`fstp_custody::with_request`), so the
+//! backend usage log names it. The body is `fstp_keys::keyop`, and
+//! [`key_op_of_body`] reads it back.
+//!
+//! The start-up `unwrap` of `S(e)` is the one exception: its request id
+//! is kept in the keystore before the call ([`Keystore::unwrap_current`]),
+//! and [`ErasureRunner::from_open`] writes its record with that id once
+//! the engine runs.
 //!
 //! # Durability
 //!
@@ -63,14 +71,18 @@ use fstp_cell_core::{CellCommand, CellState, KeyCommand, SystemTask, system_comm
 use fstp_crypto::aead;
 use fstp_crypto::composite::{self, CompositeSigningKey};
 use fstp_crypto::hybrid_kem::{self, HybridSecretKey};
-use fstp_custody::{Aad, Custody, RootLabel, RootRef, SealKey, WrappedSealKey};
+use fstp_custody::{
+    Aad, Custody, RequestId, RootLabel, RootRef, SealKey, WrappedSealKey, with_request,
+};
 use fstp_domain::time::Timestamp;
-use fstp_json::{Object, Value};
 use fstp_keys::envelope::{self, DataKey, SealContext, SealedBlob, SealedKey};
 use fstp_keys::erasure::{self as plan, ChainState, Step};
+use fstp_keys::keyop::{self, KeyCall, KeyOp};
 use fstp_keys::{CellId, Chain, DekId, Epoch, GroupId, ObjectId, Purpose};
 use fstp_rt::ShutdownSignal;
 use fstp_rt::future::{Either, race, yield_now};
+
+pub mod snapshot;
 
 use super::Clock;
 use crate::CellError;
@@ -131,15 +143,15 @@ pub enum ErasureEvent {
     },
 }
 
-/// One stored text: its data key and its sealed body.
+/// One stored text: its data key, the group generation its body was
+/// sealed under, and its sealed body. The body's seal context keeps that
+/// generation after the data key is resealed to a later one (design
+/// section 3.5 step 2), so a live sibling of an erased text still opens.
 #[derive(Clone)]
 struct TextRow {
     dek: DekId,
+    generation: u32,
     blob: SealedBlob,
-    /// The group generation the body was sealed at. A rotation reseals
-    /// the data key to a new generation, never the body, so the body
-    /// opens under the context of this generation.
-    sealed_at: u32,
 }
 
 /// One root epoch: its custody reference and its wrapped seal key.
@@ -272,6 +284,10 @@ pub struct Keystore {
     requested: BTreeSet<[u8; 16]>,
     /// The keyed login email index.
     logins: LoginIndex,
+    /// The request id of the start-up `unwrap` of `S(e)`, kept before
+    /// the call until its deferred `RecordKeyOp` is written (ADR-004
+    /// "Reconciliation", the start-up exception).
+    startup_unwrap: Option<RequestId>,
 }
 
 impl std::fmt::Debug for Keystore {
@@ -343,21 +359,39 @@ impl Keystore {
     /// Start-up, first half (design section 3.4): unwraps the current
     /// `S(e)` through custody. The chain cannot be written before `S(e)`
     /// is open, so its `RecordKeyOp` follows once the engine runs
-    /// ([`ErasureRunner::from_open`], ADR-004 "Reconciliation").
+    /// ([`ErasureRunner::from_open`], ADR-004 "Reconciliation"). The
+    /// call's request id is kept in the keystore before the call, as the
+    /// operational row of the start-up exception, and the deferred record
+    /// carries the same id.
     ///
     /// # Errors
     ///
     /// [`CellError::Custody`] when custody refuses or cannot be reached.
-    pub async fn unwrap_current<C: Custody>(&self, custody: &C) -> Result<SealKey, CellError> {
+    pub async fn unwrap_current<C: Custody>(&mut self, custody: &C) -> Result<SealKey, CellError> {
         let epoch = self.chain_state.epoch().0;
         let row = self
             .roots
             .get(&epoch)
             .ok_or(keys_err("no root of the current epoch"))?;
-        custody
-            .unwrap(&row.root, &row.wrapped, &seal_aad(self.cell, epoch))
+        let request = request_id()?;
+        self.startup_unwrap = Some(request);
+        let aad = seal_aad(self.cell, epoch);
+        with_request(request, || custody.unwrap(&row.root, &row.wrapped, &aad))
             .await
             .map_err(CellError::Custody)
+    }
+
+    /// The custody reference of every root the keystore holds a row for,
+    /// by epoch. The reconciliation reads each root's usage log through
+    /// it (`Custody::usage_since`, ADR-004 "Reconciliation").
+    pub fn root_refs(&self) -> Vec<RootRef> {
+        self.roots.values().map(|r| r.root.clone()).collect()
+    }
+
+    /// The request id of the start-up `unwrap` whose `RecordKeyOp` is
+    /// still owed, if any.
+    pub fn startup_unwrap(&self) -> Option<RequestId> {
+        self.startup_unwrap
     }
 
     /// Start-up, second half: opens every current group secret under
@@ -561,25 +595,27 @@ fn copy_signer(key: &CompositeSigningKey) -> Result<CompositeSigningKey, CellErr
     CompositeSigningKey::from_bytes(&secret[..]).map_err(|_| keys_err("signing key decode"))
 }
 
-/// The canonical `RecordKeyOp` body of a custody call.
-fn key_op_body(call: &str, epoch: u64, request: [u8; 16]) -> Result<Vec<u8>, CellError> {
-    let mut hex = String::with_capacity(32);
-    for b in request {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    let members = vec![
-        ("call".to_owned(), Value::String(call.to_owned())),
-        ("chain".to_owned(), Value::String("app".to_owned())),
-        (
-            "epoch".to_owned(),
-            Value::Number(fstp_json::Number::from(epoch)),
-        ),
-        ("request".to_owned(), Value::String(hex)),
-    ];
-    let obj = Object::from_members(members).map_err(|_| keys_err("key op body"))?;
-    fstp_json::to_canonical(&Value::Object(obj))
-        .map(String::into_bytes)
-        .map_err(|_| keys_err("key op body"))
+/// The canonical `RecordKeyOp` body of a custody call of the App chain
+/// (`fstp_keys::keyop`).
+fn key_op_body(call: KeyCall, epoch: u64, request: RequestId) -> Result<Vec<u8>, CellError> {
+    keyop::encode(&KeyOp {
+        call,
+        chain: Chain::App,
+        epoch: Epoch(epoch),
+        request: request.0,
+    })
+    .map_err(|_| keys_err("key op body"))
+}
+
+/// The `KeyOp` a `RecordKeyOp` body holds (ADR-004 "Reconciliation").
+/// The daily reconciliation reads these from the App chain and matches
+/// them with the custody usage log (`fstp_custody::usage::reconcile`).
+///
+/// # Errors
+///
+/// [`CellError::Keys`] for a body that is not the canonical form.
+pub fn key_op_of_body(body: &[u8]) -> Result<KeyOp, CellError> {
+    keyop::decode(body).map_err(|_| keys_err("key op body"))
 }
 
 /// What the runner holds in process memory: the open secrets and the
@@ -629,10 +665,8 @@ impl<C> std::fmt::Debug for ErasureRunner<C> {
 }
 
 /// A fresh request id for a custody call.
-fn request_id() -> Result<[u8; 16], CellError> {
-    let mut id = [0u8; 16];
-    fstp_crypto::random_bytes(&mut id).map_err(|_| keys_err("request id"))?;
-    Ok(id)
+fn request_id() -> Result<RequestId, CellError> {
+    RequestId::generate().map_err(|_| keys_err("request id"))
 }
 
 impl<C: Custody> ErasureRunner<C> {
@@ -664,6 +698,7 @@ impl<C: Custody> ErasureRunner<C> {
                 pending_root: None,
                 requested: BTreeSet::new(),
                 logins: LoginIndex::default(),
+                startup_unwrap: None,
             },
             chain: ChainState::genesis(Epoch(0)),
             work: Work::new(SealKey::generate().map_err(CellError::Custody)?),
@@ -725,6 +760,11 @@ impl<C: Custody> ErasureRunner<C> {
         seal: SealKey,
         groups: OpenGroups,
     ) -> Result<ErasureRunner<C>, CellError> {
+        let mut store = store;
+        let request = store
+            .startup_unwrap
+            .take()
+            .ok_or(keys_err("no start-up unwrap request id"))?;
         let chain = store.chain_state.restart();
         let epoch = store.chain_state.epoch().0;
         let mut work = Work::new(seal);
@@ -739,7 +779,9 @@ impl<C: Custody> ErasureRunner<C> {
             events: Vec::new(),
             erased: Vec::new(),
         };
-        runner.record_call("unwrap", epoch).await?;
+        runner
+            .record_call_as(KeyCall::Unwrap, epoch, request)
+            .await?;
         Ok(runner)
     }
 
@@ -885,12 +927,24 @@ impl<C: Custody> ErasureRunner<C> {
         }
     }
 
-    /// Records a custody call before it is made (ADR-004).
-    async fn record_call(&self, call: &str, epoch: u64) -> Result<(), CellError> {
+    /// Records a custody call before it is made, and gives the request id
+    /// the call then carries to custody (ADR-004 "Reconciliation").
+    async fn record_call(&self, call: KeyCall, epoch: u64) -> Result<RequestId, CellError> {
         let request = request_id()?;
+        self.record_call_as(call, epoch, request).await?;
+        Ok(request)
+    }
+
+    /// Records a custody call under `request`.
+    async fn record_call_as(
+        &self,
+        call: KeyCall,
+        epoch: u64,
+        request: RequestId,
+    ) -> Result<(), CellError> {
         let op = key_op_body(call, epoch, request)?;
         let mut suffix = [0u8; 8];
-        for (d, s) in suffix.iter_mut().zip(request.iter()) {
+        for (d, s) in suffix.iter_mut().zip(request.0.iter()) {
             *d = *s;
         }
         self.record(KeyCommand::RecordKeyOp { op }, system_command_id(suffix))
@@ -898,13 +952,13 @@ impl<C: Custody> ErasureRunner<C> {
     }
 
     async fn create_root(&self, epoch: u64) -> Result<RootRef, CellError> {
-        self.record_call("create_root", epoch).await?;
-        self.custody
-            .create_root(RootLabel {
-                cell: Some(fstp_custody::CellId(self.store.cell.0)),
-                chain: Chain::App,
-                epoch: Epoch(epoch),
-            })
+        let request = self.record_call(KeyCall::CreateRoot, epoch).await?;
+        let label = RootLabel {
+            cell: Some(fstp_custody::CellId(self.store.cell.0)),
+            chain: Chain::App,
+            epoch: Epoch(epoch),
+        };
+        with_request(request, || self.custody.create_root(label))
             .await
             .map_err(CellError::Custody)
     }
@@ -915,19 +969,21 @@ impl<C: Custody> ErasureRunner<C> {
         s: &SealKey,
         epoch: u64,
     ) -> Result<WrappedSealKey, CellError> {
-        self.record_call("wrap", epoch).await?;
-        self.custody
-            .wrap(root, s, &seal_aad(self.store.cell, epoch))
+        let request = self.record_call(KeyCall::Wrap, epoch).await?;
+        let aad = seal_aad(self.store.cell, epoch);
+        with_request(request, || self.custody.wrap(root, s, &aad))
             .await
             .map_err(CellError::Custody)
     }
 
     async fn unwrap(&self, row: &RootRow, epoch: u64) -> Result<SealKey, CellError> {
-        self.record_call("unwrap", epoch).await?;
-        self.custody
-            .unwrap(&row.root, &row.wrapped, &seal_aad(self.store.cell, epoch))
-            .await
-            .map_err(CellError::Custody)
+        let request = self.record_call(KeyCall::Unwrap, epoch).await?;
+        let aad = seal_aad(self.store.cell, epoch);
+        with_request(request, || {
+            self.custody.unwrap(&row.root, &row.wrapped, &aad)
+        })
+        .await
+        .map_err(CellError::Custody)
     }
 
     /// Adds an empty text group at generation 1. Allowed while no batch
@@ -996,8 +1052,8 @@ impl<C: Custody> ErasureRunner<C> {
             id,
             TextRow {
                 dek,
+                generation,
                 blob,
-                sealed_at: generation,
             },
         );
         Ok(())
@@ -1031,7 +1087,7 @@ impl<C: Custody> ErasureRunner<C> {
             .ok_or(OpenRefusal::Keys)?;
         let ctx = ctx_for(self.store.cell, *g, *generation, id);
         let dk = envelope::open_key(sk, sealed, &ctx).map_err(|_| OpenRefusal::Keys)?;
-        let body = ctx_for(self.store.cell, *g, row.sealed_at, id);
+        let body = ctx_for(self.store.cell, *g, row.generation, id);
         envelope::open_blob(&dk, &body, &row.blob).map_err(|_| OpenRefusal::Keys)
     }
 
@@ -1220,7 +1276,7 @@ impl<C: Custody> ErasureRunner<C> {
                 .ok_or(keys_err("group secret not open"))?;
             let ctx = ctx_for(self.store.cell, *g, *generation, *id);
             let dk = envelope::open_key(gsk, sealed, &ctx).map_err(|_| keys_err("login key"))?;
-            let body = ctx_for(self.store.cell, *g, row.sealed_at, *id);
+            let body = ctx_for(self.store.cell, *g, row.generation, *id);
             let address =
                 envelope::open_blob(&dk, &body, &row.blob).map_err(|_| keys_err("login text"))?;
             out.insert(keyed_digest(&key, &address), *account);
@@ -1561,10 +1617,8 @@ impl<C: Custody> ErasureRunner<C> {
             .get(&e.0)
             .cloned()
             .ok_or(keys_err("old root"))?;
-        self.record_call("destroy", e.0).await?;
-        let receipt = self
-            .custody
-            .destroy(&row.root)
+        let request = self.record_call(KeyCall::Destroy, e.0).await?;
+        let receipt = with_request(request, || self.custody.destroy(&row.root))
             .await
             .map_err(CellError::Custody)?;
         let digest = fstp_crypto::sha256(&receipt.0);

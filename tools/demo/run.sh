@@ -17,7 +17,8 @@
 #        tools/demo/run.sh advance <minutes>
 #        tools/demo/run.sh mail <email>
 #        tools/demo/run.sh stop
-#        tools/demo/run.sh e2e [playwright args...]
+#        tools/demo/run.sh e2e [playwright args...]   every spec but the M3
+#                                               ones (project demo)
 #
 # Review stages:   submitted stage1 stage1_scored stage2 ranked ranked_tie irc_review
 # Applicant states: OPEN_CALL STAGE2 IRC_REVIEW_MINOR NEGOTIATION NOT_SELECTED
@@ -59,7 +60,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
   exit 64
 }
 
@@ -216,7 +217,7 @@ case ${1:-start} in
   e2e)
     shift
     [[ -s $STATE/stack.json ]] || die "start the demo first"
-    cd "$ROOT/e2e" && FSTP_E2E_STACK="$STATE/stack.json" node_modules/.bin/playwright test "$@"
+    cd "$ROOT/e2e" && FSTP_E2E_STACK="$STATE/stack.json" node_modules/.bin/playwright test --project=demo "$@"
     ;;
   -h | --help) usage ;;
   *) usage ;;

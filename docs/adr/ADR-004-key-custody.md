@@ -455,6 +455,13 @@ The rule "Root key use is logged by the backend, and the log is reconciled with 
 - `fstp-keyd` keeps an append-only usage log of request ids, operations, chains, epochs, times and client users. The log holds no key bytes, so it may sit outside the key volume.
 - OKMS documents no usage log on the pages read (M3 design G19). OKMS reconciliation waits on verify item K6. If OKMS offers no such log, Daniel decides how this rule is met for OKMS.
 - Test: `i24_custody_ops_reconcile_with_key_records`, against the simulator log.
+- Record, lane m3/seams-custody, 2026-11-13 (interim, pending Daniel):
+  - `RequestId` moved to the root of `fstp-custody`. The `Custody` trait keeps its six operations (I-80). A caller makes a call under its id with `fstp_custody::with_request`, which holds the id while the call is made and polled. A backend with a usage log reads it with `current_request`, or uses a fresh id. The `fstp-keyd` client and the simulator log it.
+  - The 41-byte usage record of `fstp-keyd` is now the shared layout `fstp_custody::usage`, with a decoder and the fuzz target `usage_record_decode`. The simulator writes the same layout.
+  - The `RecordKeyOp` body is `fstp_keys::keyop`, with the fuzz target `key_op_decode`. The cell keystore records each call with a fresh id and passes the same id to custody.
+  - The start-up `unwrap` keeps its request id in the keystore before the call. `ErasureRunner::from_open` writes the deferred record with it.
+  - `fstp_custody::usage::reconcile` matches by request id and operation, one record per usage entry. It skips `usage_since` reads, which use no root key.
+  - The test reads the `RecordKeyOp` ledger records. No cell code writes the sealed `KeyOp` event of the same call yet, and no task runs the reconciliation daily.
 
 ### Residual risk
 

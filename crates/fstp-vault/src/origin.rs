@@ -965,54 +965,59 @@ fn fact_for(
 ///   `programme:<id>`, and only that programme's country is shown. A
 ///   ticket with any other scope shows no country at all.
 fn release_document(s: &VaultState, c: &TicketClaims) -> Vec<u8> {
+    let m = &crate::messages::EN;
     let facts = s.facts();
     let account = c.account;
     let verified = facts.person_of(account).is_some();
     let mut rows = String::new();
-    rows.push_str(&row("Account", &account.0.to_string()));
+    rows.push_str(&row(m.account, &account.0.to_string()));
     if let Some(p) = c.proposal {
-        rows.push_str(&row("Proposal", &p.0.to_string()));
+        rows.push_str(&row(m.proposal, &p.0.to_string()));
     }
-    rows.push_str(&row("Verified", if verified { "yes" } else { "no" }));
+    rows.push_str(&row(m.verified, m.yes_no(verified)));
     let programme = scope_programme(&c.scope).filter(|p| country_scope(*p) == c.scope);
     if let Some(programme) = programme
         && let Some(country) = facts.country_of(account, programme)
     {
         rows.push_str(&row(
-            &format!("Country stated for programme {}", programme.0),
+            &format!("{} {}", m.country_for_programme, programme.0),
             &country.to_string(),
         ));
     }
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Identity release</title></head><body><h1>Identity release</h1><table>{rows}</table></body></html>"
-    )
-    .into_bytes()
+    document(m.lang, m.release_title, &rows)
 }
 
 /// The bank details of `grant`, rendered server-side with no script (M5
 /// design reading 6, I-86). It shows the latest version, when it was
 /// written, whether it is verified and whether a dispute is open.
 fn bank_document(s: &VaultState, grant: WireProposal) -> Vec<u8> {
+    let m = &crate::messages::EN;
     let facts = s.latest();
     let mut rows = String::new();
-    rows.push_str(&row("Grant", &grant.0.to_string()));
+    rows.push_str(&row(m.grant, &grant.0.to_string()));
     match facts.bank_of(grant) {
         Some(b) => {
-            rows.push_str(&row("Account holder", &b.holder));
-            rows.push_str(&row("IBAN", &b.iban));
-            rows.push_str(&row("Version", &b.version.to_string()));
-            rows.push_str(&row(
-                "Written at (UTC microseconds)",
-                &b.written_at.to_string(),
-            ));
-            rows.push_str(&row("Verified", if b.verified { "yes" } else { "no" }));
+            rows.push_str(&row(m.holder, &b.holder));
+            rows.push_str(&row(m.iban, &b.iban));
+            rows.push_str(&row(m.version, &b.version.to_string()));
+            rows.push_str(&row(m.written_at, &b.written_at.to_string()));
+            rows.push_str(&row(m.verified, m.yes_no(b.verified)));
         }
-        None => rows.push_str(&row("Bank details", "none entered")),
+        None => rows.push_str(&row(m.bank_details, m.none_entered)),
     }
     let disputed = facts.bank_disputed(grant);
-    rows.push_str(&row("Dispute open", if disputed { "yes" } else { "no" }));
+    rows.push_str(&row(m.dispute_open, m.yes_no(disputed)));
+    document(m.lang, m.bank_title, &rows)
+}
+
+/// A whole document: `title` as its title and heading, then the table of
+/// `rows`. Every text comes from the catalogue (R-NF-04).
+fn document(lang: &str, title: &str, rows: &str) -> Vec<u8> {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Bank details</title></head><body><h1>Bank details</h1><table>{rows}</table></body></html>"
+        "<!doctype html><html lang=\"{}\"><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><table>{rows}</table></body></html>",
+        escape(lang),
+        escape(title),
+        escape(title)
     )
     .into_bytes()
 }

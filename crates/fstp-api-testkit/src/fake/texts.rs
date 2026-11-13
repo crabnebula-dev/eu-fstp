@@ -10,9 +10,11 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
-    BlobOwner, BlobRef, BlobStore, PortError, PublicTextRef, ReadClearance, SealOwner, Sealed,
-    Sealer, TextClass, TextOwner, TextRef, TextStore,
+    BlobOwner, BlobRef, BlobStore, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass,
+    TextOwner, TextRef, TextStore,
 };
+
+use fstp_access::ReadClearance;
 
 use super::lock;
 use super::vault::fake_digest;
@@ -98,6 +100,19 @@ impl FakeTexts {
     }
 }
 
+/// Whether `clearance` releases a text of `class` owned by `owner`. A
+/// public text is released to any cleared read. A proposal's text is
+/// released only to a read cleared on that proposal, so a clearance of one
+/// proposal never opens another's text (decided by Daniel on 2026-11-13).
+/// Every other owner is refused until a read needs it.
+fn clears(class: TextClass, owner: TextOwner, clearance: &ReadClearance) -> bool {
+    match (class, owner, clearance.op().target) {
+        (TextClass::Public, _, _) => true,
+        (_, TextOwner::Proposal(p), fstp_access::ReadTarget::Proposal(q)) => p == q,
+        _ => false,
+    }
+}
+
 impl TextStore for FakeTexts {
     async fn put(
         &self,
@@ -109,12 +124,10 @@ impl TextStore for FakeTexts {
     }
 
     async fn get(&self, r: TextRef, clearance: &ReadClearance) -> Result<Vec<u8>, PortError> {
-        let _ = clearance;
-        lock(&self.state)
-            .rows
-            .get(&r.0)
-            .map(|(_, _, b)| b.clone())
-            .ok_or(PortError::Refused)
+        match lock(&self.state).rows.get(&r.0) {
+            Some((class, owner, b)) if clears(*class, *owner, clearance) => Ok(b.clone()),
+            Some(_) | None => Err(PortError::Refused),
+        }
     }
 
     async fn get_public(&self, r: PublicTextRef) -> Result<Vec<u8>, PortError> {

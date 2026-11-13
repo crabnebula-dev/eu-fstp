@@ -619,14 +619,10 @@ fn r_cr_01_backup_container_decoder_refuses_a_key_not_sealed_through_the_hybrid_
 // ---------------------------------------------------------------------------
 // The real stack.
 
-/// The seam of [`backup_objects`]: the world does not expose the objects
-/// its backup agent and keystore snapshots upload. Lanes W2k and W3b add
-/// the accessor.
-const OBJECTS_SEAM: &str = "fstp_celltest::world::World does not expose the uploaded backup and snapshot objects (lanes W2k and W3b)";
-
+/// Every object the world's backups uploaded, by ADR-012 object name
+/// (`World::backup_objects`, lane F-ERASE).
 fn backup_objects(world: &World) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let _ = world;
-    Err(OBJECTS_SEAM.to_owned())
+    world.backup_objects().map_err(|e| e.to_string())
 }
 
 /// R-CR-01, T-CR-ATREST: after a base backup, a WAL archive and a

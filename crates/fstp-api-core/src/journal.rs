@@ -493,6 +493,32 @@ impl Journal {
         Ok(self.thread.get(&proposal).map_or(&[], Vec::as_slice))
     }
 
+    /// The stage 2 questions of `proposal` the team has not answered, each
+    /// with its ordinal among the thread's questions (from 1) and when it
+    /// was asked, oldest first (MB-Q2, decided by Daniel on 2026-11-13).
+    ///
+    /// Interim reading, pending Daniel: `AnswerQuestions` carries one text
+    /// for all questions and names none, so an answer answers every
+    /// question asked before it. A question asked after the last answer is
+    /// unanswered.
+    pub(crate) fn unanswered(
+        &self,
+        proposal: ProposalId,
+    ) -> Result<Vec<(u32, Timestamp)>, Unknown> {
+        let mut out = Vec::new();
+        let mut n = 0u32;
+        for e in self.thread(proposal)? {
+            match e {
+                ThreadEntry::Question { at, .. } => {
+                    n = n.saturating_add(1);
+                    out.push((n, *at));
+                }
+                ThreadEntry::Answer { .. } => out.clear(),
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether the reviewer of `assignment` recorded "no questions". The
     /// caller reads it only for an assignment of a known proposal.
     pub(crate) fn no_questions(&self, assignment: AssignmentId) -> bool {
@@ -693,5 +719,43 @@ mod tests {
         j.fold(&revision, &state, now);
         assert_eq!(j.latest_plan(p), Ok(Some(PlanVersionId::from_raw(71))));
         assert_eq!(j.last_revision(p), Ok(None), "recorded, not submitted");
+    }
+
+    /// MB-Q2 (decided by Daniel on 2026-11-13), R-EV-05: the journal folds
+    /// answers per question. Interim reading: `AnswerQuestions` carries one
+    /// text, so an answer answers every question asked before it. Each
+    /// question keeps its ordinal in the thread and its instant.
+    #[test]
+    fn r_ev_05_answers_fold_per_question() {
+        let mut j = Journal::default();
+        let state = EngineState::genesis();
+        let p = ProposalId::from_raw(7);
+        assert_eq!(j.unanswered(p), Err(Unknown));
+        j.fold(&submit(7, 70), &state, Timestamp::from_micros(1));
+        assert_eq!(j.unanswered(p), Ok(Vec::new()));
+        let ask = |n: u128| {
+            Command::Core(Core::AskQuestion {
+                proposal: p,
+                assignment: AssignmentId::from_raw(n),
+                text: text(n),
+            })
+        };
+        let answer = Command::Core(Core::AnswerQuestions {
+            proposal: p,
+            text: text(99),
+        });
+        j.fold(&ask(1), &state, Timestamp::from_micros(10));
+        j.fold(&ask(2), &state, Timestamp::from_micros(20));
+        assert_eq!(
+            j.unanswered(p),
+            Ok(vec![
+                (1, Timestamp::from_micros(10)),
+                (2, Timestamp::from_micros(20))
+            ])
+        );
+        j.fold(&answer, &state, Timestamp::from_micros(30));
+        assert_eq!(j.unanswered(p), Ok(Vec::new()));
+        j.fold(&ask(3), &state, Timestamp::from_micros(40));
+        assert_eq!(j.unanswered(p), Ok(vec![(3, Timestamp::from_micros(40))]));
     }
 }

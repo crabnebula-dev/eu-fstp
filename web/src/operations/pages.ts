@@ -149,18 +149,25 @@ async function mountOperations(env: PageEnv): Promise<void> {
     // `report.programmes` names them, so the tenant-wide Financial signatory, who holds
     // no programme binding, reaches them by clicking. When that read refuses, the
     // programmes of the caller's bindings stand in. The number form stays behind a disclosure.
+    // Decided by Daniel on 2026-11-13: a person whose `report.list` refuses them, such as the
+    // reviewer R1, gets no funder reports link. A judged refusal of `report.programmes` means
+    // no programme. Only a failed read lets the programme manager and auditor bindings stand in.
     const bound = new Set(roles === null ? [] : roles.roles.map((b) => b.programme));
+    const reporting = roles === null ? [] : roles.roles.filter((b) => b.role === "programme_manager" || b.role === "auditor").map((b) => b.programme);
     const rp = await readOp(env, "report.programmes", {}, (v): v is readonly ReportProgramme[] => decodeReportProgrammes(v) !== null);
-    const listed = rp.ok ? (decodeReportProgrammes(rp.data) ?? []).map((p) => p.id) : [...bound];
+    const listed = rp.ok ? (decodeReportProgrammes(rp.data) ?? []).map((p) => p.id) : rp.problem.kind === "refused" ? [] : reporting;
     const programmes = [...new Set(listed)].sort((a, b) => (a.length === b.length ? (a < b ? -1 : 1) : a.length - b.length));
     // "Your programme" only where a binding names it; a tenant-wide role gets the plain label.
     const label = (p: string): Label => t.label(programmes.length === 1 && bound.has(p) ? "ops.reports.programme_only" : "ops.reports.programme", { id: p });
-    body.push(
-      section("ops-reports", t.label("ops.reports.heading"), [
-        h("ul", { class: "fstp-list" }, programmes.map((p) => h("li", { "data-programme": p }, [link(GRANT_PATHS.reports(p), label(p))]))),
-        h("details", { id: "ops-reports-details" }, [h("summary", {}, [t.label("ops.reports.open_by_number")]), openByNumber(env, t, f)]),
-      ]),
-    );
+    const reportRole = roles === null || can(roles, "programme_manager") || can(roles, "auditor") || can(roles, "financial_signatory");
+    if (programmes.length > 0 || reportRole) {
+      body.push(
+        section("ops-reports", t.label("ops.reports.heading"), [
+          h("ul", { class: "fstp-list" }, programmes.map((p) => h("li", { "data-programme": p }, [link(GRANT_PATHS.reports(p), label(p))]))),
+          h("details", { id: "ops-reports-details" }, [h("summary", {}, [t.label("ops.reports.open_by_number")]), openByNumber(env, t, f)]),
+        ]),
+      );
+    }
     body.push(h("p", { class: "text-sm" }, [t.label("ops.roles_callout"), " ", link("/app/admin/onboarding/summary", t.label("ops.roles_link"))]));
     f.show(body);
   });

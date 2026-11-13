@@ -370,6 +370,8 @@ pub enum PortKind {
     RequestPrecheck,
     /// The acknowledgement of the negotiation notice (R-NG-06).
     AcknowledgeNegotiationNotice,
+    /// Marking a notice of the caller's own mailbox read (MB-Q1, ADR-020).
+    MarkMailboxRead,
     /// Ending one of the caller's sessions (R-LG-04).
     EndSession,
     /// Adding a passkey.
@@ -600,6 +602,20 @@ const GRANT_READERS: &[RoleOrApplicant] = &[
     R(Role::PaymentReleaser),
     R(Role::ContractSignatory),
     R(Role::Auditor),
+];
+/// The readers of the grant overview: the grant readers and, after
+/// NEGOTIATION, the assigned reviewer through a committee binding (decided
+/// by Daniel on 2026-11-13, R-PR-08, SoD-12).
+const GRANT_OVERVIEW_READERS: &[RoleOrApplicant] = &[
+    R(Role::Applicant),
+    R(Role::ApplicantTeamMember),
+    R(Role::Guardian),
+    R(Role::ProgrammeManager),
+    R(Role::FinanceApprover),
+    R(Role::PaymentReleaser),
+    R(Role::ContractSignatory),
+    R(Role::Auditor),
+    R(Role::CommitteeMember),
 ];
 const REPORT_READERS: &[RoleOrApplicant] = &[
     R(Role::ProgrammeManager),
@@ -1895,6 +1911,15 @@ pub const OPS: &[OpSpec] = &[
     // Lane m6/mailbox (`docs/handoff/mailbox-design.md`): the caller's own
     // messages, derived from existing state. Web only: no tool (MB-D5).
     OpSpec::read("me.mailbox", RK::GetMyMailbox, "/me/mailbox").class(Personal),
+    // MB-Q1, ADR-020 (Proposed): the caller marks a notice of its own
+    // mailbox read. Web only: no tool (MB-Q4 waits).
+    OpSpec::new(
+        "me.mailbox.mark_read",
+        OpKind::M3Port(PortKind::MarkMailboxRead),
+        Post,
+        "/me/mailbox/read",
+    )
+    .class(Personal),
     OpSpec::new(
         "me.end_session",
         OpKind::M3Port(PortKind::EndSession),
@@ -1951,7 +1976,8 @@ pub const OPS: &[OpSpec] = &[
     // tools are the read-only contract and payment status of 12.1. A grant
     // is addressed by its proposal id. Interim, pending Daniel: the routes
     // and names below, and the `proposals:read` scope of the two tools.
-    OpSpec::read("grant.overview", RK::GetGrant, "/grants/{proposal}").acting(GRANT_READERS),
+    OpSpec::read("grant.overview", RK::GetGrant, "/grants/{proposal}")
+        .acting(GRANT_OVERVIEW_READERS),
     OpSpec::read("contract.view", RK::GetContract, "/grants/{proposal}/contract")
         .acting(GRANT_READERS)
         .tool(
@@ -1979,13 +2005,21 @@ pub const OPS: &[OpSpec] = &[
         Scope::ProposalsRead,
     ),
     // M5 reads follow-up: the caller's grants and the contracts awaiting
-    // the caller's signature, so nobody types a proposal number. Web
-    // only, as `grant.overview` is (I-85).
+    // the caller's signature, so nobody types a proposal number. The grant
+    // list is web only, as `grant.overview` is (I-85). Decided by Daniel on
+    // 2026-11-13: the signing list has a read-only tool, as `contract.view`
+    // has, with the same scope. Signing stays web only (I-85).
     OpSpec::read("grant.list_mine", RK::ListMyGrants, "/me/grants"),
     OpSpec::read(
         "contract.awaiting_me",
         RK::ListMyContractsToSign,
         "/me/contracts-awaiting-signature",
+    )
+    .tool(
+        "fstp_list_contracts_to_sign",
+        "List the contract versions that wait on the caller's own signature.",
+        &IN_NONE,
+        Scope::ProposalsRead,
     ),
     // Lead, 2026-11-12: the assigned reviewer's determination view (R-NG-03).
     // Web only, as `grant.determine_amount` is (I-85).

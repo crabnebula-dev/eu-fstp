@@ -938,15 +938,15 @@ const CYCLE: [&str; 6] = [
     "keystore-snapshot",
 ];
 
-/// The seam of [`world_root_needles`]: the world holds a custody
-/// simulator but exposes no needle of its roots. Lane W3b adds the
-/// accessor, and this helper then calls it.
-const WORLD_NEEDLE_SEAM: &str =
-    "fstp_celltest::world::World exposes no needles of its custody simulator's roots (lane W3b)";
-
+/// The needles of the world custody's roots, destroyed ones included
+/// (`World::root_needles`, lane F-ERASE). A world that created no root
+/// gives none, which the scan would pass vacuously, so that is an error.
 fn world_root_needles(world: &World) -> Result<Vec<Needle>, String> {
-    let _ = world;
-    Err(WORLD_NEEDLE_SEAM.to_owned())
+    let needles = world.root_needles();
+    if needles.is_empty() {
+        return Err("the world custody created no root".to_owned());
+    }
+    Ok(needles)
 }
 
 /// I-80: after a cycle, an erasure and a rotation, no root canary is in

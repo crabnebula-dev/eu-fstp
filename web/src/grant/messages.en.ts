@@ -40,6 +40,7 @@ export const GRANT_LABELS: Readonly<Record<string, string>> = {
   "grant.link_payment_new": "New payment request",
   "grant.link_progress": "Progress of the proposal",
   "grant.link_hub": "All grants",
+  "grant.link_operations_review": "Payment requests to review, on Operations",
   "grant.determine.heading": "Determine the grant amount",
   "grant.determine.intro":
     "Name the agreed plan. The platform computes the amount from the plan total and the deductions you record, and checks the limits.",

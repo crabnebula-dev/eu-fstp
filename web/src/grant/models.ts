@@ -147,7 +147,7 @@ export function decodeOverview(v: unknown): Overview | null {
 // ---------------------------------------------------------------------------
 
 /** Why a grant is in the caller's list: the rule of `grant.overview` that admits the caller. */
-export const GRANT_VIA = ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] as const;
+export const GRANT_VIA = ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor", "assigned_reviewer"] as const;
 export type GrantVia = (typeof GRANT_VIA)[number];
 
 /** One grant of `grant.list_mine`. */

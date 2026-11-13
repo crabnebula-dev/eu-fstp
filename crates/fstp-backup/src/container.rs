@@ -29,9 +29,25 @@ use fstp_keys::envelope::{
 use crate::{BackupError, Chunk};
 
 /// The magic of a backup container.
-const CONTAINER_MAGIC: [u8; 4] = *b"FBC1";
+pub(crate) const CONTAINER_MAGIC: [u8; 4] = *b"FBC1";
 /// The only chunk size version 1 accepts: 1 MiB.
-const CHUNK_SIZE: u32 = 1_048_576;
+pub(crate) const CHUNK_SIZE: u32 = 1_048_576;
+/// The length of a container header.
+pub(crate) const HEADER_LEN: usize = 49 + SEALED_KEY_LEN;
+
+/// The fields of a container header that a reader needs.
+pub(crate) struct Header<'a> {
+    /// The kind code, 1 to 3.
+    pub(crate) kind: u8,
+    /// The owner.
+    pub(crate) owner: [u8; 16],
+    /// The container id.
+    pub(crate) container: [u8; 16],
+    /// The part number.
+    pub(crate) part: u32,
+    /// The sealed data key bytes.
+    pub(crate) sealed_key: &'a [u8],
+}
 
 /// A cursor over input bytes that never reads past the end. Running out
 /// of input is truncation.
@@ -70,7 +86,7 @@ impl<'a> Reader<'a> {
 }
 
 /// Checks the container header (ADR-012) and its data key (R-CR-01).
-fn header(r: &mut Reader<'_>) -> Result<(), BackupError> {
+fn header<'a>(r: &mut Reader<'a>) -> Result<Header<'a>, BackupError> {
     if r.array::<4>()? != CONTAINER_MAGIC {
         return Err(BackupError::Malformed("magic"));
     }
@@ -80,26 +96,43 @@ fn header(r: &mut Reader<'_>) -> Result<(), BackupError> {
     if r.u16()? != AEAD_AES_256_GCM {
         return Err(BackupError::Malformed("aead"));
     }
-    if !(1..=3).contains(&r.u8()?) {
+    let kind = r.u8()?;
+    if !(1..=3).contains(&kind) {
         return Err(BackupError::Malformed("kind"));
     }
     let chain = match Chain::from_code(r.u8()?) {
         Some(c @ (Chain::CellBackup | Chain::ClusterBackup)) => c,
         _ => return Err(BackupError::Malformed("chain")),
     };
-    let _owner = r.take(16)?;
-    let _container = r.take(16)?;
-    let _part = r.u32()?;
+    let owner = r.array::<16>()?;
+    let container = r.array::<16>()?;
+    let part = r.u32()?;
     if r.u32()? != CHUNK_SIZE {
         return Err(BackupError::Malformed("chunk size"));
     }
-    let key = decode_sealed_key(r.take(SEALED_KEY_LEN)?)
+    let sealed_key = r.take(SEALED_KEY_LEN)?;
+    let key = decode_sealed_key(sealed_key)
         .map_err(|_| BackupError::KeyNotHybrid)?
         .header();
     if key.kem != KEM_HYBRID || key.chain != chain {
         return Err(BackupError::KeyNotHybrid);
     }
-    Ok(())
+    Ok(Header {
+        kind,
+        owner,
+        container,
+        part,
+        sealed_key,
+    })
+}
+
+/// Decodes the header of a container alone (ADR-012).
+///
+/// # Errors
+///
+/// As [`decode`], for the header.
+pub(crate) fn decode_header(bytes: &[u8]) -> Result<Header<'_>, BackupError> {
+    header(&mut Reader { rest: bytes })
 }
 
 /// Decodes a backup container into its sealed chunks, in order (ADR-012).
