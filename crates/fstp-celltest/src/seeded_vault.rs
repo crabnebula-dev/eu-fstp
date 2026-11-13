@@ -26,10 +26,13 @@
 //!   through `Vault::take_fact_write`, the vault core's own write entry.
 //!   The fact becomes effective only after the cell reacts to its epoch
 //!   (NOTE 4), as a real write does. Every seeded write is logged.
-//! - The shipped service refuses with 503 any call whose journal is not
-//!   empty, since the vault chain writer is not built (lane F-VCHAIN,
-//!   ADR-010 open point 5). The seeded vault persists that journal with
-//!   no vault chain row. No I-24 claim covers the vault chain of a world.
+//! - With its chain parts ([`SeededParts::chain`]), every call whose
+//!   journal is not empty commits with its kind 1 row of
+//!   `vault_audit.chain`, anchored at the world's witness, through
+//!   `fstp_vault::chain::VaultChain` as the shipped service does (Q-C,
+//!   Daniel 2026-11-13, lane m3/login-m2http). So a seeded fact batch is
+//!   a chain row too. Without chain parts the journal persists with no
+//!   chain row, and no I-24 claim covers that vault.
 //! - Its instants come from the cell's [`WorldClock`], so a ticket the
 //!   cell issued at its test instant is checked at the same instant.
 
@@ -71,6 +74,9 @@ pub struct SeededParts {
     pub origin_host: String,
     /// The cell's test clock.
     pub clock: WorldClock,
+    /// The vault chain writer's parts (`fstp_vault::chain`), or `None` to
+    /// persist journals with no chain row.
+    pub chain: Option<fstp_vault::chain::VaultChainParts>,
 }
 
 /// One call's answer.
@@ -86,6 +92,8 @@ struct Answer {
 struct Held {
     vault: Vault,
     db: Option<fstp_pgwire::Client<Rt>>,
+    /// The vault chain writer, as `fstp_vault::service` holds it.
+    chain: Option<fstp_vault::chain::VaultChain<Rt>>,
 }
 
 struct Shared {
@@ -103,15 +111,22 @@ impl Shared {
     async fn run<T>(&self, call: impl FnOnce(&mut Vault, i64) -> T) -> Result<T, ()> {
         let mut held = self.held.lock().await;
         let mut next = held.vault.clone();
-        let out = call(&mut next, self.clock.now());
+        let now = self.clock.now();
+        let out = call(&mut next, now);
         let journal = next.take_journal();
         if !journal.is_empty() {
-            let db = held.db.as_mut().ok_or(())?;
-            fstp_vault::store::persist(db, self.sealer.as_ref(), &journal)
-                .await
-                .map_err(|e| {
-                    eprintln!("fstp_celltest::seeded_vault: the journal did not persist: {e:?}");
-                })?;
+            let Held { db, chain, .. } = &mut *held;
+            let db = db.as_mut().ok_or(())?;
+            // Q-C (Daniel, 2026-11-13): a journal commits with its kind 1
+            // row of `vault_audit.chain`, anchored at the witness, as
+            // `fstp_vault::service` commits it.
+            let committed = match chain.as_mut() {
+                Some(c) => c.commit(db, self.sealer.as_ref(), &journal, now).await,
+                None => fstp_vault::store::persist(db, self.sealer.as_ref(), &journal).await,
+            };
+            committed.map_err(|e| {
+                eprintln!("fstp_celltest::seeded_vault: the journal did not persist: {e:?}");
+            })?;
         }
         held.vault = next;
         Ok(out)
@@ -248,6 +263,7 @@ impl SeededVault {
             tunnel_tls,
             origin_host,
             clock,
+            chain,
         } = parts;
         let db = db.server_check(fstp_vault::service::vault_server_check(&registered_servers));
         let mut client: fstp_pgwire::Client<Rt> =
@@ -261,10 +277,19 @@ impl SeededVault {
         fstp_vault::service::check_database(&mut client, &registered_servers).await?;
         let vault =
             fstp_vault::store::load(&mut client, sealer.as_ref(), cell, &ticket_keys).await?;
+        // ADR-010 "Start-up": the chain verifies against the witness before
+        // the vault serves, as `fstp_vault::service::serve` runs it.
+        let chain = match chain {
+            Some(p) => {
+                Some(fstp_vault::chain::VaultChain::open(rt.clone(), cell, p, &mut client).await?)
+            }
+            None => None,
+        };
         let shared = Arc::new(Shared {
             held: AsyncMutex::new(Held {
                 vault,
                 db: Some(client),
+                chain,
             }),
             sealer,
             clock,

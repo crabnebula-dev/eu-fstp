@@ -271,7 +271,9 @@ const TAMPERED: VaultError = VaultError::Malformed("the vault chain does not ver
 const NO_WITNESS: VaultError = VaultError::Unavailable("the witness");
 
 /// The vault's chain: its head, the anchorer core and the witness link.
-pub(crate) struct VaultChain<R: Runtime> {
+/// Public so the seeded vault of a test world writes its chain as
+/// `crate::service` does (lane m3/login-m2http, Daniel's Q-C).
+pub struct VaultChain<R: Runtime> {
     cell: CellId,
     key: CompositeSigningKey,
     witness_keys: Vec<Vec<u8>>,
@@ -281,6 +283,17 @@ pub(crate) struct VaultChain<R: Runtime> {
     anchorer: Anchorer,
     /// An unknown COMMIT outcome stops writes until the next start.
     stopped: bool,
+}
+
+impl<R: Runtime> std::fmt::Debug for VaultChain<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The anchor key never shows.
+        f.debug_struct("VaultChain")
+            .field("head", &self.head.0)
+            .field("next_seq", &self.next_seq)
+            .field("stopped", &self.stopped)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The chain as the database holds it.
@@ -398,7 +411,7 @@ impl<R: Runtime> VaultChain<R> {
     /// [`VaultError::Unavailable`] when the witness or the database does
     /// not answer, and [`VaultError::Malformed`] for a chain that does not
     /// verify or a possible deletion.
-    pub(crate) async fn open(
+    pub async fn open(
         rt: R,
         cell: [u8; 16],
         parts: VaultChainParts,
@@ -483,7 +496,7 @@ impl<R: Runtime> VaultChain<R> {
         clippy::too_many_lines,
         reason = "the strict tail D, step by step, as ADR-010 lists it"
     )]
-    pub(crate) async fn commit(
+    pub async fn commit(
         &mut self,
         client: &mut Client<R>,
         sealer: &dyn Sealer,

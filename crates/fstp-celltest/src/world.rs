@@ -2653,10 +2653,10 @@ fn start_cell(
         &[],
         &[],
     )?;
-    // The seeded vault of a world cell does not write `vault_audit.chain`
-    // yet: these parts wait on its chain writer (seam SEEDED_VAULT_CHAIN,
-    // after the merge of m3/cycle2 and m3/self-cp-vchain on 2026-11-13).
-    let _vault_chain = fstp_vault::chain::VaultChainParts {
+    // The seeded vault writes `vault_audit.chain` as `fstp_vault::service`
+    // does (Q-C, lane m3/login-m2http): the former seam SEEDED_VAULT_CHAIN
+    // is closed.
+    let vault_chain = fstp_vault::chain::VaultChainParts {
         anchor_key: vault_anchor,
         witness: fstp_vault::chain::VaultWitness {
             addr: witness.handle.local_addr(),
@@ -2723,6 +2723,7 @@ fn start_cell(
                 },
                 origin_host: vault_host.clone(),
                 clock: clock.clone(),
+                chain: Some(vault_chain),
             },
         ))
         .map_err(|e| fail("the vault", &e))?;
