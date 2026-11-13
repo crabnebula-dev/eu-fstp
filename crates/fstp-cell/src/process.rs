@@ -474,6 +474,12 @@ pub struct StartOptions {
     pub creator_shell: Arc<dyn crate::shell::CreatorShell>,
     /// The proof mail port of self-registration ([`crate::mail`]).
     pub proof_mail: Arc<dyn crate::mail::ProofMail>,
+    /// The control plane link of a SaaS cell ([`crate::control`]). With
+    /// one, the cell sends its heartbeats there. Interim, pending Daniel
+    /// (lane F-ISO): the control plane runs no listener yet (lane F-CP),
+    /// so the production default is `None`, and a test world passes the
+    /// world's control plane.
+    pub control_plane: Option<crate::control::ControlPlaneEndpoint>,
 }
 
 impl Default for StartOptions {
@@ -482,6 +488,7 @@ impl Default for StartOptions {
             clock: crate::engine::system_commit_clock(),
             creator_shell: Arc::new(crate::shell::ProductionShell),
             proof_mail: Arc::new(crate::mail::NoProofMail),
+            control_plane: None,
         }
     }
 }
@@ -529,7 +536,11 @@ where
         clock,
         creator_shell,
         proof_mail,
+        control_plane,
     } = options;
+    if control_plane.is_some() {
+        crate::control::allowed(mode).map_err(CellError::Egress)?;
+    }
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
     // server's OU and SPKI before its startup message.
@@ -686,6 +697,16 @@ where
         }
         .map_err(|e| CellError::Io(e.kind()))?;
         servers.push(server);
+    }
+    // B4, I-19: a SaaS cell reports its heartbeat to the control plane
+    // through the closed protocol only. A self-hosted cell never does.
+    if let Some(endpoint) = control_plane {
+        drop(rt.spawn(crate::control::heartbeat_task(
+            rt.clone(),
+            endpoint,
+            cell,
+            started.shutdown.signal(),
+        )));
     }
     Ok(RunningCell {
         rt: rt.clone(),

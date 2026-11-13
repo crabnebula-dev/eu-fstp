@@ -45,6 +45,7 @@
 //!   grammar). [`process::start`] takes them as parts.
 
 pub mod config;
+pub mod control;
 pub mod egress;
 pub mod engine;
 pub mod http;

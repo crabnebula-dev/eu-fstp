@@ -201,6 +201,20 @@ pub struct Capture {
     pub bytes: Vec<u8>,
 }
 
+/// One TLS handshake of a recorded connection (R-NF-09, lane F-ISO):
+/// the route, the connection, and whether the client presented a
+/// certificate that the receiving end verified under the roots its peer
+/// requires. A handshake that failed is recorded too, with `false`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Handshake {
+    /// The route of the connection.
+    pub route: Route,
+    /// The connection, as its captures number it.
+    pub connection: u64,
+    /// Whether the client presented a certificate that was verified.
+    pub client_certificate_verified: bool,
+}
+
 /// Every capture of a world. Clones share one log.
 #[derive(Clone, Default)]
 pub struct EgressLog {
@@ -210,6 +224,7 @@ pub struct EgressLog {
 #[derive(Default)]
 struct Shared {
     captures: Mutex<Vec<Capture>>,
+    handshakes: Mutex<Vec<Handshake>>,
     next_connection: AtomicU64,
 }
 
@@ -263,6 +278,37 @@ impl EgressLog {
         peers
     }
 
+    /// A new connection number, as [`EgressLog::wrap`] draws one. A
+    /// recording relay of the world numbers its connections with it
+    /// (`crate::relay`).
+    #[must_use]
+    pub fn open_connection(&self) -> u64 {
+        self.inner
+            .next_connection
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1)
+    }
+
+    /// Records the TLS handshake `h`.
+    pub fn record_handshake(&self, h: Handshake) {
+        self.inner
+            .handshakes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(h);
+    }
+
+    /// The TLS handshakes recorded so far, in order. The in-memory
+    /// transport of [`EgressLog::connect`] runs no TLS and records none.
+    #[must_use]
+    pub fn handshakes(&self) -> Vec<Handshake> {
+        self.inner
+            .handshakes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// Records `bytes` for `route` on `connection`.
     pub fn record(&self, route: Route, direction: Direction, connection: u64, bytes: &[u8]) {
         if bytes.is_empty() {
@@ -279,11 +325,7 @@ impl EgressLog {
     /// Wraps `inner` so every byte through it is recorded for `route`.
     #[must_use]
     pub fn wrap<T>(&self, route: Route, inner: T) -> Recorded<T> {
-        let connection = self
-            .inner
-            .next_connection
-            .fetch_add(1, Ordering::Relaxed)
-            .saturating_add(1);
+        let connection = self.open_connection();
         Recorded {
             inner,
             route,

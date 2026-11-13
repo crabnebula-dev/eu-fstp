@@ -1366,9 +1366,16 @@ pub mod db {
         .collect();
         let mut extensions = BTreeSet::new();
         for db in databases(server)? {
-            let names = server
-                .psql(&db, "SELECT extname FROM pg_extension ORDER BY 1")
-                .map_err(|e| e.to_string())?;
+            // Another world of the test binary may drop a database between
+            // the listing and this read (the "database does not exist" race
+            // of shared clusters, lane F-ISO). A database that is gone on a
+            // second listing holds no extension. Any other failure stays
+            // an error.
+            let names = match server.psql(&db, "SELECT extname FROM pg_extension ORDER BY 1") {
+                Ok(n) => n,
+                Err(e) if databases(server)?.contains(&db) => return Err(e.to_string()),
+                Err(_) => continue,
+            };
             extensions.extend(names.lines().filter(|l| !l.is_empty()).map(str::to_owned));
         }
         let hba = hba_rows(server)?.into_iter().map(|h| h.rule).collect();

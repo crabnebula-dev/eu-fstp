@@ -554,6 +554,70 @@ impl CellHandle {
             .block_on(cell.ledger())
             .map_err(|e| WorldError::Store(format!("the cell ledger: {e}")))
     }
+
+    /// The cell's erasure task (`fstp_cell::tasks::erasure`).
+    fn erasure(&self) -> Result<fstp_cell::tasks::erasure::ErasureHandle, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| c.erasure().clone())
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
+    /// Stores `text` as text `id` of the cell's text store, in a fresh
+    /// group of its own, through the cell's erasure task (design section
+    /// 5.6, lane F-ISO). It runs in process: no route takes text bytes
+    /// yet, and claims built on it say so. The ledger's `PutText` is the
+    /// caller's, over HTTP.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the task refuses the group or the text.
+    pub fn store_text(&self, id: [u8; 16], text: &[u8]) -> Result<(), WorldError> {
+        let erasure = self.erasure()?;
+        let rt = self.runtime()?;
+        let group = fstp_crypto::random_array::<16>()
+            .map_err(|e| WorldError::Store(format!("a text group id: {e}")))?;
+        rt.services
+            .rt
+            .block_on(async {
+                erasure.add_group(group).await?;
+                erasure.put_text(group, id, text.to_vec()).await
+            })
+            .map_err(|e| WorldError::Store(format!("the text store: {e}")))
+    }
+
+    /// Waits up to `deadline` until the cell's erasure task has completed
+    /// the erasure of text `id` (design section 3.5, steps 1 to 7). The
+    /// task runs a batch once something wakes it, and its tick follows
+    /// the world clock, which only a test moves. So each poll wakes it
+    /// with a keystore read, which it serves between two steps.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the erasure did not complete in time.
+    pub fn await_erased(&self, id: [u8; 16], deadline: Duration) -> Result<(), WorldError> {
+        let erasure = self.erasure()?;
+        let rt = self.runtime()?;
+        let start = Instant::now();
+        loop {
+            if erasure.erased().contains(&id) {
+                return Ok(());
+            }
+            if start.elapsed() > deadline {
+                return Err(WorldError::Store(format!(
+                    "the erasure of a text did not complete in {deadline:?} (events {:?})",
+                    erasure.events()
+                )));
+            }
+            rt.services.rt.block_on(async {
+                let _ = erasure.keystore().await;
+                fstp_rt::Runtime::sleep(&rt.services.rt, Duration::from_millis(50)).await;
+            });
+        }
+    }
 }
 
 impl Drop for CellHandle {
@@ -762,11 +826,12 @@ impl World {
             .map(|(kind, name)| ClusterHandle::start_named(*kind, name))
             .collect::<Result<Vec<_>, _>>()?;
         let mut cells = Vec::with_capacity(plans.len());
+        let egress = EgressLog::new();
         if !plans.is_empty() {
             for cluster in clusters.iter().filter(|c| is_agent_kind(c.kind())) {
                 prepare_cluster(cluster)?;
             }
-            match start_cells(&spec, &clusters, &plans, pages.as_ref()) {
+            match start_cells(&spec, &clusters, &plans, pages.as_ref(), &egress) {
                 Ok(started) => cells = started,
                 Err(e) => {
                     remember_failed(&spec, &clusters, &plans);
@@ -778,7 +843,7 @@ impl World {
             spec,
             cells,
             clusters,
-            egress: EgressLog::new(),
+            egress,
             install,
         })
     }
@@ -826,7 +891,8 @@ impl World {
     /// Every database, object directory, log and metrics sink: each
     /// cluster's stores as [`cluster_stores`] gives them, the file store of
     /// each self-hosted local witness (`selfhosted_witness_<cell>/...`),
-    /// and each egress connection per direction (`egress/...`).
+    /// each egress connection per direction (`egress/...`), and the
+    /// edge's route table and connection log (`edge/routes`, `edge/log`).
     ///
     /// The set holds every write committed before the call, since each
     /// cluster runs a CHECKPOINT first. The clusters are shared by the
@@ -858,6 +924,16 @@ impl World {
         for (name, bytes) in self.egress.store_set().stores {
             set.push(name, bytes);
         }
+        // The edge's stores (lane F-ISO): its route table and its
+        // connection log. The edge serves every world of the process, so
+        // they hold other worlds' routes and connections too.
+        if let Ok(s) = self.services() {
+            set.push(
+                "edge/routes",
+                format!("{:#?}", *lock(&s.edge.table)).into_bytes(),
+            );
+            set.push("edge/log", lock(&s.edge.log).clone());
+        }
         Ok(set)
     }
 
@@ -885,6 +961,27 @@ impl World {
     /// The plaintext captures above TLS on every outbound client.
     pub fn egress(&self) -> &EgressLog {
         &self.egress
+    }
+
+    /// One needle per custody root that any cell of the world created,
+    /// destroyed roots included (I-80, design section 14.4, lane
+    /// F-ERASE). The roots are the world custody's synthetic bytes, held
+    /// in the test process only. A label names the cell and the order of
+    /// creation, never the bytes.
+    pub fn root_needles(&self) -> Vec<crate::scan::Needle> {
+        let mut out = Vec::new();
+        for c in &self.cells {
+            let Some(rt) = c.runtime.as_ref() else {
+                continue;
+            };
+            for (n, root) in lock(&rt.custody.made).iter().enumerate() {
+                out.push(crate::scan::Needle {
+                    label: format!("cell {} root {n}", c.index),
+                    bytes: root.to_vec(),
+                });
+            }
+        }
+        out
     }
 
     /// Every PostgreSQL cluster of the world, of every kind.
@@ -1408,6 +1505,7 @@ fn start_cells(
     clusters: &[ClusterHandle],
     plans: &[RolePlan],
     pages: Option<&fstp_cell::http::pages::Pages>,
+    egress: &EgressLog,
 ) -> Result<Vec<CellHandle>, WorldError> {
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -1419,7 +1517,15 @@ fn start_cells(
     provision_services(clusters)?;
     let mut cells = Vec::with_capacity(plans.len());
     for (i, (plan, logins)) in plans.iter().zip(logins).enumerate() {
-        cells.push(start_cell(spec, clusters, index(i)?, plan, logins, pages)?);
+        cells.push(start_cell(
+            spec,
+            clusters,
+            index(i)?,
+            plan,
+            logins,
+            pages,
+            egress,
+        )?);
     }
     Ok(cells)
 }
@@ -1851,6 +1957,10 @@ mod pki {
 #[derive(Clone, Default)]
 struct WorldCustody {
     roots: std::sync::Arc<Mutex<BTreeMap<Vec<u8>, [u8; 32]>>>,
+    /// Every root it created, destroyed ones included, in order. The
+    /// I-80 scans look for these bytes ([`World::root_needles`], lane
+    /// F-ERASE).
+    made: std::sync::Arc<Mutex<Vec<[u8; 32]>>>,
 }
 
 impl fstp_custody::Custody for WorldCustody {
@@ -1865,6 +1975,7 @@ impl fstp_custody::Custody for WorldCustody {
             let handle =
                 fstp_crypto::random_array::<16>().map_err(fstp_custody::CustodyError::Crypto)?;
             lock(&self.roots).insert(handle.to_vec(), key);
+            lock(&self.made).push(key);
             Ok(fstp_custody::RootRef {
                 backend: fstp_custody::BackendId::Simulator,
                 cell: label.cell,
@@ -1985,6 +2096,10 @@ const EDGE_CONNECTION_LIFETIME: Duration = Duration::from_secs(2 * 3600);
 struct Edge {
     addr: SocketAddr,
     table: std::sync::Arc<Mutex<fstp_edge::RouteTable>>,
+    /// The edge's connection log, one line per splice (lane F-ISO): the
+    /// route kind and the byte counts each way, bucketed to powers of two
+    /// as the metadata register gives the edge's form (ADR-009, Q36).
+    log: std::sync::Arc<Mutex<Vec<u8>>>,
 }
 
 /// What every world of a test binary shares: the runtime, the CAs and
@@ -2044,6 +2159,10 @@ struct WorldWitness {
     ca_digest: [u8; 32],
     /// The name the witness server certificate carries.
     name: String,
+    /// A second server certificate for that name from the same CA, which
+    /// the cell's recording relay to the witness presents
+    /// ([`crate::relay`], lane F-ISO).
+    relay_server: pki::Issued,
     /// The install of a self-hosted cell, whose local witness stops with
     /// the cell. `None` for the shared SaaS witness.
     local: Option<LocalInstall>,
@@ -2190,11 +2309,26 @@ fn start_local_witness(s: &Services, cell: &[u8; 16]) -> Result<WorldWitness, Wo
             return Err(fail("the start", &e));
         }
     };
+    let relay_server = match install_ca.issue(
+        fstp_pki::cert::CertKind::Server,
+        LOCAL_WITNESS_NAME,
+        None,
+        &[LOCAL_WITNESS_NAME],
+        &[],
+    ) {
+        Ok(i) => i,
+        Err(e) => {
+            handle.trigger_shutdown();
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+    };
     Ok(WorldWitness {
         handle: std::sync::Arc::new(handle),
         ca_pem: install_ca.pem.clone(),
         ca_digest: install_ca.spki_digest,
         name: LOCAL_WITNESS_NAME.to_owned(),
+        relay_server,
         local: Some(LocalInstall { dir }),
     })
 }
@@ -2327,6 +2461,8 @@ async fn start_edge(rt: &Rt, control: &pki::Ca) -> Result<Edge, WorldError> {
         .map_err(|e| fail("the tunnel client", &e))?;
     let opener = fstp_edge::TlsTunnelOpener::new(rt.clone(), tls);
     let table = std::sync::Arc::new(Mutex::new(fstp_edge::RouteTable::new()));
+    let log = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let loop_log = std::sync::Arc::clone(&log);
     let loop_table = std::sync::Arc::clone(&table);
     let loop_rt = rt.clone();
     drop(rt.spawn(async move {
@@ -2339,15 +2475,26 @@ async fn start_edge(rt: &Rt, control: &pki::Ca) -> Result<Edge, WorldError> {
             let table = lock(&loop_table).clone();
             let opener = opener.clone();
             let splice_rt = loop_rt.clone();
+            let splice_log = std::sync::Arc::clone(&loop_log);
             drop(loop_rt.spawn(async move {
                 // The edge bounds each connection's life (fstp_edge::serve
                 // leaves deadlines to its caller).
                 let splice = fstp_edge::serve(client, peer, &table, &opener);
-                let _ = fstp_rt::timeout(&splice_rt, EDGE_CONNECTION_LIFETIME, splice).await;
+                if let Ok(Ok(s)) =
+                    fstp_rt::timeout(&splice_rt, EDGE_CONNECTION_LIFETIME, splice).await
+                {
+                    let line = format!(
+                        "{:?} to_cell<={} to_client<={}\n",
+                        s.kind,
+                        s.to_cell.checked_next_power_of_two().unwrap_or(u64::MAX),
+                        s.to_client.checked_next_power_of_two().unwrap_or(u64::MAX),
+                    );
+                    lock(&splice_log).extend_from_slice(line.as_bytes());
+                }
             }));
         }
     }));
-    Ok(Edge { addr, table })
+    Ok(Edge { addr, table, log })
 }
 
 /// The DNS label of a cell id: its 32 lowercase hex digits.
@@ -2397,6 +2544,11 @@ struct CellRuntime {
     running: Mutex<Running>,
     health: SocketAddr,
     witness: WorldWitness,
+    /// The recording relays of the cell's links to its vault, its
+    /// witness and the control plane ([`crate::relay`], lane F-ISO).
+    relays: Mutex<Vec<crate::relay::Relay>>,
+    /// The cell's custody, which shares its roots with the cell.
+    custody: WorldCustody,
 }
 
 impl fmt::Debug for CellRuntime {
@@ -2421,6 +2573,7 @@ impl CellRuntime {
         if let Some(c) = running {
             let _ = self.services.rt.block_on(c.shutdown(CELL_DRAIN));
         }
+        lock(&self.relays).clear();
         let r = lock(&self.running);
         let _ = self.services.rt.block_on(r.vault.shutdown(CELL_DRAIN));
         lock(&self.services.edge.table).remove_cell_by_id(cell);
@@ -2465,6 +2618,120 @@ fn registered_server_keys(
     Ok(out)
 }
 
+/// The name the world's control plane presents to a cell's heartbeat
+/// link ([`fstp_cell::control`], lane F-ISO).
+const CONTROL_PLANE_NAME: &str = "cp.fstp.localhost";
+
+/// The upstreams of a cell's relays.
+struct RelayUpstreams<'a> {
+    /// The vault's internal listener.
+    vault: SocketAddr,
+    /// The cell's `cell-app` certificate and the roots of the vault's
+    /// internal certificate.
+    vault_client: (&'a pki::Issued, &'a [u8]),
+    /// The cell's `cell-witness` certificate.
+    witness_client: &'a pki::Issued,
+    /// Whether the cell reaches the control plane: a SaaS cell does, and
+    /// a self-hosted cell never does (B12).
+    control_plane: bool,
+}
+
+/// A cell's relays and where the cell reaches each link through them.
+struct CellRelays {
+    relays: Vec<crate::relay::Relay>,
+    vault: SocketAddr,
+    witness: SocketAddr,
+    control_plane: Option<SocketAddr>,
+}
+
+/// Starts the recording relays of world cell `index` (lane F-ISO,
+/// [`crate::relay`]): to its vault, to its witness, and on a SaaS cell to
+/// the world's control plane stand-in. Each relay presents a server
+/// certificate from the CA the cell trusts for that peer, and requires a
+/// client certificate under the cell CA, as the vault's internal listener
+/// and the witness do. Each opens its upstream with the cell's own client
+/// certificate. The captures and handshakes go to `egress`.
+fn start_relays(
+    s: &'static Services,
+    egress: &EgressLog,
+    index: u8,
+    cell_ca: &pki::Ca,
+    witness: &WorldWitness,
+    up: RelayUpstreams<'_>,
+) -> Result<CellRelays, WorldError> {
+    use crate::egress::{Endpoint, Peer, Route};
+    use crate::relay::Upstream;
+    use fstp_pki::cert::CertKind;
+    let fail =
+        |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("cell {index}: {what}: {e}"));
+    let server = |cert: &pki::Issued| {
+        fstp_tls::ServerConfig::builder(&cert.cert_pem, &cert.key_pem)
+            .require_client_auth(&cell_ca.pem)
+            .build()
+            .map_err(|e| fail("a relay TLS", &e))
+    };
+    let start = |route: Route, cfg: fstp_tls::ServerConfig, upstream: Upstream| {
+        s.rt.block_on(crate::relay::start(
+            s.rt.clone(),
+            egress.clone(),
+            route,
+            cfg,
+            upstream,
+        ))
+        .map_err(|e| fail("a relay", &e))
+    };
+    let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
+    let (app, vault_roots) = up.vault_client;
+    let vault_cert = cell_ca.issue(CertKind::Server, "vault relay", None, &[], &loopback)?;
+    let vault = start(
+        Route::new(Endpoint::cell(index), Peer::Vault, Some(index)),
+        server(&vault_cert)?,
+        Upstream::Tls {
+            addr: up.vault,
+            server_name: Ipv4Addr::LOCALHOST.to_string(),
+            tls: fstp_tls::ClientConfig::mutual(vault_roots, &app.cert_pem, &app.key_pem)
+                .map_err(|e| fail("the vault relay client TLS", &e))?,
+        },
+    )?;
+    let witness_relay = start(
+        Route::new(Endpoint::cell(index), Peer::Witness, None),
+        server(&witness.relay_server)?,
+        Upstream::Tls {
+            addr: witness.handle.local_addr(),
+            server_name: witness.name.clone(),
+            tls: fstp_tls::ClientConfig::mutual(
+                &witness.ca_pem,
+                &up.witness_client.cert_pem,
+                &up.witness_client.key_pem,
+            )
+            .map_err(|e| fail("the witness relay client TLS", &e))?,
+        },
+    )?;
+    let mut out = CellRelays {
+        vault: vault.addr(),
+        witness: witness_relay.addr(),
+        control_plane: None,
+        relays: vec![vault, witness_relay],
+    };
+    if up.control_plane {
+        let cert = s.control.issue(
+            CertKind::Server,
+            CONTROL_PLANE_NAME,
+            None,
+            &[CONTROL_PLANE_NAME],
+            &[],
+        )?;
+        let cp = start(
+            Route::new(Endpoint::cell(index), Peer::ControlPlane, None),
+            server(&cert)?,
+            Upstream::ControlPlane,
+        )?;
+        out.control_plane = Some(cp.addr());
+        out.relays.push(cp);
+    }
+    Ok(out)
+}
+
 /// Starts world cell `index` of `plan` over its provisioned databases
 /// (design section 9.2 steps 5, 6, 8, 9 and 10):
 ///
@@ -2494,6 +2761,7 @@ fn start_cell(
     plan: &RolePlan,
     logins: CellLogins,
     pages: Option<&fstp_cell::http::pages::Pages>,
+    egress: &EgressLog,
 ) -> Result<CellHandle, WorldError> {
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -2577,6 +2845,13 @@ fn start_cell(
             ca_pem: s.control.pem.clone(),
             ca_digest: s.control.spki_digest,
             name: WITNESS_NAME.to_owned(),
+            relay_server: s.control.issue(
+                CertKind::Server,
+                WITNESS_NAME,
+                None,
+                &[WITNESS_NAME],
+                &[],
+            )?,
             local: None,
         }
     };
@@ -2688,12 +2963,6 @@ fn start_cell(
         &[],
         &[],
     )?;
-    let vault_client = fstp_cell::vault::HttpVaultClient::new(
-        s.rt.clone(),
-        format!("https://{}", vault.internal_addr()),
-        fstp_tls::ClientConfig::mutual(&cell_ca.pem, &cell_app.cert_pem, &cell_app.key_pem)
-            .map_err(tls_err("the vault client TLS"))?,
-    );
     let cell_witness = cell_ca.issue(
         CertKind::Client,
         "cell-witness",
@@ -2701,8 +2970,49 @@ fn start_cell(
         &[],
         &[],
     )?;
+    let cell_cp = cell_ca.issue(CertKind::Client, "cell-control-plane", None, &[], &[])?;
+    // Lane F-ISO: the cell reaches its vault, its witness and the control
+    // plane through recording relays ([`crate::relay`]).
+    let relays = match start_relays(
+        s,
+        egress,
+        index,
+        &cell_ca,
+        &witness,
+        RelayUpstreams {
+            vault: vault.internal_addr(),
+            vault_client: (&cell_app, &cell_ca.pem),
+            witness_client: &cell_witness,
+            control_plane: !spec.self_hosted,
+        },
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            return Err(e);
+        }
+    };
+    let vault_client = fstp_cell::vault::HttpVaultClient::new(
+        s.rt.clone(),
+        format!("https://{}", relays.vault),
+        fstp_tls::ClientConfig::mutual(&cell_ca.pem, &cell_app.cert_pem, &cell_app.key_pem)
+            .map_err(tls_err("the vault client TLS"))?,
+    );
+    let control_plane = match relays.control_plane {
+        Some(addr) => Some(fstp_cell::control::ControlPlaneEndpoint {
+            addr,
+            server_name: CONTROL_PLANE_NAME.to_owned(),
+            tls: fstp_tls::ClientConfig::mutual(
+                &s.control.pem,
+                &cell_cp.cert_pem,
+                &cell_cp.key_pem,
+            )
+            .map_err(tls_err("the control plane client TLS"))?,
+        }),
+        None => None,
+    };
     let witness_endpoint = fstp_cell::witness::link::WitnessEndpoint {
-        addr: witness.handle.local_addr(),
+        addr: relays.witness,
         server_name: witness.name.clone(),
         tls: fstp_tls::ClientConfig::mutual(
             &witness.ca_pem,
@@ -2724,6 +3034,7 @@ fn start_cell(
         fstp_keys::DekId(fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?),
         fstp_crypto::aead::Key::generate().map_err(|e| fail("the ledger key", &e))?,
     );
+    let custody = WorldCustody::default();
     let parts = fstp_cell::process::CellProcessParts {
         cell,
         mode: if spec.self_hosted {
@@ -2755,7 +3066,7 @@ fn start_cell(
                 },
             })
             .collect(),
-        custody: WorldCustody::default(),
+        custody: custody.clone(),
         keystore: None,
         keys: fstp_cell::process::CellKeys {
             anchor,
@@ -2792,6 +3103,7 @@ fn start_cell(
             clock: clock.commit_clock(),
             creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
             proof_mail: std::sync::Arc::new(mail.clone()),
+            control_plane,
         },
     )) {
         Ok(r) => r,
@@ -2875,6 +3187,8 @@ fn start_cell(
             }),
             health: bound.health,
             witness,
+            relays: Mutex::new(relays.relays),
+            custody,
         })),
     })
 }
