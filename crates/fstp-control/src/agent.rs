@@ -12,8 +12,13 @@
 //! [`crate::pgagent::encode_pgagent_job`] in, a [`JobOutcome`] frame out.
 //! The agent renders a job only through [`AgentScope::statements`], so a
 //! job for the other cluster kind is refused before any SQL exists (I-83).
-//! Destructive jobs are refused with [`JobRefusal::ApprovalRequired`]
-//! until the two-operator check exists (ADR-011 "Two-operator approval").
+//! A plain job frame of a destructive job is refused with
+//! [`JobRefusal::ApprovalRequired`]. A destructive job runs only from an
+//! approved frame ([`crate::pgagent::decode_approved_job`]), after the
+//! agent verified both approvals itself against the staff passkeys pinned
+//! in its configuration ([`AgentApprovals`], ADR-011 "Two-operator
+//! approval"). An agent without pinned approvers refuses every
+//! destructive job.
 //!
 //! The executor connects only to `127.0.0.1` as `fstp_super`, with mutual
 //! TLS and SCRAM (ADR-005 D2). Before the startup message it checks that
@@ -30,7 +35,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use fstp_cp_proto::CellId;
@@ -41,12 +46,16 @@ use fstp_rt::tokio::TokioRuntime;
 use fstp_rt::{Runtime, Shutdown, ShutdownSignal};
 
 use crate::ControlError;
+use crate::approval::{AgentApprovals, ApprovedJob, DestructiveJob, PinnedApprovers};
 use crate::config::{AGENT_FILES, PgagentConfig, decode_pgagent_config, read_credential};
+use crate::erase::CellDatabases;
 use crate::pg::{CellDatabase, CellSubnet, render_hba};
 use crate::pgagent::{
-    AgentScope, DbIdent, JOB_VERSION, MAX_JOB_LEN, PgagentJob, Target, decode_pgagent_job,
+    APPROVED_VERSION, AgentScope, ApprovedFrame, DbIdent, JOB_VERSION, MAX_APPROVED_LEN,
+    PgagentJob, Statement, Target, decode_approved_job, decode_pgagent_job, encode_approved_job,
     encode_pgagent_job,
 };
+use crate::placement::ClusterId;
 use crate::placement::{ClusterKind, PlacementError};
 
 /// The subject CN of the certificate the control-plane CA issues to
@@ -192,6 +201,9 @@ pub struct AgentParts {
     pub key_pem: Vec<u8>,
     /// The login to the local server.
     pub pg: PgLogin,
+    /// The approvers of destructive jobs, pinned at installation. `None`
+    /// refuses every destructive job.
+    pub approvals: Option<PinnedApprovers>,
 }
 
 impl std::fmt::Debug for AgentParts {
@@ -236,6 +248,7 @@ impl AgentParts {
                 client_key_pem: read_credential(dir, su_key)?,
                 password: pw.to_owned(),
             },
+            approvals: cfg.approvals.clone(),
         })
     }
 
@@ -269,6 +282,7 @@ pub struct Agent<R: Runtime> {
     pg: PgLogin,
     hba_file: String,
     cell_subnet: CellSubnet,
+    approvals: Option<Mutex<AgentApprovals>>,
 }
 
 impl<R: Runtime> Agent<R> {
@@ -276,15 +290,47 @@ impl<R: Runtime> Agent<R> {
     ///
     /// # Errors
     ///
-    /// [`ControlError::Job`] for a control cluster, which has no agent.
+    /// [`ControlError::Job`] for a control cluster, which has no agent,
+    /// and [`ControlError::Config`] for pinned approvers that
+    /// [`AgentApprovals::new`] refuses.
     pub fn new(rt: R, parts: &AgentParts) -> Result<Agent<R>, ControlError> {
+        let approvals = match &parts.approvals {
+            Some(p) => Some(Mutex::new(AgentApprovals::new(p)?)),
+            None => None,
+        };
         Ok(Agent {
             rt,
             scope: AgentScope::new(parts.cluster_kind)?,
             pg: parts.pg.clone(),
             hba_file: parts.hba_file.clone(),
             cell_subnet: parts.cell_subnet,
+            approvals,
         })
+    }
+
+    /// Runs the destructive job of `frame` at `now` (seconds): the
+    /// cluster kind check, then the agent's own check of both approvals
+    /// (ADR-011), then the job's statements.
+    pub async fn run_approved(&self, frame: &ApprovedFrame, now: i64) -> JobOutcome {
+        if self.scope.admits(&frame.job).is_err() {
+            return JobOutcome::Refused(JobRefusal::ClusterKind);
+        }
+        let Some(book) = &self.approvals else {
+            return JobOutcome::Refused(JobRefusal::ApprovalRequired);
+        };
+        let verified = {
+            let mut book = book.lock().unwrap_or_else(PoisonError::into_inner);
+            book.verify(&frame.job, &frame.approvals, now)
+        };
+        let statements = match verified.and_then(|v| self.scope.destructive_statements(&v)) {
+            Ok(s) => s,
+            Err(ControlError::Placement(_)) => return JobOutcome::Refused(JobRefusal::ClusterKind),
+            Err(_) => return JobOutcome::Refused(JobRefusal::ApprovalRequired),
+        };
+        match self.run_rendered(&statements).await {
+            Ok(()) => JobOutcome::Done,
+            Err(_) => JobOutcome::Failed,
+        }
     }
 
     /// Opens a superuser session to `database` on `127.0.0.1`.
@@ -339,9 +385,13 @@ impl<R: Runtime> Agent<R> {
 
     async fn run_statements(&self, job: &PgagentJob) -> Result<(), ControlError> {
         let statements = self.scope.statements(job)?;
+        self.run_rendered(&statements).await
+    }
+
+    async fn run_rendered(&self, statements: &[Statement]) -> Result<(), ControlError> {
         let mut sessions: BTreeMap<String, Client<R>> = BTreeMap::new();
         let mut result = Ok(());
-        for s in &statements {
+        for s in statements {
             let db = s.target.database_name();
             if !sessions.contains_key(&db) {
                 match self.session(&db).await {
@@ -522,15 +572,31 @@ async fn answer<R: Runtime>(
         return None;
     }
     let started = Instant::now();
-    let (job, outcome) = match decode_pgagent_job(&request) {
-        Ok(job) => {
-            let outcome = agent.run_job(&job).await;
-            (Some(job), outcome)
-        }
-        Err(_) => (None, JobOutcome::Refused(JobRefusal::Frame)),
+    let (job, outcome) = match request.first() {
+        Some(&APPROVED_VERSION) => match decode_approved_job(&request) {
+            Ok(frame) => {
+                let outcome = agent.run_approved(&frame, unix_now()).await;
+                (Some(frame.job), outcome)
+            }
+            Err(_) => (None, JobOutcome::Refused(JobRefusal::Frame)),
+        },
+        _ => match decode_pgagent_job(&request) {
+            Ok(job) => {
+                let outcome = agent.run_job(&job).await;
+                (Some(job), outcome)
+            }
+            Err(_) => (None, JobOutcome::Refused(JobRefusal::Frame)),
+        },
     };
     log_job(job.as_ref(), outcome, started.elapsed());
     Some(encode_job_outcome(outcome).to_vec())
+}
+
+/// The time in seconds since the Unix epoch, or 0 before it.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Serves jobs on `listener` until `signal` is triggered (design section
@@ -552,7 +618,7 @@ pub async fn serve<R: Runtime>(
         rt,
         listener,
         tls,
-        MAX_JOB_LEN,
+        MAX_APPROVED_LEN,
         signal,
         move |peer, request| answer(agent.clone(), peer, request),
     )
@@ -581,6 +647,95 @@ pub async fn send_job<R: Runtime>(
         .await
         .map_err(|e| ControlError::Io(e.kind()))?;
     decode_job_outcome(&reply)
+}
+
+/// The approved frame of `approved`: its agent job and the evidence of
+/// both approvals.
+///
+/// # Errors
+///
+/// [`ControlError::ApprovalRequired`] when `approved` is not an agent job
+/// or lacks the evidence of either approval. The errors of
+/// [`encode_approved_job`].
+pub fn approved_frame(approved: &ApprovedJob) -> Result<ApprovedFrame, ControlError> {
+    let DestructiveJob::Pgagent(agent_job) = approved.job() else {
+        return Err(ControlError::ApprovalRequired);
+    };
+    let evidence = approved.evidence().ok_or(ControlError::ApprovalRequired)?;
+    let frame = ApprovedFrame {
+        job: agent_job.job().clone(),
+        approvals: evidence.clone(),
+    };
+    encode_approved_job(&frame)?;
+    Ok(frame)
+}
+
+/// Sends the approved destructive agent job `approved` to the agent at
+/// `addr`, with the evidence of both approvals, and returns its outcome.
+/// The agent checks the approvals again itself (ADR-011).
+///
+/// # Errors
+///
+/// The errors of [`approved_frame`] and of [`send_job`].
+pub async fn send_approved_job<R: Runtime>(
+    rt: &R,
+    addr: SocketAddr,
+    server_name: &str,
+    tls: &fstp_tls::ClientConfig,
+    approved: &ApprovedJob,
+) -> Result<JobOutcome, ControlError> {
+    let frame = encode_approved_job(&approved_frame(approved)?)?;
+    let reply = crate::exchange::request(rt, addr, server_name, tls, &frame, OUTCOME_LEN)
+        .await
+        .map_err(|e| ControlError::Io(e.kind()))?;
+    decode_job_outcome(&reply)
+}
+
+/// The agents of the self-operated clusters, as `fstp-control` reaches
+/// them over their mutual TLS listeners (design section 3.7 step 2).
+pub struct AgentLinks<R: Runtime> {
+    rt: R,
+    tls: fstp_tls::ClientConfig,
+    agents: BTreeMap<ClusterId, (SocketAddr, String)>,
+}
+
+impl<R: Runtime> AgentLinks<R> {
+    /// No agent yet. `tls` presents the `fstp-control` certificate and
+    /// trusts the agents' CA.
+    pub fn new(rt: R, tls: fstp_tls::ClientConfig) -> AgentLinks<R> {
+        AgentLinks {
+            rt,
+            tls,
+            agents: BTreeMap::new(),
+        }
+    }
+
+    /// Adds the agent of `cluster` at `addr`, whose certificate carries
+    /// `server_name`.
+    pub fn add(&mut self, cluster: ClusterId, addr: SocketAddr, server_name: &str) {
+        self.agents.insert(cluster, (addr, server_name.to_owned()));
+    }
+
+    fn agent(&self, cluster: ClusterId) -> Result<&(SocketAddr, String), ControlError> {
+        self.agents
+            .get(&cluster)
+            .ok_or(ControlError::Job("no agent for the cluster"))
+    }
+}
+
+impl<R: Runtime> CellDatabases for AgentLinks<R> {
+    async fn run_approved(&self, job: &ApprovedJob) -> Result<JobOutcome, ControlError> {
+        let DestructiveJob::Pgagent(a) = job.job() else {
+            return Err(ControlError::ApprovalRequired);
+        };
+        let (addr, name) = self.agent(a.cluster())?;
+        send_approved_job(&self.rt, *addr, name, &self.tls, job).await
+    }
+
+    async fn run(&self, cluster: ClusterId, job: &PgagentJob) -> Result<JobOutcome, ControlError> {
+        let (addr, name) = self.agent(cluster)?;
+        send_job(&self.rt, *addr, name, &self.tls, job).await
+    }
 }
 
 /// Serves until a termination signal, then drains (ADR-002, design

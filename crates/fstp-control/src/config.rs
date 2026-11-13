@@ -19,6 +19,12 @@
 //!  "listen": "10.0.0.5:7400", "postgres_port": 5432}
 //! ```
 //!
+//! An agent configuration may add the member `approvals`, the approvers
+//! it checks destructive jobs against (ADR-011): `{"cluster_id": "<32
+//! hex>", "operator_host": "control.example.eu", "staff": [...]}`, with
+//! staff entries as in a control plane configuration. Without it the
+//! agent refuses every destructive job.
+//!
 //! The agent connects only to its local server, over loopback, as
 //! `fstp_super` (ADR-011), so neither the host nor the role is a member.
 //!
@@ -37,6 +43,7 @@ use fstp_webauthn::RelyingParty;
 
 use crate::ControlConfig;
 use crate::ControlError;
+use crate::approval::PinnedApprovers;
 use crate::operator::StaffCredential;
 use crate::pg::CellSubnet;
 use crate::placement::{Cluster, ClusterId, ClusterKind};
@@ -62,6 +69,11 @@ pub const AGENT_MEMBERS: [&str; 6] = [
     "listen",
     "postgres_port",
 ];
+
+/// The optional member of an agent configuration: the pinned approvers of
+/// destructive jobs, as `{"cluster_id": <32 hex>, "operator_host": <host>,
+/// "staff": [<staff entry>, ...]}` (ADR-011 "Two-operator approval").
+pub const AGENT_APPROVALS: &str = "approvals";
 
 /// The members of a control plane configuration, in key order.
 pub const CONTROL_MEMBERS: [&str; 5] = [
@@ -109,6 +121,10 @@ pub struct PgagentConfig {
     pub listen: SocketAddr,
     /// The port of the local server on `127.0.0.1`.
     pub postgres_port: u16,
+    /// The approvers the agent checks destructive jobs against (ADR-011),
+    /// from the optional member `approvals`. Without it the agent refuses
+    /// every destructive job.
+    pub approvals: Option<PinnedApprovers>,
 }
 
 fn bad(rule: &'static str) -> ControlError {
@@ -239,7 +255,21 @@ fn id16(s: &str, rule: &'static str) -> Result<[u8; 16], ControlError> {
 /// kind is refused, since the control cluster has no agent (ADR-011).
 pub fn decode_pgagent_config(bytes: &[u8]) -> Result<PgagentConfig, ControlError> {
     let value = parse(bytes)?;
-    let obj = closed_object(&value, &AGENT_MEMBERS, "members")?;
+    let obj = value.as_object().ok_or(bad("members"))?;
+    let approvals = match obj.get(AGENT_APPROVALS) {
+        Some(a) => Some(pinned_approvers(a)?),
+        None => None,
+    };
+    let wanted = AGENT_MEMBERS
+        .len()
+        .saturating_add(usize::from(approvals.is_some()));
+    if obj.len() != wanted
+        || obj
+            .keys()
+            .any(|k| !AGENT_MEMBERS.contains(&k) && k != AGENT_APPROVALS)
+    {
+        return Err(bad("members"));
+    }
     let cluster_kind = match string(obj, "cluster_kind", "cluster_kind")? {
         "application" => ClusterKind::Application,
         "vault" => ClusterKind::Vault,
@@ -259,7 +289,59 @@ pub fn decode_pgagent_config(bytes: &[u8]) -> Result<PgagentConfig, ControlError
         hba_file: path(obj, "hba_file", "hba_file")?,
         listen: socket_addr(obj, "listen", "listen")?,
         postgres_port: port,
+        approvals,
     })
+}
+
+/// The pinned approvers of an agent configuration. The staff entries are
+/// those of a control plane configuration, and at least one is needed.
+fn pinned_approvers(value: &Value) -> Result<PinnedApprovers, ControlError> {
+    let obj = closed_object(
+        value,
+        &["cluster_id", "operator_host", "staff"],
+        "approvals",
+    )?;
+    let operator_host = string(obj, "operator_host", "approvals")?;
+    RelyingParty::new(operator_host).map_err(|_| bad("approvals"))?;
+    let staff = staff_list(obj)?;
+    if staff.is_empty() {
+        return Err(bad("approvals"));
+    }
+    Ok(PinnedApprovers {
+        cluster: ClusterId(id16(string(obj, "cluster_id", "approvals")?, "approvals")?),
+        operator_host: operator_host.to_owned(),
+        staff,
+    })
+}
+
+/// The member `staff`: a list of `{"cose_key": <hex>, "credential_id":
+/// <hex>, "staff": <32 hex>}`, with distinct credential ids.
+fn staff_list(obj: &fstp_json::Object) -> Result<Vec<StaffCredential>, ControlError> {
+    let mut staff: Vec<StaffCredential> = Vec::new();
+    for s in obj
+        .get("staff")
+        .and_then(Value::as_array)
+        .ok_or(bad("staff"))?
+        .iter()
+    {
+        let s = closed_object(s, &["cose_key", "credential_id", "staff"], "staff")?;
+        let credential_id = hex_bytes(
+            string(s, "credential_id", "staff")?,
+            MAX_CREDENTIAL_ID_LEN,
+            "staff",
+        )?;
+        let cose = hex_bytes(string(s, "cose_key", "staff")?, MAX_CONFIG_LEN, "staff")?;
+        let key = fstp_webauthn::parse_cose_key(&cose).map_err(|_| bad("staff"))?;
+        if staff.iter().any(|k| k.credential_id == credential_id) {
+            return Err(bad("staff"));
+        }
+        staff.push(StaffCredential {
+            staff: fstp_cp_proto::StaffRef(id16(string(s, "staff", "staff")?, "staff")?),
+            credential_id,
+            key,
+        });
+    }
+    Ok(staff)
 }
 
 /// Decodes a control plane configuration. Fuzzed
@@ -299,30 +381,7 @@ pub fn decode_control_config(bytes: &[u8]) -> Result<ControlConfig, ControlError
     }
     let operator_host = string(obj, "operator_host", "operator_host")?;
     RelyingParty::new(operator_host).map_err(|_| bad("operator_host"))?;
-    let mut staff: Vec<StaffCredential> = Vec::new();
-    for s in obj
-        .get("staff")
-        .and_then(Value::as_array)
-        .ok_or(bad("staff"))?
-        .iter()
-    {
-        let s = closed_object(s, &["cose_key", "credential_id", "staff"], "staff")?;
-        let credential_id = hex_bytes(
-            string(s, "credential_id", "staff")?,
-            MAX_CREDENTIAL_ID_LEN,
-            "staff",
-        )?;
-        let cose = hex_bytes(string(s, "cose_key", "staff")?, MAX_CONFIG_LEN, "staff")?;
-        let key = fstp_webauthn::parse_cose_key(&cose).map_err(|_| bad("staff"))?;
-        if staff.iter().any(|k| k.credential_id == credential_id) {
-            return Err(bad("staff"));
-        }
-        staff.push(StaffCredential {
-            staff: fstp_cp_proto::StaffRef(id16(string(s, "staff", "staff")?, "staff")?),
-            credential_id,
-            key,
-        });
-    }
+    let staff = staff_list(obj)?;
     Ok(ControlConfig {
         clusters,
         cell_listen: socket_addr(obj, "cell_listen", "cell_listen")?,
@@ -376,7 +435,7 @@ pub fn read_config_file(var: &str) -> Result<Vec<u8>, ControlError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
@@ -414,6 +473,65 @@ mod tests {
             "[]".to_owned(),
         ] {
             assert!(decode_pgagent_config(bad.as_bytes()).is_err(), "{bad}");
+        }
+    }
+
+    /// An agent configuration with the `approvals` member of one staff
+    /// passkey, an Ed25519 COSE key.
+    fn with_approvals(approvals: &str) -> String {
+        AGENT.replacen(
+            "\"postgres_port\":5432",
+            &format!("\"postgres_port\":5432,\"approvals\":{approvals}"),
+            1,
+        )
+    }
+
+    fn cose_hex() -> String {
+        let key = fstp_crypto::sig::Ed25519SigningKey::generate().unwrap();
+        let mut cose = vec![0xa4, 0x01, 0x01, 0x03, 0x27, 0x20, 0x06, 0x21, 0x58, 0x20];
+        cose.extend_from_slice(&key.public_key());
+        cose.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// ADR-011 "fstp-pgagent checks both approvals again itself, against
+    /// a staff key set pinned at its installation": the optional member
+    /// `approvals` pins the agent's cluster, the control-plane host and
+    /// the staff passkeys. Without it the agent has no approvers.
+    #[test]
+    fn adr011_agent_config_pins_the_approvers() {
+        assert_eq!(
+            decode_pgagent_config(AGENT.as_bytes()).unwrap().approvals,
+            None
+        );
+        let staff = format!(
+            "{{\"cose_key\":\"{}\",\"credential_id\":\"a1a1\",\"staff\":\"{}\"}}",
+            cose_hex(),
+            "01".repeat(16)
+        );
+        let good = format!(
+            "{{\"cluster_id\":\"{}\",\"operator_host\":\"control.example.eu\",\"staff\":[{staff}]}}",
+            "31".repeat(16)
+        );
+        let c = decode_pgagent_config(with_approvals(&good).as_bytes()).unwrap();
+        let p = c.approvals.unwrap();
+        assert_eq!(p.cluster, ClusterId([0x31; 16]));
+        assert_eq!(p.operator_host, "control.example.eu");
+        assert_eq!(p.staff.len(), 1);
+        assert_eq!(p.staff[0].credential_id, vec![0xa1, 0xa1]);
+        for bad in [
+            good.replacen(&format!("[{staff}]"), "[]", 1),
+            good.replacen(&format!("[{staff}]"), &format!("[{staff},{staff}]"), 1),
+            good.replacen("control.example.eu", "not a host", 1),
+            good.replacen(&"31".repeat(16), &"31".repeat(15), 1),
+            good.replacen("\"cluster_id\"", "\"cluster\"", 1),
+            good.replacen("}", ",\"extra\":1}", 1),
+            "{}".to_owned(),
+            "[]".to_owned(),
+        ] {
+            assert!(
+                decode_pgagent_config(with_approvals(&bad).as_bytes()).is_err(),
+                "{bad}"
+            );
         }
     }
 }

@@ -20,12 +20,13 @@
 //! 0x04 destroy  = id | root
 //! 0x05 sign     = id | handle len u8 | handle | digest 32
 //! 0x06 usage    = id | root | cursor u64
+//! 0x07 destroy sign key = id | handle len u8 | handle
 //!
 //! responses (server to client)
 //! 0x81 root      = root
 //! 0x82 wrapped   = len u16 | wrapped
 //! 0x83 unwrapped = seal key 32
-//! 0x84 destroyed = len u16 | receipt
+//! 0x84 destroyed = len u16 | receipt (a sign key receipt after 0x07)
 //! 0x85 signed    = len u16 | signature
 //! 0x86 usage     = next u64 | count u16 | count times (len u16 | record)
 //! 0xff refused   = code u8
@@ -123,6 +124,8 @@ pub const KIND_DESTROY: u8 = 0x04;
 pub const KIND_SIGN: u8 = 0x05;
 /// Request kind: read the usage log.
 pub const KIND_USAGE: u8 = 0x06;
+/// Request kind: destroy a CA sign key (ADR-004 "CA keys in custody").
+pub const KIND_DESTROY_SIGN_KEY: u8 = 0x07;
 /// Response kind: a root.
 pub const KIND_ROOT: u8 = 0x81;
 /// Response kind: a wrapped seal key.
@@ -464,6 +467,14 @@ pub enum Request {
         /// The index of the first record to read.
         cursor: u64,
     },
+    /// Destroy a CA sign key (ADR-004 "CA keys in custody"). Kept apart
+    /// from the six operations of the `Custody` trait (I-80).
+    DestroySignKey {
+        /// The request id.
+        id: RequestId,
+        /// The signing key handle.
+        key: Vec<u8>,
+    },
 }
 
 impl std::fmt::Debug for Request {
@@ -515,6 +526,11 @@ impl std::fmt::Debug for Request {
                 .field("root", root)
                 .field("cursor", cursor)
                 .finish(),
+            Request::DestroySignKey { id, key } => f
+                .debug_struct("DestroySignKey")
+                .field("id", id)
+                .field("key_len", &key.len())
+                .finish(),
         }
     }
 }
@@ -529,7 +545,8 @@ impl Request {
             | Request::Unwrap { id, .. }
             | Request::Destroy { id, .. }
             | Request::Sign { id, .. }
-            | Request::UsageSince { id, .. } => *id,
+            | Request::UsageSince { id, .. }
+            | Request::DestroySignKey { id, .. } => *id,
         }
     }
 
@@ -543,6 +560,7 @@ impl Request {
             Request::Destroy { .. } => KIND_DESTROY,
             Request::Sign { .. } => KIND_SIGN,
             Request::UsageSince { .. } => KIND_USAGE,
+            Request::DestroySignKey { .. } => KIND_DESTROY_SIGN_KEY,
         }
     }
 }
@@ -583,15 +601,10 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>, CustodyError> {
         }
         Request::Destroy { root, .. } => b.extend_from_slice(&root.encode()),
         Request::Sign { key, digest, .. } => {
-            if key.len() > MAX_HANDLE_LEN {
-                return Err(CustodyError::Protocol("signing key handle too long"));
-            }
-            let n = u8::try_from(key.len())
-                .map_err(|_| CustodyError::Protocol("signing key handle too long"))?;
-            b.push(n);
-            b.extend_from_slice(key);
+            put_handle(&mut b, key)?;
             b.extend_from_slice(digest);
         }
+        Request::DestroySignKey { key, .. } => put_handle(&mut b, key)?,
         Request::UsageSince { root, cursor, .. } => {
             b.extend_from_slice(&root.encode());
             b.extend_from_slice(&cursor.to_be_bytes());
@@ -680,6 +693,103 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response, CustodyError> {
     };
     r.end()?;
     Ok(response)
+}
+
+/// A signing key handle: a length octet and at most [`MAX_HANDLE_LEN`]
+/// bytes.
+fn put_handle(out: &mut Vec<u8>, key: &[u8]) -> Result<(), CustodyError> {
+    if key.len() > MAX_HANDLE_LEN {
+        return Err(CustodyError::Protocol("signing key handle too long"));
+    }
+    let n = u8::try_from(key.len())
+        .map_err(|_| CustodyError::Protocol("signing key handle too long"))?;
+    out.push(n);
+    out.extend_from_slice(key);
+    Ok(())
+}
+
+/// The magic of a sign key destroy receipt.
+pub const SIGN_RECEIPT_MAGIC: [u8; 4] = *b"FKS1";
+
+/// A decoded destroy receipt of a CA sign key (lane m3/erase-cell-2).
+///
+/// ```text
+/// sign receipt = "FKS1" | version u8 = 1 | handle len u8 | handle | count u8 | count step codes
+/// ```
+///
+/// Like a root's [`Receipt`], it confirms a destroy only when it lists
+/// every step of [`DestroyStep::ALL`], once each and in order, and it
+/// names only the handle, so a repeated destroy returns the same bytes.
+/// Interim, pending Daniel: `fstp-keyd` holds no sign key yet, since no
+/// request creates one, so it never issues this receipt yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignKeyReceipt {
+    /// The handle of the destroyed key.
+    pub handle: Vec<u8>,
+    /// The steps the destroy took, in order.
+    pub steps: Vec<DestroyStep>,
+}
+
+impl SignKeyReceipt {
+    /// The receipt of a full destroy of the key `handle`.
+    #[must_use]
+    pub fn full(handle: &[u8]) -> SignKeyReceipt {
+        SignKeyReceipt {
+            handle: handle.to_vec(),
+            steps: DestroyStep::ALL.to_vec(),
+        }
+    }
+
+    /// The receipt bytes.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a handle above [`MAX_HANDLE_LEN`].
+    pub fn encode(&self) -> Result<Vec<u8>, CustodyError> {
+        let mut out = SIGN_RECEIPT_MAGIC.to_vec();
+        out.push(RECEIPT_VERSION);
+        put_handle(&mut out, &self.handle)?;
+        let n = u8::try_from(self.steps.len())
+            .map_err(|_| CustodyError::Protocol("too many receipt steps"))?;
+        out.push(n);
+        out.extend(self.steps.iter().map(|s| s.code()));
+        Ok(out)
+    }
+}
+
+/// Decodes a sign key destroy receipt of `fstp-keyd`.
+///
+/// # Errors
+///
+/// Refuses any input that is not one receipt in its one spelling, and a
+/// receipt whose steps are not exactly [`DestroyStep::ALL`] in order.
+pub fn decode_sign_receipt(bytes: &[u8]) -> Result<SignKeyReceipt, CustodyError> {
+    let mut r = Reader::new(bytes);
+    if r.array::<4>()? != SIGN_RECEIPT_MAGIC || r.u8()? != RECEIPT_VERSION {
+        return Err(CustodyError::Protocol(
+            "a sign key receipt has the wrong magic or version",
+        ));
+    }
+    let n = usize::from(r.u8()?);
+    if n == 0 || n > MAX_HANDLE_LEN {
+        return Err(CustodyError::Protocol("a sign key receipt handle length"));
+    }
+    let handle = r.take(n)?.to_vec();
+    let count = usize::from(r.u8()?);
+    let codes = r.take(count)?;
+    r.end()?;
+    let steps = codes
+        .iter()
+        .map(|c| {
+            DestroyStep::from_code(*c).ok_or(CustodyError::Protocol("an unknown receipt step"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if steps != DestroyStep::ALL {
+        return Err(CustodyError::Protocol(
+            "a receipt does not list every destroy step once and in order",
+        ));
+    }
+    Ok(SignKeyReceipt { handle, steps })
 }
 
 fn put_u16_bytes(out: &mut Vec<u8>, bytes: &[u8], max: usize) -> Result<(), CustodyError> {
@@ -807,6 +917,39 @@ impl KeydCustody {
             let answer = Zeroizing::new(exchange(&socket, &frame)?);
             decode_response(&answer)
         })
+    }
+
+    /// Destroys the CA sign key `key` and returns the checked receipt
+    /// ([`decode_sign_receipt`]). It is not one of the six `Custody`
+    /// operations (I-80). `fstp-control` reaches it through its
+    /// `SignKeyCustody` trait for cell erasure (R-SW-02). The call carries
+    /// the caller's request id, as every custody call does.
+    ///
+    /// # Errors
+    ///
+    /// [`CustodyError::InvalidConfig`] for a key of another backend,
+    /// [`CustodyError::Protocol`] for a handle above [`MAX_HANDLE_LEN`] or
+    /// a receipt that names another key, and the refusal of the server,
+    /// such as [`Refusal::NoSignKey`] or [`Refusal::NotPermitted`].
+    pub async fn destroy_sign_key(&self, key: &SignKeyRef) -> Result<DestroyReceipt, CustodyError> {
+        if key.backend != BackendId::Keyd {
+            return Err(CustodyError::InvalidConfig("the key is not a keyd key"));
+        }
+        let request = Request::DestroySignKey {
+            id: crate::request_or_fresh()?,
+            key: key.handle.0.clone(),
+        };
+        match self.call(&request).await? {
+            Response::Destroyed(r) => {
+                if decode_sign_receipt(&r)?.handle != key.handle.0 {
+                    return Err(CustodyError::Protocol(
+                        "the destroy receipt names another sign key",
+                    ));
+                }
+                Ok(DestroyReceipt(r))
+            }
+            other => Err(unexpected(other)),
+        }
     }
 
     fn root_of(root: &RootRef) -> Result<RootHandle, CustodyError> {

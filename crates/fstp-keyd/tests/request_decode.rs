@@ -41,7 +41,7 @@ fn root(g: &mut Gen) -> RootHandle {
 /// A generated request of any operation, with generated fields.
 fn sample_request(g: &mut Gen) -> Result<KeydRequest, Fail> {
     let id = RequestId(arr(g));
-    Ok(match g.usize_in(0..=5) {
+    Ok(match g.usize_in(0..=6) {
         0 => KeydRequest::CreateRoot {
             id,
             cell: if g.bool() { Some(CellId(arr(g))) } else { None },
@@ -66,10 +66,14 @@ fn sample_request(g: &mut Gen) -> Result<KeydRequest, Fail> {
             key: g.bytes(0..=64),
             digest: arr(g),
         },
-        _ => KeydRequest::UsageSince {
+        5 => KeydRequest::UsageSince {
             id,
             root: root(g),
             cursor: g.u64(),
+        },
+        _ => KeydRequest::DestroySignKey {
+            id,
+            key: g.bytes(0..=64),
         },
     })
 }

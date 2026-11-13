@@ -36,10 +36,10 @@
 //!
 //! [`service::run`] and [`agent::run`] serve until SIGTERM. A destructive
 //! request runs only through the two-operator check of [`approval`].
-//! Destructive `fstp-pgagent` jobs keep refusing with
-//! [`ControlError::ApprovalRequired`], since the agent's own check of the
-//! approvals is not built. [`install::run`] stays a refusal
-//! under B-06.
+//! A destructive `fstp-pgagent` job runs only after the agent checked
+//! both approvals again itself, against the staff passkeys pinned in its
+//! configuration ([`approval::AgentApprovals`]). [`install::run`] stays a
+//! refusal under B-06.
 
 pub mod agent;
 pub mod api;

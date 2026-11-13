@@ -112,3 +112,44 @@ fn i81_keyd_client_refuses_a_receipt_of_another_root() {
         "a receipt of epoch 9 confirmed the destroy of epoch 1"
     );
 }
+
+/// R-SW-02, ADR-004 "CA keys in custody", lane m3/erase-cell-2: a sign
+/// key receipt round trips, names its handle, and is refused with a step
+/// missing, repeated or unknown, an empty or long handle, another magic,
+/// a root receipt's bytes, a cut or a trailing byte.
+#[test]
+fn r_sw_02_keyd_sign_receipt_needs_every_step_and_one_handle() {
+    use fstp_custody::keyd::{SignKeyReceipt, decode_sign_receipt};
+    let handle = [fstp_custody::keyd::SIGN_KEY_CELL_CA, b'c', b'a'];
+    let full = SignKeyReceipt::full(&handle);
+    let bytes = full.encode().unwrap();
+    assert_eq!(decode_sign_receipt(&bytes).unwrap(), full);
+    assert_eq!(full.handle, handle.to_vec());
+    let mut bad: Vec<Vec<u8>> = Vec::new();
+    for i in 0..DestroyStep::ALL.len() {
+        let mut short = full.clone();
+        short.steps.remove(i);
+        bad.push(short.encode().unwrap());
+        let mut twice = full.clone();
+        twice.steps.insert(i, DestroyStep::ALL[i]);
+        bad.push(twice.encode().unwrap());
+    }
+    let mut unknown = bytes.clone();
+    *unknown.last_mut().unwrap() = 9;
+    bad.push(unknown);
+    bad.push(SignKeyReceipt::full(&[]).encode().unwrap());
+    assert!(SignKeyReceipt::full(&[1; 65]).encode().is_err());
+    let mut magic = bytes.clone();
+    magic[3] = b'2';
+    bad.push(magic);
+    bad.push(Receipt::full(Chain::App, Epoch(1)).encode());
+    for cut in 0..bytes.len() {
+        bad.push(bytes[..cut].to_vec());
+    }
+    let mut longer = bytes.clone();
+    longer.push(0);
+    bad.push(longer);
+    for b in bad {
+        assert!(decode_sign_receipt(&b).is_err(), "{b:02x?}");
+    }
+}

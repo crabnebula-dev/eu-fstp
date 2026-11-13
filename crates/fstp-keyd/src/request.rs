@@ -60,14 +60,14 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, KeydError> {
             root: r.root()?,
         },
         wire::KIND_SIGN => {
-            let n = usize::from(r.u8()?);
-            if n > MAX_HANDLE_LEN {
-                return Err(KeydError::Malformed("a signing key handle is too long"));
-            }
-            let key = r.take(n)?.to_vec();
+            let key = r.handle()?;
             let digest = r.array::<32>()?;
             Request::Sign { id, key, digest }
         }
+        wire::KIND_DESTROY_SIGN_KEY => Request::DestroySignKey {
+            id,
+            key: r.handle()?,
+        },
         wire::KIND_USAGE => {
             let root = r.root()?;
             let cursor = r.u64()?;
@@ -175,6 +175,16 @@ impl<'a> Reader<'a> {
 
     fn u64(&mut self) -> Result<u64, KeydError> {
         Ok(u64::from_be_bytes(self.array()?))
+    }
+
+    /// A signing key handle: a length octet and at most
+    /// [`MAX_HANDLE_LEN`] bytes.
+    fn handle(&mut self) -> Result<Vec<u8>, KeydError> {
+        let n = usize::from(self.u8()?);
+        if n > MAX_HANDLE_LEN {
+            return Err(KeydError::Malformed("a signing key handle is too long"));
+        }
+        Ok(self.take(n)?.to_vec())
     }
 
     fn u16_bytes(&mut self, max: usize) -> Result<&'a [u8], KeydError> {

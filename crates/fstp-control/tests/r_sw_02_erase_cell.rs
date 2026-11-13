@@ -364,3 +364,394 @@ fn r_sw_02_erase_cell_issues_no_confirmation_after_a_refused_destroy() {
         )))
     );
 }
+
+// ---------------------------------------------------------------------------
+// Design section 3.7 steps 1 to 3 in order (lane m3/erase-cell-2).
+
+mod steps {
+    use super::*;
+
+    use std::net::SocketAddr;
+
+    use fstp_control::agent::JobOutcome;
+    use fstp_control::approval::{ApprovalEvent, ApprovalEvidence};
+    use fstp_control::erase::{
+        CellDatabases, EdgeRoutes, ErasureEvent, ErasureStep, database_drop_jobs, erase_cell_steps,
+    };
+    use fstp_control::pg::CellDatabase;
+    use fstp_control::placement::{Cluster, ClusterKind, Placement};
+    use fstp_edge::{CELL_ID_LEN, CellEndpoint, HostName, LiveRoutes};
+    use fstp_webauthn::AssertionResponse;
+
+    const APP: ClusterId = ClusterId([0xa0; 16]);
+    const VAULT: ClusterId = ClusterId([0xb0; 16]);
+    const OTHER_CELL: CellId = CellId([0x0e; 16]);
+
+    fn placement() -> Placement {
+        Placement::new(
+            &Cluster {
+                id: APP,
+                kind: ClusterKind::Application,
+            },
+            &Cluster {
+                id: VAULT,
+                kind: ClusterKind::Vault,
+            },
+        )
+        .unwrap()
+    }
+
+    /// Evidence the fake agents never check. The real agent's check is
+    /// covered by `adr011_pgagent_approvals.rs`.
+    fn evidence(n: u8) -> ApprovalEvidence {
+        ApprovalEvidence {
+            issued_at: T0,
+            nonce: [n; 32],
+            assertion: AssertionResponse {
+                credential_id: vec![n],
+                client_data_json: Vec::new(),
+                authenticator_data: Vec::new(),
+                signature: Vec::new(),
+            },
+        }
+    }
+
+    /// The four approved drops of the cell, with evidence.
+    fn drops(cell: CellId) -> Vec<ApprovedJob> {
+        database_drop_jobs(cell, &placement())
+            .into_iter()
+            .map(|(cluster, job)| {
+                let job = DestructiveJob::pgagent(cluster, job).unwrap();
+                let mut book = ApprovalBook::default();
+                book.approve_with_evidence(StaffRef([1; 16]), &job, T0, evidence(1))
+                    .unwrap();
+                book.approve_with_evidence(StaffRef([2; 16]), &job, T0, evidence(2))
+                    .unwrap();
+                book.take(StaffRef([1; 16]), &job, T0 + 1).unwrap()
+            })
+            .collect()
+    }
+
+    /// One call of the fake agents: the cluster, the job, and how many
+    /// keys custody still held when the call came.
+    type AgentCall = (ClusterId, PgagentJob, usize);
+
+    /// Agents that record each call and answer `Done`, except for the
+    /// job `fail`, which fails.
+    struct Agents<'a> {
+        custody: &'a Recorder,
+        calls: Mutex<Vec<AgentCall>>,
+        fail: Option<PgagentJob>,
+    }
+
+    impl Agents<'_> {
+        fn answer(&self, cluster: ClusterId, job: &PgagentJob) -> JobOutcome {
+            let live = self.custody.live.lock().unwrap().len();
+            self.calls
+                .lock()
+                .unwrap()
+                .push((cluster, job.clone(), live));
+            if self.fail.as_ref() == Some(job) {
+                JobOutcome::Failed
+            } else {
+                JobOutcome::Done
+            }
+        }
+    }
+
+    impl CellDatabases for Agents<'_> {
+        fn run_approved(
+            &self,
+            job: &ApprovedJob,
+        ) -> impl Future<Output = Result<JobOutcome, ControlError>> {
+            let DestructiveJob::Pgagent(a) = job.job() else {
+                panic!("an erasure sent to an agent");
+            };
+            assert!(job.evidence().is_some(), "a drop went without evidence");
+            std::future::ready(Ok(self.answer(a.cluster(), a.job())))
+        }
+
+        fn run(
+            &self,
+            cluster: ClusterId,
+            job: &PgagentJob,
+        ) -> impl Future<Output = Result<JobOutcome, ControlError>> {
+            assert!(!job.is_destructive(), "a destructive job went unapproved");
+            std::future::ready(Ok(self.answer(cluster, job)))
+        }
+    }
+
+    /// The control plane's side of an edge in the same process.
+    struct Edge(LiveRoutes);
+
+    impl EdgeRoutes for Edge {
+        fn remove_cell(&self, cell: CellId) -> impl Future<Output = Result<u16, ControlError>> {
+            let n = self.0.remove_cell_by_id(&cell.0);
+            std::future::ready(Ok(u16::try_from(n).unwrap()))
+        }
+    }
+
+    fn endpoint(cell: CellId, port: u16) -> CellEndpoint {
+        CellEndpoint {
+            cell: cell.0,
+            address: SocketAddr::from(([10, 0, 2, cell.0[0]], port)),
+            tls_name: "tunnel.cell.internal".to_owned(),
+        }
+    }
+
+    /// The edge routes of the erased cell and of one other cell.
+    fn edge() -> Edge {
+        let routes = LiveRoutes::default();
+        for (cell, host) in [(CELL, "erased.example"), (OTHER_CELL, "other.example")] {
+            routes
+                .add_cell(
+                    HostName::parse(host.as_bytes()).unwrap(),
+                    endpoint(cell, 8443),
+                    endpoint(cell, 9443),
+                )
+                .unwrap();
+        }
+        Edge(routes)
+    }
+
+    fn hosts(edge: &Edge) -> Vec<(String, [u8; CELL_ID_LEN])> {
+        let t = edge.0.current();
+        [
+            "erased.example",
+            "id.erased.example",
+            "other.example",
+            "id.other.example",
+        ]
+        .iter()
+        .filter_map(|h| {
+            t.route(&HostName::parse(h.as_bytes()).unwrap())
+                .map(|(ep, _)| ((*h).to_owned(), ep.cell))
+        })
+        .collect()
+    }
+
+    /// Runs the full erasure and logs every event in `book`.
+    fn run_steps(
+        custody: &Recorder,
+        agents: &Agents<'_>,
+        edge: &Edge,
+        agent_jobs: &[ApprovedJob],
+        book: &mut ApprovalBook,
+    ) -> (Result<ErasureConfirmation, ControlError>, Vec<ErasureEvent>) {
+        let job = approved(erase_job(CELL));
+        let signer = composite::generate().unwrap();
+        let mut events = Vec::new();
+        let r = block_on(erase_cell_steps(
+            custody,
+            agents,
+            edge,
+            &job,
+            agent_jobs,
+            &placement(),
+            &cell_keys(),
+            &signer,
+            T0 + 2,
+            |e| {
+                match e {
+                    ErasureEvent::CustodyCall(id) => book.log_custody_call(&job, id, T0 + 2),
+                    ErasureEvent::Step(s) => book.log_step(&job, s, T0 + 2),
+                }
+                events.push(e);
+            },
+        ));
+        if let Ok(c) = &r {
+            assert!(verify_erasure_confirmation(
+                &signer.public_key().to_bytes(),
+                c
+            ));
+        }
+        (r, events)
+    }
+
+    /// R-SW-02, design section 3.7 steps 1 to 4, ADR-011: the erasure
+    /// destroys every key first. Only then do the agents drop the
+    /// application database, its roles and its `pg_hba` lines, then the
+    /// vault's, each drop sent with its approvals. Then the edge removes
+    /// both routes of the cell and keeps the other cell's. Each step is
+    /// reported after it finished and logged in the approval book, in that
+    /// order, and the confirmation lists every destroyed key.
+    #[test]
+    fn r_sw_02_erase_cell_steps_run_in_order_and_each_is_logged() {
+        let keys = cell_keys();
+        let custody = custody_holding(&keys, &[]);
+        let agents = Agents {
+            custody: &custody,
+            calls: Mutex::new(Vec::new()),
+            fail: None,
+        };
+        let edge = edge();
+        let mut book = ApprovalBook::default();
+        let (r, events) = run_steps(&custody, &agents, &edge, &drops(CELL), &mut book);
+        let c = r.unwrap();
+        assert_eq!(c.keys.len(), 5);
+
+        let steps: Vec<ErasureStep> = events
+            .iter()
+            .filter_map(|e| match e {
+                ErasureEvent::Step(s) => Some(*s),
+                ErasureEvent::CustodyCall(_) => None,
+            })
+            .collect();
+        let want = vec![
+            ErasureStep::KeysDestroyed { count: 5 },
+            ErasureStep::DatabaseDropped {
+                cluster: APP,
+                database: CellDatabase::App,
+            },
+            ErasureStep::RolesDropped {
+                cluster: APP,
+                database: CellDatabase::App,
+            },
+            ErasureStep::HbaRewritten { cluster: APP },
+            ErasureStep::DatabaseDropped {
+                cluster: VAULT,
+                database: CellDatabase::Vault,
+            },
+            ErasureStep::RolesDropped {
+                cluster: VAULT,
+                database: CellDatabase::Vault,
+            },
+            ErasureStep::HbaRewritten { cluster: VAULT },
+            ErasureStep::RoutesRemoved { count: 2 },
+        ];
+        assert_eq!(steps, want);
+        let first_step = events
+            .iter()
+            .position(|e| matches!(e, ErasureEvent::Step(_)))
+            .unwrap();
+        assert_eq!(first_step, 5, "a step ran before every custody call");
+
+        let a = fstp_control::pgagent::DbIdent::new(CellDatabase::App, CELL);
+        let v = fstp_control::pgagent::DbIdent::new(CellDatabase::Vault, CELL);
+        let calls = agents.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec![
+                (APP, PgagentJob::DropCellDatabase(a), 0),
+                (APP, PgagentJob::DropRoles(a), 0),
+                (APP, PgagentJob::WriteHba, 0),
+                (VAULT, PgagentJob::DropCellDatabase(v), 0),
+                (VAULT, PgagentJob::DropRoles(v), 0),
+                (VAULT, PgagentJob::WriteHba, 0),
+            ],
+            "an agent job ran before every key was destroyed, or out of order"
+        );
+        assert_eq!(
+            hosts(&edge),
+            vec![
+                ("other.example".to_owned(), OTHER_CELL.0),
+                ("id.other.example".to_owned(), OTHER_CELL.0),
+            ]
+        );
+
+        let logged: Vec<ErasureStep> = book
+            .log()
+            .iter()
+            .filter_map(|e| match e {
+                ApprovalEvent::Step { step, .. } => Some(*step),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(logged, want);
+        let custody_logged = book
+            .log()
+            .iter()
+            .filter(|e| matches!(e, ApprovalEvent::CustodyCall { .. }))
+            .count();
+        assert_eq!(custody_logged, 5);
+    }
+
+    /// R-SW-02, ADR-011: the erasure checks its four approved drops before
+    /// step 1. A missing, extra, repeated or evidence-less drop, or one
+    /// approved for another cluster, stops it with nothing destroyed,
+    /// dropped or unrouted.
+    #[test]
+    fn r_sw_02_erase_cell_steps_check_every_drop_before_destroying() {
+        let mut cases: Vec<(&str, Vec<ApprovedJob>)> = Vec::new();
+        let mut missing = drops(CELL);
+        missing.pop();
+        cases.push(("missing", missing));
+        let mut repeated = drops(CELL);
+        repeated.pop();
+        repeated.push(drops(CELL).remove(0));
+        cases.push(("repeated", repeated));
+        let mut extra = drops(CELL);
+        extra.push(drops(OTHER_CELL).remove(0));
+        cases.push(("extra", extra));
+        let mut swapped = drops(CELL);
+        let a = fstp_control::pgagent::DbIdent::new(CellDatabase::App, CELL);
+        let wrong = DestructiveJob::pgagent(VAULT, PgagentJob::DropRoles(a)).unwrap();
+        let mut book = ApprovalBook::default();
+        book.approve_with_evidence(StaffRef([1; 16]), &wrong, T0, evidence(1))
+            .unwrap();
+        book.approve_with_evidence(StaffRef([2; 16]), &wrong, T0, evidence(2))
+            .unwrap();
+        swapped[1] = book.take(StaffRef([1; 16]), &wrong, T0).unwrap();
+        cases.push(("other cluster", swapped));
+        let mut bare = drops(CELL);
+        let plain = DestructiveJob::pgagent(APP, PgagentJob::DropRoles(a)).unwrap();
+        bare[1] = approved(plain);
+        cases.push(("no evidence", bare));
+        cases.push(("another cell", drops(OTHER_CELL)));
+        for (what, jobs) in cases {
+            let keys = cell_keys();
+            let custody = custody_holding(&keys, &[]);
+            let agents = Agents {
+                custody: &custody,
+                calls: Mutex::new(Vec::new()),
+                fail: None,
+            };
+            let edge = edge();
+            let (r, events) = run_steps(
+                &custody,
+                &agents,
+                &edge,
+                &jobs,
+                &mut ApprovalBook::default(),
+            );
+            assert_eq!(r, Err(ControlError::ApprovalRequired), "{what}");
+            assert!(events.is_empty(), "{what}: {events:?}");
+            assert!(custody.calls.lock().unwrap().is_empty(), "{what}");
+            assert!(agents.calls.lock().unwrap().is_empty(), "{what}");
+            assert_eq!(hosts(&edge).len(), 4, "{what}");
+        }
+    }
+
+    /// R-SW-02, design section 3.7: a drop that does not finish stops the
+    /// erasure there, with no confirmation. The log ends with the last
+    /// finished step, and the routes stay until step 3 runs.
+    #[test]
+    fn r_sw_02_erase_cell_steps_stop_at_a_failed_drop() {
+        let keys = cell_keys();
+        let custody = custody_holding(&keys, &[]);
+        let v = fstp_control::pgagent::DbIdent::new(CellDatabase::Vault, CELL);
+        let agents = Agents {
+            custody: &custody,
+            calls: Mutex::new(Vec::new()),
+            fail: Some(PgagentJob::DropCellDatabase(v)),
+        };
+        let edge = edge();
+        let mut book = ApprovalBook::default();
+        let (r, events) = run_steps(&custody, &agents, &edge, &drops(CELL), &mut book);
+        assert!(matches!(r, Err(ControlError::Job(_))), "{r:?}");
+        assert_eq!(
+            events.last(),
+            Some(&ErasureEvent::Step(ErasureStep::HbaRewritten {
+                cluster: APP
+            }))
+        );
+        assert_eq!(hosts(&edge).len(), 4);
+        assert!(matches!(
+            book.log().last(),
+            Some(ApprovalEvent::Step {
+                step: ErasureStep::HbaRewritten { cluster: APP },
+                ..
+            })
+        ));
+    }
+}

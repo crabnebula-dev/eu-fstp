@@ -6,7 +6,8 @@
 //! - [`RouteTable`] maps a verified host to one cell and one kind:
 //!   `<cell host>` to the cell application, `id.<cell host>` to its vault
 //!   origin (design section 1.5). [`decide`] routes the first bytes of a
-//!   connection.
+//!   connection. [`LiveRoutes`] holds the table the edge serves from, and
+//!   removes an erased cell's routes (design section 3.7 step 3).
 //! - [`encode_tunnel_header`] and [`decode_tunnel_header`] write and read
 //!   the first frame of the tunnel, with one spelling. The decoder is
 //!   fuzzed (`tunnel_header_decode`), and the cell and vault call it.
@@ -30,7 +31,8 @@ pub use crate::header::{
 };
 pub use crate::host::{HostError, HostName, MAX_HOST_LEN, MAX_LABEL_LEN};
 pub use crate::route::{
-    CELL_ID_LEN, CellEndpoint, CloseReason, Decision, RouteError, RouteKind, RouteTable, decide,
+    CELL_ID_LEN, CellEndpoint, CloseReason, Decision, LiveRoutes, RouteError, RouteKind,
+    RouteTable, decide,
 };
 pub use crate::sni::{
     HelloPart, HelloScan, MAX_HELLO_BUF, SniError, SniOutcome, parse_client_hello_sni,

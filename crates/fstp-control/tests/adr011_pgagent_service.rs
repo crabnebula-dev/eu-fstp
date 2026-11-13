@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use fstp_control::agent::{AgentParts, JobOutcome, JobRefusal, PgLogin, send_job, serve};
+use fstp_control::approval::PinnedApprovers;
 use fstp_control::pg::{CellDatabase, CellSubnet, cell_role_plan, database_name, role_name};
 use fstp_control::pgagent::{DbIdent, PgagentJob};
 use fstp_control::placement::{Cluster, ClusterId, ClusterKind, Placement};
@@ -64,6 +65,15 @@ fn hba_file(server: &PgServer) -> String {
 /// Starts an agent of `kind` for `server` on a free loopback port, and
 /// returns its address. The agent runs for the rest of the test binary.
 fn start_agent(server: &'static PgServer, kind: ClusterKind) -> SocketAddr {
+    start_agent_with(server, kind, None)
+}
+
+/// As `start_agent`, with the pinned approvers `approvals`.
+fn start_agent_with(
+    server: &'static PgServer,
+    kind: ClusterKind,
+    approvals: Option<PinnedApprovers>,
+) -> SocketAddr {
     let login = server.fresh_database_as(Role::Superuser).unwrap();
     // The harness issues server certificates with a cluster kind OU only.
     let issued = pki().ca.issue_server("control").unwrap();
@@ -82,6 +92,7 @@ fn start_agent(server: &'static PgServer, kind: ClusterKind) -> SocketAddr {
             client_key_pem: login.client_key_pem.to_vec(),
             password: login.password.clone(),
         },
+        approvals,
     };
     let listener = rt().block_on(rt().bind_tcp(parts.listen)).unwrap();
     let addr = listener.local_addr().unwrap();
@@ -93,6 +104,15 @@ fn start_agent(server: &'static PgServer, kind: ClusterKind) -> SocketAddr {
         serve(rt().clone(), &parts, listener, signal).await.unwrap();
     }));
     addr
+}
+
+/// Serialises the tests that create or drop databases on the shared
+/// server: `CREATE DATABASE` copies `template1`, which `HardenCluster`
+/// connects to, and two concurrent hardenings update the same rows.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn app_agent() -> SocketAddr {
@@ -186,6 +206,7 @@ fn provision_app_through_agent(cell: CellId, migrate: bool) {
 /// holds nothing on the database. Every job runs again without error.
 #[test]
 fn i82_pgagent_applies_the_role_plan_over_mutual_tls() {
+    let _serial = serial();
     let cell = CellId([0xa7; 16]);
     provision_app_through_agent(cell, true);
     let server = server();
@@ -379,4 +400,606 @@ fn i83_pgagent_refuses_a_server_of_another_kind() {
         )
         .unwrap();
     assert_eq!(found, "0");
+}
+
+/// Destructive jobs with two operators' approvals, which the agent checks
+/// again itself (ADR-011 "Two-operator approval", R-SW-02 design section
+/// 3.7 step 2). Lane m3/erase-cell-2.
+mod approved {
+    use super::*;
+    use fstp_control::agent::{approved_frame, send_approved_job};
+    use fstp_control::approval::{
+        ApprovalEvidence, ApprovedJob, DestructiveJob, approval_challenge, job_digest,
+    };
+    use fstp_control::operator::{OperatorLogin, OperatorSession, Purpose, StaffCredential};
+    use fstp_control::pgagent::{ApprovedFrame, encode_approved_job};
+    use fstp_cp_proto::StaffRef;
+    use fstp_crypto::sig::Ed25519SigningKey;
+    use fstp_webauthn::{AssertionResponse, CoseKey};
+
+    const HOST: &str = "control.example.test";
+
+    /// The application cluster of `placement()`.
+    const CLUSTER: ClusterId = ClusterId([1; 16]);
+
+    /// A software passkey of one staff member.
+    struct Passkey {
+        staff: StaffRef,
+        id: Vec<u8>,
+        key: Ed25519SigningKey,
+        count: u32,
+    }
+
+    impl Passkey {
+        fn new(staff: u8, id: u8) -> Passkey {
+            Passkey {
+                staff: StaffRef([staff; 16]),
+                id: vec![id; 16],
+                key: Ed25519SigningKey::generate().unwrap(),
+                count: 0,
+            }
+        }
+
+        fn pinned(&self) -> StaffCredential {
+            StaffCredential {
+                staff: self.staff,
+                credential_id: self.id.clone(),
+                key: CoseKey::Ed25519 {
+                    x: self.key.public_key(),
+                },
+            }
+        }
+
+        fn assert(&mut self, challenge: &[u8; 32]) -> AssertionResponse {
+            self.count += 1;
+            let mut auth = fstp_crypto::sha256(HOST.as_bytes()).to_vec();
+            auth.push(0x05);
+            auth.extend_from_slice(&self.count.to_be_bytes());
+            let b64 = fstp_pgwire::base64::encode(challenge)
+                .replace('+', "-")
+                .replace('/', "_")
+                .replace('=', "");
+            let client = format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{b64}\",\"origin\":\"https://{HOST}\"}}"
+            )
+            .into_bytes();
+            let mut message = auth.clone();
+            message.extend_from_slice(&fstp_crypto::sha256(&client));
+            AssertionResponse {
+                credential_id: self.id.clone(),
+                client_data_json: client,
+                authenticator_data: auth,
+                signature: self.key.sign(&message).unwrap().to_vec(),
+            }
+        }
+    }
+
+    fn now() -> i64 {
+        i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap()
+    }
+
+    /// Two staff members logged in to one operator login.
+    struct Operators {
+        login: OperatorLogin,
+        a: (Passkey, OperatorSession),
+        b: (Passkey, OperatorSession),
+    }
+
+    impl Operators {
+        fn new() -> Operators {
+            let mut a = Passkey::new(1, 0xa1);
+            let mut b = Passkey::new(2, 0xb2);
+            let mut login = OperatorLogin::new(HOST, &[a.pinned(), b.pinned()]).unwrap();
+            let mut session = |p: &mut Passkey| {
+                let c = login.begin(Purpose::Login, now()).unwrap();
+                login.finish_login(c, &p.assert(&c), now()).unwrap().0
+            };
+            let sa = session(&mut a);
+            let sb = session(&mut b);
+            Operators {
+                login,
+                a: (a, sa),
+                b: (b, sb),
+            }
+        }
+
+        fn pinned(&self) -> PinnedApprovers {
+            self.pinned_on(CLUSTER)
+        }
+
+        fn pinned_on(&self, cluster: ClusterId) -> PinnedApprovers {
+            PinnedApprovers {
+                cluster,
+                operator_host: HOST.to_owned(),
+                staff: vec![self.a.0.pinned(), self.b.0.pinned()],
+            }
+        }
+
+        /// Both approve `job` on the application cluster, and the first
+        /// asks for it.
+        fn approved(&mut self, job: PgagentJob) -> ApprovedJob {
+            self.approve(DestructiveJob::pgagent(CLUSTER, job).unwrap())
+        }
+
+        /// Both approve `job`, and the first asks for it.
+        fn approve(&mut self, job: DestructiveJob) -> ApprovedJob {
+            for (p, s) in [&mut self.a, &mut self.b] {
+                let c = self.login.begin_approval(*s, &job, now()).unwrap();
+                let assertion = p.assert(&c);
+                self.login
+                    .finish_approval(*s, c, &assertion, now())
+                    .unwrap();
+            }
+            self.login
+                .authorise_destructive(self.a.1, &job, now())
+                .unwrap()
+        }
+    }
+
+    fn send_approved(addr: SocketAddr, approved: &ApprovedJob) -> JobOutcome {
+        let tls = control_tls(&pki().ca, "fstp_control");
+        rt().block_on(send_approved_job(rt(), addr, "localhost", &tls, approved))
+            .unwrap()
+    }
+
+    fn send_frame(addr: SocketAddr, frame: &ApprovedFrame) -> JobOutcome {
+        let tls = control_tls(&pki().ca, "fstp_control");
+        let bytes = encode_approved_job(frame).unwrap();
+        let reply = rt()
+            .block_on(fstp_control::exchange::request(
+                rt(),
+                addr,
+                "localhost",
+                &tls,
+                &bytes,
+                fstp_control::agent::OUTCOME_LEN,
+            ))
+            .unwrap();
+        fstp_control::agent::decode_job_outcome(&reply).unwrap()
+    }
+
+    /// Creates the application database of `cell` and its roles through
+    /// the agent without approvers: design section 9.2 step 4.
+    fn create_app(cell: CellId) {
+        let tls = control_tls(&pki().ca, "fstp_control");
+        let p = placement();
+        let (app, _) = p.clusters();
+        for (cluster, job) in database_jobs(cell, &p) {
+            if cluster == app && job != PgagentJob::HardenCluster {
+                assert_eq!(send(app_agent(), &tls, &job), JobOutcome::Done, "{job:?}");
+            }
+        }
+        assert_eq!(
+            send(app_agent(), &tls, &PgagentJob::WriteHba),
+            JobOutcome::Done
+        );
+    }
+
+    fn count(sql: &str) -> String {
+        server().psql("postgres", sql).unwrap()
+    }
+
+    fn databases(cell: CellId) -> String {
+        let db = database_name(CellDatabase::App, cell);
+        count(&format!(
+            "SELECT count(*) FROM pg_database WHERE datname = '{db}'"
+        ))
+    }
+
+    fn roles(cell: CellId) -> String {
+        let hex = fstp_control::pg::cell_hex(cell);
+        count(&format!(
+            "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'c\\_{hex}\\_%'"
+        ))
+    }
+
+    fn hba_lines(cell: CellId) -> String {
+        let db = database_name(CellDatabase::App, cell);
+        count(&format!(
+            "SELECT count(*) FROM pg_hba_file_rules WHERE '{db}' = ANY(database)"
+        ))
+    }
+
+    /// R-SW-02, design section 3.7 step 2, ADR-011: with two operators'
+    /// approvals, which the agent verifies itself against its pinned
+    /// staff passkeys, the agent drops the cell's database, then its
+    /// roles, and `WriteHba` leaves no line of the cell. A role drop
+    /// before the database drop fails and drops nothing. A spent frame
+    /// sent again is refused. Each drop runs again without error.
+    #[test]
+    fn r_sw_02_pgagent_drops_a_cell_database_and_roles_on_verified_approvals() {
+        let _serial = serial();
+        let cell = CellId([0xf1; 16]);
+        create_app(cell);
+        assert_eq!(databases(cell), "1");
+        let planned = cell_role_plan(cell)
+            .unwrap()
+            .roles
+            .iter()
+            .filter(|r| r.database == CellDatabase::App)
+            .count()
+            .to_string();
+        assert_eq!(roles(cell), planned);
+        assert_ne!(hba_lines(cell), "0");
+
+        let mut ops = Operators::new();
+        let agent = start_agent_with(server(), ClusterKind::Application, Some(ops.pinned()));
+        let d = DbIdent::new(CellDatabase::App, cell);
+
+        let early = ops.approved(PgagentJob::DropRoles(d));
+        assert_eq!(send_approved(agent, &early), JobOutcome::Failed);
+        assert_eq!(roles(cell), planned, "a role went before its database");
+
+        let drop = ops.approved(PgagentJob::DropCellDatabase(d));
+        assert_eq!(send_approved(agent, &drop), JobOutcome::Done);
+        assert_eq!(databases(cell), "0");
+        assert_eq!(
+            send_approved(agent, &drop),
+            JobOutcome::Refused(JobRefusal::ApprovalRequired),
+            "a spent approval ran the job again"
+        );
+        let again = ops.approved(PgagentJob::DropCellDatabase(d));
+        assert_eq!(send_approved(agent, &again), JobOutcome::Done);
+
+        let roles_job = ops.approved(PgagentJob::DropRoles(d));
+        assert_eq!(send_approved(agent, &roles_job), JobOutcome::Done);
+        assert_eq!(roles(cell), "0");
+        let again = ops.approved(PgagentJob::DropRoles(d));
+        assert_eq!(send_approved(agent, &again), JobOutcome::Done);
+
+        let tls = control_tls(&pki().ca, "fstp_control");
+        assert_eq!(send(agent, &tls, &PgagentJob::WriteHba), JobOutcome::Done);
+        assert_eq!(hba_lines(cell), "0");
+    }
+
+    /// ADR-011 "fstp-pgagent checks both approvals again itself": the
+    /// agent refuses, before any SQL runs, an approved drop when it has no
+    /// pinned approvers, when one staff member signed both approvals, when
+    /// the approvals name another cluster, and when the job is sent as a
+    /// plain frame. The database stays.
+    #[test]
+    fn adr011_pgagent_refuses_a_drop_without_two_verified_approvals() {
+        let _serial = serial();
+        let cell = CellId([0xf2; 16]);
+        create_app(cell);
+        let mut ops = Operators::new();
+        let agent = start_agent_with(server(), ClusterKind::Application, Some(ops.pinned()));
+        let d = DbIdent::new(CellDatabase::App, cell);
+        let job = PgagentJob::DropCellDatabase(d);
+
+        let approved = ops.approved(job.clone());
+        assert_eq!(
+            send_approved(app_agent(), &approved),
+            JobOutcome::Refused(JobRefusal::ApprovalRequired),
+            "an agent without pinned approvers ran a drop"
+        );
+
+        let digest = job_digest(&DestructiveJob::pgagent(CLUSTER, job.clone()).unwrap());
+        let mut by_a = |n: u8| {
+            let nonce = [n; 32];
+            let issued_at = now();
+            let c = approval_challenge(digest, issued_at, &nonce);
+            ApprovalEvidence {
+                issued_at,
+                nonce,
+                assertion: ops.a.0.assert(&c),
+            }
+        };
+        let one_person = ApprovedFrame {
+            job: job.clone(),
+            approvals: [by_a(1), by_a(2)],
+        };
+        assert_eq!(
+            send_frame(agent, &one_person),
+            JobOutcome::Refused(JobRefusal::ApprovalRequired)
+        );
+
+        let other = DestructiveJob::pgagent(ClusterId([9; 16]), job.clone()).unwrap();
+        let mut elsewhere = approved_frame(&ops.approved(job.clone())).unwrap();
+        let other_digest = job_digest(&other);
+        for (e, p) in elsewhere
+            .approvals
+            .iter_mut()
+            .zip([&mut ops.a.0, &mut ops.b.0])
+        {
+            let c = approval_challenge(other_digest, e.issued_at, &e.nonce);
+            e.assertion = p.assert(&c);
+        }
+        assert_eq!(
+            send_frame(agent, &elsewhere),
+            JobOutcome::Refused(JobRefusal::ApprovalRequired)
+        );
+
+        let tls = control_tls(&pki().ca, "fstp_control");
+        assert_eq!(
+            send(agent, &tls, &job),
+            JobOutcome::Refused(JobRefusal::ApprovalRequired)
+        );
+        assert_eq!(databases(cell), "1");
+
+        // The pair the control plane made still runs on the pinned agent.
+        assert_eq!(send_approved(agent, &approved), JobOutcome::Done);
+        assert_eq!(databases(cell), "0");
+        let roles_job = ops.approved(PgagentJob::DropRoles(d));
+        assert_eq!(send_approved(agent, &roles_job), JobOutcome::Done);
+    }
+
+    /// The vault server of these tests, with `vault` as its OU.
+    fn vault_server() -> &'static PgServer {
+        PgServer::shared_named("agentvault", "vault").unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// A custody that holds handles only and destroys each once.
+    #[derive(Default)]
+    struct Handles {
+        live: std::sync::Mutex<BTreeSet<Vec<u8>>>,
+    }
+
+    impl Handles {
+        fn gone(
+            &self,
+            h: &[u8],
+        ) -> Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError> {
+            if self.live.lock().unwrap().remove(h) {
+                Ok(fstp_custody::DestroyReceipt(h.to_vec()))
+            } else {
+                Err(fstp_custody::CustodyError::Refused(
+                    fstp_custody::Refusal::UnknownRoot,
+                ))
+            }
+        }
+    }
+
+    impl fstp_custody::Custody for Handles {
+        fn create_root(
+            &self,
+            _label: fstp_custody::RootLabel,
+        ) -> impl Future<Output = Result<fstp_custody::RootRef, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented(
+                "create_root",
+            )))
+        }
+        fn wrap(
+            &self,
+            _root: &fstp_custody::RootRef,
+            _key: &fstp_custody::SealKey,
+            _aad: &fstp_custody::Aad,
+        ) -> impl Future<Output = Result<fstp_custody::WrappedSealKey, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented("wrap")))
+        }
+        fn unwrap(
+            &self,
+            _root: &fstp_custody::RootRef,
+            _w: &fstp_custody::WrappedSealKey,
+            _aad: &fstp_custody::Aad,
+        ) -> impl Future<Output = Result<fstp_custody::SealKey, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented("unwrap")))
+        }
+        fn destroy(
+            &self,
+            root: &fstp_custody::RootRef,
+        ) -> impl Future<Output = Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(self.gone(&root.handle.0))
+        }
+        fn sign(
+            &self,
+            _key: &fstp_custody::SignKeyRef,
+            _digest: &[u8; 32],
+        ) -> impl Future<Output = Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented("sign")))
+        }
+        fn usage_since(
+            &self,
+            _root: &fstp_custody::RootRef,
+            _cursor: fstp_custody::UsageCursor,
+        ) -> impl Future<Output = Result<fstp_custody::UsagePage, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Ok(fstp_custody::UsagePage::default()))
+        }
+    }
+
+    impl fstp_control::erase::SignKeyCustody for Handles {
+        fn destroy_sign_key(
+            &self,
+            key: &fstp_custody::SignKeyRef,
+        ) -> impl Future<Output = Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(self.gone(&key.handle.0))
+        }
+    }
+
+    struct Edge(fstp_edge::LiveRoutes);
+
+    impl fstp_control::erase::EdgeRoutes for Edge {
+        fn remove_cell(
+            &self,
+            cell: CellId,
+        ) -> impl Future<Output = Result<u16, fstp_control::ControlError>> {
+            let n = self.0.remove_cell_by_id(&cell.0);
+            std::future::ready(Ok(u16::try_from(n).unwrap()))
+        }
+    }
+
+    /// Creates both databases of `cell` and their roles, each through the
+    /// agent of its cluster without approvers.
+    fn create_both(cell: CellId, app: SocketAddr, vault: SocketAddr) {
+        let tls = control_tls(&pki().ca, "fstp_control");
+        let p = placement();
+        let (app_id, _) = p.clusters();
+        for (cluster, job) in database_jobs(cell, &p) {
+            if job == PgagentJob::HardenCluster {
+                continue;
+            }
+            let addr = if cluster == app_id { app } else { vault };
+            assert_eq!(send(addr, &tls, &job), JobOutcome::Done, "{job:?}");
+        }
+        for addr in [app, vault] {
+            assert_eq!(send(addr, &tls, &PgagentJob::WriteHba), JobOutcome::Done);
+        }
+    }
+
+    fn counts(server: &PgServer, cell: CellId, db: CellDatabase) -> [String; 3] {
+        let name = database_name(db, cell);
+        let prefix = &name[..2];
+        let hex = fstp_control::pg::cell_hex(cell);
+        let q = |sql: String| server.psql("postgres", &sql).unwrap();
+        [
+            q(format!(
+                "SELECT count(*) FROM pg_database WHERE datname = '{name}'"
+            )),
+            q(format!(
+                "SELECT count(*) FROM pg_roles WHERE rolname LIKE '{}\\_{hex}\\_%'",
+                &prefix[..1]
+            )),
+            q(format!(
+                "SELECT count(*) FROM pg_hba_file_rules WHERE '{name}' = ANY(database)"
+            )),
+        ]
+    }
+
+    /// R-SW-02, design section 3.7 steps 1 to 4, ADR-011, TH-48: the whole
+    /// erasure over real agents of an application and a vault cluster.
+    /// Two operators approve the erasure and the four drops. The job
+    /// destroys every key, then each agent checks its drops' approvals
+    /// itself and drops the cell's database, roles and `pg_hba` lines,
+    /// then the edge loses both routes of the cell. Each step is in the
+    /// operator login's log, and the confirmation verifies.
+    #[test]
+    fn r_sw_02_erase_cell_runs_steps_one_to_three_over_real_agents() {
+        let _serial = serial();
+        let cell = CellId([0xf3; 16]);
+        let p = placement();
+        let (app_id, vault_id) = p.clusters();
+        let mut ops = Operators::new();
+        let app = start_agent_with(
+            server(),
+            ClusterKind::Application,
+            Some(ops.pinned_on(app_id)),
+        );
+        let vault = start_agent_with(
+            vault_server(),
+            ClusterKind::Vault,
+            Some(ops.pinned_on(vault_id)),
+        );
+        create_both(cell, app, vault);
+        for (s, db) in [
+            (server(), CellDatabase::App),
+            (vault_server(), CellDatabase::Vault),
+        ] {
+            let [d, r, h] = counts(s, cell, db);
+            assert_eq!(d, "1");
+            assert_ne!(r, "0");
+            assert_ne!(h, "0");
+        }
+
+        let erase = ops.approve(DestructiveJob::EraseCell { cell });
+        let drops: Vec<ApprovedJob> = fstp_control::erase::database_drop_jobs(cell, &p)
+            .into_iter()
+            .map(|(cluster, job)| ops.approve(DestructiveJob::pgagent(cluster, job).unwrap()))
+            .collect();
+
+        let fcell = Some(fstp_custody::CellId(cell.0));
+        let root = |chain, h: u8| fstp_custody::RootRef {
+            backend: fstp_custody::BackendId::Simulator,
+            cell: fcell,
+            chain,
+            epoch: fstp_custody::Epoch(1),
+            handle: fstp_custody::CustodyHandle(vec![h; 16]),
+        };
+        let keys = fstp_control::erase::CellKeys {
+            roots: vec![
+                root(fstp_custody::Chain::App, 1),
+                root(fstp_custody::Chain::Vault, 2),
+                root(fstp_custody::Chain::CellBackup, 3),
+            ],
+            ca: vec![fstp_custody::SignKeyRef {
+                backend: fstp_custody::BackendId::Simulator,
+                handle: fstp_custody::CustodyHandle(vec![4; 16]),
+            }],
+        };
+        let custody = Handles::default();
+        custody
+            .live
+            .lock()
+            .unwrap()
+            .extend((1..=4).map(|h| vec![h; 16]));
+
+        let mut links = fstp_control::agent::AgentLinks::new(
+            rt().clone(),
+            control_tls(&pki().ca, "fstp_control"),
+        );
+        links.add(app_id, app, "localhost");
+        links.add(vault_id, vault, "localhost");
+
+        let routes = fstp_edge::LiveRoutes::default();
+        let ep = |port| fstp_edge::CellEndpoint {
+            cell: cell.0,
+            address: SocketAddr::from((Ipv4Addr::new(10, 0, 3, 1), port)),
+            tls_name: "tunnel.cell.internal".to_owned(),
+        };
+        routes
+            .add_cell(
+                fstp_edge::HostName::parse(b"erased.example").unwrap(),
+                ep(8443),
+                ep(9443),
+            )
+            .unwrap();
+        let edge = Edge(routes);
+
+        let signer = fstp_crypto::composite::generate().unwrap();
+        let at = now();
+        let confirmation = rt()
+            .block_on(fstp_control::erase::erase_cell_steps(
+                &custody,
+                &links,
+                &edge,
+                &erase,
+                &drops,
+                &p,
+                &keys,
+                &signer,
+                at,
+                |e| match e {
+                    fstp_control::erase::ErasureEvent::CustodyCall(id) => {
+                        ops.login.log_custody_call(&erase, id, at);
+                    }
+                    fstp_control::erase::ErasureEvent::Step(s) => ops.login.log_step(&erase, s, at),
+                },
+            ))
+            .unwrap();
+        assert!(fstp_control::erase::verify_erasure_confirmation(
+            &signer.public_key().to_bytes(),
+            &confirmation
+        ));
+        assert!(custody.live.lock().unwrap().is_empty());
+        for (s, db) in [
+            (server(), CellDatabase::App),
+            (vault_server(), CellDatabase::Vault),
+        ] {
+            assert_eq!(
+                counts(s, cell, db),
+                ["0", "0", "0"].map(str::to_owned),
+                "{db:?}"
+            );
+        }
+        assert!(edge.0.current().is_empty());
+        let steps = ops
+            .login
+            .approval_log()
+            .iter()
+            .filter(|e| matches!(e, fstp_control::approval::ApprovalEvent::Step { .. }))
+            .count();
+        assert_eq!(steps, 8);
+    }
 }

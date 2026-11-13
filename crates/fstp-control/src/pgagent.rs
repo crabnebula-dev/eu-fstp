@@ -23,6 +23,7 @@
 use fstp_cp_proto::{CellId, RoleName, ScramVerifier};
 
 use crate::ControlError;
+use crate::approval::ApprovalEvidence;
 use crate::pg::{CellDatabase, Revocation, cell_hex, cell_role_plan, roles_of};
 use crate::placement::{ClusterKind, PlacementError};
 
@@ -609,8 +610,9 @@ const ROLE_REASSERTED: &str =
 ///
 /// [`ControlError::ApprovalRequired`] for a destructive job. ADR-011 needs
 /// two operators' passkey approvals over the job digest, checked again
-/// against a staff key set pinned at installation. That check is not
-/// built, so no destructive SQL is rendered.
+/// against a staff key set pinned at installation. This function never
+/// renders destructive SQL. Only [`destructive_statements`] does, from a
+/// [`VerifiedJob`] that the agent's own check made.
 pub fn job_statements(job: &PgagentJob) -> Result<Vec<Statement>, ControlError> {
     if job.is_destructive() {
         return Err(ControlError::ApprovalRequired);
@@ -793,6 +795,251 @@ fn apply_grants(d: &DbIdent) -> Result<Vec<Statement>, ControlError> {
 }
 
 // ---------------------------------------------------------------------------
+// Destructive jobs (ADR-011 "Two-operator approval", lane m3/erase-cell-2).
+
+/// A destructive job whose two approvals the agent verified itself. Only
+/// [`crate::approval::AgentApprovals::verify`] makes one, so destructive
+/// SQL exists only after that check.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedJob {
+    job: PgagentJob,
+}
+
+impl VerifiedJob {
+    pub(crate) fn new(job: PgagentJob) -> VerifiedJob {
+        VerifiedJob { job }
+    }
+
+    /// The job.
+    pub fn job(&self) -> &PgagentJob {
+        &self.job
+    }
+}
+
+/// The statements of a verified destructive job, in order, each run as
+/// the superuser. Every one may run again with the same result:
+///
+/// - [`PgagentJob::DropCellDatabase`] is `DROP DATABASE IF EXISTS` with
+///   `FORCE`, which ends the database's sessions first (PostgreSQL 13 and
+///   later).
+/// - [`PgagentJob::DropRoles`] drops each role of the plan for the
+///   database that exists. It refuses while the database exists, so a
+///   role never goes before its database.
+/// - [`PgagentJob::SetNoLogin`] sets NOLOGIN on the role, then ends the
+///   role's sessions.
+///
+/// # Errors
+///
+/// [`ControlError::Job`] for a job that is not destructive, and the
+/// errors of the role plan.
+pub fn destructive_statements(v: &VerifiedJob) -> Result<Vec<Statement>, ControlError> {
+    match &v.job {
+        PgagentJob::DropCellDatabase(d) => Ok(vec![stmt(
+            Target::Maintenance,
+            format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", d.render()),
+        )]),
+        PgagentJob::DropRoles(d) => {
+            let mut sql = format!(
+                "DO $fstp_drop$ BEGIN \
+                 IF EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '{}') THEN \
+                 RAISE EXCEPTION 'the cell database still exists' USING ERRCODE = '55006'; \
+                 END IF;",
+                d.name()
+            );
+            for role in plan_roles(d)? {
+                sql.push_str(&format!(
+                    " IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{}') THEN \
+                     DROP ROLE {}; END IF;",
+                    role.name(),
+                    role.render()
+                ));
+            }
+            sql.push_str(" END $fstp_drop$");
+            Ok(vec![stmt(Target::Maintenance, sql)])
+        }
+        PgagentJob::SetNoLogin(r) => Ok(vec![
+            stmt(
+                Target::Maintenance,
+                format!(
+                    "DO $fstp_nologin$ BEGIN \
+                     IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{}') THEN \
+                     ALTER ROLE {} NOLOGIN; END IF; END $fstp_nologin$",
+                    r.name(),
+                    r.render()
+                ),
+            ),
+            stmt(
+                Target::Maintenance,
+                format!(
+                    "DO $fstp_end$ BEGIN \
+                     PERFORM pg_catalog.pg_terminate_backend(a.pid) \
+                     FROM pg_catalog.pg_stat_activity a WHERE a.usename = '{}'; \
+                     END $fstp_end$",
+                    r.name()
+                ),
+            ),
+        ]),
+        PgagentJob::HardenCluster
+        | PgagentJob::CreateCellDatabase(_)
+        | PgagentJob::CreateRoles(_)
+        | PgagentJob::ApplyRevocations(_)
+        | PgagentJob::SetRoleCredential { .. }
+        | PgagentJob::ApplyGrants(_)
+        | PgagentJob::PrivilegeAudit
+        | PgagentJob::WriteHba => Err(ControlError::Job("not destructive")),
+    }
+}
+
+/// The version octet that opens an approved job frame. It differs from
+/// [`JOB_VERSION`], so a plain job frame never reads as an approved one.
+pub const APPROVED_VERSION: u8 = 2;
+
+/// The longest approved job frame, in octets.
+pub const MAX_APPROVED_LEN: usize = 12 * 1024;
+
+/// The longest authenticator data an approval carries.
+pub const MAX_AUTHENTICATOR_DATA_LEN: usize = 1024;
+
+/// The longest client data JSON an approval carries.
+pub const MAX_CLIENT_DATA_LEN: usize = 2048;
+
+/// The longest assertion signature an approval carries.
+pub const MAX_SIGNATURE_LEN: usize = 1024;
+
+/// A destructive job and the evidence of its two approvals, as
+/// `fstp-control` sends it to the agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovedFrame {
+    /// The job.
+    pub job: PgagentJob,
+    /// The requester's approval, then the second one.
+    pub approvals: [ApprovalEvidence; 2],
+}
+
+fn push_field(out: &mut Vec<u8>, b: &[u8], max: usize) -> Result<(), ControlError> {
+    if b.len() > max {
+        return Err(ControlError::Job("approval field too long"));
+    }
+    let len = u16::try_from(b.len()).map_err(|_| ControlError::Job("approval field too long"))?;
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(b);
+    Ok(())
+}
+
+/// Encodes an approved job:
+///
+/// ```text
+/// frame    = APPROVED_VERSION | job len u16 | job frame | approval | approval
+/// approval = issued_at i64 | nonce 32 | credential id len u16 | credential id
+///          | authenticator data len u16 | authenticator data
+///          | client data len u16 | client data | signature len u16 | signature
+/// ```
+///
+/// Integers are big-endian. The job frame is [`encode_pgagent_job`].
+///
+/// # Errors
+///
+/// [`ControlError::Job`] for a job that is not destructive or does not
+/// encode, and for a field above its limit.
+pub fn encode_approved_job(frame: &ApprovedFrame) -> Result<Vec<u8>, ControlError> {
+    if !frame.job.is_destructive() {
+        return Err(ControlError::Job("not destructive"));
+    }
+    let mut out = vec![APPROVED_VERSION];
+    push_field(&mut out, &encode_pgagent_job(&frame.job)?, MAX_JOB_LEN)?;
+    for e in &frame.approvals {
+        out.extend_from_slice(&e.issued_at.to_be_bytes());
+        out.extend_from_slice(&e.nonce);
+        let a = &e.assertion;
+        if a.credential_id.is_empty() {
+            return Err(ControlError::Job("empty credential id"));
+        }
+        push_field(
+            &mut out,
+            &a.credential_id,
+            crate::config::MAX_CREDENTIAL_ID_LEN,
+        )?;
+        push_field(&mut out, &a.authenticator_data, MAX_AUTHENTICATOR_DATA_LEN)?;
+        push_field(&mut out, &a.client_data_json, MAX_CLIENT_DATA_LEN)?;
+        push_field(&mut out, &a.signature, MAX_SIGNATURE_LEN)?;
+    }
+    if out.len() > MAX_APPROVED_LEN {
+        return Err(ControlError::Job("too long"));
+    }
+    Ok(out)
+}
+
+impl JobReader<'_> {
+    fn field(&mut self, max: usize) -> Result<Vec<u8>, ControlError> {
+        let len: [u8; 2] = self
+            .take(2)?
+            .try_into()
+            .map_err(|_| ControlError::Job("truncated"))?;
+        let n = usize::from(u16::from_be_bytes(len));
+        if n > max {
+            return Err(ControlError::Job("approval field too long"));
+        }
+        Ok(self.take(n)?.to_vec())
+    }
+
+    fn approval(&mut self) -> Result<ApprovalEvidence, ControlError> {
+        let at: [u8; 8] = self
+            .take(8)?
+            .try_into()
+            .map_err(|_| ControlError::Job("truncated"))?;
+        let nonce: [u8; 32] = self
+            .take(32)?
+            .try_into()
+            .map_err(|_| ControlError::Job("truncated"))?;
+        let credential_id = self.field(crate::config::MAX_CREDENTIAL_ID_LEN)?;
+        let authenticator_data = self.field(MAX_AUTHENTICATOR_DATA_LEN)?;
+        let client_data_json = self.field(MAX_CLIENT_DATA_LEN)?;
+        let signature = self.field(MAX_SIGNATURE_LEN)?;
+        Ok(ApprovalEvidence {
+            issued_at: i64::from_be_bytes(at),
+            nonce,
+            assertion: fstp_webauthn::AssertionResponse {
+                credential_id,
+                client_data_json,
+                authenticator_data,
+                signature,
+            },
+        })
+    }
+}
+
+/// Decodes an approved job. Fuzzed (`pgagent_approved_job_decode`). A
+/// frame decodes only if it is the one encoding of its job and approvals.
+///
+/// # Errors
+///
+/// [`ControlError::Job`] naming the rule broken: another version, a job
+/// frame that does not decode, a job that is not destructive, a field
+/// above its limit, a truncated or longer frame.
+pub fn decode_approved_job(bytes: &[u8]) -> Result<ApprovedFrame, ControlError> {
+    if bytes.len() > MAX_APPROVED_LEN {
+        return Err(ControlError::Job("too long"));
+    }
+    let mut r = JobReader { rest: bytes };
+    if r.u8()? != APPROVED_VERSION {
+        return Err(ControlError::Job("unknown version"));
+    }
+    let job = decode_pgagent_job(&r.field(MAX_JOB_LEN)?)?;
+    if !job.is_destructive() {
+        return Err(ControlError::Job("not destructive"));
+    }
+    let approvals = [r.approval()?, r.approval()?];
+    if !r.rest.is_empty() {
+        return Err(ControlError::Job("trailing bytes"));
+    }
+    let frame = ApprovedFrame { job, approvals };
+    if encode_approved_job(&frame)? != bytes {
+        return Err(ControlError::Job("not canonical"));
+    }
+    Ok(frame)
+}
+
+// ---------------------------------------------------------------------------
 // The agent's own check of the cluster kind.
 
 /// The cluster one agent serves (ADR-011 `CreateCellDatabases`, "as the
@@ -890,6 +1137,18 @@ impl AgentScope {
     pub fn statements(&self, job: &PgagentJob) -> Result<Vec<Statement>, ControlError> {
         self.admits(job)?;
         job_statements(job)
+    }
+
+    /// The statements of the verified destructive job `v` on this agent's
+    /// cluster: [`Self::admits`] first, then [`destructive_statements`].
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::admits`], then those of
+    /// [`destructive_statements`].
+    pub fn destructive_statements(&self, v: &VerifiedJob) -> Result<Vec<Statement>, ControlError> {
+        self.admits(v.job())?;
+        destructive_statements(v)
     }
 }
 

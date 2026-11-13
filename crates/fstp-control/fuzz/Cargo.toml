@@ -61,6 +61,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "pgagent_approved_job_decode"
+path = "fuzz_targets/pgagent_approved_job_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

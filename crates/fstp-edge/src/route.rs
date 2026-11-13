@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use crate::host::{HostError, HostName};
 use crate::sni::{SniError, SniOutcome, parse_client_hello_sni};
@@ -152,6 +153,67 @@ impl RouteTable {
         let before = self.by_host.len();
         self.by_host.retain(|_, (ep, _)| ep.cell != *cell);
         before.saturating_sub(self.by_host.len())
+    }
+}
+
+/// The route table an edge serves from, shared between the listener and
+/// the route feed (design section 3.7 step 3, TH-48).
+///
+/// Each connection routes on the table that is current when its hello
+/// arrives ([`LiveRoutes::current`]). A change builds a new table and
+/// swaps it in, so a connection never sees half a change. Removing an
+/// erased cell's routes makes every later hello for its hosts close as
+/// [`CloseReason::UnknownHost`]. A tunnel already open runs on until
+/// either end closes it.
+#[derive(Clone, Debug, Default)]
+pub struct LiveRoutes {
+    inner: Arc<RwLock<Arc<RouteTable>>>,
+}
+
+impl LiveRoutes {
+    /// Live routes that start as `table`.
+    pub fn new(table: RouteTable) -> LiveRoutes {
+        LiveRoutes {
+            inner: Arc::new(RwLock::new(Arc::new(table))),
+        }
+    }
+
+    /// The current table.
+    pub fn current(&self) -> Arc<RouteTable> {
+        Arc::clone(&self.inner.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Adds the two routes of one cell, as [`RouteTable::add_cell`] does.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`RouteTable::add_cell`]. A refused change leaves
+    /// the table as it was.
+    pub fn add_cell(
+        &self,
+        host: HostName,
+        app: CellEndpoint,
+        vault: CellEndpoint,
+    ) -> Result<(), RouteError> {
+        let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        let mut next = RouteTable::clone(&slot);
+        next.add_cell(host, app, vault)?;
+        *slot = Arc::new(next);
+        Ok(())
+    }
+
+    /// Removes every route of cell `cell`, as
+    /// [`RouteTable::remove_cell_by_id`] does, and returns the number
+    /// removed. Removing the routes of a cell without routes changes
+    /// nothing and returns 0, so a retried removal is harmless.
+    pub fn remove_cell_by_id(&self, cell: &[u8; CELL_ID_LEN]) -> usize {
+        let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        let mut next = RouteTable::clone(&slot);
+        let removed = next.remove_cell_by_id(cell);
+        if removed > 0 {
+            *slot = Arc::new(next);
+        }
+        removed
     }
 }
 

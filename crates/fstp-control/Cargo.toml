@@ -27,6 +27,9 @@ fstp-obs.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# The erase-cell tests remove routes from the edge's own route table
+# (design section 3.7 step 3). In-house.
+fstp-edge.workspace = true
 # The G14 revocation tests run a real PostgreSQL 16 server and an
 # fstp-pgwire session over the tokio runtime. Both in-house.
 fstp-pgtest.workspace = true
