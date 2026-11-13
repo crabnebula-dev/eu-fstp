@@ -113,6 +113,9 @@ struct ErasureRun {
     /// The number of custody calls that changed custody state: creates
     /// and destroys.
     custody_changes: usize,
+    /// The number of custody calls served: creates, wraps, unwraps and
+    /// destroys.
+    custody_calls: usize,
 }
 
 /// The cell of these tests.
@@ -136,13 +139,14 @@ enum Call {
     Destroy,
 }
 
-/// An in-memory custody backend that counts state changes and fails the
-/// next call of one kind once.
+/// An in-memory custody backend that counts state changes and served
+/// calls, and fails the next call of one kind once.
 #[derive(Default)]
 struct SimCustody {
     roots: Mutex<BTreeMap<Vec<u8>, [u8; 32]>>,
     next: Mutex<u64>,
     changes: Mutex<usize>,
+    calls: Mutex<usize>,
     fail: Mutex<Option<Call>>,
 }
 
@@ -188,6 +192,7 @@ impl CustodyBackend for Custodian {
             };
             lock(&self.0.roots).insert(handle.clone(), key);
             *lock(&self.0.changes) += 1;
+            *lock(&self.0.calls) += 1;
             Ok(RootRef {
                 backend: BackendId::Simulator,
                 cell: label.cell,
@@ -213,6 +218,7 @@ impl CustodyBackend for Custodian {
             let s = aead::seal(&k, &aad.0, key.expose()).map_err(CustodyError::Crypto)?;
             let mut out = s.nonce.to_vec();
             out.extend_from_slice(&s.body);
+            *lock(&self.0.calls) += 1;
             Ok(WrappedSealKey(out))
         })();
         std::future::ready(r)
@@ -233,6 +239,7 @@ impl CustodyBackend for Custodian {
             let nonce: [u8; aead::NONCE_LEN] = nonce.try_into().unwrap();
             let pt = aead::open(&k, &nonce, &aad.0, body)
                 .map_err(|_| CustodyError::Refused(Refusal::UnwrapFailed))?;
+            *lock(&self.0.calls) += 1;
             Ok(SealKey::from_bytes(pt.as_slice().try_into().unwrap()))
         })();
         std::future::ready(r)
@@ -250,6 +257,7 @@ impl CustodyBackend for Custodian {
                 return Err(CustodyError::Refused(Refusal::UnknownRoot));
             }
             *lock(&self.0.changes) += 1;
+            *lock(&self.0.calls) += 1;
             Ok(DestroyReceipt(root.handle.0.clone()))
         })();
         std::future::ready(r)
@@ -456,6 +464,7 @@ fn run_erasure(
         let from = runner.keystore().epoch();
         let before = engine.state().head();
         let changes_before = *lock(&sim.0.changes);
+        let calls_before = *lock(&sim.0.calls);
         as_admin(
             &engine,
             CellCommand::Text(TextCommand::EraseTexts {
@@ -522,6 +531,7 @@ fn run_erasure(
         }
         erased.extend_from_slice(runner.erased());
         let custody_changes = *lock(&sim.0.changes) - changes_before;
+        let custody_calls = *lock(&sim.0.calls) - calls_before;
         drop(runner);
         drop(engine);
         let store = task.await.map_err(|_| "the engine task failed")?;
@@ -538,6 +548,7 @@ fn run_erasure(
             opened_after_request,
             erased,
             custody_changes,
+            custody_calls,
         })
     })
 }
@@ -707,8 +718,11 @@ fn i81_cell_erasure_request_during_a_batch_joins_the_next_batch() {
 }
 
 /// I-24, ADR-004 "Reconciliation" (Daniel, 2026-10-29): every custody
-/// operation that changes custody state has its `RecordKeyOp` ledger
-/// record, so key records reconcile with custody operations.
+/// call has its `RecordKeyOp` ledger record, so key records reconcile with
+/// custody operations. Daniel decided on 2026-11-13 that ADR-004 wins
+/// (m3-exit-audit section 7, item 3, Q-KEYOP): the expected count is
+/// one record per custody call (create, wrap, unwrap, destroy), not one
+/// per state change.
 #[test]
 fn i24_cell_erasure_runner_records_a_key_op_for_each_custody_change() {
     let r = run(&[T1], Custody::Healthy);
@@ -718,7 +732,7 @@ fn i24_cell_erasure_runner_records_a_key_op_for_each_custody_change() {
         .filter(|x| matches!(x, CellRecord::Key(KeyRecord::KeyOpRecorded { .. })))
         .count();
     assert!(
-        r.custody_changes >= 2 && key_ops == r.custody_changes,
+        r.custody_changes >= 2 && key_ops == r.custody_calls,
         "{r:?}"
     );
 }
