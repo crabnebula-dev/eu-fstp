@@ -141,20 +141,21 @@ jobs:
           - { part: matrix-http-2, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 2/4, timeout: 100 }
           - { part: matrix-http-3, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 3/4, timeout: 100 }
           # Q34 B: the direct channel at the full policy product (144
-          # policies). Measured locally on 4 threads: about 250 minutes in
+          # policies). On CI four shards ran past 100 minutes on 2026-11-13,
+          # so each has 180. Measured locally on 4 threads: about 250 minutes in
           # all, so 12 shards of about 21 minutes.
-          - { part: matrix-direct-0, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 0/12, timeout: 100 }
-          - { part: matrix-direct-1, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 1/12, timeout: 100 }
-          - { part: matrix-direct-2, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 2/12, timeout: 100 }
-          - { part: matrix-direct-3, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 3/12, timeout: 100 }
-          - { part: matrix-direct-4, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 4/12, timeout: 100 }
-          - { part: matrix-direct-5, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 5/12, timeout: 100 }
-          - { part: matrix-direct-6, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 6/12, timeout: 100 }
-          - { part: matrix-direct-7, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 7/12, timeout: 100 }
-          - { part: matrix-direct-8, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 8/12, timeout: 100 }
-          - { part: matrix-direct-9, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 9/12, timeout: 100 }
-          - { part: matrix-direct-10, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 10/12, timeout: 100 }
-          - { part: matrix-direct-11, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 11/12, timeout: 100 }
+          - { part: matrix-direct-0, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 0/12, timeout: 180 }
+          - { part: matrix-direct-1, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 1/12, timeout: 180 }
+          - { part: matrix-direct-2, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 2/12, timeout: 180 }
+          - { part: matrix-direct-3, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 3/12, timeout: 180 }
+          - { part: matrix-direct-4, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 4/12, timeout: 180 }
+          - { part: matrix-direct-5, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 5/12, timeout: 180 }
+          - { part: matrix-direct-6, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 6/12, timeout: 180 }
+          - { part: matrix-direct-7, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 7/12, timeout: 180 }
+          - { part: matrix-direct-8, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 8/12, timeout: 180 }
+          - { part: matrix-direct-9, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 9/12, timeout: 180 }
+          - { part: matrix-direct-10, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 10/12, timeout: 180 }
+          - { part: matrix-direct-11, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 11/12, timeout: 180 }
     env:
       # The M2 testkit builds about 160 test binaries, and each links every
       # M2 crate. With full debug info they fill the runner's disk. Line
