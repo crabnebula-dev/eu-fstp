@@ -152,7 +152,11 @@ impl Server {
                     Receipt::full(handle.chain, handle.epoch).encode(),
                 ))
             }
-            Request::Sign { .. } => Err(Response::Refused(Refusal::NoSignKey)),
+            // The simulator holds no signing keys, as fstp-keyd holds none
+            // yet (lane m3/erase-cell-2), so it can destroy none either.
+            Request::Sign { .. } | Request::DestroySignKey { .. } => {
+                Err(Response::Refused(Refusal::NoSignKey))
+            }
             Request::UsageSince { root, cursor, .. } => {
                 let root = self.root(*root)?.clone();
                 let page = block_on(
