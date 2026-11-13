@@ -21,9 +21,17 @@
 //!   ends no session that logged in before the restart.
 //! - The CredLookup key is handed in by the caller. Its keystore group
 //!   is not written yet (design section 3.5).
-//! - The keyed login email lookup and the outbox need the Lookup key and
-//!   the outbox data keys, which the keystore does not give yet. Both
-//!   calls fail closed with [`BackendFault::Unavailable`].
+//! - The keyed login email lookup runs in the keystore owner
+//!   (`crate::tasks::erasure`), which holds the `Lookup` group and the
+//!   index (lane m3/login-m2http). A backend without it fails closed with
+//!   [`BackendFault::Unavailable`]. Magic links and recovery email proofs
+//!   go to the login email through the proof mail port (`crate::mail`)
+//!   until M6 delivers through the outbox, whose data keys the keystore
+//!   does not give yet. Interim, pending Daniel.
+//! - The address of a pending self-registration or invitation, and the
+//!   verified operator ticket of a recovery case, are held in process
+//!   memory between two ceremony steps (`Pending`). Interim, pending
+//!   Daniel.
 //! - The erasure log needs the programme of each text (G30, Q42), which
 //!   no record holds yet. It fails closed the same way.
 
@@ -71,6 +79,7 @@ const fn purpose_code(p: ChallengePurpose) -> i16 {
         ChallengePurpose::StepUp => 2,
         ChallengePurpose::Registration => 3,
         ChallengePurpose::Signup => 4,
+        ChallengePurpose::Recovery => 5,
     }
 }
 
@@ -80,6 +89,7 @@ fn purpose_of(code: i16) -> Option<ChallengePurpose> {
         ChallengePurpose::StepUp,
         ChallengePurpose::Registration,
         ChallengePurpose::Signup,
+        ChallengePurpose::Recovery,
     ]
     .into_iter()
     .find(|p| purpose_code(*p) == code)
@@ -90,6 +100,8 @@ const fn token_code(k: TokenKind) -> i16 {
     match k {
         TokenKind::MagicLink => 1,
         TokenKind::SignupProof => 2,
+        TokenKind::RecoveryEmail => 3,
+        TokenKind::RecoveryEnrolment => 4,
     }
 }
 
@@ -98,6 +110,10 @@ const fn token_lifetime(k: TokenKind) -> i64 {
     match k {
         TokenKind::MagicLink => crate::routes::MAGIC_LINK_US,
         TokenKind::SignupProof => fstp_cell_core::lifetimes::SIGNUP_PROOF_US,
+        // Interim, pending Daniel: the email proof of a recovery case
+        // lives as long as its case (ADR-008 "Unset lifetimes").
+        TokenKind::RecoveryEmail => fstp_cell_core::lifetimes::RECOVERY_CASE_US,
+        TokenKind::RecoveryEnrolment => fstp_cell_core::lifetimes::RECOVERY_ENROLMENT_TOKEN_US,
     }
 }
 
@@ -130,6 +146,28 @@ pub struct PgBackend<R: Runtime> {
     clock: crate::engine::CommitClock,
     shell: Arc<dyn crate::shell::CreatorShell>,
     proof_mail: Arc<dyn crate::mail::ProofMail>,
+    /// The keystore owner, which holds the keyed login email index.
+    keys: Option<crate::tasks::erasure::ErasureHandle>,
+    /// The cell's deployment mode.
+    mode: Option<fstp_auth::recovery::Deployment>,
+    /// The pinned control-plane key of operator tickets.
+    operator_key: Option<Vec<u8>>,
+    /// What the routes keep between two steps of a ceremony (module
+    /// documentation).
+    pending: Mutex<Pending>,
+}
+
+/// What the routes keep between two steps of a ceremony, in process
+/// memory. Interim, pending Daniel (lane m3/login-m2http): a restart
+/// loses it, so the ceremony starts again.
+#[derive(Default)]
+struct Pending {
+    /// The address each self-registration proves, by its new account.
+    signups: BTreeMap<u128, String>,
+    /// The address of each invitation, by its token digest.
+    invitations: BTreeMap<[u8; 32], String>,
+    /// The verified operator ticket of each recovery case.
+    tickets: BTreeMap<[u8; 16], Vec<u8>>,
 }
 
 impl<R: Runtime> std::fmt::Debug for PgBackend<R> {
@@ -162,6 +200,10 @@ impl<R: Runtime> PgBackend<R> {
             clock: crate::engine::system_commit_clock(),
             shell: Arc::new(crate::shell::ProductionShell),
             proof_mail: Arc::new(crate::mail::NoProofMail),
+            keys: None,
+            mode: None,
+            operator_key: None,
+            pending: Mutex::new(Pending::default()),
         })
     }
 
@@ -184,6 +226,70 @@ impl<R: Runtime> PgBackend<R> {
     pub fn with_clock(mut self, clock: crate::engine::CommitClock) -> PgBackend<R> {
         self.clock = clock;
         self
+    }
+
+    /// The same backend over the keystore owner `keys`, which holds the
+    /// keyed login email index (`crate::tasks::erasure`).
+    #[must_use]
+    pub fn with_login_index(mut self, keys: crate::tasks::erasure::ErasureHandle) -> PgBackend<R> {
+        self.keys = Some(keys);
+        self
+    }
+
+    /// The same backend in the deployment mode `mode`.
+    #[must_use]
+    pub fn with_mode(mut self, mode: fstp_auth::recovery::Deployment) -> PgBackend<R> {
+        self.mode = Some(mode);
+        self
+    }
+
+    /// The same backend with the pinned control-plane operator ticket key
+    /// `key`, encoded (design section 8.5).
+    #[must_use]
+    pub fn with_operator_key(mut self, key: Option<Vec<u8>>) -> PgBackend<R> {
+        self.operator_key = key;
+        self
+    }
+
+    /// Keeps `email` as the address of the invitation whose token digest
+    /// is `digest` (provisioning of the first admin, design section 9.2
+    /// step 10).
+    pub fn note_first_admin_email(&self, digest: [u8; 32], email: String) {
+        self.pending().invitations.insert(digest, email);
+    }
+
+    fn pending(&self) -> MutexGuard<'_, Pending> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn login_index(&self) -> Result<&crate::tasks::erasure::ErasureHandle, BackendFault> {
+        self.keys.as_ref().ok_or(BackendFault::Unavailable)
+    }
+
+    /// Binds `email` to `account` in the keyed index. `false` when it is
+    /// another account's login email.
+    async fn bind(&self, account: AccountId, email: String) -> Result<bool, BackendFault> {
+        match self.login_index()?.set_login_email(account, email).await {
+            Ok(crate::tasks::erasure::LoginEmailSet::Set) => Ok(true),
+            Ok(crate::tasks::erasure::LoginEmailSet::Taken) => Ok(false),
+            Err(_) => Err(BackendFault::Unavailable),
+        }
+    }
+
+    /// Sends `token` of `kind` to the login email of `account`.
+    async fn mail_account(
+        &self,
+        account: AccountId,
+        kind: crate::mail::ProofKind,
+        token: [u8; 32],
+    ) -> Result<(), BackendFault> {
+        let email = self
+            .login_index()?
+            .login_email(account)
+            .await
+            .map_err(fault)?
+            .ok_or(BackendFault::Unavailable)?;
+        self.proof_mail.send(kind, &email, token).map_err(fault)
     }
 
     fn logins(&self) -> MutexGuard<'_, BTreeMap<[u8; 16], Vec<u8>>> {
@@ -403,13 +509,139 @@ impl<R: Runtime> Backend for PgBackend<R> {
         Ok(())
     }
 
-    fn login_account(
+    async fn login_account(&self, email: String) -> Result<Option<AccountId>, BackendFault> {
+        // The keyed lookup under the keystore's `Lookup` key (module
+        // documentation).
+        self.login_index()?
+            .login_account(email)
+            .await
+            .map_err(fault)
+    }
+
+    async fn token(
         &self,
+        digest: [u8; 32],
+        kind: TokenKind,
+    ) -> Result<Option<TokenRow>, BackendFault> {
+        let mut c = self.app.get().await.map_err(fault)?;
+        let rows = c
+            .query(
+                "SELECT account_id, expires_at FROM auth.token WHERE token_hash = $1 AND kind = $2 AND consumed_at IS NULL",
+                &[&digest.to_vec(), &token_code(kind)],
+            )
+            .await
+            .map_err(fault)?;
+        c.release();
+        match rows.as_slice() {
+            [] => Ok(None),
+            [row] => {
+                let account: Option<Uuid> = row.get(0).map_err(fault)?;
+                let expires: i64 = row.get(1).map_err(fault)?;
+                let account = account.ok_or(BackendFault::Unavailable)?;
+                Ok(Some(TokenRow {
+                    digest,
+                    kind,
+                    account: account_of(&account),
+                    issued_at: Timestamp::from_micros(expires.saturating_sub(token_lifetime(kind))),
+                }))
+            }
+            _ => Err(BackendFault::Unavailable),
+        }
+    }
+
+    fn note_signup_email(
+        &self,
+        account: AccountId,
         email: String,
-    ) -> impl Future<Output = Result<Option<AccountId>, BackendFault>> + Send {
-        // The keyed lookup needs the Lookup key (module documentation).
-        let _ = email;
-        std::future::ready(Err(BackendFault::Unavailable))
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        self.pending().signups.insert(account.raw(), email);
+        std::future::ready(Ok(()))
+    }
+
+    async fn bind_signup_email(&self, account: AccountId) -> Result<bool, BackendFault> {
+        let email = self.pending().signups.remove(&account.raw());
+        match email {
+            Some(e) => self.bind(account, e).await,
+            None => Err(BackendFault::Unavailable),
+        }
+    }
+
+    fn note_invitation_email(
+        &self,
+        digest: [u8; 32],
+        email: String,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        self.pending().invitations.insert(digest, email);
+        std::future::ready(Ok(()))
+    }
+
+    async fn bind_invitation_email(
+        &self,
+        digest: [u8; 32],
+        account: AccountId,
+    ) -> Result<(), BackendFault> {
+        let email = self.pending().invitations.remove(&digest);
+        match email {
+            // An invitation that named no address enrols an account with
+            // no login email, as before lane m3/login-m2http.
+            None => Ok(()),
+            Some(e) => match self.bind(account, e).await? {
+                true => Ok(()),
+                false => Err(BackendFault::Unavailable),
+            },
+        }
+    }
+
+    async fn send_recovery_proof(
+        &self,
+        account: AccountId,
+        case: [u8; 16],
+        token: [u8; 32],
+    ) -> Result<(), BackendFault> {
+        self.mail_account(account, crate::mail::ProofKind::Recovery { case }, token)
+            .await
+    }
+
+    async fn send_recovery_enrolment(
+        &self,
+        account: AccountId,
+        case: [u8; 16],
+        token: [u8; 32],
+    ) -> Result<(), BackendFault> {
+        self.mail_account(
+            account,
+            crate::mail::ProofKind::RecoveryEnrolment { case },
+            token,
+        )
+        .await
+    }
+
+    fn deployment(&self) -> Option<fstp_auth::recovery::Deployment> {
+        self.mode
+    }
+
+    fn operator_key(&self) -> Option<Vec<u8>> {
+        self.operator_key.clone()
+    }
+
+    fn put_operator_ticket(
+        &self,
+        case: [u8; 16],
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<bool, BackendFault>> + Send {
+        let mut p = self.pending();
+        let fresh = !p.tickets.contains_key(&case);
+        if fresh {
+            p.tickets.insert(case, bytes);
+        }
+        std::future::ready(Ok(fresh))
+    }
+
+    fn operator_ticket(
+        &self,
+        case: [u8; 16],
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, BackendFault>> + Send {
+        std::future::ready(Ok(self.pending().tickets.get(&case).cloned()))
     }
 
     async fn put_token(&self, row: TokenRow) -> Result<(), BackendFault> {
@@ -468,15 +700,16 @@ impl<R: Runtime> Backend for PgBackend<R> {
         }
     }
 
-    fn send_magic_link(
+    async fn send_magic_link(
         &self,
         account: AccountId,
         token: [u8; 32],
-    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
-        // The outbox row is sealed under an outbox data key, which the
-        // keystore does not give yet (module documentation).
-        let _ = (account, token);
-        std::future::ready(Err(BackendFault::Unavailable))
+    ) -> Result<(), BackendFault> {
+        // Interim, pending Daniel: the link goes through the proof mail
+        // port to the account's login email until M6 delivers it through
+        // the outbox (module documentation).
+        self.mail_account(account, crate::mail::ProofKind::MagicLink, token)
+            .await
     }
 
     fn send_signup_proof(

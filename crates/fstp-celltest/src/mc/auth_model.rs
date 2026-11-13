@@ -2848,16 +2848,18 @@ pub fn properties<'a, B: AuthBackend>(m: &'a AuthModel<B>) -> Vec<Property<'a, A
 /// software passkey per account and device. What the cell cannot do over
 /// HTTP yet refuses with a seam that names the missing part:
 ///
-/// - [`http::MAGIC_LINK_SEAM`]: an invited account has no email address,
-///   and the world captures no outbox mail.
-/// - [`http::ROLE_GRANT_SEAM`]: a programme role needs an active
-///   programme, and no programme activates over HTTP.
 /// - [`http::SUSPEND_SEAM_HTTP`]: no vault fact seeding reaches a world
 ///   cell's reaction (design section 6.9, lane F-AUTHP).
-/// - [`http::RECOVERY_SEAM`]: the recovery request, email proof and
-///   completion routes fail closed (ADR-008 "Unset lifetimes").
-/// - [`http::OPERATOR_TICKET_SEAM`]: no control-plane signer of operator
-///   tickets runs in the world.
+///
+/// Lane m3/login-m2http closed the former seams [`http::MAGIC_LINK_SEAM`],
+/// [`http::ROLE_GRANT_SEAM`], [`http::RECOVERY_SEAM`] and
+/// [`http::OPERATOR_TICKET_SEAM`]: every account has a synthetic login
+/// email (`crate::world::CellHandle::login_email`), the world's mail
+/// capture receives magic links and recovery proofs, the machines' own
+/// programme activates through the creator path
+/// (`crate::cycle::Cycle::machine_programme`), the recovery routes run,
+/// and the world signs operator tickets as the control plane
+/// (`crate::world::CellHandle::operator_ticket`).
 pub mod http {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
@@ -2888,11 +2890,13 @@ pub mod http {
     /// it: a world cell runs on its `crate::world::WorldClock`.
     pub const CLOCK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::set_clock: a world cell runs on the host clock, and no test clock reaches its backend (fstp-cell routes/pg.rs, world.rs start_cell)";
 
-    /// A magic-link login refuses: an invited account has no email
+    /// The former seam of a magic-link login, closed by lane
+    /// m3/login-m2http. A magic-link login refuses: an invited account has no email
     /// address the cell knows, and the world captures no outbox mail.
     pub const MAGIC_LINK_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::login by magic link: no account has a login email in the cell: an invitation names none, and self-registration (built by lane F-CYCLE3) keeps none, since the keyed login email index needs the Lookup key that the keystore does not give (fstp-cell routes/pg.rs login_account); the pg backend also puts no magic link in an outbox the world could capture (send_magic_link)";
 
-    /// A programme role grant or end refuses: every programme role names
+    /// The former seam of a programme role change, closed by lane
+    /// m3/login-m2http. A programme role grant or end refuses: every programme role names
     /// an active programme, and this client sets up none of its own. The
     /// cycle's creator path activates one over HTTP (lane F-CYCLE2).
     pub const ROLE_GRANT_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::roster: a programme role needs an active programme; the cycle activates one through the creator path (fstp_celltest::cycle create-programme), but the machine client sets up no programme of its own yet";
@@ -2901,11 +2905,13 @@ pub mod http {
     /// takes facts now, but this client seeds no conflict fact yet.
     pub const SUSPEND_SEAM_HTTP: &str = "fstp_celltest::mc::auth_model::http::AuthClient::suspend_for_conflict: the world runs the seeded vault (CellHandle::seed), but the client seeds no conflict fact yet, and the cell side of the suspension is SUSPEND_SEAM (lane F-AUTHP)";
 
+    /// The former seam of recovery, closed by lane m3/login-m2http.
     /// The recovery ceremonies refuse: the request, email proof and
     /// completion routes fail closed with 501.
     pub const RECOVERY_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient recovery: POST /auth/recovery, .../email and .../complete fail closed (501): the gate admits no ProveRecoveryEmail or CompleteRecovery (fstp_cell_core::gate::ROUTE_ADMISSION_SEAM), though fstp_cell_core::lifetimes now holds the interim token lifetimes of ADR-008 \"Unset lifetimes\"";
 
-    /// An operator ticket refuses: no control-plane signer runs in the
+    /// The former seam of operator tickets, closed by lane
+    /// m3/login-m2http. An operator ticket refuses: no control-plane signer runs in the
     /// world, and the cell refuses `ApplyOperatorTicket` (no ticket form).
     pub const OPERATOR_TICKET_SEAM: &str = "fstp_celltest::mc::auth_model::http::AuthClient::recovery_ticket: no control-plane ticket signer runs in the world, and fstp-cell-core refuses ApplyOperatorTicket (no operator ticket form)";
 
@@ -3054,6 +3060,27 @@ pub mod http {
         admin: Option<Cookie>,
         /// Each cookie the cell set: the model account and the session id.
         sessions: BTreeMap<Vec<u8>, (AccountId, [u8; 16])>,
+        /// Whether the machines' programme P1 is active
+        /// (`crate::cycle::Cycle::machine_programme`).
+        programme: bool,
+        /// The programme role bindings the client granted, by model
+        /// account and role.
+        bindings: BTreeMap<(AccountId, fstp_domain::roles::Role), fstp_domain::id::BindingId>,
+        /// The next binding id the client draws.
+        next_binding: u128,
+        /// The model accounts whose verification the client seeded.
+        verified: std::collections::BTreeSet<AccountId>,
+        /// Each recovery case the cell opened: its holder, its email proof
+        /// token, and its enrolment token once the email was proven.
+        cases: BTreeMap<Vec<u8>, CaseTokens>,
+    }
+
+    /// What the client holds of one recovery case.
+    #[derive(Clone, Copy)]
+    struct CaseTokens {
+        holder: AccountId,
+        email: [u8; 32],
+        enrolment: Option<[u8; 32]>,
     }
 
     /// What an [`AuthClient`] knows of its cell, kept between clients
@@ -3240,7 +3267,7 @@ pub mod http {
                 "POST",
                 "/auth/stepup/options",
                 Some(session),
-                &command_body(command, command_id, None),
+                &command_body(command, command_id, None, None),
             )?;
             let Some((id, challenge)) = Self::options(&options) else {
                 return Ok(None);
@@ -3274,6 +3301,17 @@ pub mod http {
             session: &Cookie,
             command: &CellCommand,
         ) -> Result<bool, NotImplemented> {
+            self.stepped(session, command, None)
+        }
+
+        /// [`AuthClient::command_with_stepup`] with the address `email`
+        /// of an invitation (lane m3/login-m2http).
+        fn stepped(
+            &self,
+            session: &Cookie,
+            command: &CellCommand,
+            email: Option<&str>,
+        ) -> Result<bool, NotImplemented> {
             let command_id = fstp_crypto::random_array::<16>().map_err(|_| failed())?;
             let Some(stepup) = self.step_up(session, command, command_id)? else {
                 return Ok(false);
@@ -3283,7 +3321,7 @@ pub mod http {
                     "POST",
                     "/api/v1/commands",
                     Some(session),
-                    &command_body(command, command_id, Some(stepup)),
+                    &command_body(command, command_id, email, Some(stepup)),
                 )?
                 .ok())
         }
@@ -3316,7 +3354,10 @@ pub mod http {
                 account: cell,
                 token_digest: fstp_auth::ceremony::token_digest(&fstp_auth::codec::Token(token)),
             });
-            if !self.command_with_stepup(&admin, &command)? {
+            // The invitation names the account's synthetic login email
+            // (lane m3/login-m2http).
+            let email = self.cell.login_email(account);
+            if !self.stepped(&admin, &command, Some(&email))? {
                 return Ok(false);
             }
             let mut device = Device::new(self.cell.host())?;
@@ -3456,7 +3497,7 @@ pub mod http {
                 "POST",
                 "/api/v1/commands",
                 Some(session),
-                &command_body(command, command_id, granted),
+                &command_body(command, command_id, None, granted),
             )?))
         }
 
@@ -3502,24 +3543,128 @@ pub mod http {
             Ok(Some(Cookie(pair)))
         }
 
-        /// A login of `account` by `m`: the passkey routes with device 0.
-        /// A magic link refuses with [`MAGIC_LINK_SEAM`].
+        /// A login of `account` by `m`: the passkey routes with device 0,
+        /// or a magic link ([`AuthClient::magic_login`]).
         pub fn login(
             &self,
             account: AccountId,
             m: RefMethod,
         ) -> Result<Option<Cookie>, NotImplemented> {
             match m {
-                RefMethod::MagicLink => Err(NotImplemented::new(MAGIC_LINK_SEAM)),
+                RefMethod::MagicLink => self.magic_login(account),
                 _ => self.passkey_login(account),
             }
         }
 
+        /// A magic-link login of `account` (ADR-008 "Magic links", lane
+        /// m3/login-m2http): `POST /auth/magic/request {email}` with the
+        /// account's synthetic login email, the link the world's mail
+        /// capture receives for it, then `POST /auth/magic/consume
+        /// {token}`. `None` when no link arrived or the cell refused it.
+        /// The former [`MAGIC_LINK_SEAM`] is closed.
+        fn magic_login(&self, account: AccountId) -> Result<Option<Cookie>, NotImplemented> {
+            if !self.known().people.contains_key(&account) {
+                return Ok(None);
+            }
+            let email = self.cell.login_email(account);
+            let before = self.cell.mail().count();
+            let asked = self.call(
+                "POST",
+                "/auth/magic/request",
+                None,
+                format!("{{\"email\":\"{email}\"}}").as_bytes(),
+            )?;
+            if asked.status != 202 {
+                return Err(failed());
+            }
+            let Some(token) =
+                self.cell
+                    .mail()
+                    .since(before, fstp_cell::mail::ProofKind::MagicLink, &email)
+            else {
+                return Ok(None);
+            };
+            let body = format!("{{\"token\":\"{}\"}}", hex(&token));
+            let reply = self.send("POST", "/auth/magic/consume", None, body.as_bytes())?;
+            if !reply.ok() {
+                return Ok(None);
+            }
+            let cookie = self.cookie_of(account, &reply)?;
+            Ok(Some(cookie))
+        }
+
+        /// The session cookie a reply set for `account`, recorded.
+        fn cookie_of(
+            &self,
+            account: AccountId,
+            reply: &HttpReply,
+        ) -> Result<Cookie, NotImplemented> {
+            let pair: Vec<u8> = reply
+                .header("set-cookie")
+                .and_then(|set| set.split(|b| *b == b';').next())
+                .ok_or_else(failed)?
+                .to_vec();
+            let session: [u8; 16] = json_str(&reply.body, "session")
+                .and_then(|s| unhex_array(&s))
+                .ok_or_else(failed)?;
+            self.known()
+                .sessions
+                .insert(pair.clone(), (account, session));
+            Ok(Cookie(pair))
+        }
+
+        /// The machines' programme P1 (`ROLE_GRANT_SEAM`, closed by lane
+        /// m3/login-m2http): the client's memory goes to a
+        /// [`crate::cycle::Cycle`], which runs
+        /// [`crate::cycle::Cycle::machine_programme`], and comes back.
+        fn ensure_programme(&self) -> Result<(), NotImplemented> {
+            if self.known().programme {
+                return Ok(());
+            }
+            let memory = std::mem::take(&mut *self.known());
+            let client = AuthClient::resume(self.cell, ClientMemory(memory));
+            let mut cycle = crate::cycle::Cycle::with_client(client);
+            let done = cycle.machine_programme();
+            let back = cycle.into_client().into_memory();
+            *self.known() = back.0;
+            done?;
+            self.known().programme = true;
+            Ok(())
+        }
+
+        /// Seeds a verification of the model account `account` once
+        /// (design section 6.9), as a Drafting, Judging or Operations
+        /// grant reads it (SoD-09). Its synthetic attribute tuple is its
+        /// own, so no two accounts share an identity.
+        fn ensure_verified(
+            &self,
+            account: AccountId,
+            cell: AccountId,
+        ) -> Result<(), NotImplemented> {
+            if self.known().verified.contains(&account) {
+                return Ok(());
+            }
+            let attributes = format!("synthetic-machine-person-{}", account.raw());
+            self.cell
+                .seed_verification(cell, attributes.as_bytes())
+                .map_err(|e| {
+                    eprintln!("fstp_celltest AuthClient: the seeded verification: {e}");
+                    failed()
+                })?;
+            self.known().verified.insert(account);
+            Ok(())
+        }
+
         /// A roster change in the session `admin`, with a fresh step-up,
         /// through `POST /api/v1/commands`. A tenant admin grant is
-        /// `GrantTenantAdmin`. A programme role grant or end refuses with
-        /// [`ROLE_GRANT_SEAM`].
+        /// `GrantTenantAdmin`. A programme role grant is `GrantRole` on the
+        /// machines' programme P1, set up at the first grant
+        /// ([`crate::cycle::Cycle::machine_programme`]), after the
+        /// grantee's verification is seeded. An end is `EndRole` of the
+        /// binding the client granted, at the cell's instant.
         pub fn roster(&self, admin: &Cookie, change: RosterChange) -> Result<bool, NotImplemented> {
+            use fstp_domain_testkit::r#gen::roster::{grant, grant_until};
+            let now = Timestamp::from_micros(self.cell.clock().now());
             match change {
                 RosterChange::GrantAdmin { account } => {
                     let Some(cell) = self.known().people.get(&account).map(|p| p.cell) else {
@@ -3529,8 +3674,48 @@ pub mod http {
                         CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: cell });
                     self.command_with_stepup(admin, &command)
                 }
-                RosterChange::Grant { .. } | RosterChange::End { .. } => {
-                    Err(NotImplemented::new(ROLE_GRANT_SEAM))
+                RosterChange::Grant {
+                    account,
+                    role,
+                    until,
+                } => {
+                    let Some(cell) = self.known().people.get(&account).map(|p| p.cell) else {
+                        return Ok(false);
+                    };
+                    self.ensure_programme()?;
+                    self.ensure_verified(account, cell)?;
+                    let binding = {
+                        let mut k = self.known();
+                        k.next_binding = k.next_binding.max(20_000).saturating_add(1);
+                        fstp_domain::id::BindingId::from_raw(k.next_binding)
+                    };
+                    let p1 = fstp_domain_testkit::r#gen::roster::P1;
+                    let step = match until {
+                        Some(e) => grant_until(binding, cell, p1, role, now, e).map_err(|why| {
+                            eprintln!("fstp_celltest AuthClient: the scheduled grant: {why}");
+                            failed()
+                        })?,
+                        None => grant(binding, cell, p1, role, now),
+                    };
+                    let command = CellCommand::Engine(fstp_engine::Command::Core(step.cmd));
+                    let ok = self.command_with_stepup(admin, &command)?;
+                    if ok {
+                        self.known().bindings.insert((account, role), binding);
+                    }
+                    Ok(ok)
+                }
+                RosterChange::End { account, role } => {
+                    let Some(binding) = self.known().bindings.get(&(account, role)).copied() else {
+                        return Ok(false);
+                    };
+                    let command = CellCommand::Engine(fstp_engine::Command::Core(
+                        fstp_domain::Command::EndRole { binding, at: now },
+                    ));
+                    let ok = self.command_with_stepup(admin, &command)?;
+                    if ok {
+                        self.known().bindings.remove(&(account, role));
+                    }
+                    Ok(ok)
                 }
             }
         }
@@ -3615,48 +3800,163 @@ pub mod http {
             Ok(self.call("DELETE", &path, Some(session), b"")?.ok())
         }
 
-        /// `POST /auth/recovery` for `account`. Refuses with
-        /// [`RECOVERY_SEAM`].
+        /// `POST /auth/recovery {email}` for `account`, with its synthetic
+        /// login email, and the case and email proof token the world's
+        /// mail capture receives (lane m3/login-m2http). `None` when no
+        /// proof arrived: the cell opened no case.
         pub fn recovery(&self, account: AccountId) -> Result<Option<CaseRef>, NotImplemented> {
-            let _ = account;
-            Err(NotImplemented::new(RECOVERY_SEAM))
+            let email = self.cell.login_email(account);
+            let before = self.cell.mail().count();
+            let asked = self.call(
+                "POST",
+                "/auth/recovery",
+                None,
+                format!("{{\"email\":\"{email}\"}}").as_bytes(),
+            )?;
+            if asked.status != 202 {
+                return Err(failed());
+            }
+            let Some((case, token)) = self.cell.mail().recovery_since(before, &email) else {
+                return Ok(None);
+            };
+            self.known().cases.insert(
+                case.to_vec(),
+                CaseTokens {
+                    holder: account,
+                    email: token,
+                    enrolment: None,
+                },
+            );
+            Ok(Some(CaseRef(case.to_vec())))
         }
 
-        /// `POST /auth/recovery/{case}/email`. Refuses with
-        /// [`RECOVERY_SEAM`].
+        /// `POST /auth/recovery/{case}/email {token}` with the email proof
+        /// the holder received. Keeps the enrolment token of the reply.
         pub fn recovery_email(&self, case: &CaseRef) -> Result<bool, NotImplemented> {
-            let _ = case;
-            Err(NotImplemented::new(RECOVERY_SEAM))
+            let Some(tokens) = self.known().cases.get(&case.0).copied() else {
+                return Ok(false);
+            };
+            let path = format!("/auth/recovery/{}/email", hex(&case.0));
+            let body = format!("{{\"token\":\"{}\"}}", hex(&tokens.email));
+            let reply = self.call("POST", &path, None, body.as_bytes())?;
+            if !reply.ok() {
+                return Ok(false);
+            }
+            // `EmailThenPasskey` answers its enrolment token here. Other
+            // paths send one to the login email once approved or ticketed.
+            let enrolment: Option<[u8; 32]> =
+                json_str(&reply.body, "enrolment").and_then(|s| unhex_array(&s));
+            if let Some(t) = self.known().cases.get_mut(&case.0) {
+                t.enrolment = enrolment;
+            }
+            Ok(true)
         }
 
-        /// `POST /auth/recovery/{case}/approve` in `approver`'s session.
-        /// Refuses with [`RECOVERY_SEAM`], since no case can be opened.
+        /// `POST /auth/recovery/{case}/approve {command_id, stepup?}` in
+        /// `approver`'s session, with a step-up for `ApproveRecovery` when
+        /// `stepup` holds.
         pub fn recovery_approve(
             &self,
             case: &CaseRef,
             approver: &Cookie,
             stepup: bool,
         ) -> Result<bool, NotImplemented> {
-            let _ = (case, approver, stepup);
-            Err(NotImplemented::new(RECOVERY_SEAM))
+            let id: [u8; 16] = case.0.as_slice().try_into().map_err(|_| failed())?;
+            let command = CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { case: id });
+            let command_id = fstp_crypto::random_array::<16>().map_err(|_| failed())?;
+            let granted = if stepup {
+                match self.step_up(approver, &command, command_id)? {
+                    Some(s) => Some(s),
+                    None => return Ok(false),
+                }
+            } else {
+                None
+            };
+            let mut body = format!("{{\"command_id\":\"{}\"", hex(&command_id));
+            if let Some(s) = granted {
+                body.push_str(&format!(",\"stepup\":\"{}\"", hex(&s)));
+            }
+            body.push('}');
+            let path = format!("/auth/recovery/{}/approve", hex(&case.0));
+            Ok(self
+                .call("POST", &path, Some(approver), body.as_bytes())?
+                .ok())
         }
 
-        /// An operator ticket for `case`. Refuses with
-        /// [`OPERATOR_TICKET_SEAM`].
+        /// An operator ticket for `case`, signed by the world's
+        /// control-plane key (`crate::world::CellHandle::operator_ticket`),
+        /// with two staff approvals, or one staff member twice when
+        /// `two_staff` is false. It goes to `POST
+        /// /auth/recovery/{case}/complete {ticket}`.
         pub fn recovery_ticket(
             &self,
             case: &CaseRef,
             two_staff: bool,
         ) -> Result<bool, NotImplemented> {
-            let _ = (case, two_staff);
-            Err(NotImplemented::new(OPERATOR_TICKET_SEAM))
+            let id: [u8; 16] = case.0.as_slice().try_into().map_err(|_| failed())?;
+            let staff_1 = [0x51; 16];
+            let staff_2 = if two_staff { [0x52; 16] } else { staff_1 };
+            let ticket = self
+                .cell
+                .operator_ticket(id, staff_1, staff_2)
+                .map_err(|_| failed())?;
+            let path = format!("/auth/recovery/{}/complete", hex(&case.0));
+            let body = format!("{{\"ticket\":\"{}\"}}", hex(&ticket));
+            Ok(self.call("POST", &path, None, body.as_bytes())?.ok())
         }
 
         /// `POST /auth/recovery/{case}/complete` with a new software
-        /// passkey. Refuses with [`RECOVERY_SEAM`].
+        /// passkey: the creation options for the case's enrolment token,
+        /// then the registration with the token. The new session, or
+        /// `None` when the cell refused or the email was never proven. The
+        /// holder's devices are then the new passkey only.
+        ///
+        /// The new session starts one microsecond after the completion's
+        /// instant (`fstp_cell::routes` recovery), so the harness moves the
+        /// cell clock one microsecond on, as any clock moves between two
+        /// requests.
         pub fn recovery_complete(&self, case: &CaseRef) -> Result<Option<Cookie>, NotImplemented> {
-            let _ = case;
-            Err(NotImplemented::new(RECOVERY_SEAM))
+            let Some(tokens) = self.known().cases.get(&case.0).copied() else {
+                return Ok(None);
+            };
+            // The latest enrolment token the holder received by mail, or
+            // the one the email proof answered.
+            let id: [u8; 16] = case.0.as_slice().try_into().map_err(|_| failed())?;
+            let email = self.cell.login_email(tokens.holder);
+            let Some(enrolment) = self
+                .cell
+                .mail()
+                .latest_enrolment(id, &email)
+                .or(tokens.enrolment)
+            else {
+                return Ok(None);
+            };
+            let path = format!("/auth/recovery/{}/complete", hex(&case.0));
+            let options = self.call(
+                "POST",
+                &path,
+                None,
+                format!("{{\"token\":\"{}\"}}", hex(&enrolment)).as_bytes(),
+            )?;
+            let Some((id, challenge)) = Self::options(&options) else {
+                return Ok(None);
+            };
+            let mut device = Device::new(self.cell.host())?;
+            let mut body = device.registration_body(&id, challenge)?;
+            // The registration body is one canonical object; the token joins
+            // it as its last member, in key order.
+            body.pop();
+            body.extend_from_slice(format!(",\"token\":\"{}\"}}", hex(&enrolment)).as_bytes());
+            let reply = self.send("POST", &path, None, &body)?;
+            if !reply.ok() {
+                return Ok(None);
+            }
+            self.cell.clock().advance(1);
+            let cookie = self.cookie_of(tokens.holder, &reply)?;
+            if let Some(p) = self.known().people.get_mut(&tokens.holder) {
+                p.devices = vec![device];
+            }
+            Ok(Some(cookie))
         }
 
         /// The tenant audit view as `session` sees it:
@@ -3672,6 +3972,7 @@ pub mod http {
     fn command_body(
         command: &CellCommand,
         command_id: [u8; 16],
+        email: Option<&str>,
         stepup: Option<[u8; 16]>,
     ) -> Vec<u8> {
         let mut c =
@@ -3686,6 +3987,9 @@ pub mod http {
             c = c.replace(&format!("\"minor\":{minor},"), "");
         }
         let mut body = format!("{{\"command\":{c},\"command_id\":\"{}\"", hex(&command_id));
+        if let Some(e) = email {
+            body.push_str(&format!(",\"email\":\"{e}\""));
+        }
         if let Some(s) = stepup {
             body.push_str(&format!(",\"stepup\":\"{}\"", hex(&s)));
         }

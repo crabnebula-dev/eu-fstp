@@ -40,6 +40,18 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     let Some(command) = r.command.map(|c| *c) else {
         return bad_body(BodyRefusal::Member("command"));
     };
+    // An address rides with an invitation only (`CommandRequest::email`).
+    let invited = match (&command, r.email) {
+        (_, None) => None,
+        (
+            CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::IssueInvitation {
+                token_digest,
+                ..
+            }),
+            Some(email),
+        ) => Some((*token_digest, email)),
+        (_, Some(_)) => return bad_body(BodyRefusal::Member("email")),
+    };
     let blocked = needs_route_input(&command);
     let creator = match &command {
         CellCommand::Engine(fstp_engine::Command::Creator(c)) => Some(c.clone()),
@@ -65,6 +77,14 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         // The batch needs a route input that `decide` cannot take yet
         // (`fstp_cell_core::RouteInput`).
         return Reply::not_built();
+    }
+    // The address is kept for the enrolment once the gate admitted the
+    // invitation. A refused invitation leaves a kept address no token
+    // can reach.
+    if let Some((digest, email)) = invited
+        && let Err(f) = ctx.backend.note_invitation_email(digest, email).await
+    {
+        return unavailable(f);
     }
     run(ctx, admitted).await
 }

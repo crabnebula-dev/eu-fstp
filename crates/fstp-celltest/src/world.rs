@@ -304,6 +304,9 @@ pub struct CellHandle {
     logins: CellLogins,
     clock: WorldClock,
     mail: crate::world_mail::WorldMail,
+    /// The control-plane signer of recovery operator tickets, whose public
+    /// key the cell pins (design section 8.5, lane m3/login-m2http).
+    operator: OperatorSigner,
     /// What the last cycle on this cell kept (lane F-CYCLE3).
     cycle: Mutex<Option<crate::cycle::CycleMemory>>,
     runtime: Option<std::sync::Arc<CellRuntime>>,
@@ -327,6 +330,44 @@ impl CellHandle {
     /// The cell's mail capture ([`crate::world_mail`]).
     pub fn mail(&self) -> &crate::world_mail::WorldMail {
         &self.mail
+    }
+
+    /// The synthetic login email of the model account `model` on this
+    /// cell (lane m3/login-m2http): the address an invitation names and
+    /// the world's mail capture receives.
+    pub fn login_email(&self, model: fstp_domain::id::AccountId) -> String {
+        login_email_of(&self.host, model)
+    }
+
+    /// An operator ticket of recovery case `case` with the staff
+    /// approvals `staff_1` and `staff_2`, signed by the world's
+    /// control-plane key as `fstp_auth::codec::encode_operator_ticket`
+    /// writes it (design section 8.5, ADR-008 "Operator process checks").
+    /// Interim: the world stands in for the control plane and its two
+    /// staff members, and claims built on it say so.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the signature or the encoding fails.
+    pub fn operator_ticket(
+        &self,
+        case: [u8; 16],
+        staff_1: [u8; 16],
+        staff_2: [u8; 16],
+    ) -> Result<Vec<u8>, WorldError> {
+        let ticket = fstp_auth::recovery::OperatorTicket {
+            case,
+            staff_1: fstp_auth::recovery::StaffRef(staff_1),
+            staff_2: fstp_auth::recovery::StaffRef(staff_2),
+        };
+        let signature = self
+            .operator
+            .0
+            .sign_with_context(&ticket.message(), fstp_auth::recovery::TICKET_CONTEXT)
+            .map_err(|e| WorldError::Store(format!("the operator ticket signature: {e:?}")))?
+            .to_bytes();
+        fstp_auth::codec::encode_operator_ticket(&ticket, &signature)
+            .map_err(|e| WorldError::Store(format!("the operator ticket: {e:?}")))
     }
 
     /// The cell's index in its world.
@@ -2637,6 +2678,11 @@ fn start_cell(
     );
     let clock = WorldClock::default();
     let mail = crate::world_mail::WorldMail::default();
+    // The control plane's operator ticket key (design section 8.5). In
+    // production it is a ControlPlane chain key held in custody.
+    let operator = OperatorSigner(std::sync::Arc::new(
+        fstp_crypto::composite::generate().map_err(|e| fail("the operator ticket key", &e))?,
+    ));
     let vault =
         s.rt.block_on(crate::seeded_vault::SeededVault::start(
             s.rt.clone(),
@@ -2792,6 +2838,12 @@ fn start_cell(
             clock: clock.commit_clock(),
             creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
             proof_mail: std::sync::Arc::new(mail.clone()),
+            operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
+            // P-70: the world's tenant enables magic links, as the auth
+            // machines' universe does (`mc::auth_model::ENABLED`).
+            login_methods: fstp_auth::EnabledMethods {
+                methods: vec![fstp_auth::Method::MagicLink],
+            },
         },
     )) {
         Ok(r) => r,
@@ -2858,6 +2910,20 @@ fn start_cell(
             return Err(e);
         }
     };
+    // The first admin's login email, as the tenant contact's address that
+    // provisioning names (lane m3/login-m2http). Synthetic.
+    {
+        use fstp_auth::ceremony::{split_token_digest, token_digest};
+        use fstp_auth::codec::Token;
+        let digest = match &invitation {
+            Invitation::Split(i) => split_token_digest(&Token(i.first), &Token(i.second)),
+            Invitation::Whole(t) => token_digest(&Token(*t)),
+        };
+        running.note_first_admin_email(
+            digest,
+            login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN),
+        );
+    }
     Ok(CellHandle {
         index,
         id: cell,
@@ -2865,6 +2931,7 @@ fn start_cell(
         logins,
         clock,
         mail,
+        operator,
         cycle: Mutex::new(None),
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
@@ -3493,6 +3560,24 @@ impl ClusterHandle {
     /// Fails when the cluster's state cannot be created.
     pub fn replication_login(&self) -> Result<Option<RoleLogin>, WorldError> {
         Ok(lock(cluster_state(&self.name)?).replication.clone())
+    }
+}
+
+/// The synthetic login email of the model account `model` on the cell
+/// host `host` (lane m3/login-m2http). No real address: the host is a
+/// world host under the reserved `.test` name.
+pub fn login_email_of(host: &str, model: fstp_domain::id::AccountId) -> String {
+    format!("account-{}@{host}", model.raw())
+}
+
+/// The world's control-plane signer of recovery operator tickets. Its
+/// debug form shows no key.
+#[derive(Clone)]
+struct OperatorSigner(std::sync::Arc<fstp_crypto::composite::CompositeSigningKey>);
+
+impl fmt::Debug for OperatorSigner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("OperatorSigner(..)")
     }
 }
 

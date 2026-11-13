@@ -162,6 +162,11 @@ impl Reply {
         }
     }
 
+    /// Whether the status is 2xx.
+    pub(crate) fn is_success(&self) -> bool {
+        self.status.is_success()
+    }
+
     /// A route step that needs an API the sources do not offer yet. It
     /// fails closed with 501 and names no internals.
     pub(crate) fn not_built() -> Reply {
@@ -370,9 +375,9 @@ async fn dispatch<B: Backend>(
         (Endpoint::MagicConsume, _) => auth::magic_consume(ctx, req).await,
         (Endpoint::SignupOptions, _) => auth::signup_options(ctx, req).await,
         (Endpoint::Signup, _) => auth::signup(ctx, req).await,
-        (Endpoint::RecoveryRequest | Endpoint::RecoveryEmail | Endpoint::RecoveryComplete, _) => {
-            auth::not_built_ceremony(req)
-        }
+        (Endpoint::RecoveryRequest, _) => auth::recovery_request(ctx, req).await,
+        (Endpoint::RecoveryEmail, _) => auth::recovery_email(ctx, req).await,
+        (Endpoint::RecoveryComplete, _) => auth::recovery_complete(ctx, req).await,
         (Endpoint::StepUpOptions, Some(c)) => auth::stepup_options(ctx, req, &c).await,
         (Endpoint::StepUp, Some(c)) => auth::stepup(ctx, req, &c).await,
         (Endpoint::PasskeyOptions | Endpoint::PasskeyAdd, Some(c)) => {

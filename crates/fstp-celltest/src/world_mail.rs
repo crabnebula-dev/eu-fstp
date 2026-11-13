@@ -45,6 +45,43 @@ impl WorldMail {
     }
 }
 
+impl WorldMail {
+    /// How many mails were captured so far.
+    pub fn count(&self) -> usize {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// The token of the first mail of `kind` to `to` captured after the
+    /// first `after` mails.
+    pub fn since(&self, after: usize, kind: ProofKind, to: &str) -> Option<[u8; 32]> {
+        self.captured()
+            .iter()
+            .skip(after)
+            .find(|m| m.kind == kind && m.to == to)
+            .map(|m| m.token)
+    }
+
+    /// The case and token of the first recovery email proof to `to`
+    /// captured after the first `after` mails (lane m3/login-m2http).
+    pub fn recovery_since(&self, after: usize, to: &str) -> Option<([u8; 16], [u8; 32])> {
+        self.captured()
+            .iter()
+            .skip(after)
+            .find_map(|m| match m.kind {
+                ProofKind::Recovery { case } if m.to == to => Some((case, m.token)),
+                _ => None,
+            })
+    }
+}
+
+impl WorldMail {
+    /// The latest enrolment token of recovery case `case` sent to `to`
+    /// (lane m3/login-m2http).
+    pub fn latest_enrolment(&self, case: [u8; 16], to: &str) -> Option<[u8; 32]> {
+        self.latest(ProofKind::RecoveryEnrolment { case }, to)
+    }
+}
+
 impl ProofMail for WorldMail {
     fn send(&self, kind: ProofKind, to: &str, token: [u8; 32]) -> Result<(), MailRefused> {
         self.0

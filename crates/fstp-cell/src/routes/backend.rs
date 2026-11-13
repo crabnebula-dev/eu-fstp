@@ -65,6 +65,10 @@ pub enum ChallengePurpose {
     /// (design section 8.3 ceremony 2), bound to the digest of the email
     /// proof token its options call named.
     Signup,
+    /// The registration of the new passkey of a recovery completion
+    /// (design section 8.5), bound to the digest of the case and its
+    /// enrolment token.
+    Recovery,
 }
 
 /// One row of `auth.challenge` (design section 4.2).
@@ -95,6 +99,13 @@ pub enum TokenKind {
     /// The email proof of a self-registration. Its row names the new
     /// account the route drew (design section 8.3 ceremony 2).
     SignupProof,
+    /// The email proof of a recovery case (design section 8.5). Its
+    /// digest is `SHA-256(case || token)`, so it proves one case only.
+    RecoveryEmail,
+    /// The one-time enrolment token of a recovery case, given to the
+    /// holder who proved the email (design section 8.5). Its digest is
+    /// `SHA-256(case || token)`.
+    RecoveryEnrolment,
 }
 
 /// One row of `auth.token`. Only the token's SHA-256 digest is stored.
@@ -273,6 +284,123 @@ pub trait Backend: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
         let _ = (email, token);
         std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    /// The live token of `kind` with digest `digest`, without taking it.
+    /// The provided body fails closed.
+    fn token(
+        &self,
+        digest: [u8; 32],
+        kind: TokenKind,
+    ) -> impl Future<Output = Result<Option<TokenRow>, BackendFault>> + Send {
+        let _ = (digest, kind);
+        std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    /// Keeps `email` as the address the self-registration of `account`
+    /// proves, until [`Backend::bind_signup_email`]. The provided body
+    /// keeps nothing.
+    fn note_signup_email(
+        &self,
+        account: AccountId,
+        email: String,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (account, email);
+        std::future::ready(Ok(()))
+    }
+
+    /// Makes the address kept for `account` its login email, through the
+    /// keyed index (design section 4.2). `false` when the address is the
+    /// login email of another account. The provided body keeps no index
+    /// and answers `true`.
+    fn bind_signup_email(
+        &self,
+        account: AccountId,
+    ) -> impl Future<Output = Result<bool, BackendFault>> + Send {
+        let _ = account;
+        std::future::ready(Ok(true))
+    }
+
+    /// Keeps `email` as the address of the invitation whose token digest
+    /// is `digest`, until [`Backend::bind_invitation_email`]. The provided
+    /// body fails closed.
+    fn note_invitation_email(
+        &self,
+        digest: [u8; 32],
+        email: String,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (digest, email);
+        std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    /// Makes the address kept for the invitation `digest` the login email
+    /// of `account`, which enrolled through it. The provided body keeps
+    /// nothing.
+    fn bind_invitation_email(
+        &self,
+        digest: [u8; 32],
+        account: AccountId,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (digest, account);
+        std::future::ready(Ok(()))
+    }
+
+    /// Sends the email proof `token` of recovery case `case` to the login
+    /// email of `account` through the cell's proof mail port. The provided
+    /// body fails closed.
+    fn send_recovery_proof(
+        &self,
+        account: AccountId,
+        case: [u8; 16],
+        token: [u8; 32],
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (account, case, token);
+        std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    /// Sends the one-time enrolment token `token` of recovery case `case`
+    /// to the login email of `account` through the cell's proof mail port.
+    /// The provided body fails closed.
+    fn send_recovery_enrolment(
+        &self,
+        account: AccountId,
+        case: [u8; 16],
+        token: [u8; 32],
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (account, case, token);
+        std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    /// The cell's deployment mode, which picks the recovery path. `None`
+    /// fails the recovery request closed.
+    fn deployment(&self) -> Option<fstp_auth::recovery::Deployment> {
+        None
+    }
+
+    /// The pinned control-plane key of operator tickets (design section
+    /// 8.5), encoded. `None` refuses every ticket.
+    fn operator_key(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Keeps the verified operator ticket `bytes` of case `case`. `false`
+    /// when the case holds one already. The provided body fails closed.
+    fn put_operator_ticket(
+        &self,
+        case: [u8; 16],
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<bool, BackendFault>> + Send {
+        let _ = (case, bytes);
+        std::future::ready(Err(BackendFault::Unavailable))
+    }
+
+    /// The operator ticket kept for case `case`, if any.
+    fn operator_ticket(
+        &self,
+        case: [u8; 16],
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, BackendFault>> + Send {
+        let _ = case;
+        std::future::ready(Ok(None))
     }
 
     /// When step-up `id` was asserted: the instant of its `StepUpGranted`

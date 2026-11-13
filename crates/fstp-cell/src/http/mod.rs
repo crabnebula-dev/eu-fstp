@@ -52,6 +52,12 @@ pub struct CommandRequest {
     pub stepup: Option<[u8; 16]>,
     /// The command, when the body names one.
     pub command: Option<Box<CellCommand>>,
+    /// The address an `IssueInvitation` names (design section 4.2, lane
+    /// m3/login-m2http, Interim, pending Daniel). The enrolment through
+    /// the invitation makes it the account's login email. The address
+    /// never enters the ledger: the cell keeps it until the enrolment,
+    /// then only sealed and as its keyed digest.
+    pub email: Option<String>,
 }
 
 /// Decodes a command request body. Fuzzed (`command_request_decode`). A
@@ -76,7 +82,10 @@ pub const fn body_refusal(r: BodyRefusal) -> CellError {
 /// The members of a command request body.
 const REQUIRED: [&str; 1] = ["command_id"];
 /// The optional members of a command request body.
-const OPTIONAL: [&str; 2] = ["command", "stepup"];
+const OPTIONAL: [&str; 3] = ["command", "email", "stepup"];
+
+/// The longest address of an invitation (RFC 5321 path limit).
+const MAX_EMAIL: usize = 254;
 
 /// Decodes a command request body with a typed refusal (design sections
 /// 8.4, 8.7 and 15). The size limit is [`COMMAND_BODY_LIMIT`].
@@ -93,10 +102,21 @@ pub fn decode_command_body(bytes: &[u8]) -> Result<CommandRequest, BodyRefusal> 
         None => None,
         Some(v) => Some(Box::new(command_member(v)?)),
     };
+    let email = match o.get("email") {
+        None => None,
+        Some(_) => {
+            let e = body::string(&o, "email")?;
+            if e.is_empty() || e.len() > MAX_EMAIL || !e.contains('@') {
+                return Err(BodyRefusal::Member("email"));
+            }
+            Some(e.to_owned())
+        }
+    };
     Ok(CommandRequest {
         command_id,
         stepup,
         command,
+        email,
     })
 }
 

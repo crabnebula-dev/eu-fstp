@@ -361,6 +361,14 @@ impl Backend for MemoryBackend {
         }))
     }
 
+    fn token(
+        &self,
+        digest: [u8; 32],
+        kind: TokenKind,
+    ) -> impl Future<Output = Result<Option<TokenRow>, BackendFault>> + Send {
+        ready(self.with(|m| m.tokens.get(&digest).filter(|r| r.kind == kind).copied()))
+    }
+
     fn send_magic_link(
         &self,
         account: AccountId,

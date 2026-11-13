@@ -136,6 +136,10 @@ pub enum ErasureEvent {
 struct TextRow {
     dek: DekId,
     blob: SealedBlob,
+    /// The group generation the body was sealed at. A rotation reseals
+    /// the data key to a new generation, never the body, so the body
+    /// opens under the context of this generation.
+    sealed_at: u32,
 }
 
 /// One root epoch: its custody reference and its wrapped seal key.
@@ -180,6 +184,72 @@ pub const SIGNER_LIFETIME_US: i64 = 365 * 24 * 60 * 60 * 1_000_000;
 /// The AAD label of a level 2 signing key sealed under a seal key.
 pub const SIGNER_AAD: &[u8] = b"fstp-level2-signer-v1";
 
+/// The HKDF label of the HMAC key of a keyed digest group (design
+/// sections 3.1 and 3.5, G24). The info is this label and the purpose
+/// code.
+///
+/// Interim reading of lane m3/login-m2http, pending Daniel: the runner
+/// holds every level 2 group as a hybrid group secret, sealed under the
+/// seal key and replaced by a new generation in each batch that affects
+/// it. So the `Lookup` group is such a group, and its HMAC key is derived
+/// from its secret. A batch that erases a login email then replaces the
+/// key with the group (design section 3.5, decision 27), and the old key
+/// dies with the old root.
+pub const KEYED_DIGEST_LABEL: &[u8] = b"fstp-keyed-digest-v1";
+
+/// The normalised form of a login email that the keyed index digests:
+/// ASCII lower case, as the in-memory backend reads it. Interim, pending
+/// Daniel (Q22): the design names a normalised address but no rule.
+pub fn normalise_email(email: &str) -> String {
+    email.to_ascii_lowercase()
+}
+
+/// The keyed login email index (design section 4.2, Q22): the account of
+/// each live login email by `HMAC-SHA-256(Lookup, normalised address)`,
+/// and the text that holds each address, sealed like every text.
+///
+/// Interim, pending Daniel: the index is held with the keystore, in its
+/// owner's memory, until the PostgreSQL keystore tables of lane W2e land.
+#[derive(Clone, Default)]
+struct LoginIndex {
+    /// The keyed digest group of purpose `Lookup`, once a login email
+    /// exists. Its subjects are the data keys of the login email texts.
+    lookup: Option<GroupId>,
+    /// The text group that new login emails join.
+    group: Option<GroupId>,
+    /// The text of each account's login email.
+    texts: BTreeMap<u128, [u8; 16]>,
+    /// The account of each keyed digest.
+    digests: BTreeMap<[u8; 32], u128>,
+}
+
+/// What [`ErasureRunner::set_login_email`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginEmailSet {
+    /// The address is now the account's login email.
+    Set,
+    /// The address is the login email of another account already.
+    Taken,
+}
+
+/// The HMAC key of the keyed digest group whose secret is `sk`.
+fn digest_key(sk: &HybridSecretKey, purpose: Purpose) -> Result<SealKey, CellError> {
+    let mut info = KEYED_DIGEST_LABEL.to_vec();
+    info.push(purpose.code());
+    let mut out = [0u8; 32];
+    let derived = fstp_crypto::kdf::hkdf_sha256(&[], &sk.to_bytes()[..], &info, &mut out);
+    let key = SealKey::from_bytes(out);
+    out = [0u8; 32];
+    let _ = out;
+    derived.map_err(|_| keys_err("keyed digest key"))?;
+    Ok(key)
+}
+
+/// The keyed digest of the normalised `address` under `key`.
+fn keyed_digest(key: &SealKey, address: &[u8]) -> [u8; 32] {
+    fstp_crypto::hmac_sha256(key.expose(), address)
+}
+
 /// The durable key state of one chain: what survives a crash.
 #[derive(Clone)]
 pub struct Keystore {
@@ -200,6 +270,8 @@ pub struct Keystore {
     pending_root: Option<RootRow>,
     /// Requests already joined, by text.
     requested: BTreeSet<[u8; 16]>,
+    /// The keyed login email index.
+    logins: LoginIndex,
 }
 
 impl std::fmt::Debug for Keystore {
@@ -221,6 +293,18 @@ impl Keystore {
     /// The custody receipt digest of each destroyed epoch.
     pub fn receipts(&self) -> &BTreeMap<u64, [u8; 32]> {
         &self.receipts
+    }
+
+    /// The keyed digests of the login email index, in order. They are
+    /// what an index table row would hold (design section 4.2).
+    pub fn login_digests(&self) -> Vec<[u8; 32]> {
+        self.logins.digests.keys().copied().collect()
+    }
+
+    /// The text that holds the login email of `account`, if any. An
+    /// account erasure names it in its `EraseTexts` (ADR-007).
+    pub fn login_text(&self, account: fstp_domain::id::AccountId) -> Option<[u8; 16]> {
+        self.logins.texts.get(&account.raw()).copied()
     }
 
     /// The epochs whose root this keystore still references.
@@ -518,6 +602,9 @@ struct Work {
     signers: BTreeMap<Purpose, CompositeSigningKey>,
     /// Step 3: the signing keys resealed under the new seal key.
     signer_rows: BTreeMap<Purpose, SignerRow>,
+    /// Step 2: the login email index under the new `Lookup` key, when
+    /// the batch erases a login email.
+    new_logins: Option<BTreeMap<[u8; 32], u128>>,
 }
 
 /// The erasure runner of one cell's App chain.
@@ -576,6 +663,7 @@ impl<C: Custody> ErasureRunner<C> {
                 retired: BTreeMap::new(),
                 pending_root: None,
                 requested: BTreeSet::new(),
+                logins: LoginIndex::default(),
             },
             chain: ChainState::genesis(Epoch(0)),
             work: Work::new(SealKey::generate().map_err(CellError::Custody)?),
@@ -904,7 +992,14 @@ impl<C: Custody> ErasureRunner<C> {
             .map_err(|_| keys_err("key admission"))?;
         self.chain = chain;
         self.store.keys.insert(dek, (g, generation, sealed));
-        self.store.texts.insert(id, TextRow { dek, blob });
+        self.store.texts.insert(
+            id,
+            TextRow {
+                dek,
+                blob,
+                sealed_at: generation,
+            },
+        );
         Ok(())
     }
 
@@ -936,7 +1031,201 @@ impl<C: Custody> ErasureRunner<C> {
             .ok_or(OpenRefusal::Keys)?;
         let ctx = ctx_for(self.store.cell, *g, *generation, id);
         let dk = envelope::open_key(sk, sealed, &ctx).map_err(|_| OpenRefusal::Keys)?;
-        envelope::open_blob(&dk, &ctx, &row.blob).map_err(|_| OpenRefusal::Keys)
+        let body = ctx_for(self.store.cell, *g, row.sealed_at, id);
+        envelope::open_blob(&dk, &body, &row.blob).map_err(|_| OpenRefusal::Keys)
+    }
+
+    /// The HMAC key of the `Lookup` group at its committed generation, if
+    /// the group exists.
+    fn lookup_key(&self) -> Result<Option<SealKey>, CellError> {
+        let Some(g) = self.store.logins.lookup else {
+            return Ok(None);
+        };
+        let generation = self
+            .store
+            .chain_state
+            .generation(g)
+            .ok_or(keys_err("unknown lookup group"))?;
+        let sk = self
+            .work
+            .secrets
+            .get(&(g, generation))
+            .ok_or(keys_err("lookup group secret not open"))?;
+        digest_key(sk, Purpose::Lookup).map(Some)
+    }
+
+    /// Creates the `Lookup` keyed digest group at generation 1 (design
+    /// section 3.1), sealed under the current seal key.
+    fn add_lookup_group(&mut self) -> Result<GroupId, CellError> {
+        let g = GroupId(fstp_crypto::random_array::<16>().map_err(|_| keys_err("group id"))?);
+        let mut chain = self.chain.clone();
+        chain
+            .add_digest_group(g, &[])
+            .map_err(|_| keys_err("lookup group admission"))?;
+        let sk = hybrid_kem::generate().map_err(|_| keys_err("group key"))?;
+        let epoch = self.store.chain_state.epoch().0;
+        let row = seal_group(&self.work.current, self.store.cell, g, 1, epoch, &sk)?;
+        self.store
+            .chain_state
+            .add_digest_group(g, &[])
+            .map_err(|_| keys_err("lookup group admission"))?;
+        self.chain = chain;
+        self.store.groups.insert((g, 1), row);
+        self.work.secrets.insert((g, 1), sk);
+        self.store.logins.lookup = Some(g);
+        Ok(g)
+    }
+
+    /// Stores `text` as text `id` in the login email group, and opens a
+    /// new group when there is none or it is full.
+    fn put_login_text(&mut self, id: [u8; 16], text: &[u8]) -> Result<(), CellError> {
+        if let Some(g) = self.store.logins.group
+            && self.put_text(g.0, id, text).is_ok()
+        {
+            return Ok(());
+        }
+        let g = fstp_crypto::random_array::<16>().map_err(|_| keys_err("group id"))?;
+        self.add_group(g)?;
+        self.store.logins.group = Some(GroupId(g));
+        self.put_text(g, id, text)
+    }
+
+    /// Makes `email` the login email of `account` (design section 4.2,
+    /// Q22, decision 27): the normalised address is sealed as a text of
+    /// its own, and its keyed digest under the `Lookup` key maps to the
+    /// account. The text's data key is a subject of the `Lookup` group,
+    /// so a batch that erases it replaces the key (design section 3.5).
+    /// The address is never kept in clear.
+    ///
+    /// An address that is another account's login email already is
+    /// [`LoginEmailSet::Taken`], and nothing changes. The same address
+    /// for the same account changes nothing either.
+    ///
+    /// # Errors
+    ///
+    /// An account that has another login email (no change of address is
+    /// built), a batch that holds a login group frozen, or a failed seal.
+    pub fn set_login_email(
+        &mut self,
+        account: fstp_domain::id::AccountId,
+        email: &str,
+    ) -> Result<LoginEmailSet, CellError> {
+        let address = normalise_email(email);
+        // Before a batch commits, its groups take no key and no new group
+        // is added, so nothing here is half applied. The caller retries.
+        if matches!(
+            self.chain.phase(),
+            plan::Phase::Planned | plan::Phase::Resealed
+        ) {
+            return Err(keys_err("a batch is resealing the keystore"));
+        }
+        let lookup = match self.store.logins.lookup {
+            Some(g) => g,
+            None => self.add_lookup_group()?,
+        };
+        let key = self.lookup_key()?.ok_or(keys_err("no lookup key"))?;
+        let digest = keyed_digest(&key, address.as_bytes());
+        match self.store.logins.digests.get(&digest) {
+            Some(a) if *a == account.raw() => return Ok(LoginEmailSet::Set),
+            Some(_) => return Ok(LoginEmailSet::Taken),
+            None => {}
+        }
+        if self.store.logins.texts.contains_key(&account.raw()) {
+            return Err(keys_err("the account has a login email"));
+        }
+        let id = fstp_crypto::random_array::<16>().map_err(|_| keys_err("text id"))?;
+        self.put_login_text(id, address.as_bytes())?;
+        let mut chain = self.chain.clone();
+        chain
+            .add_digest_subject(lookup, DekId(id))
+            .map_err(|_| keys_err("lookup subject"))?;
+        self.store
+            .chain_state
+            .add_digest_subject(lookup, DekId(id))
+            .map_err(|_| keys_err("lookup subject"))?;
+        self.chain = chain;
+        self.store.logins.texts.insert(account.raw(), id);
+        self.store.logins.digests.insert(digest, account.raw());
+        Ok(LoginEmailSet::Set)
+    }
+
+    /// The account whose login email is `email`, through the keyed index.
+    ///
+    /// # Errors
+    ///
+    /// A key chain that does not open.
+    pub fn login_account(
+        &self,
+        email: &str,
+    ) -> Result<Option<fstp_domain::id::AccountId>, CellError> {
+        let Some(key) = self.lookup_key()? else {
+            return Ok(None);
+        };
+        let digest = keyed_digest(&key, normalise_email(email).as_bytes());
+        Ok(self
+            .store
+            .logins
+            .digests
+            .get(&digest)
+            .map(|a| fstp_domain::id::AccountId::from_raw(*a)))
+    }
+
+    /// The login email of `account`, opened from its text, or `None` when
+    /// the account has none or its text is under erasure.
+    ///
+    /// # Errors
+    ///
+    /// A key chain that does not open.
+    pub fn login_email(
+        &self,
+        state: &CellState,
+        account: fstp_domain::id::AccountId,
+    ) -> Result<Option<String>, CellError> {
+        let Some(id) = self.store.logins.texts.get(&account.raw()) else {
+            return Ok(None);
+        };
+        match self.open_text(state, *id) {
+            Ok(t) => String::from_utf8(t.to_vec())
+                .map(Some)
+                .map_err(|_| keys_err("login email text")),
+            Err(OpenRefusal::Erased | OpenRefusal::Unknown) => Ok(None),
+            Err(OpenRefusal::Keys) => Err(keys_err("login email open")),
+        }
+    }
+
+    /// Step 2 of a batch that erases a login email (design section 3.5,
+    /// G24): the keyed digest of every live login email under the new
+    /// `Lookup` generation `sk`. Erased addresses get no digest.
+    fn recompute_logins(
+        &self,
+        batch: &BTreeSet<DekId>,
+        sk: &HybridSecretKey,
+    ) -> Result<BTreeMap<[u8; 32], u128>, CellError> {
+        let key = digest_key(sk, Purpose::Lookup)?;
+        let mut out = BTreeMap::new();
+        for (account, id) in &self.store.logins.texts {
+            if batch.contains(&DekId(*id)) {
+                continue;
+            }
+            let row = self.store.texts.get(id).ok_or(keys_err("login text"))?;
+            let (g, generation, sealed) = self
+                .store
+                .keys
+                .get(&row.dek)
+                .ok_or(keys_err("login text key"))?;
+            let gsk = self
+                .work
+                .secrets
+                .get(&(*g, *generation))
+                .ok_or(keys_err("group secret not open"))?;
+            let ctx = ctx_for(self.store.cell, *g, *generation, *id);
+            let dk = envelope::open_key(gsk, sealed, &ctx).map_err(|_| keys_err("login key"))?;
+            let body = ctx_for(self.store.cell, *g, row.sealed_at, *id);
+            let address =
+                envelope::open_blob(&dk, &body, &row.blob).map_err(|_| keys_err("login text"))?;
+            out.insert(keyed_digest(&key, &address), *account);
+        }
+        Ok(out)
     }
 
     /// Whether the runner has work: a request not yet joined, or a batch
@@ -1078,7 +1367,18 @@ impl<C: Custody> ErasureRunner<C> {
             }
             plan::apply(&mut chain, &step).map_err(|_| keys_err("planner step"))?;
         }
+        // G24, decision 27: a batch that erases a login email affects the
+        // `Lookup` group, which takes a new generation and so a new key.
+        // Every live login email is digested again under it.
+        let new_logins = match self.store.logins.lookup {
+            Some(lookup) => match new_groups.iter().find(|((g, _), _)| *g == lookup) {
+                Some((_, sk)) => Some(self.recompute_logins(&self.chain.running_batch(), sk)?),
+                None => None,
+            },
+            None => None,
+        };
         self.chain = chain;
+        self.work.new_logins = new_logins;
         self.work.new_groups = new_groups;
         self.work.resealed = resealed;
         Ok(ErasureEvent::GroupsRotated)
@@ -1187,8 +1487,18 @@ impl<C: Custody> ErasureRunner<C> {
         for (dek, v) in std::mem::take(&mut self.work.resealed) {
             store.keys.insert(dek, v);
         }
-        for dek in chain.running_batch() {
-            store.keys.remove(&dek);
+        let batch = chain.running_batch();
+        for dek in &batch {
+            store.keys.remove(dek);
+        }
+        // The erased login emails leave the index, and the live ones take
+        // their digests under the new `Lookup` key (G24).
+        store
+            .logins
+            .texts
+            .retain(|_, id| !batch.contains(&DekId(*id)));
+        if let Some(digests) = self.work.new_logins.take() {
+            store.logins.digests = digests;
         }
         store.pending_root = None;
         store.chain_state = chain.clone();
@@ -1318,6 +1628,7 @@ impl Work {
             snapshot: None,
             signers: BTreeMap::new(),
             signer_rows: BTreeMap::new(),
+            new_logins: None,
         }
     }
 }
@@ -1365,6 +1676,19 @@ enum Request {
         purpose: Purpose,
         reply: ReplyTx<Result<Vec<u8>, CellError>>,
     },
+    SetLoginEmail {
+        account: fstp_domain::id::AccountId,
+        email: String,
+        reply: ReplyTx<Result<LoginEmailSet, CellError>>,
+    },
+    LoginAccount {
+        email: String,
+        reply: ReplyTx<Result<Option<fstp_domain::id::AccountId>, CellError>>,
+    },
+    LoginEmail {
+        account: fstp_domain::id::AccountId,
+        reply: ReplyTx<Result<Option<String>, CellError>>,
+    },
 }
 
 impl Request {
@@ -1378,6 +1702,9 @@ impl Request {
             Request::OpenText { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
             Request::Signer { reply, .. } => reply.send(Err(gone)),
             Request::RotateSigner { reply, .. } => reply.send(Err(gone)),
+            Request::SetLoginEmail { reply, .. } => reply.send(Err(gone)),
+            Request::LoginAccount { reply, .. } => reply.send(Err(gone)),
+            Request::LoginEmail { reply, .. } => reply.send(Err(gone)),
             // Dropping the slot answers `None`.
             Request::Keystore { reply } => drop(reply),
         }
@@ -1492,6 +1819,55 @@ impl ErasureHandle {
     /// The runner's refusal, or [`CellError::Keys`] once the task ended.
     pub async fn rotate_signer(&self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
         self.ask(|reply| Request::RotateSigner { purpose, reply })
+            .await
+            .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// Makes `email` the login email of `account`
+    /// ([`ErasureRunner::set_login_email`]).
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn set_login_email(
+        &self,
+        account: fstp_domain::id::AccountId,
+        email: String,
+    ) -> Result<LoginEmailSet, CellError> {
+        self.ask(|reply| Request::SetLoginEmail {
+            account,
+            email,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// The account whose login email is `email`
+    /// ([`ErasureRunner::login_account`]).
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn login_account(
+        &self,
+        email: String,
+    ) -> Result<Option<fstp_domain::id::AccountId>, CellError> {
+        self.ask(|reply| Request::LoginAccount { email, reply })
+            .await
+            .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// The login email of `account` ([`ErasureRunner::login_email`]).
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn login_email(
+        &self,
+        account: fstp_domain::id::AccountId,
+    ) -> Result<Option<String>, CellError> {
+        self.ask(|reply| Request::LoginEmail { account, reply })
             .await
             .unwrap_or(Err(keys_err("the erasure task is not running")))
     }
@@ -1621,6 +1997,16 @@ fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             );
         }
         Request::RotateSigner { purpose, reply } => reply.send(runner.rotate_signer(purpose)),
+        Request::SetLoginEmail {
+            account,
+            email,
+            reply,
+        } => reply.send(runner.set_login_email(account, &email)),
+        Request::LoginAccount { email, reply } => reply.send(runner.login_account(&email)),
+        Request::LoginEmail { account, reply } => {
+            let state = runner.engine.state();
+            reply.send(runner.login_email(&state, account));
+        }
     }
 }
 

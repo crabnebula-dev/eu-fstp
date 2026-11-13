@@ -168,6 +168,11 @@ const VERSION: PolicyVersionId = PolicyVersionId::from_raw(1);
 pub const BUILDER: AccountId = AccountId::from_raw(5);
 /// The binding of the builder.
 const BUILDER_BINDING: BindingId = BindingId::from_raw(1);
+/// The second tenant admin who approves the auth machines' programme
+/// ([`Cycle::machine_programme`]). Outside every machine's universe.
+pub const MACHINE_APPROVER: AccountId = AccountId::from_raw(8_001);
+/// The programme manager who builds the auth machines' programme.
+pub const MACHINE_BUILDER: AccountId = AccountId::from_raw(8_002);
 /// The binding of the programme manager who publishes.
 const PM_BINDING: BindingId = BindingId::from_raw(3);
 /// The binding of the call drafter.
@@ -301,6 +306,60 @@ impl<'w> Cycle<'w> {
             pending: memory.pending,
             current: memory.current,
         }
+    }
+
+    /// A cycle over the client `client` of the auth machines (lane
+    /// m3/login-m2http), which keeps its passkeys and sessions. Its first
+    /// admin session is the client's own.
+    pub fn with_client(client: AuthClient<'w>) -> Cycle<'w> {
+        let admin = client.admin_session();
+        let mut c = Cycle::new(client.cell());
+        c.client = client;
+        c.admin = admin;
+        c
+    }
+
+    /// The client back, with what the cycle enrolled.
+    pub fn into_client(self) -> AuthClient<'w> {
+        self.client
+    }
+
+    /// The active programme P1 of the auth machines (lane m3/login-m2http,
+    /// `http::ROLE_GRANT_SEAM`): the creator path with
+    /// [`MACHINE_APPROVER`] as the approving second tenant admin and
+    /// [`MACHINE_BUILDER`] as the builder, then the first admin ends the
+    /// approver's tenant admin role with a step-up. The machines' own
+    /// accounts take no part, and the cell keeps one tenant admin, as the
+    /// sole-admin variants of I-79 need. The verifications of the first
+    /// admin, the approver and the builder are seeded (design section
+    /// 6.9).
+    ///
+    /// # Errors
+    ///
+    /// The first refused step.
+    pub fn machine_programme(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "machine-programme";
+        if self.active {
+            return Ok(());
+        }
+        // A fresh session of the first admin: the cell clock may have
+        // moved past the idle lifetime (P-72) of the client's last one.
+        self.login()?;
+        let admin = self
+            .admin
+            .clone()
+            .ok_or(NotImplemented::new(NOT_LOGGED_IN))?;
+        self.creator_path(&admin, MACHINE_APPROVER, MACHINE_BUILDER, &[])?;
+        let approver = self.account(STEP, MACHINE_APPROVER)?;
+        self.command(
+            STEP,
+            "EndTenantAdmin of the approver",
+            &admin,
+            CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::EndTenantAdmin {
+                account: approver,
+            }),
+            true,
+        )
     }
 
     /// What the cycle keeps for the next script on its cell.
@@ -493,19 +552,72 @@ impl<'w> Cycle<'w> {
             .admin
             .clone()
             .ok_or(NotImplemented::new(NOT_LOGGED_IN))?;
+        let (approver, mut staff) =
+            self.creator_path(&admin, ADMIN_2, BUILDER, &[STAFF_PM, STAFF_DRAFTER])?;
+        let drafter = staff
+            .pop()
+            .ok_or_else(|| Self::refused(STEP, "the staff", None))?;
+        let manager = staff
+            .pop()
+            .ok_or_else(|| Self::refused(STEP, "the staff", None))?;
+        let pm = self.account(STEP, STAFF_PM)?;
+        self.command(
+            STEP,
+            "the programme manager's GrantRole",
+            &admin,
+            grant(PM_BINDING, pm, Role::ProgrammeManager, self.now()),
+            true,
+        )?;
+        let d = self.account(STEP, STAFF_DRAFTER)?;
+        self.command(
+            STEP,
+            "the call drafter's GrantRole",
+            &admin,
+            grant(DRAFTER_BINDING, d, Role::CallDrafter, self.now()),
+            true,
+        )?;
+        self.approver = Some(approver);
+        self.manager = Some(manager);
+        self.drafter = Some(drafter);
+        Ok(())
+    }
+
+    /// The creator path to an active programme P1 (M4 design section 3.4):
+    /// `approver` enrols and becomes the second tenant admin, `builder`
+    /// and each of `staff` enrol, and the first admin, the approver, the
+    /// builder and the staff have their verifications seeded. The first
+    /// admin opens the draft and grants the builder its programme manager
+    /// role. The builder builds the draft and requests activation, and the
+    /// approver, who built nothing, approves it (I-66, I-67, D2e). Gives
+    /// the approver's session and the staff sessions, in order.
+    fn creator_path(
+        &mut self,
+        admin: &Cookie,
+        approver_model: AccountId,
+        builder_model: AccountId,
+        staff_models: &[AccountId],
+    ) -> Result<(Cookie, Vec<Cookie>), NotImplemented> {
+        const STEP: &str = "create-programme";
+        let admin = admin.clone();
         // The second tenant admin, who approves, and the staff.
-        let approver = self.enrol_and_login(STEP, ADMIN_2)?;
+        let approver = self.enrol_and_login(STEP, approver_model)?;
         if !self.client.roster(
             &admin,
-            crate::mc::auth_model::RosterChange::GrantAdmin { account: ADMIN_2 },
+            crate::mc::auth_model::RosterChange::GrantAdmin {
+                account: approver_model,
+            },
         )? {
             return Err(Self::refused(STEP, "GrantTenantAdmin", None));
         }
-        let builder = self.enrol_and_login(STEP, BUILDER)?;
-        let manager = self.enrol_and_login(STEP, STAFF_PM)?;
-        let drafter = self.enrol_and_login(STEP, STAFF_DRAFTER)?;
+        let builder = self.enrol_and_login(STEP, builder_model)?;
+        let mut staff = Vec::with_capacity(staff_models.len());
+        for who in staff_models {
+            staff.push(self.enrol_and_login(STEP, *who)?);
+        }
         // Design section 6.9: the verifications SoD-09 and I-67 read.
-        for who in [FIRST_ADMIN, ADMIN_2, BUILDER, STAFF_PM, STAFF_DRAFTER] {
+        let mut verified = vec![FIRST_ADMIN, approver_model, builder_model];
+        verified.extend_from_slice(staff_models);
+        for who in verified {
             self.verify(STEP, who)?;
         }
         // The draft, opened by the first admin (R-PG-02, D1).
@@ -530,7 +642,7 @@ impl<'w> Cycle<'w> {
             }),
             true,
         )?;
-        let b = self.account(STEP, BUILDER)?;
+        let b = self.account(STEP, builder_model)?;
         self.command(
             STEP,
             "the builder's GrantRole",
@@ -591,26 +703,7 @@ impl<'w> Cycle<'w> {
             true,
         )?;
         self.active = true;
-        let pm = self.account(STEP, STAFF_PM)?;
-        self.command(
-            STEP,
-            "the programme manager's GrantRole",
-            &admin,
-            grant(PM_BINDING, pm, Role::ProgrammeManager, self.now()),
-            true,
-        )?;
-        let d = self.account(STEP, STAFF_DRAFTER)?;
-        self.command(
-            STEP,
-            "the call drafter's GrantRole",
-            &admin,
-            grant(DRAFTER_BINDING, d, Role::CallDrafter, self.now()),
-            true,
-        )?;
-        self.approver = Some(approver);
-        self.manager = Some(manager);
-        self.drafter = Some(drafter);
-        Ok(())
+        Ok((approver, staff))
     }
 
     /// The head revision of the draft of P1.

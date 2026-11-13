@@ -829,8 +829,11 @@ fn system_only(c: &CellCommand) -> bool {
 /// - `ProveRecoveryEmail` (design section 8.5): its proof is the email
 ///   token.
 ///
-/// ADR-008 "Unset lifetimes" gives the recovery tokens no lifetime, so no
-/// route verifies them yet.
+/// The forms here still refuse, since they take no token. Lane
+/// m3/login-m2http added the proven forms [`admit_recovery_email`] and
+/// [`admit_proven_recovery_completion`], which take the email proof or
+/// the one-time enrolment token with its row, under the interim
+/// lifetimes of [`crate::lifetimes`].
 pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate admits no GrantStepUp from a StepUp alone, and no CompleteRecovery or ProveRecoveryEmail (design sections 8.4 and 8.5, lane W3a). A step-up is admitted only with its assertion, which admit_verified_stepup verifies through fstp_auth::stepup::verify_step_up. The recovery steps need the enrolment or email token, which has no lifetime (ADR-008 \"Unset lifetimes\")";
 
 /// Whether only an auth route issues `c`, after it verified what the
@@ -1312,6 +1315,175 @@ pub fn admit_recovery_completion(
     // I-79: nothing binds the caller to the case, so the completion fails
     // closed.
     Err(RouteDeny::Gate(Deny::NotImplemented(ROUTE_ADMISSION_SEAM)))
+}
+
+/// The digest a recovery token of case `case` is stored under:
+/// `SHA-256(case || token)`. A token of one case never proves another.
+pub fn recovery_token_digest(case: [u8; 16], token: &[u8; 32]) -> [u8; 32] {
+    let mut m = Vec::with_capacity(48);
+    m.extend_from_slice(&case);
+    m.extend_from_slice(token);
+    fstp_crypto::sha256(&m)
+}
+
+/// A recovery token as its route holds it: the token the caller sent,
+/// and the live operational row (`auth.token`) the route read for its
+/// digest. Lane m3/login-m2http, Interim, pending Daniel: the email proof
+/// token goes to the holder's login email and lives as long as its case,
+/// and the one-time enrolment token is given to the caller who proved the
+/// email (ADR-008 "Unset lifetimes", [`crate::lifetimes`]).
+#[derive(Clone, Copy)]
+pub struct RecoveryToken {
+    /// The token the caller sent.
+    pub token: [u8; 32],
+    /// The digest its row is stored under.
+    pub row_digest: [u8; 32],
+    /// The account its row names.
+    pub row_account: AccountId,
+    /// When the row's token was issued.
+    pub issued_at: Timestamp,
+}
+
+impl std::fmt::Debug for RecoveryToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A credential: the debug form never shows it.
+        f.write_str("RecoveryToken(..)")
+    }
+}
+
+/// The holder of open case `case`, once `proof` proves the case: its
+/// token digests to its row's digest under the case, in constant time,
+/// the row names the holder, and the token is at most `lifetime_us` old
+/// at `now`.
+fn proven_holder(
+    s: &CellState,
+    case: [u8; 16],
+    proof: &RecoveryToken,
+    lifetime_us: i64,
+    now: Timestamp,
+) -> Result<AccountId, RouteDeny> {
+    let c = s.auth().recovery(case).ok_or(RouteDeny::UnknownCase)?;
+    if c.completed.is_some() {
+        return Err(RouteDeny::UnknownCase);
+    }
+    let digest = recovery_token_digest(case, &proof.token);
+    let fresh = now
+        .micros()
+        .checked_sub(proof.issued_at.micros())
+        .is_some_and(|age| (0..=lifetime_us).contains(&age));
+    if !fstp_crypto::constant_time_eq(&digest, &proof.row_digest)
+        || proof.row_account != c.account
+        || !fresh
+    {
+        return Err(RouteDeny::Enrol(
+            fstp_auth::ceremony::EnrolDeny::InvitationToken,
+        ));
+    }
+    Ok(c.account)
+}
+
+/// `POST /auth/recovery/{case}/email` (public, design sections 8.5 and
+/// 8.7): admits `ProveRecoveryEmail` of case `case` once `proof`, the
+/// email proof token sent to the holder's login email, proves the case
+/// ([`proven_holder`], within `crate::lifetimes::RECOVERY_CASE_US`).
+///
+/// No session acts, so the principal is [`Principal::Ceremony`] for the
+/// holder. `decide` refuses a case already proven. This is the proven
+/// form of the step that [`ROUTE_ADMISSION_SEAM`] names: the route took
+/// the token's row, and the gate checks the token against it, as a magic
+/// link is checked (`fstp_auth::ceremony::admit_magic_link`).
+///
+/// # Errors
+///
+/// An unknown or completed case, and a token that does not prove it.
+pub fn admit_recovery_email(
+    s: &CellState,
+    case: [u8; 16],
+    proof: &RecoveryToken,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    let holder = proven_holder(s, case, proof, crate::lifetimes::RECOVERY_CASE_US, now)?;
+    Ok(Admitted {
+        action: Action::Command(CellCommand::Auth(
+            fstp_auth::AuthCommand::ProveRecoveryEmail { case },
+        )),
+        principal: Principal::Ceremony(holder),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none(),
+    })
+}
+
+/// `POST /auth/recovery/{case}/complete` (ceremony, I-79, design sections
+/// 8.5 and 8.7): admits `CompleteRecovery` of case `case` with the new
+/// passkey that `reg` registers, once `proof`, the one-time enrolment
+/// token of the case, binds the caller to it ([`proven_holder`], within
+/// `crate::lifetimes::RECOVERY_ENROLMENT_TOKEN_US`).
+///
+/// It then runs every check of [`admit_recovery_completion`]: the path
+/// recomputed from the holdings at `now` and the mode `mode` must be
+/// completed by the case's evidence, with the verified operator ticket
+/// `ticket` for `OperatorProcess`, and the new passkey passes the UV rule
+/// of that path with a fresh credential id. The admission carries `rows`,
+/// the live sessions of the holder that the completion ends, the mode,
+/// the ticket and the verified credential. The command runs under
+/// `command_id`.
+///
+/// # Errors
+///
+/// The first check that fails.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the case, the proof, the registration, the session rows, the mode, the ticket, the command id and the instant"
+)]
+pub fn admit_proven_recovery_completion(
+    s: &CellState,
+    case: [u8; 16],
+    proof: &RecoveryToken,
+    reg: &fstp_auth::ceremony::Registration<'_>,
+    rows: SessionRows,
+    mode: fstp_auth::recovery::Deployment,
+    ticket: Option<fstp_auth::recovery::VerifiedTicket>,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    let holder = proven_holder(
+        s,
+        case,
+        proof,
+        crate::lifetimes::RECOVERY_ENROLMENT_TOKEN_US,
+        now,
+    )?;
+    let c = crate::decide::recovery_case(s, case, ticket).map_err(|_| RouteDeny::UnknownCase)?;
+    let roster = RosterView::from_roster(s.engine().core.roster(), now);
+    let tenant = TenantView {
+        admins: s.tenant().admins(),
+    };
+    fstp_auth::recovery::decide(&c, &roster, &tenant, mode).map_err(RouteDeny::Recovery)?;
+    let known = |id: &[u8]| s.auth().is_registered(id);
+    let cred = fstp_auth::recovery::new_passkey(reg, &c, &roster, &tenant, mode, &known)
+        .map_err(RouteDeny::Recovery)?;
+    let command = CellCommand::Auth(fstp_auth::AuthCommand::CompleteRecovery {
+        case,
+        credential: cred.id.clone(),
+    });
+    let mut inputs = RouteInputs::none()
+        .with_sessions(rows)
+        .with_mode(mode)
+        .with_credential(cred);
+    if let Some(t) = ticket {
+        inputs = inputs.with_ticket(t);
+    }
+    Ok(Admitted {
+        action: Action::Command(command),
+        principal: Principal::Ceremony(holder),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs,
+    })
 }
 
 /// Admits a command of a system task, which holds no session (design

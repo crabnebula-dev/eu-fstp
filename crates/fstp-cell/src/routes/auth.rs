@@ -17,11 +17,13 @@
 //! 501 after every check that applies before them:
 //! - Adding a passkey: the step-up digest of `AddPasskey` names a
 //!   credential id that the options call cannot know yet.
-//! - The recovery request and its email proof, and the recovery
-//!   completion: their routes are not written yet. Self-registration is
-//!   built (lane F-CYCLE3) except its form without a passkey. Int3 added
-//!   `admit_recovery_request` and `admit_recovery_completion`, which
-//!   these routes are to call.
+//! - Self-registration without a passkey (ADR-008 open point).
+//!
+//! Lane m3/login-m2http built the keyed login email index (design section
+//! 4.2): a self-registration and an invitation that names an address make
+//! it the account's login email, and the magic-link and recovery routes
+//! look accounts up by it. The recovery routes run the email proof, the
+//! operator ticket and the completion (section "Recovery" below).
 
 use fstp_auth::ceremony::{
     InvitationProof, MagicLink, Registration, admit_magic_link, may_issue_magic_link,
@@ -196,6 +198,18 @@ async fn open_session<B: Backend>(
     method: Method,
     credential: Option<Vec<u8>>,
 ) -> Reply {
+    let now = ctx.backend.now();
+    open_session_at(ctx, account, method, credential, now).await
+}
+
+/// [`open_session`] with the start instant `started`.
+async fn open_session_at<B: Backend>(
+    ctx: &Ctx<B>,
+    account: AccountId,
+    method: Method,
+    credential: Option<Vec<u8>>,
+    started: Timestamp,
+) -> Reply {
     let token = match random::<32>() {
         Ok(t) => t,
         Err(r) => return r,
@@ -204,13 +218,12 @@ async fn open_session<B: Backend>(
         Ok(t) => t,
         Err(r) => return r,
     };
-    let now = ctx.backend.now();
     let row = SessionRow {
         id,
         account,
         method,
-        started: now,
-        last_used: now,
+        started,
+        last_used: started,
         credential,
     };
     if let Err(f) = ctx
@@ -471,17 +484,6 @@ fn decode_token(bytes: &[u8]) -> Result<[u8; 32], BodyRefusal> {
     body::hex_member::<32>(&o, "token")
 }
 
-/// A ceremony or recovery step whose record the sources cannot write yet
-/// (module documentation). The body must still be one canonical JSON
-/// object, then the step fails closed with 501. No body schema is fixed
-/// for these steps yet.
-pub(crate) fn not_built_ceremony(req: &Request) -> Reply {
-    match body::object(&req.body, usize::MAX) {
-        Ok(_) => Reply::not_built(),
-        Err(r) => bad_body(r),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The invitation ceremony (design section 8.3 item 1, G10, Q35).
 
@@ -723,8 +725,23 @@ pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request)
         Err(r) => return r,
     };
     let now = ctx.backend.now();
+    let invited = s
+        .auth()
+        .invitation_by_digest(&digest)
+        .map(|(_, i)| i.account);
     match admit_invitation_enrolment(&s, &proof, &registration, command_id, now) {
-        Ok(admitted) => run(ctx, admitted).await,
+        Ok(admitted) => {
+            let reply = run(ctx, admitted).await;
+            // The address the invitation named becomes the login email
+            // through the keyed index (design section 4.2). A fault there
+            // leaves the enrolled account without one.
+            if reply.is_success()
+                && let Some(account) = invited
+            {
+                let _ = ctx.backend.bind_invitation_email(digest, account).await;
+            }
+            reply
+        }
         Err(RouteDeny::Gate(d)) => denied(d),
         Err(_) => login_refused(Rule::Adr008),
     }
@@ -737,10 +754,11 @@ pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request)
 //
 // 1. `POST /auth/signup/options {email}` draws the new account id and a
 //    single-use proof token, stores the token's digest with the account
-//    (`auth.token`, kind `SignupProof`), and sends the token to the address
-//    through the cell's proof mail port (`crate::mail`). The reply is 202
-//    and the same for every address: the cell keeps no login email yet, so
-//    it never tells which addresses hold accounts.
+//    (`auth.token`, kind `SignupProof`), keeps the address for the
+//    account (`Backend::note_signup_email`), and sends the token to the
+//    address through the cell's proof mail port (`crate::mail`). The reply
+//    is 202 and the same for every address, so it never tells which
+//    addresses hold accounts.
 // 2. `POST /auth/signup/options {token}` answers `{challenge_id,
 //    public_key}` with the creation options of a registration challenge
 //    bound to the token's digest. It never looks the token up, so the
@@ -748,14 +766,14 @@ pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request)
 // 3. `POST /auth/signup {attestation_object, challenge_id,
 //    client_data_json, token}` takes the challenge and then the token,
 //    each once, and enrols the account and its first passkey through
-//    `fstp_cell_core::gate::admit_self_registration`. It opens a passkey
-//    session for the new account.
+//    `fstp_cell_core::gate::admit_self_registration`. The proven address
+//    becomes the login email through the keyed index (lane
+//    m3/login-m2http). It opens a passkey session for the new account.
 //
 // Interim, pending Daniel (ADR-008 open point "Self-registration without
 // a passkey"): the passkey members are optional at the API, so it neither
-// requires nor excludes a passkey. A body with the token alone fails
-// closed with 501, since the cell keeps no login email to sign such an
-// account in.
+// requires nor excludes a passkey. A body with the token alone still
+// fails closed with 501 until Daniel answers that point.
 
 /// The one reply of `POST /auth/signup/options {email}`.
 fn signup_sent() -> Reply {
@@ -824,7 +842,11 @@ async fn send_signup_proof<B: Backend>(ctx: &Ctx<B>, email: String) -> Reply {
         account: AccountId::from_raw(u128::from_be_bytes(raw)),
         issued_at: ctx.backend.now(),
     };
+    let account = row.account;
     if let Err(f) = ctx.backend.put_token(row).await {
+        return unavailable(f);
+    }
+    if let Err(f) = ctx.backend.note_signup_email(account, email.clone()).await {
         return unavailable(f);
     }
     if let Err(f) = ctx.backend.send_signup_proof(email, token).await {
@@ -967,7 +989,14 @@ pub(crate) async fn signup<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
     match ctx.backend.execute(admitted).await {
         Err(f) => unavailable(f),
         Ok(Err(e)) => exec_failed(&e),
-        Ok(Ok(_)) => open_session(ctx, proof.account, Method::Passkey, Some(credential)).await,
+        Ok(Ok(_)) => {
+            // The proven address becomes the login email through the
+            // keyed index (design section 4.2). An address that is another
+            // account's login email already stays with that account, and
+            // this one signs in by passkey only. Interim, pending Daniel.
+            let _ = ctx.backend.bind_signup_email(proof.account).await;
+            open_session(ctx, proof.account, Method::Passkey, Some(credential)).await
+        }
     }
 }
 
@@ -1473,8 +1502,466 @@ pub(crate) async fn approve_recovery<B: Backend>(
     )
     .await
     {
-        Ok((_, admitted)) => run(ctx, admitted).await,
+        Ok((_, admitted)) => {
+            let reply = run(ctx, admitted).await;
+            // The holder receives a fresh enrolment token (section
+            // "Recovery" below).
+            if reply.is_success() {
+                send_enrolment(ctx, case).await;
+            }
+            reply
+        }
         Err(reply) => reply,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Recovery (design section 8.5, I-79, lane m3/login-m2http).
+//
+// Body forms, Interim, pending Daniel (design section 8.7 fixes the routes
+// but no bodies). They follow the contract of `web/src/auth/pages/recovery.ts`:
+//
+// 1. `POST /auth/recovery {email}` answers 202 and the same for every
+//    address. For an address of the keyed login email index, the cell
+//    draws a case reference, commits `RequestRecovery`, stores the email
+//    proof token's digest `SHA-256(case || token)` (`auth.token`, kind
+//    `RecoveryEmail`, the case lifetime) and sends the case and the token
+//    to the login email through the proof mail port (`crate::mail`).
+// 2. `POST /auth/recovery/{case}/email {token}` takes the token once and
+//    commits `ProveRecoveryEmail` (`gate::admit_recovery_email`). It
+//    answers `{path}`, the path recomputed at that instant, and for
+//    `EmailThenPasskey` also `enrolment`: a one-time enrolment token of
+//    the case, stored as `SHA-256(case || enrolment)` (kind
+//    `RecoveryEnrolment`, `fstp_cell_core::lifetimes::RECOVERY_ENROLMENT_TOKEN_US`).
+// 3. An approval (`.../approve`) or an accepted operator ticket sends a
+//    fresh enrolment token of the case to the holder's login email
+//    (`ProofKind::RecoveryEnrolment`). Only the holder of the email sees
+//    an enrolment token, never an approving admin or a staff member.
+// 4. `POST /auth/recovery/{case}/complete` takes one of three bodies:
+//    - `{ticket}`: an operator ticket of the `OperatorProcess` path, as
+//      `fstp_auth::codec::encode_operator_ticket` writes it, in hex. It
+//      must verify under the pinned control-plane key, name this case
+//      and carry two staff approvals (`fstp_auth::recovery::accept_ticket`).
+//      The case must be open with its email proven and hold no ticket.
+//      The cell keeps it for the completion. No record form for a ticket
+//      exists, so none is written; the completion's record shows the
+//      operator path to the tenant.
+//    - `{token}`: the creation options of a registration challenge bound
+//      to `SHA-256(case || token)`, for an enrolment token.
+//    - `{attestation_object, challenge_id, client_data_json, token}` (and
+//      an optional `credential_id`): the completion. The challenge is
+//      taken once, the gate admits `CompleteRecovery` with the live
+//      sessions of the holder (`gate::admit_proven_recovery_completion`),
+//      and only then is the enrolment token taken. The new passkey
+//      session starts one microsecond after the completion's instant, so
+//      the completion, which ends every session that started by its
+//      instant, never ends it.
+
+/// `POST /auth/recovery` (Public, design section 8.5): `{email}`. The one
+/// reply is 202 whether or not the address holds an account.
+pub(crate) async fn recovery_request<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
+    let email = match decode_email(&req.body) {
+        Ok(e) => e,
+        Err(r) => return bad_body(r),
+    };
+    let account = match ctx.backend.login_account(email).await {
+        Ok(a) => a,
+        Err(f) => return unavailable(f),
+    };
+    if let Some(account) = account {
+        // Errors on this path are not shown (uniform reply).
+        let _ = open_recovery(ctx, account).await;
+    }
+    magic_accepted()
+}
+
+/// Opens a case for `account` and sends its email proof.
+async fn open_recovery<B: Backend>(ctx: &Ctx<B>, account: AccountId) -> Result<(), ()> {
+    let mode = ctx.backend.deployment().ok_or(())?;
+    let case = random::<16>().map_err(|_| ())?;
+    let token = random::<32>().map_err(|_| ())?;
+    let command_id = random::<16>().map_err(|_| ())?;
+    let s = ctx.backend.state().await.map_err(|_| ())?;
+    let now = ctx.backend.now();
+    let admitted =
+        fstp_cell_core::gate::admit_recovery_request(&s, case, account, mode, command_id, now)
+            .map_err(|_| ())?;
+    match ctx.backend.execute(admitted).await {
+        Ok(Ok(_)) => {}
+        _ => return Err(()),
+    }
+    let row = TokenRow {
+        digest: fstp_cell_core::gate::recovery_token_digest(case, &token),
+        kind: TokenKind::RecoveryEmail,
+        account,
+        issued_at: now,
+    };
+    ctx.backend.put_token(row).await.map_err(|_| ())?;
+    ctx.backend
+        .send_recovery_proof(account, case, token)
+        .await
+        .map_err(|_| ())
+}
+
+/// The proof the route holds for `token` of `case` and its row.
+fn recovery_proof(token: [u8; 32], row: &TokenRow) -> fstp_cell_core::gate::RecoveryToken {
+    fstp_cell_core::gate::RecoveryToken {
+        token,
+        row_digest: row.digest,
+        row_account: row.account,
+        issued_at: row.issued_at,
+    }
+}
+
+/// `POST /auth/recovery/{case}/email` (Public, design section 8.5):
+/// `{token}`, the email proof of the case (section comment above).
+pub(crate) async fn recovery_email<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
+    let case = match param::<16>(req, "case") {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let token = match decode_token(&req.body) {
+        Ok(t) => t,
+        Err(r) => return bad_body(r),
+    };
+    let digest = fstp_cell_core::gate::recovery_token_digest(case, &token);
+    let row = match ctx
+        .backend
+        .take_token(digest, TokenKind::RecoveryEmail)
+        .await
+    {
+        Err(f) => return unavailable(f),
+        Ok(None) => return login_refused(Rule::Adr008),
+        Ok(Some(r)) => r,
+    };
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let command_id = match random::<16>() {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let Some(mode) = ctx.backend.deployment() else {
+        return unavailable(crate::routes::BackendFault::Unavailable);
+    };
+    let now = ctx.backend.now();
+    let proof = recovery_proof(token, &row);
+    let admitted =
+        match fstp_cell_core::gate::admit_recovery_email(&s, case, &proof, command_id, now) {
+            Ok(a) => a,
+            Err(RouteDeny::Gate(d)) => return denied(d),
+            Err(_) => return login_refused(Rule::Adr008),
+        };
+    match ctx.backend.execute(admitted).await {
+        Err(f) => return unavailable(f),
+        Ok(Err(e)) => return exec_failed(&e),
+        Ok(Ok(_)) => {}
+    }
+    let roster = fstp_auth::RosterView::from_roster(s.engine().core.roster(), now);
+    let tenant = fstp_auth::TenantView {
+        admins: s.tenant().admins(),
+    };
+    let path = fstp_auth::recovery::path_for(&roster, &tenant, row.account, mode);
+    let mut o = Object::with_capacity(2);
+    if path == fstp_auth::RecoveryPath::EmailThenPasskey {
+        let enrolment = match put_enrolment(ctx, case, row.account, now).await {
+            Ok(e) => e,
+            Err(r) => return r,
+        };
+        o.insert("enrolment", hex_value(&enrolment));
+    }
+    o.insert("path", Value::String(path_name(path).to_owned()));
+    Reply::json(StatusCode::OK, &Value::Object(o))
+}
+
+/// The name of `path` in a reply, as `web/src/auth/pages/recovery.ts`
+/// reads it.
+const fn path_name(path: fstp_auth::RecoveryPath) -> &'static str {
+    match path {
+        fstp_auth::RecoveryPath::EmailThenPasskey => "EmailThenPasskey",
+        fstp_auth::RecoveryPath::SecondAdmin => "SecondAdmin",
+        fstp_auth::RecoveryPath::OperatorProcess => "OperatorProcess",
+        fstp_auth::RecoveryPath::HostConsole => "HostConsole",
+    }
+}
+
+/// Stores a fresh one-time enrolment token of `case` for `account` and
+/// gives it (section comment above).
+async fn put_enrolment<B: Backend>(
+    ctx: &Ctx<B>,
+    case: [u8; 16],
+    account: AccountId,
+    now: Timestamp,
+) -> Result<[u8; 32], Reply> {
+    let enrolment = random::<32>()?;
+    let row = TokenRow {
+        digest: fstp_cell_core::gate::recovery_token_digest(case, &enrolment),
+        kind: TokenKind::RecoveryEnrolment,
+        account,
+        issued_at: now,
+    };
+    ctx.backend.put_token(row).await.map_err(unavailable)?;
+    Ok(enrolment)
+}
+
+/// Sends a fresh enrolment token of `case` to its holder's login email,
+/// after an approval or an accepted operator ticket (section comment
+/// above). A failure here is not shown: the step itself is recorded, and
+/// a later approval or ticket sends a new token.
+async fn send_enrolment<B: Backend>(ctx: &Ctx<B>, case: [u8; 16]) {
+    let Ok(s) = ctx.backend.state().await else {
+        return;
+    };
+    let Some(c) = s.auth().recovery(case) else {
+        return;
+    };
+    let now = ctx.backend.now();
+    if let Ok(token) = put_enrolment(ctx, case, c.account, now).await {
+        let _ = ctx
+            .backend
+            .send_recovery_enrolment(c.account, case, token)
+            .await;
+    }
+}
+
+/// The longest operator ticket body: the encoded ticket with its
+/// composite signature, in bytes.
+const MAX_TICKET: usize = 8 * 1024;
+
+/// A body of `POST /auth/recovery/{case}/complete` (section comment).
+enum CompleteBody {
+    Ticket(Vec<u8>),
+    Options([u8; 32]),
+    Complete {
+        enrolment: [u8; 32],
+        registration: RegistrationBody,
+    },
+}
+
+fn decode_complete(bytes: &[u8]) -> Result<CompleteBody, BodyRefusal> {
+    let o = body::object(bytes, CEREMONY_BODY_LIMIT)?;
+    if o.get("ticket").is_some() {
+        body::members(&o, &["ticket"], &[])?;
+        return body::bytes_member(&o, "ticket", MAX_TICKET).map(CompleteBody::Ticket);
+    }
+    if o.get("challenge_id").is_none() {
+        body::members(&o, &["token"], &[])?;
+        return body::hex_member::<32>(&o, "token").map(CompleteBody::Options);
+    }
+    body::members(
+        &o,
+        &[
+            "attestation_object",
+            "challenge_id",
+            "client_data_json",
+            "token",
+        ],
+        &["credential_id"],
+    )?;
+    if o.get("credential_id").is_some() {
+        body::bytes_member(&o, "credential_id", MAX_CREDENTIAL)?;
+    }
+    Ok(CompleteBody::Complete {
+        enrolment: body::hex_member::<32>(&o, "token")?,
+        registration: RegistrationBody {
+            challenge_id: body::hex_member::<16>(&o, "challenge_id")?,
+            response: RegistrationResponse {
+                client_data_json: body::bytes_member(&o, "client_data_json", MAX_CLIENT_DATA)?,
+                attestation_object: body::bytes_member(&o, "attestation_object", MAX_ATTESTATION)?,
+            },
+        },
+    })
+}
+
+/// `POST /auth/recovery/{case}/complete` (Ceremony, I-79, design section
+/// 8.5): an operator ticket, the creation options, or the completion
+/// (section comment above).
+pub(crate) async fn recovery_complete<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
+    let case = match param::<16>(req, "case") {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match decode_complete(&req.body) {
+        Err(r) => bad_body(r),
+        Ok(CompleteBody::Ticket(bytes)) => apply_ticket(ctx, case, bytes).await,
+        Ok(CompleteBody::Options(enrolment)) => {
+            let (id, nonce, user) = match (random::<16>(), random::<32>(), random::<16>()) {
+                (Ok(i), Ok(n), Ok(u)) => (i, n, u),
+                (Err(r), _, _) | (_, Err(r), _) | (_, _, Err(r)) => return r,
+            };
+            let row = ChallengeRow {
+                id,
+                purpose: ChallengePurpose::Recovery,
+                session: None,
+                action_digest: Some(fstp_cell_core::gate::recovery_token_digest(
+                    case, &enrolment,
+                )),
+                nonce,
+                issued_at: ctx.backend.now(),
+            };
+            if let Err(f) = ctx.backend.put_challenge(row).await {
+                return unavailable(f);
+            }
+            // UV is asked always: the path, and so its UV rule, is known
+            // only at completion (as for an invitation).
+            let mut o = Object::with_capacity(2);
+            o.insert("challenge_id", hex_value(&id));
+            o.insert("public_key", creation_options(ctx, &nonce, &user, true));
+            Reply::json(StatusCode::OK, &Value::Object(o))
+        }
+        Ok(CompleteBody::Complete {
+            enrolment,
+            registration,
+        }) => complete_recovery(ctx, case, enrolment, registration).await,
+    }
+}
+
+/// A refused operator ticket: 403 under I-79.
+fn ticket_refused() -> Reply {
+    Reply::refuse(StatusCode::FORBIDDEN, Some(Rule::Spec("I-79")), "ticket")
+}
+
+/// Keeps the verified operator ticket `bytes` of `case` (section comment).
+async fn apply_ticket<B: Backend>(ctx: &Ctx<B>, case: [u8; 16], bytes: Vec<u8>) -> Reply {
+    let Some(key) = ctx.backend.operator_key() else {
+        return ticket_refused();
+    };
+    if fstp_auth::recovery::accept_ticket(&bytes, case, &key).is_err() {
+        return ticket_refused();
+    }
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let open = s
+        .auth()
+        .recovery(case)
+        .is_some_and(|c| c.completed.is_none() && c.email_proven);
+    if !open {
+        return ticket_refused();
+    }
+    match ctx.backend.put_operator_ticket(case, bytes).await {
+        Err(f) => unavailable(f),
+        Ok(false) => Reply::refuse(StatusCode::CONFLICT, Some(Rule::Spec("I-79")), "ticket"),
+        Ok(true) => {
+            send_enrolment(ctx, case).await;
+            let mut o = Object::with_capacity(1);
+            o.insert("status", Value::String("accepted".to_owned()));
+            Reply::json(StatusCode::OK, &Value::Object(o))
+        }
+    }
+}
+
+/// The completion of `case` (section comment above).
+async fn complete_recovery<B: Backend>(
+    ctx: &Ctx<B>,
+    case: [u8; 16],
+    enrolment: [u8; 32],
+    b: RegistrationBody,
+) -> Reply {
+    let digest = fstp_cell_core::gate::recovery_token_digest(case, &enrolment);
+    let bound = |row: &ChallengeRow| {
+        row.purpose == ChallengePurpose::Recovery
+            && row
+                .action_digest
+                .is_some_and(|d| fstp_crypto::constant_time_eq(&d, &digest))
+    };
+    match ctx.backend.challenge(b.challenge_id).await {
+        Err(f) => return unavailable(f),
+        Ok(Some(row)) if bound(&row) => {}
+        Ok(_) => return login_refused(Rule::Adr008),
+    }
+    let row = match ctx.backend.take_challenge(b.challenge_id).await {
+        Err(f) => return unavailable(f),
+        Ok(Some(row)) if bound(&row) => row,
+        Ok(_) => return login_refused(Rule::Adr008),
+    };
+    let now = ctx.backend.now();
+    if !fresh(row.issued_at, now, CHALLENGE_US) {
+        return login_refused(Rule::Adr008);
+    }
+    let registration = Registration {
+        response: &b.response,
+        rp: &ctx.cfg.rp,
+        challenge: row.nonce,
+    };
+    let token = match ctx
+        .backend
+        .token(digest, TokenKind::RecoveryEnrolment)
+        .await
+    {
+        Err(f) => return unavailable(f),
+        Ok(None) => return login_refused(Rule::Adr008),
+        Ok(Some(t)) => t,
+    };
+    let Some(mode) = ctx.backend.deployment() else {
+        return unavailable(crate::routes::BackendFault::Unavailable);
+    };
+    let ticket = match ctx.backend.operator_ticket(case).await {
+        Err(f) => return unavailable(f),
+        Ok(None) => None,
+        Ok(Some(bytes)) => ctx
+            .backend
+            .operator_key()
+            .and_then(|key| fstp_auth::recovery::accept_ticket(&bytes, case, &key).ok()),
+    };
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let account = token.account;
+    let holdings = holds(&s, account, now);
+    let mut rows = match ctx.backend.sessions_of(account).await {
+        Ok(r) => r,
+        Err(f) => return unavailable(f),
+    };
+    rows.retain(|r| r.account == account && live(&s, r, holdings, now));
+    rows.sort_by_key(|r| r.id);
+    let command_id = match random::<16>() {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+    let admitted = match fstp_cell_core::gate::admit_proven_recovery_completion(
+        &s,
+        case,
+        &recovery_proof(enrolment, &token),
+        &registration,
+        session_rows(&rows),
+        mode,
+        ticket,
+        command_id,
+        now,
+    ) {
+        Ok(a) => a,
+        Err(RouteDeny::Gate(d)) => return denied(d),
+        Err(_) => return login_refused(Rule::Spec("I-79")),
+    };
+    let credential = match admitted.action() {
+        Action::Command(CellCommand::Auth(fstp_auth::AuthCommand::CompleteRecovery {
+            credential,
+            ..
+        })) => credential.clone(),
+        _ => return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal"),
+    };
+    // The token is taken only once the gate admitted the completion, so a
+    // completion refused for missing evidence leaves it for a retry.
+    match ctx
+        .backend
+        .take_token(digest, TokenKind::RecoveryEnrolment)
+        .await
+    {
+        Err(f) => return unavailable(f),
+        Ok(None) => return login_refused(Rule::Adr008),
+        Ok(Some(_)) => {}
+    }
+    match ctx.backend.execute(admitted).await {
+        Err(f) => unavailable(f),
+        Ok(Err(e)) => exec_failed(&e),
+        Ok(Ok(_)) => {
+            let started = Timestamp::from_micros(now.micros().saturating_add(1));
+            open_session_at(ctx, account, Method::Passkey, Some(credential), started).await
+        }
     }
 }
 

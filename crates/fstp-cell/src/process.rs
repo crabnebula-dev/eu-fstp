@@ -472,8 +472,18 @@ pub struct StartOptions {
     /// The creator shell the command route reads its facts from
     /// ([`crate::shell`]).
     pub creator_shell: Arc<dyn crate::shell::CreatorShell>,
-    /// The proof mail port of self-registration ([`crate::mail`]).
+    /// The proof mail port of self-registration, magic links and recovery
+    /// email proofs ([`crate::mail`]).
     pub proof_mail: Arc<dyn crate::mail::ProofMail>,
+    /// The pinned control-plane key of recovery operator tickets, encoded
+    /// (design section 8.5). `None` refuses every ticket, as a cell does
+    /// until provisioning hands it the key (Interim, pending Daniel).
+    pub operator_key: Option<Vec<u8>>,
+    /// The login methods the tenant enables (P-70). Passkeys are always
+    /// enabled. The default enables nothing more, so magic links are off
+    /// until the tenant's setting is handed in (lane m3/login-m2http,
+    /// Interim, pending Daniel: no record carries P-70 yet).
+    pub login_methods: fstp_auth::EnabledMethods,
 }
 
 impl Default for StartOptions {
@@ -482,6 +492,8 @@ impl Default for StartOptions {
             clock: crate::engine::system_commit_clock(),
             creator_shell: Arc::new(crate::shell::ProductionShell),
             proof_mail: Arc::new(crate::mail::NoProofMail),
+            operator_key: None,
+            login_methods: fstp_auth::EnabledMethods::default(),
         }
     }
 }
@@ -529,6 +541,8 @@ where
         clock,
         creator_shell,
         proof_mail,
+        operator_key,
+        login_methods,
     } = options;
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
@@ -627,7 +641,13 @@ where
             .map_err(store_err)?
             .with_clock(Arc::clone(&clock))
             .with_shell(creator_shell)
-            .with_proof_mail(proof_mail),
+            .with_proof_mail(proof_mail)
+            .with_login_index(started.erasure.clone())
+            .with_mode(match mode {
+                Mode::Saas => fstp_auth::recovery::Deployment::Saas,
+                Mode::SelfHosted => fstp_auth::recovery::Deployment::SelfHosted,
+            })
+            .with_operator_key(operator_key),
     );
     // The timeline reads `auth.session` through the route backend for
     // `EndSessionsAtBindingEnd` (design sections 4.2 and 5.1).
@@ -639,7 +659,7 @@ where
     let front_cfg = FrontConfig {
         cell,
         host: host.clone(),
-        enabled: fstp_auth::EnabledMethods::default(),
+        enabled: login_methods,
     };
     let log = Arc::new(StderrLog);
     let front = match pages {
@@ -850,6 +870,16 @@ impl<R: Runtime> RunningCell<R> {
         .map_err(store_err)?;
         self.engine.execute(admitted).await.map_err(store_err)?;
         Ok(FirstAdminToken { first, second })
+    }
+
+    /// Keeps `email` as the login email of the first admin's invitation,
+    /// whose token digest is `digest`. The enrolment binds it to the new
+    /// account through the keyed index (design section 4.2). Interim,
+    /// pending Daniel (lane m3/login-m2http): provisioning names the
+    /// tenant contact's address here, and design section 9.2 step 10
+    /// names no address.
+    pub fn note_first_admin_email(&self, digest: [u8; 32], email: String) {
+        self.backend.note_first_admin_email(digest, email);
     }
 
     /// The contract port's fact `event` of `contract` on `proposal` (M5
