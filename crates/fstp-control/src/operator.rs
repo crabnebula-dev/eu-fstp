@@ -132,6 +132,17 @@ pub struct OperatorLogin {
     sessions: BTreeMap<[u8; 32], Session>,
 }
 
+impl std::fmt::Debug for OperatorLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperatorLogin")
+            .field("rp", &self.rp)
+            .field("credentials", &self.credentials.len())
+            .field("pending", &self.pending.len())
+            .field("sessions", &self.sessions.len())
+            .finish()
+    }
+}
+
 fn refuse(r: OperatorRefusal) -> ControlError {
     ControlError::Operator(r)
 }
