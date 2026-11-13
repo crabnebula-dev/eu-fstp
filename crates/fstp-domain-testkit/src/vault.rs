@@ -793,6 +793,11 @@ impl GroundTruth {
         self.relations.iter().copied()
     }
 
+    /// Every effective affiliation of an account on a P-38 list.
+    pub fn affiliations(&self) -> impl Iterator<Item = (AccountId, ProximityListId)> + '_ {
+        self.affiliations.iter().copied()
+    }
+
     /// Whether `account` has facts that wait for its verification.
     pub fn has_pending(&self, account: AccountId) -> bool {
         self.pending.get(&account).is_some_and(|p| !p.is_empty())

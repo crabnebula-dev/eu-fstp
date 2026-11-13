@@ -2,7 +2,8 @@
 //! lane m3/m2-over-http).
 //!
 //! The SoD machine of [`crate::r#gen::roster`] drives a
-//! [`crate::r#gen::roster::Driver`]: the production engine over a
+//! [`crate::r#gen::roster::Driver`], and the review machine of
+//! [`crate::r#gen::review`] a [`RevDriver`]. Each is the production engine over a
 //! `MemStore` and the synthetic vault, or the reference alone. A third
 //! driver runs the same commands through a running cell: its HTTP API,
 //! its PostgreSQL store and its real vault (`fstp-celltest`). [`M2Driver`]
@@ -22,7 +23,9 @@ use fstp_engine::ExecError;
 use fstp_ledger::Seq;
 
 use crate::r#gen::policy::core_records;
-use crate::r#gen::roster::{Backend, Driver, SodWorld, Step, VaultOp};
+use crate::r#gen::review::{RevDriver, ReviewWorld};
+use crate::r#gen::roster::{Backend, Driver, SodWorld, Step};
+use crate::reference::review::RevView;
 use crate::scenario::Scenario;
 use crate::vault::GroundTruth;
 
@@ -52,13 +55,20 @@ pub trait M2Driver {
     /// The driver's refusal of the step.
     fn execute(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError>;
 
-    /// Changes the vault with `op` at `now` and processes the change.
+    /// Changes the vault facts with `change` at `now` and processes the
+    /// change: a machine's vault operation, such as a
+    /// [`crate::r#gen::roster::VaultOp`] or a
+    /// [`crate::r#gen::review::RevOp`], applied to the facts.
     ///
     /// # Errors
     ///
     /// A refused reaction, or a change that left the epoch where the
     /// state already was.
-    fn change_vault(&mut self, op: VaultOp, now: Timestamp) -> Result<Seq, ExecError>;
+    fn change_vault(
+        &mut self,
+        change: &dyn Fn(&mut GroundTruth),
+        now: Timestamp,
+    ) -> Result<Seq, ExecError>;
 
     /// Runs every System command that `fstp_domain::due` lists at `now`.
     ///
@@ -106,8 +116,12 @@ impl M2Driver for Driver {
         Driver::execute(self, step, now)
     }
 
-    fn change_vault(&mut self, op: VaultOp, now: Timestamp) -> Result<Seq, ExecError> {
-        Driver::change_vault(self, op, now)
+    fn change_vault(
+        &mut self,
+        change: &dyn Fn(&mut GroundTruth),
+        now: Timestamp,
+    ) -> Result<Seq, ExecError> {
+        self.change_facts(change, now)
     }
 
     fn run_due(&mut self, now: Timestamp) -> Result<Seq, ExecError> {
@@ -118,6 +132,66 @@ impl M2Driver for Driver {
         match self {
             Driver::Engine(s) => core_records(&s.entries().unwrap_or_default()),
             Driver::Reference(_, records) => records.clone(),
+        }
+    }
+}
+
+impl M2Driver for RevDriver {
+    fn truth(&self) -> &GroundTruth {
+        RevDriver::truth(self)
+    }
+
+    fn start(
+        &mut self,
+        truth: &GroundTruth,
+        steps: &[Step],
+        at: Timestamp,
+    ) -> Result<Seq, ExecError> {
+        *self = match self {
+            RevDriver::Engine(_) => match Scenario::new(truth.clone()) {
+                Ok(s) => RevDriver::Engine(Box::new(s)),
+                Err(_) => return Err(ExecError::Refused(Refusal::not_implemented())),
+            },
+            RevDriver::Reference(..) => RevDriver::Reference(
+                Box::new(ReviewWorld {
+                    sod: SodWorld::new(Backend::Reference, truth.clone()),
+                    view: RevView::new(),
+                    havoc: None,
+                }),
+                Vec::new(),
+            ),
+        };
+        let mut last = Ok(Seq::ZERO);
+        for step in steps {
+            last = RevDriver::execute(self, step, at);
+            if last.is_err() {
+                break;
+            }
+        }
+        last
+    }
+
+    fn execute(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError> {
+        RevDriver::execute(self, step, now)
+    }
+
+    fn change_vault(
+        &mut self,
+        change: &dyn Fn(&mut GroundTruth),
+        now: Timestamp,
+    ) -> Result<Seq, ExecError> {
+        self.change_facts(change, now)
+    }
+
+    /// The review machine runs no System command.
+    fn run_due(&mut self, _now: Timestamp) -> Result<Seq, ExecError> {
+        Err(ExecError::Refused(Refusal::not_implemented()))
+    }
+
+    fn core_records(&self) -> Vec<Record> {
+        match self {
+            RevDriver::Engine(s) => core_records(&s.entries().unwrap_or_default()),
+            RevDriver::Reference(_, records) => records.clone(),
         }
     }
 }

@@ -8,13 +8,18 @@
 //! over its PostgreSQL store and its vault, which the driver seeds through
 //! the world's seeded vault (design section 6.9).
 //!
-//! [`SodOverHttp`] runs the SoD machine of `fstp_domain_testkit` in
-//! lockstep: each command goes to the M2 engine, which the machine checks
-//! against its reference as it always does, and to the cell. The cell
-//! must accept and refuse as the engine does and append the same M2 core
-//! records, and the machine's invariants must hold over the cell's ledger.
+//! [`OverHttp`] runs an M2 machine of `fstp_domain_testkit` in lockstep:
+//! each command goes to the M2 engine, which the machine checks against
+//! its reference as it always does, and to the cell. The cell must accept
+//! and refuse as the engine does and append the same M2 core records, and
+//! the machine's invariants must hold over the cell's ledger. The SoD
+//! machine (I-04, I-06) and the review machine (I-03, I-35) implement
+//! [`CellMachine`]. A reduced case is one case of at most
+//! [`REDUCED_COMMANDS`] commands under a fixed seed. The seed is the
+//! first from the suite's own on which the engine alone runs a case long
+//! enough to count, so it picks the commands, never the cell's outcome.
 //!
-//! How the driver maps the machine onto the cell:
+//! How the driver maps a machine onto the cell:
 //!
 //! - Accounts. Each generator account enrols at its own id through an
 //!   invitation of the world's first tenant admin
@@ -22,14 +27,13 @@
 //!   tenant admin. The first admin itself is the harness's and names no
 //!   generator account.
 //! - Programmes. A setup's `CreateProgramme` runs the creator path of M4
-//!   design section 3.4: the first admin opens the draft and grants the
-//!   harness builder ([`BUILDER`]) the programme manager role, the
-//!   builder saves the synthetic spec and requests activation, and
-//!   [`ADMIN_2`] approves. The builder then records the generator's
-//!   policy with one `EditPolicy` under the generator's version id, and
-//!   the first admin ends the builder's binding. The setup's core
-//!   `ActivateProgramme` is skipped: the creator's approval activated the
-//!   programme (D2e).
+//!   design section 3.4: [`ADMIN`] opens the draft and grants the harness
+//!   builder ([`BUILDER`]) the programme manager role, the builder saves
+//!   the synthetic spec and requests activation, and [`ADMIN_2`]
+//!   approves. The builder then records the generator's policy with one
+//!   `EditPolicy` under the generator's version id, and the first admin
+//!   ends the builder's binding. The setup's core `ActivateProgramme` is
+//!   skipped: the creator's approval activated the programme (D2e).
 //! - Instants. The cell runs on the world's clock. Each step sets it to
 //!   the step's instant, which never runs backwards. The setup's
 //!   enrolments and creator path run before the setup instant.
@@ -37,27 +41,39 @@
 //!   attribute tuple of its own, so accounts of one tag share a person.
 //!   An exclusion is a partner staff affiliation in its class on one
 //!   verified account of its identity, which the vault counts for every
-//!   account of that person, and a relation is a relationship
-//!   between one verified account of each identity. After a vault change
-//!   a probe command that the domain refuses makes the cell process the
-//!   new epoch, as its next command would (design section 5.2 step 4).
+//!   account of that person. A relation is a relationship between one
+//!   verified account of each identity. An affiliation on a P-38 list is
+//!   an affiliation with the list's one organisation, and the setup
+//!   declares every list of its policies. A change that leaves every fact
+//!   as it was, such as an affiliation declared again, writes one changed
+//!   account's verification again, so it is a new epoch on both sides.
+//! - Reactions. After a vault change a probe command that the domain
+//!   refuses makes the cell process the new epoch, as its next command
+//!   would (design section 5.2 step 4).
 //!
 //! Interim readings, pending Daniel, of what a reduced case is. A cell
 //! derives what a generator step states as flags, and the vault holds
 //! facts of verified persons only (as `tests/seam_vault.rs` notes). So
-//! [`SodOverHttp`] rewrites each drawn command before both sides run it:
+//! [`OverHttp`] rewrites each drawn command before both sides run it, or
+//! leaves it out:
 //!
 //! - The setup verifies every account that has an identity. An
 //!   unverified account's exclusions and relations have no vault form.
 //! - A step's tenant admin flags are the cell's own: the actor is a
 //!   tenant admin when it is [`ADMIN`] or [`ADMIN_2`], and a second admin
 //!   is never attested, since no tenant approval ceremony runs.
-//! - A draft is minor-flagged, as the cell flags every draft (I-18,
-//!   interim reading of Q13).
+//! - A draft a machine step names is minor-flagged, as the cell flags
+//!   every draft (I-18, interim reading of Q13). The setup drafts keep
+//!   their flags on the engine side.
 //! - An end is never scheduled later than its step, since the cell's
 //!   timeline commits a due end on its own tick.
 //! - An identity merge is drawn only for an account whose identity has no
-//!   exclusion or relation, since the vault cannot retract a fact.
+//!   exclusion or relation, and no relation ends, since the vault cannot
+//!   retract a fact.
+//! - The records are compared with the vault's epochs and answer digests
+//!   left out. The cell may record more vault answers than the engine,
+//!   since `fstp-vault` lists every account of a changed person as
+//!   changed (`split_outcomes`).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -73,9 +89,16 @@ use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::Role;
 use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::driver::M2Driver;
+use fstp_domain_testkit::r#gen::review::{
+    RevCmd, RevFocus, RevModel, RevOp, RevOutput, ReviewMachine, machine_setup as review_setup,
+};
 use fstp_domain_testkit::r#gen::roster::{
-    ADMIN, ADMIN_2, MachineCmd, MachineModel, MachineOutput, MachineSut, SodFocus, SodMachine,
-    Step, T0, VaultOp,
+    ADMIN, ADMIN_2, MachineCmd, MachineModel, MachineOutput, SodFocus, SodMachine, Step, T0,
+    VaultOp,
+};
+use fstp_domain_testkit::reference::review::{
+    RevView, check_handles, check_i02_assignments, check_i03, check_i36, check_i36_held,
+    check_one_organisation, check_rcf02,
 };
 use fstp_domain_testkit::reference::sod::{
     View, check_bars, check_i01, check_i02, check_i04, check_i06,
@@ -85,7 +108,7 @@ use fstp_engine::ExecError;
 use fstp_ledger::Seq;
 use fstp_prop::{Config, Gen, Outcome, StateMachine};
 use fstp_vault_core::fact::{Fact, Org};
-use fstp_vault_proto::{WireAccount, WireClass};
+use fstp_vault_proto::{WireAccount, WireClass, WireList};
 
 use crate::NotImplemented;
 use crate::mc::auth_model::RosterChange;
@@ -135,7 +158,7 @@ const MIN_ACCEPTED: usize = 4;
 const MIN_STEPS: usize = 10;
 
 /// An `m2-suite` step names a suite the driver has no machine for yet.
-pub const SUITE_SEAM: &str = "fstp_celltest::m2_http: the m2-suite step names an M2 suite whose machine has no cell driver yet; the SoD machine (I-04, I-06) runs over the cell, and the review, money and ledger machines (I-03, I-35, I-13, I-14, I-15, I-23) still drive fstp_domain_testkit's own drivers only";
+pub const SUITE_SEAM: &str = "fstp_celltest::m2_http: the m2-suite step names an M2 suite whose machine has no cell driver yet; the SoD machine (I-04, I-06) and the review machine (I-03, I-35) run over the cell, and the money and ledger machines (I-13, I-14, I-15, I-23) still drive fstp_domain_testkit's own drivers only";
 
 /// The model key of `account`.
 fn key(account: AccountId) -> AccountId {
@@ -150,6 +173,11 @@ fn attributes(t: IdentityTag) -> Vec<u8> {
 /// The organisation of a partner staff affiliation in class `class`.
 fn class_org(class: fstp_domain::id::ClassId) -> Org {
     Org(700_000u128.saturating_add(class.raw()))
+}
+
+/// The one organisation of the P-38 list `list` in the vault.
+fn list_org(list: fstp_domain::id::ProximityListId) -> Org {
+    Org(800_000u128.saturating_add(list.raw()))
 }
 
 /// The refusal an [`HttpDriver`] gives for a step the cell refused. The
@@ -170,6 +198,10 @@ pub struct HttpDriver<'c, 'w> {
     classes: BTreeSet<(IdentityTag, fstp_domain::id::ClassId)>,
     /// The relationships seeded.
     relationships: BTreeSet<(AccountId, AccountId)>,
+    /// The P-38 lists the vault holds.
+    lists: BTreeSet<fstp_domain::id::ProximityListId>,
+    /// The affiliations on a list seeded, by account and list.
+    affiliated: BTreeSet<(AccountId, fstp_domain::id::ProximityListId)>,
     /// The M2 core records of the cell's ledger at the last read.
     records: Vec<Record>,
     /// The number of entries of the cell's ledger at the last read.
@@ -216,6 +248,8 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             persons: BTreeMap::new(),
             classes: BTreeSet::new(),
             relationships: BTreeSet::new(),
+            lists: BTreeSet::new(),
+            affiliated: BTreeSet::new(),
             records: Vec::new(),
             entries: 0,
             settle_each: true,
@@ -444,6 +478,31 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
                 seeded = true;
             }
         }
+        let affiliations: Vec<_> = self.truth.affiliations().collect();
+        for (a, list) in affiliations {
+            if self.lists.insert(list) {
+                self.seed_fact(
+                    SeedSource::SyntheticAffiliation,
+                    Fact::ProximityListDeclared {
+                        list: WireList(list.raw()),
+                        orgs: BTreeSet::from([list_org(list)]),
+                    },
+                )?;
+                seeded = true;
+            }
+            if self.affiliated.insert((a, list)) {
+                self.seed_fact(
+                    SeedSource::SyntheticAffiliation,
+                    Fact::AffiliationDeclared {
+                        account: WireAccount(a.raw()),
+                        org: list_org(list),
+                        class: None,
+                        partner_staff: false,
+                    },
+                )?;
+                seeded = true;
+            }
+        }
         Ok(seeded)
     }
 
@@ -453,6 +512,25 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             self.probe()
         } else {
             Ok(())
+        }
+    }
+
+    /// A change of the M2 vault that moved its epoch past `epoch` but left
+    /// every fact the vault holds as it was, such as an affiliation
+    /// declared again, is a new epoch in `fstp-vault` too: the
+    /// verification of one changed account is written again. Returns
+    /// whether it wrote one.
+    fn touch(&mut self, epoch: fstp_domain::id::VaultEpoch) -> Result<bool, ExecError> {
+        let changed = self.truth.changed_since(epoch);
+        let again = changed
+            .iter()
+            .find_map(|a| self.persons.get(a).map(|t| (*a, *t)));
+        match again {
+            Some((a, t)) => {
+                self.seed_person(a, &attributes(t))?;
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
@@ -683,6 +761,23 @@ impl M2Driver for HttpDriver<'_, '_> {
         };
         self.seed_person(first, b"m2-harness-first-admin")?;
         self.seed_person(BUILDER, b"m2-harness-builder")?;
+        // The P-38 lists of the setup's policies, so a later affiliation
+        // on a list is one write, as the M2 vault's change is one epoch.
+        for s in steps {
+            if let Command::CreateProgramme { policy } = &s.cmd {
+                for list in policy.live.p38.0.values() {
+                    if self.lists.insert(*list) {
+                        self.seed_fact(
+                            SeedSource::SyntheticAffiliation,
+                            Fact::ProximityListDeclared {
+                                list: WireList(list.raw()),
+                                orgs: BTreeSet::from([list_org(*list)]),
+                            },
+                        )?;
+                    }
+                }
+            }
+        }
         self.sync_vault()?;
         for s in steps {
             match &s.cmd {
@@ -724,11 +819,16 @@ impl M2Driver for HttpDriver<'_, '_> {
         }
     }
 
-    fn change_vault(&mut self, op: VaultOp, now: Timestamp) -> Result<Seq, ExecError> {
+    fn change_vault(
+        &mut self,
+        change: &dyn Fn(&mut GroundTruth),
+        now: Timestamp,
+    ) -> Result<Seq, ExecError> {
         self.clock_to(now)?;
         let before = self.entries;
-        op.apply(&mut self.truth);
-        if !self.sync_vault()? {
+        let epoch = self.truth.epoch();
+        change(&mut self.truth);
+        if !self.sync_vault()? && !self.touch(epoch)? {
             return Err(ExecError::Refused(Refusal::new(
                 RuleRef::StaleFacts,
                 RefusalReason::AnswerStale,
@@ -760,7 +860,7 @@ impl M2Driver for HttpDriver<'_, '_> {
 }
 
 // ---------------------------------------------------------------------------
-// The SoD machine in lockstep.
+// The machines in lockstep.
 
 /// What the cell did with one machine command.
 #[derive(Debug)]
@@ -773,32 +873,237 @@ pub struct RemoteOutput {
     pub fault: Option<String>,
 }
 
-/// The SoD machine of `fstp_domain_testkit` in lockstep with a cell
+/// What the engine did with one machine command: whether it took it, the
+/// M2 core records it appended and the step's description.
+pub type EngineSide<'a> = (bool, &'a [Record], &'a str);
+
+/// An M2 machine that runs in lockstep over a cell ([`OverHttp`]).
+pub trait CellMachine: StateMachine {
+    /// Whether `cmd` is the machine's setup from genesis.
+    fn is_setup(cmd: &Self::Command) -> bool;
+
+    /// `cmd` as both sides run it: with the cell's own flags, the cell's
+    /// draft flag and a verified setup vault (module documentation).
+    fn for_cell(cmd: Self::Command) -> Self::Command;
+
+    /// Whether the cell can express `cmd` in `model`: a vault change the
+    /// vault cannot hold is left out of a reduced case.
+    fn cell_admits(model: &Self::Model, cmd: &Self::Command) -> bool;
+
+    /// Sends `cmd` to the cell.
+    ///
+    /// # Errors
+    ///
+    /// The cell's refusal, or the driver's failure.
+    fn drive(remote: &mut HttpDriver<'_, '_>, cmd: &Self::Command) -> Result<Seq, ExecError>;
+
+    /// What the engine did with the command of `out`.
+    fn engine_side(out: &Self::Output) -> EngineSide<'_>;
+
+    /// The machine's invariants over the M2 core records of the cell.
+    ///
+    /// # Errors
+    ///
+    /// The first invariant that fails.
+    fn cell_invariant(records: &[Record], truth: &GroundTruth) -> Result<(), String>;
+}
+
+/// `step` with the flags the cell derives and the draft flag the cell
+/// sets, and no end later than the step (module documentation).
+fn cell_step(step: &Step, now: i64) -> Step {
+    let mut s = step.clone();
+    let admins = [ADMIN, ADMIN_2];
+    let actor = match s.actor {
+        Actor::Account(a) => Some(a),
+        Actor::System(_) => None,
+    };
+    s.flags.tenant_admin = actor.is_some_and(|a| admins.contains(&a));
+    s.flags.second_admin = None;
+    let bound = match &s.cmd {
+        Command::GrantRole { account, .. }
+        | Command::AddTeamMember { account, .. }
+        | Command::AddGuardian { account, .. } => Some(*account),
+        Command::CreateDraft { .. } => actor,
+        _ => None,
+    };
+    s.flags.binds_tenant_admin = bound.is_some_and(|a| admins.contains(&a));
+    match &mut s.cmd {
+        Command::CreateDraft { minor, .. } => *minor = true,
+        Command::EndRole { at, .. } if at.micros() > now => *at = Timestamp::from_micros(now),
+        _ => {}
+    }
+    s
+}
+
+/// The setup's vault with every account that has an identity verified
 /// (module documentation).
-pub struct SodOverHttp<'d, 'c, 'w> {
-    inner: SodMachine,
+fn cell_truth(truth: &GroundTruth) -> GroundTruth {
+    let mut t = truth.clone();
+    let accounts: Vec<AccountId> = truth.identities().map(|(a, _)| a).collect();
+    for a in accounts {
+        if !t.is_verified(a) {
+            t.verify(a);
+        }
+    }
+    t
+}
+
+impl CellMachine for SodMachine {
+    fn is_setup(cmd: &MachineCmd) -> bool {
+        matches!(cmd, MachineCmd::Setup { .. })
+    }
+
+    fn for_cell(cmd: MachineCmd) -> MachineCmd {
+        match cmd {
+            MachineCmd::Setup { truth, subjects } => MachineCmd::Setup {
+                truth: Box::new(cell_truth(&truth)),
+                subjects,
+            },
+            MachineCmd::Core { now, step } => MachineCmd::Core {
+                now,
+                step: Box::new(cell_step(&step, now)),
+            },
+            other => other,
+        }
+    }
+
+    fn cell_admits(model: &MachineModel, cmd: &MachineCmd) -> bool {
+        let MachineCmd::Vault {
+            op: VaultOp::Merge(account, _),
+            ..
+        } = cmd
+        else {
+            return true;
+        };
+        let Some(old) = model.truth.identity_of(*account) else {
+            return false;
+        };
+        !(model.truth.exclusions().any(|(t, _)| t == old)
+            || model
+                .truth
+                .relations()
+                .any(|(x, y, _)| x == old || y == old))
+    }
+
+    fn drive(remote: &mut HttpDriver<'_, '_>, cmd: &MachineCmd) -> Result<Seq, ExecError> {
+        match cmd {
+            MachineCmd::Setup { truth, .. } => match SodMachine::setup().steps() {
+                Ok(steps) => remote.start(truth, &steps, T0),
+                Err(e) => Err(remote.fail(format!("the setup steps: {e}"))),
+            },
+            MachineCmd::Core { now, step } => remote.execute(step, Timestamp::from_micros(*now)),
+            MachineCmd::Vault { now, op } => {
+                remote.change_vault(&|t| op.apply(t), Timestamp::from_micros(*now))
+            }
+            MachineCmd::Due { now } => remote.run_due(Timestamp::from_micros(*now)),
+        }
+    }
+
+    fn engine_side(out: &MachineOutput) -> EngineSide<'_> {
+        (out.result.is_ok(), &out.appended, &out.context)
+    }
+
+    fn cell_invariant(records: &[Record], truth: &GroundTruth) -> Result<(), String> {
+        let view = View::of(records.iter())
+            .map_err(|e| format!("the reference cannot follow the cell's ledger: {e}"))?;
+        check_i01(&view)?;
+        check_bars(&view)?;
+        check_i02(&view)?;
+        check_i04(&view, truth)?;
+        check_i06(&view, truth)
+    }
+}
+
+impl CellMachine for ReviewMachine {
+    fn is_setup(cmd: &RevCmd) -> bool {
+        matches!(cmd, RevCmd::Setup { .. })
+    }
+
+    fn for_cell(cmd: RevCmd) -> RevCmd {
+        match cmd {
+            RevCmd::Setup { truth } => RevCmd::Setup {
+                truth: Box::new(cell_truth(&truth)),
+            },
+            RevCmd::Core { now, step } => RevCmd::Core {
+                now,
+                step: Box::new(cell_step(&step, now)),
+            },
+            other => other,
+        }
+    }
+
+    /// The vault holds no end of a relationship, so a reduced case draws
+    /// no `Unrelate`.
+    fn cell_admits(_model: &RevModel, cmd: &RevCmd) -> bool {
+        !matches!(
+            cmd,
+            RevCmd::Vault {
+                op: RevOp::Unrelate(..),
+                ..
+            }
+        )
+    }
+
+    fn drive(remote: &mut HttpDriver<'_, '_>, cmd: &RevCmd) -> Result<Seq, ExecError> {
+        match cmd {
+            RevCmd::Setup { truth } => match review_setup().steps() {
+                Ok(steps) => remote.start(truth, &steps, T0),
+                Err(e) => Err(remote.fail(format!("the setup steps: {e}"))),
+            },
+            RevCmd::Core { now, step } => remote.execute(step, Timestamp::from_micros(*now)),
+            RevCmd::Vault { now, op } => {
+                remote.change_vault(&|t| op.apply(t), Timestamp::from_micros(*now))
+            }
+        }
+    }
+
+    fn engine_side(out: &RevOutput) -> EngineSide<'_> {
+        (out.result.is_ok(), &out.appended, &out.context)
+    }
+
+    fn cell_invariant(records: &[Record], _truth: &GroundTruth) -> Result<(), String> {
+        let view = View::of(records.iter())
+            .map_err(|e| format!("the roles reference cannot follow the cell's ledger: {e}"))?;
+        let rev = RevView::of(records.iter())
+            .map_err(|e| format!("the review reference cannot follow the cell's ledger: {e}"))?;
+        check_i03(&rev)?;
+        check_rcf02(&view, &rev)?;
+        check_handles(&rev)?;
+        check_i02_assignments(&view, &rev)?;
+        check_i02(&view)?;
+        check_i36_held(&view, &rev)?;
+        check_one_organisation(&view, &rev)?;
+        check_i36(&rev)
+    }
+}
+
+/// An M2 machine in lockstep with a cell (module documentation). Each
+/// command runs on the machine's own engine, which the machine checks as
+/// it always does, and on the cell, which must agree with the engine.
+pub struct OverHttp<'d, 'c, 'w, M> {
+    inner: M,
     /// The cell, or none for a dry run on the engine alone, which picks
     /// the seed of a case that is long enough.
     remote: Option<RefCell<&'d mut HttpDriver<'c, 'w>>>,
     /// The setups run so far. Only the first case reaches the cell; a
     /// later case of the runner runs on the engine alone.
     cases: RefCell<u32>,
-    /// The steps of the current case after its setup, and how many the
+    /// The steps of the first case after its setup, and how many the
     /// engine accepted.
     counts: RefCell<(usize, usize)>,
     max_commands: usize,
 }
 
-impl<'d, 'c, 'w> SodOverHttp<'d, 'c, 'w> {
-    /// The machine of `focus` over `remote`, with at most `max_commands`
-    /// commands per case.
+impl<'d, 'c, 'w, M: CellMachine> OverHttp<'d, 'c, 'w, M> {
+    /// `inner` over `remote`, with at most `max_commands` commands per
+    /// case.
     pub fn new(
-        focus: SodFocus,
+        inner: M,
         remote: &'d mut HttpDriver<'c, 'w>,
         max_commands: usize,
-    ) -> SodOverHttp<'d, 'c, 'w> {
-        SodOverHttp {
-            inner: SodMachine::new(focus),
+    ) -> OverHttp<'d, 'c, 'w, M> {
+        OverHttp {
+            inner,
             remote: Some(RefCell::new(remote)),
             cases: RefCell::new(0),
             counts: RefCell::new((0, 0)),
@@ -806,10 +1111,10 @@ impl<'d, 'c, 'w> SodOverHttp<'d, 'c, 'w> {
         }
     }
 
-    /// The machine of `focus` on the engine alone.
-    pub fn dry(focus: SodFocus, max_commands: usize) -> SodOverHttp<'d, 'c, 'w> {
-        SodOverHttp {
-            inner: SodMachine::new(focus),
+    /// `inner` on the engine alone.
+    pub fn dry(inner: M, max_commands: usize) -> OverHttp<'d, 'c, 'w, M> {
+        OverHttp {
+            inner,
             remote: None,
             cases: RefCell::new(0),
             counts: RefCell::new((0, 0)),
@@ -817,50 +1122,10 @@ impl<'d, 'c, 'w> SodOverHttp<'d, 'c, 'w> {
         }
     }
 
-    /// The steps of the last case after its setup, and how many the
+    /// The steps of the first case after its setup, and how many the
     /// engine accepted.
     pub fn counts(&self) -> (usize, usize) {
         *self.counts.borrow()
-    }
-
-    /// `step` with the flags the cell derives and the draft flag the cell
-    /// sets (module documentation).
-    fn cell_step(step: &Step, now: i64) -> Step {
-        let mut s = step.clone();
-        let admins = [ADMIN, ADMIN_2];
-        let actor = match s.actor {
-            Actor::Account(a) => Some(a),
-            Actor::System(_) => None,
-        };
-        s.flags.tenant_admin = actor.is_some_and(|a| admins.contains(&a));
-        s.flags.second_admin = None;
-        let bound = match &s.cmd {
-            Command::GrantRole { account, .. }
-            | Command::AddTeamMember { account, .. }
-            | Command::AddGuardian { account, .. } => Some(*account),
-            Command::CreateDraft { .. } => actor,
-            _ => None,
-        };
-        s.flags.binds_tenant_admin = bound.is_some_and(|a| admins.contains(&a));
-        match &mut s.cmd {
-            Command::CreateDraft { minor, .. } => *minor = true,
-            Command::EndRole { at, .. } if at.micros() > now => *at = Timestamp::from_micros(now),
-            _ => {}
-        }
-        s
-    }
-
-    /// The setup's vault with every account that has an identity
-    /// verified (module documentation).
-    fn cell_truth(truth: &GroundTruth) -> GroundTruth {
-        let mut t = truth.clone();
-        let accounts: Vec<AccountId> = truth.identities().map(|(a, _)| a).collect();
-        for a in accounts {
-            if !t.is_verified(a) {
-                t.verify(a);
-            }
-        }
-        t
     }
 }
 
@@ -919,95 +1184,84 @@ fn mask_between(text: &str, open: &str, close: &str) -> String {
     out
 }
 
-impl StateMachine for SodOverHttp<'_, '_, '_> {
-    type Model = MachineModel;
-    type Sut = MachineSut;
-    type Command = MachineCmd;
-    type Output = (MachineOutput, RemoteOutput);
+/// Compares what the engine and the cell appended for one step.
+fn compare(context: &str, engine: &[Record], cell: &[Record]) -> Result<(), String> {
+    let (want, want_asked) = split_outcomes(&masked(engine));
+    let (got, mut got_asked) = split_outcomes(&masked(cell));
+    let asked_all = want_asked
+        .iter()
+        .all(|w| match got_asked.iter().position(|g| g == w) {
+            Some(i) => {
+                got_asked.swap_remove(i);
+                true
+            }
+            None => false,
+        });
+    if want != got || !asked_all {
+        return Err(format!(
+            "{context}: the cell appended other M2 records\n  engine: {:?}\n  cell:   {:?}",
+            masked(engine),
+            masked(cell)
+        ));
+    }
+    Ok(())
+}
 
-    fn init_model(&self) -> MachineModel {
+impl<M: CellMachine> StateMachine for OverHttp<'_, '_, '_, M> {
+    type Model = M::Model;
+    type Sut = M::Sut;
+    type Command = M::Command;
+    type Output = (M::Output, RemoteOutput);
+
+    fn init_model(&self) -> M::Model {
         self.inner.init_model()
     }
 
-    fn init_sut(&self) -> MachineSut {
+    fn init_sut(&self) -> M::Sut {
         self.inner.init_sut()
     }
 
-    fn command(&self, g: &mut Gen, model: &MachineModel) -> MachineCmd {
-        match self.inner.command(g, model) {
-            MachineCmd::Setup { truth, subjects } => MachineCmd::Setup {
-                truth: Box::new(Self::cell_truth(&truth)),
-                subjects,
-            },
-            MachineCmd::Core { now, step } => MachineCmd::Core {
-                now,
-                step: Box::new(Self::cell_step(&step, now)),
-            },
-            other => other,
-        }
+    fn command(&self, g: &mut Gen, model: &M::Model) -> M::Command {
+        M::for_cell(self.inner.command(g, model))
     }
 
-    fn precondition(&self, model: &MachineModel, cmd: &MachineCmd) -> bool {
-        if let MachineCmd::Vault {
-            op: VaultOp::Merge(account, _),
-            ..
-        } = cmd
-        {
-            let Some(old) = model.truth.identity_of(*account) else {
-                return false;
-            };
-            if model.truth.exclusions().any(|(t, _)| t == old)
-                || model
-                    .truth
-                    .relations()
-                    .any(|(x, y, _)| x == old || y == old)
-            {
-                return false;
-            }
-        }
-        self.inner.precondition(model, cmd)
+    fn precondition(&self, model: &M::Model, cmd: &M::Command) -> bool {
+        M::cell_admits(model, cmd) && self.inner.precondition(model, cmd)
     }
 
-    fn run(&self, sut: &mut MachineSut, cmd: &MachineCmd) -> (MachineOutput, RemoteOutput) {
+    fn run(&self, sut: &mut M::Sut, cmd: &M::Command) -> (M::Output, RemoteOutput) {
         let out = self.inner.run(sut, cmd);
+        let setup = M::is_setup(cmd);
         let first = {
             let mut n = self.cases.borrow_mut();
-            if matches!(cmd, MachineCmd::Setup { .. }) {
+            if setup {
                 *n = n.saturating_add(1);
             }
             *n == 1
         };
-        if first {
+        let (accepted, appended, _) = M::engine_side(&out);
+        if first && !setup {
             let mut c = self.counts.borrow_mut();
-            if !matches!(cmd, MachineCmd::Setup { .. }) {
-                c.0 = c.0.saturating_add(1);
-                if out.result.is_ok() {
-                    c.1 = c.1.saturating_add(1);
-                }
+            c.0 = c.0.saturating_add(1);
+            if accepted {
+                c.1 = c.1.saturating_add(1);
             }
         }
         let Some(remote) = self.remote.as_ref().filter(|_| first) else {
             let mirror = RemoteOutput {
-                accepted: out.result.is_ok(),
-                appended: out.appended.clone(),
+                accepted,
+                appended: appended.to_vec(),
                 fault: None,
             };
             return (out, mirror);
         };
         let mut remote = remote.borrow_mut();
         let before = remote.records.len();
-        let result = match cmd {
-            MachineCmd::Setup { truth, .. } => match SodMachine::setup().steps() {
-                Ok(steps) => remote.start(truth, &steps, T0),
-                Err(e) => Err(remote.fail(format!("the setup steps: {e}"))),
-            },
-            MachineCmd::Core { now, step } => remote.execute(step, Timestamp::from_micros(*now)),
-            MachineCmd::Vault { now, op } => remote.change_vault(*op, Timestamp::from_micros(*now)),
-            MachineCmd::Due { now } => remote.run_due(Timestamp::from_micros(*now)),
-        };
-        let appended = match cmd {
-            MachineCmd::Setup { .. } => Vec::new(),
-            _ => remote.records.get(before..).unwrap_or_default().to_vec(),
+        let result = M::drive(&mut remote, cmd);
+        let appended = if setup {
+            Vec::new()
+        } else {
+            remote.records.get(before..).unwrap_or_default().to_vec()
         };
         let output = RemoteOutput {
             accepted: result.is_ok(),
@@ -1019,20 +1273,19 @@ impl StateMachine for SodOverHttp<'_, '_, '_> {
 
     fn postcondition(
         &self,
-        model: &MachineModel,
-        cmd: &MachineCmd,
-        output: &(MachineOutput, RemoteOutput),
+        model: &M::Model,
+        cmd: &M::Command,
+        output: &(M::Output, RemoteOutput),
     ) -> Result<(), String> {
         let (out, remote) = output;
         self.inner.postcondition(model, cmd, out)?;
         if let Some(f) = &remote.fault {
             return Err(format!("the cell driver failed: {f}"));
         }
-        let engine = out.result.is_ok();
+        let (engine, appended, context) = M::engine_side(out);
         if engine != remote.accepted {
             return Err(format!(
-                "{}: the engine {} it, the cell {} it",
-                out.context,
+                "{context}: the engine {} it, the cell {} it",
                 if engine { "accepts" } else { "refuses" },
                 if remote.accepted {
                     "accepts"
@@ -1041,36 +1294,17 @@ impl StateMachine for SodOverHttp<'_, '_, '_> {
                 }
             ));
         }
-        if !matches!(cmd, MachineCmd::Setup { .. }) {
-            let (want, want_asked) = split_outcomes(&masked(&out.appended));
-            let (got, mut got_asked) = split_outcomes(&masked(&remote.appended));
-            let asked_all =
-                want_asked
-                    .iter()
-                    .all(|w| match got_asked.iter().position(|g| g == w) {
-                        Some(i) => {
-                            got_asked.swap_remove(i);
-                            true
-                        }
-                        None => false,
-                    });
-            if want != got || !asked_all {
-                return Err(format!(
-                    "{}: the cell appended other M2 records\n  engine: {:?}\n  cell:   {:?}",
-                    out.context,
-                    masked(&out.appended),
-                    masked(&remote.appended)
-                ));
-            }
+        if M::is_setup(cmd) {
+            return Ok(());
         }
-        Ok(())
+        compare(context, appended, &remote.appended)
     }
 
-    fn next_state(&self, model: &mut MachineModel, cmd: &MachineCmd) {
+    fn next_state(&self, model: &mut M::Model, cmd: &M::Command) {
         self.inner.next_state(model, cmd);
     }
 
-    fn invariant(&self, model: &MachineModel, sut: &MachineSut) -> Result<(), String> {
+    fn invariant(&self, model: &M::Model, sut: &M::Sut) -> Result<(), String> {
         self.inner.invariant(model, sut)?;
         let Some(remote) = self.remote.as_ref().filter(|_| *self.cases.borrow() == 1) else {
             return Ok(());
@@ -1079,14 +1313,7 @@ impl StateMachine for SodOverHttp<'_, '_, '_> {
         if remote.records.is_empty() {
             return Ok(());
         }
-        let view = View::of(remote.records.iter())
-            .map_err(|e| format!("the reference cannot follow the cell's ledger: {e}"))?;
-        let truth = M2Driver::truth(&**remote);
-        check_i01(&view)?;
-        check_bars(&view)?;
-        check_i02(&view)?;
-        check_i04(&view, truth)?;
-        check_i06(&view, truth)
+        M::cell_invariant(&remote.records, M2Driver::truth(&**remote))
     }
 
     fn max_commands(&self) -> usize {
@@ -1095,7 +1322,7 @@ impl StateMachine for SodOverHttp<'_, '_, '_> {
 }
 
 /// The commands of one reduced case over the cell.
-const REDUCED_COMMANDS: usize = 24;
+pub const REDUCED_COMMANDS: usize = 24;
 
 /// The seed of the reduced case of each suite: fixed, so a red run
 /// replays the same commands.
@@ -1111,21 +1338,37 @@ const SEED_BASE: u64 = 0x5eed_0002;
 /// Runs the reduced case of the M2 suite `suite` (an invariant id such
 /// as `I-04`) over the cell of `client` (design section 14.6).
 ///
+/// The suites and their machines: I-04 and I-06 run the SoD machine
+/// (`SodFocus::I04`, `SodFocus::I06`), I-03 and I-35 the review machine
+/// (`RevFocus::I03`, `RevFocus::I34_I35`).
+///
 /// # Errors
 ///
-/// [`SUITE_SEAM`] for a suite with no cell driver yet, [`DRIVER_FAILED`]
-/// for a harness failure, or the machine's failure, written to standard
-/// error.
+/// [`SUITE_SEAM`] for a suite with no cell driver yet,
+/// [`MACHINE_FAILED`] for a divergence, a broken invariant or a harness
+/// failure, and [`CASE_TOO_SHORT`] for a case that ran too few steps.
+/// The details are on standard error.
 pub fn run_suite(client: &AuthClient<'_>, suite: &str) -> Result<(), NotImplemented> {
-    let focus = match suite {
-        "I-04" => SodFocus::I04,
-        "I-06" => SodFocus::I06,
-        _ => return Err(NotImplemented::new(SUITE_SEAM)),
-    };
+    match suite {
+        "I-04" => run_machine(client, suite, || SodMachine::new(SodFocus::I04)),
+        "I-06" => run_machine(client, suite, || SodMachine::new(SodFocus::I06)),
+        "I-03" => run_machine(client, suite, || ReviewMachine::new(RevFocus::I03)),
+        "I-35" => run_machine(client, suite, || ReviewMachine::new(RevFocus::I34_I35)),
+        _ => Err(NotImplemented::new(SUITE_SEAM)),
+    }
+}
+
+/// Runs the reduced case of the machine `make` builds over the cell of
+/// `client` ([`run_suite`]).
+fn run_machine<M: CellMachine>(
+    client: &AuthClient<'_>,
+    suite: &str,
+    make: impl Fn() -> M,
+) -> Result<(), NotImplemented> {
     let name = format!("m2-suite:{suite}:reduced over the cell");
-    let seed = pick_seed(focus, suite, &name)?;
+    let seed = pick_seed(&make, suite, &name)?;
     let mut driver = HttpDriver::new(client);
-    let machine = SodOverHttp::new(focus, &mut driver, REDUCED_COMMANDS);
+    let machine = OverHttp::new(make(), &mut driver, REDUCED_COMMANDS);
     let outcome = fstp_prop::run_machine(&name, case_config(seed), &machine);
     drop(machine);
     let tally = driver.tally;
@@ -1173,11 +1416,15 @@ const SEED_TRIES: u64 = 256;
 /// alone passes the machine, with at least twice [`MIN_STEPS`] steps and
 /// twice [`MIN_ACCEPTED`] accepted ones. The seed picks a case, never an
 /// outcome on the cell: the cell runs the case the engine ran.
-fn pick_seed(focus: SodFocus, suite: &str, name: &str) -> Result<u64, NotImplemented> {
+fn pick_seed<M: CellMachine>(
+    make: &impl Fn() -> M,
+    suite: &str,
+    name: &str,
+) -> Result<u64, NotImplemented> {
     let base = seed_of(suite);
     for i in 0..SEED_TRIES {
         let seed = base.wrapping_add(i);
-        let dry = SodOverHttp::dry(focus, REDUCED_COMMANDS);
+        let dry: OverHttp<'_, '_, '_, M> = OverHttp::dry(make(), REDUCED_COMMANDS);
         let outcome = fstp_prop::run_machine(name, case_config(seed), &dry);
         let (steps, accepted) = dry.counts();
         if outcome.is_passed()
