@@ -67,3 +67,23 @@ Each is marked "Interim, pending Daniel" in code or in the lane's handoff sectio
 
 - R-HS-01 (hosting verify items V1 to V11, L-15).
 - A release: `deps-check --release` stays red until a Mythos-tier confirmation of moduletto at `6c1ae92` is recorded (I-74).
+
+## 7. Decided by Daniel on 2026-11-13 (second round)
+
+Daniel answered "follow all recommendations" for these items, and chose `/auth/account` for item 9.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Q-D, witness receipt key and I-80 | `fstp-witness` joins design rule 7 and the list of `i80_only_listed_crates_reach_fstp_custody`. The witness run loop returns |
+| 2 | Q-SIM | The custody simulator wraps and unwraps. The pin `harness_custody_sim_wrap_refuses_until_the_aead_lands` is retired, since the AEAD has landed |
+| 3 | Q-KEYOP | ADR-004 wins: a key record for every custody call. The `erasure_runner` test's expectation follows the ADR |
+| 4 | Q-ISO | The vault-change command id is keyed per cell, so `t_iso_i20` stays strict |
+| 6 | Q-I77 | The I-77 HTTP test's cookie bookkeeping is fixed in the test: two sessions of one account at one tick get distinct model keys |
+| 7 | Devstack | Pages are served from a separate page table, and `slice_devstack` reads that table. The I-78 rule that keeps page routes out of `routes::table()` stays |
+| 8 | Edge and ECH | The edge routes a ClientHello that carries `encrypted_client_hello` on its outer SNI, as ADR-009 records (2026-10-29). `b5_th26_sni_encrypted_client_hello_closes` is replaced by a routing test |
+| 9 | Landing on the M3 stack | M3 browser specs land on `/auth/account` |
+| 10 | `r_nf_05` | The baseline is a provisioned cluster |
+| 15 | Vault digests and epochs | Comparisons against the real vault leave out vault digests and epochs, in `seam_async` and in the M2-over-HTTP comparison |
+| 26 | Playwright in CI | CI runs the demo Playwright project as a separate job |
+
+Items 5, 11 to 14, 16 to 18 and the interim readings of section 5 stay open.
