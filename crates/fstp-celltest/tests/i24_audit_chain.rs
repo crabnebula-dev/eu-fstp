@@ -1102,9 +1102,12 @@ fn i24_vault_chain_anchor_under_the_cell_key_is_refused_on_the_reference() {
 /// I-24, ADR-007, design section 7.3: an erasure request and a destroyed
 /// key epoch are ledger records, and each sits in the chain.
 ///
-/// Gaps: the stubs name `TextsErased` only, not `TextErasureRequested`,
-/// `TextErased` and `DocumentErased`. `fstp-pgstore` exposes no append
-/// that writes chain rows (`STORE_SEAM`).
+/// The batch goes through `prod_store_batch`: the cell's anchoring store,
+/// the `fstp_audit` anchorer and the `fstp_witness` core write it into a
+/// fresh App chain, and the production verifier checks it.
+///
+/// Gap: the cell records name `TextsErased` only, not
+/// `TextErasureRequested`, `TextErased` and `DocumentErased`.
 #[test]
 fn i24_erasure_entries_are_chained() {
     let mut cell = ProdCell::bootstrapped().unwrap_or_else(|e| panic!("{e}"));
