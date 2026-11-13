@@ -16,8 +16,12 @@
 //!   type before its end, a zero-length record, and handshake bytes after
 //!   it in its last record are refused.
 //! - Every length must match exactly. Duplicate extensions, a server name
-//!   list with more than one entry, an unknown name type and an
-//!   `encrypted_client_hello` extension are refused.
+//!   list with more than one entry and an unknown name type are refused.
+//! - A hello that carries `encrypted_client_hello` is read like any other
+//!   hello, and its outer SNI decides the route (ADR-009, Daniel's
+//!   decisions of 2026-10-29 and 2026-11-13). Chromium-family browsers
+//!   send that extension as GREASE, so refusing it would close them. The
+//!   parser never tries to tell GREASE from real ECH.
 //! - The host name is an LDH DNS name, folded to lowercase.
 
 use crate::host::{HostError, HostName};
@@ -43,8 +47,6 @@ const RANDOM_LEN: usize = 32;
 const MAX_SESSION_ID: usize = 32;
 /// Extension `server_name` (RFC 6066).
 const EXT_SERVER_NAME: u16 = 0x0000;
-/// Extension `encrypted_client_hello`.
-const EXT_ECH: u16 = 0xfe0d;
 /// Server name type `host_name`, the only type RFC 6066 defines.
 const NAME_TYPE_HOST: u8 = 0;
 
@@ -105,9 +107,6 @@ pub enum SniError {
     Malformed(HelloPart),
     /// Two extensions share a type.
     DuplicateExtension,
-    /// The hello carries `encrypted_client_hello`. The edge never routes
-    /// on an outer name.
-    EncryptedClientHello,
     /// The server name list holds more than one name.
     MultipleServerNames,
     /// The server name is of a type other than `host_name`.
@@ -405,7 +404,6 @@ fn parse_extensions(block: &[u8]) -> Result<SniOutcome, SniError> {
     let mut r = Reader::new(block);
     let mut seen: Vec<u16> = Vec::new();
     let mut host: Option<HostName> = None;
-    let mut ech = false;
     while !r.is_empty() {
         let ty = r.u16(HelloPart::Extension)?;
         let body = r.vec16(HelloPart::Extension)?;
@@ -413,14 +411,11 @@ fn parse_extensions(block: &[u8]) -> Result<SniOutcome, SniError> {
             Ok(_) => return Err(SniError::DuplicateExtension),
             Err(pos) => seen.insert(pos, ty),
         }
-        match ty {
-            EXT_SERVER_NAME => host = Some(parse_server_name(body)?),
-            EXT_ECH => ech = true,
-            _ => {}
+        // Every other extension, `encrypted_client_hello` included, is
+        // skipped unread (ADR-009, Daniel 2026-10-29 and 2026-11-13).
+        if ty == EXT_SERVER_NAME {
+            host = Some(parse_server_name(body)?);
         }
-    }
-    if ech {
-        return Err(SniError::EncryptedClientHello);
     }
     Ok(host.map_or(SniOutcome::NoSni, SniOutcome::Host))
 }

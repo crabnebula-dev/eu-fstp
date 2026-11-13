@@ -235,6 +235,9 @@ function launchArgs(): string[] {
 const DEVSTACK_SPECS =
   /(^|[\\/])(i17-vault-origin-release|i20-passkey-not-offered-across-tenants|i77-management-login|r_lg_03_committee_grant_and_add_passkey_need_stepup|r-lg-04-sessions|r-nf-03-auth-and-vault-pages)\.spec\.ts$/;
 
+/** The Playwright project of the M3 browser specs, which run against `fstp-devstack e2e`. */
+export const DEVSTACK_PROJECT = 'devstack';
+
 export default defineConfig({
   testDir: '.',
   testMatch: /.*\.spec\.ts$/,
@@ -262,7 +265,7 @@ export default defineConfig({
   // e2e` (`tools/devstack/run.sh e2e`). `demo` holds every other spec,
   // which runs against `fstp-e2e-cell` (`tools/demo/run.sh e2e`).
   projects: [
-    { name: 'devstack', testMatch: DEVSTACK_SPECS, use: { browserName: 'chromium' } },
+    { name: DEVSTACK_PROJECT, testMatch: DEVSTACK_SPECS, use: { browserName: 'chromium' } },
     { name: 'demo', testIgnore: DEVSTACK_SPECS, use: { browserName: 'chromium' } },
   ],
 });
@@ -945,7 +948,7 @@ export function isAccountPage(u: URL, origin: string): boolean {
   return u.origin === origin && u.pathname === PAGES.account;
 }
 
-/** The home page on the cell origin, where every sign-in lands (interim, design section 15.0). */
+/** The home page on the cell origin, where every sign-in lands on the demo cell (interim, design section 15.0). */
 export const HOME_PAGE = '/app/';
 
 /** Whether `u` is the home page of `origin`. */
@@ -953,47 +956,67 @@ export function isHomePage(u: URL, origin: string): boolean {
   return u.origin === origin && u.pathname === HOME_PAGE;
 }
 
+/**
+ * The page a sign-in lands on in the running project. The M3 cell serves
+ * the auth pages only and no `/app/` page, so on it every sign-in lands
+ * on the account page (Daniel, 2026-11-13, M3 exit audit section 7, item
+ * 9). Its shell names that landing (`web/src/auth/next.ts`). The demo
+ * cell lands on the home page.
+ */
+export function landingPage(): string {
+  return base.info().project.name === DEVSTACK_PROJECT ? PAGES.account : HOME_PAGE;
+}
+
+/** Whether `u` is the landing page of `origin` in the running project ([`landingPage`]). */
+export function isLandingPage(u: URL, origin: string): boolean {
+  return u.origin === origin && u.pathname === landingPage();
+}
+
 /** The most Tab presses `expectSignedIn` makes to reach the Account link. */
 const MAX_TABS_TO_ACCOUNT = 40;
 
 /**
- * Waits until the page shows the home page of `origin` after a sign-in,
- * then opens the account page through the site navigation and waits
- * until it shows the account, signed in. So a caller goes on from the
- * account page, as before the home page landing (interim, design
- * section 15.0 of 2026-10-31).
+ * Waits until the page shows the landing of `origin` after a sign-in
+ * ([`landingPage`]) and ends on the account page, signed in. So a caller
+ * goes on from the account page in either project.
  *
- * R-NF-03 (review finding F1): the Account link is reached by Tab and
- * opened with Enter, never with a pointer. So the keyboard flow of
- * `r_nf_03_flows_complete_by_keyboard_alone` stays keyboard only: home,
- * then Account, by keyboard. It also checks that a keyboard user can
- * reach the account page from the home landing.
+ * On the M3 stack the landing is the account page itself (Daniel,
+ * 2026-11-13, M3 exit audit section 7, item 9).
+ *
+ * On the demo cell the landing is the home page (interim, design section
+ * 15.0 of 2026-10-31). R-NF-03 (review finding F1): the Account link is
+ * then reached by Tab and opened with Enter, never with a pointer. So the
+ * keyboard flow of `r_nf_03_flows_complete_by_keyboard_alone` stays
+ * keyboard only: home, then Account, by keyboard. It also checks that a
+ * keyboard user can reach the account page from the home landing.
  */
 export async function expectSignedIn(page: Page, origin: string): Promise<void> {
-  await expect(page).toHaveURL((u) => isHomePage(u, origin));
-  await expect(page.locator('main #home')).toBeVisible();
-  // The home page has loaded, so the shell has filled the navigation.
-  await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
-  const account = page.locator('nav a[data-nav="account"]').first();
-  await expect(account).toBeVisible();
-  let focused = false;
-  for (let i = 0; i < MAX_TABS_TO_ACCOUNT && !focused; i += 1) {
-    await page.keyboard.press('Tab');
-    focused = await page.evaluate(() => document.activeElement?.matches('nav a[data-nav="account"]') === true);
+  await expect(page).toHaveURL((u) => isLandingPage(u, origin));
+  if (landingPage() === HOME_PAGE) {
+    await expect(page.locator('main #home')).toBeVisible();
+    // The home page has loaded, so the shell has filled the navigation.
+    await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
+    const account = page.locator('nav a[data-nav="account"]').first();
+    await expect(account).toBeVisible();
+    let focused = false;
+    for (let i = 0; i < MAX_TABS_TO_ACCOUNT && !focused; i += 1) {
+      await page.keyboard.press('Tab');
+      focused = await page.evaluate(() => document.activeElement?.matches('nav a[data-nav="account"]') === true);
+    }
+    expect(focused, `R-NF-03: the Account link is reachable by Tab within ${MAX_TABS_TO_ACCOUNT} presses`).toBe(true);
+    await page.keyboard.press('Enter');
   }
-  expect(focused, `R-NF-03: the Account link is reachable by Tab within ${MAX_TABS_TO_ACCOUNT} presses`).toBe(true);
-  await page.keyboard.press('Enter');
   await expect(page).toHaveURL((u) => isAccountPage(u, origin));
   await expect(page.locator(UI.account.sessions)).toBeVisible();
   expect(await sessionStatus(page, origin)).toBe(200);
 }
 
 /**
- * Waits for the outcome of a sign-in step: the home page (true) or a
+ * Waits for the outcome of a sign-in step: the landing page (true) or a
  * visible alert (false). Neither within the timeout fails the test.
  */
 export async function signInOutcome(page: Page, origin: string): Promise<boolean> {
-  const ok = page.waitForURL((u) => isHomePage(u, origin)).then(
+  const ok = page.waitForURL((u) => isLandingPage(u, origin)).then(
     () => true,
     () => null,
   );
@@ -1007,7 +1030,7 @@ export async function signInOutcome(page: Page, origin: string): Promise<boolean
     );
   const r = await Promise.race([ok, refused]);
   if (r === null) {
-    throw new Error('the page showed neither the home page nor an alert');
+    throw new Error('the page showed neither the landing page nor an alert');
   }
   if (r) {
     await expectSignedIn(page, origin);
@@ -1024,6 +1047,34 @@ export async function enrolByInvite(page: Page, origin: string, url: string): Pr
   expect(u.hash.length, 'the invitation token travels in the fragment').toBeGreaterThan(1);
   await openLink(page, url);
   await page.locator(UI.invite.register).click();
+  await expectSignedInAfterInvite(page, origin);
+}
+
+/**
+ * Waits until an invitation enrolment on `origin` has signed the person
+ * in, then goes on as [`expectSignedIn`].
+ *
+ * On the M3 stack the invitation enrols the passkey and opens no session
+ * (`fstp_cell::routes::auth::invitation_register`). So the page lands on
+ * the account page, which sends the browser to the login page, and the
+ * person signs in there with the new passkey (`tools/devstack/run.sh`,
+ * "Logging in through a browser"; Daniel, 2026-11-13, M3 exit audit
+ * section 7, item 9). The sign-in button is reached by Tab and pressed
+ * with Enter, so a keyboard-only flow stays keyboard only (R-NF-03).
+ */
+export async function expectSignedInAfterInvite(page: Page, origin: string): Promise<void> {
+  if (landingPage() === PAGES.account) {
+    await expect(page).toHaveURL((u) => u.origin === origin && u.pathname === PAGES.login);
+    const button = page.locator(UI.login.passkey);
+    await expect(button).toBeVisible();
+    let focused = false;
+    for (let i = 0; i < MAX_TABS_TO_ACCOUNT && !focused; i += 1) {
+      await page.keyboard.press('Tab');
+      focused = await page.evaluate((s) => document.activeElement?.matches(s) === true, UI.login.passkey);
+    }
+    expect(focused, `R-NF-03: the passkey sign-in is reachable by Tab within ${MAX_TABS_TO_ACCOUNT} presses`).toBe(true);
+    await page.keyboard.press('Enter');
+  }
   await expectSignedIn(page, origin);
 }
 

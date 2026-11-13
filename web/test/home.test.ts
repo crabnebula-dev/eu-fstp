@@ -6,7 +6,7 @@
 // report that a signed-in person found no way to their work. Every value
 // here is synthetic.
 
-import { HOME_PATH, LOGIN_PATH, MAX_RETURN, isReturnPath, landingAfterSignIn, loginPathFor } from "../src/auth/next.js";
+import { ACCOUNT_PATH, HOME_PATH, LOGIN_PATH, MAX_RETURN, homeOf, isReturnPath, landingAfterSignIn, loginPathFor } from "../src/auth/next.js";
 import { SCHEMAS, VALIDATORS } from "../src/gen/api.js";
 import { AUTH_EN } from "../src/auth/messages.en.js";
 import { navRolesOf, siteLinks } from "../src/auth/sitenav.js";
@@ -383,6 +383,27 @@ test("adr014_return_path_stays_on_the_cell_origin", () => {
       const landing = landingAfterSignIn(`?next=${encodeURIComponent(p)}`);
       assert(landing === HOME_PATH || landing === p, `${show(p)} lands on ${show(landing)}`);
       assert(isReturnPath(landing), `the landing ${show(landing)} is a return path`);
+    },
+  );
+});
+
+/**
+ * R-NF-03, M3 exit audit section 7 item 9 (Daniel, 2026-11-13): a cell
+ * whose shell names the account page as its landing serves no `/app/`
+ * page, so every sign-in there lands on the account page, whatever the
+ * query. Any other declared value, or none, keeps the home page.
+ */
+test("r_nf_03_m3_cell_landing_is_the_account_page", () => {
+  eq(homeOf(ACCOUNT_PATH), ACCOUNT_PATH, "the declared account page");
+  for (const v of [null, undefined, "", "/app/", "/auth/account/", "/AUTH/ACCOUNT", "https://evil.example/auth/account", 1]) {
+    eq(homeOf(v), HOME_PATH, `the landing declared as ${show(String(v))}`);
+  }
+  forAll(
+    (r) => (r.bool() ? "/app/" : "") + r.stringFrom(PATHISH, 8),
+    (p) => {
+      eq(landingAfterSignIn(`?next=${encodeURIComponent(p)}`, ACCOUNT_PATH), ACCOUNT_PATH, `${show(p)} on the M3 cell`);
+      const other = landingAfterSignIn(`?next=${encodeURIComponent(p)}`, p);
+      assert(other === ACCOUNT_PATH || other === HOME_PATH || isReturnPath(other), `${show(p)} as a declared home`);
     },
   );
 });

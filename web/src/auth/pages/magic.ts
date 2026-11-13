@@ -6,8 +6,7 @@
 import { ok, post } from '../api.js';
 import { h } from '../dom.js';
 import { isHex } from '../encoding.js';
-import { PATHS, busy, frame, go, hush, showFailure, t, takeFragment } from '../layout.js';
-import { HOME_PATH } from '../next.js';
+import { PATHS, busy, frame, go, hush, showFailure, signedInHome, t, takeFragment } from '../layout.js';
 import { Failure, failureOf } from '../webauthn.js';
 
 /** Mounts the confirm page. */
@@ -28,7 +27,7 @@ export function mount(): void {
       hush(alert);
       const r = await post('/auth/magic/consume', { token });
       if (ok(r)) {
-        go(HOME_PATH);
+        go(signedInHome());
       } else {
         // A refused link is 401 here, not a lost session.
         showFailure(alert, failureOf(r.status === 401 ? 403 : r.status));

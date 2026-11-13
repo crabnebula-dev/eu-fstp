@@ -109,7 +109,7 @@ tsc and Playwright run on Node.js, and Playwright installs through npm. The Deci
 | npm | 11.6.2, bundled with Node.js 24.11.1. Lockfile format version 3 | The pinned Node.js archive | 2026-10-29 |
 | `web/` npm tree | `typescript` 6.0.3 only | `web/package-lock.json` and the npm allowlist | 2026-10-29 |
 | `e2e/` npm tree | `@playwright/test` 1.64.1, `playwright` 1.64.1, `playwright-core` 1.64.1, `typescript` 6.0.3 | `e2e/package-lock.json` and the npm allowlist | 2026-10-29 |
-| Playwright browsers | Record at first use | The controlled CI step | Record at first use |
+| Playwright browsers | Chrome Headless Shell 156.0.8078.4, the `chromium-headless-shell` revision 1248 of Playwright 1.64.1, for Linux x64 only: `https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-headless-shell-linux64.zip`, SHA-256 `c3e50596aef52c58f8fda3c6b3411c33d34c88b177b3ed1c2243359fd3b8ba20`. No other browser is fetched in CI | The step "Fetch the pinned Chrome Headless Shell" of the `e2e-demo` job in `.github/workflows/ci.yml`, which checks the SHA-256 and unpacks the archive where Playwright looks for it (M3 exit audit section 7, item 26) | 2026-11-13 |
 | SBOM generator | In-house, `deps-check sbom` (`tools/deps-check/src/sbom.rs`). CycloneDX 1.6 JSON through `fstp-json`, no third-party tool. Node.js and npm are listed as build-time components. `TODO(legal)`: whether the CRA implementing acts name a format (M9 design D5) | The `sbom` job in `.github/workflows/ci.yml`, which passes the Node.js and npm pins above | 2026-11-06 |
 
 The tsc and Playwright rows in the record table above are filled at first use as before.

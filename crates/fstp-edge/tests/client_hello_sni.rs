@@ -8,7 +8,9 @@
 //!   valid hellos name their host in lowercase, and every proper prefix
 //!   needs more bytes.
 //! - Refusals: malformed, truncated, oversized and multi-SNI hellos, and
-//!   invalid host names. ECH and other hellos the edge cannot route close.
+//!   invalid host names. Hellos the edge cannot route close.
+//! - ECH: a hello with `encrypted_client_hello` routes on its outer SNI
+//!   (ADR-009, Daniel 2026-10-29 and 2026-11-13).
 //!
 //! The parser reads only. Bytes after the ClientHello are covered in
 //! `i19_edge_pass_through.rs`.
@@ -23,7 +25,12 @@ mod common;
 #[path = "support/hello.rs"]
 mod hello;
 
-use fstp_edge::{SniOutcome, parse_client_hello_sni};
+use std::net::SocketAddr;
+
+use fstp_edge::{
+    CELL_ID_LEN, CellEndpoint, CloseReason, Decision, HostName, RouteKind, RouteTable, SniOutcome,
+    decide, parse_client_hello_sni,
+};
 use fstp_prop::{check, prop_assert, prop_assert_eq};
 
 use common::{closes, gen_hello_naming, gen_hello_with, gen_host, host_of, refused};
@@ -412,22 +419,106 @@ fn th26_sni_invalid_host_names_are_refused() {
     }
 }
 
-/// B5, TH-26 (design section 9.4, ADR-009): a hello with an
-/// `encrypted_client_hello` extension closes the connection, even though
-/// its outer SNI names a valid host. The edge never routes on an ECH
-/// public name.
+/// The cell id of the one cell in [`ech_table`].
+const ECH_CELL: [u8; CELL_ID_LEN] = [7; CELL_ID_LEN];
+
+/// A route table with one cell, `cell.example`, and its vault origin
+/// `id.cell.example`.
+fn ech_table() -> RouteTable {
+    let endpoint = |port: u16| CellEndpoint {
+        cell: ECH_CELL,
+        address: SocketAddr::from(([10, 0, 2, 7], port)),
+        tls_name: "tunnel.cell.internal".to_owned(),
+    };
+    let mut table = RouteTable::new();
+    table
+        .add_cell(
+            HostName::parse(b"cell.example").unwrap(),
+            endpoint(8443),
+            endpoint(9443),
+        )
+        .unwrap();
+    table
+}
+
+/// Inserts an `encrypted_client_hello` extension with a random body at a
+/// random position, as a GREASE or a real ECH client would send it.
+fn add_ech(g: &mut fstp_prop::Gen, hello: &mut Hello) {
+    let at = g.usize_in(0..=hello.extensions.len());
+    let ech = g.bytes(0..=200);
+    hello.extensions.insert(at, (EXT_ECH, ech));
+}
+
+/// B5, TH-26, I-19 (design section 9.4, ADR-009 "Edge and tunnel"):
+/// a hello with an `encrypted_client_hello` extension routes on its outer
+/// SNI, like any other hello. Daniel decided this on 2026-10-29 (ADR-009,
+/// design section 21) and again on 2026-11-13 (M3 exit audit section 7,
+/// item 8). Chromium-family browsers send that extension as GREASE. This
+/// test replaces `b5_th26_sni_encrypted_client_hello_closes`.
 #[test]
-fn b5_th26_sni_encrypted_client_hello_closes() {
-    check("b5_th26_sni_encrypted_client_hello_closes", |g| {
-        let host = gen_host(g);
-        let mut hello = gen_hello_naming(g, &host);
-        let at = g.usize_in(0..=hello.extensions.len());
-        let ech = g.bytes(1..=48);
-        hello.extensions.insert(at, (EXT_ECH, ech));
-        let verdict = parse_client_hello_sni(&hello.record());
-        prop_assert!(closes(&verdict), "verdict {:?}", verdict);
-        Ok(())
-    });
+fn b5_th26_sni_encrypted_client_hello_routes_on_outer_sni() {
+    let table = ech_table();
+    check(
+        "b5_th26_sni_encrypted_client_hello_routes_on_outer_sni",
+        |g| {
+            let (name, kind): (&[u8], RouteKind) = if g.bool() {
+                (b"cell.example", RouteKind::Cell)
+            } else {
+                (b"id.cell.example", RouteKind::VaultOrigin)
+            };
+            let mut outer = name.to_vec();
+            for b in &mut outer {
+                if g.bool() {
+                    *b = b.to_ascii_uppercase();
+                }
+            }
+            let mut hello = gen_hello_naming(g, &outer);
+            add_ech(g, &mut hello);
+            match decide(&table, &hello.record()) {
+                Decision::Forward {
+                    host,
+                    endpoint,
+                    kind: routed,
+                } => {
+                    prop_assert_eq!(host.as_str().as_bytes(), name);
+                    prop_assert_eq!(endpoint.cell, ECH_CELL);
+                    prop_assert_eq!(routed, kind);
+                }
+                other => prop_assert!(false, "an ECH hello did not route: {:?}", other),
+            }
+            Ok(())
+        },
+    );
+}
+
+/// B5, TH-26, I-19 (design section 9.4, ADR-009): a hello with an
+/// `encrypted_client_hello` extension whose outer SNI names no route
+/// still closes as an unknown host, and one without an outer SNI closes
+/// as having none (Daniel, 2026-10-29 and 2026-11-13). The extension
+/// never opens a route of its own.
+#[test]
+fn b5_th26_sni_encrypted_client_hello_without_a_route_closes() {
+    let table = ech_table();
+    check(
+        "b5_th26_sni_encrypted_client_hello_without_a_route_closes",
+        |g| {
+            let outer = gen_host(g);
+            let lower = lowercase(&outer);
+            if lower == "cell.example" || lower == "id.cell.example" {
+                return Ok(());
+            }
+            let mut hello = gen_hello_naming(g, &outer);
+            add_ech(g, &mut hello);
+            let decision = decide(&table, &hello.record());
+            prop_assert_eq!(decision, Decision::Close(CloseReason::UnknownHost));
+
+            let mut bare = gen_hello_with(g, None);
+            add_ech(g, &mut bare);
+            let decision = decide(&table, &bare.record());
+            prop_assert_eq!(decision, Decision::Close(CloseReason::NoSni));
+            Ok(())
+        },
+    );
 }
 
 /// TH-26 (design section 9.4, RFC 6066 section 3): a server name of a

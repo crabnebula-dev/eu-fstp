@@ -33,6 +33,7 @@ import {
   call,
   enrolByInvite,
   expectSignedIn,
+  expectSignedInAfterInvite,
   keyForNextPasskey,
   okJson,
   openLink,
@@ -79,7 +80,7 @@ async function eachPageState(
   await page.goto(fresh.first_admin.url);
   await check(page, 'invitation');
   await page.locator(UI.invite.register).click();
-  await expectSignedIn(page, cell.origin);
+  await expectSignedInAfterInvite(page, cell.origin);
   await check(page, 'account');
   await page.locator(UI.account.addPasskey).click();
   await expect(page.locator(UI.stepup.dialog)).toBeVisible();
@@ -406,7 +407,7 @@ test.describe('R-NF-03 auth and vault pages', () => {
     await page.goto(fresh.first_admin.url);
     await tabTo(page, UI.invite.register);
     await page.keyboard.press('Enter');
-    await expectSignedIn(page, cell.origin);
+    await expectSignedInAfterInvite(page, cell.origin);
 
     // Adding a passkey, with its step-up dialog.
     await keyForNextPasskey(page);

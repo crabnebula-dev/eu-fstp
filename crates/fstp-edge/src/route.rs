@@ -267,9 +267,10 @@ pub enum Decision<'t> {
     Close(CloseReason),
 }
 
-/// Routes the first bytes of a connection by their SNI. No SNI, ECH, an
+/// Routes the first bytes of a connection by their SNI. No SNI, an
 /// unknown host or a malformed hello closes the connection (design
-/// section 9.4).
+/// section 9.4). A hello with `encrypted_client_hello` routes on its outer
+/// SNI (ADR-009).
 pub fn decide<'t>(table: &'t RouteTable, buf: &[u8]) -> Decision<'t> {
     match parse_client_hello_sni(buf) {
         Ok(SniOutcome::NeedMore) => Decision::NeedMore,

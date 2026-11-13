@@ -33,7 +33,7 @@ pub(crate) fn refused(v: &Verdict) -> bool {
 }
 
 /// The edge closes the connection: a real refusal, no SNI or not TLS
-/// (design section 9.4: "No SNI, ECH, an unknown host or a malformed hello
+/// (design section 9.4: "No SNI, an unknown host or a malformed hello
 /// closes the connection").
 pub(crate) fn closes(v: &Verdict) -> bool {
     refused(v) || matches!(v, Ok(SniOutcome::NoSni | SniOutcome::NotTls))

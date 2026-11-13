@@ -14,7 +14,7 @@
 
 import { ok, post } from '../api.js';
 import { h } from '../dom.js';
-import { PATHS, busy, emailField, frame, go, hush, showFailure, statusRegion, t } from '../layout.js';
+import { PATHS, busy, emailField, frame, go, hush, showFailure, signedInHome, statusRegion, t } from '../layout.js';
 import { landingAfterSignIn } from '../next.js';
 import { assertion, failureOf, optionsOf } from '../webauthn.js';
 
@@ -29,7 +29,7 @@ async function passkeyLogin(): Promise<void> {
   if (!ok(r)) throw failureOf(r.status);
   // Interim, design section 15.0 (2026-10-31): the home page, or the
   // same-origin /app/ page the person asked for before signing in.
-  go(landingAfterSignIn(location.search));
+  go(landingAfterSignIn(location.search, signedInHome()));
 }
 
 /** Mounts the login page. */
