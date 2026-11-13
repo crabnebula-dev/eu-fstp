@@ -651,14 +651,37 @@ impl DriverCore {
                 return self.again(state);
             }
         }
-        let batch = crate::decide_reaction(state, &cmd, self.admitted.at(), answers)
-            .map_err(ExecError::Refused)?;
+        // The admitted command's session rows, if its route read them: a
+        // suspension or a voiding in the reaction then ends the sessions
+        // of its account in the same batch (design section 5.1).
+        let batch = crate::decide_reaction_with_inputs(
+            state,
+            &cmd,
+            self.admitted.at(),
+            self.admitted.inputs(),
+            answers,
+        )
+        .map_err(ExecError::Refused)?;
+        // The store writes one `auth_log.session_end` row per ended
+        // session, so the side effects name them as a command's do.
+        let side = SideEffects {
+            sessions_ended: batch
+                .iter()
+                .filter_map(|r| match r {
+                    CellRecord::Auth(fstp_auth::AuthRecord::SessionEnded { session }) => {
+                        Some(*session)
+                    }
+                    _ => None,
+                })
+                .collect(),
+            ..SideEffects::default()
+        };
         self.append(
             state,
             batch,
             reaction_command_id(target.raw()),
             Pending::Reaction(target),
-            SideEffects::default(),
+            side,
         )
     }
 

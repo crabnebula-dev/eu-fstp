@@ -189,6 +189,14 @@ impl MemoryBackend {
     fn run(&self, admitted: Admitted) -> Result<Result<Done, ExecError>, BackendFault> {
         self.with(|m| {
             let mut state = (*m.state()).clone();
+            // Every live row when the route read none, as the PostgreSQL
+            // backend does (design section 5.1 "Reactions").
+            let admitted = if admitted.inputs().sessions().is_none() {
+                let rows: Vec<SessionRow> = m.sessions.values().cloned().collect();
+                admitted.with_sessions(crate::tasks::timeline::session_rows(&rows))
+            } else {
+                admitted
+            };
             let mut driver = DriverCore::start(admitted);
             let mut event: Option<Event> = None;
             for _ in 0..MAX_STEPS {
@@ -273,6 +281,10 @@ impl Backend for MemoryBackend {
                 .cloned()
                 .collect()
         }))
+    }
+
+    fn all_sessions(&self) -> impl Future<Output = Result<Vec<SessionRow>, BackendFault>> + Send {
+        ready(self.with(|m| m.sessions.values().cloned().collect()))
     }
 
     fn open_session(

@@ -337,6 +337,20 @@ impl<R: Runtime> Backend for PgBackend<R> {
     }
 
     async fn execute(&self, admitted: Admitted) -> Result<Result<Done, ExecError>, BackendFault> {
+        // A command whose route read no session rows is decided with every
+        // live row of the cell. So a grant, an end, a suspension or a
+        // voiding in its batch, or in the vault reaction the driver runs
+        // before it, names every session it ends (design section 5.1
+        // "Reactions", Q16 A). The gate refuses those sessions anyway
+        // (design section 5.4 step 2), apart from one that started at the
+        // very instant of the end, which only the recorded end stops
+        // (lane m3/cycle-steps, I-77).
+        let admitted = if admitted.inputs().sessions().is_none() {
+            let rows = self.all_sessions().await?;
+            admitted.with_sessions(crate::tasks::timeline::session_rows(&rows))
+        } else {
+            admitted
+        };
         match self.engine.execute(admitted).await {
             Ok(done) => Ok(Ok(done)),
             Err(EngineError::Exec(e)) => Ok(Err(e)),
@@ -367,6 +381,19 @@ impl<R: Runtime> Backend for PgBackend<R> {
             .query(
                 "SELECT session_id, account_id, method, created_at, last_seen_at FROM auth.session WHERE account_id = $1 ORDER BY session_id",
                 &[&account_uuid(account)],
+            )
+            .await
+            .map_err(fault)?;
+        c.release();
+        rows.iter().map(|r| self.session_row(r)).collect()
+    }
+
+    async fn all_sessions(&self) -> Result<Vec<SessionRow>, BackendFault> {
+        let mut c = self.app.get().await.map_err(fault)?;
+        let rows = c
+            .query(
+                "SELECT session_id, account_id, method, created_at, last_seen_at FROM auth.session ORDER BY session_id",
+                &[],
             )
             .await
             .map_err(fault)?;

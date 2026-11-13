@@ -2905,6 +2905,11 @@ pub mod http {
     /// takes facts now, but this client seeds no conflict fact yet.
     pub const SUSPEND_SEAM_HTTP: &str = "fstp_celltest::mc::auth_model::http::AuthClient::suspend_for_conflict: the world runs the seeded vault (CellHandle::seed), but the client seeds no conflict fact yet, and the cell side of the suspension is SUSPEND_SEAM (lane F-AUTHP)";
 
+    /// The model ids of the conflict partners of
+    /// [`AuthClient::suspend_for_conflict`] start above this number, so they
+    /// never meet a machine account or the cycle's staff.
+    const CONFLICT_PARTNER_BASE: u128 = 8_100;
+
     /// The former seam of recovery, closed by lane m3/login-m2http.
     /// The recovery ceremonies refuse: the request, email proof and
     /// completion routes fail closed with 501.
@@ -3076,6 +3081,9 @@ pub mod http {
         /// The synthetic attribute tuple of each verified model account
         /// (lane m3/cycle-steps).
         attributes: BTreeMap<AccountId, Vec<u8>>,
+        /// The conflict partners drawn so far
+        /// ([`AuthClient::suspend_for_conflict`]).
+        partners: u128,
         /// Each recovery case the cell opened: its holder, its email proof
         /// token, and its enrolment token once the email was proven.
         cases: BTreeMap<Vec<u8>, CaseTokens>,
@@ -3876,11 +3884,99 @@ pub mod http {
             }
         }
 
-        /// Gives `account` a conflict of interest through vault seeding.
-        /// Refuses with [`SUSPEND_SEAM_HTTP`].
+        /// Gives `account` a conflict of interest through vault seeding, so
+        /// the cell's own `VaultChanged` reaction suspends its committee
+        /// member binding under I-06, as `ProdCell::suspend_for_conflict`
+        /// does in process (lane m3/cycle-steps; the former
+        /// [`SUSPEND_SEAM_HTTP`] is closed).
+        ///
+        /// 1. A fresh partner account enrols, its verification is seeded
+        ///    with a synthetic attribute tuple of its own, and the first
+        ///    admin grants it programme manager (Drafting) on P1, with a
+        ///    step-up.
+        /// 2. The verification of `account` is seeded again with the
+        ///    partner's tuple, so the vault resolves both to one identity
+        ///    (design section 6.4, Q17) and lists `account` as changed.
+        /// 3. The first admin ends the partner's binding, with a step-up.
+        ///    The cell processes the new epoch before that command (design
+        ///    section 5.2 step 4), while the partner still holds, so its own
+        ///    reaction suspends the binding of `account`. A later committee
+        ///    grant of `account` then meets no Drafting holder of its
+        ///    identity. The suspension stays.
+        ///
+        /// `Ok(true)` when the ledger then holds `BindingSuspended` of the
+        /// binding under I-06. `Ok(false)` when the client granted
+        /// `account` no committee member binding, or the cell suspended
+        /// nothing. Claim: the conflict comes from seeded verifications
+        /// (design section 6.9).
         pub fn suspend_for_conflict(&self, account: AccountId) -> Result<bool, NotImplemented> {
-            let _ = account;
-            Err(NotImplemented::new(SUSPEND_SEAM_HTTP))
+            use fstp_domain::roles::Role;
+            let Some(binding) = self
+                .known()
+                .bindings
+                .get(&(account, Role::CommitteeMember))
+                .copied()
+            else {
+                return Ok(false);
+            };
+            let Some(cell) = self.known().people.get(&account).map(|p| p.cell) else {
+                return Ok(false);
+            };
+            // A fresh session of the first admin: the cell clock may have
+            // moved past the idle lifetime (P-72) of the last one.
+            let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+            let partner = {
+                let mut k = self.known();
+                k.partners = k.partners.saturating_add(1);
+                AccountId::from_raw(CONFLICT_PARTNER_BASE.saturating_add(k.partners))
+            };
+            if !self.enrol(partner)? {
+                return Err(failed());
+            }
+            let grant = RosterChange::Grant {
+                account: partner,
+                role: Role::ProgrammeManager,
+                until: None,
+            };
+            if !self.roster(&admin, grant)? {
+                eprintln!("fstp_celltest AuthClient: the conflict partner's grant was refused");
+                return Err(failed());
+            }
+            let tuple = self
+                .known()
+                .attributes
+                .get(&partner)
+                .cloned()
+                .ok_or_else(failed)?;
+            self.cell.seed_verification(cell, &tuple).map_err(|e| {
+                eprintln!("fstp_celltest AuthClient: the conflicting verification: {e}");
+                failed()
+            })?;
+            self.known().attributes.insert(account, tuple);
+            let suspended = |c: &CellHandle| -> Result<bool, NotImplemented> {
+                Ok(c.ledger().map_err(|_| failed())?.iter().any(|e| {
+                    matches!(
+                        &e.record,
+                        fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(
+                            fstp_domain::Record::BindingSuspended(s)
+                        )) if s.binding == binding
+                            && s.rule == fstp_domain::refusal::RuleRef::I06
+                    )
+                }))
+            };
+            // The end is a command that asks the vault, so the cell processes
+            // the new epoch before it (design section 5.2 step 4). While
+            // the reaction runs, the partner still holds its binding, so
+            // the reaction meets the conflict and suspends.
+            let end = RosterChange::End {
+                account: partner,
+                role: Role::ProgrammeManager,
+            };
+            if !self.roster(&admin, end)? {
+                eprintln!("fstp_celltest AuthClient: the conflict partner's end was refused");
+                return Err(failed());
+            }
+            suspended(self.cell)
         }
 
         /// Whether the cell admits a request in the session:
