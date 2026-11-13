@@ -838,3 +838,179 @@ fn i81_cell_erasure_task_completes_a_requested_batch_on_its_own() {
         r.opened_before && r.erased == vec![T1] && r.after == Err(OpenRefusal::Erased) && r.drained;
     assert!(ok, "{r:?}");
 }
+
+/// The context of the notice companion signature
+/// (`fstp_contract::notice_companion::NOTICE_COMPANION_CONTEXT`, M9 D6).
+const COMPANION_CONTEXT: &[u8] = b"fstp-notice-companion-v1";
+
+/// What the signing key test saw.
+struct SignerRun {
+    first: Vec<u8>,
+    again: Vec<u8>,
+    after_batch: Vec<u8>,
+    rotated: Vec<u8>,
+    after_restart: Vec<u8>,
+    history: Vec<(u32, Vec<u8>)>,
+    anchor_refused: bool,
+    from: u64,
+    to: u64,
+    signature_verifies: bool,
+    due_now: bool,
+    due_in_a_year: bool,
+}
+
+/// Seam: a cell with one text, the notice companion key created through
+/// the keystore, an erasure batch that crashes before its commit and
+/// resumes, then a rotation and a restart.
+fn run_signer() -> Result<SignerRun, &'static str> {
+    use fstp_cell::tasks::erasure::SIGNER_LIFETIME_US;
+    use fstp_keys::Purpose;
+    let rt = TokioRuntime::new_multi_thread(2).map_err(|_| "no runtime")?;
+    let rt2 = rt.clone();
+    rt.block_on(async move {
+        let (mem, stepup) = store_with_admin_stepup()?;
+        let store = Unanchored::open(mem, CELL)
+            .await
+            .map_err(|_| "the store did not open")?;
+        let shutdown = Shutdown::new();
+        let (engine, _task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
+            .await
+            .map_err(|_| "the engine did not start")?;
+        as_admin(
+            &engine,
+            CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
+            GRANT_ADMIN,
+            Some(stepup),
+        )
+        .await?;
+        as_admin(
+            &engine,
+            CellCommand::Text(TextCommand::PutText { id: T1 }),
+            0xA1,
+            None,
+        )
+        .await?;
+        let sim = Custodian::default();
+        let mut runner = ErasureRunner::genesis(sim.clone(), engine.clone(), CELL)
+            .await
+            .map_err(|_| "the key chain did not start")?;
+        runner.add_group(G1).map_err(|_| "no group 1")?;
+        runner
+            .put_text(G1, T1, b"synthetic text one")
+            .map_err(|_| "no T1")?;
+        let first = runner
+            .ensure_signer(Purpose::NoticeCompanion)
+            .map_err(|_| "no notice companion key")?;
+        let again = runner
+            .ensure_signer(Purpose::NoticeCompanion)
+            .map_err(|_| "no notice companion key")?;
+        let anchor_refused = runner.ensure_signer(Purpose::Anchor).is_err();
+        let key = runner
+            .signer(Purpose::NoticeCompanion)
+            .map_err(|_| "no signer")?;
+        let sig = key
+            .sign_with_context(b"synthetic notice digest", COMPANION_CONTEXT)
+            .map_err(|_| "no signature")?;
+        let signature_verifies = fstp_crypto::composite::verify_with_context(
+            &first,
+            b"synthetic notice digest",
+            COMPANION_CONTEXT,
+            &sig.to_bytes(),
+        )
+        .is_ok();
+        let from = runner.keystore().epoch();
+        as_admin(
+            &engine,
+            CellCommand::Text(TextCommand::EraseTexts {
+                ids: vec![T1],
+                cause: 2,
+            }),
+            0xB0,
+            None,
+        )
+        .await?;
+        let mut steps = 0usize;
+        let mut crashed = false;
+        while runner.step().await.map_err(|_| "a step failed")?.is_some() {
+            steps += 1;
+            if !crashed && steps == 5 {
+                // The process crashes after the reseal, before the commit.
+                crashed = true;
+                let store = runner.keystore().clone();
+                drop(runner);
+                runner = ErasureRunner::resume(sim.clone(), engine.clone(), store)
+                    .await
+                    .map_err(|_| "the runner did not resume")?;
+            }
+        }
+        let to = runner.keystore().epoch();
+        // A restart from the durable keystore under the new epoch only.
+        let store = runner.keystore().clone();
+        drop(runner);
+        let mut runner = ErasureRunner::resume(sim.clone(), engine.clone(), store)
+            .await
+            .map_err(|_| "the runner did not resume after the batch")?;
+        let after_batch = runner
+            .signer(Purpose::NoticeCompanion)
+            .map_err(|_| "the key did not survive the batch")?
+            .public_key()
+            .to_bytes()
+            .to_vec();
+        let rotated = runner
+            .rotate_signer(Purpose::NoticeCompanion)
+            .map_err(|_| "no rotation")?;
+        let store = runner.keystore().clone();
+        drop(runner);
+        let runner = ErasureRunner::resume(sim.clone(), engine.clone(), store)
+            .await
+            .map_err(|_| "the runner did not resume after the rotation")?;
+        let after_restart = runner
+            .signer(Purpose::NoticeCompanion)
+            .map_err(|_| "the rotated key did not reopen")?
+            .public_key()
+            .to_bytes()
+            .to_vec();
+        let ks = runner.keystore();
+        let now = fstp_cell::tasks::system_now();
+        Ok(SignerRun {
+            first,
+            again,
+            after_batch,
+            rotated,
+            after_restart,
+            history: ks.signer_public_keys(Purpose::NoticeCompanion),
+            anchor_refused,
+            from,
+            to,
+            signature_verifies,
+            due_now: ks.signer_due(Purpose::NoticeCompanion, now),
+            due_in_a_year: ks.signer_due(Purpose::NoticeCompanion, now + SIGNER_LIFETIME_US),
+        })
+    })
+}
+
+/// R-CR-04, ADR-004, M9 decision CD4: the keystore creates the notice
+/// companion key once, under the chain's seal key that custody wraps.
+/// The key signs under the companion context, survives an erasure batch
+/// with a crash before its commit (resealed under the new epoch, while
+/// the old root is destroyed), and rotates to a new generation whose
+/// predecessor's public key stays listed. No other purpose is held.
+#[test]
+fn r_cr_04_keystore_holds_and_rotates_the_notice_companion_key() {
+    let r = run_signer().unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(r.first, r.again, "one key per purpose");
+    assert!(r.anchor_refused, "the Anchor key is not the keystore's");
+    assert!(r.signature_verifies, "the key signs a companion signature");
+    assert_eq!(r.to, r.from + 1, "the batch moved the epoch");
+    assert_eq!(r.after_batch, r.first, "the key survives the batch");
+    assert_ne!(r.rotated, r.first, "a rotation makes a new key");
+    assert_eq!(r.after_restart, r.rotated, "the new generation reopens");
+    assert_eq!(
+        r.history,
+        vec![(1, r.first.clone()), (2, r.rotated.clone())]
+    );
+    assert!(
+        !r.due_now && r.due_in_a_year,
+        "yearly rotation is due after one year"
+    );
+}

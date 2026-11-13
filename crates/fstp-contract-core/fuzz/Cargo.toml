@@ -19,6 +19,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "notice_companion_decode"
+path = "fuzz_targets/notice_companion_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

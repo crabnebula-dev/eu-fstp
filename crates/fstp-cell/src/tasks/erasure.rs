@@ -61,6 +61,7 @@ use std::time::Duration;
 use fstp_cell_core::gate::{self, Action};
 use fstp_cell_core::{CellCommand, CellState, KeyCommand, SystemTask, system_command_id};
 use fstp_crypto::aead;
+use fstp_crypto::composite::{self, CompositeSigningKey};
 use fstp_crypto::hybrid_kem::{self, HybridSecretKey};
 use fstp_custody::{Aad, Custody, RootLabel, RootRef, SealKey, WrappedSealKey};
 use fstp_domain::time::Timestamp;
@@ -152,6 +153,33 @@ struct GroupRow {
     body: Vec<u8>,
 }
 
+/// A composite level 2 signing key of one purpose, sealed under the seal
+/// key of `epoch` (ADR-004 "Signing keys", M9 decision CD4).
+#[derive(Clone)]
+struct SignerRow {
+    /// The generation: 1 at creation, one more at each rotation.
+    generation: u32,
+    epoch: u64,
+    nonce: [u8; aead::NONCE_LEN],
+    body: Vec<u8>,
+    /// The composite public key, `mldsaPK || tradPK`.
+    public: Vec<u8>,
+    /// When the generation was created, in microseconds since the epoch.
+    created_us: i64,
+}
+
+/// The purposes whose composite level 2 key the keystore creates and
+/// rotates. The `Anchor` key is still handed in by the caller
+/// (`crate::process::CellKeys`), so it is not here.
+pub const SIGNER_PURPOSES: [Purpose; 1] = [Purpose::NoticeCompanion];
+
+/// How long one generation of a level 2 signing key serves before it is
+/// due for replacement: 365 days, the yearly rotation of ADR-004.
+pub const SIGNER_LIFETIME_US: i64 = 365 * 24 * 60 * 60 * 1_000_000;
+
+/// The AAD label of a level 2 signing key sealed under a seal key.
+pub const SIGNER_AAD: &[u8] = b"fstp-level2-signer-v1";
+
 /// The durable key state of one chain: what survives a crash.
 #[derive(Clone)]
 pub struct Keystore {
@@ -162,6 +190,12 @@ pub struct Keystore {
     groups: BTreeMap<(GroupId, u32), GroupRow>,
     keys: BTreeMap<DekId, (GroupId, u32, SealedKey)>,
     texts: BTreeMap<[u8; 16], TextRow>,
+    /// The current composite signing key of each purpose of
+    /// [`SIGNER_PURPOSES`] the cell created.
+    signers: BTreeMap<Purpose, SignerRow>,
+    /// The public keys of replaced generations, kept so earlier
+    /// signatures stay verifiable.
+    retired: BTreeMap<(Purpose, u32), Vec<u8>>,
     /// A root created for the batch in flight, before its commit.
     pending_root: Option<RootRow>,
     /// Requests already joined, by text.
@@ -196,6 +230,30 @@ impl Keystore {
             .copied()
             .filter(|e| !self.receipts.contains_key(e))
             .collect()
+    }
+
+    /// Every public key of the signing key of `purpose`, by generation,
+    /// the current one last. Empty when the cell created none.
+    pub fn signer_public_keys(&self, purpose: Purpose) -> Vec<(u32, Vec<u8>)> {
+        let mut out: Vec<(u32, Vec<u8>)> = self
+            .retired
+            .iter()
+            .filter(|((p, _), _)| *p == purpose)
+            .map(|((_, g), k)| (*g, k.clone()))
+            .collect();
+        if let Some(row) = self.signers.get(&purpose) {
+            out.push((row.generation, row.public.clone()));
+        }
+        out
+    }
+
+    /// Whether the current signing key of `purpose` has served
+    /// [`SIGNER_LIFETIME_US`] at `now_us` and is due for rotation. A
+    /// purpose with no key is not due.
+    pub fn signer_due(&self, purpose: Purpose, now_us: i64) -> bool {
+        self.signers
+            .get(&purpose)
+            .is_some_and(|r| now_us.saturating_sub(r.created_us) >= SIGNER_LIFETIME_US)
     }
 
     /// Start-up, first half (design section 3.4): unwraps the current
@@ -339,6 +397,86 @@ fn open_group(
     HybridSecretKey::from_bytes(&bytes).map_err(|_| keys_err("group secret decode"))
 }
 
+fn signer_aad(cell: CellId, purpose: Purpose, generation: u32, epoch: u64) -> Vec<u8> {
+    let mut aad = SIGNER_AAD.to_vec();
+    aad.extend_from_slice(&cell.0);
+    aad.push(Chain::App.code());
+    aad.push(purpose.code());
+    aad.extend_from_slice(&generation.to_be_bytes());
+    aad.extend_from_slice(&epoch.to_be_bytes());
+    aad
+}
+
+/// Seals `key`, generation `generation` of `purpose`, under `s` of `epoch`.
+fn seal_signer(
+    s: &SealKey,
+    cell: CellId,
+    purpose: Purpose,
+    generation: u32,
+    epoch: u64,
+    key: &CompositeSigningKey,
+    created_us: i64,
+) -> Result<SignerRow, CellError> {
+    let aead_key = aead::Key::from_bytes(s.expose()).map_err(|_| keys_err("seal key"))?;
+    let secret = key.to_bytes().map_err(|_| keys_err("signing key export"))?;
+    let sealed = aead::seal(
+        &aead_key,
+        &signer_aad(cell, purpose, generation, epoch),
+        &secret[..],
+    )
+    .map_err(|_| keys_err("signing key seal"))?;
+    Ok(SignerRow {
+        generation,
+        epoch,
+        nonce: sealed.nonce,
+        body: sealed.body,
+        public: key.public_key().to_bytes().to_vec(),
+        created_us,
+    })
+}
+
+/// Opens the signing key of `row` under `s`, and checks it is the key
+/// whose public key the row names.
+fn open_signer(
+    s: &SealKey,
+    cell: CellId,
+    purpose: Purpose,
+    row: &SignerRow,
+) -> Result<CompositeSigningKey, CellError> {
+    let aead_key = aead::Key::from_bytes(s.expose()).map_err(|_| keys_err("seal key"))?;
+    let secret = aead::open(
+        &aead_key,
+        &row.nonce,
+        &signer_aad(cell, purpose, row.generation, row.epoch),
+        &row.body,
+    )
+    .map_err(|_| keys_err("signing key open"))?;
+    let key =
+        CompositeSigningKey::from_bytes(&secret).map_err(|_| keys_err("signing key decode"))?;
+    if key.public_key().to_bytes()[..] != row.public[..] {
+        return Err(keys_err("signing key mismatch"));
+    }
+    Ok(key)
+}
+
+/// Opens every current signing key of `store` under `s`.
+fn open_signers(
+    s: &SealKey,
+    store: &Keystore,
+) -> Result<BTreeMap<Purpose, CompositeSigningKey>, CellError> {
+    let mut out = BTreeMap::new();
+    for (purpose, row) in &store.signers {
+        out.insert(*purpose, open_signer(s, store.cell, *purpose, row)?);
+    }
+    Ok(out)
+}
+
+/// A second handle on `key`, for a caller outside the runner.
+fn copy_signer(key: &CompositeSigningKey) -> Result<CompositeSigningKey, CellError> {
+    let secret = key.to_bytes().map_err(|_| keys_err("signing key export"))?;
+    CompositeSigningKey::from_bytes(&secret[..]).map_err(|_| keys_err("signing key decode"))
+}
+
 /// The canonical `RecordKeyOp` body of a custody call.
 fn key_op_body(call: &str, epoch: u64, request: [u8; 16]) -> Result<Vec<u8>, CellError> {
     let mut hex = String::with_capacity(32);
@@ -376,6 +514,10 @@ struct Work {
     rows: BTreeMap<(GroupId, u32), GroupRow>,
     /// Step 5: the snapshot taken.
     snapshot: Option<Keystore>,
+    /// The open composite signing keys of the committed state.
+    signers: BTreeMap<Purpose, CompositeSigningKey>,
+    /// Step 3: the signing keys resealed under the new seal key.
+    signer_rows: BTreeMap<Purpose, SignerRow>,
 }
 
 /// The erasure runner of one cell's App chain.
@@ -430,6 +572,8 @@ impl<C: Custody> ErasureRunner<C> {
                 groups: BTreeMap::new(),
                 keys: BTreeMap::new(),
                 texts: BTreeMap::new(),
+                signers: BTreeMap::new(),
+                retired: BTreeMap::new(),
                 pending_root: None,
                 requested: BTreeSet::new(),
             },
@@ -485,7 +629,7 @@ impl<C: Custody> ErasureRunner<C> {
     ///
     /// # Errors
     ///
-    /// A refused key record.
+    /// A refused key record, or a signing key that does not open.
     pub async fn from_open(
         custody: C,
         engine: CellEngine,
@@ -497,6 +641,7 @@ impl<C: Custody> ErasureRunner<C> {
         let epoch = store.chain_state.epoch().0;
         let mut work = Work::new(seal);
         work.secrets = groups.0;
+        work.signers = open_signers(&work.current, &store)?;
         let runner = ErasureRunner {
             custody,
             engine,
@@ -539,7 +684,95 @@ impl<C: Custody> ErasureRunner<C> {
             }
         }
         self.work.secrets = secrets;
+        self.work.signers = open_signers(&self.work.current, &self.store)?;
         Ok(())
+    }
+
+    /// Whether a batch holds a new seal key not yet committed. A signing
+    /// key sealed now would miss the batch's reseal, so none is created or
+    /// rotated then.
+    fn sealing(&self) -> bool {
+        self.work.new_seal.is_some()
+    }
+
+    /// Makes generation `generation` of the signing key of `purpose`,
+    /// sealed under the current seal key, and returns its public key.
+    fn make_signer(&mut self, purpose: Purpose, generation: u32) -> Result<Vec<u8>, CellError> {
+        if !SIGNER_PURPOSES.contains(&purpose) {
+            return Err(keys_err("no level 2 signing key of this purpose"));
+        }
+        if self.sealing() {
+            return Err(keys_err("a batch is resealing the keystore"));
+        }
+        let key = composite::generate().map_err(|_| keys_err("signing key"))?;
+        let epoch = self.store.chain_state.epoch().0;
+        let row = seal_signer(
+            &self.work.current,
+            self.store.cell,
+            purpose,
+            generation,
+            epoch,
+            &key,
+            super::system_now(),
+        )?;
+        let public = row.public.clone();
+        if let Some(old) = self.store.signers.insert(purpose, row) {
+            self.store
+                .retired
+                .insert((purpose, old.generation), old.public);
+        }
+        self.work.signers.insert(purpose, key);
+        Ok(public)
+    }
+
+    /// Creates the composite level 2 signing key of `purpose` at
+    /// generation 1, unless one exists, and returns its public key. The key
+    /// is sealed under the chain's seal key, which custody wraps under the
+    /// root, so it is resealed at each new epoch (ADR-004, M9 decision
+    /// CD4). Only the purposes of [`SIGNER_PURPOSES`] are held.
+    ///
+    /// # Errors
+    ///
+    /// Another purpose, a batch that is resealing, or a failed seal.
+    pub fn ensure_signer(&mut self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
+        if let Some(row) = self.store.signers.get(&purpose) {
+            return Ok(row.public.clone());
+        }
+        self.make_signer(purpose, 1)
+    }
+
+    /// Replaces the signing key of `purpose` with a new generation and
+    /// returns its public key. The replaced public key stays in
+    /// [`Keystore::signer_public_keys`], and its secret is dropped.
+    ///
+    /// # Errors
+    ///
+    /// No key of `purpose` yet, a batch that is resealing, or a failed
+    /// seal.
+    pub fn rotate_signer(&mut self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
+        let generation = self
+            .store
+            .signers
+            .get(&purpose)
+            .and_then(|r| r.generation.checked_add(1))
+            .ok_or(keys_err("no signing key to rotate"))?;
+        self.make_signer(purpose, generation)
+    }
+
+    /// A handle on the current signing key of `purpose`, as custody of the
+    /// cell hands it out. `fstp_contract::notice_companion` takes it with
+    /// its purpose and refuses any other (D6).
+    ///
+    /// # Errors
+    ///
+    /// No key of `purpose`.
+    pub fn signer(&self, purpose: Purpose) -> Result<CompositeSigningKey, CellError> {
+        let key = self
+            .work
+            .signers
+            .get(&purpose)
+            .ok_or(keys_err("no signing key of this purpose"))?;
+        copy_signer(key)
     }
 
     /// Appends one key record through the engine.
@@ -909,7 +1142,30 @@ impl<C: Custody> ErasureRunner<C> {
                 seal_group(s, self.store.cell, *g, *generation, e.0, sk)?,
             );
         }
+        // The level 2 signing keys are resealed under `S(e)` with the
+        // group secrets (ADR-004: "Re-sealed under each new epoch").
+        let mut signer_rows = BTreeMap::new();
+        for (purpose, key) in &self.work.signers {
+            let old = self
+                .store
+                .signers
+                .get(purpose)
+                .ok_or(keys_err("signing key row"))?;
+            signer_rows.insert(
+                *purpose,
+                seal_signer(
+                    s,
+                    self.store.cell,
+                    *purpose,
+                    old.generation,
+                    e.0,
+                    key,
+                    old.created_us,
+                )?,
+            );
+        }
         self.work.rows = rows;
+        self.work.signer_rows = signer_rows;
         self.apply(&Step::RewrapGroups(e))?;
         Ok(ErasureEvent::GroupsResealed { epoch: e.0 })
     }
@@ -924,6 +1180,9 @@ impl<C: Custody> ErasureRunner<C> {
         store.roots.insert(e.0, root);
         for (k, row) in std::mem::take(&mut self.work.rows) {
             store.groups.insert(k, row);
+        }
+        for (purpose, row) in std::mem::take(&mut self.work.signer_rows) {
+            store.signers.insert(purpose, row);
         }
         for (dek, v) in std::mem::take(&mut self.work.resealed) {
             store.keys.insert(dek, v);
@@ -975,6 +1234,10 @@ impl<C: Custody> ErasureRunner<C> {
             let sk = open_group(&s, snap.cell, *g, *generation, grow)?;
             envelope::open_key(&sk, sealed, &ctx_for(snap.cell, *g, *generation, dek.0))
                 .map_err(|_| keys_err("snapshot sample"))?;
+        }
+        // Every signing key opens from the snapshot too.
+        for (purpose, row) in &snap.signers {
+            open_signer(&s, snap.cell, *purpose, row)?;
         }
         self.apply_durable(&Step::VerifySnapshot(e))?;
         Ok(ErasureEvent::SnapshotVerified { epoch: e.0 })
@@ -1053,6 +1316,8 @@ impl Work {
             new_seal: None,
             rows: BTreeMap::new(),
             snapshot: None,
+            signers: BTreeMap::new(),
+            signer_rows: BTreeMap::new(),
         }
     }
 }
@@ -1092,6 +1357,14 @@ enum Request {
     Keystore {
         reply: ReplyTx<Keystore>,
     },
+    Signer {
+        purpose: Purpose,
+        reply: ReplyTx<Result<CompositeSigningKey, CellError>>,
+    },
+    RotateSigner {
+        purpose: Purpose,
+        reply: ReplyTx<Result<Vec<u8>, CellError>>,
+    },
 }
 
 impl Request {
@@ -1103,6 +1376,8 @@ impl Request {
                 reply.send(Err(gone));
             }
             Request::OpenText { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
+            Request::Signer { reply, .. } => reply.send(Err(gone)),
+            Request::RotateSigner { reply, .. } => reply.send(Err(gone)),
             // Dropping the slot answers `None`.
             Request::Keystore { reply } => drop(reply),
         }
@@ -1194,6 +1469,31 @@ impl ErasureHandle {
     /// A copy of the durable keystore, or `None` once the task ended.
     pub async fn keystore(&self) -> Option<Keystore> {
         self.ask(|reply| Request::Keystore { reply }).await
+    }
+
+    /// The current signing key of `purpose`, created at its first use
+    /// ([`ErasureRunner::ensure_signer`], [`ErasureRunner::signer`]). The
+    /// notice companion key comes from here (M9 decision CD4).
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn signer(&self, purpose: Purpose) -> Result<CompositeSigningKey, CellError> {
+        self.ask(|reply| Request::Signer { purpose, reply })
+            .await
+            .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// Replaces the signing key of `purpose` with a new generation
+    /// ([`ErasureRunner::rotate_signer`]) and gives its public key.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn rotate_signer(&self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
+        self.ask(|reply| Request::RotateSigner { purpose, reply })
+            .await
+            .unwrap_or(Err(keys_err("the erasure task is not running")))
     }
 
     /// Every event of the task so far, in order.
@@ -1313,6 +1613,14 @@ fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             reply.send(opened);
         }
         Request::Keystore { reply } => reply.send(runner.keystore().clone()),
+        Request::Signer { purpose, reply } => {
+            reply.send(
+                runner
+                    .ensure_signer(purpose)
+                    .and_then(|_| runner.signer(purpose)),
+            );
+        }
+        Request::RotateSigner { purpose, reply } => reply.send(runner.rotate_signer(purpose)),
     }
 }
 

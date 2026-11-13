@@ -18,21 +18,26 @@
 //! - [`verify_notice_companion`] accepts only when both halves verify
 //!   (I-90). It is a row of the I-90 sweep in `fstp-celltest`.
 //!
-//! [`NoticeCompanionSigned`] is the record kept with the notice. The
-//! notice store and its stored form arrive with the notice record, so
-//! this module holds the typed record only (interim, pending Daniel).
+//! [`NoticeCompanionSigned`] is the record kept with the notice. Its type
+//! and stored form live in `fstp_contract_core::notice` (fuzz target
+//! `notice_companion_decode`). [`store_notice_companion`] writes the
+//! stored form to the write-once document store under its digest, beside
+//! the sealed PDF, and [`load_notice_companion`] reads it back. The cell
+//! keystore holds the key (`fstp_cell::tasks::erasure`).
 
 use fstp_crypto::composite::{self, CompositeSigningKey, PUBLIC_KEY_LEN, SIGNATURE_LEN};
 use fstp_keys::Purpose;
 
+use crate::blob::{BlobError, BlobKind, BlobStore};
 use crate::digest::{Digest, sha256};
+
+pub use fstp_contract_core::notice::{
+    NoticeCompanionSigned, NoticeId, STORED_FORM, StoredFormError, decode_notice_companion,
+    encode_notice_companion,
+};
 
 /// The composite context of the companion signature (M9 design D6).
 pub const NOTICE_COMPANION_CONTEXT: &[u8] = b"fstp-notice-companion-v1";
-
-/// A contractual notice, as its store will name it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NoticeId(pub u128);
 
 /// Why a companion signature was not made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,19 +89,6 @@ impl NoticeCompanionKey {
     pub fn public_key(&self) -> [u8; PUBLIC_KEY_LEN] {
         self.key.public_key().to_bytes()
     }
-}
-
-/// The companion signature of one notice, kept with the notice.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct NoticeCompanionSigned {
-    /// The notice.
-    pub notice: NoticeId,
-    /// The SHA-256 of the sealed notice PDF.
-    pub notice_digest: Digest,
-    /// The SHA-256 of the composite public key that signed.
-    pub key: Digest,
-    /// The composite signature, `mldsaSig || tradSig`.
-    pub signature: Vec<u8>,
 }
 
 /// The signed message: the notice id as 16 big-endian bytes, then the
@@ -151,4 +143,68 @@ pub fn verify_notice_companion(rec: &NoticeCompanionSigned, public_key: &[u8]) -
             &rec.signature,
         )
         .is_ok()
+}
+
+/// Why a companion signature was not stored or loaded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompanionStoreError {
+    /// The record has no stored form, or the stored bytes are not one.
+    Form(StoredFormError),
+    /// The document store refused.
+    Store(BlobError),
+}
+
+impl std::fmt::Display for CompanionStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompanionStoreError::Form(e) => write!(f, "{e}"),
+            CompanionStoreError::Store(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for CompanionStoreError {}
+
+/// Stores the stored form of `rec` in the write-once document store and
+/// returns its digest, which the notice keeps beside its PDF digest. The
+/// same record stored again returns the same digest (I-30).
+///
+/// # Errors
+///
+/// [`CompanionStoreError::Form`] for a record with no stored form, and
+/// [`CompanionStoreError::Store`] when the store refuses.
+pub fn store_notice_companion<S: BlobStore>(
+    store: &mut S,
+    rec: &NoticeCompanionSigned,
+) -> Result<Digest, CompanionStoreError> {
+    let bytes = encode_notice_companion(rec).map_err(CompanionStoreError::Form)?;
+    store
+        .put(BlobKind::NoticeCompanion, &bytes)
+        .map_err(CompanionStoreError::Store)
+}
+
+/// The companion signature stored under `digest`, decoded strictly.
+///
+/// # Errors
+///
+/// [`CompanionStoreError::Store`] when nothing is stored there, and
+/// [`CompanionStoreError::Form`] when the bytes are no stored form.
+pub fn load_notice_companion<S: BlobStore>(
+    store: &S,
+    digest: &Digest,
+) -> Result<NoticeCompanionSigned, CompanionStoreError> {
+    let bytes = store.get(digest).map_err(CompanionStoreError::Store)?;
+    decode_notice_companion(&bytes).map_err(CompanionStoreError::Form)
+}
+
+#[cfg(test)]
+mod tests {
+    /// R-CR-04: the stored form's signature length is the composite one.
+    #[test]
+    fn r_cr_04_stored_signature_length_is_the_composite_length() {
+        assert_eq!(
+            fstp_contract_core::notice::SIGNATURE_LEN,
+            super::SIGNATURE_LEN
+        );
+    }
 }

@@ -7,7 +7,9 @@
 //! - [`decide`](mod@decide): the contract commands and their rules, with
 //!   I-30 at the centre: a signed version is immutable, and any change is
 //!   a new version signed by all parties;
-//! - [`digest`]: the SHA-256 digest value and its stored spelling.
+//! - [`digest`]: the SHA-256 digest value and its stored spelling;
+//! - [`notice`]: the companion signature record of a contractual notice
+//!   and its stored form (R-CR-04).
 //!
 //! `fstp-engine` reaches contracts through this crate only, so it stays
 //! free of I/O and of third-party crates (M2 layering rule 1). The crate
@@ -25,6 +27,7 @@
 pub mod decide;
 pub mod digest;
 pub mod model;
+pub mod notice;
 pub mod record;
 
 pub use decide::{ContractCommand, ContractFoldError, ContractRefusal, apply, decide};
@@ -32,5 +35,9 @@ pub use digest::Digest;
 pub use model::{
     ChangeStatus, Contract, ContractStatus, ContractStore, Party, PartyRole, Route, Side, Version,
     VersionState,
+};
+pub use notice::{
+    NoticeCompanionSigned, NoticeId, StoredFormError, decode_notice_companion,
+    encode_notice_companion,
 };
 pub use record::ContractRecord;
