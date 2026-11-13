@@ -16,7 +16,11 @@ fuzz_target!(|data: &[u8]| {
         }
         Ok(UsageEntry::Damaged { index }) => {
             assert_eq!(data.len(), 9, "a marker of another length");
-            assert_eq!(data.get(1..), Some(&index.to_be_bytes()[..]), "marker index");
+            assert_eq!(
+                data.get(1..),
+                Some(&index.to_be_bytes()[..]),
+                "marker index"
+            );
         }
         Err(e) => assert!(!format!("{e:?}").is_empty()),
     }
