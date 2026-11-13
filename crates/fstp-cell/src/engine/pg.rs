@@ -267,6 +267,10 @@ where
     R: Runtime,
     W: PrepareWitness + Send + Sync + 'static,
 {
+    fn cell(&self) -> [u8; 16] {
+        self.inner.cell()
+    }
+
     async fn append_cell(&mut self, req: AppendRequest) -> Result<Committed, CellAppendError> {
         let side = side_effects(&req)?;
         let c = self

@@ -667,7 +667,10 @@ impl ProdCell {
         }
         self.fold(
             at,
-            fstp_cell_core::reaction_command_id(target.raw()),
+            fstp_cell_core::reaction_command_id(
+                crate::reference::vault::REACTION_CELL,
+                target.raw(),
+            ),
             &batch,
         )
     }
@@ -879,7 +882,7 @@ impl ProdCell {
         commit_at: Timestamp,
     ) -> Result<Result<Vec<CellRecord>, ExecError>, ProdError> {
         let command = admitted.command_id();
-        let mut run = DriverCore::start(admitted);
+        let mut run = DriverCore::start(admitted).in_cell(crate::reference::vault::REACTION_CELL);
         let mut ev: Option<Event> = None;
         let mut committed: Vec<CellRecord> = Vec::new();
         for _ in 0..256 {

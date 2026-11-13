@@ -67,7 +67,8 @@ pub use decide::{
 pub use inputs::{RouteInputs, SessionRows};
 pub use state::CellState;
 pub use state::{
-    SYSTEM_PREFIX, is_system_command_id, reaction_command_id, reaction_epoch, system_command_id,
+    SYSTEM_PREFIX, is_reaction_command_id, is_system_command_id, reaction_command_id,
+    system_command_id,
 };
 
 /// A command of a cell.

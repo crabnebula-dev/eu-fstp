@@ -14,6 +14,7 @@
 
 use fstp_celltest::NotImplemented;
 use fstp_celltest::canary::{Canary, CanaryKind};
+use fstp_celltest::m2_http::masked;
 use fstp_celltest::mc::driver_model::paths;
 use fstp_celltest::scan::{StoreSet, scan};
 use fstp_celltest::world::{CycleScript, DbMode, VaultLayout, World, WorldSpec};
@@ -56,7 +57,10 @@ fn cell_core_records(world: &World) -> Result<Vec<fstp_domain::Record>, NotImple
 /// Design section 14.6: the M2 generators run through
 /// `fstp_engine::Engine<MemStore, SyntheticVault>` and through `CellEngine`
 /// with `PgRecordStore` and `fstp-vault`, seeded from the same ground
-/// truth. The ledgers are equal record for record after decryption.
+/// truth. The ledgers are equal record for record after decryption, with
+/// the vault's digests and epochs left out: Daniel decided on 2026-11-13
+/// (M3 exit audit, section 7, item 15) that comparisons against the real
+/// vault leave them out. Every other field is compared.
 #[test]
 fn seam_async_engine_matches_reference_over_pg_and_real_vault() {
     let world = one_cell_world();
@@ -79,7 +83,11 @@ fn seam_async_engine_matches_reference_over_pg_and_real_vault() {
         .result
         .unwrap_or_else(|e| panic!("the cycle did not run: {e}"));
     let got = cell_core_records(&world).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(got, want, "the cell ledger differs from the M2 engine's");
+    assert_eq!(
+        masked(&got),
+        masked(&want),
+        "the cell ledger differs from the M2 engine's"
+    );
 }
 
 /// Runs the reduced case of the M2 suite of invariant `suite` over the

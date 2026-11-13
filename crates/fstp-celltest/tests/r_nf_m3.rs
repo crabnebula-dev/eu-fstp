@@ -202,28 +202,109 @@ fn fixed_install_values(a: &InstallFiles, b: &InstallFiles) -> Vec<String> {
     out
 }
 
-/// What every install of one build holds before it generates anything:
-/// the identifiers two bare clusters share once every application and
-/// vault migration set is applied, such as catalog names next to a length
-/// byte. A credential an install generates is in neither bare cluster.
-fn build_constants() -> PublicConstants {
-    let bare = |name: &str| {
-        let c = ClusterHandle::start_named(ClusterKind::Application, name).unwrap();
-        for set in db::migration_sets()
-            .iter()
-            .filter(|s| matches!(s.kind, ClusterKind::Application | ClusterKind::Vault))
-        {
-            db::migrated(c.server(), set).unwrap_or_else(|e| panic!("{}: {e}", set.set));
+/// The identifiers of every credential of the install `w`: its credential
+/// files, every store that holds a private key, and the SCRAM verifier of
+/// every login role of its clusters.
+fn credential_identifiers(w: &World, f: &InstallFiles) -> BTreeSet<Vec<u8>> {
+    let mut creds = f.credentials.clone();
+    let stores = w
+        .stores()
+        .unwrap_or_else(|e| panic!("the install stores: {e}"));
+    for (name, bytes) in stores.stores {
+        if bytes.windows(11).any(|x| x == b"PRIVATE KEY") {
+            creds.push(name, bytes);
         }
-        CellDump::from_stores(&fstp_celltest::world::cluster_stores(name, c.server()).unwrap())
-    };
-    PublicConstants::baseline(&bare("w1f_bare_install_a"), &bare("w1f_bare_install_b"))
+    }
+    for c in w.clusters() {
+        let verifiers = c
+            .server()
+            .psql(
+                "postgres",
+                "SELECT coalesce(rolpassword, '') FROM pg_authid WHERE rolcanlogin ORDER BY 1",
+            )
+            .unwrap();
+        creds.push(format!("{}/verifiers", c.name()), verifiers.into_bytes());
+    }
+    let mut secret = StoreSet::default();
+    for (name, bytes) in creds.stores {
+        secret.push(name, without_certificates(&bytes));
+    }
+    CellDump::from_stores(&secret).identifiers
+}
+
+/// `bytes` without its PEM certificate blocks. A certificate is public,
+/// so its extension bytes, which provisioning writes alike, stay in the
+/// baseline. Its key and serial are generated, so no baseline holds them.
+fn without_certificates(bytes: &[u8]) -> Vec<u8> {
+    const BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
+    const END: &[u8] = b"-----END CERTIFICATE-----";
+    let find = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).position(|w| w == needle);
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut rest = bytes;
+    while let Some(i) = find(rest, BEGIN) {
+        out.extend_from_slice(&rest[..i]);
+        match find(&rest[i..], END) {
+            Some(j) => rest = &rest[i + j + END.len()..],
+            None => {
+                rest = &[];
+            }
+        }
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+/// The identifiers of the install `w`: its cluster stores and its install
+/// files.
+fn install_dump(w: &World, f: &InstallFiles) -> CellDump {
+    let mut all = w
+        .stores()
+        .unwrap_or_else(|e| panic!("the install stores: {e}"));
+    all.stores.extend(f.config.stores.clone());
+    all.stores.extend(f.credentials.stores.clone());
+    CellDump::from_stores(&all)
+}
+
+/// What every install of one build holds alike: the identifiers two more
+/// provisioned installs share, such as catalog and WAL bytes that
+/// provisioning writes alike and the X.509 extension bytes of client
+/// certificates. Daniel decided on 2026-11-13 (M3 exit audit, section 7,
+/// item 10) that the baseline is a provisioned cluster. No credential is a
+/// constant: every identifier of a credential of either baseline install
+/// is left out, so a credential two installs share is still reported.
+///
+/// The baseline installs start while `tested` are alive, so they take
+/// other install slots and never reuse a tested install's servers.
+fn build_constants(tested: &[&World]) -> PublicConstants {
+    let x = world(1, true, false);
+    let y = world(1, true, false);
+    for base in [&x, &y] {
+        for t in tested {
+            for (cb, ct) in base.clusters().iter().zip(t.clusters()) {
+                assert!(
+                    !std::ptr::eq(cb.server(), ct.server()),
+                    "the baseline install shares the cluster {}, so the comparison is vacuous",
+                    ct.name()
+                );
+            }
+        }
+    }
+    let files = |w: &World| install_files(w).unwrap_or_else(|e| panic!("{e}"));
+    let (fx, fy) = (files(&x), files(&y));
+    let mut public = PublicConstants::baseline(&install_dump(&x, &fx), &install_dump(&y, &fy));
+    let creds: BTreeSet<Vec<u8>> = credential_identifiers(&x, &fx)
+        .into_iter()
+        .chain(credential_identifiers(&y, &fy))
+        .collect();
+    public.values.retain(|v| !creds.contains(v));
+    public
 }
 
 /// R-NF-05, R-NF-01, design section 9.5: every credential is generated at
 /// install, and no file holds a fixed value. Two fresh self-hosted
-/// installs share no identifier beyond the constants of the build, over
-/// their cluster stores and their install files. No credential file, and
+/// installs share no identifier beyond the constants of the build, which
+/// two more provisioned installs give ([`build_constants`]), over their
+/// cluster stores and their install files. No credential file, and
 /// no credential setting of a configuration file, is the same in both. As
 /// a second line, each instance passes the default-password check.
 #[test]
@@ -250,15 +331,8 @@ fn r_nf_05_self_hosted_install_has_no_default_credentials() {
     let files = |w: &World| install_files(w).unwrap_or_else(|e| panic!("{e}"));
     let (fa, fb) = (files(&a), files(&b));
     found.extend(fixed_install_values(&fa, &fb));
-    let dump = |w: &World, f: &InstallFiles| {
-        let mut all = w
-            .stores()
-            .unwrap_or_else(|e| panic!("the install stores: {e}"));
-        all.stores.extend(f.config.stores.clone());
-        all.stores.extend(f.credentials.stores.clone());
-        CellDump::from_stores(&all)
-    };
-    let shared = shared_identifiers(&dump(&a, &fa), &dump(&b, &fb), &build_constants()).unwrap();
+    let (dump_a, dump_b) = (install_dump(&a, &fa), install_dump(&b, &fb));
+    let shared = shared_identifiers(&dump_a, &dump_b, &build_constants(&[&a, &b])).unwrap();
     found.extend(
         shared
             .iter()
