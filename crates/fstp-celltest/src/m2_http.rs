@@ -1662,8 +1662,11 @@ impl<'d, 'c, 'w, M: CellMachine> OverHttp<'d, 'c, 'w, M> {
 }
 
 /// The text of `records` with the vault's epochs and answer digests left
-/// out, which differ between the synthetic vault and `fstp-vault`.
-fn masked(records: &[Record]) -> Vec<String> {
+/// out, which differ between the synthetic vault and `fstp-vault`. Daniel
+/// decided on 2026-11-13 (M3 exit audit, section 7, item 15) that every
+/// comparison against the real vault leaves them out. Every other field
+/// stays in the text.
+pub fn masked(records: &[Record]) -> Vec<String> {
     records
         .iter()
         .map(|r| {
