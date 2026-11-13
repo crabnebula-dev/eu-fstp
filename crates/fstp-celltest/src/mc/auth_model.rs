@@ -3369,6 +3369,49 @@ pub mod http {
             Ok(true)
         }
 
+        /// Enrols the model account `account` at the cell account id `cell`
+        /// with a software passkey, through an invitation the harness
+        /// issues as the first admin with a step-up, as
+        /// [`AuthClient::enrol`] does with a random id (lane
+        /// m3/m2-over-http: an M2 generator account keeps its own id in
+        /// the cell). `false` when the model account is enrolled already
+        /// or the cell refused a step, such as an id a record names.
+        pub fn enrol_at(
+            &self,
+            account: AccountId,
+            cell: AccountId,
+        ) -> Result<bool, NotImplemented> {
+            if account == FIRST_ADMIN || self.known().people.contains_key(&account) {
+                return Ok(false);
+            }
+            if !self.enrol_first_admin()? {
+                return Ok(false);
+            }
+            let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+            self.known().admin = Some(admin.clone());
+            let token = fstp_crypto::random_array::<32>().map_err(|_| failed())?;
+            let command = CellCommand::Tenant(TenantCommand::IssueInvitation {
+                invitation: fstp_crypto::random_array::<16>().map_err(|_| failed())?,
+                account: cell,
+                token_digest: fstp_auth::ceremony::token_digest(&fstp_auth::codec::Token(token)),
+            });
+            if !self.command_with_stepup(&admin, &command)? {
+                return Ok(false);
+            }
+            let mut device = Device::new(self.cell.host())?;
+            if !self.register(&hex(&token), &mut device)? {
+                return Ok(false);
+            }
+            self.known().people.insert(
+                account,
+                Person {
+                    cell,
+                    devices: vec![device],
+                },
+            );
+            Ok(true)
+        }
+
         /// Self-registers `account` with the synthetic address `email` and a
         /// software passkey (design section 8.3 ceremony 2, lane F-CYCLE3):
         /// `POST /auth/signup/options {email}`, the proof from the world's

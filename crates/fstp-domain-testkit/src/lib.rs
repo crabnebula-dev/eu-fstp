@@ -43,6 +43,7 @@
 
 pub mod activation;
 pub mod clock;
+pub mod driver;
 pub mod harness;
 pub mod mc;
 pub mod publicity;

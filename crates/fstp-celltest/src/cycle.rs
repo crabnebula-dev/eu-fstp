@@ -55,6 +55,8 @@
 //!   carried a step-up again, and the cell must not commit it twice.
 //! - `<kind>:<text>` and `authenticator:<hex>`: values of the next
 //!   applicant (`Person`, lane F-ISO).
+//! - `m2-suite:<invariant>:reduced`: the reduced case of that M2 suite
+//!   over the cell ([`crate::m2_http`], lane m3/m2-over-http).
 //!
 //! Lane F-CYCLE3: the cell clock moves to the call's opening and past its
 //! deadline, and every session is renewed by passkey after a move
@@ -530,9 +532,16 @@ impl<'w> Cycle<'w> {
                 self.grant()
             }
             s if s.starts_with("seed:ground-truth") => Err(NotImplemented::new(GROUND_TRUTH_SEAM)),
-            s if s.starts_with("m2:") || s.starts_with("m2-suite:") => {
-                Err(NotImplemented::new(M2_SETUP_SEAM))
-            }
+            // The reduced case of an M2 suite over the cell (lane
+            // m3/m2-over-http, `crate::m2_http`).
+            s if s.starts_with("m2-suite:") => match s
+                .strip_prefix("m2-suite:")
+                .and_then(|r| r.strip_suffix(":reduced"))
+            {
+                Some(suite) => crate::m2_http::run_suite(&self.client, suite),
+                None => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
+            },
+            s if s.starts_with("m2:") => Err(NotImplemented::new(M2_SETUP_SEAM)),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
         }
     }
@@ -1642,17 +1651,17 @@ impl<'w> Cycle<'w> {
 }
 
 /// The cell command of a creator command.
-fn creator(c: CreatorCommand) -> CellCommand {
+pub(crate) fn creator(c: CreatorCommand) -> CellCommand {
     CellCommand::Engine(fstp_engine::Command::Creator(c))
 }
 
 /// The cell command of a core command.
-fn core(c: fstp_domain::Command) -> CellCommand {
+pub(crate) fn core(c: fstp_domain::Command) -> CellCommand {
     CellCommand::Engine(fstp_engine::Command::Core(c))
 }
 
 /// A synthetic text reference: id `n`, digest of `n` bytes.
-fn synthetic_text(n: u8) -> TextRef {
+pub(crate) fn synthetic_text(n: u8) -> TextRef {
     TextRef::new(
         TextId::from_raw(50_000 + u128::from(n)),
         ContentDigest::from_bytes([n; 32]),
@@ -1676,7 +1685,7 @@ fn grant(binding: BindingId, account: AccountId, role: Role, start: i64) -> Cell
 
 /// The SuperSAFE fixture spec with its P-09 wording stored as text
 /// references (ADR-007), as `fstp-engine`'s creator path tests build it.
-fn synthetic_spec() -> Result<ProgrammeSpec, NotImplemented> {
+pub(crate) fn synthetic_spec() -> Result<ProgrammeSpec, NotImplemented> {
     let failed = || NotImplemented::new(STEP_REFUSED);
     let item = |id: u8| {
         let hex: String = std::iter::repeat_n(format!("{id:02x}"), 32).collect();
@@ -1694,7 +1703,7 @@ fn synthetic_spec() -> Result<ProgrammeSpec, NotImplemented> {
 
 /// A manual save of every field `spec` sets, P-53 aside, each under a
 /// synthetic digest.
-fn save_of(spec: &ProgrammeSpec) -> Vec<FieldEdit> {
+pub(crate) fn save_of(spec: &ProgrammeSpec) -> Vec<FieldEdit> {
     FieldId::ALL
         .iter()
         .enumerate()
