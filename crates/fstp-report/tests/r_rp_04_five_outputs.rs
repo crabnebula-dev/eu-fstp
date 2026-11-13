@@ -48,7 +48,8 @@ fn r_rp_04_horizon_europe_generates_all_five_outputs() {
     ];
     let mut kinds = Vec::new();
     for r in &requests {
-        let out = generate(&snap, r).unwrap_or_else(|e| panic!("R-RP-04: {r:?}: {e}"));
+        let out =
+            generate(&snap, &support::he(), r).unwrap_or_else(|e| panic!("R-RP-04: {r:?}: {e}"));
         assert_eq!(
             out.snapshot, digest,
             "R-RP-01: the snapshot digest is recorded"
@@ -86,6 +87,7 @@ fn r_rp_04_unpublished_call_is_refused() {
     let snap = ledger_of(&fixed()).snapshot();
     let r = generate(
         &snap,
+        &support::he(),
         &Request::AuditFile {
             call: support::OTHER_CALL,
         },

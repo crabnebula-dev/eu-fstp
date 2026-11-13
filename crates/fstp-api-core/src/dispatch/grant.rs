@@ -1045,8 +1045,10 @@ fn instant(op: &Op, name: &str) -> Result<Timestamp, ApiError> {
         .ok_or_else(bad)
 }
 
-/// `report.generate` (R-RP-04, I-44): one output of the Horizon Europe
-/// profile from a snapshot of the core ledger. A mismatch fails
+/// `report.generate` (R-RP-04, I-44): one output of the funder profile
+/// version P-53 pins for the call or programme, from a snapshot of the
+/// core ledger. A P-53 value that names no shipped profile refuses with
+/// P-53. A mismatch fails
 /// generation with I-44. The open call package takes the stored Guide of
 /// the call from the ledger state (R-RP-04, I-48, I-53).
 async fn generate<P: Seams>(
@@ -1120,7 +1122,23 @@ async fn generate<P: Seams>(
             }
         }
     };
-    let output = fstp_report::generate(&snap, &request).map_err(|e| match e {
+    // R-RP-01, P-53: the profile version the call or programme pins.
+    let scope = match request {
+        fstp_report::Request::PeriodicReportingData { programme, .. } => {
+            fstp_report::Scope::Programme(programme)
+        }
+        fstp_report::Request::CallPublicationRecord { call: c, .. }
+        | fstp_report::Request::OpenCallPackage { call: c, .. }
+        | fstp_report::Request::AuditFile { call: c }
+        | fstp_report::Request::DeliverableDraft { call: c } => fstp_report::Scope::Call(c),
+    };
+    let profile = fstp_engine::report::pinned_p53(&call.state, scope)
+        .ok_or_else(not_found)
+        .and_then(|p| {
+            fstp_report::profile::for_p53(p.0.as_str())
+                .map_err(|_| ApiError::refused(ErrorCode::Refused, "P-53"))
+        })?;
+    let output = fstp_report::generate(&snap, &profile, &request).map_err(|e| match e {
         fstp_report::ReportError::Reconciliation(_) => {
             ApiError::refused(ErrorCode::Refused, "I-44")
         }

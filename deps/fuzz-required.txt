@@ -72,6 +72,7 @@ fstp-sigval
 fstp-contract-core
 # M5 lane L-RPT: the stored Guide reader
 # behind the Guide PDF, which moved here from fstp-guide.
+# M9 lane F1 adds the funder profile parser, target funder_profile_parse.
 fstp-report
 # The report record decoder, in the pure core that fstp-engine reaches.
 fstp-report-core

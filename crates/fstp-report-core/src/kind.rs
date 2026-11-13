@@ -42,17 +42,6 @@ impl ReportKind {
     pub fn from_name(name: &str) -> Option<ReportKind> {
         ReportKind::ALL.into_iter().find(|k| k.name() == name)
     }
-
-    /// The template version (R-RP-01).
-    pub const fn template(self) -> &'static str {
-        match self {
-            ReportKind::CallPublicationRecord => "horizon-europe/call_publication_record/1",
-            ReportKind::OpenCallPackage => "horizon-europe/open_call_package/1",
-            ReportKind::PeriodicReportingData => "horizon-europe/periodic_reporting_data/1",
-            ReportKind::AuditFile => "horizon-europe/audit_file/1",
-            ReportKind::DeliverableDraft => "horizon-europe/deliverable_draft/1",
-        }
-    }
 }
 
 /// What an output covers.

@@ -18,9 +18,11 @@
 )]
 
 mod kind;
+mod pin;
 mod record;
 
 pub use kind::{ReportKind, Scope};
+pub use pin::{MAX_PROFILE_ID, ProfilePin, is_profile_id, p53_profile};
 pub use record::{
     ApprovalRefusal, ENVELOPE, ReportFoldError, ReportId, ReportRecord, ReportStore, StoredReport,
     approve, is_financial_signatory,

@@ -2,7 +2,9 @@
 //! stored JSON form, the fold and the approval decision (R-RP-03, Q3).
 //!
 //! - `ReportGenerated` names the output, its scope, the snapshot digest,
-//!   the template version, the document digest and the generator.
+//!   the template version, the funder profile it was generated under (id,
+//!   version and file digest, M9 design section 2.1), the document digest
+//!   and the generator.
 //! - `ReportApproved` names the approver. A Financial signatory who did
 //!   not generate the document approves it (Q3, answered 2026-11-06).
 //!   [`approve`] decides it, and the fold refuses a self-approval too, so
@@ -20,6 +22,7 @@ use fstp_domain::time::Timestamp;
 use fstp_json::{FromJson, FromJsonError, FromJsonErrorKind, Object, ToJson, Value};
 
 use crate::kind::{ReportKind, Scope};
+use crate::pin::{ProfilePin, is_profile_id};
 
 /// The envelope name of report records in the stored engine form.
 pub const ENVELOPE: &str = "report";
@@ -55,6 +58,8 @@ pub enum ReportRecord {
         snapshot: ContentDigest,
         /// The template version.
         template: String,
+        /// The funder profile it was generated under (P-53).
+        profile: ProfilePin,
         /// The SHA-256 of the document bytes.
         document: ContentDigest,
         /// The generator.
@@ -80,6 +85,8 @@ pub struct StoredReport {
     pub snapshot: ContentDigest,
     /// The template version.
     pub template: String,
+    /// The funder profile.
+    pub profile: ProfilePin,
     /// The document digest.
     pub document: ContentDigest,
     /// The generator.
@@ -127,6 +134,7 @@ impl ReportStore {
                 scope,
                 snapshot,
                 template,
+                profile,
                 document,
                 by,
             } => {
@@ -140,6 +148,7 @@ impl ReportStore {
                         scope: *scope,
                         snapshot: *snapshot,
                         template: template.clone(),
+                        profile: profile.clone(),
                         document: *document,
                         generator: *by,
                         approver: None,
@@ -213,9 +222,10 @@ pub fn is_financial_signatory(roster: &RosterState, account: AccountId, at: Time
 
 const GENERATED: &str = "ReportGenerated";
 const APPROVED: &str = "ReportApproved";
-const GENERATED_MEMBERS: [&str; 8] = [
-    "type", "report", "kind", "scope", "snapshot", "template", "document", "by",
+const GENERATED_MEMBERS: [&str; 9] = [
+    "type", "report", "kind", "scope", "snapshot", "template", "profile", "document", "by",
 ];
+const PROFILE_MEMBERS: [&str; 3] = ["id", "version", "digest"];
 const APPROVED_MEMBERS: [&str; 3] = ["type", "report", "approver"];
 /// The longest template version accepted.
 const MAX_TEMPLATE: usize = 128;
@@ -242,6 +252,7 @@ impl ToJson for ReportRecord {
                 scope,
                 snapshot,
                 template,
+                profile,
                 document,
                 by,
             } => {
@@ -256,6 +267,11 @@ impl ToJson for ReportRecord {
                 o.insert("scope", Value::Object(s));
                 o.insert("snapshot", hex(*snapshot));
                 o.insert("template", Value::String(template.clone()));
+                let mut p = Object::new();
+                p.insert("id", Value::String(profile.id.clone()));
+                p.insert("version", Value::String(profile.version.to_string()));
+                p.insert("digest", hex(profile.digest));
+                o.insert("profile", Value::Object(p));
                 o.insert("document", hex(*document));
                 o.insert("by", id(by.raw()));
             }
@@ -313,6 +329,31 @@ fn take_digest(o: &Object, k: &str) -> Result<ContentDigest, FromJsonError> {
     Ok(ContentDigest::from_bytes(out))
 }
 
+/// The `profile` member: `{id, version, digest}`, the version a canonical
+/// decimal string from 1 to 65535.
+fn take_profile(o: &Object) -> Result<ProfilePin, FromJsonError> {
+    let p = exact(o.get("profile").ok_or_else(invalid)?, &PROFILE_MEMBERS)?;
+    let id = p
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| is_profile_id(id))
+        .ok_or_else(invalid)?
+        .to_owned();
+    let v = p
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid)?;
+    let version: u16 = v.parse().map_err(|_| invalid())?;
+    if version == 0 || version.to_string() != v {
+        return Err(invalid());
+    }
+    Ok(ProfilePin {
+        id,
+        version,
+        digest: take_digest(p, "digest")?,
+    })
+}
+
 impl FromJson for ReportRecord {
     fn from_json(value: &Value) -> Result<ReportRecord, FromJsonError> {
         let tag = value
@@ -349,6 +390,7 @@ impl FromJson for ReportRecord {
                     scope,
                     snapshot: take_digest(o, "snapshot")?,
                     template,
+                    profile: take_profile(o)?,
                     document: take_digest(o, "document")?,
                     by: AccountId::from_raw(take_id(o, "by")?),
                 })

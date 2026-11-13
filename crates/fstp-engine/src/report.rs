@@ -8,10 +8,14 @@
 //! goes to `fstp_report_core::approve`: only a Financial signatory of the
 //! tenant fold who did not generate the document approves it (R-RP-03,
 //! Q3). The fold refuses a self-approval too (`ReportStore::apply`).
+//!
+//! The generated record must name the funder profile id and version that
+//! P-53 pins for its scope (M9 design section 2.1, [`pinned_p53`]).
 
 use fstp_domain::command::{Actor, Ctx};
 use fstp_domain::engine::FoldError;
 use fstp_domain::id::{AccountId, ProgrammeId};
+use fstp_domain::policy::FunderProfileRef;
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::roles::{BindingScope, Role};
 use fstp_report_core::{ApprovalRefusal, ReportFoldError, ReportRecord, Scope};
@@ -41,6 +45,19 @@ fn manages(state: &EngineState, account: AccountId, programme: ProgrammeId, ctx:
     })
 }
 
+/// The P-53 value that pins the funder profile of an output over `scope`
+/// (M9 design section 2.5, R-RP-01): the frozen policy of a published
+/// call, or the head policy version of a programme. An unpublished call
+/// has none.
+pub fn pinned_p53(state: &EngineState, scope: Scope) -> Option<&FunderProfileRef> {
+    match scope {
+        Scope::Call(c) => {
+            fstp_domain::policy::frozen_policy(&state.core, c).map(|f| &f.values().p53)
+        }
+        Scope::Programme(p) => fstp_domain::policy::head(&state.core, p).map(|v| &v.frozen.p53),
+    }
+}
+
 /// Whether `account` holds the Financial signatory role in the tenant
 /// fold (NOTE 5, R-RP-03).
 pub fn financial_signatory(state: &EngineState, account: AccountId) -> bool {
@@ -62,7 +79,11 @@ pub(crate) fn decide_report(
     };
     match r {
         ReportRecord::Generated {
-            report, scope, by, ..
+            report,
+            scope,
+            by,
+            profile,
+            ..
         } => {
             if *by != actor {
                 return Err(actor_refusal());
@@ -74,6 +95,10 @@ pub(crate) fn decide_report(
                 .ok_or(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity))?;
             if !manages(state, actor, programme, ctx) {
                 return Err(actor_refusal());
+            }
+            // R-RP-01: the document names the profile version P-53 pins.
+            if !pinned_p53(state, *scope).is_some_and(|p| profile.matches_p53(p.0.as_str())) {
+                return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
             }
         }
         ReportRecord::Approved { report, approver } => {

@@ -2,8 +2,11 @@
 //!
 //! - [`Snapshot`] is the data snapshot: a prefix of the core ledger, with
 //!   a digest over its canonical form (R-RP-01).
-//! - [`generate`] makes one output of the Horizon Europe profile from a
-//!   snapshot: the call publication record, the open call package, the
+//! - [`profile`]: versioned funder profiles (M9 design section 2.5). The
+//!   Horizon Europe profile, version 1, ships in
+//!   `profiles/horizon-europe/profile.v1.json`, and a programme pins one
+//!   through P-53.
+//! - [`generate`] makes one output of a funder profile from a snapshot: the call publication record, the open call package, the
 //!   periodic reporting data, the audit file per call and the deliverable
 //!   draft (R-RP-04). Every output first reconciles the snapshot. Any
 //!   mismatch fails generation and is listed (I-44, R-RP-02). Equal
@@ -28,17 +31,19 @@
 mod books;
 pub mod guide;
 mod output;
+pub mod profile;
 mod record;
 mod snapshot;
 mod time;
 
 pub use books::Mismatch;
 pub use fstp_report_core::{
-    ApprovalRefusal, ENVELOPE, ReportFoldError, ReportId, ReportKind, ReportRecord, ReportStore,
-    Scope, StoredReport, approve, is_financial_signatory,
+    ApprovalRefusal, ENVELOPE, ProfilePin, ReportFoldError, ReportId, ReportKind, ReportRecord,
+    ReportStore, Scope, StoredReport, approve, is_financial_signatory,
 };
 pub use guide::{GuideContent, GuidePdfError, guide_pdf, read_canonical, rendered_guide_pdf};
-pub use output::{Content, Output, PROFILE, PackageInputs, Period, Request, generate};
+pub use output::{Content, Output, PackageInputs, Period, Request, generate};
+pub use profile::{FunderProfile, ProfileError};
 pub use record::generated;
 pub use snapshot::{Entry, Snapshot};
 
@@ -65,6 +70,10 @@ pub enum ReportError {
     Encoding,
     /// A sum overflowed or mixed currencies.
     Money,
+    /// The pinned funder profile does not define this output (D3).
+    NotInProfile(ReportKind),
+    /// The funder profile is malformed or not shipped (P-53).
+    Profile(ProfileError),
 }
 
 impl std::fmt::Display for ReportError {
@@ -91,6 +100,10 @@ impl std::fmt::Display for ReportError {
             ReportError::Pdf(e) => write!(f, "{e}"),
             ReportError::Encoding => f.write_str("a value has no canonical JSON form"),
             ReportError::Money => f.write_str("a sum overflowed or mixed currencies"),
+            ReportError::NotInProfile(k) => {
+                write!(f, "the funder profile defines no {} output", k.name())
+            }
+            ReportError::Profile(e) => write!(f, "{e}"),
         }
     }
 }

@@ -49,9 +49,9 @@ fn r_rp_01_each_output_is_deterministic_for_equal_ledgers() {
                 return Err("R-RP-01: the snapshot digest changed over the stored form".into());
             }
             for r in requests(&periods) {
-                let x = generate(&a, &r).map_err(|e| format!("{r:?}: {e}"))?;
-                let y = generate(&b, &r).map_err(|e| format!("{r:?}: {e}"))?;
-                let z = generate(&c, &r).map_err(|e| format!("{r:?}: {e}"))?;
+                let x = generate(&a, &support::he(), &r).map_err(|e| format!("{r:?}: {e}"))?;
+                let y = generate(&b, &support::he(), &r).map_err(|e| format!("{r:?}: {e}"))?;
+                let z = generate(&c, &support::he(), &r).map_err(|e| format!("{r:?}: {e}"))?;
                 if x.bytes != y.bytes || x.bytes != z.bytes || x.digest != z.digest {
                     return Err(format!("R-RP-01: {:?} differs for equal ledgers", x.kind));
                 }
@@ -79,7 +79,7 @@ fn r_rp_01_other_snapshot_other_digest() {
         periods: &periods,
     };
     assert_ne!(
-        generate(&a, &r).unwrap().bytes,
-        generate(&b, &r).unwrap().bytes
+        generate(&a, &support::he(), &r).unwrap().bytes,
+        generate(&b, &support::he(), &r).unwrap().bytes
     );
 }
