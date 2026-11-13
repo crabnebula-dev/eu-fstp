@@ -254,6 +254,7 @@ dependencies = [
  "fstp-engine",
  "fstp-guide",
  "fstp-http",
+ "fstp-json",
  "fstp-keyd",
  "fstp-keys",
  "fstp-ledger",
