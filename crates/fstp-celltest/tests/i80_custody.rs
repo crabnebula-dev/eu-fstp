@@ -505,8 +505,8 @@ fn i80_root_material_named_only_in_keyd() {
 }
 
 /// I-80, design section 2.4 rule 7: only `fstp-cell`, `fstp-vault`,
-/// `fstp-control`, `fstp-backup`, `fstp-keyd` and `fstp-celltest` name
-/// `fstp-custody` in their manifests. A fuzz project counts as part of
+/// `fstp-control`, `fstp-witness`, `fstp-backup`, `fstp-keyd` and
+/// `fstp-celltest` name `fstp-custody` in their manifests. A fuzz project counts as part of
 /// its crate. This test checks direct dependencies, in every manifest
 /// form. Reach is transitive, as through `fstp-cell` or `fstp-backup`.
 /// The deps-check rule 7 in `tools/deps-check/src/layering_m3.rs` checks
@@ -521,6 +521,10 @@ fn i80_only_listed_crates_reach_fstp_custody() {
         "crates/fstp-control",
         "crates/fstp-keyd",
         "crates/fstp-vault",
+        // Daniel's decision of 2026-11-13 (m3-exit-audit section 7, item
+        // 1, Q-D): the witness opens its receipt key through its own
+        // fstp-keyd entry, so it joins rule 7 and this list.
+        "crates/fstp-witness",
     ]
     .iter()
     .map(|s| (*s).to_owned())
