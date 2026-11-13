@@ -327,11 +327,37 @@ struct WorldPart {
     clusters: Vec<(String, &'static fstp_pgtest::PgServer)>,
 }
 
-/// The backups and stored texts of one cell (module documentation).
+/// The backups and stored texts of one cell (module documentation), and
+/// the fault point of its record store (R-NF-08).
 #[derive(Default)]
 pub struct CellBackups {
     state: Mutex<State>,
     world: OnceLock<WorldPart>,
+    fault: fstp_pgstore::FaultPoint,
+    retried: std::sync::atomic::AtomicU64,
+}
+
+impl CellBackups {
+    /// The fault point of the cell's record store, which the cell starts
+    /// with (`fstp_cell::process::StartOptions::fault_point`).
+    pub(crate) fn fault(&self) -> &fstp_pgstore::FaultPoint {
+        &self.fault
+    }
+
+    /// Counts one command that the cycle sent again after the fault point
+    /// aborted its append.
+    pub(crate) fn note_retry(&self) {
+        let _ = self.retried.fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |n| n.checked_add(1),
+        );
+    }
+
+    /// How many aborted commands the cycle sent again.
+    pub(crate) fn retried(&self) -> u64 {
+        self.retried.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl std::fmt::Debug for CellBackups {

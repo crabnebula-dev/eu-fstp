@@ -480,6 +480,9 @@ pub struct StartOptions {
     /// so the production default is `None`, and a test world passes the
     /// world's control plane.
     pub control_plane: Option<crate::control::ControlPlaneEndpoint>,
+    /// A test's fault point on the cell's record store
+    /// ([`fstp_pgstore::FaultPoint`], lane F-ERASE). Production sets none.
+    pub fault_point: Option<fstp_pgstore::FaultPoint>,
 }
 
 impl Default for StartOptions {
@@ -489,6 +492,7 @@ impl Default for StartOptions {
             creator_shell: Arc::new(crate::shell::ProductionShell),
             proof_mail: Arc::new(crate::mail::NoProofMail),
             control_plane: None,
+            fault_point: None,
         }
     }
 }
@@ -537,6 +541,7 @@ where
         creator_shell,
         proof_mail,
         control_plane,
+        fault_point,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -591,11 +596,13 @@ where
     )
     .map_err(store_err)?;
     let store_clock = Arc::clone(&clock);
-    let store = PgCellStore::from_store(
-        store
-            .into_inner()
-            .with_clock(Arc::new(move || Some(store_clock()))),
-    );
+    let mut inner = store
+        .into_inner()
+        .with_clock(Arc::new(move || Some(store_clock())));
+    if let Some(f) = fault_point {
+        inner = inner.with_fault_point(f);
+    }
+    let store = PgCellStore::from_store(inner);
     let (store, keystore) = match keystore {
         Some(k) => (store, k),
         None => {

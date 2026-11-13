@@ -47,6 +47,12 @@
 //! - `base-backup`, `wal-archive`, `keystore-snapshot` and `rotate-chain`:
 //!   the backups of [`crate::backups`] and the yearly re-wrap of the
 //!   CellBackup chain (lane F-ERASE).
+//! - `abort-next-append`, `retry` and `replay-step-up`: the fault steps of
+//!   R-NF-08 (lane F-ERASE). The first arms the cell store's fault point,
+//!   so the next append aborts after its rows are inserted. A command
+//!   whose append it aborted is sent again once. `retry` checks that each
+//!   aborted command was. `replay-step-up` sends the last command that
+//!   carried a step-up again, and the cell must not commit it twice.
 //! - `<kind>:<text>` and `authenticator:<hex>`: values of the next
 //!   applicant (`Person`, lane F-ISO).
 //!
@@ -152,7 +158,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the account, identity and cell erasure, document and fault steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the account, identity and cell erasure and document steps of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -498,6 +504,13 @@ impl<'w> Cycle<'w> {
                 "keystore-snapshot",
                 crate::backups::keystore_snapshot(self.client.cell()),
             ),
+            // The fault steps of R-NF-08 (lane F-ERASE).
+            "abort-next-append" => {
+                self.client.cell().backups.fault().arm_abort_next_append();
+                Ok(())
+            }
+            "retry" => self.retry(),
+            "replay-step-up" => self.replay_step_up(),
             "rotate-chain" => Self::backup_step(
                 "rotate-chain",
                 crate::backups::rotate_chain(self.client.cell()),
@@ -550,6 +563,44 @@ impl<'w> Cycle<'w> {
             Some(r) if r.ok() => Ok(()),
             other => Err(Self::refused(step, what, other.as_ref())),
         }
+    }
+
+    /// `retry`: every append the fault point aborted was sent again, and
+    /// at least one was. A point armed with no append after it refuses.
+    fn retry(&self) -> Result<(), NotImplemented> {
+        let b = &self.client.cell().backups;
+        let (fired, retried) = (b.fault().fired(), b.retried());
+        if fired > 0 && fired == retried && !b.fault().armed() {
+            return Ok(());
+        }
+        eprintln!(
+            "fstp_celltest::cycle retry: {fired} aborted appends, {retried} sent again, armed {}",
+            b.fault().armed()
+        );
+        Err(NotImplemented::new(STEP_REFUSED))
+    }
+
+    /// `replay-step-up`: the last command that carried a step-up is sent
+    /// again byte for byte. The cell must not commit it a second time:
+    /// its ledger head stays where it was. The reply itself may be a
+    /// refusal or the first commit's answer.
+    fn replay_step_up(&self) -> Result<(), NotImplemented> {
+        const STEP: &str = "replay-step-up";
+        let failed = || NotImplemented::new(STEP_REFUSED);
+        let cell = self.client.cell();
+        let before = cell.ledger().map_err(|_| failed())?.len();
+        if self.client.replay_last_stepup()?.is_none() {
+            eprintln!("fstp_celltest::cycle {STEP}: no command carried a step-up yet");
+            return Err(failed());
+        }
+        let after = cell.ledger().map_err(|_| failed())?.len();
+        if after != before {
+            eprintln!(
+                "fstp_celltest::cycle {STEP}: the replay committed ({before} entries, then {after})"
+            );
+            return Err(failed());
+        }
+        Ok(())
     }
 
     /// The cell's state, replayed from its ledger.

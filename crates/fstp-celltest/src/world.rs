@@ -3152,6 +3152,8 @@ fn start_cell(
             health: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         },
     };
+    // The fault point of the cell's record store (lane F-ERASE).
+    let backups = crate::backups::CellBackups::default();
     let running = match s.rt.block_on(fstp_cell::process::start_with(
         &s.rt,
         parts,
@@ -3160,6 +3162,7 @@ fn start_cell(
             creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
             proof_mail: std::sync::Arc::new(mail.clone()),
             control_plane,
+            fault_point: Some(backups.fault().clone()),
         },
     )) {
         Ok(r) => r,
@@ -3234,7 +3237,7 @@ fn start_cell(
         clock,
         mail,
         cycle: Mutex::new(None),
-        backups: crate::backups::CellBackups::default(),
+        backups,
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
             running: Mutex::new(Running {
