@@ -57,6 +57,9 @@
 //!   applicant (`Person`, lane F-ISO).
 //! - `m2-suite:<invariant>:reduced`: the reduced case of that M2 suite
 //!   over the cell ([`crate::m2_http`], lane m3/m2-over-http).
+//! - `m2:random-commands` and `m2:path-to-<state>`: random M2 commands,
+//!   or the M2 path of PR1, over the cell (`crate::m2_http::run_m2_step`).
+//!   `seed:ground-truth:life-setup-adult` names the vault those paths seed.
 //!
 //! Lane F-CYCLE3: the cell clock moves to the call's opening and past its
 //! deadline, and every session is renewed by passkey after a move
@@ -160,7 +163,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the account, identity and cell erasure and document steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps, the account, identity and cell erasure and document steps of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -531,6 +534,10 @@ impl<'w> Cycle<'w> {
                 self.revalidate()?;
                 self.grant()
             }
+            // The vault an `m2:path-to` step seeds is the life setup's with
+            // L1 an adult (`crate::m2_http::run_m2_step`). Naming it is
+            // all this step does; another ground truth has no cell form yet.
+            "seed:ground-truth:life-setup-adult" => Ok(()),
             s if s.starts_with("seed:ground-truth") => Err(NotImplemented::new(GROUND_TRUTH_SEAM)),
             // The reduced case of an M2 suite over the cell (lane
             // m3/m2-over-http, `crate::m2_http`).
@@ -541,7 +548,7 @@ impl<'w> Cycle<'w> {
                 Some(suite) => crate::m2_http::run_suite(&self.client, suite),
                 None => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
             },
-            s if s.starts_with("m2:") => Err(NotImplemented::new(M2_SETUP_SEAM)),
+            s if s.starts_with("m2:") => crate::m2_http::run_m2_step(&self.client, s),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
         }
     }

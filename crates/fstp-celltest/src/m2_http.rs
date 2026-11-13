@@ -198,6 +198,8 @@ pub struct HttpDriver<'c, 'w> {
     classes: BTreeSet<(IdentityTag, fstp_domain::id::ClassId)>,
     /// The relationships seeded.
     relationships: BTreeSet<(AccountId, AccountId)>,
+    /// The over-18 attestations seeded, with their instants.
+    adults: BTreeMap<AccountId, i64>,
     /// The P-38 lists the vault holds.
     lists: BTreeSet<fstp_domain::id::ProximityListId>,
     /// The affiliations on a list seeded, by account and list.
@@ -248,6 +250,7 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             persons: BTreeMap::new(),
             classes: BTreeSet::new(),
             relationships: BTreeSet::new(),
+            adults: BTreeMap::new(),
             lists: BTreeSet::new(),
             affiliated: BTreeSet::new(),
             records: Vec::new(),
@@ -437,6 +440,24 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             if self.persons.get(a) != Some(t) {
                 self.seed_person(*a, &attributes(*t))?;
                 self.persons.insert(*a, *t);
+                seeded = true;
+            }
+        }
+        let adults: Vec<(AccountId, Timestamp)> = self
+            .truth
+            .adults()
+            .filter(|(a, _)| self.truth.is_verified(*a))
+            .collect();
+        for (a, from) in adults {
+            if self.adults.get(&a) != Some(&from.micros()) {
+                self.seed_fact(
+                    SeedSource::SyntheticVerification,
+                    Fact::AdultAttestation {
+                        account: WireAccount(a.raw()),
+                        adult_from: from.micros(),
+                    },
+                )?;
+                self.adults.insert(a, from.micros());
                 seeded = true;
             }
         }
@@ -711,16 +732,19 @@ fn named_accounts(step: &Step) -> Vec<AccountId> {
     out
 }
 
-impl M2Driver for HttpDriver<'_, '_> {
-    fn truth(&self) -> &GroundTruth {
-        &self.truth
-    }
-
-    fn start(
+impl HttpDriver<'_, '_> {
+    /// Starts from genesis over `truth` and runs `steps`, each at its own
+    /// instant, as [`M2Driver::start`] does at one instant. A path of
+    /// `crate::mc::driver_model::paths` runs this way.
+    ///
+    /// # Errors
+    ///
+    /// The refusal of the first step that did not run, or the driver's
+    /// failure.
+    pub fn start_timed(
         &mut self,
         truth: &GroundTruth,
-        steps: &[Step],
-        at: Timestamp,
+        steps: &[(Step, Timestamp)],
     ) -> Result<Seq, ExecError> {
         self.truth = truth.clone();
         match self.client.enrol(FIRST_ADMIN) {
@@ -733,7 +757,7 @@ impl M2Driver for HttpDriver<'_, '_> {
         // names it (`fstp_cell_core::decide`, `account_known`).
         let mut accounts: BTreeSet<AccountId> = truth.identities().map(|(a, _)| a).collect();
         accounts.insert(BUILDER);
-        for s in steps {
+        for (s, _) in steps {
             accounts.extend(named_accounts(s));
         }
         for a in &accounts {
@@ -763,7 +787,7 @@ impl M2Driver for HttpDriver<'_, '_> {
         self.seed_person(BUILDER, b"m2-harness-builder")?;
         // The P-38 lists of the setup's policies, so a later affiliation
         // on a list is one write, as the M2 vault's change is one epoch.
-        for s in steps {
+        for (s, _) in steps {
             if let Command::CreateProgramme { policy } = &s.cmd {
                 for list in policy.live.p38.0.values() {
                     if self.lists.insert(*list) {
@@ -779,13 +803,13 @@ impl M2Driver for HttpDriver<'_, '_> {
             }
         }
         self.sync_vault()?;
-        for s in steps {
+        for (s, at) in steps {
             match &s.cmd {
                 Command::CreateProgramme { policy } => self.create_programme(policy)?,
                 // The creator's approval activated it (D2e).
                 Command::ActivateProgramme { .. } => {}
                 _ => {
-                    M2Driver::execute(self, s, at)?;
+                    M2Driver::execute(self, s, *at)?;
                 }
             }
         }
@@ -795,6 +819,22 @@ impl M2Driver for HttpDriver<'_, '_> {
             ..Tally::default()
         };
         self.read()
+    }
+}
+
+impl M2Driver for HttpDriver<'_, '_> {
+    fn truth(&self) -> &GroundTruth {
+        &self.truth
+    }
+
+    fn start(
+        &mut self,
+        truth: &GroundTruth,
+        steps: &[Step],
+        at: Timestamp,
+    ) -> Result<Seq, ExecError> {
+        let timed: Vec<(Step, Timestamp)> = steps.iter().map(|s| (s.clone(), at)).collect();
+        self.start_timed(truth, &timed)
     }
 
     fn execute(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError> {
@@ -1435,4 +1475,70 @@ fn pick_seed<M: CellMachine>(
         }
     }
     Err(NotImplemented::new(CASE_TOO_SHORT))
+}
+
+/// A path step names a state outside `paths::STATES`, or the path could
+/// not be built.
+pub const PATH_SEAM: &str = "fstp_celltest::m2_http: the m2:path-to step names a state that crate::mc::driver_model::paths does not reach (draft, submitted, stage1, stage2, ranked, irc-review, negotiation)";
+
+/// The cell refused a step of an M2 path, or the driver failed one. Not a
+/// seam: the step is on standard error.
+pub const PATH_REFUSED: &str = "fstp_celltest::m2_http: the cell did not take a step of the M2 path (the step and the cell's reply are on standard error)";
+
+/// The state a path step names.
+fn path_state(name: &str) -> Option<fstp_domain::rules::StateTag> {
+    use fstp_domain::rules::StateTag;
+    Some(match name {
+        "draft" => StateTag::Draft,
+        "submitted" => StateTag::Submitted,
+        "stage1" => StateTag::Stage1,
+        "stage2" => StateTag::Stage2,
+        "ranked" => StateTag::Ranked,
+        "irc-review" => StateTag::IrcReview,
+        "negotiation" => StateTag::Negotiation,
+        _ => return None,
+    })
+}
+
+/// Runs an `m2:` step of a cycle script over the cell of `client`:
+///
+/// - `m2:random-commands` runs random M2 commands as the reduced case of
+///   the review machine, whose Judging staff assign, declare and read
+///   ([`run_suite`] of I-03).
+/// - `m2:path-to-<state>` runs the path of
+///   `crate::mc::driver_model::paths` that takes PR1 to `<state>`, over
+///   the path's vault with L1 an adult (`paths::truth(true)`), from a
+///   cell with no programme yet. Every step must be taken.
+///
+/// # Errors
+///
+/// [`PATH_SEAM`], [`PATH_REFUSED`], the errors of [`run_suite`], or
+/// `crate::cycle::M2_SETUP_SEAM` for another `m2:` step.
+pub fn run_m2_step(client: &AuthClient<'_>, step: &str) -> Result<(), NotImplemented> {
+    use crate::mc::driver_model::paths;
+    if step == "m2:random-commands" {
+        return run_suite(client, "I-03");
+    }
+    let Some(name) = step.strip_prefix("m2:path-to-") else {
+        return Err(NotImplemented::new(crate::cycle::M2_SETUP_SEAM));
+    };
+    let Some(target) = path_state(name) else {
+        return Err(NotImplemented::new(crate::cycle::M2_SETUP_SEAM));
+    };
+    let path = paths::to(target).map_err(|e| {
+        eprintln!("fstp_celltest::m2_http {step}: {e}");
+        NotImplemented::new(PATH_SEAM)
+    })?;
+    let timed: Vec<(Step, Timestamp)> = path.into_iter().map(|p| (p.step, p.at)).collect();
+    let mut driver = HttpDriver::new(client);
+    match driver.start_timed(&paths::truth(true), &timed) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            eprintln!(
+                "fstp_celltest::m2_http {step}: {e:?}; driver fault: {:?}",
+                driver.fault()
+            );
+            Err(NotImplemented::new(PATH_REFUSED))
+        }
+    }
 }

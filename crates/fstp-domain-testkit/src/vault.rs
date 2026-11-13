@@ -798,6 +798,12 @@ impl GroundTruth {
         self.affiliations.iter().copied()
     }
 
+    /// Every effective over-18 attestation, with the instant from which
+    /// it shows its account 18 or older.
+    pub fn adults(&self) -> impl Iterator<Item = (AccountId, Timestamp)> + '_ {
+        self.adults.iter().map(|(a, t)| (*a, *t))
+    }
+
     /// Whether `account` has facts that wait for its verification.
     pub fn has_pending(&self, account: AccountId) -> bool {
         self.pending.get(&account).is_some_and(|p| !p.is_empty())
