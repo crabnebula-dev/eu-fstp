@@ -259,7 +259,7 @@ pub struct LoadedChain {
 }
 
 /// One stored record, before the replay.
-enum Stored {
+pub(crate) enum Stored {
     Prepare {
         seq: u64,
         row: AnchorRow,
@@ -380,7 +380,11 @@ pub async fn load_chain<R: Runtime>(
 }
 
 /// Replays `stored`, in witness order, into the chain's state and log.
-fn replay(cell: CellId, chain: ChainId, stored: Vec<Stored>) -> Result<LoadedChain, StoreError> {
+pub(crate) fn replay(
+    cell: CellId,
+    chain: ChainId,
+    stored: Vec<Stored>,
+) -> Result<LoadedChain, StoreError> {
     let mut state = WitnessState {
         confirmed: (0, fstp_audit::chain::genesis(cell, chain)),
         outstanding: None,

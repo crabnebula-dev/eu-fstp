@@ -18,7 +18,9 @@
 //! - [`store`] is the PostgreSQL store of a SaaS witness, and
 //!   [`MIGRATIONS`] its migration set.
 //! - [`service`] is the run loop: the mutual TLS listener, the store and
-//!   the receipts, on one runtime through `fstp-rt` ([`serve`]).
+//!   the receipts, on one runtime through `fstp-rt`. [`serve`] runs it
+//!   over the database of a SaaS witness, and [`serve_local`] over the
+//!   file store of a self-hosted install.
 //! - [`lock`] is the async mutex the service and the cell's link use.
 //!
 //! [`CATALOGUE`] holds the column maps of the witness database (design
@@ -59,7 +61,7 @@ pub use crate::chain_witness::{
 pub use crate::file_store::{FileRecord, decode_file_store, encode_file_store, load_file_store};
 pub use crate::message::{WitnessMessage, decode_witness_message, encode_witness_message};
 pub use crate::receipt::sign_receipt;
-pub use crate::service::{WitnessHandle, WitnessParts, serve};
+pub use crate::service::{LocalWitnessParts, WitnessHandle, WitnessParts, serve, serve_local};
 
 /// The witness migrations, in order (design sections 4.4 and 4.6):
 ///

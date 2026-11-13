@@ -141,7 +141,7 @@ Transcribed on 2026-10-29 from the text of `draft-ietf-lamps-pq-composite-sigs-1
 | App chain anchor key, per cell | Composite | App chain level 2 key, purpose `Anchor` | Re-wrapped under each new root epoch. Replaced yearly. Old public keys stay in the anchor key history that the witness holds |
 | Vault chain anchor key, per cell | Composite | Vault chain level 2 key, purpose `Anchor` | As above |
 | Witness receipt key, SaaS | Composite | The witness's own custody entry, chain `ControlPlane`, with its own credential | Yearly. Cells pin a set of witness keys. A new key is announced signed by the old one |
-| Witness receipt key, self-hosted | Composite | The local witness's own key. Custody placement is open (see Open points) | Record at first use |
+| Witness receipt key, self-hosted | Composite | The local witness's own key, in a separate `fstp-keyd` entry with its own credential (open point 6, ADR-004 part 2 "Self-hosted witness receipt key") | As the SaaS key |
 
 ### Prepare, receipt, commit
 
@@ -225,6 +225,9 @@ A batch of entries shares one prepare. Steps 1 to 6 can abort. The vault follows
 - The cell and the vault refuse writes until the local witness answers, as in SaaS.
 - An external object-lock bucket is optional. The tenant chooses it.
 - No anchor and no prepare ever goes to a CrabNebula host (I-38). `i38_self_hosted_witness_never_targets_crabnebula` checks that.
+- The file store keeps one append-only file per cell and chain, framed as `fstp_witness::file_store` says, and one registry file. Interim, pending Daniel (open point 4 fixed the database shape only): a prepare record is the witness message followed by its encoded receipt. An abort or in-doubt record is the witness message, `be64(received_at)` and the witness link. A registry record is a CA certificate or an anchor key of one cell.
+- The local witness loads every file at start and recomputes every witness link. A store with a missing, changed or cut record does not start, so it fails closed.
+- Scope of the self-hosted I-24 claim (open point 7, Daniel, 2026-11-13): the local witness detects a change or deletion by any database role and by the database owner. A root user on the cell node can change both the database and the witness file store, so that is outside what the local witness detects. Only the optional external bucket would detect it. Every self-hosted I-24 test and document states its claim within this scope.
 
 ### The vault chain is anchored by the vault only
 
