@@ -163,15 +163,12 @@ const RELEASE_USERS: [&str; 3] = ["fstp-cell", "fstp-release-svc", CELLTEST];
 /// Rule 7: the root material identifier and where it may appear.
 const ROOT_MATERIAL: &str = "RootMaterial";
 const ROOT_MATERIAL_CRATES: [&str; 2] = ["fstp-keyd", CELLTEST];
-/// Rule 7: custody and the crates that may reach it. The witness opens its
-/// receipt key through its own fstp-keyd entry (Daniel, 2026-11-13,
-/// m3-finish Q-D; ADR-004 ControlPlane row).
+/// Rule 7: custody and the crates that may reach it.
 const CUSTODY: &str = "fstp-custody";
-const CUSTODY_USERS: [&str; 7] = [
+const CUSTODY_USERS: [&str; 6] = [
     "fstp-cell",
     "fstp-vault",
     "fstp-control",
-    "fstp-witness",
     "fstp-backup",
     "fstp-keyd",
     CELLTEST,
@@ -329,7 +326,7 @@ pub(crate) fn check(meta: &Metadata) -> Vec<Finding> {
         &CUSTODY_USERS,
         &ANY_KIND,
         "layering-m3-i80",
-        "only fstp-cell, fstp-vault, fstp-control, fstp-witness, fstp-backup, fstp-keyd and fstp-celltest may reach it (I-80, design section 2.4 rule 7)",
+        "only fstp-cell, fstp-vault, fstp-control, fstp-backup, fstp-keyd and fstp-celltest may reach it (I-80, design section 2.4 rule 7)",
         &mut out,
     );
 

@@ -166,19 +166,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fstp-custody"
-version = "0.1.0"
-dependencies = [
- "fstp-crypto",
- "fstp-http",
- "fstp-json",
- "fstp-keys",
- "fstp-rt",
- "fstp-tls",
- "zeroize",
-]
-
-[[package]]
 name = "fstp-http"
 version = "0.1.0"
 dependencies = [
@@ -189,15 +176,6 @@ dependencies = [
 [[package]]
 name = "fstp-json"
 version = "0.1.0"
-
-[[package]]
-name = "fstp-keys"
-version = "0.1.0"
-dependencies = [
- "fstp-crypto",
- "fstp-json",
- "zeroize",
-]
 
 [[package]]
 name = "fstp-ledger"
@@ -267,10 +245,7 @@ dependencies = [
  "fstp-audit",
  "fstp-cp-proto",
  "fstp-crypto",
- "fstp-custody",
  "fstp-http",
- "fstp-json",
- "fstp-keys",
  "fstp-migrate",
  "fstp-obs",
  "fstp-pgwire",
