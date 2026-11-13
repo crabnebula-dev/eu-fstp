@@ -146,3 +146,17 @@ Reserved identifiers:
 | ID | Content |
 | --- | --- |
 | P-20 execution mode | Payment execution through a bank interface |
+
+## B-12: Organisation identity through the Yivi Business Wallet
+
+Deferred by Daniel on 2026-11-13. The Yivi app comes first (`03-architecture/eudi-wallet.md`, ADR-020). CrabNebula joins the Business Wallet design partner programme meanwhile.
+
+Scope when resumed: verifying a register-verified organisation and the mandate of the person acting for it, for example for organisation applicants or tenant onboarding. The spec has no organisation identity step today, so this starts with new requirements.
+
+Before it returns to scope it needs:
+
+- How a third party verifies a Business Wallet attestation, and which formats and trust anchors apply.
+- Coverage beyond the Dutch business register, since applicants come from across the EU.
+- A check that the ADR-020 verifier can be reused.
+
+No identifiers are reserved yet.
