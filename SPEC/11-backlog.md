@@ -157,6 +157,6 @@ Before it returns to scope it needs:
 
 - How a third party verifies a Business Wallet attestation, and which formats and trust anchors apply.
 - Coverage beyond the Dutch business register, since applicants come from across the EU.
-- A check that the ADR-020 verifier can be reused.
+- A check that the ADR-021 verifier can be reused.
 
 No identifiers are reserved yet.
