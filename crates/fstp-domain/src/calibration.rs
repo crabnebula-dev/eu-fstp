@@ -20,7 +20,10 @@
 //! because a terminal state may have ended the binding before the notice
 //! (interim reading, pending Daniel).
 //!
-//! The outcome notice record is `OutboxEnqueued(ProposalOutcome)`. No core
+//! The outcome notice record is `OutboxEnqueued(ProposalOutcome)`. A notice
+//! with state INELIGIBLE (a failed knock-out) does not count: it opens no
+//! consent, so no INELIGIBLE proposal enters a calibration set (I-37,
+//! decided by Daniel on 2026-11-13). No core
 //! command writes it yet. M6 dispatch adds it, and once M6 dispatches email
 //! the request also waits for the dispatch record. Use beyond the tenant
 //! (R-LA-11) is not built.
@@ -39,7 +42,7 @@ use crate::oracle::{Answers, Query};
 use crate::record::{OutboxEvent, Record};
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
 use crate::roles::Role;
-use crate::rules::ParamId;
+use crate::rules::{ParamId, StateTag};
 use crate::state::State;
 use crate::time::Timestamp;
 
@@ -75,11 +78,21 @@ impl ConsentState {
     }
 }
 
+/// Whether `proposal` is INELIGIBLE: the calibration side leaves it out
+/// (I-37, decided by Daniel on 2026-11-13).
+fn ineligible(state: &State, proposal: ProposalId) -> bool {
+    crate::view::proposal_state(state, proposal) == Some(StateTag::Ineligible)
+}
+
 /// The sequence number of the consent record that admits `proposal` to a
 /// calibration run: a recorded consent with no revocation (I-37).
 pub fn consent_of(state: &State, proposal: ProposalId) -> Option<Seq> {
     let c = state.calibration.get(proposal);
-    if c.revoked { None } else { c.given }
+    if c.revoked || ineligible(state, proposal) {
+        None
+    } else {
+        c.given
+    }
 }
 
 /// Whether a calibration run may include `proposal` (I-37, R-LA-10).
@@ -184,6 +197,11 @@ pub(crate) fn decide(
                     RefusalReason::GuardFailed,
                 ));
             }
+            // The state filter of the calibration side: an INELIGIBLE
+            // proposal is never asked for consent (I-37, 2026-11-13).
+            if ineligible(state, *proposal) {
+                return Err(i37());
+            }
             let c = state.calibration.get(*proposal);
             let notice = c.notice.ok_or_else(i37)?;
             if c.requested.is_some() || c.revoked {
@@ -266,9 +284,16 @@ pub(crate) fn apply(
 }
 
 /// Notes the first outcome notice record of a proposal at `seq`. Every
-/// other record leaves the consent part unchanged.
+/// other record leaves the consent part unchanged. An INELIGIBLE outcome
+/// notice does not open calibration consent, so it is not noted (I-37,
+/// decided by Daniel on 2026-11-13).
 pub(crate) fn on_outbox(state: &mut State, seq: Seq, record: &Record) {
-    if let Record::OutboxEnqueued(OutboxEvent::ProposalOutcome { proposal, .. }) = record {
+    if let Record::OutboxEnqueued(OutboxEvent::ProposalOutcome {
+        proposal,
+        state: tag,
+    }) = record
+        && *tag != StateTag::Ineligible
+    {
         let c = state.calibration.proposals.entry(*proposal).or_default();
         if c.notice.is_none() {
             c.notice = Some(seq);

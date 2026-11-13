@@ -55,6 +55,8 @@ fn via(rule: ReadRule) -> Option<&'static str> {
         ReadRule::Holder(Role::PaymentReleaser) => "payment_releaser",
         ReadRule::Holder(Role::ContractSignatory) => "contract_signatory",
         ReadRule::Auditor => "auditor",
+        // R-PR-08, SoD-12 (2026-11-13): after NEGOTIATION.
+        ReadRule::GrantReviewer => "assigned_reviewer",
         _ => return None,
     })
 }

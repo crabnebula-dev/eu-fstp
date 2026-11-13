@@ -31,6 +31,9 @@ export const MAIL_KINDS = [
   "payment.confirm",
   "notice.outcome",
   "notice.irc_concern",
+  // MB-Q3 (2026-11-13): invitations and role grants of an existing account.
+  "invitation.open",
+  "role.granted",
 ] as const;
 
 /** One kind. */
@@ -59,6 +62,8 @@ export const MAILBOX_ROUTES: Readonly<Record<MailKind, string>> = Object.freeze(
   "payment.confirm": "/app/operations",
   "notice.outcome": "/app/notices",
   "notice.irc_concern": "/app/notices",
+  "invitation.open": "/app/",
+  "role.granted": "/app/",
 });
 
 /**
@@ -83,6 +88,11 @@ export const ID_MEMBERS = [
   "request",
   "pending",
   "programme",
+  // MB-Q2: the ordinal of an unanswered stage 2 question.
+  "question",
+  // MB-Q3: the role binding and the invitation.
+  "binding",
+  "invitation",
 ] as const;
 
 /** One id member. */
@@ -98,6 +108,8 @@ export interface MailMessage {
   readonly since: string | null;
   /** When it is due or expires, in microseconds, when known. */
   readonly due: string | null;
+  /** A notice's own read mark (MB-Q1, ADR-020); null for a work message. */
+  readonly read: boolean | null;
   readonly ids: Readonly<Partial<Record<IdMember, string>>>;
 }
 
@@ -124,7 +136,7 @@ function isKind(v: unknown): v is MailKind {
 }
 
 const REQUIRED = ["id", "kind", "action", "href"];
-const OPTIONAL = ["since", "due", ...ID_MEMBERS];
+const OPTIONAL = ["since", "due", "read", ...ID_MEMBERS];
 
 /**
  * Whether `href` is the route `pattern` with each `{name}` filled by the
@@ -185,12 +197,17 @@ function message(v: unknown): MailMessage | null {
   if (since === undefined || due === undefined) {
     return null;
   }
+  // MB-Q1, ADR-020: a notice carries its read mark, a work message none.
+  const read = Object.hasOwn(o, "read") ? o["read"] : null;
+  if (action ? read !== null : typeof read !== "boolean") {
+    return null;
+  }
   // The page must be the route of the kind, filled with the message's
   // own ids, so no reply can send a person elsewhere.
   if (!fills(href, MAILBOX_ROUTES[kind], ids)) {
     return null;
   }
-  return Object.freeze({ id, kind, action, href, since, due, ids: Object.freeze(ids) });
+  return Object.freeze({ id, kind, action, href, since, due, read: read as boolean | null, ids: Object.freeze(ids) });
 }
 
 /**
@@ -226,6 +243,14 @@ export function readMailbox(v: unknown): Mailbox | null {
 /** The catalogue key of a message's label: `mailbox.kind.<kind>`. */
 export function labelKey(kind: MailKind): string {
   return `mailbox.kind.${kind}`;
+}
+
+/**
+ * The catalogue key of message `m`: its kind's key, or for a stage 2
+ * message that names its question, the per-question key (MB-Q2).
+ */
+export function messageKey(m: MailMessage): string {
+  return m.kind === "stage2.respond" && m.ids.question !== undefined ? "mailbox.kind.stage2.respond.question" : labelKey(m.kind);
 }
 
 /**

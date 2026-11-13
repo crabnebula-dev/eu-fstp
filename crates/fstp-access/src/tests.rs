@@ -78,8 +78,8 @@ fn i84_tool_input_schema_matches_its_route() {
         tools += 1;
     }
     // M5 design 12.1: the read-only contract, payment status and
-    // payment queue tools.
-    assert_eq!(tools, 38);
+    // payment queue tools, and the signing list tool (2026-11-13).
+    assert_eq!(tools, 39);
 }
 
 /// I-84: no two operations share a method and a route.

@@ -56,11 +56,16 @@ pub enum MailKind {
     NoticeOutcome,
     /// An IRC concern notice (R-IR-02).
     NoticeIrcConcern,
+    /// An invitation the caller's existing account holds, not yet
+    /// granted (MB-Q3, SoD-09).
+    InvitationOpen,
+    /// A role granted to the caller's existing account (MB-Q3).
+    RoleGranted,
 }
 
 impl MailKind {
     /// Every kind, in the order the mailbox lists them.
-    pub const ALL: [MailKind; 18] = [
+    pub const ALL: [MailKind; 20] = [
         MailKind::PendingConfirm,
         MailKind::ContractSign,
         MailKind::PaymentReview,
@@ -79,6 +84,8 @@ impl MailKind {
         MailKind::RoundVote,
         MailKind::NoticeOutcome,
         MailKind::NoticeIrcConcern,
+        MailKind::InvitationOpen,
+        MailKind::RoleGranted,
     ];
 
     /// The kind as the wire spells it (`fstp_access::MAILBOX_KINDS`).
@@ -102,13 +109,21 @@ impl MailKind {
             MailKind::PaymentConfirm => "payment.confirm",
             MailKind::NoticeOutcome => "notice.outcome",
             MailKind::NoticeIrcConcern => "notice.irc_concern",
+            MailKind::InvitationOpen => "invitation.open",
+            MailKind::RoleGranted => "role.granted",
         }
     }
 
     /// Whether the caller must act. A notice is to read, and never closes
     /// (MB-D2).
     pub const fn action(self) -> bool {
-        !matches!(self, MailKind::NoticeOutcome | MailKind::NoticeIrcConcern)
+        !matches!(
+            self,
+            MailKind::NoticeOutcome
+                | MailKind::NoticeIrcConcern
+                | MailKind::InvitationOpen
+                | MailKind::RoleGranted
+        )
     }
 
     /// The read behind the message's page. The mailbox keeps a message
@@ -132,6 +147,8 @@ impl MailKind {
             | MailKind::PaymentRelease
             | MailKind::PaymentConfirm => ReadKind::ListMyPaymentQueue,
             MailKind::NoticeOutcome | MailKind::NoticeIrcConcern => ReadKind::GetOwnNotices,
+            // MB-Q3: the home page lists the caller's own roles.
+            MailKind::InvitationOpen | MailKind::RoleGranted => ReadKind::ListMyRoles,
         }
     }
 
@@ -169,6 +186,8 @@ pub const MAILBOX_ROUTES: &[(MailKind, &str)] = &[
     (MailKind::PaymentConfirm, "/app/operations"),
     (MailKind::NoticeOutcome, "/app/notices"),
     (MailKind::NoticeIrcConcern, "/app/notices"),
+    (MailKind::InvitationOpen, "/app/"),
+    (MailKind::RoleGranted, "/app/"),
 ];
 
 /// The ids a message names. Only those its page needs are set.
@@ -192,11 +211,18 @@ pub struct MailRefs {
     pub pending: Option<u128>,
     /// The programme.
     pub programme: Option<u128>,
+    /// The ordinal of an unanswered stage 2 question in its thread, from 1
+    /// (MB-Q2). Part of the id, and shown in the label.
+    pub question: Option<u128>,
+    /// The role binding a grant made (MB-Q3).
+    pub binding: Option<u128>,
+    /// The invitation (MB-Q3).
+    pub invitation: Option<u128>,
 }
 
 impl MailRefs {
     /// The members as the wire names them, with their values.
-    fn members(&self) -> [(&'static str, Option<u128>); 8] {
+    fn members(&self) -> [(&'static str, Option<u128>); 11] {
         [
             ("proposal", self.proposal),
             ("call", self.call),
@@ -206,6 +232,9 @@ impl MailRefs {
             ("request", self.request),
             ("pending", self.pending),
             ("programme", self.programme),
+            ("question", self.question),
+            ("binding", self.binding),
+            ("invitation", self.invitation),
         ]
     }
 
@@ -247,6 +276,9 @@ pub struct MailItem {
     pub since: Option<Timestamp>,
     /// When it is due or expires, when the source holds it.
     pub due: Option<Timestamp>,
+    /// A notice's per-account read mark (MB-Q1, ADR-020). `None` for a
+    /// work message, which closes itself instead.
+    pub read: Option<bool>,
 }
 
 impl MailItem {
@@ -257,6 +289,7 @@ impl MailItem {
             refs,
             since: None,
             due: None,
+            read: None,
         }
     }
 
@@ -297,6 +330,9 @@ impl ToJson for MailItem {
         }
         if let Some(t) = self.due {
             let _ = o.insert("due", Value::String(t.micros().to_string()));
+        }
+        if let Some(r) = self.read {
+            let _ = o.insert("read", Value::Bool(r));
         }
         for (name, v) in self.refs.members() {
             if let Some(v) = v {
@@ -354,6 +390,55 @@ impl ToJson for MailboxView {
 
 impl crate::McpSafe for MailboxView {}
 
+/// The most read marks one account holds (ADR-020).
+pub(crate) const MAX_MARKS_PER_ACCOUNT: usize = 4_096;
+
+/// The most read marks this core holds in all (ADR-020).
+pub(crate) const MAX_MARKS: usize = 1_000_000;
+
+/// The per-account read marks of notices (MB-Q1, ADR-020, Proposed).
+///
+/// Each mark is a message id, which holds only a kind and decimal ids
+/// (I-27, I-86). Interim, pending Daniel: the marks live in memory in the
+/// API core, as the negotiation acknowledgement does (`content.rs`), until
+/// lane W6 gives them a cell table.
+#[derive(Debug, Default)]
+pub(crate) struct ReadMarks {
+    marks:
+        std::collections::BTreeMap<fstp_domain::id::AccountId, std::collections::BTreeSet<String>>,
+    total: usize,
+}
+
+impl ReadMarks {
+    /// Marks `id` read for `account`. Idempotent. `false` when a bound is
+    /// reached, and nothing is evicted.
+    pub(crate) fn mark(&mut self, account: fstp_domain::id::AccountId, id: &str) -> bool {
+        let set = self.marks.entry(account).or_default();
+        if set.contains(id) {
+            return true;
+        }
+        if set.len() >= MAX_MARKS_PER_ACCOUNT || self.total >= MAX_MARKS {
+            return false;
+        }
+        set.insert(id.to_owned());
+        self.total = self.total.saturating_add(1);
+        true
+    }
+
+    /// Whether `account` marked `id` read.
+    pub(crate) fn is_read(&self, account: fstp_domain::id::AccountId, id: &str) -> bool {
+        self.marks.get(&account).is_some_and(|s| s.contains(id))
+    }
+
+    /// Sets the read mark of every notice of `view` for `account`. Work
+    /// messages keep no mark (MB-D2).
+    pub(crate) fn apply(&self, account: fstp_domain::id::AccountId, view: &mut MailboxView) {
+        for m in &mut view.messages {
+            m.read = (!m.kind.action()).then(|| self.is_read(account, &m.id()));
+        }
+    }
+}
+
 /// A view with one message of every kind and every member set, for the
 /// reply shape check of `model.rs` (TH-26).
 #[cfg(test)]
@@ -368,6 +453,9 @@ pub(crate) fn samples() -> MailboxView {
         request: Some(6),
         pending: Some(7),
         programme: Some(8),
+        question: Some(9),
+        binding: Some(10),
+        invitation: Some(11),
     };
     MailboxView::new(
         MailKind::ALL
@@ -377,6 +465,7 @@ pub(crate) fn samples() -> MailboxView {
                 refs,
                 since: Some(Timestamp::from_micros(1)),
                 due: Some(Timestamp::from_micros(2)),
+                read: (!k.action()).then_some(false),
             })
             .collect(),
     )
@@ -399,6 +488,9 @@ mod tests {
             request: Some(16),
             pending: Some(17),
             programme: Some(18),
+            question: Some(19),
+            binding: Some(20),
+            invitation: Some(21),
         }
     }
 
@@ -495,11 +587,46 @@ mod tests {
                     "request",
                     "pending",
                     "programme",
+                    "question",
+                    "binding",
+                    "invitation",
+                    "read",
                 ]
                 .contains(k),
                 "{k}"
             );
         }
         assert_eq!(j.get("proposal").and_then(Value::as_str), Some("11"));
+    }
+
+    /// MB-Q1, ADR-020, I-86: a mark is per account and idempotent, only
+    /// notices carry it, and the per-account bound refuses without
+    /// evicting.
+    #[test]
+    fn adr020_i86_read_marks_are_per_account_and_bounded() {
+        let a = fstp_domain::id::AccountId::from_raw(1);
+        let b = fstp_domain::id::AccountId::from_raw(2);
+        let refs = MailRefs {
+            proposal: Some(5),
+            ..MailRefs::default()
+        };
+        let mut marks = ReadMarks::default();
+        assert!(marks.mark(a, "notice.outcome:5"));
+        assert!(marks.mark(a, "notice.outcome:5"));
+        let mut v = MailboxView::new(vec![
+            MailItem::new(MailKind::NoticeOutcome, refs),
+            MailItem::new(MailKind::Stage2Respond, refs),
+        ]);
+        marks.apply(a, &mut v);
+        let read: Vec<Option<bool>> = v.messages.iter().map(|m| m.read).collect();
+        assert_eq!(read, [None, Some(true)]);
+        marks.apply(b, &mut v);
+        assert_eq!(v.messages[1].read, Some(false), "I-86: b's own marks");
+        for n in 0..MAX_MARKS_PER_ACCOUNT {
+            let _ = marks.mark(b, &format!("notice.outcome:{n}"));
+        }
+        assert!(!marks.mark(b, "notice.irc_concern:1"), "the bound");
+        assert!(marks.is_read(b, "notice.outcome:0"), "nothing evicted");
+        assert!(marks.mark(b, "notice.outcome:0"), "a repeat still answers");
     }
 }

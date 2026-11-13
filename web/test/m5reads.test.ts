@@ -293,3 +293,13 @@ test("r_ac_01_refused_report_programmes_links_no_reports", async () => {
   assert(!links().some(([href]) => href.endsWith("/reports")), JSON.stringify(links()));
   assert(text().includes("Open the reports of another programme by its number"), "the number form remains");
 });
+
+/** R-PR-08, SoD-12 (decided by Daniel on 2026-11-13): the line review page links the grant overview, which the assigned reviewer now reads after NEGOTIATION. */
+test("r_pr_08_sod_12_line_review_links_the_grant_overview", async () => {
+  prepare("/app/grants/3/payments/9");
+  const sent: string[] = [];
+  await mountPostGrant(env({ "GET /grants/3/payment-requests/9/line-review": LINE_REVIEW }, sent), "/app/grants/3/payments/9");
+  await settle();
+  const found = links().find(([href]) => href === "/app/grants/3");
+  assert(found?.[1] === "Grant overview of proposal 3", JSON.stringify(links()));
+});

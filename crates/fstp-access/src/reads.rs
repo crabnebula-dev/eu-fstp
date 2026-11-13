@@ -330,6 +330,12 @@ pub enum ReadRule {
     /// programme (R-NG-03, R-CF-02, I-03). Unlike `AssignedReviewer`, the
     /// target is the proposal, not the assignment.
     ProposalReviewer,
+    /// The caller's own reviewer assignment of the target grant, as
+    /// [`ReadRule::ProposalReviewer`], only once the grant passed
+    /// NEGOTIATION ([`ReadRule::GRANT_REVIEWER_STATES`]). The assigned
+    /// reviewer reads the grant overview for the line review of payment
+    /// requests (R-PR-08, SoD-12, decided by Daniel on 2026-11-13).
+    GrantReviewer,
     /// The maker of a grant's public choices: its lead through an active
     /// Applicant binding, or through the one a terminal state ended
     /// normally (`fstp_domain::publicity::is_choice_maker`, M9 lane P1).
@@ -337,6 +343,18 @@ pub enum ReadRule {
     ChoiceMaker,
     /// Any one of these rules.
     AnyOf(&'static [ReadRule]),
+}
+
+impl ReadRule {
+    /// The states after NEGOTIATION in which [`ReadRule::GrantReviewer`]
+    /// opens. Interim reading, pending Daniel: WITHDRAWN and DECLINED end
+    /// the negotiation without a grant, so they are left out.
+    pub const GRANT_REVIEWER_STATES: &'static [StateTag] = &[
+        StateTag::Granted,
+        StateTag::InExecution,
+        StateTag::Completed,
+        StateTag::Terminated,
+    ];
 }
 
 const OPEN_ALWAYS: &[StateTag] = &StateTag::ALL;
@@ -556,7 +574,10 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // its payment status: the team or former team, and the programme's
     // manager, Operations roles and auditor. Interim, pending Daniel:
     // nobody outside the team reads a grant before NEGOTIATION (I-21).
-    (ReadKind::GetGrant, GRANT_READER, GRANT_STATES),
+    // Decided by Daniel on 2026-11-13 (R-PR-08, SoD-12): the overview
+    // also admits the assigned reviewer after NEGOTIATION, for the line
+    // review. The contract and the payment status do not.
+    (ReadKind::GetGrant, GRANT_OVERVIEW_READER, GRANT_STATES),
     (ReadKind::GetContract, GRANT_READER, GRANT_STATES),
     (ReadKind::GetPaymentStatus, GRANT_READER, GRANT_STATES),
     // The caller's own review, approval and release work only.
@@ -669,6 +690,19 @@ const GRANT_READER: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Holder(Role::PaymentReleaser),
     ReadRule::Holder(Role::ContractSignatory),
     ReadRule::Auditor,
+]);
+
+/// The readers of the grant overview: the grant readers and, after
+/// NEGOTIATION, the assigned reviewer (decided by Daniel on 2026-11-13).
+const GRANT_OVERVIEW_READER: ReadRule = ReadRule::AnyOf(&[
+    ReadRule::Team,
+    ReadRule::FormerTeam,
+    ReadRule::Holder(Role::ProgrammeManager),
+    ReadRule::Holder(Role::FinanceApprover),
+    ReadRule::Holder(Role::PaymentReleaser),
+    ReadRule::Holder(Role::ContractSignatory),
+    ReadRule::Auditor,
+    ReadRule::GrantReviewer,
 ]);
 
 /// The proposal states in which a grant can exist: NEGOTIATION and every
@@ -1049,6 +1083,15 @@ fn judge(
                 ..*ctx
             };
             declared_assignee(state, account, &with, AssignmentKind::Reviewer, now).map(|()| rule)
+        }
+        ReadRule::GrantReviewer => {
+            if !ctx
+                .state
+                .is_some_and(|s| ReadRule::GRANT_REVIEWER_STATES.contains(&s))
+            {
+                return deny(DenyRule::Rac01);
+            }
+            judge(ReadRule::ProposalReviewer, p, state, ctx, now).map(|_| rule)
         }
         ReadRule::IrcAssignee => {
             declared_assignee(state, account, ctx, AssignmentKind::Irc, now).map(|()| rule)

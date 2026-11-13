@@ -200,6 +200,8 @@ pub(crate) struct State {
     rates: Mutex<Rates>,
     content: Mutex<ContentStore>,
     journal: Mutex<Journal>,
+    /// The per-account read marks of mailbox notices (MB-Q1, ADR-020).
+    marks: Mutex<crate::mailbox::ReadMarks>,
     /// The verifications begun through this core, so their state reads
     /// "pending" for a bounded time while the vault has not confirmed
     /// them (I-86).
@@ -1575,8 +1577,20 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 }
             }
             for p in &mut own {
-                if p.state == "INELIGIBLE" {
-                    p.knock_out_reason = knock_out_reason(call, p.proposal);
+                if p.state != "INELIGIBLE" {
+                    continue;
+                }
+                // Each reason is read with a clearance of that proposal's
+                // own read, so the list opens no text the caller could
+                // not read one by one (2026-11-13).
+                let one = ReadOp {
+                    kind: ReadKind::GetOwnProposal,
+                    target: ReadTarget::Proposal(p.proposal),
+                };
+                if let Ok(c) =
+                    fstp_access::authorize_read(&one, &call.caller.p, &call.state, call.now)
+                {
+                    p.knock_out_reason = knock_out_reason(call, p.proposal, &c).await;
                 }
             }
             ReadModel::OwnProposals(own)
@@ -1602,7 +1616,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             };
             mine.title = lock(&call.st.content).title_of(p);
             if mine.state == "INELIGIBLE" {
-                mine.knock_out_reason = knock_out_reason(call, p);
+                mine.knock_out_reason = knock_out_reason(call, p, &clearance).await;
             }
             // R-AU-01, I-84: the team's read of its own proposal appends a
             // `ContentRead` through every channel (design section 3.8).
@@ -1989,26 +2003,44 @@ fn own_proposals(
     out
 }
 
-/// The knock-out reason the FSTP coordinator recorded for `p`, when this
-/// core holds its text (O-54: an INELIGIBLE proposal shows the recorded
-/// knock-out reason). The reason is a confidential text of the proposal,
-/// so it is read from what this core remembered when it stored it, and
-/// from nowhere else. Web callers only: an agent's read carries no
-/// free text written by staff (lane m4/fast-flow).
-fn knock_out_reason<P: Seams>(call: &Call<'_, P>, p: ProposalId) -> Option<String> {
+/// The knock-out reason the FSTP coordinator recorded for `p` (O-54: an
+/// INELIGIBLE proposal shows the recorded knock-out reason). The reason is
+/// a confidential text of the proposal. Its durable source is the
+/// `KnockOutRecorded` record's text, read through the text store with the
+/// read's `clearance`, so it survives a cell restart (decided by Daniel on
+/// 2026-11-13). A text whose digest differs from the record's is not
+/// shown. Web callers only: an agent's read carries no free text written
+/// by staff (lane m4/fast-flow).
+async fn knock_out_reason<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> Option<String> {
     if call.caller.via() != Via::Web {
         return None;
     }
-    let entries = call.ports.engine().ledger()?;
-    let reason = entries.iter().rev().find_map(|e| match &e.record {
-        fstp_engine::Record::Core(fstp_domain::record::Record::KnockOutRecorded {
-            proposal,
-            reason: Some(r),
-            ..
-        }) if *proposal == p => Some(*r),
-        _ => None,
-    })?;
-    lock(&call.st.content).text(reason).map(str::to_owned)
+    let reason = call
+        .ports
+        .engine()
+        .ledger()?
+        .iter()
+        .rev()
+        .find_map(|e| match &e.record {
+            fstp_engine::Record::Core(fstp_domain::record::Record::KnockOutRecorded {
+                proposal,
+                reason: Some(r),
+                ..
+            }) if *proposal == p => Some(*r),
+            _ => None,
+        })?;
+    let bytes = call
+        .ports
+        .texts()
+        .get(crate::port::TextRef(reason.id().raw()), clearance)
+        .await
+        .ok()?;
+    let text = String::from_utf8(bytes).ok()?;
+    (forms::text_digest(&text) == reason.digest()).then_some(text)
 }
 
 /// The caller's assignments, without released ones.
@@ -2079,6 +2111,8 @@ enum PortCall {
     ApproveBreakGlass(BreakGlassId, bool),
     /// The user ends one of their sessions (R-LG-04).
     EndSession(SessionId),
+    /// The user marks a notice of their own mailbox read (MB-Q1, ADR-020).
+    MarkMailboxRead(String),
     /// The user begins an identity verification.
     BeginVerification,
     /// The team saves the private workspace of a draft (I-21).
@@ -2148,6 +2182,24 @@ async fn m3_port<P: Seams>(
         // `/auth/passkeys` route runs them before its 501.
         PortKind::AddPasskey if call.spec.high_risk => PortCall::AddPasskey,
         PortKind::EndSession => PortCall::EndSession(SessionId::from_raw(id("session")?)),
+        PortKind::MarkMailboxRead => {
+            let message = op
+                .request
+                .get("message")
+                .and_then(Value::as_str)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            // ADR-020: only a notice of the caller's own mailbox at this
+            // instant. Any other id gets the one refusal, so the answer
+            // reveals no other account's notices (I-86).
+            let own = mailbox::read(call, account)
+                .messages
+                .iter()
+                .any(|m| !m.kind.action() && m.id() == message);
+            if !own {
+                return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
+            }
+            PortCall::MarkMailboxRead(message.to_owned())
+        }
         PortKind::BeginVerification => PortCall::BeginVerification,
         PortKind::SaveWorkspace => {
             let p = ProposalId::from_raw(id("proposal")?);
@@ -2339,6 +2391,12 @@ async fn m3_port<P: Seams>(
                 Ok(to) => call.accept(ReadModel::Redirect(to.0)),
                 Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
             }
+        }
+        PortCall::MarkMailboxRead(message) => {
+            if !lock(&call.st.marks).mark(account, &message) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "ADR-020")));
+            }
+            done(Ok(()), "ADR-020")
         }
         PortCall::AcknowledgeNotice(p) => {
             // Kept in memory only until its ledger or outbox record exists

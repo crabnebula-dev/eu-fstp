@@ -6,8 +6,10 @@
 //! 16 proposal states, so no state leaves it unjudged. The dispatch then
 //! keeps only the grants and contracts that `grant.overview` and
 //! `contract.view` would serve the caller, so the lists never widen
-//! those reads. Both are web only: no MCP tool, since `grant.overview`
-//! has none (I-85). Each has a reply shape, so gen-ts emits a validator.
+//! those reads. `grant.list_mine` is web only, since `grant.overview` has
+//! no tool (I-85). `contract.awaiting_me` has a read-only tool, as
+//! `contract.view` has (decided by Daniel on 2026-11-13). Each has a reply
+//! shape, so gen-ts emits a validator.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -39,15 +41,26 @@ fn d11_m5_lists_are_own_reads_open_in_every_state() {
     }
 }
 
-/// I-85, R-AC-01: each list is a read with no tool, at its route, and is
-/// neither high risk nor binding.
+/// I-85, I-84, R-AC-01: each list is a read at its route, and is neither
+/// high risk nor binding. `grant.list_mine` has no tool, as
+/// `grant.overview` has none. `contract.awaiting_me` has the read-only
+/// tool `fstp_list_contracts_to_sign` with the scope of `contract.view`,
+/// as `contract.view` has one (decided by Daniel on 2026-11-13).
 #[test]
 fn i85_m5_lists_are_web_only_reads() {
     for (name, kind, path) in LISTS {
         let spec = op(name).unwrap_or_else(|| panic!("{name} is not in the registry"));
         assert_eq!(spec.kind, OpKind::Read(kind), "{name}");
         assert_eq!(spec.route.map(|(_, p)| p), Some(path), "{name}");
-        assert!(spec.tool.is_none(), "I-85: {name} has an MCP tool");
+        if name == "contract.awaiting_me" {
+            let t = spec.tool.unwrap_or_else(|| panic!("{name} has no tool"));
+            assert_eq!(t.name, "fstp_list_contracts_to_sign");
+            assert!(!t.prepare_only, "I-84: a read-only tool");
+            let view = op("contract.view").and_then(|o| o.tool).expect("a tool");
+            assert_eq!(t.scope, view.scope, "the scope of contract.view");
+        } else {
+            assert!(spec.tool.is_none(), "I-85: {name} has an MCP tool");
+        }
         assert!(!spec.high_risk && !spec.binding, "{name}");
     }
 }
@@ -177,4 +190,40 @@ fn r_pr_08_d11_line_review_view_is_the_assigned_reviewers_in_execution() {
             "the line review view names {leak}: {text}"
         );
     }
+}
+
+/// R-PR-08, SoD-12, D11 (decided by Daniel on 2026-11-13): the assigned
+/// reviewer reads the grant overview after NEGOTIATION, for the line
+/// review of payment requests. The overview admits `GrantReviewer` beside
+/// the grant readers, and `GrantReviewer` alone opens only in the states
+/// after NEGOTIATION. The contract and payment status reads do not gain
+/// it, and the overview stays web only (I-85).
+#[test]
+fn r_pr_08_sod_12_overview_admits_the_assigned_reviewer_after_negotiation() {
+    let (rule, _) = read_rule(ReadKind::GetGrant).expect("a rule");
+    let ReadRule::AnyOf(rules) = rule else {
+        panic!("grant.overview is not AnyOf: {rule:?}")
+    };
+    assert!(rules.contains(&ReadRule::GrantReviewer), "{rules:?}");
+    assert_eq!(
+        ReadRule::GRANT_REVIEWER_STATES,
+        &[
+            StateTag::Granted,
+            StateTag::InExecution,
+            StateTag::Completed,
+            StateTag::Terminated,
+        ]
+    );
+    for kind in [ReadKind::GetContract, ReadKind::GetPaymentStatus] {
+        let (rule, _) = read_rule(kind).expect("a rule");
+        let ReadRule::AnyOf(rules) = rule else {
+            panic!("{kind:?} is not AnyOf")
+        };
+        assert!(
+            !rules.contains(&ReadRule::GrantReviewer),
+            "{kind:?} admits the reviewer"
+        );
+    }
+    let spec = op("grant.overview").expect("in the registry");
+    assert!(spec.tool.is_none(), "I-85: grant.overview has a tool");
 }

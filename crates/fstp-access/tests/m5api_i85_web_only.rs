@@ -55,11 +55,13 @@ const M5_COMMANDS: [&str; 33] = [
     "report.list",
 ];
 
-/// The read-only tools of 12.1.
-const M5_TOOLS: [(&str, &str); 3] = [
+/// The read-only tools of 12.1, and the contracts awaiting the caller's
+/// signature (decided by Daniel on 2026-11-13, as `contract.view` has one).
+const M5_TOOLS: [(&str, &str); 4] = [
     ("contract.view", "fstp_get_contract_status"),
     ("payment.status", "fstp_get_payment_status"),
     ("payment.queue", "fstp_get_payment_queue"),
+    ("contract.awaiting_me", "fstp_list_contracts_to_sign"),
 ];
 
 const T0: Timestamp = Timestamp::from_micros(1_000_000);

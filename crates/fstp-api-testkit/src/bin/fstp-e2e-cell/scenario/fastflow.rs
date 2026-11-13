@@ -455,5 +455,57 @@ mod tests {
             .unwrap_or_else(|| panic!("no row of z in {}", mine.to_compact()));
         assert_eq!(text(row, "state"), "INELIGIBLE");
         assert_eq!(text(row, "knock_out_reason"), reason);
+        o54_reason_survives_a_restart(&inner, z.lead, z.proposal, reason);
+    }
+
+    /// O-54, R-EV-01 (decided by Daniel on 2026-11-13): the reason read
+    /// has a durable source. A fresh API core over the same ledger and
+    /// text store, as after a cell restart, remembers no text, and still
+    /// shows the lead the `KnockOutRecorded` text, read through the text
+    /// store with the read's clearance. An agent's read carries no reason.
+    fn o54_reason_survives_a_restart(
+        inner: &Inner,
+        lead: AccountId,
+        proposal: ProposalId,
+        reason: &str,
+    ) {
+        let fresh = fstp_api_core::port::api_core(inner.ports.clone());
+        let cookie = inner
+            .ports
+            .sessions
+            .login(lead, LoginMethod::Passkey)
+            .cookie;
+        let read = |path: &str| -> Value {
+            let op = decode_route(ApiMethod::Get, path, &[]).unwrap();
+            match block_on(fresh.dispatch(
+                Credential::SessionCookie(cookie.clone()),
+                &RequestHead::new(),
+                op,
+            )) {
+                Ok(OpResult::Done { body, .. }) => fstp_json::ToJson::to_json(&body),
+                other => panic!("{path}: {other:?}"),
+            }
+        };
+        let one = read(&format!("/proposals/{}", proposal.raw()));
+        assert_eq!(
+            text(&one, "knock_out_reason"),
+            reason,
+            "O-54 after a restart"
+        );
+        let list = read("/me/proposals");
+        let row = list
+            .as_array()
+            .and_then(|a| {
+                a.iter().find(|r| {
+                    r.get("proposal").and_then(Value::as_str)
+                        == Some(proposal.raw().to_string().as_str())
+                })
+            })
+            .unwrap_or_else(|| panic!("no row in {}", list.to_compact()));
+        assert_eq!(
+            text(row, "knock_out_reason"),
+            reason,
+            "O-54 list after a restart"
+        );
     }
 }

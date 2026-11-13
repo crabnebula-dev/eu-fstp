@@ -9,7 +9,7 @@ import { SCHEMAS, VALIDATORS } from "../src/gen/api.js";
 import { HOME_LABELS } from "../src/home/messages.en.js";
 import { WORK_PATHS } from "../src/home/model.js";
 import { MAILBOX_LABELS } from "../src/mailbox/messages.en.js";
-import { M5_ROUTES, MAILBOX_PATHS, MAILBOX_ROUTES, MAIL_KINDS, type MailKind, fills, labelArgs, labelKey, readMailbox, split } from "../src/mailbox/model.js";
+import { M5_ROUTES, MAILBOX_PATHS, MAILBOX_ROUTES, MAIL_KINDS, type MailKind, fills, labelArgs, labelKey, messageKey, readMailbox, split } from "../src/mailbox/model.js";
 import { mailboxLabel, readPendingList } from "../src/mailbox/pages.js";
 import { MAILBOX_PAGE_ROUTES } from "../src/mailbox/routes.js";
 import { assert, eq, show, test } from "./support/harness.js";
@@ -19,7 +19,8 @@ import { REPO_DIR, WEB_DIR } from "./support/paths.js";
 function msg(kind: MailKind, action = true): Record<string, unknown> {
   const ids: Record<string, string> = { proposal: "11", call: "12", assignment: "13", round: "14", pending: "17", request: "16", programme: "18", contract: "15" };
   const href = MAILBOX_ROUTES[kind].replace(/\{([a-z_]+)\}/g, (_, n: string) => ids[n] ?? "");
-  return { id: `${kind}:1`, kind, action, href, ...ids };
+  // MB-Q1, ADR-020: a notice carries its read mark, a work message none.
+  return { id: `${kind}:1`, kind, action, href, ...ids, ...(action ? {} : { read: false }) };
 }
 
 function reply(messages: Record<string, unknown>[]): Record<string, unknown> {
@@ -182,4 +183,33 @@ test("i27_mailbox_labels_show_no_internal_ids", () => {
       assert(!label.includes(bad), `${k} shows ${bad}`);
     }
   }
+});
+
+/** MB-Q1, ADR-020, I-27: a notice carries a boolean read mark, a work message none, and the reader refuses either the other way round. */
+test("adr020_i27_mailbox_reader_reads_the_read_mark_of_notices_only", () => {
+  const read = { ...msg("notice.outcome", false), read: true };
+  const ok = readMailbox(reply([msg("contract.sign"), read]));
+  assert(ok !== null, "a read notice reads");
+  eq(ok.messages.map((m) => m.read), [null, true], "work has no mark, the notice its own");
+  const { read: _drop, ...bare } = msg("notice.outcome", false);
+  for (const bad of [
+    reply([bare]),
+    reply([{ ...msg("notice.outcome", false), read: "yes" }]),
+    reply([{ ...msg("contract.sign"), read: false }]),
+  ]) {
+    eq(readMailbox(bad), null, show(bad));
+  }
+});
+
+/** R-EV-05, MB-Q2 (decided by Daniel on 2026-11-13): a stage 2 message names its question, its label shows the ordinal, and the id stays unique per question. */
+test("r_ev_05_mailbox_stage2_message_names_its_question", () => {
+  const one = { ...msg("stage2.respond"), id: "stage2.respond:11:1", question: "1" };
+  const two = { ...msg("stage2.respond"), id: "stage2.respond:11:2", question: "2" };
+  const b = readMailbox(reply([one, two]));
+  assert(b !== null, "two questions read");
+  const m = b.messages[1];
+  assert(m !== undefined, "the second");
+  eq(messageKey(m), "mailbox.kind.stage2.respond.question", "the per-question label");
+  eq(String(mailboxLabel(messageKey(m), labelArgs(m, MAILBOX_LABELS[messageKey(m)] ?? ""))), "Answer question 2 on proposal 11", "the label");
+  eq(readMailbox(reply([{ ...one, question: "first" }])), null, "a question is a decimal id");
 });

@@ -119,7 +119,8 @@ async function mountHub(env: PageEnv): Promise<void> {
     const g = await readOp(env, "grant.list_mine", {}, (v): v is readonly GrantRow[] => decodeGrantList(v) !== null);
     if (g.ok) {
       for (const r of decodeGrantList(g.data) ?? []) {
-        add(r.via === "team" || r.via === "former_team" ? mine : board, { proposal: r.proposal, title: "", state: r.state });
+        // R-PR-08, SoD-12 (2026-11-13): the assigned reviewer reads the overview after NEGOTIATION.
+        add(r.via === "team" || r.via === "former_team" ? mine : r.via === "assigned_reviewer" ? assigned : board, { proposal: r.proposal, title: "", state: r.state });
       }
     } else {
       f.problem(g.problem);
@@ -346,6 +347,15 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
       return;
     }
     const roles = await rolesOrNull();
+    const staff = ["programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"].some((r) =>
+      can(roles, r as Parameters<typeof can>[1]),
+    );
+    const lead = can(roles, "applicant", proposal);
+    // R-PR-08, SoD-12 (2026-11-13): after NEGOTIATION the assigned reviewer reads the overview
+    // for the line review. The reviewer reads no contract and no payment list, so the page
+    // links to Operations, where the requests to review are.
+    const reviewerOnly =
+      can(roles, "committee_member") && !staff && !lead && !can(roles, "applicant_team_member", proposal) && !can(roles, "guardian", proposal);
     const negotiation = o.state === "NEGOTIATION";
     // A contract exists only after the amount was accepted and approved, so those actions are past.
     const amountOpen = negotiation && o.contract === null;
@@ -360,15 +370,23 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
         [t.label("grant.requests"), String(o.requests)],
       ]),
       h("nav", { "aria-label": t.label("grant.links") }, [
-        h("ul", { class: "fstp-list" }, [
-          h("li", {}, [link(GRANT_PATHS.contract(proposal), t.label("grant.link_contract", { id: proposal }))]),
-          h("li", {}, [link(GRANT_PATHS.payments(proposal), t.label("grant.link_payments"))]),
-          h("li", {}, [link(`/app/proposals/${proposal}/progress`, t.label("grant.link_progress"))]),
-          h("li", {}, [link(GRANT_PATHS.hub, t.label("grant.link_hub"))]),
-        ]),
+        h(
+          "ul",
+          { class: "fstp-list" },
+          reviewerOnly
+            ? [
+                h("li", { id: "grant-reviewer-operations" }, [link(GRANT_PATHS.operations, t.label("grant.link_operations_review"))]),
+                h("li", {}, [link(GRANT_PATHS.hub, t.label("grant.link_hub"))]),
+              ]
+            : [
+                h("li", {}, [link(GRANT_PATHS.contract(proposal), t.label("grant.link_contract", { id: proposal }))]),
+                h("li", {}, [link(GRANT_PATHS.payments(proposal), t.label("grant.link_payments"))]),
+                h("li", {}, [link(`/app/proposals/${proposal}/progress`, t.label("grant.link_progress"))]),
+                h("li", {}, [link(GRANT_PATHS.hub, t.label("grant.link_hub"))]),
+              ],
+        ),
       ]),
     ];
-    const lead = can(roles, "applicant", proposal);
     if (amountOpen && can(roles, "committee_member")) {
       body.push(determineSection(env, t, f, o, render));
     }
@@ -391,10 +409,7 @@ async function mountGrant(env: PageEnv, params: Readonly<Record<string, string>>
     // M9 lane P2 (R-PB-02): the grantee lead chooses what the public pages show, from
     // GRANTED on. COMPLETED ended the lead's binding, so there the former team sees the link
     // too, and the cell admits only the lead.
-    const staff = ["programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"].some((r) =>
-      can(roles, r as Parameters<typeof can>[1]),
-    );
-    if ((live && lead) || (o.state === "COMPLETED" && (lead || !staff))) {
+    if ((live && lead) || (o.state === "COMPLETED" && (lead || (!staff && !reviewerOnly)))) {
       body.push(
         section("grant-visibility", t.label("grant.visibility.link"), [
           h("p", {}, [t.label("grant.visibility.note_platform")]),
