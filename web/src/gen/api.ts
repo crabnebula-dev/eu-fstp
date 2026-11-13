@@ -3687,7 +3687,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "amount": { schema: { kind: "nullable", inner: { kind: "amount" } }, optional: false },
       "paid": { schema: { kind: "amount" }, optional: false },
       "contract": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
-      "via": { schema: { kind: "enum", values: ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
+      "via": { schema: { kind: "enum", values: ["team", "former_team", "programme_manager", "finance_approver", "payment_releaser", "contract_signatory", "auditor", "assigned_reviewer"] }, optional: false },
     },
   } },
   "grant.determination_view": {
@@ -4619,7 +4619,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         fields: {
           "id": { schema: { kind: "id" }, optional: false },
           "email": { schema: { kind: "string" }, optional: false },
-          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "finance_approver", "payment_releaser", "contract_signatory", "auditor", "assigned_reviewer"] }, optional: false },
+          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
           "state": { schema: { kind: "enum", values: ["invited", "accepted", "verified", "granted"] }, optional: false },
           "sod": { schema: { kind: "enum", values: ["pass", "fail", "unchecked"] }, optional: false },
           "rule": { schema: { kind: "string" }, optional: true },
@@ -4666,7 +4666,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
   "people.get_invitation": {
     kind: "object",
     fields: {
-      "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "finance_approver", "payment_releaser", "contract_signatory", "auditor", "assigned_reviewer"] }, optional: false },
+      "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "finance_approver", "payment_releaser", "contract_signatory", "auditor"] }, optional: false },
       "terms_version": { schema: { kind: "int" }, optional: false },
       "p75": { schema: { kind: "nullable", inner: { kind: "bool" } }, optional: false },
       "p77": { schema: { kind: "nullable", inner: { kind: "enum", values: ["draft_only", "allowed"] } }, optional: false },
