@@ -36,6 +36,7 @@ pub mod soft_authn;
 pub mod vault_keys;
 pub mod vault_seed;
 pub mod world;
+pub mod world_host;
 pub mod world_mail;
 pub mod world_shell;
 

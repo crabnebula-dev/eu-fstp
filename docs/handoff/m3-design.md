@@ -301,7 +301,7 @@ What the OVHcloud decision implies, if Daniel answers Q3 and Q11 as recommended:
 | `fstp-cell` | Cell runtime: async engine, routes, background tasks (anchorer, erasure runner, licence and update checks). Binary `fstp-cell` | `fstp-cell-core`, `fstp-pgstore`, `fstp-custody`, `fstp-vault-proto`, `fstp-cp-proto`, `fstp-release`, `fstp-edge` (the tunnel header codec only), `fstp-http`, `fstp-tls`, `fstp-obs`, `fstp-rt` | tokio through `fstp-rt` | yes | yes (request bodies) |
 | `fstp-cp-proto` | Closed `CellToCp` and `CpToCell` types and codec | `fstp-json` | none | no | yes |
 | `fstp-control` | Registry, placement, provisioning, routing, operator tickets, metering, isolation auditor, the cell role plan. Binaries `fstp-control`, `fstp-pgagent` and the self-hosted `fstp-install` (section 9.5) | `fstp-cp-proto`, `fstp-pki`, `fstp-custody`, `fstp-webauthn` (staff passkeys), `fstp-pgwire`, `fstp-migrate`, `fstp-http`, `fstp-tls`, `fstp-obs` | none | yes | yes |
-| `fstp-witness` | Anchor intake, per-cell anchor chains, receipts. PostgreSQL store for SaaS and an append-only file store for self-hosted. Binary `fstp-witness` | `fstp-audit`, `fstp-cp-proto`, `fstp-pgwire`, `fstp-http`, `fstp-tls` | none | yes | yes |
+| `fstp-witness` | Anchor intake, per-cell anchor chains, receipts. PostgreSQL store for SaaS and an append-only file store for self-hosted. Binary `fstp-witness` | `fstp-audit`, `fstp-cp-proto`, `fstp-pgwire`, `fstp-http`, `fstp-tls`, `fstp-custody`, `fstp-keys`, `fstp-json` | none | yes | yes |
 | `fstp-edge` | ClientHello SNI parser, route table, tunnel header, splice. Binary `fstp-edge` | `fstp-tls` (tunnel client only), `fstp-rt`, `fstp-json` | none | yes | yes |
 | `fstp-release` | Licence token and release metadata formats, licence state, `may_apply`, and the I-38 `egress` client | `fstp-crypto`, `fstp-json`, `fstp-http`, `fstp-tls` | none | yes, client only | yes |
 | `fstp-release-svc` | CrabNebula licence and update services. Binaries `fstp-licence-svc`, `fstp-update-svc` | `fstp-release`, `fstp-pgwire`, `fstp-migrate`, `fstp-http`, `fstp-tls` | none | yes | yes |
@@ -350,7 +350,7 @@ Every binary uses tokio 1.54.1 through `fstp_rt::tokio::TokioRuntime`, exactly o
 4. **The control plane cannot decode tenant data (I-19, I-20).** `fstp-control`, `fstp-cp-proto`, `fstp-witness`, `fstp-edge`, `fstp-release` and `fstp-release-svc` reach none of `fstp-domain`, `fstp-engine`, `fstp-findings`, `fstp-auth`, `fstp-cell-core`, `fstp-pgstore` or `fstp-vault*`.
 5. **The edge holds no tenant TLS server.** `fstp-edge` reaches `fstp-tls`, but a source scan refuses any server configuration constructor in it. A behaviour test checks that bytes after the ClientHello pass unchanged.
 6. **I-39.** Only `fstp-cell` and `fstp-release-svc` reach `fstp-release`. None of `fstp-cell-core`, `fstp-engine`, `fstp-domain`, `fstp-pgstore`, `fstp-vault` or `fstp-backup` reaches it.
-7. **I-80.** A source scan allows the identifier `RootMaterial` only in `fstp-keyd` and `fstp-celltest`. Only `fstp-cell`, `fstp-vault`, `fstp-control`, `fstp-backup`, `fstp-keyd` and `fstp-celltest` reach `fstp-custody`.
+7. **I-80.** A source scan allows the identifier `RootMaterial` only in `fstp-keyd` and `fstp-celltest`. Only `fstp-cell`, `fstp-vault`, `fstp-control`, `fstp-witness`, `fstp-backup`, `fstp-keyd` and `fstp-celltest` reach `fstp-custody`. `fstp-witness` joined by Daniel's decision of 2026-11-13 (m3-exit-audit section 7, item 1), since it opens its receipt key through its own `fstp-keyd` entry (Q-D, ADR-004).
 8. **Tier B confinement.** moduletto is reachable only through `fstp-crypto`.
 9. **Test and dev crates never ship.** `fstp-celltest` joins `TEST_ONLY`. The aws-lc-rs ML-KEM and ML-DSA oracles are reachable only from it. A source scan refuses the identifiers `SeedSource` and `seed_fact` outside `fstp-celltest`, so no shipped binary can write a vault fact around the vault's own write rules.
 10. **One runtime per binary (ADR-002).** Each `[[bin]]` target's resolved graph holds at most one of tokio and smol.
@@ -1538,7 +1538,7 @@ M3 adds:
 - **Scanners** search raw bytes, both hex cases, base64, base64url, percent-encoding, JSON string escaping and UTF-16LE.
 - **Teeth for scanners and auditors.** Each scanner test has a twin that seeds one canary and asserts that it is found. Each catalogue auditor has a twin that seeds one forbidden grant.
 - **Real topology.** `fstp-pgtest` worlds with application, vault, control and witness servers, each with its own cluster CA. Role certificates are minted at test time by `fstp-pki`.
-- **Process mode.** I-80 and isolation tests spawn real binaries through `CARGO_BIN_EXE_*`.
+- **Process mode.** I-80 and isolation tests spawn real binaries through `CARGO_BIN_EXE_*`. Interim, pending Daniel (lane m3/custody-decisions, 2026-11-13): one `fstp-world-host` process runs every cell and vault of the world, and each cell's custody runs in its own `fstp-custody-sim --serve` process. The cell reaches custody through `KeydCustody`, so its roots never enter the host. Separate `fstp-cell` and `fstp-vault` binaries wait until `fstp_cell::run` accepts a full configuration.
 - **Fixtures** are synthetic only, shaped like the corpus variants "Sybil", "Excluded affiliation", "Minor applicant" and "Repeat applicant".
 
 ### 14.2 Models
