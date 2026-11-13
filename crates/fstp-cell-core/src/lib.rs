@@ -41,6 +41,7 @@ mod decide;
 pub mod driver;
 pub mod gate;
 pub mod inputs;
+pub mod lifetimes;
 pub mod ops;
 pub mod release;
 pub mod state;

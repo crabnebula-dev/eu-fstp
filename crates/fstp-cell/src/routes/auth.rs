@@ -58,8 +58,8 @@ use crate::routes::{
 pub const CHALLENGE_US: i64 = fstp_cell_core::tenant::P71_DEFAULT_US;
 
 /// How long a magic link stays valid: 15 minutes. Interim, pending Daniel
-/// (ADR-008 open point "Unset lifetimes").
-pub const MAGIC_LINK_US: i64 = 15 * 60 * 1_000_000;
+/// (ADR-008 open point "Unset lifetimes", `fstp_cell_core::lifetimes`).
+pub const MAGIC_LINK_US: i64 = fstp_cell_core::lifetimes::MAGIC_LINK_US;
 
 /// The WebAuthn `timeout` of an options reply, in milliseconds.
 const TIMEOUT_MS: &str = "300000";
