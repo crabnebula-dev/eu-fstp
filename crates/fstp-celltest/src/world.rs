@@ -554,6 +554,70 @@ impl CellHandle {
             .block_on(cell.ledger())
             .map_err(|e| WorldError::Store(format!("the cell ledger: {e}")))
     }
+
+    /// The cell's erasure task (`fstp_cell::tasks::erasure`).
+    fn erasure(&self) -> Result<fstp_cell::tasks::erasure::ErasureHandle, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| c.erasure().clone())
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
+    /// Stores `text` as text `id` of the cell's text store, in a fresh
+    /// group of its own, through the cell's erasure task (design section
+    /// 5.6, lane F-ISO). It runs in process: no route takes text bytes
+    /// yet, and claims built on it say so. The ledger's `PutText` is the
+    /// caller's, over HTTP.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the task refuses the group or the text.
+    pub fn store_text(&self, id: [u8; 16], text: &[u8]) -> Result<(), WorldError> {
+        let erasure = self.erasure()?;
+        let rt = self.runtime()?;
+        let group = fstp_crypto::random_array::<16>()
+            .map_err(|e| WorldError::Store(format!("a text group id: {e}")))?;
+        rt.services
+            .rt
+            .block_on(async {
+                erasure.add_group(group).await?;
+                erasure.put_text(group, id, text.to_vec()).await
+            })
+            .map_err(|e| WorldError::Store(format!("the text store: {e}")))
+    }
+
+    /// Waits up to `deadline` until the cell's erasure task has completed
+    /// the erasure of text `id` (design section 3.5, steps 1 to 7). The
+    /// task runs a batch once something wakes it, and its tick follows
+    /// the world clock, which only a test moves. So each poll wakes it
+    /// with a keystore read, which it serves between two steps.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the erasure did not complete in time.
+    pub fn await_erased(&self, id: [u8; 16], deadline: Duration) -> Result<(), WorldError> {
+        let erasure = self.erasure()?;
+        let rt = self.runtime()?;
+        let start = Instant::now();
+        loop {
+            if erasure.erased().contains(&id) {
+                return Ok(());
+            }
+            if start.elapsed() > deadline {
+                return Err(WorldError::Store(format!(
+                    "the erasure of a text did not complete in {deadline:?} (events {:?})",
+                    erasure.events()
+                )));
+            }
+            rt.services.rt.block_on(async {
+                let _ = erasure.keystore().await;
+                fstp_rt::Runtime::sleep(&rt.services.rt, Duration::from_millis(50)).await;
+            });
+        }
+    }
 }
 
 impl Drop for CellHandle {
@@ -827,7 +891,8 @@ impl World {
     /// Every database, object directory, log and metrics sink: each
     /// cluster's stores as [`cluster_stores`] gives them, the file store of
     /// each self-hosted local witness (`selfhosted_witness_<cell>/...`),
-    /// and each egress connection per direction (`egress/...`).
+    /// each egress connection per direction (`egress/...`), and the
+    /// edge's route table and connection log (`edge/routes`, `edge/log`).
     ///
     /// The set holds every write committed before the call, since each
     /// cluster runs a CHECKPOINT first. The clusters are shared by the
@@ -858,6 +923,16 @@ impl World {
         }
         for (name, bytes) in self.egress.store_set().stores {
             set.push(name, bytes);
+        }
+        // The edge's stores (lane F-ISO): its route table and its
+        // connection log. The edge serves every world of the process, so
+        // they hold other worlds' routes and connections too.
+        if let Ok(s) = self.services() {
+            set.push(
+                "edge/routes",
+                format!("{:#?}", *lock(&s.edge.table)).into_bytes(),
+            );
+            set.push("edge/log", lock(&s.edge.log).clone());
         }
         Ok(set)
     }
@@ -1995,6 +2070,10 @@ const EDGE_CONNECTION_LIFETIME: Duration = Duration::from_secs(2 * 3600);
 struct Edge {
     addr: SocketAddr,
     table: std::sync::Arc<Mutex<fstp_edge::RouteTable>>,
+    /// The edge's connection log, one line per splice (lane F-ISO): the
+    /// route kind and the byte counts each way, bucketed to powers of two
+    /// as the metadata register gives the edge's form (ADR-009, Q36).
+    log: std::sync::Arc<Mutex<Vec<u8>>>,
 }
 
 /// What every world of a test binary shares: the runtime, the CAs and
@@ -2356,6 +2435,8 @@ async fn start_edge(rt: &Rt, control: &pki::Ca) -> Result<Edge, WorldError> {
         .map_err(|e| fail("the tunnel client", &e))?;
     let opener = fstp_edge::TlsTunnelOpener::new(rt.clone(), tls);
     let table = std::sync::Arc::new(Mutex::new(fstp_edge::RouteTable::new()));
+    let log = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let loop_log = std::sync::Arc::clone(&log);
     let loop_table = std::sync::Arc::clone(&table);
     let loop_rt = rt.clone();
     drop(rt.spawn(async move {
@@ -2368,15 +2449,26 @@ async fn start_edge(rt: &Rt, control: &pki::Ca) -> Result<Edge, WorldError> {
             let table = lock(&loop_table).clone();
             let opener = opener.clone();
             let splice_rt = loop_rt.clone();
+            let splice_log = std::sync::Arc::clone(&loop_log);
             drop(loop_rt.spawn(async move {
                 // The edge bounds each connection's life (fstp_edge::serve
                 // leaves deadlines to its caller).
                 let splice = fstp_edge::serve(client, peer, &table, &opener);
-                let _ = fstp_rt::timeout(&splice_rt, EDGE_CONNECTION_LIFETIME, splice).await;
+                if let Ok(Ok(s)) =
+                    fstp_rt::timeout(&splice_rt, EDGE_CONNECTION_LIFETIME, splice).await
+                {
+                    let line = format!(
+                        "{:?} to_cell<={} to_client<={}\n",
+                        s.kind,
+                        s.to_cell.checked_next_power_of_two().unwrap_or(u64::MAX),
+                        s.to_client.checked_next_power_of_two().unwrap_or(u64::MAX),
+                    );
+                    lock(&splice_log).extend_from_slice(line.as_bytes());
+                }
             }));
         }
     }));
-    Ok(Edge { addr, table })
+    Ok(Edge { addr, table, log })
 }
 
 /// The DNS label of a cell id: its 32 lowercase hex digits.

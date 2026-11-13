@@ -201,6 +201,81 @@ struct Run {
     irc: Vec<(AccountId, AssignmentId)>,
 }
 
+/// The values a script gives the next applicant (lane F-ISO). Interim
+/// reading, pending Daniel, of the steps that `t_iso_i19` and `t_iso_i20`
+/// carry:
+///
+/// - `<kind>:<text>`, where `<kind>` is a [`CanaryKind`] label, records
+///   the value of that kind. The next applicant who signs up takes it:
+///   the email as its self-registration address (`<text>@example.test`
+///   unless the text holds an `@`), and the name, phone, country and
+///   document as the attribute tuple of its seeded verification (design
+///   section 6.9), which the vault seals and keys per cell.
+/// - The other kinds (ip, proposal, rootkey, textsalt, account) are
+///   recorded only. Claim: the cycle places them nowhere. The world
+///   reaches the cell from loopback, so no client address is chosen.
+/// - `authenticator:<hex>` names the person's authenticator. Recorded
+///   only: the software passkey draws a fresh key pair and credential id
+///   per registration, as an authenticator does per relying party.
+/// - A `signup` waits for the value steps right after it, so a script
+///   may name the values after its `signup`. It runs before the next
+///   other step, or at the end of the script.
+#[derive(Clone, Debug, Default)]
+struct Person {
+    values: BTreeMap<CanaryKind, String>,
+    authenticator: Option<String>,
+    signup_due: bool,
+}
+
+impl Person {
+    /// Records `step` when it is a value step, and says whether it was.
+    fn take_step(&mut self, step: &str) -> bool {
+        let Some((label, text)) = step.split_once(':') else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        if label == "authenticator" {
+            self.authenticator = Some(text.to_owned());
+            return true;
+        }
+        match CanaryKind::ALL.into_iter().find(|k| k.label() == label) {
+            Some(kind) => {
+                self.values.insert(kind, text.to_owned());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The email value as an address, taken by one applicant.
+    fn email(&mut self) -> Option<String> {
+        let text = self.values.remove(&CanaryKind::Email)?;
+        Some(if text.contains('@') {
+            text
+        } else {
+            format!("{text}@example.test")
+        })
+    }
+
+    /// The attribute tuple of the name, phone, country and document
+    /// values, taken by one applicant, or `None` when the script gave
+    /// none of them.
+    fn attributes(&mut self) -> Option<String> {
+        let parts: Vec<String> = [
+            CanaryKind::Name,
+            CanaryKind::Phone,
+            CanaryKind::Country,
+            CanaryKind::Document,
+        ]
+        .into_iter()
+        .filter_map(|k| self.values.remove(&k).map(|v| format!("{}={v}", k.label())))
+        .collect();
+        (!parts.is_empty()).then(|| parts.join(";"))
+    }
+}
+
 /// What a cycle keeps between two scripts on one cell (lane F-CYCLE3):
 /// the client's passkeys and sessions and the cycle's progress. The
 /// world keeps it per cell, so `World::run_cycle` continues a cell's
@@ -221,6 +296,7 @@ pub struct CycleMemory {
     applicants: u128,
     pending: Option<(AccountId, Cookie)>,
     current: Option<Run>,
+    values: Person,
 }
 
 impl std::fmt::Debug for CycleMemory {
@@ -258,6 +334,8 @@ pub struct Cycle<'w> {
     pending: Option<(AccountId, Cookie)>,
     /// The proposal the evaluation steps act on.
     current: Option<Run>,
+    /// The values of the next applicant ([`Person`]).
+    values: Person,
 }
 
 impl<'w> Cycle<'w> {
@@ -279,6 +357,7 @@ impl<'w> Cycle<'w> {
             applicants: 0,
             pending: None,
             current: None,
+            values: Person::default(),
         }
     }
 
@@ -300,6 +379,7 @@ impl<'w> Cycle<'w> {
             applicants: memory.applicants,
             pending: memory.pending,
             current: memory.current,
+            values: memory.values,
         }
     }
 
@@ -321,6 +401,7 @@ impl<'w> Cycle<'w> {
             applicants: self.applicants,
             pending: self.pending,
             current: self.current,
+            values: self.values,
         }
     }
 
@@ -331,9 +412,28 @@ impl<'w> Cycle<'w> {
     /// The seam or refusal of the first step that did not run.
     pub fn run(&mut self, steps: &[String]) -> Result<(), NotImplemented> {
         for step in steps {
+            if self.values.take_step(step) {
+                continue;
+            }
+            // A `signup` takes the values that follow it before the next
+            // other step ([`Person`]).
+            self.flush_signup()?;
+            if step == "signup" {
+                self.values.signup_due = true;
+                continue;
+            }
             self.step(step)?;
         }
-        Ok(())
+        self.flush_signup()
+    }
+
+    /// Runs a `signup` that waits for its values ([`Person`]).
+    fn flush_signup(&mut self) -> Result<(), NotImplemented> {
+        if !self.values.signup_due {
+            return Ok(());
+        }
+        self.values.signup_due = false;
+        self.signup()
     }
 
     /// Runs one step.
@@ -371,6 +471,9 @@ impl<'w> Cycle<'w> {
                 }
                 Ok(())
             }
+            // One text put and erased (`t_iso_i19` names it
+            // `erase-one-text`, `i80_custody` and `i81_backups` `erase-text`).
+            "erase-one-text" | "erase-text" => self.erase_text(),
             "minor-applicant:draft" => self.minor_draft(),
             "minor-applicant:submit" => self.submit(),
             "minor-applicant:evaluate" => {
@@ -454,9 +557,20 @@ impl<'w> Cycle<'w> {
     /// section 6.9). It becomes effective once the cell reacts to its
     /// epoch, before the cell's next command that asks the vault.
     fn verify(&mut self, step: &str, who: AccountId) -> Result<(), NotImplemented> {
-        let account = self.account(step, who)?;
         // A synthetic attribute tuple of its own per person.
         let attributes = format!("synthetic-person-{}", self.person);
+        self.verify_as(step, who, &attributes)
+    }
+
+    /// Seeds a verification of `who` with the attribute tuple
+    /// `attributes` (design section 6.9).
+    fn verify_as(
+        &mut self,
+        step: &str,
+        who: AccountId,
+        attributes: &str,
+    ) -> Result<(), NotImplemented> {
+        let account = self.account(step, who)?;
         self.person = self.person.saturating_add(1);
         self.client
             .cell()
@@ -799,14 +913,20 @@ impl<'w> Cycle<'w> {
     fn new_applicant(&mut self, step: &str) -> Result<(AccountId, Cookie), NotImplemented> {
         self.applicants = self.applicants.saturating_add(1);
         let who = AccountId::from_raw(APPLICANTS.saturating_add(self.applicants));
-        let email = crate::canary::Canary::generate(self.client.cell().index(), CanaryKind::Email)
-            .map_err(|_| Self::refused(step, "the canary address", None))?
-            .email_address();
+        let email = match self.values.email() {
+            Some(e) => e,
+            None => crate::canary::Canary::generate(self.client.cell().index(), CanaryKind::Email)
+                .map_err(|_| Self::refused(step, "the canary address", None))?
+                .email_address(),
+        };
         let cookie = self
             .client
             .signup(who, &email)?
             .ok_or_else(|| Self::refused(step, "the self-registration", None))?;
-        self.verify(step, who)?;
+        match self.values.attributes() {
+            Some(a) => self.verify_as(step, who, &a)?,
+            None => self.verify(step, who)?,
+        }
         Ok((who, cookie))
     }
 
@@ -947,9 +1067,72 @@ impl<'w> Cycle<'w> {
         if self.pending.is_none() {
             let applicant = self.new_applicant("submit-proposal")?;
             self.pending = Some(applicant);
+            // Interim reading of lane F-ISO, pending Daniel: such a script
+            // names no applicant step, so its applicant is the adult of
+            // `verify-identity`. The I-18 minor paths have steps of their
+            // own (`minor-applicant:...`).
+            self.verify_identity()?;
         }
         self.draft("submit-proposal")?;
         self.submit()
+    }
+
+    /// `erase-text` (and `erase-one-text`): one text is stored and erased
+    /// (design sections 3.5 and 5.6, ADR-007, lane F-ISO). The text is the
+    /// script's proposal text value ([`Person`]) or a fresh proposal text
+    /// canary of the cell. It is sealed into the cell's text store in
+    /// process (`CellHandle::store_text`), since no route takes text bytes
+    /// yet. The first tenant admin records `PutText` and then `EraseTexts`
+    /// with cause 2, an erasure request, over HTTP. The step ends once the
+    /// cell's erasure task completed the batch: the old epoch destroyed in
+    /// custody and `KeyEpochDestroyed` recorded.
+    fn erase_text(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "erase-text";
+        /// The erasure cause of an erasure request (ADR-007, design
+        /// section 5.6).
+        const ERASURE_REQUEST: u16 = 2;
+        let admin = self
+            .admin
+            .clone()
+            .ok_or(NotImplemented::new(NOT_LOGGED_IN))?;
+        let id = fstp_crypto::random_array::<16>()
+            .map_err(|_| Self::refused(STEP, "a text id", None))?;
+        let text = match self.values.values.remove(&CanaryKind::ProposalText) {
+            Some(t) => t,
+            None => crate::canary::Canary::generate(
+                self.client.cell().index(),
+                CanaryKind::ProposalText,
+            )
+            .map_err(|_| Self::refused(STEP, "the text canary", None))?
+            .text(),
+        };
+        let cell = self.client.cell();
+        cell.store_text(id, text.as_bytes()).map_err(|e| {
+            eprintln!("fstp_celltest::cycle {STEP}: {e}");
+            NotImplemented::new(STEP_REFUSED)
+        })?;
+        self.command(
+            STEP,
+            "PutText",
+            &admin,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id }),
+            false,
+        )?;
+        self.command(
+            STEP,
+            "EraseTexts",
+            &admin,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::EraseTexts {
+                ids: vec![id],
+                cause: ERASURE_REQUEST,
+            }),
+            false,
+        )?;
+        cell.await_erased(id, std::time::Duration::from_secs(120))
+            .map_err(|e| {
+                eprintln!("fstp_celltest::cycle {STEP}: {e}");
+                NotImplemented::new(STEP_REFUSED)
+            })
     }
 
     /// The Judging staff of the evaluation (`life_judges` of the M2 life
