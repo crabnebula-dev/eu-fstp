@@ -300,6 +300,15 @@ pub enum JournalEntry {
         /// The identity match key (design section 6.4, Q17).
         match_key: [u8; MATCH_KEY_LEN],
     },
+    /// An identity took a new match key `match_key` (`vault.identity`):
+    /// the Match key rotated in an erasure batch that erased an identity
+    /// (design section 3.5, G24, decision 27).
+    IdentityRekeyed {
+        /// The identity id.
+        identity: Person,
+        /// The new identity match key.
+        match_key: [u8; MATCH_KEY_LEN],
+    },
     /// A verification of `account` became effective at `epoch`
     /// (`vault.account`).
     AccountVerified {
@@ -593,6 +602,45 @@ impl Vault {
             match_key,
         });
         Ok(identity)
+    }
+
+    /// Moves every identity to its match key under a new Match key, in one
+    /// journal (design section 3.5, G24, decision 27): `rekey` maps each
+    /// current match key to its new one. The keystore that rotates the
+    /// Match key computes the new keys from the live identities' tuples,
+    /// and gives an erased identity an unlinkable key that no tuple
+    /// recomputes. Each identity keeps its id, so no account changes.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Malformed`] unless `rekey` names every stored match
+    /// key exactly once and its new keys are distinct and new. Nothing
+    /// changes then.
+    pub fn rekey_identities(
+        &mut self,
+        rekey: &BTreeMap<[u8; MATCH_KEY_LEN], [u8; MATCH_KEY_LEN]>,
+    ) -> Result<(), VaultError> {
+        let refused = VaultError::Malformed("an identity rekey");
+        if rekey.len() != self.identities.len()
+            || !self.identities.keys().all(|k| rekey.contains_key(k))
+        {
+            return Err(refused);
+        }
+        let mut next = BTreeMap::new();
+        for (old, new) in rekey {
+            let identity = *self.identities.get(old).ok_or(refused)?;
+            if self.identities.contains_key(new) || next.insert(*new, identity).is_some() {
+                return Err(refused);
+            }
+        }
+        for (match_key, identity) in &next {
+            self.journal.push(JournalEntry::IdentityRekeyed {
+                identity: *identity,
+                match_key: *match_key,
+            });
+        }
+        self.identities = next;
+        Ok(())
     }
 
     /// The verification fact of `account` with the R-ID-02 record

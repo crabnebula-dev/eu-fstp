@@ -60,7 +60,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use fstp_backup::{ContainerKind, GroupRef, open_container, seal_container};
 use fstp_cell::tasks::erasure::snapshot::{
-    KeystoreImage, decode_image, encode_image, open_text, root_ref, seal_key_aad, wrapped_of,
+    KeystoreImage, decode_image, encode_image, login_digest, login_digest_keys, open_text,
+    root_ref, seal_key_aad, wrapped_of,
 };
 use fstp_crypto::aead;
 use fstp_crypto::hybrid_kem::{self, HybridPublicKey, HybridSecretKey};
@@ -327,6 +328,14 @@ struct WorldPart {
     clusters: Vec<(String, &'static fstp_pgtest::PgServer)>,
 }
 
+/// A login email canary the cycle signed an account up with: the cell
+/// account, the canary, and the text that holds the address.
+type Login = (u128, Canary, Option<[u8; 16]>);
+
+/// A live custody key of a cell: the chain of a root, or `None` for the
+/// cell CA key, and its custody handle.
+pub type CustodyKey = (Option<Chain>, Vec<u8>);
+
 /// The backups and stored texts of one cell (module documentation), and
 /// the fault point of its record store (R-NF-08).
 #[derive(Default)]
@@ -335,6 +344,12 @@ pub struct CellBackups {
     world: OnceLock<WorldPart>,
     fault: fstp_pgstore::FaultPoint,
     retried: std::sync::atomic::AtomicU64,
+    /// The cell's Vault chain keystore (`crate::vault_keys`, lane
+    /// m3/erase-steps), made at the cell's start.
+    vault: Mutex<Option<Arc<crate::vault_keys::VaultKeys>>>,
+    /// The login email canaries of the accounts the cycle signed up, by
+    /// cell account (lane m3/erase-steps).
+    logins: Mutex<Vec<Login>>,
 }
 
 impl CellBackups {
@@ -380,8 +395,76 @@ pub(crate) fn attach(cells: &[CellHandle], clusters: &[ClusterHandle]) -> Result
             store: Arc::clone(&store),
             clusters: agent.clone(),
         });
+        // The Vault chain starts with the cell (lane m3/erase-steps).
+        if c.custody().is_ok() {
+            vault_keys(c)?;
+        }
     }
     Ok(())
+}
+
+/// The Vault chain keystore of `cell`, made at its first use
+/// (`crate::vault_keys`, lane m3/erase-steps).
+///
+/// # Errors
+///
+/// Fails when the cell runs no custody or custody refuses a call.
+pub(crate) fn vault_keys(
+    cell: &CellHandle,
+) -> Result<Arc<crate::vault_keys::VaultKeys>, WorldError> {
+    let mut slot = lock(&cell.backups.vault);
+    if let Some(k) = slot.as_ref() {
+        return Ok(Arc::clone(k));
+    }
+    let keys = Arc::new(crate::vault_keys::VaultKeys::genesis(
+        cell.custody()?,
+        cell.id(),
+    )?);
+    *slot = Some(Arc::clone(&keys));
+    Ok(keys)
+}
+
+/// Keeps `canary` as the login email of the cell account `account`, which
+/// the cycle signed up with it, with the text that holds it (lane
+/// m3/erase-steps). The keystore drops an erased address's text from its
+/// index, so the world keeps the text id to tell erased from live.
+pub(crate) fn note_login(cell: &CellHandle, account: u128, canary: Canary) {
+    let text = cell.erasure().ok().and_then(|erasure| {
+        cell.block_on(erasure.keystore())
+            .ok()
+            .flatten()
+            .and_then(|k| k.login_text(fstp_domain::id::AccountId::from_raw(account)))
+    });
+    lock(&cell.backups.logins).push((account, canary, text));
+}
+
+/// Whether the login email text `text` is erased, by the cell's erasure
+/// task. An account with no login text is not.
+fn login_erased(cell: &CellHandle, text: Option<[u8; 16]>) -> Result<bool, WorldError> {
+    let gone = cell.erasure()?.erased();
+    Ok(text.is_some_and(|t| gone.contains(&t)))
+}
+
+/// The account erasure of `erase-account` (lane m3/erase-steps): the
+/// oldest live account with a login email canary, other than `keep`,
+/// and the text of its login email.
+///
+/// # Errors
+///
+/// Fails when the erasure task cannot be reached.
+pub(crate) fn account_erasure(
+    cell: &CellHandle,
+    keep: u128,
+) -> Result<Option<(u128, [u8; 16])>, WorldError> {
+    let logins = lock(&cell.backups.logins).clone();
+    for (a, _, text) in logins.into_iter().filter(|(a, _, _)| *a != keep) {
+        if let Some(t) = text
+            && !login_erased(cell, text)?
+        {
+            return Ok(Some((a, t)));
+        }
+    }
+    Ok(None)
 }
 
 fn world_part(cell: &CellHandle) -> Result<&WorldPart, WorldError> {
@@ -787,4 +870,143 @@ fn unwrap_every_root(
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Keyed digests and custody keys (lane m3/erase-steps).
+
+/// Whether `needle` occurs in `hay`.
+fn holds(hay: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && hay.windows(needle.len()).any(|w| w == needle)
+}
+
+impl World {
+    /// The login email canaries of the accounts the cycle signed up whose
+    /// login email is erased, or of those whose login email lives (lane
+    /// m3/erase-steps).
+    ///
+    /// # Errors
+    ///
+    /// Fails when a cell's keystore cannot be read.
+    pub fn login_canaries(&self, erased: bool) -> Result<Vec<Canary>, WorldError> {
+        let mut out = Vec::new();
+        for c in self.cells() {
+            let logins = lock(&c.backups.logins).clone();
+            for (_, canary, text) in logins {
+                if login_erased(c, text)? == erased {
+                    out.push(canary);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The name canaries of the identities the cycle seeded that were
+    /// erased, or of the live ones (`crate::vault_keys`, lane
+    /// m3/erase-steps).
+    ///
+    /// # Errors
+    ///
+    /// Fails when a cell runs no Vault chain keystore.
+    pub fn identity_canaries(&self, erased: bool) -> Result<Vec<Canary>, WorldError> {
+        let mut out = Vec::new();
+        for c in self.cells() {
+            out.extend(vault_keys(c)?.name_canaries(erased));
+        }
+        Ok(out)
+    }
+
+    /// The stores of `copies` that hold a keyed digest of `guess` under a
+    /// key that a live custody root opens (I-81, design section 3.5, G24),
+    /// as `copy <i> <store>`. Lane m3/erase-steps.
+    ///
+    /// - `Chain::App`: `guess` is a login email. The keys are every
+    ///   `Lookup` key that a group row of the live keystore or of any
+    ///   keystore image in `copies` gives under a live root
+    ///   (`fstp_cell::tasks::erasure::snapshot::login_digest_keys`).
+    /// - `Chain::Vault`: `guess` is an attribute tuple, or the name of a
+    ///   seeded identity, which stands for its tuple. The keys are every
+    ///   `Match` key a row ever written gives under a live root
+    ///   (`crate::vault_keys`).
+    ///
+    /// Each digest is looked for as bytes in every store of every copy:
+    /// keystore images, opened base backups and WAL segments, and the live
+    /// store set.
+    ///
+    /// # Errors
+    ///
+    /// Fails when an image does not decode or a keystore cannot be read,
+    /// and for another chain.
+    pub fn recompute_digests(
+        &self,
+        copies: &[StoreSet],
+        chain: Chain,
+        guess: &[u8],
+    ) -> Result<Vec<String>, WorldError> {
+        let mut needles = Vec::new();
+        match chain {
+            Chain::App => {
+                let email = String::from_utf8_lossy(guess);
+                for c in self.cells() {
+                    let live = live_image(c)?;
+                    let mut images = vec![live];
+                    for copy in copies {
+                        for (name, bytes) in &copy.stores {
+                            if !name.starts_with(KEYSTORE_PREFIX) {
+                                continue;
+                            }
+                            let image = decode_image(bytes).map_err(|e| err("an image", &e))?;
+                            if image.cell == c.id() {
+                                images.push(image);
+                            }
+                        }
+                    }
+                    let rows: Vec<&KeystoreImage> = images.iter().collect();
+                    let seals = unwrap_every_root(&c.custody()?, c.id(), &rows);
+                    for key in login_digest_keys(c.id(), &rows, &seals) {
+                        needles.push(login_digest(&key, &email));
+                    }
+                }
+            }
+            Chain::Vault => {
+                for c in self.cells() {
+                    let keys = vault_keys(c)?;
+                    let mut tuples = keys.tuples_named(guess);
+                    tuples.push(guess.to_vec());
+                    for key in keys.reachable_match_keys() {
+                        for t in &tuples {
+                            needles.push(fstp_vault::match_key(&key, t));
+                        }
+                    }
+                }
+            }
+            _ => return Err(err("recompute_digests", &"names no keyed digest chain")),
+        }
+        needles.sort_unstable();
+        needles.dedup();
+        let mut out = Vec::new();
+        for (i, copy) in copies.iter().enumerate() {
+            for (name, bytes) in &copy.stores {
+                if needles.iter().any(|n| holds(bytes, n)) {
+                    out.push(format!("copy {i} {name}"));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every live custody key of cell `index`: each root of its App,
+    /// Vault and CellBackup chains with its chain, and its cell CA key with
+    /// no chain, by custody handle (R-SW-02, ADR-004 "CA keys in custody",
+    /// lane m3/erase-steps).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell does not exist or runs no custody.
+    pub fn live_custody_keys(&self, index: u8) -> Result<Vec<CustodyKey>, WorldError> {
+        let cell = self
+            .cell(index)
+            .ok_or_else(|| err("live_custody_keys", &"names no cell of the world"))?;
+        Ok(cell.custody()?.live_keys())
+    }
 }

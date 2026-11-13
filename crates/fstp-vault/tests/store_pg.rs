@@ -487,6 +487,42 @@ fn i20_identities_survive_a_restart() {
     });
 }
 
+/// I-81, design section 3.5 (G24, decision 27): a Match key rotation
+/// moves every identity to its new match key in one journal, keeping its
+/// id. The old keys resolve to nothing after a reload, the new ones to
+/// the same identities. A rekey that leaves out a stored key, or maps two
+/// keys to one, is refused and changes nothing.
+#[test]
+fn i81_identity_rekey_survives_a_restart() {
+    let mut db = fresh();
+    block_on(store::migrate(&mut db)).unwrap();
+    let key = Signer::new(1);
+    let mut v = Vault::new(CELL, &[key.public()]).unwrap();
+    let old = |t: &[u8]| fstp_vault::match_key(&[0xA1; 32], t);
+    let new = |t: &[u8]| fstp_vault::match_key(&[0xB2; 32], t);
+    let p1 = v.resolve_identity(old(b"synthetic|0001")).unwrap();
+    let p2 = v.resolve_identity(old(b"synthetic|0002")).unwrap();
+    persist(&mut db, &mut v).unwrap();
+    let mut partial = std::collections::BTreeMap::new();
+    partial.insert(old(b"synthetic|0001"), new(b"synthetic|0001"));
+    let before = v.clone();
+    assert!(v.rekey_identities(&partial).is_err());
+    partial.insert(old(b"synthetic|0002"), new(b"synthetic|0001"));
+    assert!(v.rekey_identities(&partial).is_err());
+    assert_eq!(v, before, "a refused rekey changed the vault");
+    let mut rekey = std::collections::BTreeMap::new();
+    rekey.insert(old(b"synthetic|0001"), new(b"synthetic|0001"));
+    rekey.insert(old(b"synthetic|0002"), [0x5A; 32]);
+    v.rekey_identities(&rekey).unwrap();
+    persist(&mut db, &mut v).unwrap();
+    let mut loaded = reload(&mut db, &key).unwrap();
+    assert_eq!(loaded.resolve_identity(new(b"synthetic|0001")).unwrap(), p1);
+    assert_eq!(loaded.resolve_identity([0x5A; 32]).unwrap(), p2);
+    assert!(loaded.take_journal().is_empty(), "the new keys are stored");
+    let p3 = loaded.resolve_identity(old(b"synthetic|0001")).unwrap();
+    assert!(p3 != p1 && p3 != p2, "an old key still resolves");
+}
+
 /// I-33, I-86, M5 design 4.3: bank details persist sealed (migration 4
 /// takes kinds 14 to 18), never in plain text, and reload to the same
 /// state, so a restart keeps the hold and the verification.

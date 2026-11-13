@@ -425,6 +425,72 @@ impl SeededVault {
         Ok(events)
     }
 
+    /// Seeds a synthetic manual verification of `account` with the
+    /// identity of the match key `mk`, as [`SeededVault::seed_verification`]
+    /// does over its own key. The world's Vault chain keystore computes
+    /// `mk` (`crate::vault_keys`, lane m3/erase-steps).
+    ///
+    /// # Errors
+    ///
+    /// As [`SeededVault::seed`].
+    pub async fn seed_verification_keyed(
+        &self,
+        account: u128,
+        mk: [u8; 32],
+    ) -> Result<Vec<VaultEvent>, SeedError> {
+        use fstp_vault_core::fact::{Check, DocumentType, VerificationMethod, VerificationRecord};
+        use fstp_vault_proto::WireAccount;
+        let (events, at) = self
+            .shared
+            .run(|v, now| {
+                let record = VerificationRecord {
+                    method: VerificationMethod::Manual,
+                    document_type: DocumentType::Passport,
+                    checks: [Check::DocumentAuthentic, Check::PhotoMatch]
+                        .into_iter()
+                        .collect(),
+                    at: now,
+                    verifier: WireAccount(u128::MAX),
+                };
+                let events = v
+                    .verification_fact(WireAccount(u128::MAX), WireAccount(account), record, mk)
+                    .map_err(|_| CoreError::Refused(fstp_vault_proto::VaultRefusal::Unavailable))
+                    .and_then(|fact| v.take_fact(fact, now));
+                (events, now)
+            })
+            .await
+            .map_err(|()| {
+                SeedError::NotImplemented(crate::NotImplemented::new(
+                    "fstp_celltest::seeded_vault: the vault database refused the seeded journal",
+                ))
+            })?;
+        let events = events.map_err(SeedError::from)?;
+        self.shared.log().writes.push(SeededWrite {
+            source: SeedSource::SyntheticVerification,
+            kind: fstp_vault_core::fact::kind::VERIFICATION_RECORDED,
+            at,
+        });
+        Ok(events)
+    }
+
+    /// Moves the vault's identities to new match keys in one journal
+    /// (`fstp_vault::origin::Vault::rekey_identities`), as an erasure
+    /// batch of the Vault chain commits them (design section 3.5, lane
+    /// m3/erase-steps). The journal persists with its chain row.
+    ///
+    /// # Errors
+    ///
+    /// The vault's refusal, or a journal the database refused.
+    pub async fn rekey_identities(
+        &self,
+        rekey: &std::collections::BTreeMap<[u8; 32], [u8; 32]>,
+    ) -> Result<(), String> {
+        self.shared
+            .run(|v, _| v.rekey_identities(rekey).map_err(|e| e.to_string()))
+            .await
+            .map_err(|()| "the vault database refused the rekey journal".to_owned())?
+    }
+
     /// Seeds the synthetic fact `fact` from `source` at the cell's clock
     /// instant, through `Vault::take_fact`, as [`SeededVault::seed_verification`]
     /// does (design section 6.9). Lane F-CYCLE3 seeds over-18 attestations

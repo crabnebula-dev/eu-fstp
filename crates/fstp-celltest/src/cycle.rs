@@ -47,6 +47,10 @@
 //! - `base-backup`, `wal-archive`, `keystore-snapshot` and `rotate-chain`:
 //!   the backups of [`crate::backups`] and the yearly re-wrap of the
 //!   CellBackup chain (lane F-ERASE).
+//! - `erase-account` and `erase-identity`: an account erasure, which
+//!   erases its login email and replaces the `Lookup` key, and an identity
+//!   erasure on the Vault chain, which replaces the `Match` key (design
+//!   section 3.5, decision 27, lane m3/erase-steps).
 //! - `abort-next-append`, `retry` and `replay-step-up`: the fault steps of
 //!   R-NF-08 (lane F-ERASE). The first arms the cell store's fault point,
 //!   so the next append aborts after its rows are inserted. A command
@@ -163,7 +167,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps, the account, identity and cell erasure and document steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps, the cell erasure and document steps of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -579,6 +583,9 @@ impl<'w> Cycle<'w> {
                 "rotate-chain",
                 crate::backups::rotate_chain(self.client.cell()),
             ),
+            // The erasure steps of lane m3/erase-steps.
+            "erase-account" => self.erase_account(),
+            "erase-identity" => self.erase_identity(),
             "minor-applicant:draft" => self.minor_draft(),
             "minor-applicant:submit" => self.submit(),
             "minor-applicant:evaluate" => {
@@ -724,11 +731,23 @@ impl<'w> Cycle<'w> {
         who: AccountId,
         attributes: &str,
     ) -> Result<(), NotImplemented> {
+        self.verify_identity_of(step, who, attributes, None)
+    }
+
+    /// [`Cycle::verify_as`], with the name canary `name` of the tuple, if
+    /// any, kept by the Vault chain keystore (lane m3/erase-steps).
+    fn verify_identity_of(
+        &mut self,
+        step: &str,
+        who: AccountId,
+        attributes: &str,
+        name: Option<crate::canary::Canary>,
+    ) -> Result<(), NotImplemented> {
         let account = self.account(step, who)?;
         self.person = self.person.saturating_add(1);
         self.client
             .cell()
-            .seed_verification(account, attributes.as_bytes())
+            .seed_identity(account, attributes.as_bytes(), name)
             .map(|_| ())
             .map_err(|e| {
                 eprintln!("fstp_celltest::cycle {step}: the seeded verification: {e}");
@@ -1099,21 +1118,45 @@ impl<'w> Cycle<'w> {
     /// a canary address, and its verification is seeded (design section
     /// 6.9). Its session is the current applicant's.
     fn new_applicant(&mut self, step: &str) -> Result<(AccountId, Cookie), NotImplemented> {
+        self.applicant_named(step, None)
+    }
+
+    /// [`Cycle::new_applicant`], whose identity tuple is `name=<canary>`
+    /// when `name` holds a name canary (lane m3/erase-steps). The Vault
+    /// chain keystore keeps the canary with the tuple.
+    fn applicant_named(
+        &mut self,
+        step: &str,
+        name: Option<crate::canary::Canary>,
+    ) -> Result<(AccountId, Cookie), NotImplemented> {
         self.applicants = self.applicants.saturating_add(1);
         let who = AccountId::from_raw(APPLICANTS.saturating_add(self.applicants));
-        let email = match self.values.email() {
-            Some(e) => e,
-            None => crate::canary::Canary::generate(self.client.cell().index(), CanaryKind::Email)
-                .map_err(|_| Self::refused(step, "the canary address", None))?
-                .email_address(),
+        let (email, canary) = match self.values.email() {
+            Some(e) => (e, None),
+            None => {
+                let c =
+                    crate::canary::Canary::generate(self.client.cell().index(), CanaryKind::Email)
+                        .map_err(|_| Self::refused(step, "the canary address", None))?;
+                (c.email_address(), Some(c))
+            }
         };
         let cookie = self
             .client
             .signup(who, &email)?
             .ok_or_else(|| Self::refused(step, "the self-registration", None))?;
-        match self.values.attributes() {
-            Some(a) => self.verify_as(step, who, &a)?,
-            None => self.verify(step, who)?,
+        // The world keeps each login email canary by account (lane
+        // m3/erase-steps), for `erase-account` and the I-81 scans.
+        if let Some(c) = canary {
+            let account = self.account(step, who)?;
+            crate::backups::note_login(self.client.cell(), account.raw(), c);
+        }
+        match (name, self.values.attributes()) {
+            (Some(c), _) => {
+                let tuple = format!("{}={}", CanaryKind::Name.label(), c.text());
+                self.verify_identity_of(step, who, &tuple, Some(c))?;
+            }
+            (None, Some(a)) => self.verify_as(step, who, &a)?,
+            (None, None) => self.verify(step, who)?,
         }
         Ok((who, cookie))
     }
@@ -1378,6 +1421,103 @@ impl<'w> Cycle<'w> {
             cell.await_erased(plan.erase, std::time::Duration::from_secs(120)),
         )?;
         Self::backup_step(STEP, crate::backups::keystore_snapshot(cell))
+    }
+
+    /// `erase-account` (lane m3/erase-steps, design section 3.5, decision
+    /// 27): an account erasure. A new applicant signs up with a login
+    /// email canary and stays live. Then the oldest other live account
+    /// with a login email canary is erased, or a second new one on the
+    /// first step. Interim reading, pending Daniel: `fstp-cell-core` has
+    /// no account erasure command, so the account erasure is the ADR-007
+    /// erasure request (cause 2) of its login email text, as
+    /// `fstp-cell`'s `login_index` tests run it. The first tenant admin
+    /// records `PutText` and `EraseTexts` over HTTP. The batch erases the
+    /// text and replaces the `Lookup` key, and every live address gets its
+    /// digest under the new key. The step waits until the batch completed,
+    /// then takes the keystore snapshot that follows every batch.
+    fn erase_account(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "erase-account";
+        const ERASURE_REQUEST: u16 = 2;
+        let admin = self
+            .admin
+            .clone()
+            .ok_or(NotImplemented::new(NOT_LOGGED_IN))?;
+        let (kept, _) = self.new_applicant(STEP)?;
+        let kept = self.account(STEP, kept)?.raw();
+        let victim = match crate::backups::account_erasure(self.client.cell(), kept) {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                let _ = self.new_applicant(STEP)?;
+                match crate::backups::account_erasure(self.client.cell(), kept) {
+                    Ok(Some(v)) => v,
+                    Ok(None) => return Err(Self::refused(STEP, "the account to erase", None)),
+                    Err(e) => return Self::backup_step(STEP, Err(e)),
+                }
+            }
+            Err(e) => return Self::backup_step(STEP, Err(e)),
+        };
+        let (_, text) = victim;
+        self.command(
+            STEP,
+            "PutText of the login email",
+            &admin,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id: text }),
+            false,
+        )?;
+        self.command(
+            STEP,
+            "EraseTexts of the login email",
+            &admin,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::EraseTexts {
+                ids: vec![text],
+                cause: ERASURE_REQUEST,
+            }),
+            false,
+        )?;
+        let cell = self.client.cell();
+        Self::backup_step(
+            STEP,
+            cell.await_erased(text, std::time::Duration::from_secs(120)),
+        )?;
+        Self::backup_step(STEP, crate::backups::keystore_snapshot(cell))
+    }
+
+    /// `erase-identity` (lane m3/erase-steps, design section 3.5, G24): an
+    /// identity erasure on the Vault chain (`crate::vault_keys`). A new
+    /// applicant signs up with the identity tuple `name=<name canary>` and
+    /// stays live. Then the oldest other live identity with a name canary
+    /// is erased, or a second new one on the first step. The batch gives
+    /// the `Match` group a new generation, moves every live identity to
+    /// its match key under it in one vault journal, gives the erased
+    /// identity an unlinkable key, and destroys the old Vault root.
+    fn erase_identity(&mut self) -> Result<(), NotImplemented> {
+        const STEP: &str = "erase-identity";
+        let named = |s: &mut Self| -> Result<(), NotImplemented> {
+            let c = crate::canary::Canary::generate(s.client.cell().index(), CanaryKind::Name)
+                .map_err(|_| Self::refused(STEP, "the name canary", None))?;
+            s.applicant_named(STEP, Some(c)).map(|_| ())
+        };
+        named(self)?;
+        let cell = self.client.cell();
+        let keys = match crate::backups::vault_keys(cell) {
+            Ok(k) => k,
+            Err(e) => return Self::backup_step(STEP, Err(e)),
+        };
+        let victim = match keys.erasure_victim() {
+            Some(v) => v,
+            None => {
+                named(self)?;
+                keys.erasure_victim()
+                    .ok_or_else(|| Self::refused(STEP, "the identity to erase", None))?
+            }
+        };
+        let cell = self.client.cell();
+        Self::backup_step(
+            STEP,
+            keys.erasure_batch(&std::collections::BTreeSet::new(), Some(&victim), |rekey| {
+                cell.rekey_identities(rekey)
+            }),
+        )
     }
 
     /// The Judging staff of the evaluation (`life_judges` of the M2 life
