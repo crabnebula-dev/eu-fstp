@@ -194,6 +194,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-domain",
  "fstp-json",
+ "fstp-keys",
  "fstp-pdf",
  "fstp-pki",
  "fstp-sigval",
@@ -314,6 +315,15 @@ dependencies = [
 [[package]]
 name = "fstp-json"
 version = "0.1.0"
+
+[[package]]
+name = "fstp-keys"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "zeroize",
+]
 
 [[package]]
 name = "fstp-ledger"

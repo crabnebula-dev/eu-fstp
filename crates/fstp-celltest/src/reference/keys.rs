@@ -597,6 +597,7 @@ pub const fn purpose_code(purpose: Purpose) -> Option<u8> {
         Purpose::Document => 11,
         Purpose::Fact => 12,
         Purpose::Match => 13,
+        Purpose::NoticeCompanion => 14,
     })
 }
 

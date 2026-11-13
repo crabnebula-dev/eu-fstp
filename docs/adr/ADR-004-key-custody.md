@@ -159,6 +159,7 @@ The `purpose u8` of `ctx` takes one code per `fstp_keys::Purpose` variant, in de
 | 11 | `Document` | An identity document (Vault chain) |
 | 12 | `Fact` | A vault fact (Vault chain) |
 | 13 | `Match` | The identity match key (Vault chain) |
+| 14 | `NoticeCompanion` | The composite notice companion signing key (App chain). Added by M9 lane C2 on 2026-11-13 as the next free code, interim, pending Daniel |
 
 `fstp_keys::Purpose::code` implements this table, and `fstp_celltest::reference::keys::purpose_code` copies it. The code binds through the AAD of the wrapped data key, since `ctx` is not stored.
 
@@ -244,7 +245,7 @@ Epoch seal keys and I-80 (decided by Daniel on 2026-10-28):
 
 | Chain | Process | Purposes and groups | Rotated by |
 | --- | --- | --- | --- |
-| App | `fstp-cell` | `Text`; `Ledger` (one group); `Lookup` and `CredLookup` (HMAC keys of the email and credential id indexes, one group each); `Ticket` (Ed25519); `Anchor` (composite) | Each erasure of App data keys |
+| App | `fstp-cell` | `Text`; `Ledger` (one group); `Lookup` and `CredLookup` (HMAC keys of the email and credential id indexes, one group each); `Ticket` (Ed25519); `Anchor` (composite); `NoticeCompanion` (composite, M9 lane C2) | Each erasure of App data keys |
 | Vault | `fstp-vault` | `Attribute`, `Document` (one group per document), `Fact`, `Match` (identity match key, its own group), `Anchor` | Each erasure of Vault data keys, including every document verification (P-19) |
 | CellBackup | `fstp-cell` | Keystore snapshot containers | Yearly re-wrap. Never rotated by erasure |
 | ClusterBackup | `fstp-control` | Cluster backup containers | Yearly re-wrap. Never rotated by erasure |
@@ -423,6 +424,7 @@ Per-epoch TPM objects (Q32, option B) are evaluated with the M9 self-hosted pack
 | Restore declaration key | Composite | Control-plane custody, level 2 under chain ControlPlane, held by `fstp-control` | Yearly. The witness pins the current and the next public key. Interim, pending Daniel: proposed by ADR-012 (Declared restores at the witness) |
 
 - The export manifest key, the notice companion key, and the profile bundle and template keys are not built in M3. When built, they follow the "Signing keys" table above.
+- Record, M9 lane C2, 2026-11-13 (interim, pending Daniel): the notice companion key is a composite App chain level 2 key with purpose `NoticeCompanion` (code 14), separate from the `Anchor` key (M9 design D6). It signs only through `CompositeSigningKey::sign_with_context` under the context `fstp-notice-companion-v1`, in `fstp_contract::notice_companion`. Its verifier is a row of the I-90 sweep. Placement in the cell keystore and its yearly rotation follow the `Anchor` key and arrive with the notice store.
 - Release root and release signing keys are not built in M3 (I-91 is an M9 exit). The two-tier release signing above stands unchanged.
 - ML-DSA-65 halves come from moduletto (I-75), and every composite verifier requires both halves (I-90).
 - moduletto has no ML-DSA-65 yet. Until the pull request of ADR-001 A2 lands, every composite key above refuses to sign with a typed error, and none is created in production. aws-lc-rs ML-DSA is never a production fallback (Daniel, 2026-10-28).

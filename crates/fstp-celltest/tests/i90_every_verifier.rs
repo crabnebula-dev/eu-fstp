@@ -12,7 +12,7 @@
 //!
 //! [`i90_every_composite_verify_call_site_is_in_the_table`] scans the
 //! shipped sources. A new `composite::verify*` call site that no row
-//! names fails it, so a new verifier cannot skip the sweep. Lane C2 adds
+//! names fails it, so a new verifier cannot skip the sweep. Lane C2 added
 //! the notice companion row.
 //!
 //! The layout is draft 19 section 4.3: `mldsaSig || tradSig`. Code outside
@@ -32,7 +32,13 @@ use fstp_audit::chain::{ChainId, Link};
 use fstp_audit::{Anchor, CellId, Receipt, ReceiptFields};
 use fstp_auth::codec::encode_operator_ticket;
 use fstp_auth::recovery::{OperatorTicket, StaffRef, TicketKind, verify_ticket_as};
+use fstp_contract::digest::Digest;
+use fstp_contract::notice_companion::{
+    NoticeCompanionKey, NoticeCompanionSigned, NoticeId, sign_notice_companion,
+    verify_notice_companion,
+};
 use fstp_crypto::composite::{self, CompositeSigningKey, MLDSA_SIGNATURE_LEN, SIGNATURE_LEN};
+use fstp_keys::Purpose;
 use fstp_release::metadata::{
     METADATA_BODY_LEN, METADATA_CONTEXT, METADATA_MAGIC, ReleaseSigningKey, verify_metadata,
 };
@@ -61,7 +67,7 @@ struct Verifier {
 /// Every composite verifier of the platform. A shipped file with a
 /// `composite::verify*` call that no row names fails
 /// [`i90_every_composite_verify_call_site_is_in_the_table`].
-const VERIFIERS: [Verifier; 5] = [
+const VERIFIERS: [Verifier; 6] = [
     Verifier {
         name: "audit anchor (fstp_audit::anchor::anchor_signature_verifies)",
         site: "crates/fstp-audit/src/anchor.rs",
@@ -91,6 +97,12 @@ const VERIFIERS: [Verifier; 5] = [
         site: "crates/fstp-auth/src/recovery.rs",
         sign: |k, v| ticket_sign(k, v, TicketKind::BreakGlass),
         verify: |pk, v, s| ticket_verify(pk, v, s, TicketKind::BreakGlass),
+    },
+    Verifier {
+        name: "notice companion (fstp_contract::notice_companion::verify_notice_companion)",
+        site: "crates/fstp-contract/src/notice_companion.rs",
+        sign: companion_sign,
+        verify: companion_verify,
     },
 ];
 
@@ -196,6 +208,34 @@ fn ticket_sign(key: &CompositeSigningKey, v: u8, kind: TicketKind) -> Vec<u8> {
 fn ticket_verify(pk: &[u8], v: u8, sig: &[u8], kind: TicketKind) -> bool {
     let bytes = encode_operator_ticket(&ticket(v), sig).unwrap();
     verify_ticket_as(&bytes, pk, kind).is_ok()
+}
+
+/// The notice and its PDF digest of variant `v`.
+fn notice(v: u8) -> (NoticeId, Digest) {
+    (
+        NoticeId((u128::from(v) << 64) | 0x5eed),
+        Digest::from_bytes([v ^ 0x3c; 32]),
+    )
+}
+
+/// Signs as production does: custody hands out the `NoticeCompanion`
+/// level 2 key, and only `sign_notice_companion` signs with it.
+fn companion_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    let copy = CompositeSigningKey::from_bytes(&key.to_bytes().unwrap()[..]).unwrap();
+    let key = NoticeCompanionKey::from_custody(Purpose::NoticeCompanion, copy).unwrap();
+    let (id, digest) = notice(v);
+    sign_notice_companion(&key, id, digest).unwrap().signature
+}
+
+fn companion_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    let (id, digest) = notice(v);
+    let rec = NoticeCompanionSigned {
+        notice: id,
+        notice_digest: digest,
+        key: fstp_contract::digest::sha256(pk),
+        signature: sig.to_vec(),
+    };
+    verify_notice_companion(&rec, pk)
 }
 
 // ------------------------------------------------------------- the sweep

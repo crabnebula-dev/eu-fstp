@@ -60,6 +60,8 @@ aws-lc-rs.workspace = true
 [dev-dependencies]
 # Test only: the loopback SMTP sink for the moved dispatch and mail relay tests.
 fstp-api-testkit = { path = "../fstp-api-testkit" }
+# M9 lane C2: the notice companion verifier row of the I-90 sweep.
+fstp-contract.workspace = true
 fstp-mail.workspace = true
 fstp-money.workspace = true
 fstp-smtp.workspace = true
