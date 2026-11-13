@@ -143,7 +143,7 @@ jobs:
             timeout: 60
           - part: api-testkit
             packages: -p fstp-api-testkit
-            skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate i67_m_activate
+            skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate i67_m_activate i84_t_authz_matrix_mcp_equals_channel_policy_of_web
             timeout: 90
           # I-66: the M-ACTIVATE model check peaks at about 8 GB and runs
           # about 6 minutes (measured 2026-11-13). Beside the rest of the
@@ -153,6 +153,17 @@ jobs:
           # it lost the api-testkit runner on 2026-11-13. The part runs one
           # test at a time, since two of these at once exceed the runner.
           - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate --test i67_m_activate, threads: 1, timeout: 120 }
+          # I-84: the MCP channel matrix. Inside the api-testkit part it ran
+          # past 75 minutes on 2026-11-13 and the part was cancelled at 90, so
+          # it runs in 8 shards of its own, as the direct matrix does.
+          - { part: matrix-mcp-0, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 0/8, timeout: 150 }
+          - { part: matrix-mcp-1, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 1/8, timeout: 150 }
+          - { part: matrix-mcp-2, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 2/8, timeout: 150 }
+          - { part: matrix-mcp-3, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 3/8, timeout: 150 }
+          - { part: matrix-mcp-4, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 4/8, timeout: 150 }
+          - { part: matrix-mcp-5, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 5/8, timeout: 150 }
+          - { part: matrix-mcp-6, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 6/8, timeout: 150 }
+          - { part: matrix-mcp-7, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 7/8, timeout: 150 }
           # Q34 B: HTTP and MCP at the 9-row policy covering array. On CI the
           # shards ran past 50 minutes on 2026-11-12, so each has 100. Measured
           # locally on 4 threads: about 53 minutes in all, so 4 shards.
