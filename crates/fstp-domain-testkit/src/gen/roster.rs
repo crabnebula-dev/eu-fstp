@@ -1291,7 +1291,7 @@ impl Driver {
     }
 
     /// Runs `step` at `now`.
-    fn execute(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError> {
+    pub(crate) fn execute(&mut self, step: &Step, now: Timestamp) -> Result<Seq, ExecError> {
         match self {
             Driver::Engine(s) => {
                 let mut ctx = s.ctx(now, step.actor);
@@ -1312,15 +1312,25 @@ impl Driver {
     }
 
     /// Changes the vault with `op` at `now` and processes the change.
-    fn change_vault(&mut self, op: VaultOp, now: Timestamp) -> Result<Seq, ExecError> {
+    pub(crate) fn change_vault(&mut self, op: VaultOp, now: Timestamp) -> Result<Seq, ExecError> {
+        self.change_facts(&|t| op.apply(t), now)
+    }
+
+    /// Changes the vault facts with `change` at `now` and processes the
+    /// change ([`crate::driver::M2Driver::change_vault`]).
+    pub(crate) fn change_facts(
+        &mut self,
+        change: &dyn Fn(&mut GroundTruth),
+        now: Timestamp,
+    ) -> Result<Seq, ExecError> {
         let processed = match self {
             Driver::Engine(s) => {
                 let ctx = s.ctx(now, Actor::System(SystemCause::Vault));
-                s.change_vault(|t| op.apply(t), ctx)?
+                s.change_vault(change, ctx)?
             }
             Driver::Reference(w, records) => {
                 w.now = now;
-                op.apply(&mut w.truth);
+                change(&mut w.truth);
                 match w.sync(Facts::Effective) {
                     Ok(Ok(batch)) if batch.is_empty() => None,
                     Ok(Ok(batch)) => Some(reference_append(records, batch)),
@@ -1338,7 +1348,7 @@ impl Driver {
     /// Runs every System command that `due` lists at `now`, with the actor
     /// `System(Timeline)`. In reference mode the reference records the
     /// scheduled ends due then. Returns the head after the last command.
-    fn run_due(&mut self, now: Timestamp) -> Result<Seq, ExecError> {
+    pub(crate) fn run_due(&mut self, now: Timestamp) -> Result<Seq, ExecError> {
         match self {
             Driver::Engine(s) => {
                 let mut head = Seq::from_raw(0);

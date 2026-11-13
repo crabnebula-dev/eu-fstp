@@ -55,6 +55,11 @@
 //!   carried a step-up again, and the cell must not commit it twice.
 //! - `<kind>:<text>` and `authenticator:<hex>`: values of the next
 //!   applicant (`Person`, lane F-ISO).
+//! - `m2-suite:<invariant>:reduced`: the reduced case of that M2 suite
+//!   over the cell ([`crate::m2_http`], lane m3/m2-over-http).
+//! - `m2:random-commands` and `m2:path-to-<state>`: random M2 commands,
+//!   or the M2 path of PR1, over the cell (`crate::m2_http::run_m2_step`).
+//!   `seed:ground-truth:life-setup-adult` names the vault those paths seed.
 //!
 //! Lane F-CYCLE3: the cell clock moves to the call's opening and past its
 //! deadline, and every session is renewed by passkey after a move
@@ -158,7 +163,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, and the value steps <kind>:<text> and authenticator:<hex>); the account, identity and cell erasure and document steps of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps, the account, identity and cell erasure and document steps of other tests are not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -588,10 +593,21 @@ impl<'w> Cycle<'w> {
                 self.revalidate()?;
                 self.grant()
             }
+            // The vault an `m2:path-to` step seeds is the life setup's with
+            // L1 an adult (`crate::m2_http::run_m2_step`). Naming it is
+            // all this step does; another ground truth has no cell form yet.
+            "seed:ground-truth:life-setup-adult" => Ok(()),
             s if s.starts_with("seed:ground-truth") => Err(NotImplemented::new(GROUND_TRUTH_SEAM)),
-            s if s.starts_with("m2:") || s.starts_with("m2-suite:") => {
-                Err(NotImplemented::new(M2_SETUP_SEAM))
-            }
+            // The reduced case of an M2 suite over the cell (lane
+            // m3/m2-over-http, `crate::m2_http`).
+            s if s.starts_with("m2-suite:") => match s
+                .strip_prefix("m2-suite:")
+                .and_then(|r| r.strip_suffix(":reduced"))
+            {
+                Some(suite) => crate::m2_http::run_suite(&self.client, suite),
+                None => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
+            },
+            s if s.starts_with("m2:") => crate::m2_http::run_m2_step(&self.client, s),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
         }
     }
@@ -1735,17 +1751,17 @@ impl<'w> Cycle<'w> {
 }
 
 /// The cell command of a creator command.
-fn creator(c: CreatorCommand) -> CellCommand {
+pub(crate) fn creator(c: CreatorCommand) -> CellCommand {
     CellCommand::Engine(fstp_engine::Command::Creator(c))
 }
 
 /// The cell command of a core command.
-fn core(c: fstp_domain::Command) -> CellCommand {
+pub(crate) fn core(c: fstp_domain::Command) -> CellCommand {
     CellCommand::Engine(fstp_engine::Command::Core(c))
 }
 
 /// A synthetic text reference: id `n`, digest of `n` bytes.
-fn synthetic_text(n: u8) -> TextRef {
+pub(crate) fn synthetic_text(n: u8) -> TextRef {
     TextRef::new(
         TextId::from_raw(50_000 + u128::from(n)),
         ContentDigest::from_bytes([n; 32]),
@@ -1769,7 +1785,7 @@ fn grant(binding: BindingId, account: AccountId, role: Role, start: i64) -> Cell
 
 /// The SuperSAFE fixture spec with its P-09 wording stored as text
 /// references (ADR-007), as `fstp-engine`'s creator path tests build it.
-fn synthetic_spec() -> Result<ProgrammeSpec, NotImplemented> {
+pub(crate) fn synthetic_spec() -> Result<ProgrammeSpec, NotImplemented> {
     let failed = || NotImplemented::new(STEP_REFUSED);
     let item = |id: u8| {
         let hex: String = std::iter::repeat_n(format!("{id:02x}"), 32).collect();
@@ -1787,7 +1803,7 @@ fn synthetic_spec() -> Result<ProgrammeSpec, NotImplemented> {
 
 /// A manual save of every field `spec` sets, P-53 aside, each under a
 /// synthetic digest.
-fn save_of(spec: &ProgrammeSpec) -> Vec<FieldEdit> {
+pub(crate) fn save_of(spec: &ProgrammeSpec) -> Vec<FieldEdit> {
     FieldId::ALL
         .iter()
         .enumerate()

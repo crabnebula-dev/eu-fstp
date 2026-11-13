@@ -767,6 +767,48 @@ impl GroundTruth {
         }
     }
 
+    // -- readers for drivers that seed another vault --------------------------
+    //
+    // A driver of the M2 machines over a running cell seeds the cell's vault
+    // with these facts (`crate::driver`, lane m3/m2-over-http). They change
+    // no fact and no epoch.
+
+    /// Every account that has an identity, verified or not, with it.
+    pub fn identities(&self) -> impl Iterator<Item = (AccountId, IdentityTag)> + '_ {
+        self.identity_of.iter().map(|(a, t)| (*a, *t))
+    }
+
+    /// The accounts whose identity is `tag`, verified or not.
+    pub fn accounts_with(&self, tag: IdentityTag) -> BTreeSet<AccountId> {
+        self.accounts_of(&[tag])
+    }
+
+    /// Every effective exclusion of an identity from a class.
+    pub fn exclusions(&self) -> impl Iterator<Item = (IdentityTag, ClassId)> + '_ {
+        self.excluded.iter().copied()
+    }
+
+    /// Every effective relation between two identities.
+    pub fn relations(&self) -> impl Iterator<Item = (IdentityTag, IdentityTag, Relation)> + '_ {
+        self.relations.iter().copied()
+    }
+
+    /// Every effective affiliation of an account on a P-38 list.
+    pub fn affiliations(&self) -> impl Iterator<Item = (AccountId, ProximityListId)> + '_ {
+        self.affiliations.iter().copied()
+    }
+
+    /// Every effective over-18 attestation, with the instant from which
+    /// it shows its account 18 or older.
+    pub fn adults(&self) -> impl Iterator<Item = (AccountId, Timestamp)> + '_ {
+        self.adults.iter().map(|(a, t)| (*a, *t))
+    }
+
+    /// Whether `account` has facts that wait for its verification.
+    pub fn has_pending(&self, account: AccountId) -> bool {
+        self.pending.get(&account).is_some_and(|p| !p.is_empty())
+    }
+
     // -- internals ------------------------------------------------------------
 
     /// The accounts whose identity is one of `tags`.
