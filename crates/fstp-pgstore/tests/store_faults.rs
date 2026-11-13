@@ -49,7 +49,7 @@ const AT: i64 = 1_793_232_000_000_000;
 
 /// Superuser SQL that holds `pg_advisory_xact_lock(1)` for four seconds,
 /// as an open append or a reader view under the ADR-010 rule does.
-const HOLD_LOCK: &str = "BEGIN;\nSELECT pg_advisory_xact_lock(1);\nSELECT pg_sleep(4);\nCOMMIT;";
+const HOLD_LOCK: &str = "BEGIN;\nSELECT pg_advisory_xact_lock(1);\nSELECT pg_sleep(10);\nCOMMIT;";
 
 fn recs(n: usize, text: &str) -> Vec<Rec> {
     (0..n)
@@ -79,13 +79,16 @@ fn prepares(w: &FakeWitness) -> usize {
 }
 
 /// Waits until some session holds `pg_advisory_xact_lock(1)`.
-fn wait_for_advisory_lock(db: &CellDb) {
-    let start = Instant::now();
-    while db.count(
+fn lock_held(db: &CellDb) -> bool {
+    db.count(
         "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND granted \
          AND classid = 0 AND objid = 1 AND objsubid = 1;",
-    ) == 0
-    {
+    ) > 0
+}
+
+fn wait_for_advisory_lock(db: &CellDb) {
+    let start = Instant::now();
+    while !lock_held(db) {
         assert!(
             start.elapsed() < Duration::from_secs(20),
             "the lock was never taken"
@@ -115,12 +118,20 @@ fn i24_in_doubt_record_waits_for_the_advisory_lock() {
         wait_for_advisory_lock(&db);
         let before = w.received();
         let watch = w.clone();
+        let cell_db = &db;
+        // The sample counts only if the lock was still held after it was
+        // taken: a slow runner must not let the holder end first.
         let watcher = scope.spawn(move || {
             std::thread::sleep(Duration::from_millis(1500));
-            watch.received()
+            let seen = watch.received();
+            (seen, lock_held(cell_db))
         });
         let got = must(s.resolve_in_doubt(lx));
-        let during = watcher.join().unwrap();
+        let (during, still_held) = watcher.join().unwrap();
+        assert!(
+            still_held,
+            "the lock holder ended before the watcher sampled, so this run cannot judge I-24"
+        );
         holder.join().unwrap().unwrap();
         assert_eq!(
             during, before,
