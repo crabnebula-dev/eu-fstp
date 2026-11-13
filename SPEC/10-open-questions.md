@@ -58,6 +58,7 @@
 | O-58 | IRC route strip: No. IRC members do not get a route strip. They see the nominated proposal and outcome only (R-IR-03). (`12-journey-ui.md`, decided 2026-11-01) |
 | O-59 | Chronicle PDF generation: Self-service export by the grantee or auditor. It is not a funder report and needs no approval. (`12-journey-ui.md`, decided 2026-11-01) |
 | O-60 | Minor guardian steps visibility: Guardian consent steps appear only to the guardian, never to the rest of the team. (`12-journey-ui.md`, decided 2026-11-01) |
+| O-61 | The Yivi app is an accepted wallet for the over-18 attestation, guardian verification and identity verification. Both P-45 modes are built, in M4 with EUDI Wallet verification. The Yivi Business Wallet is deferred as B-12 (`03-architecture/eudi-wallet.md`, `../docs/adr/ADR-021-yivi-wallet.md`, decided 2026-11-13). |
 | O-42 | Two-tier release signing: an offline root used about yearly to certify time-limited signing keys, and an isolated automated signing service with moduletto, optional two-maintainer approval (`../docs/adr/ADR-004-key-custody.md`, decided 2026-10-25). |
 | O-45 | Per-text data keys; erased texts resolve to an erasure-log entry linked into the audit chain; salted digests; Auditors and tenant admins read the log; erasure requests deferred only for P-41 records; a pseudonymous ledger skeleton remains after P-41. Two legal checks pending (`../docs/adr/ADR-007-domain-ledger.md`, decided 2026-10-25). |
 | O-52 | A published call keeps a record of its effective P-05 and P-13 limits, the publication values plus every later tightening. Corrigenda come from that record, and the Guide with its corrigenda equals it under I-51 (`02-domain/policy-parameters.md` NOTE 7, decided 2026-10-25). |
@@ -66,6 +67,7 @@
 
 | ID | Question | Blocks |
 | --- | --- | --- |
+| O-62 | Can the Yivi app create a signature over a document digest, in which format, and can it reach the qualified level? Decides whether Yivi enters the P-30 cascade (`../docs/adr/ADR-021-yivi-wallet.md`, raised 2026-11-13). | Yivi signing only. Yivi verification does not wait for it. |
 
 ## Backlogged
 
@@ -104,3 +106,4 @@ Raised on 2026-10-28 by the M3 ADR drafts. Daniel assigns each an L- number, and
 | --- | --- | --- |
 | Legal basis for short-lived in-memory rate limiting on client IP addresses at the edge and in the cell | `docs/adr/ADR-009-cell-boundary.md` Edge and tunnel (design Q19) | Decides whether client addresses may be held in memory for rate limits at all. |
 | Legal basis for storing reviewers' relatives, and the minimum attributes that conflict matching needs | `docs/adr/ADR-009-cell-boundary.md` Write kinds, `ReviewerDeclaration` (design Q31) | The platform would hold third parties' data that they did not declare themselves. |
+| Whether a Yivi credential meets the assurance level the programme needs for identity verification and guardian consent | `03-architecture/eudi-wallet.md` Yivi and `docs/adr/ADR-021-yivi-wallet.md` (raised 2026-11-13) | Yivi is accepted for these steps now. A negative answer would limit it to the over-18 attestation or remove it. |
