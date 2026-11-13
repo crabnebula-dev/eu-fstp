@@ -127,17 +127,21 @@ struct InstallFiles {
     credentials: StoreSet,
 }
 
-/// The install files of `w`.
+/// The install files of `w`, as `World::install_files` reads them back
+/// from each cell's install directory (lane F-SELF).
 ///
-/// Gap, reported by lane W1f: the world exposes none of them, so this
-/// seam refuses until the harness does (lanes W1a and W3a).
+/// Gap: B-06 defers `fstp-install`, so the world plays it and runs no
+/// `fstp-keyd`. The files hold the configuration, the first-admin token
+/// file and the role keys and passwords, but no `fstp-keyd` credential or
+/// key volume yet.
 fn install_files(w: &World) -> Result<InstallFiles, fstp_celltest::NotImplemented> {
-    let _ = w;
-    Err(fstp_celltest::NotImplemented::new(
-        "fstp_celltest::world::World install files: the fstp-install configuration, the \
-         first-admin token file, the fstp-keyd credential and the role keys and passwords \
-         (gap raised by lane W1f for lanes W1a and W3a)",
-    ))
+    let f = w
+        .install_files()
+        .unwrap_or_else(|e| panic!("the install files: {e}"));
+    Ok(InstallFiles {
+        config: f.config,
+        credentials: f.credentials,
+    })
 }
 
 /// Words that mark a configuration setting as a credential.
