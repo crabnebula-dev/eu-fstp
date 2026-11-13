@@ -151,7 +151,10 @@ fn start_tags<'a>(svg: &'a str, name: &str) -> Vec<&'a str> {
 /// at a whole font size. No other colour appears.
 #[test]
 fn i70_served_public_route_paints_itself_in_the_text_colour() {
-    let served = Chrome { stylesheet: None };
+    let served = Chrome {
+        stylesheet: None,
+        funder: None,
+    };
     let html = render_html(
         &sample_view(true),
         &PublicPage::Call("3".to_owned()),

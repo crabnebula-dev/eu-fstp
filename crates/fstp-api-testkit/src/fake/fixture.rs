@@ -140,11 +140,28 @@ fn fixture_command(i: usize) -> CommandId {
 /// Builds the world from genesis. Fails with the step that production
 /// refused.
 pub fn pending_world() -> Result<World, String> {
+    world_of(steps()?)
+}
+
+/// The world whose every programme pins `p53` as its funder profile
+/// (P-53), for the tests of what a pinned profile drives (M9, I-69).
+pub fn pending_world_pinning(p53: fstp_domain::policy::FunderProfileRef) -> Result<World, String> {
+    let mut steps = steps()?;
+    for step in &mut steps {
+        if let fstp_domain::Command::CreateProgramme { policy } = &mut step.cmd {
+            policy.frozen.p53 = p53.clone();
+        }
+    }
+    world_of(steps)
+}
+
+/// The world of `steps`, run from genesis.
+fn world_of(steps: Vec<Step>) -> Result<World, String> {
     let truth = truth();
     let vault = FakeVault::new(truth.clone());
     let mut engine = Engine::open(MemStore::new(), vault.oracle())
         .map_err(|e| format!("open the fixture engine: {e:?}"))?;
-    for (i, step) in steps()?.into_iter().enumerate() {
+    for (i, step) in steps.into_iter().enumerate() {
         let ctx = step.ctx(T0, fixture_command(i));
         fstp_domain_testkit::activation::run_core(&mut engine, &step.cmd, ctx)
             .map_err(|e| format!("fixture step {i} {:?}: {e}", step.cmd.kind()))?;

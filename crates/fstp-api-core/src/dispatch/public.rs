@@ -37,6 +37,9 @@
 //!   publication stores no Guide, so its Guide route answers not found.
 //! - The public stylesheet: only the tenant brand sheet (M9 lane B2),
 //!   linked once the tenant set a brand. Otherwise the pages carry none.
+//! - The footer: its funder visibility item names the funder profile the
+//!   programme pins through P-53 and one element per visibility element
+//!   key (I-69). The wording stays a TODO(legal) placeholder.
 
 use std::collections::BTreeMap;
 
@@ -44,8 +47,8 @@ use fstp_access::PublicKind;
 use fstp_domain::id::{CallId, ProgrammeId, TextId};
 use fstp_domain::programme::{ProgrammeStatus, programme_status};
 use fstp_public::{
-    Chrome, ProgrammeIdentity, PublicError, PublicGuide, PublicPage, PublicPart, PublicQuery,
-    PublicTexts, PublicView,
+    Chrome, FunderFooter, ProgrammeIdentity, PublicError, PublicGuide, PublicPage, PublicPart,
+    PublicQuery, PublicTexts, PublicView,
 };
 
 use super::*;
@@ -278,20 +281,37 @@ fn part_of(kind: PublicKind, call: Option<String>) -> Option<PublicPart> {
     })
 }
 
+/// The footer data of the funder profile that `programme` pins through
+/// its head P-53 (I-69, M9 design section 2.4). A programme whose P-53
+/// names no shipped profile gets none, and its pages keep the platform
+/// funder element only.
+fn funder_footer(state: &EngineState, programme: ProgrammeId) -> Option<FunderFooter> {
+    let p53 = fstp_engine::report::pinned_p53(state, fstp_report::Scope::Programme(programme))?;
+    let profile = fstp_report::profile::for_p53(p53.0.as_str()).ok()?;
+    Some(FunderFooter {
+        profile: profile.id().to_owned(),
+        version: profile.version(),
+        elements: profile
+            .visibility_elements()
+            .iter()
+            .map(|e| e.key().to_owned())
+            .collect(),
+    })
+}
+
 /// The answer of `kind` over `view`.
 fn answer(
     view: &PublicView,
     kind: PublicKind,
     call: Option<String>,
     web: bool,
-    stylesheet: Option<String>,
+    chrome: &Chrome,
 ) -> Result<PublicReply, PublicError> {
     if kind == PublicKind::Feed {
         return fstp_public::feed::feed(view).map(PublicReply::Json);
     }
     if web && let Some(page) = page_of(kind, call.clone()) {
-        let chrome = Chrome { stylesheet };
-        let doc = fstp_public::render_html(view, &page, &chrome)?;
+        let doc = fstp_public::render_html(view, &page, chrome)?;
         return Ok(PublicReply::Page(doc.as_str().to_owned()));
     }
     let part = part_of(kind, call).ok_or(PublicError::NotFound)?;
@@ -318,7 +338,11 @@ pub(super) async fn read<P: Seams>(
             .map_err(|e| call.refuse(refused(e)))?;
     let web = call.caller.via() == Via::Web && !op.from_tool;
     let sheet = super::brand_of(&call.state).map(|b| format!("/brand/{}.css", b.digest));
+    let chrome = Chrome {
+        stylesheet: sheet,
+        funder: funder_footer(&call.state, programme),
+    };
     let reply =
-        answer(&view, kind, call_param(op), web, sheet).map_err(|e| call.refuse(refused(e)))?;
+        answer(&view, kind, call_param(op), web, &chrome).map_err(|e| call.refuse(refused(e)))?;
     call.accept(ReadModel::Public(reply))
 }

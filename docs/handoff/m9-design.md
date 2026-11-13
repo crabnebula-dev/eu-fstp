@@ -237,3 +237,30 @@ Open questions for Daniel:
 - Is P-57 the right reference for reporting periods, or should a new Data Sheet parameter hold the period ends and report deadlines?
 - `funder-reporting.md` calls profiles tenant-owned, while D3 ships them. Does D3 stand beyond M9?
 - Should the notice companion message carry more than the notice id and PDF hash, such as the tenant or the seal digest?
+
+---
+
+## M9 finish: decisions taken
+
+Lane M9 finish, built 2026-11-13 on branch `m9/finish`. Each decision below is interim, pending Daniel. None weakens an invariant. D1 to D6, the P lanes decisions, FD1 to FD10, CD1, CD2 and CD5 stand. MD5 and MD6 replace the last sentence of FD9. MD7 and MD8 complete CD4, MD9 completes CD3, and MD10 takes up FD11.
+
+| # | Decision | Reason |
+| --- | --- | --- |
+| MD1 | The tenant admin screens are `/app/admin/branding` and `/app/admin/terminology`. Home links both from the "Organisation settings" card (`a[data-work="branding"]`, `a[data-work="terminology"]`) | Section 4 names `web/src/admin/branding/**`. The organisation card is where the admin's settings start |
+| MD2 | No read gives the tokens or the labels in force. The branding screen starts from the platform family, and the terminology screen from empty fields. Saving replaces the tokens or the whole tenant pack | Section 2.2 names no branding or terminology read. A read would add a read kind, a rule and a reply each |
+| MD3 | Saving brand colours first asks `tenant.branding.check`. The screen sends `tenant.branding.set` only when no pair fails, and lists each failing pair by mode and name. The cell judges I-70 again on set | The admin sees the failing pairs before a step-up. The cell stays the judge |
+| MD4 | The terminology screen offers one field per key of `LABEL_KEYS` except the keys of `FIXED`, which it lists as fixed wording. `web/src/vocab/plain.ts` repeats the plain pack and the fixed keys, and a web test compares both with the Rust sources | No read carries the label list. A drift test keeps the copy honest (I-72) |
+| MD5 | The public footer keeps its platform funder element and adds one element per visibility element of the pinned profile, keyed `data-mandatory="funder_visibility.<key>"`. Its text names the element, the profile and its version, with placeholder wording marked `TODO(legal)` | `fstp-html` allows one data attribute, `data-mandatory`. A new attribute would widen the checked subset |
+| MD6 | The footer reads the programme's head P-53. A P-53 that names no shipped profile adds no profile element. The `/app/` shell footer keeps the platform funder element only | A public page belongs to one programme. An app page may span programmes, so it has no single profile |
+| MD7 | The App chain keystore holds composite level 2 signing keys for the purposes of `SIGNER_PURPOSES`, which is `NoticeCompanion` only. It creates the key at first use and seals it with AES-256-GCM under the epoch seal key `S(e)`. Each new epoch reseals it, and the snapshot check opens it | ADR-004 says the notice companion key is a level 2 key of the cell, resealed under each new epoch. `S(e)` is wrapped by custody under `R(e)` |
+| MD8 | `rotate_signer` makes the next generation, keeps the replaced public key in `signer_public_keys` and drops its secret. A generation is due after 365 days. Nothing schedules the rotation yet. Creating or rotating the key appends no `RecordKeyOp`, since no custody call is made | ADR-004 replaces signing keys yearly. Earlier companion signatures must stay verifiable |
+| MD9 | `NoticeCompanionSigned` and `NoticeId` move to `fstp_contract_core::notice` with a stored form: one canonical I-JSON object of strings, members `form`, `key`, `notice`, `notice_digest` and `signature`. The decoder is fuzzed as `notice_companion_decode`. `fstp-contract` stores the form in the write-once document store as `BlobKind::NoticeCompanion` (code 4) beside the sealed PDF | `contractual-notices.md` stores the companion signature with the notice. No notice record or store exists yet, so no code path issues notices |
+| MD10 | `programme.funder_profile.view` is `GET /programmes/{programme}/funder-profile`, web only. Its readers are those of `report.list`: the programme manager and the auditor through the rule, and the tenant-fold Financial signatory in dispatch. It reads the head P-53 and answers `profile: null` when it names no shipped profile. The funder reports page shows it in a panel | Section 2.2 says "Programme staff". The report readers are the staff who use the profile |
+
+Open questions for Daniel:
+
+- Should the `/app/` shell footer show the funder visibility elements too, and of which profile when a tenant runs several programmes?
+- Should creating or rotating a level 2 signing key append a key record, although no custody call is made?
+- What triggers the yearly rotation of the notice companion key: the erasure task, an operator action or a release step?
+- Should branding and terminology each get a read of the values in force, so the screens start from them?
+- Should other programme staff, such as the coordinator or the call drafter, read the funder profile?

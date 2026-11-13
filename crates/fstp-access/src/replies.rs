@@ -739,6 +739,25 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("name", Shape::String),
         ])),
     ),
+    // M9 finish (R-RP-01, I-86): the pinned funder profile, or `null` when
+    // P-53 names no shipped profile. The digest is the SHA-256 of the
+    // profile file, and the outputs are the kinds the profile defines.
+    (
+        "programme.funder_profile.view",
+        Shape::Object(&[
+            m("programme", Shape::Id),
+            m(
+                "profile",
+                Shape::Nullable(&Shape::Object(&[
+                    m("id", Shape::String),
+                    m("version", Shape::Id),
+                    m("digest", Shape::String),
+                    m("outputs", Shape::Array(&Shape::Enum(REPORT_KINDS))),
+                    m("visibility_elements", Shape::Array(&Shape::String)),
+                ])),
+            ),
+        ]),
+    ),
     (
         "payment.submit",
         Shape::Object(&[m("accepted", Shape::Bool), m("request", Shape::Id)]),

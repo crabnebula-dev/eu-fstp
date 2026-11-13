@@ -192,11 +192,14 @@ pub enum ReadKind {
     // M9 lane P1 (R-PB-02, I-43): the grantee lead's view of the public
     // choices of a grant, with the maximum levels and the minor flag.
     GetPublicity,
+    // M9 finish (R-RP-01, M9 design section 2.2): the funder profile a
+    // programme pins through P-53, with its outputs and visibility elements.
+    GetFunderProfile,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 68] = [
+    pub const ALL: [ReadKind; 69] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -265,6 +268,7 @@ impl ReadKind {
         ReadKind::GetLineReview,
         ReadKind::ListReportProgrammes,
         ReadKind::GetPublicity,
+        ReadKind::GetFunderProfile,
     ];
 }
 
@@ -644,6 +648,15 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
             StateTag::InExecution,
             StateTag::Completed,
         ],
+    ),
+    // M9 finish (R-RP-01): the funder profile of a programme, for the
+    // readers of its funder reports. The Financial signatory holds a
+    // tenant-wide role (NOTE 5), so dispatch admits it in the tenant fold
+    // beside this rule, as for `report.list`.
+    (
+        ReadKind::GetFunderProfile,
+        ReadRule::AnyOf(&[ReadRule::Holder(Role::ProgrammeManager), ReadRule::Auditor]),
+        OPEN_ALWAYS,
     ),
 ];
 

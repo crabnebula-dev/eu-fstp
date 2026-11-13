@@ -19,6 +19,9 @@ pub enum BlobKind {
     SealedDraft = 2,
     /// A report or payment record file.
     Report = 3,
+    /// The stored form of a contractual notice's companion signature
+    /// (R-CR-04, M9 design D6).
+    NoticeCompanion = 4,
 }
 
 /// Why a store operation failed.

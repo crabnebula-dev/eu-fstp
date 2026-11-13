@@ -64,4 +64,11 @@ export const OPERATIONS_LABELS: Readonly<Record<string, string>> = {
     "Generation fails when a figure does not match the recorded contracts, payments and payment requests (I-44). Correct the records and generate again.",
   "ops.reports.failure.support": "Contact support",
   "ops.reports.failure.support_note": "TODO(legal): the support channel description.",
+  "ops.profile.heading": "Funder profile",
+  "ops.profile.pinned": "This programme reports under the funder profile {id}, version {version}.",
+  "ops.profile.digest": "Profile file hash (SHA-256)",
+  "ops.profile.outputs": "Outputs the profile defines",
+  "ops.profile.visibility": "Funder visibility elements on the public pages: {keys}. Their wording is pending approval.",
+  "ops.profile.none": "The programme names no shipped funder profile (P-53), so no report can be generated.",
+  "ops.profile.unread": "The funder profile could not be read.",
 };

@@ -4,6 +4,7 @@
 //! `i90_every_verifier`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use fstp_contract::digest::{Digest, sha256};
 use fstp_contract::notice_companion::{
@@ -80,4 +81,37 @@ fn r_cr_04_companion_signature_binds_notice_digest_and_key() {
     other.key = sha256(&raw_pk);
     other.signature = sig.to_bytes().to_vec();
     assert!(!verify_notice_companion(&other, &raw_pk), "another context");
+}
+
+/// R-CR-04, I-90: a notice carries its companion signature. The signed
+/// record goes to the write-once store beside the sealed PDF, loads back
+/// equal, and still verifies with both halves. A stored form with one
+/// byte changed is refused or fails verification.
+#[test]
+fn r_cr_04_notice_carries_its_stored_companion_signature() {
+    use fstp_contract::blob::{BlobKind, BlobStore, MemBlobStore};
+    use fstp_contract::notice_companion::{
+        encode_notice_companion, load_notice_companion, store_notice_companion,
+    };
+    let k = key();
+    let pdf = b"%PDF-1.7 synthetic sealed notice".to_vec();
+    let mut store = MemBlobStore::default();
+    let pdf_digest = store.put(BlobKind::ContractRevision, &pdf).unwrap();
+    let rec = sign_notice_companion(&k, NoticeId(41), pdf_digest).unwrap();
+    let at = store_notice_companion(&mut store, &rec).unwrap();
+    assert_eq!(store_notice_companion(&mut store, &rec).unwrap(), at);
+    let back = load_notice_companion(&store, &at).unwrap();
+    assert_eq!(back, rec);
+    assert_eq!(back.notice_digest, sha256(&pdf));
+    assert!(verify_notice_companion(&back, &k.public_key()));
+    let bytes = encode_notice_companion(&rec).unwrap();
+    for i in [10, bytes.len() / 2, bytes.len() - 3] {
+        let mut b = bytes.clone();
+        b[i] = if b[i] == b'0' { b'1' } else { b'0' };
+        let mut other = MemBlobStore::default();
+        let d = other.put(BlobKind::NoticeCompanion, &b).unwrap();
+        if let Ok(r) = load_notice_companion(&other, &d) {
+            assert!(!verify_notice_companion(&r, &k.public_key()), "byte {i}");
+        }
+    }
 }

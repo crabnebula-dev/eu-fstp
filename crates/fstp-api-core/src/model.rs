@@ -1745,6 +1745,7 @@ pub(crate) mod reply_shape_tests {
                 crate::grant::GrantModel::Publicity(_) => &["grant.publicity.view"],
                 crate::grant::GrantModel::LineReview(_) => &["payment.line_review_view"],
                 crate::grant::GrantModel::ReportProgrammes(_) => &["report.programmes"],
+                crate::grant::GrantModel::FunderProfile(..) => &["programme.funder_profile.view"],
             },
         }
     }

@@ -1572,6 +1572,13 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("grant.publicity.view", T::Proposal, R::Publicity),
     RefOp::act("grant.publicity.set", T::Proposal, R::Lead).binding(),
     RefOp::act("grant.publicity.withdraw", T::Proposal, R::Lead).binding(),
+    // M9 finish (R-RP-01): the pinned funder profile, for the readers
+    // of the programme's funder reports.
+    RefOp::read(
+        "programme.funder_profile.view",
+        T::Programme,
+        R::ReportReader,
+    ),
 ];
 
 /// Whether the rule admits the principal, and the class if not. The

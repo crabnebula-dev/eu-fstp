@@ -1504,6 +1504,10 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
     if kind == ReadKind::ListReportProgrammes {
         return grant::report_programmes(call).await;
     }
+    // M9 finish (R-RP-01): the funder profile, with the same tenant fold check.
+    if kind == ReadKind::GetFunderProfile {
+        return grant::funder_profile(call, op).await;
+    }
     let target = match kind {
         ReadKind::GetCutOffRound => round_target(call, op)?,
         _ => read_target(op),

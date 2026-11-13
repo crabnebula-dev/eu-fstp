@@ -468,6 +468,50 @@ pub(super) async fn list_reports<P: Seams>(
     call.accept(ReadModel::Grant(GrantModel::Reports(rows)))
 }
 
+/// `programme.funder_profile.view` (M9 finish, R-RP-01, M9 design 2.2):
+/// the shipped funder profile that the programme's head P-53 pins, with
+/// its outputs and visibility element keys. The readers are those of
+/// `report.list`: the programme manager and the auditor through
+/// `authorize_read`, and the tenant-fold Financial signatory beside it
+/// (NOTE 5). A P-53 that names no shipped profile answers `null`.
+pub(super) async fn funder_profile<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+) -> Result<OpResult, ApiError> {
+    let programme = forms::id_param(&op.request, "programme")
+        .map(ProgrammeId::from_raw)
+        .ok_or_else(|| call.refuse(bad()))?;
+    let signatory = call
+        .account()
+        .is_some_and(|a| fstp_engine::report::financial_signatory(&call.state, a));
+    if !signatory {
+        let rop = ReadOp {
+            kind: ReadKind::GetFunderProfile,
+            target: ReadTarget::Programme(programme),
+        };
+        if let Err(d) = fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now) {
+            return Err(call.refuse(super::read_denied(d.rule())));
+        }
+    }
+    let p53 =
+        fstp_engine::report::pinned_p53(&call.state, fstp_report::Scope::Programme(programme))
+            .ok_or_else(|| call.refuse(not_found()))?;
+    let view = fstp_report::profile::for_p53(p53.0.as_str()).ok().map(|p| {
+        crate::grant::FunderProfileView {
+            id: p.id().to_owned(),
+            version: p.version(),
+            digest: crate::action::hex(&p.digest().bytes()),
+            outputs: p.outputs().iter().map(|o| o.kind().name()).collect(),
+            visibility_elements: p
+                .visibility_elements()
+                .iter()
+                .map(|e| e.key().to_owned())
+                .collect(),
+        }
+    });
+    call.accept(ReadModel::Grant(GrantModel::FunderProfile(programme, view)))
+}
+
 /// `report.programmes` (lane m5/report-programmes, R-RP-03): the
 /// programmes whose `report.list` admits the caller, by id. A Financial
 /// signatory of the tenant fold reads the reports of every programme, so

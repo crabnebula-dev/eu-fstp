@@ -98,6 +98,22 @@ pub enum PublicPage {
 pub struct Chrome {
     /// The same-origin path of the public stylesheet, if any.
     pub stylesheet: Option<String>,
+    /// The funder visibility elements of the programme's pinned funder
+    /// profile (P-53), if it pins a shipped one (I-69, M9 design 2.4).
+    pub funder: Option<FunderFooter>,
+}
+
+/// The footer data of a pinned funder profile: its id, its version and
+/// the keys of its visibility elements, in file order. Platform data from
+/// a shipped profile, never tenant input (M9 design D3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunderFooter {
+    /// The profile id, such as `horizon-europe`.
+    pub profile: String,
+    /// The profile version.
+    pub version: u16,
+    /// The visibility element keys.
+    pub elements: Vec<String>,
 }
 
 /// The locale of the public pages. Interim, pending the locale
@@ -196,6 +212,14 @@ const ENTRIES: &[EntrySource<'static>] = &[
         id: "public.footer.ai",
         kind: MessageKind::Approved,
         message: "AI disclosure: the approved wording is pending.",
+    },
+    // TODO(legal): the wording of each funder visibility element of the
+    // pinned profile (L-08, L-09, M9 design section 6). The placeholder
+    // names the element key only.
+    EntrySource {
+        id: "public.footer.funder_element",
+        kind: MessageKind::Approved,
+        message: "Funder visibility element {element} of funder profile {profile} version {version}: the approved wording is pending.",
     },
     label("public.footer.attribution", "Runs on the FSTP platform."),
     // TODO(legal): the approved AI disclosure for applicants (R-LA-08, AI
@@ -366,7 +390,13 @@ fn header(view: &PublicView, paths: &Paths, current: Current) -> Result<Element,
 /// It is built from platform data after the brand is applied, so no
 /// brand token can name, hide, size or reorder an element (M9 design
 /// section 2.4).
-fn footer() -> Element {
+///
+/// The funder visibility item holds the platform element, then one
+/// element per visibility element key of the pinned funder profile
+/// (`data-mandatory="funder_visibility.<key>"`), each with placeholder wording until Daniel
+/// supplies the approved text (TODO(legal), L-08). A page whose programme
+/// pins no shipped profile keeps the platform element only.
+fn footer(funder: Option<&FunderFooter>) -> Element {
     let item = |key: &'static str, id: &str, approved: bool| {
         let span = Element::new("span").attr("data-mandatory", key);
         let span = if approved {
@@ -376,10 +406,32 @@ fn footer() -> Element {
         };
         Element::new("li").child(span)
     };
+    let mut visibility = Element::new("li").child(
+        Element::new("span")
+            .attr("data-mandatory", "funder_visibility")
+            .approved(&ApprovedText::new("public.footer.funder"), &[]),
+    );
+    if let Some(f) = funder {
+        let version = f.version.to_string();
+        for key in &f.elements {
+            visibility = visibility.child(Node::text(" ")).child(
+                Element::new("span")
+                    .attr("data-mandatory", &format!("funder_visibility.{key}"))
+                    .approved(
+                        &ApprovedText::new("public.footer.funder_element"),
+                        &[
+                            ("element", key.as_str()),
+                            ("profile", f.profile.as_str()),
+                            ("version", &version),
+                        ],
+                    ),
+            );
+        }
+    }
     Element::new("footer").attr("class", "site-footer").child(
         Element::new("div").attr("class", "inner").child(
             Element::new("ul")
-                .child(item("funder_visibility", "public.footer.funder", true))
+                .child(visibility)
                 .child(item("ai_disclosure", "public.footer.ai", true))
                 .child(item("privacy_notice", "public.footer.privacy", true))
                 .child(item(
@@ -419,7 +471,7 @@ fn page(
                 .attr("class", "page-body page-body--public")
                 .child(main.attr("id", "main-content")),
         )
-        .body(footer()))
+        .body(footer(chrome.funder.as_ref())))
 }
 
 /// A deadline or opening: the instant, then its zone.

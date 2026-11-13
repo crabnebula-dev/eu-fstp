@@ -4685,6 +4685,10 @@ mod m5_api_tests {
 #[cfg(test)]
 #[path = "harness_m5_reads.rs"]
 mod m5_reads_tests;
+/// M9 finish: the pinned funder profile through the API (R-RP-01).
+#[cfg(test)]
+#[path = "harness_m9_funder_profile.rs"]
+mod m9_funder_profile_tests;
 /// M9 lane P1: the grantee choice operations through the API (R-PB-02,
 /// R-PB-03, I-41, I-43).
 #[cfg(test)]

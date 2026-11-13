@@ -281,7 +281,10 @@ fn view_of(state: &State, now: Timestamp) -> Result<PublicView, String> {
 /// Every public output of `view`: the pages, the feed when P-52 is on,
 /// and the public tool answers.
 fn outputs(view: &PublicView) -> Result<Vec<String>, String> {
-    let chrome = Chrome { stylesheet: None };
+    let chrome = Chrome {
+        stylesheet: None,
+        funder: None,
+    };
     let mut out = Vec::new();
     for page in [
         PublicPage::Programme,

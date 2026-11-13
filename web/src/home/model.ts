@@ -344,6 +344,8 @@ export const WORK_PATHS = Object.freeze({
   onboarding: "/app/admin/onboarding/summary",
   creatorNew: "/app/creator/new",
   approvals: "/app/admin/approvals",
+  branding: "/app/admin/branding",
+  terminology: "/app/admin/terminology",
   creator: (p: string): string => `/app/programmes/${p}/creator/review`,
   studio: (p: string): string => `/app/programmes/${p}/studio`,
   knockOuts: (p: string): string => `/app/programmes/${p}/studio/knock-outs`,

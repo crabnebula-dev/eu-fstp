@@ -149,7 +149,10 @@ fn i53_public_guide_page_serves_the_stored_bytes_with_no_script() {
     let page = render_html(
         &pv,
         &PublicPage::Guide("1".to_owned()),
-        &Chrome { stylesheet: None },
+        &Chrome {
+            stylesheet: None,
+            funder: None,
+        },
     )
     .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(page.as_bytes(), stored.page().as_bytes());

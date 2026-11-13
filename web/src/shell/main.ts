@@ -31,6 +31,7 @@
 // entries (`creator/main.ts`, `applicant/main.ts`) for their own tests.
 // The shell loads this module only.
 
+import { mountAdminBranding } from "../admin/branding/page.js";
 import { mountApplicantPage, mountNotFound } from "../applicant/app.js";
 import { h, installTrustedTypesPolicy } from "../core/dom.js";
 import { VISUALLY_HIDDEN_CLASS } from "../core/a11y.js";
@@ -115,6 +116,10 @@ async function run(path: string): Promise<void> {
     return;
   }
   if (mountSite(path) || mountMailboxPage(path) || mountStaff(path) || mountJourney(path) || mountApplicantPage(path)) {
+    return;
+  }
+  // M9 lane P2: the tenant admin's branding and terminology screens.
+  if (await mountAdminBranding(browserEnv(root()), path)) {
     return;
   }
   // The M5 post-grant pages: grants, contract, payment requests and operations.

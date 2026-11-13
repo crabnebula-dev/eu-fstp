@@ -68,6 +68,8 @@ fstp-smtp
 fstp-infer
 # M5 lane L-CON: the increment re-validation, and the contract record
 # decoder, which lives in the pure core that fstp-engine reaches.
+# M9 finish adds the notice companion stored form, target
+# notice_companion_decode, in the same core.
 fstp-sigval
 fstp-contract-core
 # M5 lane L-RPT: the stored Guide reader
