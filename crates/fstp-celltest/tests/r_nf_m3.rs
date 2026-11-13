@@ -949,16 +949,20 @@ struct Handshake {
 
 /// The TLS handshakes of `w`, one per connection.
 ///
-/// Gap, reported by lane W1f and raised to the lead for lane W1a: the
-/// egress recorder sits above TLS and records no handshake. This seam is
-/// the one place to wire a handshake record from the harness. Until then
-/// it refuses with `NotImplemented`, and the test stays red on that
-/// refusal, never on a fixed panic.
+/// Lane F-ISO wired the record: each link of a world cell runs through a
+/// recording relay (`fstp_celltest::relay`), which records every
+/// handshake with whether the cell presented a client certificate that
+/// verified under the cell CA. A failed handshake is recorded as not
+/// verified.
 fn handshakes(w: &World) -> Result<Vec<Handshake>, fstp_celltest::NotImplemented> {
-    let _ = w;
-    Err(fstp_celltest::NotImplemented::new(
-        "a TLS handshake record in the egress recorder (lane W1a; design gap raised by lane W1f)",
-    ))
+    Ok(w.egress()
+        .handshakes()
+        .into_iter()
+        .map(|h| Handshake {
+            peer: h.route.to,
+            client_certificate_verified: h.client_certificate_verified,
+        })
+        .collect())
 }
 
 /// The R-NF-09 breaches of the peers contacted and the handshakes

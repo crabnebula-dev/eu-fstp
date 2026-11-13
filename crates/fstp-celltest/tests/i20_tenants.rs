@@ -14,6 +14,7 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fstp_celltest::egress::Peer;
 use fstp_celltest::mc::place_model::db;
@@ -247,15 +248,37 @@ fn i20_teeth_control_plane_reaching_account_types_is_caught() {
 // ---------------------------------------------------------------------------
 // Worlds.
 
-fn world() -> World {
-    World::start(WorldSpec {
+/// One world of this test binary at a time, as in `i19_boundary.rs`. The
+/// clusters are shared by every world of the binary by name, so a world
+/// that runs beside another sees the other's cell databases, and the
+/// per-cell readings here would count them. Lane F-ISO.
+static WORLDS: Mutex<()> = Mutex::new(());
+
+/// A world that holds the [`WORLDS`] turn of this binary until it ends.
+/// The world drops first, then the turn.
+struct Alone {
+    world: World,
+    _turn: MutexGuard<'static, ()>,
+}
+
+impl std::ops::Deref for Alone {
+    type Target = World;
+    fn deref(&self) -> &World {
+        &self.world
+    }
+}
+
+fn world() -> Alone {
+    let turn = WORLDS.lock().unwrap_or_else(PoisonError::into_inner);
+    let world = World::start(WorldSpec {
         cells: 2,
         mode: DbMode::Shared,
         vault_layout: VaultLayout::SeparateCluster,
         self_hosted: false,
         process_mode: false,
     })
-    .unwrap_or_else(|e| panic!("the world did not start: {e}"))
+    .unwrap_or_else(|e| panic!("the world did not start: {e}"));
+    Alone { world, _turn: turn }
 }
 
 fn same_person_cycles(w: &World) {

@@ -762,11 +762,12 @@ impl World {
             .map(|(kind, name)| ClusterHandle::start_named(*kind, name))
             .collect::<Result<Vec<_>, _>>()?;
         let mut cells = Vec::with_capacity(plans.len());
+        let egress = EgressLog::new();
         if !plans.is_empty() {
             for cluster in clusters.iter().filter(|c| is_agent_kind(c.kind())) {
                 prepare_cluster(cluster)?;
             }
-            match start_cells(&spec, &clusters, &plans, pages.as_ref()) {
+            match start_cells(&spec, &clusters, &plans, pages.as_ref(), &egress) {
                 Ok(started) => cells = started,
                 Err(e) => {
                     remember_failed(&spec, &clusters, &plans);
@@ -778,7 +779,7 @@ impl World {
             spec,
             cells,
             clusters,
-            egress: EgressLog::new(),
+            egress,
             install,
         })
     }
@@ -1408,6 +1409,7 @@ fn start_cells(
     clusters: &[ClusterHandle],
     plans: &[RolePlan],
     pages: Option<&fstp_cell::http::pages::Pages>,
+    egress: &EgressLog,
 ) -> Result<Vec<CellHandle>, WorldError> {
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -1419,7 +1421,15 @@ fn start_cells(
     provision_services(clusters)?;
     let mut cells = Vec::with_capacity(plans.len());
     for (i, (plan, logins)) in plans.iter().zip(logins).enumerate() {
-        cells.push(start_cell(spec, clusters, index(i)?, plan, logins, pages)?);
+        cells.push(start_cell(
+            spec,
+            clusters,
+            index(i)?,
+            plan,
+            logins,
+            pages,
+            egress,
+        )?);
     }
     Ok(cells)
 }
@@ -2044,6 +2054,10 @@ struct WorldWitness {
     ca_digest: [u8; 32],
     /// The name the witness server certificate carries.
     name: String,
+    /// A second server certificate for that name from the same CA, which
+    /// the cell's recording relay to the witness presents
+    /// ([`crate::relay`], lane F-ISO).
+    relay_server: pki::Issued,
     /// The install of a self-hosted cell, whose local witness stops with
     /// the cell. `None` for the shared SaaS witness.
     local: Option<LocalInstall>,
@@ -2190,11 +2204,26 @@ fn start_local_witness(s: &Services, cell: &[u8; 16]) -> Result<WorldWitness, Wo
             return Err(fail("the start", &e));
         }
     };
+    let relay_server = match install_ca.issue(
+        fstp_pki::cert::CertKind::Server,
+        LOCAL_WITNESS_NAME,
+        None,
+        &[LOCAL_WITNESS_NAME],
+        &[],
+    ) {
+        Ok(i) => i,
+        Err(e) => {
+            handle.trigger_shutdown();
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+    };
     Ok(WorldWitness {
         handle: std::sync::Arc::new(handle),
         ca_pem: install_ca.pem.clone(),
         ca_digest: install_ca.spki_digest,
         name: LOCAL_WITNESS_NAME.to_owned(),
+        relay_server,
         local: Some(LocalInstall { dir }),
     })
 }
@@ -2397,6 +2426,9 @@ struct CellRuntime {
     running: Mutex<Running>,
     health: SocketAddr,
     witness: WorldWitness,
+    /// The recording relays of the cell's links to its vault, its
+    /// witness and the control plane ([`crate::relay`], lane F-ISO).
+    relays: Mutex<Vec<crate::relay::Relay>>,
 }
 
 impl fmt::Debug for CellRuntime {
@@ -2421,6 +2453,7 @@ impl CellRuntime {
         if let Some(c) = running {
             let _ = self.services.rt.block_on(c.shutdown(CELL_DRAIN));
         }
+        lock(&self.relays).clear();
         let r = lock(&self.running);
         let _ = self.services.rt.block_on(r.vault.shutdown(CELL_DRAIN));
         lock(&self.services.edge.table).remove_cell_by_id(cell);
@@ -2465,6 +2498,120 @@ fn registered_server_keys(
     Ok(out)
 }
 
+/// The name the world's control plane presents to a cell's heartbeat
+/// link ([`fstp_cell::control`], lane F-ISO).
+const CONTROL_PLANE_NAME: &str = "cp.fstp.localhost";
+
+/// The upstreams of a cell's relays.
+struct RelayUpstreams<'a> {
+    /// The vault's internal listener.
+    vault: SocketAddr,
+    /// The cell's `cell-app` certificate and the roots of the vault's
+    /// internal certificate.
+    vault_client: (&'a pki::Issued, &'a [u8]),
+    /// The cell's `cell-witness` certificate.
+    witness_client: &'a pki::Issued,
+    /// Whether the cell reaches the control plane: a SaaS cell does, and
+    /// a self-hosted cell never does (B12).
+    control_plane: bool,
+}
+
+/// A cell's relays and where the cell reaches each link through them.
+struct CellRelays {
+    relays: Vec<crate::relay::Relay>,
+    vault: SocketAddr,
+    witness: SocketAddr,
+    control_plane: Option<SocketAddr>,
+}
+
+/// Starts the recording relays of world cell `index` (lane F-ISO,
+/// [`crate::relay`]): to its vault, to its witness, and on a SaaS cell to
+/// the world's control plane stand-in. Each relay presents a server
+/// certificate from the CA the cell trusts for that peer, and requires a
+/// client certificate under the cell CA, as the vault's internal listener
+/// and the witness do. Each opens its upstream with the cell's own client
+/// certificate. The captures and handshakes go to `egress`.
+fn start_relays(
+    s: &'static Services,
+    egress: &EgressLog,
+    index: u8,
+    cell_ca: &pki::Ca,
+    witness: &WorldWitness,
+    up: RelayUpstreams<'_>,
+) -> Result<CellRelays, WorldError> {
+    use crate::egress::{Endpoint, Peer, Route};
+    use crate::relay::Upstream;
+    use fstp_pki::cert::CertKind;
+    let fail =
+        |what: &str, e: &dyn fmt::Display| WorldError::Store(format!("cell {index}: {what}: {e}"));
+    let server = |cert: &pki::Issued| {
+        fstp_tls::ServerConfig::builder(&cert.cert_pem, &cert.key_pem)
+            .require_client_auth(&cell_ca.pem)
+            .build()
+            .map_err(|e| fail("a relay TLS", &e))
+    };
+    let start = |route: Route, cfg: fstp_tls::ServerConfig, upstream: Upstream| {
+        s.rt.block_on(crate::relay::start(
+            s.rt.clone(),
+            egress.clone(),
+            route,
+            cfg,
+            upstream,
+        ))
+        .map_err(|e| fail("a relay", &e))
+    };
+    let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
+    let (app, vault_roots) = up.vault_client;
+    let vault_cert = cell_ca.issue(CertKind::Server, "vault relay", None, &[], &loopback)?;
+    let vault = start(
+        Route::new(Endpoint::cell(index), Peer::Vault, Some(index)),
+        server(&vault_cert)?,
+        Upstream::Tls {
+            addr: up.vault,
+            server_name: Ipv4Addr::LOCALHOST.to_string(),
+            tls: fstp_tls::ClientConfig::mutual(vault_roots, &app.cert_pem, &app.key_pem)
+                .map_err(|e| fail("the vault relay client TLS", &e))?,
+        },
+    )?;
+    let witness_relay = start(
+        Route::new(Endpoint::cell(index), Peer::Witness, None),
+        server(&witness.relay_server)?,
+        Upstream::Tls {
+            addr: witness.handle.local_addr(),
+            server_name: witness.name.clone(),
+            tls: fstp_tls::ClientConfig::mutual(
+                &witness.ca_pem,
+                &up.witness_client.cert_pem,
+                &up.witness_client.key_pem,
+            )
+            .map_err(|e| fail("the witness relay client TLS", &e))?,
+        },
+    )?;
+    let mut out = CellRelays {
+        vault: vault.addr(),
+        witness: witness_relay.addr(),
+        control_plane: None,
+        relays: vec![vault, witness_relay],
+    };
+    if up.control_plane {
+        let cert = s.control.issue(
+            CertKind::Server,
+            CONTROL_PLANE_NAME,
+            None,
+            &[CONTROL_PLANE_NAME],
+            &[],
+        )?;
+        let cp = start(
+            Route::new(Endpoint::cell(index), Peer::ControlPlane, None),
+            server(&cert)?,
+            Upstream::ControlPlane,
+        )?;
+        out.control_plane = Some(cp.addr());
+        out.relays.push(cp);
+    }
+    Ok(out)
+}
+
 /// Starts world cell `index` of `plan` over its provisioned databases
 /// (design section 9.2 steps 5, 6, 8, 9 and 10):
 ///
@@ -2494,6 +2641,7 @@ fn start_cell(
     plan: &RolePlan,
     logins: CellLogins,
     pages: Option<&fstp_cell::http::pages::Pages>,
+    egress: &EgressLog,
 ) -> Result<CellHandle, WorldError> {
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -2577,6 +2725,13 @@ fn start_cell(
             ca_pem: s.control.pem.clone(),
             ca_digest: s.control.spki_digest,
             name: WITNESS_NAME.to_owned(),
+            relay_server: s.control.issue(
+                CertKind::Server,
+                WITNESS_NAME,
+                None,
+                &[WITNESS_NAME],
+                &[],
+            )?,
             local: None,
         }
     };
@@ -2688,12 +2843,6 @@ fn start_cell(
         &[],
         &[],
     )?;
-    let vault_client = fstp_cell::vault::HttpVaultClient::new(
-        s.rt.clone(),
-        format!("https://{}", vault.internal_addr()),
-        fstp_tls::ClientConfig::mutual(&cell_ca.pem, &cell_app.cert_pem, &cell_app.key_pem)
-            .map_err(tls_err("the vault client TLS"))?,
-    );
     let cell_witness = cell_ca.issue(
         CertKind::Client,
         "cell-witness",
@@ -2701,8 +2850,49 @@ fn start_cell(
         &[],
         &[],
     )?;
+    let cell_cp = cell_ca.issue(CertKind::Client, "cell-control-plane", None, &[], &[])?;
+    // Lane F-ISO: the cell reaches its vault, its witness and the control
+    // plane through recording relays ([`crate::relay`]).
+    let relays = match start_relays(
+        s,
+        egress,
+        index,
+        &cell_ca,
+        &witness,
+        RelayUpstreams {
+            vault: vault.internal_addr(),
+            vault_client: (&cell_app, &cell_ca.pem),
+            witness_client: &cell_witness,
+            control_plane: !spec.self_hosted,
+        },
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            return Err(e);
+        }
+    };
+    let vault_client = fstp_cell::vault::HttpVaultClient::new(
+        s.rt.clone(),
+        format!("https://{}", relays.vault),
+        fstp_tls::ClientConfig::mutual(&cell_ca.pem, &cell_app.cert_pem, &cell_app.key_pem)
+            .map_err(tls_err("the vault client TLS"))?,
+    );
+    let control_plane = match relays.control_plane {
+        Some(addr) => Some(fstp_cell::control::ControlPlaneEndpoint {
+            addr,
+            server_name: CONTROL_PLANE_NAME.to_owned(),
+            tls: fstp_tls::ClientConfig::mutual(
+                &s.control.pem,
+                &cell_cp.cert_pem,
+                &cell_cp.key_pem,
+            )
+            .map_err(tls_err("the control plane client TLS"))?,
+        }),
+        None => None,
+    };
     let witness_endpoint = fstp_cell::witness::link::WitnessEndpoint {
-        addr: witness.handle.local_addr(),
+        addr: relays.witness,
         server_name: witness.name.clone(),
         tls: fstp_tls::ClientConfig::mutual(
             &witness.ca_pem,
@@ -2792,6 +2982,7 @@ fn start_cell(
             clock: clock.commit_clock(),
             creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
             proof_mail: std::sync::Arc::new(mail.clone()),
+            control_plane,
         },
     )) {
         Ok(r) => r,
@@ -2875,6 +3066,7 @@ fn start_cell(
             }),
             health: bound.health,
             witness,
+            relays: Mutex::new(relays.relays),
         })),
     })
 }

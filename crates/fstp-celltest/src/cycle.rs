@@ -851,6 +851,7 @@ impl<'w> Cycle<'w> {
     /// call is open: `CreateDraft` (the cell sets the minor flag, I-18)
     /// and `RecordPlanVersion` of one milestone of 20 000.00 EUR.
     fn draft(&mut self, step: &str) -> Result<(), NotImplemented> {
+        self.ensure_call()?;
         let (opens, _) = self.window.ok_or(NotImplemented::new(NO_CALL))?;
         self.clock_to(step, opens.saturating_add(DAY / 24))?;
         let (lead, cookie) = self
@@ -910,6 +911,23 @@ impl<'w> Cycle<'w> {
             irc: Vec::new(),
         });
         Ok(())
+    }
+
+    /// A script that drafts before any `publish-call` (`i20_tenants`,
+    /// `t_iso_i20`, `r_nf_m3`) has the call set up first: the first
+    /// admin's `login` unless it ran, `create-programme` and
+    /// `publish-call`, as those steps run them. Interim reading of lane
+    /// F-ISO, pending Daniel: these scripts name only the steps their
+    /// claims rest on, and a draft needs an open call.
+    fn ensure_call(&mut self) -> Result<(), NotImplemented> {
+        if self.window.is_some() {
+            return Ok(());
+        }
+        if self.admin.is_none() {
+            self.login()?;
+        }
+        self.create_programme()?;
+        self.publish_call()
     }
 
     /// The applicant submits the current proposal (R-SB-05, R-NG-06).
