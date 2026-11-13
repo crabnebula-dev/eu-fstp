@@ -15,6 +15,7 @@
 import { h, type Child } from "../core/dom.js";
 import type { I18n, Label } from "../core/i18n.js";
 import { frame, guarded, idRoute, readOp, selectEl, type JudgingPage } from "../reviewer/kit.js";
+import { profilePanel } from "./profile.js";
 import {
   GRANT_PATHS,
   act,
@@ -248,6 +249,8 @@ async function mountReports(env: PageEnv, params: Readonly<Record<string, string
       h("p", {}, [link(GRANT_PATHS.operations, t.label("ops.reports.back"))]),
       h("p", { class: "text-sm" }, [t.label("ops.reports.no_submit")]),
     ];
+    // M9 finish (R-RP-01): the funder profile the programme pins.
+    body.push(await profilePanel(env, t, programme));
     if (rows.length === 0) {
       body.push(h("p", { id: "ops-reports-none" }, [t.label("ops.reports.none")]));
     } else {

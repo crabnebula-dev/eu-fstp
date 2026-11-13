@@ -2266,6 +2266,15 @@ pub const OPS: &[OpSpec] = &[
         "/grants/{proposal}/publicity/withdrawal",
     )
     .acting(LEAD),
+    // M9 finish (R-RP-01, M9 design section 2.2): the funder profile the
+    // programme pins through P-53. Web only, for the readers of the
+    // programme's funder reports. Interim, pending Daniel: the route.
+    OpSpec::read(
+        "programme.funder_profile.view",
+        RK::GetFunderProfile,
+        "/programmes/{programme}/funder-profile",
+    )
+    .acting(REPORT_READERS),
 ];
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:

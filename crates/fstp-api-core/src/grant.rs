@@ -57,6 +57,9 @@ pub enum GrantModel {
     ReportProgrammes(Vec<ProgrammeId>),
     /// `grant.publicity.view` (M9 lane P1, R-PB-02, I-43).
     Publicity(Box<crate::publicity::PublicityView>),
+    /// `programme.funder_profile.view` (M9 finish, R-RP-01): the profile
+    /// the programme pins through P-53, if it names a shipped one.
+    FunderProfile(ProgrammeId, Option<FunderProfileView>),
 }
 
 impl ToJson for GrantModel {
@@ -72,6 +75,16 @@ impl ToJson for GrantModel {
             GrantModel::Determination(v) => v.to_json(),
             GrantModel::LineReview(v) => v.to_json(),
             GrantModel::Publicity(v) => v.to_json(),
+            GrantModel::FunderProfile(p, view) => {
+                let mut o = Object::new();
+                let _ = o.insert("programme", dec(p.raw()));
+                let _ = o.insert(
+                    "profile",
+                    view.as_ref()
+                        .map_or(Value::Null, FunderProfileView::to_json),
+                );
+                Value::Object(o)
+            }
             GrantModel::ReportProgrammes(ps) => {
                 let mut a = Array::new();
                 for p in ps {
@@ -87,6 +100,41 @@ impl ToJson for GrantModel {
 }
 
 impl McpSafe for GrantModel {}
+
+/// A pinned funder profile, as `programme.funder_profile.view` shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunderProfileView {
+    /// The profile id, such as `horizon-europe`.
+    pub id: String,
+    /// The version.
+    pub version: u16,
+    /// The SHA-256 of the profile file, as lowercase hex.
+    pub digest: String,
+    /// The output kinds the profile defines, in file order.
+    pub outputs: Vec<&'static str>,
+    /// The visibility element keys, in file order.
+    pub visibility_elements: Vec<String>,
+}
+
+impl ToJson for FunderProfileView {
+    fn to_json(&self) -> Value {
+        let mut o = Object::new();
+        let _ = o.insert("id", Value::String(self.id.clone()));
+        let _ = o.insert("version", dec(u128::from(self.version)));
+        let _ = o.insert("digest", Value::String(self.digest.clone()));
+        let mut outputs = Array::new();
+        for k in &self.outputs {
+            outputs.push(Value::String((*k).to_owned()));
+        }
+        let _ = o.insert("outputs", Value::Array(outputs));
+        let mut keys = Array::new();
+        for k in &self.visibility_elements {
+            keys.push(Value::String(k.clone()));
+        }
+        let _ = o.insert("visibility_elements", Value::Array(keys));
+        Value::Object(o)
+    }
+}
 
 /// The overview of one grant.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -428,6 +476,17 @@ pub(crate) fn samples() -> Vec<GrantModel> {
         GrantModel::Grants(Vec::new()),
         GrantModel::ReportProgrammes(vec![ProgrammeId::from_raw(1), ProgrammeId::from_raw(2)]),
         GrantModel::ReportProgrammes(Vec::new()),
+        GrantModel::FunderProfile(ProgrammeId::from_raw(1), None),
+        GrantModel::FunderProfile(
+            ProgrammeId::from_raw(1),
+            Some(FunderProfileView {
+                id: "horizon-europe".to_owned(),
+                version: 1,
+                digest: "ab".repeat(32),
+                outputs: vec!["call_publication_record", "audit_file"],
+                visibility_elements: vec!["acknowledgement".to_owned()],
+            }),
+        ),
         GrantModel::ToSign(vec![SignRow {
             proposal: ProposalId::from_raw(3),
             contract: ContractId::from_raw(5),

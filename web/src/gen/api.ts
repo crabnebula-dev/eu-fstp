@@ -251,7 +251,8 @@ export type OpName =
   | "report.approve"
   | "grant.publicity.view"
   | "grant.publicity.set"
-  | "grant.publicity.withdraw";
+  | "grant.publicity.withdraw"
+  | "programme.funder_profile.view";
 
 /** One segment of a route: fixed text, or a named parameter. */
 export type Segment =
@@ -481,6 +482,7 @@ export interface OpParams {
   readonly "grant.publicity.view": { readonly "proposal": string };
   readonly "grant.publicity.set": { readonly "proposal": string };
   readonly "grant.publicity.withdraw": { readonly "proposal": string };
+  readonly "programme.funder_profile.view": { readonly "programme": string };
 }
 
 /** Every operation name, in registry order. */
@@ -683,6 +685,7 @@ export const OP_NAMES: readonly OpName[] = [
   "grant.publicity.view",
   "grant.publicity.set",
   "grant.publicity.withdraw",
+  "programme.funder_profile.view",
 ];
 
 /** Every operation of the registry, in registry order. */
@@ -3459,6 +3462,20 @@ export const OPERATIONS: readonly Operation[] = [
     classification: "confidential",
     tool: null,
   },
+  {
+    name: "programme.funder_profile.view",
+    method: "GET",
+    path: "/programmes/{programme}/funder-profile",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "funder-profile" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
 ];
 
 /** The operation named `name`. */
@@ -3786,6 +3803,22 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "name": { schema: { kind: "string" }, optional: false },
     },
   } },
+  "programme.funder_profile.view": {
+    kind: "object",
+    fields: {
+      "programme": { schema: { kind: "id" }, optional: false },
+      "profile": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "string" }, optional: false },
+          "version": { schema: { kind: "id" }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+          "outputs": { schema: { kind: "array", items: { kind: "enum", values: ["call_publication_record", "open_call_package", "periodic_reporting_data", "audit_file", "deliverable_draft"] } }, optional: false },
+          "visibility_elements": { schema: { kind: "array", items: { kind: "string" } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "payment.submit": {
     kind: "object",
     fields: {
