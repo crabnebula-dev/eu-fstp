@@ -77,7 +77,9 @@ use crate::reference::creator::{
 ///   a correct `OpenDraft` appends (`draft_cell::forged_open`), as the
 ///   engine's own M4 envelope tests do.
 pub mod production {
+    use std::borrow::Cow;
     use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Arc;
 
     use fstp_api_core::port::{ProbeKind as PortProbe, ProbeOutcome as PortOutcome};
     use fstp_creator::{
@@ -97,7 +99,7 @@ pub mod production {
     use fstp_domain_testkit::vault::GroundTruth;
     use fstp_engine::{Command, EngineState, Record};
     use fstp_json::{FromJson, ToJson, Value};
-    use fstp_ledger::{Entry, MemStore, RecordStore};
+    use fstp_ledger::{Entry, MemStore, RecordStore, Seq};
     use fstp_programme::{FIELDS, FieldId, FieldKind, FieldValue, ProgrammeSpec};
 
     use crate::NotImplemented;
@@ -395,32 +397,42 @@ pub mod production {
     /// One draft on production: its ledger, its vault facts, its
     /// environment and what the adapter issued. Each step rebuilds the
     /// engine from the ledger, so the state compares and hashes. Equality
-    /// and the hash leave out the store and the engine state, which are
-    /// the ledger and its replay (`replay_matches` checks the replay).
+    /// and the hash leave out the engine state, which is the ledger's
+    /// replay (`replay_matches` checks the replay).
+    ///
+    /// Memory (CI part `m-activate`): the model checker stores every
+    /// state, so the parts that most steps leave unchanged are shared
+    /// behind `Arc` and copied on write. Each ledger entry is shared with
+    /// the state it was first appended in. No store is kept: each rebuild
+    /// appends the ledger to a new `MemStore` ([`ProductionSystem::store`]).
+    /// `Arc` compares, hashes and prints as its content, so equality, the
+    /// hash and the explored state space are unchanged.
     #[derive(Clone, Debug)]
     pub struct ProductionSystem {
-        plan: DraftPlan,
-        truth: GroundTruth,
-        shell: DraftShell,
-        store: MemStore<Record>,
-        state: EngineState,
-        ledger: Vec<Entry<Record>>,
+        plan: Arc<DraftPlan>,
+        truth: Arc<GroundTruth>,
+        shell: Arc<DraftShell>,
+        /// The state the engine left after the last command, kept only
+        /// when the ledger's replay does not give it (see
+        /// [`ProductionSystem::state`]).
+        state: Option<Arc<EngineState>>,
+        ledger: Vec<Arc<Entry<Record>>>,
         probes: BTreeMap<RefProbe, RefProbeOutcome>,
         /// The number of the next command, which also sets its instant.
         n: u32,
         /// The spec the draft holds when complete: the clean spec with
         /// every seed's value. A fix saves the unset fields from it.
-        target: ProgrammeSpec,
+        target: Arc<ProgrammeSpec>,
         /// Every saved value, by field and digest, held again on each
         /// rebuild.
-        values: BTreeMap<(FieldId, ValueDigest), FieldValue>,
+        values: Arc<BTreeMap<(FieldId, ValueDigest), FieldValue>>,
         /// The value text and canonical JSON of each proposal the adapter
         /// recorded for an import resolution, held again on each rebuild.
-        imports: BTreeMap<fstp_import::ValueTextRef, String>,
+        imports: Arc<BTreeMap<fstp_import::ValueTextRef, String>>,
         /// The command ids of the setup entries.
-        setup: BTreeSet<[u8; 16]>,
+        setup: Arc<BTreeSet<[u8; 16]>>,
         /// The kind and effect of each edit the adapter issued.
-        edits: BTreeMap<[u8; 16], (EditKind, RefEdit)>,
+        edits: Arc<BTreeMap<[u8; 16], (EditKind, RefEdit)>>,
         /// The live spare invitations, latest last.
         spares: Vec<InvitationId>,
         /// The chair's invitation, which the `RosterShort` seed withdraws.
@@ -436,7 +448,7 @@ pub mod production {
             &self,
         ) -> (
             &DraftPlan,
-            &[Entry<Record>],
+            &[Arc<Entry<Record>>],
             &BTreeMap<RefProbe, RefProbeOutcome>,
             u32,
             &ProgrammeSpec,
@@ -542,23 +554,23 @@ pub mod production {
         fn begin(plan: &DraftPlan) -> Result<(ProductionSystem, AccountId), NotImplemented> {
             let target = clean_target(plan)?;
             let mut s = ProductionSystem {
-                plan: plan.clone(),
-                truth: draft_cell::truth_of(&vault_accounts(plan)),
-                shell: shell_of(plan),
-                store: MemStore::new(),
-                state: EngineState::genesis(),
+                plan: Arc::new(plan.clone()),
+                truth: Arc::new(draft_cell::truth_of(&vault_accounts(plan))),
+                shell: Arc::new(shell_of(plan)),
+                state: None,
                 ledger: Vec::new(),
                 probes: plan.env.probes.clone(),
                 n: 1,
-                target,
-                values: BTreeMap::new(),
-                imports: BTreeMap::new(),
-                setup: BTreeSet::new(),
-                edits: BTreeMap::new(),
+                target: Arc::new(target),
+                values: Arc::default(),
+                imports: Arc::default(),
+                setup: Arc::default(),
+                edits: Arc::default(),
                 spares: Vec::new(),
                 chair: None,
                 next: 0,
             };
+            s.settle(EngineState::genesis());
             let open = CreatorCommand::OpenDraft {
                 programme: PLAN_P,
                 version: PolicyVersionId::from_raw(PLAN_P.raw()),
@@ -726,19 +738,85 @@ pub mod production {
             Ok(())
         }
 
-        /// The engine state.
-        pub fn state(&self) -> &EngineState {
-            &self.state
+        /// The engine state: the state the engine left after the last
+        /// command, which is the ledger's replay unless `replay_matches`
+        /// fails.
+        pub fn state(&self) -> Result<Cow<'_, EngineState>, NotImplemented> {
+            match &self.state {
+                Some(s) => Ok(Cow::Borrowed(s)),
+                None => fstp_engine::replay(&self.entries())
+                    .map(Cow::Owned)
+                    .map_err(|_| GAP_STEP),
+            }
         }
 
-        /// The ledger.
-        pub fn ledger(&self) -> &[Entry<fstp_engine::Record>] {
+        /// Keeps `state`, the state the engine left after the last
+        /// command, unless the ledger's replay gives it. Then
+        /// [`ProductionSystem::state`] replays the ledger instead.
+        ///
+        /// Equality of engine states leaves out the creator's held values
+        /// and the import store's held texts. The adapter reads neither
+        /// from [`ProductionSystem::state`]: it reads drafts, the core, the
+        /// roster and the count of unresolved proposals. The cell it runs
+        /// commands on holds the values again on each rebuild.
+        fn settle(&mut self, state: EngineState) {
+            self.state = match fstp_engine::replay(&self.entries()) {
+                Ok(replayed) if replayed == state => None,
+                _ => Some(Arc::new(state)),
+            };
+        }
+
+        /// The ledger, each entry shared with the state it was first
+        /// appended in.
+        pub fn ledger(&self) -> &[Arc<Entry<fstp_engine::Record>>] {
             &self.ledger
+        }
+
+        /// The ledger's entries, owned.
+        fn entries(&self) -> Vec<Entry<Record>> {
+            self.ledger.iter().map(|e| Entry::clone(e)).collect()
+        }
+
+        /// A new store holding the ledger. Each command's entries are one
+        /// append, at the entry's instant and command id, so every entry of
+        /// the store equals its ledger entry. A ledger that such appends
+        /// would not write refuses with [`GAP_STEP`].
+        fn store(&self) -> Result<MemStore<Record>, NotImplemented> {
+            let mut store = MemStore::new();
+            let mut i = 0usize;
+            while let Some(first) = self.ledger.get(i) {
+                let mut batch = Vec::new();
+                let mut seq = store.head();
+                let mut j = i;
+                while let Some(e) = self.ledger.get(j) {
+                    if e.command != first.command {
+                        break;
+                    }
+                    seq = Seq::from_raw(seq.raw().saturating_add(1));
+                    if e.seq != seq || e.at != first.at || e.schema != store.schema() {
+                        return Err(GAP_STEP);
+                    }
+                    batch.push(e.record.clone());
+                    j = j.saturating_add(1);
+                }
+                let head = store.head();
+                store
+                    .append(head, first.at, first.command, batch)
+                    .map_err(|_| GAP_STEP)?;
+                i = j;
+            }
+            Ok(store)
         }
 
         /// The draft cell over the ledger now, with every saved and
         /// imported value held again.
         fn cell(&self) -> Result<DraftCell, NotImplemented> {
+            self.cell_over(self.store()?)
+        }
+
+        /// The draft cell over `store`, with every saved and imported
+        /// value held again.
+        fn cell_over(&self, store: MemStore<Record>) -> Result<DraftCell, NotImplemented> {
             let probes = RefProbe::ALL
                 .into_iter()
                 .map(|p| {
@@ -751,14 +829,14 @@ pub mod production {
                 })
                 .collect();
             let mut cell = DraftCell::open_with_shell(
-                self.store.clone(),
-                self.truth.clone(),
+                store,
+                GroundTruth::clone(&self.truth),
                 self.plan.stat.admins.clone(),
                 &probes,
                 &self.shell,
             )
             .map_err(|_| GAP_STEP)?;
-            for (text, json) in &self.imports {
+            for (text, json) in self.imports.iter() {
                 let v = fstp_json::parse(json.as_bytes()).map_err(|_| GAP_STEP)?;
                 let value = fstp_import::UntrustedValue::new(&v).map_err(|_| GAP_STEP)?;
                 cell.engine
@@ -801,10 +879,10 @@ pub mod production {
             if matches!(out, Run::Appended) {
                 match tag {
                     Tag::Setup => {
-                        let _ = self.setup.insert(id);
+                        let _ = Arc::make_mut(&mut self.setup).insert(id);
                     }
                     Tag::Edit(kind, effect) => {
-                        let _ = self.edits.insert(id, (kind, effect));
+                        let _ = Arc::make_mut(&mut self.edits).insert(id, (kind, effect));
                     }
                     Tag::Plain => {}
                 }
@@ -813,11 +891,20 @@ pub mod production {
             Ok(out)
         }
 
-        /// Keeps the ledger and state of `cell`.
+        /// Keeps the ledger and state of `cell`. An entry equal to the one
+        /// kept before at the same position stays shared.
         fn keep(&mut self, cell: DraftCell) -> Result<(), NotImplemented> {
-            self.state = cell.state().clone();
-            self.store = cell.into_store();
-            self.ledger = draft_cell::entries(&self.store).map_err(|_| GAP_STEP)?;
+            let state = cell.state().clone();
+            let entries = draft_cell::entries(&cell.into_store()).map_err(|_| GAP_STEP)?;
+            let mut ledger = Vec::with_capacity(entries.len());
+            for (i, e) in entries.into_iter().enumerate() {
+                match self.ledger.get(i) {
+                    Some(kept) if **kept == e => ledger.push(Arc::clone(kept)),
+                    _ => ledger.push(Arc::new(e)),
+                }
+            }
+            self.ledger = ledger;
+            self.settle(state);
             Ok(())
         }
 
@@ -844,8 +931,8 @@ pub mod production {
             let out = self.run(Command::Creator(cmd), by, tag)?;
             if matches!(out, Run::Appended) {
                 for (k, v) in kept {
-                    self.target.set(v.clone());
-                    let _ = self.values.insert(k, v);
+                    Arc::make_mut(&mut self.target).set(v.clone());
+                    let _ = Arc::make_mut(&mut self.values).insert(k, v);
                 }
             }
             Ok(out)
@@ -894,9 +981,10 @@ pub mod production {
                 Step::Save(values) => self.save(by, revision, values, tag),
                 Step::Blank => {
                     let profile = self
-                        .state
-                        .creator
-                        .draft(PLAN_P)
+                        .state()
+                        .ok()
+                        .as_deref()
+                        .and_then(|s| s.creator.draft(PLAN_P))
                         .map(|d| d.profile().clone())
                         .ok_or(GAP_STEP)?;
                     let start = CreatorCommand::ApplyStart {
@@ -1006,7 +1094,7 @@ pub mod production {
             ) {
                 return Err(GAP_STEP);
             }
-            let _ = s.imports.insert(value_text, json);
+            let _ = Arc::make_mut(&mut s.imports).insert(value_text, json);
             let digest = fstp_import::ValueDigest::from_bytes(fstp_crypto::sha256(
                 untrusted.as_data().as_bytes(),
             ));
@@ -1023,7 +1111,7 @@ pub mod production {
             });
             let out = s.run(resolve, by, tag)?;
             if matches!(out, Run::Appended) {
-                s.target.set(v);
+                Arc::make_mut(&mut s.target).set(v);
                 *self = s;
             }
             Ok(out)
@@ -1031,7 +1119,7 @@ pub mod production {
 
         /// The draft's head revision now.
         fn head(&self) -> Option<fstp_creator::DraftRevision> {
-            self.state.creator.head(PLAN_P)
+            self.state().ok()?.creator.head(PLAN_P)
         }
 
         /// The number of setup entries, which the reference revisions do
@@ -1060,9 +1148,10 @@ pub mod production {
         /// The fields the draft does not set (`FieldUnset`).
         fn unset(&self) -> BTreeSet<FieldId> {
             let set = self
-                .state
-                .creator
-                .draft(PLAN_P)
+                .state()
+                .ok()
+                .as_deref()
+                .and_then(|s| s.creator.draft(PLAN_P))
                 .map(|d| d.set_fields())
                 .unwrap_or_default();
             FIELDS
@@ -1112,10 +1201,11 @@ pub mod production {
 
         /// Whether the draft is active.
         fn active(&self) -> bool {
-            self.state
-                .creator
-                .draft(PLAN_P)
-                .is_some_and(|d| d.active().is_some())
+            self.state().is_ok_and(|s| {
+                s.creator
+                    .draft(PLAN_P)
+                    .is_some_and(|d| d.active().is_some())
+            })
         }
 
         /// The reference refusal of a refused creator command (the inverse
@@ -1156,9 +1246,10 @@ pub mod production {
         /// Whether `a` shares a verified identity with a builder.
         fn same_identity(&self, a: AccountId) -> bool {
             let builders = self
-                .state
-                .creator
-                .draft(PLAN_P)
+                .state()
+                .ok()
+                .as_deref()
+                .and_then(|s| s.creator.draft(PLAN_P))
                 .map(|d| d.builders().clone())
                 .unwrap_or_default();
             self.plan.stat.vault.same_identity_as_any(a, &builders)
@@ -1170,9 +1261,10 @@ pub mod production {
         fn uncleared(&self) -> Result<RefRefusal, NotImplemented> {
             let report = self.report()?;
             let acks = self
-                .state
-                .creator
-                .draft(PLAN_P)
+                .state()
+                .ok()
+                .as_deref()
+                .and_then(|s| s.creator.draft(PLAN_P))
                 .map(|d| d.live_acks())
                 .unwrap_or_default();
             if let Some(c) = report.keys().find(|c| c.severity() == RefSeverity::Failure) {
@@ -1226,7 +1318,7 @@ pub mod production {
         /// Records of the import store are no draft records.
         fn set_unresolved(&mut self, n: u32) -> Result<(), NotImplemented> {
             let now = self
-                .state
+                .state()?
                 .import
                 .unresolved(fstp_import::ProgrammeRef::from_raw(PLAN_P.raw()));
             if n < now {
@@ -1454,7 +1546,8 @@ pub mod production {
                 }
                 RefCommand::Grant { by, to } => self.grant(by, to),
                 RefCommand::EndBinding { by, of } => {
-                    let binding = self.state.core.roster().bindings().find_map(|(id, b)| {
+                    let state = self.state()?;
+                    let binding = state.core.roster().bindings().find_map(|(id, b)| {
                         (b.account == of
                             && b.programme == PLAN_P
                             && b.role == Role::ProgrammeManager
@@ -1575,7 +1668,7 @@ pub mod production {
         fn entry_events(
             &self,
             entry: &[&Record],
-            prefix: &[Entry<Record>],
+            prefix: &[Arc<Entry<Record>>],
             edit: Option<(EditKind, RefEdit)>,
             offset: u32,
             managers: &mut BTreeMap<BindingId, AccountId>,
@@ -1599,7 +1692,8 @@ pub mod production {
                         let _ = probes.insert(ref_probe(*probe), ref_outcome(*outcome));
                     }
                 }
-                let before = fstp_engine::replay(prefix).map_err(|_| GAP_STEP)?;
+                let prefix: Vec<Entry<Record>> = prefix.iter().map(|e| Entry::clone(e)).collect();
+                let before = fstp_engine::replay(&prefix).map_err(|_| GAP_STEP)?;
                 let unresolved = before
                     .import
                     .unresolved(fstp_import::ProgrammeRef::from_raw(PLAN_P.raw()));
@@ -1691,8 +1785,12 @@ pub mod production {
 
         /// Whether `fstp_engine::replay` of the ledger gives the state.
         pub fn replay_matches(&self) -> Result<bool, String> {
-            match fstp_engine::replay(&self.ledger) {
-                Ok(s) => Ok(s == self.state),
+            // Unset when `settle` found the replay equal to the state.
+            let Some(state) = &self.state else {
+                return Ok(true);
+            };
+            match fstp_engine::replay(&self.entries()) {
+                Ok(s) => Ok(s == **state),
                 Err(e) => Err(format!("replay refused the ledger: {e:?}")),
             }
         }
@@ -1708,7 +1806,8 @@ pub mod production {
             revision: u32,
             inputs: &RefInputs,
         ) -> Result<(), NotImplemented> {
-            let d = self.state.creator.draft(PLAN_P).ok_or(GAP_STEP)?;
+            let state = self.state()?;
+            let d = state.creator.draft(PLAN_P).ok_or(GAP_STEP)?;
             let head = d.head();
             // The reference counts no setup entry.
             let rev = fstp_creator::DraftRevision::new(
@@ -1776,11 +1875,12 @@ pub mod production {
             records.push(Record::Creator(approved));
             records.push(Record::Core(activated));
             let ctx = self.ctx(by);
-            let head = self.store.head();
-            self.store
+            let mut store = self.store()?;
+            let head = store.head();
+            store
                 .append(head, ctx.now.micros(), ctx.command.bytes(), records)
                 .map_err(|_| GAP_STEP)?;
-            let cell = self.cell()?;
+            let cell = self.cell_over(store)?;
             self.keep(cell)
         }
 
@@ -1812,21 +1912,22 @@ pub mod production {
                 other => other,
             };
             let ctx = draft_cell::ctx(stand_in, self.now(), 0, &[stand_in].into_iter().collect());
+            let state = self.state()?;
             let mut answers = Answers::new();
-            for q in fstp_domain::queries(&self.state.core, &cmd, &ctx).map_err(|_| GAP_STEP)? {
+            for q in fstp_domain::queries(&state.core, &cmd, &ctx).map_err(|_| GAP_STEP)? {
                 let holds = matches!(q, Query::IsVerified { .. });
                 answers.insert(
                     q,
                     Answer {
                         holds,
                         accounts: None,
-                        epoch: self.state.epoch(),
+                        epoch: state.epoch(),
                         digest: ContentDigest::from_bytes([0x7e; 32]),
                     },
                 );
             }
-            let records = fstp_domain::decide(&self.state.core, &cmd, &ctx, &answers)
-                .map_err(|_| GAP_STEP)?;
+            let records =
+                fstp_domain::decide(&state.core, &cmd, &ctx, &answers).map_err(|_| GAP_STEP)?;
             let activated = records
                 .into_iter()
                 .find(|r| matches!(r, fstp_domain::Record::ProgrammeActivated(_)))
@@ -1948,7 +2049,8 @@ pub mod production {
             creator_builders: creator_builders.clone(),
         };
         let ctx = s.ctx(actor);
-        let queries = fstp_domain::queries(&s.state.core, &cmd, &ctx);
+        let state = s.state()?;
+        let queries = fstp_domain::queries(&state.core, &cmd, &ctx);
         let verdict = match queries {
             Err(r) => Err(r),
             Ok(qs) => {
@@ -1956,7 +2058,7 @@ pub mod production {
                 for q in qs {
                     answers.insert(q.clone(), s.truth.answer(&q));
                 }
-                fstp_domain::decide(&s.state.core, &cmd, &ctx, &answers).map(|_| ())
+                fstp_domain::decide(&state.core, &cmd, &ctx, &answers).map(|_| ())
             }
         };
         Ok(match verdict {
