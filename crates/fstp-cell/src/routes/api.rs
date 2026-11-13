@@ -112,10 +112,10 @@ fn canonical_u128(s: &str) -> Option<u128> {
 }
 
 /// The command of a vault ticket request: `{command_id, kind, proposal?,
-/// stepup?}`. `kind` is `release`, which needs `proposal`, or
-/// `write:<kind label>` of ADR-009, which takes none. A download scope is
-/// not accepted yet: `IssueReleaseTicket` carries no scope, so the gate
-/// could not ask for `IdentityDownload` (ADR-008).
+/// stepup?}`. `kind` is `release` or `download`, which need `proposal`,
+/// or `write:<kind label>` of ADR-009, which takes none. A `download` is
+/// `IssueDownloadTicket`, the high-risk action `IdentityDownload`
+/// (ADR-008, design section 8.7), so the gate asks for its step-up.
 /// A decoded vault ticket request.
 struct TicketRequest {
     command: CellCommand,
@@ -137,7 +137,8 @@ fn decode_ticket(bytes: &[u8]) -> Result<TicketRequest, BodyRefusal> {
     };
     let release = match (kind, proposal) {
         ("release", Some(proposal)) => ReleaseCommand::IssueReleaseTicket { proposal },
-        ("release", None) => return Err(BodyRefusal::Member("proposal")),
+        ("download", Some(proposal)) => ReleaseCommand::IssueDownloadTicket { proposal },
+        ("release" | "download", None) => return Err(BodyRefusal::Member("proposal")),
         (k, None) => {
             let label = k
                 .strip_prefix("write:")

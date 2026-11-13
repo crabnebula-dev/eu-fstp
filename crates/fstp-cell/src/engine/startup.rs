@@ -304,6 +304,9 @@ pub struct StartedCell<R: Runtime, S> {
     pub release: ReleaseView,
     /// The engine task, which gives the store back once it ends.
     pub engine_task: fstp_rt::JoinHandle<S>,
+    /// Where the timeline reads session rows for `EndSessionsAtBindingEnd`.
+    /// The process sets it to its route backend once that exists.
+    pub sessions: timeline::SessionSlot,
 }
 
 /// What the start-up path needs of a cell's anchoring store, beyond the
@@ -654,12 +657,14 @@ where
             .map_err(|_| StartRefusal::KeyRecord)?;
     // The timeline: scheduled role ends and every other due system
     // command (design sections 5.1 and 8.2).
+    let sessions = timeline::SessionSlot::new();
     {
         let signal = shutdown.signal();
         let clock = FnClock::new(rt.clone(), std::sync::Arc::clone(&parts.clock));
         let engine = engine.clone();
+        let sessions = sessions.clone();
         drop(rt.spawn(async move {
-            timeline::run(&clock, &engine, &signal).await;
+            timeline::run(&clock, &engine, &sessions, &signal).await;
             drop(signal);
         }));
     }
@@ -702,5 +707,6 @@ where
         erasure,
         release: view,
         engine_task,
+        sessions,
     })
 }

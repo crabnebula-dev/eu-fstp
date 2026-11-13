@@ -35,15 +35,28 @@
 //!   occurrence. A retry of an occurrence whose commit the engine has
 //!   not folded yet reuses its id, so the store answers it as a
 //!   duplicate.
+//!
+//! `EndSessionsAtBindingEnd` names the sessions it ends from the live rows
+//! of `auth.session`, an operational table that no ledger record holds
+//! (design section 4.2, int3). The timeline reads them through a
+//! [`SessionSource`] for the account, as a route reads its own. Without
+//! rows the decider refuses the command as a missing input, and the next
+//! tick tries again. The gate refuses those sessions from the end instant
+//! on in any case (design section 5.4 step 2).
 
 use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use fstp_auth::SessionView;
+use fstp_auth::session::SessionLogin;
 use fstp_cell_core::driver::Done;
 use fstp_cell_core::gate::{self, Action, Deny};
 use fstp_cell_core::ops::OpsCommand;
 use fstp_cell_core::timeline::{MessageBody, TimelineCommand};
-use fstp_cell_core::{CellCommand, CellState, SystemTask, system_command_id};
+use fstp_cell_core::{CellCommand, CellState, SessionRows, SystemTask, system_command_id};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
 use fstp_rt::ShutdownSignal;
@@ -51,6 +64,105 @@ use fstp_rt::future::{Either, race};
 
 use super::Clock;
 use crate::engine::{CellEngine, EngineError};
+use crate::routes::backend::{Backend, SessionRow};
+
+/// The future of [`SessionSource::sessions_of`].
+pub type RowsFuture<'a> = Pin<Box<dyn Future<Output = Option<SessionRows>> + Send + 'a>>;
+
+/// Where the timeline reads the live session rows of an account for
+/// `EndSessionsAtBindingEnd` (design sections 4.2 and 5.1).
+pub trait SessionSource: Send + Sync {
+    /// The session rows of `account`, or `None` when they cannot be read
+    /// now. Rows are data, not proof: the decider uses only those of
+    /// `account` that started before a due end and that the ledger has
+    /// not ended.
+    fn sessions_of(&self, account: AccountId) -> RowsFuture<'_>;
+}
+
+/// A source that never has rows. The decider then refuses
+/// `EndSessionsAtBindingEnd` as a missing input.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoSessions;
+
+impl SessionSource for NoSessions {
+    fn sessions_of(&self, _account: AccountId) -> RowsFuture<'_> {
+        Box::pin(std::future::ready(None))
+    }
+}
+
+/// A source set once after start: the cell's route backend exists only
+/// after the engine started (`crate::process`). Until it is set, it has
+/// no rows.
+#[derive(Clone, Default)]
+pub struct SessionSlot(Arc<OnceLock<Arc<dyn SessionSource>>>);
+
+impl SessionSlot {
+    /// An empty slot.
+    pub fn new() -> SessionSlot {
+        SessionSlot::default()
+    }
+
+    /// Sets the source. A second call leaves the first source in place
+    /// and returns `false`.
+    pub fn set(&self, source: Arc<dyn SessionSource>) -> bool {
+        self.0.set(source).is_ok()
+    }
+}
+
+impl std::fmt::Debug for SessionSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionSlot")
+            .field("set", &self.0.get().is_some())
+            .finish()
+    }
+}
+
+impl SessionSource for SessionSlot {
+    fn sessions_of(&self, account: AccountId) -> RowsFuture<'_> {
+        match self.0.get() {
+            Some(source) => source.sessions_of(account),
+            None => Box::pin(std::future::ready(None)),
+        }
+    }
+}
+
+/// The rows of a route backend, read through [`Backend::sessions_of`].
+#[derive(Clone, Debug)]
+pub struct BackendSessions<B>(pub Arc<B>);
+
+impl<B: Backend> SessionSource for BackendSessions<B> {
+    fn sessions_of(&self, account: AccountId) -> RowsFuture<'_> {
+        Box::pin(async move {
+            let rows = self.0.sessions_of(account).await.ok()?;
+            Some(session_rows(&rows))
+        })
+    }
+}
+
+/// The session rows `rows` as the decider reads them, with the credential
+/// each passkey session logged in with.
+pub fn session_rows(rows: &[SessionRow]) -> SessionRows {
+    let live = rows
+        .iter()
+        .map(|r| SessionView {
+            id: r.id,
+            account: r.account,
+            method: r.method,
+            started: r.started,
+            last_used: r.last_used,
+        })
+        .collect();
+    let logins = rows
+        .iter()
+        .filter_map(|r| {
+            r.credential.as_ref().map(|c| SessionLogin {
+                session: r.id,
+                credential: c.clone(),
+            })
+        })
+        .collect();
+    SessionRows::new(live, logins)
+}
 
 /// The domain label of timeline command ids.
 pub const ID_LABEL: &[u8] = b"fstp-timeline-v1";
@@ -138,19 +250,30 @@ pub struct TickItem {
 }
 
 /// Runs one tick at `now`: issues every due command in order, then the
-/// timeline step ([`timeline_step`]).
+/// timeline step ([`timeline_step`]). `EndSessionsAtBindingEnd` carries
+/// the account's rows from `sessions`.
 ///
 /// The four sweep kinds of `fstp_engine::sweep` are left out of the first
 /// pass. The timeline fires each in one entry with its `EventFired`
 /// record (M6 design section 4, D13), so the cell has one issuer of them.
-pub async fn tick(engine: &CellEngine, now: Timestamp) -> Vec<TickItem> {
+pub async fn tick<S: SessionSource + ?Sized>(
+    engine: &CellEngine,
+    sessions: &S,
+    now: Timestamp,
+) -> Vec<TickItem> {
     let due = due_commands(&engine.state(), now);
     let mut out = Vec::with_capacity(due.len());
     for (command, id) in due {
         if is_sweep(&command) {
             continue;
         }
-        let result = issue(engine, command.clone(), id, Vec::new(), now).await;
+        let rows = match &command {
+            CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }) => {
+                sessions.sessions_of(*account).await
+            }
+            _ => None,
+        };
+        let result = issue_with(engine, command.clone(), id, Vec::new(), rows, now).await;
         out.push(TickItem {
             command,
             id,
@@ -216,6 +339,18 @@ async fn issue(
     bodies: Vec<MessageBody>,
     now: Timestamp,
 ) -> Issued {
+    issue_with(engine, command, id, bodies, None, now).await
+}
+
+/// [`issue`] with the session rows `rows` of `EndSessionsAtBindingEnd`.
+async fn issue_with(
+    engine: &CellEngine,
+    command: CellCommand,
+    id: [u8; 16],
+    bodies: Vec<MessageBody>,
+    rows: Option<SessionRows>,
+    now: Timestamp,
+) -> Issued {
     let state = engine.state();
     let admitted = gate::admit_system(
         &state,
@@ -224,19 +359,30 @@ async fn issue(
         id,
         now,
     );
-    match admitted {
-        Err(d) => Issued::Denied(d),
-        Ok(a) if bodies.is_empty() => Issued::Ran(engine.execute(a).await),
-        Ok(a) => Issued::Ran(engine.execute(a.with_outbox(bodies)).await),
+    let mut a = match admitted {
+        Err(d) => return Issued::Denied(d),
+        Ok(a) => a,
+    };
+    if let Some(rows) = rows {
+        a = a.with_sessions(rows);
     }
+    if !bodies.is_empty() {
+        a = a.with_outbox(bodies);
+    }
+    Issued::Ran(engine.execute(a).await)
 }
 
 /// Runs the timeline every [`TICK`] until `stop` is triggered.
-pub async fn run<C: Clock>(clock: &C, engine: &CellEngine, stop: &ShutdownSignal) {
+pub async fn run<C: Clock, S: SessionSource + ?Sized>(
+    clock: &C,
+    engine: &CellEngine,
+    sessions: &S,
+    stop: &ShutdownSignal,
+) {
     let step = i64::try_from(TICK.as_micros()).unwrap_or(i64::MAX);
     loop {
         let now = clock.now();
-        let _ = tick(engine, Timestamp::from_micros(now)).await;
+        let _ = tick(engine, sessions, Timestamp::from_micros(now)).await;
         let next = now.saturating_add(step);
         match race(stop.notified(), clock.sleep_until(next)).await {
             Either::Left(()) => return,

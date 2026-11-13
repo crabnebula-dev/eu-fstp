@@ -527,6 +527,14 @@ fn release_record_json(r: &ReleaseRecord) -> Value {
                 ("proposal", dec_u128(*proposal)),
             ],
         ),
+        ReleaseRecord::IdentityDownloadIssued { id, proposal, by } => tagged(
+            "IdentityDownloadIssued",
+            vec![
+                ("by", account_json(*by)),
+                ("id", hex(id)),
+                ("proposal", dec_u128(*proposal)),
+            ],
+        ),
     }
 }
 
@@ -545,6 +553,14 @@ fn release_record(v: &Value) -> Result<ReleaseRecord, FromJsonError> {
         "IdentityReleaseIssued" => {
             fields(o, &["by", "id", "proposal"])?;
             Ok(ReleaseRecord::IdentityReleaseIssued {
+                id: array_from(o, "id")?,
+                proposal: u128_from(o, "proposal")?,
+                by: account_from(o, "by")?,
+            })
+        }
+        "IdentityDownloadIssued" => {
+            fields(o, &["by", "id", "proposal"])?;
+            Ok(ReleaseRecord::IdentityDownloadIssued {
                 id: array_from(o, "id")?,
                 proposal: u128_from(o, "proposal")?,
                 by: account_from(o, "by")?,
@@ -1207,6 +1223,10 @@ fn release_command_json(c: &ReleaseCommand) -> Value {
             "IssueReleaseTicket",
             vec![("proposal", dec_u128(*proposal))],
         ),
+        ReleaseCommand::IssueDownloadTicket { proposal } => tagged(
+            "IssueDownloadTicket",
+            vec![("proposal", dec_u128(*proposal))],
+        ),
         ReleaseCommand::IssueWriteTicket { kind } => tagged(
             "IssueWriteTicket",
             vec![("kind", Value::Number(Number::from(*kind)))],
@@ -1224,6 +1244,12 @@ fn release_command(v: &Value) -> Result<ReleaseCommand, FromJsonError> {
         "IssueReleaseTicket" => {
             fields(o, &["proposal"])?;
             Ok(ReleaseCommand::IssueReleaseTicket {
+                proposal: u128_from(o, "proposal")?,
+            })
+        }
+        "IssueDownloadTicket" => {
+            fields(o, &["proposal"])?;
+            Ok(ReleaseCommand::IssueDownloadTicket {
                 proposal: u128_from(o, "proposal")?,
             })
         }

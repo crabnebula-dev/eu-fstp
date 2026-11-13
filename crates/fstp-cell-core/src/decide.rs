@@ -1807,7 +1807,9 @@ fn decide_release(
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     let at = now.micros();
     match cmd {
-        ReleaseCommand::IssueReleaseTicket { proposal } => {
+        ReleaseCommand::IssueReleaseTicket { proposal }
+        | ReleaseCommand::IssueDownloadTicket { proposal } => {
+            let download = matches!(cmd, ReleaseCommand::IssueDownloadTicket { .. });
             let p = ProposalId::from_raw(*proposal);
             let core = &s.engine().core;
             let (call, _) = s.proposal(p).ok_or_else(unknown)?;
@@ -1828,19 +1830,28 @@ fn decide_release(
             if !RELEASE_STATES.contains(&state) {
                 return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
             }
-            let id = derive_id(b"release", command, actor, at, &proposal.to_be_bytes());
+            let label: &[u8] = if download { b"download" } else { b"release" };
+            let id = derive_id(label, command, actor, at, &proposal.to_be_bytes());
             if s.ticket_issued(id) {
                 return Err(reused());
             }
             // The record names the proposal and the account, so the read of
             // identity attributes is logged (R-AU-01, design section 6.5).
-            Ok(vec![CellRecord::Release(
+            // Its kind names the scope.
+            let record = if download {
+                ReleaseRecord::IdentityDownloadIssued {
+                    id,
+                    proposal: *proposal,
+                    by: actor,
+                }
+            } else {
                 ReleaseRecord::IdentityReleaseIssued {
                     id,
                     proposal: *proposal,
                     by: actor,
-                },
-            )])
+                }
+            };
+            Ok(vec![CellRecord::Release(record)])
         }
         ReleaseCommand::IssueWriteTicket { kind } => match *kind {
             WRITE_KIND_GUARDIAN_CONSENT => {

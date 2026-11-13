@@ -11,6 +11,15 @@ pub enum ReleaseCommand {
         /// The proposal.
         proposal: u128,
     },
+    /// Issue a release ticket with the download scope: the released
+    /// fields may be saved as a file. It is the high-risk action
+    /// `IdentityDownload` (ADR-008, ADR-009 "Releases", design sections 6.5
+    /// and 8.7), so it is a command of its own and the gate asks for a
+    /// step-up by its kind.
+    IssueDownloadTicket {
+        /// The proposal.
+        proposal: u128,
+    },
     /// Issue a write ticket.
     IssueWriteTicket {
         /// The write kind.
@@ -43,10 +52,20 @@ pub enum ReleaseRecord {
     /// issued, so the read is logged with who asked for it and for which
     /// proposal (R-AU-01, design section 6.5, ADR-009).
     ///
-    /// Reading, interim pending Daniel: `IssueReleaseTicket` names no
-    /// scope yet, so the record names none. It gains the scope once the
-    /// command carries one (design section 8.7, `IdentityDownload`).
+    /// The view scope. A download is `IdentityDownloadIssued`.
     IdentityReleaseIssued {
+        /// The ticket id.
+        id: [u8; 16],
+        /// The proposal whose identity attributes the ticket releases.
+        proposal: u128,
+        /// The account the ticket was issued to.
+        by: AccountId,
+    },
+    /// A release ticket with the download scope was issued
+    /// (`IssueDownloadTicket`). It names the proposal and the account, as
+    /// `IdentityReleaseIssued` does, and its kind names the scope, so the
+    /// log tells a download from a view (R-AU-01, design section 6.5).
+    IdentityDownloadIssued {
         /// The ticket id.
         id: [u8; 16],
         /// The proposal whose identity attributes the ticket releases.

@@ -629,6 +629,13 @@ where
             .with_shell(creator_shell)
             .with_proof_mail(proof_mail),
     );
+    // The timeline reads `auth.session` through the route backend for
+    // `EndSessionsAtBindingEnd` (design sections 4.2 and 5.1).
+    let _ = started
+        .sessions
+        .set(Arc::new(crate::tasks::timeline::BackendSessions(
+            Arc::clone(&backend),
+        )));
     let front_cfg = FrontConfig {
         cell,
         host: host.clone(),

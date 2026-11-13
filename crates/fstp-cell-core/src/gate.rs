@@ -229,6 +229,9 @@ fn cell_entry(c: &CellCommand) -> Option<&'static str> {
         CellCommand::Tenant(TenantCommand::EndTenantAdmin { .. }) => Some("EndTenantAdmin"),
         CellCommand::Tenant(TenantCommand::ApproveSelfGrant { .. }) => Some("ApproveSelfGrant"),
         CellCommand::Tenant(TenantCommand::SetLoginPolicy { .. }) => Some("SetLoginPolicy"),
+        CellCommand::Release(crate::release::ReleaseCommand::IssueDownloadTicket { .. }) => {
+            Some("IdentityDownload")
+        }
         CellCommand::Ops(crate::ops::OpsCommand::ApproveBreakGlass { .. }) => {
             Some("ApproveBreakGlass")
         }
