@@ -46,6 +46,17 @@
 //! The forwarder copies bytes on loopback and nothing else. Without it the
 //! stack refuses to print URLs that a browser could not log in on.
 //!
+//! # Resolver rules instead of port 443
+//!
+//! `fstp-devstack --resolver-rules` needs neither port 443 nor a
+//! forwarder, as the e2e mode does (`e2e.rs`). It prints the exact
+//! origins with no port, and before them the line `resolver <rules>`.
+//! The rules are `MAP <host> <edge>, MAP id.<host> <edge>`, the form of
+//! Chromium's `--host-resolver-rules`. A browser started with them
+//! reaches the world's edge for both origins, while each page origin
+//! keeps no port. `tests/slice_devstack.rs` runs this mode, so the test
+//! does not need port 443 (M3 exit audit section 7, item 7).
+//!
 //! The binary registers its termination handlers before the world starts,
 //! so a SIGTERM during the start is queued rather than fatal. A world that
 //! does not start, or a URL it cannot give, ends the binary with failure
@@ -151,14 +162,30 @@ fn write_origin_ca(world: &World) -> Result<String, WorldError> {
 }
 
 /// The `<name> <url>` lines of a started world, in the order printed.
-fn announce(world: &World) -> Result<Vec<(&'static str, String)>, WorldError> {
+/// With `resolver`, the cell and vault URLs are the exact origins and a
+/// `resolver` line maps both hosts to the edge (module documentation,
+/// "Resolver rules instead of port 443"). Without it, loopback port 443
+/// must reach the edge.
+fn announce(world: &World, resolver: bool) -> Result<Vec<(&'static str, String)>, WorldError> {
     let cell = world
         .cell(0)
         .ok_or_else(|| WorldError::Store("the one-cell world holds no cell 0".to_owned()))?;
-    let urls = cell.urls()?;
+    let mut urls = cell.urls()?;
     let witness = world.witness_url()?;
     check_enrol_page(cell, &urls.cell)?;
-    check_origins(cell, &urls, world.edge_addr()?)?;
+    let edge = world.edge_addr()?;
+    let mut lines = Vec::new();
+    if resolver {
+        let host = cell.host();
+        urls.cell = format!("https://{host}/");
+        urls.vault = format!("https://id.{host}/");
+        lines.push((
+            "resolver",
+            format!("MAP {host} {edge}, MAP id.{host} {edge}"),
+        ));
+    } else {
+        check_origins(cell, &urls, edge)?;
+    }
     let invitation = cell.first_admin_invitation()?;
     let enrol = format!(
         "{}{ENROL_PAGE}#{}{}",
@@ -167,14 +194,15 @@ fn announce(world: &World) -> Result<Vec<(&'static str, String)>, WorldError> {
         hex(&invitation.second)
     );
     let ca = write_origin_ca(world)?;
-    Ok(vec![
+    lines.extend([
         ("origin-ca", ca),
         ("cell", urls.cell),
         ("vault", urls.vault),
         ("witness", witness),
         ("health", urls.health),
         ("enrol", enrol),
-    ])
+    ]);
+    Ok(lines)
 }
 
 /// `forward <listen port> <edge port>`: copies every connection to
@@ -229,9 +257,10 @@ fn main() -> ExitCode {
         };
     }
     let e2e = args.first().is_some_and(|a| a == "e2e");
-    if !args.is_empty() && !e2e {
+    let resolver = args.as_slice() == ["--resolver-rules"];
+    if !args.is_empty() && !e2e && !resolver {
         eprintln!(
-            "usage: fstp-devstack, fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
+            "usage: fstp-devstack [--resolver-rules], fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
         );
         return ExitCode::from(2);
     }
@@ -286,7 +315,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let lines = match announce(&world) {
+    let lines = match announce(&world, resolver) {
         Ok(lines) => lines,
         Err(e) => {
             eprintln!("fstp-devstack: the world gives no URLs: {e}");

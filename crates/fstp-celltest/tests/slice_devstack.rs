@@ -7,6 +7,12 @@
 //! `enrol`, then the line `ready`. It stops cleanly on SIGTERM. Other
 //! lines are allowed and ignored.
 //!
+//! The test runs `fstp-devstack --resolver-rules`, so it needs no port
+//! 443 (M3 exit audit section 7, item 7, Daniel 2026-11-13). The stack
+//! then prints the exact origins with no port and a line `resolver
+//! <rules>` in the form of Chromium's `--host-resolver-rules`. The test
+//! applies those rules as a browser started with them would.
+//!
 //! Lane W3b wrote this test before the production code. It is red while
 //! the binary refuses to start.
 
@@ -52,6 +58,7 @@ impl Drop for Stack {
 impl Stack {
     fn start() -> Stack {
         let mut child = Command::new(env!("CARGO_BIN_EXE_fstp-devstack"))
+            .arg("--resolver-rules")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -88,7 +95,7 @@ impl Stack {
         self.stderr.lock().unwrap().clone()
     }
 
-    /// The URL lines printed before `ready`.
+    /// The URL lines printed before `ready`, and the `resolver` line.
     fn ready(&mut self) -> BTreeMap<String, String> {
         let deadline = Instant::now() + READY_TIMEOUT;
         let mut urls = BTreeMap::new();
@@ -98,7 +105,7 @@ impl Stack {
                 Ok(line) if line == "ready" => return urls,
                 Ok(line) => {
                     if let Some((name, url)) = line.split_once(' ')
-                        && NAMES.contains(&name)
+                        && (NAMES.contains(&name) || name == "resolver")
                     {
                         urls.insert(name.to_owned(), url.to_owned());
                     }
@@ -195,11 +202,35 @@ fn host_port(url: &str) -> (String, u16) {
     }
 }
 
-/// The addresses a browser on this host reaches `host:port` at. An IP
-/// literal is itself. `localhost` and every name under `.localhost` are
-/// loopback by RFC 6761 section 6.3, which browsers apply without asking
-/// the resolver. Any other name goes to the system resolver.
-fn reached_at(host: &str, port: u16) -> Vec<SocketAddr> {
+/// The resolver rules of a `resolver` line: `MAP <host> <ip>:<port>`
+/// entries separated by commas, as Chromium's `--host-resolver-rules`
+/// takes them. Every entry must have that form.
+fn resolver_rules(line: &str) -> BTreeMap<String, SocketAddr> {
+    line.split(',')
+        .map(|rule| {
+            let mut words = rule.split_whitespace();
+            match (words.next(), words.next(), words.next(), words.next()) {
+                (Some("MAP"), Some(host), Some(to), None) => (
+                    host.to_ascii_lowercase(),
+                    to.parse()
+                        .unwrap_or_else(|_| panic!("resolver rule {rule:?}: bad address")),
+                ),
+                _ => panic!("resolver rule {rule:?} is not MAP <host> <address>"),
+            }
+        })
+        .collect()
+}
+
+/// The addresses a browser on this host, started with `rules`, reaches
+/// `host:port` at. A host that a rule maps is reached at its address
+/// only. An IP literal is itself. `localhost` and every name under
+/// `.localhost` are loopback by RFC 6761 section 6.3, which browsers
+/// apply without asking the resolver. Any other name goes to the system
+/// resolver.
+fn reached_at(host: &str, port: u16, rules: &BTreeMap<String, SocketAddr>) -> Vec<SocketAddr> {
+    if let Some(to) = rules.get(&host.to_ascii_lowercase()) {
+        return vec![*to];
+    }
     if let Ok(ip) = host.parse::<IpAddr>() {
         return vec![SocketAddr::new(ip, port)];
     }
@@ -331,8 +362,12 @@ fn http_get(addr: SocketAddr, path: &str) -> (u16, Vec<u8>) {
 /// enrolment link, then `ready`. The vault origin is `id.<cell host>`.
 /// The enrolment link is on the cell origin and carries a random token
 /// of at least 256 bits, so the stack has no default credential. Its
-/// path is a page the cell's route table serves with `GET`, so the link
-/// opens one. Every printed URL is reached on loopback only (design
+/// path is a `GET` of the cell's page table
+/// (`fstp_cell::routes::page_table`), so the link opens a page. The page
+/// table stays apart from the design section 8.7 table, as I-78 and
+/// Daniel's decision of 2026-11-13 (M3 exit audit section 7, item 7)
+/// keep it. The cell and vault hosts are reached through the printed
+/// resolver rules. Every printed URL is reached on loopback only (design
 /// section 2.3 table, "Loopback"): its host is loopback, a listener
 /// accepts there, and no listener accepts on the port at the host's
 /// own interface addresses. The loopback health listener answers
@@ -370,16 +405,28 @@ fn slice_devstack_serves_healthz_and_stops_on_sigterm() {
         .unwrap_or_default()
         .to_owned();
     assert!(
-        fstp_cell::routes::table()
+        fstp_cell::routes::page_table()
             .iter()
             .any(|r| matches!(r.parts(), ("GET", p, _) if p == enrol_path)),
-        "the enrolment link opens {enrol_path:?}, a page the cell's route table does not serve"
+        "the enrolment link opens {enrol_path:?}, a page the cell's page table does not serve"
     );
+
+    let rules = urls
+        .get("resolver")
+        .map(|line| resolver_rules(line))
+        .unwrap_or_default();
+    for name in ["cell", "vault"] {
+        let host = https_host(&urls[name]);
+        assert!(
+            rules.contains_key(&host),
+            "the resolver rules {rules:?} do not map the {name} host {host}"
+        );
+    }
 
     let interfaces = interface_addresses();
     for name in ["cell", "vault", "witness", "health"] {
         let (host, port) = host_port(&urls[name]);
-        let addrs = reached_at(&host, port);
+        let addrs = reached_at(&host, port, &rules);
         assert!(
             !addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()),
             "design section 2.3: the {name} URL {} is not reached on loopback only: {addrs:?}",
@@ -392,8 +439,11 @@ fn slice_devstack_serves_healthz_and_stops_on_sigterm() {
             "no listener accepts at the {name} URL {} ({addrs:?})",
             urls[name]
         );
-        for ip in &interfaces {
-            let at = SocketAddr::new(*ip, port);
+        for (ip, at_port) in interfaces
+            .iter()
+            .flat_map(|ip| addrs.iter().map(move |a| (ip, a.port())))
+        {
+            let at = SocketAddr::new(*ip, at_port);
             assert!(
                 TcpStream::connect_timeout(&at, Duration::from_secs(2)).is_err(),
                 "design section 2.3: a listener on the {name} port accepts at the interface address {at}"
