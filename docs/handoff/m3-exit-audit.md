@@ -15,7 +15,7 @@ Updated late on 2026-11-13, after the decision lanes of section 7 merged. Local 
 | I-18 | Green | None |
 | I-19 | Green | None |
 | I-20 | Green (vault-change ids keyed per cell, item 4) | None |
-| I-24 | Red: `i24_erasure_entries_are_chained` | Build: the production store and anchorer behind `prod_store_batch` (STORE_SEAM). A lane is on it |
+| I-24 | Green (the production AnchoredStore and anchorer behind `prod_store_batch`) | Design 5.3 names `PgRecordStore` for a serving cell; this path uses `AnchoredStore` |
 | I-38 | Green (licence and update tasks, CrabNebula stand-in) | None |
 | I-39 | Green | None |
 | I-77 | Green (item 6) | None |
