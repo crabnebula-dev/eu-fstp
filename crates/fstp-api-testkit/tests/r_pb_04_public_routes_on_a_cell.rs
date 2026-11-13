@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use fstp_api_core::port::{LoginMethod, TextClass, TextOwner, api_core};
-use fstp_api_testkit::fake::fixture::{LEAD, PX, pending_world};
+use fstp_api_testkit::fake::fixture::{LEAD, PX, World, pending_world, pending_world_pinning};
 use fstp_api_testkit::fake::{FakePorts, port_seams};
 use fstp_http::{Parsed, parse_request};
 use fstp_web::{PUBLIC_CSP, SESSION_COOKIE, WebConfig, WebRouter, limits, parse_origin_header};
@@ -60,7 +60,11 @@ struct Cell {
 }
 
 fn cell() -> Cell {
-    let world = pending_world().unwrap_or_else(|e| panic!("the I-85 world: {e}"));
+    cell_of(pending_world().unwrap_or_else(|e| panic!("the I-85 world: {e}")))
+}
+
+/// The cell over `world`.
+fn cell_of(world: World) -> Cell {
     let seams = port_seams().unwrap_or_else(|e| panic!("{e}"));
     let ports = FakePorts::new(&world, seams).unwrap_or_else(|e| panic!("{e}"));
     let _ = ports.texts.put_now(
@@ -185,5 +189,40 @@ fn r_pb_03_cell_router_public_answers_hold_no_script_and_no_proposal_text() {
                 "{path}: the proposal text reached {body}"
             );
         }
+    }
+}
+
+/// I-69, M9 design section 2.4: a public page served by the cell carries
+/// the funder visibility elements of the profile its programme pins
+/// through P-53, inside the footer. Here every programme pins Horizon
+/// Europe version 1, whose two elements are `acknowledgement` and
+/// `emblem`. The setup world pins no shipped profile, so its pages keep
+/// the platform element only.
+#[test]
+fn i69_cell_public_page_footer_carries_the_pinned_profile_elements() {
+    let he = fstp_programme::FunderProfile::horizon_europe()
+        .policy_ref()
+        .unwrap_or_else(|| panic!("the Horizon Europe P-53 value"));
+    let pinned = cell_of(pending_world_pinning(he).unwrap_or_else(|e| panic!("the world: {e}")));
+    let plain = cell();
+    for path in ["/p/1/", "/p/1/funded", "/p/1/finished"] {
+        let r = get(&pinned, path, false);
+        let body = String::from_utf8_lossy(&r.body);
+        assert_eq!(r.status, 200, "{path}: {body}");
+        let footer = body.split("<footer").nth(1).unwrap_or("");
+        for key in ["acknowledgement", "emblem"] {
+            assert!(
+                footer.contains(&format!("data-mandatory=\"funder_visibility.{key}\"")),
+                "{path}: no {key} element in {footer}"
+            );
+        }
+        assert!(footer.contains("horizon-europe"), "{path}: {footer}");
+        let r = get(&plain, path, false);
+        let body = String::from_utf8_lossy(&r.body);
+        assert!(
+            body.contains("data-mandatory=\"funder_visibility\""),
+            "{path}: {body}"
+        );
+        assert!(!body.contains("funder_visibility."), "{path}: {body}");
     }
 }

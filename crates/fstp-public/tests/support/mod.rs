@@ -36,6 +36,7 @@ use fstp_public::{
 pub(crate) fn chrome() -> Chrome {
     Chrome {
         stylesheet: Some("/p/assets/public.css".to_owned()),
+        funder: None,
     }
 }
 

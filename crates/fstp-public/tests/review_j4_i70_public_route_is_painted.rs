@@ -25,7 +25,10 @@ use support::{count, sample_view};
 #[test]
 fn review_j4_i70_served_public_route_is_painted() {
     // The chrome production uses (`dispatch/public.rs`, `answer`).
-    let served = Chrome { stylesheet: None };
+    let served = Chrome {
+        stylesheet: None,
+        funder: None,
+    };
     let html = render_html(
         &sample_view(true),
         &PublicPage::Call("3".to_owned()),

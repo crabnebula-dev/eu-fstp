@@ -360,7 +360,10 @@ fn r_pb_03_proposal_text_never_reaches_a_public_output() {
     let view = public_view_with(core(&w), PROGRAMME, &t, &all_full(), w.now())
         .unwrap_or_else(|e| panic!("{e}"));
     let mut outputs: Vec<String> = Vec::new();
-    let chrome = Chrome { stylesheet: None };
+    let chrome = Chrome {
+        stylesheet: None,
+        funder: None,
+    };
     let mut pages = vec![
         PublicPage::Programme,
         PublicPage::Funded,
