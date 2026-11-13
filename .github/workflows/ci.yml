@@ -126,8 +126,13 @@ jobs:
             timeout: 60
           - part: api-testkit
             packages: -p fstp-api-testkit
-            skip: t_authz_matrix_direct t_authz_matrix_http
+            skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate
             timeout: 90
+          # I-66: the M-ACTIVATE model check peaks at about 8 GB and runs
+          # about 6 minutes (measured 2026-11-13). Beside the rest of the
+          # api-testkit part it lost its runner three times, so it runs on
+          # a runner of its own. Both tests of the binary run here.
+          - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate, timeout: 60 }
           # Q34 B: HTTP and MCP at the 9-row policy covering array. On CI the
           # shards ran past 50 minutes on 2026-11-12, so each has 100. Measured
           # locally on 4 threads: about 53 minutes in all, so 4 shards.
