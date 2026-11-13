@@ -13,24 +13,24 @@ Status on 2026-11-13. Built milestone by milestone, as `SPEC/09-milestones.md` s
 | M0 | Specification freeze for v1 | Done | Closed |
 | M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done | Closed |
 | M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done | Closed at domain level |
-| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Mostly built | Not green. About 60 tests on `ci/known-red.txt` wait on the test world's slice cycle, the self-hosted witness and the cluster isolation scans. OVHcloud is named in ADR-005 |
+| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, except the cell's licence and update tasks and the self-hosted service steps | Not green. I-16 to I-19, I-78 and I-81 to I-83 are green. I-20, I-24, I-38, I-39, I-77 and I-79 each have red tests; several wait on Daniel's decisions. See `docs/handoff/m3-exit-audit.md` |
 | M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built | Not green. SuperSAFE is built through the creator and the cycle reaches NEGOTIATION in the demo. I-66 and I-67 tests and the authorisation matrix are on the known-red list, and the I-84 MCP matrix run has not finished |
 | M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built | The cycle reaches PAID in the demo. The I-30 to I-33 tests exist. Not yet confirmed in CI |
 | M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests exist. The crash-injection run is not yet confirmed in CI |
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | Built | The I-10, I-11 and I-21 tests exist. No evaluation run against a live model has been reported, so the thresholds are not yet met |
 | M8 | Matrix and WhatsApp | Deferred (B-03, B-05) | None while deferred |
-| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | In part: ML-DSA-65, the I-75 scan and the I-90 sweep, brand tokens and sheet, the mandatory footer, tenant terminology, the SBOM | Not green. Open: grantee publicity choices, the versioned funder profile with the Horizon Europe profile, the notice companion signature, and the exit audit |
+| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | Built: publicity choices, versioned funder profiles with Horizon Europe v1, the notice companion signature, admin branding and terminology screens, the SBOM | Not yet confirmed in CI. `docs/handoff/m9-exit-audit.md` maps each invariant to its tests. I-74 stays open until the Mythos confirmation |
 | M10 | Hardening on a Mythos-tier model | Not started | Needs the Mythos-tier run. Design in `docs/handoff/m10-m12-design.md` |
 | M11 | Pilot with SuperSAFE and a second programme | Not started | Waits on the parties' approval |
 | M12 | Calibration with consented real proposals | Consent records and per-corpus metrics (`fstp-calib`) only | Needs real consented proposals |
 
-CI on `main` passes deps-check, fmt and clippy, the web tests and the SBOM job. The test jobs are red: the known-red gate misreads the test logs, and a D11 test shows a committee member can read a WITHDRAWN proposal without a conflict declaration.
+CI on `main` passes deps-check, fmt and clippy, the web tests and the SBOM job. The known-red gate was fixed on 2026-11-13 and now judges every test part. The authorisation matrix shards, the domain testkit part and the M-ACTIVATE model check run as separate parts. The remaining red tests are listed in `ci/known-red.txt` or in the exit audits.
 
 ### M3: what is open
 
-Built: the cell runtime with its routes, engine, record store and signing, and the control plane protocol and provisioning. Authentication uses passkeys and magic links, with step-up, recovery and first-admin enrolment. The identity vault, the witness and the vault run loops work. Key custody runs through `fstp-keyd`. Every database connection checks the server identity (I-83), and all role grants come from one plan (I-82). ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.
+Built: the cell runtime with its routes, engine, record store and signing; the control plane with its run loops, operator login and cell link; `fstp-pgagent`, which applies the role plan; signup, passkeys, magic links, step-up and recovery; the login email index; the identity vault with its audit chain; the witness with a local file store for self-hosted cells; key custody through `fstp-keyd`; backups sealed with the hybrid KEM; and a test world that runs the call cycle from signup to GRANTED over HTTP. ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.
 
-Open, by lane of `docs/handoff/m3-finish.md`: the HTTP client of the test world, the slice cycle steps, the self-hosted witness, the cell keystore's key operation records, the vault audit chain, the control plane run loops, erasure and backups over a real cycle, the isolation scans, and the exit audit.
+Open: the cell's licence and update tasks and the self-hosted service steps (I-38, I-39), cell erasure, the money and ledger suites over PostgreSQL, and the decisions listed in `docs/handoff/m3-exit-audit.md` section 3.
 
 ### Demo
 
