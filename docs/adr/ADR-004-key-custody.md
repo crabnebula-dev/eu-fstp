@@ -417,7 +417,14 @@ Recorded at first use by lane m3/erase-cell, 2026-11-13. Interim, pending Daniel
 - **Destroying a sign key.** The `Custody` trait keeps its six operations (I-80). Destroying a CA sign key is a separate trait, `fstp_control::erase::SignKeyCustody`, with one operation. It returns a `DestroyReceipt` as `destroy` does. The test custody implements it. `OkmsCustody` and `KeydCustody` do not yet, so cell erasure runs in the test world only.
 - **What is destroyed.** `fstp-control erase-cell` takes the cell's live roots and CA sign keys as input. It refuses a root of another cell, and a root of the ClusterBackup or ControlPlane chain. In production the list comes from `cp.custody_entry` and the backend's own listing, which is not built.
 - **Erasure confirmation.** A composite signature under the context `fstp-cell-erasure-v1`. The signed body holds the cell, the erasure time, the job digest, both approvers, and one entry per destroyed key: chain code (0 for a CA key), handle and receipt. The key is a control-plane composite key, level 2 under chain ControlPlane, handed in by the caller. Its custody placement and rotation follow the staff assertion key.
-- **Order.** The design's step 1 and step 4 run: every key is destroyed, then the confirmation is issued. Steps 2 and 3, dropping the databases and removing the routes, need the destructive `fstp-pgagent` jobs and the edge route removal, which are not built.
+- **Order.** The design's step 1 and step 4 run: every key is destroyed, then the confirmation is issued. Steps 2 and 3, dropping the databases and removing the routes, need the destructive `fstp-pgagent` jobs and the edge route removal, which are not built. Superseded by the record of lane m3/erase-cell-2 in ADR-011 and below.
+
+Recorded at first use by lane m3/erase-cell-2, 2026-11-13. Interim, pending Daniel:
+
+- **Sign key destroy in file custody.** The keyd protocol gains request kind `0x07`: the request id, a handle length octet and the handle. Socket access follows the sign rules by class byte, so the `fstp-cell` socket destroys cell CA keys only and the `fstp-pgagent` socket cluster CA keys only. The usage log records it as operation 7, `destroy-sign-key`, with no root. `KeydCustody::destroy_sign_key` sends it, and `fstp-control` implements `SignKeyCustody` for `KeydCustody` through it. The six operations of `Custody` are unchanged (I-80).
+- **Sign key receipt.** `"FKS1"`, version 1, the handle with a length octet, then the step count and the step codes of a root destroy. The client accepts a receipt only when it lists every step once and in order and names the destroyed handle.
+- **No sign key in `fstp-keyd` yet.** No request creates a sign key, neither the install step that creates the local cluster CA keys nor the cell's first start. So `fstp-keyd` holds none, and a permitted sign key destroy answers `NoSignKey`, as `sign` does. Storing sign keys needs a slot form in the key table beside the root slots, so that a destroy overwrites the key in place. That form is open for Daniel.
+- **OKMS.** `OkmsCustody` still has no sign key destroy, since its network calls wait on Q11.
 
 ### Signing key placement in M3
 

@@ -126,7 +126,7 @@ impl ClientRole {
             | Request::Unwrap { root, .. }
             | Request::Destroy { root, .. }
             | Request::UsageSince { root, .. } => self.chains().contains(&root.chain),
-            Request::Sign { key, .. } => self.signs_with(key),
+            Request::Sign { key, .. } | Request::DestroySignKey { key, .. } => self.signs_with(key),
         }
     }
 }

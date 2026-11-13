@@ -18,8 +18,9 @@
 //! Interim, pending Daniel (ADR-004 record of lane m3/erase-cell):
 //!
 //! - Destroying a CA sign key is [`SignKeyCustody`], outside the six
-//!   operations of the `Custody` trait (I-80). Only the test custody
-//!   implements it yet.
+//!   operations of the `Custody` trait (I-80). The test custody and the
+//!   file custody client implement it. `fstp-keyd` holds no sign key
+//!   yet, so it answers `NoSignKey` (lane m3/erase-cell-2).
 //! - The key list is input. In production it comes from
 //!   `cp.custody_entry` and the backend's listing, which is not built.
 //! - Design steps 2 and 3, dropping the databases and removing the
@@ -95,6 +96,19 @@ pub trait SignKeyCustody: Send + Sync + 'static {
         &self,
         key: &SignKeyRef,
     ) -> impl Future<Output = Result<DestroyReceipt, CustodyError>> + Send;
+}
+
+/// The file custody client destroys a sign key through its own request
+/// (`fstp_custody::KeydCustody::destroy_sign_key`). Interim, pending
+/// Daniel: `fstp-keyd` holds no sign key yet, since no request creates
+/// one, so it answers `NoSignKey`.
+impl SignKeyCustody for fstp_custody::KeydCustody {
+    fn destroy_sign_key(
+        &self,
+        key: &SignKeyRef,
+    ) -> impl Future<Output = Result<DestroyReceipt, CustodyError>> + Send {
+        fstp_custody::KeydCustody::destroy_sign_key(self, key)
+    }
 }
 
 /// The custody keys of one cell that its erasure destroys.

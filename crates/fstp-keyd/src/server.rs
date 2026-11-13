@@ -149,6 +149,13 @@ impl Server {
             } => self.unwrap(*root, aad, wrapped),
             Request::Destroy { root, .. } => self.destroy(*root),
             Request::Sign { .. } => Err(Refusal::NoSignKey),
+            // Interim, pending Daniel: no request creates a sign key yet
+            // (ADR-004 "CA keys in custody", design section 9.5 step 2),
+            // so the server holds none, and a destroy finds none. Once
+            // keys exist, a destroy takes the steps of a root destroy and
+            // answers `SignKeyReceipt::full`, also for a key destroyed
+            // before, as `destroy` does for a root.
+            Request::DestroySignKey { .. } => Err(Refusal::NoSignKey),
             Request::UsageSince { root, cursor, .. } => {
                 let (records, next) = self
                     .usage
@@ -323,6 +330,7 @@ fn op_and_root(request: &Request) -> (u8, Option<RootHandle>) {
         Request::Unwrap { root, .. } => (usage::OP_UNWRAP, Some(*root)),
         Request::Destroy { root, .. } => (usage::OP_DESTROY, Some(*root)),
         Request::Sign { .. } => (usage::OP_SIGN, None),
+        Request::DestroySignKey { .. } => (usage::OP_DESTROY_SIGN_KEY, None),
         Request::UsageSince { root, .. } => (usage::OP_USAGE, Some(*root)),
     }
 }
@@ -1321,6 +1329,52 @@ mod tests {
             unwrap(&mut s, live, &w),
             Response::Unwrapped(Zeroizing::new([4; 32]))
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R-SW-02, ADR-004 "CA keys in custody", R-NF-08: a sign key destroy
+    /// follows the sign rules of each socket role. The cell socket
+    /// reaches cell CA handles only, the pgagent socket cluster CA handles
+    /// only, and every other request is `NotPermitted`. The server holds
+    /// no sign key yet, so a permitted destroy finds none. Each request is
+    /// logged as a sign key destroy with its client and outcome, and no
+    /// root is touched.
+    #[test]
+    fn r_sw_02_keyd_sign_key_destroy_follows_the_sign_rules() {
+        let dir = scratch("destroy-sign-key");
+        let mut s = Server::open(&dir, &pass()).unwrap();
+        let app = create(&mut s, Chain::App, 1);
+        let cell_ca = [fstp_custody::keyd::SIGN_KEY_CELL_CA, b'c'];
+        let cluster_ca = [fstp_custody::keyd::SIGN_KEY_CLUSTER_CA, b'p'];
+        let mut want_log = Vec::new();
+        for role in ClientRole::ALL {
+            for handle in [&cell_ca[..], &cluster_ca[..], b"ca"] {
+                let r = s.handle_as(
+                    role,
+                    &Request::DestroySignKey {
+                        id: ID,
+                        key: handle.to_vec(),
+                    },
+                );
+                let want = if role.signs_with(handle) {
+                    Refusal::NoSignKey
+                } else {
+                    Refusal::NotPermitted
+                };
+                assert_eq!(r, Response::Refused(want), "{role:?} {handle:?}");
+                want_log.push((role.code(), want.code()));
+            }
+        }
+        let log = std::fs::read(dir.join(usage::USAGE_FILE)).unwrap();
+        let got: Vec<(u8, u8)> = log
+            .chunks_exact(usage::RECORD_LEN)
+            .filter(|r| r.get(17) == Some(&usage::OP_DESTROY_SIGN_KEY))
+            .filter_map(|r| Some((*r.get(36)?, *r.get(35)?)))
+            .collect();
+        assert_eq!(got, want_log);
+        let Response::Wrapped(_) = wrap(&mut s, app, [5; 32]) else {
+            panic!("a sign key destroy touched the App root");
+        };
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
