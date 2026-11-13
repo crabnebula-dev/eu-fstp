@@ -57,6 +57,8 @@ fstp-dispatch.workspace = true
 fstp-pgwire.workspace = true
 fstp-tls.workspace = true
 fstp-http.workspace = true
+# The control routes and stack manifest of `fstp-devstack e2e`.
+fstp-json.workspace = true
 # ADR-001 A6: aws-lc-rs ML-KEM-768, ML-DSA-65 and X25519 as test oracles only, with no feature change.
 # A normal dependency, so the library oracles under src/reference can name it.
 # This crate never ships, and layering rule 9 keeps the post-quantum oracles inside it.
@@ -69,7 +71,6 @@ fstp-api-testkit = { path = "../fstp-api-testkit" }
 fstp-contract.workspace = true
 fstp-mail.workspace = true
 fstp-smtp.workspace = true
-fstp-json.workspace = true
 fstp-api-core.workspace = true
 
 [lints]

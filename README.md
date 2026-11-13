@@ -85,6 +85,8 @@ The site runs on your machine only, on loopback, with synthetic data. It needs N
 
 The front door also links the public pages under `/p`, which work with scripts turned off. `docs/handoff/m4-demo.md` gives the click paths of each role.
 
+The Playwright specs run against two stacks. `tools/demo/run.sh e2e` runs every spec of project `demo` against the running demo cell. `tools/devstack/run.sh e2e` starts the real M3 cells of `fstp-devstack e2e`, runs the six root M3 specs of project `devstack` against them, and stops the stack.
+
 ## Repository layout
 
 | Path | Content |

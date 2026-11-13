@@ -189,9 +189,9 @@ function manifestOrError(): StackManifest | StackMissing {
   const path = process.env[MANIFEST_ENV];
   if (path === undefined || path.length === 0) {
     return new StackMissing(
-      `${MANIFEST_ENV} is not set. Start the stack with ` +
-        '`cargo run -p fstp-celltest --bin fstp-devstack -- --e2e-manifest <file>` ' +
-        `(lane W3b) and set ${MANIFEST_ENV}=<file>.`,
+      `${MANIFEST_ENV} is not set. Run the M3 specs with ` +
+        '`tools/devstack/run.sh e2e`, which starts `fstp-devstack e2e --manifest-out <file>` ' +
+        `and sets ${MANIFEST_ENV}=<file>, and the other specs with \`tools/demo/run.sh e2e\`.`,
     );
   }
   try {
@@ -228,6 +228,13 @@ function launchArgs(): string[] {
 // Configuration
 // ---------------------------------------------------------------------------
 
+/**
+ * The M3 browser specs of design section 14.7, at the root of `e2e/`.
+ * They run against `fstp-devstack e2e` only (project `devstack`).
+ */
+const DEVSTACK_SPECS =
+  /(^|[\\/])(i17-vault-origin-release|i20-passkey-not-offered-across-tenants|i77-management-login|r_lg_03_committee_grant_and_add_passkey_need_stepup|r-lg-04-sessions|r-nf-03-auth-and-vault-pages)\.spec\.ts$/;
+
 export default defineConfig({
   testDir: '.',
   testMatch: /.*\.spec\.ts$/,
@@ -250,7 +257,14 @@ export default defineConfig({
     screenshot: 'off',
     serviceWorkers: 'block',
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
+  // Two stacks, one project each. `devstack` holds the M3 browser specs
+  // of design section 14.7, which need the real cell of `fstp-devstack
+  // e2e` (`tools/devstack/run.sh e2e`). `demo` holds every other spec,
+  // which runs against `fstp-e2e-cell` (`tools/demo/run.sh e2e`).
+  projects: [
+    { name: 'devstack', testMatch: DEVSTACK_SPECS, use: { browserName: 'chromium' } },
+    { name: 'demo', testIgnore: DEVSTACK_SPECS, use: { browserName: 'chromium' } },
+  ],
 });
 
 // ---------------------------------------------------------------------------

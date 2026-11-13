@@ -58,6 +58,8 @@
     reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
 )]
 
+mod e2e;
+
 use std::io::Write as _;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::process::ExitCode;
@@ -226,11 +228,27 @@ fn main() -> ExitCode {
             }
         };
     }
-    if !args.is_empty() {
+    let e2e = args.first().is_some_and(|a| a == "e2e");
+    if !args.is_empty() && !e2e {
         eprintln!(
-            "usage: fstp-devstack, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
+            "usage: fstp-devstack, fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
         );
         return ExitCode::from(2);
+    }
+    if e2e {
+        return match auth_pages() {
+            Ok(Some(pages)) => e2e::run(args.get(1..).unwrap_or_default(), pages),
+            Ok(None) => {
+                eprintln!(
+                    "fstp-devstack e2e: the auth pages are not compiled (web/dist/auth, or {AUTH_PAGES_ENV}); run tools/devstack/run.sh e2e"
+                );
+                ExitCode::FAILURE
+            }
+            Err(e) => {
+                eprintln!("fstp-devstack e2e: {e}");
+                ExitCode::FAILURE
+            }
+        };
     }
     let rt = match TokioRuntime::new_multi_thread(2) {
         Ok(rt) => rt,
