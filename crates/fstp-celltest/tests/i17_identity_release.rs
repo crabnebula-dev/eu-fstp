@@ -475,14 +475,23 @@ fn canary_script(canaries: &[Canary]) -> CycleScript {
     CycleScript { steps }
 }
 
-/// The seam of the response scan: `CellHandle` records no HTTP responses
-/// yet (lanes W1a and W3a).
+/// The former seam of the response scan, closed by lane m3/cycle-steps:
+/// `CellHandle` records the replies to sessions (`fstp_celltest::responses`).
 const RESPONSES_SEAM: &str =
     "fstp_celltest::world::CellHandle records no HTTP responses for a session (lanes W1a and W3a)";
 
+/// Every reply cell 0 gave to a session of an account that held a Judging
+/// or Drafting role there. The machine must have read something, so an
+/// empty set is the seam, never a clean scan.
 fn judging_responses(world: &World) -> Result<StoreSet, NotImplemented> {
-    let _ = world;
-    Err(NotImplemented::new(RESPONSES_SEAM))
+    let set = world
+        .cell(0)
+        .and_then(|c| c.judging_and_drafting_responses().ok())
+        .ok_or(NotImplemented::new(RESPONSES_SEAM))?;
+    if set.stores.is_empty() {
+        return Err(NotImplemented::new(RESPONSES_SEAM));
+    }
+    Ok(set)
 }
 
 /// I-17, TH-07 (T-PRIV-CANARY for M3): over a machine of M2 commands and

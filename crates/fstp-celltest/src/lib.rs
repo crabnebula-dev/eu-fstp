@@ -27,6 +27,7 @@ pub mod mc;
 pub mod procmem;
 pub mod reference;
 pub mod relay;
+pub mod responses;
 pub mod scan;
 pub mod seeded_vault;
 pub mod soft_authn;

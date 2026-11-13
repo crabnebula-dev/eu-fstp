@@ -3073,6 +3073,9 @@ pub mod http {
         next_binding: u128,
         /// The model accounts whose verification the client seeded.
         verified: std::collections::BTreeSet<AccountId>,
+        /// The synthetic attribute tuple of each verified model account
+        /// (lane m3/cycle-steps).
+        attributes: BTreeMap<AccountId, Vec<u8>>,
         /// Each recovery case the cell opened: its holder, its email proof
         /// token, and its enrolment token once the email was proven.
         cases: BTreeMap<Vec<u8>, CaseTokens>,
@@ -3201,7 +3204,40 @@ pub mod http {
             if let Some(c) = cookie {
                 r = r.header("cookie", c.0.clone());
             }
-            self.cell.request(&r).map_err(|_| failed())
+            let reply = self.cell.request(&r).map_err(|_| failed())?;
+            // Every reply to a session the client knows is recorded with
+            // the session's cell account (`crate::responses`, I-17).
+            if let Some(c) = cookie {
+                let account = {
+                    let k = self.known();
+                    k.sessions
+                        .get(&c.0)
+                        .and_then(|(model, _)| k.people.get(model))
+                        .map(|p| p.cell)
+                };
+                if let Some(a) = account {
+                    self.cell.responses().record(a, method, path, &reply);
+                }
+            }
+            Ok(reply)
+        }
+
+        /// The model account the client enrolled as the cell account
+        /// `cell`, if any (lane m3/cycle-steps).
+        pub fn model_of(&self, cell: AccountId) -> Option<AccountId> {
+            self.known()
+                .people
+                .iter()
+                .find(|(_, p)| p.cell == cell)
+                .map(|(m, _)| *m)
+        }
+
+        /// Notes that the model account `account` was verified with the
+        /// synthetic attribute tuple `attributes` (design section 6.9), so
+        /// a later conflict can give another account the same identity
+        /// ([`AuthClient::suspend_for_conflict`]).
+        pub fn note_attributes(&self, account: AccountId, attributes: &[u8]) {
+            self.known().attributes.insert(account, attributes.to_vec());
         }
 
         /// The `challenge_id` and challenge of an options reply.
@@ -3771,6 +3807,7 @@ pub mod http {
                     failed()
                 })?;
             self.known().verified.insert(account);
+            self.note_attributes(account, attributes.as_bytes());
             Ok(())
         }
 
