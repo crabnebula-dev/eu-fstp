@@ -48,12 +48,14 @@ use fstp_rt::{Runtime, Shutdown, ShutdownSignal};
 use crate::ControlError;
 use crate::approval::{AgentApprovals, ApprovedJob, DestructiveJob, PinnedApprovers};
 use crate::config::{AGENT_FILES, PgagentConfig, decode_pgagent_config, read_credential};
+use crate::erase::CellDatabases;
 use crate::pg::{CellDatabase, CellSubnet, render_hba};
 use crate::pgagent::{
     APPROVED_VERSION, AgentScope, ApprovedFrame, DbIdent, JOB_VERSION, MAX_APPROVED_LEN,
     PgagentJob, Statement, Target, decode_approved_job, decode_pgagent_job, encode_approved_job,
     encode_pgagent_job,
 };
+use crate::placement::ClusterId;
 use crate::placement::{ClusterKind, PlacementError};
 
 /// The subject CN of the certificate the control-plane CA issues to
@@ -687,6 +689,53 @@ pub async fn send_approved_job<R: Runtime>(
         .await
         .map_err(|e| ControlError::Io(e.kind()))?;
     decode_job_outcome(&reply)
+}
+
+/// The agents of the self-operated clusters, as `fstp-control` reaches
+/// them over their mutual TLS listeners (design section 3.7 step 2).
+pub struct AgentLinks<R: Runtime> {
+    rt: R,
+    tls: fstp_tls::ClientConfig,
+    agents: BTreeMap<ClusterId, (SocketAddr, String)>,
+}
+
+impl<R: Runtime> AgentLinks<R> {
+    /// No agent yet. `tls` presents the `fstp-control` certificate and
+    /// trusts the agents' CA.
+    pub fn new(rt: R, tls: fstp_tls::ClientConfig) -> AgentLinks<R> {
+        AgentLinks {
+            rt,
+            tls,
+            agents: BTreeMap::new(),
+        }
+    }
+
+    /// Adds the agent of `cluster` at `addr`, whose certificate carries
+    /// `server_name`.
+    pub fn add(&mut self, cluster: ClusterId, addr: SocketAddr, server_name: &str) {
+        self.agents.insert(cluster, (addr, server_name.to_owned()));
+    }
+
+    fn agent(&self, cluster: ClusterId) -> Result<&(SocketAddr, String), ControlError> {
+        self.agents
+            .get(&cluster)
+            .ok_or(ControlError::Job("no agent for the cluster"))
+    }
+}
+
+impl<R: Runtime> CellDatabases for AgentLinks<R> {
+    async fn run_approved(&self, job: &ApprovedJob) -> Result<JobOutcome, ControlError> {
+        let DestructiveJob::Pgagent(a) = job.job() else {
+            return Err(ControlError::ApprovalRequired);
+        };
+        let (addr, name) = self.agent(a.cluster())?;
+        send_approved_job(&self.rt, *addr, name, &self.tls, job).await
+    }
+
+    async fn run(&self, cluster: ClusterId, job: &PgagentJob) -> Result<JobOutcome, ControlError> {
+        let (addr, name) = self.agent(cluster)?;
+        send_job(&self.rt, *addr, name, &self.tls, job).await
+    }
 }
 
 /// Serves until a termination signal, then drains (ADR-002, design

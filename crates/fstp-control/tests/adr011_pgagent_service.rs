@@ -510,8 +510,12 @@ mod approved {
         }
 
         fn pinned(&self) -> PinnedApprovers {
+            self.pinned_on(CLUSTER)
+        }
+
+        fn pinned_on(&self, cluster: ClusterId) -> PinnedApprovers {
             PinnedApprovers {
-                cluster: CLUSTER,
+                cluster,
                 operator_host: HOST.to_owned(),
                 staff: vec![self.a.0.pinned(), self.b.0.pinned()],
             }
@@ -520,7 +524,11 @@ mod approved {
         /// Both approve `job` on the application cluster, and the first
         /// asks for it.
         fn approved(&mut self, job: PgagentJob) -> ApprovedJob {
-            let job = DestructiveJob::pgagent(CLUSTER, job).unwrap();
+            self.approve(DestructiveJob::pgagent(CLUSTER, job).unwrap())
+        }
+
+        /// Both approve `job`, and the first asks for it.
+        fn approve(&mut self, job: DestructiveJob) -> ApprovedJob {
             for (p, s) in [&mut self.a, &mut self.b] {
                 let c = self.login.begin_approval(*s, &job, now()).unwrap();
                 let assertion = p.assert(&c);
@@ -720,5 +728,278 @@ mod approved {
         assert_eq!(databases(cell), "0");
         let roles_job = ops.approved(PgagentJob::DropRoles(d));
         assert_eq!(send_approved(agent, &roles_job), JobOutcome::Done);
+    }
+
+    /// The vault server of these tests, with `vault` as its OU.
+    fn vault_server() -> &'static PgServer {
+        PgServer::shared_named("agentvault", "vault").unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// A custody that holds handles only and destroys each once.
+    #[derive(Default)]
+    struct Handles {
+        live: std::sync::Mutex<BTreeSet<Vec<u8>>>,
+    }
+
+    impl Handles {
+        fn gone(
+            &self,
+            h: &[u8],
+        ) -> Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError> {
+            if self.live.lock().unwrap().remove(h) {
+                Ok(fstp_custody::DestroyReceipt(h.to_vec()))
+            } else {
+                Err(fstp_custody::CustodyError::Refused(
+                    fstp_custody::Refusal::UnknownRoot,
+                ))
+            }
+        }
+    }
+
+    impl fstp_custody::Custody for Handles {
+        fn create_root(
+            &self,
+            _label: fstp_custody::RootLabel,
+        ) -> impl Future<Output = Result<fstp_custody::RootRef, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented(
+                "create_root",
+            )))
+        }
+        fn wrap(
+            &self,
+            _root: &fstp_custody::RootRef,
+            _key: &fstp_custody::SealKey,
+            _aad: &fstp_custody::Aad,
+        ) -> impl Future<Output = Result<fstp_custody::WrappedSealKey, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented("wrap")))
+        }
+        fn unwrap(
+            &self,
+            _root: &fstp_custody::RootRef,
+            _w: &fstp_custody::WrappedSealKey,
+            _aad: &fstp_custody::Aad,
+        ) -> impl Future<Output = Result<fstp_custody::SealKey, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented("unwrap")))
+        }
+        fn destroy(
+            &self,
+            root: &fstp_custody::RootRef,
+        ) -> impl Future<Output = Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(self.gone(&root.handle.0))
+        }
+        fn sign(
+            &self,
+            _key: &fstp_custody::SignKeyRef,
+            _digest: &[u8; 32],
+        ) -> impl Future<Output = Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Err(fstp_custody::CustodyError::NotImplemented("sign")))
+        }
+        fn usage_since(
+            &self,
+            _root: &fstp_custody::RootRef,
+            _cursor: fstp_custody::UsageCursor,
+        ) -> impl Future<Output = Result<fstp_custody::UsagePage, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(Ok(fstp_custody::UsagePage::default()))
+        }
+    }
+
+    impl fstp_control::erase::SignKeyCustody for Handles {
+        fn destroy_sign_key(
+            &self,
+            key: &fstp_custody::SignKeyRef,
+        ) -> impl Future<Output = Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError>> + Send
+        {
+            std::future::ready(self.gone(&key.handle.0))
+        }
+    }
+
+    struct Edge(fstp_edge::LiveRoutes);
+
+    impl fstp_control::erase::EdgeRoutes for Edge {
+        fn remove_cell(
+            &self,
+            cell: CellId,
+        ) -> impl Future<Output = Result<u16, fstp_control::ControlError>> {
+            let n = self.0.remove_cell_by_id(&cell.0);
+            std::future::ready(Ok(u16::try_from(n).unwrap()))
+        }
+    }
+
+    /// Creates both databases of `cell` and their roles, each through the
+    /// agent of its cluster without approvers.
+    fn create_both(cell: CellId, app: SocketAddr, vault: SocketAddr) {
+        let tls = control_tls(&pki().ca, "fstp_control");
+        let p = placement();
+        let (app_id, _) = p.clusters();
+        for (cluster, job) in database_jobs(cell, &p) {
+            if job == PgagentJob::HardenCluster {
+                continue;
+            }
+            let addr = if cluster == app_id { app } else { vault };
+            assert_eq!(send(addr, &tls, &job), JobOutcome::Done, "{job:?}");
+        }
+        for addr in [app, vault] {
+            assert_eq!(send(addr, &tls, &PgagentJob::WriteHba), JobOutcome::Done);
+        }
+    }
+
+    fn counts(server: &PgServer, cell: CellId, db: CellDatabase) -> [String; 3] {
+        let name = database_name(db, cell);
+        let prefix = &name[..2];
+        let hex = fstp_control::pg::cell_hex(cell);
+        let q = |sql: String| server.psql("postgres", &sql).unwrap();
+        [
+            q(format!(
+                "SELECT count(*) FROM pg_database WHERE datname = '{name}'"
+            )),
+            q(format!(
+                "SELECT count(*) FROM pg_roles WHERE rolname LIKE '{}\\_{hex}\\_%'",
+                &prefix[..1]
+            )),
+            q(format!(
+                "SELECT count(*) FROM pg_hba_file_rules WHERE '{name}' = ANY(database)"
+            )),
+        ]
+    }
+
+    /// R-SW-02, design section 3.7 steps 1 to 4, ADR-011, TH-48: the whole
+    /// erasure over real agents of an application and a vault cluster.
+    /// Two operators approve the erasure and the four drops. The job
+    /// destroys every key, then each agent checks its drops' approvals
+    /// itself and drops the cell's database, roles and `pg_hba` lines,
+    /// then the edge loses both routes of the cell. Each step is in the
+    /// operator login's log, and the confirmation verifies.
+    #[test]
+    fn r_sw_02_erase_cell_runs_steps_one_to_three_over_real_agents() {
+        let _serial = serial();
+        let cell = CellId([0xf3; 16]);
+        let p = placement();
+        let (app_id, vault_id) = p.clusters();
+        let mut ops = Operators::new();
+        let app = start_agent_with(
+            server(),
+            ClusterKind::Application,
+            Some(ops.pinned_on(app_id)),
+        );
+        let vault = start_agent_with(
+            vault_server(),
+            ClusterKind::Vault,
+            Some(ops.pinned_on(vault_id)),
+        );
+        create_both(cell, app, vault);
+        for (s, db) in [
+            (server(), CellDatabase::App),
+            (vault_server(), CellDatabase::Vault),
+        ] {
+            let [d, r, h] = counts(s, cell, db);
+            assert_eq!(d, "1");
+            assert_ne!(r, "0");
+            assert_ne!(h, "0");
+        }
+
+        let erase = ops.approve(DestructiveJob::EraseCell { cell });
+        let drops: Vec<ApprovedJob> = fstp_control::erase::database_drop_jobs(cell, &p)
+            .into_iter()
+            .map(|(cluster, job)| ops.approve(DestructiveJob::pgagent(cluster, job).unwrap()))
+            .collect();
+
+        let fcell = Some(fstp_custody::CellId(cell.0));
+        let root = |chain, h: u8| fstp_custody::RootRef {
+            backend: fstp_custody::BackendId::Simulator,
+            cell: fcell,
+            chain,
+            epoch: fstp_custody::Epoch(1),
+            handle: fstp_custody::CustodyHandle(vec![h; 16]),
+        };
+        let keys = fstp_control::erase::CellKeys {
+            roots: vec![
+                root(fstp_custody::Chain::App, 1),
+                root(fstp_custody::Chain::Vault, 2),
+                root(fstp_custody::Chain::CellBackup, 3),
+            ],
+            ca: vec![fstp_custody::SignKeyRef {
+                backend: fstp_custody::BackendId::Simulator,
+                handle: fstp_custody::CustodyHandle(vec![4; 16]),
+            }],
+        };
+        let custody = Handles::default();
+        custody
+            .live
+            .lock()
+            .unwrap()
+            .extend((1..=4).map(|h| vec![h; 16]));
+
+        let mut links = fstp_control::agent::AgentLinks::new(
+            rt().clone(),
+            control_tls(&pki().ca, "fstp_control"),
+        );
+        links.add(app_id, app, "localhost");
+        links.add(vault_id, vault, "localhost");
+
+        let routes = fstp_edge::LiveRoutes::default();
+        let ep = |port| fstp_edge::CellEndpoint {
+            cell: cell.0,
+            address: SocketAddr::from((Ipv4Addr::new(10, 0, 3, 1), port)),
+            tls_name: "tunnel.cell.internal".to_owned(),
+        };
+        routes
+            .add_cell(
+                fstp_edge::HostName::parse(b"erased.example").unwrap(),
+                ep(8443),
+                ep(9443),
+            )
+            .unwrap();
+        let edge = Edge(routes);
+
+        let signer = fstp_crypto::composite::generate().unwrap();
+        let at = now();
+        let confirmation = rt()
+            .block_on(fstp_control::erase::erase_cell_steps(
+                &custody,
+                &links,
+                &edge,
+                &erase,
+                &drops,
+                &p,
+                &keys,
+                &signer,
+                at,
+                |e| match e {
+                    fstp_control::erase::ErasureEvent::CustodyCall(id) => {
+                        ops.login.log_custody_call(&erase, id, at);
+                    }
+                    fstp_control::erase::ErasureEvent::Step(s) => ops.login.log_step(&erase, s, at),
+                },
+            ))
+            .unwrap();
+        assert!(fstp_control::erase::verify_erasure_confirmation(
+            &signer.public_key().to_bytes(),
+            &confirmation
+        ));
+        assert!(custody.live.lock().unwrap().is_empty());
+        for (s, db) in [
+            (server(), CellDatabase::App),
+            (vault_server(), CellDatabase::Vault),
+        ] {
+            assert_eq!(
+                counts(s, cell, db),
+                ["0", "0", "0"].map(str::to_owned),
+                "{db:?}"
+            );
+        }
+        assert!(edge.0.current().is_empty());
+        let steps = ops
+            .login
+            .approval_log()
+            .iter()
+            .filter(|e| matches!(e, fstp_control::approval::ApprovalEvent::Step { .. }))
+            .count();
+        assert_eq!(steps, 8);
     }
 }

@@ -20,10 +20,12 @@
 //! - **The confirmation** is kept with the cell, and
 //!   [`World::cell_erasure`] gives it with the control plane's public key.
 //!
-//! Interim, pending Daniel: design steps 2 and 3, dropping the cell's
-//! databases and removing its routes, do not run, since the destructive
-//! `fstp-pgagent` jobs and the edge route removal are not built. The cell
-//! keeps running with its keys gone.
+//! Interim, pending Daniel: the world runs no `fstp-pgagent` and no edge,
+//! so it runs design steps 1 and 4 only, through `erase_cell`. Steps 1 to
+//! 3 in order run through `fstp_control::erase::erase_cell_steps` in the
+//! tests of `fstp-control`, over real agents of an application and a
+//! vault cluster (lane m3/erase-cell-2). The world's cell keeps running
+//! with its keys gone.
 
 use std::sync::OnceLock;
 
