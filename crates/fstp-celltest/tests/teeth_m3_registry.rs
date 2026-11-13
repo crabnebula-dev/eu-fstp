@@ -972,13 +972,22 @@ fn selects(filters: &[String], skips: &[String], name: &str) -> bool {
 fn w4_isolation_part_and_workspace_part_run_each_isolation_test_once() {
     let iso = ci_part("isolation-multi-cell");
     let ws = ci_part("workspace");
-    let mut bins = BTreeSet::new();
-    let mut it = iso.packages.iter();
-    while let Some(w) = it.next() {
-        if w == "--test" {
-            bins.insert(format!("{CT}{}.rs", it.next().unwrap()));
+    // The devstack part (M3 exit audit section 7, item 7) runs
+    // slice_devstack after compiling the auth pages, and the workspace
+    // part skips it. It counts like the other parts: each test runs once.
+    let dev = ci_part("devstack");
+    let test_bins = |packages: &[String]| {
+        let mut bins = BTreeSet::new();
+        let mut it = packages.iter();
+        while let Some(w) = it.next() {
+            if w == "--test" {
+                bins.insert(format!("{CT}{}.rs", it.next().unwrap()));
+            }
         }
-    }
+        bins
+    };
+    let bins = test_bins(&iso.packages);
+    let dev_bins = test_bins(&dev.packages);
     assert!(
         iso.packages
             .starts_with(&["-p".to_owned(), "fstp-celltest".to_owned()])
@@ -995,13 +1004,15 @@ fn w4_isolation_part_and_workspace_part_run_each_isolation_test_once() {
         }
         let in_iso = bins.contains(&file) && selects(&iso.filters, &iso.skips, &name);
         let in_ws = selects(&ws.filters, &ws.skips, &name);
+        let in_dev = dev_bins.contains(&file) && selects(&dev.filters, &dev.skips, &name);
         let isolation = name.starts_with("t_iso_")
             || name.starts_with("t_db_iso_")
             || name.starts_with("i80_root_canary_");
-        if in_iso && in_ws {
-            bad.push(format!("{file}: {name} runs in both parts"));
+        let parts = usize::from(in_iso) + usize::from(in_ws) + usize::from(in_dev);
+        if parts > 1 {
+            bad.push(format!("{file}: {name} runs in more than one part"));
         }
-        if !in_iso && !in_ws {
+        if parts == 0 {
             bad.push(format!("{file}: {name} runs in no part"));
         }
         if isolation && !in_iso {
