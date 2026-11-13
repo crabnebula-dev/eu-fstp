@@ -370,6 +370,8 @@ pub enum PortKind {
     RequestPrecheck,
     /// The acknowledgement of the negotiation notice (R-NG-06).
     AcknowledgeNegotiationNotice,
+    /// Marking a notice of the caller's own mailbox read (MB-Q1, ADR-020).
+    MarkMailboxRead,
     /// Ending one of the caller's sessions (R-LG-04).
     EndSession,
     /// Adding a passkey.
@@ -1909,6 +1911,15 @@ pub const OPS: &[OpSpec] = &[
     // Lane m6/mailbox (`docs/handoff/mailbox-design.md`): the caller's own
     // messages, derived from existing state. Web only: no tool (MB-D5).
     OpSpec::read("me.mailbox", RK::GetMyMailbox, "/me/mailbox").class(Personal),
+    // MB-Q1, ADR-020 (Proposed): the caller marks a notice of its own
+    // mailbox read. Web only: no tool (MB-Q4 waits).
+    OpSpec::new(
+        "me.mailbox.mark_read",
+        OpKind::M3Port(PortKind::MarkMailboxRead),
+        Post,
+        "/me/mailbox/read",
+    )
+    .class(Personal),
     OpSpec::new(
         "me.end_session",
         OpKind::M3Port(PortKind::EndSession),

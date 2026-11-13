@@ -38,7 +38,10 @@ pub(super) fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> MailboxV
     payments(call, account, &mut out);
     notices(call, account, &mut out);
     out.retain(|m| admitted(call, m));
-    MailboxView::new(out)
+    let mut view = MailboxView::new(out);
+    // MB-Q1, ADR-020: each notice carries the caller's own read mark.
+    lock(&call.st.marks).apply(account, &mut view);
+    view
 }
 
 /// The target of the read behind `m`'s page (design section 3).

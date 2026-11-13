@@ -731,6 +731,9 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             obj(vec![("account", dec(AccountId::from_raw(990).raw()))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
+        // MB-Q1, ADR-020: an id no world holds as a notice, so the call
+        // ends in the guard refusal `Input` after authorisation.
+        "me.mailbox.mark_read" => obj(vec![("message", s("notice.outcome:1"))]),
         "proposal.declare_affiliations" => obj(vec![("affiliations", s("SYNTHETIC AFFILIATIONS"))]),
         "proposal.state_birth_date" => obj(vec![("date_of_birth", s("1990-01-01"))]),
         "proposal.submit" => obj(vec![("ethics", s("none")), ("notice_version", s("1"))]),

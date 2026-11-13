@@ -92,8 +92,8 @@ export function mailboxCount(): Promise<number | null> {
   return counted;
 }
 
-/** One message as a list item. */
-function item(m: MailMessage): HTMLElement {
+/** One message as a list item. A notice shows its read mark, and an unread one a button to mark it read (MB-Q1, ADR-020). */
+function item(m: MailMessage, reload: () => void): HTMLElement {
   const meta: string[] = [];
   const since = dayOf(m.since);
   if (since !== null) {
@@ -103,41 +103,64 @@ function item(m: MailMessage): HTMLElement {
   if (due !== null) {
     meta.push(mailboxLabel("mailbox.due", { day: due }));
   }
-  const kids: HTMLElement[] = [
-    h("p", { class: "mailbox-what" }, [h("a", { href: m.href, "data-mail-link": m.kind }, [mailboxLabel(labelKey(m.kind), labelArgs(m, MAILBOX_LABELS[labelKey(m.kind)] ?? ""))])]),
-  ];
+  const what: (HTMLElement | string)[] = [h("a", { href: m.href, "data-mail-link": m.kind }, [mailboxLabel(labelKey(m.kind), labelArgs(m, MAILBOX_LABELS[labelKey(m.kind)] ?? ""))])];
+  if (m.read !== null) {
+    what.push(" ", h("span", { class: m.read ? "badge" : "badge badge--info", "data-read": String(m.read) }, [mailboxLabel(m.read ? "mailbox.read" : "mailbox.unread")]));
+  }
+  const kids: HTMLElement[] = [h("p", { class: "mailbox-what" }, what)];
   if (meta.length > 0) {
     kids.push(h("p", { class: "fstp-meta" }, [meta.join(" · ")]));
   }
-  return h("li", { "data-mail": m.id, "data-kind": m.kind, class: m.action ? "mailbox-item mailbox-item--work" : "mailbox-item" }, kids);
+  if (m.read === false) {
+    const b = h("button", { type: "button", class: "btn btn--secondary", "data-mark-read": m.id }, [mailboxLabel("mailbox.mark_read")]) as HTMLButtonElement;
+    b.addEventListener("click", () => {
+      b.disabled = true;
+      void command("me.mailbox.mark_read", [], { message: m.id }, anyObject).then((o) => {
+        if (o.kind === "done") {
+          reload();
+        } else {
+          b.disabled = false;
+        }
+      });
+    });
+    kids.push(h("p", {}, [b]));
+  }
+  const cls = m.action ? "mailbox-item mailbox-item--work" : m.read === false ? "mailbox-item mailbox-item--unread" : "mailbox-item";
+  return h("li", { "data-mail": m.id, "data-kind": m.kind, class: cls }, kids);
 }
 
 /** Mounts the mailbox page. */
 export function mountMailbox(): void {
   const f = frame(mailboxLabel("mailbox.title"));
   f.main.append(h("p", { class: "muted" }, [mailboxLabel("mailbox.intro")]));
-  run(f, async () => {
-    const r = await readMyMailbox();
-    if (!r.ok) {
-      showFailure(f, r.failure);
-      return;
-    }
-    const { work, notices } = split(r.value);
-    f.main.append(
-      h("section", { id: "mailbox-work", "aria-labelledby": "mailbox-work-title" }, [
-        h("h2", { id: "mailbox-work-title" }, [mailboxLabel("mailbox.work"), " ", h("span", { class: "badge badge--info", "data-open": String(r.value.open) }, [String(r.value.open)])]),
-        work.length === 0
-          ? h("p", { id: "mailbox-empty" }, [mailboxLabel("mailbox.empty")])
-          : h("ul", { id: "mailbox-list", class: "fstp-list" }, work.map(item)),
-      ]),
-      h("section", { id: "mailbox-notices", "aria-labelledby": "mailbox-notices-title" }, [
-        h("h2", { id: "mailbox-notices-title" }, [mailboxLabel("mailbox.notices")]),
-        notices.length === 0
-          ? h("p", {}, [mailboxLabel("mailbox.no_notices")])
-          : h("ul", { id: "mailbox-notice-list", class: "fstp-list" }, notices.map(item)),
-      ]),
-    );
-  });
+  const body = h("div", { id: "mailbox-body" }, []);
+  f.main.append(body);
+  const render = (): void => {
+    run(f, async () => {
+      const r = await readMyMailbox();
+      if (!r.ok) {
+        showFailure(f, r.failure);
+        return;
+      }
+      const { work, notices } = split(r.value);
+      const unread = notices.filter((m) => m.read === false).length;
+      body.replaceChildren(
+        h("section", { id: "mailbox-work", "aria-labelledby": "mailbox-work-title" }, [
+          h("h2", { id: "mailbox-work-title" }, [mailboxLabel("mailbox.work"), " ", h("span", { class: "badge badge--info", "data-open": String(r.value.open) }, [String(r.value.open)])]),
+          work.length === 0
+            ? h("p", { id: "mailbox-empty" }, [mailboxLabel("mailbox.empty")])
+            : h("ul", { id: "mailbox-list", class: "fstp-list" }, work.map((m) => item(m, render))),
+        ]),
+        h("section", { id: "mailbox-notices", "aria-labelledby": "mailbox-notices-title" }, [
+          h("h2", { id: "mailbox-notices-title" }, [mailboxLabel("mailbox.notices"), " ", h("span", { class: "badge", "data-unread": String(unread) }, [mailboxLabel("mailbox.unread_count", { count: String(unread) })])]),
+          notices.length === 0
+            ? h("p", {}, [mailboxLabel("mailbox.no_notices")])
+            : h("ul", { id: "mailbox-notice-list", class: "fstp-list" }, notices.map((m) => item(m, render))),
+        ]),
+      );
+    });
+  };
+  render();
 }
 
 // ---------------------------------------------------------------------------

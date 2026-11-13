@@ -19,7 +19,8 @@ import { REPO_DIR, WEB_DIR } from "./support/paths.js";
 function msg(kind: MailKind, action = true): Record<string, unknown> {
   const ids: Record<string, string> = { proposal: "11", call: "12", assignment: "13", round: "14", pending: "17", request: "16", programme: "18", contract: "15" };
   const href = MAILBOX_ROUTES[kind].replace(/\{([a-z_]+)\}/g, (_, n: string) => ids[n] ?? "");
-  return { id: `${kind}:1`, kind, action, href, ...ids };
+  // MB-Q1, ADR-020: a notice carries its read mark, a work message none.
+  return { id: `${kind}:1`, kind, action, href, ...ids, ...(action ? {} : { read: false }) };
 }
 
 function reply(messages: Record<string, unknown>[]): Record<string, unknown> {
@@ -181,5 +182,21 @@ test("i27_mailbox_labels_show_no_internal_ids", () => {
     for (const bad of ["{assignment}", "{request}", "{round}", "{pending}", "{contract}"]) {
       assert(!label.includes(bad), `${k} shows ${bad}`);
     }
+  }
+});
+
+/** MB-Q1, ADR-020, I-27: a notice carries a boolean read mark, a work message none, and the reader refuses either the other way round. */
+test("adr020_i27_mailbox_reader_reads_the_read_mark_of_notices_only", () => {
+  const read = { ...msg("notice.outcome", false), read: true };
+  const ok = readMailbox(reply([msg("contract.sign"), read]));
+  assert(ok !== null, "a read notice reads");
+  eq(ok.messages.map((m) => m.read), [null, true], "work has no mark, the notice its own");
+  const { read: _drop, ...bare } = msg("notice.outcome", false);
+  for (const bad of [
+    reply([bare]),
+    reply([{ ...msg("notice.outcome", false), read: "yes" }]),
+    reply([{ ...msg("contract.sign"), read: false }]),
+  ]) {
+    eq(readMailbox(bad), null, show(bad));
   }
 });

@@ -1522,6 +1522,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // no tool (MB-D5, I-86).
     RefOp::read("me.mailbox", T::None, R::AnyAccount),
     RefOp::act("me.end_session", T::None, R::AnyAccount),
+    // MB-Q1, ADR-020 (Proposed): the caller marks its own notice read.
+    RefOp::act("me.mailbox.mark_read", T::None, R::AnyAccount),
     RefOp::act("me.add_passkey", T::None, R::AnyAccount).hr(),
     RefOp::read("pending.list", T::None, R::AnyAccount),
     RefOp::act("pending.confirm", T::None, R::AnyAccount),

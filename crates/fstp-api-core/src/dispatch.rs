@@ -200,6 +200,8 @@ pub(crate) struct State {
     rates: Mutex<Rates>,
     content: Mutex<ContentStore>,
     journal: Mutex<Journal>,
+    /// The per-account read marks of mailbox notices (MB-Q1, ADR-020).
+    marks: Mutex<crate::mailbox::ReadMarks>,
     /// The verifications begun through this core, so their state reads
     /// "pending" for a bounded time while the vault has not confirmed
     /// them (I-86).
@@ -2109,6 +2111,8 @@ enum PortCall {
     ApproveBreakGlass(BreakGlassId, bool),
     /// The user ends one of their sessions (R-LG-04).
     EndSession(SessionId),
+    /// The user marks a notice of their own mailbox read (MB-Q1, ADR-020).
+    MarkMailboxRead(String),
     /// The user begins an identity verification.
     BeginVerification,
     /// The team saves the private workspace of a draft (I-21).
@@ -2178,6 +2182,24 @@ async fn m3_port<P: Seams>(
         // `/auth/passkeys` route runs them before its 501.
         PortKind::AddPasskey if call.spec.high_risk => PortCall::AddPasskey,
         PortKind::EndSession => PortCall::EndSession(SessionId::from_raw(id("session")?)),
+        PortKind::MarkMailboxRead => {
+            let message = op
+                .request
+                .get("message")
+                .and_then(Value::as_str)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            // ADR-020: only a notice of the caller's own mailbox at this
+            // instant. Any other id gets the one refusal, so the answer
+            // reveals no other account's notices (I-86).
+            let own = mailbox::read(call, account)
+                .messages
+                .iter()
+                .any(|m| !m.kind.action() && m.id() == message);
+            if !own {
+                return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
+            }
+            PortCall::MarkMailboxRead(message.to_owned())
+        }
         PortKind::BeginVerification => PortCall::BeginVerification,
         PortKind::SaveWorkspace => {
             let p = ProposalId::from_raw(id("proposal")?);
@@ -2369,6 +2391,12 @@ async fn m3_port<P: Seams>(
                 Ok(to) => call.accept(ReadModel::Redirect(to.0)),
                 Err(_) => Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle"))),
             }
+        }
+        PortCall::MarkMailboxRead(message) => {
+            if !lock(&call.st.marks).mark(account, &message) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "ADR-020")));
+            }
+            done(Ok(()), "ADR-020")
         }
         PortCall::AcknowledgeNotice(p) => {
             // Kept in memory only until its ledger or outbox record exists

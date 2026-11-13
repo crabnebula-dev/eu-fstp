@@ -1160,6 +1160,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("kind", Shape::Enum(MAILBOX_KINDS)),
                     m("action", Shape::Bool),
                     m("href", Shape::String),
+                    // MB-Q1, ADR-020: a notice's per-account read mark.
+                    opt("read", Shape::Bool),
                     opt("since", Shape::Id),
                     opt("due", Shape::Id),
                     opt("proposal", Shape::Id),

@@ -52,11 +52,13 @@ fn seeder(w: Built) -> Seeder {
 }
 
 /// The members a message may hold (design section 1).
-const MEMBERS: [&str; 14] = [
+const MEMBERS: [&str; 15] = [
     "id",
     "kind",
     "action",
     "href",
+    // MB-Q1 (ADR-020): a notice's read mark.
+    "read",
     "since",
     "due",
     "proposal",
@@ -146,6 +148,14 @@ fn check_reply(v: &Value, texts: &[&str], who: Who) {
             "{who:?}: {} is not {}",
             text(&m, "href"),
             wanted.route()
+        );
+        // MB-Q1 (ADR-020): every notice carries its read mark, and no
+        // work message does.
+        let notice = m.get("action") == Some(&Value::Bool(false));
+        assert_eq!(
+            matches!(m.get("read"), Some(Value::Bool(_))),
+            notice,
+            "read mark of {compact}"
         );
         if m.get("action") == Some(&Value::Bool(true)) {
             work += 1;
@@ -553,4 +563,76 @@ fn r_ev_08_mailbox_ballot_closes_the_voters_message_only() {
     assert!(of_kind(&mailbox(&mut seed, first), "round.vote").is_empty());
     let (second, _) = voters[1];
     assert_eq!(of_kind(&mailbox(&mut seed, second), "round.vote").len(), 1);
+}
+
+/// The `read` mark of message `id` in `v`.
+fn read_mark(v: &Value, id: &str) -> Option<bool> {
+    messages(v)
+        .into_iter()
+        .find(|m| text(m, "id") == id)
+        .and_then(|m| m.get("read").and_then(Value::as_bool))
+}
+
+fn mark(seed: &mut Seeder, who: AccountId, id: &str) -> Result<Value, String> {
+    seed.api(
+        who,
+        POST,
+        "/me/mailbox/read",
+        &obj(vec![("message", s(id))]),
+    )
+}
+
+/// MB-Q1, ADR-020, I-86, I-27 (decided by Daniel on 2026-11-13): a notice
+/// carries a per-account read mark. The lead marks the outcome notice
+/// read; the lead's next mailbox shows it read, another team member's
+/// still shows it unread, and `open` does not change. A work message, an
+/// unknown id and another account's notice are refused with the same
+/// answer, so no answer reveals another account's notices.
+#[test]
+fn adr020_i86_notice_read_mark_is_per_account() {
+    let mut seed = seeder(world(StateTag::NotSelected));
+    let before = mailbox(&mut seed, LEAD);
+    let ids = of_kind(&before, "notice.outcome");
+    assert_eq!(ids.len(), 1, "{}", before.to_compact());
+    let id = ids[0].clone();
+    assert_eq!(read_mark(&before, &id), Some(false));
+    let team = mailbox(&mut seed, TEAM);
+    assert_eq!(read_mark(&team, &id), Some(false), "{}", team.to_compact());
+    mark(&mut seed, LEAD, &id).unwrap_or_else(|e| panic!("{e}"));
+    // A second mark changes nothing (ADR-020: idempotent).
+    mark(&mut seed, LEAD, &id).unwrap_or_else(|e| panic!("{e}"));
+    let after = mailbox(&mut seed, LEAD);
+    check_reply(&after, &WORLD_TEXTS, Who::Lead);
+    assert_eq!(read_mark(&after, &id), Some(true));
+    assert_eq!(after.get("open"), before.get("open"), "MB-D2");
+    assert_eq!(
+        read_mark(&mailbox(&mut seed, TEAM), &id),
+        Some(false),
+        "I-86: the mark is the lead's alone"
+    );
+    // Refused alike: an account without this notice, and an unknown id.
+    for (who, which) in [(UNBOUND, id.as_str()), (LEAD, "notice.outcome:999999")] {
+        let e = mark(&mut seed, who, which).expect_err("refused");
+        assert!(e.contains("not_found") && e.contains("Input"), "{e}");
+    }
+}
+
+/// MB-Q1, ADR-020, MB-D2: a work message closes itself and takes no read
+/// mark, and a malformed body is refused.
+#[test]
+fn adr020_mb_d2_work_messages_take_no_read_mark() {
+    let mut seed = seeder(world(StateTag::Stage2));
+    let v = mailbox(&mut seed, LEAD);
+    let work: Vec<String> = messages(&v)
+        .into_iter()
+        .filter(|m| m.get("action") == Some(&Value::Bool(true)))
+        .map(|m| text(&m, "id").to_owned())
+        .collect();
+    assert!(!work.is_empty(), "{}", v.to_compact());
+    let e = mark(&mut seed, LEAD, &work[0]).expect_err("a work message");
+    assert!(e.contains("not_found") && e.contains("Input"), "{e}");
+    let e = seed
+        .api(LEAD, POST, "/me/mailbox/read", &obj(vec![("id", s("x"))]))
+        .expect_err("a malformed body");
+    assert!(!e.is_empty());
 }

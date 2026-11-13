@@ -98,6 +98,8 @@ export interface MailMessage {
   readonly since: string | null;
   /** When it is due or expires, in microseconds, when known. */
   readonly due: string | null;
+  /** A notice's own read mark (MB-Q1, ADR-020); null for a work message. */
+  readonly read: boolean | null;
   readonly ids: Readonly<Partial<Record<IdMember, string>>>;
 }
 
@@ -124,7 +126,7 @@ function isKind(v: unknown): v is MailKind {
 }
 
 const REQUIRED = ["id", "kind", "action", "href"];
-const OPTIONAL = ["since", "due", ...ID_MEMBERS];
+const OPTIONAL = ["since", "due", "read", ...ID_MEMBERS];
 
 /**
  * Whether `href` is the route `pattern` with each `{name}` filled by the
@@ -185,12 +187,17 @@ function message(v: unknown): MailMessage | null {
   if (since === undefined || due === undefined) {
     return null;
   }
+  // MB-Q1, ADR-020: a notice carries its read mark, a work message none.
+  const read = Object.hasOwn(o, "read") ? o["read"] : null;
+  if (action ? read !== null : typeof read !== "boolean") {
+    return null;
+  }
   // The page must be the route of the kind, filled with the message's
   // own ids, so no reply can send a person elsewhere.
   if (!fills(href, MAILBOX_ROUTES[kind], ids)) {
     return null;
   }
-  return Object.freeze({ id, kind, action, href, since, due, ids: Object.freeze(ids) });
+  return Object.freeze({ id, kind, action, href, since, due, read: read as boolean | null, ids: Object.freeze(ids) });
 }
 
 /**
