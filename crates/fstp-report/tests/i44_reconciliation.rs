@@ -127,6 +127,7 @@ fn i44_periodic_figures_equal_an_independent_fold() {
         let snap = ledger_of(&spec).snapshot();
         let out = generate(
             &snap,
+            &support::he(),
             &Request::PeriodicReportingData {
                 programme: PROGRAMME,
                 periods: &ps,
@@ -186,7 +187,7 @@ fn i44_seeded_mismatch_fails_generation_and_is_listed() {
             identifier: "SYN",
         },
     ] {
-        match generate(&snap, &r) {
+        match generate(&snap, &support::he(), &r) {
             Err(ReportError::Reconciliation(list)) => {
                 let seqs: Vec<u64> = list.iter().map(|m| m.seq.raw()).collect();
                 assert!(

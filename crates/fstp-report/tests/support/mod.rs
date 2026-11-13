@@ -633,3 +633,8 @@ pub(crate) fn periods() -> Vec<Period> {
         },
     ]
 }
+
+/// The shipped Horizon Europe profile, version 1 (P-53).
+pub(crate) fn he() -> fstp_report::FunderProfile {
+    fstp_report::profile::shipped("horizon-europe", 1).unwrap()
+}

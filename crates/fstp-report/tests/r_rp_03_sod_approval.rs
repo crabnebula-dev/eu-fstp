@@ -24,7 +24,7 @@ const SIGNATORY: AccountId = AccountId::from_raw(5_000_000_002);
 
 fn store_with(report: ReportId, by: AccountId) -> ReportStore {
     let snap = ledger_of(&fixed()).snapshot();
-    let out = generate(&snap, &Request::AuditFile { call: CALL }).unwrap();
+    let out = generate(&snap, &support::he(), &Request::AuditFile { call: CALL }).unwrap();
     let mut store = ReportStore::default();
     store.apply(&generated(report, &out, by)).unwrap();
     store
@@ -101,7 +101,12 @@ fn r_rp_03_fold_refuses_self_approval() {
 #[test]
 fn r_rp_03_no_report_is_approved_by_its_generator() {
     let snap = ledger_of(&fixed()).snapshot();
-    let out = generate(&snap, &Request::DeliverableDraft { call: CALL }).unwrap();
+    let out = generate(
+        &snap,
+        &support::he(),
+        &Request::DeliverableDraft { call: CALL },
+    )
+    .unwrap();
     fstp_prop::check("r_rp_03_no_report_is_approved_by_its_generator", |g| {
         let mut store = ReportStore::default();
         let steps = g.vec(0..=24, |g| {

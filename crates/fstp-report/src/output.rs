@@ -1,5 +1,10 @@
-//! The five outputs of the Horizon Europe profile
-//! (`SPEC/03-architecture/funder-reporting.md`, R-RP-04).
+//! The five outputs of `SPEC/03-architecture/funder-reporting.md`
+//! (R-RP-04), generated under a versioned funder profile (M9 design
+//! section 2.5). The profile names the template of each output and the
+//! fields that carry figures. Each field names a ledger fold of
+//! [`Figure`], so every figure is computed here from the reconciled books
+//! (I-44). Members that carry no figure, such as dates and ids, are fixed
+//! by the output kind.
 //!
 //! | Output | Form | Source |
 //! | --- | --- | --- |
@@ -26,15 +31,13 @@ use fstp_domain::time::Timestamp;
 use fstp_json::{Object, ToJson, Value};
 use fstp_money::{Amount, Currency};
 use fstp_pdf::{Block, BlockKind, Document};
-use fstp_report_core::{ReportKind, Scope};
+use fstp_report_core::{ProfilePin, ReportKind, Scope};
 
 use crate::ReportError;
-use crate::books::{Books, reconcile};
+use crate::books::{Books, GrantBook, reconcile};
+use crate::profile::{Figure, FunderProfile, Level, OutputSpec, ProfileError};
 use crate::snapshot::{Snapshot, record_digest};
 use crate::time::{date, utc};
-
-/// The funder profile these outputs belong to (P-53).
-pub const PROFILE: &str = "horizon-europe";
 
 /// A reporting period from the Data Sheet: `start` inclusive, `end`
 /// exclusive.
@@ -114,8 +117,10 @@ pub struct Output {
     pub kind: ReportKind,
     /// What it covers.
     pub scope: Scope,
-    /// The template version.
-    pub template: &'static str,
+    /// The template version, from the profile.
+    pub template: String,
+    /// The funder profile it was generated under (P-53).
+    pub profile: ProfilePin,
     /// The digest of the snapshot it was generated from.
     pub snapshot: ContentDigest,
     /// The content.
@@ -136,35 +141,52 @@ impl Output {
     }
 }
 
-/// Generates one output from `snap` (module documentation).
-pub fn generate(snap: &Snapshot, request: &Request<'_>) -> Result<Output, ReportError> {
+/// What one output is generated under: the profile, its output entry and
+/// the snapshot digest.
+struct Under<'a> {
+    profile: &'a FunderProfile,
+    spec: &'a OutputSpec,
+    snapshot: ContentDigest,
+}
+
+/// Generates one output from `snap` under `profile` (module
+/// documentation). An output the profile does not define is refused.
+pub fn generate(
+    snap: &Snapshot,
+    profile: &FunderProfile,
+    request: &Request<'_>,
+) -> Result<Output, ReportError> {
     let books = reconcile(snap)?;
     let snapshot = snap.digest()?;
-    let (kind, scope, content) = match *request {
+    let kind = request.kind();
+    let spec = profile
+        .output(kind)
+        .ok_or(ReportError::NotInProfile(kind))?;
+    let u = Under {
+        profile,
+        spec,
+        snapshot,
+    };
+    let (scope, content) = match *request {
         Request::CallPublicationRecord { call, identifier } => (
-            ReportKind::CallPublicationRecord,
             Scope::Call(call),
-            Content::Data(publication(&books, call, identifier, snapshot)?),
+            Content::Data(publication(&u, snap, &books, call, identifier)?),
         ),
         Request::OpenCallPackage { call, package } => (
-            ReportKind::OpenCallPackage,
             Scope::Call(call),
-            Content::Document(open_call_package(&books, call, package)?),
+            Content::Document(open_call_package(&u, &books, call, package)?),
         ),
         Request::PeriodicReportingData { programme, periods } => (
-            ReportKind::PeriodicReportingData,
             Scope::Programme(programme),
-            Content::Data(periodic(&books, programme, periods, snapshot)?),
+            Content::Data(periodic(&u, &books, programme, periods)?),
         ),
         Request::AuditFile { call } => (
-            ReportKind::AuditFile,
             Scope::Call(call),
-            Content::Document(audit_file(snap, &books, call, snapshot)?),
+            Content::Document(audit_file(&u, snap, &books, call)?),
         ),
         Request::DeliverableDraft { call } => (
-            ReportKind::DeliverableDraft,
             Scope::Call(call),
-            Content::Document(selection_report(snap, &books, call, snapshot)?),
+            Content::Document(selection_report(&u, snap, &books, call)?),
         ),
     };
     let bytes = match &content {
@@ -178,12 +200,26 @@ pub fn generate(snap: &Snapshot, request: &Request<'_>) -> Result<Output, Report
     Ok(Output {
         kind,
         scope,
-        template: kind.template(),
+        template: spec.template().to_owned(),
+        profile: profile.pin(),
         snapshot,
         content,
         bytes,
         digest,
     })
+}
+
+impl Request<'_> {
+    /// The output this request asks for.
+    pub fn kind(&self) -> ReportKind {
+        match self {
+            Request::CallPublicationRecord { .. } => ReportKind::CallPublicationRecord,
+            Request::OpenCallPackage { .. } => ReportKind::OpenCallPackage,
+            Request::PeriodicReportingData { .. } => ReportKind::PeriodicReportingData,
+            Request::AuditFile { .. } => ReportKind::AuditFile,
+            Request::DeliverableDraft { .. } => ReportKind::DeliverableDraft,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,11 +242,13 @@ fn sub(a: Amount, b: Amount) -> Result<Amount, ReportError> {
     a.checked_sub(b).map_err(|_| ReportError::Money)
 }
 
-fn header(o: &mut Object, kind: ReportKind, snapshot: ContentDigest) {
-    o.insert("profile", s(PROFILE));
-    o.insert("output", s(kind.name()));
-    o.insert("template", s(kind.template()));
-    o.insert("snapshot", s(hex(snapshot)));
+fn header(o: &mut Object, u: &Under<'_>) {
+    o.insert("profile", s(u.profile.id()));
+    o.insert("profile_version", s(u.profile.version().to_string()));
+    o.insert("profile_digest", s(hex(u.profile.digest())));
+    o.insert("output", s(u.spec.kind().name()));
+    o.insert("template", s(u.spec.template()));
+    o.insert("snapshot", s(hex(u.snapshot)));
 }
 
 fn block(kind: BlockKind, text: impl Into<String>) -> Block {
@@ -233,11 +271,61 @@ fn p(t: impl Into<String>) -> Block {
 }
 
 /// The draft status line every document carries until L-09 is checked.
-fn status(kind: ReportKind) -> Block {
+fn status(u: &Under<'_>) -> Block {
     p(format!(
-        "Template {}. Draft for approval by a Financial signatory. Field list not yet checked against the portal forms (L-09).",
-        kind.template()
+        "Template {}. Funder profile {} version {}. Draft for approval by a Financial signatory. Field list not yet checked against the portal forms (L-09).",
+        u.spec.template(),
+        u.profile.id(),
+        u.profile.version()
     ))
+}
+
+/// A figure: an amount of money or a count.
+#[derive(Clone, Copy, Debug)]
+enum Fig {
+    Amount(Amount),
+    Count(u64),
+}
+
+impl Fig {
+    fn count(n: usize) -> Fig {
+        Fig::Count(u64::try_from(n).unwrap_or(u64::MAX))
+    }
+
+    /// The JSON value: amounts as decimal strings (ADR-006), counts as
+    /// integers.
+    fn json(self) -> Value {
+        match self {
+            Fig::Amount(a) => s(a.to_string()),
+            Fig::Count(n) => Value::Number(n.into()),
+        }
+    }
+
+    /// The document line of a field labelled `label`.
+    fn line(self, label: &str) -> String {
+        match self {
+            Fig::Amount(a) => format!("{label}: {a} {}.", a.currency().code()),
+            Fig::Count(n) => format!("{label}: {n}."),
+        }
+    }
+}
+
+/// A figure the parser lets no field name at that level.
+fn undefined() -> ReportError {
+    ReportError::Profile(ProfileError::Shape("a figure not defined at its level"))
+}
+
+/// Inserts the fields of `u` at `level` into `o`, each by `value`.
+fn fields_into(
+    o: &mut Object,
+    u: &Under<'_>,
+    level: Level,
+    value: impl Fn(Figure) -> Result<Fig, ReportError>,
+) -> Result<(), ReportError> {
+    for f in u.spec.at(level) {
+        o.insert(f.name(), value(f.figure())?.json());
+    }
+    Ok(())
 }
 
 fn document(title: &str, blocks: Vec<Block>) -> Document {
@@ -259,29 +347,114 @@ fn published(books: &Books, call: CallId) -> Result<&crate::books::CallBook, Rep
 }
 
 // ---------------------------------------------------------------------------
+// Call-level figures
+// ---------------------------------------------------------------------------
+
+/// The folds of one published call (level [`Level::Call`]).
+struct CallFigures<'b> {
+    budget: Amount,
+    currency: Currency,
+    created: usize,
+    submitted: usize,
+    knocked: usize,
+    grants: Vec<&'b GrantBook>,
+}
+
+impl<'b> CallFigures<'b> {
+    fn of(snap: &Snapshot, books: &'b Books, call: CallId) -> Result<CallFigures<'b>, ReportError> {
+        let c = published(books, call)?;
+        let currency = books
+            .currency_of_call(call)
+            .ok_or(ReportError::UnknownCall)?;
+        let proposals: BTreeSet<_> = books
+            .proposals
+            .iter()
+            .filter(|(_, k)| **k == call)
+            .map(|(p, _)| *p)
+            .collect();
+        let mut submitted = BTreeSet::new();
+        let mut knocked = BTreeSet::new();
+        for e in snap.entries() {
+            match &e.record {
+                fstp_domain::Record::Submitted { proposal, .. } if proposals.contains(proposal) => {
+                    submitted.insert(*proposal);
+                }
+                fstp_domain::Record::KnockOutRecorded { proposal, .. }
+                    if proposals.contains(proposal) =>
+                {
+                    knocked.insert(*proposal);
+                }
+                _ => {}
+            }
+        }
+        Ok(CallFigures {
+            budget: c.budget.amount(),
+            currency,
+            created: proposals.len(),
+            submitted: submitted.len(),
+            knocked: knocked.len(),
+            grants: books.grants.values().filter(|g| g.call == call).collect(),
+        })
+    }
+
+    fn get(&self, f: Figure) -> Result<Fig, ReportError> {
+        scope_figure(f, &self.grants, self.currency).or_else(|_| match f {
+            Figure::CallBudget => Ok(Fig::Amount(self.budget)),
+            Figure::ProposalsCreated => Ok(Fig::count(self.created)),
+            Figure::ProposalsSubmitted => Ok(Fig::count(self.submitted)),
+            Figure::KnockOutDecisions => Ok(Fig::count(self.knocked)),
+            _ => Err(undefined()),
+        })
+    }
+}
+
+/// The figures a call and a programme share, over their decided grants.
+fn scope_figure(f: Figure, grants: &[&GrantBook], c: Currency) -> Result<Fig, ReportError> {
+    let zero = Amount::zero(c);
+    let sum = |h: &dyn Fn(&GrantBook) -> Result<Amount, ReportError>| {
+        grants.iter().try_fold(zero, |acc, g| add(acc, h(g)?))
+    };
+    match f {
+        Figure::RecipientCount => Ok(Fig::count(grants.len())),
+        Figure::GrantsClosed => Ok(Fig::count(
+            grants.iter().filter(|g| g.closed.is_some()).count(),
+        )),
+        Figure::Committed => Ok(Fig::Amount(sum(&|g| Ok(g.committed))?)),
+        Figure::Paid => Ok(Fig::Amount(sum(&|g| Ok(g.paid))?)),
+        Figure::ReleasedCommitments => Ok(Fig::Amount(sum(&|g| match g.closed {
+            Some(_) => sub(g.committed, g.paid),
+            None => Ok(zero),
+        })?)),
+        _ => Err(undefined()),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Call publication record
 // ---------------------------------------------------------------------------
 
 fn publication(
+    u: &Under<'_>,
+    snap: &Snapshot,
     books: &Books,
     call: CallId,
     identifier: &str,
-    snapshot: ContentDigest,
 ) -> Result<Value, ReportError> {
     let c = published(books, call)?;
     let (policy, seq, at) = c.published.ok_or(ReportError::UnknownCall)?;
+    let figures = CallFigures::of(snap, books, call)?;
     let mut o = Object::new();
-    header(&mut o, ReportKind::CallPublicationRecord, snapshot);
+    header(&mut o, u);
     o.insert("call", s(identifier));
     o.insert("programme", s(c.programme.raw().to_string()));
     o.insert("opens", s(utc(c.opens)));
     o.insert("deadline", s(utc(c.deadline)));
     o.insert("deadline_time_zone", s(c.zone.clone()));
-    o.insert("budget", s(c.budget.amount().to_string()));
-    o.insert("currency", s(c.budget.amount().currency().code()));
+    o.insert("currency", s(figures.currency.code()));
     o.insert("frozen_policy", s(policy.raw().to_string()));
     o.insert("publication_sequence", s(seq.get().to_string()));
     o.insert("published_at", s(utc(at)));
+    fields_into(&mut o, u, Level::Call, |f| figures.get(f))?;
     Ok(Value::Object(o))
 }
 
@@ -301,6 +474,7 @@ const I48: [(&str, &[&str]); 5] = [
 ];
 
 fn open_call_package(
+    u: &Under<'_>,
     books: &Books,
     call: CallId,
     package: &PackageInputs<'_>,
@@ -336,7 +510,7 @@ fn open_call_package(
     let mut blocks = vec![
         h1("Open call package"),
         p(format!("Call {identifier}.")),
-        status(ReportKind::OpenCallPackage),
+        status(u),
     ];
     blocks.extend(guide.blocks().iter().cloned());
     blocks.push(h1("Proposal form"));
@@ -352,11 +526,47 @@ fn open_call_package(
 // Periodic reporting data
 // ---------------------------------------------------------------------------
 
+/// The folds of one recipient in one period (level [`Level::Recipient`]).
+#[derive(Clone, Copy)]
+struct RowFigures {
+    committed: Amount,
+    paid: Amount,
+    hardship: Amount,
+    released: Amount,
+}
+
+impl RowFigures {
+    fn get(&self, f: Figure) -> Result<Fig, ReportError> {
+        match f {
+            Figure::Committed => Ok(Fig::Amount(self.committed)),
+            Figure::PaidInPeriod => Ok(Fig::Amount(self.paid)),
+            Figure::PaidHardshipInPeriod => Ok(Fig::Amount(self.hardship)),
+            Figure::ReleasedCommitmentInPeriod => Ok(Fig::Amount(self.released)),
+            _ => Err(undefined()),
+        }
+    }
+}
+
+/// The folds of one period (level [`Level::Period`]): sums over its rows.
+fn period_figure(f: Figure, rows: &[RowFigures], c: Currency) -> Result<Fig, ReportError> {
+    let sum = |h: fn(&RowFigures) -> Amount| {
+        rows.iter()
+            .try_fold(Amount::zero(c), |acc, r| add(acc, h(r)))
+    };
+    match f {
+        Figure::PaidInPeriod => Ok(Fig::Amount(sum(|r| r.paid)?)),
+        Figure::PaidHardshipInPeriod => Ok(Fig::Amount(sum(|r| r.hardship)?)),
+        Figure::ReleasedCommitmentInPeriod => Ok(Fig::Amount(sum(|r| r.released)?)),
+        Figure::RecipientCount => Ok(Fig::count(rows.len())),
+        _ => Err(undefined()),
+    }
+}
+
 fn periodic(
+    u: &Under<'_>,
     books: &Books,
     programme: ProgrammeId,
     periods: &[Period],
-    snapshot: ContentDigest,
 ) -> Result<Value, ReportError> {
     let currency: Currency = *books
         .programmes
@@ -380,7 +590,7 @@ fn periodic(
     for period in periods {
         let within = |t: Timestamp| t >= period.start && t < period.end;
         let mut rows = Vec::new();
-        let mut period_paid = zero;
+        let mut figures = Vec::new();
         for (proposal, g) in &grants {
             if g.decided >= period.end {
                 continue;
@@ -402,39 +612,35 @@ fn periodic(
                 Some(t) if within(t) => sub(g.committed, g.paid)?,
                 _ => zero,
             };
-            period_paid = add(period_paid, paid)?;
+            let f = RowFigures {
+                committed: g.committed,
+                paid,
+                hardship,
+                released,
+            };
             let mut row = Object::new();
             row.insert("recipient", s(format!("G-{}", proposal.raw())));
             row.insert("call", s(g.call.raw().to_string()));
-            row.insert("committed", s(g.committed.to_string()));
-            row.insert("paid", s(paid.to_string()));
-            row.insert("paid_hardship", s(hardship.to_string()));
-            row.insert("released_commitment", s(released.to_string()));
+            fields_into(&mut row, u, Level::Recipient, |x| f.get(x))?;
             rows.push(Value::Object(row));
+            figures.push(f);
         }
         let mut po = Object::new();
         po.insert("start", s(utc(period.start)));
         po.insert("end", s(utc(period.end)));
         po.insert("recipients", Value::Array(rows.into()));
-        po.insert("paid", s(period_paid.to_string()));
+        fields_into(&mut po, u, Level::Period, |x| {
+            period_figure(x, &figures, currency)
+        })?;
         out_periods.push(Value::Object(po));
     }
-    let mut committed = zero;
-    let mut paid = zero;
-    let mut released = zero;
-    for (_, g) in &grants {
-        committed = add(committed, g.committed)?;
-        paid = add(paid, g.paid)?;
-        if g.closed.is_some() {
-            released = add(released, sub(g.committed, g.paid)?)?;
-        }
-    }
+    let all: Vec<&GrantBook> = grants.iter().map(|(_, g)| *g).collect();
     let mut totals = Object::new();
-    totals.insert("committed", s(committed.to_string()));
-    totals.insert("paid", s(paid.to_string()));
-    totals.insert("released_commitments", s(released.to_string()));
+    fields_into(&mut totals, u, Level::Total, |x| {
+        scope_figure(x, &all, currency)
+    })?;
     let mut o = Object::new();
-    header(&mut o, ReportKind::PeriodicReportingData, snapshot);
+    header(&mut o, u);
     o.insert("programme", s(programme.raw().to_string()));
     o.insert("currency", s(currency.code()));
     o.insert("cost_category", s("financial_support_to_third_parties"));
@@ -568,10 +774,10 @@ impl Related {
 }
 
 fn audit_file(
+    u: &Under<'_>,
     snap: &Snapshot,
     books: &Books,
     call: CallId,
-    snapshot: ContentDigest,
 ) -> Result<Document, ReportError> {
     published(books, call)?;
     let mut related = Related {
@@ -606,9 +812,9 @@ fn audit_file(
         p(format!(
             "Call {}. Snapshot sha256 {}.",
             call.raw(),
-            hex(snapshot)
+            hex(u.snapshot)
         )),
-        status(ReportKind::AuditFile),
+        status(u),
         p(
             "Each line names a ledger record by sequence number, time, kind and the SHA-256 of its stored form. Contractual notices join in M6.",
         ),
@@ -628,76 +834,33 @@ fn audit_file(
 // ---------------------------------------------------------------------------
 
 fn selection_report(
+    u: &Under<'_>,
     snap: &Snapshot,
     books: &Books,
     call: CallId,
-    snapshot: ContentDigest,
 ) -> Result<Document, ReportError> {
     let c = published(books, call)?;
-    let currency = books
-        .currency_of_call(call)
-        .ok_or(ReportError::UnknownCall)?;
-    let proposals: BTreeSet<_> = books
-        .proposals
-        .iter()
-        .filter(|(_, k)| **k == call)
-        .map(|(p, _)| *p)
-        .collect();
-    let mut submitted = BTreeSet::new();
-    let mut knocked = BTreeSet::new();
-    for e in snap.entries() {
-        match &e.record {
-            fstp_domain::Record::Submitted { proposal, .. } if proposals.contains(proposal) => {
-                submitted.insert(*proposal);
-            }
-            fstp_domain::Record::KnockOutRecorded { proposal, .. }
-                if proposals.contains(proposal) =>
-            {
-                knocked.insert(*proposal);
-            }
-            _ => {}
-        }
-    }
-    let zero = Amount::zero(currency);
-    let mut committed = zero;
-    let mut paid = zero;
-    let mut granted = 0_usize;
-    let mut closed = 0_usize;
-    for g in books.grants.values().filter(|g| g.call == call) {
-        granted = granted.saturating_add(1);
-        committed = add(committed, g.committed)?;
-        paid = add(paid, g.paid)?;
-        if g.closed.is_some() {
-            closed = closed.saturating_add(1);
-        }
-    }
-    let code = currency.code();
-    let blocks = vec![
+    let figures = CallFigures::of(snap, books, call)?;
+    let mut blocks = vec![
         h1("Selection report"),
         p(format!(
             "Call {}. Snapshot sha256 {}.",
             call.raw(),
-            hex(snapshot)
+            hex(u.snapshot)
         )),
-        status(ReportKind::DeliverableDraft),
+        status(u),
         h2("Call"),
         p(format!(
-            "Opened {}. Deadline {} ({}). Budget {} {code}.",
+            "Opened {}. Deadline {} ({}).",
             date(c.opens),
             utc(c.deadline),
-            c.zone,
-            c.budget.amount()
+            c.zone
         )),
-        h2("Proposals"),
-        p(format!("Proposals created: {}.", proposals.len())),
-        p(format!("Proposals submitted: {}.", submitted.len())),
-        p(format!("Knock-out decisions recorded: {}.", knocked.len())),
-        h2("Grants"),
-        p(format!("Grants decided: {granted}.")),
-        p(format!("Amount committed: {committed} {code}.")),
-        p(format!("Amount paid: {paid} {code}.")),
-        p(format!("Grants closed: {closed}.")),
+        h2("Figures"),
     ];
+    for f in u.spec.at(Level::Call) {
+        blocks.push(p(figures.get(f.figure())?.line(f.label())));
+    }
     Ok(document("Selection report", blocks))
 }
 
@@ -709,7 +872,17 @@ mod tests {
     fn r_rp_04_kind_names_round_trip() {
         for k in ReportKind::ALL {
             assert_eq!(ReportKind::from_name(k.name()), Some(k));
-            assert!(k.template().starts_with(PROFILE));
+        }
+    }
+
+    /// R-RP-01: the shipped profile names a template of its own for every
+    /// output it defines.
+    #[test]
+    fn r_rp_01_shipped_templates_are_profile_refs() {
+        for p in crate::profile::shipped_all().unwrap_or_default() {
+            for o in p.outputs() {
+                assert!(o.template().starts_with(&format!("{}/", p.id())));
+            }
         }
     }
 

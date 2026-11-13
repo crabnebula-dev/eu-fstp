@@ -10,10 +10,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-report = { path = ".." }
+fstp-crypto = { path = "../../fstp-crypto" }
 
 [[bin]]
 name = "guide_pdf"
 path = "fuzz_targets/guide_pdf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "funder_profile_parse"
+path = "fuzz_targets/funder_profile_parse.rs"
 test = false
 doc = false
 bench = false

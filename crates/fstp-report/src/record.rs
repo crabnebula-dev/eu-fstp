@@ -13,7 +13,8 @@ pub fn generated(report: ReportId, output: &Output, by: AccountId) -> ReportReco
         kind: output.kind,
         scope: output.scope,
         snapshot: output.snapshot,
-        template: output.template.to_owned(),
+        template: output.template.clone(),
+        profile: output.profile.clone(),
         document: output.digest,
         by,
     }

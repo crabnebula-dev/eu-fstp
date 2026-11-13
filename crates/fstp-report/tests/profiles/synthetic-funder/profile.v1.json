@@ -1,0 +1,43 @@
+{
+  "funder_profile_version": 1,
+  "id": "synthetic-funder",
+  "version": 3,
+  "outputs": [
+    {
+      "kind": "periodic_reporting_data",
+      "template": "synthetic-funder/periodic_reporting_data/3",
+      "fields": [
+        {"name": "contract_amount", "label": "Contract amount", "level": "recipient", "figure": "committed"},
+        {"name": "disbursed", "label": "Disbursed in the period", "level": "recipient", "figure": "paid_in_period"},
+        {"name": "returned", "label": "Released in the period", "level": "recipient", "figure": "released_commitment_in_period"},
+        {"name": "disbursed", "label": "Disbursed in the period", "level": "period", "figure": "paid_in_period"},
+        {"name": "hardship", "label": "Hardship paid in the period", "level": "period", "figure": "paid_hardship_in_period"},
+        {"name": "returned", "label": "Released in the period", "level": "period", "figure": "released_commitment_in_period"},
+        {"name": "recipients_listed", "label": "Recipients listed", "level": "period", "figure": "recipient_count"},
+        {"name": "recipients", "label": "Recipients", "level": "total", "figure": "recipient_count"},
+        {"name": "closed", "label": "Grants closed", "level": "total", "figure": "grants_closed"},
+        {"name": "disbursed", "label": "Disbursed", "level": "total", "figure": "paid"}
+      ]
+    },
+    {
+      "kind": "audit_file",
+      "template": "synthetic-funder/audit_file/3",
+      "fields": []
+    },
+    {
+      "kind": "deliverable_draft",
+      "template": "synthetic-funder/deliverable_draft/3",
+      "fields": [
+        {"name": "budget", "label": "Synthetic call budget", "level": "call", "figure": "call_budget"},
+        {"name": "recipients", "label": "Synthetic recipients", "level": "call", "figure": "recipient_count"},
+        {"name": "committed", "label": "Synthetic committed", "level": "call", "figure": "committed"},
+        {"name": "released", "label": "Synthetic released commitments", "level": "call", "figure": "released_commitments"},
+        {"name": "closed", "label": "Synthetic grants closed", "level": "call", "figure": "grants_closed"}
+      ]
+    }
+  ],
+  "visibility_elements": [
+    {"key": "acknowledgement", "wording": {"ref": "synthetic-funder/visibility/acknowledgement", "status": "TODO(legal)"}}
+  ],
+  "reporting_periods": {"source": "data_sheet", "parameter": "P-57"}
+}

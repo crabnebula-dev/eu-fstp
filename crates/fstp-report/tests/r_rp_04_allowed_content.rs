@@ -56,6 +56,7 @@ fn r_rp_04_periodic_data_holds_only_profile_members() {
     let ps = periods();
     let out = generate(
         &snap,
+        &support::he(),
         &Request::PeriodicReportingData {
             programme: PROGRAMME,
             periods: &ps,
@@ -69,6 +70,8 @@ fn r_rp_04_periodic_data_holds_only_profile_members() {
         keys(v),
         set(&[
             "profile",
+            "profile_version",
+            "profile_digest",
             "output",
             "template",
             "snapshot",
@@ -120,6 +123,7 @@ fn r_rp_04_call_publication_record_holds_call_fields_only() {
     let snap = ledger_of(&fixed()).snapshot();
     let out = generate(
         &snap,
+        &support::he(),
         &Request::CallPublicationRecord {
             call: CALL,
             identifier: "SYN-2026-01",
@@ -133,6 +137,8 @@ fn r_rp_04_call_publication_record_holds_call_fields_only() {
         keys(v),
         set(&[
             "profile",
+            "profile_version",
+            "profile_digest",
             "output",
             "template",
             "snapshot",
@@ -168,7 +174,7 @@ fn r_rp_04_call_publication_record_holds_call_fields_only() {
 #[test]
 fn r_rp_04_audit_file_lists_kinds_and_hashes_only() {
     let snap = ledger_of(&fixed()).snapshot();
-    let out = generate(&snap, &Request::AuditFile { call: CALL }).unwrap();
+    let out = generate(&snap, &support::he(), &Request::AuditFile { call: CALL }).unwrap();
     let Content::Document(d) = &out.content else {
         panic!("the audit file is a document")
     };
@@ -235,6 +241,7 @@ fn i48_open_call_package_needs_the_five_elements() {
     };
     let ok = generate(
         &snap,
+        &support::he(),
         &Request::OpenCallPackage {
             call: CALL,
             package: &full,
@@ -269,6 +276,7 @@ fn i48_open_call_package_needs_the_five_elements() {
     p.data_protection = &dpn;
     match generate(
         &snap,
+        &support::he(),
         &Request::OpenCallPackage {
             call: CALL,
             package: &p,
@@ -284,6 +292,7 @@ fn i48_open_call_package_needs_the_five_elements() {
     p.contract_template = &contract;
     match generate(
         &snap,
+        &support::he(),
         &Request::OpenCallPackage {
             call: CALL,
             package: &p,

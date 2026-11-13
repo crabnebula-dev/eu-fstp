@@ -15,6 +15,8 @@
 //!   wallet, QTSP and trusted list for tests and the demo;
 //! - [`signing`]: one signature over a verified increment, validated by
 //!   `fstp-sigval` from the stored bytes.
+//! - [`notice_companion`]: the composite companion signature on
+//!   contractual notices (R-CR-04, M9 design D6).
 //!
 //! The crate never creates a party's signature in production. The fake
 //! adapter signs only with its own test CA (`contracts.md` Signature).
@@ -28,6 +30,7 @@
 pub mod blob;
 pub mod digest;
 pub mod fake;
+pub mod notice_companion;
 pub mod port;
 pub mod render;
 pub mod signing;

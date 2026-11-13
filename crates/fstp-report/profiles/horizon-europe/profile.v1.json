@@ -1,0 +1,57 @@
+{
+  "funder_profile_version": 1,
+  "id": "horizon-europe",
+  "version": 1,
+  "outputs": [
+    {
+      "kind": "call_publication_record",
+      "template": "horizon-europe/call_publication_record/1",
+      "fields": [
+        {"name": "budget", "label": "Call budget", "level": "call", "figure": "call_budget"}
+      ]
+    },
+    {
+      "kind": "open_call_package",
+      "template": "horizon-europe/open_call_package/1",
+      "fields": []
+    },
+    {
+      "kind": "periodic_reporting_data",
+      "template": "horizon-europe/periodic_reporting_data/1",
+      "fields": [
+        {"name": "committed", "label": "Amount committed", "level": "recipient", "figure": "committed"},
+        {"name": "paid", "label": "Amount paid in the period", "level": "recipient", "figure": "paid_in_period"},
+        {"name": "paid_hardship", "label": "Hardship contribution paid in the period", "level": "recipient", "figure": "paid_hardship_in_period"},
+        {"name": "released_commitment", "label": "Commitment released in the period", "level": "recipient", "figure": "released_commitment_in_period"},
+        {"name": "paid", "label": "Amount paid in the period", "level": "period", "figure": "paid_in_period"},
+        {"name": "committed", "label": "Amount committed", "level": "total", "figure": "committed"},
+        {"name": "paid", "label": "Amount paid", "level": "total", "figure": "paid"},
+        {"name": "released_commitments", "label": "Commitments released", "level": "total", "figure": "released_commitments"}
+      ]
+    },
+    {
+      "kind": "audit_file",
+      "template": "horizon-europe/audit_file/1",
+      "fields": []
+    },
+    {
+      "kind": "deliverable_draft",
+      "template": "horizon-europe/deliverable_draft/1",
+      "fields": [
+        {"name": "budget", "label": "Call budget", "level": "call", "figure": "call_budget"},
+        {"name": "proposals_created", "label": "Proposals created", "level": "call", "figure": "proposals_created"},
+        {"name": "proposals_submitted", "label": "Proposals submitted", "level": "call", "figure": "proposals_submitted"},
+        {"name": "knock_outs", "label": "Knock-out decisions recorded", "level": "call", "figure": "knock_out_decisions"},
+        {"name": "grants_decided", "label": "Grants decided", "level": "call", "figure": "recipient_count"},
+        {"name": "committed", "label": "Amount committed", "level": "call", "figure": "committed"},
+        {"name": "paid", "label": "Amount paid", "level": "call", "figure": "paid"},
+        {"name": "grants_closed", "label": "Grants closed", "level": "call", "figure": "grants_closed"}
+      ]
+    }
+  ],
+  "visibility_elements": [
+    {"key": "acknowledgement", "wording": {"ref": "horizon-europe/visibility/acknowledgement", "status": "TODO(legal)"}},
+    {"key": "emblem", "wording": {"ref": "horizon-europe/visibility/emblem", "status": "TODO(legal)"}}
+  ],
+  "reporting_periods": {"source": "data_sheet", "parameter": "P-57"}
+}

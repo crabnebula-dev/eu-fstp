@@ -103,11 +103,14 @@ pub enum Purpose {
     Fact,
     /// The identity match key (Vault chain, G24).
     Match,
+    /// The composite notice companion signing key (App chain, R-CR-04,
+    /// M9 design D6).
+    NoticeCompanion,
 }
 
 impl Purpose {
     /// Every purpose, in code order.
-    pub const ALL: [Purpose; 13] = [
+    pub const ALL: [Purpose; 14] = [
         Purpose::Ledger,
         Purpose::Text,
         Purpose::AuditEvent,
@@ -121,6 +124,7 @@ impl Purpose {
         Purpose::Document,
         Purpose::Fact,
         Purpose::Match,
+        Purpose::NoticeCompanion,
     ];
 
     /// The purpose code that a seal context binds (ADR-004 part 1). The
@@ -142,6 +146,7 @@ impl Purpose {
             Purpose::Document => 11,
             Purpose::Fact => 12,
             Purpose::Match => 13,
+            Purpose::NoticeCompanion => 14,
         }
     }
 
