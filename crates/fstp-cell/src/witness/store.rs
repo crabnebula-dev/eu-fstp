@@ -418,6 +418,23 @@ impl<D: Database, W: PrepareWitness + OpenPrepare + Send + Sync + 'static> Ancho
         &self.witness
     }
 
+    /// Raises `PossibleDeletion` for each of `heads` to tenant admins and
+    /// the auditor view, durably and keyed by `(n, link)`, so a head raised
+    /// before changes nothing (design section 7.2 "In doubt").
+    ///
+    /// # Errors
+    ///
+    /// The database's refusal.
+    pub async fn raise_possible_deletions(
+        &mut self,
+        heads: &[(u64, Link)],
+    ) -> Result<(), StoreError> {
+        for head in heads {
+            self.db.raise_possible_deletion(*head).await?;
+        }
+        Ok(())
+    }
+
     /// The pinned witness receipt keys ([`StoreKeys::witness`]). The
     /// start-up verification checks the stored receipts under the same
     /// set, so one pin set serves both checks.

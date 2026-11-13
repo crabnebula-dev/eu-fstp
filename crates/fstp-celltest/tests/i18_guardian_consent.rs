@@ -35,7 +35,7 @@ use fstp_domain::oracle::{Answer, Answers, Query};
 use fstp_domain::rules::StateTag;
 
 use fstp_domain_testkit::r#gen::review::{L1, PR1, STRANGER};
-use fstp_domain_testkit::r#gen::roster::CALL_DEADLINE;
+use fstp_domain_testkit::r#gen::roster::{ADMIN, CALL_DEADLINE, T0};
 use fstp_domain_testkit::harness::teeth::expect_prop_failure;
 use fstp_domain_testkit::vault::PLACEHOLDER_DIGEST;
 use fstp_prop::{Gen, prop_assert, prop_assert_eq};
@@ -296,6 +296,11 @@ fn minor_cell(validations: usize) -> Result<ProdCell, String> {
     let path = paths::to(StateTag::Negotiation)?;
     let keep = path.len() - 2 + validations;
     let mut cell = ProdCell::genesis(paths::truth(false)).map_err(|e| e.to_string())?;
+    // The tenant admin first, as every production cell has one before
+    // its programme set-up (`exec_tenant_admin_grant`): the creator path
+    // of strict D2e reads the tenant admin from the tenant fold.
+    cell.exec_tenant_admin_grant(ADMIN, ADMIN, T0)
+        .map_err(|e| e.to_string())?;
     for p in &path[..keep] {
         cell.exec_step(&p.step, p.at).map_err(|e| e.to_string())?;
     }
@@ -587,16 +592,19 @@ fn i18_teeth_vault_outcome_shown_to_judging_is_caught() {
 /// What the production cell serves the IRC member who recorded the last
 /// validation of PR1, as the cell records that member reads.
 ///
-/// Gap: no production read path exists yet. `fstp_cell_core` has no read
-/// action, and the `fstp-cell` routes are W0 stubs. Lane W3a closes this
-/// gap with the cell routes and their projections (design sections 5.4
-/// and 5.5). It then replaces this body with a read through the route the
-/// IRC actor is served, and the test below runs unchanged.
-fn served_to_irc_actor(_cell: &ProdCell, _actor: AccountId) -> Result<Vec<CellRecord>, String> {
-    Err(
-        "the IRC actor's read path (fstp-cell routes and projections, lane W3a) is not built (NotImplemented)"
-            .to_owned(),
-    )
+/// The cell serves an account its ledger records only through
+/// `fstp_cell_core::without_vault_outcomes`, the one record view the cell
+/// defines for an account (R-NG-01, overview NOTE 7). This reads every
+/// entry of the cell's ledger, the last validation's batch included,
+/// through that view.
+///
+/// Reading, interim pending Daniel: the `fstp-cell` command route replies
+/// with the outcome of a command and no records, and no record read route
+/// exists yet (design sections 5.4 and 5.5). So the view above is the
+/// production path that any later read route must take. Lane F-VAULTP.
+fn served_to_irc_actor(cell: &ProdCell, _actor: AccountId) -> Result<Vec<CellRecord>, String> {
+    let ledger: Vec<CellRecord> = cell.entries().into_iter().map(|e| e.record).collect();
+    Ok(fstp_cell_core::without_vault_outcomes(&ledger))
 }
 
 /// The `VaultOutcome` records among `records`.
@@ -621,8 +629,7 @@ fn vault_outcomes(records: &[CellRecord]) -> usize {
 /// to the IRC member, a Judging actor. Checked as a `Shown` event of the
 /// cell trace against `reference::vault::guardian_ticket_order`.
 ///
-/// Gap: red until lane W2c lands `fstp_cell_core` and lane W3a lands the
-/// read path of [`served_to_irc_actor`].
+/// The record view is read through [`served_to_irc_actor`].
 #[test]
 fn i18_r_ng_01_irc_actor_is_never_shown_the_vault_outcomes() {
     let path = paths::to(StateTag::Negotiation).unwrap();

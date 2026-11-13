@@ -921,6 +921,30 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         self.settle().await?.ok_or(StoreFault::OutOfOrder)
     }
 
+    /// Raises `PossibleDeletion` for each of `heads`, as the start-up does
+    /// for every `InDoubtAbsent` record the witness holds (design section
+    /// 7.2 "In doubt"). Each insert runs under `pg_advisory_xact_lock(1)`
+    /// and is keyed by `(n, link)`, so a head raised before changes
+    /// nothing and draws no new key.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault, or the key provider's refusal.
+    pub async fn raise_possible_deletions(
+        &mut self,
+        heads: &[(u64, Link)],
+    ) -> Result<(), StoreFault> {
+        for head in heads {
+            let mut client = self.pool.get().await?;
+            let mut tx = client.transaction().await?;
+            tx.execute(LOCK_SQL, &[]).await?;
+            self.insert_alert(&mut tx, *head).await?;
+            tx.commit().await?;
+            client.release();
+        }
+        Ok(())
+    }
+
     /// Reads row `n` under the advisory lock and resolves `head`. A
     /// missing row raises its alert in the same transaction.
     async fn read_chain(&mut self, head: (u64, Link)) -> Result<Resolution, StoreFault> {

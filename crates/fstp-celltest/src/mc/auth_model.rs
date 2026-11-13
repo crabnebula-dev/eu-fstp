@@ -111,18 +111,18 @@ pub fn auth_truth() -> GroundTruth {
 /// for the suites that name it.
 pub const FOLD_SEAM: &str = "ProdCell::fold: closed by the lead; every batch folds from the fstp_ledger entries its MemStore returns, and no production path returns this seam";
 
-/// The seam of [`ProdCell::suspend_for_conflict`]: a conflict-of-interest
-/// suspension is the vault reaction `VaultChanged`, a system command.
-/// `CellCtx` carries an account actor only, and the reaction's facts need
-/// the vault seeding of design section 6.9 (lanes W2c and W2d). The
-/// harness owns this seam.
+/// Closed by lane F-AUTHP: [`ProdCell::suspend_for_conflict`] gives the
+/// ground truth a conflict-of-interest fact, and production decides the
+/// `VaultChanged` reaction under its `System(Vault)` actor
+/// ([`ProdCell::react`]). No production path returns this seam. The
+/// constant stays for the suites that name it.
 pub const SUSPEND_SEAM: &str = "fstp_celltest::mc::auth_model::ProdCell::suspend_for_conflict: CellCtx has no system actor for the VaultChanged reaction that suspends a binding (design sections 5.1 and 6.9, lanes W2c and W2d)";
 
-/// The seam of [`ProdCell::open_session`] and of every production batch
-/// that must name sessions: sessions are operational rows, not ledger
-/// records (design section 4.2), and `decide` sees no session list. So a
-/// production batch cannot name the sessions it ends (lane W2c). The
-/// harness owns this seam.
+/// Closed by lane F-AUTHP: [`ProdCell::open_session`] writes the live
+/// session rows, and every command of a [`ProdCell`] reads them as its
+/// route does (`fstp_cell_core::RouteInputs`). A route-only command that
+/// still lacks its session rows names this seam ([`refusal_of`]). The
+/// constant stays for the suites that name it.
 pub const SESSIONS_SEAM: &str = "fstp_celltest::mc::auth_model::ProdCell::open_session: fstp_cell_core::decide sees no session rows, so a batch cannot name the sessions it ends (design sections 4.2 and 5.1, lane W2c)";
 
 /// The seam of a production session check under lifetimes other than the
@@ -504,6 +504,13 @@ pub struct ProdCell {
     state: CellState,
     truth: GroundTruth,
     drawn: u128,
+    /// The live rows of `auth.session`, as a login writes them. They are
+    /// operational rows, so no ledger record holds them (design section
+    /// 4.2). Each command reads them as its route does.
+    sessions: Vec<SessionView>,
+    /// The credential each passkey session of [`ProdCell::sessions`]
+    /// logged in with.
+    logins: Vec<fstp_auth::session::SessionLogin>,
 }
 
 impl ProdCell {
@@ -516,6 +523,8 @@ impl ProdCell {
             state,
             truth,
             drawn: 0,
+            sessions: Vec::new(),
+            logins: Vec::new(),
         })
     }
 
@@ -612,8 +621,10 @@ impl ProdCell {
             let a = self.truth.answer(&q);
             answers.insert(q, a);
         }
-        let batch = fstp_cell_core::decide_with_id(&self.state, &cmd, &x, command, &answers)
-            .map_err(|e| refusal_of(&cmd, e))?;
+        let inputs = self.route_inputs();
+        let batch =
+            fstp_cell_core::decide_with_inputs(&self.state, &cmd, &x, command, &inputs, &answers)
+                .map_err(|e| refusal_of(&cmd, e))?;
         if batch.is_empty() {
             return Ok(batch);
         }
@@ -647,8 +658,10 @@ impl ProdCell {
             let a = self.truth.answer(&q);
             answers.insert(q, a);
         }
+        let inputs = self.route_inputs();
         let batch =
-            fstp_cell_core::decide_reaction(&self.state, &cmd, at, &answers).map_err(refusal)?;
+            fstp_cell_core::decide_reaction_with_inputs(&self.state, &cmd, at, &inputs, &answers)
+                .map_err(refusal)?;
         if batch.is_empty() {
             return Ok(());
         }
@@ -1241,23 +1254,129 @@ impl ProdCell {
 
     /// Suspends `account`'s binding `binding` for a conflict of interest
     /// at `at`, as the vault reaction does (I-06), and returns the batch.
-    /// Refuses with [`SUSPEND_SEAM`] until the cell can run the reaction.
+    ///
+    /// The vault learns a fact that gives `account` a conflict of
+    /// interest: its identity is merged into the identity of a Drafting
+    /// holder of the binding's programme (Identity discovery, I-06). The
+    /// ground truth then lists `account` as changed at a new epoch, and
+    /// the cell processes that change first, as `DriverCore` does before
+    /// any command (NOTE 3). So the suspension is production's own
+    /// `VaultChanged` reaction ([`ProdCell::react`]), decided by
+    /// `fstp_cell_core::decide_reaction_with_inputs` with the live session
+    /// rows, under the `System(Vault)` actor. Nothing is built by hand.
+    ///
+    /// It refuses when the binding is not open, when its programme has no
+    /// other Drafting holder with an identity, or when the reaction does
+    /// not suspend the binding under I-06.
     pub fn suspend_for_conflict(
         &mut self,
         account: AccountId,
         binding: BindingId,
         at: Timestamp,
     ) -> Result<Vec<CellRecord>, ProdError> {
-        let _ = (account, binding, at, &mut self.state);
-        Err(ProdError::NotImplemented(SUSPEND_SEAM))
+        let roster = self.state.engine().core.roster();
+        let Some(b) = roster.binding(binding).filter(|b| b.account == account) else {
+            return Err(ProdError::Refused(format!(
+                "{binding:?} is not an open binding of {account:?}"
+            )));
+        };
+        let programme = b.programme;
+        let holder = roster
+            .bindings()
+            .filter(|(_, d)| {
+                d.programme == programme
+                    && d.group() == fstp_domain::roles::Group::Drafting
+                    && d.account != account
+                    && !d.voided()
+            })
+            .find_map(|(_, d)| self.truth.identity_of(d.account));
+        let Some(identity) = holder else {
+            return Err(ProdError::Refused(format!(
+                "no Drafting holder of {programme:?} has an identity to share"
+            )));
+        };
+        let logged = self.log.len();
+        self.truth.set_identity(account, identity);
+        self.react(at)?;
+        let batch: Vec<CellRecord> = self
+            .log
+            .get(logged..)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|a| a.batch.iter().cloned())
+            .collect();
+        let suspended = batch.iter().any(|r| {
+            matches!(
+                r,
+                CellRecord::Engine(fstp_engine::Record::Core(fstp_domain::Record::BindingSuspended(
+                    fstp_domain::record::BindingSuspended { binding: got, rule, .. }
+                ))) if *got == binding && *rule == fstp_domain::refusal::RuleRef::I06
+            )
+        });
+        if !suspended {
+            return Err(ProdError::Refused(format!(
+                "the vault reaction did not suspend {binding:?} under I-06: {batch:?}"
+            )));
+        }
+        Ok(batch)
     }
 
     /// Opens session `s` in the cell, as a login does, so that later
-    /// batches can end it. Refuses with [`SESSIONS_SEAM`] until `decide`
-    /// sees session rows.
+    /// batches can end it. The login route writes a live `auth.session`
+    /// row and no ledger record (design section 4.2). Every later command
+    /// of this cell reads the live rows as its route does, so its batch
+    /// names the sessions it ends (design section 5.1).
+    ///
+    /// The harness does not decide the login itself: M-AUTH asks
+    /// `fstp_auth::admit_method` for that. It refuses a session the ledger
+    /// ended, and a second row under an open id. The same row again is the
+    /// one row it is.
     pub fn open_session(&mut self, s: &SessionView) -> Result<(), ProdError> {
-        let _ = (s, &mut self.state);
-        Err(ProdError::NotImplemented(SESSIONS_SEAM))
+        self.open_session_with(s, None)
+    }
+
+    /// [`ProdCell::open_session`] for a passkey session logged in with
+    /// `credential`, which the logins side table records.
+    pub fn open_session_with(
+        &mut self,
+        s: &SessionView,
+        credential: Option<Vec<u8>>,
+    ) -> Result<(), ProdError> {
+        if self.state.auth().session_ended(s.id) {
+            return Err(ProdError::Refused(format!(
+                "session {:?} was ended before",
+                s.id
+            )));
+        }
+        if let Some(row) = self.sessions.iter().find(|r| r.id == s.id) {
+            // `auth.session` holds one row per id. The same login again
+            // writes nothing new; another row under that id is refused.
+            return if row == s {
+                Ok(())
+            } else {
+                Err(ProdError::Refused(format!(
+                    "session {:?} is open with another row",
+                    s.id
+                )))
+            };
+        }
+        self.sessions.push(s.clone());
+        if let Some(credential) = credential {
+            self.logins.push(fstp_auth::session::SessionLogin {
+                session: s.id,
+                credential,
+            });
+        }
+        Ok(())
+    }
+
+    /// The route inputs of a command: the live session rows and their
+    /// logins. `decide` ignores a row the ledger ended.
+    fn route_inputs(&self) -> fstp_cell_core::RouteInputs {
+        fstp_cell_core::RouteInputs::none().with_sessions(fstp_cell_core::SessionRows::new(
+            self.sessions.clone(),
+            self.logins.clone(),
+        ))
     }
 }
 
@@ -1520,13 +1639,11 @@ impl AuthBackend for Reference {
 /// holding the reference evaluated. A holding is read as the gate's
 /// refusal of a fresh magic-link session as `WeakSessionForRole`.
 ///
-/// Gaps against design sections 4.2, 5.1 and 8.2, reported by lane W1b:
-/// `decide` sees no session rows, so a batch that must end sessions
-/// refuses with [`SESSIONS_SEAM`]; a suspension refuses with
-/// [`SUSPEND_SEAM`]. A credential revocation registers a verified passkey
-/// first ([`ProdCell::register_passkey`]). `RevokeCredential` then needs
-/// the session rows of the device, so it refuses with [`SESSIONS_SEAM`]
-/// as well.
+/// The sessions of the model are opened in that cell as live rows before
+/// a roster change, so each batch names the sessions it ends (design
+/// sections 4.2 and 5.1). A suspension is the vault reaction
+/// ([`ProdCell::suspend_for_conflict`]). A credential revocation
+/// registers a verified passkey first ([`ProdCell::register_passkey`]).
 #[derive(Clone, Debug)]
 pub struct Production {
     _probe: (),
@@ -1562,11 +1679,6 @@ fn session_admitted<T>(got: Result<T, Deny>) -> Result<bool, NotImplemented> {
         Err(Deny::NotImplemented(op)) => Err(NotImplemented::new(op)),
         Err(_) => Ok(false),
     }
-}
-
-/// Whether any of `sessions` belongs to `account`.
-fn of_account(sessions: &[RefSession], account: AccountId) -> bool {
-    sessions.iter().any(|s| s.account == account)
 }
 
 impl Production {
@@ -1636,17 +1748,33 @@ impl Production {
         Ok(cell)
     }
 
-    /// The ended ids of `batch`, or [`SESSIONS_SEAM`] when the account
-    /// had sessions the cell cannot know.
+    /// [`Production::cell_for`] with every session of `sessions` that is
+    /// live at `now` opened in the cell, as its logins wrote them. A
+    /// passkey session records the credential of its device.
+    fn cell_with_sessions(
+        &self,
+        roster: &RefRoster,
+        sessions: &[RefSession],
+        now: Timestamp,
+    ) -> Result<ProdCell, ProdError> {
+        let mut cell = self.cell_for(roster, now)?;
+        for s in sessions {
+            if s.ended.is_some_and(|(at, _)| at.micros() <= now.micros()) {
+                continue;
+            }
+            let credential = s.device.map(|d| credential_of(s.account, d));
+            cell.open_session_with(&prod_session(s), credential)?;
+        }
+        Ok(cell)
+    }
+
+    /// The ended ids of `batch`.
     fn ends_of(
         &self,
         batch: Result<Vec<CellRecord>, ProdError>,
-        sessions: &[RefSession],
-        account: AccountId,
     ) -> Result<Option<Vec<[u8; 16]>>, NotImplemented> {
         match batch {
             Err(e) => prod_ni(e),
-            Ok(_) if of_account(sessions, account) => Err(NotImplemented::new(SESSIONS_SEAM)),
             Ok(b) => Ok(Some(sessions_ended_in(&b))),
         }
     }
@@ -1779,11 +1907,11 @@ impl AuthBackend for Production {
         sessions: &[RefSession],
         now: Timestamp,
     ) -> Result<Option<Vec<[u8; 16]>>, NotImplemented> {
-        let mut cell = match self.cell_for(before, now) {
+        let mut cell = match self.cell_with_sessions(before, sessions, now) {
             Ok(c) => c,
             Err(e) => return prod_ni(e),
         };
-        let (account, batch) = match change {
+        let batch = match change {
             RosterChange::Grant {
                 account,
                 role,
@@ -1797,17 +1925,16 @@ impl AuthBackend for Production {
                     },
                     None => grant(id, account, P1, role, now),
                 };
-                (account, cell.exec_step(&step, now))
+                cell.exec_step(&step, now)
             }
-            RosterChange::End { account, role } => (
-                account,
-                cell.exec_step(&end(binding_of(account, role), now), now),
-            ),
+            RosterChange::End { account, role } => {
+                cell.exec_step(&end(binding_of(account, role), now), now)
+            }
             RosterChange::GrantAdmin { account } => {
-                (account, cell.exec_tenant_admin_grant(ADMIN, account, now))
+                cell.exec_tenant_admin_grant(ADMIN, account, now)
             }
         };
-        self.ends_of(batch, sessions, account)
+        self.ends_of(batch)
     }
 
     fn suspension_ends(
@@ -1818,12 +1945,12 @@ impl AuthBackend for Production {
         sessions: &[RefSession],
         now: Timestamp,
     ) -> Result<Option<Vec<[u8; 16]>>, NotImplemented> {
-        let mut cell = match self.cell_for(before, now) {
+        let mut cell = match self.cell_with_sessions(before, sessions, now) {
             Ok(c) => c,
             Err(e) => return prod_ni(e),
         };
         let batch = cell.suspend_for_conflict(account, binding_of(account, role), now);
-        self.ends_of(batch, sessions, account)
+        self.ends_of(batch)
     }
 
     fn revocation_ends(
@@ -1834,7 +1961,7 @@ impl AuthBackend for Production {
         sessions: &[RefSession],
         now: Timestamp,
     ) -> Result<Option<Vec<[u8; 16]>>, NotImplemented> {
-        let mut cell = match self.cell_for(before, now) {
+        let mut cell = match self.cell_with_sessions(before, sessions, now) {
             Ok(c) => c,
             Err(e) => return prod_ni(e),
         };
@@ -1850,7 +1977,7 @@ impl AuthBackend for Production {
             credential,
         });
         let batch = cell.exec(revoke, account, now);
-        self.ends_of(batch, sessions, account)
+        self.ends_of(batch)
     }
 }
 
