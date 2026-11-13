@@ -126,6 +126,9 @@ use crate::world::CellHandle;
 // and the vault origin writes.
 pub mod origin_writes;
 pub mod reads;
+// Lane m3/licence-update: the self-hosted steps of `i38_egress` and
+// `i39_licence`.
+pub mod self_hosted;
 
 /// A step that needs `login` first.
 pub const NOT_LOGGED_IN: &str =
@@ -182,7 +185,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, and the value steps <kind>:<text> and authenticator:<hex>); the cell erasure step of other tests is not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, the value steps <kind>:<text> and authenticator:<hex>, and the self-hosted steps seed:<kind>:<text>, restart, licence-refresh, licence-refresh:<outcome>, update-check, services-down:<fault>, services-up, submit, stage1, stage2, irc-review, request-payment, release-payment, notify, export, catalogue-to-granted, payment-commands, enqueue-outbox and export-entry-point); the cell erasure step of other tests is not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -245,6 +248,8 @@ struct Run {
     reviewers: Vec<(AccountId, AssignmentId)>,
     /// The IRC members and their assignments.
     irc: Vec<(AccountId, AssignmentId)>,
+    /// The milestone of its plan (lane m3/licence-update).
+    milestone: MilestoneId,
 }
 
 /// The values a script gives the next applicant (lane F-ISO). Interim
@@ -271,6 +276,9 @@ struct Person {
     values: BTreeMap<CanaryKind, String>,
     authenticator: Option<String>,
     signup_due: bool,
+    /// The values of `seed:<kind>:<text>` steps already given to an
+    /// applicant of this cell (lane m3/licence-update, [`self_hosted`]).
+    seeded: std::collections::BTreeSet<(CanaryKind, String)>,
 }
 
 impl Person {
@@ -512,7 +520,7 @@ impl<'w> Cycle<'w> {
     /// The seam or refusal of the first step that did not run.
     pub fn run(&mut self, steps: &[String]) -> Result<(), NotImplemented> {
         for step in steps {
-            if self.values.take_step(step) || self.take_origin_value(step) {
+            if self.values.take_step(step) || self.take_origin_value(step) || self.take_seed(step) {
                 continue;
             }
             // A `signup` takes the values that follow it before the next
@@ -550,8 +558,8 @@ impl<'w> Cycle<'w> {
             "verify-identity" => self.verify_identity(),
             "submit-proposal" => self.submit_proposal(),
             "score" => self.score(),
-            "rank" => self.rank(),
-            "negotiate" => self.negotiate(),
+            "rank" => self.rank_step(),
+            "negotiate" => self.negotiate_step(),
             "grant" => self.grant(),
             // The whole cycle as one step (`i80_custody`, `i81_backups`).
             "call-cycle" => {
@@ -644,6 +652,8 @@ impl<'w> Cycle<'w> {
                 self.read_every_route(step, fstp_domain::roles::Group::Drafting)
             }
             s if s.starts_with(origin_writes::PREFIX) => self.vault_origin_write(s),
+            // Lane m3/licence-update ([`self_hosted`]).
+            s if self_hosted::is_step(s) => self.self_hosted_step(s),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
         }
     }
@@ -806,6 +816,12 @@ impl<'w> Cycle<'w> {
         const STEP: &str = "create-programme";
         if self.active {
             return Ok(());
+        }
+        // Lane m3/licence-update: the self-hosted scripts of `i38_egress`
+        // name no `login`, so the first admin logs in first. Interim,
+        // pending Daniel.
+        if self.admin.is_none() {
+            self.login()?;
         }
         let admin = self
             .admin
@@ -1299,6 +1315,7 @@ impl<'w> Cycle<'w> {
             plan,
             reviewers: Vec::new(),
             irc: Vec::new(),
+            milestone,
         });
         Ok(())
     }

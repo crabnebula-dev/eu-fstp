@@ -19,6 +19,7 @@
 
 pub mod backups;
 pub mod canary;
+pub mod crabnebula;
 pub mod custody_sim;
 pub mod cycle;
 pub mod egress;

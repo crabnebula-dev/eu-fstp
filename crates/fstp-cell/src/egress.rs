@@ -302,6 +302,53 @@ pub trait CnTransport: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Vec<u8>, CnFault>> + Send;
 }
 
+/// One boxed exchange of a [`DynCnTransport`].
+pub type CnExchange<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, CnFault>> + Send + 'a>>;
+
+/// The object-safe form of a [`CnTransport`], so a start option can hold
+/// any transport ([`SharedCnTransport`]).
+pub trait DynCnTransport: Send + Sync + 'static {
+    /// [`CnTransport::exchange`], boxed.
+    fn exchange_boxed(&self, host: &'static str, request: Vec<u8>) -> CnExchange<'_>;
+}
+
+impl<T: CnTransport> DynCnTransport for T {
+    fn exchange_boxed(&self, host: &'static str, request: Vec<u8>) -> CnExchange<'_> {
+        Box::pin(self.exchange(host, request))
+    }
+}
+
+/// A shared [`CnTransport`] of any type. A cell start takes its
+/// CrabNebula transport in this form (`crate::process::StartOptions`).
+/// It adds nothing to the policy: [`CnClient`] still checks the mode and
+/// the host and builds every request through `fstp_release::egress`.
+#[derive(Clone)]
+pub struct SharedCnTransport(std::sync::Arc<dyn DynCnTransport>);
+
+impl SharedCnTransport {
+    /// `transport`, shared.
+    pub fn new<T: CnTransport>(transport: T) -> SharedCnTransport {
+        SharedCnTransport(std::sync::Arc::new(transport))
+    }
+}
+
+impl std::fmt::Debug for SharedCnTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SharedCnTransport(..)")
+    }
+}
+
+impl CnTransport for SharedCnTransport {
+    fn exchange(
+        &self,
+        host: &'static str,
+        request: Vec<u8>,
+    ) -> impl Future<Output = Result<Vec<u8>, CnFault>> + Send {
+        self.0.exchange_boxed(host, request)
+    }
+}
+
 /// The client of the CrabNebula services. It is the only caller of a
 /// [`CnTransport`], and it builds request bytes only through
 /// `fstp_release::egress::encode` (I-38).

@@ -4,9 +4,9 @@
 //! - Each call runs at most once a day after an answered call, with a
 //!   10-second timeout, and backs off after failures: 1 minute, doubling
 //!   up to a day ([`Schedule`]).
-//! - Neither cell start nor any request waits for it. The task holds no
-//!   handle that a request handler reaches, and the engine never asks it
-//!   anything (I-39).
+//! - Neither cell start nor any request waits for it, and a shutdown ends
+//!   a call in flight. The task holds no handle that a request handler
+//!   reaches, and the engine never asks it anything (I-39).
 //! - A SaaS cell runs no call at all (B12). The connector refuses one
 //!   anyway ([`crate::egress::CnClient`]).
 //! - Request bytes come only from `fstp_release::egress::encode` (I-38).
@@ -275,7 +275,17 @@ pub async fn run<C: Clock, T: CnTransport>(
             return;
         };
         let deadline = started.saturating_add(CALL_TIMEOUT_US);
-        let answer = race(client.call(call), clock.sleep_until(deadline)).await;
+        // A shutdown never waits for a call: the stop signal ends it too.
+        // A call that has ended wins a tie, so its outcome is recorded.
+        let answer = match race(
+            race(client.call(call), clock.sleep_until(deadline)),
+            stop.notified(),
+        )
+        .await
+        {
+            Either::Left(a) => a,
+            Either::Right(()) => return,
+        };
         let ended = clock.now();
         let outcome = match answer {
             Either::Right(()) => Outcome::TimedOut,

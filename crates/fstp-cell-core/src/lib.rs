@@ -192,6 +192,15 @@ pub enum SystemTask {
     /// `fstp_cell::process::RunningCell::contract_fact`. No request handler
     /// reaches it, and claims built on it say so.
     ContractPort,
+    /// The payment port of the checks runner (M5 design section 4.2): the
+    /// core `RecordChecks` of a payment request, with the actor
+    /// `System(PaymentPort)`.
+    ///
+    /// Interim, pending Daniel (lane m3/licence-update): no checks runner
+    /// runs in the cell yet, so only a test world issues it, in process,
+    /// through `fstp_cell::process::RunningCell::payment_checks`. No
+    /// request handler reaches it, and claims built on it say so.
+    PaymentPort,
 }
 
 /// The context a system task's command runs in.

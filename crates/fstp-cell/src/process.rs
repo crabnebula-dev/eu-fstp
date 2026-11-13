@@ -182,6 +182,7 @@ pub struct RunningCell<R: Runtime> {
     app: Pool<R>,
     reader: PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>,
     clock: crate::engine::CommitClock,
+    release: crate::tasks::release::ReleaseView,
 }
 
 impl<R: Runtime> std::fmt::Debug for RunningCell<R> {
@@ -493,6 +494,27 @@ pub struct StartOptions {
     /// A test's fault point on the cell's record store
     /// ([`fstp_pgstore::FaultPoint`], lane F-ERASE). Production sets none.
     pub fault_point: Option<fstp_pgstore::FaultPoint>,
+    /// The transport to the CrabNebula services (design section 10.1).
+    /// With one, a self-hosted cell starts its licence refresh and update
+    /// check in the background (`crate::tasks::release`, I-38, I-39). A
+    /// SaaS cell never builds a call, with or without one (B12).
+    ///
+    /// Interim, pending Daniel: Q34 is open, so the production default is
+    /// `None` and no cell process builds `crate::egress::TlsCnTransport`
+    /// yet. A test world passes its CrabNebula stand-in.
+    pub crabnebula: Option<crate::egress::SharedCnTransport>,
+    /// The licence token the cell holds, with its pinned key set (design
+    /// section 10.2, Q41). Interim, pending Daniel: the sealed licence
+    /// store of `fstp-cell licence import` is not built, so the caller
+    /// hands the imported token in. Without one only the update check
+    /// runs.
+    pub licence: Option<crate::tasks::release::LicenceHold>,
+    /// The clock of the licence refresh and the update check, or `None`
+    /// to run them on [`StartOptions::clock`], as production does. A test
+    /// world passes a clock it moves ahead of the cell's, so a call falls
+    /// due without moving the cell's own time, which would end its
+    /// sessions (P-72).
+    pub release_clock: Option<crate::engine::CommitClock>,
 }
 
 impl Default for StartOptions {
@@ -505,6 +527,9 @@ impl Default for StartOptions {
             login_methods: fstp_auth::EnabledMethods::default(),
             control_plane: None,
             fault_point: None,
+            crabnebula: None,
+            licence: None,
+            release_clock: None,
         }
     }
 }
@@ -556,6 +581,9 @@ where
         login_methods,
         control_plane,
         fault_point,
+        crabnebula,
+        licence,
+        release_clock,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -641,14 +669,15 @@ where
             store,
             anchor_key,
             vault,
-            crabnebula: None::<NoCrabNebula>,
-            licence: None,
+            crabnebula,
+            licence,
             listen: [
                 (ListenerKind::Tunnel, listen.tunnel),
                 (ListenerKind::Internal, listen.internal),
                 (ListenerKind::Health, listen.health),
             ],
             clock: Arc::clone(&clock),
+            release_clock,
         },
         &mut |_| {},
     )
@@ -746,6 +775,7 @@ where
         servers,
         bound,
         erasure: started.erasure,
+        release: started.release,
         app: app_pool,
         reader,
     })
@@ -761,21 +791,6 @@ fn http_config(tls: Option<fstp_tls::ServerConfig>) -> fstp_http::ServerConfig {
             ..fstp_http::Limits::default()
         },
         ..fstp_http::ServerConfig::default()
-    }
-}
-
-/// The CrabNebula transport of a cell that has none: a SaaS cell never
-/// reaches CrabNebula (B12). It is never handed to a start, and every
-/// call would fail as unreachable.
-struct NoCrabNebula;
-
-impl crate::egress::CnTransport for NoCrabNebula {
-    fn exchange(
-        &self,
-        _host: &'static str,
-        _request: Vec<u8>,
-    ) -> impl std::future::Future<Output = Result<Vec<u8>, crate::egress::CnFault>> + Send {
-        std::future::ready(Err(crate::egress::CnFault::Unreachable))
     }
 }
 
@@ -832,6 +847,14 @@ impl<R: Runtime> RunningCell<R> {
     /// The erasure task's handle.
     pub fn erasure(&self) -> &ErasureHandle {
         &self.erasure
+    }
+
+    /// The admin view of the licence refresh and the update check: each
+    /// attempt with its time and outcome, and the licence token held
+    /// (design section 10.3). It holds no handle to the task, so nothing
+    /// waits for a call through it (I-39).
+    pub fn release(&self) -> &crate::tasks::release::ReleaseView {
+        &self.release
     }
 
     /// Every committed ledger entry, decrypted, in sequence order. It reads
@@ -943,6 +966,49 @@ impl<R: Runtime> RunningCell<R> {
             &self.engine.state(),
             action,
             fstp_cell_core::SystemTask::ContractPort,
+            fstp_cell_core::system_command_id(suffix),
+            now,
+        )
+        .map_err(store_err)?;
+        self.engine.execute(admitted).await.map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Records the checks runner's `RecordChecks` of `request` (M5 design
+    /// section 4.2, R-PR-02, I-32) as the system task
+    /// `fstp_cell_core::SystemTask::PaymentPort`. The gate admits only
+    /// `RecordChecks` under this task, and the domain decides it with
+    /// every guard of its row.
+    ///
+    /// Interim, pending Daniel (lane m3/licence-update): no checks runner
+    /// runs in the cell yet, so only a test world calls this, in process,
+    /// as it plays the contract port ([`RunningCell::contract_fact`]).
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] when no random value is available, and
+    /// [`CellError::Store`] when the gate or the engine refuses.
+    pub async fn payment_checks(
+        &self,
+        request: fstp_domain::id::RequestId,
+        phase: fstp_domain::payment::CheckPhase,
+        results: Vec<fstp_domain::payment::CheckResult>,
+        snapshot: fstp_domain::id::ContentDigest,
+    ) -> Result<(), CellError> {
+        let suffix = fstp_crypto::random_array::<8>().map_err(|_| CellError::Keys("ids"))?;
+        let now = fstp_domain::time::Timestamp::from_micros((self.clock)());
+        let action = gate::Action::Command(fstp_cell_core::CellCommand::Engine(
+            fstp_engine::Command::Core(fstp_domain::Command::RecordChecks {
+                request,
+                phase,
+                results,
+                snapshot,
+            }),
+        ));
+        let admitted = gate::admit_system(
+            &self.engine.state(),
+            action,
+            fstp_cell_core::SystemTask::PaymentPort,
             fstp_cell_core::system_command_id(suffix),
             now,
         )

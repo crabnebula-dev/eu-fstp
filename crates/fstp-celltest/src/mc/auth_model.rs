@@ -3283,8 +3283,9 @@ pub mod http {
             if self.known().people.contains_key(&FIRST_ADMIN) {
                 return Ok(true);
             }
-            let inv = self.cell.first_admin_invitation().map_err(|_| failed())?;
-            let token = format!("{}{}", hex(&inv.first), hex(&inv.second));
+            // Both halves of a SaaS invitation joined, or the whole token
+            // of a self-hosted install (lane m3/licence-update).
+            let token = hex(&self.cell.first_admin_token().map_err(|_| failed())?);
             let mut device = Device::new(self.cell.host())?;
             if !self.register(&token, &mut device)? {
                 return Ok(false);

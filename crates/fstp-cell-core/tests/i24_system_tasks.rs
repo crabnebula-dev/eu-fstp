@@ -151,6 +151,49 @@ fn i24_admit_system_admits_each_task_its_own_commands_only() {
     }
 }
 
+/// I-24, I-39, M5 design section 4.2: the payment port (lane
+/// m3/licence-update, interim) is admitted for the checks runner's
+/// `RecordChecks` only. No other task issues it, and the payment port
+/// issues no key, session or other core command.
+#[test]
+fn i39_admit_system_admits_the_payment_port_its_checks_only() {
+    let s = fstp_cell_core::replay(&[]).unwrap();
+    let admit = |a: Action, t: SystemTask| gate::admit_system(&s, a, t, cid(4), NOW);
+    let checks = CellCommand::Engine(fstp_engine::Command::Core(
+        fstp_domain::Command::RecordChecks {
+            request: fstp_domain::id::RequestId::from_raw(1),
+            phase: fstp_domain::payment::CheckPhase::Submission,
+            results: Vec::new(),
+            snapshot: fstp_domain::id::ContentDigest::from_bytes([7; 32]),
+        },
+    ));
+    let start = CellCommand::Engine(fstp_engine::Command::Core(
+        fstp_domain::Command::StartExecution {
+            proposal: fstp_domain::id::ProposalId::from_raw(1),
+        },
+    ));
+    let end_sessions = CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account: A });
+    assert!(admit(Action::Command(checks.clone()), SystemTask::PaymentPort).is_ok());
+    for (c, t) in [
+        (checks.clone(), SystemTask::ContractPort),
+        (checks.clone(), SystemTask::ErasureRunner),
+        (checks, SystemTask::Provisioning),
+        (destroy(1), SystemTask::PaymentPort),
+        (start, SystemTask::PaymentPort),
+        (end_sessions, SystemTask::PaymentPort),
+    ] {
+        assert_eq!(
+            admit(Action::Command(c.clone()), t).err(),
+            Some(Deny::NotPermitted),
+            "{c:?} under {t:?}"
+        );
+    }
+    assert_eq!(
+        admit(Action::Read(ReadAction::ReadAudit), SystemTask::PaymentPort).err(),
+        Some(Deny::NotPermitted)
+    );
+}
+
 /// I-23, ADR-007 ("a retry after a lost acknowledgement is reported as a
 /// duplicate"), design section 5.2: a crash retry under the same command
 /// id finds its earlier commit in the catch-up and finishes with that

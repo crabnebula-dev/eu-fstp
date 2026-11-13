@@ -1526,6 +1526,12 @@ pub fn admit_system(
                 ..
             })),
         ) => true,
+        (
+            SystemTask::PaymentPort,
+            CellCommand::Engine(fstp_engine::Command::Core(fstp_domain::Command::RecordChecks {
+                ..
+            })),
+        ) => true,
         _ => false,
     };
     if !admitted {

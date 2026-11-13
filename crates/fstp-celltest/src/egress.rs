@@ -215,6 +215,30 @@ pub struct Handshake {
     pub client_certificate_verified: bool,
 }
 
+/// How far one connection attempt got (lane m3/licence-update). A
+/// capture holds the bytes above TLS only, so an attempt that fails below
+/// TLS leaves no capture. The attempt record shows it was made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AttemptOutcome {
+    /// The TCP connection was refused or failed.
+    Refused,
+    /// The TLS handshake failed.
+    HandshakeFailed,
+    /// The TLS handshake completed.
+    Connected,
+}
+
+/// One connection attempt on a route, whether or not it reached TLS
+/// (lane m3/licence-update). The world's CrabNebula stand-in and its
+/// transport record them (`crate::crabnebula`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Attempt {
+    /// The route of the attempt.
+    pub route: Route,
+    /// How far it got.
+    pub outcome: AttemptOutcome,
+}
+
 /// Every capture of a world. Clones share one log.
 #[derive(Clone, Default)]
 pub struct EgressLog {
@@ -225,6 +249,7 @@ pub struct EgressLog {
 struct Shared {
     captures: Mutex<Vec<Capture>>,
     handshakes: Mutex<Vec<Handshake>>,
+    attempts: Mutex<Vec<Attempt>>,
     next_connection: AtomicU64,
 }
 
@@ -304,6 +329,26 @@ impl EgressLog {
     pub fn handshakes(&self) -> Vec<Handshake> {
         self.inner
             .handshakes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records the connection attempt `a`.
+    pub fn record_attempt(&self, a: Attempt) {
+        self.inner
+            .attempts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(a);
+    }
+
+    /// The connection attempts recorded so far, in order. Only the
+    /// world's CrabNebula link records them.
+    #[must_use]
+    pub fn attempts(&self) -> Vec<Attempt> {
+        self.inner
+            .attempts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
