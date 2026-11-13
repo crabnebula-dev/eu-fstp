@@ -601,6 +601,20 @@ const GRANT_READERS: &[RoleOrApplicant] = &[
     R(Role::ContractSignatory),
     R(Role::Auditor),
 ];
+/// The readers of the grant overview: the grant readers and, after
+/// NEGOTIATION, the assigned reviewer through a committee binding (decided
+/// by Daniel on 2026-11-13, R-PR-08, SoD-12).
+const GRANT_OVERVIEW_READERS: &[RoleOrApplicant] = &[
+    R(Role::Applicant),
+    R(Role::ApplicantTeamMember),
+    R(Role::Guardian),
+    R(Role::ProgrammeManager),
+    R(Role::FinanceApprover),
+    R(Role::PaymentReleaser),
+    R(Role::ContractSignatory),
+    R(Role::Auditor),
+    R(Role::CommitteeMember),
+];
 const REPORT_READERS: &[RoleOrApplicant] = &[
     R(Role::ProgrammeManager),
     R(Role::Auditor),
@@ -1951,7 +1965,8 @@ pub const OPS: &[OpSpec] = &[
     // tools are the read-only contract and payment status of 12.1. A grant
     // is addressed by its proposal id. Interim, pending Daniel: the routes
     // and names below, and the `proposals:read` scope of the two tools.
-    OpSpec::read("grant.overview", RK::GetGrant, "/grants/{proposal}").acting(GRANT_READERS),
+    OpSpec::read("grant.overview", RK::GetGrant, "/grants/{proposal}")
+        .acting(GRANT_OVERVIEW_READERS),
     OpSpec::read("contract.view", RK::GetContract, "/grants/{proposal}/contract")
         .acting(GRANT_READERS)
         .tool(

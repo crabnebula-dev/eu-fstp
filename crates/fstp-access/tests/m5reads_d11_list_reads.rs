@@ -178,3 +178,39 @@ fn r_pr_08_d11_line_review_view_is_the_assigned_reviewers_in_execution() {
         );
     }
 }
+
+/// R-PR-08, SoD-12, D11 (decided by Daniel on 2026-11-13): the assigned
+/// reviewer reads the grant overview after NEGOTIATION, for the line
+/// review of payment requests. The overview admits `GrantReviewer` beside
+/// the grant readers, and `GrantReviewer` alone opens only in the states
+/// after NEGOTIATION. The contract and payment status reads do not gain
+/// it, and the overview stays web only (I-85).
+#[test]
+fn r_pr_08_sod_12_overview_admits_the_assigned_reviewer_after_negotiation() {
+    let (rule, _) = read_rule(ReadKind::GetGrant).expect("a rule");
+    let ReadRule::AnyOf(rules) = rule else {
+        panic!("grant.overview is not AnyOf: {rule:?}")
+    };
+    assert!(rules.contains(&ReadRule::GrantReviewer), "{rules:?}");
+    assert_eq!(
+        ReadRule::GRANT_REVIEWER_STATES,
+        &[
+            StateTag::Granted,
+            StateTag::InExecution,
+            StateTag::Completed,
+            StateTag::Terminated,
+        ]
+    );
+    for kind in [ReadKind::GetContract, ReadKind::GetPaymentStatus] {
+        let (rule, _) = read_rule(kind).expect("a rule");
+        let ReadRule::AnyOf(rules) = rule else {
+            panic!("{kind:?} is not AnyOf")
+        };
+        assert!(
+            !rules.contains(&ReadRule::GrantReviewer),
+            "{kind:?} admits the reviewer"
+        );
+    }
+    let spec = op("grant.overview").expect("in the registry");
+    assert!(spec.tool.is_none(), "I-85: grant.overview has a tool");
+}

@@ -527,7 +527,12 @@ async function reviewerFallback(
   if (!can(roles, "committee_member")) {
     return false;
   }
-  const back = h("p", {}, [link(GRANT_PATHS.operations, t.label("pay.reviewer.back"))]);
+  // R-PR-08, SoD-12 (2026-11-13): the assigned reviewer also reads the grant overview.
+  const back = h("p", {}, [
+    link(GRANT_PATHS.operations, t.label("pay.reviewer.back")),
+    " · ",
+    h("a", { id: "pay-reviewer-grant", href: GRANT_PATHS.grant(proposal) }, [t.label("pay.reviewer.grant", { id: proposal })]),
+  ]);
   const v = await readOp(env, "payment.line_review_view", { proposal, request: id }, (x): x is LineReviewView => decodeLineReview(x) !== null);
   const view = v.ok ? decodeLineReview(v.data) : null;
   if (view === null) {

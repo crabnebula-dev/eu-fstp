@@ -299,6 +299,7 @@ pub const INVITED_ROLES: &[&str] = &[
     "payment_releaser",
     "contract_signatory",
     "auditor",
+    "assigned_reviewer",
 ];
 
 /// A pass or fail outcome, with no reason and no account (R-CF-03).

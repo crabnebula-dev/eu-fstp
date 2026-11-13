@@ -169,7 +169,13 @@ fn r_ac_01_grant_list_names_the_admitting_role() {
         Some("contract_signatory")
     );
     assert_eq!(via(&mut seed, AUDITOR).as_deref(), Some("auditor"));
-    for outsider in [PM_OTHER, PM_ENDED, MEMBER, UNBOUND, LEAD_Y, REVIEWER] {
+    // SoD-12, R-PR-08 (2026-11-13): the assigned reviewer reads the
+    // overview after NEGOTIATION, for the line review.
+    assert_eq!(
+        via(&mut seed, REVIEWER).as_deref(),
+        Some("assigned_reviewer")
+    );
+    for outsider in [PM_OTHER, PM_ENDED, MEMBER, UNBOUND, LEAD_Y] {
         assert_eq!(via(&mut seed, outsider), None, "{outsider:?} lists X");
     }
 }
@@ -622,6 +628,69 @@ fn r_pr_08_d11_line_review_view_is_closed_outside_execution() {
             "{state:?}: {e}"
         );
     }
+}
+
+/// R-PR-08, SoD-12, R-AC-01, I-03, R-CF-02, I-86 (decided by Daniel on
+/// 2026-11-13): the assigned reviewer reads the grant overview after
+/// NEGOTIATION, for the line review of payment requests. An undeclared or
+/// conflicted assignee and an unassigned member are refused. In
+/// NEGOTIATION the reviewer reads the determination view, not the
+/// overview. The contract and payment status reads stay closed to the
+/// reviewer, and the overview names no account or bank value.
+#[test]
+fn r_pr_08_sod_12_assigned_reviewer_reads_the_overview_after_negotiation() {
+    for state in [
+        StateTag::Granted,
+        StateTag::InExecution,
+        StateTag::Completed,
+    ] {
+        let w = world(state);
+        let x = w.targets.proposal.expect("X").raw();
+        let mut seed = seeder(w);
+        let path = format!("/grants/{x}");
+        let v = read(&mut seed, REVIEWER, &path);
+        assert_eq!(str_member(&v, "proposal"), Some(x.to_string()));
+        let refused = |seed: &mut Seeder, who: AccountId, p: &str| -> String {
+            seed.api(who, GET, p, &Value::Null).expect_err("refused")
+        };
+        assert!(
+            refused(&mut seed, REVIEWER_UNDECLARED, &path).contains("R-CF-02"),
+            "{state:?}: undeclared"
+        );
+        assert!(
+            refused(&mut seed, REVIEWER_CONFLICTED, &path).contains("I-03"),
+            "{state:?}: conflicted"
+        );
+        for who in [MEMBER, REVIEWER_RELEASED, UNBOUND] {
+            assert!(
+                refused(&mut seed, who, &path).contains("R-AC-01"),
+                "{state:?}: {who:?}"
+            );
+        }
+        for other in [
+            format!("/grants/{x}/contract"),
+            format!("/grants/{x}/payment-requests"),
+        ] {
+            assert!(
+                refused(&mut seed, REVIEWER, &other).contains("R-AC-01"),
+                "{state:?}: the reviewer read {other}"
+            );
+        }
+        let listed = grant_list(&mut seed, REVIEWER);
+        assert!(
+            listed
+                .iter()
+                .any(|(p, via)| *p == x.to_string() && via == "assigned_reviewer"),
+            "{state:?}: {listed:?}"
+        );
+    }
+    let w = world(StateTag::Negotiation);
+    let x = w.targets.proposal.expect("X").raw();
+    let mut seed = seeder(w);
+    let e = seed
+        .api(REVIEWER, GET, &format!("/grants/{x}"), &Value::Null)
+        .expect_err("closed in NEGOTIATION");
+    assert!(e.contains("R-AC-01"), "{e}");
 }
 
 /// The programme ids of `who`'s `report.programmes`.

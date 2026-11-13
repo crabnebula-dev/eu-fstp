@@ -902,6 +902,12 @@ pub enum Rule {
     /// the programme manager, finance approver, payment releaser, contract
     /// signatory and auditor of P, once X reached NEGOTIATION.
     GrantReader,
+    /// Decided by Daniel on 2026-11-13 (R-PR-08, SoD-12): the grant
+    /// overview of X. The grant readers as [`Rule::GrantReader`], and the
+    /// assigned reviewer of X, declared free of conflict, once X passed
+    /// NEGOTIATION (GRANTED, IN_EXECUTION, COMPLETED or TERMINATED). An
+    /// undeclared or conflicted assignee is refused as a conflict there.
+    GrantOverview,
     /// The funder reports of P: its programme manager or auditor, and the
     /// Financial signatory, who approves them (Q3).
     ReportReader,
@@ -1044,6 +1050,17 @@ impl Rule {
                 Some(Role::PaymentReleaser),
                 Some(Role::ContractSignatory),
                 Some(Role::Auditor),
+            ],
+            Rule::GrantOverview => &[
+                Some(Role::Applicant),
+                Some(Role::ApplicantTeamMember),
+                Some(Role::Guardian),
+                Some(Role::ProgrammeManager),
+                Some(Role::FinanceApprover),
+                Some(Role::PaymentReleaser),
+                Some(Role::ContractSignatory),
+                Some(Role::Auditor),
+                Some(Role::CommitteeMember),
             ],
             Rule::ReportReader | Rule::ReportProgrammes => &[
                 Some(Role::ProgrammeManager),
@@ -1514,7 +1531,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // M5 lane L-API (M5 design section 5, 12.1). Every command is web only
     // (reading 9), so MCP refuses it as not exposed. The three status
     // reads carry read-only tools.
-    RefOp::read("grant.overview", T::Proposal, R::GrantReader),
+    RefOp::read("grant.overview", T::Proposal, R::GrantOverview),
     RefOp::read("contract.view", T::Proposal, R::GrantReader).tool("fstp_get_contract_status"),
     RefOp::read("payment.status", T::Proposal, R::GrantReader).tool("fstp_get_payment_status"),
     RefOp::read("payment.queue", T::None, R::AnyAccount).tool("fstp_get_payment_queue"),
@@ -1763,6 +1780,41 @@ fn admit(
                         | Who::Auditor
                 );
             open(in_grant && (former_team_reads(who, x) || staff))
+        }
+        Rule::GrantOverview => {
+            let in_grant = x.is_some_and(|s| among(s, &GRANT_STATES));
+            let staff = who.manager()
+                || matches!(
+                    who,
+                    Who::FinanceApprover
+                        | Who::PaymentReleaser
+                        | Who::ContractSignatory
+                        | Who::Auditor
+                );
+            if in_grant && (former_team_reads(who, x) || staff) {
+                return Ok(());
+            }
+            // After NEGOTIATION, the assigned reviewer (2026-11-13).
+            let after = x.is_some_and(|s| {
+                matches!(
+                    s,
+                    StateTag::Granted
+                        | StateTag::InExecution
+                        | StateTag::Completed
+                        | StateTag::Terminated
+                )
+            });
+            if !after {
+                return Err(outsider);
+            }
+            if who == Who::SuspendedReviewer && who.conflicted_in(x) {
+                return Err(Conflict);
+            }
+            assignee(
+                Who::AssignedReviewer,
+                Who::AssignedReviewerUndeclared,
+                Who::AssignedReviewerConflicted,
+            )
         }
         Rule::ReportReader => {
             open(who.manager() || matches!(who, Who::Auditor | Who::FinancialSignatory))
