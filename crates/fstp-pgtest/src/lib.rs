@@ -22,6 +22,8 @@
 //!   and a role without special rights. Each has a random password and a
 //!   committed client certificate from `crates/fstp-tls/testdata/`.
 //! - `fsync = off`, because the data is thrown away.
+//! - `wal_keep_size = '128MB'`, so a busy test cluster does not recycle a
+//!   WAL segment before `pg_basebackup -X stream` has streamed it.
 //!
 //! [`ServerTls::Optional`] and [`ServerTls::Off`] are explicitly separate
 //! configurations that also accept unencrypted `host` connections. They

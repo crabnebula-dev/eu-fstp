@@ -975,6 +975,7 @@ fn server_conf(dir: &Path, tls_on: bool) -> String {
          synchronous_commit = off\n\
          full_page_writes = off\n\
          max_connections = 100\n\
+         wal_keep_size = '128MB'\n\
          shared_buffers = '32MB'\n\
          logging_collector = off\n\
          log_connections = off\n\
