@@ -300,14 +300,30 @@ fn store_err(e: StoreError) -> WitnessError {
 impl<R: Runtime> Shared<R> {
     /// Rebuilds the TLS configuration over the registered cell CAs.
     fn rebuild_tls(&self) -> Result<(), WitnessError> {
-        let roots: Vec<u8> = locked(&self.cells)
-            .values()
-            .flat_map(|r| r.ca_cert_pem.iter().copied())
-            .collect();
+        let (roots, cells): (Vec<u8>, usize) = {
+            let cells = locked(&self.cells);
+            (
+                cells
+                    .values()
+                    .flat_map(|r| r.ca_cert_pem.iter().copied())
+                    .collect(),
+                cells.len(),
+            )
+        };
         let config = if roots.is_empty() {
             None
         } else {
+            // The roots are the witness's own registry, one cell CA per
+            // registered cell, so the PEM limits grow with it. The default
+            // limits of `fstp_tls` (256 certificates) would refuse the
+            // configuration of a witness that serves more cells (ADR-010).
+            let defaults = fstp_tls::PemLimits::default();
+            let limits = fstp_tls::PemLimits {
+                max_input_bytes: defaults.max_input_bytes.max(roots.len()),
+                max_certificates: defaults.max_certificates.max(cells),
+            };
             let cfg = fstp_tls::ServerConfig::builder(&self.server_chain_pem, &self.server_key_pem)
+                .pem_limits(limits)
                 .require_client_auth(&roots)
                 .build()
                 .map_err(|_| WitnessError::Tls)?;

@@ -325,6 +325,12 @@ pub struct CellHandle {
     runtime: Option<std::sync::Arc<CellRuntime>>,
     /// The cell's backups and stored texts (lane F-ERASE).
     pub(crate) backups: crate::backups::CellBackups,
+    /// The cell's `Ticket` key, whose public key the vault pins. The world
+    /// holds it for the cell, whose route layer cannot sign a ticket yet
+    /// (`crate::cycle::VERIFY_IDENTITY_SEAM`, lane m3/cycle-steps).
+    ticket: TicketSigner,
+    /// The replies the cell gave to sessions ([`crate::responses`]).
+    responses: crate::responses::ResponseLog,
 }
 
 /// The refusal of a call on a cell that runs no listener.
@@ -466,6 +472,81 @@ impl CellHandle {
     /// Fails when the transport fails. A reply of any status is `Ok`.
     pub fn health(&self, req: &HttpRequest) -> Result<HttpReply, WorldError> {
         self.runtime()?.health(req)
+    }
+
+    /// Sends `req` to the cell's vault origin `id.<host>` the way a
+    /// browser reaches it: through the world's edge, with the vault origin
+    /// host as SNI (design sections 1.5 and 6.5, lane m3/cycle-steps).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the transport fails. A reply of any status is `Ok`.
+    pub fn vault_origin_request(&self, req: &HttpRequest) -> Result<HttpReply, WorldError> {
+        self.runtime()?.request(&self.vault_host(), req)
+    }
+
+    /// The vault origin host `id.<host>` (design section 1.5).
+    pub fn vault_host(&self) -> String {
+        format!("id.{}", self.host)
+    }
+
+    /// The signed ticket of `claims`: the canonical claims body, then the
+    /// Ed25519 signature of the cell's `Ticket` key over it, the framing
+    /// of `fstp_vault_proto::ticket` (design section 6.5).
+    ///
+    /// Interim, pending Daniel (lane m3/cycle-steps): the world signs for
+    /// the cell. The cell's ticket routes answer 501 before the engine
+    /// runs them, since the route layer holds no `Ticket` key
+    /// (`crate::cycle::VERIFY_IDENTITY_SEAM`). Claims built on a ticket
+    /// signed here say so.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the claims have no canonical body or the signature
+    /// fails.
+    pub fn sign_ticket(
+        &self,
+        claims: &fstp_vault_proto::TicketClaims,
+    ) -> Result<Vec<u8>, WorldError> {
+        let mut out = claims
+            .canonical()
+            .map_err(|e| WorldError::Store(format!("the ticket claims: {e:?}")))?;
+        let signature = self
+            .ticket
+            .0
+            .sign(&out)
+            .map_err(|e| WorldError::Store(format!("the ticket signature: {e:?}")))?;
+        out.extend_from_slice(&signature);
+        Ok(out)
+    }
+
+    /// The replies the cell gave to sessions of the cycle's auth client
+    /// ([`crate::responses`]).
+    pub fn responses(&self) -> &crate::responses::ResponseLog {
+        &self.responses
+    }
+
+    /// The replies to every session of an account that held a Judging or
+    /// Drafting role on the cell at any time: an account named by a
+    /// `BindingGranted` record of such a role in the cell's ledger
+    /// (I-17, design section 14.4).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the ledger cannot be read.
+    pub fn judging_and_drafting_responses(&self) -> Result<crate::scan::StoreSet, WorldError> {
+        use fstp_domain::roles::Group;
+        let accounts: std::collections::BTreeSet<fstp_domain::id::AccountId> = self
+            .ledger()?
+            .iter()
+            .filter_map(|e| match &e.record {
+                fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(
+                    fstp_domain::Record::BindingGranted(b),
+                )) if matches!(b.role.group(), Group::Judging | Group::Drafting) => Some(b.account),
+                _ => None,
+            })
+            .collect();
+        Ok(self.responses.stores_of(&accounts))
     }
 
     /// The first tenant admin's invitation, as the two staff channels
@@ -3517,6 +3598,8 @@ fn start_cell(
         operator,
         cycle: Mutex::new(None),
         backups,
+        ticket: TicketSigner(std::sync::Arc::new(ticket)),
+        responses: crate::responses::ResponseLog::default(),
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
             running: Mutex::new(Running {
@@ -4164,6 +4247,17 @@ struct OperatorSigner(std::sync::Arc<fstp_crypto::composite::CompositeSigningKey
 impl fmt::Debug for OperatorSigner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("OperatorSigner(..)")
+    }
+}
+
+/// The cell's `Ticket` key in the world (design section 6.5, lane
+/// m3/cycle-steps). Its debug form shows no key.
+#[derive(Clone)]
+struct TicketSigner(std::sync::Arc<fstp_crypto::sig::Ed25519SigningKey>);
+
+impl fmt::Debug for TicketSigner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TicketSigner(..)")
     }
 }
 

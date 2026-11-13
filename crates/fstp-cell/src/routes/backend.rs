@@ -189,6 +189,12 @@ pub trait Backend: Send + Sync + 'static {
         account: AccountId,
     ) -> impl Future<Output = Result<Vec<SessionRow>, BackendFault>> + Send;
 
+    /// Every session row of the cell. The command route decides each
+    /// command with them, so a grant, an end or a vault reaction in its
+    /// batch names every session it ends (design section 5.1
+    /// "Reactions", lane m3/cycle-steps).
+    fn all_sessions(&self) -> impl Future<Output = Result<Vec<SessionRow>, BackendFault>> + Send;
+
     /// Opens a session under the token digest `token`.
     fn open_session(
         &self,

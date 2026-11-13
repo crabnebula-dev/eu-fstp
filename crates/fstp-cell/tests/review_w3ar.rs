@@ -71,6 +71,9 @@ impl Backend for Spy {
     ) -> impl Future<Output = Result<Vec<SessionRow>, BackendFault>> + Send {
         self.inner.sessions_of(account)
     }
+    fn all_sessions(&self) -> impl Future<Output = Result<Vec<SessionRow>, BackendFault>> + Send {
+        self.inner.all_sessions()
+    }
     fn open_session(
         &self,
         token: [u8; 32],

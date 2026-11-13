@@ -64,6 +64,13 @@
 //! - `m2:random-commands` and `m2:path-to-<state>`: random M2 commands,
 //!   or the M2 path of PR1, over the cell (`crate::m2_http::run_m2_step`).
 //!   `seed:ground-truth:life-setup-adult` names the vault those paths seed.
+//! - `judging:read-every-route` and `drafting:read-every-route`: every
+//!   live holder of the group reads every read route of the cell in a
+//!   fresh passkey session ([`reads`], lane m3/cycle-steps).
+//! - `vault-origin:write:<canary>` and `vault-origin:write:<kind>:<text>`:
+//!   a write on the vault origin under a write ticket, or a value of the
+//!   next applicant for a kind the M3 vault origin takes no write of
+//!   ([`origin_writes`], lane m3/cycle-steps).
 //!
 //! Lane F-CYCLE3: the cell clock moves to the call's opening and past its
 //! deadline, and every session is renewed by passkey after a move
@@ -111,6 +118,11 @@ use crate::reference::auth::RefMethod;
 use crate::vault_seed::SeedSource;
 
 use crate::world::CellHandle;
+
+// Lane m3/cycle-steps: the read steps of the Judging and Drafting roles
+// and the vault origin writes.
+pub mod origin_writes;
+pub mod reads;
 
 /// A step that needs `login` first.
 pub const NOT_LOGGED_IN: &str =
@@ -167,7 +179,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, and the value steps <kind>:<text> and authenticator:<hex>); the vault-origin, judging and drafting read steps and the cell erasure step of other tests are not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, and the value steps <kind>:<text> and authenticator:<hex>); the cell erasure step of other tests is not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -497,7 +509,7 @@ impl<'w> Cycle<'w> {
     /// The seam or refusal of the first step that did not run.
     pub fn run(&mut self, steps: &[String]) -> Result<(), NotImplemented> {
         for step in steps {
-            if self.values.take_step(step) {
+            if self.values.take_step(step) || self.take_origin_value(step) {
                 continue;
             }
             // A `signup` takes the values that follow it before the next
@@ -617,6 +629,14 @@ impl<'w> Cycle<'w> {
                 None => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
             },
             s if s.starts_with("m2:") => crate::m2_http::run_m2_step(&self.client, s),
+            // Lane m3/cycle-steps ([`reads`], [`origin_writes`]).
+            "judging:read-every-route" => {
+                self.read_every_route(step, fstp_domain::roles::Group::Judging)
+            }
+            "drafting:read-every-route" => {
+                self.read_every_route(step, fstp_domain::roles::Group::Drafting)
+            }
+            s if s.starts_with(origin_writes::PREFIX) => self.vault_origin_write(s),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),
         }
     }
@@ -754,7 +774,9 @@ impl<'w> Cycle<'w> {
             .map_err(|e| {
                 eprintln!("fstp_celltest::cycle {step}: the seeded verification: {e}");
                 NotImplemented::new(STEP_REFUSED)
-            })
+            })?;
+        self.client.note_attributes(who, attributes.as_bytes());
+        Ok(())
     }
 
     /// `login`: the first admin enrols with both invitation halves and
