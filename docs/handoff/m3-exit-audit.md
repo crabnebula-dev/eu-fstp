@@ -21,7 +21,7 @@ Updated late on 2026-11-13, after the decision lanes of section 7 merged. Local 
 | I-77 | Green (item 6) | None |
 | I-78 | Green | None |
 | I-79 | Red: `i79_non_receiving_never_recovered_by_email_alone` | Daniel: Q-I79 |
-| I-80 | Green on macOS. The two Linux memory scans now get a PID through process mode; first real run is in CI | Confirm in CI |
+| I-80 | Green on macOS. On Linux, CI run 43394088959 passed the root canary scan and failed the seal key scan: destroyed `S(e)` copies stayed in the world host's heap and stack. Lane m3/i80-seal keeps each `SealKey` in one heap allocation and wipes the keyd frames | Confirm the Linux seal key scan in CI |
 | I-81 | Green | None |
 | I-82 | Green | None |
 | I-83 | Green | None |

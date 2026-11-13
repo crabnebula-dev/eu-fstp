@@ -13,8 +13,8 @@ Status on 2026-11-13. Built milestone by milestone, as `SPEC/09-milestones.md` s
 | M0 | Specification freeze for v1 | Done | Closed |
 | M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done | Closed |
 | M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done | Closed at domain level |
-| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, except the cell's licence and update tasks and the self-hosted service steps | Not green. I-16 to I-19, I-78 and I-81 to I-83 are green. I-20, I-24, I-38, I-39, I-77 and I-79 each have red tests; several wait on Daniel's decisions. See `docs/handoff/m3-exit-audit.md` |
-| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built | Not green. SuperSAFE is built through the creator and the cycle reaches NEGOTIATION in the demo. I-66 and I-67 tests and the authorisation matrix are on the known-red list, and the I-84 MCP matrix run has not finished |
+| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, including the licence and update tasks, backups, cell erasure with the two-operator check, process mode and ECH routing | Not closed. Locally every exit invariant is green except I-79, which waits on Daniel (Q-I79). I-80's Linux memory scan found a destroyed seal key in CI; the fix is merged and waits on the next CI run. See `docs/handoff/m3-exit-audit.md` |
+| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built | Not green. SuperSAFE is built through the creator and the cycle reaches NEGOTIATION in the demo. I-66 and I-67 tests and the authorisation matrix are on the known-red list, and the I-84 MCP matrix now runs in eight CI shards of its own. The M-ACTIVATE model check runs out of memory on the CI runner; a fix is in progress |
 | M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built | The cycle reaches PAID in the demo. The I-30 to I-33 tests exist. Not yet confirmed in CI |
 | M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests exist. The crash-injection run is not yet confirmed in CI |
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | Built | The I-10, I-11 and I-21 tests exist. No evaluation run against a live model has been reported, so the thresholds are not yet met |
@@ -24,13 +24,18 @@ Status on 2026-11-13. Built milestone by milestone, as `SPEC/09-milestones.md` s
 | M11 | Pilot with SuperSAFE and a second programme | Not started | Waits on the parties' approval |
 | M12 | Calibration with consented real proposals | Consent records and per-corpus metrics (`fstp-calib`) only | Needs real consented proposals |
 
-CI on `main` passes deps-check, fmt and clippy, the web tests and the SBOM job. The known-red gate was fixed on 2026-11-13 and now judges every test part. The authorisation matrix shards, the domain testkit part and the M-ACTIVATE model check run as separate parts. The remaining red tests are listed in `ci/known-red.txt` or in the exit audits.
+CI on `main` (run of 2026-11-13 on d2038dc8) passes deps-check, fmt and clippy, fuzz smoke, the web tests, the SBOM job, the demo Playwright job, the devstack part, the domain testkit part and all 16 authorisation matrix shards. The known-red gate was fixed on 2026-11-13 and now judges every test part. Four parts were red. The workspace part had five unlisted failures: four are fixed (e0495faf and before), and `r_nf_08_no_api_takes_a_caller_nonce` waits on Daniel. The isolation part failed on the I-80 Linux seal key scan, now fixed. The M-ACTIVATE part ran out of memory, and the api-testkit part ran out of time on the MCP matrix, which is now sharded. `ci/known-red.txt` lists 20 tests, down from 79 on the morning of 2026-11-13.
 
 ### M3: what is open
 
 Built: the cell runtime with its routes, engine, record store and signing; the control plane with its run loops, operator login and cell link; `fstp-pgagent`, which applies the role plan; signup, passkeys, magic links, step-up and recovery; the login email index; the identity vault with its audit chain; the witness with a local file store for self-hosted cells; key custody through `fstp-keyd`; backups sealed with the hybrid KEM; and a test world that runs the call cycle from signup to GRANTED over HTTP. ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.
 
-Open: the cell's licence and update tasks and the self-hosted service steps (I-38, I-39), cell erasure, the money and ledger suites over PostgreSQL, and the decisions listed in `docs/handoff/m3-exit-audit.md` section 3.
+Open:
+
+- I-79: a decision on whether an approval may be recorded on a recovery path that takes none (Q-I79).
+- I-80: confirm the Linux memory scans in CI.
+- `r_nf_08_no_api_takes_a_caller_nonce`: an entry for the two-operator approval challenge in the scan's `NOT_SEALS` list waits on Daniel.
+- Further decisions in `docs/handoff/m3-exit-audit.md` sections 3 and 8: the vault sealed-value layout, break-glass fields, the system erasure path, ledger positions and the I-66 and I-67 generators.
 
 ### Demo
 
