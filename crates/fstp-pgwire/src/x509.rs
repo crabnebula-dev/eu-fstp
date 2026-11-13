@@ -137,6 +137,9 @@ pub fn tls_server_end_point(cert_der: &[u8]) -> Result<Vec<u8>, Error> {
 /// `id-at-organizationalUnitName` (2.5.4.11), content bytes.
 const OID_OU: &[u8] = &[0x55, 0x04, 0x0b];
 
+/// `id-at-commonName` (2.5.4.3), content bytes.
+const OID_CN: &[u8] = &[0x55, 0x04, 0x03];
+
 const SEQUENCE: u8 = 0x30;
 const SET: u8 = 0x31;
 const INTEGER: u8 = 0x02;
@@ -161,6 +164,27 @@ const EXPLICIT_0: u8 = 0xa0;
 /// certificate up to the end of its subject is not valid DER of that
 /// structure.
 pub fn subject_organizational_units(cert_der: &[u8]) -> Result<Vec<&[u8]>, Error> {
+    subject_values(cert_der, OID_OU)
+}
+
+/// Every commonName value in the subject of the certificate `cert_der`,
+/// in the order the subject lists them (RFC 5280 section 4.1.2.6). The
+/// walk and its refusals are those of [`subject_organizational_units`].
+/// Fuzzed with it (`pg_cert_subject_ou`).
+///
+/// The control plane reads the cell a `CellToCp` client certificate names
+/// from it, after the TLS handshake verified the certificate (M3 design
+/// sections 1.3 and 9.1).
+///
+/// # Errors
+///
+/// As for [`subject_organizational_units`].
+pub fn subject_common_names(cert_der: &[u8]) -> Result<Vec<&[u8]>, Error> {
+    subject_values(cert_der, OID_CN)
+}
+
+/// The values of every subject attribute of type `want_oid`, in order.
+fn subject_values<'a>(cert_der: &'a [u8], want_oid: &[u8]) -> Result<Vec<&'a [u8]>, Error> {
     let bad = || Error::auth("server certificate is not valid DER");
     let expect = |input, want| -> Result<(&[u8], &[u8]), Error> {
         let (tag, content, rest) = tlv(input)?;
@@ -204,7 +228,7 @@ pub fn subject_organizational_units(cert_der: &[u8]) -> Result<Vec<&[u8]>, Error
             if !end.is_empty() {
                 return Err(bad());
             }
-            if oid == OID_OU {
+            if oid == want_oid {
                 ous.push(content);
             }
         }
@@ -249,8 +273,6 @@ mod tests {
         seq(SEQUENCE, &body)
     }
 
-    const OID_CN: &[u8] = &[0x55, 0x04, 0x03];
-
     /// I-83, design section 9.2: the reader returns every subject OU in
     /// order, in separate and in multi-valued RDNs, and none for a subject
     /// without one.
@@ -283,6 +305,25 @@ mod tests {
         assert!(subject_organizational_units(&none).unwrap().is_empty());
         let der = first_der(include_bytes!("../../fstp-tls/testdata/server.pem"));
         assert!(subject_organizational_units(&der).unwrap().is_empty());
+    }
+
+    /// R-NF-09, design sections 1.3 and 9.1: the CN reader returns every
+    /// subject CN in order and skips the OUs, over the same walk.
+    #[test]
+    fn r_nf_09_subject_common_names_lists_every_cn_of_the_subject() {
+        let c = cert_with_subject(&[
+            vec![attribute(OID_OU, "vault")],
+            vec![attribute(OID_CN, "cell_ab")],
+        ]);
+        assert_eq!(
+            subject_common_names(&c).unwrap(),
+            vec![b"cell_ab".as_slice()]
+        );
+        let none = cert_with_subject(&[vec![attribute(OID_OU, "vault")]]);
+        assert!(subject_common_names(&none).unwrap().is_empty());
+        for cut in 0..c.len() {
+            assert!(subject_common_names(&c[..cut]).is_err(), "cut at {cut}");
+        }
     }
 
     /// TH-26: a truncated certificate, trailing bytes, an empty RDN and an

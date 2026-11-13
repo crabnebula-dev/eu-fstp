@@ -687,7 +687,11 @@ impl Session {
 
     /// Runs a transaction control statement through the unnamed statement
     /// and returns its command tag. The caller has called `ensure_ready`.
-    pub(crate) async fn run_control(&mut self, sql: &'static str) -> Result<String, Error> {
+    ///
+    /// It also runs the rendered DDL of `Client::execute_rendered_ddl`,
+    /// which is why `sql` is not `&'static str` here. The statement takes
+    /// no parameter and returns no row. A row breaks the connection.
+    pub(crate) async fn run_control(&mut self, sql: &str) -> Result<String, Error> {
         self.encode_request(|s| {
             frontend::parse("", sql, &[], &mut s.wbuf)?;
             BindWriter::begin("", "", 0, &mut s.wbuf)?.finish()?;

@@ -308,6 +308,7 @@ name = "fstp-control"
 version = "0.1.0"
 dependencies = [
  "fstp-cp-proto",
+ "fstp-crypto",
  "fstp-custody",
  "fstp-http",
  "fstp-json",

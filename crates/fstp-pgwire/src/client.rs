@@ -334,6 +334,47 @@ impl<R: Runtime> Client<R> {
         })
     }
 
+    /// Runs one rendered DDL statement outside any transaction and returns
+    /// its command tag. Only built with the `rendered-ddl` feature, which
+    /// only `fstp-control` enables, for `fstp-pgagent` (ADR-011).
+    ///
+    /// This is the one entry point whose SQL text is not `&'static str`.
+    /// `CREATE DATABASE` and `ALTER ROLE ... PASSWORD` cannot take their
+    /// identifiers or verifier as parameters, so `fstp-pgagent` renders
+    /// them from typed slots (`DbIdent`, `RoleIdent`, `ScramVerifier`)
+    /// and passes the text here. The type of those slots is the guard, as
+    /// `&'static str` is for every other statement. Review rejects any
+    /// other caller.
+    ///
+    /// The statement runs alone as the unnamed statement over the
+    /// extended query protocol, so a string with several statements fails
+    /// to parse. It takes no parameter and is never cached. It must return
+    /// no row: a row is a protocol error that breaks the connection. It
+    /// runs only when no transaction is open, so `CREATE DATABASE` is
+    /// allowed. The statement timeout applies. The SQL never appears in an
+    /// error.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Config`] for an empty statement or an open
+    /// transaction. Otherwise the server's error, such as SQLSTATE `42P04`
+    /// for a database that exists, [`ErrorKind::Timeout`], or a
+    /// connection error.
+    #[cfg(feature = "rendered-ddl")]
+    pub async fn execute_rendered_ddl(&mut self, sql: &str) -> Result<String, Error> {
+        if sql.trim().is_empty() {
+            return Err(Error::new(ErrorKind::Config, "empty rendered statement"));
+        }
+        timed!(self, self.session.ensure_ready())?;
+        if self.session.transaction_status() != TransactionStatus::Idle {
+            return Err(Error::new(
+                ErrorKind::Config,
+                "rendered DDL runs only outside a transaction",
+            ));
+        }
+        timed!(self, self.session.run_control(sql))
+    }
+
     async fn end_transaction(&mut self, sql: &'static str) -> Result<String, Error> {
         timed!(self, self.session.ensure_ready())?;
         timed!(self, self.session.run_control(sql))

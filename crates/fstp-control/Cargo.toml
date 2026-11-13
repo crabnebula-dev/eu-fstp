@@ -14,7 +14,9 @@ fstp-json.workspace = true
 fstp-pki.workspace = true
 fstp-custody.workspace = true
 fstp-webauthn.workspace = true
-fstp-pgwire.workspace = true
+fstp-pgwire = { workspace = true, features = ["rendered-ddl"] }
+# Random operator challenges and session tokens (ADR-008). In-house.
+fstp-crypto.workspace = true
 # The isolation auditor reads the catalogue over an fstp-pgwire session,
 # which is generic over the runtime trait. In-house.
 fstp-rt.workspace = true

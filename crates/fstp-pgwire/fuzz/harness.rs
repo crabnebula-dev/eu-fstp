@@ -38,7 +38,8 @@ use fstp_json::Value;
 use fstp_pgwire::proto::backend::{BackendDecoder, BackendMessage, DecodeLimits, decode_frame};
 use fstp_pgwire::scram::{ChannelBinding, ScramClient};
 use fstp_pgwire::x509::{
-    EndPointHash, end_point_hash, subject_organizational_units, tls_server_end_point,
+    EndPointHash, end_point_hash, subject_common_names, subject_organizational_units,
+    tls_server_end_point,
 };
 use fstp_pgwire::{
     AuthMethod, ClientTls, Config, Date, ErrorKind, FromSql, Limits, Numeric, Password,
@@ -950,12 +951,17 @@ pub fn hostile_server_tls(data: &[u8]) -> Option<usize> {
 /// length.
 const MIN_OU_BYTES: usize = 9;
 
-/// I-83, TH-26: `subject_organizational_units` on arbitrary bytes. Every
-/// value it returns lies inside the input, after the one before it, and
-/// takes at least [`MIN_OU_BYTES`] of the input. A second read gives the
-/// same values.
+/// I-83, R-NF-09, TH-26: `subject_organizational_units` and
+/// `subject_common_names` on arbitrary bytes. Every value either returns
+/// lies inside the input. Each OU lies after the one before it and takes
+/// at least [`MIN_OU_BYTES`] of the input. A second read gives the same
+/// values, and both readers accept exactly the same inputs.
 pub fn cert_subject_ou(data: &[u8]) {
     let Ok(ous) = subject_organizational_units(data) else {
+        assert!(
+            subject_common_names(data).is_err(),
+            "the CN reader read a subject the OU reader refused"
+        );
         return;
     };
     let base = data.as_ptr().addr();
@@ -981,4 +987,17 @@ pub fn cert_subject_ou(data: &[u8]) {
         ous,
         "a second read differs"
     );
+    // The CN reader walks the same structure, so it reads exactly the
+    // inputs the OU reader reads, and its values lie inside the input.
+    let cns =
+        subject_common_names(data).expect("the CN reader refused a subject the OU reader read");
+    for v in &cns {
+        let start = v
+            .as_ptr()
+            .addr()
+            .checked_sub(base)
+            .expect("a CN value starts before the input");
+        let end = start.checked_add(v.len()).expect("a CN value overflows");
+        assert!(end <= data.len(), "a CN value ends after the input");
+    }
 }
