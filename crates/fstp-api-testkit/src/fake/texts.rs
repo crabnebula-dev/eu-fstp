@@ -10,9 +10,11 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
-    BlobOwner, BlobRef, BlobStore, PortError, PublicTextRef, ReadClearance, SealOwner, Sealed,
-    Sealer, TextClass, TextOwner, TextRef, TextStore,
+    BlobOwner, BlobRef, BlobStore, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass,
+    TextOwner, TextRef, TextStore,
 };
+
+use fstp_access::ReadClearance;
 
 use super::lock;
 use super::vault::fake_digest;
