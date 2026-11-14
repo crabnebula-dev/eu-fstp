@@ -19,7 +19,7 @@ use fstp_api_core::decode::{Method, decode_route};
 use fstp_api_core::{ApiError, Credential, Op, OpResult};
 use fstp_api_testkit::fake::{FakeCell, WebLogin};
 use signatories::{
-    A1, A2, FINANCIAL, LEGAL, OUTSIDER, S1, active, approve, assert_rule, complete, done, login,
+    A2, FINANCIAL, LEGAL, OUTSIDER, S1, active, approve, assert_rule, complete, done, login,
     member, onboarded, request, request_id, state, stepped, text,
 };
 

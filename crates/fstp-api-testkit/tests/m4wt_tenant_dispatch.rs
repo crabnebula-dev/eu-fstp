@@ -167,59 +167,6 @@ fn fresh(cell: &str, second: Second) -> FakeCell {
     FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"))
 }
 
-/// The I-85 world, with the provisioning record of its tenant admin
-/// appended, and the agreement versions the control plane recorded.
-///
-/// Once the ledger holds the tenant part, publication reads its
-/// configuration from the ledger alone (design 3.5, fix round 1). So the
-/// admin then walks onboarding to a validated Inference step whose
-/// primary is the fixture's P-21 primary, as a real tenant does before
-/// its first publication.
-fn staffed() -> FakeCell {
-    let mut world = fixture::pending_world().unwrap_or_else(|e| panic!("the I-85 world: {e}"));
-    let at = fstp_domain_testkit::r#gen::roster::T0.micros();
-    let mut prov = provisioned(ADMIN, "saas");
-    if let Some(o) = prov.as_object_mut() {
-        o.insert(
-            "agreements",
-            json(r#"{"dpa":"1","saas_terms":"1","sub_processors":"1"}"#),
-        );
-    }
-    append(&mut world.store, at, 1, vec![record(prov)]);
-    let c = FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"));
-    let l = login(&c, ADMIN);
-    let model = fstp_domain_testkit::r#gen::policy::MODEL_A;
-    let steps = [
-        (
-            "organisation",
-            format!(
-                r#"{{"data_protection_contact":"{CONTACT}","signatories":["{}"]}}"#,
-                ADMIN.raw()
-            ),
-        ),
-        (
-            "agreements",
-            r#"{"dpa":"1","saas_terms":"1","sub_processors":"1"}"#.to_owned(),
-        ),
-        ("branding", r#"{"package":"default"}"#.to_owned()),
-        (
-            "domains_and_email",
-            r#"{"sending_domain":"mail.e2e.invalid"}"#.to_owned(),
-        ),
-        (
-            "identity",
-            r#"{"p18":["document_upload","eudi_wallet"],"p45":"tenant_registration"}"#.to_owned(),
-        ),
-        (
-            "inference",
-            format!(r#"{{"fallbacks":[],"primary":"{model}","provider":"placeholder"}}"#),
-        ),
-    ];
-    for (step, values) in steps {
-        save_validated(&c, &l, step, &values);
-    }
-    c
-}
 
 // ---------------------------------------------------------------------------
 // Requests, as the onboarding pages send them
