@@ -22,6 +22,7 @@
 import { createApi, type ApiOutcome, type OperationRef } from "../core/api.js";
 import { withStepUp } from "../core/stepup.js";
 import { OPERATIONS } from "../gen/api.js";
+import { signedInAs } from "../home/nav.js";
 import { warn } from "./frame.js";
 import { t } from "./i18n.js";
 import { canonicalJson, record } from "./model.js";
@@ -125,6 +126,14 @@ export function anyObject(v: unknown): boolean {
  * M4 design section 15.0), lists each as `P-05 60000.01`.
  */
 function refusedText(rule: string | null, values: Readonly<Record<string, string>> | undefined): string {
+  const base = refusalOf(rule, values);
+  // Daniel, 2026-11-14: with many roles, a refusal says which roles the
+  // person acts in, so a page opened in the wrong role is plain to see.
+  const who = signedInAs();
+  return who === null ? base : t.label("outcome.refused_who", { refusal: base, who });
+}
+
+function refusalOf(rule: string | null, values: Readonly<Record<string, string>> | undefined): string {
   if (rule === null) {
     return t.label("outcome.refused");
   }

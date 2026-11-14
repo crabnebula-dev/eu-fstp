@@ -139,6 +139,15 @@ function chipText(roles: MyRoles | null): Label {
   });
 }
 
+/**
+ * The role chip text ("Signed in as ..."), once the shell read the
+ * caller's roles, or null before. Refusals name it, so a person sees
+ * which roles they act in (Daniel, 2026-11-14).
+ */
+export function signedInAs(): Label | null {
+  return known === null ? null : chipText(known);
+}
+
 /** The site navigation: a labelled `nav` landmark with its link list and Account. */
 export function siteNav(): HTMLElement {
   const l = links(known);
