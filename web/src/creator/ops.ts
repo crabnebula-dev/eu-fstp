@@ -20,6 +20,7 @@
 // public page and is never called from here.
 
 import { createApi, type ApiOutcome, type OperationRef } from "../core/api.js";
+import { isSetupRefusal } from "../core/setup.js";
 import { withStepUp } from "../core/stepup.js";
 import { OPERATIONS } from "../gen/api.js";
 import { signedInAs } from "../home/nav.js";
@@ -134,6 +135,10 @@ function refusedText(rule: string | null, values: Readonly<Record<string, string
 }
 
 function refusalOf(rule: string | null, values: Readonly<Record<string, string>> | undefined): string {
+  if (isSetupRefusal("refused", rule)) {
+    // ADR-021: the organisation is still being set up.
+    return t.label("outcome.setup");
+  }
   if (rule === null) {
     return t.label("outcome.refused");
   }

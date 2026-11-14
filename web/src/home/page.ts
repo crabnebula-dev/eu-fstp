@@ -42,6 +42,10 @@
 // - `#home-signatory` names each signatory role the caller holds, one
 //   `li[data-signatory="<role>"]` each (NOTE 5; design section 15.0,
 //   2026-11-06).
+// - Before the organisation is activated (ADR-021), a person the setup
+//   gate refuses sees `#home-setup-notice` alone, which says the
+//   organisation is still being set up. A tenant admin keeps the
+//   onboarding links.
 //
 // Every element is built with `h`, and every text goes in as a text node.
 
@@ -63,6 +67,8 @@ import {
   isId,
   isText,
   list,
+  nullable,
+  oneOf,
   readOp,
   record,
 } from "../reviewer/kit.js";
@@ -137,6 +143,19 @@ interface Counts {
 
 const isAdmins: Guard<{ readonly admins: readonly { readonly account: string; readonly handle: string; readonly verified: boolean }[] }> =
   record({ admins: list(record({ account: isId, handle: isText, verified: isBool })) });
+
+/** The activation read of the organisation (`tenant.get_activation`, SoD-18). */
+const isActivation: Guard<{
+  readonly state: "not_requested" | "requested" | "active";
+  readonly request: string | null;
+  readonly requested_by: string | null;
+  readonly approved_by: string | null;
+}> = record({
+  state: oneOf("not_requested", "requested", "active"),
+  request: nullable(isId),
+  requested_by: nullable(isId),
+  approved_by: nullable(isId),
+});
 
 /** The calls of the work items of `kind`, from their paths. */
 function callsOf(items: readonly WorkItem[], kind: string): string[] {
@@ -536,6 +555,16 @@ export function mountHome(): void {
       home.replaceChildren(h("p", { role: "status" }, [homeLabel("home.signed_out")]));
       return;
     }
+    if (a.kind === "setting_up") {
+      // ADR-021: until the organisation is activated, a person the setup
+      // gate holds back sees one plain notice and nothing else.
+      home.replaceChildren(
+        h("p", { id: "home-setup-notice", role: "status", class: "callout", "data-setup": "" }, [
+          homeLabel("home.setup_notice"),
+        ]),
+      );
+      return;
+    }
     if (a.kind !== "roles") {
       failed();
       return;
@@ -564,6 +593,20 @@ export function mountHome(): void {
       parts.push(h("p", { id: "home-no-role" }, [homeLabel("home.no_role")]));
     } else {
       parts.push(h("p", { class: "muted" }, [homeLabel(adminOnly(a.roles) ? "home.admin.intro" : "home.intro")]));
+    }
+    // ADR-021: until the organisation is activated, a tenant admin reads
+    // that only onboarding runs, and where the activation is.
+    if (a.roles.tenantAdmin) {
+      const act = await readOp(browserEnv(document.body), "tenant.get_activation", {}, isActivation);
+      if (act.ok && act.data.state !== "active") {
+        parts.push(
+          h("p", { id: "home-setup-admin", class: "callout", "data-setup": act.data.state }, [
+            homeLabel("home.setup_admin"),
+            " ",
+            h("a", { href: "/app/admin/onboarding/summary", "data-setup-link": "" }, [homeLabel("home.setup_admin.link")]),
+          ]),
+        );
+      }
     }
     // Lane m6/mailbox: the way to the work waiting for the caller.
     const open = await mailboxCount();

@@ -15,6 +15,7 @@
 
 import { loginPathFor } from "../auth/next.js";
 import { type ApiClient, type ApiOutcome, createApi } from "../core/api.js";
+import { isSetupRefusal } from "../core/setup.js";
 import { OPERATIONS, VALIDATORS } from "../gen/api.js";
 import { type MyRoles, isPublicPage, readMyRoles } from "./model.js";
 import { showRoles } from "./nav.js";
@@ -24,10 +25,13 @@ import { setCallTitles } from "./titles.js";
 export type RolesAnswer =
   | { readonly kind: "roles"; readonly roles: MyRoles }
   | { readonly kind: "signed_out" }
+  /** ADR-021: the organisation is not activated, and the setup gate refuses this caller. */
+  | { readonly kind: "setting_up" }
   | { readonly kind: "failed" };
 
 const FAILED: RolesAnswer = Object.freeze({ kind: "failed" });
 const SIGNED_OUT: RolesAnswer = Object.freeze({ kind: "signed_out" });
+const SETTING_UP: RolesAnswer = Object.freeze({ kind: "setting_up" });
 
 let client: ApiClient | null = null;
 let pending: Promise<RolesAnswer> | null = null;
@@ -55,6 +59,9 @@ async function load(): Promise<RolesAnswer> {
   }
   if (o.kind === "refused" && o.code === "unauthenticated") {
     return SIGNED_OUT;
+  }
+  if (o.kind === "refused" && isSetupRefusal(o.code, o.rule)) {
+    return SETTING_UP;
   }
   return FAILED;
 }
