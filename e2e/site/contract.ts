@@ -75,6 +75,13 @@
  * - A high-risk action still opens `dialog#stepup`. Its confirm button
  *   `#stepup-confirm` is named "Confirm" and runs no WebAuthn ceremony.
  *   Escape still cancels it, and the command still needs the step-up.
+ * - The notice is the button `header button[data-demo-switch]` (lane
+ *   m4/demo-switch). It opens `dialog#demo-switch` with one
+ *   `li[data-demo-person]` per person of the scene, the current one
+ *   with `aria-current="true"`. The dialog reads
+ *   [`DEMO_PEOPLE_PATH`] and a choice posts [`DEMO_SWITCH_PATH`], which
+ *   issues one fresh token that the page redeems on [`DEMO_SIGNIN_PATH`].
+ *   Both answer 401 without a session and 404 without the flag.
  */
 
 import { expect, type APIRequestContext, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
@@ -105,6 +112,12 @@ export const DEMO_SIGNIN_FLAG = '--demo-signin';
 /** The demo sign-in route on the cell origin. */
 export const DEMO_SIGNIN_PATH = '/auth/demo-signin';
 
+/** The people list of the "Switch person" control (lane m4/demo-switch). */
+export const DEMO_PEOPLE_PATH = '/auth/demo-signin/people';
+
+/** The switch of the "Switch person" control (lane m4/demo-switch). */
+export const DEMO_SWITCH_PATH = '/auth/demo-signin/switch';
+
 /** The notice every page of a demo sign-in session shows in its top bar. */
 export const DEMO_NOTICE = 'Demo sign-in';
 
@@ -128,7 +141,11 @@ export const SITE = {
     does: '[data-demo-does]',
     signIn: 'a[data-demo-signin]',
     publicCalls: 'a[data-demo-link="public-calls"]',
+    switchControl: 'header button[data-demo-switch]',
+    switchDialog: 'dialog#demo-switch',
+    switchPerson: 'li[data-demo-person]',
   },
+  roleChip: 'aside [data-role-chip]',
   stepup: { dialog: '#stepup', confirm: '#stepup-confirm' },
 } as const;
 

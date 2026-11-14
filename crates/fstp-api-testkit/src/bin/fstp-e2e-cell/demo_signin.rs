@@ -32,6 +32,18 @@
 //!   step-up stays the passkey ceremony, which a demo account cannot give,
 //!   so passkey and session management there is not part of the demo.
 //!
+//! - The top bar notice of a demo session is a "Switch person" button
+//!   (lane m4/demo-switch). It opens a dialog that lists the people of
+//!   the scene from `GET /auth/demo-signin/people`: each person the demo
+//!   page lists, with their roles and the line on what they can do, and
+//!   the current person marked. Choosing one posts
+//!   `POST /auth/demo-signin/switch {account}`, which issues one fresh
+//!   token as the demo page does, and the page redeems it at once on
+//!   `POST /auth/demo-signin`. Both routes answer only a demo session
+//!   of this cell, and the switch passes the CSRF rule. No token is ever
+//!   listed: one is issued per click, for one person of the scene, and
+//!   it is single use and short-lived like every other.
+//!
 //! The session is a passkey session in the fake sessions port, so the
 //! management login rule of I-77 and the step-up rules hold for it as for
 //! a passkey session. The cell marks it as a demo session. The
@@ -42,11 +54,24 @@
 use fstp_domain::id::AccountId;
 use fstp_http::{Method, Request, Response, StatusCode};
 
-use crate::wire::{self, refuse};
+use fstp_json::{Array, Value};
+
+use crate::wire::{self, dec, obj, refuse};
 use crate::{Inner, SiteInfo, auth, lock};
 
 /// The demo sign-in route on the cell origin (`e2e/site/contract.ts`).
 pub(crate) const ROUTE: &str = "/auth/demo-signin";
+
+/// The route that lists the people a demo session may switch to.
+pub(crate) const PEOPLE_ROUTE: &str = "/auth/demo-signin/people";
+
+/// The route that issues a token to switch a demo session to one person.
+pub(crate) const SWITCH_ROUTE: &str = "/auth/demo-signin/switch";
+
+/// Whether `path` is one of the demo sign-in routes on the cell origin.
+pub(crate) fn is_route(path: &str) -> bool {
+    path == ROUTE || path == PEOPLE_ROUTE || path == SWITCH_ROUTE
+}
 
 /// The longest a demo sign-in token lives, in microseconds of the cell
 /// clock: five minutes.
@@ -87,8 +112,21 @@ fn well_formed(token: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Answers `GET` and `POST` on [`ROUTE`] of a cell started with the flag.
+/// Answers the routes of [`is_route`] on a cell started with the flag.
 pub(crate) async fn handle(info: &SiteInfo, inner: &Inner, req: Request) -> Response {
+    let path = req.target.path().to_owned();
+    if path == PEOPLE_ROUTE {
+        return match req.method {
+            Method::GET => people(inner, &req).await,
+            _ => Response::new(StatusCode::METHOD_NOT_ALLOWED),
+        };
+    }
+    if path == SWITCH_ROUTE {
+        return match req.method {
+            Method::POST => switch(info, inner, &req).await,
+            _ => Response::new(StatusCode::METHOD_NOT_ALLOWED),
+        };
+    }
     match req.method {
         Method::GET => {
             let mut r = info.auth_assets.page_with(PAGE.as_bytes());
@@ -113,6 +151,79 @@ pub(crate) async fn handle(info: &SiteInfo, inner: &Inner, req: Request) -> Resp
             }
         }
         _ => Response::new(StatusCode::METHOD_NOT_ALLOWED),
+    }
+}
+
+/// The account of the demo session of `req`, or the refusal: 401 with
+/// no session, 403 for a session that no demo sign-in opened.
+async fn demo_account(inner: &Inner, req: &Request) -> Result<AccountId, Response> {
+    let Some((session, account)) = auth::session(inner, req).await else {
+        return Err(refuse(StatusCode::UNAUTHORIZED, "session"));
+    };
+    if !lock(&inner.auth).is_demo_session(session) {
+        return Err(refuse(StatusCode::FORBIDDEN, "demo"));
+    }
+    Ok(account)
+}
+
+/// `GET /auth/demo-signin/people`: the scene and its people for the
+/// switcher, with the current person marked. No token is listed.
+async fn people(inner: &Inner, req: &Request) -> Response {
+    let current = match demo_account(inner, req).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let items: Vec<Value> = crate::demo::scene_people(inner, current)
+        .into_iter()
+        .map(|p| {
+            obj(vec![
+                ("account", dec(p.account.raw())),
+                ("name", Value::String(p.name)),
+                ("email", Value::String(p.email)),
+                ("roles", Value::String(p.roles)),
+                ("does", Value::String(p.does)),
+                ("current", Value::Bool(p.account == current)),
+            ])
+        })
+        .collect();
+    wire::json(
+        StatusCode::OK,
+        &obj(vec![
+            ("scene", Value::String(inner.scene())),
+            ("people", Value::Array(Array::from(items))),
+        ]),
+    )
+}
+
+/// `POST /auth/demo-signin/switch {account}`: one fresh single-use token
+/// for `account`, which must be a person the switcher lists. The page
+/// redeems it on [`ROUTE`] at once.
+async fn switch(info: &SiteInfo, inner: &Inner, req: &Request) -> Response {
+    if !auth::csrf(info, req) {
+        return refuse(StatusCode::FORBIDDEN, "csrf");
+    }
+    let current = match demo_account(inner, req).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let Some(body) = wire::body(req) else {
+        return wire::bad("body");
+    };
+    let Some(raw) = wire::dec_member(&body, "account").and_then(|n| u128::try_from(n).ok()) else {
+        return wire::bad("account");
+    };
+    let target = AccountId::from_raw(raw);
+    if !crate::demo::scene_people(inner, current)
+        .iter()
+        .any(|p| p.account == target)
+    {
+        return refuse(StatusCode::FORBIDDEN, "account");
+    }
+    let now = inner.ports.clock.read().micros();
+    let issued = lock(&inner.auth).demo_token(target, now, LIFETIME_MICROS);
+    match issued {
+        Ok(token) => wire::json(StatusCode::OK, &obj(vec![("token", Value::String(token))])),
+        Err(_) => refuse(StatusCode::SERVICE_UNAVAILABLE, "random"),
     }
 }
 
@@ -206,5 +317,18 @@ mod tests {
         assert_eq!(module_for("/auth/account"), Some(ACCOUNT_MODULE));
         assert_eq!(module_for("/auth/login"), None);
         assert_eq!(module_for("/demo"), None);
+    }
+
+    /// Lane m4/demo-switch: the switcher's routes are the demo sign-in
+    /// routes, and no other path under `/auth` is.
+    #[test]
+    fn demo_switch_routes_are_demo_signin_routes() {
+        assert!(is_route(ROUTE));
+        assert!(is_route(PEOPLE_ROUTE));
+        assert!(is_route(SWITCH_ROUTE));
+        assert!(PEOPLE_ROUTE.starts_with(ROUTE) && SWITCH_ROUTE.starts_with(ROUTE));
+        assert!(!is_route("/auth/demo-signin/"));
+        assert!(!is_route("/auth/demo-signin/other"));
+        assert!(!is_route("/auth/account"));
     }
 }

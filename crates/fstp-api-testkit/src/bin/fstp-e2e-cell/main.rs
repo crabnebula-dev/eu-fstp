@@ -343,7 +343,7 @@ impl Handler for CellOrigin {
                 return site.info.auth_assets.asset(&req);
             }
             let inner = site.inner();
-            if site.info.demo_signin && path == demo_signin::ROUTE {
+            if site.info.demo_signin && demo_signin::is_route(&path) {
                 return demo_signin::handle(&site.info, &inner, req).await;
             }
             // The `/app/` shell and the M3 account page of a demo sign-in

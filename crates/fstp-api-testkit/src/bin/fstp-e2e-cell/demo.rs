@@ -490,6 +490,52 @@ pub(crate) fn short_line(inner: &Inner, account: AccountId) -> String {
     }
 }
 
+/// One person the switcher of a demo session lists
+/// (`crate::demo_signin`): the same words the demo page shows for them.
+#[derive(Debug)]
+pub(crate) struct ScenePerson {
+    pub(crate) account: AccountId,
+    pub(crate) name: String,
+    pub(crate) email: String,
+    pub(crate) roles: String,
+    pub(crate) does: String,
+}
+
+/// The people of the scene for the switcher of a demo session: each
+/// person the demo page lists (an unused one-time enrolment link), and
+/// `current`, each once, in the order of the demo page.
+pub(crate) fn scene_people(inner: &Inner, current: AccountId) -> Vec<ScenePerson> {
+    let named: Vec<(AccountId, String)> = {
+        let auth = lock(&inner.auth);
+        let mut accounts: BTreeSet<AccountId> =
+            auth.open_invites().into_iter().map(|(a, _)| a).collect();
+        accounts.insert(current);
+        accounts
+            .into_iter()
+            .map(|a| (a, auth.email_of(a).unwrap_or("").to_owned()))
+            .collect()
+    };
+    let mut sorted: Vec<(u8, String, AccountId, String)> = named
+        .into_iter()
+        .map(|(account, email)| {
+            let name =
+                scenario::persona_label(account).map_or_else(|| email.clone(), str::to_owned);
+            (role_rank(inner, account), name, account, email)
+        })
+        .collect();
+    sorted.sort();
+    sorted
+        .into_iter()
+        .map(|(_, name, account, email)| ScenePerson {
+            account,
+            name,
+            email,
+            roles: roles_of(inner, account),
+            does: short_line(inner, account),
+        })
+        .collect()
+}
+
 /// The public open calls page of the scene (R-PB-01, R-PB-04, design
 /// section 3.10): `/p/{programme}/` of the first programme with a
 /// published call, by its id in decimal, which the public routes accept
@@ -609,7 +655,7 @@ fn page(site: &Site) -> Response {
         })
         .unwrap_or_default();
     let how = if site.info.demo_signin {
-        "Choose \"Sign in as\" to open the person's home page in one click, with no passkey. Use one browser profile per person, such as a new incognito window each. Pages signed in this way say \"Demo sign-in\" in the top bar. The name link enrols a passkey instead, and works once."
+        "Choose \"Sign in as\" to open the person's home page in one click, with no passkey. Use one browser profile per person, such as a new incognito window each. Pages signed in this way say \"Demo sign-in\" in the top bar. That button switches to another person of the scene in the same tab. The name link enrols a passkey instead, and works once."
     } else {
         "Open each name link in its own incognito window and choose \"Create a passkey\". The person is signed in and lands on the home page, which links to their work. A link works once."
     };
