@@ -3,12 +3,15 @@
 //! that is fully built, so every creator step validates and the review
 //! page shows the final report and its three previews.
 //!
-//! The draft is built through the API core with the operations the
-//! creator pages call, as the persons of journey J1 do, and no ledger row
-//! is written by hand:
+//! The ledger starts with the tenant's provisioning and the invitation and
+//! acceptance of the second tenant admin A2, as `tenant.invite_admin` and
+//! M3's enrolment append them (SoD-07). From there the draft is built
+//! through the API core with the operations the onboarding and creator
+//! pages call, as the persons of journeys J0 and J1 do:
 //!
-//! - tenant admin A1 invites a second tenant admin, who takes the
-//!   invitation (`tenant.invite_admin`, SoD-07), as in the reset scene;
+//! - A1 founds the organisation through onboarding, and A2 approves its
+//!   activation (ADR-021, SoD-18), since nothing outside onboarding runs
+//!   before (`found`);
 //! - A1 opens the draft (`creator.open_draft`, with its step-up, I-78)
 //!   and grants M1 the programme manager role (core `GrantRole`, as the
 //!   other seeds grant roles);
@@ -304,30 +307,12 @@ async fn build_draft(seed: &mut Seeder<'_>, p: ProgrammeId) -> Result<(), String
     Err("the set-up draft keeps unacknowledged warnings".to_owned())
 }
 
-/// A1 invites a second tenant admin, who takes the invitation, so the
-/// tenant holds the two admins of SoD-07 and one of them did not build
-/// the draft (I-67). This is the path of the reset scene: the API core
-/// appends the invitation and the cell plays M3's enrolment.
-async fn second_admin(seed: &mut Seeder<'_>) -> Result<(), String> {
-    let before = seed.inner.ports.engine.appended().len();
-    seed.api(
-        OPENER,
-        ApiMethod::Post,
-        "/admin/admins",
-        &obj(vec![("email", s(&email("a2")?))]),
-    )
-    .await?;
-    let (invitation, invitee) = crate::onboarding::appended_invitation(seed.inner, before)
-        .ok_or("tenant.invite_admin appended no invitation")?;
-    crate::onboarding::take(seed.inner, invitee, invitation)
-}
-
 /// A fresh state for the scene: the tenant's provisioning record, both
 /// tenant admins, and M1 with a login email and a one-time enrolment
 /// link. Returns the state and M1's link.
 fn fresh(info: &SiteInfo) -> Result<(Inner, String), String> {
     let mut store = MemStore::new();
-    crate::onboarding::provision(&mut store, OPENER, T_SETUP)?;
+    crate::onboarding::provision_two_admins(&mut store, OPENER, ADMIN_2, T_SETUP)?;
     let world = World {
         store,
         truth: review_truth(),
@@ -354,7 +339,7 @@ pub(crate) async fn build(info: &SiteInfo) -> Result<(Inner, Value), String> {
         cookies: BTreeMap::new(),
     };
     seed.at(T_SETUP);
-    second_admin(&mut seed).await?;
+    super::found(&mut seed).await?;
     let opened = seed
         .api(OPENER, ApiMethod::Post, "/programmes", &obj(vec![]))
         .await?;

@@ -62,6 +62,46 @@ pub(crate) fn provision(
         .map_err(|e| format!("the provisioning record: {e:?}"))
 }
 
+/// Appends the provisioning record of a SaaS cell whose first tenant
+/// admin is `first_admin`, then the invitation of `second_admin` and its
+/// acceptance, as `tenant.invite_admin` and M3's enrolment append them
+/// (Q31 A). The scenes found their organisation on this ledger through
+/// real onboarding and activation (ADR-021).
+pub(crate) fn provision_two_admins(
+    store: &mut MemStore<Record>,
+    first_admin: AccountId,
+    second_admin: AccountId,
+    at: i64,
+) -> Result<(), String> {
+    provision(store, first_admin, at)?;
+    let invitation = InvitationId::from_raw(0x1a2);
+    let records = [
+        fstp_tenant::TenantRecord::AdminInvited {
+            invitation,
+            invitee: second_admin,
+            token_digest: fstp_tenant::TokenDigest::from_bytes([0xd2; 32]),
+            by: first_admin,
+        },
+        fstp_tenant::TenantRecord::AdminAdded {
+            account: second_admin,
+            invitation,
+        },
+    ];
+    for (n, r) in (2u8..).zip(records) {
+        let mut command = *b"fstp:e2e:tenant\0";
+        command[15] = n;
+        store
+            .append(
+                store.head(),
+                at,
+                command,
+                vec![Record::Tenant(TenantEntry::Record(r))],
+            )
+            .map_err(|e| format!("the second admin's tenant record: {e:?}"))?;
+    }
+    Ok(())
+}
+
 /// The invitation and the invitee of the latest `InviteAdmin` the engine
 /// port appended after its first `before` executions.
 pub(crate) fn appended_invitation(

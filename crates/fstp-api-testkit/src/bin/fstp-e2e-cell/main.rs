@@ -199,6 +199,9 @@ impl Inner {
         }
         seams.settings = Arc::new(settings);
         let ports = FakePorts::new(world, seams).map_err(|e| e.to_string())?;
+        // ADR-021: a cell whose ledger holds no tenant part is not active,
+        // so every scene must found its organisation through onboarding.
+        ports.tenant.set_organisation_active(false);
         ports.precheck.set_link(crate::assess::link());
         // R-GA-01: the scenarios create their SuperSAFE programme through
         // core commands, with no complete creator draft, so its Guide reads the
@@ -546,17 +549,29 @@ mod tests {
         format!("127.0.0.1:{port}")
     }
 
-    /// R-PB-01, design sections 1.2 and 8.7: the e2e cell starts on
-    /// loopback and answers one read. `GET /api/v1/calls` lists the open
-    /// calls, public data that needs no session, as JSON.
+    /// R-PB-01, ADR-021, design sections 1.2 and 8.7: the e2e cell starts
+    /// on loopback and answers one read. At first start its organisation
+    /// is not activated, so `GET /api/v1/calls` is refused under
+    /// `ADR-021`. Once a scene founded the organisation, the same read
+    /// lists the open calls, public data that needs no session, as JSON.
     #[test]
-    fn r_pb_01_e2e_cell_starts_and_answers_one_read() {
+    fn r_pb_01_adr021_e2e_cell_starts_and_answers_one_read() {
         let running = start(&Config::loopback()).unwrap_or_else(|e| panic!("{e}"));
         let site = &running.sites[0];
-        let text = exchange(
-            &cell_addr(site),
-            "GET /api/v1/calls HTTP/1.1\r\nHost: a.fstp.localhost\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+        let read = "GET /api/v1/calls HTTP/1.1\r\nHost: a.fstp.localhost\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
+        let first = exchange(&cell_addr(site), read);
+        assert!(first.starts_with("HTTP/1.1 403"), "the reply: {first}");
+        assert!(first.contains("\"ADR-021\""), "the reply: {first}");
+        let body = r#"{"at":"OPEN_CALL"}"#;
+        let seeded = exchange(
+            &addr_of(&site.info.control),
+            &format!(
+                "POST /test/scenario/applicant HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
         );
+        assert!(seeded.starts_with("HTTP/1.1 200"), "the seed: {seeded}");
+        let text = exchange(&cell_addr(site), read);
         assert!(text.starts_with("HTTP/1.1 200"), "the reply: {text}");
         let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
         assert!(

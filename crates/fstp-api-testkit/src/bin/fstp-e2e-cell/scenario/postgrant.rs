@@ -725,7 +725,7 @@ async fn reports(seed: &mut Seeder<'_>) -> Result<Vec<(String, String)>, String>
 
 /// A fresh cell seeded at `at`, with its front-door reply.
 pub(crate) async fn build(info: &SiteInfo, at: GrantAt) -> Result<(Inner, Value), String> {
-    let (inner, _people, _canaries) = fresh_review_with(info, true)?;
+    let (inner, _people, _canaries) = fresh_review(info)?;
     {
         let mut auth = lock_auth(&inner);
         let mail = email("lead-x-self")?;

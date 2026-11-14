@@ -1,11 +1,17 @@
 //! The scenario seeds of the review and applicant specs (`e2e/review`,
 //! `e2e/applicant`), built from genesis through production commands.
 //!
-//! A seed starts from an empty ledger with the synthetic SuperSAFE
-//! programme: the `fstp-programme` fixture, compiled under the Horizon
-//! Europe profile, with its P-09 wording stored as public texts first, as
-//! the creator does (ADR-007). It then runs every command through one of
-//! two production paths:
+//! A seed starts from a ledger that holds only the tenant's provisioning
+//! and the invitation and acceptance of its second tenant admin, as
+//! `tenant.invite_admin` and M3's enrolment append them. The two admins
+//! first found the organisation through real onboarding and activation
+//! (`found`, ADR-021), since nothing outside onboarding runs before. So
+//! a scene holds only people who can exist once the organisation is
+//! active. The seed then builds the synthetic SuperSAFE programme: the
+//! `fstp-programme` fixture, compiled under the Horizon Europe profile,
+//! with its P-09 wording stored as public texts first, as the creator
+//! does (ADR-007). It runs every command through one of two production
+//! paths:
 //!
 //! - **the API core**, `ApiCore::dispatch` with the actor's session, for
 //!   every operation the registry routes and whose texts or projections a
@@ -554,9 +560,94 @@ fn review_truth() -> GroundTruth {
     t
 }
 
-/// The programme, its activation, staff and Judging grants, and the two
-/// calls, the first published with its deadline at `deadline`.
+/// The account that signs for the organisation in every scene. It holds
+/// both tenant-wide signatory roles (SoD-14, SoD-15, SoD-16) and no
+/// programme role.
+const ORG_SIGNATORY: AccountId = AccountId::from_raw(0x0005_1600);
+
+/// Founds the organisation through real onboarding (ADR-021), as its two
+/// tenant admins would through the onboarding pages: A1 grants both
+/// signatory roles, saves every step and completes onboarding, then
+/// requests the activation, and A2 approves it (SoD-07, SoD-14, SoD-15,
+/// SoD-18). Nothing outside onboarding runs before this, so every scene
+/// with a programme starts here.
+async fn found(seed: &mut Seeder<'_>) -> Result<(), String> {
+    seed.at(T_SETUP);
+    for role in ["financial_signatory", "legal_signatory"] {
+        seed.api(
+            ADMIN,
+            ApiMethod::Post,
+            "/admin/signatories",
+            &obj(vec![
+                ("account", dec(ORG_SIGNATORY.raw())),
+                ("role", role.into()),
+            ]),
+        )
+        .await?;
+    }
+    let admins = [ADMIN, ADMIN_2];
+    for name in fstp_api_testkit::harness::ONBOARDING_STEP_NAMES {
+        if name == "payments" {
+            seed.api(
+                ADMIN,
+                ApiMethod::Put,
+                "/admin/settings/payment-mode",
+                &obj(vec![("value", "record_only".into())]),
+            )
+            .await?;
+        }
+        let path = format!("/admin/onboarding/{name}");
+        let view = seed.api(ADMIN, ApiMethod::Get, &path, &Value::Null).await?;
+        let base = text_member(&view, "revision")?;
+        let values = fstp_api_testkit::harness::onboarding_step_values(name, ADMIN, &admins);
+        let saved = seed
+            .api(
+                ADMIN,
+                ApiMethod::Put,
+                &path,
+                &obj(vec![("base", base.as_str().into()), ("values", values)]),
+            )
+            .await?;
+        if text_member(&saved, "outcome")? != "validated" {
+            return Err(format!("onboarding step {name}: {}", saved.to_compact()));
+        }
+    }
+    seed.api(
+        ADMIN,
+        ApiMethod::Post,
+        "/admin/onboarding/complete",
+        &obj(vec![]),
+    )
+    .await?;
+    seed.api(ADMIN, ApiMethod::Post, "/admin/activation", &obj(vec![]))
+        .await?;
+    let view = seed
+        .api(ADMIN, ApiMethod::Get, "/admin/activation", &Value::Null)
+        .await?;
+    let request = text_member(&view, "request")?;
+    seed.api(
+        ADMIN_2,
+        ApiMethod::Post,
+        "/admin/activation/approval",
+        &obj(vec![("request", request.as_str().into())]),
+    )
+    .await?;
+    Ok(())
+}
+
+/// The text member `key` of the reply `v`.
+fn text_member(v: &Value, key: &str) -> Result<String, String> {
+    v.as_object()
+        .and_then(|o| wire::str_member(o, key))
+        .map(str::to_owned)
+        .ok_or_else(|| format!("the reply has no {key}: {}", v.to_compact()))
+}
+
+/// The organisation founded (ADR-021), then the programme, its
+/// activation, staff and Judging grants, and the two calls, the first
+/// published with its deadline at `deadline`.
 async fn programme(seed: &mut Seeder<'_>, deadline: i64) -> Result<(), String> {
+    found(seed).await?;
     seed.at(T_SETUP);
     let policy = supersafe(seed).await?;
     seed.step(&Step::by(
@@ -1056,20 +1147,14 @@ type FreshSeed = (Inner, Vec<Person>, Vec<String>);
 /// A persona's key, its one-time enrolment link and its login email.
 type Person = (&'static str, String, String);
 
-/// A fresh state for a seed: an empty ledger over the review vault, every
-/// persona and lead with a login email and a display handle.
+/// A fresh state for a seed, over the review vault: a ledger that holds
+/// the tenant's provisioning with A1 and A2 as its tenant admins, and
+/// every persona and lead with a login email and a display handle. Each
+/// scene then founds the organisation through real onboarding and
+/// activation ([`found`], ADR-021).
 fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
-    fresh_review_with(info, false)
-}
-
-/// [`fresh_review`], optionally over a ledger that starts with the tenant's
-/// provisioning record, so tenant routes such as the signatory grants run
-/// (M5 L-DEMO: the Financial signatory approves funder reports).
-fn fresh_review_with(info: &SiteInfo, tenant: bool) -> Result<FreshSeed, String> {
     let mut store = MemStore::new();
-    if tenant {
-        crate::onboarding::provision(&mut store, ADMIN, T_SETUP)?;
-    }
+    crate::onboarding::provision_two_admins(&mut store, ADMIN, ADMIN_2, T_SETUP)?;
     let world = World {
         store,
         truth: review_truth(),
