@@ -8,7 +8,9 @@ import { failureText } from "../src/applicant/ui.js";
 import { CALLS_LABELS } from "../src/calls/messages.en.js";
 import { SETUP_NOTICE, SETUP_RULE, isSetupRefusal } from "../src/core/setup.js";
 import { CATALOGUE } from "../src/creator/messages.en.js";
+import { siteLinks } from "../src/auth/sitenav.js";
 import { HOME_LABELS } from "../src/home/messages.en.js";
+import { navOf, readMyRoles } from "../src/home/model.js";
 import { assert, eq, test } from "./support/harness.js";
 
 /** ADR-021: the rule the cell names, and only a `refused` code with it, is the setup gate. */
@@ -38,4 +40,28 @@ test("adr021_every_page_shows_the_same_setup_notice", () => {
     SETUP_NOTICE,
     "a refused read under ADR-021 shows the notice",
   );
+});
+
+/**
+ * ADR-021: before activation a tenant admin's navigation, in the app and
+ * on the account page alike, offers Home, the onboarding pages, the
+ * approvals and Account alone, since the cell refuses every other page.
+ */
+test("adr021_setup_navigation_offers_the_onboarding_pages_alone", () => {
+  const admin = readMyRoles({ tenant_admin: true, roles: [], calls: [], rounds: [], drafts: [], signatories: [] });
+  assert(admin !== null, "the admin's me.roles reply reads");
+  const app = navOf(admin, false, true).map((l) => `${l.kind} ${l.href}`);
+  const account = siteLinks({ tenantAdmin: true, staff: new Set(), signatories: [], setup: true }).map(
+    (l) => `${l.kind} ${l.href}`,
+  );
+  eq(app, account, "the app and the account page give the same setup navigation");
+  eq(
+    app,
+    ["home /app/", "onboarding /app/admin/onboarding/summary", "approvals /app/admin/approvals", "account /auth/account"],
+    "only the pages the setup gate admits",
+  );
+  const active = navOf(admin).map((l) => l.kind);
+  for (const kind of ["creator", "proposals", "grants", "calls"]) {
+    assert(active.includes(kind as never), `${kind} returns once the organisation is active`);
+  }
 });

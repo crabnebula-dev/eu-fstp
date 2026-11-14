@@ -40,6 +40,11 @@ export interface NavRoles {
   readonly staff: ReadonlySet<string>;
   /** The tenant-wide signatory roles of the caller. */
   readonly signatories: readonly string[];
+  /**
+   * A tenant admin of an organisation that waits for its activation
+   * (ADR-021): only the onboarding pages open until then.
+   */
+  readonly setup?: boolean;
 }
 
 /** The parts of a `me.roles` reply the navigation reads, or null when it does not fit. */
@@ -66,6 +71,14 @@ export function navRolesOf(v: unknown): NavRoles | null {
  * `roles` is null until `me.roles` answers.
  */
 export function siteLinks(roles: NavRoles | null): readonly SiteLink[] {
+  if (roles?.setup === true) {
+    return [
+      { kind: 'home', href: '/app/' },
+      { kind: 'onboarding', href: '/app/admin/onboarding/summary' },
+      { kind: 'approvals', href: '/app/admin/approvals' },
+      { kind: 'account', href: '/auth/account' },
+    ];
+  }
   const out: SiteLink[] = [{ kind: 'home', href: '/app/' }];
   if (roles !== null) {
     if (roles.staff.has('committee_member')) {

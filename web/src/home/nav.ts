@@ -72,6 +72,14 @@ export function homeLocale(): string {
 /** The caller's roles, once the shell read them. */
 let known: MyRoles | null = null;
 
+/**
+ * Whether the caller is a tenant admin of an organisation that waits for
+ * its activation (ADR-021). Only onboarding runs then, so the navigation
+ * offers the onboarding pages alone, and the top bar has no Mailbox or
+ * Notifications link.
+ */
+let setup = false;
+
 /** The attribute that marks the link list of a site navigation. */
 const LIST = "data-site-nav";
 
@@ -102,7 +110,7 @@ const PROFILE = "/app/me";
  */
 function links(roles: MyRoles | null): { readonly main: HTMLElement[]; readonly tools: HTMLElement[] } {
   const current = here();
-  const all = navOf(roles, reviewWork);
+  const all = navOf(roles, reviewWork, setup);
   return {
     main: all.filter((l) => l.kind !== "account").map((l) => item(l, current)),
     tools: all
@@ -215,14 +223,20 @@ function topBar(): HTMLElement {
         h("span", {}, [homeLabel("nav.brand"), h("span", { class: "sr-only" }, [homeLabel("nav.brand_home")])]),
       ]),
       h("span", { class: "topbar-spacer" }),
-      h("ul", { class: "topbar-tools" }, [
-        h("li", {}, [mailboxLink()]),
-        h("li", {}, [
-          h("a", { class: "tool-link", href: WORK_PATHS.notices, "data-tool": "notices" }, [
-            homeLabel("nav.notifications"),
-          ]),
-        ]),
-      ]),
+      h(
+        "ul",
+        { class: "topbar-tools" },
+        setup
+          ? []
+          : [
+              h("li", {}, [mailboxLink()]),
+              h("li", {}, [
+                h("a", { class: "tool-link", href: WORK_PATHS.notices, "data-tool": "notices" }, [
+                  homeLabel("nav.notifications"),
+                ]),
+              ]),
+            ],
+      ),
       h("nav", { class: "topbar-nav", "aria-label": homeLabel("nav.tools_label") }, [
         h("ul", { class: "topbar-tools", [LIST]: "tools" }, links(known).tools),
       ]),
@@ -242,6 +256,20 @@ export function appShell(main: HTMLElement): HTMLElement[] {
   main.setAttribute("tabindex", "-1");
   const skip = h("a", { class: "skip-link", href: `#${main.id}` }, [homeLabel("nav.skip_to_main")]);
   return [skip, topBar(), h("div", { class: "page-body" }, [sidebar(), main])];
+}
+
+/**
+ * Marks that the organisation waits for its activation (ADR-021): the
+ * navigation then offers the onboarding pages alone, and every top bar
+ * of the page, and of every shell built later, drops its Mailbox and
+ * Notifications links, whose pages the cell refuses until activation.
+ * `showRoles` fills the navigation lists.
+ */
+export function showSetup(): void {
+  setup = true;
+  for (const a of Array.from(document.querySelectorAll('a[data-tool="mailbox"], a[data-tool="notices"]'))) {
+    a.closest("li")?.remove();
+  }
 }
 
 /**

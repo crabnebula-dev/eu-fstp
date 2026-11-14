@@ -18,12 +18,13 @@ import { type ApiClient, type ApiOutcome, createApi } from "../core/api.js";
 import { isSetupRefusal } from "../core/setup.js";
 import { OPERATIONS, VALIDATORS } from "../gen/api.js";
 import { type MyRoles, isPublicPage, readMyRoles } from "./model.js";
-import { showRoles } from "./nav.js";
+import { showRoles, showSetup } from "./nav.js";
 import { setCallTitles } from "./titles.js";
 
 /** What the read of the caller's roles gave. */
 export type RolesAnswer =
-  | { readonly kind: "roles"; readonly roles: MyRoles }
+  /** `setup`: a tenant admin of an organisation that waits for its activation (ADR-021). */
+  | { readonly kind: "roles"; readonly roles: MyRoles; readonly setup: boolean }
   | { readonly kind: "signed_out" }
   /** ADR-021: the organisation is not activated, and the setup gate refuses this caller. */
   | { readonly kind: "setting_up" }
@@ -35,6 +36,29 @@ const SETTING_UP: RolesAnswer = Object.freeze({ kind: "setting_up" });
 
 let client: ApiClient | null = null;
 let pending: Promise<RolesAnswer> | null = null;
+
+/**
+ * Whether the organisation still waits for its activation, as a tenant
+ * admin reads it (`tenant.get_activation`, ADR-021). Only onboarding runs
+ * until then, so the shell offers the onboarding pages alone. A read that
+ * fails gives false: the cell still refuses what the gate refuses.
+ */
+async function awaitingActivation(api: ApiClient): Promise<boolean> {
+  const op = OPERATIONS.find((o) => o.name === "tenant.get_activation");
+  const check = VALIDATORS["tenant.get_activation"];
+  if (op === undefined || op.base !== "api" || check === undefined) {
+    return false;
+  }
+  try {
+    const o = await api.call(op, {}, undefined, check);
+    if (o.kind !== "done" || typeof o.body !== "object" || o.body === null) {
+      return false;
+    }
+    return (o.body as Readonly<Record<string, unknown>>)["state"] !== "active";
+  } catch {
+    return false;
+  }
+}
 
 async function load(): Promise<RolesAnswer> {
   const op = OPERATIONS.find((o) => o.name === "me.roles");
@@ -55,7 +79,8 @@ async function load(): Promise<RolesAnswer> {
     return FAILED;
   }
   if (o.kind === "done" && box.roles !== null) {
-    return Object.freeze({ kind: "roles", roles: box.roles });
+    const setup = box.roles.tenantAdmin ? await awaitingActivation(client) : false;
+    return Object.freeze({ kind: "roles", roles: box.roles, setup });
   }
   if (o.kind === "refused" && o.code === "unauthenticated") {
     return SIGNED_OUT;
@@ -80,6 +105,9 @@ export function myRoles(): Promise<RolesAnswer> {
 export async function startSession(path: string): Promise<void> {
   const a = await myRoles();
   if (a.kind === "roles") {
+    if (a.setup) {
+      showSetup();
+    }
     showRoles(a.roles);
     setCallTitles(a.roles.titles);
   } else if (a.kind === "signed_out" && !isPublicPage(path)) {

@@ -67,8 +67,6 @@ import {
   isId,
   isText,
   list,
-  nullable,
-  oneOf,
   readOp,
   record,
 } from "../reviewer/kit.js";
@@ -143,19 +141,6 @@ interface Counts {
 
 const isAdmins: Guard<{ readonly admins: readonly { readonly account: string; readonly handle: string; readonly verified: boolean }[] }> =
   record({ admins: list(record({ account: isId, handle: isText, verified: isBool })) });
-
-/** The activation read of the organisation (`tenant.get_activation`, SoD-18). */
-const isActivation: Guard<{
-  readonly state: "not_requested" | "requested" | "active";
-  readonly request: string | null;
-  readonly requested_by: string | null;
-  readonly approved_by: string | null;
-}> = record({
-  state: oneOf("not_requested", "requested", "active"),
-  request: nullable(isId),
-  requested_by: nullable(isId),
-  approved_by: nullable(isId),
-});
 
 /** The calls of the work items of `kind`, from their paths. */
 function callsOf(items: readonly WorkItem[], kind: string): string[] {
@@ -574,17 +559,25 @@ export function mountHome(): void {
       f.heading.replaceChildren(title);
       document.title = homeLabel("home.document_title", { page: title });
     }
-    const listed = await call("proposal.list_own", {}, undefined, decodeOwnProposals);
+    // ADR-021: before activation a tenant admin's home holds the
+    // onboarding work alone, and reads nothing the cell refuses.
+    const setup = a.setup;
+    const listed = setup
+      ? ({ ok: true, value: [] } as const)
+      : await call("proposal.list_own", {}, undefined, decodeOwnProposals);
     const infos: readonly ProposalInfo[] = listed.ok ? listed.value : [];
     const own: readonly OwnProposal[] | null = listed.ok
       ? listed.value.map((p) => ({ proposal: p.proposal, role: p.role, title: p.title, state: p.state }))
       : null;
-    const w = workOf(
+    const all = workOf(
       a.roles,
       own,
       (c) => homeLabel("home.call", { id: c }),
       (p) => homeLabel("home.proposal", { id: p }),
     );
+    const w: Work = setup
+      ? { ...all, items: all.items.filter((i) => i.group === "tenant_admin" && i.kind === "onboarding") }
+      : all;
     const counts = await readCounts(w, a.roles);
     const { main, after } = cards(w, infos, counts);
     const everyone = w.items.filter((i) => i.group === "everyone");
@@ -596,20 +589,17 @@ export function mountHome(): void {
     }
     // ADR-021: until the organisation is activated, a tenant admin reads
     // that only onboarding runs, and where the activation is.
-    if (a.roles.tenantAdmin) {
-      const act = await readOp(browserEnv(document.body), "tenant.get_activation", {}, isActivation);
-      if (act.ok && act.data.state !== "active") {
-        parts.push(
-          h("p", { id: "home-setup-admin", class: "callout", "data-setup": act.data.state }, [
-            homeLabel("home.setup_admin"),
-            " ",
-            h("a", { href: "/app/admin/onboarding/summary", "data-setup-link": "" }, [homeLabel("home.setup_admin.link")]),
-          ]),
-        );
-      }
+    if (setup) {
+      parts.push(
+        h("p", { id: "home-setup-admin", class: "callout", "data-setup": "" }, [
+          homeLabel("home.setup_admin"),
+          " ",
+          h("a", { href: "/app/admin/onboarding/summary", "data-setup-link": "" }, [homeLabel("home.setup_admin.link")]),
+        ]),
+      );
     }
     // Lane m6/mailbox: the way to the work waiting for the caller.
-    const open = await mailboxCount();
+    const open = setup ? null : await mailboxCount();
     if (open !== null) {
       parts.push(
         h("p", { id: "home-mailbox", class: "callout" }, [
@@ -624,9 +614,13 @@ export function mountHome(): void {
         ...main.map((c, n) => cardElement(c, n === 0 ? homeLabel("home.primary.kicker") : null)),
         ...after,
       ]),
-      h("aside", { "aria-label": homeLabel("home.other_places") }, [
-        cardElement({ id: "home-calls", title: homeLabel("home.group.everyone"), body: [h("p", { class: "text-sm" }, [homeLabel("home.calls.intro")])], items: everyone }, null),
-      ]),
+      ...(setup
+        ? []
+        : [
+            h("aside", { "aria-label": homeLabel("home.other_places") }, [
+              cardElement({ id: "home-calls", title: homeLabel("home.group.everyone"), body: [h("p", { class: "text-sm" }, [homeLabel("home.calls.intro")])], items: everyone }, null),
+            ]),
+          ]),
     ]);
     parts.push(work, ...signatoryRoles(w), ...otherRoles(w));
     home.replaceChildren(...parts);

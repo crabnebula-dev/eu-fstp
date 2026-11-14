@@ -32,6 +32,9 @@ const ME_ROLES = '/api/v1/me/roles';
 /** The caller's mailbox (`me.mailbox`, lane m6/mailbox). */
 const ME_MAILBOX = '/api/v1/me/mailbox';
 
+/** The activation of the organisation (`tenant.get_activation`, SoD-18, ADR-021). */
+const ADMIN_ACTIVATION = '/api/v1/admin/activation';
+
 /** The paths of the top bar and the sidebar foot, as `home/model.ts` names them. */
 const APP = { home: '/app/', mailbox: '/app/mailbox', notices: '/app/notices', profile: '/app/me' } as const;
 
@@ -166,23 +169,44 @@ export function appShell(main: HTMLElement): void {
   // `main` (WCAG 2.2 SC 2.4.1).
   body.before(topBar(mailbox));
   body.after(footer());
-  void get(ME_ROLES).then(
-    (r) => {
-      if (!ok(r)) return;
-      const roles = navRolesOf(r.body);
-      if (roles !== null) fillNav(list, roles);
-      chip.replaceChildren(chipText(chipRolesOf(r.body)));
-    },
-    () => undefined,
-  );
-  void get(ME_MAILBOX).then(
-    (r) => {
-      const open = ok(r) ? record(r.body)?.['open'] : undefined;
-      if (typeof open === 'number' && Number.isSafeInteger(open) && open >= 0) {
-        mailbox.setAttribute('data-open', String(open));
-        mailbox.replaceChildren(t('shell.mailbox_count', { count: String(open) }));
+  void loadShell(list, chip, mailbox);
+}
+
+/**
+ * Reads `me.roles` to fill the role chip and the role links. A tenant
+ * admin of an organisation that waits for its activation (ADR-021) gets
+ * the onboarding links alone and no Mailbox or Notifications link, since
+ * the cell refuses those pages until then. Anyone else then reads
+ * `me.mailbox` for the open count. A failed read changes nothing.
+ */
+async function loadShell(list: HTMLElement, chip: HTMLElement, mailbox: HTMLElement): Promise<void> {
+  try {
+    const r = await get(ME_ROLES);
+    if (!ok(r)) return;
+    const roles = navRolesOf(r.body);
+    chip.replaceChildren(chipText(chipRolesOf(r.body)));
+    if (roles === null) return;
+    if (roles.tenantAdmin && (await awaitingActivation())) {
+      fillNav(list, { ...roles, setup: true });
+      for (const a of Array.from(document.querySelectorAll('a[data-tool="mailbox"], a[data-tool="notices"]'))) {
+        a.closest('li')?.remove();
       }
-    },
-    () => undefined,
-  );
+      return;
+    }
+    fillNav(list, roles);
+    const m = await get(ME_MAILBOX);
+    const open = ok(m) ? record(m.body)?.['open'] : undefined;
+    if (typeof open === 'number' && Number.isSafeInteger(open) && open >= 0) {
+      mailbox.setAttribute('data-open', String(open));
+      mailbox.replaceChildren(t('shell.mailbox_count', { count: String(open) }));
+    }
+  } catch {
+    return;
+  }
+}
+
+/** Whether the organisation still waits for its activation (`tenant.get_activation`). */
+async function awaitingActivation(): Promise<boolean> {
+  const r = await get(ADMIN_ACTIVATION);
+  return ok(r) && record(r.body)?.['state'] !== 'active';
 }
