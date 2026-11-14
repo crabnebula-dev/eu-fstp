@@ -16,6 +16,10 @@
  *   and still guards the command (R-LG-03).
  * - demo_signin_token_refusals: a reused, expired or forged token is
  *   refused, each paired with a fresh token that works.
+ * - demo_switch_person (lane m4/demo-switch): the top bar notice of a
+ *   demo session is a "Switch person" control. It lists the people of
+ *   the scene with their roles and work, marks the current person, and
+ *   one click signs in as another person in the same tab (R-NF-03).
  * - demo_signin_absent_without_flag: the cell started without the flag
  *   answers 404 on the demo sign-in route, offers no "Sign in as" link,
  *   and shows no demo notice in a passkey session. The Rust half,
@@ -35,7 +39,9 @@ import {
   DEMO_CONFIRM,
   DEMO_NOTICE,
   DEMO_SIGNIN_FLAG,
+  DEMO_PEOPLE_PATH,
   DEMO_SIGNIN_PATH,
+  DEMO_SWITCH_PATH,
   DEMO_TOKEN_MICROS,
   DOOR,
   FrontDoor,
@@ -310,6 +316,121 @@ test.describe('demo sign-in with the flag', () => {
     }
   });
 
+  /**
+   * Lane m4/demo-switch, R-NF-03: the "Switch person" control in the top
+   * bar lists the people of the scene with their roles and the line on
+   * what they can do, marks the current person, and signs in as another
+   * person in the same tab with one click. It works from `/app/` and
+   * from the M3 account page. Its routes answer a demo session only, and
+   * a switch token is single use.
+   */
+  test('demo_switch_person', async ({ browser }, testInfo) => {
+    const c = cellOf();
+    const origin = c.cell.origin;
+    const door = await FrontDoor.open(browser, c.cell);
+    try {
+      await door.chooseScene('/demo/review?stage=stage1');
+    } finally {
+      await door.close();
+    }
+    const bare = await bareContext(browser);
+    try {
+      const page = await clickSignIn(bare.page, c, DOOR.c1);
+      await expectDemoHome(page, origin, 'coordinator');
+      const chip = page.locator(SITE.roleChip).first();
+      await expect(chip, 'the role chip names the coordinator').toHaveText(/coordinator/i);
+
+      // The notice is the switch control, and names the person signed in now.
+      const control = page.locator(SITE.demo.switchControl);
+      await expect(control, 'one switch control in the top bar').toHaveCount(1);
+      await expect(control).toHaveAccessibleName(/Demo sign-in: Coordinator C1\. Switch person/);
+      await expect(control).toHaveAttribute('aria-haspopup', 'dialog');
+
+      // It opens a dialog with every person of the scene.
+      await control.click();
+      const dialog = page.locator(SITE.demo.switchDialog);
+      await expect(dialog, 'the switcher opens').toBeVisible();
+      await expect(dialog.getByRole('heading', { name: 'Switch person' })).toBeVisible();
+      await expect(dialog, 'the switcher names the scene').toContainText('Scene: stage1');
+      const people = dialog.locator(SITE.demo.switchPerson);
+      await expect(people.first()).toBeVisible();
+      const count = await people.count();
+      expect(count, 'the switcher lists the people of the scene').toBeGreaterThan(3);
+      for (let i = 0; i < count; i += 1) {
+        const p = people.nth(i);
+        await expect(p.locator('[data-demo-roles]'), 'each person shows their roles').toHaveText(/\S/);
+        const does = (await p.locator(SITE.demo.does).innerText()).trim();
+        expect(does, 'each person shows what they can do').not.toBe('');
+        expect(does.split(/\s+/).length, 'one short line').toBeLessThan(40);
+      }
+      const me = people.filter({ hasText: DOOR.c1 });
+      await expect(me, 'the current person is listed').toHaveCount(1);
+      await expect(me).toHaveAttribute('aria-current', 'true');
+      await expect(me.locator('[data-demo-current]'), 'the current person is marked').toHaveText('Signed in now');
+      await expect(me.getByRole('button'), 'the current person has no switch button').toHaveCount(0);
+      await expect(dialog.locator('[aria-current="true"]'), 'one current person').toHaveCount(1);
+      const r1 = people.filter({ hasText: DOOR.r1 });
+      await expect(r1.locator('[data-demo-roles]')).toHaveText(/Committee member/);
+      await expect(r1.locator(SITE.demo.does)).toHaveText(/review assignment/);
+      await page.screenshot({ path: testInfo.outputPath('demo-switch-open.png'), fullPage: false });
+
+      // Escape closes it and gives focus back to the control (R-NF-03).
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(control).toBeFocused();
+      await expect(control).toHaveAttribute('aria-expanded', 'false');
+
+      // One click signs in as the committee member in the same tab.
+      const tabs = bare.context.pages().length;
+      await control.click();
+      const switched = page.waitForEvent('load');
+      await dialog.getByRole('button', { name: 'Sign in as Committee member R1' }).click();
+      await switched;
+      await expectDemoHome(page, origin, 'committee member after the switch');
+      await expect(page.locator(SITE.roleChip).first(), 'the role chip names the committee member').toHaveText(/committee member/i);
+      await expect(page.locator(SITE.demo.switchControl)).toHaveAccessibleName(/Committee member R1/);
+      expect(bare.context.pages().length, 'the switch stays in the same tab').toBe(tabs);
+
+      // From the M3 account page, back to the coordinator.
+      await page.goto(`${origin}/auth/account`);
+      const again = page.locator(SITE.demo.switchControl);
+      await expect(again, 'the account page has the switch control').toBeVisible();
+      await again.click();
+      await expect(page.locator(SITE.demo.switchDialog).locator('[aria-current="true"]')).toContainText('Committee member R1');
+      const back = page.waitForEvent('load');
+      await page.locator(SITE.demo.switchDialog).getByRole('button', { name: 'Sign in as Coordinator C1' }).click();
+      await back;
+      await expectDemoHome(page, origin, 'coordinator after the switch from the account page');
+      await expect(page.locator(SITE.roleChip).first()).toHaveText(/coordinator/i);
+      expect(bare.webauthn(), 'no WebAuthn call').toEqual([]);
+
+      // The routes: a person outside the scene is refused, and a token works once.
+      const outside = await call(page, origin, 'POST', DEMO_SWITCH_PATH, { account: '987654321' });
+      expect(outside.status, 'a switch to an account outside the scene is refused').toBe(403);
+      const listed = await call(page, origin, 'GET', DEMO_PEOPLE_PATH);
+      const people2 = (JSON.parse(listed.body) as { people: { account: string; name: string }[] }).people;
+      const h1 = people2.find((p) => DOOR.h1.test(p.name));
+      expect(h1, 'the people list names the chair').toBeDefined();
+      const issued = await call(page, origin, 'POST', DEMO_SWITCH_PATH, { account: h1?.account ?? '' });
+      expect(issued.status).toBe(200);
+      const token = (JSON.parse(issued.body) as { token: string }).token;
+      expect((await call(page, origin, 'POST', DEMO_SIGNIN_PATH, { token })).status, 'the switch token works once').toBe(200);
+      expect((await call(page, origin, 'POST', DEMO_SIGNIN_PATH, { token })).status, 'a used switch token is refused').toBe(403);
+    } finally {
+      await bare.context.close();
+    }
+
+    // Without a demo session both routes refuse.
+    const anon = await bareContext(browser);
+    try {
+      await anon.page.goto(`${origin}/auth/login`);
+      expect((await call(anon.page, origin, 'GET', DEMO_PEOPLE_PATH)).status, 'no people list without a session').toBe(401);
+      expect((await call(anon.page, origin, 'POST', DEMO_SWITCH_PATH, { account: '1' })).status, 'no switch without a session').toBe(401);
+    } finally {
+      await anon.context.close();
+    }
+  });
+
   /** Scope item 8: the cell refuses a reused, an expired and a forged token. */
   test('demo_signin_token_refusals', async ({ browser, request }) => {
     const c = cellOf();
@@ -396,21 +517,29 @@ test.describe('demo sign-in with the flag', () => {
  * and `X-FSTP-Request` fields a state-changing call needs.
  */
 /** The demo modules of `web/src/demo`, which the cell serves only with the flag. */
-const DEMO_MODULES = ['/assets/demo/notice.js', '/assets/demo/signin.js'] as const;
+const DEMO_MODULES = ['/assets/demo/notice.js', '/assets/demo/signin.js', '/assets/demo/people.js'] as const;
 
 async function probeRoute(
   browser: Browser,
   origin: string,
-): Promise<{ readonly get: number; readonly post: number; readonly assets: readonly number[] }> {
+): Promise<{
+  readonly get: number;
+  readonly post: number;
+  readonly people: number;
+  readonly switched: number;
+  readonly assets: readonly number[];
+}> {
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
     const g = await page.goto(`${origin}${DEMO_SIGNIN_PATH}`);
     await page.goto(`${origin}/auth/login`);
     const p = await call(page, origin, 'POST', DEMO_SIGNIN_PATH, { token: '00' });
+    const people = await call(page, origin, 'GET', DEMO_PEOPLE_PATH);
+    const switched = await call(page, origin, 'POST', DEMO_SWITCH_PATH, { account: '1' });
     const assets: number[] = [];
     for (const m of DEMO_MODULES) assets.push((await page.request.get(`${origin}${m}`)).status());
-    return { get: g?.status() ?? 0, post: p.status, assets };
+    return { get: g?.status() ?? 0, post: p.status, people: people.status, switched: switched.status, assets };
   } finally {
     await context.close();
   }
@@ -443,6 +572,8 @@ test.describe('demo sign-in without the flag', () => {
     const probe = await probeRoute(browser, origin);
     expect(probe.get, `GET ${DEMO_SIGNIN_PATH} without the flag`).toBe(404);
     expect(probe.post, `POST ${DEMO_SIGNIN_PATH} without the flag`).toBe(404);
+    expect(probe.people, `GET ${DEMO_PEOPLE_PATH} without the flag`).toBe(404);
+    expect(probe.switched, `POST ${DEMO_SWITCH_PATH} without the flag`).toBe(404);
     expect(probe.assets, `the demo modules ${DEMO_MODULES.join(", ")} without the flag`).toEqual(DEMO_MODULES.map(() => 404));
 
     const door = await FrontDoor.open(browser, plain.cell);
@@ -473,6 +604,8 @@ test.describe('demo sign-in without the flag', () => {
     flagged = await OwnCell.start([DEMO_SIGNIN_FLAG]);
     const served = await probeRoute(browser, flagged.cell.origin);
     expect(served.get, `GET ${DEMO_SIGNIN_PATH} with the flag is served`).not.toBe(404);
+    expect(served.people, `GET ${DEMO_PEOPLE_PATH} with the flag asks for a demo session`).toBe(401);
+    expect(served.switched, `POST ${DEMO_SWITCH_PATH} with the flag asks for a demo session`).toBe(401);
     expect(served.assets, `the demo modules ${DEMO_MODULES.join(", ")} with the flag`).toEqual(DEMO_MODULES.map(() => 200));
   });
 });

@@ -3,7 +3,11 @@
 //! ADR-014). The platform never gains its route, its flag or its bypass.
 //!
 //! - `fstp-web`, the router every cell mounts, answers 404 on the demo
-//!   sign-in route for `GET` and for a `POST` that passes CSRF.
+//!   sign-in route for `GET` and for a `POST` that passes CSRF. It
+//!   answers 404 on the two routes of the "Switch person" control too
+//!   (lane m4/demo-switch): the people list and the switch.
+//! - The demo modules of `web/src/demo`, which hold the switcher, are not
+//!   assets of `fstp-web`, and no other web module imports them.
 //! - No source file of a platform crate names the route or the flag. The
 //!   one place allowed is `crates/fstp-api-testkit/src/bin/fstp-e2e-cell/`.
 //!
@@ -22,6 +26,22 @@ use web_common::{TENANT_ORIGIN, get, request, serve};
 
 /// The demo sign-in route of `e2e/site/contract.ts` `DEMO_SIGNIN_PATH`.
 const DEMO_SIGNIN_PATH: &str = "/auth/demo-signin";
+
+/// The people list of the "Switch person" control (lane m4/demo-switch).
+const DEMO_PEOPLE_PATH: &str = "/auth/demo-signin/people";
+
+/// The switch of the "Switch person" control (lane m4/demo-switch).
+const DEMO_SWITCH_PATH: &str = "/auth/demo-signin/switch";
+
+/// The demo modules as the test cell serves them, and as `/app/` assets.
+const DEMO_ASSETS: &[&str] = &[
+    "/assets/demo/notice.js",
+    "/assets/demo/banner.js",
+    "/assets/demo/people.js",
+    "/assets/demo/signin.js",
+    "/app/assets/demo/banner.js",
+    "/app/assets/demo/people.js",
+];
 
 /// The words that name the demo sign-in in source: the route, the flag
 /// and the identifier forms of both.
@@ -76,6 +96,86 @@ fn demo_signin_absent_without_flag_in_fstp_web_routes() {
     );
     let p = serve(&raw).unwrap_or_else(|e| panic!("POST {DEMO_SIGNIN_PATH}: {e}"));
     assert_eq!(p.status.as_u16(), 404, "POST {DEMO_SIGNIN_PATH}");
+}
+
+/// A9, ADR-014, lane m4/demo-switch: `fstp-web` answers 404 on the
+/// people list and the switch of the "Switch person" control, for `GET`
+/// and for a `POST` that passes CSRF, and serves no demo module.
+#[test]
+fn demo_switch_absent_without_flag_in_fstp_web_routes() {
+    for path in [DEMO_PEOPLE_PATH, DEMO_SWITCH_PATH] {
+        let g = get(path);
+        assert_eq!(g.status.as_u16(), 404, "GET {path}");
+        let raw = request(
+            "POST",
+            path,
+            &[
+                ("Origin", TENANT_ORIGIN),
+                ("X-FSTP-Request", "1"),
+                ("Content-Type", "application/json"),
+            ],
+            br#"{"account":"1"}"#,
+        );
+        let p = serve(&raw).unwrap_or_else(|e| panic!("POST {path}: {e}"));
+        assert_eq!(p.status.as_u16(), 404, "POST {path}");
+    }
+    for path in DEMO_ASSETS {
+        assert_eq!(get(path).status.as_u16(), 404, "GET {path}");
+    }
+}
+
+/// Every `.ts` file below `dir`, depth first.
+fn ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    paths.sort();
+    for p in paths {
+        if p.is_dir() {
+            ts_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "ts") {
+            out.push(p);
+        }
+    }
+}
+
+/// A9, ADR-014, lane m4/demo-switch: no web module outside `web/src/demo`
+/// imports a demo module or names a demo sign-in route, so the `/app/`
+/// bundle, which packs what `shell/main.js` reaches, never holds the
+/// switcher.
+#[test]
+fn demo_switch_absent_without_flag_in_platform_web_sources() {
+    let root = repo();
+    let src = root.join("web").join("src");
+    let demo = src.join("demo");
+    let mut files = Vec::new();
+    ts_files(&src, &mut files);
+    let mut found = Vec::new();
+    let mut scanned = 0usize;
+    for f in files {
+        if f.starts_with(&demo) {
+            continue;
+        }
+        scanned += 1;
+        let text = std::fs::read_to_string(&f).unwrap_or_default();
+        for n in NAMES.iter().chain(["/demo/", "demo-switch"].iter()) {
+            if text.contains(n) {
+                found.push(format!(
+                    "{} names {n}",
+                    f.strip_prefix(&root).unwrap_or(&f).display()
+                ));
+            }
+        }
+    }
+    assert!(
+        scanned > 50,
+        "the web sources are scanned ({scanned} files)"
+    );
+    assert!(
+        found.is_empty(),
+        "A9: the demo switcher leaks into the platform web modules: {found:#?}"
+    );
 }
 
 /// A9: no platform crate names the demo sign-in route or flag. Only the
