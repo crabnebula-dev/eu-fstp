@@ -530,10 +530,32 @@ const fn onboard_name(s: OnboardStep) -> &'static str {
 
 /// The values of a valid save of onboarding step `step`.
 fn step_values(step: &str, admins: &[AccountId]) -> Value {
+    onboarding_step_values(step, ADMIN_BUILDER, admins)
+}
+
+/// The route segments of the onboarding steps, in the order they
+/// validate (`fstp_tenant::OnboardingStep`). The e2e cell walks them too.
+pub const ONBOARDING_STEP_NAMES: [&str; 9] = [
+    "organisation",
+    "agreements",
+    "branding",
+    "domains_and_email",
+    "identity",
+    "inference",
+    "payments",
+    "channels",
+    "administrators",
+];
+
+/// The synthetic values of a valid save of the onboarding step `step`:
+/// `signatory` signs for the organisation, and `admins` are the tenant
+/// admins of the Administrators step. The e2e cell builds its scenes
+/// through real onboarding with them (ADR-021).
+pub fn onboarding_step_values(step: &str, signatory: AccountId, admins: &[AccountId]) -> Value {
     let text = match step {
         "organisation" => format!(
             r#"{{"data_protection_contact":"Synthetic data protection contact.","signatories":["{}"]}}"#,
-            ADMIN_BUILDER.raw()
+            signatory.raw()
         ),
         "agreements" => r#"{"dpa":"1","saas_terms":"1","sub_processors":"1"}"#.to_owned(),
         "branding" => r#"{"package":"default"}"#.to_owned(),

@@ -32,6 +32,8 @@ use support::{GUIDE_CALL, GuideEnv, publish_step, world_with};
 
 /// The tenant admin of the cell.
 const A1: AccountId = AccountId::from_raw(0x0a01);
+/// The second tenant admin, who approves the activation (SoD-18, ADR-021).
+const A2: AccountId = AccountId::from_raw(0x0a02);
 /// The tenant's own data protection summary. Synthetic, not a notice.
 const TENANT_SUMMARY: &str =
     "Synthetic tenant data protection summary. It is not a privacy notice.";
@@ -59,11 +61,41 @@ fn cell(tenant: bool) -> FakeCell {
     let mut truth = sod_truth();
     truth.set_identity(A1, IdentityTag::new(0xa1));
     truth.verify(A1);
+    truth.set_identity(A2, IdentityTag::new(0xa2));
+    truth.verify(A2);
     if tenant {
         let head = store.head();
         store
             .append(head, T0.micros(), [0x7e; 16], vec![provisioned()])
             .unwrap_or_else(|e| panic!("{e:?}"));
+        let invitation = fstp_tenant::InvitationId::from_raw(0x1a2);
+        for (n, r) in [
+            fstp_tenant::TenantRecord::AdminInvited {
+                invitation,
+                invitee: A2,
+                token_digest: fstp_tenant::TokenDigest::from_bytes([0xd2; 32]),
+                by: A1,
+            },
+            fstp_tenant::TenantRecord::AdminAdded {
+                account: A2,
+                invitation,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let head = store.head();
+            let mut command = [0x7e; 16];
+            command[15] = u8::try_from(n).unwrap_or(0).saturating_add(1);
+            store
+                .append(
+                    head,
+                    T0.micros(),
+                    command,
+                    vec![Record::Tenant(fstp_engine::TenantEntry::Record(r))],
+                )
+                .unwrap_or_else(|e| panic!("{e:?}"));
+        }
     }
     let world = CellWorld {
         store,
@@ -74,6 +106,12 @@ fn cell(tenant: bool) -> FakeCell {
     let c = FakeCell::from_world(&world).unwrap_or_else(|e| panic!("{e}"));
     let fixture = fstp_programme::supersafe_fixture().unwrap_or_else(|e| panic!("{e:?}"));
     c.ports.engine.set_guide_spec(fixture.spec);
+    if tenant {
+        // ADR-021: the organisation is founded before anything outside
+        // onboarding runs.
+        c.found(A1, A2, AccountId::from_raw(0x0f05_1600))
+            .unwrap_or_else(|e| panic!("ADR-021: the founding: {e}"));
+    }
     c
 }
 
@@ -146,19 +184,21 @@ fn r_ga_01_fake_cell_publication_stores_the_guide_with_the_platform_default() {
 #[test]
 fn r_ga_01_i78_tenant_override_needs_a_step_up_and_replaces_the_default() {
     let c = cell(true);
+    // The founding of the organisation (ADR-021) appended before.
+    let before = c.ports.engine.appended().len();
     let l = c.login(A1, LoginMethod::Passkey);
     let op = || set_notice(TENANT_SUMMARY, TENANT_PRIVACY);
     let ch = match c.web(&l, op()) {
         Ok(OpResult::StepUpRequired(ch)) => ch,
         other => panic!("I-78: the override without a proof: {other:?}"),
     };
-    assert!(c.ports.engine.appended().is_empty(), "I-78: appended");
+    assert_eq!(c.ports.engine.appended().len(), before, "I-78: appended");
     c.ports.step_up.approve(l.session, ch.action).unwrap();
     match c.web(&l, op()) {
         Ok(OpResult::Done { .. }) => {}
         other => panic!("R-GA-01: the override with its proof: {other:?}"),
     }
-    assert_eq!(c.ports.engine.appended().len(), 1);
+    assert_eq!(c.ports.engine.appended().len(), before.saturating_add(1));
     publish(&c).unwrap_or_else(|e| panic!("the publication is refused: {e:?}"));
     let page = calls_guide(&c);
     assert!(page.contains(TENANT_SUMMARY), "R-GA-01: the tenant summary");
@@ -173,6 +213,10 @@ fn r_ga_01_i78_tenant_override_needs_a_step_up_and_replaces_the_default() {
 #[test]
 fn r_ga_01_http_privacy_address_is_refused_before_step_up() {
     let c = cell(true);
+    // The founding of the organisation (ADR-021) stepped up and appended
+    // before.
+    let begun = c.ports.step_up.begun().len();
+    let before = c.ports.engine.appended().len();
     let l = c.login(A1, LoginMethod::Passkey);
     let got = c.web(
         &l,
@@ -185,8 +229,8 @@ fn r_ga_01_http_privacy_address_is_refused_before_step_up() {
         }
         other => panic!("R-GA-01: an http address: {other:?}"),
     }
-    assert!(c.ports.step_up.begun().is_empty(), "a step-up was begun");
-    assert!(c.ports.engine.appended().is_empty());
+    assert_eq!(c.ports.step_up.begun().len(), begun, "a step-up was begun");
+    assert_eq!(c.ports.engine.appended().len(), before);
 }
 
 /// R-GA-01, R-LA-08, Q38: a fake cell has a pre-check provider by

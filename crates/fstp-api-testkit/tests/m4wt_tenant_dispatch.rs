@@ -1078,6 +1078,52 @@ fn q31_ledger_admin_set_gates_tenant_operations() {
 // P-74 through dispatch (Q42)
 // ---------------------------------------------------------------------------
 
+/// The I-85 world with its tenant part, founded through onboarding and
+/// activation by its two tenant admins (ADR-021), so its programme work
+/// runs.
+fn active_staffed() -> FakeCell {
+    let mut world = fixture::pending_world().unwrap_or_else(|e| panic!("the I-85 world: {e}"));
+    let at = fstp_domain_testkit::r#gen::roster::T0.micros();
+    let mut prov = provisioned(ADMIN, "saas");
+    if let Some(o) = prov.as_object_mut() {
+        o.insert(
+            "agreements",
+            json(r#"{"dpa":"1","saas_terms":"1","sub_processors":"1"}"#),
+        );
+    }
+    append(&mut world.store, at, 1, vec![record(prov)]);
+    append(
+        &mut world.store,
+        at,
+        2,
+        vec![tenant(&TenantRecord::AdminInvited {
+            invitation: INVITATION,
+            invitee: fixture::ADMIN_2,
+            token_digest: TokenDigest::from_bytes([0xd2; 32]),
+            by: ADMIN,
+        })],
+    );
+    append(
+        &mut world.store,
+        at,
+        3,
+        vec![tenant(&TenantRecord::AdminAdded {
+            account: fixture::ADMIN_2,
+            invitation: INVITATION,
+        })],
+    );
+    let c = FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"));
+    let model = fstp_domain_testkit::r#gen::policy::MODEL_A;
+    c.found_with_model(
+        ADMIN,
+        fixture::ADMIN_2,
+        AccountId::from_raw(0x0f05_1600),
+        model,
+    )
+    .unwrap_or_else(|e| panic!("ADR-021: the founding: {e}"));
+    c
+}
+
 /// Changes P-74 to `value` as the I-85 world's tenant admin, with step-up.
 fn set_p74(c: &FakeCell, value: &str) {
     let l = login(c, ADMIN);
@@ -1092,7 +1138,7 @@ fn set_p74(c: &FakeCell, value: &str) {
 /// change.
 #[test]
 fn p74_disabled_mcp_server_refuses_every_tool_call() {
-    let c = staffed();
+    let c = active_staffed();
     let token = c.token(OWNER, AGENT, [Scope::CallsRead], LoginMethod::Passkey);
     let before = c.mcp(&token, requests::list_open_calls_mcp());
     assert_eq!(class(&before), Class::Done, "P-74 on: {before:?}");
@@ -1115,7 +1161,7 @@ fn q42_p74_role_limit_refuses_an_op_acting_under_a_disallowed_role() {
         (r#"["Applicant"]"#, Class::Refused(ErrorCode::P74)),
         (r#"["Programme manager"]"#, Class::Pending),
     ] {
-        let c = staffed();
+        let c = active_staffed();
         set_p74(
             &c,
             &format!(r#"{{"enabled":true,"public_tools":true,"roles":{roles}}}"#),

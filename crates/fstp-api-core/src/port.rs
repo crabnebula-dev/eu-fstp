@@ -1139,6 +1139,13 @@ pub trait TenantConfig: Send + Sync {
     fn settings(&self) -> Arc<TenantSettings>;
     /// Whether the attested tenant admin set holds the account.
     fn is_tenant_admin(&self, a: AccountId) -> bool;
+    /// Whether the organisation is activated, for a cell whose ledger
+    /// holds no tenant part yet (ADR-021, interim). Once the ledger holds
+    /// it, the ledger alone answers. The default is the seam of a port
+    /// that does not know: it answers no, so the setup gate fails closed.
+    fn organisation_active(&self) -> bool {
+        false
+    }
     /// A recorded second-admin approval.
     fn approval(
         &self,

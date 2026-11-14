@@ -92,6 +92,10 @@ fn review_sod03_signatory_holder_cannot_take_a_receiving_binding() {
         })],
     );
     let c = FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"));
+    // ADR-021: the organisation is founded before anything outside
+    // onboarding runs.
+    c.found(ADMIN, ADMIN_2, AccountId::from_raw(0x0f05_1600))
+        .unwrap_or_else(|e| panic!("ADR-021: the founding: {e}"));
     let lead = c.login(LEAD, LoginMethod::Passkey);
     let r = c.web(&lead, requests::add_member_web(PX, signatory));
     assert!(

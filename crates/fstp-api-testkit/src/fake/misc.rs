@@ -203,6 +203,9 @@ pub struct FakeTenant {
     settings: Arc<TenantSettings>,
     admins: Arc<Mutex<BTreeSet<AccountId>>>,
     approvals: Arc<Mutex<BTreeMap<ApprovalId, SecondAdminApproval>>>,
+    /// The port's answer whether the organisation is activated, for a
+    /// cell whose ledger holds no tenant part (ADR-021). Shared by clones.
+    active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for FakeTenant {
@@ -220,7 +223,18 @@ impl FakeTenant {
             settings,
             admins: Arc::new(Mutex::new(admins)),
             approvals: Arc::new(Mutex::new(BTreeMap::new())),
+            active: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
+    }
+
+    /// Sets the port's answer whether the organisation is activated, for
+    /// a cell whose ledger holds no tenant part (ADR-021). A new port
+    /// answers yes: it stands for the attested tenant of the worlds from
+    /// before the tenant part, as its attested admin set does. The e2e
+    /// cell sets it to no, so a scene must activate through onboarding.
+    pub fn set_organisation_active(&self, active: bool) {
+        self.active
+            .store(active, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The attested admin set.
@@ -252,6 +266,10 @@ impl TenantConfig for FakeTenant {
 
     fn is_tenant_admin(&self, a: AccountId) -> bool {
         self.holds_admin(a)
+    }
+
+    fn organisation_active(&self) -> bool {
+        self.active.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn approval(&self, id: ApprovalId) -> Result<SecondAdminApproval, PortError> {
