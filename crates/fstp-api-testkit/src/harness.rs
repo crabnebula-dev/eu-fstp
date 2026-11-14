@@ -12,6 +12,9 @@
 //! - the tenant part of the ledger holds the provisioning of the first
 //!   tenant admin and the second admin's invitation and enrolment, as M3
 //!   appends them. Every onboarding step then runs through dispatch;
+//! - every programme world then activates the organisation: the first
+//!   admin requests it and the second approves it, since nothing outside
+//!   onboarding runs before (ADR-021);
 //! - the programme P comes through the creator: the first admin opens the
 //!   draft, the programme manager applies the SuperSAFE template, saves
 //!   the policy row's P-10, P-11, P-28, P-75 and P-77 and requests the
@@ -231,7 +234,7 @@ const fn account_of(who: Who) -> Option<AccountId> {
 pub enum Variant {
     /// Two tenant admins, and every other principal.
     Main,
-    /// One tenant admin only, who opened the draft P.
+    /// One tenant admin only, while onboarding runs (ADR-021).
     Sole,
     /// X's lead had its Receiving binding voided under I-04.
     Voided,
@@ -1591,6 +1594,31 @@ fn onboard(
     Ok(())
 }
 
+/// Activates the organisation (ADR-021, SoD-18): the first admin of
+/// `admins` requests the activation and the second approves it. Every
+/// programme world runs this after onboarding, since nothing outside
+/// onboarding runs before.
+fn activate_organisation(seed: &mut Seeder, admins: &[AccountId]) -> Result<(), String> {
+    let (Some(first), Some(second)) = (admins.first().copied(), admins.get(1).copied()) else {
+        return Err("activation needs two tenant admins (SoD-18)".to_owned());
+    };
+    seed.api(first, ApiMethod::Post, "/admin/activation", &obj(vec![]))?;
+    let view = seed.api(first, ApiMethod::Get, "/admin/activation", &Value::Null)?;
+    let request = str_member(&view, "request").ok_or_else(|| {
+        format!(
+            "the activation read names no request: {}",
+            view.to_compact()
+        )
+    })?;
+    seed.api(
+        second,
+        ApiMethod::Post,
+        "/admin/activation/approval",
+        &obj(vec![("request", s(&request))]),
+    )?;
+    Ok(())
+}
+
 /// The head revision of the draft of `p`, in the wire form
 /// `"<seq>.<entry>"` that `creator.get_draft` shows. The harness reads it
 /// from the engine state, since `creator.get_draft` waits for a seam of
@@ -2046,7 +2074,9 @@ struct Reached {
 /// The lifecycle position of a state: how far C and X go.
 fn depth(state: StateProfile) -> u8 {
     match state {
-        StateProfile::Onboarding(_) | StateProfile::ProgrammeDraft => 0,
+        StateProfile::Onboarding(_)
+        | StateProfile::AwaitingActivation
+        | StateProfile::ProgrammeDraft => 0,
         StateProfile::ProgrammeActive => 1,
         StateProfile::CallDrafted => 2,
         StateProfile::CallApproved => 3,
@@ -2106,9 +2136,8 @@ struct Start {
     narrative: Option<String>,
 }
 
-/// The key of a [`Start`]: the variant, whether P is activated and the
-/// policy row.
-type StartKey = (bool, bool, Policy);
+/// The key of a [`Start`]: whether P is activated, and the policy row.
+type StartKey = (bool, Policy);
 
 /// One start, built once by the first thread that asks for it.
 type StartSlot = Arc<std::sync::OnceLock<Result<Start, String>>>;
@@ -2152,10 +2181,11 @@ fn fixture_value(key: &str) -> Result<Value, String> {
         .ok_or_else(|| format!("the fixture sets no {key}"))
 }
 
-/// Builds the start of `key`.
+/// Builds the start of `key`: onboarding to its completion, the
+/// activation of the organisation (ADR-021), then P through the creator.
 fn build_start(key: StartKey) -> Result<Start, String> {
-    let (sole, activated, policy) = key;
-    let (store, admins) = tenant_ledger(sole)?;
+    let (activated, policy) = key;
+    let (store, admins) = tenant_ledger(false)?;
     let (ports, core) = fresh_cell(store, &admins, T_SETUP)?;
     let mut seed = Seeder {
         ports,
@@ -2168,31 +2198,29 @@ fn build_start(key: StartKey) -> Result<Start, String> {
     };
     let admin_list: Vec<AccountId> = admins.iter().copied().collect();
     seed.at(T_SETUP);
-    let stop = sole.then_some(OnboardStep::Administrators);
-    onboard(&mut seed, stop, &admin_list)?;
-    let first_admin = if sole { ADMIN_SOLE } else { ADMIN_BUILDER };
+    onboard(&mut seed, None, &admin_list)?;
+    activate_organisation(&mut seed, &admin_list)?;
     if policy.p74 != P74::AllRoles {
         seed.api(
-            first_admin,
+            ADMIN_BUILDER,
             ApiMethod::Put,
             "/admin/settings/mcp",
             &obj(vec![("value", mcp_value(policy.p74))]),
         )?;
     }
-    let p = open_draft(&mut seed, first_admin, PM)?;
-    if !sole {
-        grant(&mut seed, first_admin, PM_ENDED, p, Role::ProgrammeManager)?;
-    }
-    // The only admin cannot have the activation approved by another
-    // (I-67), so the report of a sole-admin draft keeps that failure.
-    let tolerated: &[&str] = if sole { &["TooFewTenantAdmins"] } else { &[] };
-    let (warning, narrative) = build_draft(&mut seed, p, &policy, tolerated)?;
+    let p = open_draft(&mut seed, ADMIN_BUILDER, PM)?;
+    grant(
+        &mut seed,
+        ADMIN_BUILDER,
+        PM_ENDED,
+        p,
+        Role::ProgrammeManager,
+    )?;
+    let (warning, narrative) = build_draft(&mut seed, p, &policy, &[])?;
     if activated {
         activate(&mut seed, p, ADMIN_PLAIN)?;
     }
-    if !sole {
-        other_programme(&mut seed)?;
-    }
+    other_programme(&mut seed)?;
     let store = seed.ports.engine.store_copy();
     let texts = crate::fake::FakeTexts::default();
     texts.copy_from(&seed.ports.texts);
@@ -2219,7 +2247,17 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
     let mut warning = None;
     let mut narrative = None;
     let first_admin = if sole { ADMIN_SOLE } else { ADMIN_BUILDER };
-    let mut seed = if let StateProfile::Onboarding(step) = key.state {
+    let mut seed = if key.state.before_activation() {
+        // ADR-021: no programme exists before the organisation is
+        // activated. An onboarding state stops before its step, and the
+        // state awaiting activation completes onboarding.
+        let stop = match key.state {
+            StateProfile::Onboarding(step) => Some(step),
+            _ => None,
+        };
+        if sole && stop.is_none() {
+            return Err("a sole tenant admin cannot complete onboarding (SoD-07)".to_owned());
+        }
         let (store, admins) = tenant_ledger(sole)?;
         let (ports, core) = fresh_cell(store, &admins, T_SETUP)?;
         let mut seed = Seeder {
@@ -2233,7 +2271,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         };
         seed.at(T_SETUP);
         let admin_list: Vec<AccountId> = admins.iter().copied().collect();
-        onboard(&mut seed, Some(step), &admin_list)?;
+        onboard(&mut seed, stop, &admin_list)?;
         if key.policy.p74 != P74::AllRoles {
             seed.api(
                 first_admin,
@@ -2244,8 +2282,14 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         }
         seed
     } else {
-        let activated = !sole && depth(key.state) >= 1;
-        let start = start_of((sole, activated, key.policy))?;
+        if sole {
+            return Err(format!(
+                "no sole tenant admin exists in {:?}: a programme needs an activated organisation (ADR-021)",
+                key.state
+            ));
+        }
+        let activated = depth(key.state) >= 1;
+        let start = start_of((activated, key.policy))?;
         let (ports, core) = fresh_cell(start.store.clone(), &start.admins, start.now)?;
         ports.texts.copy_from(&start.texts);
         for _ in 0..start.drawn {
@@ -2272,9 +2316,8 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         end_binding_of(&mut seed, p, PM_ENDED, key)?;
         // The end of a binding on the draft is an edit, so the creator
         // cells name the revision after it, and an approval cell meets a
-        // live request there (design 3.7 step 5). The report of a
-        // sole-admin draft fails, so no request is admitted.
-        if !activated && !sole {
+        // live request there (design 3.7 step 5).
+        if !activated {
             request_live(&mut seed, p)?;
         }
         revision = Some(draft_revision(&mut seed, PM, p)?);
@@ -2286,6 +2329,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
             StateTag::InExecution | StateTag::Completed | StateTag::Terminated,
         ) => NOW_EXECUTING,
         StateProfile::Onboarding(_)
+        | StateProfile::AwaitingActivation
         | StateProfile::ProgrammeDraft
         | StateProfile::ProgrammeActive
         | StateProfile::CallDrafted

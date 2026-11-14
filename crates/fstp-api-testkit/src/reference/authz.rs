@@ -16,6 +16,7 @@
 //! - the strong methods and the high-risk table of
 //!   `SPEC/03-architecture/authentication.md`;
 //! - I-03, I-17, I-21, I-65, I-67, I-77, I-78, I-84 and I-85;
+//! - the setup gate of ADR-021 (decided by Daniel on 2026-11-14);
 //! - the decided readings that design section 15.0 builds as interim
 //!   readings: Q1, Q9, Q10, Q16, Q32, Q39 and Q42.
 //!
@@ -59,6 +60,9 @@ pub enum AuthClass {
     NotExposed,
     /// The programme is still a draft (change D3).
     Draft,
+    /// The organisation is not yet activated, and the operation is
+    /// outside what the setup gate admits (ADR-021).
+    Setup,
 }
 
 /// The reference outcome of one cell.
@@ -87,9 +91,10 @@ pub enum Who {
     TenantAdmin,
     /// A tenant admin who opened the draft P, so a builder (Q1).
     TenantAdminBuilder,
-    /// The only tenant admin: no second admin exists yet. Reading: nothing
-    /// in the spec makes a draft wait for onboarding to finish, so this
-    /// admin may have opened the draft P and is then its builder (Q1).
+    /// The only tenant admin: no second admin exists yet. Onboarding
+    /// completes only with two admins, and nothing outside onboarding
+    /// runs before activation (ADR-021), so this admin exists only while
+    /// onboarding runs.
     SoleTenantAdmin,
     /// A programme manager of P who is no drafter of C.
     ProgrammeManager,
@@ -431,7 +436,12 @@ pub enum StateProfile {
     /// The tenant is onboarding, and this step is the first one not yet
     /// validated. No programme exists.
     Onboarding(OnboardStep),
-    /// P is a draft programme with no call.
+    /// Onboarding is complete, with two verified tenant admins and both
+    /// signatory roles held, and the activation of the organisation is
+    /// not yet approved (ADR-021, SoD-18). No programme exists.
+    AwaitingActivation,
+    /// P is a draft programme with no call. Every state from here on
+    /// holds an activated organisation (ADR-021).
     ProgrammeDraft,
     /// P is active with no call.
     ProgrammeActive,
@@ -449,14 +459,16 @@ pub enum StateProfile {
 }
 
 impl StateProfile {
-    /// Every state profile: the nine onboarding steps, six programme and
-    /// call states, then the 16 proposal states.
+    /// Every state profile: the nine onboarding steps, the state awaiting
+    /// activation, six programme and call states, then the 16 proposal
+    /// states.
     pub fn all() -> Vec<StateProfile> {
         let mut out: Vec<StateProfile> = OnboardStep::ALL
             .iter()
             .map(|s| StateProfile::Onboarding(*s))
             .collect();
         out.extend([
+            StateProfile::AwaitingActivation,
             StateProfile::ProgrammeDraft,
             StateProfile::ProgrammeActive,
             StateProfile::CallDrafted,
@@ -473,6 +485,16 @@ impl StateProfile {
             StateProfile::Proposal(s) => Some(s),
             _ => None,
         }
+    }
+
+    /// Whether the organisation is not yet activated (ADR-021): while
+    /// onboarding runs, and once it is complete until a second tenant
+    /// admin approves the activation.
+    pub const fn before_activation(self) -> bool {
+        matches!(
+            self,
+            StateProfile::Onboarding(_) | StateProfile::AwaitingActivation
+        )
     }
 }
 
@@ -674,11 +696,10 @@ pub fn target_exists(target: Target, state: StateProfile) -> bool {
     use StateProfile as S;
     match target {
         Target::None => true,
-        Target::Programme => !matches!(state, S::Onboarding(_)),
-        Target::Call => !matches!(
-            state,
-            S::Onboarding(_) | S::ProgrammeDraft | S::ProgrammeActive
-        ),
+        Target::Programme => !state.before_activation(),
+        Target::Call => {
+            !state.before_activation() && !matches!(state, S::ProgrammeDraft | S::ProgrammeActive)
+        }
         Target::PublishedCall => matches!(state, S::CallOpen | S::CallClosed | S::Proposal(_)),
         Target::OpenCall => matches!(state, S::CallOpen | S::Proposal(StateTag::Draft)),
         Target::Proposal => state.proposal().is_some(),
@@ -712,6 +733,11 @@ pub fn feasible(who: Who, state: StateProfile) -> bool {
             Who::Anonymous | Who::Unbound | Who::TenantAdmin | Who::SoleTenantAdmin
         );
     }
+    // Onboarding completes only with two tenant admins, and no programme
+    // exists before activation (ADR-021).
+    if state == S::AwaitingActivation {
+        return matches!(who, Who::Anonymous | Who::Unbound | Who::TenantAdmin);
+    }
     let x = state.proposal();
     let draft_programme = matches!(state, S::ProgrammeDraft);
     let declared_on_x = x.is_none_or(|s| s != StateTag::Draft);
@@ -723,10 +749,10 @@ pub fn feasible(who: Who, state: StateProfile) -> bool {
         | Who::ProgrammeManager
         | Who::EndedProgrammeManager
         | Who::OtherProgrammeManager => true,
-        // Onboarding finishes with two admins, and activation needs a second
-        // admin (I-67), so a sole admin exists past onboarding only while P
-        // is still the draft it opened.
-        Who::SoleTenantAdmin => draft_programme,
+        // Onboarding finishes with two admins, and no programme exists
+        // before the organisation is activated (ADR-021), so no sole admin
+        // exists once a programme does.
+        Who::SoleTenantAdmin => false,
         // A draft programme admits programme manager grants only (D3).
         Who::CallDrafter
         | Who::CommitteeMember
@@ -1986,12 +2012,43 @@ fn p74_refuses(rule: Rule, who: Who, policy: &Policy) -> bool {
     }
 }
 
+/// What the setup gate of ADR-021 admits before the organisation is
+/// activated, written from the ADR:
+///
+/// - any caller: the account security operations, which R-LG-04 keeps
+///   open ("Users can see and end their sessions and linked devices");
+/// - a tenant admin: every `tenant.*` operation, the onboarding approvals
+///   (`admin.approvals`, `admin.approve_self_grant`,
+///   `admin.approve_recovery`), and the admin's own roles and
+///   verification, since completion needs two verified admins.
+///
+/// Everything else waits for activation. An admitted operation is then
+/// judged by its own rules.
+pub fn setup_admits(op: &RefOp, who: Who) -> bool {
+    const ACCOUNT_SECURITY: [&str; 3] = ["me.sessions", "me.end_session", "me.add_passkey"];
+    const ADMIN_ONBOARDING: [&str; 6] = [
+        "admin.approvals",
+        "admin.approve_self_grant",
+        "admin.approve_recovery",
+        "me.roles",
+        "me.get_verification",
+        "me.begin_verification",
+    ];
+    ACCOUNT_SECURITY.contains(&op.name)
+        || (who.tenant_admin()
+            && (op.name.starts_with("tenant.") || ADMIN_ONBOARDING.contains(&op.name)))
+}
+
 /// The reference outcome of one cell, in the order of design section 3.7:
 /// session strength, channel, the dry run's authorisation, then the
 /// pending action for MCP or the step-up for the web.
 ///
 /// - Public operations admit anyone. Through MCP they need their tool and
 ///   an enabled MCP server, and no scope.
+/// - Before the organisation is activated, an operation the setup gate
+///   does not admit ([`setup_admits`]) refuses with `Setup` (ADR-021).
+///   The gate comes after the session strength and channel rules, and
+///   before the actor rules.
 /// - Without an account, every other operation refuses with `Actor`,
 ///   except the open-call reads that admit anyone. A call read refuses
 ///   anyone with `Visibility` before publication.
@@ -2012,6 +2069,7 @@ pub fn expected(
     session: &Session,
 ) -> Expected {
     let mcp = matches!(session.channel, Channel::Mcp { .. });
+    let gated = state.before_activation() && !setup_admits(op, who);
     if op.public {
         if mcp {
             if op.tool.is_none() {
@@ -2021,10 +2079,21 @@ pub fn expected(
                 return Expected::Deny(AuthClass::P74);
             }
         }
+        if gated {
+            return Expected::Deny(AuthClass::Setup);
+        }
         return Expected::Allow;
     }
-    if !who.account() && !matches!(op.rule, Rule::Anyone | Rule::PublishedCall) {
-        return Expected::Deny(AuthClass::Actor);
+    // A caller with no account has no session and reaches MCP through
+    // public tools only, so the session and channel rules below pass it
+    // and the setup gate judges it first.
+    if !who.account() {
+        if gated {
+            return Expected::Deny(AuthClass::Setup);
+        }
+        if !matches!(op.rule, Rule::Anyone | Rule::PublishedCall) {
+            return Expected::Deny(AuthClass::Actor);
+        }
     }
     let weak = session.login.is_some_and(|l| !l.strong());
     if weak && (op.high_risk || who.management()) {
@@ -2040,6 +2109,9 @@ pub fn expected(
         if p74_refuses(op.rule, who, policy) {
             return Expected::Deny(AuthClass::P74);
         }
+    }
+    if gated {
+        return Expected::Deny(AuthClass::Setup);
     }
     if let Err(class) = admit(op, who, state, policy, mcp) {
         return Expected::Deny(class);
