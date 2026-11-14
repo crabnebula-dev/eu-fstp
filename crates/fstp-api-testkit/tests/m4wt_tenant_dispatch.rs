@@ -167,7 +167,6 @@ fn fresh(cell: &str, second: Second) -> FakeCell {
     FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"))
 }
 
-
 // ---------------------------------------------------------------------------
 // Requests, as the onboarding pages send them
 // ---------------------------------------------------------------------------

@@ -145,6 +145,10 @@ const AUDITOR: AccountId = AccountId::from_raw(404);
 const ORG_SIGNATORY: AccountId = AccountId::from_raw(405);
 /// An account a signatory grant names, which holds no role.
 const SIGNATORY_GRANTEE: AccountId = AccountId::from_raw(406);
+/// A second holder of both signatory roles, so ending
+/// [`ORG_SIGNATORY`]'s binding never removes the last holder of an active
+/// organisation (SoD-17, ADR-021). It holds no programme binding.
+const ORG_SIGNATORY_2: AccountId = AccountId::from_raw(407);
 /// An account with no binding.
 const UNBOUND: AccountId = AccountId::from_raw(499);
 
@@ -1559,17 +1563,17 @@ fn onboard(
     let admin = admins.first().copied().ok_or("no admin")?;
     // SoD-14, SoD-15: the Administrators step validates only with a holder
     // of each signatory role. The grants come first, so every built state
-    // holds the binding that `tenant.end_signatory` names.
-    for role in ["financial_signatory", "legal_signatory"] {
-        seed.api(
-            admin,
-            ApiMethod::Post,
-            "/admin/signatories",
-            &obj(vec![
-                ("account", dec(ORG_SIGNATORY.raw())),
-                ("role", s(role)),
-            ]),
-        )?;
+    // holds the binding that `tenant.end_signatory` names. A second holder
+    // keeps that end valid once the organisation is active (SoD-17).
+    for account in [ORG_SIGNATORY, ORG_SIGNATORY_2] {
+        for role in ["financial_signatory", "legal_signatory"] {
+            seed.api(
+                admin,
+                ApiMethod::Post,
+                "/admin/signatories",
+                &obj(vec![("account", dec(account.raw())), ("role", s(role))]),
+            )?;
+        }
     }
     for step in OnboardStep::ALL {
         if Some(step) == stop {
