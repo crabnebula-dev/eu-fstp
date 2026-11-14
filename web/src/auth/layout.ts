@@ -39,26 +39,24 @@ const PUBLIC_LINKS: readonly (readonly [AuthMessageId, string])[] = [
  * scope item 3; `docs/design/01-navigation-home.md` "Layout and
  * routing contract"): the top bar before it, the
  * footer after it, and no sidebar. The account page of a signed-in
- * person puts its own navigation after the top bar, so its top bar
- * holds the brand only.
+ * person gets the app shell instead (`appshell.ts`), which its mount
+ * builds.
  */
 function chrome(main: HTMLElement): void {
   if (document.querySelector('header.site-header') !== null) return;
   const here = location.pathname;
-  const links =
-    here === PATHS.account
-      ? []
-      : [
-          h('nav', { class: 'main-nav', 'aria-label': t('top.nav') }, [
-            h(
-              'ul',
-              {},
-              PUBLIC_LINKS.map(([id, href]) =>
-                h('li', {}, [h('a', href === here ? { href, 'aria-current': 'page' } : { href }, [t(id)])]),
-              ),
-            ),
-          ]),
-        ];
+  if (here === PATHS.account) return;
+  const links = [
+    h('nav', { class: 'main-nav', 'aria-label': t('top.nav') }, [
+      h(
+        'ul',
+        {},
+        PUBLIC_LINKS.map(([id, href]) =>
+          h('li', {}, [h('a', href === here ? { href, 'aria-current': 'page' } : { href }, [t(id)])]),
+        ),
+      ),
+    ]),
+  ];
   const header = h('header', { class: 'site-header' }, [
     h('div', { class: 'topbar' }, [
       h('a', { class: 'brand', href: '/app/' }, [

@@ -32,6 +32,7 @@ export class DomRefusal extends Error {
 /** The tags these pages build. */
 const TAGS: ReadonlySet<string> = new Set([
   'a',
+  'aside',
   'button',
   'dialog',
   'div',
