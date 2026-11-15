@@ -37,10 +37,9 @@
 //!   so this covers only cells and worlds from before the tenant part.
 //! - The data protection contact goes to the cell's text store as a
 //!   confidential text of the tenant (`TextOwner::Tenant`, Q22). As for
-//!   every other text, this core caches it to show it again. The
-//!   `TextStore` port has no read without a `ReadClearance` yet, so a
-//!   restarted core that no longer caches the contact fails the
-//!   Organisation read closed. That read path is a seam of the lead.
+//!   every other text, this core caches it to show it again. A restarted
+//!   core reads it back from the text store under the tenant admin's
+//!   read clearance, checked against its digest.
 //! - P-70 to P-72 are recorded and shown here, but the M3 session and
 //!   step-up ports enforce their own values. Those ports do not read the
 //!   ledger yet, which is a seam of the lead.
