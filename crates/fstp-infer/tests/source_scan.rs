@@ -7,9 +7,14 @@ use std::path::{Path, PathBuf};
 
 /// Files that may name the request members: the encoder, and the
 /// synthetic model, which reads requests.
-const ALLOWED: [&str; 2] = [
+///
+/// `fstp-access/src/replies.rs` builds no model request. It names
+/// `"system"` as an audit actor role (`ACTOR_ROLES`) and `"messages"` as
+/// a member of the `me.mailbox` reply shape (Daniel, 2026-11-15 night).
+const ALLOWED: [&str; 3] = [
     "crates/fstp-infer/src/encode.rs",
     "crates/fstp-infer/src/synthetic.rs",
+    "crates/fstp-access/src/replies.rs",
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

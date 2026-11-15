@@ -2202,3 +2202,9 @@ Built by lane m4/matrix-final-2:
 - **Notice acknowledgement.** The dispatch admits the lead only, and refuses anyone else as an actor before the state is read. The mailbox gives `negotiation.acknowledge` to the lead only.
 - **Workspace read, former team.** The reference rule `Workspace` admits the team while X is under way.
 - Tests: `t_authz_matrix_applicant_ops.rs` runs the four operations and `proposal.diary` with no cell left out. `o60_guardian_steps.rs` and `r_jv_03_spec_pinned_cells.rs` pin the guardian's reading. `r_ng_06_mailbox_acknowledge_goes_to_the_lead_only` pins the mailbox item.
+
+Follow-up answers (2026-11-15, night), after lane m4/matrix-final-2:
+
+- **TH-01 scan.** `crates/fstp-access/src/replies.rs` is on the scan's `ALLOWED` list with its reason: it builds no model request ("system" is an audit actor role, "messages" a member of the `me.mailbox` reply). The scan is unchanged for every other file.
+- **Former team.** Besides journey, map and diary, former team keep `proposal.view`, their own stage 2 thread and the grant reads. Only the application workspace closes.
+- **Guardian route map.** The guardian sees the route map too, as part of the full journey (to build).
