@@ -380,9 +380,8 @@ async fn dispatch<B: Backend>(
         (Endpoint::RecoveryComplete, _) => auth::recovery_complete(ctx, req).await,
         (Endpoint::StepUpOptions, Some(c)) => auth::stepup_options(ctx, req, &c).await,
         (Endpoint::StepUp, Some(c)) => auth::stepup(ctx, req, &c).await,
-        (Endpoint::PasskeyOptions | Endpoint::PasskeyAdd, Some(c)) => {
-            auth::add_passkey(ctx, req, &c).await
-        }
+        (Endpoint::PasskeyOptions, Some(c)) => auth::passkey_options(ctx, req, &c).await,
+        (Endpoint::PasskeyAdd, Some(c)) => auth::add_passkey(ctx, req, &c).await,
         (Endpoint::Sessions, Some(c)) => auth::sessions(ctx, &c).await,
         (Endpoint::EndSession, Some(c)) => auth::end_session(ctx, req, &c).await,
         (Endpoint::Devices, Some(c)) => auth::devices(ctx, &c).await,
@@ -413,26 +412,9 @@ pub(crate) async fn admit<B: Backend>(
 ) -> Result<(Arc<CellState>, Admitted), Reply> {
     let s = ctx.backend.state().await.map_err(unavailable)?;
     let now = ctx.backend.now();
-    let view = match stepup.and_then(|id| s.auth().stepup_grant(id).map(|g| (id, g))) {
+    let view = match stepup {
+        Some(id) => stepup_view(ctx, &s, id).await?,
         None => None,
-        Some((id, grant)) => {
-            let asserted_at = ctx
-                .backend
-                .stepup_asserted_at(id)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(|| unavailable(BackendFault::Unavailable))?;
-            Some(StepUpView {
-                id,
-                session: grant.session,
-                action_digest: grant.action_digest,
-                asserted_at,
-                // The ledger grants a step-up only after a passkey
-                // assertion with user verification (design section 8.4).
-                strong: true,
-                consumed: s.auth().consumed(id),
-            })
-        }
     };
     let policy = LoginPolicy {
         stepup_freshness_us: P71_DEFAULT_US,
@@ -458,6 +440,35 @@ pub(crate) async fn admit<B: Backend>(
         .await
         .map_err(unavailable)?;
     Ok((s, admitted))
+}
+
+/// The step-up `id` as the gate sees it, read from the ledger's
+/// `StepUpGranted` record and the backend's assertion instant. A step-up
+/// the ledger does not know is `None`, so a high-risk action is refused.
+pub(crate) async fn stepup_view<B: Backend>(
+    ctx: &Ctx<B>,
+    s: &CellState,
+    id: [u8; 16],
+) -> Result<Option<StepUpView>, Reply> {
+    let Some(grant) = s.auth().stepup_grant(id) else {
+        return Ok(None);
+    };
+    let asserted_at = ctx
+        .backend
+        .stepup_asserted_at(id)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(|| unavailable(BackendFault::Unavailable))?;
+    Ok(Some(StepUpView {
+        id,
+        session: grant.session,
+        action_digest: grant.action_digest,
+        asserted_at,
+        // The ledger grants a step-up only after a passkey assertion with
+        // user verification (design section 8.4).
+        strong: true,
+        consumed: s.auth().consumed(id),
+    }))
 }
 
 /// A fresh random array from the cell's random source.

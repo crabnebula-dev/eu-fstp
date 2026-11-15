@@ -33,10 +33,10 @@ export interface StepUp {
 
 /**
  * The step-up action of adding a passkey, a route with no domain command
- * yet (design section 8.3). Lane w3ar reports that the `AddPasskey`
- * digest of `RegisterCredential` names a credential id that the options
- * call cannot know. This page uses the route action of the e2e contract
- * (`e2e/playwright.config.ts` `ROUTE_ACTIONS`), pending the lead.
+ * (design section 8.3). The cell binds the step-up to
+ * `SHA-256("fstp-add-passkey-v1" || command_id)`, and the passkey options
+ * bind their registration challenge to it (ADR-008 interim reading of
+ * lane m3/cell-routes).
  */
 export const ADD_PASSKEY: Json = { type: 'AddPasskey' };
 

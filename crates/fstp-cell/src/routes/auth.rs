@@ -13,11 +13,14 @@
 //! invitation registration commits the first passkey, through
 //! `fstp_cell_core::gate::admit_invitation_enrolment` (lane int5).
 //!
+//! Adding a passkey (`AddPasskey`): the step-up names the addition's
+//! command id (`fstp_cell_core::add_passkey_digest`), and the options draw
+//! a registration challenge bound to it (ADR-008 interim reading of lane
+//! m3/cell-routes, section "Adding a passkey" below).
+//!
 //! Steps that need an API the sources do not offer yet fail closed with
-//! 501 after every check that applies before them:
-//! - Adding a passkey: the step-up digest of `AddPasskey` names a
-//!   credential id that the options call cannot know yet.
-//! - Self-registration without a passkey (ADR-008 open point).
+//! 501 after every check that applies before them: self-registration
+//! without a passkey (ADR-008 open point).
 //!
 //! Lane m3/login-m2http built the keyed login email index (design section
 //! 4.2): a self-registration and an invitation that names an address make
@@ -49,7 +52,7 @@ use crate::http::body::{self, BodyRefusal};
 use crate::http::{decode_command_body, set_session_cookie};
 use crate::routes::handle::{
     Caller, Ctx, Reply, Rule, admit, bad_body, decimal, denied, exec_failed, hex_value, random,
-    run, unavailable,
+    run, stepup_view, unavailable,
 };
 use crate::routes::{
     AUTH_BODY_LIMIT, Backend, CEREMONY_BODY_LIMIT, ChallengePurpose, ChallengeRow, SessionRow,
@@ -1007,12 +1010,22 @@ fn own_credentials(s: &CellState, a: AccountId) -> Vec<Vec<u8>> {
 
 /// `POST /auth/stepup/options` (Session, design section 8.4):
 /// `{command, command_id}`. It answers with a challenge bound to this
-/// session and to `SHA-256(canonical(command) || command_id)`.
+/// session and to `SHA-256(canonical(command) || command_id)`. Adding a
+/// passkey names the route action `{type: "AddPasskey"}`, and its digest
+/// is `fstp_cell_core::add_passkey_digest(command_id)` (section "Adding
+/// a passkey" below).
 pub(crate) async fn stepup_options<B: Backend>(
     ctx: &Ctx<B>,
     req: &Request,
     caller: &Caller,
 ) -> Reply {
+    match decode_add_passkey_stepup(&req.body) {
+        Some(Ok(id)) => {
+            return stepup_for(ctx, caller, fstp_cell_core::add_passkey_digest(id)).await;
+        }
+        Some(Err(e)) => return bad_body(e),
+        None => {}
+    }
     let r = match decode_command_body(&req.body) {
         Ok(r) => r,
         Err(e) => return bad_body(e),
@@ -1023,6 +1036,15 @@ pub(crate) async fn stepup_options<B: Backend>(
     let Some(command) = r.command.map(|c| *c) else {
         return bad_body(BodyRefusal::Member("command"));
     };
+    // `RegisterCredential` is `AddPasskey`, whose step-up names the route
+    // action only (`fstp_cell_core::add_passkey_digest`). A step-up over
+    // the command itself would admit nothing.
+    if matches!(
+        command,
+        CellCommand::Auth(fstp_auth::AuthCommand::RegisterCredential { .. })
+    ) {
+        return bad_body(BodyRefusal::Member("command"));
+    }
     if !caller.view.method.phishing_resistant() {
         return stepup_refused();
     }
@@ -1046,30 +1068,28 @@ pub(crate) async fn stepup_options<B: Backend>(
     let Some(digest) = fstp_cell_core::try_action_digest(&command, r.command_id) else {
         return bad_body(BodyRefusal::Command);
     };
-    let (id, nonce) = match (random::<16>(), random::<32>()) {
-        (Ok(i), Ok(n)) => (i, n),
-        (Err(r), _) | (_, Err(r)) => return r,
-    };
-    let row = ChallengeRow {
-        id,
-        purpose: ChallengePurpose::StepUp,
-        session: Some(caller.row.id),
-        action_digest: Some(digest),
-        nonce,
-        issued_at: ctx.backend.now(),
-    };
-    if let Err(f) = ctx.backend.put_challenge(row).await {
-        return unavailable(f);
+    stepup_challenge_reply(ctx, &s, caller, digest).await
+}
+
+/// The step-up options of a route action with the action digest `digest`:
+/// a phishing-resistant session the gate admits gets a step-up challenge.
+async fn stepup_for<B: Backend>(ctx: &Ctx<B>, caller: &Caller, digest: [u8; 32]) -> Reply {
+    if !caller.view.method.phishing_resistant() {
+        return stepup_refused();
     }
-    let challenge = stepup_challenge(ctx.cfg.cell, caller.row.id, digest, nonce);
-    let allow = own_credentials(&s, caller.view.account);
-    let mut o = Object::with_capacity(2);
-    o.insert("challenge_id", hex_value(&id));
-    o.insert(
-        "public_key",
-        request_options(ctx, &challenge, "required", &allow),
-    );
-    Reply::json(StatusCode::OK, &Value::Object(o))
+    let (s, _) = match admit(
+        ctx,
+        caller,
+        Action::Read(ReadAction::ReadContent),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(x) => x,
+        Err(reply) => return reply,
+    };
+    stepup_challenge_reply(ctx, &s, caller, digest).await
 }
 
 /// `POST /auth/stepup` (Session, I-78): verifies a passkey assertion with
@@ -1199,38 +1219,277 @@ async fn grant_stepup<B: Backend>(
     run(ctx, admitted).await
 }
 
-/// `POST /auth/passkeys/options` and `POST /auth/passkeys` (high risk
-/// `AddPasskey`, design section 8.3): `{command_id, stepup}`. A magic-link
-/// session never adds a passkey. The `AddPasskey` digest names the new
-/// credential id, which the options call cannot know, so after the
-/// session, method and step-up member checks the route fails closed with
-/// 501.
-pub(crate) async fn add_passkey<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Caller) -> Reply {
+// ---------------------------------------------------------------------------
+// Adding a passkey (high risk `AddPasskey`, design sections 8.3 and 8.7).
+//
+// ADR-008 interim reading of lane m3/cell-routes: the step-up names the
+// command id of the addition, not the new credential id, which no
+// options call can know. Body forms, as `web/src/auth/pages/account.ts`
+// sends them:
+//
+// 1. `POST /auth/stepup/options {command: {type: "AddPasskey"},
+//    command_id}` binds the step-up to
+//    `fstp_cell_core::add_passkey_digest(command_id)`, and
+//    `POST /auth/stepup` grants it as for any other action.
+// 2. `POST /auth/passkeys/options {command_id, stepup}` checks that
+//    step-up through `fstp_cell_core::gate::admit_add_passkey_options`,
+//    draws a registration challenge bound to the session and to the
+//    digest (`ChallengePurpose::AddPasskey`), and answers
+//    `{challenge_id, public_key}`.
+// 3. `POST /auth/passkeys {attestation_object, challenge_id,
+//    client_data_json, command_id, stepup}` takes that challenge once and
+//    admits `RegisterCredential` through
+//    `fstp_cell_core::gate::admit_add_passkey`, whose batch consumes the
+//    step-up. So one step-up covers one registration.
+
+/// The `type` of the route action a step-up names for adding a passkey.
+pub(crate) const ADD_PASSKEY_ACTION: &str = "AddPasskey";
+
+/// The command id of an `AddPasskey` step-up options body
+/// `{command: {type: "AddPasskey"}, command_id}`. `None` when the body
+/// names another command.
+pub(crate) fn decode_add_passkey_stepup(bytes: &[u8]) -> Option<Result<[u8; 16], BodyRefusal>> {
+    let o = body::object(bytes, AUTH_BODY_LIMIT).ok()?;
+    let command = o.get("command")?.as_object()?;
+    if command.get("type").and_then(Value::as_str) != Some(ADD_PASSKEY_ACTION) {
+        return None;
+    }
+    let decoded = body::members(&o, &["command", "command_id"], &[])
+        .and_then(|()| {
+            body::members(command, &["type"], &[]).map_err(|_| BodyRefusal::Member("command"))
+        })
+        .and_then(|()| body::hex_member::<16>(&o, "command_id"));
+    Some(decoded)
+}
+
+/// Whether `row` is a live `AddPasskey` challenge of session `session` at
+/// `now`, bound to the step-up digest `digest`.
+fn add_passkey_challenge(
+    row: &ChallengeRow,
+    session: [u8; 16],
+    digest: &[u8; 32],
+    now: Timestamp,
+) -> bool {
+    row.purpose == ChallengePurpose::AddPasskey
+        && row.session == Some(session)
+        && row
+            .action_digest
+            .is_some_and(|d| fstp_crypto::constant_time_eq(&d, digest))
+        && fresh(row.issued_at, now, CHALLENGE_US)
+}
+
+/// Stores a step-up challenge for `digest` in the caller's session and
+/// answers `{challenge_id, public_key}` (design section 8.4).
+async fn stepup_challenge_reply<B: Backend>(
+    ctx: &Ctx<B>,
+    s: &CellState,
+    caller: &Caller,
+    digest: [u8; 32],
+) -> Reply {
+    let (id, nonce) = match (random::<16>(), random::<32>()) {
+        (Ok(i), Ok(n)) => (i, n),
+        (Err(r), _) | (_, Err(r)) => return r,
+    };
+    let row = ChallengeRow {
+        id,
+        purpose: ChallengePurpose::StepUp,
+        session: Some(caller.row.id),
+        action_digest: Some(digest),
+        nonce,
+        issued_at: ctx.backend.now(),
+    };
+    if let Err(f) = ctx.backend.put_challenge(row).await {
+        return unavailable(f);
+    }
+    let challenge = stepup_challenge(ctx.cfg.cell, caller.row.id, digest, nonce);
+    let allow = own_credentials(s, caller.view.account);
+    let mut o = Object::with_capacity(2);
+    o.insert("challenge_id", hex_value(&id));
+    o.insert(
+        "public_key",
+        request_options(ctx, &challenge, "required", &allow),
+    );
+    Reply::json(StatusCode::OK, &Value::Object(o))
+}
+
+/// The login policy of the route admissions: the P-71 default, which the
+/// gate shortens to the tenant's value.
+const ROUTE_POLICY: fstp_cell_core::gate::LoginPolicy = fstp_cell_core::gate::LoginPolicy {
+    stepup_freshness_us: fstp_cell_core::tenant::P71_DEFAULT_US,
+};
+
+/// `POST /auth/passkeys/options` (high risk `AddPasskey`, design section
+/// 8.3): `{command_id, stepup}`. Under the granted step-up of the
+/// addition (`fstp_cell_core::gate::admit_add_passkey_options`) it
+/// answers `{challenge_id, public_key}` with the creation options of a
+/// registration challenge bound to this session and to the step-up's
+/// digest. A magic-link session never adds a passkey. User verification
+/// is required for a management holder (ADR-008 "User verification").
+pub(crate) async fn passkey_options<B: Backend>(
+    ctx: &Ctx<B>,
+    req: &Request,
+    caller: &Caller,
+) -> Reply {
     let r = match decode_command_body(&req.body) {
         Ok(r) => r,
         Err(e) => return bad_body(e),
     };
-    if r.command.is_some() {
+    if r.command.is_some() || r.email.is_some() {
         return bad_body(BodyRefusal::Member("command"));
     }
-    if r.stepup.is_none() {
+    let Some(stepup) = r.stepup else {
         return bad_body(BodyRefusal::Member("stepup"));
-    }
+    };
     if !caller.view.method.phishing_resistant() {
         return stepup_refused();
     }
-    if let Err(reply) = admit(
-        ctx,
-        caller,
-        Action::Read(ReadAction::ReadContent),
-        None,
-        None,
-    )
-    .await
-    {
-        return reply;
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let view = match stepup_view(ctx, &s, stepup).await {
+        Ok(v) => v,
+        Err(reply) => return reply,
+    };
+    let now = ctx.backend.now();
+    match fstp_cell_core::gate::admit_add_passkey_options(
+        &s,
+        &caller.view,
+        r.command_id,
+        view.as_ref(),
+        now,
+        &ROUTE_POLICY,
+    ) {
+        Ok(()) => {}
+        Err(RouteDeny::Gate(d)) => return denied(d),
+        Err(_) => return Reply::refuse(StatusCode::FORBIDDEN, Some(Rule::Adr008), "passkey"),
     }
-    Reply::not_built()
+    if let Err(f) = ctx.backend.touch_session(caller.row.id, now).await {
+        return unavailable(f);
+    }
+    let (id, nonce, user) = match (random::<16>(), random::<32>(), random::<16>()) {
+        (Ok(i), Ok(n), Ok(u)) => (i, n, u),
+        (Err(r), _, _) | (_, Err(r), _) | (_, _, Err(r)) => return r,
+    };
+    let row = ChallengeRow {
+        id,
+        purpose: ChallengePurpose::AddPasskey,
+        session: Some(caller.row.id),
+        action_digest: Some(fstp_cell_core::add_passkey_digest(r.command_id)),
+        nonce,
+        issued_at: now,
+    };
+    if let Err(f) = ctx.backend.put_challenge(row).await {
+        return unavailable(f);
+    }
+    let uv = holds(&s, caller.view.account, now);
+    let mut o = Object::with_capacity(2);
+    o.insert("challenge_id", hex_value(&id));
+    o.insert("public_key", creation_options(ctx, &nonce, &user, uv));
+    Reply::json(StatusCode::OK, &Value::Object(o))
+}
+
+/// An add passkey body: the registration, the challenge it answers, the
+/// command id and the step-up.
+struct AddPasskeyBody {
+    registration: RegistrationBody,
+    command_id: [u8; 16],
+    stepup: [u8; 16],
+}
+
+fn decode_add_passkey(bytes: &[u8]) -> Result<AddPasskeyBody, BodyRefusal> {
+    let o = body::object(bytes, CEREMONY_BODY_LIMIT)?;
+    body::members(
+        &o,
+        &[
+            "attestation_object",
+            "challenge_id",
+            "client_data_json",
+            "command_id",
+            "stepup",
+        ],
+        &["credential_id"],
+    )?;
+    if o.get("credential_id").is_some() {
+        body::bytes_member(&o, "credential_id", MAX_CREDENTIAL)?;
+    }
+    Ok(AddPasskeyBody {
+        registration: RegistrationBody {
+            challenge_id: body::hex_member::<16>(&o, "challenge_id")?,
+            response: RegistrationResponse {
+                client_data_json: body::bytes_member(&o, "client_data_json", MAX_CLIENT_DATA)?,
+                attestation_object: body::bytes_member(&o, "attestation_object", MAX_ATTESTATION)?,
+            },
+        },
+        command_id: body::hex_member::<16>(&o, "command_id")?,
+        stepup: body::hex_member::<16>(&o, "stepup")?,
+    })
+}
+
+/// `POST /auth/passkeys` (high risk `AddPasskey`, design sections 8.3 and
+/// 8.7): registers a further passkey for the session's own account.
+///
+/// In order: the body decodes (400). A magic-link session is refused
+/// (403, I-78). The challenge must be a live `AddPasskey` challenge of
+/// this session, drawn under the step-up of this command id, and the
+/// route takes it once (403, the same reply for every cause), so a failed
+/// registration starts again from the options. The gate then verifies the
+/// registration over the challenge's nonce and the step-up in full
+/// (`fstp_cell_core::gate::admit_add_passkey`). The batch records
+/// `CredentialRegistered` with the key the gate verified and consumes the
+/// step-up.
+pub(crate) async fn add_passkey<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Caller) -> Reply {
+    let b = match decode_add_passkey(&req.body) {
+        Ok(b) => b,
+        Err(r) => return bad_body(r),
+    };
+    if !caller.view.method.phishing_resistant() {
+        return stepup_refused();
+    }
+    let challenge_id = b.registration.challenge_id;
+    let digest = fstp_cell_core::add_passkey_digest(b.command_id);
+    let now = ctx.backend.now();
+    let live = |row: &ChallengeRow| add_passkey_challenge(row, caller.row.id, &digest, now);
+    match ctx.backend.challenge(challenge_id).await {
+        Err(f) => return unavailable(f),
+        Ok(Some(row)) if live(&row) => {}
+        Ok(_) => return stepup_refused(),
+    }
+    let row = match ctx.backend.take_challenge(challenge_id).await {
+        Err(f) => return unavailable(f),
+        Ok(Some(row)) if live(&row) => row,
+        Ok(_) => return stepup_refused(),
+    };
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let view = match stepup_view(ctx, &s, b.stepup).await {
+        Ok(v) => v,
+        Err(reply) => return reply,
+    };
+    let registration = Registration {
+        response: &b.registration.response,
+        rp: &ctx.cfg.rp,
+        challenge: row.nonce,
+    };
+    let admitted = match fstp_cell_core::gate::admit_add_passkey(
+        &s,
+        &caller.view,
+        &registration,
+        b.command_id,
+        view.as_ref(),
+        now,
+        &ROUTE_POLICY,
+    ) {
+        Ok(a) => a,
+        Err(RouteDeny::Gate(d)) => return denied(d),
+        Err(_) => return Reply::refuse(StatusCode::FORBIDDEN, Some(Rule::Adr008), "passkey"),
+    };
+    if let Err(f) = ctx.backend.touch_session(caller.row.id, now).await {
+        return unavailable(f);
+    }
+    run(ctx, admitted).await
 }
 
 /// Whether session `row` of the caller's account is live at `now`, as the

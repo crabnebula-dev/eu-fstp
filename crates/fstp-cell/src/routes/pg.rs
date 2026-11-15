@@ -80,6 +80,7 @@ const fn purpose_code(p: ChallengePurpose) -> i16 {
         ChallengePurpose::Registration => 3,
         ChallengePurpose::Signup => 4,
         ChallengePurpose::Recovery => 5,
+        ChallengePurpose::AddPasskey => 6,
     }
 }
 
@@ -90,6 +91,7 @@ fn purpose_of(code: i16) -> Option<ChallengePurpose> {
         ChallengePurpose::Registration,
         ChallengePurpose::Signup,
         ChallengePurpose::Recovery,
+        ChallengePurpose::AddPasskey,
     ]
     .into_iter()
     .find(|p| purpose_code(*p) == code)

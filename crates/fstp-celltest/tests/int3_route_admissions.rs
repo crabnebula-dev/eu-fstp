@@ -123,10 +123,15 @@ fn add(account: AccountId, credential: &[u8]) -> CellCommand {
     })
 }
 
-/// The step-up `id` the ledger granted in `session` for `cmd` under
-/// [`COMMAND`], thirty seconds before `NOW`, and its view.
-fn granted(id: u8, session: &SessionView, cmd: &CellCommand) -> (CellRecord, StepUpView) {
-    let digest = fstp_cell_core::action_digest(cmd, COMMAND);
+/// The `AddPasskey` step-up digest of [`COMMAND`] (ADR-008 interim reading
+/// of lane m3/cell-routes).
+fn add_digest() -> [u8; 32] {
+    fstp_cell_core::add_passkey_digest(COMMAND)
+}
+
+/// The step-up `id` the ledger granted in `session` for `digest`, thirty
+/// seconds before `NOW`, and its view.
+fn granted_digest(id: u8, session: &SessionView, digest: [u8; 32]) -> (CellRecord, StepUpView) {
     let record = CellRecord::Auth(AuthRecord::StepUpGranted {
         id: [id; 16],
         action_digest: digest,
@@ -144,16 +149,22 @@ fn granted(id: u8, session: &SessionView, cmd: &CellCommand) -> (CellRecord, Ste
 }
 
 /// A tenant admin with passkey `A1 01`, in a passkey session, with a
-/// step-up the ledger granted for adding credential `new`.
-fn admin_world(new: &[u8]) -> (CellState, SessionView, StepUpView) {
+/// step-up the ledger granted for `digest`.
+fn admin_world_for(digest: [u8; 32]) -> (CellState, SessionView, StepUpView) {
     let sess = session(0x51, ADMIN, Method::Passkey);
-    let (grant, view) = granted(0x5C, &sess, &add(ADMIN, new));
+    let (grant, view) = granted_digest(0x5C, &sess, digest);
     let s = state_at(&[
         (T0, admin(ADMIN)),
         (T0, registered(ADMIN, &[0xA1, 1])),
         (plus(NOW, -MINUTE_US / 2), grant),
     ]);
     (s, sess, view)
+}
+
+/// A tenant admin with passkey `A1 01`, in a passkey session, with a
+/// step-up the ledger granted for adding a passkey under [`COMMAND`].
+fn admin_world() -> (CellState, SessionView, StepUpView) {
+    admin_world_for(add_digest())
 }
 
 /// I-78, design section 8.3: a tenant admin's `AddPasskey` with the
@@ -163,7 +174,7 @@ fn admin_world(new: &[u8]) -> (CellState, SessionView, StepUpView) {
 #[test]
 fn i78_add_passkey_admits_the_gate_verified_key() {
     let new = [0xA1, 2];
-    let (s, sess, su) = admin_world(&new);
+    let (s, sess, su) = admin_world();
     let resp = response(&new, true);
     let rp = rp();
     let reg = Registration {
@@ -203,7 +214,7 @@ fn i78_add_passkey_admits_the_gate_verified_key() {
 #[test]
 fn i78_add_passkey_refuses_a_holder_passkey_without_uv() {
     let new = [0xA1, 2];
-    let (s, sess, su) = admin_world(&new);
+    let (s, sess, su) = admin_world();
     let resp = response(&new, false);
     let rp = rp();
     let reg = Registration {
@@ -223,7 +234,7 @@ fn i78_add_passkey_refuses_a_holder_passkey_without_uv() {
 #[test]
 fn i78_add_passkey_refuses_a_reused_credential_id() {
     let reused = [0xA1, 1];
-    let (s, sess, su) = admin_world(&reused);
+    let (s, sess, su) = admin_world();
     let resp = response(&reused, true);
     let rp = rp();
     let reg = Registration {
@@ -238,12 +249,12 @@ fn i78_add_passkey_refuses_a_reused_credential_id() {
 }
 
 /// I-78, design section 8.4: `AddPasskey` is high risk. With no step-up
-/// it is refused as one required, and with a step-up granted for another
-/// credential it is refused as a mismatch.
+/// it is refused as one required. A step-up granted for another command
+/// id is refused as a mismatch.
 #[test]
 fn i78_add_passkey_needs_its_own_step_up() {
     let new = [0xA1, 2];
-    let (s, sess, _) = admin_world(&new);
+    let (s, sess, _) = admin_world();
     let resp = response(&new, true);
     let rp = rp();
     let reg = Registration {
@@ -258,20 +269,79 @@ fn i78_add_passkey_needs_its_own_step_up() {
         ),
         "AddPasskey without a step-up"
     );
-    // The ledger granted a step-up for adding A1 03, not A1 02.
-    let (s_other, sess_other, su_other) = admin_world(&[0xA1, 3]);
+    // The ledger granted a step-up for adding a passkey under another
+    // command id.
+    let (s_id, sess_id, su_id) = admin_world_for(fstp_cell_core::add_passkey_digest([0x3D; 16]));
     assert_eq!(
-        gate::admit_add_passkey(
-            &s_other,
-            &sess_other,
-            &reg,
-            COMMAND,
-            Some(&su_other),
-            NOW,
-            &POLICY
-        )
-        .err(),
+        gate::admit_add_passkey(&s_id, &sess_id, &reg, COMMAND, Some(&su_id), NOW, &POLICY).err(),
         Some(RouteDeny::Gate(Deny::StepUpMismatch))
+    );
+}
+
+/// I-78, ADR-008 interim reading of lane m3/cell-routes: the `AddPasskey`
+/// step-up names the command id of the addition. A step-up granted over the
+/// canonical `RegisterCredential` of the very credential the registration
+/// carries admits nothing, so only the one digest form exists.
+#[test]
+fn i78_add_passkey_refuses_a_step_up_over_register_credential() {
+    let new = [0xA1, 2];
+    let (s, sess, su) = admin_world_for(fstp_cell_core::action_digest(&add(ADMIN, &new), COMMAND));
+    let resp = response(&new, true);
+    let rp = rp();
+    let reg = Registration {
+        response: &resp,
+        rp: &rp,
+        challenge: CHALLENGE,
+    };
+    assert_eq!(
+        gate::admit_add_passkey(&s, &sess, &reg, COMMAND, Some(&su), NOW, &POLICY).err(),
+        Some(RouteDeny::Gate(Deny::StepUpMismatch))
+    );
+}
+
+/// I-78, ADR-008 interim reading of lane m3/cell-routes: the options of
+/// `AddPasskey` draw a registration challenge only under the granted
+/// step-up of the addition's command id. No step-up, a step-up for
+/// another command id or over `RegisterCredential`, and a magic-link
+/// session are refused before any challenge exists.
+#[test]
+fn i78_add_passkey_options_need_the_step_up_of_the_addition() {
+    let (s, sess, su) = admin_world();
+    assert_eq!(
+        gate::admit_add_passkey_options(&s, &sess, COMMAND, Some(&su), NOW, &POLICY),
+        Ok(())
+    );
+    assert!(matches!(
+        gate::admit_add_passkey_options(&s, &sess, COMMAND, None, NOW, &POLICY),
+        Err(RouteDeny::Gate(Deny::StepUpRequired(_)))
+    ));
+    assert_eq!(
+        gate::admit_add_passkey_options(&s, &sess, [0x3D; 16], Some(&su), NOW, &POLICY),
+        Err(RouteDeny::Gate(Deny::StepUpMismatch))
+    );
+    let (s_rc, sess_rc, su_rc) = admin_world_for(fstp_cell_core::action_digest(
+        &add(ADMIN, &[0xA1, 2]),
+        COMMAND,
+    ));
+    assert_eq!(
+        gate::admit_add_passkey_options(&s_rc, &sess_rc, COMMAND, Some(&su_rc), NOW, &POLICY),
+        Err(RouteDeny::Gate(Deny::StepUpMismatch))
+    );
+    // P-71 plus 1 µs after the assertion.
+    let late = plus(NOW, 5 * MINUTE_US);
+    assert_eq!(
+        gate::admit_add_passkey_options(&s, &sess, COMMAND, Some(&su), late, &POLICY),
+        Err(RouteDeny::Gate(Deny::StepUpStale))
+    );
+    let magic = session(0x54, A, Method::MagicLink);
+    let (grant, su_m) = granted_digest(0x5F, &magic, add_digest());
+    let s_m = state_at(&[
+        (T0, registered(A, &[0xB1, 1])),
+        (plus(NOW, -MINUTE_US / 2), grant),
+    ]);
+    assert_eq!(
+        gate::admit_add_passkey_options(&s_m, &magic, COMMAND, Some(&su_m), NOW, &POLICY),
+        Err(RouteDeny::Gate(Deny::MagicLinkSessionHighRisk))
     );
 }
 
@@ -281,7 +351,7 @@ fn i78_add_passkey_needs_its_own_step_up() {
 fn i78_add_passkey_refuses_a_magic_link_session() {
     let new = [0xB1, 2];
     let sess = session(0x52, A, Method::MagicLink);
-    let (grant, su) = granted(0x5D, &sess, &add(A, &new));
+    let (grant, su) = granted_digest(0x5D, &sess, add_digest());
     let s = state_at(&[
         (T0, registered(A, &[0xB1, 1])),
         (plus(NOW, -MINUTE_US / 2), grant),
@@ -305,7 +375,7 @@ fn i78_add_passkey_refuses_a_magic_link_session() {
 fn i78_add_passkey_refuses_an_account_without_a_passkey() {
     let new = [0xB1, 2];
     let sess = session(0x53, A, Method::Passkey);
-    let (grant, su) = granted(0x5E, &sess, &add(A, &new));
+    let (grant, su) = granted_digest(0x5E, &sess, add_digest());
     let s = state_at(&[(plus(NOW, -MINUTE_US / 2), grant)]);
     let resp = response(&new, true);
     let rp = rp();

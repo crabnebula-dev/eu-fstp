@@ -69,6 +69,11 @@ pub enum ChallengePurpose {
     /// (design section 8.5), bound to the digest of the case and its
     /// enrolment token.
     Recovery,
+    /// The registration of a further passkey of the session's own account
+    /// (high risk `AddPasskey`, design section 8.3), bound to the session.
+    /// The `AddPasskey` step-up names its id
+    /// (`fstp_cell_core::add_passkey_digest`).
+    AddPasskey,
 }
 
 /// One row of `auth.challenge` (design section 4.2).

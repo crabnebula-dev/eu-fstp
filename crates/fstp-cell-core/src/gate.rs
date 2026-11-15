@@ -55,6 +55,8 @@
 //!
 //! - [`admit_add_passkey`]: `RegisterCredential` as `AddPasskey`. The gate
 //!   verifies the registration itself, and the batch records that key.
+//!   [`admit_add_passkey_options`] checks the step-up before the route
+//!   draws the registration challenge.
 //! - [`admit_recovery_request`]: the public `RequestRecovery`, with the
 //!   deployment mode.
 //! - [`Admitted::with_sessions`]: the live session rows of any admitted
@@ -696,6 +698,26 @@ fn admit_in_session(
     now: Timestamp,
     policy: &LoginPolicy,
 ) -> Result<Admitted, Deny> {
+    admit_in_session_with(s, session, action, command, stepup, now, policy, None)
+}
+
+/// [`admit_in_session`], with the step-up digest `route_digest` in place
+/// of the command's own when a route admission names one: `AddPasskey`
+/// binds its registration challenge ([`crate::add_passkey_digest`]).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the inputs of admit_in_session and the route's digest"
+)]
+fn admit_in_session_with(
+    s: &CellState,
+    session: &SessionView,
+    action: Action,
+    command: Option<[u8; 16]>,
+    stepup: Option<&StepUpView>,
+    now: Timestamp,
+    policy: &LoginPolicy,
+    route_digest: Option<[u8; 32]>,
+) -> Result<Admitted, Deny> {
     session_checks(s, session, now)?;
     let tenant = s.tenant().policy();
     // The audit and erasure logs are read by tenant admins and Auditors
@@ -716,7 +738,15 @@ fn admit_in_session(
                 .min(policy.stepup_freshness_us)
                 .min(tenant.p71_us());
             Some(check_stepup(
-                s, session, &action, command, stepup, high, now, p71,
+                s,
+                session,
+                &action,
+                command,
+                stepup,
+                high,
+                now,
+                p71,
+                route_digest,
             )?)
         }
     };
@@ -744,6 +774,7 @@ fn check_stepup(
     high: HighRiskAction,
     now: Timestamp,
     p71_us: i64,
+    route_digest: Option<[u8; 32]>,
 ) -> Result<StepUpUse, Deny> {
     if !phishing_resistant(session.method) {
         return Err(Deny::MagicLinkSessionHighRisk);
@@ -762,9 +793,10 @@ fn check_stepup(
             "fstp_cell_core::gate::admit has no command id for the step-up digest: use gate::admit_command (design section 8.4)",
         ));
     };
-    // A command whose canonical form does not name it alone has no digest,
+    // A route admission names its own digest (`AddPasskey`). Otherwise a
+    // command whose canonical form does not name it alone has no digest,
     // so no step-up admits it (fail closed).
-    let Some(want) = crate::try_action_digest(c, id) else {
+    let Some(want) = route_digest.or_else(|| crate::try_action_digest(c, id)) else {
         return Err(Deny::NotPermitted);
     };
     if !fstp_crypto::constant_time_eq(&u.action_digest, &want) {
@@ -1191,6 +1223,13 @@ pub fn admit_first_admin_invitation(
 /// holds a passkey already and the session is phishing resistant. The
 /// verified credential goes into the batch's inputs, so `decide` records
 /// the key that `fstp_webauthn` verified.
+///
+/// The step-up of `AddPasskey` names `command_id`, not the new credential
+/// id: its digest is [`crate::add_passkey_digest`] (ADR-008 interim
+/// reading of lane m3/cell-routes). The route bound the registration
+/// challenge to that digest in [`admit_add_passkey_options`], took it
+/// once for this session, and `reg` must answer its nonce. A step-up over
+/// `RegisterCredential` itself admits nothing.
 #[allow(
     clippy::too_many_arguments,
     reason = "the session, the registration, the command id, the step-up, the instant and the policy"
@@ -1213,7 +1252,7 @@ pub fn admit_add_passkey(
         account: session.account,
         credential: cred.id.clone(),
     });
-    let mut admitted = admit_in_session(
+    let mut admitted = admit_in_session_with(
         s,
         session,
         Action::Command(cmd),
@@ -1221,6 +1260,7 @@ pub fn admit_add_passkey(
         stepup,
         now,
         policy,
+        Some(crate::add_passkey_digest(command_id)),
     )
     .map_err(RouteDeny::Gate)?;
     // The step-up passed above, as the check of the high-risk action.
@@ -1232,6 +1272,55 @@ pub fn admit_add_passkey(
     .map_err(RouteDeny::Enrol)?;
     admitted.inputs = std::mem::take(&mut admitted.inputs).with_credential(cred);
     Ok(admitted)
+}
+
+/// `POST /auth/passkeys/options` (high risk `AddPasskey`, design sections
+/// 8.3 and 8.7): whether the session may draw a registration challenge
+/// for the addition under `command_id`. It admits nothing to run.
+///
+/// The checks are those of [`admit_add_passkey`] before the registration:
+/// the session, then the step-up of `AddPasskey` over
+/// [`crate::add_passkey_digest`] of `command_id` (the ledger granted it in
+/// this session, it is strong, fresh under P-71 and unconsumed), then
+/// `fstp_auth::ceremony::admit_add_passkey`. The route binds its challenge
+/// to that digest, so the registration answers a challenge drawn under
+/// this step-up only.
+///
+/// # Errors
+///
+/// The gate's refusal, or [`RouteDeny::Enrol`] for an account with no
+/// passkey.
+pub fn admit_add_passkey_options(
+    s: &CellState,
+    session: &SessionView,
+    command_id: [u8; 16],
+    stepup: Option<&StepUpView>,
+    now: Timestamp,
+    policy: &LoginPolicy,
+) -> Result<(), RouteDeny> {
+    // The command names no credential yet. It classes the action as
+    // `AddPasskey` only: the step-up digest is the route's own.
+    let cmd = CellCommand::Auth(fstp_auth::AuthCommand::RegisterCredential {
+        account: session.account,
+        credential: Vec::new(),
+    });
+    admit_in_session_with(
+        s,
+        session,
+        Action::Command(cmd),
+        Some(command_id),
+        stepup,
+        now,
+        policy,
+        Some(crate::add_passkey_digest(command_id)),
+    )
+    .map_err(RouteDeny::Gate)?;
+    fstp_auth::ceremony::admit_add_passkey(
+        s.auth().has_any_credential(session.account),
+        session,
+        Ok(()),
+    )
+    .map_err(RouteDeny::Enrol)
 }
 
 /// `POST /auth/recovery` (public, design sections 8.5 and 8.7): admits
