@@ -68,6 +68,7 @@ fn save(fields: Vec<FieldEdit>) -> CreatorCommand {
         programme: P,
         base: base(),
         fields,
+        clear: Vec::new(),
     }
 }
 
@@ -185,6 +186,7 @@ fn r_pg_01_every_saved_field_round_trips_through_the_record_codec() {
         revision: base(),
         fields,
         by: M1,
+        cleared: Vec::new(),
     };
     let text = encode_record(&r).unwrap();
     assert!(

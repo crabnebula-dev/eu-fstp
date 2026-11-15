@@ -140,6 +140,7 @@ fn accept_wording(
         programme,
         base: crate::creator::revision_at(&op.request, "base")?,
         fields: vec![edit],
+        clear: Vec::new(),
     }))
 }
 
@@ -195,6 +196,7 @@ fn store_manual_wording(cmd: Command, refs: Option<&[TextRef]>) -> Result<Comman
         programme,
         base,
         mut fields,
+        clear,
     }) = cmd
     else {
         return Ok(cmd);
@@ -224,6 +226,7 @@ fn store_manual_wording(cmd: Command, refs: Option<&[TextRef]>) -> Result<Comman
         programme,
         base,
         fields,
+        clear,
     }))
 }
 

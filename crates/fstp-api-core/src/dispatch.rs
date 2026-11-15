@@ -1165,6 +1165,13 @@ async fn command<P: Seams>(
     if !check_target(&call.state, &op.request) {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
     }
+    // T-AUTHZ-MATRIX: an actor refusal comes before every state or input
+    // refusal. A lead command of a caller who never led the proposal is
+    // refused here, before the build reads the proposal's data.
+    let lead = lead_command(call, &op.request, account);
+    if lead == Some(Lead::Not) {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
+    }
     // Lane inv, J2: a grant by invitation stands for the grant of the
     // accepting account in the invited role, with the accepted terms as
     // its confidentiality text (`people`). The digest stays the one of the
@@ -1210,7 +1217,7 @@ async fn command<P: Seams>(
     // Step 5.
     dry_run(call, account, &cmd, ctx)
         .await
-        .map_err(|e| call.refuse(e))?;
+        .map_err(|e| call.refuse(former_lead_guard(e, lead)))?;
     // Step 6.
     if verdict == ChannelVerdict::Prepare {
         return prepare(call, op, account);
@@ -2372,6 +2379,28 @@ async fn m3_port<P: Seams>(
         forms::id_param(&op.request, name)
             .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))
     };
+    // T-AUTHZ-MATRIX: an actor refusal comes before every state or input
+    // rule. A caller with no binding in `roles` on the proposal, active or
+    // ended at a final state, is no actor of the operation.
+    let actor_first = |p: ProposalId, roles: &[&str]| -> Result<Lead, ApiError> {
+        match proposal_bound(&call.state, account, p, call.now, roles) {
+            Lead::Not => Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor"))),
+            bound => Ok(bound),
+        }
+    };
+    let in_draft = |p: ProposalId| {
+        fstp_domain::view::proposal_state(&call.state.core, p) == Some(fstp_domain::StateTag::Draft)
+    };
+    // R-NG-01, Q23 B: the lead's statements to the vault, in DRAFT only.
+    // Elsewhere, and for the former lead of an ended X, a guard on the
+    // target refuses.
+    let lead_drafts = |p: ProposalId, lead: Lead| -> Result<(), ApiError> {
+        if lead == Lead::Active && in_draft(p) {
+            Ok(())
+        } else {
+            Err(call.refuse(ApiError::refused(ErrorCode::Refused, "Input")))
+        }
+    };
     // The supported operations and their arguments come first, so no
     // step-up proof is spent on a call that cannot run.
     let port_call = match kind {
@@ -2429,6 +2458,10 @@ async fn m3_port<P: Seams>(
         PortKind::BeginVerification => PortCall::BeginVerification,
         PortKind::SaveWorkspace => {
             let p = ProposalId::from_raw(id("proposal")?);
+            // An actor refusal first: the registry admits the team
+            // (`TEAM`), so a caller never bound to X is no actor here, in
+            // any state (T-AUTHZ-MATRIX).
+            actor_first(p, TEAM_ROLES)?;
             let text = |name: &str| {
                 op.request
                     .get(name)
@@ -2441,6 +2474,14 @@ async fn m3_port<P: Seams>(
                 summary: text("summary")?,
                 narrative: text("narrative")?,
             };
+            // A guard on the target: the workspace is the draft's, and no
+            // binding is revived once X ended.
+            if !in_draft(p) {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "Input")));
+            }
+            // Interim, pending Daniel: the guardian consents and does not
+            // write the form, so the guardian of a draft is refused under
+            // I-21.
             if !drafting_team(&call.state, account, p, call.now) {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-21")));
             }
@@ -2448,45 +2489,46 @@ async fn m3_port<P: Seams>(
         }
         PortKind::StateCountry => {
             let p = ProposalId::from_raw(id("proposal")?);
+            let lead = actor_first(p, &["lead"])?;
             let code = op
                 .request
                 .get("country")
                 .and_then(Value::as_str)
                 .and_then(country_code)
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
-            if !drafting_team(&call.state, account, p, call.now) {
-                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
-            }
+            lead_drafts(p, lead)?;
             PortCall::StateCountry(p, code)
         }
         PortKind::DeclareAffiliations => {
             let p = ProposalId::from_raw(id("proposal")?);
+            let lead = actor_first(p, &["lead"])?;
             let d = op
                 .request
                 .get("affiliations")
                 .and_then(Value::as_str)
                 .and_then(crate::port::Affiliations::new)
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
-            if !drafting_team(&call.state, account, p, call.now) {
-                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
-            }
+            lead_drafts(p, lead)?;
             PortCall::DeclareAffiliations(p, d)
         }
         PortKind::StateBirthDate => {
             let p = ProposalId::from_raw(id("proposal")?);
+            let lead = actor_first(p, &["lead"])?;
             let d = op
                 .request
                 .get("date_of_birth")
                 .and_then(Value::as_str)
                 .and_then(crate::port::BirthDate::parse)
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
-            if !drafting_team(&call.state, account, p, call.now) {
-                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-01")));
-            }
+            lead_drafts(p, lead)?;
             PortCall::StateBirthDate(p, d)
         }
         PortKind::BeginGuardianConsent => {
             let p = ProposalId::from_raw(id("proposal")?);
+            // An actor refusal for anyone who is not X's guardian. The
+            // guardian outside IRC_REVIEW and NEGOTIATION, or once X
+            // ended, is refused by the I-18 guard.
+            actor_first(p, &["guardian"])?;
             if !consenting_guardian(&call.state, account, p, call.now) {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-18")));
             }
@@ -2512,6 +2554,10 @@ async fn m3_port<P: Seams>(
         }
         PortKind::AcknowledgeNegotiationNotice => {
             let p = ProposalId::from_raw(id("proposal")?);
+            // An actor refusal for a caller with no Receiving binding on X.
+            // Interim, pending Daniel: the registry names the lead, and
+            // this arm and the mailbox admit every team member.
+            actor_first(p, TEAM_ROLES)?;
             let negotiating = fstp_domain::view::proposal_state(&call.state.core, p)
                 == Some(fstp_domain::StateTag::Negotiation);
             let team = own_proposals(&call.state, account, call.now, Ended::Excluded)
@@ -3864,16 +3910,22 @@ async fn round_view<P: Seams>(
     })
 }
 
-/// How `account` leads a proposal (R-SB-04, the copy request).
+/// How `account` is bound to a proposal in some Receiving roles (R-SB-04,
+/// the copy request; T-AUTHZ-MATRIX, the actor before any state rule).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lead {
-    /// An active lead binding.
+    /// An active binding in one of the roles.
     Active,
-    /// A lead binding that ended when the proposal reached a final state.
+    /// A binding in one of the roles that ended when the proposal reached
+    /// a final state.
     Former,
-    /// No lead binding.
+    /// No such binding, or only a voided or suspended one.
     Not,
 }
+
+/// The Receiving roles of [`own_proposals`] that make up the team: the
+/// lead, a team member and the guardian (`roles-and-sod.md` roles table).
+const TEAM_ROLES: &[&str] = &["lead", "member", "guardian"];
 
 /// How `account` leads `proposal` at `now`. R-SB-04: the copy request
 /// is the lead's, as the registry admits it.
@@ -3883,14 +3935,57 @@ fn proposal_lead(
     proposal: ProposalId,
     now: Timestamp,
 ) -> Lead {
-    let lead = |ended| {
+    proposal_bound(state, account, proposal, now, &["lead"])
+}
+
+/// How the caller leads the proposal of a lead command: `None` for a
+/// command the registry does not give to the lead alone, or one that
+/// names no proposal.
+fn lead_command<P: Seams>(
+    call: &Call<'_, P>,
+    request: &Object,
+    account: AccountId,
+) -> Option<Lead> {
+    if call.spec.acting != [RoleOrApplicant::Role(Role::Applicant)] {
+        return None;
+    }
+    let p = ProposalId::from_raw(forms::id_param(request, "proposal")?);
+    Some(proposal_lead(&call.state, account, p, call.now))
+}
+
+/// The refusal of a lead command's dry run. The domain refuses a former
+/// lead of an ended proposal as no actor, since the binding ended. For
+/// the API that is a guard on the target, since no binding is revived for
+/// a command (Daniel, 2026-11-06), as the copy request reads it. Any other
+/// refusal stays as it is.
+fn former_lead_guard(e: ApiError, lead: Option<Lead>) -> ApiError {
+    match (&e, lead) {
+        (ApiError::Refused { rule, .. }, Some(Lead::Former)) if *rule == "actor" => {
+            ApiError::refused(ErrorCode::Refused, "Input")
+        }
+        _ => e,
+    }
+}
+
+/// How `account` holds one of the Receiving `roles` (as [`own_proposals`]
+/// names them) on `proposal` at `now`: an active binding, one that ended
+/// at a final state, or none. A voided or suspended binding is none, as
+/// [`gives_final_read`] reads it.
+fn proposal_bound(
+    state: &EngineState,
+    account: AccountId,
+    proposal: ProposalId,
+    now: Timestamp,
+    roles: &[&str],
+) -> Lead {
+    let bound = |ended| {
         own_proposals(state, account, now, ended)
             .iter()
-            .any(|x| x.proposal == proposal && x.role == "lead")
+            .any(|x| x.proposal == proposal && roles.contains(&x.role))
     };
-    if lead(Ended::Excluded) {
+    if bound(Ended::Excluded) {
         Lead::Active
-    } else if lead(Ended::Final) {
+    } else if bound(Ended::Final) {
         Lead::Former
     } else {
         Lead::Not

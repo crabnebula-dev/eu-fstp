@@ -327,6 +327,7 @@ fn save(e: &mut E, fields: Vec<FieldEdit>, t: i64) -> Result<Seq, ExecError> {
         programme: P,
         base: head(e),
         fields,
+        clear: Vec::new(),
     };
     e.execute(Command::Creator(cmd), by(M1, t))
 }

@@ -893,6 +893,7 @@ fn r_pg_02_open_and_save_guards_refuse_with_a_named_reason() {
         programme: P,
         base: w.head(),
         fields: Vec::new(),
+        clear: Vec::new(),
     };
     assert_eq!(
         decide_creator(&w.core, &w.creator, &save, &ctx(M1), &inputs),
@@ -1240,6 +1241,7 @@ fn i66_edit_narrative_edits_held_text_and_voids_the_clearance() {
         programme: P,
         base: w.head(),
         fields: vec![narrative_edit("Synthetic narrative", 1)],
+        clear: Vec::new(),
     };
     w.run(&save, M1, &inputs).unwrap();
     let mut not_manual = narrative_edit("Synthetic text", 2);
@@ -1665,6 +1667,7 @@ fn draft_commands(revision: DraftRevision) -> Vec<CreatorCommand> {
             programme: P,
             base: revision,
             fields: Vec::new(),
+            clear: Vec::new(),
         },
         CreatorCommand::AcceptNarrative {
             programme: P,
@@ -1942,4 +1945,161 @@ fn r_pg_01_open_draft_name_round_trips_and_is_left_out_when_unset() {
     let v = plain.to_json();
     assert!(v.as_object().unwrap().get("name").is_none());
     assert_eq!(CreatorCommand::from_json(&v).unwrap(), plain);
+}
+
+/// I-66 (Daniel, 2026-11-15 night): `SaveFields` clears a field
+/// explicitly. The cleared field holds no value any more, so the draft
+/// holds no value of it (a gap, which the report shows as `FieldUnset`), and the
+/// clear is an edit: it voids
+/// the acknowledgement and the activation request. The record names the
+/// cleared fields, and a save without a clear records none.
+#[test]
+fn i66_save_fields_clear_makes_a_gap_and_voids_the_clearance() {
+    let field = fstp_programme::FieldId::ProgrammeNarrative;
+    let mut w = opened();
+    let inputs = passing();
+    let save = CreatorCommand::SaveFields {
+        programme: P,
+        base: w.head(),
+        fields: vec![narrative_edit("Synthetic narrative", 1)],
+        clear: Vec::new(),
+    };
+    w.run(&save, M1, &inputs).unwrap();
+    assert!(w.creator.draft(P).unwrap().set_fields().contains(&field));
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+
+    let clear = CreatorCommand::SaveFields {
+        programme: P,
+        base: w.head(),
+        fields: Vec::new(),
+        clear: vec![field],
+    };
+    let d = decide_with(
+        &w.core,
+        &w.creator,
+        &clear,
+        &ctx(M1),
+        &inputs,
+        &clean_facts(),
+    )
+    .unwrap();
+    assert!(
+        d.core.is_empty(),
+        "a clear composes no policy: {:?}",
+        d.core
+    );
+    assert!(matches!(
+        d.records.as_slice(),
+        [CreatorRecord::FieldsSaved { fields, cleared, .. }]
+            if fields.is_empty() && cleared == &vec![field]
+    ));
+    w.run(&clear, M1, &inputs).unwrap();
+    let draft = w.creator.draft(P).unwrap();
+    assert!(!draft.set_fields().contains(&field), "the field is a gap");
+    assert!(!draft.fields().contains_key(&field));
+    assert!(!draft.request_live(), "the clear voids the request");
+    assert!(
+        draft.live_acks().is_empty(),
+        "the clear voids the acknowledgement"
+    );
+}
+
+/// I-66: a clear names only fields that hold a value, never P-53, never a
+/// field the same save sets, and in strictly ascending order. Each other
+/// clear is refused as an invalid save.
+#[test]
+fn i66_save_fields_clear_is_refused_when_it_clears_nothing() {
+    use fstp_programme::FieldId;
+    let mut w = opened();
+    let inputs = passing();
+    let save = CreatorCommand::SaveFields {
+        programme: P,
+        base: w.head(),
+        fields: vec![narrative_edit("Synthetic narrative", 1)],
+        clear: Vec::new(),
+    };
+    w.run(&save, M1, &inputs).unwrap();
+    let clear = |w: &World, fields: Vec<crate::model::FieldEdit>, clear: Vec<FieldId>| {
+        CreatorCommand::SaveFields {
+            programme: P,
+            base: w.head(),
+            fields,
+            clear,
+        }
+    };
+    for (what, cmd) in [
+        (
+            "an unset field",
+            clear(&w, Vec::new(), vec![FieldId::Minors]),
+        ),
+        ("P-53", clear(&w, Vec::new(), vec![FieldId::P53])),
+        (
+            "a field the save sets",
+            clear(
+                &w,
+                vec![narrative_edit("Other narrative", 2)],
+                vec![FieldId::ProgrammeNarrative],
+            ),
+        ),
+        (
+            "a repeated field",
+            clear(
+                &w,
+                Vec::new(),
+                vec![FieldId::ProgrammeNarrative, FieldId::ProgrammeNarrative],
+            ),
+        ),
+    ] {
+        assert_eq!(
+            w.run(&cmd, M1, &inputs),
+            Err(CreatorRefusal::NothingToSave),
+            "{what}"
+        );
+    }
+}
+
+/// The codec of a clear: a save without one encodes as before clears
+/// existed, with no `clear` member, and a record with no `cleared`
+/// member decodes to none. A clear round-trips, and an empty or unsorted
+/// set is refused, so each value has one encoding.
+#[test]
+fn save_fields_clear_codec_keeps_old_encodings() {
+    use fstp_programme::FieldId;
+    let old = r#"{"kind":"FieldsSaved","programme":"7","revision":{"seq":"1","entry":"1"},"fields":[],"by":"177"}"#;
+    let r = crate::decode_record(old.as_bytes()).unwrap();
+    assert!(matches!(&r, CreatorRecord::FieldsSaved { cleared, .. } if cleared.is_empty()));
+    let back = r.to_json().to_canonical().unwrap();
+    assert!(!back.contains("cleared"), "{back}");
+
+    let mut a = FieldId::Minors;
+    let mut b = FieldId::ProgrammeNarrative;
+    if b < a {
+        std::mem::swap(&mut a, &mut b);
+    }
+    let cmd = CreatorCommand::SaveFields {
+        programme: P,
+        base: DraftRevision::new(1, Seq::from_raw(1)),
+        fields: Vec::new(),
+        clear: vec![a, b],
+    };
+    let text = cmd.to_json().to_canonical().unwrap();
+    assert_eq!(crate::decode_command(text.as_bytes()).unwrap(), cmd);
+    let none = CreatorCommand::SaveFields {
+        programme: P,
+        base: DraftRevision::new(1, Seq::from_raw(1)),
+        fields: vec![narrative_edit("Synthetic narrative", 1)],
+        clear: Vec::new(),
+    };
+    assert!(!none.to_json().to_canonical().unwrap().contains("clear"));
+
+    let (ka, kb) = (a.key(), b.key());
+    for bad in [
+        r#"{"kind":"SaveFields","programme":"7","base":{"seq":"1","entry":"1"},"fields":[],"clear":[]}"#.to_owned(),
+        format!(
+            r#"{{"kind":"SaveFields","programme":"7","base":{{"seq":"1","entry":"1"}},"fields":[],"clear":["{kb}","{ka}"]}}"#
+        ),
+    ] {
+        assert!(crate::decode_command(bad.as_bytes()).is_err(), "{bad}");
+    }
 }

@@ -62,6 +62,7 @@ fn review_r_pg_01_save_fields_is_not_a_seam() {
             edit(decode(FieldId::P05, &format!("\"{}\"", adr006(100_000))), 2),
             edit(decode(FieldId::P58, &format!("\"{}\"", adr006(200_000))), 2),
         ],
+        clear: Vec::new(),
     };
     let got = refusal(&mut cell, &cmd, M1);
     assert!(
@@ -79,6 +80,7 @@ fn review_r_pg_01_artefact_save_is_not_a_seam() {
         programme: P,
         base: cell.head(),
         fields: vec![edit(decode(FieldId::Faq, "\"Synthetic FAQ.\""), 3)],
+        clear: Vec::new(),
     };
     let got = refusal(&mut cell, &cmd, M1);
     assert_eq!(got, None, "an artefact-only save is refused: {got:?}");

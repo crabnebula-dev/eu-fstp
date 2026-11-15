@@ -144,17 +144,10 @@ pub mod production {
     /// save refuses it first, so no save carries it (I-50 strict).
     const P03_INVALID: &str = "65";
 
-    /// The field the setup leaves unsaved when the plan seeds `FieldUnset`:
-    /// an artefact narrative that no other check reads and no Guide
-    /// placeholder binds.
+    /// The field the setup leaves unsaved when the plan seeds `FieldUnset`,
+    /// and the field a later save clears to seed it: an artefact narrative
+    /// that no other check reads and no Guide placeholder binds.
     const UNSAVED: FieldId = FieldId::Minors;
-
-    /// A field save that seeds `FieldUnset` after the opening: no save
-    /// removes a value, and only field saves set or clear fields (Daniel,
-    /// 2026-11-15). The machine generates no such edit.
-    pub const GAP_UNSET: NotImplemented = NotImplemented::new(
-        "a field save that seeds FieldUnset after the opening: no SaveFields removes a value (Daniel, 2026-11-15: only field saves set or clear fields)",
-    );
 
     /// A fix of `FieldUnset` that the edit's kind cannot make.
     pub const GAP_FIX: NotImplemented = NotImplemented::new(
@@ -389,6 +382,9 @@ pub mod production {
     enum Step {
         /// `SaveFields` of these values.
         Save(Vec<FieldValue>),
+        /// `SaveFields` of these values that also clears the field
+        /// (Daniel, 2026-11-15 night): it seeds `FieldUnset`.
+        SaveClear(Vec<FieldValue>, FieldId),
         /// `ApplyStart` of a blank start: a restart, which keeps the saved
         /// fields (Daniel, 2026-11-15).
         Blank,
@@ -559,6 +555,7 @@ pub mod production {
                 programme: PLAN_P,
                 base,
                 fields,
+                clear: Vec::new(),
             };
             let ctx = s.ctx(builder);
             let before = s.ledger.len();
@@ -636,7 +633,10 @@ pub mod production {
             } else {
                 Tag::Setup
             };
-            if !matches!(self.save(builder, base, all, tag)?, Run::Appended) {
+            if !matches!(
+                self.save(builder, base, all, Vec::new(), tag)?,
+                Run::Appended
+            ) {
                 return Err(GAP_STEP);
             }
             // P-03 and P-39 are 2 and P-15 is 2 in the fixture. Three
@@ -737,6 +737,7 @@ pub mod production {
                         programme: PLAN_P,
                         base,
                         fields: vec![draft_cell::manual_edit(valid)],
+                        clear: Vec::new(),
                     };
                     let json = cmd.to_json().to_canonical().map_err(|_| GAP_STEP)?;
                     let from = format!("\"value\":\"{text}\"");
@@ -1001,13 +1002,15 @@ pub mod production {
             Ok(())
         }
 
-        /// `SaveFields` of `values` at `base` by `by`. The values of an
-        /// appended save are kept for the rebuilds.
+        /// `SaveFields` of `values` at `base` by `by`, clearing `clear`.
+        /// The values of an appended save are kept for the rebuilds. A
+        /// cleared field keeps its target value, which a fix saves again.
         fn save(
             &mut self,
             by: AccountId,
             base: fstp_creator::DraftRevision,
             values: Vec<FieldValue>,
+            clear: Vec<FieldId>,
             tag: Tag,
         ) -> Result<Run, NotImplemented> {
             let fields: Vec<fstp_creator::FieldEdit> =
@@ -1020,6 +1023,7 @@ pub mod production {
                 programme: PLAN_P,
                 base,
                 fields,
+                clear,
             };
             let out = self.run(Command::Creator(cmd), by, tag)?;
             if matches!(out, Run::Appended) {
@@ -1071,7 +1075,8 @@ pub mod production {
                 return Err(GAP_STEP);
             };
             match step {
-                Step::Save(values) => self.save(by, revision, values, tag),
+                Step::Save(values) => self.save(by, revision, values, Vec::new(), tag),
+                Step::SaveClear(values, field) => self.save(by, revision, values, vec![field], tag),
                 Step::Blank => {
                     let profile = self
                         .state()
@@ -1666,8 +1671,15 @@ pub mod production {
             };
             let tag = Tag::Edit(kind, effect);
             let step = match kind {
-                EditKind::Policy | EditKind::Artefact if seed => {
-                    return self.refused_or(by, kind, base, GAP_UNSET);
+                // A save that also clears [`UNSAVED`], which no other check
+                // reads, seeds `FieldUnset` (Daniel, 2026-11-15 night): a
+                // policy save sets P-02 with it, an artefact save the
+                // programme name.
+                EditKind::Policy if seed => {
+                    Step::SaveClear(vec![field(self, FieldId::P02)?], UNSAVED)
+                }
+                EditKind::Artefact if seed => {
+                    Step::SaveClear(vec![field(self, FieldId::ProgrammeName)?], UNSAVED)
                 }
                 EditKind::Policy if fix => {
                     let mut values: Vec<FieldValue> = unset

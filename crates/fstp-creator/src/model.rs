@@ -263,7 +263,7 @@ pub enum CreatorCommand {
         /// The starting point.
         start: StartingPoint,
     },
-    /// Save field values.
+    /// Save field values, and clear others.
     SaveFields {
         /// The draft.
         programme: ProgrammeId,
@@ -271,6 +271,12 @@ pub enum CreatorCommand {
         base: DraftRevision,
         /// The edits.
         fields: Vec<FieldEdit>,
+        /// The fields to clear, in ascending order: each loses the value
+        /// the draft holds, saved, accepted or applied by the start, and
+        /// becomes a gap (`FieldUnset`). A clear is an edit and voids the
+        /// report like any other (I-66; Daniel, 2026-11-15 night). P-53
+        /// is never cleared.
+        clear: Vec<FieldId>,
     },
     /// Accept template narrative text, which is never applied silently.
     AcceptNarrative {
@@ -446,7 +452,7 @@ pub enum CreatorRecord {
         /// The author.
         by: AccountId,
     },
-    /// Field values were saved.
+    /// Field values were saved, and others cleared.
     FieldsSaved {
         /// The draft.
         programme: ProgrammeId,
@@ -454,6 +460,8 @@ pub enum CreatorRecord {
         revision: DraftRevision,
         /// Each field with its value digest and provenance.
         fields: Vec<(FieldId, ValueDigest, Provenance)>,
+        /// The fields cleared, in ascending order.
+        cleared: Vec<FieldId>,
         /// The author.
         by: AccountId,
     },

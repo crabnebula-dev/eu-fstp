@@ -517,9 +517,18 @@ impl CreatorState {
                 draft.start_fields = started;
                 draft.narratives = kept_narratives;
             }
-            CreatorRecord::FieldsSaved { fields, .. } => {
+            CreatorRecord::FieldsSaved {
+                fields, cleared, ..
+            } => {
                 for (f, d, p) in fields {
                     draft.fields.insert(*f, (*d, p.clone()));
+                }
+                // A cleared field holds no value of any source any more
+                // (Daniel, 2026-11-15 night), so it is a gap again.
+                for f in cleared {
+                    draft.fields.remove(f);
+                    draft.start_fields.remove(f);
+                    draft.narratives.remove(f);
                 }
             }
             CreatorRecord::NarrativeAccepted { field, .. } => {

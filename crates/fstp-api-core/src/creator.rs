@@ -181,7 +181,7 @@ impl Form {
             Form::OpenDraft => (&[], &["name"]),
             Form::Withdraw | Form::SaveAsTemplate => (&[], &[]),
             Form::ApplyStart => (&["base", "start"], &[]),
-            Form::SaveFields => (&["base", "fields"], &[]),
+            Form::SaveFields => (&["base", "fields"], &["clear"]),
             Form::AcceptNarrative | Form::Remove => (&["base"], &[]),
             Form::EditNarrative => (&["base", "value"], &[]),
             Form::Invite => (&["email", "role"], &["organisation", "start", "end"]),
@@ -585,13 +585,29 @@ fn named_open(open: CreatorCommand, name: &Value) -> Result<CreatorCommand, ApiE
 }
 
 /// The `SaveFields` of `creator.save_fields`: one manual edit per field,
-/// each with its value's canonical text and the SHA-256 of that text.
+/// each with its value's canonical text and the SHA-256 of that text, and
+/// the optional `clear`, the keys of the fields to clear (Daniel,
+/// 2026-11-15 night). The keys are sent in ascending field order, as the
+/// command's set holds them, and the codec refuses any other order. The
+/// creator judges each clear.
 fn save_fields(request: &Object) -> Result<CreatorCommand, ApiError> {
     let fields = request
         .get("fields")
         .and_then(Value::as_array)
         .ok_or_else(bad)?;
-    if fields.is_empty() || fields.len() > MAX_EDITS {
+    let clear: Vec<Value> = match request.get("clear") {
+        None => Vec::new(),
+        Some(v) => {
+            let keys = v.as_array().ok_or_else(bad)?;
+            if keys.is_empty() || keys.iter().any(|k| k.as_str().is_none()) {
+                return Err(bad());
+            }
+            keys.to_vec()
+        }
+    };
+    if (fields.is_empty() && clear.is_empty())
+        || fields.len().saturating_add(clear.len()) > MAX_EDITS
+    {
         return Err(bad());
     }
     let mut seen = BTreeSet::new();
@@ -621,6 +637,12 @@ fn save_fields(request: &Object) -> Result<CreatorCommand, ApiError> {
             ("fields", Value::Array(edits.into_iter().collect())),
         ],
     );
+    let mut v = v;
+    if !clear.is_empty()
+        && let Value::Object(o) = &mut v
+    {
+        let _ = o.insert("clear", Value::Array(clear.into_iter().collect()));
+    }
     decode(&v)
 }
 

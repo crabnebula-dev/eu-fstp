@@ -2181,5 +2181,5 @@ Lane m4/decisions-b built I-52 and the ledger seams, then stopped on these gaps 
 
 Follow-up answers (2026-11-15, night), after lane m4/i66-gaps:
 
-- **Clearing a field.** `SaveFields` gains an explicit clear for a field. It is an edit and voids the report. The I-66 model then generates emptied required fields, which closes GAP_UNSET (to build).
+- **Clearing a field.** `SaveFields` gains an explicit clear for a field. It is an edit and voids the report. The I-66 model then generates emptied required fields, which closes GAP_UNSET. Built by lane m4/matrix-final: `SaveFields` carries `clear` (the API body member `clear`, keys in ascending field order), `FieldsSaved` records `cleared`, and both members are left out when empty, so older entries decode unchanged.
 - **Readings accepted.** Restarts and narrative edits are neutral for field checks in the reference. A restart keeps every saved field, and an accepted narrative only where the new template offers the same text.

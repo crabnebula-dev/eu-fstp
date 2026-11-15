@@ -731,6 +731,7 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
                 programme: p,
                 base: head,
                 fields: crate::cycle::save_of(&spec),
+                clear: Vec::new(),
             }),
         )?;
         let head = self.draft_head(p)?;

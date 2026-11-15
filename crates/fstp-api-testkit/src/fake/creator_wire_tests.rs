@@ -1029,6 +1029,7 @@ fn r_pg_01_save_fields_builds_field_edits_with_the_shell_sha256() {
         programme,
         base: got_base,
         fields,
+        clear: _,
     } = cmd
     else {
         panic!("the engine port appended {cmd:?}");

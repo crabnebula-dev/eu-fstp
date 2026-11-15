@@ -489,6 +489,7 @@ fn imported(save_p58_first: bool) -> E {
                 Provenance::Manual,
             )],
             by: PM,
+            cleared: Vec::new(),
         };
         store
             .append(h, 4, id("p58", 1), vec![Record::Creator(saved)])
@@ -644,6 +645,7 @@ fn i65_fold_pairs_imported_values_with_their_resolution() {
             },
         )],
         by: PM,
+        cleared: Vec::new(),
     });
     let resolved = |by: AccountId| {
         Record::Import(ImportRecord::ProposalResolved {
@@ -691,6 +693,7 @@ fn i65_fold_binds_imported_values_to_the_proposal_field_and_programme() {
                 },
             )],
             by: PM,
+            cleared: Vec::new(),
         })
     };
     let resolved = Record::Import(ImportRecord::ProposalResolved {

@@ -12,9 +12,11 @@
 //! 2. has `fstp-pgagent` drop both cell databases and their roles, each
 //!    drop approved by two operators and checked again by the agent, and
 //!    rewrite `pg_hba.conf` on both clusters ([`CellDatabases`]). Then it
-//!    deletes the cell's object storage prefix ([`CellObjects`]) and
 //!    revokes the cell at the witness ([`WitnessCredentials`],
-//!    [`WitnessRegistry`]);
+//!    [`WitnessRegistry`]). It deletes no object of the cell's object
+//!    storage prefix (ADR-004, Daniel's night decision of 2026-11-15):
+//!    step 1 made every backup unreadable (I-81), and bucket lifecycle
+//!    rules remove the objects later (ADR-005, ADR-012);
 //! 3. removes every route of the cell at the edge ([`EdgeRoutes`]);
 //! 4. issues the erasure confirmation, composite-signed by the control
 //!    plane, which lists every destroyed key with its receipt.
@@ -36,8 +38,6 @@
 //!   in place (lane m3/erase-prod). `OkmsCustody` does not implement it.
 //! - The key list is input. In production it comes from
 //!   `cp.custody_entry` and the backend's listing, which is not built.
-//! - Step 2 deletes the object storage prefix through a trait that only
-//!   tests implement, since the S3 client has no list or delete.
 //! - Step 3 reaches remote edges through [`crate::routes::RemoteEdges`],
 //!   or an edge in the same process.
 
@@ -96,12 +96,6 @@ pub enum ErasureStep {
     HbaRewritten {
         /// The cluster.
         cluster: ClusterId,
-    },
-    /// Step 2: every object under the cell's object storage prefix is
-    /// deleted.
-    ObjectsDeleted {
-        /// The number of objects deleted.
-        count: u32,
     },
     /// Step 2: the witness revoked the cell (ADR-004, 2026-11-15 late).
     WitnessCellRevoked,
@@ -388,15 +382,6 @@ pub trait EdgeRoutes {
     fn remove_cell(&self, cell: CellId) -> impl Future<Output = Result<u16, ControlError>>;
 }
 
-/// The cell's object storage prefix (design section 3.7 step 2). Interim,
-/// pending Daniel: the S3 client of `fstp-backup` is a W0 stub with no
-/// list or delete, so only test implementations exist.
-pub trait CellObjects {
-    /// Deletes every object under the prefix of `cell` and returns the
-    /// number deleted. A prefix without objects deletes none.
-    fn delete_prefix(&self, cell: CellId) -> impl Future<Output = Result<u32, ControlError>>;
-}
-
 /// The cell's credentials at the witness (design section 3.7 step 2,
 /// ADR-004 "Decided by Daniel, 2026-11-15 (late)"). The witness appends a
 /// revocation record beside `witness.cell_ca` and refuses the revoked
@@ -598,9 +583,9 @@ fn count16(n: usize) -> u16 {
 ///    `fstp-pgagent` drop the cell's database, then its roles, then
 ///    rewrite `pg_hba.conf`, through `databases`. Each drop is one of
 ///    `agent_jobs`, approved by two operators, which the agent checks
-///    again itself. Then it deletes the cell's object storage prefix
-///    through `objects` and revokes the cell at the witness through
-///    `witness`;
+///    again itself. Then it revokes the cell at the witness through
+///    `witness`. It deletes no object storage (ADR-004, 2026-11-15
+///    night): bucket lifecycle rules remove the cell's objects;
 /// 3. removes every route of the cell through `edge`;
 /// 4. signs the confirmation with `signer` at `now`.
 ///
@@ -622,10 +607,9 @@ fn count16(n: usize) -> u16 {
 /// when custody refuses a destroy. [`ControlError::Job`] when an agent job
 /// does not finish, and the errors of `databases` and `edge`.
 #[allow(clippy::too_many_arguments)]
-pub async fn erase_cell_steps<C, D, O, W, E>(
+pub async fn erase_cell_steps<C, D, W, E>(
     custody: &C,
     databases: &D,
-    objects: &O,
     witness: &W,
     edge: &E,
     approved: &ApprovedJob,
@@ -639,7 +623,6 @@ pub async fn erase_cell_steps<C, D, O, W, E>(
 where
     C: Custody + SignKeyCustody,
     D: CellDatabases,
-    O: CellObjects,
     W: WitnessCredentials,
     E: EdgeRoutes,
 {
@@ -682,8 +665,6 @@ where
         report(ErasureEvent::Step(ErasureStep::HbaRewritten { cluster }));
     }
 
-    let count = objects.delete_prefix(cell).await?;
-    report(ErasureEvent::Step(ErasureStep::ObjectsDeleted { count }));
     witness.revoke_cell(cell).await?;
     report(ErasureEvent::Step(ErasureStep::WitnessCellRevoked));
 
