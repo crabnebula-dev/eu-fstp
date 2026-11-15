@@ -5,8 +5,12 @@
  *
  * - A visitor with no session who opens `/app/grants` lands on the login
  *   page, which returns them to `/app/grants` after sign-in.
- * - An applicant who opens `/app/admin/approvals` gets the one "Page not
- *   found" page, status 404, as for a path that does not exist.
+ * - An applicant who opens `/app/admin/approvals` lands on home, `/app/`,
+ *   by the same 303 as a path that does not exist (SA-09 amendment,
+ *   Daniel 2026-11-15).
+ * - A browser that opens a path that does not exist, on any path of the
+ *   cell origin, lands on home, or on sign-in with no session. The API
+ *   keeps its JSON answer.
  * - Every in-app link of the navigation of each demo person opens with
  *   status 200: the navigation lists only pages the person may open.
  *
@@ -17,8 +21,11 @@ import { expect, test } from '@playwright/test';
 import { PAGES, stack } from '../playwright.config';
 import { DemoPage, HOME, classify, enrolFromLink, newPerson, personOf, settle } from './support';
 
-/** The heading of the not-found page (`applicant/messages.en.ts` `app.not_found`). */
+/** The heading of the not-found page (`applicant/messages.en.ts` `app.not_found`), which no page shows now. */
 const NOT_FOUND_TITLE = 'Page not found';
+
+/** The home page's root (`home/page.ts`). */
+const HOME_WORK = 'main #home';
 
 test.describe('SA-09 page gate', () => {
   /** r_ac_01_sa09: signed out, `/app/grants` answers 303 to sign-in with the page as return path. */
@@ -43,8 +50,12 @@ test.describe('SA-09 page gate', () => {
     }
   });
 
-  /** r_ac_01_sa09: an applicant on `/app/admin/approvals` sees the not-found page, 404, as an unknown path. */
-  test('r_ac_01_sa09_applicant_on_admin_approvals_sees_page_not_found', async ({ browser }) => {
+  /**
+   * r_ac_01_sa09: an applicant who opens `/app/admin/approvals` lands on
+   * home by the same 303 as a path that does not exist, so the answer
+   * never says that the page exists (SA-09 amendment).
+   */
+  test('r_ac_01_sa09_applicant_on_admin_approvals_lands_on_home', async ({ browser }) => {
     test.setTimeout(180_000);
     const demo = await DemoPage.open(browser);
     const p = await newPerson(browser);
@@ -53,14 +64,53 @@ test.describe('SA-09 page gate', () => {
       await enrolFromLink(p, personOf(await demo.people(), 'lead-x', 'applicant_NEGOTIATION').link);
       await expect(p.page).toHaveURL((u) => u.origin === p.origin && !u.pathname.startsWith('/auth/'));
       await settle(p.page);
-      const closed = await p.page.goto(`${p.origin}/app/admin/approvals`);
-      expect(closed?.status(), 'the page answers 404').toBe(404);
+      const closed = await p.page.request.get(`${p.origin}/app/admin/approvals`, { maxRedirects: 0 });
+      expect(closed.status(), 'the closed page answers 303').toBe(303);
+      expect(closed.headers()['location'], 'to home').toBe(HOME);
+      const unknown = await p.page.request.get(`${p.origin}/app/no-such-page`, { maxRedirects: 0 });
+      expect(unknown.status()).toBe(303);
+      expect(unknown.headers()['location']).toBe(HOME);
+      expect(await closed.body(), 'the same bytes as an unknown path').toEqual(await unknown.body());
+      await p.page.goto(`${p.origin}/app/admin/approvals`);
+      await expect(p.page).toHaveURL((u) => u.origin === p.origin && u.pathname === HOME);
       await settle(p.page);
-      await expect(p.page.locator('h1').first()).toHaveText(NOT_FOUND_TITLE);
+      await expect(p.page.locator(HOME_WORK), 'the home page').toBeVisible();
+      await expect(p.page.locator('h1').first()).not.toHaveText(NOT_FOUND_TITLE);
       await expect(p.page.locator('body')).not.toContainText('The platform refused');
-      const unknown = await p.page.request.get(`${p.origin}/app/no-such-page`);
-      expect(unknown.status()).toBe(404);
-      expect(await closed?.body(), 'the same bytes as an unknown path').toEqual(await unknown.body());
+    } finally {
+      await p.context.close();
+      await demo.close();
+    }
+  });
+
+  /**
+   * r_ac_01_sa09: a browser that opens a path that does not exist lands
+   * on home, inside and outside `/app/`, and on sign-in with no session.
+   * It never sees a JSON answer. The API keeps its JSON answer.
+   */
+  test('r_ac_01_sa09_unknown_paths_land_on_home', async ({ browser }) => {
+    test.setTimeout(180_000);
+    const demo = await DemoPage.open(browser);
+    const p = await newPerson(browser);
+    try {
+      await demo.chooseScene('/demo/applicant?at=NEGOTIATION');
+      const visitor = await p.context.newPage();
+      await visitor.goto(`${p.origin}/nonexistent`);
+      await expect(visitor, 'no session: sign-in').toHaveURL((u) => u.origin === p.origin && u.pathname === PAGES.login);
+      await visitor.close();
+      await enrolFromLink(p, personOf(await demo.people(), 'lead-x', 'applicant_NEGOTIATION').link);
+      await expect(p.page).toHaveURL((u) => u.origin === p.origin && !u.pathname.startsWith('/auth/'));
+      await settle(p.page);
+      for (const path of ['/nonexistent', '/no/such/page', '/app/nonexistent', '/auth/nonexistent']) {
+        await p.page.goto(`${p.origin}${path}`);
+        await expect(p.page, `${path} lands on home`).toHaveURL((u) => u.origin === p.origin && u.pathname === HOME);
+        await settle(p.page);
+        await expect(p.page.locator(HOME_WORK), `${path}: the home page`).toBeVisible();
+        await expect(p.page.locator('body'), `${path}: no JSON`).not.toContainText('not_found');
+      }
+      const api = await p.page.request.get(`${p.origin}/api/v1/nonexistent`, { maxRedirects: 0 });
+      expect(api.status(), 'the API keeps its answer').toBe(404);
+      expect(api.headers()['content-type']).toBe('application/json');
     } finally {
       await p.context.close();
       await demo.close();

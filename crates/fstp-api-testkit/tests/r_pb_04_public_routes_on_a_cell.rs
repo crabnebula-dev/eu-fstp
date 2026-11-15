@@ -308,3 +308,61 @@ fn adr021_public_pages_after_activation_are_not_the_notice() {
         assert!(!body.contains("not published yet"), "{path}: {body}");
     }
 }
+
+/// A browser page navigation `GET` of `path`, with Fetch metadata.
+fn navigate(c: &Cell, path: &str) -> Reply {
+    let raw = format!(
+        "GET {path} HTTP/1.1\r\nHost: tenant.fstp.test\r\nSec-Fetch-Mode: navigate\r\nAccept: text/html\r\n\r\n"
+    );
+    let req = match parse_request(raw.as_bytes(), &limits()) {
+        Ok(Parsed::Complete { message, .. }) => message,
+        other => panic!("{path}: {other:?}"),
+    };
+    let r = fstp_rt::future::block_on(c.router.serve(req));
+    Reply {
+        status: r.status.as_u16(),
+        fields: r
+            .headers
+            .iter()
+            .map(|(n, v)| (n.as_str().to_owned(), v.as_bytes().to_vec()))
+            .collect(),
+        body: r.body,
+    }
+}
+
+/// SA-09 amendment (Daniel, 2026-11-15), R-PB-04: a browser page request
+/// for a path under `/p/{slug}/` that does not exist goes to that
+/// programme's public home `/p/{slug}/` when the programme exists, and
+/// home `/app/` otherwise. Every answer keeps the public CSP and sets no
+/// cookie. A script or an HTTP library keeps the JSON answer.
+#[test]
+fn sa09_r_pb_04_unknown_public_page_goes_to_the_programme_home() {
+    let c = cell();
+    assert_eq!(get(&c, "/p/1/", false).status, 200);
+    let cases = [
+        ("/p/1/no-such-page", "/p/1/"),
+        ("/p/1/calls/987654321", "/p/1/"),
+        ("/p/1/calls/not-an-id/guide", "/p/1/"),
+        ("/p/1", "/p/1/"),
+        ("/p/no-such-programme/", "/app/"),
+        ("/p/no-such-programme/funded", "/app/"),
+        ("/p", "/app/"),
+    ];
+    for (path, to) in cases {
+        let r = navigate(&c, path);
+        assert_eq!(r.status, 303, "{path}");
+        assert_eq!(r.values("location"), [to], "{path}");
+        assert_eq!(r.values("content-security-policy"), [PUBLIC_CSP], "{path}");
+        assert!(r.values("set-cookie").is_empty(), "{path}");
+        let plain = get(&c, path, false);
+        assert!(
+            plain.status == 404 || plain.status == 400,
+            "{path}: {}",
+            plain.status
+        );
+        assert_eq!(plain.values("content-type"), ["application/json"], "{path}");
+    }
+    for path in ["/p/1/", "/p/1/funded"] {
+        assert_eq!(navigate(&c, path).status, 200, "{path}");
+    }
+}

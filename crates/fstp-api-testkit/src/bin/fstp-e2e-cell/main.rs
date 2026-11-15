@@ -338,46 +338,87 @@ impl Handler for CellOrigin {
                 }
                 return vault_page(&req);
             }
-            let path = req.target.path().to_owned();
-            if path == "/" && req.method == Method::GET {
-                let mut r = Response::new(StatusCode::SEE_OTHER);
-                let _ = r.headers.try_insert("location", "/auth/login");
-                return r;
+            // SA-09 amendment: a browser page request for a path no
+            // route serves goes home; the API and the machine routes
+            // keep their answers. `fstp-web` answers its own surfaces so
+            // already; this covers the M3 pages, their assets and the
+            // demo routes.
+            let page = serves_pages(req.target.path()) && fstp_http::is_page_navigation(&req);
+            let r = cell_origin(&site, req).await;
+            if page && matches!(r.status.as_u16(), 400 | 404) {
+                return to_home();
             }
-            if path == "/assets" || path.starts_with("/assets/") {
-                return site.info.auth_assets.asset(&req);
-            }
-            let inner = site.inner();
-            if site.info.demo_signin && demo_signin::is_route(&path) {
-                return demo_signin::handle(&site.info, &inner, req).await;
-            }
-            // The `/app/` shell and the M3 account page of a demo sign-in
-            // session carry the demo notice; no other reply changes
-            // (`demo_signin`).
-            let demo = if site.info.demo_signin && req.method == Method::GET {
-                match demo_signin::module_for(&path) {
-                    Some(m) if demo_signin::is_demo_session(&inner, &req).await => Some(m),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            if path == "/auth" || path.starts_with("/auth/") {
-                let r = auth::handle(&site.info, &inner, req).await;
-                return match demo {
-                    Some(m) => demo_signin::mark_shell(r, m),
-                    None => r,
-                };
-            }
-            if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
-                return onboarding::invite_admin(&inner, req).await;
-            }
-            let r = people::serve(&inner, req).await;
-            match demo {
-                Some(m) => demo_signin::mark_shell(r, m),
-                None => r,
-            }
+            r
         }
+    }
+}
+
+/// Whether a browser loads pages from `path` on the cell origin: every
+/// path but the API and the machine routes (SA-09 amendment).
+fn serves_pages(path: &str) -> bool {
+    let under = |root: &str| {
+        path.strip_prefix(root)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    };
+    !(under("/api") || under("/mcp") || under("/oauth") || under("/.well-known") || under("/test"))
+}
+
+/// The answer to a browser page request for a path the cell origin does
+/// not serve (SA-09 amendment, Daniel 2026-11-15): 303 to home, `/app/`,
+/// whose page gate sends a visitor with no session to sign in.
+fn to_home() -> Response {
+    let mut r = Response::new(StatusCode::SEE_OTHER);
+    for (name, value) in [
+        ("location", "/app/"),
+        ("cache-control", "no-store"),
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+    ] {
+        let _ = r.headers.try_insert(name, value);
+    }
+    r
+}
+
+/// The cell origin's answer to `req`, which is not for the vault host.
+async fn cell_origin(site: &Site, req: Request) -> Response {
+    let path = req.target.path().to_owned();
+    if path == "/" && req.method == Method::GET {
+        let mut r = Response::new(StatusCode::SEE_OTHER);
+        let _ = r.headers.try_insert("location", "/auth/login");
+        return r;
+    }
+    if path == "/assets" || path.starts_with("/assets/") {
+        return site.info.auth_assets.asset(&req);
+    }
+    let inner = site.inner();
+    if site.info.demo_signin && demo_signin::is_route(&path) {
+        return demo_signin::handle(&site.info, &inner, req).await;
+    }
+    // The `/app/` shell and the M3 account page of a demo sign-in
+    // session carry the demo notice; no other reply changes
+    // (`demo_signin`).
+    let demo = if site.info.demo_signin && req.method == Method::GET {
+        match demo_signin::module_for(&path) {
+            Some(m) if demo_signin::is_demo_session(&inner, &req).await => Some(m),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if path == "/auth" || path.starts_with("/auth/") {
+        let r = auth::handle(&site.info, &inner, req).await;
+        return match demo {
+            Some(m) => demo_signin::mark_shell(r, m),
+            None => r,
+        };
+    }
+    if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
+        return onboarding::invite_admin(&inner, req).await;
+    }
+    let r = people::serve(&inner, req).await;
+    match demo {
+        Some(m) => demo_signin::mark_shell(r, m),
+        None => r,
     }
 }
 
@@ -649,6 +690,53 @@ mod tests {
                 s.info.host,
                 s.info.origin.rsplit(':').next().unwrap()
             )));
+    }
+
+    /// SA-09 amendment (Daniel, 2026-11-15): on the cell origin, a browser
+    /// page request for a path that does not exist goes home, 303 to
+    /// `/app/`, inside and outside `/app/`, the M3 pages included. A
+    /// fetch keeps its answer, the API keeps its JSON for a navigation
+    /// too, and the vault origin is not the cell origin.
+    #[test]
+    fn sa09_unknown_pages_on_the_cell_origin_go_home() {
+        let running = start(&Config::loopback()).unwrap_or_else(|e| panic!("{e}"));
+        let site = &running.sites[0];
+        let ask = |host: &str, path: &str, fields: &str| {
+            exchange(
+                &cell_addr(site),
+                &format!(
+                    "GET {path} HTTP/1.1\r\nHost: {host}\r\n{fields}Connection: close\r\n\r\n"
+                ),
+            )
+        };
+        let nav = "Sec-Fetch-Mode: navigate\r\nAccept: text/html\r\n";
+        let home = |r: &str| {
+            r.starts_with("HTTP/1.1 303")
+                && r.to_ascii_lowercase().contains("\r\nlocation: /app/\r\n")
+        };
+        for path in [
+            "/nonexistent",
+            "/auth/nonexistent",
+            "/assets/nonexistent.js",
+            "/app/nonexistent",
+            "/demo/sign-in",
+        ] {
+            let r = ask("a.fstp.localhost", path, nav);
+            assert!(home(&r), "{path}: {r}");
+        }
+        for path in ["/nonexistent", "/auth/nonexistent"] {
+            let r = ask(
+                "a.fstp.localhost",
+                path,
+                "Sec-Fetch-Mode: cors\r\nAccept: */*\r\n",
+            );
+            assert!(r.starts_with("HTTP/1.1 404"), "{path}: {r}");
+        }
+        let api = ask("a.fstp.localhost", "/api/v1/nonexistent", nav);
+        assert!(api.starts_with("HTTP/1.1 404"), "{api}");
+        assert!(api.contains("not_found"), "{api}");
+        let vault = ask("id.a.fstp.localhost", "/nonexistent", nav);
+        assert!(vault.starts_with("HTTP/1.1 404"), "{vault}");
     }
 
     /// The arguments: a port, the web directory and the manifest file.

@@ -69,6 +69,11 @@ fuzz_target!(|data: &[u8]| {
         assert!(body.len() as u64 <= c.limits.max_body_bytes);
 
         let mut req = Request::from_parts(head.clone(), body.clone(), trailers.clone());
+        // SA-09 amendment: the page request decision never panics, and
+        // only GET and HEAD load a page.
+        if fstp_http::is_page_navigation(&req) {
+            assert!(req.method == fstp_http::Method::GET || req.method == fstp_http::Method::HEAD);
+        }
         req.headers = without(&req.headers, &["content-length", "transfer-encoding"]);
         let framing = if trailers.is_empty() {
             Framing::ContentLength

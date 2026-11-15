@@ -117,8 +117,9 @@ fn adr014_shell_has_one_module_script_and_nothing_inline() {
 /// ADR-014 as SA-09 amends it: a deep link to a page open to anyone
 /// serves the shell, so the client router handles it. With no session,
 /// every other page of the table answers 303 to the login page with the
-/// page as its return path, and a path no page has answers the one
-/// "Page not found" reply, 404, whatever the path.
+/// page as its return path, and a path no page has answers 303 to home,
+/// `/app/`, the same bytes whatever the path and whoever asks (SA-09
+/// amendment, Daniel 2026-11-15).
 #[test]
 fn sa09_adr014_app_deep_links_pass_the_page_gate() {
     let shell = get(OPEN_PAGE).body;
@@ -142,13 +143,9 @@ fn sa09_adr014_app_deep_links_pass_the_page_gate() {
         }
     });
     let missing = get("/app/no-such-page");
-    assert_eq!(missing.status.as_u16(), 404);
+    assert_eq!(missing.status.as_u16(), 303);
+    assert_eq!(one_header(&missing, "location").unwrap(), "/app/");
     assert_ne!(missing.body, shell);
-    let html = String::from_utf8(missing.body.clone()).unwrap();
-    assert!(
-        html.contains("<meta name=\"fstp-page\" content=\"not-found\">"),
-        "{html}"
-    );
     let paths = [
         "/app/calls/c1",
         "/app/creator/p1/steps/3",
@@ -158,12 +155,78 @@ fn sa09_adr014_app_deep_links_pass_the_page_gate() {
     ];
     all(&paths, |p| {
         let r = get(p);
-        if r.status.as_u16() == 404 && r.body == missing.body {
+        let at = one_header(&r, "location")?;
+        if r.status.as_u16() == 303 && at == "/app/" && r.body == missing.body {
+            Ok(())
+        } else {
+            Err(format!("status {}, location {at}", r.status.as_u16()))
+        }
+    });
+}
+
+/// SA-09 amendment (Daniel, 2026-11-15): a browser page request for a
+/// path that does not exist goes home, 303 to `/app/`, on every surface
+/// a browser loads pages from. The same path asked by a script or an
+/// HTTP library keeps its JSON answer, and the API and the ADR-013
+/// routes keep theirs for a navigation too. The stub has no public pages, so
+/// `/p/` is checked over a real core in `fstp-api-testkit`.
+#[test]
+fn sa09_unknown_browser_page_requests_go_home() {
+    let navigate = [
+        ("Sec-Fetch-Mode", "navigate"),
+        ("Accept", "text/html,application/xhtml+xml,*/*;q=0.8"),
+    ];
+    let html_only = [("Accept", "text/html")];
+    let fetch = [("Sec-Fetch-Mode", "cors"), ("Accept", "*/*")];
+    let ask = |method: &str, path: &str, fields: &[(&str, &str)]| {
+        web_common::serve(&web_common::request(method, path, fields, b""))
+            .unwrap_or_else(|e| panic!("{method} {path}: {e}"))
+    };
+    let home = [
+        "/nonexistent",
+        "/no/such/path",
+        "/app/no-such-page",
+        "/brand/no-such-sheet",
+    ];
+    all(&home, |p| {
+        for (method, fields) in [
+            ("GET", &navigate[..]),
+            ("HEAD", &navigate[..]),
+            ("GET", &html_only[..]),
+        ] {
+            let r = ask(method, p, fields);
+            let at = one_header(&r, "location")?;
+            if r.status.as_u16() != 303 || at != "/app/" {
+                return Err(format!(
+                    "{method}: status {}, location {at}",
+                    r.status.as_u16()
+                ));
+            }
+            baseline(&r, p)?;
+        }
+        Ok(())
+    });
+    let machine = ["/nonexistent", "/no/such/path"];
+    all(&machine, |p| {
+        let r = ask("GET", p, &fetch);
+        if r.status.as_u16() == 404 && r.body == br#"{"code":"not_found"}"# {
             Ok(())
         } else {
             Err(format!("status {}", r.status.as_u16()))
         }
     });
+    let kept = ["/api/v1/no-such-route", "/oauth/no-such-route"];
+    all(&kept, |p| {
+        let r = ask("GET", p, &navigate);
+        let plain = get(p);
+        if r.status == plain.status && r.body == plain.body && r.status.as_u16() != 303 {
+            Ok(())
+        } else {
+            Err(format!("status {}", r.status.as_u16()))
+        }
+    });
+    let posted = ask("POST", "/nonexistent", &navigate);
+    assert_ne!(posted.status.as_u16(), 303);
 }
 
 /// ADR-014: the shell's entry module is served at its content-addressed

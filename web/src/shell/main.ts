@@ -138,9 +138,16 @@ function servedAsNotFound(): boolean {
 /**
  * SA-09: whether the page at `path` may be mounted. The server decided
  * the first page of the document before it served the shell. Every later
- * page asks the same gate: a page the viewer may not open shows "Page
- * not found", and a viewer who must sign in loads the page from the
- * server, whose answer leads to sign-in and back.
+ * page asks the same gate. A page the gate closes loads from the server,
+ * whose 303 leads to sign-in and back, or home for a page the viewer may
+ * not open (SA-09 amendment).
+ *
+ * The gate's answer for a path is kept for the page load. Every in-app
+ * link was asked before it was shown, and every page of Back and Forward
+ * was asked when it was opened, so a navigation mounts its page at once,
+ * with the URL, and never shows the URL of one page over the heading of
+ * the one before (ADR-014, R-NF-03). A page that closed since is still
+ * caught: its own read is refused, and the guard below asks again.
  */
 async function admitted(path: string): Promise<boolean> {
   if (first) {
@@ -151,13 +158,8 @@ async function admitted(path: string): Promise<boolean> {
     }
     return true;
   }
-  const g = await gate.fresh(path);
-  if (g === "sign_in") {
+  if ((await gate.check(path)) === "closed") {
     location.assign(path);
-    return false;
-  }
-  if (g === "not_found") {
-    mountNotFound();
     return false;
   }
   return true;
@@ -208,20 +210,16 @@ installFooterGuard(async (programme) => {
   return r.ok ? decodeFunderProfile(r.data) : null;
 });
 // SA-09 rule 7: a page whose own read is refused after it loaded, for
-// example because the session ended, shows sign-in or "Page not found"
-// once the gate says the page is closed now, never the refusal code. A
-// refusal on a page the gate still admits returns to the page as before.
+// example because the session ended, loads from the server once the gate
+// says the page is closed now: its 303 leads to sign-in or home, never to
+// the refusal code. A refusal on a page the gate still admits returns to
+// the page as before.
 let closing: Promise<boolean> | null = null;
 setReadRefusalGuard(() => {
   closing ??= (async () => {
     const path = location.pathname;
-    const g = await gate.fresh(path);
-    if (g === "sign_in") {
+    if ((await gate.fresh(path)) === "closed") {
       location.assign(path);
-      return true;
-    }
-    if (g === "not_found") {
-      mountNotFound();
       return true;
     }
     return false;

@@ -93,7 +93,8 @@
 //!
 //! The cargo-fuzz project in `fuzz/` has five targets:
 //!
-//! - `http_request_parse`, with a differential check over input splits;
+//! - `http_request_parse`, with a differential check over input splits,
+//!   which also runs [`is_page_navigation`] on every accepted request;
 //! - `http_response_parse`;
 //! - `http_chunked_decode`, against a reference decoder;
 //! - `http_header_value`: the encoder never emits CR or LF inside a field;
@@ -111,6 +112,7 @@ mod io;
 mod limits;
 mod message;
 mod method;
+mod navigation;
 mod router;
 mod server;
 mod status;
@@ -131,6 +133,7 @@ pub use crate::header::{HeaderName, HeaderValue, Headers};
 pub use crate::limits::Limits;
 pub use crate::message::{BodyKind, Request, RequestHead, Response, ResponseHead};
 pub use crate::method::Method;
+pub use crate::navigation::is_page_navigation;
 pub use crate::router::{RouteError, Router};
 pub use crate::server::{EventHook, Server, ServerConfig, ServerEvent, ServerHandle, TimeoutPhase};
 pub use crate::status::StatusCode;

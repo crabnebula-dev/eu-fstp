@@ -7,7 +7,8 @@
 //!
 //! - a passkey session: 200 with the shell when the read answers 200
 //!   (and lists the page's own id, for a [`fstp_access::Listed`] row),
-//!   else 404 with the bytes of an unknown path;
+//!   else 303 to home `/app/` with the bytes of an unknown path (SA-09
+//!   amendment);
 //! - a magic-link session: as above, and 303 to a passkey sign-in where
 //!   the read is refused for the login strength alone (I-77);
 //! - no session: 200 where the read admits anyone, else 303 to the login
@@ -242,7 +243,11 @@ fn check_scene(
     for (who, cookie) in &viewers {
         let cookie = cookie.as_deref();
         let missing = get(inner, "/app/no-such-page", cookie);
-        assert_eq!(missing.status.as_u16(), 404);
+        assert_eq!(missing.status.as_u16(), 303);
+        assert_eq!(
+            missing.headers.get("location").and_then(|v| v.to_str()),
+            Some("/app/")
+        );
         for row in PAGES {
             for (path, params) in paths(inner, row) {
                 let r = get(inner, &path, cookie);
@@ -267,7 +272,9 @@ fn check_scene(
                 seen.insert((row.pattern, want.name()));
                 let ok = match want {
                     Want::Shell => status == 200,
-                    Want::NotFound => status == 404 && r.body == missing.body,
+                    Want::NotFound => {
+                        status == 303 && location == "/app/" && r.body == missing.body
+                    }
                     Want::SignIn => {
                         status == 303
                             && location.starts_with("/auth/login")
@@ -312,7 +319,8 @@ impl Want {
 /// SA-09 rules 2, 3 and 5, R-AC-01, ADR-021: over the demo scenes, every
 /// person and every page row, the cell serves a page exactly when the
 /// API admits the page's read; a visitor with no session goes to sign
-/// in; a viewer the read refuses gets the bytes of an unknown path, 404.
+/// in; a viewer the read refuses gets the answer of an unknown path, 303
+/// to home (SA-09 amendment).
 #[test]
 fn sa09_r_ac_01_pages_are_served_exactly_when_their_read_is_admitted() {
     let info = info();

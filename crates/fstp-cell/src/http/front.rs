@@ -14,6 +14,10 @@
 //! 3. The matched route runs the shared checks and its handler
 //!    (`crate::routes`): `Origin`, `Content-Type`, the body limit, the
 //!    session, the body, the gate.
+//! 4. A browser page request (`fstp_http::is_page_navigation`) outside
+//!    `/api/` that would answer 404 gets 303 to home, `/app/`, instead
+//!    (SA-09 amendment, Daniel 2026-11-15). `/app/` itself keeps its 404,
+//!    since this front does not serve it yet.
 //!
 //! A front built with `Front::with_pages` (feature `dev-pages`, test and
 //! dev stack only) also routes the compiled auth pages
@@ -318,11 +322,16 @@ impl<B: Backend, L: LogSink> Front<B, L> {
     pub async fn serve(&self, req: Request) -> Response {
         let started = Instant::now();
         let method = obs_method(&req.method);
+        let home = goes_home(&req);
         let (mut resp, rule) = match self.precheck(&req) {
             Some(refused) => refused,
             None => (self.inner.router.handle(req).await, None),
         };
-        if resp.headers.remove(LOGGED) == 0 {
+        let logged = resp.headers.remove(LOGGED) > 0;
+        if home && resp.status == StatusCode::NOT_FOUND {
+            resp = see_home();
+        }
+        if !logged {
             let outcome = Outcome { rule };
             self.inner
                 .log
@@ -398,6 +407,27 @@ impl<B: Backend, L: LogSink> Handler for HealthHandler<B, L> {
     async fn handle(&self, req: Request) -> Response {
         self.0.serve_health(req).await
     }
+}
+
+/// Where a browser goes for a page that does not exist (SA-09 amendment).
+const HOME: &str = "/app/";
+
+/// Whether a 404 answer to `req` becomes 303 to home (SA-09 amendment,
+/// Daniel 2026-11-15): a browser page request
+/// ([`fstp_http::is_page_navigation`]) outside `/api/`. Home itself keeps
+/// its 404, since this front does not serve `/app/` and a redirect to
+/// itself would loop.
+fn goes_home(req: &Request) -> bool {
+    let path = req.target.path();
+    let api = path == "/api" || path.starts_with("/api/");
+    !api && path != HOME && fstp_http::is_page_navigation(req)
+}
+
+/// The 303 to home. [`Front::serve`] adds the fields of every response.
+fn see_home() -> Response {
+    let mut r = Response::new(StatusCode::SEE_OTHER);
+    let _ = r.headers.try_insert("location", HOME);
+    r
 }
 
 /// Sets the response fields every tunnel response carries, replacing any

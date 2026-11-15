@@ -62,25 +62,34 @@ test("r_ac_01_sa09_page_ids_are_decimal_for_the_client", () => {
   }
 });
 
-/** R-AC-01, SA-09: the gate reads 200 as open, a redirect as sign in and 404 as not found. */
+/**
+ * R-AC-01, SA-09 and its amendment (Daniel, 2026-11-15): the gate reads
+ * 200 as open and a redirect as closed. The server answers sign-in and a
+ * closed or unknown page alike with a 303, which the gate never follows.
+ */
 test("r_ac_01_sa09_gate_reads_the_server_answer", async () => {
   eq(gateOf({ type: "basic", status: 200 }), "open", "200");
-  eq(gateOf({ type: "opaqueredirect", status: 0 }), "sign_in", "a redirect not followed");
-  eq(gateOf({ type: "basic", status: 303 }), "sign_in", "303");
-  eq(gateOf({ type: "basic", status: 404 }), "not_found", "404");
+  eq(gateOf({ type: "opaqueredirect", status: 0 }), "closed", "a redirect not followed");
+  eq(gateOf({ type: "basic", status: 303 }), "closed", "303");
+  eq(gateOf({ type: "basic", status: 404 }), "closed", "404");
   eq(gateOf({ type: "basic", status: 503 }), "unknown", "503");
   const asked: { path: string; method: string | undefined; redirect: string | undefined }[] = [];
   const gate = createGate((path, init) => {
     asked.push({ path, method: init.method, redirect: init.redirect });
-    return Promise.resolve({ type: "basic", status: path === "/app/grants" ? 404 : 200 });
+    return Promise.resolve(path === "/app/grants" ? { type: "opaqueredirect", status: 0 } : { type: "basic", status: 200 });
   });
-  eq(await gate.check("/app/grants"), "not_found", "the grants hub");
-  eq(await gate.check("/app/grants"), "not_found", "asked again");
   eq(await gate.check("/app/"), "open", "home");
-  eq(asked.length, 2, "each path is asked once per page load");
-  eq(asked[0], { path: "/app/grants", method: "HEAD", redirect: "manual" }, "a HEAD with no redirect followed");
-  await gate.fresh("/app/grants");
-  eq(asked.length, 3, "fresh asks again");
+  eq(await gate.check("/app/"), "open", "home asked again");
+  eq(asked.length, 1, "an open page is asked once per page load");
+  eq(asked[0], { path: "/app/", method: "HEAD", redirect: "manual" }, "a HEAD with no redirect followed");
+  eq(await gate.check("/app/grants"), "closed", "the grants hub");
+  eq(await gate.check("/app/grants"), "closed", "asked again");
+  // R-CF-02: a page opens as the person acts, such as the knock-out check
+  // once the coordinator declared no conflict, so a closed answer is
+  // never kept.
+  eq(asked.length, 3, "a closed page is asked each time");
+  await gate.fresh("/app/");
+  eq(asked.length, 4, "fresh asks again");
   const failing = createGate(() => Promise.reject(new Error("network")));
   eq(await failing.check("/app/"), "unknown", "a network failure");
 });
