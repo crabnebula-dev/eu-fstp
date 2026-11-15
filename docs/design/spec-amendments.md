@@ -117,3 +117,24 @@ Applied by the implementing agent on 2026-11-04, after Daniel confirmed all four
 **Source.** Daniel's decision, 2026-11-01. **Status.** Spec amendment applied on 2026-11-04 as `SPEC/12-journey-ui.md` section 8.6.
 
 The preview shows synthetic sample data only, never real records, and changes no access rule. Real content still needs SoD-08 break-glass approval.
+
+## SA-07: The FSTP coordinator unmasks parties of their own programme
+
+**Source.** Daniel's decision, 2026-11-15, option "Amend I-17: coordinator unmasks, logged". **Status.** Spec amendment applied on 2026-11-15 under ADR-023. Backend work applied by lane `m4/coordinator-unmask`.
+
+The option read: "The FSTP coordinator may unmask any party of their own programme at any stage. Each unmask asks for a purpose, needs a passkey confirmation and is a ledger record shown in the audit log. I-17 is amended (ADR-023) to exempt the coordinator; other Judging roles stay masked."
+
+### Spec amendment applied
+
+- I-17 in `SPEC/02-domain/invariants.md` now reads: "Judging roles cannot read identity attributes of an applicant before the proposal enters negotiation. The FSTP coordinator is exempt for the parties of their own programme: each unmask names a purpose, needs a fresh step-up and leaves its own ledger record, and the vault shows the identity on its own origin only." A NOTE cites ADR-023.
+- `roles-and-sod.md` restates it in the FSTP coordinator row, the reviewer note and the anonymous reviewer handles section.
+- `overview.md` names the unmask ticket as the one release without a negotiation fact.
+- R-NG-01 NOTE, TH-07 and the I-17 and I-21 test plan row restate the exemption.
+- I-20, I-27, I-83, I-86 and I-89 are unchanged.
+
+### Backend work
+
+1. The core command `UnmaskParty` and its record `PartyUnmasked { programme, party_kind, subject, purpose, by }`, for an active FSTP coordinator of the named programme only. The subject is a binding or assignment id.
+2. The operation `identity.unmask`, high-risk with step-up, web only, with a purpose of 1 to 500 characters stored as a `TextRef`.
+3. The vault ticket kind `unmask` on the release route, admitted without a negotiation fact.
+4. The reads `identity.parties` for the coordinator and `audit.unmasks` for the auditor and tenant admins.

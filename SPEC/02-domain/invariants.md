@@ -29,7 +29,8 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 
 ## Data protection and isolation
 
-- **I-17** Judging roles cannot read identity attributes of an applicant before the proposal enters negotiation.
+- **I-17** Judging roles cannot read identity attributes of an applicant before the proposal enters negotiation. The FSTP coordinator is exempt for the parties of their own programme: each unmask names a purpose, needs a fresh step-up and leaves its own ledger record, and the vault shows the identity on its own origin only.
+  NOTE: Amended by Daniel on 2026-11-15, option "Amend I-17: coordinator unmasks, logged" (`docs/adr/ADR-023-coordinator-unmask.md`). The coordinator may unmask applicants, team members, guardians with their consent record, the person behind a reviewer or IRC handle, and staff of the programme. Every other Judging role stays masked. Applicants still see only reviewer handles. I-20, I-27, I-83, I-86 and I-89 are unchanged.
 - **I-18** A proposal flagged as from a minor cannot enter negotiation without a verified guardian consent record.
 - **I-19** No tenant data crosses a cell boundary except through a tenant export, a user-held profile bundle or a template the tenant published (I-73).
 - **I-20** The platform stores no link between tenant accounts in different tenants.
