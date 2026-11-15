@@ -532,6 +532,7 @@ impl Cell {
             programme: P,
             base: self.head(),
             fields,
+            clear: Vec::new(),
         };
         self.run(&cmd, by)
     }

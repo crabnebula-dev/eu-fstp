@@ -767,6 +767,32 @@ fn report_digest(v: &Value) -> R<ReportDigest> {
     ))
 }
 
+/// The fields a save clears, as the member `name` of `members`: left out
+/// when there are none, so a save without a clear encodes as it did before
+/// clears existed (Daniel, 2026-11-15 night), and otherwise a set.
+fn put_cleared(members: &mut Vec<(&'static str, Value)>, name: &'static str, cleared: &[FieldId]) {
+    if !cleared.is_empty() {
+        members.push((
+            name,
+            Value::Array(cleared.iter().map(|f| put_field(*f)).collect()),
+        ));
+    }
+}
+
+/// The fields a save clears from the member `name` of `o`: none when the
+/// member is absent, and otherwise a non-empty set, so each value has one
+/// encoding.
+fn take_cleared(o: &Object, name: &'static str) -> R<Vec<FieldId>> {
+    if !o.contains_key(name) {
+        return Ok(Vec::new());
+    }
+    let set = at(o, name, |x| take_set(x, field))?;
+    if set.is_empty() {
+        return Err(FromJsonError::invalid("an empty set of cleared fields").at_field(name));
+    }
+    Ok(set.into_iter().collect())
+}
+
 fn put_accounts(set: &BTreeSet<AccountId>) -> Value {
     Value::Array(set.iter().map(|a| dec(a.raw())).collect())
 }
@@ -839,17 +865,19 @@ impl ToJson for CreatorCommand {
                 programme,
                 base,
                 fields,
-            } => tagged(
-                "SaveFields",
-                vec![
+                clear,
+            } => tagged("SaveFields", {
+                let mut m = vec![
                     p(*programme),
                     ("base", put_revision(*base)),
                     (
                         "fields",
                         Value::Array(fields.iter().map(put_edit).collect()),
                     ),
-                ],
-            ),
+                ];
+                put_cleared(&mut m, "clear", clear);
+                m
+            }),
             CreatorCommand::AcceptNarrative {
                 programme,
                 base,
@@ -1003,11 +1031,16 @@ impl FromJson for CreatorCommand {
                 })
             }
             "SaveFields" => {
-                let o = o(&["kind", "programme", "base", "fields"])?;
+                let o = if expect_object(v)?.contains_key("clear") {
+                    o(&["kind", "programme", "base", "fields", "clear"])?
+                } else {
+                    o(&["kind", "programme", "base", "fields"])?
+                };
                 Ok(CreatorCommand::SaveFields {
                     programme: at(o, "programme", programme)?,
                     base: at(o, "base", revision)?,
                     fields: at(o, "fields", |x| take_list(x, edit))?,
+                    clear: take_cleared(o, "clear")?,
                 })
             }
             "AcceptNarrative" => {
@@ -1163,10 +1196,10 @@ impl ToJson for CreatorRecord {
                 programme,
                 revision,
                 fields,
+                cleared,
                 by: b,
-            } => tagged(
-                "FieldsSaved",
-                vec![
+            } => tagged("FieldsSaved", {
+                let mut m = vec![
                     p(*programme),
                     ("revision", put_revision(*revision)),
                     (
@@ -1174,8 +1207,10 @@ impl ToJson for CreatorRecord {
                         Value::Array(fields.iter().map(put_saved).collect()),
                     ),
                     by(*b),
-                ],
-            ),
+                ];
+                put_cleared(&mut m, "cleared", cleared);
+                m
+            }),
             CreatorRecord::NarrativeAccepted {
                 programme,
                 revision,
@@ -1357,11 +1392,16 @@ impl FromJson for CreatorRecord {
                 })
             }
             "FieldsSaved" => {
-                let o = o(&["kind", "programme", "revision", "fields", "by"])?;
+                let o = if expect_object(v)?.contains_key("cleared") {
+                    o(&["kind", "programme", "revision", "fields", "cleared", "by"])?
+                } else {
+                    o(&["kind", "programme", "revision", "fields", "by"])?
+                };
                 Ok(CreatorRecord::FieldsSaved {
                     programme: at(o, "programme", programme)?,
                     revision: at(o, "revision", revision)?,
                     fields: at(o, "fields", |x| take_list(x, saved))?,
+                    cleared: take_cleared(o, "cleared")?,
                     by: at(o, "by", account)?,
                 })
             }

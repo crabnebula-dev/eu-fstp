@@ -950,6 +950,7 @@ impl<'w> Cycle<'w> {
                 programme: P1,
                 base: head,
                 fields: save_of(&synthetic_spec()?),
+                clear: Vec::new(),
             }),
             false,
         )?;

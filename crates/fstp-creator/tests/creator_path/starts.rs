@@ -74,6 +74,7 @@ fn i65_r_pg_01_import_save_takes_the_path_of_a_client_save() {
             revision: base,
             fields: vec![(FieldId::P05, digest(FieldId::P05, 7), provenance.clone())],
             by: M1,
+            cleared: Vec::new(),
         }]
     );
     let [Command::EditPolicy { base: on, version }] = d.core.as_slice() else {
@@ -380,6 +381,7 @@ fn i49_i66_unheld_flow_down_list_fails_closed() {
         programme: P,
         base: cell.head(),
         fields: fields.clone(),
+        clear: Vec::new(),
     };
     let ctx = cell.ctx(M1);
     let entry = cell.decide(&cmd, &ctx).unwrap_or_else(|f| panic!("{f:?}"));

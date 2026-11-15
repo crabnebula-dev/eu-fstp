@@ -121,6 +121,7 @@ fn r_pg_01_open_draft_with_a_name_saves_the_programme_name_in_the_same_entry() {
                 revision: fstp_creator::DraftRevision::new(0, fstp_ledger::Seq::ZERO),
                 fields: vec![(FieldId::ProgrammeName, name.digest, Provenance::Manual)],
                 by: TA,
+                cleared: Vec::new(),
             },
         ]
     );
@@ -306,6 +307,7 @@ fn r_pg_01_i50_i51_save_fields_composes_one_edit_policy_with_the_saved_values() 
         programme: P,
         base,
         fields,
+        clear: Vec::new(),
     };
     let d = decision(&mut cell, &cmd, M1);
     let [
@@ -313,6 +315,7 @@ fn r_pg_01_i50_i51_save_fields_composes_one_edit_policy_with_the_saved_values() 
             programme,
             revision,
             fields: saved,
+            cleared,
             by,
         },
     ] = d.records.as_slice()
@@ -320,6 +323,7 @@ fn r_pg_01_i50_i51_save_fields_composes_one_edit_policy_with_the_saved_values() 
         panic!("expected one FieldsSaved, got {:?}", d.records);
     };
     assert_eq!((*programme, *revision, *by), (P, base, M1));
+    assert!(cleared.is_empty(), "a save without a clear clears nothing");
     let saved: BTreeMap<FieldId, _> = saved
         .iter()
         .map(|(f, dg, p)| (*f, (*dg, p.clone())))
@@ -361,6 +365,7 @@ fn r_pg_01_artefact_only_save_composes_no_policy_edit() {
         programme: P,
         base,
         fields: vec![edit(decode(FieldId::Faq, "\"Synthetic FAQ.\""), 3)],
+        clear: Vec::new(),
     };
     let d = decision(&mut cell, &cmd, M1);
     assert_eq!(
@@ -370,6 +375,7 @@ fn r_pg_01_artefact_only_save_composes_no_policy_edit() {
             revision: base,
             fields: vec![(FieldId::Faq, digest(FieldId::Faq, 3), Provenance::Manual)],
             by: M1,
+            cleared: Vec::new(),
         }]
     );
     assert!(d.core.is_empty(), "{:?}", d.core);

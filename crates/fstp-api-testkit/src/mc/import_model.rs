@@ -1764,6 +1764,7 @@ pub mod production {
                 programme: PLAN_P,
                 base,
                 fields,
+                clear: Vec::new(),
             };
             match self.run(Command::Creator(save), M1, None)? {
                 Run::Appended => {
@@ -2059,6 +2060,7 @@ pub mod production {
                 programme: PLAN_P,
                 base: base_rev,
                 fields: vec![edit],
+                clear: Vec::new(),
             };
             let saved = Some(vec![(field, value.clone())]);
             match self.run(Command::Creator(save), by, saved)? {
@@ -2685,6 +2687,7 @@ pub mod production {
                     },
                 )],
                 by,
+                cleared: Vec::new(),
             };
             let ctx = self.ctx(by);
             let id = ctx.command.bytes();

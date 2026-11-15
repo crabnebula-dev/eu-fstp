@@ -232,6 +232,7 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                     programme: *programme,
                     revision: DraftRevision::new(0, fstp_ledger::Seq::ZERO),
                     fields: vec![(n.field, n.digest, Provenance::Manual)],
+                    cleared: Vec::new(),
                     by: actor,
                 });
             }
@@ -278,6 +279,7 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             programme,
             base,
             fields,
+            clear,
         } => {
             // The roles table: the call drafter writes the knock-out
             // criteria, so a save of P-09 alone admits a call drafter too.
@@ -286,7 +288,11 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             // new criteria (I-12), and a call approved before it returns
             // to DRAFT (R-PC-03 NOTE). Lane m4/fast-flow, Daniel's
             // decision of 2026-11-12.
-            let knock_outs = !fields.is_empty() && fields.iter().all(|f| f.field == FieldId::P09);
+            // A clear is a draft edit only: it composes no policy, so it
+            // is never the knock-out save of an active programme.
+            let knock_outs = !fields.is_empty()
+                && clear.is_empty()
+                && fields.iter().all(|f| f.field == FieldId::P09);
             if knock_outs {
                 manager_or_drafter(core, *programme, actor, ctx.now)?;
             } else {
@@ -300,7 +306,7 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                 open_draft(creator, *programme)?
             };
             at_head(d, *base)?;
-            if fields.is_empty() {
+            if fields.is_empty() && clear.is_empty() {
                 return Err(CreatorRefusal::NothingToSave);
             }
             if fields
@@ -318,7 +324,7 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                     provenance: f.provenance.clone(),
                 })
                 .collect();
-            let mut decision = save(core, d, *programme, *base, actor, ctx, &edits)?;
+            let mut decision = save(core, d, *programme, *base, actor, ctx, &edits, clear)?;
             if d.active().is_some() {
                 // An active draft folds no creator record. The core
                 // `PolicyVersionRecorded` carries the change, and the
@@ -614,7 +620,7 @@ pub fn decide_import_save(
         digest: edit.digest,
         provenance: edit.provenance(),
     }];
-    save(core, d, programme, base, actor, ctx, &edits)
+    save(core, d, programme, base, actor, ctx, &edits, &[])
 }
 
 /// Decides the draft record of the removal of an imported document
@@ -670,6 +676,14 @@ struct Edit<'a> {
 /// Each edit must carry a value of its own field. A value that does not
 /// compile under the draft's profile, or P-09 wording that is still inline
 /// (ADR-007), is refused as an invalid save.
+///
+/// `clear` names the fields the save clears (Daniel, 2026-11-15 night),
+/// in strictly ascending order. Each must hold a value now, must not be
+/// P-53, which the opening sets, and must not be saved in the same
+/// command. A clear composes no core command: the head policy keeps its
+/// values, and the draft shows the field as a gap (`FieldUnset`) until a
+/// save sets it again. Like every edit it voids the report (I-66).
+#[allow(clippy::too_many_arguments, reason = "the save's parts as decided")]
 fn save(
     core: &State,
     d: &Draft,
@@ -678,8 +692,16 @@ fn save(
     actor: AccountId,
     ctx: &Ctx,
     edits: &[Edit<'_>],
+    clear: &[FieldId],
 ) -> Result<CreatorDecision, CreatorRefusal> {
-    if edits.is_empty() || edits.iter().any(|e| e.value.field() != e.field) {
+    if (edits.is_empty() && clear.is_empty()) || edits.iter().any(|e| e.value.field() != e.field) {
+        return Err(CreatorRefusal::NothingToSave);
+    }
+    let clear_ok = clear.windows(2).all(|w| matches!(w, [a, b] if a < b))
+        && clear.iter().all(|f| {
+            *f != FieldId::P53 && draft::holds_value(d, *f) && edits.iter().all(|e| e.field != *f)
+        });
+    if !clear_ok {
         return Err(CreatorRefusal::NothingToSave);
     }
     let policy_values: Vec<&FieldValue> = edits
@@ -708,6 +730,7 @@ fn save(
                 .iter()
                 .map(|e| (e.field, e.digest, e.provenance.clone()))
                 .collect(),
+            cleared: clear.to_vec(),
             by: actor,
         }],
         core: composed,
