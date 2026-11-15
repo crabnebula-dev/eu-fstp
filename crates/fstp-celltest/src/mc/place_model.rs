@@ -1364,20 +1364,27 @@ pub mod db {
             privilege: field(&r, 2).to_owned(),
         })
         .collect();
-        let mut extensions = BTreeSet::new();
-        for db in databases(server)? {
-            // Another world of the test binary may drop a database between
-            // the listing and this read (the "database does not exist" race
-            // of shared clusters, lane F-ISO). A database that is gone on a
-            // second listing holds no extension. Any other failure stays
-            // an error.
-            let names = match server.psql(&db, "SELECT extname FROM pg_extension ORDER BY 1") {
-                Ok(n) => n,
-                Err(e) if databases(server)?.contains(&db) => return Err(e.to_string()),
-                Err(_) => continue,
-            };
-            extensions.extend(names.lines().filter(|l| !l.is_empty()).map(str::to_owned));
-        }
+        // A world start of another test drops the databases of ended worlds
+        // with FORCE, which ends a session connected to one of them
+        // ("terminating connection due to administrator command") while
+        // the database is still listed. So the listing and the reads run
+        // between world starts, and no world drops a database meanwhile.
+        let extensions = crate::world::between_world_starts(|| {
+            let mut extensions = BTreeSet::new();
+            for db in databases(server)? {
+                // A database that another drop removed between the listing
+                // and this read (the "database does not exist" race of
+                // shared clusters, lane F-ISO) is gone on a second listing
+                // and holds no extension. Any other failure stays an error.
+                let names = match server.psql(&db, "SELECT extname FROM pg_extension ORDER BY 1") {
+                    Ok(n) => n,
+                    Err(e) if databases(server)?.contains(&db) => return Err(e.to_string()),
+                    Err(_) => continue,
+                };
+                extensions.extend(names.lines().filter(|l| !l.is_empty()).map(str::to_owned));
+            }
+            Ok::<_, String>(extensions)
+        })?;
         let hba = hba_rows(server)?.into_iter().map(|h| h.rule).collect();
         Ok(CatalogueRows {
             roles,

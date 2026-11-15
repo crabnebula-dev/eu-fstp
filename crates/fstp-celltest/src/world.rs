@@ -1603,6 +1603,18 @@ fn start_lock() -> &'static Mutex<()> {
     &START
 }
 
+/// Runs `f` while no world of this process starts. A world start drops
+/// the cells of ended worlds from the shared clusters with
+/// `DROP DATABASE ... WITH (FORCE)` ([`prepare_cluster`]). That ends every
+/// session on the dropped database with "terminating connection due to
+/// administrator command", and the database stays listed until the drop
+/// commits. A reader that connects to each database of a shared cluster
+/// in turn runs inside `f`, so no such drop ends its session halfway.
+pub(crate) fn between_world_starts<R>(f: impl FnOnce() -> R) -> R {
+    let _turn = lock(start_lock());
+    f()
+}
+
 /// Locks `m`. The harness holds no invariant that a panic could break
 /// halfway, so a poisoned lock is taken as it is.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
