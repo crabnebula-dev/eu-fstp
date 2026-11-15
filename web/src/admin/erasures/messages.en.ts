@@ -6,11 +6,11 @@ export const ADMIN_ERASURE_LABELS: Readonly<Record<string, string>> = {
   "admin.erasures.title": "Erasures",
   "admin.erasures.intro":
     "Texts are erased by destroying their keys. The erasure log keeps each erased text with its cause and its times. It never keeps the text.",
-  "admin.erasures.ended.heading": "Grants whose retention ended",
+  "admin.erasures.ended.heading": "Grants ready for erasure",
   "admin.erasures.ended.intro":
-    "The funder retention period of a grant starts when its last payment is confirmed and lasts the programme's retention period. Once it has ended, you may request the erasure of the grant's texts.",
-  "admin.erasures.ended.none": "No grant has reached the end of its retention period.",
-  "admin.erasures.ended.row": "Grant {grant} in programme {programme}: retention started {start} and ended {end}.",
+    "A grant's texts must be kept for the number of years the programme sets, counted from the day its last payment was confirmed. When that time is up, the grant appears here and you can ask for its texts to be erased.",
+  "admin.erasures.ended.none": "No grant is ready for erasure yet.",
+  "admin.erasures.ended.row": "Grant {grant} (programme {programme}): kept from {start} until {end}.",
   "admin.erasures.request.heading": "Request an erasure",
   "admin.erasures.request.intro":
     "Choose a grant whose retention ended and the cause. The request erases every text of the grant and cannot be undone. It needs a fresh confirmation with your passkey.",
