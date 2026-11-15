@@ -29,7 +29,7 @@ const CALL = { call: isId };
 const PROPOSAL = { proposal: isId };
 
 /** The page routes, each with its mount. */
-const PAGES: readonly (RouteDef & { readonly mount: (params: Readonly<Record<string, string>>) => void })[] = [
+export const PAGES: readonly (RouteDef & { readonly mount: (params: Readonly<Record<string, string>>) => void })[] = [
   { name: "calls.list", pattern: "/app/calls", segments: {}, mount: () => mountCallList() },
   { name: "calls.call", pattern: "/app/calls/{call}", segments: CALL, mount: (p) => mountCall(p["call"] ?? "") },
   { name: "calls.guide", pattern: "/app/calls/{call}/guide", segments: CALL, mount: (p) => mountGuide(p["call"] ?? "") },

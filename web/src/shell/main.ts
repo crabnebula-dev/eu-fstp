@@ -12,6 +12,11 @@
 // 5. the progress map and the activity log of a proposal (lane j3).
 // 6. the mailbox and the prepared action page (lane m6/mailbox).
 //
+// SA-09: the server serves a page only after its page gate admits it
+// (`shell/routes.ts` lists every page, `gen/api.ts` `PAGES` the server's
+// table). This module asks the same gate before each in-app navigation,
+// after a refused read, and for every in-app link (`shell/gate.ts`).
+//
 // The tables hold disjoint patterns, so the order only fixes which table
 // is asked first. A path that no table holds shows the not-found page.
 // Each feature module has no side effect on import, so importing every
@@ -53,6 +58,8 @@ import { browserEnv } from "../reviewer/kit.js";
 import { mountJudging } from "../reviewer/judging.js";
 import { mountSite } from "../site/pages.js";
 import { installFooterGuard } from "./brand.js";
+import { setReadRefusalGuard } from "../core/api.js";
+import { createGate, gateLinks } from "./gate.js";
 
 /** The creator, onboarding and people routes, checked once when first used. */
 const STAFF_ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES, ...SETUP_ROUTES];
@@ -110,8 +117,54 @@ function isHome(path: string): boolean {
   return path === "/app/" || path === "/app";
 }
 
+/** The page gate of SA-09, asked once per path in this page load (`gate.ts`). */
+const gate = createGate((path, init) => fetch(path, init));
+
+/** Whether the page on show is the first of this document. */
+let first = true;
+
+/**
+ * Whether the server answered this document as "Page not found" (SA-09):
+ * the shell then carries `<meta name="fstp-page" content="not-found">`.
+ */
+function servedAsNotFound(): boolean {
+  const m = document.querySelector('meta[name="fstp-page"]');
+  return m !== null && m.getAttribute("content") === "not-found";
+}
+
+/**
+ * SA-09: whether the page at `path` may be mounted. The server decided
+ * the first page of the document before it served the shell. Every later
+ * page asks the same gate: a page the viewer may not open shows "Page
+ * not found", and a viewer who must sign in loads the page from the
+ * server, whose answer leads to sign-in and back.
+ */
+async function admitted(path: string): Promise<boolean> {
+  if (first) {
+    first = false;
+    if (servedAsNotFound()) {
+      mountNotFound();
+      return false;
+    }
+    return true;
+  }
+  const g = await gate.fresh(path);
+  if (g === "sign_in") {
+    location.assign(path);
+    return false;
+  }
+  if (g === "not_found") {
+    mountNotFound();
+    return false;
+  }
+  return true;
+}
+
 /** Mounts the page of `path`. */
 async function run(path: string): Promise<void> {
+  if (!(await admitted(path))) {
+    return;
+  }
   if (isHome(path)) {
     mountHome();
     return;
@@ -138,6 +191,41 @@ async function run(path: string): Promise<void> {
 
 installTrustedTypesPolicy();
 installFooterGuard();
+// SA-09 rule 7: a page whose own read is refused after it loaded, for
+// example because the session ended, shows sign-in or "Page not found"
+// once the gate says the page is closed now, never the refusal code. A
+// refusal on a page the gate still admits returns to the page as before.
+let closing: Promise<boolean> | null = null;
+setReadRefusalGuard(() => {
+  closing ??= (async () => {
+    const path = location.pathname;
+    const g = await gate.fresh(path);
+    if (g === "sign_in") {
+      location.assign(path);
+      return true;
+    }
+    if (g === "not_found") {
+      mountNotFound();
+      return true;
+    }
+    return false;
+  })().finally(() => {
+    closing = null;
+  });
+  return closing;
+});
+// SA-09 rule 6: an in-app link shows only once the gate admits its page,
+// in the navigation, on the home page, in the mailbox and on every page.
+void gateLinks(document.body, gate, location.href);
+new MutationObserver((records) => {
+  for (const r of records) {
+    for (const n of Array.from(r.addedNodes)) {
+      if (n instanceof Element) {
+        void gateLinks(n, gate, location.href);
+      }
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true });
 void startSession(location.pathname);
 // Lane m6/mailbox: a signed-in person sees the number of messages to act
 // on beside the Mailbox link of the top bar.
