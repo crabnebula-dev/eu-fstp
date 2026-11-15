@@ -501,21 +501,10 @@ pub fn class_of(observed: &Observed) -> ObservedClass {
 }
 
 /// Whether an observed class agrees with the reference, both ways.
-///
-/// Design section 3.7 runs the dry run (step 5) before the pending action
-/// (step 6) and the step-up (step 7), and a dry-run refusal "returns now,
-/// before any step-up prompt or pending action". The reference judges
-/// authorisation only, so a guard refusal agrees with an expected
-/// pending action and with an expected step-up alike. Nothing ran, so
-/// I-78 and I-85 hold. Every other denial class needs its own class.
 pub fn agrees(expected: Expected, observed: ObservedClass) -> bool {
     match expected {
         Expected::Allow => matches!(observed, ObservedClass::Done | ObservedClass::Guard),
         Expected::Pending => matches!(observed, ObservedClass::Pending | ObservedClass::Guard),
-        Expected::Deny(AuthClass::StepUp) => matches!(
-            observed,
-            ObservedClass::Auth(AuthClass::StepUp) | ObservedClass::Guard
-        ),
         Expected::Deny(c) => observed == ObservedClass::Auth(c),
     }
 }
@@ -1223,42 +1212,6 @@ mod tests {
             class_of(&hidden),
             ObservedClass::Auth(AuthClass::Visibility)
         );
-    }
-
-    /// T-AUTHZ-MATRIX, I-78, design section 3.7 step 5: the dry run runs
-    /// before the step-up and the pending action, and its refusal
-    /// returns first. So a guard refusal agrees with an expected step-up,
-    /// as it agrees with an expected pending action: nothing ran. Done, a
-    /// pending action, any other authorisation class and an unmapped
-    /// refusal still disagree, so a high-risk operation that completes
-    /// without its step-up is still caught.
-    #[test]
-    fn i78_t_authz_matrix_guard_before_step_up_agrees() {
-        let step_up = Expected::Deny(AuthClass::StepUp);
-        assert!(agrees(step_up, ObservedClass::Guard));
-        assert!(agrees(step_up, ObservedClass::Auth(AuthClass::StepUp)));
-        for o in [
-            ObservedClass::Done,
-            ObservedClass::Pending,
-            ObservedClass::Unmapped,
-            ObservedClass::Auth(AuthClass::Actor),
-            ObservedClass::Auth(AuthClass::LoginStrength),
-        ] {
-            assert!(!agrees(step_up, o), "{o:?}");
-        }
-        for c in [
-            AuthClass::Actor,
-            AuthClass::Visibility,
-            AuthClass::Conflict,
-            AuthClass::Scope,
-            AuthClass::P74,
-            AuthClass::LoginStrength,
-            AuthClass::NotExposed,
-            AuthClass::Draft,
-            AuthClass::Setup,
-        ] {
-            assert!(!agrees(Expected::Deny(c), ObservedClass::Guard), "{c:?}");
-        }
     }
 
     /// Design section 8.3: an operation on one side only is reported, and
