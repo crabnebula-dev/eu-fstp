@@ -101,7 +101,6 @@ Every scene of the e2e cell starts from the tenant's provisioning and runs onboa
 1. **Account security set.** Accepted. Before activation every signed-in account manages its own sessions and passkeys (R-LG-04). Everything else stays gated.
 2. **Activation request.** Accepted. `tenant.request_activation` checks the completion conditions itself and does not ask for the `OnboardingCompleted` record.
 3. **Public pages.** A `/p` page of an organisation that is not yet activated answers with a plain HTML page saying its pages are not published yet. It keeps the refusal's status code. It replaces the JSON refusal.
-
 4. **Admin's own set and fail-closed port default.** Accepted on 2026-11-15 (late).
 
 ## Open points for Daniel
