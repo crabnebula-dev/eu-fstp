@@ -289,3 +289,12 @@ Readings, pending Daniel:
 - The help text is hidden by default. An "i" button beside the field's label shows it and hides it again. The button follows the disclosure pattern: a real button, `aria-expanded`, `aria-controls`, keyboard operable, and an accessible name "About <field label>".
 - The text is plain language (docs/design/10). It says what the field means, what a typical value looks like, and what it affects, such as which check, which document or which applicants. Content comes from the SPEC descriptions (`policy-parameters.md`, `programme-creator.md`, the profile and Guide sections) with the P- id. It never invents legal claims; where a legal explanation would be needed it says `TODO(legal)`.
 - A completeness test fails when a field has no help text, as the label check already does.
+
+### SA-11 amendment, Daniel 2026-11-15 (night): unique display names
+
+Daniel: "Display names should be unique."
+
+- A display name is unique within the organisation (the tenant). It is never compared across tenants (I-20).
+- Names are compared after normalisation: Unicode NFC, surrounding white space trimmed, inner white space collapsed to one space, and case folded. "Anna Berg" and "anna  berg" are the same name.
+- Setting a name that another account of the tenant holds is refused with "This name is already used in your organisation". Setting your own current name again is not a conflict.
+- Names are stored sealed (ADR-007), so uniqueness uses a keyed fingerprint of the normalised name, made through `fstp-crypto`, kept per tenant and erased with the name. The check and the write are one atomic step, so two accounts cannot take the same name at once.
