@@ -314,6 +314,12 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             let fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(r)) = &e.record else {
                 continue;
             };
+            // The Guide of a publication is an M4 record, which the M2
+            // engine's core records leave out too (I-52,
+            // `fstp_domain_testkit::r#gen::policy::core_records`).
+            if matches!(r, Record::GuidePublished { .. }) {
+                continue;
+            }
             match batches.last_mut() {
                 Some(b) if last == Some(e.command) => b.push(r.clone()),
                 _ => batches.push(vec![r.clone()]),
