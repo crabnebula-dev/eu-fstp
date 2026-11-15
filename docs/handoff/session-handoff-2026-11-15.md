@@ -52,7 +52,7 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | (merged, pushed 8991814f) | `m9/answers` | Milestone publicity opt-in, P-57 periods, tenant copies of funder profiles, programme footer in /app, companion key rotation reminder, profile read for all programme staff |
 | (queued) | `m4/acme` | In-house fuzzed ACME client (ADR-009 Q30) |
 | `.lanes/mx` (running) | `m4/matrix-final` | After the CI run on current main: remaining matrix ops, other reds it names, and `CellObjects` out of erasure step 2 (ADR-004 night decision), and a field clear in `SaveFields` (m4-design, follow-up answers) |
-| `.lanes/pg2` (running) | `m4/page-gate-2` | SA-09 amendment (unknown and closed pages redirect home) and the 18 demo specs red at 782dc5ad |
+| (merged, pushed e3b731fb) | `m4/page-gate-2` | SA-09 amendment (unknown and closed pages redirect home) and the 18 demo specs red at 782dc5ad |
 | (merged, pushed 8991814f) | `m3/devstack-scenarios` | `/test/scenario/negotiation` and an active programme for the last 9 devstack specs |
 
 The briefs for decB and finish are in the transcript of this session. In short, each item in the two tables above.
@@ -69,6 +69,7 @@ Open points from the merged lanes: `Workspaces` and the R-NG-06 acknowledgement 
 
 ## Open questions for Daniel (not blocking)
 
+- SA-09 amendment (lane m4/page-gate-2): the production `fstp-cell` front does not serve `/app/` yet, so its redirect home lands on a 404 there; a gate 503 stays JSON for a browser.
 - P-41 (lane m5/retention, interim): no email at retention end, mailbox only; a grant with no PAID request gets no retention start; the erasures page erases only grants whose retention ended (TODO(legal): which records P-41 covers); the cell gate does not class `EraseTexts` as high-risk yet (step-up enforced in the API core).
 - ADR-021: the admin's own set and the fail-closed port default (not asked yet).
 - ADR-023: legal basis and retention of the purpose text (TODO(legal)); whether another FSTP coordinator of the programme counts as unmaskable staff (interim: yes).
