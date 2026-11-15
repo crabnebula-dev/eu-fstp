@@ -612,9 +612,20 @@ export function navLinksOf(r: MyRoles, reviewWork = false): readonly NavLink[] {
  * The whole site navigation, in order: Home, the role links of
  * `navLinksOf`, the pages anyone signed in may open without an id (their
  * own applications and the open calls), and Account. `roles` is null
- * until the shell has read them.
+ * until the shell has read them. With `setup`, a tenant admin of an
+ * organisation that waits for its activation (ADR-021), only Home, the
+ * onboarding pages, the approvals and Account, since the cell refuses
+ * every other page until then.
  */
-export function navOf(roles: MyRoles | null, reviewWork = false): readonly NavLink[] {
+export function navOf(roles: MyRoles | null, reviewWork = false, setup = false): readonly NavLink[] {
+  if (setup) {
+    return Object.freeze([
+      { kind: "home", href: WORK_PATHS.home, label: "nav.home" },
+      { kind: "onboarding", href: WORK_PATHS.onboarding, label: "nav.onboarding" },
+      { kind: "approvals", href: WORK_PATHS.approvals, label: "nav.approvals" },
+      { kind: "account", href: WORK_PATHS.account, label: "nav.account" },
+    ] satisfies NavLink[]);
+  }
   return Object.freeze([
     { kind: "home", href: WORK_PATHS.home, label: "nav.home" },
     ...(roles === null ? [] : navLinksOf(roles, reviewWork)),

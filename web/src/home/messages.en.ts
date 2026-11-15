@@ -44,6 +44,12 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.no_role":
     "You hold no role on this platform yet. You can read the open calls and start a proposal in one of them.",
   "home.failed": "Your work could not be loaded. Reload the page to try again.",
+  // ADR-021: the notice to a tenant admin before activation, and its link.
+  "home.setup_admin":
+    "This organisation is not activated yet. Only onboarding runs until a second tenant administrator approves the activation.",
+  "home.setup_admin.link": "Open the onboarding summary and its activation",
+  // ADR-021: the notice of a person the setup gate holds back.
+  "home.setup_notice": "This organisation is still being set up. Its pages open once a second tenant administrator has approved its activation.",
   "home.signed_out": "You are not signed in. Opening the sign-in page.",
   "home.primary.kicker": "Start here",
   "home.primary.title": "Your next step",

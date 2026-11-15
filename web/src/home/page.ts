@@ -42,6 +42,10 @@
 // - `#home-signatory` names each signatory role the caller holds, one
 //   `li[data-signatory="<role>"]` each (NOTE 5; design section 15.0,
 //   2026-11-06).
+// - Before the organisation is activated (ADR-021), a person the setup
+//   gate refuses sees `#home-setup-notice` alone, which says the
+//   organisation is still being set up. A tenant admin keeps the
+//   onboarding links.
 //
 // Every element is built with `h`, and every text goes in as a text node.
 
@@ -536,6 +540,16 @@ export function mountHome(): void {
       home.replaceChildren(h("p", { role: "status" }, [homeLabel("home.signed_out")]));
       return;
     }
+    if (a.kind === "setting_up") {
+      // ADR-021: until the organisation is activated, a person the setup
+      // gate holds back sees one plain notice and nothing else.
+      home.replaceChildren(
+        h("p", { id: "home-setup-notice", role: "status", class: "callout", "data-setup": "" }, [
+          homeLabel("home.setup_notice"),
+        ]),
+      );
+      return;
+    }
     if (a.kind !== "roles") {
       failed();
       return;
@@ -545,17 +559,25 @@ export function mountHome(): void {
       f.heading.replaceChildren(title);
       document.title = homeLabel("home.document_title", { page: title });
     }
-    const listed = await call("proposal.list_own", {}, undefined, decodeOwnProposals);
+    // ADR-021: before activation a tenant admin's home holds the
+    // onboarding work alone, and reads nothing the cell refuses.
+    const setup = a.setup;
+    const listed = setup
+      ? ({ ok: true, value: [] } as const)
+      : await call("proposal.list_own", {}, undefined, decodeOwnProposals);
     const infos: readonly ProposalInfo[] = listed.ok ? listed.value : [];
     const own: readonly OwnProposal[] | null = listed.ok
       ? listed.value.map((p) => ({ proposal: p.proposal, role: p.role, title: p.title, state: p.state }))
       : null;
-    const w = workOf(
+    const all = workOf(
       a.roles,
       own,
       (c) => homeLabel("home.call", { id: c }),
       (p) => homeLabel("home.proposal", { id: p }),
     );
+    const w: Work = setup
+      ? { ...all, items: all.items.filter((i) => i.group === "tenant_admin" && i.kind === "onboarding") }
+      : all;
     const counts = await readCounts(w, a.roles);
     const { main, after } = cards(w, infos, counts);
     const everyone = w.items.filter((i) => i.group === "everyone");
@@ -565,8 +587,19 @@ export function mountHome(): void {
     } else {
       parts.push(h("p", { class: "muted" }, [homeLabel(adminOnly(a.roles) ? "home.admin.intro" : "home.intro")]));
     }
+    // ADR-021: until the organisation is activated, a tenant admin reads
+    // that only onboarding runs, and where the activation is.
+    if (setup) {
+      parts.push(
+        h("p", { id: "home-setup-admin", class: "callout", "data-setup": "" }, [
+          homeLabel("home.setup_admin"),
+          " ",
+          h("a", { href: "/app/admin/onboarding/summary", "data-setup-link": "" }, [homeLabel("home.setup_admin.link")]),
+        ]),
+      );
+    }
     // Lane m6/mailbox: the way to the work waiting for the caller.
-    const open = await mailboxCount();
+    const open = setup ? null : await mailboxCount();
     if (open !== null) {
       parts.push(
         h("p", { id: "home-mailbox", class: "callout" }, [
@@ -581,9 +614,13 @@ export function mountHome(): void {
         ...main.map((c, n) => cardElement(c, n === 0 ? homeLabel("home.primary.kicker") : null)),
         ...after,
       ]),
-      h("aside", { "aria-label": homeLabel("home.other_places") }, [
-        cardElement({ id: "home-calls", title: homeLabel("home.group.everyone"), body: [h("p", { class: "text-sm" }, [homeLabel("home.calls.intro")])], items: everyone }, null),
-      ]),
+      ...(setup
+        ? []
+        : [
+            h("aside", { "aria-label": homeLabel("home.other_places") }, [
+              cardElement({ id: "home-calls", title: homeLabel("home.group.everyone"), body: [h("p", { class: "text-sm" }, [homeLabel("home.calls.intro")])], items: everyone }, null),
+            ]),
+          ]),
     ]);
     parts.push(work, ...signatoryRoles(w), ...otherRoles(w));
     home.replaceChildren(...parts);

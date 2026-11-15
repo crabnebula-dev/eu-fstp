@@ -141,7 +141,8 @@ void startSession(location.pathname);
 // Lane m6/mailbox: a signed-in person sees the number of messages to act
 // on beside the Mailbox link of the top bar.
 void myRoles().then(async (a) => {
-  if (a.kind === "roles") {
+  // ADR-021: before activation the cell refuses the mailbox read.
+  if (a.kind === "roles" && !a.setup) {
     const n = await mailboxCount();
     if (n !== null) {
       showMailboxCount(n);

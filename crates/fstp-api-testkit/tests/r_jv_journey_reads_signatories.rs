@@ -93,8 +93,17 @@ fn cell_with_signatory(signatory: AccountId) -> FakeCell {
             })],
         );
     }
-    FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"))
+    let c = FakeCell::from_world(&world).unwrap_or_else(|e| panic!("the fake cell: {e}"));
+    // ADR-021: the organisation is founded through onboarding and
+    // activation before anything outside onboarding runs.
+    c.found(ADMIN, ADMIN_2, FOUNDING_SIGNATORY)
+        .unwrap_or_else(|e| panic!("ADR-021: the founding: {e}"));
+    c
 }
+
+/// The account that signs for the organisation at its founding (ADR-021):
+/// it holds no programme role and is no subject of these tests.
+const FOUNDING_SIGNATORY: AccountId = AccountId::from_raw(0x0f05_1600);
 
 /// The refusal rule of `account` reading `read` of PX.
 fn refusal(c: &FakeCell, account: AccountId, read: &str) -> &'static str {

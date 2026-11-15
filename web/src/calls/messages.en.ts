@@ -8,6 +8,8 @@ export const CALLS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "calls.list.title": "Open calls",
   "calls.list.intro": "These calls accept proposals now. Open a call to read it and its Guide for Applicants.",
   "calls.list.empty": "No call is open at the moment.",
+  // ADR-021: before activation the organisation has no open call to show.
+  "calls.list.setup": "This organisation is still being set up. Its pages open once a second tenant administrator has approved its activation.",
   "calls.untitled": "Call {id}",
 
   "call.title": "Call",

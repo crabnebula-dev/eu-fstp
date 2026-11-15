@@ -15,7 +15,11 @@
 //!    confirmation then carry the same plan (I-85).
 //! 2. **Session strength** (I-77).
 //! 3. **Channel.** `channel_policy`, with the governing P-77 read from the
-//!    domain's own rule.
+//!    domain's own rule. Then the **setup gate** (ADR-021): until the
+//!    organisation is activated, `fstp_access::setup_admits` decides what
+//!    runs, which is onboarding for tenant admins and each account's own
+//!    sessions and passkeys. Everything else is refused under the rule
+//!    `ADR-021`.
 //! 4. **Rate limits** per session, account, token and client.
 //! 5. **Dry run** with web semantics. Every vault answer it obtains is
 //!    recorded through `VaultAudit` as a query digest and the answer bit,
@@ -740,6 +744,18 @@ pub(crate) async fn run<P: Seams>(
         }
         v => v,
     };
+    // Step 3, the setup gate of ADR-021: until a second tenant admin approves the
+    // activation of the organisation, only onboarding runs. The gate
+    // comes after the session and channel rules and before any rate
+    // counter or dry run, and its refusal names no account.
+    if !fstp_access::setup_admits(spec, &call.caller.p)
+        && !tenant::organisation_active(ports, &call.state)
+    {
+        return Err(call.refuse(ApiError::refused(
+            ErrorCode::Refused,
+            fstp_access::SETUP_RULE,
+        )));
+    }
     // Step 4.
     rate_limits(&call)?;
     match spec.kind {

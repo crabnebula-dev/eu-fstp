@@ -44,6 +44,8 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
 
   "error.unavailable": "This action is not available yet.",
   "error.refused": "The platform refused this request ({code}).",
+  // ADR-021: a refusal of the setup gate, in words.
+  "error.setup": "This organisation is still being set up. Its pages open once a second tenant administrator has approved its activation.",
   "error.refused_rule": "The platform refused this request ({code}): {rule}",
   "error.network": "The platform could not be reached. Check your connection and try again.",
   "error.invalid": "The platform sent an answer this page cannot read.",

@@ -8,6 +8,7 @@
 
 import { clearError, linkError } from "../core/a11y.js";
 import { type Child, h } from "../core/dom.js";
+import { isSetupRefusal } from "../core/setup.js";
 import { type ApprovedText, type I18n, type Label, createI18n } from "../core/i18n.js";
 import { CALLS_APPROVED, CALLS_LABELS } from "../calls/messages.en.js";
 import type { Failure } from "./client.js";
@@ -299,6 +300,10 @@ export function failureText(x: Failure): Label {
     case "unavailable":
       return t("error.unavailable");
     case "refused":
+      if (isSetupRefusal(x.code, x.rule)) {
+        // ADR-021: the organisation is still being set up.
+        return t("error.setup");
+      }
       return x.rule === null || x.rule === ""
         ? t("error.refused", { code: x.code })
         : t("error.refused_rule", { code: x.code, rule: x.rule });

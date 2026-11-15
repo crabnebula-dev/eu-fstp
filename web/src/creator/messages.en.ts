@@ -12,6 +12,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "page.not_found_intro": "There is no page at this address. Check the link, or start from the menu.",
   "outcome.unavailable": "This action is not available in this cell yet.",
   "outcome.refused": "This was refused.",
+  // ADR-021: a refusal of the setup gate, in words.
+  "outcome.setup": "This organisation is still being set up. Its pages open once a second tenant administrator has approved its activation.",
   "outcome.refused_rule": "This was refused under rule {rule}.",
   "outcome.refused_values": "This was refused under rule {rule}. The values are {values}.",
   "outcome.refused_who": "{refusal} {who}. This page or action may need another role.",

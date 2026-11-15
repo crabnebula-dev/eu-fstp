@@ -372,3 +372,73 @@ fn d11_every_read_has_one_rule_row() {
     }
     assert_eq!(READ_RULES.len(), ReadKind::ALL.len());
 }
+
+/// ADR-021: every operation the setup gate names exists in the registry,
+/// and every tenant operation of the registry is an onboarding operation.
+#[test]
+fn adr021_setup_gate_names_registry_operations() {
+    for name in ACCOUNT_SECURITY_OPS
+        .iter()
+        .chain(ONBOARDING_ADMIN_OPS.iter())
+        .chain(ADMIN_OWN_OPS.iter())
+    {
+        assert!(op(name).is_some(), "ADR-021 names {name}, which OPS lacks");
+    }
+    for o in OPS.iter() {
+        if matches!(o.kind, OpKind::Tenant(_)) {
+            assert!(onboarding_op(o.name), "{} is a tenant command", o.name);
+        }
+    }
+    assert!(!onboarding_op("admin.approve_break_glass"));
+    assert!(!onboarding_op("roles.grant"));
+    assert!(!onboarding_op("creator.invite"));
+}
+
+/// ADR-021, SoD-14, SoD-15, R-LG-04: before activation a tenant admin
+/// keeps onboarding, its grants and its own roles and verification. Any
+/// other caller keeps its sessions and passkeys only. Nothing else
+/// passes, for anyone.
+#[test]
+fn adr021_setup_gate_admits_onboarding_for_admins_only() {
+    let s = EngineState::genesis();
+    let admin = web(ADMIN, LoginMethod::Passkey, &[ADMIN], &s);
+    let other = web(L1, LoginMethod::Passkey, &[ADMIN], &s);
+    let anon = Principal::anonymous();
+    for name in [
+        "tenant.save_step",
+        "tenant.complete",
+        "tenant.invite_admin",
+        "tenant.grant_signatory",
+        "tenant.end_signatory",
+        "tenant.request_activation",
+        "tenant.approve_activation",
+        "admin.approve_self_grant",
+        "me.roles",
+        "me.begin_verification",
+    ] {
+        assert!(setup_admits(spec(name), &admin), "{name} for an admin");
+        assert!(!setup_admits(spec(name), &other), "{name} for an account");
+        assert!(!setup_admits(spec(name), &anon), "{name} for no account");
+    }
+    for name in ACCOUNT_SECURITY_OPS {
+        for p in [&admin, &other, &anon] {
+            assert!(setup_admits(spec(name), p), "R-LG-04: {name}");
+        }
+    }
+    for name in [
+        "creator.open_draft",
+        "creator.invite",
+        "roles.grant",
+        "calls.list_open",
+        "proposal.list_own",
+        "me.mailbox",
+        "admin.approve_break_glass",
+        "agents.consent",
+        "people.get_invitation",
+    ] {
+        for p in [&admin, &other, &anon] {
+            assert!(!setup_admits(spec(name), p), "{name}");
+        }
+    }
+    assert_eq!(SETUP_RULE, "ADR-021");
+}

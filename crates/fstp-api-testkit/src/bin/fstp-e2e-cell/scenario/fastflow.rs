@@ -110,6 +110,7 @@ async fn build(info: &SiteInfo) -> Result<Inner, String> {
 /// The programme, its activation, the staff and Judging grants, and call 1
 /// drafted by D1, not yet approved.
 async fn set_up(seed: &mut Seeder<'_>) -> Result<(), String> {
+    super::found(seed).await?;
     seed.at(T_SETUP);
     let policy = supersafe(seed).await?;
     seed.step(&Step::by(

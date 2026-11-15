@@ -123,6 +123,17 @@ pub(super) fn holds_tenant_operations<P: CellPorts>(
     }
 }
 
+/// Whether the organisation is activated (ADR-021, SoD-18): a second
+/// tenant admin approved its activation. The ledger alone answers once it
+/// holds the tenant part. Before that the port does (interim, module
+/// documentation), and its default answer is no.
+pub(super) fn organisation_active<P: CellPorts>(ports: &P, state: &EngineState) -> bool {
+    match state.tenant.state() {
+        Some(ts) => ts.is_active(),
+        None => ports.tenant().organisation_active(),
+    }
+}
+
 /// P-74 as the channel policy reads it: the ledger's setting once the
 /// ledger holds the tenant part, else the M3 port's (interim).
 pub(super) fn mcp_settings<P: Seams>(ports: &P, state: &EngineState) -> McpSettings {

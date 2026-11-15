@@ -347,7 +347,7 @@ pub enum ObservedClass {
 /// the actor. A refusal of a draft programme names I-66 (change D3), since
 /// only activation lifts it. The non-spec `RuleRef::Actor` travels as
 /// `"actor"`.
-const AUTH_RULES: [(&str, AuthClass); 31] = [
+const AUTH_RULES: [(&str, AuthClass); 32] = [
     ("actor", AuthClass::Actor),
     ("I-01", AuthClass::Actor),
     ("I-02", AuthClass::Actor),
@@ -380,6 +380,9 @@ const AUTH_RULES: [(&str, AuthClass); 31] = [
     ("I-78", AuthClass::StepUp),
     ("P-74", AuthClass::P74),
     ("I-66", AuthClass::Draft),
+    // ADR-021: the setup gate refuses everything outside onboarding until
+    // the organisation is activated.
+    ("ADR-021", AuthClass::Setup),
 ];
 
 /// Rules whose refusals are guards outside authorisation: transition
@@ -963,6 +966,7 @@ mod tests {
                 AuthClass::StepUp => Observed::StepUpRequired,
                 AuthClass::NotExposed => Observed::ChannelDenied(Denial::NotExposed),
                 AuthClass::Draft => Observed::Refused(Some("I-66".into())),
+                AuthClass::Setup => Observed::Refused(Some("ADR-021".into())),
             },
         }
     }
@@ -1198,6 +1202,7 @@ mod tests {
                 AuthClass::StepUp,
                 AuthClass::NotExposed,
                 AuthClass::Draft,
+                AuthClass::Setup,
             ] {
                 assert!(!agrees(Expected::Deny(c), class_of(&o)), "{o:?} {c:?}");
             }
@@ -1859,7 +1864,7 @@ mod tests {
         assert!(one_sided.is_empty(), "one-sided operations: {one_sided:?}");
         assert_eq!(whos.len(), Who::ALL.len(), "principals");
         assert_eq!(states.len(), StateProfile::all().len(), "states");
-        assert_eq!(classes.len(), 9, "classes {classes:?}");
+        assert_eq!(classes.len(), 10, "classes {classes:?}");
         assert!(n > 100_000, "only {n} cells");
     }
 
@@ -2104,8 +2109,9 @@ mod tests {
 
     /// SoD-07, I-67, design section 8.3: a sole tenant admin walks every
     /// onboarding step and invites the second admin, but approves no
-    /// self-grant, finishes no onboarding and approves no activation of the
-    /// draft it opened. With a second admin, each is allowed.
+    /// self-grant and finishes no onboarding. With a second admin, each is
+    /// allowed. A sole admin never meets a draft, since no programme exists
+    /// before activation (ADR-021).
     #[test]
     fn sod07_i67_reference_sole_admin_needs_a_second_admin() {
         use crate::reference::authz::OnboardStep;
@@ -2133,15 +2139,13 @@ mod tests {
                 "{op} with a second admin"
             );
         }
-        assert_eq!(
-            at(
-                "creator.approve_activation",
-                sole,
-                StateProfile::ProgrammeDraft,
-                SS,
-                fresh
-            ),
-            Expected::Deny(AuthClass::Actor)
+        assert!(
+            !feasible(sole, StateProfile::AwaitingActivation),
+            "onboarding completes only with a second admin"
+        );
+        assert!(
+            !feasible(sole, StateProfile::ProgrammeDraft),
+            "ADR-021: no draft exists before the organisation is activated"
         );
         assert!(
             !feasible(sole, StateProfile::ProgrammeActive),
@@ -2471,6 +2475,137 @@ mod tests {
         }
     }
 
+    /// ADR-021, SoD-14, SoD-15, SoD-18: before the organisation is
+    /// activated the reference refuses every operation outside onboarding
+    /// with `Setup`, for every caller. A tenant admin keeps the onboarding
+    /// operations, the grants onboarding needs and its own roles and
+    /// verification. Every account keeps its sessions and passkeys
+    /// (R-LG-04). Once activated, the same calls are judged by their own
+    /// rules.
+    #[test]
+    fn adr021_sod18_reference_setup_gate_until_activation() {
+        use crate::reference::authz::OnboardStep;
+        let fresh = web(Login::Passkey, StepUp::Fresh);
+        let setup = Expected::Deny(AuthClass::Setup);
+        let before = [
+            StateProfile::Onboarding(OnboardStep::Organisation),
+            StateProfile::Onboarding(OnboardStep::Administrators),
+            StateProfile::AwaitingActivation,
+        ];
+        for s in before {
+            assert!(s.before_activation(), "{s:?}");
+            for op in ["tenant.get_activation", "tenant.save_step", "me.roles"] {
+                assert_eq!(
+                    at(op, Who::TenantAdmin, s, SS, PASS),
+                    Expected::Allow,
+                    "{op} {s:?}"
+                );
+                assert_eq!(at(op, Who::Unbound, s, SS, PASS), setup, "{op} {s:?}");
+                assert_eq!(
+                    at(op, Who::Anonymous, s, SS, anonymous()),
+                    setup,
+                    "{op} {s:?}"
+                );
+            }
+            // The grants onboarding needs: the second admin and the two
+            // signatory roles.
+            for op in ["tenant.invite_admin", "tenant.grant_signatory"] {
+                assert_eq!(
+                    at(op, Who::TenantAdmin, s, SS, fresh),
+                    Expected::Allow,
+                    "{op} {s:?}"
+                );
+                assert_eq!(at(op, Who::Unbound, s, SS, fresh), setup, "{op} {s:?}");
+            }
+            // Outside onboarding, an admin is refused too.
+            for (op, session) in [
+                ("creator.open_draft", fresh),
+                ("creator.list_programmes", PASS),
+                ("me.mailbox", PASS),
+                ("proposal.list_own", PASS),
+                ("admin.approve_break_glass", fresh),
+                ("agents.consent", fresh),
+            ] {
+                assert_eq!(
+                    at(op, Who::TenantAdmin, s, SS, session),
+                    setup,
+                    "{op} {s:?}"
+                );
+                assert_eq!(at(op, Who::Unbound, s, SS, session), setup, "{op} {s:?}");
+            }
+            assert_eq!(
+                at("people.get_invitation", Who::Anonymous, s, SS, anonymous()),
+                setup,
+                "no invitation landing before activation"
+            );
+            // R-LG-04: every account sees and ends its own sessions.
+            assert_eq!(
+                at("me.sessions", Who::Unbound, s, SS, PASS),
+                Expected::Allow
+            );
+            assert_eq!(
+                at("me.sessions", Who::Anonymous, s, SS, anonymous()),
+                Expected::Deny(AuthClass::Actor)
+            );
+            // The session and channel rules come first, as in dispatch.
+            assert_eq!(
+                at(
+                    "creator.open_draft",
+                    Who::TenantAdmin,
+                    s,
+                    SS,
+                    web(Login::MagicLink, StepUp::Absent)
+                ),
+                Expected::Deny(AuthClass::LoginStrength)
+            );
+            assert_eq!(
+                at("proposal.list_own", Who::TenantAdmin, s, SS, mcp(true)),
+                setup
+            );
+            assert_eq!(
+                at("me.roles", Who::TenantAdmin, s, SS, mcp(true)),
+                Expected::Deny(AuthClass::NotExposed)
+            );
+        }
+        assert!(!feasible(
+            Who::SoleTenantAdmin,
+            StateProfile::AwaitingActivation
+        ));
+        assert!(!target_exists(
+            Target::Programme,
+            StateProfile::AwaitingActivation
+        ));
+        // After activation the same command and the same reads pass.
+        let active = StateProfile::ProgrammeDraft;
+        assert!(!active.before_activation());
+        assert_eq!(
+            at("creator.open_draft", Who::TenantAdmin, active, SS, fresh),
+            Expected::Allow
+        );
+        assert_eq!(
+            at("me.roles", Who::Unbound, active, SS, PASS),
+            Expected::Allow
+        );
+        assert_eq!(
+            at("proposal.list_own", Who::Unbound, active, SS, PASS),
+            Expected::Allow
+        );
+        assert_eq!(
+            at("roles.grant", Who::TenantAdmin, active, SS, fresh),
+            Expected::Allow
+        );
+        assert_eq!(
+            at(
+                "people.get_invitation",
+                Who::Anonymous,
+                active,
+                SS,
+                anonymous()
+            ),
+            Expected::Allow
+        );
+    }
+
     /// SoD-07, design section 2.2 J0: the admin list of the Administrators
     /// step opens to every tenant admin, the sole admin included, and to
     /// nobody else. It has no tool.
@@ -2481,15 +2616,25 @@ mod tests {
         let list = |who, st, s| at("tenant.list_admins", who, st, SS, s);
         assert_eq!(list(Who::SoleTenantAdmin, admins, PASS), Expected::Allow);
         assert_eq!(list(Who::TenantAdmin, admins, PASS), Expected::Allow);
+        // ADR-021: before activation the setup gate refuses everyone but
+        // the tenant admins first.
         assert_eq!(
             list(Who::Unbound, admins, PASS),
-            Expected::Deny(AuthClass::Visibility)
+            Expected::Deny(AuthClass::Setup)
         );
         assert_eq!(
             list(Who::Anonymous, admins, anonymous()),
-            Expected::Deny(AuthClass::Actor)
+            Expected::Deny(AuthClass::Setup)
         );
         let active = StateProfile::ProgrammeActive;
+        assert_eq!(
+            list(Who::Unbound, active, PASS),
+            Expected::Deny(AuthClass::Visibility)
+        );
+        assert_eq!(
+            list(Who::Anonymous, active, anonymous()),
+            Expected::Deny(AuthClass::Actor)
+        );
         assert_eq!(
             list(Who::ProgrammeManager, active, PASS),
             Expected::Deny(AuthClass::Visibility)
@@ -2518,9 +2663,17 @@ mod tests {
         let s = StateProfile::Onboarding(OnboardStep::Identity);
         let get = |who, st, sess| at("me.get_verification", who, st, SS, sess);
         assert_eq!(get(Who::SoleTenantAdmin, s, PASS), Expected::Allow);
-        assert_eq!(get(Who::Unbound, s, PASS), Expected::Allow);
+        // ADR-021: before activation only a tenant admin reads its own
+        // verification state, since completion needs verified admins.
+        assert_eq!(get(Who::Unbound, s, PASS), Expected::Deny(AuthClass::Setup));
         assert_eq!(
             get(Who::Anonymous, s, anonymous()),
+            Expected::Deny(AuthClass::Setup)
+        );
+        let active = StateProfile::ProgrammeActive;
+        assert_eq!(get(Who::Unbound, active, PASS), Expected::Allow);
+        assert_eq!(
+            get(Who::Anonymous, active, anonymous()),
             Expected::Deny(AuthClass::Actor)
         );
         let draft = StateProfile::Proposal(StateTag::Draft);
@@ -2543,7 +2696,6 @@ mod tests {
             for (who, st) in [
                 (Who::TenantAdmin, draft),
                 (Who::TenantAdminBuilder, draft),
-                (Who::SoleTenantAdmin, draft),
                 (Who::ProgrammeManager, draft),
                 (Who::OtherProgrammeManager, draft),
                 (Who::ProgrammeManagerDrafter, s1),

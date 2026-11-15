@@ -5,7 +5,8 @@
 //! constructors, the [`OPS`] registry with every [`ToolDef`] (the only
 //! tool table), the read rules and [`authorize_read`], scopes,
 //! classifications, the reply shapes [`REPLIES`], the session rule
-//! [`session_admits`] and [`channel_policy`], the one pure function where
+//! [`session_admits`], the setup gate [`setup_admits`] (ADR-021) and
+//! [`channel_policy`], the one pure function where
 //! the web and MCP channels differ.
 //!
 //! The crate holds no parser, so it has no fuzz project (design section
@@ -28,6 +29,7 @@ mod principal;
 mod reads;
 mod registry;
 mod replies;
+mod setup;
 
 // I-84 compile-fail twins. Doc comments only, owned by the test author.
 #[cfg(doctest)]
@@ -51,6 +53,11 @@ pub use registry::{
 pub use replies::{
     BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, INVITED_ROLES, MAILBOX_KINDS, Member, REPLIES, STATE_NAMES,
     Shape, invitable, reply, role_wire_name,
+};
+
+pub use setup::{
+    ACCOUNT_SECURITY_OPS, ADMIN_OWN_OPS, ONBOARDING_ADMIN_OPS, SETUP_RULE, onboarding_op,
+    setup_admits,
 };
 
 #[cfg(test)]

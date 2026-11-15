@@ -38,7 +38,7 @@ import {
   type ScenarioAt,
 } from '../applicant/support';
 import { APP, CREATOR_STEPS } from '../creator/contract';
-import { cellA, firstAdmin, openDraft } from '../creator/support';
+import { cellA, firstAdmin, onboardedTenant, openDraft } from '../creator/support';
 import type { PersonaKey, ReviewScenario, ReviewStage } from '../review/contract';
 import { assignmentOf, ircAssignmentOf, proposal, seed } from '../review/support';
 import { settle } from '../navigation/support';
@@ -299,8 +299,10 @@ const SCREENS: readonly Screen[] = [
   {
     screen: 'planning-studio', prototype: 'planning-studio', layout: 'app', h1: 'Programme set-up', h2: [], regions: [{ role: 'navigation', name: 'Set-up steps' }],
     reach: async (c) => {
+      // ADR-021: a draft opens only once the organisation is activated, so
+      // the tenant onboards and activates first.
       const control = cellA(c.request);
-      const { a1 } = await firstAdmin(c.person, control);
+      const { a1 } = await onboardedTenant(c.person, control);
       const p = await openDraft(a1, control.cell.origin);
       await a1.page.goto(`${control.cell.origin}${APP.creatorStep(p, CREATOR_STEPS[0])}`);
       await settle(a1.page);
