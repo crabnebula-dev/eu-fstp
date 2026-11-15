@@ -102,6 +102,7 @@ Daniel answered "follow all recommendations" for these items, and chose `/auth/a
 | 2 | Q-SIM | The custody simulator wraps and unwraps. The pin `harness_custody_sim_wrap_refuses_until_the_aead_lands` is retired, since the AEAD has landed |
 | 3 | Q-KEYOP | ADR-004 wins: a key record for every custody call. The `erasure_runner` test's expectation follows the ADR |
 | 4 | Q-ISO | The vault-change command id is keyed per cell, so `t_iso_i20` stays strict |
+| 4a | Q-ISO, applied again (lane m4/ci-fixes-3, 2026-11-15) | Timeline command ids (plans, firings, session ends and due commands) are HMAC-SHA256 keyed by the cell id too. The P-57 period events made two cells commit byte-identical plans, which `t_iso_i20` caught |
 | 6 | Q-I77 | The I-77 HTTP test's cookie bookkeeping is fixed in the test: two sessions of one account at one tick get distinct model keys |
 | 7 | Devstack | Pages are served from a separate page table, and `slice_devstack` reads that table. The I-78 rule that keeps page routes out of `routes::table()` stays |
 | 8 | Edge and ECH | The edge routes a ClientHello that carries `encrypted_client_hello` on its outer SNI, as ADR-009 records (2026-10-29). `b5_th26_sni_encrypted_client_hello_closes` is replaced by a routing test |
