@@ -169,6 +169,9 @@ pub enum ReadKind {
     // P-41, ADR-007 (lane m5/retention): the erasure log and the grants
     // whose funder retention ended, for tenant admins.
     ListErasures,
+    // Daniel, 2026-11-15 (late): the shipped and tenant-owned funder
+    // profiles, for the tenant admins who copy and edit them.
+    ListFunderProfiles,
     // M5 reads follow-up: the caller's own grants and the contracts
     // awaiting the caller's signature (module documentation).
     ListMyGrants,
@@ -208,7 +211,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 72] = [
+    pub const ALL: [ReadKind; 73] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -269,6 +272,7 @@ impl ReadKind {
         ReadKind::GetMailRelay,
         ReadKind::GetProgrammeTimeline,
         ReadKind::ListErasures,
+        ReadKind::ListFunderProfiles,
         ReadKind::ListMyGrants,
         ReadKind::ListMyContractsToSign,
         ReadKind::GetDetermination,
@@ -643,6 +647,13 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // ADR-007: tenant admins read every erasure-log entry (P-41, lane
     // m5/retention).
     (ReadKind::ListErasures, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    // Daniel, 2026-11-15 (late): the tenant admins read the shipped and
+    // tenant-owned funder profiles they copy and edit.
+    (
+        ReadKind::ListFunderProfiles,
+        ReadRule::TenantAdmin,
+        OPEN_ALWAYS,
+    ),
     (
         ReadKind::GetProgrammeTimeline,
         ReadRule::Holder(Role::ProgrammeManager),

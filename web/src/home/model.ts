@@ -353,6 +353,7 @@ export const WORK_PATHS = Object.freeze({
   approvals: "/app/admin/approvals",
   branding: "/app/admin/branding",
   erasures: "/app/admin/erasures",
+  funderProfiles: "/app/admin/funder-profiles",
   terminology: "/app/admin/terminology",
   creator: (p: string): string => `/app/programmes/${p}/creator/review`,
   studio: (p: string): string => `/app/programmes/${p}/studio`,

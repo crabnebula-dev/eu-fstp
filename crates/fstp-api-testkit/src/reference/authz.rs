@@ -1366,6 +1366,12 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("tenant.get_mail_relay", T::None, R::TenantAdmin),
     RefOp::act("tenant.clear_mail_relay", T::None, R::TenantAdmin).hr(),
     RefOp::read("tenant.deliveries", T::None, R::TenantAdmin),
+    // Daniel, 2026-11-15 (late): tenant copies of funder profiles. The
+    // copy and each save are high-risk by the strict reading, as the brand
+    // tokens are, and web only.
+    RefOp::read("tenant.funder_profiles", T::None, R::TenantAdmin),
+    RefOp::act("tenant.funder_profile.copy", T::None, R::TenantAdmin).hr(),
+    RefOp::act("tenant.funder_profile.save", T::None, R::TenantAdmin).hr(),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.

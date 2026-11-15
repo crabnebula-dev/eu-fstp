@@ -8,7 +8,7 @@ use fstp_domain::time::Timestamp;
 use crate::types::{
     ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, MailRelay,
     ModelRef, OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
-    TenantRevision, Terminology, TokenDigest,
+    TenantProfile, TenantRevision, Terminology, TokenDigest,
 };
 
 /// The context of one tenant command, supplied by the shell.
@@ -169,6 +169,14 @@ pub enum TenantCommand {
         /// The relay, or `None` to stop sending mail.
         relay: Option<MailRelay>,
     },
+    /// Save a version of a tenant-owned funder profile: a copy as version
+    /// 1, or an edit as the next version (`tenant.funder_profile.copy`
+    /// and `tenant.funder_profile.save`, Daniel, 2026-11-15 late).
+    /// High-risk.
+    SaveFunderProfile {
+        /// The version.
+        profile: TenantProfile,
+    },
 }
 
 /// The kind of a tenant command, as the operation registry names it.
@@ -208,11 +216,13 @@ pub enum TenantKind {
     SetTerminology,
     /// `tenant.set_mail_relay`.
     SetMailRelay,
+    /// `tenant.funder_profile.copy` and `tenant.funder_profile.save`.
+    SaveFunderProfile,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 22] = [
+    pub const ALL: [TenantKind; 23] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -235,6 +245,7 @@ impl TenantKind {
         TenantKind::SetBranding,
         TenantKind::SetTerminology,
         TenantKind::SetMailRelay,
+        TenantKind::SaveFunderProfile,
     ];
 
     /// Whether the kind is high-risk and needs a fresh step-up (R-LG-03).
@@ -266,6 +277,7 @@ impl TenantKind {
                 | TenantKind::SetBranding
                 | TenantKind::SetTerminology
                 | TenantKind::SetMailRelay
+                | TenantKind::SaveFunderProfile
         )
     }
 
@@ -312,6 +324,7 @@ impl TenantCommand {
             TenantCommand::SetBranding { .. } => TenantKind::SetBranding,
             TenantCommand::SetTerminology { .. } => TenantKind::SetTerminology,
             TenantCommand::SetMailRelay { .. } => TenantKind::SetMailRelay,
+            TenantCommand::SaveFunderProfile { .. } => TenantKind::SaveFunderProfile,
         }
     }
 
@@ -495,6 +508,15 @@ pub enum TenantRecord {
         /// The relay, or `None` when cleared.
         relay: Option<MailRelay>,
         /// The setting admin.
+        by: AccountId,
+    },
+    /// A tenant admin saved a version of a tenant-owned funder profile
+    /// (Daniel, 2026-11-15 late). Its version is one more than the
+    /// previous version of its id, and version 1 names its source.
+    FunderProfileSaved {
+        /// The version.
+        profile: TenantProfile,
+        /// The saving admin.
         by: AccountId,
     },
 }

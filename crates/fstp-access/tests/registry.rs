@@ -589,8 +589,9 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
 /// Guide data protection texts (R-GA-01, section 15.0, 2026-11-06), the
 /// brand tokens (M9 lane B1, interim), the terminology (M9 lane T1,
 /// interim), the mail relay (M6 lane L6-EGR, ADR-018, interim), and an
-/// erasure request (ADR-007, P-41, Daniel 2026-11-15 late).
-const STRICT_EXTRA: [&str; 11] = [
+/// erasure request (ADR-007, P-41, Daniel 2026-11-15 late), and a tenant
+/// funder profile version (Daniel 2026-11-15 late, interim).
+const STRICT_EXTRA: [&str; 13] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
@@ -602,6 +603,8 @@ const STRICT_EXTRA: [&str; 11] = [
     "tenant.set_mail_relay",
     "tenant.clear_mail_relay",
     "admin.request_erasure",
+    "tenant.funder_profile.copy",
+    "tenant.funder_profile.save",
 ];
 
 /// R-LG-03, I-78, design section 3.6
@@ -654,6 +657,7 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
                 || o.kind == OpKind::Tenant(TenantKind::SetBranding)
                 || o.kind == OpKind::Tenant(TenantKind::SetTerminology)
                 || o.kind == OpKind::Tenant(TenantKind::SetMailRelay)
+                || o.kind == OpKind::Tenant(TenantKind::SaveFunderProfile)
                 || o.kind == OpKind::M3Port(fstp_access::PortKind::RequestErasure),
             "{} is a tenant setting other than P-70, the Guide notice, the brand tokens, the terminology, the mail relay, or an erasure request",
             o.name
@@ -1022,7 +1026,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 72] = [
+const READ_NAMES: [&str; 73] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1089,6 +1093,7 @@ const READ_NAMES: [&str; 72] = [
     "GetProgrammeTimeline",
     // Lane m5/retention (P-41, ADR-007): the erasure log.
     "ListErasures",
+    "ListFunderProfiles",
     // M5 reads follow-up: the caller's grants and contracts to sign.
     "ListMyGrants",
     "ListMyContractsToSign",

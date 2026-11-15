@@ -74,6 +74,9 @@ export type OpName =
   | "tenant.get_mail_relay"
   | "tenant.clear_mail_relay"
   | "tenant.deliveries"
+  | "tenant.funder_profiles"
+  | "tenant.funder_profile.copy"
+  | "tenant.funder_profile.save"
   | "me.get_verification"
   | "tenant.set_login_methods"
   | "tenant.set_step_up_freshness"
@@ -311,6 +314,9 @@ export interface OpParams {
   readonly "tenant.get_mail_relay": Readonly<Record<never, string>>;
   readonly "tenant.clear_mail_relay": Readonly<Record<never, string>>;
   readonly "tenant.deliveries": Readonly<Record<never, string>>;
+  readonly "tenant.funder_profiles": Readonly<Record<never, string>>;
+  readonly "tenant.funder_profile.copy": Readonly<Record<never, string>>;
+  readonly "tenant.funder_profile.save": Readonly<Record<never, string>>;
   readonly "me.get_verification": Readonly<Record<never, string>>;
   readonly "tenant.set_login_methods": Readonly<Record<never, string>>;
   readonly "tenant.set_step_up_freshness": Readonly<Record<never, string>>;
@@ -521,6 +527,9 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.get_mail_relay",
   "tenant.clear_mail_relay",
   "tenant.deliveries",
+  "tenant.funder_profiles",
+  "tenant.funder_profile.copy",
+  "tenant.funder_profile.save",
   "me.get_verification",
   "tenant.set_login_methods",
   "tenant.set_step_up_freshness",
@@ -988,6 +997,48 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: false,
     binding: false,
     session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.funder_profiles",
+    method: "GET",
+    path: "/admin/funder-profiles",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "funder-profiles" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.funder_profile.copy",
+    method: "POST",
+    path: "/admin/funder-profiles/copies",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "funder-profiles" }, { kind: "literal", text: "copies" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.funder_profile.save",
+    method: "PUT",
+    path: "/admin/funder-profiles",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "funder-profiles" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
     classification: "confidential",
     tool: null,
   },
@@ -4773,6 +4824,28 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "tenant.funder_profiles": {
+    kind: "object",
+    fields: {
+      "profiles": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "string" }, optional: false },
+          "version": { schema: { kind: "id" }, optional: false },
+          "owner": { schema: { kind: "enum", values: ["shipped", "tenant"] }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+          "source": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "profile": { schema: { kind: "string" }, optional: false },
+              "version": { schema: { kind: "id" }, optional: false },
+            },
+          } }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "tenant.deliveries": { kind: "array", items: {
     kind: "object",
     fields: {
@@ -5188,6 +5261,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/admin/branding", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/terminology", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/erasures", need: { kind: "reads", reads: ["admin.erasures"] }, values: {}, listed: null },
+  { pattern: "/app/admin/funder-profiles", need: { kind: "reads", reads: ["tenant.funder_profiles"] }, values: {}, listed: null },
   { pattern: "/app/creator/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
   { pattern: "/app/setup/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/creator/start", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },

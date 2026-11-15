@@ -1546,6 +1546,29 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ])),
         )]),
     ),
+    // Daniel, 2026-11-15 (late): every shipped and tenant-owned funder
+    // profile version, with its owner, file hash, the version a copy was
+    // made from, and its profile text, which the admin edits.
+    (
+        "tenant.funder_profiles",
+        Shape::Object(&[m(
+            "profiles",
+            Shape::Array(&Shape::Object(&[
+                m("id", Shape::String),
+                m("version", Shape::Id),
+                m("owner", Shape::Enum(&["shipped", "tenant"])),
+                m("digest", Shape::String),
+                m(
+                    "source",
+                    Shape::Nullable(&Shape::Object(&[
+                        m("profile", Shape::String),
+                        m("version", Shape::Id),
+                    ])),
+                ),
+                m("text", Shape::String),
+            ])),
+        )]),
+    ),
     // M6 lane L6-API, M6 design section 6, I-27: per message its template,
     // event, version, phase, attempts and reply code. No body, no address.
     (

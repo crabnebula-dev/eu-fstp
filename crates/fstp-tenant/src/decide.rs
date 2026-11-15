@@ -335,6 +335,13 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SaveFunderProfile { profile } => {
+            state.check_funder_profile(profile)?;
+            Ok(vec![TenantRecord::FunderProfileSaved {
+                profile: profile.clone(),
+                by,
+            }])
+        }
         TenantCommand::SetMailRelay { relay } => {
             if relay
                 .as_ref()

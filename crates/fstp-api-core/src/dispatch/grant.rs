@@ -496,8 +496,9 @@ pub(super) async fn funder_profile<P: Seams>(
     let p53 =
         fstp_engine::report::pinned_p53(&call.state, fstp_report::Scope::Programme(programme))
             .ok_or_else(|| call.refuse(not_found()))?;
-    let view = fstp_report::profile::for_p53(p53.0.as_str()).ok().map(|p| {
-        crate::grant::FunderProfileView {
+    let view = crate::tenant::profile_for_p53(&call.state, p53.0.as_str())
+        .ok()
+        .map(|p| crate::grant::FunderProfileView {
             id: p.id().to_owned(),
             version: p.version(),
             digest: crate::action::hex(&p.digest().bytes()),
@@ -507,8 +508,7 @@ pub(super) async fn funder_profile<P: Seams>(
                 .iter()
                 .map(|e| e.key().to_owned())
                 .collect(),
-        }
-    });
+        });
     // P-57 (Daniel, 2026-11-15 late): the reporting periods the periodic
     // data is generated for.
     let periods = fstp_domain::reporting::reporting_periods(&call.state.core, programme);
@@ -1187,7 +1187,7 @@ async fn generate<P: Seams>(
     let profile = fstp_engine::report::pinned_p53(&call.state, scope)
         .ok_or_else(not_found)
         .and_then(|p| {
-            fstp_report::profile::for_p53(p.0.as_str())
+            crate::tenant::profile_for_p53(&call.state, p.0.as_str())
                 .map_err(|_| ApiError::refused(ErrorCode::Refused, "P-53"))
         })?;
     let output = fstp_report::generate(&snap, &profile, &request).map_err(|e| match e {

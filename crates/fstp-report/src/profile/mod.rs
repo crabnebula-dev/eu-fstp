@@ -353,6 +353,40 @@ pub fn shipped(id: &str, version: u16) -> Result<FunderProfile, ProfileError> {
     Ok(p)
 }
 
+/// The file bytes of the shipped profile `id` at `version`, which a tenant
+/// copies (Daniel, 2026-11-15 late).
+pub fn shipped_text(id: &str, version: u16) -> Option<&'static [u8]> {
+    SHIPPED
+        .iter()
+        .find(|(i, v, _)| *i == id && *v == version)
+        .map(|(_, _, b)| *b)
+}
+
+/// Every shipped profile file: id, version and bytes.
+pub fn shipped_files() -> impl Iterator<Item = (&'static str, u16, &'static [u8])> {
+    SHIPPED.iter().copied()
+}
+
+/// The profile the P-53 value `p53_text` pins: a shipped one, else the
+/// tenant-owned version `tenant` gives for the id and version it names
+/// (Daniel, 2026-11-15 late). The tenant text is parsed as every profile
+/// file is, and must carry the id and version P-53 names.
+pub fn for_p53_with<'a>(
+    p53_text: &str,
+    tenant: impl FnOnce(&str, u16) -> Option<&'a str>,
+) -> Result<FunderProfile, ProfileError> {
+    let (id, version) = p53_profile(p53_text).ok_or(ProfileError::NotShipped)?;
+    if let Ok(p) = shipped(&id, version) {
+        return Ok(p);
+    }
+    let text = tenant(&id, version).ok_or(ProfileError::NotShipped)?;
+    let p = parse_profile(text.as_bytes())?;
+    if p.id != id || p.version != version {
+        return Err(ProfileError::NotShipped);
+    }
+    Ok(p)
+}
+
 /// Every shipped profile.
 pub fn shipped_all() -> Result<Vec<FunderProfile>, ProfileError> {
     SHIPPED.iter().map(|(i, v, _)| shipped(i, *v)).collect()
