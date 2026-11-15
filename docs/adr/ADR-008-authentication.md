@@ -211,6 +211,7 @@ Answered (Q15). Approving a recovery is high-risk. Completion revokes every cred
 - When both approver and holder are verified, `SameIdentityAsAny` must be false. A vault outage refuses the approval, so the check fails closed.
 - The operator ticket is composite-signed by the control plane and names only the cell's opaque case reference, never an account id (I-20).
 - `HostConsole` is the reading of "the platform operator's verified process" for a self-hosted cell, whose operator is the hosting organisation. Daniel accepted it (Q15).
+- **Approval as evidence (Q-I79).** Decided (Daniel, 2026-11-15: "Record it as evidence"). After the email proof, `ApproveRecovery` is recorded on any path as extra evidence, with the same checks: a different current tenant admin, a step-up, and the identity check. It counts as the second factor only where the path recomputed at completion is `SecondAdmin`. `EmailThenPasskey` completes on the email proof and never reads it. `OperatorProcess` and `HostConsole` need their own evidence. So no non-receiving account is recovered by email alone (I-79).
 
 ## Manual identity checks
 
@@ -265,6 +266,9 @@ Interim, pending Daniel (Q21). SoD-08 and TH-18 apply.
 - Staff reach the cell with a staff assertion signed by the control plane. The cell verifies it against a pinned key. Staff authenticate to the control plane with passkeys.
 - The gate treats staff as a separate principal kind, `Principal::BreakGlass(GrantId)`. It admits them only for read actions inside the recorded scope and time.
 - Every use is a `BreakGlassRead` record and appears in the tenant's audit view. `EndBreakGlass` ends a grant early.
+- **Where the request enters the ledger.** Decided (Daniel, 2026-11-15: "On the approval record"). `ApproveBreakGlass { request, staff, scope, until }` carries the request as the control plane names it. The cell checks the window and scope at the approval instant and records `BreakGlassApproved { grant, staff, scope, until }`. The request id becomes the grant id, and a scope is strictly ascending.
+- **Staff assertion.** The control plane signs `grant 16 || staff 16 || issued_at i64` (big-endian UTC microseconds) with its composite key, in the context `fstp-staff-assertion-v1`. The cell verifies it against the pinned key, and it is valid from `issued_at` and for `STAFF_ASSERTION_US` (15 minutes, interim). `gate::admit_break_glass` then admits the named staff member for a read inside the grant's scope and window, as `Principal::BreakGlass(grant)`.
+- **Logging.** Every admitted read yields one `BreakGlassRead { grant, read }`, which the read route appends before it serves the read (`Admitted::break_glass_log`). The HTTP route for staff reads arrives with the operator content views (M4).
 - Content views for operators arrive with the M4 interfaces.
 - Proposed reading: a self-hosted cell pins no staff assertion key, so it admits no break-glass principal.
 
@@ -320,7 +324,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
   - magic-link token: 15 minutes;
   - recovery enrolment token: 24 hours;
   - recovery case: 72 hours, as the invitation lifetime;
-  - staff assertion of the operator process: 15 minutes.
+  - staff assertion of the operator process and of break-glass: 15 minutes.
   - email proof of a self-registration: 15 minutes, as a magic link (proposed by lane F-CYCLE3 on 2026-11-13).
   - email proof of a recovery case: the case lifetime, 72 hours (proposed by lane m3/login-m2http on 2026-11-13).
 - **Login email index, magic links and recovery (lane m3/login-m2http, 2026-11-13).** Interim, pending Daniel. The keystore owner holds the `Lookup` keyed digest group. Its HMAC key is derived by HKDF from the group secret, so each batch that erases a login email replaces it (decision 27). The index lives with the keystore in process memory until the W2e keystore tables land. A self-registration binds its proven address, and an invitation binds the address its issuer names in the `email` member of the command body. Magic links and recovery email proofs go to the login email through the proof mail port until M6 delivers. Recovery body forms: `POST /auth/recovery {email}` answers 202 for every address. `.../{case}/email {token}` takes the email proof and answers the one-time enrolment token. `.../{case}/complete` takes an operator ticket (`{ticket}`), asks for creation options (`{enrolment}`), or completes with the registration and the enrolment token. The verified operator ticket is held in process memory until a record form exists. The completion's new session starts one microsecond after the completion's instant. P-70 reaches the cell as a start option (`StartOptions::login_methods`), since no record carries it.

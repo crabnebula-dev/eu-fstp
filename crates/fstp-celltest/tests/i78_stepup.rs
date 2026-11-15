@@ -213,6 +213,9 @@ fn m3_command(name: &str) -> Option<CellCommand> {
         "PublishCall" => core(publish(call(1)).cmd),
         "ApproveBreakGlass" => CellCommand::Ops(OpsCommand::ApproveBreakGlass {
             request: [0x42; 16],
+            staff: fstp_auth::recovery::StaffRef([0x57; 16]),
+            scope: vec![fstp_auth::breakglass::BreakGlassRead::Content],
+            until: Timestamp::from_micros(NOW.micros() + 3_600_000_000),
         }),
         "ApproveRecovery" => CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x7C; 16] }),
         // ADR-023: the coordinator unmask of a binding of P1.

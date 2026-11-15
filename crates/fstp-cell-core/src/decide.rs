@@ -110,12 +110,6 @@ pub const WRITE_KIND_GUARDIAN_CONSENT: u16 = 4;
 /// identity verification of a document (R-ID-03).
 pub const ERASURE_CAUSES: [u16; 4] = [1, 2, 3, 4];
 
-/// The erasure causes an account may record as their authoriser: an
-/// erasure request and a cell erasure (ADR-007 "Erasure-log entries",
-/// design section 5.6). A retention expiry is authorised by the system
-/// under the P-41 rule, and a completed verification by the vault.
-pub const ACCOUNT_ERASURE_CAUSES: [u16; 2] = [2, 3];
-
 /// The proposal states in which a release ticket may be issued (I-17).
 pub const RELEASE_STATES: [StateTag; 5] = [
     StateTag::Negotiation,
@@ -562,7 +556,7 @@ pub(crate) fn queries_with_inputs(
             kind: WRITE_KIND_GUARDIAN_CONSENT,
         }) => guardian_plan(s, actor, now).map(|p| p.queries()),
         CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { case }) => {
-            approval_plan(s, *case, actor, now).map(|p| p.queries())
+            approval_plan(s, *case, actor).map(|p| p.queries())
         }
         _ => Ok(Vec::new()),
     }
@@ -730,7 +724,7 @@ fn decide_unchecked(
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
-        CellCommand::Ops(cmd) => decide_ops(s, cmd, actor),
+        CellCommand::Ops(cmd) => decide_ops(s, cmd, actor, now),
         // `system_only` refused these above.
         CellCommand::Key(_) | CellCommand::Timeline(_) => Err(wrong_actor()),
     }
@@ -1152,7 +1146,7 @@ fn decide_auth(
             })])
         }
         C::ApproveRecovery { case } => {
-            let plan = approval_plan(s, *case, actor, now)?;
+            let plan = approval_plan(s, *case, actor)?;
             let verified = |q: &Query| answers.get(q).map(|a| a.holds);
             let identity = match (
                 verified(&plan.approver_verified()),
@@ -1338,14 +1332,18 @@ impl ApprovalPlan {
 
 /// The approval of case `case` by `approver` at `now`, before the vault
 /// is asked (I-79, design section 8.5). The case is open, its email proof
-/// was given and no approval was recorded. The path recomputed from the
-/// holdings at `now` must be `SecondAdmin`: no other path takes an
-/// approval. That path does not depend on the deployment mode.
+/// was given and no approval was recorded.
+///
+/// Q-I79 (Daniel, 2026-11-15: "Record it as evidence", ADR-008): an
+/// approval is recorded on any recovery path as extra evidence. It counts
+/// as the second factor only where the path recomputed at completion is
+/// `SecondAdmin` (`fstp_auth::recovery::complete`). `EmailThenPasskey`
+/// completes on the email proof and never reads it; `OperatorProcess`
+/// and `HostConsole` need their own evidence. So I-79 still holds.
 fn approval_plan(
     s: &CellState,
     case: [u8; 16],
     approver: AccountId,
-    now: Timestamp,
 ) -> Result<ApprovalPlan, CellRefusal> {
     let c = open_case(s, case)?;
     if !c.email_proven {
@@ -1353,17 +1351,6 @@ fn approval_plan(
     }
     if c.approver.is_some() {
         return Err(reused());
-    }
-    let roster = fstp_auth::RosterView::from_roster(s.engine().core.roster(), now);
-    let tenant = tenant_view(s);
-    let holdings = fstp_auth::recovery::Holdings::of(&roster, &tenant, c.account);
-    let path = fstp_auth::recovery::path_of(
-        holdings,
-        tenant.others(c.account),
-        fstp_auth::recovery::Deployment::Saas,
-    );
-    if path != fstp_auth::RecoveryPath::SecondAdmin {
-        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
     }
     Ok(ApprovalPlan {
         approver,
@@ -1692,18 +1679,17 @@ fn decide_text(
             }
             Ok(vec![CellRecord::Text(TextRecord::TextPut { id: *id })])
         }
+        // ADR-007 "Erasure-log entries", Daniel's decision of 2026-11-15
+        // ("Tenant admin for all"): a tenant admin requests every cause,
+        // retention expiry (P-41) and a completed verification included,
+        // and is the authoriser the entry names. The system only reminds
+        // them when a retention period ends.
         TextCommand::EraseTexts { ids, cause } => {
             if !s.tenant().is_admin(actor) {
                 return Err(wrong_actor());
             }
             if !ERASURE_CAUSES.contains(cause) || ids.is_empty() || ids.len() > MAX_TEXT_IDS {
                 return Err(invalid());
-            }
-            if !ACCOUNT_ERASURE_CAUSES.contains(cause) {
-                // Retention expiry is the system's, with the P-41 rule as
-                // its authoriser, and a completed verification is the
-                // vault's (ADR-007 "Erasure-log entries").
-                return Err(wrong_actor());
             }
             let mut seen = BTreeSet::new();
             for id in ids {
@@ -1921,18 +1907,44 @@ fn decide_ops(
     s: &CellState,
     cmd: &OpsCommand,
     actor: AccountId,
+    now: Timestamp,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     use crate::ops::OpsRecord;
     match cmd {
-        OpsCommand::ApproveBreakGlass { request } => {
+        // SoD-08, design section 8.6, Daniel's decision of 2026-11-15
+        // ("On the approval record"): the approval records the request's
+        // staff member, scope and end. The gate checked the step-up
+        // (I-78), and `fstp_auth::breakglass::approve_break_glass` checks
+        // the window and the scope at the approval instant.
+        OpsCommand::ApproveBreakGlass {
+            request,
+            staff,
+            scope,
+            until,
+        } => {
             if !s.tenant().is_admin(actor) {
                 return Err(wrong_actor());
             }
             if s.break_glass_known(*request) {
                 return Err(reused());
             }
+            if !crate::ops::scope_is_canonical(scope) {
+                return Err(invalid());
+            }
+            let grant = fstp_auth::breakglass::BreakGlassGrant {
+                staff: *staff,
+                scope: scope.clone(),
+                approved_at: now,
+                until: *until,
+                ended: None,
+            };
+            fstp_auth::breakglass::approve_break_glass(true, Ok(()), &grant)
+                .map_err(|_| invalid())?;
             Ok(vec![CellRecord::Ops(OpsRecord::BreakGlassApproved {
                 grant: *request,
+                staff: *staff,
+                scope: scope.clone(),
+                until: *until,
             })])
         }
         OpsCommand::EndBreakGlass { grant } => {

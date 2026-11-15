@@ -26,8 +26,8 @@ pub const RECOVERY_ENROLMENT_TOKEN_US: i64 = 24 * HOUR_US;
 /// lifetimes").
 pub const RECOVERY_CASE_US: i64 = 72 * HOUR_US;
 
-/// How long a staff assertion of the operator process stays valid: 15
-/// minutes. Interim, pending Daniel (ADR-008 "Unset lifetimes").
+/// How long a staff assertion of the operator process or of break-glass
+/// stays valid: 15 minutes. Interim, pending Daniel (ADR-008 "Unset lifetimes").
 pub const STAFF_ASSERTION_US: i64 = 15 * MINUTE_US;
 
 /// How long the email proof of a self-registration stays valid: 15

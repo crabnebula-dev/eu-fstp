@@ -313,10 +313,18 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
                 by: account(g),
             },
         }),
-        "ops" => CellRecord::Ops(if g.bool() {
-            OpsRecord::BreakGlassApproved { grant: id16(g) }
-        } else {
-            OpsRecord::BreakGlassEnded { grant: id16(g) }
+        "ops" => CellRecord::Ops(match g.u8_in(0..=2) {
+            0 => OpsRecord::BreakGlassApproved {
+                grant: id16(g),
+                staff: fstp_auth::recovery::StaffRef(id16(g)),
+                scope: bg_scope(g),
+                until: bg_until(g),
+            },
+            1 => OpsRecord::BreakGlassEnded { grant: id16(g) },
+            _ => OpsRecord::BreakGlassRead {
+                grant: id16(g),
+                read: bg_read(g),
+            },
         }),
         "timeline" => CellRecord::Timeline(if g.bool() {
             TimelineRecord::EventCancelled {
@@ -414,7 +422,12 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
             },
         }),
         "ops" => CellCommand::Ops(match g.u8_in(0..=3) {
-            0 => OpsCommand::ApproveBreakGlass { request: id16(g) },
+            0 => OpsCommand::ApproveBreakGlass {
+                request: id16(g),
+                staff: fstp_auth::recovery::StaffRef(id16(g)),
+                scope: bg_scope(g),
+                until: bg_until(g),
+            },
             1 => OpsCommand::EndBreakGlass { grant: id16(g) },
             2 => OpsCommand::ApplyOperatorTicket {
                 ticket: canonical_bytes(g),
@@ -523,4 +536,23 @@ pub(crate) fn engine_tenant_command(g: &mut Gen) -> Result<CellCommand, String> 
     fstp_engine::tenant::request_from_json(&Value::Object(o))
         .map(|r| CellCommand::Engine(fstp_engine::Command::Tenant(r)))
         .map_err(|e| format!("engine tenant command: {e:?}"))
+}
+
+/// A break-glass scope: a subset of the three read actions, strictly
+/// ascending, as the codec accepts it.
+fn bg_scope(g: &mut Gen) -> Vec<fstp_auth::breakglass::BreakGlassRead> {
+    use fstp_auth::breakglass::BreakGlassRead as B;
+    [B::Content, B::Audit, B::ErasureLog]
+        .into_iter()
+        .filter(|_| g.bool())
+        .collect()
+}
+
+fn bg_read(g: &mut Gen) -> fstp_auth::breakglass::BreakGlassRead {
+    use fstp_auth::breakglass::BreakGlassRead as B;
+    *g.pick(&[B::Content, B::Audit, B::ErasureLog])
+}
+
+fn bg_until(g: &mut Gen) -> fstp_domain::time::Timestamp {
+    fstp_domain::time::Timestamp::from_micros(g.i64())
 }

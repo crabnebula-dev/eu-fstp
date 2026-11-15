@@ -7,36 +7,93 @@
 //! `admit_break_glass`). Its own test is
 //! `i78_sod_08_reference_break_glass_admits_only_the_named_staff_member`.
 //!
-//! Gaps, reported by lane W1f: `OpsCommand::ApproveBreakGlass` names a
-//! request id only, so the staff member, scope and end of the request do
-//! not reach `decide`. `OpsRecord` has no `BreakGlassRead`, and the gate
-//! has no entry point for a staff assertion, so a staff read cannot be
-//! admitted or logged yet (lane W2c). The test checks the approval half,
-//! then compares every staff read with the reference through one seam,
-//! `staff_read`, which refuses with `NotImplemented` until those exist.
-//!
-//! Lane W1f wrote this test before the production code. It is red until
-//! the cell fold and gate (lane W2c) land.
+//! Daniel decided on 2026-11-15 ("On the approval record") that the
+//! request's staff member, scope and end enter the ledger on the approval:
+//! `ApproveBreakGlass { request, staff, scope, until }` records
+//! `BreakGlassApproved { grant, staff, scope, until }` (ADR-008, design
+//! section 8.6). A staff read reaches the gate with a control-plane-signed
+//! staff assertion, verified against the pinned key within
+//! `STAFF_ASSERTION_US` (`gate::admit_break_glass`). Each admitted read
+//! is logged as one `OpsRecord::BreakGlassRead`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+use fstp_auth::breakglass::{BreakGlassRead, StaffAssertion};
+use fstp_auth::recovery::StaffRef;
+use fstp_cell_core::gate::{self, ReadAction};
 use fstp_cell_core::ops::{OpsCommand, OpsRecord};
 use fstp_cell_core::{CellCommand, CellRecord};
 use fstp_celltest::mc::auth_model::{ProdCell, ProdError};
 use fstp_celltest::reference::auth::{
     self as r, RefBreakGlass, RefRead, RefStaff, RefStaffRequest,
 };
+use fstp_crypto::composite::CompositeSigningKey;
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::r#gen::roster::{A, ADMIN, T0};
 
-fn approve(c: &mut ProdCell, who: AccountId, request: [u8; 16]) -> Result<Vec<CellRecord>, String> {
-    let cmd = CellCommand::Ops(OpsCommand::ApproveBreakGlass { request });
+/// The cell's staff reference of reference staff member `s`.
+fn staff_ref(s: RefStaff) -> StaffRef {
+    let mut out = [0x57; 16];
+    out[14..].copy_from_slice(&s.0.to_be_bytes());
+    StaffRef(out)
+}
+
+fn read_kind(read: RefRead) -> BreakGlassRead {
+    match read {
+        RefRead::Content => BreakGlassRead::Content,
+        RefRead::Audit => BreakGlassRead::Audit,
+        RefRead::ErasureLog => BreakGlassRead::ErasureLog,
+    }
+}
+
+fn read_action(read: RefRead) -> ReadAction {
+    match read {
+        RefRead::Content => ReadAction::ReadContent,
+        RefRead::Audit => ReadAction::ReadAudit,
+        RefRead::ErasureLog => ReadAction::ReadErasureLog,
+    }
+}
+
+/// The approval of request `request` for grant `g`, as the control
+/// plane's request names it.
+fn approval(request: [u8; 16], g: &RefBreakGlass) -> OpsCommand {
+    OpsCommand::ApproveBreakGlass {
+        request,
+        staff: staff_ref(g.staff),
+        scope: g.scope.iter().map(|x| read_kind(*x)).collect(),
+        until: g.until,
+    }
+}
+
+fn approve(
+    c: &mut ProdCell,
+    who: AccountId,
+    request: [u8; 16],
+    g: &RefBreakGlass,
+) -> Result<Vec<CellRecord>, String> {
+    let cmd = CellCommand::Ops(approval(request, g));
     match c.exec(cmd, who, T0) {
         Ok(batch) => Ok(batch),
         Err(ProdError::Refused(_)) => Ok(Vec::new()),
         Err(ProdError::NotImplemented(op)) => Err(format!("{op} is NotImplemented")),
+    }
+}
+
+/// The control plane's staff assertion key, which the cell pins, and a
+/// key the cell does not pin.
+struct Keys {
+    pinned: CompositeSigningKey,
+    other: CompositeSigningKey,
+}
+
+impl Keys {
+    fn new() -> Keys {
+        Keys {
+            pinned: fstp_crypto::composite::generate().unwrap(),
+            other: fstp_crypto::composite::generate().unwrap(),
+        }
     }
 }
 
@@ -53,24 +110,36 @@ fn sod_08_break_glass_needs_tenant_approval_and_logs_every_read() {
         until: Timestamp::from_micros(T0.micros() + r::HOUR_US),
         ended: None,
     };
+    let keys = Keys::new();
     let mut c = ProdCell::bootstrapped().unwrap_or_else(|e| panic!("{e}"));
     let request = [0xB6; 16];
 
     // A non-admin's approval records nothing, as the reference refuses it.
     assert!(r::approve_break_glass(false, true, &grant).is_err());
-    let by_a = approve(&mut c, A, request).unwrap();
+    let by_a = approve(&mut c, A, request, &grant).unwrap();
     assert!(
         by_a.is_empty(),
         "a non-admin approved break-glass: {by_a:?}"
     );
 
-    // A tenant admin's approval records `BreakGlassApproved`.
+    // A tenant admin's approval records `BreakGlassApproved` with the
+    // request's staff member, scope and end.
     assert!(r::approve_break_glass(true, true, &grant).is_ok());
-    let batch = approve(&mut c, ADMIN, request).unwrap();
+    let batch = approve(&mut c, ADMIN, request, &grant).unwrap();
     let granted: Vec<[u8; 16]> = batch
         .iter()
         .filter_map(|x| match x {
-            CellRecord::Ops(OpsRecord::BreakGlassApproved { grant }) => Some(*grant),
+            CellRecord::Ops(OpsRecord::BreakGlassApproved {
+                grant: id,
+                staff,
+                scope,
+                until,
+            }) => {
+                assert_eq!(*staff, staff_ref(grant.staff));
+                assert_eq!(*scope, vec![BreakGlassRead::Content]);
+                assert_eq!(*until, grant.until);
+                Some(*id)
+            }
             _ => None,
         })
         .collect();
@@ -81,7 +150,7 @@ fn sod_08_break_glass_needs_tenant_approval_and_logs_every_read() {
     // `BreakGlassRead`. Every step runs in time order (R14).
     let inside = Timestamp::from_micros(T0.micros() + 1);
     let mut found = read_mismatches(&grant, inside, |s, r, p, t| {
-        staff_read(&mut c, granted[0], s, r, p, t)
+        staff_read(&mut c, &keys, granted[0], s, r, p, t)
     });
 
     // Ending it records `BreakGlassEnded` for that grant.
@@ -103,7 +172,7 @@ fn sod_08_break_glass_needs_tenant_approval_and_logs_every_read() {
     };
     for at in [ended_at, grant.until] {
         found.extend(read_mismatches(&after, at, |s, r, p, t| {
-            staff_read(&mut c, granted[0], s, r, p, t)
+            staff_read(&mut c, &keys, granted[0], s, r, p, t)
         }));
     }
     assert!(found.is_empty(), "{found:#?}");
@@ -118,27 +187,73 @@ struct StaffRead {
 }
 
 /// A staff read under break-glass grant `grant`, by `staff` with a staff
-/// assertion verified against the pinned key when `pinned` holds, at `at`.
+/// assertion signed by the pinned key when `pinned` holds and by a key
+/// the cell does not pin otherwise, at `at`.
 ///
-/// Gap, reported by lane W1f and raised to the lead for lane W2c: the gate
-/// has no entry point for a control-plane-signed staff assertion, and
-/// `OpsRecord` has no `BreakGlassRead`. This seam is the one place to wire
-/// them, through `gate::admit` with `Principal::BreakGlass` and the read's
-/// record batch. Until then it refuses with `NotImplemented`, and the test
-/// stays red on that refusal, never on a fixed panic.
+/// The gate admits it through `gate::admit_break_glass` with
+/// `Principal::BreakGlass`, and the harness appends the admission's log
+/// record (`Admitted::break_glass_log`). The count is of the
+/// `BreakGlassRead` records the ledger gained.
 fn staff_read(
     c: &mut ProdCell,
+    keys: &Keys,
     grant: [u8; 16],
     staff: RefStaff,
     read: RefRead,
     pinned: bool,
     at: Timestamp,
 ) -> Result<StaffRead, fstp_celltest::NotImplemented> {
-    let _ = (c, grant, staff, read, pinned, at);
-    Err(fstp_celltest::NotImplemented::new(
-        "the gate's staff assertion path and OpsRecord::BreakGlassRead \
-         (lane W2c; design gap raised by lane W1f)",
-    ))
+    let assertion = StaffAssertion {
+        grant,
+        staff: staff_ref(staff),
+        issued_at: at,
+    };
+    let signer = if pinned { &keys.pinned } else { &keys.other };
+    let signature = signer
+        .sign_with_context(
+            &assertion.message(),
+            fstp_auth::breakglass::STAFF_ASSERTION_CONTEXT,
+        )
+        .unwrap()
+        .to_bytes();
+    let pin = keys.pinned.public_key().to_bytes();
+    let logged_before = break_glass_reads(c);
+    let admitted = match gate::admit_break_glass(
+        c.state(),
+        &assertion,
+        &signature,
+        Some(&pin[..]),
+        read_action(read),
+        at,
+    ) {
+        Ok(a) => a,
+        Err(_) => {
+            return Ok(StaffRead {
+                admitted: false,
+                logged: break_glass_reads(c) - logged_before,
+            });
+        }
+    };
+    assert_eq!(
+        admitted.principal(),
+        gate::Principal::BreakGlass(grant),
+        "a staff read is admitted as its grant"
+    );
+    c.log_break_glass_read(&admitted, at)
+        .unwrap_or_else(|e| panic!("{e}"));
+    Ok(StaffRead {
+        admitted: true,
+        logged: break_glass_reads(c) - logged_before,
+    })
+}
+
+/// The `BreakGlassRead` records in the ledger.
+fn break_glass_reads(c: &ProdCell) -> usize {
+    c.log()
+        .iter()
+        .flat_map(|a| a.batch.iter())
+        .filter(|x| matches!(x, CellRecord::Ops(OpsRecord::BreakGlassRead { .. })))
+        .count()
 }
 
 /// Every staff read at `at` where `read_by` differs from

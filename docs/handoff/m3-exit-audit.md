@@ -20,7 +20,7 @@ Updated late on 2026-11-13, after the decision lanes of section 7 merged. Local 
 | I-39 | Green | None |
 | I-77 | Green (item 6) | None |
 | I-78 | Green | None |
-| I-79 | Red: `i79_non_receiving_never_recovered_by_email_alone` | Daniel: Q-I79 |
+| I-79 | Green locally (Q-I79 decided 2026-11-15, section 9) | Confirm in CI |
 | I-80 | Green on macOS. On Linux, CI run 43394088959 passed the root canary scan and failed the seal key scan: destroyed `S(e)` copies stayed in the world host's heap and stack. Lane m3/i80-seal keeps each `SealKey` in one heap allocation and wipes the keyd frames | Confirm the Linux seal key scan in CI |
 | I-81 | Green | None |
 | I-82 | Green | None |
@@ -28,7 +28,7 @@ Updated late on 2026-11-13, after the decision lanes of section 7 merged. Local 
 | Isolation | Green | Confirm in CI (part `isolation-multi-cell`) |
 | Hosting provider | Met: OVHcloud is named in ADR-005 | Verify items V1 to V11 stay open for the R-HS-01 claim (L-15) |
 
-Other M3 tests still red: `r_nf_08_aborted_append_never_reuses_a_nonce` (the vault sealed-value layout needs an ADR record), `sod_08_break_glass` (item 12), `adr007_erased_textref` (item 13), `seam_async` (item 15 was not enough, see section 8), `r_nf_08_no_api_takes_a_caller_nonce` (unlisted, see section 8).
+Other M3 tests still red: `seam_async` (item 15 was not enough, see section 8), `r_nf_08_no_api_takes_a_caller_nonce` (unlisted, see section 8).
 
 ## 8. Open after the second round
 
@@ -54,12 +54,12 @@ Each is recorded in the lane handoffs. Lanes built the stricter reading where on
 - **Q-ISO (I-20).** `t_iso_i20` finds seven identifiers shared across tenants. All are vault-change command ids, `fstp:vc:` followed by the vault epoch, stored in clear in each ledger. They carry no person data. Should the test baseline admit them, or should the id be keyed per cell?
 - **Q-KEYOP (I-24).** `erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change` expects one key record per state change. ADR-004 records Daniel's decision of 2026-10-29: a record for every custody call. The code follows the ADR.
 - **Q-SIM (I-24, I-80).** The custody simulator still refuses to wrap, pinned by `harness_custody_sim_wrap_refuses_until_the_aead_lands`. The AEAD has landed. With a wrapping simulator `i24_custody_ops_reconcile_with_key_records` passes, and cells can run as separate processes so the Linux memory scans get a PID.
-- **Q-I79.** The I-79 reference machine records an approval on a recovery path that takes none. The cell-core test `i79_approval_needs_another_admin_and_the_second_admin_path` says no approval is recorded.
+- **Q-I79.** Decided by Daniel on 2026-11-15 ("Record it as evidence"), section 9.
 - **Q-I77.** Case 243 of the I-77 HTTP test fails on the test's own bookkeeping: two passkey sessions of one account at one tick share one model key. The fix is in the test.
 - **Q-D (witness receipt key).** Daniel decided the self-hosted witness opens its receipt key through its own `fstp-keyd` entry. That needs `fstp-custody`, which design rule 7 and the I-80 test `i80_only_listed_crates_reach_fstp_custody` do not allow for `fstp-witness`. The witness run loop was reverted until Daniel decides.
 - **Devstack.** `slice_devstack` needs `GET /auth/invite` in `routes::table()`, while the I-78 test `i78_page_routes_are_public_gets_outside_the_section_8_7_table` forbids page routes there. It also needs port 443 on macOS.
 
-Other M3 entries waiting on Daniel: `r_nf_05` (the baseline of a provisioned cluster), `r_nf_08` (the layout of vault sealed values), `sod_08` (where a break-glass request's fields enter the ledger), `adr007_erased_textref` (the system path for erasure causes 1 and 4).
+Other M3 entries waiting on Daniel: `r_nf_05` (the baseline of a provisioned cluster). Daniel decided `r_nf_08`, `sod_08` and `adr007_erased_textref` on 2026-11-15 (section 9).
 
 ## 4. Work left that needs no decision
 
@@ -101,3 +101,19 @@ Daniel answered "follow all recommendations" for these items, and chose `/auth/a
 | 26 | Playwright in CI | CI runs the demo Playwright project as a separate job |
 
 Items 5, 11 to 14, 16 to 18 and the interim readings of section 5 stay open.
+
+## 9. Decided by Daniel on 2026-11-15
+
+Lane m3/decisions-a built these four decisions.
+
+| Question | Decision | What changed |
+| --- | --- | --- |
+| Q-I79, recovery | "Record it as evidence" | `decide` records `ApproveRecovery` on any path after the email proof, with the same checks. It counts as the second factor only where the path recomputed at completion is `SecondAdmin`, so I-79 holds. The cell-core test is now `i79_approval_needs_another_admin_and_is_evidence_on_any_path`. ADR-008 "Recovery" records it |
+| SoD-08 break-glass | "On the approval record" | `ApproveBreakGlass { request, staff, scope, until }` records `BreakGlassApproved { grant, staff, scope, until }`. `gate::admit_break_glass` verifies a composite staff assertion against the pinned key within `STAFF_ASSERTION_US` and admits reads as `Principal::BreakGlass(grant)`. Each admitted read is logged as `OpsRecord::BreakGlassRead`. ADR-008 "Break-glass" records it |
+| ADR-007 erasure causes 1 and 4 | "Tenant admin for all" | A tenant admin requests all four causes and is the authoriser the entry names. `ACCOUNT_ERASURE_CAUSES` is gone. ADR-007 "Erasure-log entries" records it |
+| R-NF-08 sealed blobs | "Record it in ADR-004" | ADR-004 "Vault sealed values" records `nonce 12 \| ciphertext \| tag 16` for `vault.epoch.affected`, `vault.fact.body`, `vault.negotiation.sealed_accounts` and `vault_audit.chain.body`. The R-NF-08 test reads their nonce at offset 0 |
+
+Open after these decisions:
+
+- **Retention reminder (P-41).** The system should remind tenant admins when a retention period ends. No place exists for it yet: the M6 timeline has no event kind or source for the end of P-41 per action, and no mailbox message covers it.
+- **Staff read route.** No HTTP route serves a staff read yet. `gate::admit_break_glass` and `Admitted::break_glass_log` are the entry points for it, with the operator content views (M4). The cell pins only the operator ticket key (`operator_key`) today; design section 9 lists a staff assertion key beside it, which the route will pass as `pinned_key`.

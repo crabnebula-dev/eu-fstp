@@ -104,3 +104,79 @@ fn sod_08_reads_only_by_the_named_staff_in_scope_and_time() {
         },
     );
 }
+
+/// SoD-08, ADR-008 "Break-glass" (Daniel, 2026-11-15): a staff assertion
+/// verifies only under the pinned control-plane key, in its own context,
+/// for the grant, staff member and instant it signs, and only within its
+/// lifetime. A cell that pins no key admits no staff assertion.
+#[test]
+fn sod_08_staff_assertion_needs_the_pinned_key_and_its_lifetime() {
+    use fstp_auth::breakglass::{
+        STAFF_ASSERTION_CONTEXT, StaffAssertion, StaffAssertionDeny, verify_staff_assertion,
+    };
+    const LIFE: i64 = 15 * 60 * 1_000_000;
+    let key = fstp_crypto::composite::generate().unwrap();
+    let other = fstp_crypto::composite::generate().unwrap();
+    let pin = key.public_key().to_bytes();
+    let a = StaffAssertion {
+        grant: [0xB6; 16],
+        staff: STAFF,
+        issued_at: T0,
+    };
+    let sign = |k: &fstp_crypto::composite::CompositeSigningKey, ctx: &[u8], m: &[u8]| {
+        k.sign_with_context(m, ctx).unwrap().to_bytes()
+    };
+    let good = sign(&key, STAFF_ASSERTION_CONTEXT, &a.message());
+    let v = verify_staff_assertion(&a, &good, Some(&pin[..]), at(1), LIFE).unwrap();
+    assert_eq!(v.grant(), a.grant);
+    assert_eq!(v.staff(), STAFF);
+    assert_eq!(
+        verify_staff_assertion(&a, &good, Some(&pin[..]), T0, LIFE).map(|v| v.staff()),
+        Ok(STAFF),
+        "at the issue instant"
+    );
+    assert_eq!(
+        verify_staff_assertion(&a, &good, None, at(1), LIFE).err(),
+        Some(StaffAssertionDeny::NoPinnedKey)
+    );
+    let unpinned = sign(&other, STAFF_ASSERTION_CONTEXT, &a.message());
+    assert_eq!(
+        verify_staff_assertion(&a, &unpinned, Some(&pin[..]), at(1), LIFE).err(),
+        Some(StaffAssertionDeny::Signature)
+    );
+    let wrong_context = sign(&key, b"fstp-operator-ticket-break-glass-v1", &a.message());
+    assert_eq!(
+        verify_staff_assertion(&a, &wrong_context, Some(&pin[..]), at(1), LIFE).err(),
+        Some(StaffAssertionDeny::Signature)
+    );
+    for changed in [
+        StaffAssertion {
+            grant: [0xB7; 16],
+            ..a
+        },
+        StaffAssertion {
+            staff: StaffRef([0x5B; 16]),
+            ..a
+        },
+        StaffAssertion {
+            issued_at: at(1),
+            ..a
+        },
+    ] {
+        assert_eq!(
+            verify_staff_assertion(&changed, &good, Some(&pin[..]), at(1), LIFE).err(),
+            Some(StaffAssertionDeny::Signature),
+            "{changed:?}"
+        );
+    }
+    assert_eq!(
+        verify_staff_assertion(&a, &good, Some(&pin[..]), at(LIFE), LIFE).err(),
+        Some(StaffAssertionDeny::Expired),
+        "at the end of its lifetime"
+    );
+    assert_eq!(
+        verify_staff_assertion(&a, &good, Some(&pin[..]), at(-1), LIFE).err(),
+        Some(StaffAssertionDeny::Expired),
+        "before its issue"
+    );
+}

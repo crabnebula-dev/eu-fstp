@@ -530,6 +530,9 @@ pub(crate) fn table_commands() -> Result<Vec<(&'static str, CellCommand)>, Strin
             "ApproveBreakGlass",
             CellCommand::Ops(OpsCommand::ApproveBreakGlass {
                 request: [0x42; 16],
+                staff: fstp_auth::recovery::StaffRef([0x57; 16]),
+                scope: vec![fstp_auth::breakglass::BreakGlassRead::Content],
+                until: plus(NOW, HOUR_US),
             }),
         ),
         (

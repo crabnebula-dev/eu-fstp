@@ -34,8 +34,10 @@
 //! Decode errors name schema members and static reasons only, never input
 //! content (R-NF-02).
 
+use fstp_auth::breakglass::BreakGlassRead;
 use fstp_domain::id::{AccountId, CallId, LlmConfigId};
 use fstp_domain::policy::ModelRef;
+use fstp_domain::time::Timestamp;
 use fstp_findings::{Finding, FindingCommand, FindingId, Mark};
 use fstp_json::typed::{expect_object, reject_unknown};
 use fstp_json::{
@@ -572,12 +574,30 @@ fn release_record(v: &Value) -> Result<ReleaseRecord, FromJsonError> {
 
 fn ops_record_json(r: &OpsRecord) -> Value {
     match r {
-        OpsRecord::BreakGlassApproved { grant } => {
-            tagged("BreakGlassApproved", vec![("grant", hex(grant))])
-        }
+        OpsRecord::BreakGlassApproved {
+            grant,
+            staff,
+            scope,
+            until,
+        } => tagged(
+            "BreakGlassApproved",
+            vec![
+                ("grant", hex(grant)),
+                ("scope", scope_json(scope)),
+                ("staff", hex(&staff.0)),
+                ("until", Value::String(until.micros().to_string())),
+            ],
+        ),
         OpsRecord::BreakGlassEnded { grant } => {
             tagged("BreakGlassEnded", vec![("grant", hex(grant))])
         }
+        OpsRecord::BreakGlassRead { grant, read } => tagged(
+            "BreakGlassRead",
+            vec![
+                ("grant", hex(grant)),
+                ("read", Value::String(read_name(*read).to_owned())),
+            ],
+        ),
     }
 }
 
@@ -585,9 +605,12 @@ fn ops_record(v: &Value) -> Result<OpsRecord, FromJsonError> {
     let (tag, o) = variant(v)?;
     match tag {
         "BreakGlassApproved" => {
-            fields(o, &["grant"])?;
+            fields(o, &["grant", "scope", "staff", "until"])?;
             Ok(OpsRecord::BreakGlassApproved {
                 grant: array_from(o, "grant")?,
+                staff: fstp_auth::recovery::StaffRef(array_from(o, "staff")?),
+                scope: scope_from(o, "scope")?,
+                until: Timestamp::from_micros(i64_from(o, "until")?),
             })
         }
         "BreakGlassEnded" => {
@@ -596,8 +619,67 @@ fn ops_record(v: &Value) -> Result<OpsRecord, FromJsonError> {
                 grant: array_from(o, "grant")?,
             })
         }
+        "BreakGlassRead" => {
+            fields(o, &["grant", "read"])?;
+            Ok(OpsRecord::BreakGlassRead {
+                grant: array_from(o, "grant")?,
+                read: read_of(str_of(o, "read")?)
+                    .ok_or_else(|| FromJsonError::invalid("not a read action").at_field("read"))?,
+            })
+        }
         _ => Err(unknown_variant()),
     }
+}
+
+/// The name of a break-glass read action.
+const fn read_name(r: BreakGlassRead) -> &'static str {
+    match r {
+        BreakGlassRead::Content => "Content",
+        BreakGlassRead::Audit => "Audit",
+        BreakGlassRead::ErasureLog => "ErasureLog",
+    }
+}
+
+fn read_of(s: &str) -> Option<BreakGlassRead> {
+    match s {
+        "Content" => Some(BreakGlassRead::Content),
+        "Audit" => Some(BreakGlassRead::Audit),
+        "ErasureLog" => Some(BreakGlassRead::ErasureLog),
+        _ => None,
+    }
+}
+
+fn scope_json(scope: &[BreakGlassRead]) -> Value {
+    Value::Array(
+        scope
+            .iter()
+            .map(|r| Value::String(read_name(*r).to_owned()))
+            .collect::<Array>(),
+    )
+}
+
+/// A break-glass scope: at most the three read actions, strictly
+/// ascending, so each scope has one canonical form.
+fn scope_from(o: &Object, name: &'static str) -> Result<Vec<BreakGlassRead>, FromJsonError> {
+    let list = member(o, name)?
+        .as_array()
+        .ok_or_else(|| FromJsonError::invalid("not a list").at_field(name))?;
+    if list.len() > 3 {
+        return Err(FromJsonError::invalid("too many read actions").at_field(name));
+    }
+    let mut out = Vec::with_capacity(list.len());
+    for (i, v) in list.iter().enumerate() {
+        let r = v.as_str().and_then(read_of).ok_or_else(|| {
+            FromJsonError::invalid("not a read action")
+                .at_index(i)
+                .at_field(name)
+        })?;
+        out.push(r);
+    }
+    if !crate::ops::scope_is_canonical(&out) {
+        return Err(FromJsonError::invalid("scope not strictly ascending").at_field(name));
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,9 +1362,20 @@ fn release_command(v: &Value) -> Result<ReleaseCommand, FromJsonError> {
 
 fn ops_command_json(c: &OpsCommand) -> Value {
     match c {
-        OpsCommand::ApproveBreakGlass { request } => {
-            tagged("ApproveBreakGlass", vec![("request", hex(request))])
-        }
+        OpsCommand::ApproveBreakGlass {
+            request,
+            staff,
+            scope,
+            until,
+        } => tagged(
+            "ApproveBreakGlass",
+            vec![
+                ("request", hex(request)),
+                ("scope", scope_json(scope)),
+                ("staff", hex(&staff.0)),
+                ("until", Value::String(until.micros().to_string())),
+            ],
+        ),
         OpsCommand::EndBreakGlass { grant } => tagged("EndBreakGlass", vec![("grant", hex(grant))]),
         OpsCommand::ApplyOperatorTicket { ticket } => {
             tagged("ApplyOperatorTicket", vec![("ticket", opaque_json(ticket))])
@@ -1298,9 +1391,12 @@ fn ops_command(v: &Value) -> Result<OpsCommand, FromJsonError> {
     let (tag, o) = variant(v)?;
     match tag {
         "ApproveBreakGlass" => {
-            fields(o, &["request"])?;
+            fields(o, &["request", "scope", "staff", "until"])?;
             Ok(OpsCommand::ApproveBreakGlass {
                 request: array_from(o, "request")?,
+                staff: fstp_auth::recovery::StaffRef(array_from(o, "staff")?),
+                scope: scope_from(o, "scope")?,
+                until: Timestamp::from_micros(i64_from(o, "until")?),
             })
         }
         "EndBreakGlass" => {

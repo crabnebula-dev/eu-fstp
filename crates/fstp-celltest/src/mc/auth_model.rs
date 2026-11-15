@@ -593,6 +593,27 @@ impl ProdCell {
         self.run(cmd, actor, at, Some(command))
     }
 
+    /// Logs a staff read that `gate::admit_break_glass` admitted at `at`,
+    /// as the read route does before it serves the read (SoD-08, design
+    /// section 8.6): it appends the admission's `BreakGlassRead` under a
+    /// fresh command id and returns the batch. An admission of anything
+    /// else logs nothing and is refused.
+    pub fn log_break_glass_read(
+        &mut self,
+        admitted: &gate::Admitted,
+        at: Timestamp,
+    ) -> Result<Vec<CellRecord>, ProdError> {
+        let Some(record) = admitted.break_glass_log() else {
+            return Err(ProdError::Refused(
+                "not a break-glass read admission".to_owned(),
+            ));
+        };
+        let batch = vec![record];
+        let command = self.draw();
+        self.fold(at, command, &batch)?;
+        Ok(batch)
+    }
+
     fn run(
         &mut self,
         cmd: CellCommand,

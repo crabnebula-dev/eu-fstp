@@ -507,7 +507,7 @@ pub struct CellState {
     pub(crate) tickets: BTreeSet<[u8; 16]>,
     /// The ticket each command issued, by command id (lane m3/cell-routes).
     issued: BTreeMap<[u8; 16], crate::release::IssuedTicket>,
-    pub(crate) break_glass: BTreeMap<[u8; 16], bool>,
+    pub(crate) break_glass: BTreeMap<[u8; 16], fstp_auth::breakglass::BreakGlassGrant>,
     pub(crate) timeline: crate::timeline::TimelineState,
     bindings: BTreeMap<BindingId, BindingFacts>,
     proposals: BTreeMap<ProposalId, (CallId, AccountId)>,
@@ -606,7 +606,18 @@ impl CellState {
 
     /// Whether break-glass grant `grant` was approved and has not ended.
     pub fn break_glass_active(&self, grant: [u8; 16]) -> bool {
-        self.break_glass.get(&grant).copied().unwrap_or(false)
+        self.break_glass
+            .get(&grant)
+            .is_some_and(|g| g.ended.is_none())
+    }
+
+    /// Break-glass grant `grant` as recorded: its staff member, scope,
+    /// approval instant, end and early end, if it was approved.
+    pub fn break_glass_grant(
+        &self,
+        grant: [u8; 16],
+    ) -> Option<&fstp_auth::breakglass::BreakGlassGrant> {
+        self.break_glass.get(&grant)
     }
 
     /// The last sequence number of the committed reaction to vault epoch
@@ -736,7 +747,7 @@ pub(crate) fn fold(
             s.issued
                 .insert(command, crate::release::IssuedTicket::of(r));
         }
-        CellRecord::Ops(r) => fold_ops(&mut s.break_glass, r)?,
+        CellRecord::Ops(r) => fold_ops(&mut s.break_glass, at, r)?,
         CellRecord::Timeline(r) => s.timeline.fold(r)?,
     }
     s.commands.insert(command, seq);
@@ -1202,16 +1213,42 @@ fn fold_release(tickets: &mut BTreeSet<[u8; 16]>, r: &ReleaseRecord) -> Result<(
     Ok(())
 }
 
-fn fold_ops(grants: &mut BTreeMap<[u8; 16], bool>, r: &OpsRecord) -> Result<(), FoldError> {
+/// Folds an ops record (design section 8.6). The approval records the
+/// grant as approved at its entry instant, the end ends it at its entry
+/// instant, and a read is logged only under a known grant and inside its
+/// scope.
+fn fold_ops(
+    grants: &mut BTreeMap<[u8; 16], fstp_auth::breakglass::BreakGlassGrant>,
+    at: Timestamp,
+    r: &OpsRecord,
+) -> Result<(), FoldError> {
     match r {
-        OpsRecord::BreakGlassApproved { grant } => {
+        OpsRecord::BreakGlassApproved {
+            grant,
+            staff,
+            scope,
+            until,
+        } => {
             if grants.contains_key(grant) {
                 return Err(duplicate());
             }
-            grants.insert(*grant, true);
+            grants.insert(
+                *grant,
+                fstp_auth::breakglass::BreakGlassGrant {
+                    staff: *staff,
+                    scope: scope.clone(),
+                    approved_at: at,
+                    until: *until,
+                    ended: None,
+                },
+            );
         }
         OpsRecord::BreakGlassEnded { grant } => match grants.get_mut(grant) {
-            Some(active) if *active => *active = false,
+            Some(g) if g.ended.is_none() => g.ended = Some(at),
+            _ => return Err(unknown()),
+        },
+        OpsRecord::BreakGlassRead { grant, read } => match grants.get(grant) {
+            Some(g) if g.scope.contains(read) => {}
             _ => return Err(unknown()),
         },
     }
