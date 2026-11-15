@@ -105,6 +105,13 @@ pub enum ReadModel {
     /// `me.roles`: the caller's own active roles, for the interim home
     /// page of design section 15.0 (2026-10-31; I-86).
     MyRoles(crate::dispatch::me_roles::MyRoles),
+    /// `agents.list`: the caller's live agent clients (R-MC-03).
+    MyAgents(crate::dispatch::agents::MyAgents),
+    /// `agents.activity`: the caller's calls through one agent client
+    /// (R-MC-03).
+    AgentActivity(crate::dispatch::agents::AgentActivity),
+    /// `roles.list`: the staff bindings of a programme (J1).
+    Bindings(crate::dispatch::bindings::ProgrammeBindings),
     /// `proposal.journey`: a proposal's route position, its legs and the
     /// overlay (lane j2, `SPEC/12-journey-ui.md` section 10).
     Journey(crate::dispatch::journey::JourneyView),
@@ -280,6 +287,9 @@ impl ToJson for ReadModel {
             ReadModel::Tenant(v) => v.to_json(),
             ReadModel::Creator(m) => m.to_json(),
             ReadModel::MyRoles(r) => r.to_json(),
+            ReadModel::MyAgents(a) => a.to_json(),
+            ReadModel::AgentActivity(a) => a.to_json(),
+            ReadModel::Bindings(b) => b.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
             ReadModel::Invitation(v) => v.to_json(),
@@ -1728,6 +1738,9 @@ pub(crate) mod reply_shape_tests {
             }
             ReadModel::Creator(c) => creator_served_as(c),
             ReadModel::MyRoles(_) => &["me.roles"],
+            ReadModel::MyAgents(_) => &["agents.list"],
+            ReadModel::AgentActivity(_) => &["agents.activity"],
+            ReadModel::Bindings(_) => &["roles.list"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
             ReadModel::Invitation(_) => &["people.get_invitation"],
@@ -1887,6 +1900,79 @@ pub(crate) mod reply_shape_tests {
                 Vec::new()
             },
         }
+    }
+
+    /// An `agents.list` reply (R-MC-03): one client with every optional
+    /// member set and one with none.
+    fn my_agents() -> crate::dispatch::agents::MyAgents {
+        use crate::port::{AgentClientId, AgentInfo};
+        crate::dispatch::agents::MyAgents(vec![
+            AgentInfo {
+                client: AgentClientId::from_raw(7),
+                name: Some("Synthetic agent".to_owned()),
+                scopes: [
+                    fstp_access::Scope::CallsRead,
+                    fstp_access::Scope::ProposalsDraft,
+                ]
+                .into_iter()
+                .collect(),
+                method: LoginMethod::Passkey,
+                since: Some(Timestamp::from_micros(5)),
+                until: Some(Timestamp::from_micros(9)),
+            },
+            AgentInfo {
+                client: AgentClientId::from_raw(8),
+                name: None,
+                scopes: std::collections::BTreeSet::new(),
+                method: LoginMethod::Opaque,
+                since: None,
+                until: None,
+            },
+        ])
+    }
+
+    /// An `agents.activity` reply (R-MC-03): each outcome once.
+    fn agent_activity() -> crate::dispatch::agents::AgentActivity {
+        use crate::dispatch::agents::{ActivityItem, ActivityOutcome, AgentActivity};
+        let at = Timestamp::from_micros(5);
+        AgentActivity(vec![
+            ActivityItem {
+                op: "calls.list_open",
+                outcome: ActivityOutcome::Accepted,
+                at,
+            },
+            ActivityItem {
+                op: "call.draft",
+                outcome: ActivityOutcome::Pending,
+                at,
+            },
+            ActivityItem {
+                op: "call.publish",
+                outcome: ActivityOutcome::Refused("P-74"),
+                at,
+            },
+        ])
+    }
+
+    /// A `roles.list` reply (J1): each binding state, with and without a
+    /// scheduled end and a rule.
+    fn programme_bindings() -> crate::dispatch::bindings::ProgrammeBindings {
+        use crate::dispatch::bindings::{BindingRow, BindingState, ProgrammeBindings};
+        use fstp_domain::id::{AccountId, BindingId};
+        let row = |n: u128, state, end| BindingRow {
+            binding: BindingId::from_raw(n),
+            account: AccountId::from_raw(n.saturating_add(100)),
+            role: Role::IrcMember,
+            start: Timestamp::from_micros(5),
+            end,
+            state,
+        };
+        ProgrammeBindings(vec![
+            row(1, BindingState::Active, Some(Timestamp::from_micros(9))),
+            row(2, BindingState::Suspended(Some("I-06")), None),
+            row(3, BindingState::Voided(Some("I-04")), None),
+            row(4, BindingState::Suspended(None), None),
+        ])
     }
 
     /// A `me.roles` reply (design section 15.0, I-86): with every
@@ -2075,6 +2161,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Creator(crate::creator::CreatorModel::Proposals(Vec::new())),
             ReadModel::MyRoles(my_roles(true)),
             ReadModel::MyRoles(my_roles(false)),
+            ReadModel::MyAgents(my_agents()),
+            ReadModel::AgentActivity(agent_activity()),
+            ReadModel::Bindings(programme_bindings()),
             ReadModel::Journey(journey_view(true)),
             ReadModel::Journey(journey_view(false)),
             ReadModel::Diary(diary_view(true)),
@@ -2257,7 +2346,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 46;
+    const VARIANTS: usize = 49;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2310,6 +2399,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::FindingsStatus(_) => 43,
             ReadModel::Mailbox(_) => 44,
             ReadModel::Unmask(_) => 45,
+            ReadModel::MyAgents(_) => 46,
+            ReadModel::AgentActivity(_) => 47,
+            ReadModel::Bindings(_) => 48,
         }
     }
 

@@ -51,6 +51,22 @@ const LABELS: Readonly<Record<string, string>> = {
     "Grant each role once the invitee accepted the terms and verified identity. An Operations role needs no identity check and is granted after activation. Each grant needs your passkey.",
   "people.admin.grant": "Grant {role} to {email}",
 
+  // The current roles of the people admin page (J1, lane m4/ops-roles-agents).
+  "people.bindings.title": "Current roles",
+  "people.bindings.intro":
+    "Each role held in this programme, by account. Ending or reinstating a role needs your passkey.",
+  "people.bindings.none": "No one holds a role in this programme yet.",
+  "people.bindings.summary": "{role}, account {account}. {state}",
+  "people.bindings.active": "Active.",
+  "people.bindings.suspended": "Suspended.",
+  "people.bindings.suspended_rule": "Suspended under rule {rule}.",
+  "people.bindings.voided": "Voided.",
+  "people.bindings.voided_rule": "Voided under rule {rule}.",
+  "people.bindings.end": "End the role of {role} for account {account}",
+  "people.bindings.reason": "Reason for reinstating account {account}",
+  "people.bindings.reinstate": "Reinstate the role of {role} for account {account}",
+  "people.bindings.reason_missing": "Give a reason for the reinstatement.",
+
   // The invitation landing.
   "people.invitation.title": "Your invitation",
   "people.invitation.intro": "Read the terms below. Accepting them is the first step to your role.",

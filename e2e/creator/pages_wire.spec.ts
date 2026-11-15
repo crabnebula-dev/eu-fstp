@@ -31,6 +31,9 @@ const OPS: readonly (readonly [string, string, string])[] = [
   ['creator.invitations', 'GET', '/api/v1/programmes/{programme}/invitations'],
   ['creator.list_templates', 'GET', '/api/v1/creator/templates'],
   ['roles.grant', 'POST', '/api/v1/programmes/{programme}/roles'],
+  ['roles.list', 'GET', '/api/v1/programmes/{programme}/roles'],
+  ['roles.end', 'POST', '/api/v1/programmes/{programme}/roles/{binding}/end'],
+  ['roles.reinstate', 'POST', '/api/v1/programmes/{programme}/roles/{binding}/reinstatement'],
   ['import.upload', 'POST', '/api/v1/programmes/{programme}/imports'],
 ];
 
@@ -225,6 +228,51 @@ test.describe('W4a page wire', () => {
     await page.locator('li[data-invitation="i1"] [data-action="grant"]').click();
     await expect.poll(() => sent.length).toBe(1);
     expect(sent[0]).toEqual({ method: 'POST', path: '/api/v1/programmes/p1/roles', body: { approval: 'a1', invitation: 'i1' } });
+  });
+
+  /**
+   * J1, I-06 (lane m4/ops-roles-agents): a tenant admin sees the
+   * programme's current roles by account id. Ending an active role sends
+   * `roles.end` with no member, and reinstating a suspended one sends
+   * `roles.reinstate` with the reason, never an empty one.
+   */
+  test('i06_people_page_ends_and_reinstates_a_role', async ({ page }) => {
+    const sent = await cell(page, (method, path) => {
+      if (method === 'GET' && path === '/api/v1/programmes/p1/draft') {
+        return [200, { spec: {}, revision: '5', status: 'active' }];
+      }
+      if (method === 'GET' && path === '/api/v1/programmes/p1/invitations') {
+        return [200, { invitations: [] }];
+      }
+      if (method === 'GET' && path === '/api/v1/programmes/p1/roles') {
+        return [
+          200,
+          [
+            { binding: '11', account: '201', role: 'call_drafter', start: '5', state: 'active' },
+            { binding: '12', account: '225', role: 'irc_member', start: '5', state: 'suspended', rule: 'I-06' },
+          ],
+        ];
+      }
+      return method === 'POST' ? [200, {}] : NOT_FOUND;
+    });
+    await page.goto(`${ORIGIN}/app/programmes/p1/people`);
+    await expect(page.locator('main[data-ready="true"]')).toBeVisible();
+    await expect(page.locator('#bindings-section')).toBeVisible();
+    await expect(page.locator('li[data-binding="12"]')).toContainText('I-06');
+    await page.locator('li[data-binding="11"] [data-action="end"]').click();
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent[0]).toEqual({ method: 'POST', path: '/api/v1/programmes/p1/roles/11/end', body: {} });
+    await page.locator('li[data-binding="12"] [data-action="reinstate"]').click();
+    await expect(page.locator('#people-error')).toContainText('reason');
+    expect(sent.length).toBe(1);
+    await page.locator('#reason-12').fill('Synthetic clash resolved');
+    await page.locator('li[data-binding="12"] [data-action="reinstate"]').click();
+    await expect.poll(() => sent.length).toBe(2);
+    expect(sent[1]).toEqual({
+      method: 'POST',
+      path: '/api/v1/programmes/p1/roles/12/reinstatement',
+      body: { reason: 'Synthetic clash resolved' },
+    });
   });
 
   /**

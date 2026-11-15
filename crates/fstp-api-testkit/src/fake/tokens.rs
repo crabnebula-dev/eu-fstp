@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use fstp_access::GrantFacts;
 use fstp_api_core::meta::Scope;
-use fstp_api_core::port::{AgentClientId, ConsentApproval, LoginMethod, PortError};
+use fstp_api_core::port::{AgentClientId, AgentInfo, ConsentApproval, LoginMethod, PortError};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
 
@@ -287,17 +287,82 @@ impl FakeTokens {
         })
     }
 
-    /// Revokes every token of `client` for `account` at once (R-MC-03).
+    /// Revokes every token of `client` for `account` at once, those it
+    /// issued and those the authorisation server issued (R-MC-03).
     pub fn revoke(&self, account: AccountId, client: AgentClientId) -> Result<(), PortError> {
-        let mut s = lock(&self.state);
         let mut any = false;
-        for (g, revoked) in s.grants.values_mut() {
-            if g.account == account && g.client == client {
-                *revoked = true;
-                any = true;
+        {
+            let mut s = lock(&self.state);
+            for (g, revoked) in s.grants.values_mut() {
+                if g.account == account && g.client == client {
+                    *revoked = true;
+                    any = true;
+                }
             }
         }
+        if let (Ok(a), Ok(c)) = (u64::try_from(account.raw()), u64::try_from(client.raw()))
+            && let Some(o) = lock(&self.oauth).as_mut()
+        {
+            let n = o.server.revoke_agent_by_number(
+                fstp_oauth::Account::from_raw(a),
+                fstp_oauth::ClientNumber::from_raw(c),
+                0,
+            );
+            any = any || n > 0;
+        }
         if any { Ok(()) } else { Err(PortError::Refused) }
+    }
+
+    /// The live agent clients of `account` at `now` (R-MC-03): the
+    /// clients of the tokens it issued that are not revoked, and the
+    /// grants of the authorisation server, one entry per client with the
+    /// union of the scopes.
+    pub fn agents(&self, account: AccountId, now: Timestamp) -> Vec<AgentInfo> {
+        let mut by: BTreeMap<AgentClientId, AgentInfo> = BTreeMap::new();
+        for (g, revoked) in lock(&self.state).grants.values() {
+            if *revoked || g.account != account {
+                continue;
+            }
+            let e = by.entry(g.client).or_insert_with(|| AgentInfo {
+                client: g.client,
+                name: None,
+                scopes: BTreeSet::new(),
+                method: g.consented_with,
+                since: None,
+                until: None,
+            });
+            e.scopes.extend(g.scopes.iter().copied());
+        }
+        let Ok(a) = u64::try_from(account.raw()) else {
+            return by.into_values().collect();
+        };
+        if let Some(o) = lock(&self.oauth).as_ref() {
+            for g in o
+                .server
+                .agents_of(fstp_oauth::Account::from_raw(a), now.micros())
+            {
+                let client = AgentClientId::from_raw(u128::from(g.client.raw()));
+                let e = by.entry(client).or_insert_with(|| AgentInfo {
+                    client,
+                    name: g.client_name.clone(),
+                    scopes: BTreeSet::new(),
+                    method: match g.consent_method {
+                        fstp_oauth::LoginMethod::Passkey => LoginMethod::Passkey,
+                        fstp_oauth::LoginMethod::MagicLink => LoginMethod::MagicLink,
+                        fstp_oauth::LoginMethod::Opaque => LoginMethod::Opaque,
+                        fstp_oauth::LoginMethod::EudiWallet => LoginMethod::EudiWallet,
+                    },
+                    since: Some(Timestamp::from_micros(g.start)),
+                    until: Some(Timestamp::from_micros(g.end)),
+                });
+                e.scopes.extend(
+                    g.scopes
+                        .iter()
+                        .filter_map(|s| Scope::ALL.into_iter().find(|x| x.as_str() == s.as_str())),
+                );
+            }
+        }
+        by.into_values().collect()
     }
 
     /// How many tokens were issued.
@@ -326,5 +391,13 @@ impl fstp_api_core::port::Tokens for FakeTokens {
 
     async fn approve_consent(&self, c: ConsentApproval) -> Result<String, PortError> {
         self.approve(&c)
+    }
+
+    async fn agents(
+        &self,
+        account: AccountId,
+        now: Timestamp,
+    ) -> Result<Vec<AgentInfo>, PortError> {
+        Ok(FakeTokens::agents(self, account, now))
     }
 }

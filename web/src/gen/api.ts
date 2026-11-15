@@ -4433,6 +4433,38 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "started": { schema: { kind: "string" }, optional: false },
     },
   } },
+  "agents.list": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "client": { schema: { kind: "id" }, optional: false },
+      "name": { schema: { kind: "string" }, optional: true },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read"] } }, optional: false },
+      "method": { schema: { kind: "enum", values: ["passkey", "magic_link", "opaque", "eudi_wallet"] }, optional: false },
+      "since": { schema: { kind: "string" }, optional: true },
+      "until": { schema: { kind: "string" }, optional: true },
+    },
+  } },
+  "agents.activity": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "op": { schema: { kind: "string" }, optional: false },
+      "outcome": { schema: { kind: "enum", values: ["accepted", "pending", "refused"] }, optional: false },
+      "rule": { schema: { kind: "string" }, optional: true },
+      "at": { schema: { kind: "string" }, optional: false },
+    },
+  } },
+  "roles.list": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "binding": { schema: { kind: "id" }, optional: false },
+      "account": { schema: { kind: "id" }, optional: false },
+      "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "applicant", "applicant_team_member", "guardian", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "financial_signatory", "legal_signatory", "auditor"] }, optional: false },
+      "start": { schema: { kind: "string" }, optional: false },
+      "end": { schema: { kind: "string" }, optional: true },
+      "state": { schema: { kind: "enum", values: ["active", "suspended", "voided"] }, optional: false },
+      "rule": { schema: { kind: "string" }, optional: true },
+    },
+  } },
   "me.begin_verification": {
     kind: "object",
     fields: {

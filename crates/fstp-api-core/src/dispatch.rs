@@ -135,6 +135,10 @@ mod grant_lists;
 pub(crate) mod journey;
 /// `me.roles`, the caller's own roles (design section 15.0, 2026-10-31).
 pub(crate) mod me_roles;
+// R-MC-03: the caller's agent clients and their activity.
+pub(crate) mod agents;
+// J1: the staff bindings of a programme.
+pub(crate) mod bindings;
 // Lane m6/mailbox: `me.mailbox`, derived from existing state.
 mod mailbox;
 /// The people operations of journey J2 (lane inv). The file sits beside
@@ -221,6 +225,8 @@ pub(crate) struct State {
     /// The signature services of a test or demo cell. `None` in
     /// production, where every signature is refused (M5 design 12.1, Q2).
     signing: grant::SharedSigning,
+    /// The calls of each agent client, by account (R-MC-03).
+    activity: Mutex<agents::ActivityLog>,
 }
 
 impl State {
@@ -714,6 +720,19 @@ pub(crate) async fn run<P: Seams>(
         now,
         state,
     };
+    let result = steps(&call, &op).await;
+    // R-MC-03: a call through an agent client joins the caller's
+    // activity of that client, as its audit entry records it.
+    if let (Some(account), Some(agent)) = (call.account(), call.caller.agent) {
+        lock(&st.activity).record(account, agent, spec.name, &result, now);
+    }
+    result
+}
+
+/// Steps 2 to 8 of one call whose caller and digest are known.
+async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
+    let ports = call.ports;
+    let spec = call.spec;
     // Step 2.
     if !fstp_access::session_admits(spec, &call.caller.p) {
         return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-77")));
@@ -729,7 +748,7 @@ pub(crate) async fn run<P: Seams>(
     let verdict = match verdict {
         ChannelVerdict::Deny(d) => return Err(call.refuse(denial(d))),
         ChannelVerdict::Prepare if needs_p77(spec) => {
-            let p77 = governing_p77(&call, &op).map_err(|e| call.refuse(e))?;
+            let p77 = governing_p77(call, op).map_err(|e| call.refuse(e))?;
             fstp_access::channel_policy(spec, &call.caller.p, p77, &settings)
         }
         v => v,
@@ -759,25 +778,25 @@ pub(crate) async fn run<P: Seams>(
         )));
     }
     // Step 4.
-    rate_limits(&call)?;
+    rate_limits(call)?;
     match spec.kind {
-        OpKind::Command(_) => command(&call, &op, verdict).await,
-        OpKind::Read(kind) => read(&call, &op, kind).await,
-        OpKind::Pending(PendingKind::Confirm) => confirm(&call, &op).await,
-        OpKind::Pending(PendingKind::Discard) => discard(&call, &op),
-        OpKind::Agent(kind) => agent(&call, &op, kind).await,
-        OpKind::M3Port(kind) => m3_port(&call, &op, kind).await,
+        OpKind::Command(_) => command(call, op, verdict).await,
+        OpKind::Read(kind) => read(call, op, kind).await,
+        OpKind::Pending(PendingKind::Confirm) => confirm(call, op).await,
+        OpKind::Pending(PendingKind::Discard) => discard(call, op),
+        OpKind::Agent(kind) => agent(call, op, kind).await,
+        OpKind::M3Port(kind) => m3_port(call, op, kind).await,
         OpKind::Creator(_) | OpKind::Bridge(_) | OpKind::Import(_) => {
-            creator_ops::command(&call, &op).await
+            creator_ops::command(call, op).await
         }
-        OpKind::Tenant(kind) => tenant::command(&call, &op, kind).await,
-        OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(&call, &op).await,
+        OpKind::Tenant(kind) => tenant::command(call, op, kind).await,
+        OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(call, op).await,
         // `Record` and `Regenerate` are the assessor's, through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
             "a finding command that only the assessor issues",
         ))),
-        OpKind::Public(kind) => public::read(&call, &op, kind).await,
-        OpKind::Grant(kind) => grant::command(&call, &op, kind).await,
+        OpKind::Public(kind) => public::read(call, op, kind).await,
+        OpKind::Grant(kind) => grant::command(call, op, kind).await,
     }
 }
 
@@ -1354,7 +1373,11 @@ fn pending_of<P: Seams>(
     let found = lock(&call.st.pending)
         .get(PendingId::from_raw(id), account)
         .cloned();
-    let a = found.ok_or(ApiError::refused(ErrorCode::NotFound, "I-85"))?;
+    // I-85: an action is found only by its own account. An id that
+    // names no open action of the caller is an input refusal, alike for
+    // an unknown id and another account's action, outside authorisation
+    // (lane m4/ops-roles-agents).
+    let a = found.ok_or(ApiError::refused(ErrorCode::NotFound, "Input"))?;
     match a.status_at(call.now) {
         PendingStatus::Open => Ok((account, a)),
         PendingStatus::Expired => {
@@ -1585,6 +1608,26 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             ReadModel::PendingActions(lock(&call.st.pending).list(a, call.now))
+        }
+        // R-MC-03, lane m4/ops-roles-agents.
+        ReadKind::ListMyAgents => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::MyAgents(agents::list(call, a).await?)
+        }
+        ReadKind::ListMyAgentActivity => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::AgentActivity(agents::activity(call, op, a)?)
+        }
+        // J1, lane m4/ops-roles-agents: the read rule admitted a tenant admin.
+        ReadKind::ListBindings => {
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+            ReadModel::Bindings(bindings::list(&call.state, p))
         }
         ReadKind::ListMySessions => {
             let Some(a) = account else {

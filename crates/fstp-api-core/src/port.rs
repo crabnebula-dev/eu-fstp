@@ -930,6 +930,31 @@ pub trait Tokens: Send + Sync {
         &self,
         c: ConsentApproval,
     ) -> impl Future<Output = Result<String, PortError>> + Send;
+    /// The live agent clients of `account` at `now`, one per client,
+    /// each with the scopes of its tokens (R-MC-03, `mcp-server.md`).
+    fn agents(
+        &self,
+        account: AccountId,
+        now: Timestamp,
+    ) -> impl Future<Output = Result<Vec<AgentInfo>, PortError>> + Send;
+}
+
+/// One connected agent client of an account (R-MC-03): what its tokens
+/// grant. It names no other account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentInfo {
+    /// The agent client.
+    pub client: AgentClientId,
+    /// The client name it registered with: untrusted text, unverified.
+    pub name: Option<String>,
+    /// The scopes its live tokens hold.
+    pub scopes: BTreeSet<fstp_access::Scope>,
+    /// How the session that consented logged in.
+    pub method: LoginMethod,
+    /// When the grant started, when the token store knows it.
+    pub since: Option<Timestamp>,
+    /// When it ends at the latest (P-72), when the token store knows it.
+    pub until: Option<Timestamp>,
 }
 
 /// Audit (I-24): one entry per call, in the same transaction as any append.
