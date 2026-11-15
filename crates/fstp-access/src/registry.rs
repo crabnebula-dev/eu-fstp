@@ -1689,8 +1689,9 @@ pub const OPS: &[OpSpec] = &[
     )
     .acting(JOURNEY),
     // Lane j4, ADR-015 amendment of 2026-11-06: the renderer's checked map
-    // tree and node statuses of one proposal, for its team (section 8.1,
-    // O-58). Web only, as the journey reads are.
+    // tree and node statuses of one proposal, for its team, the guardian
+    // included (section 8.1, O-58; Daniel, 2026-11-15, night). Web only,
+    // as the journey reads are.
     OpSpec::read(
         "proposal.route_map",
         RK::GetRouteMap,

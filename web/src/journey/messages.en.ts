@@ -66,7 +66,6 @@ export const JOURNEY_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "journey.link.progress": "Progress",
   "journey.link.activity": "Activity",
   "journey.link.label": "Progress and activity",
-  "journey.link.activity_label": "Activity of this proposal",
 
   // Help panels (design "Help panel per node").
   "journey.help.heading": "{label} ({state})",

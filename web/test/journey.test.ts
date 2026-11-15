@@ -35,6 +35,7 @@ import {
   say,
   stripOf,
 } from "../src/journey/model.js";
+import * as LINKS from "../src/journey/links.js";
 import { JOURNEY_PATHS, JOURNEY_ROUTES, journeyLinks } from "../src/journey/routes.js";
 import { assert, eq, forAll, show, test } from "./support/harness.js";
 import { WEB_DIR } from "./support/paths.js";
@@ -615,6 +616,21 @@ test("r_jv_01_proposal_links_reach_progress_and_activity", () => {
     ["Progress", "Activity"],
     "their words",
   );
+});
+
+/**
+ * R-JV-01, `SPEC/12-journey-ui.md` section 8.1 (Daniel, 2026-11-15,
+ * night): the guardian sees the route map as part of the full journey,
+ * so the guardian's home card and guardian page link the progress page
+ * as well as the activity log. No activity-only navigation is left.
+ */
+test("r_jv_01_guardian_pages_link_progress_and_activity", () => {
+  assert(!("activityNav" in LINKS), "links.ts still offers an activity-only navigation");
+  for (const file of [join("src", "home", "page.ts"), join("src", "applicant", "negotiation.ts")]) {
+    const src = readFileSync(join(WEB_DIR, file), "utf8");
+    assert(!src.includes("activityNav"), `${file} links the guardian to the activity log alone`);
+    assert(src.includes("journeyNav("), `${file} shows no "Progress" and "Activity" links`);
+  }
 });
 
 // ---------------------------------------------------------------------------

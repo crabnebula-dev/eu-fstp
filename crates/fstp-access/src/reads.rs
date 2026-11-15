@@ -601,7 +601,9 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // dispatch applies the visibility function per entry (I-93).
     (ReadKind::GetJourney, JOURNEY_READER, OPEN_ALWAYS),
     (ReadKind::GetDiary, JOURNEY_READER, OPEN_ALWAYS),
-    // Lane j4, section 8.1, O-58: the map is the team's alone. Judging
+    // Lane j4, section 8.1, O-58: the map is the team's alone, the
+    // guardian included (`ReadRule::Team`; Daniel, 2026-11-15, night: the
+    // guardian sees the route map as part of the full journey). Judging
     // roles keep the strip of `proposal.journey` (section 8.3). Daniel,
     // 2026-11-06: the former team keeps a read-only view of all three.
     (

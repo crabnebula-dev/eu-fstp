@@ -76,7 +76,7 @@ import { mailboxCount } from "../mailbox/pages.js";
 import { decodeQueue, type QueueRow } from "../grant/models.js";
 import { homeLabel } from "./nav.js";
 import { myRoles } from "./session.js";
-import { activityNav, journeyNav } from "../journey/links.js";
+import { journeyNav } from "../journey/links.js";
 
 /** The path of one onboarding step (`onboarding/routes.ts`). */
 function ONBOARDING_STEP(step: "organisation" | "administrators"): string {
@@ -347,13 +347,13 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
   }
   const guardian = of((x) => x.group === "guardian");
   if (guardian.length > 0) {
-    // The guardian reaches the activity log, which holds the journey as a
-    // Receiving binding reads it and their own consent steps (O-60), by
-    // clicking from the home page.
+    // The guardian reaches the progress map and the activity log, which
+    // hold the full journey as a Receiving binding reads it, with their own
+    // consent steps (O-60), by clicking from the home page.
     out.push({
       id: "home-guardian",
       title: homeLabel("home.group.guardian"),
-      body: guardian.map((i) => activityNav(i.href.split("/")[3] ?? "")),
+      body: guardian.map((i) => journeyNav(i.href.split("/")[3] ?? "")),
       items: guardian,
     });
   }

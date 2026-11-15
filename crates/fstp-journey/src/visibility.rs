@@ -392,6 +392,20 @@ pub const fn route_strip(role: Role) -> bool {
     )
 }
 
+/// Whether a viewer reading through `role` gets the full route map, its
+/// list and its help panels (section 8.1): the Receiving roles, which
+/// are the lead, the team members and the guardian. Daniel, 2026-11-15
+/// (night): the guardian sees the route map as part of the full journey.
+/// Judging roles keep the strip of section 8.3, and IRC members get
+/// neither (O-58). The caller also needs the Receiving binding on the
+/// proposal itself.
+pub const fn route_map(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Applicant | Role::ApplicantTeamMember | Role::Guardian
+    )
+}
+
 /// The aggregate per-state counts a coordinator may see before conflict
 /// declaration (O-57): one count per state that holds a proposal, with no
 /// id, title or applicant datum.

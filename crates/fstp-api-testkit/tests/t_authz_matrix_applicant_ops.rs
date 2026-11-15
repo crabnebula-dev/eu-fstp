@@ -15,7 +15,8 @@
 //! `docs/handoff/m4-design.md`, settle the four operations the previous
 //! lane left open: the journey for staff and the guardian, the guardian's
 //! workspace save in DRAFT, the notice acknowledgement, and the former
-//! team's workspace read. No cell is left out.
+//! team's workspace read. No cell is left out. The follow-up answer of
+//! the same night gives the guardian the route map as well.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -273,6 +274,24 @@ fn t_authz_matrix_i93_diary_readers() {
 #[test]
 fn t_authz_matrix_i21_get_workspace_is_closed_to_the_former_team() {
     let (n, bad) = run(&["proposal.get_workspace"], |_, _, _| false);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} cells disagree:\n{}",
+        bad.len(),
+        report(&bad)
+    );
+    assert!(n > 1000, "{n}");
+}
+
+/// `SPEC/12-journey-ui.md` section 8.1, O-58, R-JV-01 (Daniel,
+/// 2026-11-15, night): the route map is read by the Receiving roles that
+/// read the journey. The guardian sees it as part of the full journey
+/// while X is under way, and the former lead and team member keep it
+/// once X ended. Staff are refused, whatever they read of the journey,
+/// so `proposal.journey` sets `map` exactly where this read admits.
+#[test]
+fn t_authz_matrix_r_jv_route_map_is_the_receiving_bindings() {
+    let (n, bad) = run(&["proposal.route_map"], |_, _, _| false);
     assert!(
         bad.is_empty(),
         "{} of {n} cells disagree:\n{}",

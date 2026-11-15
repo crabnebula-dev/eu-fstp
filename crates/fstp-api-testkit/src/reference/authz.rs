@@ -949,8 +949,11 @@ pub enum Rule {
     /// diary only, so the workspace is closed to them.
     Workspace,
     /// The route map of X (ADR-015 amendment of 2026-11-06, section 8.1,
-    /// O-58): the lead and the team member in every state, a terminal one
-    /// included (Daniel, 2026-11-06). The guardian gets no map.
+    /// O-58): the readers of [`Rule::Journey`] on the team side. The lead
+    /// and the team member read in every state, a terminal one included
+    /// (Daniel, 2026-11-06). Daniel, 2026-11-15 (night): the guardian sees
+    /// the route map too, as part of the full journey, so the guardian
+    /// reads it while X is under way, as the journey.
     RouteMap,
     /// M5 lane L-API: the grant, contract and payment status of X (M5
     /// design section 5). Reading: the team as for its own proposal, and
@@ -1088,8 +1091,8 @@ impl Rule {
                 Some(Role::Guardian),
             ],
             Rule::Lead => &[Some(Role::Applicant)],
-            // The registry names the team for the route map. The guardian is
-            // then refused by the rule itself (section 8.1).
+            // The registry names the team for the route map, the guardian
+            // included (section 8.1; Daniel, 2026-11-15, night).
             Rule::Team
             | Rule::DraftingTeam
             | Rule::NegotiationTeam
@@ -1887,7 +1890,7 @@ fn admit(
         ),
         Rule::JourneyPosition => journey_position(who, x, policy),
         Rule::Workspace => open(who.team() && !x.is_some_and(StateTag::is_terminal)),
-        Rule::RouteMap => open(matches!(who, Who::Lead | Who::TeamMember)),
+        Rule::RouteMap => open(former_team_reads(who, x)),
         Rule::GrantReader => {
             let in_grant = x.is_some_and(|s| among(s, &GRANT_STATES));
             let staff = who.manager()

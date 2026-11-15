@@ -405,6 +405,22 @@ pub const fn route_strip(role: Role) -> Option<bool> {
     }
 }
 
+/// Whether `role` gets the full route map of section 8.1: the Voyager
+/// surface of the Receiving roles. The guardian is a Receiving role
+/// (`roles-and-sod.md`) and sees the map as part of the full journey
+/// (Daniel, 2026-11-15, night). The judging roles keep the strip of
+/// section 8.3 and IRC members get neither (O-58). `None` where the spec
+/// is silent.
+pub const fn route_map(role: Role) -> Option<bool> {
+    match role {
+        Role::Applicant | Role::ApplicantTeamMember | Role::Guardian => Some(true),
+        Role::CommitteeMember | Role::CommitteeChair | Role::FstpCoordinator | Role::IrcMember => {
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 /// The per-state counts of O-57: how many proposals sit in each state.
 pub fn state_counts(states: &[StateTag]) -> BTreeMap<StateTag, u64> {
     let mut out: BTreeMap<StateTag, u64> = BTreeMap::new();
