@@ -4554,7 +4554,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         kind: "object",
         fields: {
           "id": { schema: { kind: "string" }, optional: false },
-          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted"] }, optional: false },
           "action": { schema: { kind: "bool" }, optional: false },
           "href": { schema: { kind: "string" }, optional: false },
           "read": { schema: { kind: "bool" }, optional: true },

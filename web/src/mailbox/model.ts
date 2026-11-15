@@ -24,6 +24,8 @@ export const MAIL_KINDS = [
   "intake.knock_out",
   "round.vote",
   "admin.approve_activation",
+  // ADR-022 decision 2 (2026-11-15): the override a building tenant admin may use.
+  "admin.override_activation",
   "contract.sign",
   "payment.review",
   "payment.approve",
@@ -55,6 +57,7 @@ export const MAILBOX_ROUTES: Readonly<Record<MailKind, string>> = Object.freeze(
   "intake.knock_out": "/app/calls/{call}/intake",
   "round.vote": "/app/cut-off-rounds/{round}",
   "admin.approve_activation": "/app/admin/approvals",
+  "admin.override_activation": "/app/admin/approvals",
   "contract.sign": "/app/grants/{proposal}/contract",
   "payment.review": "/app/operations",
   "payment.approve": "/app/operations",

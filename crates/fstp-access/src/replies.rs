@@ -179,6 +179,9 @@ pub const MAILBOX_KINDS: &[&str] = &[
     "intake.knock_out",
     "round.vote",
     "admin.approve_activation",
+    // ADR-022 decision 2 (2026-11-15): the override a building tenant
+    // admin may use.
+    "admin.override_activation",
     "contract.sign",
     "payment.review",
     "payment.approve",
